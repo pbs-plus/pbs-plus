@@ -12,13 +12,14 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
 )
 
 func CreateProxy(target *url.URL, storeInstance *store.Store) *httputil.ReverseProxy {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	originalDirector := proxy.Director
 
-	proxy.Transport = store.BaseTransport
+	proxy.Transport = utils.BaseTransport
 	proxy.Director = func(req *http.Request) {
 		ExtractTokenFromRequest(req, storeInstance)
 		originalDirector(req)
