@@ -60,7 +60,7 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	},
 
     render_status: function(value, metadata, record, rowIndex, colIndex, store) {
-      if value {
+      if (value) {
         icon = 'check good';
         text = gettext("OK");
       } else {
