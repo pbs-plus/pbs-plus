@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/getlantern/systray"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/serverlog"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/sftp"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
@@ -52,6 +53,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	serverLog, _ := serverlog.InitializeLogger()
+
 	// Reserve port 33450-33476
 	drives := utils.GetLocalDrives()
 	ctx := context.Background()
@@ -64,12 +67,18 @@ func main() {
 
 		err = sftpConfig.PopulateKeys()
 		if err != nil {
+			if serverLog != nil {
+				serverLog.Print(fmt.Sprintf("Unable to populate SFTP keys: %s", err))
+			}
 			utils.ShowMessageBox("Error", fmt.Sprintf("Unable to populate SFTP keys: %s", err))
 			os.Exit(1)
 		}
 
 		port, err := utils.DriveLetterPort(rune)
 		if err != nil {
+			if serverLog != nil {
+				serverLog.Print(fmt.Sprintf("Unable to map letter to port: %s", err))
+			}
 			utils.ShowMessageBox("Error", fmt.Sprintf("Unable to map letter to port: %s", err))
 			os.Exit(1)
 		}
@@ -87,6 +96,8 @@ func main() {
 }
 
 func onReady(serverUrl string) func() {
+	serverLog, _ := serverlog.InitializeLogger()
+
 	return func() {
 		systray.SetIcon(icon)
 		systray.SetTitle("Proxmox Backup Agent")
@@ -94,6 +105,9 @@ func onReady(serverUrl string) func() {
 
 		url, err := url.Parse(serverUrl)
 		if err != nil {
+			if serverLog != nil {
+				serverLog.Print(fmt.Sprintf("Failed to parse server URL: %s", err))
+			}
 			utils.ShowMessageBox("Error", fmt.Sprintf("Failed to parse server URL: %s", err))
 			os.Exit(1)
 		}
@@ -115,6 +129,8 @@ func isAdmin() bool {
 }
 
 func runAsAdmin() {
+	serverLog, _ := serverlog.InitializeLogger()
+
 	verb := "runas"
 	exe, _ := os.Executable()
 	cwd, _ := os.Getwd()
@@ -129,6 +145,9 @@ func runAsAdmin() {
 
 	err := windows.ShellExecute(0, verbPtr, exePtr, argPtr, cwdPtr, showCmd)
 	if err != nil {
+		if serverLog != nil {
+			serverLog.Print(fmt.Sprintf("Failed to run as administrator: %s", err))
+		}
 		utils.ShowMessageBox("Error", fmt.Sprintf("Failed to run as administrator: %s", err))
 	}
 }

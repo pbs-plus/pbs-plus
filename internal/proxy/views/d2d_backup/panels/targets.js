@@ -59,6 +59,18 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	    this.getView().getStore().rstore.startUpdate();
 	},
 
+    render_status: function(value, metadata, record, rowIndex, colIndex, store) {
+      if value {
+        icon = 'check good';
+        text = gettext("OK");
+      } else {
+        icon = 'times critical';
+        text = "Unreachable";
+      }
+
+	return `<i class="fa fa-${icon}"></i> ${text}`;
+    },
+
 	init: function(view) {
 	    Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
 	},
@@ -118,6 +130,12 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	    text: gettext('Path'),
 	    dataIndex: 'path',
 	    flex: 2,
+	},
+	{
+	    header: gettext('Status'),
+	    dataIndex: 'connection_status',
+	    renderer: this.render_status,
+	    flex: 3,
 	},
     ],
 });

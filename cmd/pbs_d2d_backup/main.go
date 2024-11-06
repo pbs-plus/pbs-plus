@@ -12,6 +12,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/logger"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/agents"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/jobs"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/targets"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
@@ -92,6 +93,7 @@ func main() {
 
 	mux.HandleFunc("/api2/json/d2d/backup", jobs.D2DJobHandler(storeInstance))
 	mux.HandleFunc("/api2/json/d2d/target", targets.D2DTargetHandler(storeInstance))
+	mux.HandleFunc("/api2/json/d2d/agent-log", agents.AgentLogHandler(storeInstance))
 
 	mux.HandleFunc("/api2/extjs/d2d/backup/{job}", jobs.ExtJsJobRunHandler(storeInstance))
 

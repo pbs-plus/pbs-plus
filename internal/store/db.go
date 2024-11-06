@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/logger"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
 )
 
 // Job represents the pbs-disk-backup-job-status model
@@ -32,8 +35,9 @@ type Job struct {
 
 // Target represents the pbs-model-targets model
 type Target struct {
-	Name string `db:"name" json:"name"`
-	Path string `db:"path" json:"path"`
+	Name             string `db:"name" json:"name"`
+	Path             string `db:"path" json:"path"`
+	ConnectionStatus bool   `json:"connection_status"`
 }
 
 // Store holds the database instance
@@ -259,6 +263,21 @@ func (store *Store) GetTarget(name string) (*Target, error) {
 		}
 		return nil, fmt.Errorf("GetTarget: error scanning row from targets table -> %w", err)
 	}
+
+	syslogger, _ := logger.InitializeSyslogger()
+	if strings.HasPrefix(target.Path, "agent://") {
+		target.ConnectionStatus, err = store.AgentPing(&target)
+		if err != nil {
+			errI := fmt.Errorf("GetTarget: error agent ping -> %w", err)
+			if syslogger != nil {
+				syslogger.Err(err.Error())
+			}
+			log.Println(errI)
+		}
+	} else {
+		target.ConnectionStatus = utils.IsValid(target.Path)
+	}
+
 	return &target, nil
 }
 
@@ -355,6 +374,21 @@ func (store *Store) GetAllTargets() ([]Target, error) {
 		if err != nil {
 			return nil, fmt.Errorf("GetAllTargets: error scanning row from targets -> %w", err)
 		}
+
+		syslogger, _ := logger.InitializeSyslogger()
+		if strings.HasPrefix(target.Path, "agent://") {
+			target.ConnectionStatus, err = store.AgentPing(&target)
+			if err != nil {
+				errI := fmt.Errorf("GetTarget: error agent ping -> %w", err)
+				if syslogger != nil {
+					syslogger.Err(err.Error())
+				}
+				log.Println(errI)
+			}
+		} else {
+			target.ConnectionStatus = utils.IsValid(target.Path)
+		}
+
 		targets = append(targets, target)
 	}
 

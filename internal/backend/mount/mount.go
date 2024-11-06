@@ -30,6 +30,7 @@ func Mount(target *store.Target) (*AgentMount, error) {
 	agentDriveRune := []rune(agentDrive)[0]
 	agentPort, err := utils.DriveLetterPort(agentDriveRune)
 	if err != nil {
+		agentMount.Unmount()
 		return nil, fmt.Errorf("Mount: error mapping \"%c\" to network port -> %w", agentDriveRune, err)
 	}
 
@@ -37,6 +38,7 @@ func Mount(target *store.Target) (*AgentMount, error) {
 
 	err = os.MkdirAll(agentMount.Path, 0700)
 	if err != nil {
+		agentMount.Unmount()
 		return nil, fmt.Errorf("Mount: error creating directory \"%s\" -> %w", agentMount.Path, err)
 	}
 
@@ -66,23 +68,24 @@ func Mount(target *store.Target) (*AgentMount, error) {
 	mnt.Stdout = os.Stdout
 	mnt.Stderr = os.Stderr
 
+	agentMount.Cmd = mnt
+
 	err = mnt.Start()
 	if err != nil {
+		agentMount.Unmount()
 		return nil, fmt.Errorf("Mount: error starting rclone for sftp -> %w", err)
 	}
-
-	agentMount.Cmd = mnt
 
 	return agentMount, nil
 }
 
 func (a *AgentMount) Unmount() {
+	if a.Cmd != nil && a.Cmd.Process != nil {
+		_ = a.Cmd.Process.Kill()
+	}
+
 	umount := exec.Command("umount", a.Path)
 	umount.Env = os.Environ()
 
 	_ = umount.Start()
-
-	if a.Cmd != nil {
-		_ = a.Cmd.Process.Kill()
-	}
 }

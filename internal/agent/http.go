@@ -1,21 +1,26 @@
-package store
+package agent
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
 )
 
-func (storeInstance *Store) ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error {
+var httpClient *http.Client
+
+func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error {
+	serverUrl := os.Getenv("PBS_AGENT_SERVER")
 	req, err := http.NewRequest(
 		method,
 		fmt.Sprintf(
 			"%s%s",
-			ProxyTargetURL,
+			strings.TrimSuffix(serverUrl, "/"),
 			url,
 		),
 		body,
@@ -25,32 +30,16 @@ func (storeInstance *Store) ProxmoxHTTPRequest(method, url string, body io.Reade
 		return fmt.Errorf("ProxmoxHTTPRequest: error creating http request -> %w", err)
 	}
 
-	if storeInstance.LastToken == nil && storeInstance.APIToken == nil {
-		return fmt.Errorf("ProxmoxHTTPRequest: token is required")
-	}
-
-	if storeInstance.LastToken != nil {
-		req.Header.Set("Csrfpreventiontoken", storeInstance.LastToken.CSRFToken)
-
-		req.AddCookie(&http.Cookie{
-			Name:  "PBSAuthCookie",
-			Value: storeInstance.LastToken.Ticket,
-			Path:  "/",
-		})
-	} else if storeInstance.APIToken != nil {
-		req.Header.Set("Authorization", fmt.Sprintf("PBSAPIToken=%s:%s", storeInstance.APIToken.TokenId, storeInstance.APIToken.Value))
-	}
-
 	req.Header.Add("Content-Type", "application/json")
 
-	if storeInstance.HTTPClient == nil {
-		storeInstance.HTTPClient = &http.Client{
+	if httpClient == nil {
+		httpClient = &http.Client{
 			Timeout:   time.Second * 30,
 			Transport: utils.BaseTransport,
 		}
 	}
 
-	resp, err := storeInstance.HTTPClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("ProxmoxHTTPRequest: error executing http request -> %w", err)
 	}

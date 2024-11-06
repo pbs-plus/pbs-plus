@@ -32,9 +32,10 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	}
 
 	srcPath := target.Path
+	isAgent := strings.HasPrefix(target.Path, "agent://")
 
 	var agentMount *mount.AgentMount
-	if strings.HasPrefix(target.Path, "agent://") {
+	if isAgent {
 		agentMount, err = mount.Mount(target)
 		if err != nil {
 			return nil, fmt.Errorf("RunBackup: mount initialization error -> %w", err)
@@ -58,12 +59,18 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		return nil, fmt.Errorf("RunBackup: failed to fix datastore permissions -> %w", err)
 	}
 
+	backupId := job.Target
+	if isAgent {
+		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
+	}
+
 	cmdArgs := []string{
 		"backup",
 		fmt.Sprintf("%s.pxar:%s", strings.ReplaceAll(job.Target, " ", "-"), srcPath),
 		"--repository",
 		jobStore,
 		"--change-detection-mode=metadata",
+		"--backup-id", backupId,
 	}
 
 	if job.Namespace != "" {
