@@ -10,14 +10,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
-	"syscall"
-
-	"golang.org/x/sys/windows"
 
 	"github.com/getlantern/systray"
+	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/serverlog"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/sftp"
@@ -25,22 +22,27 @@ import (
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
 )
 
-//go:embed icon/logo.ico
-var icon []byte
-
 type PingResp struct {
 	Pong bool `json:"pong"`
 }
 
-func main() {
-	defer os.Exit(0)
+//go:embed icon/logo.ico
+var icon []byte
 
-	if !isAdmin() {
-		fmt.Println("This program needs to be run as administrator.")
-		runAsAdmin()
-		runtime.Goexit()
-	}
+type program struct {
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
 
+func (p *program) Start(s service.Service) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancel = cancel
+
+	go p.run(ctx)
+	return nil
+}
+
+func (p *program) run(ctx context.Context) {
 	serverUrl, ok := os.LookupEnv("PBS_AGENT_SERVER")
 	if !ok {
 		for {
@@ -57,73 +59,45 @@ func main() {
 
 		utils.SetEnvironment("PBS_AGENT_SERVER", serverUrl)
 	}
-
-	_, err := url.ParseRequestURI(serverUrl)
-	if err != nil {
-		utils.ShowMessageBox("Error", fmt.Sprintf("Invalid server URL: %s", err))
-		runtime.Goexit()
-	}
-
 	serverLog, _ := serverlog.InitializeLogger()
 
-	// Reserve port 33450-33476
 	drives := utils.GetLocalDrives()
-	ctx, cancel := context.WithCancel(context.Background())
 
-	var wg sync.WaitGroup
+	defer snapshots.CloseAllSnapshots()
+
 	for _, driveLetter := range drives {
 		rune := []rune(driveLetter)[0]
-
 		sftpConfig, _ := sftp.InitializeSFTPConfig(serverUrl, driveLetter)
-
-		err = sftpConfig.PopulateKeys()
-		if err != nil {
-			if serverLog != nil {
-				serverLog.Print(fmt.Sprintf("Unable to populate SFTP keys: %s", err))
-			}
-			utils.ShowMessageBox("Error", fmt.Sprintf("Unable to populate SFTP keys: %s", err))
-			runtime.Goexit()
+		if err := sftpConfig.PopulateKeys(); err != nil {
+			serverLog.Print(fmt.Sprintf("Unable to populate SFTP keys: %s", err))
+			return
 		}
 
 		port, err := utils.DriveLetterPort(rune)
 		if err != nil {
-			if serverLog != nil {
-				serverLog.Print(fmt.Sprintf("Unable to map letter to port: %s", err))
-			}
-			utils.ShowMessageBox("Error", fmt.Sprintf("Unable to map letter to port: %s", err))
-			runtime.Goexit()
+			serverLog.Print(fmt.Sprintf("Unable to map letter to port: %s", err))
+			return
 		}
 
-		wg.Add(1)
-		go sftp.Serve(ctx, &wg, sftpConfig, "0.0.0.0", port, driveLetter)
+		p.wg.Add(1)
+		go func() {
+			sftp.Serve(ctx, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
+		}()
 	}
 
-	defer snapshots.CloseAllSnapshots()
-
-	systray.Run(onReady(ctx, serverUrl), onExit(cancel))
-
-	wg.Wait()
+	systray.Run(p.onReady(ctx), p.onExit)
+	p.wg.Wait()
 }
 
-func onReady(ctx context.Context, serverUrl string) func() {
-	serverLog, _ := serverlog.InitializeLogger()
-
+func (p *program) onReady(ctx context.Context) func() {
 	return func() {
 		systray.SetIcon(icon)
 		systray.SetTitle("Proxmox Backup Agent")
-		systray.SetTooltip("Orchestrating backups with Proxmox Backup Server")
-
-		url, err := url.Parse(serverUrl)
-		if err != nil {
-			if serverLog != nil {
-				serverLog.Print(fmt.Sprintf("Failed to parse server URL: %s", err))
-			}
-			utils.ShowMessageBox("Error", fmt.Sprintf("Failed to parse server URL: %s", err))
-			runtime.Goexit()
-		}
+		systray.SetTooltip("Proxmox Backup Agent")
 
 		status := systray.AddMenuItem("Status: Connecting...", "Connectivity status")
 		status.Disable()
+
 		go func(ctx context.Context, status *systray.MenuItem) {
 			for {
 				select {
@@ -141,9 +115,6 @@ func onReady(ctx context.Context, serverUrl string) func() {
 			}
 		}(ctx, status)
 
-		serverIP := systray.AddMenuItem(fmt.Sprintf("Server: %s", url), "Proxmox Backup Server address")
-		serverIP.Disable()
-
 		closeButton := systray.AddMenuItem("Close", "Close PBS Agent")
 		go func() {
 			<-closeButton.ClickedCh
@@ -152,38 +123,78 @@ func onReady(ctx context.Context, serverUrl string) func() {
 	}
 }
 
-func onExit(cancel context.CancelFunc) func() {
-	return cancel
+func (p *program) onExit() {
+	systray.Quit()
 }
 
-func isAdmin() bool {
-	_, err := os.Open("\\\\.\\PHYSICALDRIVE0")
-	if err != nil {
-		return false
+func (p *program) Stop(s service.Service) error {
+	if p.cancel != nil {
+		p.cancel()
 	}
-	return true
+	p.wg.Wait()
+	return nil
 }
 
-func runAsAdmin() {
-	serverLog, _ := serverlog.InitializeLogger()
+func main() {
+	svcConfig := &service.Config{
+		Name:        "ProxmoxBackupAgent",
+		DisplayName: "Proxmox Backup Agent",
+		Description: "Agent for orchestrating backups with Proxmox Backup Server",
+		UserName:    "",
+	}
 
-	verb := "runas"
-	exe, _ := os.Executable()
-	cwd, _ := os.Getwd()
-	args := strings.Join(os.Args[1:], " ")
-
-	verbPtr, _ := syscall.UTF16PtrFromString(verb)
-	exePtr, _ := syscall.UTF16PtrFromString(exe)
-	cwdPtr, _ := syscall.UTF16PtrFromString(cwd)
-	argPtr, _ := syscall.UTF16PtrFromString(args)
-
-	var showCmd int32 = 1 //SW_NORMAL
-
-	err := windows.ShellExecute(0, verbPtr, exePtr, argPtr, cwdPtr, showCmd)
+	prg := &program{}
+	s, err := service.New(prg, svcConfig)
 	if err != nil {
-		if serverLog != nil {
-			serverLog.Print(fmt.Sprintf("Failed to run as administrator: %s", err))
+		fmt.Println("Failed to initialize service:", err)
+		return
+	}
+
+	if len(os.Args) > 1 {
+		cmd := os.Args[1]
+		switch cmd {
+		case "install":
+			err = s.Install()
+			if err != nil {
+				fmt.Println("Failed to install service:", err)
+			} else {
+				fmt.Println("Service installed")
+			}
+			return
+		case "uninstall":
+			err = s.Uninstall()
+			if err != nil {
+				fmt.Println("Failed to uninstall service:", err)
+			} else {
+				fmt.Println("Service uninstalled")
+			}
+			return
+		case "start":
+			err = s.Start()
+			if err != nil {
+				fmt.Println("Failed to start service:", err)
+			} else {
+				fmt.Println("Service started")
+			}
+			return
+		case "stop":
+			err = s.Stop()
+			if err != nil {
+				fmt.Println("Failed to stop service:", err)
+			} else {
+				fmt.Println("Service stopped")
+			}
+			return
+		default:
+			fmt.Println("Unknown command:", cmd)
+			fmt.Println("Available commands: install, uninstall, start, stop")
+			return
 		}
-		utils.ShowMessageBox("Error", fmt.Sprintf("Failed to run as administrator: %s", err))
+	}
+
+	// If no command provided, run the service as normal
+	err = s.Run()
+	if err != nil {
+		fmt.Println("Error running service:", err)
 	}
 }

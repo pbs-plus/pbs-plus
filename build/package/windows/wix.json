@@ -22,15 +22,19 @@
   },
   "hooks": [
     {
-      "command": "sc.exe create PBSAgent binPath=\"[INSTALLDIR]pbs-d2d-agent.exe\" type=own start=auto DisplayName=\"PBS Agent\"",
+      "command": "[INSTALLDIR]pbs-d2d-agent.exe install",
       "when": "install"
     },
     {
-      "command": "sc.exe start PBSAgent",
+      "command": "[INSTALLDIR]pbs-d2d-agent.exe start",
       "when": "install"
     },
     {
-      "command": "sc.exe delete PBSAgent",
+      "command": "[INSTALLDIR]pbs-d2d-agent.exe stop",
+      "when": "uninstall"
+    },
+    {
+      "command": "[INSTALLDIR]pbs-d2d-agent.exe uninstall",
       "when": "uninstall"
     }
   ]
