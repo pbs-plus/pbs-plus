@@ -306,7 +306,7 @@ func (store *Store) DeleteTarget(name string) error {
 
 // GetAllJobes retrieves all Job records from the database
 func (store *Store) GetAllJobs() ([]Job, error) {
-	query := `SELECT id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM disk_backup_job_status;`
+	query := `SELECT id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM disk_backup_job_status AND id IS NOT NULL;`
 	rows, err := store.Db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllJobs: error getting job select query -> %w", err)
@@ -361,7 +361,7 @@ func (store *Store) GetAllJobs() ([]Job, error) {
 
 // GetAllTargets retrieves all Target records from the database
 func (store *Store) GetAllTargets() ([]Target, error) {
-	query := `SELECT name, path FROM targets;`
+	query := `SELECT name, path FROM targets AND name IS NOT NULL;`
 	rows, err := store.Db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllTargets: error getting select query -> %w", err)
