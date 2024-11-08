@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -32,10 +33,12 @@ type PingResp struct {
 }
 
 func main() {
+	defer os.Exit(0)
+
 	if !isAdmin() {
 		fmt.Println("This program needs to be run as administrator.")
 		runAsAdmin()
-		os.Exit(0)
+		runtime.Goexit()
 	}
 
 	serverUrl, ok := os.LookupEnv("PBS_AGENT_SERVER")
@@ -58,14 +61,14 @@ func main() {
 	_, err := url.ParseRequestURI(serverUrl)
 	if err != nil {
 		utils.ShowMessageBox("Error", fmt.Sprintf("Invalid server URL: %s", err))
-		os.Exit(1)
+		runtime.Goexit()
 	}
 
 	serverLog, _ := serverlog.InitializeLogger()
 
 	// Reserve port 33450-33476
 	drives := utils.GetLocalDrives()
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 
 	var wg sync.WaitGroup
 	for _, driveLetter := range drives {
@@ -79,7 +82,7 @@ func main() {
 				serverLog.Print(fmt.Sprintf("Unable to populate SFTP keys: %s", err))
 			}
 			utils.ShowMessageBox("Error", fmt.Sprintf("Unable to populate SFTP keys: %s", err))
-			os.Exit(1)
+			runtime.Goexit()
 		}
 
 		port, err := utils.DriveLetterPort(rune)
@@ -88,7 +91,7 @@ func main() {
 				serverLog.Print(fmt.Sprintf("Unable to map letter to port: %s", err))
 			}
 			utils.ShowMessageBox("Error", fmt.Sprintf("Unable to map letter to port: %s", err))
-			os.Exit(1)
+			runtime.Goexit()
 		}
 
 		wg.Add(1)
@@ -97,8 +100,7 @@ func main() {
 
 	defer snapshots.CloseAllSnapshots()
 
-	systray.Run(onReady(ctx, serverUrl), onExit)
-	defer systray.Quit()
+	systray.Run(onReady(ctx, serverUrl), onExit(cancel))
 
 	wg.Wait()
 }
@@ -117,7 +119,7 @@ func onReady(ctx context.Context, serverUrl string) func() {
 				serverLog.Print(fmt.Sprintf("Failed to parse server URL: %s", err))
 			}
 			utils.ShowMessageBox("Error", fmt.Sprintf("Failed to parse server URL: %s", err))
-			os.Exit(1)
+			runtime.Goexit()
 		}
 
 		status := systray.AddMenuItem("Status: Connecting...", "Connectivity status")
@@ -141,10 +143,17 @@ func onReady(ctx context.Context, serverUrl string) func() {
 
 		serverIP := systray.AddMenuItem(fmt.Sprintf("Server: %s", url), "Proxmox Backup Server address")
 		serverIP.Disable()
+
+		closeButton := systray.AddMenuItem("Close", "Close PBS Agent")
+		go func() {
+			<-closeButton.ClickedCh
+			systray.Quit()
+		}()
 	}
 }
 
-func onExit() {
+func onExit(cancel context.CancelFunc) func() {
+	return cancel
 }
 
 func isAdmin() bool {
