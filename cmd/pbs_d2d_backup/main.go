@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/logger"
@@ -18,12 +19,48 @@ import (
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
 )
 
+// CustomRouter to handle specific paths and fallback to proxy
+type CustomRouter struct {
+	store       *store.Store
+	proxy       *http.Handler
+	targetPaths map[string]http.HandlerFunc
+}
+
+func NewCustomRouter(storeInstance *store.Store, proxy http.Handler) *CustomRouter {
+	router := &CustomRouter{
+		store: storeInstance,
+		proxy: &proxy,
+		targetPaths: map[string]http.HandlerFunc{
+			"/api2/json/d2d/backup":               jobs.D2DJobHandler(storeInstance),
+			"/api2/json/d2d/target":               targets.D2DTargetHandler(storeInstance),
+			"/api2/json/d2d/agent-log":            agents.AgentLogHandler(storeInstance),
+			"/api2/extjs/d2d/backup/":             jobs.ExtJsJobRunHandler(storeInstance),
+			"/api2/extjs/config/d2d-target":       targets.ExtJsTargetHandler(storeInstance),
+			"/api2/extjs/config/d2d-target/":      targets.ExtJsTargetSingleHandler(storeInstance),
+			"/api2/extjs/config/disk-backup-job":  jobs.ExtJsJobHandler(storeInstance),
+			"/api2/extjs/config/disk-backup-job/": jobs.ExtJsJobSingleHandler(storeInstance),
+		},
+	}
+	return router
+}
+
+func (router *CustomRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Route request based on custom paths
+	for path, handler := range router.targetPaths {
+		if strings.HasPrefix(r.URL.Path, path) {
+			handler(w, r)
+			return
+		}
+	}
+
+	// If no match, fall back to proxy
+	(*router.proxy).ServeHTTP(w, r)
+}
+
 func main() {
 	s, _ := logger.InitializeSyslogger()
 	jobRun := flag.String("job", "", "Job ID to execute")
 	flag.Parse()
-
-	mux := http.NewServeMux()
 
 	targetURL, err := url.Parse(store.ProxyTargetURL)
 	if err != nil {
@@ -41,25 +78,7 @@ func main() {
 		log.Fatalf("Failed to initialize store: %v", err)
 	}
 
-	proxy := proxy.CreateProxy(targetURL, storeInstance)
-
-	err = storeInstance.CreateTables()
-	if err != nil {
-		if s != nil {
-			s.Err(fmt.Sprintf("Failed to create store tables: %v", err))
-		}
-		log.Fatalf("Failed to create store tables: %v", err)
-	}
-
-	token, err := store.GetAPITokenFromFile()
-	if err != nil {
-		if s != nil {
-			s.Err(err.Error())
-		}
-		log.Println(err)
-	}
-
-	storeInstance.APIToken = token
+	router := NewCustomRouter(storeInstance, proxy.CreateProxy(targetURL, storeInstance))
 
 	if *jobRun != "" {
 		if storeInstance.APIToken == nil {
@@ -91,24 +110,8 @@ func main() {
 		return
 	}
 
-	mux.HandleFunc("/api2/json/d2d/backup", jobs.D2DJobHandler(storeInstance))
-	mux.HandleFunc("/api2/json/d2d/target", targets.D2DTargetHandler(storeInstance))
-	mux.HandleFunc("/api2/json/d2d/agent-log", agents.AgentLogHandler(storeInstance))
-
-	mux.HandleFunc("/api2/extjs/d2d/backup/{job}", jobs.ExtJsJobRunHandler(storeInstance))
-
-	mux.HandleFunc("/api2/extjs/config/d2d-target", targets.ExtJsTargetHandler(storeInstance))
-	mux.HandleFunc("/api2/extjs/config/d2d-target/{target}", targets.ExtJsTargetSingleHandler(storeInstance))
-
-	mux.HandleFunc("/api2/extjs/config/disk-backup-job", jobs.ExtJsJobHandler(storeInstance))
-	mux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", jobs.ExtJsJobSingleHandler(storeInstance))
-
-	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxy.ServeHTTP(w, r)
-	}))
-
 	log.Println("Starting proxy server on :8008")
-	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, mux); err != nil {
+	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, router); err != nil {
 		if s != nil {
 			s.Err(fmt.Sprintf("Server failed: %v", err))
 		}
