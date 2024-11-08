@@ -59,8 +59,8 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	    this.getView().getStore().rstore.startUpdate();
 	},
 
-    render_status: function(value, metadata, record, rowIndex, colIndex, store) {
-      if (value) {
+    render_status: function(value) {
+      if (value.toString() == "true") {
         icon = 'check good';
         text = gettext("OK");
       } else {
@@ -134,7 +134,7 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	{
 	    header: gettext('Status'),
 	    dataIndex: 'connection_status',
-	    renderer: this.render_status,
+	    renderer: 'render_status',
 	    flex: 3,
 	},
     ],
