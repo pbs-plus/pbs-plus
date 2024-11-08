@@ -17,8 +17,8 @@ type LogRequest struct {
 	Message  string `json:"message"`
 }
 
-func AgentLogHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+func AgentLogHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
+	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}

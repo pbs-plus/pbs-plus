@@ -21,8 +21,8 @@ type NewAgentRequest struct {
 	Hostname  string `json:"hostname"`
 }
 
-func D2DTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+func D2DTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
+	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
@@ -92,8 +92,8 @@ func D2DTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *htt
 	}
 }
 
-func ExtJsTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+func ExtJsTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
+	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -131,8 +131,8 @@ func ExtJsTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *h
 	}
 }
 
-func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
+	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -152,7 +152,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWrit
 				return
 			}
 
-			target, err := storeInstance.GetTarget(r.PathValue("target"))
+			target, err := storeInstance.GetTarget(pathVar["target"])
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -192,7 +192,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWrit
 		}
 
 		if r.Method == http.MethodGet {
-			target, err := storeInstance.GetTarget(r.PathValue("target"))
+			target, err := storeInstance.GetTarget(pathVar["target"])
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -209,7 +209,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWrit
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.DeleteTarget(r.PathValue("target"))
+			err := storeInstance.DeleteTarget(pathVar["target"])
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
