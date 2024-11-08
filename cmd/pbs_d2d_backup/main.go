@@ -73,6 +73,14 @@ func main() {
 		log.Fatalf("Failed to initialize store: %v", err)
 	}
 
+	err = storeInstance.CreateTables()
+	if err != nil {
+		if s != nil {
+			s.Err(fmt.Sprintf("Failed to create store tables: %v", err))
+		}
+		log.Fatalf("Failed to create store tables: %v", err)
+	}
+
 	if *jobRun != "" {
 		if storeInstance.APIToken == nil {
 			return
@@ -112,6 +120,16 @@ func main() {
 	}
 
 	proxy := proxy.CreateProxy(targetURL, storeInstance)
+
+	token, err := store.GetAPITokenFromFile()
+	if err != nil {
+		if s != nil {
+			s.Err(err.Error())
+		}
+		log.Println(err)
+	}
+
+	storeInstance.APIToken = token
 
 	// Set up router with routes and a reverse proxy as the default handler
 	router := &CustomRouter{
