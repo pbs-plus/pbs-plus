@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"regexp"
 
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/logger"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/agents"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/jobs"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/targets"
@@ -111,7 +111,7 @@ func main() {
 		log.Fatalf("Failed to parse target URL: %v", err)
 	}
 
-	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy := proxy.CreateProxy(targetURL, storeInstance)
 
 	// Set up router with routes and a reverse proxy as the default handler
 	router := &CustomRouter{
