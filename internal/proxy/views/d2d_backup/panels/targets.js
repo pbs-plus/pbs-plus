@@ -62,7 +62,7 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
     render_status: function(value) {
       if (value.toString() == "true") {
         icon = 'check good';
-        text = gettext("OK");
+        text = "Reachable";
       } else {
         icon = 'times critical';
         text = "Unreachable";

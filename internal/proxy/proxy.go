@@ -22,6 +22,9 @@ func CreateProxy(target *url.URL, storeInstance *store.Store) *httputil.ReverseP
 	proxy.Transport = utils.BaseTransport
 	proxy.Director = func(req *http.Request) {
 		ExtractTokenFromRequest(req, storeInstance)
+
+		// Prevent altering the request method when handling double slashes
+		req.URL.Path = strings.ReplaceAll(req.URL.Path, "//", "/")
 		originalDirector(req)
 	}
 
