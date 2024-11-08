@@ -15,17 +15,7 @@ type Logger struct {
 	Hostname string
 }
 
-type PingResponse struct {
-	Pong bool `json:"pong"`
-}
-
 func InitializeLogger() (*Logger, error) {
-	var pingResp PingResponse
-	err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/ping", nil, &pingResp)
-	if err != nil {
-		return nil, fmt.Errorf("InitializeLogger: failed to ping server -> %w", err)
-	}
-
 	hostname, _ := os.Hostname()
 	return &Logger{Hostname: hostname}, nil
 }

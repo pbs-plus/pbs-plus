@@ -1,3 +1,5 @@
+//go:build linux
+
 package store
 
 import (
@@ -25,7 +27,7 @@ type Job struct {
 	Schedule         string  `db:"schedule" json:"schedule"`
 	Comment          string  `db:"comment" json:"comment"`
 	NotificationMode string  `db:"notification_mode" json:"notification-mode"`
-	Namespace        string  `db:"namespace" json:"namespace"`
+	Namespace        string  `db:"namespace" json:"ns"`
 	NextRun          *int64  `db:"next_run" json:"next-run"`
 	LastRunUpid      *string `db:"last_run_upid" json:"last-run-upid"`
 	LastRunState     *string `json:"last-run-state"`
