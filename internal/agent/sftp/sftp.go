@@ -148,8 +148,7 @@ func handleSFTP(channel ssh.Channel, driveLetter string) {
 		if logger != nil {
 			logger.Print(fmt.Sprintf("failed to initialize snapshot: %v", err))
 		}
-		utils.ShowMessageBox("Fatal Error", fmt.Sprintf("failed to initialize snapshot: %s", err))
-		os.Exit(1)
+		return
 	}
 
 	ctx := context.Background()
@@ -159,12 +158,14 @@ func handleSFTP(channel ssh.Channel, driveLetter string) {
 		if logger != nil {
 			logger.Print(fmt.Sprintf("failed to initialize handler: %v", err))
 		}
-		utils.ShowMessageBox("Fatal Error", fmt.Sprintf("failed to initialize handler: %s", err))
-		os.Exit(1)
+		return
 	}
 
 	server := sftp.NewRequestServer(channel, *sftpHandler)
 	if err := server.Serve(); err != nil {
 		log.Printf("sftp server completed with error: %s\n", err)
+		if logger != nil {
+			logger.Print(fmt.Sprintf("sftp server completed with error: %v", err))
+		}
 	}
 }

@@ -37,10 +37,10 @@ func Mount(target *store.Target) (*AgentMount, error) {
 	}
 
 	agentMount.Path = filepath.Join(store.AgentMountBasePath, strings.ReplaceAll(target.Name, " ", "-"))
+	agentMount.Unmount()
 
 	err = os.MkdirAll(agentMount.Path, 0700)
 	if err != nil {
-		agentMount.Unmount()
 		return nil, fmt.Errorf("Mount: error creating directory \"%s\" -> %w", agentMount.Path, err)
 	}
 
@@ -89,5 +89,5 @@ func (a *AgentMount) Unmount() {
 	umount := exec.Command("umount", a.Path)
 	umount.Env = os.Environ()
 
-	_ = umount.Start()
+	_ = umount.Run()
 }

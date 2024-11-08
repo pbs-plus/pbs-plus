@@ -7,6 +7,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/getlantern/systray"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/serverlog"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/sftp"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/snapshots"
@@ -24,6 +26,10 @@ import (
 
 //go:embed icon/logo.ico
 var icon []byte
+
+type PingResp struct {
+	Pong bool `json:"pong"`
+}
 
 func main() {
 	if !isAdmin() {
@@ -42,6 +48,8 @@ func main() {
 				serverUrl = strings.TrimSuffix(serverUrl, "/")
 				break
 			}
+
+			utils.ShowMessageBox("Error", fmt.Sprintf("Invalid server URL: %s", err))
 		}
 
 		utils.SetEnvironment("PBS_AGENT_SERVER", serverUrl)
@@ -89,13 +97,13 @@ func main() {
 
 	defer snapshots.CloseAllSnapshots()
 
-	systray.Run(onReady(serverUrl), onExit)
+	systray.Run(onReady(ctx, serverUrl), onExit)
 	defer systray.Quit()
 
 	wg.Wait()
 }
 
-func onReady(serverUrl string) func() {
+func onReady(ctx context.Context, serverUrl string) func() {
 	serverLog, _ := serverlog.InitializeLogger()
 
 	return func() {
@@ -111,6 +119,25 @@ func onReady(serverUrl string) func() {
 			utils.ShowMessageBox("Error", fmt.Sprintf("Failed to parse server URL: %s", err))
 			os.Exit(1)
 		}
+
+		status := systray.AddMenuItem("Status: Connecting...", "Connectivity status")
+		status.Disable()
+		go func(ctx context.Context, status *systray.MenuItem) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					var pingResp PingResp
+					pingErr := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/ping", nil, &pingResp)
+					if pingErr != nil || !pingResp.Pong {
+						status.SetTitle(fmt.Sprintf("Status: Error (%s)", pingErr))
+						continue
+					}
+					status.SetTitle("Status: Connected")
+				}
+			}
+		}(ctx, status)
 
 		serverIP := systray.AddMenuItem(fmt.Sprintf("Server: %s", url), "Proxmox Backup Server address")
 		serverIP.Disable()
