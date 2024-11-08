@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,11 +43,16 @@ func (storeInstance *Store) AgentPing(agentTarget *Target) (bool, error) {
 	}
 	defer client.Close()
 
-	_, pong, err := client.SendRequest("ping", true, []byte("ping"))
+	session, err := client.NewSession()
+	if err != nil {
+		return false, fmt.Errorf("AgentPing: error creating new ssh session -> %w", err)
+	}
+	defer session.Close()
+
+	pong, err := session.SendRequest("ping", true, []byte{})
 	if err != nil {
 		return false, fmt.Errorf("AgentPing: error sending ping request -> %w", err)
 	}
-	fmt.Println(string(pong))
 
-	return bytes.Equal(pong, []byte("pong")), nil
+	return pong, nil
 }

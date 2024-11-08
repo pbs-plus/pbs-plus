@@ -103,25 +103,40 @@ func handleConnection(conn net.Conn, sftpConfig *SFTPConfig, driveLetter string)
 			continue
 		}
 
-		go handleRequests(requests)
-		go handleSFTP(channel, driveLetter)
+		// Create a channel to receive sftp request signals
+		sftpRequest := make(chan bool, 1)
+		go handleRequests(requests, sftpRequest)
+
+		// Check the sftpRequest channel to determine if we should start SFTP
+		if requested, ok := <-sftpRequest; ok && requested {
+			go handleSFTP(channel, driveLetter)
+		} else {
+			channel.Close()
+		}
 	}
 }
 
-func handleRequests(requests <-chan *ssh.Request) {
+func handleRequests(requests <-chan *ssh.Request, sftpRequest chan<- bool) {
 	for req := range requests {
-		if req.Type == "subsystem" && string(req.Payload[4:]) == "sftp" {
-			req.Reply(true, nil)
-		} else if req.Type == "ping" {
-			req.Reply(false, []byte("pong"))
-		} else {
-			if string(req.Payload) == "ping" {
-				req.Reply(false, []byte("pong"))
+		switch req.Type {
+		case "subsystem":
+			if string(req.Payload[4:]) == "sftp" {
+				sftpRequest <- true // Signal that SFTP was requested
+				req.Reply(true, nil)
 			} else {
+				sftpRequest <- false // Signal that an unknown subsystem was requested
 				req.Reply(false, nil)
 			}
+		case "ping":
+			sftpRequest <- false            // Signal that an unknown subsystem was requested
+			req.Reply(true, []byte("pong")) // Reply to ping request
+		default:
+			sftpRequest <- false // Signal that an unknown subsystem was requested
+			req.Reply(false, nil)
 		}
 	}
+	// Close channel when done to signal no further requests
+	close(sftpRequest)
 }
 
 func handleSFTP(channel ssh.Channel, driveLetter string) {
