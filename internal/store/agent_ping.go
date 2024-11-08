@@ -44,10 +44,11 @@ func (storeInstance *Store) AgentPing(agentTarget *Target) (bool, error) {
 	}
 	defer client.Close()
 
-	_, pong, err := client.SendRequest("ping", true, []byte{})
+	_, pong, err := client.SendRequest("ping", true, []byte("ping"))
 	if err != nil {
 		return false, fmt.Errorf("AgentPing: error sending ping request -> %w", err)
 	}
+	fmt.Println(string(pong))
 
 	return bytes.Equal(pong, []byte("pong")), nil
 }

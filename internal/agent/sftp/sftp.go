@@ -115,7 +115,11 @@ func handleRequests(requests <-chan *ssh.Request) {
 		} else if req.Type == "ping" {
 			req.Reply(false, []byte("pong"))
 		} else {
-			req.Reply(false, nil)
+			if string(req.Payload) == "ping" {
+				req.Reply(false, []byte("pong"))
+			} else {
+				req.Reply(false, nil)
+			}
 		}
 	}
 }
