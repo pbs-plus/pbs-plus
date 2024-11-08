@@ -113,7 +113,7 @@ func handleRequests(requests <-chan *ssh.Request) {
 		if req.Type == "subsystem" && string(req.Payload[4:]) == "sftp" {
 			req.Reply(true, nil)
 		} else if req.Type == "ping" {
-			req.Reply(true, []byte("pong"))
+			req.Reply(false, []byte("pong"))
 		} else {
 			req.Reply(false, nil)
 		}

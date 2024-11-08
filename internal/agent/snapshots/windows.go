@@ -50,30 +50,38 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	snapshotPath := filepath.Join(appDataFolder, "VSS", driveLetter)
 	err = vss.CreateLink(snapshotPath, volName)
 	if err != nil {
-		if strings.Contains(err.Error(), "already exists") {
-			if _, err := vss.Get(snapshotPath); err == nil {
-				if KnownSnapshots != nil {
-					for _, knownSnap := range KnownSnapshots {
-						if knownSnap.SnapshotPath == snapshotPath && time.Since(knownSnap.LastAccessed) < (15*time.Minute) {
-							return knownSnap, nil
-						} else if time.Since(knownSnap.LastAccessed) >= (15 * time.Minute) {
-							knownSnap.Close()
-							if knownSnap.SnapshotPath == snapshotPath {
-								break
+		if strings.Contains(err.Error(), "shadow copy operation is already in progress") {
+			for {
+				if _, err := vss.Get(snapshotPath); err == nil {
+					break
+				}
+			}
+		} else {
+			if strings.Contains(err.Error(), "already exists") {
+				if _, err := vss.Get(snapshotPath); err == nil {
+					if KnownSnapshots != nil {
+						for _, knownSnap := range KnownSnapshots {
+							if knownSnap.SnapshotPath == snapshotPath && time.Since(knownSnap.LastAccessed) < (15*time.Minute) {
+								return knownSnap, nil
+							} else if time.Since(knownSnap.LastAccessed) >= (15 * time.Minute) {
+								knownSnap.Close()
+								if knownSnap.SnapshotPath == snapshotPath {
+									break
+								}
 							}
 						}
 					}
+					_ = vss.Remove(snapshotPath)
 				}
-				_ = vss.Remove(snapshotPath)
-			}
 
-			_ = os.Remove(snapshotPath)
+				_ = os.Remove(snapshotPath)
 
-			if err := vss.CreateLink(snapshotPath, volName); err != nil {
+				if err := vss.CreateLink(snapshotPath, volName); err != nil {
+					return nil, fmt.Errorf("Snapshot: error creating snapshot (%s to %s) -> %w", volName, snapshotPath, err)
+				}
+			} else {
 				return nil, fmt.Errorf("Snapshot: error creating snapshot (%s to %s) -> %w", volName, snapshotPath, err)
 			}
-		} else {
-			return nil, fmt.Errorf("Snapshot: error creating snapshot (%s to %s) -> %w", volName, snapshotPath, err)
 		}
 	}
 
