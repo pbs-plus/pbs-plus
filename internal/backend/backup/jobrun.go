@@ -31,6 +31,10 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		return nil, fmt.Errorf("RunBackup: Target '%s' does not exist.", job.Target)
 	}
 
+	if !target.ConnectionStatus {
+		return nil, fmt.Errorf("RunBackup: Target '%s' is unreachable or does not exist.", job.Target)
+	}
+
 	srcPath := target.Path
 	isAgent := strings.HasPrefix(target.Path, "agent://")
 
