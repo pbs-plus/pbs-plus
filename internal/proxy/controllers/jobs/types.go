@@ -1,3 +1,5 @@
+//go:build linux
+
 package jobs
 
 import "github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"

@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/backend/mount"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/logger"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
 )
 
 func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) {
@@ -148,27 +148,24 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	}
 
 	go func() {
-		syslogger, _ := logger.InitializeSyslogger()
+		syslogger, err := syslog.InitializeLogger()
+		if err != nil {
+			log.Printf("Failed to initialize logger: %s", err)
+			return
+		}
 
 		if agentMount != nil {
 			defer agentMount.Unmount()
 		}
 		err = cmd.Wait()
 		if err != nil {
-			errI := fmt.Sprintf("RunBackup (goroutine): error waiting for backup -> %v", err)
-			log.Println(errI)
-			if syslogger != nil {
-				syslogger.Err(errI)
-			}
+			syslogger.Errorf("RunBackup (goroutine): error waiting for backup -> %v", err)
+			return
 		}
 
 		taskFound, err := storeInstance.GetTaskByUPID(task.UPID)
 		if err != nil {
-			errI := fmt.Sprintf("RunBackup (goroutine): unable to get task by UPID -> %v", err)
-			log.Println(errI)
-			if syslogger != nil {
-				syslogger.Err(errI)
-			}
+			syslogger.Errorf("RunBackup (goroutine): unable to get task by UPID -> %v", err)
 			return
 		}
 
@@ -177,11 +174,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 
 		err = storeInstance.UpdateJob(*job)
 		if err != nil {
-			errI := fmt.Sprintf("RunBackup (goroutine): unable to update job -> %v", err)
-			log.Println(errI)
-			if syslogger != nil {
-				syslogger.Err(errI)
-			}
+			syslogger.Errorf("RunBackup (goroutine): unable to update job -> %v", err)
 			return
 		}
 	}()

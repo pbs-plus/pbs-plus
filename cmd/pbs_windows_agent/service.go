@@ -13,9 +13,9 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/serverlog"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/sftp"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
 	"golang.org/x/sys/windows/registry"
 )
@@ -25,6 +25,7 @@ type PingResp struct {
 }
 
 type agentService struct {
+	svc    service.Service
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -39,6 +40,11 @@ func (p *agentService) Start(s service.Service) error {
 
 func (p *agentService) run() {
 	utils.SetEnvironment("PBS_AGENT_STATUS", "Starting")
+	logger, err := syslog.InitializeLogger(p.svc)
+	if err != nil {
+		utils.SetEnvironment("PBS_AGENT_STATUS", fmt.Sprintf("Failed to initialize logger -> %s", err.Error()))
+		return
+	}
 
 	for {
 		key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
@@ -52,28 +58,29 @@ func (p *agentService) run() {
 		time.Sleep(time.Second)
 	}
 
-	serverLog, _ := serverlog.InitializeLogger()
-
 	drives := utils.GetLocalDrives()
 
 	for _, driveLetter := range drives {
 		rune := []rune(driveLetter)[0]
-		sftpConfig, _ := sftp.InitializeSFTPConfig(driveLetter)
+		sftpConfig, err := sftp.InitializeSFTPConfig(p.svc, driveLetter)
+
+		if err != nil {
+			logger.Error(fmt.Sprintf("Unable to initialize SFTP config: %s", err))
+			continue
+		}
 		if err := sftpConfig.PopulateKeys(); err != nil {
-			serverLog.Print(fmt.Sprintf("Unable to populate SFTP keys: %s", err))
-			return
+			logger.Error(fmt.Sprintf("Unable to populate SFTP keys: %s", err))
+			continue
 		}
 
 		port, err := utils.DriveLetterPort(rune)
 		if err != nil {
-			serverLog.Print(fmt.Sprintf("Unable to map letter to port: %s", err))
-			return
+			logger.Error(fmt.Sprintf("Unable to map letter to port: %s", err))
+			continue
 		}
 
 		p.wg.Add(1)
-		go func() {
-			sftp.Serve(p.ctx, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
-		}()
+		go sftp.Serve(p.ctx, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
 	}
 
 	go func(ctx context.Context) {

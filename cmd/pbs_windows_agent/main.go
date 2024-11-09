@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/kardianos/service"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
 )
 
 func main() {
@@ -24,6 +25,13 @@ func main() {
 		fmt.Println("Failed to initialize service:", err)
 		return
 	}
+	prg.svc = s
+
+	logger, err := syslog.InitializeLogger(s)
+	if err != nil {
+		fmt.Println("Failed to initialize logger:", err)
+		return
+	}
 
 	tray := &agentTray{svc: s}
 
@@ -33,38 +41,38 @@ func main() {
 		case "install":
 			err = s.Install()
 			if err != nil {
-				fmt.Println("Failed to install service:", err)
+				logger.Errorf("Failed to install service: %s", err)
 			} else {
-				fmt.Println("Service installed")
+				logger.Info("Service installed")
 			}
 			return
 		case "uninstall":
 			err = s.Uninstall()
 			if err != nil {
-				fmt.Println("Failed to uninstall service:", err)
+				logger.Errorf("Failed to uninstall service: %s", err)
 			} else {
-				fmt.Println("Service uninstalled")
+				logger.Info("Service uninstalled")
 			}
 			return
 		case "start":
 			err = s.Start()
 			if err != nil {
-				fmt.Println("Failed to start service:", err)
+				logger.Errorf("Failed to start service: %s", err)
 			} else {
-				fmt.Println("Service started")
+				logger.Info("Service started")
 			}
 			return
 		case "stop":
 			err = s.Stop()
 			if err != nil {
-				fmt.Println("Failed to stop service:", err)
+				logger.Errorf("Failed to stop service: %s", err)
 			} else {
-				fmt.Println("Service stopped")
+				logger.Info("Service stopped")
 			}
 			return
 		default:
-			fmt.Println("Unknown command:", cmd)
-			fmt.Println("Available commands: install, uninstall, start, stop")
+			logger.Errorf("Unknown command: %s", cmd)
+			logger.Info("Available commands: install, uninstall, start, stop")
 			return
 		}
 	}
@@ -72,14 +80,20 @@ func main() {
 	if !service.Interactive() {
 		err = s.Run()
 		if err != nil {
-			fmt.Println("Error running service:", err)
+			logger.Errorf("Error running service: %s", err)
 		}
 	} else {
 		if !isAdmin() {
-			runAsAdmin()
+			err = runAsAdmin()
+			if err != nil {
+				logger.Errorf("Error running as admin: %s", err)
+			}
 			return
 		}
 
 		err = tray.foregroundTray()
+		if err != nil {
+			logger.Errorf("Error running tray: %s", err)
+		}
 	}
 }

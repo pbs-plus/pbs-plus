@@ -4,19 +4,18 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"regexp"
 
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/backend/backup"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/logger"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/agents"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/jobs"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/targets"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
 )
 
 // routeHandler holds a pattern and handler that accepts path variables
@@ -61,24 +60,24 @@ func (cr *CustomRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	s, _ := logger.InitializeSyslogger()
+	s, err := syslog.InitializeLogger()
+	if err != nil {
+		log.Fatalf("Failed to initialize logger: %s", err)
+	}
+
 	jobRun := flag.String("job", "", "Job ID to execute")
 	flag.Parse()
 
 	storeInstance, err := store.Initialize()
 	if err != nil {
-		if s != nil {
-			s.Err(fmt.Sprintf("Failed to initialize store: %v", err))
-		}
-		log.Fatalf("Failed to initialize store: %v", err)
+		s.Errorf("Failed to initialize store: %v", err)
+		return
 	}
 
 	err = storeInstance.CreateTables()
 	if err != nil {
-		if s != nil {
-			s.Err(fmt.Sprintf("Failed to create store tables: %v", err))
-		}
-		log.Fatalf("Failed to create store tables: %v", err)
+		s.Errorf("Failed to create store tables: %v", err)
+		return
 	}
 
 	if *jobRun != "" {
@@ -88,24 +87,18 @@ func main() {
 
 		jobTask, err := storeInstance.GetJob(*jobRun)
 		if err != nil {
-			if s != nil {
-				s.Err(err.Error())
-			}
-			log.Println(err)
+			s.Error(err)
 			return
 		}
 
 		if jobTask.LastRunState == nil {
-			log.Println("A job is still running, skipping this schedule.")
+			s.Info("A job is still running, skipping this schedule.")
 			return
 		}
 
 		_, err = backup.RunBackup(jobTask, storeInstance)
 		if err != nil {
-			if s != nil {
-				s.Err(err.Error())
-			}
-			log.Println(err)
+			s.Error(err)
 		}
 
 		return
@@ -113,20 +106,14 @@ func main() {
 
 	targetURL, err := url.Parse(store.ProxyTargetURL)
 	if err != nil {
-		if s != nil {
-			s.Err(fmt.Sprintf("Failed to parse target URL: %v", err))
-		}
-		log.Fatalf("Failed to parse target URL: %v", err)
+		s.Errorf("Failed to parse target URL: %v", err)
 	}
 
 	proxy := proxy.CreateProxy(targetURL, storeInstance)
 
 	token, err := store.GetAPITokenFromFile()
 	if err != nil {
-		if s != nil {
-			s.Err(err.Error())
-		}
-		log.Println(err)
+		s.Error(err)
 	}
 
 	storeInstance.APIToken = token
@@ -146,11 +133,11 @@ func main() {
 	router.AddRoute("/api2/extjs/config/disk-backup-job", jobs.ExtJsJobHandler(storeInstance))
 	router.AddRoute("/api2/extjs/config/disk-backup-job/{job}", jobs.ExtJsJobSingleHandler(storeInstance))
 
-	log.Println("Starting proxy server on :8008")
+	s.Info("Starting proxy server on :8008")
 	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, router); err != nil {
 		if s != nil {
-			s.Err(fmt.Sprintf("Server failed: %v", err))
+			s.Errorf("Server failed: %v", err)
+			return
 		}
-		log.Fatalf("Server failed: %v", err)
 	}
 }

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kardianos/service"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/windows/registry"
@@ -30,23 +32,35 @@ type SFTPConfig struct {
 	BasePath     string `json:"base_path"`
 }
 
-func InitializeSFTPConfig(driveLetter string) (*SFTPConfig, error) {
+var logger *syslog.Logger
+
+func InitializeSFTPConfig(svc service.Service, driveLetter string) (*SFTPConfig, error) {
+	var err error
+	if logger == nil {
+		logger, err = syslog.InitializeLogger(svc)
+		if err != nil {
+			return nil, fmt.Errorf("InitializeLogger: failed to initialize logger -> %w", err)
+		}
+	}
+
 	newSftpConfig := &SFTPConfig{
 		BasePath: driveLetter,
 		Server:   "",
 	}
 
 	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
-	if err == nil {
-		defer key.Close()
+	if err != nil {
+		return nil, fmt.Errorf("InitializeSFTPConfig: unable to create registry key -> %w", err)
+	}
 
-		if basePath, _, err := key.GetStringValue("BasePath"); err == nil {
-			newSftpConfig.BasePath = basePath
-		}
+	defer key.Close()
 
-		if server, _, err := key.GetStringValue("ServerURL"); err == nil {
-			newSftpConfig.Server = server
-		}
+	if basePath, _, err := key.GetStringValue("BasePath"); err == nil {
+		newSftpConfig.BasePath = basePath
+	}
+
+	if server, _, err := key.GetStringValue("ServerURL"); err == nil {
+		newSftpConfig.Server = server
 	}
 
 	return newSftpConfig, nil

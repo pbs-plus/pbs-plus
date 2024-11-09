@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/logger"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
 )
 
 type ErrorReponse struct {
@@ -16,9 +16,9 @@ type ErrorReponse struct {
 }
 
 func WriteErrorResponse(w http.ResponseWriter, err error) {
-	s, logErr := logger.InitializeSyslogger()
+	s, logErr := syslog.InitializeLogger()
 	if logErr == nil {
-		s.Err(err.Error())
+		s.Error(err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

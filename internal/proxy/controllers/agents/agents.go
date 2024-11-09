@@ -4,12 +4,11 @@ package agents
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/logger"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
 )
 
 type LogRequest struct {
@@ -23,7 +22,7 @@ func AgentLogHandler(storeInstance *store.Store) func(http.ResponseWriter, *http
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
-		syslogger, err := logger.InitializeSyslogger()
+		syslogger, err := syslog.InitializeLogger()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
@@ -38,7 +37,7 @@ func AgentLogHandler(storeInstance *store.Store) func(http.ResponseWriter, *http
 			return
 		}
 
-		syslogger.Info(fmt.Sprintf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message))
+		syslogger.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
 
 		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(map[string]string{"success": "true"})

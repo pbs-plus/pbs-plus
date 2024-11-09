@@ -16,7 +16,7 @@ import (
 
 	"github.com/getlantern/systray"
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/serverlog"
+	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -31,6 +31,11 @@ type agentTray struct {
 }
 
 func (p *agentTray) askServerUrl() string {
+	logger, err := syslog.InitializeLogger(p.svc)
+	if err != nil {
+		utils.ShowMessageBox("Error", fmt.Sprintf("Failed to initialize logger: %s", err))
+	}
+
 	var serverUrl string
 	for {
 		serverUrl = utils.PromptInput("PBS Agent", "Server URL")
@@ -41,7 +46,7 @@ func (p *agentTray) askServerUrl() string {
 			break
 		}
 
-		utils.ShowMessageBox("Error", fmt.Sprintf("Invalid server URL: %s", err))
+		logger.Errorf("Invalid server URL: %s", err)
 	}
 
 	return serverUrl
@@ -68,6 +73,11 @@ func (p *agentTray) foregroundTray() error {
 }
 
 func (p *agentTray) onReady(url string) func() {
+	logger, err := syslog.InitializeLogger(p.svc)
+	if err != nil {
+		utils.ShowMessageBox("Error", fmt.Sprintf("Failed to initialize logger: %s", err))
+	}
+
 	return func() {
 		p.svc.Start()
 
@@ -105,7 +115,7 @@ func (p *agentTray) onReady(url string) func() {
 		go func(ctx context.Context, changeUrl *systray.MenuItem) {
 			key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.ALL_ACCESS)
 			if err != nil {
-				utils.ShowMessageBox("Error", fmt.Sprintf("Failed to retrieve registry key: %s", err))
+				logger.Errorf("Failed to retrieve registry key: %s", err)
 				changeUrl.Hide()
 				return
 			}
@@ -118,19 +128,19 @@ func (p *agentTray) onReady(url string) func() {
 				case <-changeUrl.ClickedCh:
 					serverUrl := p.askServerUrl()
 					if err := key.SetStringValue("ServerURL", serverUrl); err != nil {
-						utils.ShowMessageBox("Error", fmt.Sprintf("Failed to set new server url: %s", err))
+						logger.Errorf("Failed to set new server url: %s", err)
 						continue
 					}
 
 					err = p.svc.Stop()
 					if err != nil {
-						utils.ShowMessageBox("Error", fmt.Sprintf("Failed to restart service: %s", err))
+						logger.Errorf("Failed to restart service: %s", err)
 						continue
 					}
 
 					err = p.svc.Start()
 					if err != nil {
-						utils.ShowMessageBox("Error", fmt.Sprintf("Failed to restart service: %s", err))
+						logger.Errorf("Failed to restart service: %s", err)
 						continue
 					}
 				}
@@ -162,8 +172,7 @@ func isAdmin() bool {
 	return true
 }
 
-func runAsAdmin() {
-	serverLog, _ := serverlog.InitializeLogger()
+func runAsAdmin() error {
 	verb := "runas"
 	exe, _ := os.Executable()
 	cwd, _ := os.Getwd()
@@ -178,9 +187,8 @@ func runAsAdmin() {
 
 	err := windows.ShellExecute(0, verbPtr, exePtr, argPtr, cwdPtr, showCmd)
 	if err != nil {
-		if serverLog != nil {
-			serverLog.Print(fmt.Sprintf("Failed to run as administrator: %s", err))
-		}
-		utils.ShowMessageBox("Error", fmt.Sprintf("Failed to run as administrator: %s", err))
+		return fmt.Errorf("Failed to run as administrator: %s", err)
 	}
+
+	return nil
 }
