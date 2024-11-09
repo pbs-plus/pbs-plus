@@ -20,8 +20,12 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-type PingResp struct {
+type PingData struct {
 	Pong bool `json:"pong"`
+}
+
+type PingResp struct {
+	Data PingData `json:"data"`
 }
 
 type agentService struct {
@@ -29,11 +33,35 @@ type agentService struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	exit   chan struct{}
 }
 
 func (p *agentService) Start(s service.Service) error {
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	go p.run()
+
+	go func(ctx context.Context) {
+		for {
+			select {
+			case <-ctx.Done():
+				utils.SetEnvironment("PBS_AGENT_STATUS", "Agent service is not running")
+				return
+			default:
+				var pingResp PingResp
+				pingErr := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/ping", nil, &pingResp)
+				if pingErr != nil {
+					utils.SetEnvironment("PBS_AGENT_STATUS", fmt.Sprintf("Error - (%s)", pingErr.Error()))
+					continue
+				}
+				if !pingResp.Data.Pong {
+					utils.SetEnvironment("PBS_AGENT_STATUS", "Error - server did not return expected data")
+					continue
+				}
+
+				utils.SetEnvironment("PBS_AGENT_STATUS", "Connected")
+			}
+		}
+	}(p.ctx)
 
 	return nil
 }
@@ -83,38 +111,22 @@ func (p *agentService) run() {
 		go sftp.Serve(p.ctx, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
 	}
 
-	go func(ctx context.Context) {
-		for {
-			select {
-			case <-ctx.Done():
-				utils.SetEnvironment("PBS_AGENT_STATUS", "Agent service is not running")
-				return
-			default:
-				var pingResp PingResp
-				pingErr := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/ping", nil, &pingResp)
-				if pingErr != nil {
-					utils.SetEnvironment("PBS_AGENT_STATUS", fmt.Sprintf("Error - (%s)", pingErr.Error()))
-					continue
-				}
-				if !pingResp.Pong {
-					utils.SetEnvironment("PBS_AGENT_STATUS", "Error - server did not return expected data")
-					continue
-				}
+	wgDone := utils.WaitChan(&p.wg)
 
-				utils.SetEnvironment("PBS_AGENT_STATUS", "Connected")
-			}
-		}
-	}(p.ctx)
+	select {
+	case <-p.exit:
+		p.cancel()
 
-	p.wg.Wait()
+		utils.SetEnvironment("PBS_AGENT_STATUS", "Agent service is not running")
+		snapshots.CloseAllSnapshots()
+		return
+	case <-wgDone:
+		go p.run()
+		return
+	}
 }
 
 func (p *agentService) Stop(s service.Service) error {
-	if p.cancel != nil {
-		p.cancel()
-	}
-
-	utils.SetEnvironment("PBS_AGENT_STATUS", "Agent service is not running")
-	snapshots.CloseAllSnapshots()
+	close(p.exit)
 	return nil
 }
