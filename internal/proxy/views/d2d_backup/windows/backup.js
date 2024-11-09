@@ -7,7 +7,7 @@ Ext.define('PBS.D2DManagement.BackupWindow', {
     cbindData: function(config) {
 	let me = this;
 	return {
-	    warning: Ext.String.format(gettext("Manually start backup job '{0}' ?"), me.id),
+	    warning: Ext.String.format(gettext("Manually start backup job '{0}'?"), me.id),
       id: me.id,
 	};
     },
@@ -38,7 +38,7 @@ Ext.define('PBS.D2DManagement.BackupWindow', {
 		{
 		    xtype: 'component',
 		    cls: [Ext.baseCSSPrefix + 'message-box-icon',
-			Ext.baseCSSPrefix + 'message-box-warning',
+			Ext.baseCSSPrefix + 'message-box-question',
 			Ext.baseCSSPrefix + 'dlg-icon'],
 		},
 		{
