@@ -35,16 +35,16 @@ type program struct {
 }
 
 func (p *program) Start(s service.Service) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	p.cancel = cancel
-
-	go p.run(ctx)
+	go p.run(false)
 	return nil
 }
 
-func (p *program) run(ctx context.Context) {
+func (p *program) run(forceChangeUrl bool) {
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancel = cancel
+
 	serverUrl, ok := os.LookupEnv("PBS_AGENT_SERVER")
-	if !ok {
+	if !ok || forceChangeUrl {
 		for {
 			serverUrl = utils.PromptInput("PBS Agent", "Server URL")
 
@@ -85,15 +85,18 @@ func (p *program) run(ctx context.Context) {
 		}()
 	}
 
-	systray.Run(p.onReady(ctx), p.onExit)
+	systray.Run(p.onReady(ctx, serverUrl), p.onExit)
 	p.wg.Wait()
 }
 
-func (p *program) onReady(ctx context.Context) func() {
+func (p *program) onReady(ctx context.Context, url string) func() {
 	return func() {
 		systray.SetIcon(icon)
 		systray.SetTitle("Proxmox Backup Agent")
 		systray.SetTooltip("Proxmox Backup Agent")
+
+		serverIP := systray.AddMenuItem(fmt.Sprintf("Server: %s", url), "Proxmox Backup Server address")
+		serverIP.Disable()
 
 		status := systray.AddMenuItem("Status: Connecting...", "Connectivity status")
 		status.Disable()
@@ -114,6 +117,17 @@ func (p *program) onReady(ctx context.Context) func() {
 				}
 			}
 		}(ctx, status)
+
+		systray.AddSeparator()
+
+		changeUrl := systray.AddMenuItem("Change Server", "Change Server URL")
+		go func() {
+			<-changeUrl.ClickedCh
+			p.cancel()
+			p.wg.Wait()
+
+			p.run(true)
+		}()
 
 		closeButton := systray.AddMenuItem("Close", "Close PBS Agent")
 		go func() {
