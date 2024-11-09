@@ -25,7 +25,7 @@ Ext.define('PBS.D2DManagement.BackupWindow', {
     width: 400,
     method: 'POST',
     isCreate: true,
-    submitText: gettext('Ok'),
+    submitText: gettext('Start Backup'),
     items: [
 	{
 	    xtype: 'container',
