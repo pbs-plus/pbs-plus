@@ -32,6 +32,10 @@ type SFTPConfig struct {
 	BasePath     string `json:"base_path"`
 }
 
+func (s *SFTPConfig) GetRegistryKey() string {
+	return fmt.Sprintf("Software\\ProxmoxAgent\\Config\\SFTP-%s", s.BasePath)
+}
+
 var logger *syslog.Logger
 
 func InitializeSFTPConfig(svc service.Service, driveLetter string) (*SFTPConfig, error) {
@@ -48,7 +52,7 @@ func InitializeSFTPConfig(svc service.Service, driveLetter string) (*SFTPConfig,
 		Server:   "",
 	}
 
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, newSftpConfig.GetRegistryKey(), registry.QUERY_VALUE)
 	if err != nil {
 		return nil, fmt.Errorf("InitializeSFTPConfig: unable to create registry key -> %w", err)
 	}
@@ -75,7 +79,7 @@ func (config *SFTPConfig) PopulateKeys() error {
 		},
 	}
 
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, config.GetRegistryKey(), registry.QUERY_VALUE)
 	if err == nil {
 		defer key.Close()
 
@@ -117,7 +121,7 @@ func (config *SFTPConfig) PopulateKeys() error {
 
 		config.ServerKey = []byte(*serverKey)
 
-		key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.ALL_ACCESS)
+		key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, config.GetRegistryKey(), registry.ALL_ACCESS)
 		if err != nil {
 			return fmt.Errorf("PopulateKeys: failed to create registry key -> %w", err)
 		}
