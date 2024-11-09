@@ -67,22 +67,7 @@ Ext.define('PBS.config.DiskBackupJobView', {
 		id,
 		listeners: {
 		    destroy: function() {
-	    let innerSelection = view.getSelection();
-	    if (innerSelection.length < 1) {
         me.reload()
-        return
-      }
-	    let upid = innerSelection[0].data['last-run-upid'];
-	    if (!upid) {
-        me.reload()
-        return
-      }
-		    Ext.create('Proxmox.window.TaskViewer', {
-		        upid,
-		        taskDone: function(success) {
-              me.reload();
-		        },
-		    }).show();
 		    },
 		},
 	    }).show();
