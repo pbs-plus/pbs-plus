@@ -69,7 +69,7 @@ func main() {
 		}
 	}
 
-	if isWindowsService() {
+	if !service.Interactive() {
 		err = s.Run()
 		if err != nil {
 			fmt.Println("Error running service:", err)

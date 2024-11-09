@@ -8,7 +8,6 @@ import (
 	_ "embed"
 	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -112,8 +111,4 @@ func (p *agentService) Stop(s service.Service) error {
 	utils.SetEnvironment("PBS_AGENT_STATUS", "Agent service is not running")
 	snapshots.CloseAllSnapshots()
 	return nil
-}
-
-func isWindowsService() bool {
-	return len(os.Getenv("SERVICE_NAME")) > 0
 }
