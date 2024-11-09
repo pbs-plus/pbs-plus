@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -33,7 +34,7 @@ func main() {
 		return
 	}
 
-	tray := &agentTray{svc: s}
+	tray := &agentTray{svc: s, ctx: context.Background()}
 
 	if len(os.Args) > 1 {
 		cmd := os.Args[1]

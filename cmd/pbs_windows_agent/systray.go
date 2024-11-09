@@ -73,12 +73,12 @@ func (p *agentTray) foregroundTray() error {
 }
 
 func (p *agentTray) onReady(url string) func() {
-	logger, err := syslog.InitializeLogger(p.svc)
-	if err != nil {
-		utils.ShowMessageBox("Error", fmt.Sprintf("Failed to initialize logger: %s", err))
-	}
-
 	return func() {
+		logger, err := syslog.InitializeLogger(p.svc)
+		if err != nil {
+			utils.ShowMessageBox("Error", fmt.Sprintf("Failed to initialize logger: %s", err))
+		}
+
 		p.svc.Start()
 
 		systray.SetIcon(icon)

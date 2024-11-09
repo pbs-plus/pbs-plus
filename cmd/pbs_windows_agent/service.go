@@ -113,7 +113,6 @@ func (p *agentService) Stop(s service.Service) error {
 	if p.cancel != nil {
 		p.cancel()
 	}
-	p.wg.Wait()
 
 	utils.SetEnvironment("PBS_AGENT_STATUS", "Agent service is not running")
 	snapshots.CloseAllSnapshots()
