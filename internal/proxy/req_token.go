@@ -28,9 +28,6 @@ func ExtractTokenFromRequest(r *http.Request, storeInstance *store.Store) *store
 
 	pbsAuthCookie, err := r.Cookie("PBSAuthCookie")
 	if err != nil {
-		if syslogger != nil {
-			syslogger.Errorf("ExtractTokenFromRequest: error retrieving cookie -> %v", err)
-		}
 		return nil
 	}
 	decodedAuthCookie := strings.ReplaceAll(pbsAuthCookie.Value, "%3A", ":")
