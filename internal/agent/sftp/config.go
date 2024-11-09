@@ -6,18 +6,19 @@ package sftp
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sys/windows/registry"
 )
 
 type SFTPConfig struct {
@@ -29,53 +30,29 @@ type SFTPConfig struct {
 	BasePath     string `json:"base_path"`
 }
 
-func InitializeSFTPConfig(serverUrl string, driveLetter string) (*SFTPConfig, error) {
-	newSftpConfig := SFTPConfig{
+func InitializeSFTPConfig(driveLetter string) (*SFTPConfig, error) {
+	newSftpConfig := &SFTPConfig{
 		BasePath: driveLetter,
-		Server:   serverUrl,
+		Server:   "",
 	}
 
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return &newSftpConfig, fmt.Errorf("ReadFileConfig: failed to get user config directory -> %w", err)
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
+	if err == nil {
+		defer key.Close()
+
+		if basePath, _, err := key.GetStringValue("BasePath"); err == nil {
+			newSftpConfig.BasePath = basePath
+		}
+
+		if server, _, err := key.GetStringValue("ServerURL"); err == nil {
+			newSftpConfig.Server = server
+		}
 	}
 
-	configBasePath := filepath.Join(configDir, "proxmox-agent")
-
-	err = os.MkdirAll(configBasePath, 0700)
-	if err != nil {
-		return &newSftpConfig, fmt.Errorf("ReadFileConfig: failed to create proxmox-agent directory -> %w", err)
-	}
-
-	savedConfigPath := filepath.Join(configBasePath, fmt.Sprintf("%s-sftp.json", driveLetter))
-	jsonFile, err := os.Open(savedConfigPath)
-	if err != nil {
-		return &newSftpConfig, fmt.Errorf("ReadFileConfig: failed to open json file -> %w", err)
-	}
-	defer jsonFile.Close()
-
-	byteContent, err := io.ReadAll(jsonFile)
-	if err != nil {
-		return &newSftpConfig, fmt.Errorf("ReadFileConfig: failed to read json file content -> %w", err)
-	}
-
-	var existingConfig SFTPConfig
-	err = json.Unmarshal(byteContent, &existingConfig)
-	if err != nil {
-		return &newSftpConfig, fmt.Errorf("ReadFileConfig: invalid json file (%s) -> %w", string(byteContent), err)
-	}
-
-	return &existingConfig, nil
+	return newSftpConfig, nil
 }
 
 func (config *SFTPConfig) PopulateKeys() error {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return fmt.Errorf("ReadFileConfig: failed to get user config directory -> %w", err)
-	}
-
-	configBasePath := filepath.Join(configDir, "proxmox-agent")
-
 	configSSH := &ssh.ServerConfig{
 		NoClientAuth:  false,
 		ServerVersion: "SSH-2.0-PBS-D2D-Agent",
@@ -84,10 +61,36 @@ func (config *SFTPConfig) PopulateKeys() error {
 		},
 	}
 
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
+	if err == nil {
+		defer key.Close()
+
+		if privateKey, _, err := key.GetStringValue("PrivateKey"); err == nil {
+			config.PrivateKey, err = base64.StdEncoding.DecodeString(privateKey)
+			if err != nil {
+				return fmt.Errorf("PopulateKeys: failed to decode private key -> %w", err)
+			}
+		}
+
+		if publicKey, _, err := key.GetStringValue("PublicKey"); err == nil {
+			config.PublicKey, err = base64.StdEncoding.DecodeString(publicKey)
+			if err != nil {
+				return fmt.Errorf("PopulateKeys: failed to decode public key -> %w", err)
+			}
+		}
+
+		if serverKey, _, err := key.GetStringValue("ServerKey"); err == nil {
+			config.ServerKey, err = base64.StdEncoding.DecodeString(serverKey)
+			if err != nil {
+				return fmt.Errorf("PopulateKeys: failed to decode server key -> %w", err)
+			}
+		}
+	}
+
 	if len(config.PrivateKey) == 0 || len(config.PublicKey) == 0 || len(config.ServerKey) == 0 {
 		privateKey, pubKey, err := utils.GenerateKeyPair(4096)
 		if err != nil {
-			return fmt.Errorf("InitializeSFTPConfig: failed to generate SSH key pair -> %w", err)
+			return fmt.Errorf("PopulateKeys: failed to generate SSH key pair -> %w", err)
 		}
 
 		config.PrivateKey = privateKey
@@ -95,35 +98,37 @@ func (config *SFTPConfig) PopulateKeys() error {
 
 		serverKey, err := getServerPublicKey(config.Server, string(pubKey), config.BasePath)
 		if err != nil {
-			return fmt.Errorf("InitializeSFTPConfig: failed to get server public ssh key -> %w", err)
+			return fmt.Errorf("PopulateKeys: failed to get server public ssh key -> %w", err)
 		}
 
 		config.ServerKey = []byte(*serverKey)
 
-		knownHosts, err := os.OpenFile(filepath.Join(configBasePath, fmt.Sprintf("%s-sftp.json", config.BasePath)), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+		key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.ALL_ACCESS)
 		if err != nil {
-			log.Println(err)
+			return fmt.Errorf("PopulateKeys: failed to create registry key -> %w", err)
 		}
-		defer knownHosts.Close()
+		defer key.Close()
 
-		jsonContent, err := json.Marshal(config)
-		if err == nil {
-			if _, err = knownHosts.Write(jsonContent); err != nil {
-				log.Println(err)
-			}
+		if err := key.SetStringValue("PrivateKey", base64.StdEncoding.EncodeToString(config.PrivateKey)); err != nil {
+			return fmt.Errorf("PopulateKeys: failed to save private key -> %w", err)
+		}
+		if err := key.SetStringValue("PublicKey", base64.StdEncoding.EncodeToString(config.PublicKey)); err != nil {
+			return fmt.Errorf("PopulateKeys: failed to save public key -> %w", err)
+		}
+		if err := key.SetStringValue("ServerKey", base64.StdEncoding.EncodeToString(config.ServerKey)); err != nil {
+			return fmt.Errorf("PopulateKeys: failed to save server key -> %w", err)
 		}
 	}
 
 	parsedSigner, err := ssh.ParsePrivateKey(config.PrivateKey)
 	if err != nil {
-		return fmt.Errorf("InitializeSFTPConfig: failed to parse private key to signer -> %w", err)
+		return fmt.Errorf("PopulateKeys: failed to parse private key to signer -> %w", err)
 	}
-
 	configSSH.AddHostKey(parsedSigner)
 
 	parsedServerKey, _, _, _, err := ssh.ParseAuthorizedKey(config.ServerKey)
 	if err != nil {
-		return fmt.Errorf("InitializeSFTPConfig: failed to parse server key -> %w", err)
+		return fmt.Errorf("PopulateKeys: failed to parse server key -> %w", err)
 	}
 
 	configSSH.PublicKeyCallback = func(conn ssh.ConnMetadata, auth ssh.PublicKey) (*ssh.Permissions, error) {
@@ -134,11 +139,10 @@ func (config *SFTPConfig) PopulateKeys() error {
 				},
 			}, nil
 		}
-		return nil, fmt.Errorf("InitializeSFTPConfig: unknown public key for %s -> %w", conn.RemoteAddr().String(), err)
+		return nil, fmt.Errorf("PopulateKeys: unknown public key for %s -> %w", conn.RemoteAddr().String(), err)
 	}
 
 	config.ServerConfig = configSSH
-
 	return nil
 }
 

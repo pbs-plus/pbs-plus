@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
 	"golang.org/x/crypto/ssh"
@@ -37,6 +38,7 @@ func (storeInstance *Store) AgentPing(agentTarget *Target) (bool, error) {
 		User:            "proxmox",
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         time.Second * 2,
 	}
 
 	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%s", agentHost, agentPort), sshConfig)

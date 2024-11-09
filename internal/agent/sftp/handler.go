@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/pkg/sftp"
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/snapshots"
@@ -37,7 +36,7 @@ func (h *SftpHandler) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.Snapshot.LastAccessed = time.Now()
+	h.Snapshot.UpdateTimestamp()
 	h.setFilePath(r)
 
 	file, err := h.fetch(r.Filepath, os.O_RDONLY)
@@ -66,7 +65,7 @@ func (h *SftpHandler) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.Snapshot.LastAccessed = time.Now()
+	h.Snapshot.UpdateTimestamp()
 	h.setFilePath(r)
 
 	switch r.Method {

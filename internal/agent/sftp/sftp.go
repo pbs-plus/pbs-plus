@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"net/url"
-	"runtime"
 	"strings"
 	"sync"
 
@@ -32,7 +31,7 @@ func Serve(ctx context.Context, wg *sync.WaitGroup, sftpConfig *SFTPConfig, addr
 			logger.Print(fmt.Sprintf("Port is already in use! Failed to listen on %s: %v", listenAt, err))
 		}
 		utils.ShowMessageBox("Fatal Error", fmt.Sprintf("Port is already in use! Failed to listen on %s: %v", listenAt, err))
-		runtime.Goexit()
+		return
 	}
 	defer listener.Close()
 

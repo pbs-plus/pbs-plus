@@ -1,3 +1,5 @@
+//go:build windows
+
 package agent
 
 import (
@@ -5,17 +7,28 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"golang.org/x/sys/windows/registry"
 )
 
 var httpClient *http.Client
 
 func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error {
-	serverUrl := os.Getenv("PBS_AGENT_SERVER")
+	serverUrl := ""
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\SFTPConfig`, registry.QUERY_VALUE)
+	if err != nil {
+		return fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
+	}
+
+	defer key.Close()
+
+	if serverUrl, _, err = key.GetStringValue("ServerURL"); err != nil || serverUrl == "" {
+		return fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
+	}
+
 	req, err := http.NewRequest(
 		method,
 		fmt.Sprintf(
