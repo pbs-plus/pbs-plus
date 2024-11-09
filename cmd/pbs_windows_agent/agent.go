@@ -126,7 +126,7 @@ func (p *program) onReady(ctx context.Context, url string) func() {
 			p.cancel()
 			p.wg.Wait()
 
-			p.run(true)
+			go p.run(true)
 		}()
 
 		closeButton := systray.AddMenuItem("Close", "Close PBS Agent")
