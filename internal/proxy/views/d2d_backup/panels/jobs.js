@@ -63,25 +63,29 @@ Ext.define('PBS.config.DiskBackupJobView', {
 
 	    let id = selection[0].data.id;
 
-		  view.mask(gettext('Starting backup...'), 'x-mask-loading');
-
-	    Proxmox.Utils.API2Request({
-		method: 'POST',
-		url: "/d2d/backup/" + id,
-		success: function(response, opt) {
-        view.unmask();
+      Ext.create('PBS.D2DManagement.BackupWindow', {
+		id,
+		listeners: {
+		    destroy: function() {
+	    let innerSelection = view.getSelection();
+	    if (innerSelection.length < 1) {
+        me.reload()
+        return
+      }
+	    let upid = innerSelection[0].data['last-run-upid'];
+	    if (!upid) {
+        me.reload()
+        return
+      }
 		    Ext.create('Proxmox.window.TaskViewer', {
-		        upid: response.result.data,
+		        upid,
 		        taskDone: function(success) {
               me.reload();
 		        },
 		    }).show();
+		    },
 		},
-		failure: function(response, opt) {
-        view.unmask();
-		    Ext.Msg.alert(gettext('Error'), response.htmlStatus);
-		},
-	    });
+	    }).show();
 	},
 
 	startStore: function() { this.getView().getStore().rstore.startUpdate(); },

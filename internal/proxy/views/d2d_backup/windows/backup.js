@@ -2,23 +2,22 @@ Ext.define('PBS.D2DManagement.BackupWindow', {
     extend: 'Proxmox.window.Edit',
     mixins: ['Proxmox.Mixin.CBind'],
 
-    job: undefined,
-    target: undefined,
+    id: undefined,
 
     cbindData: function(config) {
 	let me = this;
 	return {
-	    warning: Ext.String.format(gettext("Are you sure you want to manually start backup '{0}' ?"), me.job),
+	    warning: Ext.String.format(gettext("Are you sure you want to manually start backup '{0}' ?"), me.id),
 	};
     },
 
     title: gettext('Backup'),
-    url: `/api2/extjs/tape/drive`,
+    url: `/api2/extjs/d2d/backup`,
     showProgress: true,
     submitUrl: function(url, values) {
-	let drive = values.drive;
-	delete values.drive;
-	return `${url}/${drive}/format-media`;
+	let id = values.id;
+	delete values.id;
+	return `${url}/${id}`;
     },
 
     layout: 'hbox',
@@ -49,39 +48,6 @@ Ext.define('PBS.D2DManagement.BackupWindow', {
 			    xtype: 'displayfield',
 			    cbind: {
 				value: '{warning}',
-			    },
-			},
-			{
-			    xtype: 'displayfield',
-			    cls: 'pmx-hint',
-			    value: gettext('Make sure to insert the tape into the selected drive.'),
-			    cbind: {
-				hidden: '{changer}',
-			    },
-			},
-			{
-			    xtype: 'hidden',
-			    name: 'label-text',
-			    cbind: {
-				value: '{label}',
-			    },
-			},
-			{
-			    xtype: 'hidden',
-			    name: 'drive',
-			    cbind: {
-				disabled: '{!hasSingleDrive}',
-				value: '{singleDrive}',
-			    },
-			},
-			{
-			    xtype: 'pbsDriveSelector',
-			    fieldLabel: gettext('Drive'),
-			    name: 'drive',
-			    cbind: {
-				changer: '{changer}',
-				disabled: '{hasSingleDrive}',
-				hidden: '{hasSingleDrive}',
 			    },
 			},
 		    ],
