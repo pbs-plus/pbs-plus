@@ -50,6 +50,10 @@ Ext.define('PBS.D2DManagement.BackupWindow', {
 				value: '{warning}',
 			    },
 			},
+			{
+			    xtype: 'hidden',
+			    name: 'drive',
+			},
 		    ],
 		},
 	    ],

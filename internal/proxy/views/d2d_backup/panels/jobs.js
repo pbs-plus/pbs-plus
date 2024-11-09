@@ -154,7 +154,6 @@ Ext.define('PBS.config.DiskBackupJobView', {
 	    text: gettext('Run now'),
 	    handler: 'runJob',
       reference: 'd2dBackupRun',
-	    confirmMsg: gettext('Manually start backup job?'),
 	    disabled: true,
 	},
     ],
