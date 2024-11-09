@@ -18,7 +18,7 @@ var httpClient *http.Client
 
 func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error {
 	serverUrl := ""
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\SFTPConfig`, registry.QUERY_VALUE)
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
 	if err != nil {
 		return fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
 	}
