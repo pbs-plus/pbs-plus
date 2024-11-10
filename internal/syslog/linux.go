@@ -13,7 +13,7 @@ type Logger struct {
 }
 
 func InitializeLogger() (*Logger, error) {
-	syslogger, err := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-d2d")
+	syslogger, err := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-plus")
 	if err != nil {
 		return nil, err
 	}

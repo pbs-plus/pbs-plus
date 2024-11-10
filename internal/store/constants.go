@@ -7,5 +7,5 @@ const (
 	KeyFile            = "/etc/proxmox-backup/proxy.key" // Path to generated private key
 	TimerBasePath      = "/lib/systemd/system"
 	DbBasePath         = "/var/lib/proxmox-backup"
-	AgentMountBasePath = "/mnt/pbs-d2d-mounts"
+	AgentMountBasePath = "/mnt/pbs-plus-mounts"
 )

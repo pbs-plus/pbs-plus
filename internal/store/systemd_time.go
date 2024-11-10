@@ -14,7 +14,7 @@ import (
 
 func generateTimer(job *Job) error {
 	content := fmt.Sprintf(`[Unit]
-Description=%s D2D Backup Job Timer
+Description=%s Backup Job Timer
 
 [Timer]
 OnCalendar=%s
@@ -23,7 +23,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target`, job.ID, job.Schedule)
 
-	filePath := fmt.Sprintf("proxmox-d2d-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
+	filePath := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
 	fullPath := filepath.Join(TimerBasePath, filePath)
 
 	file, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -43,7 +43,7 @@ WantedBy=timers.target`, job.ID, job.Schedule)
 
 func generateService(job *Job) error {
 	content := fmt.Sprintf(`[Unit]
-Description=%s D2D Backup Job Service
+Description=%s Backup Job Service
 After=network-online.target
 Wants=network-online.target
 
@@ -51,7 +51,7 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/usr/bin/pbs-d2d-backup -job="%s"`, job.ID, job.ID)
 
-	filePath := fmt.Sprintf("proxmox-d2d-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
+	filePath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
 	fullPath := filepath.Join(TimerBasePath, filePath)
 
 	file, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -69,10 +69,10 @@ ExecStart=/usr/bin/pbs-d2d-backup -job="%s"`, job.ID, job.ID)
 }
 
 func deleteSchedule(id string) {
-	svcFilePath := fmt.Sprintf("proxmox-d2d-job-%s.service", strings.ReplaceAll(id, " ", "-"))
+	svcFilePath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(id, " ", "-"))
 	svcFullPath := filepath.Join(TimerBasePath, svcFilePath)
 
-	timerFilePath := fmt.Sprintf("proxmox-d2d-job-%s.timer", strings.ReplaceAll(id, " ", "-"))
+	timerFilePath := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(id, " ", "-"))
 	timerFullPath := filepath.Join(TimerBasePath, timerFilePath)
 
 	_ = os.Remove(svcFullPath)
@@ -97,7 +97,7 @@ func getNextSchedule(job *Job) (*time.Time, error) {
 		return nil, nil
 	}
 
-	timerUnit := fmt.Sprintf("proxmox-d2d-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
+	timerUnit := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
 
 	cmd := exec.Command("systemctl", "list-timers", "--all", "|", "grep", timerUnit)
 	cmd.Env = os.Environ()

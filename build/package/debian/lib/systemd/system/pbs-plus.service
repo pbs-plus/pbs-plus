@@ -1,5 +1,5 @@
 [Unit]
-Description=Proxmox Backup Server Plus Overlay Proxy
+Description=PBS Plus Proxy Server 
 Wants=network-online.target
 After=network.target
 Wants=proxmox-backup-proxy.service
@@ -7,7 +7,7 @@ After=proxmox-backup-proxy.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/pbs-plus-overlay
+ExecStart=/usr/bin/pbs-plus
 ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/run/proxmox-backup/pbs-plus.pid
 Restart=on-failure

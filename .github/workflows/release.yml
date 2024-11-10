@@ -1,10 +1,13 @@
 on:
   release:
     types: [created]
+  push:
+    branches:
+      - main
 
 permissions:
-    contents: write
-    packages: write
+  contents: write
+  packages: write
 
 jobs:
   release-linux-amd64:
@@ -19,27 +22,31 @@ jobs:
         goos: linux
         goarch: amd64
         compress_assets: false
-        executable_compression: upx 
-        project_path: ./cmd/pbs_plus_overlay
+        executable_compression: upx
+        project_path: ./cmd/pbs_plus
     - name: pre-packaging script
       env:
-        BINARY_PATH: ${{steps.go_build.outputs.release_asset_dir}}
-      run: ./build/package/pre-packaging.sh 
+        BINARY_PATH: ${{ steps.go_build.outputs.release_asset_dir }}
+      run: ./build/package/pre-packaging.sh
     - uses: jiro4989/build-deb-action@v3
       with:
-        package: ${{ github.event.repository.name }} 
+        package: ${{ github.event.repository.name }}
         package_root: build/package/debian
-        maintainer: Son Roy Almerol <github@snry.me> 
-        version: ${{ github.ref }} # refs/tags/v*.*.*
+        maintainer: Son Roy Almerol <github@snry.me>
+        version: ${{ github.ref }}
         arch: 'amd64'
         depends: 'proxmox-backup (>= 3.2), proxmox-backup-client (>= 3.2.5), rclone'
         desc: 'PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution'
         homepage: 'https://github.com/${{ github.repository }}'
-    - name: Publish Release Assets
+    
+    # Publish Release Assets for releases or pre-release for dev builds
+    - name: Publish Release or Dev Pre-Release Assets
+      if: github.event_name == 'release' || github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v1
       with:
-        tag: ${{ github.event.release.tag_name }}
+        tag: ${{ github.event.release.tag_name || 'dev' }}
         files: ./*.deb
+        prerelease: ${{ github.ref == 'refs/heads/main' || github.event.release.tag_name == 'dev' }} # Set as pre-release if this is a dev build
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -52,21 +59,23 @@ jobs:
       id: go_build
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: windows 
+        goos: windows
         goarch: amd64
         compress_assets: false
-        executable_compression: upx 
+        executable_compression: upx
         binary_name: pbs-plus-agent
-        project_path: ./cmd/pbs_windows_agent
+        project_path: ./cmd/windows_agent
         ldflags: -H=windowsgui
     - uses: actions/upload-artifact@v4
+      if: github.event_name == 'release'
       with:
         name: windows-binary
-        path: ${{steps.go_build.outputs.release_asset_dir}}/pbs-plus-agent.exe
+        path: ${{ steps.go_build.outputs.release_asset_dir }}/pbs-plus-agent.exe
 
   release-windows-amd64-agent-installer:
     name: release agent installer windows/amd64
     runs-on: windows-latest
+    if: github.event_name == 'release'
     needs: release-windows-amd64-agent
     steps:
     - uses: actions/checkout@v4
@@ -93,11 +102,10 @@ jobs:
         $env:TMP = $tempDir
         cd ./build/package/windows 
         go-msi make --msi $env:MSI_NAME --version $env:VERSION
-    - name: Publish Release Assets
+    - name: Publish Release
       uses: softprops/action-gh-release@v1
       with:
         tag: ${{ github.event.release.tag_name }}
         files: ./build/package/windows/*.msi
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
