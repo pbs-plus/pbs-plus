@@ -16,7 +16,7 @@ import (
 func getVSSFolder() (string, error) {
 	tmpDir := os.TempDir()
 
-	configBasePath := filepath.Join(tmpDir, "proxmox-agent")
+	configBasePath := filepath.Join(tmpDir, "pbs-plus")
 
 	err := os.MkdirAll(configBasePath, os.ModePerm)
 	if err != nil {

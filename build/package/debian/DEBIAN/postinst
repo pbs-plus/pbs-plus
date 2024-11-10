@@ -1,14 +1,14 @@
 #!/bin/bash
 set -e
 
-chmod +x /usr/bin/pbs-d2d-backup
+chmod +x /usr/bin/pbs-plus-overlay
 
 systemctl daemon-reload
 
 # Enable the service to start on boot
-systemctl enable pbs-d2d-backup.service
+systemctl enable pbs-plus-overlay.service
 
 # Start the service
-systemctl start pbs-d2d-backup.service
+systemctl start pbs-plus-overlay.service
 
 exit 0

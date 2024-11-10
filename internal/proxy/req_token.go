@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 func ExtractTokenFromRequest(r *http.Request, storeInstance *store.Store) *store.Token {

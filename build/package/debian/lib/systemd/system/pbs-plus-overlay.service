@@ -1,5 +1,5 @@
 [Unit]
-Description=Proxmox D2D Backup Proxy
+Description=Proxmox Backup Server Plus Overlay Proxy
 Wants=network-online.target
 After=network.target
 Wants=proxmox-backup-proxy.service
@@ -7,9 +7,9 @@ After=proxmox-backup-proxy.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/pbs-d2d-backup
+ExecStart=/usr/bin/pbs-plus-overlay
 ExecReload=/bin/kill -HUP $MAINPID
-PIDFile=/run/proxmox-backup/pbs-d2d.pid
+PIDFile=/run/proxmox-backup/pbs-plus.pid
 Restart=on-failure
 User=root
 Group=root

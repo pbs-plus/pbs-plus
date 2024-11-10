@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
 )
 

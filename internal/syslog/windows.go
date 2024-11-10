@@ -7,7 +7,7 @@ import (
 	"log"
 
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 type Logger struct {

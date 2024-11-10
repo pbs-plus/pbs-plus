@@ -11,8 +11,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 func CreateProxy(target *url.URL, storeInstance *store.Store) *httputil.ReverseProxy {
@@ -37,7 +37,7 @@ func CreateProxy(target *url.URL, storeInstance *store.Store) *httputil.ReverseP
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 
-			modifiedContent := append(body, []byte("\n// Modified by proxy\n")...)
+			modifiedContent := append(body, []byte("\n// Modified by PBS Plus Overlay\n")...)
 			modifiedContent = append(modifiedContent, compileCustomJS()...)
 
 			resp.Body = io.NopCloser(bytes.NewReader(modifiedContent))

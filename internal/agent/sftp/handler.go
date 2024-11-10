@@ -12,7 +12,7 @@ import (
 	"sync"
 
 	"github.com/pkg/sftp"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 )
 
 type SftpHandler struct {

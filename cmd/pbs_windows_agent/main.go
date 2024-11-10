@@ -13,14 +13,14 @@ import (
 	"github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 func main() {
 	svcConfig := &service.Config{
-		Name:        "ProxmoxBackupAgent",
-		DisplayName: "Proxmox Backup Agent",
-		Description: "Agent for orchestrating backups with Proxmox Backup Server",
+		Name:        "PBSPlusAgent",
+		DisplayName: "PBS Plus Agent",
+		Description: "Agent for orchestrating backups with PBS Plus",
 		UserName:    "",
 	}
 
@@ -125,7 +125,7 @@ func createStartupShortcut() error {
 	}
 
 	startupDir := filepath.Join(usr.HomeDir, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
-	shortcutPath := filepath.Join(startupDir, "ProxmoxBackupAgent.lnk")
+	shortcutPath := filepath.Join(startupDir, "PBSPlusAgent.lnk")
 
 	// Get the executable path
 	executable, err := os.Executable()
@@ -162,7 +162,7 @@ func createStartupShortcut() error {
 	oleutil.PutProperty(link.ToIDispatch(), "TargetPath", executable)
 	oleutil.PutProperty(link.ToIDispatch(), "WorkingDirectory", filepath.Dir(executable))
 	oleutil.PutProperty(link.ToIDispatch(), "WindowStyle", 1) // Normal window
-	oleutil.PutProperty(link.ToIDispatch(), "Description", "Proxmox Backup Agent")
+	oleutil.PutProperty(link.ToIDispatch(), "Description", "PBS Plus Agent")
 
 	// Save the shortcut
 	_, err = oleutil.CallMethod(link.ToIDispatch(), "Save")
@@ -181,7 +181,7 @@ func removeStartupShortcut() error {
 	}
 
 	startupDir := filepath.Join(usr.HomeDir, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
-	shortcutPath := filepath.Join(startupDir, "ProxmoxBackupAgent.lnk")
+	shortcutPath := filepath.Join(startupDir, "PBSPlusAgent.lnk")
 
 	err = os.Remove(shortcutPath)
 	if err != nil && !os.IsNotExist(err) {

@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/windows/registry"
 )
@@ -33,7 +33,7 @@ type SFTPConfig struct {
 }
 
 func (s *SFTPConfig) GetRegistryKey() string {
-	return fmt.Sprintf("Software\\ProxmoxAgent\\Config\\SFTP-%s", s.BasePath)
+	return fmt.Sprintf("Software\\PBSPlus\\Config\\SFTP-%s", s.BasePath)
 }
 
 var logger *syslog.Logger
@@ -47,7 +47,7 @@ func InitializeSFTPConfig(svc service.Service, driveLetter string) (*SFTPConfig,
 		}
 	}
 
-	baseKey, _, err := registry.CreateKey(registry.LOCAL_MACHINE, "Software\\ProxmoxAgent\\Config", registry.QUERY_VALUE)
+	baseKey, _, err := registry.CreateKey(registry.LOCAL_MACHINE, "Software\\PBSPlus\\Config", registry.QUERY_VALUE)
 	if err != nil {
 		return nil, fmt.Errorf("InitializeSFTPConfig: unable to create registry key -> %w", err)
 	}

@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/backend/target"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/backend/target"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 type NewAgentRequest struct {

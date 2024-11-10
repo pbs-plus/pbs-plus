@@ -28,7 +28,7 @@ func (k *KnownSnapshots) Get(path string) (*WinVSSSnapshot, error) {
 	k.Lock()
 	defer k.Unlock()
 
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent`, registry.ALL_ACCESS)
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\PBSPlus`, registry.ALL_ACCESS)
 	if err != nil {
 		return nil, fmt.Errorf("Get: error getting registry key -> %w", err)
 	}
@@ -55,7 +55,7 @@ func (k *KnownSnapshots) GetAll() ([]WinVSSSnapshot, error) {
 	k.Lock()
 	defer k.Unlock()
 
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent`, registry.ALL_ACCESS)
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\PBSPlus`, registry.ALL_ACCESS)
 	if err != nil {
 		return nil, fmt.Errorf("GetAll: error getting registry key -> %w", err)
 	}
@@ -78,7 +78,7 @@ func (k *KnownSnapshots) Delete(path string) error {
 	k.Lock()
 	defer k.Unlock()
 
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent`, registry.ALL_ACCESS)
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\PBSPlus`, registry.ALL_ACCESS)
 	if err != nil {
 		return fmt.Errorf("Delete: error getting registry key -> %w", err)
 	}
@@ -116,7 +116,7 @@ func (k *KnownSnapshots) Save(snap *WinVSSSnapshot) error {
 	k.Lock()
 	defer k.Unlock()
 
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent`, registry.ALL_ACCESS)
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\PBSPlus`, registry.ALL_ACCESS)
 	if err != nil {
 		return fmt.Errorf("Save: error getting registry key -> %w", err)
 	}

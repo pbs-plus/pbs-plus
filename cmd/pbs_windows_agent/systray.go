@@ -16,8 +16,8 @@ import (
 
 	"github.com/getlantern/systray"
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
@@ -38,7 +38,7 @@ func (p *agentTray) askServerUrl() string {
 
 	var serverUrl string
 	for {
-		serverUrl = utils.PromptInput("PBS Agent", "Server URL")
+		serverUrl = utils.PromptInput("PBS Plus Agent", "Server URL")
 
 		_, err := url.ParseRequestURI(serverUrl)
 		if err == nil {
@@ -55,7 +55,7 @@ func (p *agentTray) askServerUrl() string {
 func (p *agentTray) foregroundTray() error {
 	var serverUrl string
 
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
 	if err == nil {
 		defer key.Close()
 		serverUrl, _, _ = key.GetStringValue("ServerURL")
@@ -74,10 +74,10 @@ func (p *agentTray) onReady(url string) func() {
 		}
 
 		systray.SetIcon(icon)
-		systray.SetTitle("Proxmox Backup Agent")
-		systray.SetTooltip("Proxmox Backup Agent")
+		systray.SetTitle("PBS Plus Agent")
+		systray.SetTooltip("PBS Plus Agent")
 
-		serverIP := systray.AddMenuItem(fmt.Sprintf("Server: %s", url), "Proxmox Backup Server address")
+		serverIP := systray.AddMenuItem(fmt.Sprintf("Server: %s", url), "PBS Plus overlay address")
 		serverIP.Disable()
 
 		go func(ctx context.Context, serverIP *systray.MenuItem, url *string) {
@@ -185,7 +185,7 @@ func isAdmin() bool {
 }
 
 func setServerURLAdmin(serverUrl string) error {
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.ALL_ACCESS)
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.ALL_ACCESS)
 	if err != nil {
 		return fmt.Errorf("setServerURLAdmin: error creating HKLM key -> %w", err)
 	}

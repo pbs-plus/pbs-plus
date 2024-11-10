@@ -2,7 +2,7 @@
 
 package jobs
 
-import "github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
+import "github.com/sonroyaalmerol/pbs-plus/internal/store"
 
 type JobsResponse struct {
 	Data   []store.Job `json:"data"`

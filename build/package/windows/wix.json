@@ -6,7 +6,7 @@
   "files": {
     "guid": "00a83f86-98b2-43f6-ba9a-b81b632c522f",
     "items": [
-      "pbs-d2d-agent.exe"
+      "pbs-plus-agent.exe"
     ]
   },
   "env": {
@@ -16,25 +16,25 @@
   "shortcuts": {},
   "choco": {
     "description": "Orchestrating backups with Proxmox Backup Server",
-    "project-url": "https://github.com/sonroyaalmerol/pbs-d2d-backup",
+    "project-url": "https://github.com/sonroyaalmerol/pbs-plus",
     "tags": "backup agent",
-    "license-url": "https://github.com/sonroyaalmerol/pbs-d2d-backup/LICENSE"
+    "license-url": "https://github.com/sonroyaalmerol/pbs-plus/LICENSE"
   },
   "hooks": [
     {
-      "command": "[INSTALLDIR]pbs-d2d-agent.exe install",
+      "command": "[INSTALLDIR]pbs-plus-agent.exe install",
       "when": "install"
     },
     {
-      "command": "[INSTALLDIR]pbs-d2d-agent.exe start",
+      "command": "[INSTALLDIR]pbs-plus-agent.exe start",
       "when": "install"
     },
     {
-      "command": "[INSTALLDIR]pbs-d2d-agent.exe stop",
+      "command": "[INSTALLDIR]pbs-plus-agent.exe stop",
       "when": "uninstall"
     },
     {
-      "command": "[INSTALLDIR]pbs-d2d-agent.exe uninstall",
+      "command": "[INSTALLDIR]pbs-plus-agent.exe uninstall",
       "when": "uninstall"
     }
   ]

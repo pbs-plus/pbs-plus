@@ -9,13 +9,13 @@ import (
 	"net/url"
 	"regexp"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/backend/backup"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/agents"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/jobs"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers/targets"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/agents"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/jobs"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/targets"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 // routeHandler holds a pattern and handler that accepts path variables

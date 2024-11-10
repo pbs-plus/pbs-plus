@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/backend/mount"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/backend/mount"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) {

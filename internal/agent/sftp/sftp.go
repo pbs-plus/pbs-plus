@@ -13,8 +13,8 @@ import (
 	"sync"
 
 	"github.com/pkg/sftp"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
 )
 

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -18,7 +18,7 @@ var httpClient *http.Client
 
 func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error {
 	serverUrl := ""
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
 	if err != nil {
 		return fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
 	}

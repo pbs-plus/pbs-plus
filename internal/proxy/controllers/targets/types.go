@@ -2,7 +2,7 @@
 
 package targets
 
-import "github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
+import "github.com/sonroyaalmerol/pbs-plus/internal/store"
 
 type TargetsResponse struct {
 	Data   []store.Target `json:"data"`

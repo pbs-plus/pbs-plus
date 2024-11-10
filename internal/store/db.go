@@ -14,8 +14,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 // Job represents the pbs-disk-backup-job-status model
@@ -63,7 +63,7 @@ func Initialize() (*Store, error) {
 func (store *Store) CreateTables() error {
 	// Create Job table if it doesn't exist
 	createJobTable := `
-    CREATE TABLE IF NOT EXISTS disk_backup_job_status (
+    CREATE TABLE IF NOT EXISTS d2d_jobs (
         id TEXT PRIMARY KEY,
         store TEXT,
         target TEXT,
@@ -99,7 +99,7 @@ func (store *Store) CreateTables() error {
 
 // CreateJob inserts a new Job into the database
 func (store *Store) CreateJob(job Job) error {
-	query := `INSERT INTO disk_backup_job_status (id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace) 
+	query := `INSERT INTO d2d_jobs (id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace) 
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`
 	_, err := store.Db.Exec(query, job.ID, job.Store, job.Target, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace)
 	if err != nil {
@@ -116,7 +116,7 @@ func (store *Store) CreateJob(job Job) error {
 
 // GetJob retrieves a Job by ID
 func (store *Store) GetJob(id string) (*Job, error) {
-	query := `SELECT id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM disk_backup_job_status WHERE id = ?;`
+	query := `SELECT id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM d2d_jobs WHERE id = ?;`
 	row := store.Db.QueryRow(query, id)
 
 	var job Job
@@ -162,7 +162,7 @@ func (store *Store) GetJob(id string) (*Job, error) {
 
 // UpdateJob updates an existing Job in the database
 func (store *Store) UpdateJob(job Job) error {
-	query := `UPDATE disk_backup_job_status SET store = ?, target = ?, schedule = ?, comment = ?, next_run = ?, last_run_upid = ?, notification_mode = ?, namespace = ? WHERE id = ?;`
+	query := `UPDATE d2d_jobs SET store = ?, target = ?, schedule = ?, comment = ?, next_run = ?, last_run_upid = ?, notification_mode = ?, namespace = ? WHERE id = ?;`
 	_, err := store.Db.Exec(query, job.Store, job.Target, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace, job.ID)
 	if err != nil {
 		return fmt.Errorf("UpdateJob: error updating job table -> %w", err)
@@ -177,10 +177,10 @@ func (store *Store) UpdateJob(job Job) error {
 }
 
 func (store *Store) SetSchedule(job Job) error {
-	svcPath := fmt.Sprintf("proxmox-d2d-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
+	svcPath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
 	fullSvcPath := filepath.Join(TimerBasePath, svcPath)
 
-	timerPath := fmt.Sprintf("proxmox-d2d-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
+	timerPath := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
 	fullTimerPath := filepath.Join(TimerBasePath, timerPath)
 
 	if job.Schedule == "" {
@@ -228,7 +228,7 @@ func (store *Store) SetSchedule(job Job) error {
 
 // DeleteJob deletes a Job from the database
 func (store *Store) DeleteJob(id string) error {
-	query := `DELETE FROM disk_backup_job_status WHERE id = ?;`
+	query := `DELETE FROM d2d_jobs WHERE id = ?;`
 	_, err := store.Db.Exec(query, id)
 	if err != nil {
 		return fmt.Errorf("DeleteJob: error deleting job from table -> %w", err)
@@ -305,7 +305,7 @@ func (store *Store) DeleteTarget(name string) error {
 
 // GetAllJobes retrieves all Job records from the database
 func (store *Store) GetAllJobs() ([]Job, error) {
-	query := `SELECT id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM disk_backup_job_status WHERE id IS NOT NULL;`
+	query := `SELECT id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM d2d_jobs WHERE id IS NOT NULL;`
 	rows, err := store.Db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllJobs: error getting job select query -> %w", err)

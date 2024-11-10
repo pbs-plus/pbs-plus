@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 )
 
 func FixDatastore(job *store.Job, storeInstance *store.Store) error {

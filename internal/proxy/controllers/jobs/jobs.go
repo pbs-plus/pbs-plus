@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/backend/backup"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/proxy/controllers"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/store"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 func D2DJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {

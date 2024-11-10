@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/sftp"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-d2d-backup/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/sftp"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -111,7 +111,7 @@ waitUrl:
 		case <-p.ctx.Done():
 			return
 		default:
-			key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
+			key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
 			if err == nil {
 				defer key.Close()
 
