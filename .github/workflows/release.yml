@@ -39,14 +39,13 @@ jobs:
         desc: 'PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution'
         homepage: 'https://github.com/${{ github.repository }}'
     
-    # Publish Release Assets for releases or pre-release for dev builds
     - name: Publish Release or Dev Pre-Release Assets
       if: github.event_name == 'release' || github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v1
       with:
-        tag: ${{ github.event.release.tag_name || 'dev' }}
+        tag: ${{ github.event.release.tag_name || 'main' }}
         files: ./*.deb
-        prerelease: ${{ github.ref == 'refs/heads/main' || github.event.release.tag_name == 'dev' }} # Set as pre-release if this is a dev build
+        prerelease: ${{ github.ref == 'refs/heads/main' || github.event.release.tag_name == 'main' }} # Set as pre-release if this is a dev build
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -67,7 +66,7 @@ jobs:
         project_path: ./cmd/windows_agent
         ldflags: -H=windowsgui
     - uses: actions/upload-artifact@v4
-      if: github.event_name == 'release'
+      if: github.event_name == 'release' && github.event.release.tag_name != 'main'
       with:
         name: windows-binary
         path: ${{ steps.go_build.outputs.release_asset_dir }}/pbs-plus-agent.exe
@@ -75,7 +74,7 @@ jobs:
   release-windows-amd64-agent-installer:
     name: release agent installer windows/amd64
     runs-on: windows-latest
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' && github.event.release.tag_name != 'main'
     needs: release-windows-amd64-agent
     steps:
     - uses: actions/checkout@v4
