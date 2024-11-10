@@ -28,12 +28,19 @@ jobs:
       env:
         BINARY_PATH: ${{ steps.go_build.outputs.release_asset_dir }}
       run: ./build/package/pre-packaging.sh
+    - id: new_ref 
+      run: |
+        new_ref="$GITHUB_REF"
+        if [[ "$GITHUB_REF" == "refs/heads/main" || "$GITHUB_REF" == "refs/tags/main" ]]; then
+            new_ref="refs/tags/v0.0.0"
+        fi
+        echo "new_ref=$new_ref" >> "$GITHUB_ENV"
     - uses: jiro4989/build-deb-action@v3
       with:
         package: ${{ github.event.repository.name }}
         package_root: build/package/debian
         maintainer: Son Roy Almerol <github@snry.me>
-        version: ${{ github.ref }}
+        version: ${{ env.new_ref }}
         arch: 'amd64'
         depends: 'proxmox-backup (>= 3.2), proxmox-backup-client (>= 3.2.5), rclone'
         desc: 'PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution'
