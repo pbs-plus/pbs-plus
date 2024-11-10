@@ -53,18 +53,12 @@ func (p *agentTray) askServerUrl() string {
 }
 
 func (p *agentTray) foregroundTray() error {
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.ALL_ACCESS)
-	if err != nil {
-		return fmt.Errorf("foregroundTray: error creating HKLM key -> %w", err)
-	}
-	defer key.Close()
-
 	var serverUrl string
-	if serverUrl, _, err = key.GetStringValue("ServerURL"); err != nil || serverUrl == "" {
-		serverUrl = p.askServerUrl()
-		if err := key.SetStringValue("ServerURL", serverUrl); err != nil {
-			return fmt.Errorf("foregroundTray: error setting HKLM value -> %w", err)
-		}
+
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.QUERY_VALUE)
+	if err == nil {
+		defer key.Close()
+		serverUrl, _, _ = key.GetStringValue("ServerURL")
 	}
 
 	systray.Run(p.onReady(serverUrl), p.onExit)
@@ -79,8 +73,6 @@ func (p *agentTray) onReady(url string) func() {
 			utils.ShowMessageBox("Error", fmt.Sprintf("Failed to initialize logger: %s", err))
 		}
 
-		p.svc.Start()
-
 		systray.SetIcon(icon)
 		systray.SetTitle("Proxmox Backup Agent")
 		systray.SetTooltip("Proxmox Backup Agent")
@@ -88,38 +80,54 @@ func (p *agentTray) onReady(url string) func() {
 		serverIP := systray.AddMenuItem(fmt.Sprintf("Server: %s", url), "Proxmox Backup Server address")
 		serverIP.Disable()
 
-		status := systray.AddMenuItem("Status: Connecting...", "Connectivity status")
-		status.Disable()
-
-		go func(ctx context.Context, status *systray.MenuItem) {
+		go func(ctx context.Context, serverIP *systray.MenuItem, url *string) {
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				default:
-					svcStatus, ok := os.LookupEnv("PBS_AGENT_STATUS")
-					if !ok {
-						status.SetTitle("Status: Agent service not running")
-						continue
+					if url != nil && *url != "" {
+						serverIP.SetTitle(fmt.Sprintf("Server: %s", *url))
+					} else {
+						serverIP.SetTitle("Server: N/A")
 					}
-					status.SetTitle(fmt.Sprintf("Status: %s", svcStatus))
-
 					time.Sleep(time.Second)
 				}
 			}
-		}(p.ctx, status)
+		}(p.ctx, serverIP, &url)
+
+		status := systray.AddMenuItem("Status: Connecting...", "Connectivity status")
+		status.Disable()
+
+		go func(ctx context.Context, status *systray.MenuItem, url *string) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					if url != nil && *url != "" {
+						svcStatus, ok := os.LookupEnv("PBS_AGENT_STATUS")
+						if !ok {
+							status.SetTitle("Status: Agent service not running")
+							continue
+						}
+						status.SetTitle(fmt.Sprintf("Status: %s", svcStatus))
+					} else {
+						status.SetTitle("Status: Server URL needs to be set.")
+					}
+					time.Sleep(time.Second)
+				}
+			}
+		}(p.ctx, status, &url)
 
 		systray.AddSeparator()
 
 		changeUrl := systray.AddMenuItem("Change Server", "Change Server URL")
+
 		go func(ctx context.Context, changeUrl *systray.MenuItem) {
-			key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.ALL_ACCESS)
 			if err != nil {
-				logger.Errorf("Failed to retrieve registry key: %s", err)
-				changeUrl.Hide()
-				return
+				utils.ShowMessageBox("Error", fmt.Sprintf("Failed to initialize logger: %s", err))
 			}
-			defer key.Close()
 
 			for {
 				select {
@@ -127,18 +135,22 @@ func (p *agentTray) onReady(url string) func() {
 					return
 				case <-changeUrl.ClickedCh:
 					serverUrl := p.askServerUrl()
-					if err := key.SetStringValue("ServerURL", serverUrl); err != nil {
-						logger.Errorf("Failed to set new server url: %s", err)
-						continue
+
+					if !isAdmin() {
+						err := runAsAdminServerUrl(serverUrl)
+						if err != nil {
+							logger.Errorf("Failed to run as administrator: %s", err)
+							continue
+						}
+					} else {
+						err = setServerURLAdmin(serverUrl)
+						if err != nil {
+							logger.Errorf("Failed to set new server URL: %s", err)
+							continue
+						}
 					}
 
-					err = p.svc.Stop()
-					if err != nil {
-						logger.Errorf("Failed to restart service: %s", err)
-						continue
-					}
-
-					err = p.svc.Start()
+					err = p.svc.Restart()
 					if err != nil {
 						logger.Errorf("Failed to restart service: %s", err)
 						continue
@@ -172,11 +184,25 @@ func isAdmin() bool {
 	return true
 }
 
-func runAsAdmin() error {
+func setServerURLAdmin(serverUrl string) error {
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\ProxmoxAgent\Config`, registry.ALL_ACCESS)
+	if err != nil {
+		return fmt.Errorf("setServerURLAdmin: error creating HKLM key -> %w", err)
+	}
+	defer key.Close()
+
+	if err := key.SetStringValue("ServerURL", serverUrl); err != nil {
+		return fmt.Errorf("setServerURLAdmin: error setting HKLM value -> %w", err)
+	}
+
+	return nil
+}
+
+func runAsAdminServerUrl(serverUrl string) error {
 	verb := "runas"
 	exe, _ := os.Executable()
 	cwd, _ := os.Getwd()
-	args := strings.Join(os.Args[1:], " ")
+	args := fmt.Sprintf("--set-server-url %s", serverUrl) // Append the server URL to the arguments
 
 	verbPtr, _ := syscall.UTF16PtrFromString(verb)
 	exePtr, _ := syscall.UTF16PtrFromString(exe)
