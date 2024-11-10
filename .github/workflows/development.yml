@@ -41,7 +41,7 @@ jobs:
     - name: Pre-release dev build
       uses: softprops/action-gh-release@v1
       with:
-        tag: dev
+        tag_name: dev
         files: ./*.deb
         prerelease: true
       env:
