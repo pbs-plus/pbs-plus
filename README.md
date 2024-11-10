@@ -19,19 +19,19 @@ A Proxmox Backup Server (PBS) "overlay" proxy server designed to add advanced ba
 PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution, aiming to make PBS a viable alternative to Veeam. Among these enhancements is remote file-level backup, integrated directly within the PBS Web UI, allowing for streamlined configuration and management of backups of bare-metal workstations without requiring external cron jobs or additional scripts.
 
 ## Planned Features/Roadmap
-[x] Execute remote backups directly from Proxmox Backup Server Web UI
-[x] File backup from bare-metal workstations with agent
-[ ] File restore to bare-metal workstations with agent
-[ ] User profile backup from bare-metal workstations with agent
-[ ] User profile restore to bare-metal workstations with agent
-[ ] Pipelining backup jobs from Web UI
-[x] Windows agent support for workstations
-[ ] Linux agent support for workstations
-[ ] Containerized agent support for Docker/Kubernetes
-[ ] Mac agent support for workstations 
-[ ] MySQL database backup/restore support
-[ ] PostgreSQL database backup/restore support
-[ ] Active Directory/LDAP backup/restore support
+- [x] Execute remote backups directly from Proxmox Backup Server Web UI
+- [x] File backup from bare-metal workstations with agent
+- [ ] File restore to bare-metal workstations with agent
+- [ ] User profile backup from bare-metal workstations with agent
+- [ ] User profile restore to bare-metal workstations with agent
+- [ ] Pipelining backup jobs from Web UI
+- [x] Windows agent support for workstations
+- [ ] Linux agent support for workstations
+- [ ] Containerized agent support for Docker/Kubernetes
+- [ ] Mac agent support for workstations 
+- [ ] MySQL database backup/restore support
+- [ ] PostgreSQL database backup/restore support
+- [ ] Active Directory/LDAP backup/restore support
 
 ## Installation
 To install PBS Plus:
