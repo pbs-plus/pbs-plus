@@ -24,6 +24,7 @@ jobs:
         compress_assets: false
         executable_compression: upx
         project_path: ./cmd/pbs_plus
+        overwrite: true
     - name: pre-packaging script
       env:
         BINARY_PATH: ${{ steps.go_build.outputs.release_asset_dir }}
@@ -72,6 +73,7 @@ jobs:
         binary_name: pbs-plus-agent
         project_path: ./cmd/windows_agent
         ldflags: -H=windowsgui
+        overwrite: true
     - uses: actions/upload-artifact@v4
       if: github.event_name == 'release' && github.event.release.tag_name != 'main'
       with:
