@@ -124,30 +124,27 @@ waitUrl:
 		}
 	}
 
-	for {
-		drives := utils.GetLocalDrives()
-		for _, driveLetter := range drives {
-			rune := []rune(driveLetter)[0]
-			sftpConfig, err := sftp.InitializeSFTPConfig(p.svc, driveLetter)
-			if err != nil {
-				logger.Error(fmt.Sprintf("Unable to initialize SFTP config: %s", err))
-				continue
-			}
-			if err := sftpConfig.PopulateKeys(); err != nil {
-				logger.Error(fmt.Sprintf("Unable to populate SFTP keys: %s", err))
-				continue
-			}
-
-			port, err := utils.DriveLetterPort(rune)
-			if err != nil {
-				logger.Error(fmt.Sprintf("Unable to map letter to port: %s", err))
-				continue
-			}
-
-			p.wg.Add(1)
-			go sftp.Serve(p.ctx, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
+	drives := utils.GetLocalDrives()
+	for _, driveLetter := range drives {
+		rune := []rune(driveLetter)[0]
+		sftpConfig, err := sftp.InitializeSFTPConfig(p.svc, driveLetter)
+		if err != nil {
+			logger.Error(fmt.Sprintf("Unable to initialize SFTP config: %s", err))
+			continue
+		}
+		if err := sftpConfig.PopulateKeys(); err != nil {
+			logger.Error(fmt.Sprintf("Unable to populate SFTP keys: %s", err))
+			continue
 		}
 
+		port, err := utils.DriveLetterPort(rune)
+		if err != nil {
+			logger.Error(fmt.Sprintf("Unable to map letter to port: %s", err))
+			continue
+		}
+
+		p.wg.Add(1)
+		go sftp.Serve(p.ctx, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
 	}
 }
 
