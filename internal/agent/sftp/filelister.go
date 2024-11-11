@@ -77,7 +77,7 @@ func (h *SftpHandler) FileStat(filename string) (*FileLister, error) {
 		}
 	}
 
-	if skipFile(filename, stat, isRoot) {
+	if skipFile(filename, stat) {
 		return nil, fmt.Errorf("access denied or restricted file: %s", filename)
 	}
 
@@ -92,16 +92,12 @@ func (h *SftpHandler) fetch(path string, mode int) (*os.File, error) {
 	return os.OpenFile(path, mode, 0777)
 }
 
-func skipFile(path string, fileInfo os.FileInfo, isRoot bool) bool {
+func skipFile(path string, fileInfo os.FileInfo) bool {
 	restrictedDirs := []string{"$RECYCLE.BIN", "System Volume Information"}
 	for _, dir := range restrictedDirs {
 		if fileInfo.IsDir() && fileInfo.Name() == dir {
 			return true
 		}
-	}
-
-	if !isRoot && fileInfo.Mode()&os.ModeSymlink != 0 {
-		return true
 	}
 
 	if !fileInfo.IsDir() {
