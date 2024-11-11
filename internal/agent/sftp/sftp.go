@@ -9,16 +9,13 @@ import (
 	"net"
 	"net/url"
 	"strings"
-	"sync"
 
 	"github.com/pkg/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"golang.org/x/crypto/ssh"
 )
 
-func Serve(ctx context.Context, wg *sync.WaitGroup, sftpConfig *SFTPConfig, address, port string, driveLetter string) {
-	defer wg.Done()
-
+func Serve(ctx context.Context, sftpConfig *SFTPConfig, address, port string, driveLetter string) {
 	listenAt := fmt.Sprintf("%s:%s", address, port)
 	listener, err := net.Listen("tcp", listenAt)
 	if err != nil {

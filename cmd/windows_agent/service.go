@@ -77,8 +77,9 @@ func (p *agentService) runLoop() {
 		return
 	}
 
+	go p.startPing()
+
 	for {
-		go p.startPing()
 		p.run()
 		wgDone := utils.WaitChan(&p.wg)
 
@@ -146,14 +147,15 @@ waitUrl:
 		}
 
 		p.wg.Add(1)
-
-		go sftp.Serve(p.ctx, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
+		go func() {
+			sftp.Serve(p.ctx, sftpConfig, "0.0.0.0", port, driveLetter)
+			p.wg.Done()
+		}()
 	}
 }
 
 func (p *agentService) Stop(s service.Service) error {
 	p.cancel()
 
-	p.wg.Wait()
 	return nil
 }
