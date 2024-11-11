@@ -30,15 +30,14 @@ type PingResp struct {
 
 type agentService struct {
 	svc        service.Service
-	ctx        context.Context
 	pingCtx    context.Context
-	cancel     context.CancelFunc
 	pingCancel context.CancelFunc
 	wg         sync.WaitGroup
+	exit       chan struct{}
 }
 
 func (p *agentService) Start(s service.Service) error {
-	p.ctx, p.cancel = context.WithCancel(context.Background())
+	p.exit = make(chan struct{})
 	p.pingCtx, p.pingCancel = context.WithCancel(context.Background())
 
 	go p.startPing()
@@ -80,7 +79,7 @@ func (p *agentService) runLoop() {
 		wgDone := utils.WaitChan(&p.wg)
 
 		select {
-		case <-p.ctx.Done():
+		case <-p.exit:
 			snapshots.CloseAllSnapshots()
 			return
 		case <-wgDone:
@@ -104,7 +103,7 @@ func (p *agentService) run() {
 waitUrl:
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-p.exit:
 			return
 		default:
 			key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
@@ -139,15 +138,15 @@ waitUrl:
 		}
 
 		p.wg.Add(1)
-		go sftp.Serve(p.ctx, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
+
+		go sftp.Serve(p.exit, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
 	}
 }
 
 func (p *agentService) Stop(s service.Service) error {
-	p.cancel()
+	close(p.exit)
 	p.pingCancel()
 
 	p.wg.Wait()
-
 	return nil
 }

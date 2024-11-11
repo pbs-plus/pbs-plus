@@ -6,7 +6,6 @@ package sftp
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/url"
 	"strings"
@@ -17,7 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func Serve(ctx context.Context, wg *sync.WaitGroup, sftpConfig *SFTPConfig, address, port string, driveLetter string) {
+func Serve(exit chan struct{}, wg *sync.WaitGroup, sftpConfig *SFTPConfig, address, port string, driveLetter string) {
 	defer wg.Done()
 
 	listenAt := fmt.Sprintf("%s:%s", address, port)
@@ -32,8 +31,8 @@ func Serve(ctx context.Context, wg *sync.WaitGroup, sftpConfig *SFTPConfig, addr
 
 	for {
 		select {
-		case <-ctx.Done():
-			log.Println("Context cancelled. Terminating SFTP listener.")
+		case <-exit:
+			logger.Info("Context cancelled. Terminating SFTP listener.")
 			return
 		default:
 			conn, err := listener.Accept()
