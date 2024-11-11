@@ -21,7 +21,7 @@ type WinVSSSnapshot struct {
 type KnownSnapshots struct {
 	registry string
 
-	*sync.Mutex
+	sync.Mutex
 }
 
 func (k *KnownSnapshots) Get(path string) (*WinVSSSnapshot, error) {

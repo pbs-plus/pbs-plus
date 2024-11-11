@@ -14,7 +14,6 @@ import (
 
 	"github.com/pkg/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -25,7 +24,6 @@ func Serve(ctx context.Context, wg *sync.WaitGroup, sftpConfig *SFTPConfig, addr
 	listener, err := net.Listen("tcp", listenAt)
 	if err != nil {
 		logger.Error(fmt.Sprintf("Port is already in use! Failed to listen on %s: %v", listenAt, err))
-		utils.ShowMessageBox("Fatal Error", fmt.Sprintf("Port is already in use! Failed to listen on %s: %v", listenAt, err))
 		return
 	}
 	defer listener.Close()
@@ -41,7 +39,6 @@ func Serve(ctx context.Context, wg *sync.WaitGroup, sftpConfig *SFTPConfig, addr
 			conn, err := listener.Accept()
 			if err != nil {
 				logger.Error(fmt.Sprintf("failed to accept connection: %v", err))
-				utils.ShowMessageBox("Error", fmt.Sprintf("failed to accept connection: %v", err))
 				continue
 			}
 
@@ -56,20 +53,17 @@ func handleConnection(conn net.Conn, sftpConfig *SFTPConfig, driveLetter string)
 	server, err := url.Parse(sftpConfig.Server)
 	if err != nil {
 		logger.Error(fmt.Sprintf("failed to parse server IP: %v", err))
-		utils.ShowMessageBox("Error", fmt.Sprintf("failed to parse server IP: %v", err))
 		return
 	}
 
 	if !strings.Contains(conn.RemoteAddr().String(), server.Hostname()) {
 		logger.Error(fmt.Sprintf("WARNING: an unregistered client has attempted to connect: %s", conn.RemoteAddr().String()))
-		utils.ShowMessageBox("Error", fmt.Sprintf("WARNING: an unregistered client has attempted to connect: %s", conn.RemoteAddr().String()))
 		return
 	}
 
 	sconn, chans, reqs, err := ssh.NewServerConn(conn, sftpConfig.ServerConfig)
 	if err != nil {
 		logger.Error(fmt.Sprintf("failed to perform SSH handshake: %v", err))
-		utils.ShowMessageBox("Error", fmt.Sprintf("failed to perform SSH handshake: %v", err))
 		return
 	}
 

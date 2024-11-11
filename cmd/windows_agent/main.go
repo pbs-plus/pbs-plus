@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -34,7 +33,7 @@ func main() {
 		return
 	}
 
-	tray := &agentTray{svc: s, ctx: context.Background()}
+	//tray := &agentTray{svc: s, ctx: context.Background()}
 
 	if len(os.Args) > 1 && os.Args[1] == "--set-server-url" {
 		if len(os.Args) > 2 {
@@ -88,15 +87,21 @@ func main() {
 		}
 	}
 
-	if !service.Interactive() {
-		err = s.Run()
-		if err != nil {
-			logger.Errorf("Error running service: %s", err)
-		}
-	} else {
-		err = tray.foregroundTray()
-		if err != nil {
-			logger.Errorf("Error running tray: %s", err)
-		}
+	err = s.Run()
+	if err != nil {
+		logger.Errorf("Error running service: %s", err)
 	}
+	/*
+		if !service.Interactive() {
+			err = s.Run()
+			if err != nil {
+				logger.Errorf("Error running service: %s", err)
+			}
+		} else {
+			err = tray.foregroundTray()
+			if err != nil {
+				logger.Errorf("Error running tray: %s", err)
+			}
+		}
+	*/
 }
