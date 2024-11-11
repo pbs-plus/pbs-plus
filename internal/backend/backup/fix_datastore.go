@@ -46,8 +46,18 @@ func FixDatastore(job *store.Job, storeInstance *store.Store) error {
 		newOwner = storeInstance.LastToken.Username
 	}
 
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostnameFile, err := os.ReadFile("/etc/hostname")
+		if err != nil {
+			hostname = "localhost"
+		}
+
+		hostname = strings.TrimSpace(string(hostnameFile))
+	}
+
 	isAgent := strings.HasPrefix(target.Path, "agent://")
-	backupId := job.Target
+	backupId := hostname
 	if isAgent {
 		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
 	}

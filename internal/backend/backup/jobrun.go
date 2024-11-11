@@ -63,7 +63,17 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		return nil, fmt.Errorf("RunBackup: failed to fix datastore permissions -> %w", err)
 	}
 
-	backupId := job.Target
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostnameFile, err := os.ReadFile("/etc/hostname")
+		if err != nil {
+			hostname = "localhost"
+		}
+
+		hostname = strings.TrimSpace(string(hostnameFile))
+	}
+
+	backupId := hostname
 	if isAgent {
 		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
 	}
