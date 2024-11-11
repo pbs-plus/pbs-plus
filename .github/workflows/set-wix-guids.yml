@@ -28,7 +28,7 @@ jobs:
         $needsGuid = $false
         if ([string]::IsNullOrEmpty($wixJson.'upgrade-code') -or 
             [string]::IsNullOrEmpty($wixJson.files.guid) -or 
-            [string]::IsNullOrEmpty($wixJson.env.guid)) {
+            [string]::IsNullOrEmpty($wixJson.shortcuts.guid)) {
           $needsGuid = $true
         }
 

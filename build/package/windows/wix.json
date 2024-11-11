@@ -1,5 +1,5 @@
 {
-  "product": "pbs-agent",
+  "product": "PBS Plus Agent",
   "company": "snry",
   "license": "LICENSE",
   "upgrade-code": "784ea465-1680-4997-9f00-ee8d228ab646",
@@ -13,7 +13,18 @@
     "guid": "",
     "vars": null
   },
-  "shortcuts": {},
+  "shortcuts": {
+    "guid": "",
+    "items": [
+      {
+        "name": "PBS Plus Agent",
+        "description": "Orchestrating backups with Proxmox Backup Server",
+        "target": "[INSTALLDIR]\\pbs-plus-agent.exe",
+        "wdir": "INSTALLDIR",
+        "icon":"logo.ico"
+      }
+    ]
+  },
   "choco": {
     "description": "Orchestrating backups with Proxmox Backup Server",
     "project-url": "https://github.com/sonroyaalmerol/pbs-plus",
