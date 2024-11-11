@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/windows/registry"
@@ -36,15 +35,10 @@ func (s *SFTPConfig) GetRegistryKey() string {
 	return fmt.Sprintf("Software\\PBSPlus\\Config\\SFTP-%s", s.BasePath)
 }
 
-var logger *syslog.Logger
-
 func InitializeSFTPConfig(svc service.Service, driveLetter string) (*SFTPConfig, error) {
 	var err error
-	if logger == nil {
-		logger, err = syslog.InitializeLogger(svc)
-		if err != nil {
-			return nil, fmt.Errorf("InitializeLogger: failed to initialize logger -> %w", err)
-		}
+	if err != nil {
+		return nil, fmt.Errorf("InitializeLogger: failed to initialize logger -> %w", err)
 	}
 
 	baseKey, _, err := registry.CreateKey(registry.LOCAL_MACHINE, "Software\\PBSPlus\\Config", registry.QUERY_VALUE)

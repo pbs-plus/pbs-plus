@@ -9,57 +9,78 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/pkg/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
 )
 
-func Serve(ctx context.Context, sftpConfig *SFTPConfig, address, port string, driveLetter string) {
-	listenAt := fmt.Sprintf("%s:%s", address, port)
-	listener, err := net.Listen("tcp", listenAt)
-	if err != nil {
-		logger.Error(fmt.Sprintf("Port is already in use! Failed to listen on %s: %v", listenAt, err))
-		return
-	}
-	defer listener.Close()
+func Serve(ctx context.Context, errChan chan string, sftpConfig *SFTPConfig, address, port string, driveLetter string) {
+	var listener net.Listener
 
-	logger.Infof("Listening on %v\n", listener.Addr())
+	listening := false
+
+	listen := func() {
+		var err error
+		listenAt := fmt.Sprintf("%s:%s", address, port)
+		listener, err = net.Listen("tcp", listenAt)
+		if err != nil {
+			errChan <- fmt.Sprintf("Port is already in use! Failed to listen on %s: %v", listenAt, err)
+			return
+		}
+
+		listening = true
+	}
+
+	listen()
+
+	for !listening {
+		retryWait := utils.WaitChan(time.Second * 5)
+		select {
+		case <-ctx.Done():
+			return
+		case <-retryWait:
+			listen()
+		}
+	}
+
+	defer listener.Close()
 
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("Context cancelled. Terminating SFTP listener.")
 			return
 		default:
 			conn, err := listener.Accept()
 			if err != nil {
-				logger.Error(fmt.Sprintf("failed to accept connection: %v", err))
+				errChan <- fmt.Sprintf("failed to accept connection: %v", err)
 				continue
 			}
 
-			go handleConnection(ctx, conn, sftpConfig, driveLetter)
+			go handleConnection(ctx, errChan, conn, sftpConfig, driveLetter)
 		}
 	}
 }
 
-func handleConnection(ctx context.Context, conn net.Conn, sftpConfig *SFTPConfig, driveLetter string) {
+func handleConnection(ctx context.Context, errChan chan string, conn net.Conn, sftpConfig *SFTPConfig, driveLetter string) {
 	defer conn.Close()
 
 	server, err := url.Parse(sftpConfig.Server)
 	if err != nil {
-		logger.Error(fmt.Sprintf("failed to parse server IP: %v", err))
+		errChan <- fmt.Sprintf("failed to parse server IP: %v", err)
 		return
 	}
 
 	if !strings.Contains(conn.RemoteAddr().String(), server.Hostname()) {
-		logger.Error(fmt.Sprintf("WARNING: an unregistered client has attempted to connect: %s", conn.RemoteAddr().String()))
+		errChan <- fmt.Sprintf("WARNING: an unregistered client has attempted to connect: %s", conn.RemoteAddr().String())
 		return
 	}
 
 	sconn, chans, reqs, err := ssh.NewServerConn(conn, sftpConfig.ServerConfig)
 	if err != nil {
-		logger.Error(fmt.Sprintf("failed to perform SSH handshake: %v", err))
+		errChan <- fmt.Sprintf("failed to perform SSH handshake: %v", err)
 		return
 	}
 	defer sconn.Close()
@@ -81,7 +102,7 @@ func handleConnection(ctx context.Context, conn net.Conn, sftpConfig *SFTPConfig
 		go handleRequests(ctx, requests, sftpRequest)
 
 		if requested, ok := <-sftpRequest; ok && requested {
-			go handleSFTP(ctx, channel, driveLetter)
+			go handleSFTP(ctx, errChan, channel, driveLetter)
 		} else {
 			channel.Close()
 		}
@@ -119,19 +140,19 @@ func handleRequests(ctx context.Context, requests <-chan *ssh.Request, sftpReque
 	}
 }
 
-func handleSFTP(ctx context.Context, channel ssh.Channel, driveLetter string) {
+func handleSFTP(ctx context.Context, errChan chan string, channel ssh.Channel, driveLetter string) {
 	defer channel.Close()
 
 	snapshot, err := snapshots.Snapshot(driveLetter)
 	if err != nil {
-		logger.Error(fmt.Sprintf("failed to initialize snapshot: %v", err))
+		errChan <- fmt.Sprintf("failed to initialize snapshot: %v", err)
 		return
 	}
 
 	sftpHandler, err := NewSftpHandler(ctx, driveLetter, snapshot)
 	if err != nil {
 		snapshot.Close()
-		logger.Error(fmt.Sprintf("failed to initialize handler: %v", err))
+		errChan <- fmt.Sprintf("failed to initialize handler: %v", err)
 		return
 	}
 
@@ -142,7 +163,5 @@ func handleSFTP(ctx context.Context, channel ssh.Channel, driveLetter string) {
 		server.Close()
 	}()
 
-	if err := server.Serve(); err != nil {
-		logger.Infof("sftp server completed with error: %s", err)
-	}
+	_ = server.Serve()
 }
