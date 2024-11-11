@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func Serve(exit chan struct{}, wg *sync.WaitGroup, sftpConfig *SFTPConfig, address, port string, driveLetter string) {
+func Serve(ctx context.Context, wg *sync.WaitGroup, sftpConfig *SFTPConfig, address, port string, driveLetter string) {
 	defer wg.Done()
 
 	listenAt := fmt.Sprintf("%s:%s", address, port)
@@ -31,7 +31,7 @@ func Serve(exit chan struct{}, wg *sync.WaitGroup, sftpConfig *SFTPConfig, addre
 
 	for {
 		select {
-		case <-exit:
+		case <-ctx.Done():
 			logger.Info("Context cancelled. Terminating SFTP listener.")
 			return
 		default:
@@ -41,12 +41,12 @@ func Serve(exit chan struct{}, wg *sync.WaitGroup, sftpConfig *SFTPConfig, addre
 				continue
 			}
 
-			go handleConnection(conn, sftpConfig, driveLetter)
+			go handleConnection(ctx, conn, sftpConfig, driveLetter)
 		}
 	}
 }
 
-func handleConnection(conn net.Conn, sftpConfig *SFTPConfig, driveLetter string) {
+func handleConnection(ctx context.Context, conn net.Conn, sftpConfig *SFTPConfig, driveLetter string) {
 	defer conn.Close()
 
 	server, err := url.Parse(sftpConfig.Server)
@@ -65,7 +65,6 @@ func handleConnection(conn net.Conn, sftpConfig *SFTPConfig, driveLetter string)
 		logger.Error(fmt.Sprintf("failed to perform SSH handshake: %v", err))
 		return
 	}
-
 	defer sconn.Close()
 
 	go ssh.DiscardRequests(reqs)
@@ -81,43 +80,49 @@ func handleConnection(conn net.Conn, sftpConfig *SFTPConfig, driveLetter string)
 			continue
 		}
 
-		// Create a channel to receive sftp request signals
 		sftpRequest := make(chan bool, 1)
-		go handleRequests(requests, sftpRequest)
+		go handleRequests(ctx, requests, sftpRequest)
 
-		// Check the sftpRequest channel to determine if we should start SFTP
 		if requested, ok := <-sftpRequest; ok && requested {
-			go handleSFTP(channel, driveLetter)
+			go handleSFTP(ctx, channel, driveLetter)
 		} else {
 			channel.Close()
 		}
 	}
 }
 
-func handleRequests(requests <-chan *ssh.Request, sftpRequest chan<- bool) {
-	for req := range requests {
-		switch req.Type {
-		case "subsystem":
-			if string(req.Payload[4:]) == "sftp" {
-				sftpRequest <- true // Signal that SFTP was requested
-				req.Reply(true, nil)
-			} else {
-				sftpRequest <- false // Signal that an unknown subsystem was requested
+func handleRequests(ctx context.Context, requests <-chan *ssh.Request, sftpRequest chan<- bool) {
+	defer close(sftpRequest)
+
+	for {
+		select {
+		case req, ok := <-requests:
+			if !ok {
+				return
+			}
+			switch req.Type {
+			case "subsystem":
+				if string(req.Payload[4:]) == "sftp" {
+					sftpRequest <- true
+					req.Reply(true, nil)
+				} else {
+					sftpRequest <- false
+					req.Reply(false, nil)
+				}
+			case "ping":
+				sftpRequest <- false
+				req.Reply(true, []byte("pong"))
+			default:
+				sftpRequest <- false
 				req.Reply(false, nil)
 			}
-		case "ping":
-			sftpRequest <- false            // Signal that an unknown subsystem was requested
-			req.Reply(true, []byte("pong")) // Reply to ping request
-		default:
-			sftpRequest <- false // Signal that an unknown subsystem was requested
-			req.Reply(false, nil)
+		case <-ctx.Done():
+			return
 		}
 	}
-	// Close channel when done to signal no further requests
-	close(sftpRequest)
 }
 
-func handleSFTP(channel ssh.Channel, driveLetter string) {
+func handleSFTP(ctx context.Context, channel ssh.Channel, driveLetter string) {
 	defer channel.Close()
 
 	snapshot, err := snapshots.Snapshot(driveLetter)
@@ -126,7 +131,6 @@ func handleSFTP(channel ssh.Channel, driveLetter string) {
 		return
 	}
 
-	ctx := context.Background()
 	sftpHandler, err := NewSftpHandler(ctx, driveLetter, snapshot)
 	if err != nil {
 		snapshot.Close()
@@ -135,6 +139,12 @@ func handleSFTP(channel ssh.Channel, driveLetter string) {
 	}
 
 	server := sftp.NewRequestServer(channel, *sftpHandler)
+
+	go func() {
+		<-ctx.Done()
+		server.Close()
+	}()
+
 	if err := server.Serve(); err != nil {
 		logger.Infof("sftp server completed with error: %s", err)
 	}

@@ -29,40 +29,43 @@ type PingResp struct {
 }
 
 type agentService struct {
-	svc        service.Service
-	pingCtx    context.Context
-	pingCancel context.CancelFunc
-	wg         sync.WaitGroup
-	exit       chan struct{}
+	svc    service.Service
+	wg     sync.WaitGroup
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func (p *agentService) Start(s service.Service) error {
-	p.exit = make(chan struct{})
-	p.pingCtx, p.pingCancel = context.WithCancel(context.Background())
+	p.ctx, p.cancel = context.WithCancel(context.Background())
 
-	go p.startPing()
 	go p.runLoop()
 
 	return nil
 }
 
 func (p *agentService) startPing() {
+	firstPing := true
+	lastCheck := time.Now()
 	for {
 		select {
-		case <-p.pingCtx.Done():
+		case <-p.ctx.Done():
 			utils.SetEnvironment("PBS_AGENT_STATUS", "Agent service is not running")
 			return
 		default:
-			var pingResp PingResp
-			pingErr := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/ping", nil, &pingResp)
-			if pingErr != nil {
-				utils.SetEnvironment("PBS_AGENT_STATUS", fmt.Sprintf("Error - (%s)", pingErr.Error()))
-			} else if !pingResp.Data.Pong {
-				utils.SetEnvironment("PBS_AGENT_STATUS", "Error - server did not return expected data")
-			} else {
-				utils.SetEnvironment("PBS_AGENT_STATUS", "Connected")
+			if time.Since(lastCheck) > time.Second*5 || firstPing {
+				firstPing = false
+
+				var pingResp PingResp
+				pingErr := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/ping", nil, &pingResp)
+				if pingErr != nil {
+					utils.SetEnvironment("PBS_AGENT_STATUS", fmt.Sprintf("Error - (%s)", pingErr.Error()))
+				} else if !pingResp.Data.Pong {
+					utils.SetEnvironment("PBS_AGENT_STATUS", "Error - server did not return expected data")
+				} else {
+					utils.SetEnvironment("PBS_AGENT_STATUS", "Connected")
+				}
+				lastCheck = time.Now()
 			}
-			time.Sleep(10 * time.Second)
 		}
 	}
 }
@@ -75,20 +78,20 @@ func (p *agentService) runLoop() {
 	}
 
 	for {
+		go p.startPing()
 		p.run()
 		wgDone := utils.WaitChan(&p.wg)
 
 		select {
-		case <-p.exit:
+		case <-p.ctx.Done():
 			snapshots.CloseAllSnapshots()
 			return
 		case <-wgDone:
 			utils.SetEnvironment("PBS_AGENT_STATUS", "Unexpected shutdown - restarting SSH endpoints")
 			logger.Error("SSH endpoints stopped unexpectedly. Restarting...")
 			p.wg = sync.WaitGroup{}
+			time.Sleep(5 * time.Second)
 		}
-
-		time.Sleep(5 * time.Second)
 	}
 }
 
@@ -100,21 +103,26 @@ func (p *agentService) run() {
 		return
 	}
 
+	firstUrlCheck := true
+	lastCheck := time.Now()
 waitUrl:
 	for {
 		select {
-		case <-p.exit:
+		case <-p.ctx.Done():
 			return
 		default:
-			key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
-			if err == nil {
-				defer key.Close()
+			if time.Since(lastCheck) > time.Second*5 || firstUrlCheck {
+				firstUrlCheck = false
+				key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
+				if err == nil {
+					defer key.Close()
 
-				if serverUrl, _, err := key.GetStringValue("ServerURL"); err == nil && serverUrl != "" {
-					break waitUrl
+					if serverUrl, _, err := key.GetStringValue("ServerURL"); err == nil && serverUrl != "" {
+						break waitUrl
+					}
 				}
+				lastCheck = time.Now()
 			}
-			time.Sleep(time.Second)
 		}
 	}
 
@@ -139,13 +147,12 @@ waitUrl:
 
 		p.wg.Add(1)
 
-		go sftp.Serve(p.exit, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
+		go sftp.Serve(p.ctx, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
 	}
 }
 
 func (p *agentService) Stop(s service.Service) error {
-	close(p.exit)
-	p.pingCancel()
+	p.cancel()
 
 	p.wg.Wait()
 	return nil

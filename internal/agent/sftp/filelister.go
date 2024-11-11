@@ -39,16 +39,21 @@ func (h *SftpHandler) FileLister(dirPath string) (*FileLister, error) {
 
 	fileInfos := make([]os.FileInfo, 0, len(dirEntries))
 	for _, entry := range dirEntries {
-		info, err := entry.Info()
-		if err != nil {
-			return nil, err
-		}
+		select {
+		case <-h.ctx.Done():
+			return &FileLister{files: fileInfos}, nil
+		default:
+			info, err := entry.Info()
+			if err != nil {
+				return nil, err
+			}
 
-		fullPath := filepath.Join(dirPath, entry.Name())
-		if skipFile(fullPath, info, false) {
-			continue
+			fullPath := filepath.Join(dirPath, entry.Name())
+			if skipFile(fullPath, info, false) {
+				continue
+			}
+			fileInfos = append(fileInfos, info)
 		}
-		fileInfos = append(fileInfos, info)
 	}
 
 	return &FileLister{files: fileInfos}, nil
