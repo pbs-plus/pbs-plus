@@ -245,6 +245,9 @@ func (store *Store) CreateTarget(target Target) error {
 	query := `INSERT INTO targets (name, path) VALUES (?, ?);`
 	_, err := store.Db.Exec(query, target.Name, target.Path)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return store.UpdateTarget(target)
+		}
 		return fmt.Errorf("CreateTarget: error inserting value to targets table -> %w", err)
 	}
 
