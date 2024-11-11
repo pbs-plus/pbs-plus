@@ -36,12 +36,10 @@ type agentService struct {
 	pingCancel context.CancelFunc
 	wg         sync.WaitGroup
 	exit       chan struct{}
-	restart    chan struct{}
 }
 
 func (p *agentService) Start(s service.Service) error {
 	p.exit = make(chan struct{})
-	p.restart = make(chan struct{})
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	p.pingCtx, p.pingCancel = context.WithCancel(context.Background())
 
@@ -78,21 +76,24 @@ func (p *agentService) runLoop() {
 		close(p.exit)
 	}()
 
+	logger, err := syslog.InitializeLogger(p.svc)
+	if err != nil {
+		utils.SetEnvironment("PBS_AGENT_STATUS", fmt.Sprintf("Failed to initialize logger -> %s", err.Error()))
+		return
+	}
+
 	for {
-		select {
-		case <-p.exit:
-			return
-		default:
-			p.run()
-		}
+		p.run()
+		wgDone := utils.WaitChan(&p.wg)
 
 		select {
 		case <-p.exit:
+			snapshots.CloseAllSnapshots()
 			return
-		case <-p.restart:
-			p.cancel()
-			p.wg.Wait()
-			p.ctx, p.cancel = context.WithCancel(context.Background())
+		case <-wgDone:
+			utils.SetEnvironment("PBS_AGENT_STATUS", "Unexpected shutdown - restarting SSH endpoints")
+			logger.Error("SSH endpoints stopped unexpectedly. Restarting...")
+			p.wg = sync.WaitGroup{}
 		}
 	}
 }
@@ -147,18 +148,6 @@ waitUrl:
 			go sftp.Serve(p.ctx, &p.wg, sftpConfig, "0.0.0.0", port, driveLetter)
 		}
 
-		wgDone := utils.WaitChan(&p.wg)
-
-		select {
-		case <-p.ctx.Done():
-			snapshots.CloseAllSnapshots()
-			return
-		case <-wgDone:
-			utils.SetEnvironment("PBS_AGENT_STATUS", "Unexpected shutdown - restarting SFTP servers")
-			logger.Error("SFTP servers stopped unexpectedly. Restarting...")
-			// Reset the WaitGroup to prepare for new SFTP servers
-			p.wg = sync.WaitGroup{}
-		}
 	}
 }
 
@@ -170,8 +159,3 @@ func (p *agentService) Stop(s service.Service) error {
 	p.wg.Wait()
 	return nil
 }
-
-func (p *agentService) Restart() {
-	p.restart <- struct{}{}
-}
-

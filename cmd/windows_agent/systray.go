@@ -149,12 +149,6 @@ func (p *agentTray) onReady(url string) func() {
 							continue
 						}
 					}
-
-					err = p.svc.Restart()
-					if err != nil {
-						logger.Errorf("Failed to restart service: %s", err)
-						continue
-					}
 				}
 			}
 		}(p.ctx, changeUrl)
