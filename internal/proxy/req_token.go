@@ -43,7 +43,7 @@ func ExtractTokenFromRequest(r *http.Request, storeInstance *store.Store) *store
 
 	storeInstance.LastToken = &token
 
-	if !utils.IsValid(filepath.Join(store.DbBasePath, "pbs-d2d-token.json")) {
+	if !utils.IsValid(filepath.Join(store.DbBasePath, "pbs-plus-token.json")) {
 		apiToken, err := storeInstance.CreateAPIToken()
 		if err != nil {
 			syslogger.Errorf("ExtractTokenFromRequest: error creating API token -> %v", err)
