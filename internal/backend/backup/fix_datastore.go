@@ -20,21 +20,24 @@ func FixDatastore(job *store.Job, storeInstance *store.Store) error {
 		return fmt.Errorf("FixDatastore: api token is required")
 	}
 
+	target, err := storeInstance.GetTarget(job.Target)
+	if err != nil {
+		return fmt.Errorf("FixDatastore -> %w", err)
+	}
+
+	if target == nil {
+		return fmt.Errorf("FixDatastore: Target '%s' does not exist.", job.Target)
+	}
+
+	if !target.ConnectionStatus {
+		return fmt.Errorf("FixDatastore: Target '%s' is unreachable or does not exist.", job.Target)
+	}
+
 	jobStore := fmt.Sprintf(
 		"%s@localhost:%s",
 		storeInstance.APIToken.TokenId,
 		job.Store,
 	)
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostnameFile, err := os.ReadFile("/etc/hostname")
-		if err != nil {
-			hostname = "localhost"
-		}
-
-		hostname = strings.TrimSpace(string(hostnameFile))
-	}
 
 	newOwner := ""
 	if storeInstance.APIToken != nil {
@@ -43,9 +46,15 @@ func FixDatastore(job *store.Job, storeInstance *store.Store) error {
 		newOwner = storeInstance.LastToken.Username
 	}
 
+	isAgent := strings.HasPrefix(target.Path, "agent://")
+	backupId := job.Target
+	if isAgent {
+		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
+	}
+
 	cmdArgs := []string{
 		"change-owner",
-		fmt.Sprintf("host/%s", hostname),
+		fmt.Sprintf("host/%s", backupId),
 		newOwner,
 		"--repository",
 		jobStore,
