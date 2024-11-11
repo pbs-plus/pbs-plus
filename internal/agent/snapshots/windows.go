@@ -16,7 +16,7 @@ import (
 func getVSSFolder() (string, error) {
 	tmpDir := os.TempDir()
 
-	configBasePath := filepath.Join(tmpDir, "pbs-plus")
+	configBasePath := filepath.Join(tmpDir, "pbs-plus-vss")
 
 	err := os.MkdirAll(configBasePath, os.ModePerm)
 	if err != nil {
@@ -38,7 +38,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		return nil, fmt.Errorf("Snapshot: error getting app data folder -> %w", err)
 	}
 
-	snapshotPath := filepath.Join(vssFolder, "VSS", driveLetter)
+	snapshotPath := filepath.Join(vssFolder, driveLetter)
 	err = vss.CreateLink(snapshotPath, volName)
 	if err != nil {
 		if strings.Contains(err.Error(), "shadow copy operation is already in progress") {

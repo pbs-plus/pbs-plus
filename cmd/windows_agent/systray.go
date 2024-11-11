@@ -115,7 +115,7 @@ func (p *agentTray) onReady(url string) func() {
 					} else {
 						status.SetTitle("Status: Server URL needs to be set.")
 					}
-					time.Sleep(time.Second)
+					time.Sleep(5 * time.Second)
 				}
 			}
 		}(p.ctx, status, &url)
