@@ -23,6 +23,9 @@ func PromptInput(title, prompt string) string {
 		$input = [Microsoft.VisualBasic.Interaction]::InputBox('%s', '%s');
     $input`, prompt, title))
 
+	// Set SysProcAttr to hide the PowerShell window
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
 	output, err := cmd.Output()
 	if err != nil {
 		fmt.Println("Failed to get input:", err)

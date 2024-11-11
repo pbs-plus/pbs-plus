@@ -35,11 +35,9 @@ type agentService struct {
 	cancel     context.CancelFunc
 	pingCancel context.CancelFunc
 	wg         sync.WaitGroup
-	exit       chan struct{}
 }
 
 func (p *agentService) Start(s service.Service) error {
-	p.exit = make(chan struct{})
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	p.pingCtx, p.pingCancel = context.WithCancel(context.Background())
 
@@ -71,11 +69,6 @@ func (p *agentService) startPing() {
 }
 
 func (p *agentService) runLoop() {
-	defer func() {
-		p.cancel()
-		close(p.exit)
-	}()
-
 	logger, err := syslog.InitializeLogger(p.svc)
 	if err != nil {
 		utils.SetEnvironment("PBS_AGENT_STATUS", fmt.Sprintf("Failed to initialize logger -> %s", err.Error()))
@@ -87,7 +80,7 @@ func (p *agentService) runLoop() {
 		wgDone := utils.WaitChan(&p.wg)
 
 		select {
-		case <-p.exit:
+		case <-p.ctx.Done():
 			snapshots.CloseAllSnapshots()
 			return
 		case <-wgDone:
@@ -95,6 +88,8 @@ func (p *agentService) runLoop() {
 			logger.Error("SSH endpoints stopped unexpectedly. Restarting...")
 			p.wg = sync.WaitGroup{}
 		}
+
+		time.Sleep(5 * time.Second)
 	}
 }
 
@@ -149,10 +144,10 @@ waitUrl:
 }
 
 func (p *agentService) Stop(s service.Service) error {
-	close(p.exit)
 	p.cancel()
 	p.pingCancel()
 
 	p.wg.Wait()
+
 	return nil
 }

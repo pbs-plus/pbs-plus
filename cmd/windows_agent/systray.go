@@ -96,30 +96,6 @@ func (p *agentTray) onReady(url string) func() {
 			}
 		}(p.ctx, serverIP, &url)
 
-		status := systray.AddMenuItem("Status: Connecting...", "Connectivity status")
-		status.Disable()
-
-		go func(ctx context.Context, status *systray.MenuItem, url *string) {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					if url != nil && *url != "" {
-						svcStatus, ok := os.LookupEnv("PBS_AGENT_STATUS")
-						if !ok {
-							status.SetTitle("Status: Agent service not running")
-							continue
-						}
-						status.SetTitle(fmt.Sprintf("Status: %s", svcStatus))
-					} else {
-						status.SetTitle("Status: Server URL needs to be set.")
-					}
-					time.Sleep(5 * time.Second)
-				}
-			}
-		}(p.ctx, status, &url)
-
 		systray.AddSeparator()
 
 		changeUrl := systray.AddMenuItem("Change Server", "Change Server URL")
