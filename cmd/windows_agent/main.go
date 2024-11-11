@@ -10,6 +10,7 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"golang.org/x/sys/windows/registry"
 )
 
 func main() {
@@ -37,6 +38,11 @@ func main() {
 	tray := &agentTray{svc: s, ctx: context.Background()}
 
 	if len(os.Args) > 1 && os.Args[1] == "--set-server-url" {
+		if !isAdmin() {
+			logger.Error("Needs to be running as administrator.")
+			return
+		}
+
 		if len(os.Args) > 2 {
 			serverUrl := os.Args[2]
 			if err := setServerURLAdmin(serverUrl); err != nil {
@@ -99,4 +105,26 @@ func main() {
 			logger.Errorf("Error running tray: %s", err)
 		}
 	}
+}
+
+func isAdmin() bool {
+	_, err := os.Open("\\\\.\\PHYSICALDRIVE0")
+	if err != nil {
+		return false
+	}
+	return true
+}
+
+func setServerURLAdmin(serverUrl string) error {
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.ALL_ACCESS)
+	if err != nil {
+		return fmt.Errorf("setServerURLAdmin: error creating HKLM key -> %w", err)
+	}
+	defer key.Close()
+
+	if err := key.SetStringValue("ServerURL", serverUrl); err != nil {
+		return fmt.Errorf("setServerURLAdmin: error setting HKLM value -> %w", err)
+	}
+
+	return nil
 }
