@@ -16,6 +16,7 @@ import (
 
 	"github.com/getlantern/systray"
 	"github.com/kardianos/service"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows"
@@ -107,8 +108,8 @@ func (p *agentTray) onReady(url string) func() {
 		go func(ctx context.Context, status *systray.MenuItem, url *string) {
 			setStatus := func() {
 				if url != nil && *url != "" {
-					svcStatus, ok := os.LookupEnv("PBS_AGENT_STATUS")
-					if !ok {
+					svcStatus, err := agent.GetStatus()
+					if err != nil {
 						status.SetTitle("Status: Agent service not running")
 					} else {
 						status.SetTitle(fmt.Sprintf("Status: %s", svcStatus))

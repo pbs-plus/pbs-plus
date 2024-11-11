@@ -46,11 +46,11 @@ func (p *agentService) startPing() {
 		var pingResp PingResp
 		pingErr := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/ping", nil, &pingResp)
 		if pingErr != nil {
-			utils.SetEnvironment("PBS_AGENT_STATUS", fmt.Sprintf("Error - (%s)", pingErr.Error()))
+			agent.SetStatus(fmt.Sprintf("Error - (%s)", pingErr.Error()))
 		} else if !pingResp.Data.Pong {
-			utils.SetEnvironment("PBS_AGENT_STATUS", "Error - server did not return expected data")
+			agent.SetStatus("Error - server did not return expected data")
 		} else {
-			utils.SetEnvironment("PBS_AGENT_STATUS", "Connected")
+			agent.SetStatus("Connected")
 		}
 	}
 
@@ -60,7 +60,7 @@ func (p *agentService) startPing() {
 		retryWait := utils.WaitChan(time.Second * 5)
 		select {
 		case <-p.ctx.Done():
-			utils.SetEnvironment("PBS_AGENT_STATUS", "Agent service is not running")
+			agent.SetStatus("Agent service is not running")
 			return
 		case <-retryWait:
 			ping()
@@ -69,10 +69,10 @@ func (p *agentService) startPing() {
 }
 
 func (p *agentService) run() {
-	utils.SetEnvironment("PBS_AGENT_STATUS", "Starting")
+	agent.SetStatus("Starting")
 	logger, err := syslog.InitializeLogger(p.svc)
 	if err != nil {
-		utils.SetEnvironment("PBS_AGENT_STATUS", fmt.Sprintf("Failed to initialize logger -> %s", err.Error()))
+		agent.SetStatus(fmt.Sprintf("Failed to initialize logger -> %s", err.Error()))
 		return
 	}
 
