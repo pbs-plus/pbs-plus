@@ -49,7 +49,7 @@ func (h *SftpHandler) FileLister(dirPath string) (*FileLister, error) {
 			}
 
 			fullPath := filepath.Join(dirPath, entry.Name())
-			if skipFile(fullPath, info, false) {
+			if skipFile(fullPath, info) {
 				continue
 			}
 			fileInfos = append(fileInfos, info)
