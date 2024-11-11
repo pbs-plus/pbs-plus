@@ -14,14 +14,15 @@
     "vars": null
   },
   "shortcuts": {
-    "guid": "",
+    "guid": "6278083a-d1c2-4917-8057-96c3643e677b",
     "items": [
       {
         "name": "PBS Plus Agent",
         "description": "Orchestrating backups with Proxmox Backup Server",
         "target": "[INSTALLDIR]\\pbs-plus-agent.exe",
         "wdir": "INSTALLDIR",
-        "icon":"logo.ico"
+        "arguments": "",
+        "icon": "logo.ico"
       }
     ]
   },
