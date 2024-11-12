@@ -58,10 +58,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		job.Store,
 	)
 
-	err = FixDatastore(job, storeInstance)
-	if err != nil {
-		return nil, fmt.Errorf("RunBackup: failed to fix datastore permissions -> %w", err)
-	}
+	_ = FixDatastore(job, storeInstance)
 
 	hostname, err := os.Hostname()
 	if err != nil {
