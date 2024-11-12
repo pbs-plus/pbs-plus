@@ -63,18 +63,9 @@ func (h *SftpHandler) FileStat(filename string) (*FileLister, error) {
 	var stat fs.FileInfo
 	var err error
 
-	isRoot := strings.TrimPrefix(filename, h.Snapshot.SnapshotPath) == ""
-
-	if isRoot {
-		stat, err = os.Stat(filename)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		stat, err = os.Lstat(filename)
-		if err != nil {
-			return nil, err
-		}
+	stat, err = os.Stat(filename)
+	if err != nil {
+		return nil, err
 	}
 
 	if skipFile(filename, stat) {

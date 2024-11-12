@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"sync"
 
 	"github.com/pkg/sftp"
@@ -46,13 +45,7 @@ func (h *SftpHandler) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 		return nil, err
 	}
 
-	stat, err := os.Lstat(r.Filepath)
-	if err != nil {
-		log.Printf("error getting file stats: %v", err)
-		return nil, err
-	}
-
-	return NewEOFInjectingReaderAt(file, stat.Size()), nil
+	return file, nil
 }
 
 func (h *SftpHandler) Filewrite(r *sftp.Request) (io.WriterAt, error) {
