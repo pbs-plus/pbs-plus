@@ -24,11 +24,11 @@ func (fl *FileLister) ListAt(fileList []os.FileInfo, offset int64) (int, error) 
 		return 0, io.EOF
 	}
 
-	if n := copy(fileList, fl.files[offset:]); n < len(fl.files) {
+	n := copy(fileList, fl.files[offset:])
+	if n < len(fileList) {
 		return n, io.EOF
-	} else {
-		return n, nil
 	}
+	return n, nil
 }
 
 func (h *SftpHandler) FileLister(dirPath string) (*FileLister, error) {
@@ -63,9 +63,18 @@ func (h *SftpHandler) FileStat(filename string) (*FileLister, error) {
 	var stat fs.FileInfo
 	var err error
 
-	stat, err = os.Stat(filename)
-	if err != nil {
-		return nil, err
+	isRoot := strings.TrimPrefix(filename, h.Snapshot.SnapshotPath) == ""
+
+	if isRoot {
+		stat, err = os.Stat(filename)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		stat, err = os.Lstat(filename)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if skipFile(filename, stat) {
@@ -77,10 +86,6 @@ func (h *SftpHandler) FileStat(filename string) (*FileLister, error) {
 
 func (h *SftpHandler) setFilePath(r *sftp.Request) {
 	r.Filepath = filepath.Join(h.Snapshot.SnapshotPath, filepath.Clean(r.Filepath))
-}
-
-func (h *SftpHandler) fetch(path string) (*os.File, error) {
-	return os.Open(path)
 }
 
 func wildcardToRegex(pattern string) string {

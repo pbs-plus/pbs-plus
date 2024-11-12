@@ -50,6 +50,7 @@ func Mount(target *store.Target) (*AgentMount, error) {
 	mountArgs := []string{
 		"mount",
 		"--daemon",
+		"--vfs-cache-mode", "minimal",
 		"--read-only",
 		"--uid", "0",
 		"--gid", "0",

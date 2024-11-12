@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"sync"
 
 	"github.com/pkg/sftp"
@@ -16,9 +17,9 @@ import (
 
 type SftpHandler struct {
 	ctx         context.Context
-	mu          sync.Mutex
 	DriveLetter string
 	Snapshot    *snapshots.WinVSSSnapshot
+	mu          sync.Mutex
 }
 
 func NewSftpHandler(ctx context.Context, driveLetter string, snapshot *snapshots.WinVSSSnapshot) (*sftp.Handlers, error) {
@@ -33,40 +34,31 @@ func NewSftpHandler(ctx context.Context, driveLetter string, snapshot *snapshots
 }
 
 func (h *SftpHandler) Fileread(r *sftp.Request) (io.ReaderAt, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.Snapshot.UpdateTimestamp()
-	h.setFilePath(r)
-
-	file, err := h.fetch(r.Filepath)
-	if err != nil {
-		log.Printf("error reading file: %v", err)
-		return nil, err
+	flags := r.Pflags()
+	if !flags.Read {
+		return nil, os.ErrInvalid
 	}
 
-	return file, nil
+	go h.Snapshot.UpdateTimestamp()
+	h.setFilePath(r)
+
+	return os.Open(r.Filepath)
 }
 
 func (h *SftpHandler) Filewrite(r *sftp.Request) (io.WriterAt, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	return nil, fmt.Errorf("unsupported file command: %s", r.Method)
 }
 
 func (h *SftpHandler) Filecmd(r *sftp.Request) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	return fmt.Errorf("unsupported file command: %s", r.Method)
 }
 
 func (h *SftpHandler) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
+	_ = r.WithContext(r.Context())
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.Snapshot.UpdateTimestamp()
 	h.setFilePath(r)
 
 	switch r.Method {

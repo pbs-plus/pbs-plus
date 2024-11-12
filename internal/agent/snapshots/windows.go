@@ -27,65 +27,76 @@ func getVSSFolder() (string, error) {
 }
 
 func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
-	knownSnaps := &KnownSnapshots{
-		registry: "KnownSnaps",
-	}
-
+	knownSnaps := &KnownSnapshots{registry: "KnownSnaps"}
 	volName := filepath.VolumeName(fmt.Sprintf("%s:", driveLetter))
 
+	// Check if there's an existing valid snapshot
 	vssFolder, err := getVSSFolder()
 	if err != nil {
 		return nil, fmt.Errorf("Snapshot: error getting app data folder -> %w", err)
 	}
 
 	snapshotPath := filepath.Join(vssFolder, driveLetter)
+	if knownSnap, err := knownSnaps.Get(snapshotPath); err == nil {
+		if time.Since(knownSnap.GetTimestamp()) < 15*time.Minute {
+			return knownSnap, nil
+		}
+		knownSnap.Close()
+		_ = vss.Remove(snapshotPath) // Clean up old snapshot link if expired
+	}
+
+	// Attempt to create a new snapshot
 	err = vss.CreateLink(snapshotPath, volName)
 	if err != nil {
 		if strings.Contains(err.Error(), "shadow copy operation is already in progress") {
+			// Wait for the in-progress shadow copy operation to complete
 			for {
 				if _, err := vss.Get(snapshotPath); err == nil {
 					break
 				}
 			}
-		} else {
-			if strings.Contains(err.Error(), "already exists") {
-				if _, err := vss.Get(snapshotPath); err == nil {
-					if knownSnap, err := knownSnaps.Get(snapshotPath); err == nil {
-						if knownSnap.SnapshotPath == snapshotPath && time.Since(knownSnap.LastAccessed) < (15*time.Minute) {
-							return knownSnap, nil
-						} else if time.Since(knownSnap.LastAccessed) >= (15 * time.Minute) {
-							knownSnap.Close()
-						}
-					}
-					_ = vss.Remove(snapshotPath)
-				}
-
-				_ = os.Remove(snapshotPath)
-
-				if err := vss.CreateLink(snapshotPath, volName); err != nil {
-					return nil, fmt.Errorf("Snapshot: error creating snapshot (%s to %s) -> %w", volName, snapshotPath, err)
-				}
-			} else {
+		} else if strings.Contains(err.Error(), "already exists") {
+			_ = vss.Remove(snapshotPath)
+			err = vss.CreateLink(snapshotPath, volName)
+			if err != nil {
 				return nil, fmt.Errorf("Snapshot: error creating snapshot (%s to %s) -> %w", volName, snapshotPath, err)
 			}
+		} else {
+			return nil, fmt.Errorf("Snapshot: error creating snapshot (%s to %s) -> %w", volName, snapshotPath, err)
 		}
 	}
 
+	// Retrieve snapshot details and save the new snapshot
 	sc, err := vss.Get(snapshotPath)
 	if err != nil {
 		_ = vss.Remove(snapshotPath)
 		return nil, fmt.Errorf("Snapshot: error getting snapshot details -> %w", err)
 	}
 
-	newSnapshot := WinVSSSnapshot{
+	newSnapshot := &WinVSSSnapshot{
 		SnapshotPath: snapshotPath,
 		LastAccessed: time.Now(),
 		Id:           sc.ID,
 	}
+	knownSnaps.Save(newSnapshot)
 
-	knownSnaps.Save(&newSnapshot)
+	return newSnapshot, nil
+}
 
-	return &newSnapshot, nil
+func (instance *WinVSSSnapshot) GetTimestamp() time.Time {
+	if instance.LastAccessed.IsZero() {
+		knownSnaps := &KnownSnapshots{
+			registry: "KnownSnaps",
+		}
+
+		snap, err := knownSnaps.Get(instance.SnapshotPath)
+		if err == nil {
+			instance.LastAccessed = snap.LastAccessed
+			return snap.LastAccessed
+		}
+	}
+
+	return instance.LastAccessed
 }
 
 func (instance *WinVSSSnapshot) UpdateTimestamp() {
