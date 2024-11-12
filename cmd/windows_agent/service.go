@@ -14,7 +14,6 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -57,12 +56,11 @@ func (p *agentService) startPing() {
 	ping()
 
 	for {
-		retryWait := utils.WaitChan(time.Second * 5)
 		select {
 		case <-p.ctx.Done():
 			agent.SetStatus("Agent service is not running")
 			return
-		case <-retryWait:
+		case <-time.After(time.Second * 5):
 			ping()
 		}
 	}
@@ -91,11 +89,10 @@ func (p *agentService) run() {
 
 	if !urlExists() {
 		for !urlExists() {
-			retryWait := utils.WaitChan(time.Second * 5)
 			select {
 			case <-p.ctx.Done():
 				return
-			case <-retryWait:
+			case <-time.After(time.Second * 5):
 			}
 		}
 	}
@@ -106,11 +103,10 @@ func (p *agentService) run() {
 		err = drive.serveSFTP(p)
 		for err != nil {
 			logger.Errorf("Drive SFTP error: %v", err)
-			retryWait := utils.WaitChan(time.Second * 5)
 			select {
 			case <-p.ctx.Done():
 				return
-			case <-retryWait:
+			case <-time.After(time.Second * 5):
 				err = drive.serveSFTP(p)
 			}
 		}

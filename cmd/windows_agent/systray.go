@@ -13,7 +13,6 @@ import (
 	"github.com/getlantern/systray"
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -59,11 +58,10 @@ func (p *agentTray) onReady(url string) func() {
 
 			setIP()
 			for {
-				retryWait := utils.WaitChan(time.Second * 2)
 				select {
 				case <-ctx.Done():
 					return
-				case <-retryWait:
+				case <-time.After(time.Second * 2):
 					setIP()
 				}
 			}
@@ -88,11 +86,10 @@ func (p *agentTray) onReady(url string) func() {
 			setStatus()
 
 			for {
-				retryWait := utils.WaitChan(time.Second * 2)
 				select {
 				case <-ctx.Done():
 					return
-				case <-retryWait:
+				case <-time.After(time.Second * 2):
 					setStatus()
 				}
 			}

@@ -80,7 +80,7 @@ func (ro *ReadOnlyFS) Chroot(path string) (billy.Filesystem, error) {
 	if err != nil {
 		return nil, err
 	}
-	return New(fs), nil
+	return NewROFS(fs), nil
 }
 
 func (ro *ReadOnlyFS) Root() string {

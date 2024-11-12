@@ -13,7 +13,6 @@ import (
 
 	"github.com/pkg/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -37,11 +36,10 @@ func Serve(ctx context.Context, errChan chan string, sftpConfig *SFTPConfig, add
 	listen()
 
 	for !listening {
-		retryWait := utils.WaitChan(time.Second * 5)
 		select {
 		case <-ctx.Done():
 			return
-		case <-retryWait:
+		case <-time.After(time.Second * 5):
 			listen()
 		}
 	}
