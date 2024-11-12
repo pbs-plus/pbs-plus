@@ -97,6 +97,8 @@ func wildcardToRegex(pattern string) string {
 	// Escape backslashes and convert path to regex-friendly format
 	escapedPattern := regexp.QuoteMeta(pattern)
 
+	escapedPattern = strings.ReplaceAll(escapedPattern, ":", "")
+
 	// Replace double-star wildcard ** with regex equivalent (any directory depth)
 	escapedPattern = strings.ReplaceAll(escapedPattern, `\*\*`, `.*`)
 
@@ -162,7 +164,9 @@ func skipFile(path string, fileInfo os.FileInfo) bool {
 		`C:\Users\*\AppData\Roaming\Zoom\logs`,
 	}
 
-	normalizedPath := strings.ToUpper(filepath.Join(path, fileInfo.Name()))
+	normalizedPath := filepath.Join(path, fileInfo.Name())
+	normalizedPath = strings.TrimPrefix(normalizedPath, "C:\\Windows\\TEMP\\pbs-plus-vss\\")
+	normalizedPath = strings.ToUpper(normalizedPath)
 
 	for _, excludePath := range excludedPaths {
 		regexPattern := wildcardToRegex(excludePath)
