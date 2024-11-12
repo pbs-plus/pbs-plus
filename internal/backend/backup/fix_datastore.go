@@ -73,6 +73,9 @@ func FixDatastore(job *store.Job, storeInstance *store.Store) error {
 	if job.Namespace != "" {
 		cmdArgs = append(cmdArgs, "--ns")
 		cmdArgs = append(cmdArgs, job.Namespace)
+	} else if isAgent && job.Namespace == "" {
+		cmdArgs = append(cmdArgs, "--ns")
+		cmdArgs = append(cmdArgs, strings.ReplaceAll(job.Target, " - ", "/"))
 	}
 
 	cmd := exec.Command("/usr/bin/proxmox-backup-client", cmdArgs...)

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 
@@ -49,7 +50,7 @@ func (h *SftpHandler) FileLister(dirPath string) (*FileLister, error) {
 			}
 
 			fullPath := filepath.Join(dirPath, entry.Name())
-			if skipFile(fullPath, info, false) {
+			if skipFile(fullPath, info) {
 				continue
 			}
 			fileInfos = append(fileInfos, info)
@@ -92,10 +93,82 @@ func (h *SftpHandler) fetch(path string, mode int) (*os.File, error) {
 	return os.OpenFile(path, mode, 0777)
 }
 
+func wildcardToRegex(pattern string) string {
+	// Escape backslashes and convert path to regex-friendly format
+	escapedPattern := regexp.QuoteMeta(pattern)
+
+	// Replace double-star wildcard ** with regex equivalent (any directory depth)
+	escapedPattern = strings.ReplaceAll(escapedPattern, `\*\*`, `.*`)
+
+	// Replace single-star wildcard * with regex equivalent (any single directory level)
+	escapedPattern = strings.ReplaceAll(escapedPattern, `\*`, `[^\\]*`)
+
+	// Ensure the regex matches paths that start with the pattern and allows for subdirectories
+	return "^" + escapedPattern + `(\\|$)`
+}
+
 func skipFile(path string, fileInfo os.FileInfo) bool {
-	restrictedDirs := []string{"$RECYCLE.BIN", "System Volume Information"}
+	restrictedDirs := []string{
+		"$RECYCLE.BIN",
+		"$WinREAgent",
+		"pagefile.sys",
+		"swapfile.sys",
+		"hiberfil.sys",
+		"System Volume Information",
+	}
+
 	for _, dir := range restrictedDirs {
-		if fileInfo.IsDir() && fileInfo.Name() == dir {
+		normalizedName := strings.ToUpper(fileInfo.Name())
+		if fileInfo.IsDir() && normalizedName == strings.ToUpper(dir) {
+			return true
+		}
+	}
+
+	excludedPaths := []string{
+		`C:\Config.Msi`,
+		`C:\Documents and Settings`,
+		`C:\MSOCache`,
+		`C:\PerfLogs`,
+		`C:\Program Files`,
+		`C:\Program Files (x86)`,
+		`C:\ProgramData`,
+		`C:\Recovery`,
+		`C:\Users\Default`,
+		`C:\Users\Public`,
+		`C:\Windows`,
+		`C:\Users\*\AppData\Local\Temp`,
+		`C:\Users\*\AppData\Local\Microsoft\Windows\INetCache`,
+		`C:\Users\*\AppData\Local\Microsoft\Windows\History`,
+		`C:\Users\*\AppData\Local\Microsoft\Edge`,
+		`C:\Users\*\AppData\Local\Google\Chrome\User Data\Default\Cache`,
+		`C:\Users\*\AppData\Local\Packages`,
+		`C:\Users\*\AppData\Roaming\Microsoft\Windows\Recent`,
+		`C:\Users\*\AppData\Local\Mozilla\Firefox\Profiles\*\cache2`,
+		`C:\Users\*\AppData\Local\Mozilla\Firefox\Profiles\*\offlineCache`,
+		`C:\Users\*\AppData\Local\Mozilla\Firefox\Profiles\*\startupCache`,
+		`C:\Users\*\AppData\Local\Thunderbird\Profiles\*\cache2`,
+		`C:\Users\*\AppData\Local\Thunderbird\Profiles\*\offlineCache`,
+		`C:\Users\*\AppData\Roaming\Thunderbird\Crash Reports`,
+		`C:\Users\*\AppData\Roaming\Mozilla\Firefox\Crash Reports`,
+		`C:\Users\*\AppData\Local\Microsoft\OneDrive\Temp`,
+		`C:\Users\*\AppData\Local\Microsoft\OneDrive\logs`,
+		`C:\Users\*\AppData\Local\Spotify\Storage`,
+		`C:\Users\*\AppData\Local\Spotify\Data`,
+		`C:\Users\*\AppData\Local\Slack\Cache`,
+		`C:\Users\*\AppData\Local\Slack\Code Cache`,
+		`C:\Users\*\AppData\Local\Slack\GPUCache`,
+		`C:\Users\*\AppData\Roaming\Zoom\bin`,
+		`C:\Users\*\AppData\Roaming\Zoom\data`,
+		`C:\Users\*\AppData\Roaming\Zoom\logs`,
+	}
+
+	normalizedPath := strings.ToUpper(filepath.Join(path, fileInfo.Name()))
+
+	for _, excludePath := range excludedPaths {
+		regexPattern := wildcardToRegex(excludePath)
+		regex := regexp.MustCompile("(?i)" + regexPattern)
+
+		if regex.MatchString(normalizedPath) {
 			return true
 		}
 	}
