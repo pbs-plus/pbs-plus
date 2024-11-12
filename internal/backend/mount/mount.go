@@ -60,7 +60,7 @@ func Mount(target *store.Target) (*AgentMount, error) {
 		"--sftp-user", "proxmox",
 		"--sftp-host", agentHost,
 		"--allow-other",
-		"--sftp-shell-type", "unix",
+		"--sftp-shell-type", "none",
 		":sftp:/", agentMount.Path,
 	}
 

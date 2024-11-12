@@ -40,12 +40,19 @@ func (h *SftpHandler) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 	h.Snapshot.UpdateTimestamp()
 	h.setFilePath(r)
 
-	file, err := h.fetch(r.Filepath, os.O_RDONLY)
+	file, err := h.fetch(r.Filepath)
 	if err != nil {
 		log.Printf("error reading file: %v", err)
 		return nil, err
 	}
-	return file, nil
+
+	stat, err := os.Lstat(r.Filepath)
+	if err != nil {
+		log.Printf("error getting file stats: %v", err)
+		return nil, err
+	}
+
+	return NewEOFInjectingReaderAt(file, stat.Size()), nil
 }
 
 func (h *SftpHandler) Filewrite(r *sftp.Request) (io.WriterAt, error) {

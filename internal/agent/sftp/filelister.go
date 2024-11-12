@@ -88,8 +88,8 @@ func (h *SftpHandler) setFilePath(r *sftp.Request) {
 	r.Filepath = filepath.Join(h.Snapshot.SnapshotPath, filepath.Clean(r.Filepath))
 }
 
-func (h *SftpHandler) fetch(path string, mode int) (*os.File, error) {
-	return os.OpenFile(path, mode, 0777)
+func (h *SftpHandler) fetch(path string) (*os.File, error) {
+	return os.Open(path)
 }
 
 func wildcardToRegex(pattern string) string {
@@ -173,14 +173,6 @@ func skipFile(path string, fileInfo os.FileInfo) bool {
 		if regex.MatchString(normalizedPath) {
 			return true
 		}
-	}
-
-	if !fileInfo.IsDir() {
-		f, err := os.Open(path)
-		if err != nil {
-			return true
-		}
-		f.Close()
 	}
 
 	return false

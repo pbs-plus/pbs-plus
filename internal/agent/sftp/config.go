@@ -37,9 +37,6 @@ func (s *SFTPConfig) GetRegistryKey() string {
 
 func InitializeSFTPConfig(svc service.Service, driveLetter string) (*SFTPConfig, error) {
 	var err error
-	if err != nil {
-		return nil, fmt.Errorf("InitializeLogger: failed to initialize logger -> %w", err)
-	}
 
 	baseKey, _, err := registry.CreateKey(registry.LOCAL_MACHINE, "Software\\PBSPlus\\Config", registry.QUERY_VALUE)
 	if err != nil {
