@@ -49,7 +49,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/pbs-d2d-backup -job="%s"`, job.ID, job.ID)
+ExecStart=/usr/bin/pbs-plus -job="%s"`, job.ID, job.ID)
 
 	filePath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
 	fullPath := filepath.Join(TimerBasePath, filePath)
