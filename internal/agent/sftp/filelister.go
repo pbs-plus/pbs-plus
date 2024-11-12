@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 
 	"github.com/pkg/sftp"
 )
@@ -164,8 +163,7 @@ func skipFile(path string, fileInfo os.FileInfo) bool {
 		`C:\Users\*\AppData\Roaming\Zoom\logs`,
 	}
 
-	normalizedPath := filepath.Join(path, fileInfo.Name())
-	normalizedPath = strings.TrimPrefix(normalizedPath, "C:\\Windows\\TEMP\\pbs-plus-vss\\")
+	normalizedPath := strings.TrimPrefix(path, "C:\\Windows\\TEMP\\pbs-plus-vss\\")
 	normalizedPath = strings.ToUpper(normalizedPath)
 
 	for _, excludePath := range excludedPaths {
@@ -180,9 +178,7 @@ func skipFile(path string, fileInfo os.FileInfo) bool {
 	if !fileInfo.IsDir() {
 		f, err := os.Open(path)
 		if err != nil {
-			if pe, ok := err.(*os.PathError); ok && pe.Err == syscall.ERROR_ACCESS_DENIED {
-				return true
-			}
+			return true
 		}
 		f.Close()
 	}
