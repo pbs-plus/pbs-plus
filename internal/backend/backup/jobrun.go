@@ -58,8 +58,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		job.Store,
 	)
 
-	_ = FixDatastore(job, storeInstance)
-
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostnameFile, err := os.ReadFile("/etc/hostname")
@@ -88,9 +86,14 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		cmdArgs = append(cmdArgs, "--ns")
 		cmdArgs = append(cmdArgs, job.Namespace)
 	} else if isAgent && job.Namespace == "" {
+		newNamespace := strings.ReplaceAll(job.Target, " - ", "/")
 		cmdArgs = append(cmdArgs, "--ns")
 		cmdArgs = append(cmdArgs, strings.ReplaceAll(job.Target, " - ", "/"))
+
+		_ = CreateNamespace(newNamespace, job, storeInstance)
 	}
+
+	_ = FixDatastore(job, storeInstance)
 
 	cmd := exec.Command("/usr/bin/proxmox-backup-client", cmdArgs...)
 	cmd.Env = os.Environ()

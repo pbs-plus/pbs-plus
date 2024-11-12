@@ -3,13 +3,70 @@
 package backup
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 )
+
+type NamespaceReq struct {
+	Name   string `json:"name"`
+	Parent string `json:"parent"`
+}
+
+func CreateNamespace(namespace string, job *store.Job, storeInstance *store.Store) error {
+	if storeInstance == nil {
+		return fmt.Errorf("CreateNamespace: store is required")
+	}
+
+	if storeInstance.APIToken == nil {
+		return fmt.Errorf("CreateNamespace: api token is required")
+	}
+
+	namespaceSplit := strings.Split(namespace, "/")
+
+	for i, ns := range namespaceSplit {
+		var reqBody []byte
+		var err error
+
+		if i == 0 {
+			reqBody, err = json.Marshal(&NamespaceReq{
+				Name: ns,
+			})
+			if err != nil {
+				return fmt.Errorf("CreateNamespace: error creating req body -> %w", err)
+			}
+		} else {
+			reqBody, err = json.Marshal(&NamespaceReq{
+				Name:   ns,
+				Parent: strings.Join(namespaceSplit[:i], "/"),
+			})
+			if err != nil {
+				return fmt.Errorf("CreateNamespace: error creating req body -> %w", err)
+			}
+		}
+
+		_ = storeInstance.ProxmoxHTTPRequest(
+			http.MethodPost,
+			fmt.Sprintf("/api2/json/admin/datastore/%s/namespace", job.Store),
+			bytes.NewBuffer(reqBody),
+			nil,
+		)
+	}
+
+	job.Namespace = namespace
+	err := storeInstance.UpdateJob(*job)
+	if err != nil {
+		return fmt.Errorf("CreateNamespace: error updating job to namespace -> %w", err)
+	}
+
+	return nil
+}
 
 func FixDatastore(job *store.Job, storeInstance *store.Store) error {
 	if storeInstance == nil {
