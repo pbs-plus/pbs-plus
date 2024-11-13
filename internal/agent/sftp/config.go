@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/billgraziano/dpapi"
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
@@ -83,21 +84,36 @@ func (config *SFTPConfig) PopulateKeys() error {
 		defer key.Close()
 
 		if privateKey, _, err := key.GetStringValue("PrivateKey"); err == nil {
-			config.PrivateKey, err = base64.StdEncoding.DecodeString(privateKey)
+			decrypted, err := dpapi.Decrypt(privateKey)
+			if err != nil {
+				return fmt.Errorf("PopulateKeys: unable to decrypt private key -> %w", err)
+			}
+
+			config.PrivateKey, err = base64.StdEncoding.DecodeString(decrypted)
 			if err != nil {
 				return fmt.Errorf("PopulateKeys: failed to decode private key -> %w", err)
 			}
 		}
 
 		if publicKey, _, err := key.GetStringValue("PublicKey"); err == nil {
-			config.PublicKey, err = base64.StdEncoding.DecodeString(publicKey)
+			decrypted, err := dpapi.Decrypt(publicKey)
+			if err != nil {
+				return fmt.Errorf("PopulateKeys: unable to decrypt public key -> %w", err)
+			}
+
+			config.PublicKey, err = base64.StdEncoding.DecodeString(decrypted)
 			if err != nil {
 				return fmt.Errorf("PopulateKeys: failed to decode public key -> %w", err)
 			}
 		}
 
 		if serverKey, _, err := key.GetStringValue("ServerKey"); err == nil {
-			config.ServerKey, err = base64.StdEncoding.DecodeString(serverKey)
+			decrypted, err := dpapi.Decrypt(serverKey)
+			if err != nil {
+				return fmt.Errorf("PopulateKeys: unable to decrypt server key -> %w", err)
+			}
+
+			config.ServerKey, err = base64.StdEncoding.DecodeString(decrypted)
 			if err != nil {
 				return fmt.Errorf("PopulateKeys: failed to decode server key -> %w", err)
 			}
@@ -126,13 +142,28 @@ func (config *SFTPConfig) PopulateKeys() error {
 		}
 		defer key.Close()
 
-		if err := key.SetStringValue("PrivateKey", base64.StdEncoding.EncodeToString(config.PrivateKey)); err != nil {
+		encPriv, err := dpapi.Encrypt(base64.StdEncoding.EncodeToString(config.PrivateKey))
+		if err != nil {
+			return fmt.Errorf("PopulateKeys: failed to encrypt private key -> %w", err)
+		}
+
+		encPub, err := dpapi.Encrypt(base64.StdEncoding.EncodeToString(config.PublicKey))
+		if err != nil {
+			return fmt.Errorf("PopulateKeys: failed to encrypt public key -> %w", err)
+		}
+
+		encServer, err := dpapi.Encrypt(base64.StdEncoding.EncodeToString(config.ServerKey))
+		if err != nil {
+			return fmt.Errorf("PopulateKeys: failed to encrypt server key -> %w", err)
+		}
+
+		if err := key.SetStringValue("PrivateKey", encPriv); err != nil {
 			return fmt.Errorf("PopulateKeys: failed to save private key -> %w", err)
 		}
-		if err := key.SetStringValue("PublicKey", base64.StdEncoding.EncodeToString(config.PublicKey)); err != nil {
+		if err := key.SetStringValue("PublicKey", encPub); err != nil {
 			return fmt.Errorf("PopulateKeys: failed to save public key -> %w", err)
 		}
-		if err := key.SetStringValue("ServerKey", base64.StdEncoding.EncodeToString(config.ServerKey)); err != nil {
+		if err := key.SetStringValue("ServerKey", encServer); err != nil {
 			return fmt.Errorf("PopulateKeys: failed to save server key -> %w", err)
 		}
 	}
