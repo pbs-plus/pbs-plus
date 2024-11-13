@@ -159,6 +159,7 @@ func skipFile(path string, fileInfo os.FileInfo) bool {
 		`C:\Users\*\AppData\Roaming\Zoom\logs`,
 		`C:\Users\*\AppData\Local\BraveSoftware`,
 		`C:\Users\*\AppData\**log**`,
+		`C:\Users\*\AppData\**\cache\**`,
 	}
 
 	normalizedPath := strings.TrimPrefix(path, "C:\\Windows\\TEMP\\pbs-plus-vss\\")

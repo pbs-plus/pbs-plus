@@ -74,6 +74,20 @@ func main() {
 		return
 	}
 
+	targetURL, err := url.Parse(store.ProxyTargetURL)
+	if err != nil {
+		s.Errorf("Failed to parse target URL: %v", err)
+	}
+
+	proxy := proxy.CreateProxy(targetURL, storeInstance)
+
+	token, err := store.GetAPITokenFromFile()
+	if err != nil {
+		s.Error(err)
+	}
+
+	storeInstance.APIToken = token
+
 	err = storeInstance.CreateTables()
 	if err != nil {
 		s.Errorf("Failed to create store tables: %v", err)
@@ -103,20 +117,6 @@ func main() {
 
 		return
 	}
-
-	targetURL, err := url.Parse(store.ProxyTargetURL)
-	if err != nil {
-		s.Errorf("Failed to parse target URL: %v", err)
-	}
-
-	proxy := proxy.CreateProxy(targetURL, storeInstance)
-
-	token, err := store.GetAPITokenFromFile()
-	if err != nil {
-		s.Error(err)
-	}
-
-	storeInstance.APIToken = token
 
 	// Set up router with routes and a reverse proxy as the default handler
 	router := &CustomRouter{
