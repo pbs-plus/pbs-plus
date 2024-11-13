@@ -122,31 +122,28 @@ func (k *KnownSnapshots) Save(snap *WinVSSSnapshot) error {
 	}
 	defer key.Close()
 
+	knownSnapshots := []WinVSSSnapshot{*snap}
+
 	if knownSnapshotsRaw, _, err := key.GetStringValue(k.registry); err == nil { // Unmarshal JSON into the configuration struct
-		knownSnapshots := []WinVSSSnapshot{}
 		if err := json.Unmarshal([]byte(knownSnapshotsRaw), &knownSnapshots); err != nil {
 			knownSnapshots = append(knownSnapshots, *snap)
 		}
 
-		for i, knownSnap := range knownSnapshots {
-			if knownSnap.SnapshotPath == snap.SnapshotPath {
-				knownSnapshots[i] = *snap
-				break
+		for _, knownSnap := range knownSnapshots {
+			if knownSnap.SnapshotPath != snap.SnapshotPath {
+				knownSnapshots = append(knownSnapshots, knownSnap)
 			}
 		}
-
-		if newKnownSnapshotsRaw, err := json.Marshal(knownSnapshots); err == nil {
-			err = key.SetStringValue(k.registry, string(newKnownSnapshotsRaw))
-			if err != nil {
-				return fmt.Errorf("Save: failed to set new array json -> %w", err)
-			}
-			return nil
-
-		} else {
-			return fmt.Errorf("Save: failed to marshal json -> %w", err)
-		}
-
 	}
 
-	return fmt.Errorf("Save: error getting known snapshots registry key -> %w", err)
+	if newKnownSnapshotsRaw, err := json.Marshal(knownSnapshots); err == nil {
+		err = key.SetStringValue(k.registry, string(newKnownSnapshotsRaw))
+		if err != nil {
+			return fmt.Errorf("Save: failed to set new array json -> %w", err)
+		}
+		return nil
+
+	} else {
+		return fmt.Errorf("Save: failed to marshal json -> %w", err)
+	}
 }
