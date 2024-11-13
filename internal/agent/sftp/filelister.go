@@ -138,6 +138,7 @@ func compileExcludedPaths() []*regexp.Regexp {
 		`Microsoft\**\Windows\**.edb`,
 		`Microsoft\**\Windows\**.log`,
 		`Microsoft\**\Windows\Cookies`,
+		`Microsoft\**\Logs`,
 		`Users\Public\AccountPictures`,
 		`I386`,
 		`Internet Explorer\`,
