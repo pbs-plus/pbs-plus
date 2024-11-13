@@ -43,6 +43,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		}
 		knownSnap.Close()
 		_ = vss.Remove(snapshotPath) // Clean up old snapshot link if expired
+		_ = os.Remove(snapshotPath)
 	}
 
 	// Attempt to create a new snapshot
@@ -57,6 +58,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 			}
 		} else if strings.Contains(err.Error(), "already exists") {
 			_ = vss.Remove(snapshotPath)
+			_ = os.Remove(snapshotPath)
 			err = vss.CreateLink(snapshotPath, volName)
 			if err != nil {
 				return nil, fmt.Errorf("Snapshot: error creating snapshot (%s to %s) -> %w", volName, snapshotPath, err)
@@ -70,6 +72,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	sc, err := vss.Get(snapshotPath)
 	if err != nil {
 		_ = vss.Remove(snapshotPath)
+		_ = os.Remove(snapshotPath)
 		return nil, fmt.Errorf("Snapshot: error getting snapshot details -> %w", err)
 	}
 
@@ -111,6 +114,7 @@ func (instance *WinVSSSnapshot) UpdateTimestamp() {
 
 func (instance *WinVSSSnapshot) Close() {
 	_ = vss.Remove(instance.Id)
+	_ = os.Remove(instance.SnapshotPath)
 
 	knownSnaps := &KnownSnapshots{
 		registry: "KnownSnaps",
