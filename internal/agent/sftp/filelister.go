@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/pkg/sftp"
 )
@@ -49,7 +50,7 @@ func (h *SftpHandler) FileLister(dirPath string) (*FileLister, error) {
 			}
 
 			fullPath := filepath.Join(dirPath, entry.Name())
-			if skipFile(fullPath, info) {
+			if skipFile(fullPath) {
 				continue
 			}
 			fileInfos = append(fileInfos, info)
@@ -63,8 +64,11 @@ func (h *SftpHandler) FileStat(filename string) (*FileLister, error) {
 	var stat fs.FileInfo
 	var err error
 
-	isRoot := strings.TrimPrefix(filename, h.Snapshot.SnapshotPath) == ""
+	if skipFile(filename) {
+		return nil, fmt.Errorf("access denied or restricted file: %s", filename)
+	}
 
+	isRoot := strings.TrimPrefix(filename, h.Snapshot.SnapshotPath) == ""
 	if isRoot {
 		stat, err = os.Stat(filename)
 		if err != nil {
@@ -75,10 +79,6 @@ func (h *SftpHandler) FileStat(filename string) (*FileLister, error) {
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	if skipFile(filename, stat) {
-		return nil, fmt.Errorf("access denied or restricted file: %s", filename)
 	}
 
 	return &FileLister{files: []os.FileInfo{stat}}, nil
@@ -101,74 +101,104 @@ func wildcardToRegex(pattern string) string {
 	escapedPattern = strings.ReplaceAll(escapedPattern, `\*`, `[^\\]*`)
 
 	// Ensure the regex matches paths that start with the pattern and allows for subdirectories
-	return "^" + escapedPattern + `(\\|$)`
+	runed := []rune(pattern)
+	if strings.Contains(pattern, ":\\") && unicode.IsLetter(runed[0]) {
+		escapedPattern = "^" + escapedPattern
+	}
+
+	return escapedPattern + `(\\|$)`
 }
 
-func skipFile(path string, fileInfo os.FileInfo) bool {
-	restrictedDirs := []string{
+func compileExcludedPaths() []*regexp.Regexp {
+	excludedPaths := []string{
+		`:\hiberfil.sys`,
+		`:\pagefile.sys`,
+		`:\swapfile.sys`,
+		`:\autoexec.bat`,
+		`:\Config.Msi`,
+		`:\Documents and Settings`,
+		`:\Recycled`,
+		`:\Recycler`,
+		`:\$$Recycle.Bin`,
+		`:\Recovery`,
+		`:\Program Files`,
+		`:\Program Files (x86)`,
+		`:\ProgramData`,
+		`:\PerfLogs`,
+		`:\Windows`,
+		`:\Windows.old`,
+		`:\$$WINDOWS.~BT`,
+		`:\$$WinREAgent`,
 		"$RECYCLE.BIN",
 		"$WinREAgent",
-		"pagefile.sys",
-		"swapfile.sys",
-		"hiberfil.sys",
 		"System Volume Information",
+		"Temporary Internet Files",
+		`Microsoft\Windows\Recent`,
+		`Microsoft\**\RecoveryStore`,
+		`Microsoft\**\Windows\**.edb`,
+		`Microsoft\**\Windows\**.log`,
+		`Microsoft\**\Windows\Cookies`,
+		`Users\Public\AccountPictures`,
+		`I386`,
+		`Internet Explorer\`,
+		`MSOCache`,
+		`NTUSER`,
+		`UsrClass.dat`,
+		`Thumbs.db`,
+		`AppData\Local\Temp`,
+		`AppData\Temp`,
+		`Local Settings\Temp`,
+		`**.tmp`,
+		`AppData\**cache`,
+		`AppData\**Crash Reports`,
+		`AppData\Local\AMD\DxCache`,
+		`AppData\Local\Apple Computer\Mobile Sync`,
+		`AppData\Local\Comms\UnistoreDB`,
+		`AppData\Local\ElevatedDiagnostics`,
+		`AppData\Local\Microsoft\Edge\User Data\Default\Cache`,
+		`AppData\Local\Microsoft\VSCommon\**SQM`,
+		`AppData\Local\Microsoft\Windows\Explorer`,
+		`AppData\Local\Microsoft\Windows\INetCache`,
+		`AppData\Local\Microsoft\Windows\UPPS`,
+		`AppData\Local\Microsoft\Windows\WebCache`,
+		`AppData\Local\Microsoft\Windows Store`,
+		`AppData\Local\Packages`,
+		`Application Data\Apple Computer\Mobile Sync`,
+		`Application Data\Application Data`,
+		`Dropbox\Dropbox.exe.log`,
+		`Dropbox\QuitReports`,
+		`Google\Chrome\User Data\Default\Cache`,
+		`Google\Chrome\User Data\Default\Cookies`,
+		`Google\Chrome\User Data\Default\Cookies-journal`,
+		`Google\Chrome\**LOCK`,
+		`Google\Chrome\**Current`,
+		`Google\Chrome\Safe Browsing`,
+		`BraveSoftware\Brave-Browser`,
+		`iPhoto Library\iPod Photo Cache`,
+		`cookies.sqlite-`,
+		`permissions.sqlite-`,
+		`Local Settings\History`,
+		`OneDrive\.849C9593-D756-4E56-8D6E-42412F2A707B`,
+		`Safari\Library\Caches`,
 	}
 
-	for _, dir := range restrictedDirs {
-		normalizedName := strings.ToUpper(fileInfo.Name())
-		if fileInfo.IsDir() && normalizedName == strings.ToUpper(dir) {
-			return true
-		}
+	var compiledRegexes []*regexp.Regexp
+	for _, pattern := range excludedPaths {
+		regexPattern := wildcardToRegex(pattern)
+		compiledRegexes = append(compiledRegexes, regexp.MustCompile("(?i)"+regexPattern))
 	}
 
-	excludedPaths := []string{
-		`C:\Config.Msi`,
-		`C:\Documents and Settings`,
-		`C:\MSOCache`,
-		`C:\PerfLogs`,
-		`C:\Program Files`,
-		`C:\Program Files (x86)`,
-		`C:\ProgramData`,
-		`C:\Recovery`,
-		`C:\Users\Default`,
-		`C:\Users\Public`,
-		`C:\Windows`,
-		`C:\Users\*\AppData\Local\Temp`,
-		`C:\Users\*\AppData\Local\Microsoft\Windows\INetCache`,
-		`C:\Users\*\AppData\Local\Microsoft\Windows\History`,
-		`C:\Users\*\AppData\Local\Microsoft\Edge`,
-		`C:\Users\*\AppData\Local\Google\Chrome\User Data\Default\Cache`,
-		`C:\Users\*\AppData\Local\Packages`,
-		`C:\Users\*\AppData\Roaming\Microsoft\Windows\Recent`,
-		`C:\Users\*\AppData\Local\Mozilla\Firefox\Profiles\*\cache2`,
-		`C:\Users\*\AppData\Local\Mozilla\Firefox\Profiles\*\offlineCache`,
-		`C:\Users\*\AppData\Local\Mozilla\Firefox\Profiles\*\startupCache`,
-		`C:\Users\*\AppData\Local\Thunderbird\Profiles\*\cache2`,
-		`C:\Users\*\AppData\Local\Thunderbird\Profiles\*\offlineCache`,
-		`C:\Users\*\AppData\Roaming\Thunderbird\Crash Reports`,
-		`C:\Users\*\AppData\Roaming\Mozilla\Firefox\Crash Reports`,
-		`C:\Users\*\AppData\Local\Microsoft\OneDrive\Temp`,
-		`C:\Users\*\AppData\Local\Microsoft\OneDrive\logs`,
-		`C:\Users\*\AppData\Local\Spotify\Storage`,
-		`C:\Users\*\AppData\Local\Spotify\Data`,
-		`C:\Users\*\AppData\Local\Slack\Cache`,
-		`C:\Users\*\AppData\Local\Slack\Code Cache`,
-		`C:\Users\*\AppData\Local\Slack\GPUCache`,
-		`C:\Users\*\AppData\Roaming\Zoom\bin`,
-		`C:\Users\*\AppData\Roaming\Zoom\data`,
-		`C:\Users\*\AppData\Roaming\Zoom\logs`,
-		`C:\Users\*\AppData\Local\BraveSoftware`,
-		`C:\Users\*\AppData\**log**`,
-		`C:\Users\*\AppData\**\cache\**`,
-	}
+	return compiledRegexes
+}
 
+// Precompiled regex patterns for excluded paths
+var excludedPathRegexes = compileExcludedPaths()
+
+func skipFile(path string) bool {
 	normalizedPath := strings.TrimPrefix(path, "C:\\Windows\\TEMP\\pbs-plus-vss\\")
 	normalizedPath = strings.ToUpper(normalizedPath)
 
-	for _, excludePath := range excludedPaths {
-		regexPattern := wildcardToRegex(excludePath)
-		regex := regexp.MustCompile("(?i)" + regexPattern)
-
+	for _, regex := range excludedPathRegexes {
 		if regex.MatchString(normalizedPath) {
 			return true
 		}
