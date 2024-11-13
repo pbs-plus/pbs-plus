@@ -9,6 +9,6 @@ systemctl daemon-reload
 systemctl enable pbs-plus.service
 
 # Start the service
-systemctl start pbs-plus.service
+systemctl restart pbs-plus.service
 
 exit 0

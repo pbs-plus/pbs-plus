@@ -56,6 +56,7 @@ func main() {
 		cmd := os.Args[1]
 		switch cmd {
 		case "install":
+			_ = s.Uninstall()
 			err = s.Install()
 			if err != nil {
 				logger.Errorf("Failed to install service: %s", err)
