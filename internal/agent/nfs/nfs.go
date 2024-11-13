@@ -6,6 +6,7 @@ package nfs
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"time"
@@ -17,51 +18,45 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-func Serve(ctx context.Context, errChan chan string, address, port string, driveLetter string) {
+func Serve(ctx context.Context, address, port string, driveLetter string) error {
 	baseKey, _, err := registry.CreateKey(registry.LOCAL_MACHINE, "Software\\PBSPlus\\Config", registry.QUERY_VALUE)
 	if err != nil {
-		errChan <- fmt.Sprintf("Unable to create registry key -> %v", err)
-		return
+		return fmt.Errorf("Unable to create registry key -> %v", err)
 	}
 
 	defer baseKey.Close()
 
 	var server string
 	if server, _, err = baseKey.GetStringValue("ServerURL"); err != nil {
-		errChan <- fmt.Sprintf("Unable to get server url -> %v", err)
-		return
+		return fmt.Errorf("Unable to get server url -> %v", err)
 	}
 
 	serverUrl, err := url.Parse(server)
 	if err != nil {
-		errChan <- fmt.Sprintf("failed to parse server IP: %v", err)
-		return
+		return fmt.Errorf("failed to parse server IP: %v", err)
 	}
 
 	var listener net.Listener
-	listening := false
 
-	listen := func() {
+	listen := func() error {
 		var err error
 		listenAt := fmt.Sprintf("%s:%s", address, port)
 		listener, err = net.Listen("tcp", listenAt)
 		if err != nil {
-			errChan <- fmt.Sprintf("Port is already in use! Failed to listen on %s: %v", listenAt, err)
-			return
+			return fmt.Errorf("Port is already in use! Failed to listen on %s: %v", listenAt, err)
 		}
 
 		listener = &FilteredListener{Listener: listener, allowedIP: serverUrl.Hostname()}
-		listening = true
+		return nil
 	}
 
-	listen()
-
-	for !listening {
+	err = listen()
+	for err != nil {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-time.After(time.Second * 5):
-			listen()
+			err = listen()
 		}
 	}
 
@@ -69,8 +64,7 @@ func Serve(ctx context.Context, errChan chan string, address, port string, drive
 
 	snapshot, err := snapshots.Snapshot(driveLetter)
 	if err != nil {
-		errChan <- fmt.Sprintf("failed to initialize snapshot: %v", err)
-		return
+		return fmt.Errorf("failed to initialize snapshot: %v", err)
 	}
 	defer snapshot.Close()
 
@@ -83,7 +77,7 @@ func Serve(ctx context.Context, errChan chan string, address, port string, drive
 		go func() {
 			err := nfs.Serve(listener, nfsHandler)
 			if err != nil {
-				errChan <- fmt.Sprintf("NFS server error: %v", err)
+				log.Printf("NFS server error: %v\n", err)
 			}
 			close(done)
 		}()
@@ -91,7 +85,7 @@ func Serve(ctx context.Context, errChan chan string, address, port string, drive
 		select {
 		case <-ctx.Done():
 			listener.Close()
-			return
+			return nil
 		case <-done:
 		}
 	}

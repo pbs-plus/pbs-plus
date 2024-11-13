@@ -1,13 +1,12 @@
 package nfs
 
 import (
-	"errors"
 	"os"
 
 	"github.com/go-git/go-billy/v5"
 )
 
-var errReadOnly = errors.New("read-only file system")
+var errReadOnly = billy.ErrReadOnly
 
 type ReadOnlyFS struct {
 	fs billy.Filesystem
@@ -26,6 +25,11 @@ func (ro *ReadOnlyFS) OpenFile(filename string, flag int, perm os.FileMode) (bil
 	if flag != os.O_RDONLY {
 		return nil, errReadOnly
 	}
+
+	if skipPath(filename) {
+		return nil, billy.ErrNotSupported
+	}
+
 	return ro.fs.OpenFile(filename, flag, perm)
 }
 
@@ -40,10 +44,18 @@ func (ro *ReadOnlyFS) Remove(filename string) error {
 // Delegate read-only operations to the underlying fs
 
 func (ro *ReadOnlyFS) Open(filename string) (billy.File, error) {
+	if skipPath(filename) {
+		return nil, billy.ErrNotSupported
+	}
+
 	return ro.fs.Open(filename)
 }
 
 func (ro *ReadOnlyFS) Stat(filename string) (os.FileInfo, error) {
+	if skipPath(filename) {
+		return nil, billy.ErrNotSupported
+	}
+
 	return ro.fs.Stat(filename)
 }
 
@@ -56,6 +68,10 @@ func (ro *ReadOnlyFS) TempFile(dir, prefix string) (billy.File, error) {
 }
 
 func (ro *ReadOnlyFS) ReadDir(path string) ([]os.FileInfo, error) {
+	if skipPath(path) {
+		return nil, billy.ErrNotSupported
+	}
+
 	return ro.fs.ReadDir(path)
 }
 
@@ -72,10 +88,18 @@ func (ro *ReadOnlyFS) Symlink(target, link string) error {
 }
 
 func (ro *ReadOnlyFS) Readlink(link string) (string, error) {
+	if skipPath(link) {
+		return "", billy.ErrNotSupported
+	}
+
 	return ro.fs.Readlink(link)
 }
 
 func (ro *ReadOnlyFS) Chroot(path string) (billy.Filesystem, error) {
+	if skipPath(path) {
+		return nil, billy.ErrNotSupported
+	}
+
 	fs, err := ro.fs.Chroot(path)
 	if err != nil {
 		return nil, err
