@@ -106,7 +106,7 @@ func wildcardToRegex(pattern string) string {
 		escapedPattern = "^" + escapedPattern
 	}
 
-	return escapedPattern + `(\\|$)`
+	return escapedPattern
 }
 
 func compileExcludedPaths() []*regexp.Regexp {
