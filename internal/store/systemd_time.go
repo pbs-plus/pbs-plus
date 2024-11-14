@@ -121,6 +121,10 @@ func getNextSchedule(job *Job) (*time.Time, error) {
 		}
 
 		nextStr := strings.Join(fields[0:4], " ")
+		if strings.TrimSpace(nextStr) == "-" {
+			return nil, nil
+		}
+
 		nextTime, err := time.Parse(layout, nextStr)
 		if err != nil {
 			return nil, fmt.Errorf("getNextSchedule: error parsing Next time -> %w", err)
