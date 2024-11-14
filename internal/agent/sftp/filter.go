@@ -1,3 +1,5 @@
+//go:build windows
+
 package sftp
 
 import (
@@ -113,14 +115,31 @@ func compileExcludedPaths() []*regexp.Regexp {
 // Precompiled regex patterns for excluded paths
 var excludedPathRegexes = compileExcludedPaths()
 
-func skipFile(path string) bool {
-	normalizedPath := strings.TrimPrefix(path, "C:\\Windows\\TEMP\\pbs-plus-vss\\")
-	normalizedPath = strings.ToUpper(normalizedPath)
+func (h *SftpHandler) skipFile(path string) bool {
+	snapSplit := strings.Split(h.Snapshot.SnapshotPath, "\\")
+	snapRoot := strings.Join(snapSplit[:len(snapSplit)-1], "\\")
+
+	pathWithoutSnap := strings.TrimPrefix(path, snapRoot)
+	normalizedPath := strings.ToUpper(strings.TrimPrefix(pathWithoutSnap, "\\"))
+
+	if strings.TrimSpace(normalizedPath) == "" {
+		return false
+	}
 
 	for _, regex := range excludedPathRegexes {
 		if regex.MatchString(normalizedPath) {
 			return true
 		}
+	}
+
+	isTmp, err := isTemporary(path)
+	if err != nil || isTmp {
+		return true
+	}
+
+	probablyLocked, err := inconsistentSize(path)
+	if err != nil || probablyLocked {
+		return true
 	}
 
 	return false
