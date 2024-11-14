@@ -58,28 +58,3 @@ func invalidAttributes(path string) (bool, error) {
 
 	return false, nil
 }
-
-func inconsistentSize(path string) (bool, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return true, err
-	}
-	defer file.Close()
-
-	si := &FileStandardInfo{}
-	err = windows.GetFileInformationByHandleEx(windows.Handle(file.Fd()), windows.FileStandardInfo, (*byte)(unsafe.Pointer(si)), uint32(unsafe.Sizeof(*si)))
-	if err != nil {
-		return true, err
-	}
-
-	stat, err := os.Lstat(path)
-	if err != nil {
-		return true, err
-	}
-
-	if si.EndOfFile == stat.Size() {
-		return false, nil
-	}
-
-	return true, nil
-}

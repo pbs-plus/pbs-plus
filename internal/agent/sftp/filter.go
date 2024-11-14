@@ -84,7 +84,6 @@ func compileExcludedPaths() []*regexp.Regexp {
 		`AppData\Local\Microsoft\Windows\WebCache`,
 		`AppData\Local\Microsoft\Windows Store`,
 		`AppData\Local\Packages`,
-		`AppData\Local\Veritas`,
 		`Application Data\Apple Computer\Mobile Sync`,
 		`Application Data\Application Data**`,
 		`Dropbox\Dropbox.exe.log`,
@@ -95,7 +94,12 @@ func compileExcludedPaths() []*regexp.Regexp {
 		`Google\Chrome\**LOCK**`,
 		`Google\Chrome\**Current**`,
 		`Google\Chrome\Safe Browsing**`,
-		`BraveSoftware\Brave-Browser`,
+		`BraveSoftware\Brave-Browser\User Data\Default\Cache`,
+		`BraveSoftware\Brave-Browser\User Data\Default\Cookies`,
+		`BraveSoftware\Brave-Browser\User Data\Default\Cookies-journal`,
+		`BraveSoftware\Brave-Browser\**LOCK**`,
+		`BraveSoftware\Brave-Browser\**Current**`,
+		`BraveSoftware\Brave-Browser\Safe Browsing**`,
 		`iPhoto Library\iPod Photo Cache`,
 		`cookies.sqlite-**`,
 		`permissions.sqlite-**`,
@@ -135,11 +139,6 @@ func (h *SftpHandler) skipFile(path string) bool {
 
 	invalidAttr, err := invalidAttributes(path)
 	if err != nil || invalidAttr {
-		return true
-	}
-
-	probablyLocked, err := inconsistentSize(path)
-	if err != nil || probablyLocked {
 		return true
 	}
 
