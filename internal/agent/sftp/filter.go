@@ -132,8 +132,8 @@ func (h *SftpHandler) skipFile(path string) bool {
 		}
 	}
 
-	isTmp, err := isTemporary(path)
-	if err != nil || isTmp {
+	invalidAttr, err := invalidAttributes(path)
+	if err != nil || invalidAttr {
 		return true
 	}
 

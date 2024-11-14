@@ -4,6 +4,7 @@ package sftp
 
 import (
 	"os"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -23,7 +24,34 @@ type FileAttributeTagInfo struct {
 	ReparseTag     uint32
 }
 
-func isTemporary(path string) (bool, error) {
+func checkFileLock(filePath string) bool {
+	utfPath, err := syscall.UTF16PtrFromString(filePath)
+	if err != nil {
+		return true
+	}
+
+	hFile, err := windows.CreateFile(
+		utfPath,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		windows.OPEN_ALWAYS,
+		0,
+		0,
+	)
+
+	if err != nil {
+		errCode := windows.GetLastError()
+		if errCode == windows.ERROR_SHARING_VIOLATION {
+			return true
+		}
+	}
+
+	windows.CloseHandle(hFile)
+	return false
+}
+
+func invalidAttributes(path string) (bool, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return true, err
@@ -36,7 +64,23 @@ func isTemporary(path string) (bool, error) {
 		return true, err
 	}
 
-	if at.FileAttributes&windows.FILE_ATTRIBUTE_TEMPORARY == windows.FILE_ATTRIBUTE_TEMPORARY {
+	if at.FileAttributes&windows.FILE_ATTRIBUTE_TEMPORARY != 0 {
+		return true, nil
+	}
+
+	if at.FileAttributes&windows.FILE_ATTRIBUTE_RECALL_ON_OPEN != 0 {
+		return true, nil
+	}
+
+	if at.FileAttributes&windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
+		return true, nil
+	}
+
+	if at.FileAttributes&windows.FILE_ATTRIBUTE_VIRTUAL != 0 {
+		return true, nil
+	}
+
+	if at.FileAttributes&windows.FILE_ATTRIBUTE_OFFLINE != 0 {
 		return true, nil
 	}
 
