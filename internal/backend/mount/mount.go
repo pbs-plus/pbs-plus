@@ -55,6 +55,7 @@ func Mount(target *store.Target) (*AgentMount, error) {
 		"--read-only",
 		"--uid", "0",
 		"--gid", "0",
+		"--sftp-disable-concurrent-reads",
 		"--sftp-disable-hashcheck",
 		"--sftp-idle-timeout", "0",
 		"--sftp-key-file", privKeyFile,
