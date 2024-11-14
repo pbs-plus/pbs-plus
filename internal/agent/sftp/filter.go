@@ -154,9 +154,5 @@ func (h *SftpHandler) skipFile(path string) bool {
 		return true
 	}
 
-	if isFileOpen(strings.Replace(pathWithoutSnap, "\\", ":\\", 1)) {
-		return true
-	}
-
 	return false
 }

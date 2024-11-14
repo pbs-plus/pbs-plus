@@ -13,6 +13,16 @@ import (
 	"github.com/pkg/sftp"
 )
 
+// FileInfoWithUnknownSize wraps an os.FileInfo and overrides the Size method to return -1.
+type FileInfoWithUnknownSize struct {
+	os.FileInfo
+}
+
+// Size overrides the original Size method to always return -1.
+func (f *FileInfoWithUnknownSize) Size() int64 {
+	return -1
+}
+
 type FileLister struct {
 	files []os.FileInfo
 }
@@ -50,7 +60,8 @@ func (h *SftpHandler) FileLister(dirPath string) (*FileLister, error) {
 			if h.skipFile(fullPath) {
 				continue
 			}
-			fileInfos = append(fileInfos, info)
+			// Wrap the original os.FileInfo to override its Size method.
+			fileInfos = append(fileInfos, &FileInfoWithUnknownSize{FileInfo: info})
 		}
 	}
 
@@ -74,9 +85,11 @@ func (h *SftpHandler) FileStat(filename string) (*FileLister, error) {
 		}
 	}
 
-	return &FileLister{files: []os.FileInfo{stat}}, nil
+	// Wrap the original os.FileInfo to override its Size method.
+	return &FileLister{files: []os.FileInfo{&FileInfoWithUnknownSize{FileInfo: stat}}}, nil
 }
 
 func (h *SftpHandler) setFilePath(r *sftp.Request) {
 	r.Filepath = filepath.Join(h.Snapshot.SnapshotPath, filepath.Clean(r.Filepath))
 }
+
