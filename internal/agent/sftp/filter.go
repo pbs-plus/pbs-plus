@@ -86,6 +86,7 @@ func compileExcludedPaths() []*regexp.Regexp {
 		`AppData\Local\Microsoft\Windows\WebCache`,
 		`AppData\Local\Microsoft\Windows Store`,
 		`AppData\Local\Packages`,
+		`AppData\Local\Veritas\DLO`,
 		`Application Data\Apple Computer\Mobile Sync`,
 		`Application Data\Application Data**`,
 		`Dropbox\Dropbox.exe.log`,
@@ -128,9 +129,11 @@ func (h *SftpHandler) skipFile(path string) bool {
 		return true
 	}
 
-	// skip probably opened files
-	if h.Snapshot.TimeStarted.Sub(stat.ModTime()) <= time.Minute {
-		return true
+	if !stat.IsDir() {
+		// skip probably opened files
+		if h.Snapshot.TimeStarted.Sub(stat.ModTime()) <= time.Minute {
+			return true
+		}
 	}
 
 	snapSplit := strings.Split(h.Snapshot.SnapshotPath, "\\")
