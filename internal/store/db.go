@@ -216,11 +216,11 @@ func (store *Store) SetSchedule(job Job) error {
 		return nil
 	}
 
-	cmd = exec.Command("/usr/bin/systemctl", "enable", "--now", timerPath)
+	cmd = exec.Command("/usr/bin/systemctl", "enable", timerPath)
 	cmd.Env = os.Environ()
 	err = cmd.Run()
 	if err != nil {
-		return fmt.Errorf("SetSchedule: error running enable --now -> %w", err)
+		return fmt.Errorf("SetSchedule: error running enable -> %w", err)
 	}
 
 	return nil
