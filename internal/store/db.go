@@ -345,7 +345,7 @@ func (store *Store) GetAllJobs() ([]Job, error) {
 
 		nextSchedule, err := getNextSchedule(&job)
 		if err != nil {
-			return nil, fmt.Errorf("GetAllJobs: error getting next schedule -> %w", err)
+			nextSchedule = nil
 		}
 
 		if nextSchedule != nil {
