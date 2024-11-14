@@ -18,7 +18,7 @@ Description=%s Backup Job Timer
 
 [Timer]
 OnCalendar=%s
-Persistent=true
+Persistent=false
 
 [Install]
 WantedBy=timers.target`, job.ID, job.Schedule)
