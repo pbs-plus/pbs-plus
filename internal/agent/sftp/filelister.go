@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"unsafe"
 
 	"github.com/pkg/sftp"
 )
@@ -18,9 +20,38 @@ type FileInfoWithUnknownSize struct {
 	os.FileInfo
 }
 
-// Size overrides the original Size method to always return -1.
 func (f *FileInfoWithUnknownSize) Size() int64 {
-	return -1
+	// Convert file path to UTF-16 pointer for Windows API call
+	lpFileName, err := syscall.UTF16PtrFromString(f.Name())
+	if err != nil {
+		return -1
+	}
+
+	// Open the file with read-only access
+	handle, err := syscall.CreateFile(lpFileName, syscall.GENERIC_READ, syscall.FILE_SHARE_READ, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return -1
+	}
+	defer syscall.CloseHandle(handle)
+
+	// Create a file mapping
+	mappingHandle, err := syscall.CreateFileMapping(handle, nil, syscall.PAGE_READONLY, 0, 0, nil)
+	if err != nil {
+		return -1
+	}
+	defer syscall.CloseHandle(mappingHandle)
+
+	// Map a view of the file into the process's address space
+	ptr, err := syscall.MapViewOfFile(mappingHandle, syscall.FILE_MAP_READ, 0, 0, 0)
+	if err != nil {
+		return -1
+	}
+	defer syscall.UnmapViewOfFile(ptr)
+
+	// Calculate the file size by examining the mapped memory
+	fileSize := int64(unsafe.Sizeof(*(*byte)(unsafe.Pointer(ptr))))
+
+	return fileSize
 }
 
 type FileLister struct {
