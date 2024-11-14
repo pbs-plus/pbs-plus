@@ -4,7 +4,6 @@ package sftp
 
 import (
 	"os"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -22,33 +21,6 @@ type FileStandardInfo struct {
 type FileAttributeTagInfo struct {
 	FileAttributes uint32
 	ReparseTag     uint32
-}
-
-func checkFileLock(filePath string) bool {
-	utfPath, err := syscall.UTF16PtrFromString(filePath)
-	if err != nil {
-		return true
-	}
-
-	hFile, err := windows.CreateFile(
-		utfPath,
-		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
-		nil,
-		windows.OPEN_ALWAYS,
-		0,
-		0,
-	)
-
-	if err != nil {
-		errCode := windows.GetLastError()
-		if errCode == windows.ERROR_SHARING_VIOLATION {
-			return true
-		}
-	}
-
-	windows.CloseHandle(hFile)
-	return false
 }
 
 func invalidAttributes(path string) (bool, error) {

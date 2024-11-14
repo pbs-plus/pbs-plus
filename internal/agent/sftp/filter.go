@@ -84,6 +84,7 @@ func compileExcludedPaths() []*regexp.Regexp {
 		`AppData\Local\Microsoft\Windows\WebCache`,
 		`AppData\Local\Microsoft\Windows Store`,
 		`AppData\Local\Packages`,
+		`AppData\Local\Veritas`,
 		`Application Data\Apple Computer\Mobile Sync`,
 		`Application Data\Application Data**`,
 		`Dropbox\Dropbox.exe.log`,
