@@ -17,7 +17,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
-func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) {
+func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{}) (*store.Task, error) {
 	if storeInstance.APIToken == nil {
 		return nil, fmt.Errorf("RunBackup: api token is required")
 	}
@@ -161,6 +161,11 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	}
 
 	go func() {
+		defer func() {
+			if waitChan != nil {
+				close(waitChan)
+			}
+		}()
 		syslogger, err := syslog.InitializeLogger()
 		if err != nil {
 			log.Printf("Failed to initialize logger: %s", err)

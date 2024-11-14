@@ -110,9 +110,13 @@ func main() {
 			return
 		}
 
-		_, err = backup.RunBackup(jobTask, storeInstance)
+		waitChan := make(chan struct{})
+		_, err = backup.RunBackup(jobTask, storeInstance, waitChan)
 		if err != nil {
+			close(waitChan)
 			s.Error(err)
+		} else {
+			<-waitChan
 		}
 
 		return
