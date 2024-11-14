@@ -46,6 +46,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		_ = os.Remove(snapshotPath)
 	}
 
+	timeStarted := time.Now()
 	// Attempt to create a new snapshot
 	err = vss.CreateLink(snapshotPath, volName)
 	if err != nil {
@@ -59,6 +60,8 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		} else if strings.Contains(err.Error(), "already exists") {
 			_ = vss.Remove(snapshotPath)
 			_ = os.Remove(snapshotPath)
+
+			timeStarted = time.Now()
 			err = vss.CreateLink(snapshotPath, volName)
 			if err != nil {
 				return nil, fmt.Errorf("Snapshot: error creating snapshot (%s to %s) -> %w", volName, snapshotPath, err)
@@ -80,6 +83,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		SnapshotPath: snapshotPath,
 		LastAccessed: time.Now(),
 		Id:           sc.ID,
+		TimeStarted:  timeStarted,
 	}
 	knownSnaps.Save(newSnapshot)
 

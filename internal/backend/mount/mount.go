@@ -52,10 +52,9 @@ func Mount(target *store.Target) (*AgentMount, error) {
 		"--daemon",
 		"--no-seek",
 		"--read-only",
-		"--direct-io",
 		"--uid", "0",
 		"--gid", "0",
-		"--vfs-read-chunk-size", "0",
+		"--vfs-cache-mode", "minimal",
 		"--sftp-disable-hashcheck",
 		"--sftp-idle-timeout", "0",
 		"--sftp-key-file", privKeyFile,
@@ -75,7 +74,7 @@ func Mount(target *store.Target) (*AgentMount, error) {
 
 	agentMount.Cmd = mnt
 
-	err = mnt.Start()
+	err = mnt.Run()
 	if err != nil {
 		agentMount.Unmount()
 		return nil, fmt.Errorf("Mount: error starting rclone for sftp -> %w", err)

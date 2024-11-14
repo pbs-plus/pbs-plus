@@ -3,8 +3,10 @@
 package sftp
 
 import (
+	"os"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -121,6 +123,16 @@ func compileExcludedPaths() []*regexp.Regexp {
 var excludedPathRegexes = compileExcludedPaths()
 
 func (h *SftpHandler) skipFile(path string) bool {
+	stat, err := os.Lstat(path)
+	if err != nil {
+		return true
+	}
+
+	// skip probably opened files
+	if h.Snapshot.TimeStarted.Sub(stat.ModTime()) <= time.Minute {
+		return true
+	}
+
 	snapSplit := strings.Split(h.Snapshot.SnapshotPath, "\\")
 	snapRoot := strings.Join(snapSplit[:len(snapSplit)-1], "\\")
 
@@ -139,6 +151,10 @@ func (h *SftpHandler) skipFile(path string) bool {
 
 	invalidAttr, err := invalidAttributes(path)
 	if err != nil || invalidAttr {
+		return true
+	}
+
+	if isFileOpen(strings.Replace(pathWithoutSnap, "\\", ":\\", 1)) {
 		return true
 	}
 

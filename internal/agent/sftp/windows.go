@@ -4,6 +4,7 @@ package sftp
 
 import (
 	"os"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -57,4 +58,36 @@ func invalidAttributes(path string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+const ERROR_SHARING_VIOLATION syscall.Errno = 32
+
+func isFileOpen(path string) bool {
+	p, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return false
+	}
+
+	// Use CreateFileW system call to open the file with read-write and exclusive access
+	// FILE_SHARE_NONE ensures that the file cannot be opened by any other process
+	h, err := syscall.CreateFile(
+		p,
+		syscall.GENERIC_READ|syscall.GENERIC_WRITE,
+		0,
+		nil,
+		syscall.OPEN_EXISTING,
+		syscall.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+
+	if err != nil {
+		// ERROR_SHARING_VIOLATION means the file is already open by another process
+		if errno, ok := err.(syscall.Errno); ok && errno == ERROR_SHARING_VIOLATION {
+			return true
+		}
+		return false
+	}
+
+	syscall.CloseHandle(h)
+	return false
 }

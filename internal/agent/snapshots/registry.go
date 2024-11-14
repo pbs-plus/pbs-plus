@@ -16,6 +16,7 @@ type WinVSSSnapshot struct {
 	SnapshotPath string    `json:"path"`
 	Id           string    `json:"vss_id"`
 	LastAccessed time.Time `json:"last_accessed"`
+	TimeStarted  time.Time `json:"time_started"`
 }
 
 type KnownSnapshots struct {
