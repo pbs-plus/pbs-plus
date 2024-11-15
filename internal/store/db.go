@@ -124,7 +124,7 @@ func (store *Store) CreateTables() error {
 
 	createExclusionBridgeTable := `
     CREATE TABLE IF NOT EXISTS exclusion_bridges (
-        id INTEGER PRIMARY KEY AUTO INCREMENT,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
 				exclusion_path TEXT NOT NULL,
 				job_id TEXT NOT NULL,
 				FOREIGN KEY (exclusion_path)
