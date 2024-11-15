@@ -289,7 +289,7 @@ func (store *Store) SetSchedule(job Job) error {
 		return nil
 	}
 
-	cmd = exec.Command("/usr/bin/systemctl", "enable", timerPath)
+	cmd = exec.Command("/usr/bin/systemctl", "enable", "--now", timerPath)
 	cmd.Env = os.Environ()
 	err = cmd.Run()
 	if err != nil {
