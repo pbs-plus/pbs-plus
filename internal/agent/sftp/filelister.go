@@ -14,9 +14,8 @@ import (
 	"github.com/pkg/sftp"
 )
 
-var cacheMutex sync.Mutex // Mutex to protect the cache structure itself
-var sizeCache map[string]map[string]int64
-var mutexMap map[string]*sync.RWMutex // Mutex map for each file path
+var sizeCache sync.Map // Map[filePath]*sync.Map (snapshotId -> size)
+var mutexMap sync.Map  // Map[filePath]*sync.RWMutex
 
 type CustomFileInfo struct {
 	os.FileInfo
@@ -24,55 +23,31 @@ type CustomFileInfo struct {
 	snapshotId string
 }
 
-func initializeSizeCache() {
-	cacheMutex.Lock()
-	defer cacheMutex.Unlock()
-	if sizeCache == nil {
-		sizeCache = make(map[string]map[string]int64)
-	}
-	if mutexMap == nil {
-		mutexMap = make(map[string]*sync.RWMutex)
-	}
-}
-
 func getMutex(filePath string) *sync.RWMutex {
-	cacheMutex.Lock()
-	defer cacheMutex.Unlock()
-
-	if _, exists := mutexMap[filePath]; !exists {
-		mutexMap[filePath] = &sync.RWMutex{}
-	}
-	return mutexMap[filePath]
+	mutex, _ := mutexMap.LoadOrStore(filePath, &sync.RWMutex{})
+	return mutex.(*sync.RWMutex)
 }
 
 func (f *CustomFileInfo) Size() int64 {
-	// use metadata if >100mb
-	// ideally, text files still being written to would be less than 100mb anyways
+	// Use metadata if file size >= 100MB
 	if f.FileInfo.Size() >= 104857600 {
 		return f.FileInfo.Size()
 	}
 
-	cacheMutex.Lock()
-	if sizeCache == nil || mutexMap == nil {
-		initializeSizeCache()
-	}
-	cacheMutex.Unlock()
-
+	// Retrieve the file-specific mutex
 	fileMutex := getMutex(f.filePath)
 
+	// Check size cache with read lock
 	fileMutex.RLock()
-	if _, ok := sizeCache[f.filePath]; ok {
-		if cachedSize, ok := sizeCache[f.filePath][f.snapshotId]; ok {
+	if snapSizes, ok := sizeCache.Load(f.filePath); ok {
+		if cachedSize, ok := snapSizes.(*sync.Map).Load(f.snapshotId); ok {
 			fileMutex.RUnlock()
-			return cachedSize
+			return cachedSize.(int64)
 		}
 	}
 	fileMutex.RUnlock()
 
-	fileMutex.Lock()
-	sizeCache[f.filePath] = make(map[string]int64)
-	fileMutex.Unlock()
-
+	// Compute file size if not cached
 	file, err := os.Open(f.filePath)
 	if err != nil {
 		return 0
@@ -84,9 +59,12 @@ func (f *CustomFileInfo) Size() int64 {
 		return 0
 	}
 
+	// Update cache with write lock
 	fileMutex.Lock()
-	sizeCache[f.filePath][f.snapshotId] = byteCount
-	fileMutex.Unlock()
+	defer fileMutex.Unlock()
+
+	snapSizes, _ := sizeCache.LoadOrStore(f.filePath, &sync.Map{})
+	snapSizes.(*sync.Map).Store(f.snapshotId, byteCount)
 
 	return byteCount
 }
