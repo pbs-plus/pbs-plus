@@ -14,11 +14,10 @@ import (
 	"github.com/pkg/sftp"
 )
 
-var cacheMutex sync.RWMutex
+var cacheMutex sync.Mutex // Mutex to protect the cache structure itself
 var sizeCache map[string]map[string]int64
-var cacheOnce sync.Once
+var mutexMap map[string]*sync.RWMutex // Mutex map for each file path
 
-// CustomFileInfo wraps an os.FileInfo and overrides the Size method to return -1.
 type CustomFileInfo struct {
 	os.FileInfo
 	filePath   string
@@ -31,22 +30,42 @@ func initializeSizeCache() {
 	if sizeCache == nil {
 		sizeCache = make(map[string]map[string]int64)
 	}
+	if mutexMap == nil {
+		mutexMap = make(map[string]*sync.RWMutex)
+	}
+}
+
+func getMutex(filePath string) *sync.RWMutex {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	if _, exists := mutexMap[filePath]; !exists {
+		mutexMap[filePath] = &sync.RWMutex{}
+	}
+	return mutexMap[filePath]
 }
 
 func (f *CustomFileInfo) Size() int64 {
-	cacheOnce.Do(initializeSizeCache)
+	cacheMutex.Lock()
+	if sizeCache == nil || mutexMap == nil {
+		initializeSizeCache()
+	}
+	cacheMutex.Unlock()
 
-	cacheMutex.RLock()
+	fileMutex := getMutex(f.filePath)
+
+	fileMutex.RLock()
 	if _, ok := sizeCache[f.filePath]; ok {
 		if cachedSize, ok := sizeCache[f.filePath][f.snapshotId]; ok {
+			fileMutex.RUnlock()
 			return cachedSize
 		}
 	}
-	cacheMutex.RUnlock()
+	fileMutex.RUnlock()
 
-	cacheMutex.Lock()
+	fileMutex.Lock()
 	sizeCache[f.filePath] = make(map[string]int64)
-	cacheMutex.Unlock()
+	fileMutex.Unlock()
 
 	file, err := os.Open(f.filePath)
 	if err != nil {
@@ -59,9 +78,9 @@ func (f *CustomFileInfo) Size() int64 {
 		return 0
 	}
 
-	cacheMutex.Lock()
+	fileMutex.Lock()
 	sizeCache[f.filePath][f.snapshotId] = byteCount
-	cacheMutex.Unlock()
+	fileMutex.Unlock()
 
 	return byteCount
 }
