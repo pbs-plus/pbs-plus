@@ -31,14 +31,17 @@ func getMutex(filePath string) *sync.RWMutex {
 func (f *CustomFileInfo) Size() int64 {
 	metadataSize := f.FileInfo.Size()
 	ext := filepath.Ext(f.filePath)
+	baseName := filepath.Base(f.filePath)
+
 	if ext != "" {
 		fileExtensions := []string{
 			".log",
+			".dat",
 		}
 
 		scanFile := false
 		for _, fileExtension := range fileExtensions {
-			if ext == fileExtension {
+			if strings.Contains(baseName, fileExtension) {
 				scanFile = true
 				break
 			}
