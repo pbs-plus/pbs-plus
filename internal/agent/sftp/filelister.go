@@ -9,49 +9,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"unsafe"
 
 	"github.com/pkg/sftp"
 )
 
-// FileInfoWithUnknownSize wraps an os.FileInfo and overrides the Size method to return -1.
-type FileInfoWithUnknownSize struct {
+// CustomFileInfo wraps an os.FileInfo and overrides the Size method to return -1.
+type CustomFileInfo struct {
 	os.FileInfo
+	filePath string
 }
 
-func (f *FileInfoWithUnknownSize) Size() int64 {
-	// Convert file path to UTF-16 pointer for Windows API call
-	lpFileName, err := syscall.UTF16PtrFromString(f.Name())
+func (f *CustomFileInfo) Size() int64 {
+	file, err := os.Open(f.filePath)
 	if err != nil {
-		return -1
+		return 0
+	}
+	defer file.Close()
+
+	byteCount, err := io.Copy(io.Discard, file)
+	if err != nil {
+		return 0
 	}
 
-	// Open the file with read-only access
-	handle, err := syscall.CreateFile(lpFileName, syscall.GENERIC_READ, syscall.FILE_SHARE_READ, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
-	if err != nil {
-		return -1
-	}
-	defer syscall.CloseHandle(handle)
-
-	// Create a file mapping
-	mappingHandle, err := syscall.CreateFileMapping(handle, nil, syscall.PAGE_READONLY, 0, 0, nil)
-	if err != nil {
-		return -1
-	}
-	defer syscall.CloseHandle(mappingHandle)
-
-	// Map a view of the file into the process's address space
-	ptr, err := syscall.MapViewOfFile(mappingHandle, syscall.FILE_MAP_READ, 0, 0, 0)
-	if err != nil {
-		return -1
-	}
-	defer syscall.UnmapViewOfFile(ptr)
-
-	// Calculate the file size by examining the mapped memory
-	fileSize := int64(unsafe.Sizeof(*(*byte)(unsafe.Pointer(ptr))))
-
-	return fileSize
+	return byteCount
 }
 
 type FileLister struct {
@@ -92,7 +72,7 @@ func (h *SftpHandler) FileLister(dirPath string) (*FileLister, error) {
 				continue
 			}
 			// Wrap the original os.FileInfo to override its Size method.
-			fileInfos = append(fileInfos, &FileInfoWithUnknownSize{FileInfo: info})
+			fileInfos = append(fileInfos, &CustomFileInfo{FileInfo: info, filePath: fullPath})
 		}
 	}
 
@@ -117,10 +97,9 @@ func (h *SftpHandler) FileStat(filename string) (*FileLister, error) {
 	}
 
 	// Wrap the original os.FileInfo to override its Size method.
-	return &FileLister{files: []os.FileInfo{&FileInfoWithUnknownSize{FileInfo: stat}}}, nil
+	return &FileLister{files: []os.FileInfo{&CustomFileInfo{FileInfo: stat, filePath: filename}}}, nil
 }
 
 func (h *SftpHandler) setFilePath(r *sftp.Request) {
 	r.Filepath = filepath.Join(h.Snapshot.SnapshotPath, filepath.Clean(r.Filepath))
 }
-
