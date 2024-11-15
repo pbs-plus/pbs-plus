@@ -1,13 +1,13 @@
-Ext.define('PBS.D2DManagement.TargetPanel', {
+Ext.define('PBS.D2DManagement.ExclusionPanel', {
     extend: 'Ext.grid.Panel',
-    alias: 'widget.pbsDiskTargetPanel',
+    alias: 'widget.pbsDiskExclusionPanel',
 
     controller: {
 	xclass: 'Ext.app.ViewController',
 
 	onAdd: function() {
 	    let me = this;
-	    Ext.create('PBS.D2DManagement.TargetEditWindow', {
+	    Ext.create('PBS.D2DManagement.ExclusionEditWindow', {
 		listeners: {
 		    destroy: function() {
 			me.reload();
@@ -23,7 +23,7 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	    if (!selection || selection.length < 1) {
 		return;
 	    }
-	    Ext.create('PBS.D2DManagement.TargetEditWindow', {
+	    Ext.create('PBS.D2DManagement.ExclusionEditWindow', {
 		driveid: selection[0].data.name,
 		autoLoad: true,
 		listeners: {
@@ -47,10 +47,10 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
     render_status: function(value) {
       if (value.toString() == "true") {
         icon = 'check good';
-        text = "Reachable";
+        text = "Applies to all jobs";
       } else {
         icon = 'times critical';
-        text = "Unreachable";
+        text = "Not applied by default";
       }
 
 	return `<i class="fa fa-${icon}"></i> ${text}`;
@@ -72,11 +72,11 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	type: 'diff',
 	rstore: {
 	    type: 'update',
-	    storeid: 'proxmox-disk-targets',
-	    model: 'pbs-model-targets',
+	    storeid: 'proxmox-disk-exclusions',
+	    model: 'pbs-model-exclusions',
 	    proxy: {
 		type: 'proxmox',
-		url: "/api2/json/d2d/target",
+		url: "/api2/json/d2d/exclusion",
 	    },
 	},
 	sorters: 'name',
@@ -101,26 +101,21 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	},
 	{
 	    xtype: 'proxmoxStdRemoveButton',
-	    baseurl: '/api2/extjs/config/d2d-target',
+	    baseurl: '/api2/extjs/config/d2d-exclusion',
 	    callback: 'reload',
 	},
     ],
     columns: [
 	{
-	    text: gettext('Name'),
-	    dataIndex: 'name',
+	    text: gettext('Path'),
+	    dataIndex: 'path',
 	    flex: 1,
 	},
 	{
-	    text: gettext('Path'),
-	    dataIndex: 'path',
-	    flex: 2,
-	},
-	{
-	    header: gettext('Status'),
-	    dataIndex: 'connection_status',
+	    text: gettext('Global'),
+	    dataIndex: 'is_global',
 	    renderer: 'render_status',
-	    flex: 3,
+	    flex: 2,
 	},
     ],
 });

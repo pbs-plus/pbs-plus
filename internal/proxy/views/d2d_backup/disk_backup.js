@@ -25,5 +25,11 @@ Ext.define('PBS.D2DManagement', {
 	    itemId: 'targets',
 	    iconCls: 'fa fa-desktop',
 	},
+	{
+	    xtype: 'pbsDiskExclusionPanel',
+	    title: 'Exclusions',
+	    itemId: 'exclusions',
+	    iconCls: 'fa fa-ban',
+	},
     ],
 });
