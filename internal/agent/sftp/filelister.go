@@ -38,7 +38,7 @@ func (f *CustomFileInfo) Size() int64 {
 
 		scanFile := false
 		for _, fileExtension := range fileExtensions {
-			if strings.HasSuffix(f.filePath, fileExtension) {
+			if ext == fileExtension {
 				scanFile = true
 				break
 			}
