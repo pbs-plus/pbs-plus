@@ -102,7 +102,7 @@ Ext.define('PBS.D2DManagement.ExclusionPanel', {
 	{
 	    xtype: 'proxmoxStdRemoveButton',
 	    baseurl: '/api2/extjs/config/d2d-exclusion',
-      getUrl: (rec) => `/api/extjs/config/d2d-exclusion/${encodeURIComponent(rec.getId())}`,
+      getUrl: (rec) => `/config/d2d-exclusion/${encodeURIComponent(rec.getId())}`,
 	    callback: 'reload',
 	},
     ],
