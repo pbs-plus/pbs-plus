@@ -117,6 +117,11 @@ Ext.define('PBS.D2DManagement.ExclusionPanel', {
 	    renderer: 'render_status',
 	    flex: 2,
 	},
+	{
+	    text: gettext('Comment'),
+	    dataIndex: 'Comment',
+	    flex: 3,
+	},
     ],
 });
 

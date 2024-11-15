@@ -7,7 +7,7 @@ Ext.define('PBS.D2DManagement.BackupJobEdit', {
 
     isAdd: true,
 
-    subject: gettext('D2D Backup Job'),
+    subject: gettext('Disk Backup Job'),
 
     fieldDefaults: { labelWidth: 120 },
 

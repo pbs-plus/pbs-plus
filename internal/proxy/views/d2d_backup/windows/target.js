@@ -5,7 +5,7 @@ Ext.define('PBS.D2DManagement.TargetEditWindow', {
 
     isCreate: true,
     isAdd: true,
-    subject: 'D2D Backup Target',
+    subject: 'Disk Backup Target',
     cbindData: function(initialConfig) {
 	let me = this;
 

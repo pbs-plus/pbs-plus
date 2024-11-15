@@ -5,7 +5,7 @@ Ext.define('PBS.D2DManagement.ExclusionEditWindow', {
 
     isCreate: true,
     isAdd: true,
-    subject: 'D2D Backup Exclusion',
+    subject: 'Disk Backup Path Exclusion',
     cbindData: function(initialConfig) {
 	let me = this;
 
