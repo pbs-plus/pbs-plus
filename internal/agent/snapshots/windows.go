@@ -121,7 +121,10 @@ func (instance *WinVSSSnapshot) UpdateTimestamp() {
 }
 
 func (instance *WinVSSSnapshot) Close() {
-	_, _ = cache.SizeCache.LoadAndDelete(instance.Id)
+	if fileMap, ok := cache.SizeCache.Load(instance.Id); ok {
+		clear(fileMap.(map[string]int64))
+		cache.SizeCache.Delete(instance.Id)
+	}
 
 	_ = vss.Remove(instance.Id)
 	_ = os.Remove(instance.SnapshotPath)
@@ -141,6 +144,22 @@ func CloseAllSnapshots() {
 	if knownSnapshots, err := knownSnaps.GetAll(); err == nil {
 		for _, snapshot := range knownSnapshots {
 			snapshot.Close()
+		}
+	}
+}
+
+func GarbageCollect() {
+	knownSnaps := &KnownSnapshots{
+		registry: "KnownSnaps",
+	}
+
+	if knownSnapshots, err := knownSnaps.GetAll(); err == nil {
+		for _, snapshot := range knownSnapshots {
+			if knownSnap, err := knownSnaps.Get(snapshot.Id); err == nil {
+				if time.Since(knownSnap.GetTimestamp()) >= 15*time.Minute {
+					knownSnap.Close()
+				}
+			}
 		}
 	}
 }

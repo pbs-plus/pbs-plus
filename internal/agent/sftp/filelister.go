@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/pkg/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
@@ -44,8 +43,8 @@ func (f *CustomFileInfo) Size() int64 {
 
 	// Check size cache with read lock
 	if snapSizes, ok := cache.SizeCache.Load(f.snapshotId); ok {
-		if cachedSize, ok := snapSizes.(*sync.Map).Load(f.filePath); ok {
-			return cachedSize.(int64)
+		if cachedSize, ok := snapSizes.(map[string]int64)[f.filePath]; ok {
+			return cachedSize
 		}
 	}
 
@@ -61,8 +60,8 @@ func (f *CustomFileInfo) Size() int64 {
 		return 0
 	}
 
-	snapSizes, _ := cache.SizeCache.LoadOrStore(f.snapshotId, &sync.Map{})
-	snapSizes.(*sync.Map).Store(f.filePath, byteCount)
+	snapSizes, _ := cache.SizeCache.LoadOrStore(f.snapshotId, map[string]int64{})
+	snapSizes.(map[string]int64)[f.filePath] = byteCount
 
 	return byteCount
 }
