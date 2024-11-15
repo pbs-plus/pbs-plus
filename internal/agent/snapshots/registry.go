@@ -125,14 +125,14 @@ func (k *KnownSnapshots) Save(snap *WinVSSSnapshot) error {
 
 	knownSnapshots := []WinVSSSnapshot{*snap}
 
+	// if reg exists
 	if knownSnapshotsRaw, _, err := key.GetStringValue(k.registry); err == nil { // Unmarshal JSON into the configuration struct
-		if err := json.Unmarshal([]byte(knownSnapshotsRaw), &knownSnapshots); err != nil {
-			knownSnapshots = append(knownSnapshots, *snap)
-		}
-
-		for _, knownSnap := range knownSnapshots {
-			if knownSnap.SnapshotPath != snap.SnapshotPath {
-				knownSnapshots = append(knownSnapshots, knownSnap)
+		var regSnapshots []WinVSSSnapshot
+		if err := json.Unmarshal([]byte(knownSnapshotsRaw), &regSnapshots); err == nil {
+			for _, regSnap := range regSnapshots {
+				if regSnap.SnapshotPath != snap.SnapshotPath {
+					knownSnapshots = append(knownSnapshots, regSnap)
+				}
 			}
 		}
 	}
