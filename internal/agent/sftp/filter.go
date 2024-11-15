@@ -88,6 +88,7 @@ func compileExcludedPaths() []*regexp.Regexp {
 		`AppData\Local\Packages`,
 		`AppData\Local\Veritas`,
 		`AppData\Local\JetBrains`,
+		`AppData\Roaming\Thunderbird\Profiles\*\ImapMail`,
 		`Application Data\Apple Computer\Mobile Sync`,
 		`Application Data\Application Data**`,
 		`Dropbox\Dropbox.exe.log`,
