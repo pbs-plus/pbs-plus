@@ -56,7 +56,18 @@ func main() {
 		cmd := os.Args[1]
 		switch cmd {
 		case "install":
-			_ = s.Uninstall()
+			status, err := s.Status()
+			if err == nil {
+				switch status {
+				case service.StatusStopped:
+					_ = s.Uninstall()
+				case service.StatusRunning:
+					_ = s.Stop()
+					_ = s.Uninstall()
+				case service.StatusUnknown:
+				}
+			}
+
 			err = s.Install()
 			if err != nil {
 				logger.Errorf("Failed to install service: %s", err)
