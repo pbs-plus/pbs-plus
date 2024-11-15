@@ -30,8 +30,24 @@ func getMutex(filePath string) *sync.RWMutex {
 
 func (f *CustomFileInfo) Size() int64 {
 	metadataSize := f.FileInfo.Size()
-	// Use metadata if file size >= 10MB
-	if metadataSize >= 10485760 && !strings.HasSuffix(f.filePath, ".log") {
+	ext := filepath.Ext(f.filePath)
+	if ext != "" {
+		fileExtensions := []string{
+			".log",
+		}
+
+		scanFile := false
+		for _, fileExtension := range fileExtensions {
+			if strings.HasSuffix(f.filePath, fileExtension) {
+				scanFile = true
+				break
+			}
+		}
+
+		if !scanFile {
+			return metadataSize
+		}
+	} else if ext == "" && metadataSize > 10485760 {
 		return metadataSize
 	}
 
