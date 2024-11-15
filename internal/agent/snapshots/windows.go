@@ -156,7 +156,7 @@ func GarbageCollect() {
 	if knownSnapshots, err := knownSnaps.GetAll(); err == nil {
 		for _, snapshot := range knownSnapshots {
 			if knownSnap, err := knownSnaps.Get(snapshot.Id); err == nil {
-				if time.Since(knownSnap.GetTimestamp()) >= 15*time.Minute {
+				if time.Since(knownSnap.GetTimestamp()) >= 30*time.Minute {
 					knownSnap.Close()
 				}
 			}

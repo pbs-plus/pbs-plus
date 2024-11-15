@@ -86,6 +86,8 @@ func handleConnection(ctx context.Context, errChan chan string, conn net.Conn, s
 	go ssh.DiscardRequests(reqs)
 
 	for newChannel := range chans {
+		snapshots.GarbageCollect()
+
 		if newChannel.ChannelType() != "session" {
 			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
 			continue
