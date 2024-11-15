@@ -74,7 +74,7 @@ func Mount(target *store.Target) (*AgentMount, error) {
 
 	agentMount.Cmd = mnt
 
-	err = mnt.Run()
+	err = mnt.Start()
 	if err != nil {
 		agentMount.Unmount()
 		return nil, fmt.Errorf("Mount: error starting rclone for sftp -> %w", err)
