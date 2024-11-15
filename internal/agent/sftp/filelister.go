@@ -9,17 +9,45 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/pkg/sftp"
 )
 
+var cacheMutex sync.RWMutex
+var sizeCache map[string]map[string]int64
+var cacheOnce sync.Once
+
 // CustomFileInfo wraps an os.FileInfo and overrides the Size method to return -1.
 type CustomFileInfo struct {
 	os.FileInfo
-	filePath string
+	filePath   string
+	snapshotId string
+}
+
+func initializeSizeCache() {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+	if sizeCache == nil {
+		sizeCache = make(map[string]map[string]int64)
+	}
 }
 
 func (f *CustomFileInfo) Size() int64 {
+	cacheOnce.Do(initializeSizeCache)
+
+	cacheMutex.RLock()
+	if _, ok := sizeCache[f.filePath]; ok {
+		if cachedSize, ok := sizeCache[f.filePath][f.snapshotId]; ok {
+			return cachedSize
+		}
+	}
+	cacheMutex.RUnlock()
+
+	cacheMutex.Lock()
+	sizeCache[f.filePath] = make(map[string]int64)
+	cacheMutex.Unlock()
+
 	file, err := os.Open(f.filePath)
 	if err != nil {
 		return 0
@@ -30,6 +58,10 @@ func (f *CustomFileInfo) Size() int64 {
 	if err != nil {
 		return 0
 	}
+
+	cacheMutex.Lock()
+	sizeCache[f.filePath][f.snapshotId] = byteCount
+	cacheMutex.Unlock()
 
 	return byteCount
 }
@@ -72,7 +104,7 @@ func (h *SftpHandler) FileLister(dirPath string) (*FileLister, error) {
 				continue
 			}
 			// Wrap the original os.FileInfo to override its Size method.
-			fileInfos = append(fileInfos, &CustomFileInfo{FileInfo: info, filePath: fullPath})
+			fileInfos = append(fileInfos, &CustomFileInfo{FileInfo: info, filePath: fullPath, snapshotId: h.Snapshot.Id})
 		}
 	}
 
@@ -97,7 +129,7 @@ func (h *SftpHandler) FileStat(filename string) (*FileLister, error) {
 	}
 
 	// Wrap the original os.FileInfo to override its Size method.
-	return &FileLister{files: []os.FileInfo{&CustomFileInfo{FileInfo: stat, filePath: filename}}}, nil
+	return &FileLister{files: []os.FileInfo{&CustomFileInfo{FileInfo: stat, filePath: filename, snapshotId: h.Snapshot.Id}}}, nil
 }
 
 func (h *SftpHandler) setFilePath(r *sftp.Request) {
