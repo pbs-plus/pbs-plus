@@ -33,7 +33,7 @@ Ext.define('PBS.D2DManagement', {
 	},
 	{
 	    xtype: 'pbsDiskPartialFilePanel',
-	    title: 'Partial Files',
+	    title: 'Potentially Partial Files',
 	    itemId: 'partial-files',
 	    iconCls: 'fa fa-file',
 	},

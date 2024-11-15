@@ -5,7 +5,7 @@ Ext.define('PBS.D2DManagement.PartialFileEditWindow', {
 
     isCreate: true,
     isAdd: true,
-    subject: 'Disk Backup Partial File',
+    subject: 'Disk Backup Potentially Partial File',
     cbindData: function(initialConfig) {
 	let me = this;
 
