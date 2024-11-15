@@ -45,5 +45,6 @@ Ext.define('PBS.D2DManagement.ExclusionEditWindow', {
 			cbind: {
 			    deleteEmpty: '{!isCreate}',
 			},
+        },
     ],
 });
