@@ -41,6 +41,21 @@ type Target struct {
 	ConnectionStatus bool   `json:"connection_status"`
 }
 
+type ExclusionJobBridge struct {
+	ID            int    `db:"id" json:"id"`
+	ExclusionPath string `db:"exclusion-path" json:"exclusion_path"`
+	JobID         string `db:"job-id" json:"job_id"`
+}
+
+type Exclusion struct {
+	Path     string `db:"path" json:"path"`
+	IsGlobal bool   `db:"is-global" json:"is_global"`
+}
+
+type PartialFile struct {
+	Substring string `db:"substring" json:"substring"`
+}
+
 // Store holds the database instance
 type Store struct {
 	Db         *sql.DB
@@ -64,9 +79,9 @@ func (store *Store) CreateTables() error {
 	// Create Job table if it doesn't exist
 	createJobTable := `
     CREATE TABLE IF NOT EXISTS d2d_jobs (
-        id TEXT PRIMARY KEY,
-        store TEXT,
-        target TEXT,
+        id TEXT PRIMARY KEY NOT NULL,
+        store TEXT NOT NULL,
+        target TEXT NOT NULL,
         schedule TEXT,
         comment TEXT,
         next_run INTEGER,
@@ -83,13 +98,50 @@ func (store *Store) CreateTables() error {
 	// Create Target table if it doesn't exist
 	createTargetTable := `
     CREATE TABLE IF NOT EXISTS targets (
-        name TEXT PRIMARY KEY,
-        path TEXT
+        name TEXT PRIMARY KEY NOT NULL,
+        path TEXT NOT NULL
     );`
 
 	_, err = store.Db.Exec(createTargetTable)
 	if err != nil {
 		return fmt.Errorf("CreateTables: error creating target table -> %w", err)
+	}
+
+	createExclusionTable := `
+    CREATE TABLE IF NOT EXISTS exclusions (
+        path TEXT PRIMARY KEY NOT NULL,
+        is-global INTEGER DEFAULT 0
+    );`
+
+	_, err = store.Db.Exec(createExclusionTable)
+	if err != nil {
+		return fmt.Errorf("CreateTables: error creating exclusions table -> %w", err)
+	}
+
+	createExclusionBridgeTable := `
+    CREATE TABLE IF NOT EXISTS exclusion_bridges (
+        id INTEGER PRIMARY KEY AUTO INCREMENT,
+				exclusion-path TEXT NOT NULL,
+				job-id TEXT NOT NULL,
+				FOREIGN KEY (exclusion-path)
+					REFERENCES exclusions (path) ON DELETE CASCADE ON UPDATE CASCADE,
+				FOREIGN KEY (job-id)
+					REFERENCES d2d_jobs (id) ON DELETE CASCADE ON UPDATE CASCADE
+    );`
+
+	_, err = store.Db.Exec(createExclusionBridgeTable)
+	if err != nil {
+		return fmt.Errorf("CreateTables: error creating exclusion_bridges table -> %w", err)
+	}
+
+	createPartialFileTable := `
+    CREATE TABLE IF NOT EXISTS partial_files (
+        substring TEXT PRIMARY KEY NOT NULL
+    );`
+
+	_, err = store.Db.Exec(createPartialFileTable)
+	if err != nil {
+		return fmt.Errorf("CreateTables: error creating partial_files table -> %w", err)
 	}
 
 	return nil
