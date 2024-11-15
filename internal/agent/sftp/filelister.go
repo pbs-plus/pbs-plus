@@ -6,60 +6,19 @@ package sftp
 import (
 	"io"
 	"io/fs"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/pkg/sftp"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
 )
-
-var sizeCache sync.Map // Map[filePath]*sync.Map (snapshotId -> size)
-var mutexMap sync.Map  // Map[filePath]*sync.RWMutex
 
 type CustomFileInfo struct {
 	os.FileInfo
 	filePath   string
 	snapshotId string
-}
-
-func getMutex(filePath string) *sync.RWMutex {
-	mutex, _ := mutexMap.LoadOrStore(filePath, &sync.RWMutex{})
-	return mutex.(*sync.RWMutex)
-}
-
-type PartialFileData struct {
-	Substring string `json:"substring"`
-	Comment   string `json:"comment"`
-}
-
-type PartialFileResp struct {
-	Data []PartialFileData `json:"data"`
-}
-
-var fileExtensions = compilePartialFileList()
-
-func compilePartialFileList() []string {
-	var partialResp PartialFileResp
-	err := agent.ProxmoxHTTPRequest(
-		http.MethodGet,
-		"/api2/json/d2d/partial-file",
-		nil,
-		&partialResp,
-	)
-	if err != nil {
-		partialResp = PartialFileResp{
-			Data: []PartialFileData{},
-		}
-	}
-
-	fileExtensions := []string{}
-	for _, partial := range partialResp.Data {
-		fileExtensions = append(fileExtensions, partial.Substring)
-	}
-	return fileExtensions
 }
 
 func (f *CustomFileInfo) Size() int64 {
@@ -69,7 +28,7 @@ func (f *CustomFileInfo) Size() int64 {
 
 	if ext != "" {
 		scanFile := false
-		for _, fileExtension := range fileExtensions {
+		for _, fileExtension := range cache.FileExtensions {
 			if strings.Contains(baseName, fileExtension) {
 				scanFile = true
 				break
@@ -83,18 +42,12 @@ func (f *CustomFileInfo) Size() int64 {
 		return metadataSize
 	}
 
-	// Retrieve the file-specific mutex
-	fileMutex := getMutex(f.filePath)
-
 	// Check size cache with read lock
-	fileMutex.RLock()
-	if snapSizes, ok := sizeCache.Load(f.filePath); ok {
-		if cachedSize, ok := snapSizes.(*sync.Map).Load(f.snapshotId); ok {
-			fileMutex.RUnlock()
+	if snapSizes, ok := cache.SizeCache.Load(f.snapshotId); ok {
+		if cachedSize, ok := snapSizes.(*sync.Map).Load(f.filePath); ok {
 			return cachedSize.(int64)
 		}
 	}
-	fileMutex.RUnlock()
 
 	// Compute file size if not cached
 	file, err := os.Open(f.filePath)
@@ -108,12 +61,8 @@ func (f *CustomFileInfo) Size() int64 {
 		return 0
 	}
 
-	// Update cache with write lock
-	fileMutex.Lock()
-	defer fileMutex.Unlock()
-
-	snapSizes, _ := sizeCache.LoadOrStore(f.filePath, &sync.Map{})
-	snapSizes.(*sync.Map).Store(f.snapshotId, byteCount)
+	snapSizes, _ := cache.SizeCache.LoadOrStore(f.snapshotId, &sync.Map{})
+	snapSizes.(*sync.Map).Store(f.filePath, byteCount)
 
 	return byteCount
 }

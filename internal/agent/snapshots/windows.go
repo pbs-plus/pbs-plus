@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mxk/go-vss"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
 )
 
 func getVSSFolder() (string, error) {
@@ -87,6 +88,9 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	}
 	knownSnaps.Save(newSnapshot)
 
+	cache.ExcludedPathRegexes = cache.CompileExcludedPaths()
+	cache.FileExtensions = cache.CompilePartialFileList()
+
 	return newSnapshot, nil
 }
 
@@ -117,6 +121,8 @@ func (instance *WinVSSSnapshot) UpdateTimestamp() {
 }
 
 func (instance *WinVSSSnapshot) Close() {
+	_, _ = cache.SizeCache.LoadAndDelete(instance.Id)
+
 	_ = vss.Remove(instance.Id)
 	_ = os.Remove(instance.SnapshotPath)
 

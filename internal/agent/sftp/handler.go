@@ -25,9 +25,6 @@ type SftpHandler struct {
 func NewSftpHandler(ctx context.Context, driveLetter string, snapshot *snapshots.WinVSSSnapshot) (*sftp.Handlers, error) {
 	handler := &SftpHandler{ctx: ctx, DriveLetter: driveLetter, Snapshot: snapshot}
 
-	fileExtensions = compilePartialFileList()
-	excludedPathRegexes = compileExcludedPaths()
-
 	return &sftp.Handlers{
 		FileGet:  handler,
 		FilePut:  handler,
