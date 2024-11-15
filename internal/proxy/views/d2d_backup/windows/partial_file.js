@@ -29,6 +29,7 @@ Ext.define('PBS.D2DManagement.PartialFileEditWindow', {
 	    cbind: {
 		editable: '{isCreate}',
 	    },
+  },
 		    {
 			fieldLabel: gettext('Comment'),
 			xtype: 'proxmoxtextfield',
