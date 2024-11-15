@@ -14,6 +14,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/agents"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/exclusions"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/jobs"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/partial_files"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/targets"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -132,12 +133,15 @@ func main() {
 	router.AddRoute("/api2/json/d2d/backup", jobs.D2DJobHandler(storeInstance))
 	router.AddRoute("/api2/json/d2d/target", targets.D2DTargetHandler(storeInstance))
 	router.AddRoute("/api2/json/d2d/exclusion", exclusions.D2DExclusionHandler(storeInstance))
+	router.AddRoute("/api2/json/d2d/partial-file", partial_files.D2DPartialFileHandler(storeInstance))
 	router.AddRoute("/api2/json/d2d/agent-log", agents.AgentLogHandler(storeInstance))
 	router.AddRoute("/api2/extjs/d2d/backup/{job}", jobs.ExtJsJobRunHandler(storeInstance))
 	router.AddRoute("/api2/extjs/config/d2d-target", targets.ExtJsTargetHandler(storeInstance))
 	router.AddRoute("/api2/extjs/config/d2d-target/{target}", targets.ExtJsTargetSingleHandler(storeInstance))
 	router.AddRoute("/api2/extjs/config/d2d-exclusion", exclusions.ExtJsExclusionHandler(storeInstance))
 	router.AddRoute("/api2/extjs/config/d2d-exclusion/{exclusion}", exclusions.ExtJsExclusionSingleHandler(storeInstance))
+	router.AddRoute("/api2/extjs/config/d2d-partial-file", partial_files.ExtJsPartialFileHandler(storeInstance))
+	router.AddRoute("/api2/extjs/config/d2d-partial-file/{partial_file}", partial_files.ExtJsPartialFileSingleHandler(storeInstance))
 	router.AddRoute("/api2/extjs/config/disk-backup-job", jobs.ExtJsJobHandler(storeInstance))
 	router.AddRoute("/api2/extjs/config/disk-backup-job/{job}", jobs.ExtJsJobSingleHandler(storeInstance))
 

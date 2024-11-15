@@ -9,12 +9,12 @@ Ext.define('PBS.D2DManagement.TargetEditWindow', {
     cbindData: function(initialConfig) {
 	let me = this;
 
-	let driveid = initialConfig.driveid;
+	let contentid = initialConfig.contentid;
 	let baseurl = '/api2/extjs/config/d2d-target';
 
-	me.isCreate = !driveid;
-	me.url = driveid ? `${baseurl}/${encodeURIComponent(driveid)}` : baseurl;
-	me.method = driveid ? 'PUT' : 'POST';
+	me.isCreate = !contentid;
+	me.url = contentid ? `${baseurl}/${encodeURIComponent(contentid)}` : baseurl;
+	me.method = contentid ? 'PUT' : 'POST';
 
 	return { };
     },

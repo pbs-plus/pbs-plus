@@ -1,16 +1,16 @@
-Ext.define('PBS.D2DManagement.ExclusionEditWindow', {
+Ext.define('PBS.D2DManagement.PartialFileEditWindow', {
     extend: 'Proxmox.window.Edit',
-    alias: 'widget.pbsExclusionEditWindow',
+    alias: 'widget.pbsPartialFileEditWindow',
     mixins: ['Proxmox.Mixin.CBind'],
 
     isCreate: true,
     isAdd: true,
-    subject: 'D2D Backup Exclusion',
+    subject: 'D2D Backup Partial File',
     cbindData: function(initialConfig) {
 	let me = this;
 
 	let contentid = initialConfig.contentid;
-	let baseurl = '/api2/extjs/config/d2d-exclusion';
+	let baseurl = '/api2/extjs/config/d2d-partial-file';
 
 	me.isCreate = !contentid;
 	me.url = contentid ? `${baseurl}/${encodeURIComponent(contentid)}` : baseurl;
@@ -21,23 +21,14 @@ Ext.define('PBS.D2DManagement.ExclusionEditWindow', {
 
     items: [
 	{
-	    fieldLabel: gettext('Path'),
-	    name: 'path',
+	    fieldLabel: gettext('Filename Substring'),
+	    name: 'substring',
 	    xtype: 'pmxDisplayEditField',
 	    renderer: Ext.htmlEncode,
 	    allowBlank: false,
 	    cbind: {
 		editable: '{isCreate}',
 	    },
-	},
-	{
-	    xtype: 'proxmoxcheckbox',
-	    name: 'is_global',
-	    fieldLabel: gettext('Apply to all jobs'),
-      checked: true,
-      defaultValue: true,
-      uncheckedValue: false,
-	},
 		    {
 			fieldLabel: gettext('Comment'),
 			xtype: 'proxmoxtextfield',
@@ -45,5 +36,6 @@ Ext.define('PBS.D2DManagement.ExclusionEditWindow', {
 			cbind: {
 			    deleteEmpty: '{!isCreate}',
 			},
+	},
     ],
 });

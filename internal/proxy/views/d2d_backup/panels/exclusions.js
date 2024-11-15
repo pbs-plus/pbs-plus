@@ -24,7 +24,7 @@ Ext.define('PBS.D2DManagement.ExclusionPanel', {
 		return;
 	    }
 	    Ext.create('PBS.D2DManagement.ExclusionEditWindow', {
-		driveid: selection[0].data.name,
+		contentid: selection[0].data.path,
 		autoLoad: true,
 		listeners: {
 		    destroy: () => me.reload(),

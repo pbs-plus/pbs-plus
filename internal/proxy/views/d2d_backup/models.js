@@ -26,3 +26,11 @@ Ext.define('pbs-model-exclusions', {
     ],
     idProperty: 'path',
 });
+
+Ext.define('pbs-model-partial-files', {
+    extend: 'Ext.data.Model',
+    fields: [
+      'substring', 'comment',
+    ],
+    idProperty: 'substring',
+});

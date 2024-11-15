@@ -1,13 +1,13 @@
-Ext.define('PBS.D2DManagement.TargetPanel', {
+Ext.define('PBS.D2DManagement.PartialFilePanel', {
     extend: 'Ext.grid.Panel',
-    alias: 'widget.pbsDiskTargetPanel',
+    alias: 'widget.pbsDiskPartialFilePanel',
 
     controller: {
 	xclass: 'Ext.app.ViewController',
 
 	onAdd: function() {
 	    let me = this;
-	    Ext.create('PBS.D2DManagement.TargetEditWindow', {
+	    Ext.create('PBS.D2DManagement.PartialFileEditWindow', {
 		listeners: {
 		    destroy: function() {
 			me.reload();
@@ -23,8 +23,8 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	    if (!selection || selection.length < 1) {
 		return;
 	    }
-	    Ext.create('PBS.D2DManagement.TargetEditWindow', {
-		contentid: selection[0].data.name,
+	    Ext.create('PBS.D2DManagement.PartialFileEditWindow', {
+		contentid: selection[0].data.substring,
 		autoLoad: true,
 		listeners: {
 		    destroy: () => me.reload(),
@@ -44,18 +44,6 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	    this.getView().getStore().rstore.startUpdate();
 	},
 
-    render_status: function(value) {
-      if (value.toString() == "true") {
-        icon = 'check good';
-        text = "Reachable";
-      } else {
-        icon = 'times critical';
-        text = "Unreachable";
-      }
-
-	return `<i class="fa fa-${icon}"></i> ${text}`;
-    },
-
 	init: function(view) {
 	    Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
 	},
@@ -72,11 +60,11 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	type: 'diff',
 	rstore: {
 	    type: 'update',
-	    storeid: 'proxmox-disk-targets',
-	    model: 'pbs-model-targets',
+	    storeid: 'proxmox-disk-partial-files',
+	    model: 'pbs-model-partial-files',
 	    proxy: {
 		type: 'proxmox',
-		url: "/api2/json/d2d/target",
+		url: "/api2/json/d2d/partial-file",
 	    },
 	},
 	sorters: 'name',
@@ -101,26 +89,20 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	},
 	{
 	    xtype: 'proxmoxStdRemoveButton',
-	    baseurl: '/api2/extjs/config/d2d-target',
+	    baseurl: '/api2/extjs/config/d2d-partial-file',
 	    callback: 'reload',
 	},
     ],
     columns: [
 	{
-	    text: gettext('Name'),
-	    dataIndex: 'name',
+	    text: gettext('Filename Substring'),
+	    dataIndex: 'substring',
 	    flex: 1,
 	},
 	{
-	    text: gettext('Path'),
-	    dataIndex: 'path',
+	    text: gettext('Comment'),
+	    dataIndex: 'comment',
 	    flex: 2,
-	},
-	{
-	    header: gettext('Status'),
-	    dataIndex: 'connection_status',
-	    renderer: 'render_status',
-	    flex: 3,
 	},
     ],
 });
