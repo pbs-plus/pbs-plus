@@ -6,12 +6,14 @@ package sftp
 import (
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/pkg/sftp"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 )
 
 var sizeCache sync.Map // Map[filePath]*sync.Map (snapshotId -> size)
@@ -28,17 +30,44 @@ func getMutex(filePath string) *sync.RWMutex {
 	return mutex.(*sync.RWMutex)
 }
 
+type PartialFileData struct {
+	Substring string `json:"substring"`
+	Comment   string `json:"comment"`
+}
+
+type PartialFileResp struct {
+	Data []PartialFileData `json:"data"`
+}
+
+var fileExtensions = compilePartialFileList()
+
+func compilePartialFileList() []string {
+	var partialResp PartialFileResp
+	err := agent.ProxmoxHTTPRequest(
+		http.MethodGet,
+		"/api2/json/d2d/partial-file",
+		nil,
+		&partialResp,
+	)
+	if err != nil {
+		partialResp = PartialFileResp{
+			Data: []PartialFileData{},
+		}
+	}
+
+	fileExtensions := []string{}
+	for _, partial := range partialResp.Data {
+		fileExtensions = append(fileExtensions, partial.Substring)
+	}
+	return fileExtensions
+}
+
 func (f *CustomFileInfo) Size() int64 {
 	metadataSize := f.FileInfo.Size()
 	ext := filepath.Ext(f.filePath)
 	baseName := filepath.Base(f.filePath)
 
 	if ext != "" {
-		fileExtensions := []string{
-			".log",
-			".dat",
-		}
-
 		scanFile := false
 		for _, fileExtension := range fileExtensions {
 			if strings.Contains(baseName, fileExtension) {

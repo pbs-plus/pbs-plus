@@ -3,11 +3,14 @@
 package sftp
 
 import (
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 )
 
 func wildcardToRegex(pattern string) string {
@@ -31,7 +34,30 @@ func wildcardToRegex(pattern string) string {
 	return escapedPattern + `(\\|$)`
 }
 
+type ExclusionData struct {
+	Path     string `json:"path"`
+	IsGlobal bool   `json:"is_global"`
+	Comment  string `json:"comment"`
+}
+
+type ExclusionResp struct {
+	Data []ExclusionData `json:"data"`
+}
+
 func compileExcludedPaths() []*regexp.Regexp {
+	var exclusionResp ExclusionResp
+	err := agent.ProxmoxHTTPRequest(
+		http.MethodGet,
+		"/api2/json/d2d/exclusion",
+		nil,
+		&exclusionResp,
+	)
+	if err != nil {
+		exclusionResp = ExclusionResp{
+			Data: []ExclusionData{},
+		}
+	}
+
 	excludedPaths := []string{
 		`:\hiberfil.sys`,
 		`:\pagefile.sys`,
@@ -86,8 +112,6 @@ func compileExcludedPaths() []*regexp.Regexp {
 		`AppData\Local\Microsoft\Windows\WebCache`,
 		`AppData\Local\Microsoft\Windows Store`,
 		`AppData\Local\Packages`,
-		`AppData\Local\Veritas`,
-		`AppData\Local\JetBrains`,
 		`AppData\Roaming\Thunderbird\Profiles\*\ImapMail`,
 		`Application Data\Apple Computer\Mobile Sync`,
 		`Application Data\Application Data**`,
@@ -111,6 +135,12 @@ func compileExcludedPaths() []*regexp.Regexp {
 		`Local Settings\History`,
 		`OneDrive\.849C9593-D756-4E56-8D6E-42412F2A707B`,
 		`Safari\Library\Caches`,
+	}
+
+	for _, userExclusions := range exclusionResp.Data {
+		if userExclusions.IsGlobal {
+			excludedPaths = append(excludedPaths, userExclusions.Path)
+		}
 	}
 
 	var compiledRegexes []*regexp.Regexp

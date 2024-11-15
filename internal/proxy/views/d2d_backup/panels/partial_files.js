@@ -90,6 +90,7 @@ Ext.define('PBS.D2DManagement.PartialFilePanel', {
 	{
 	    xtype: 'proxmoxStdRemoveButton',
 	    baseurl: '/api2/extjs/config/d2d-partial-file',
+      getUrl: (rec) => `/api/extjs/config/d2d-partial-file/${encodeURIComponent(rec.getId())}`,
 	    callback: 'reload',
 	},
     ],
