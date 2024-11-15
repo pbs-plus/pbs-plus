@@ -80,11 +80,6 @@ func Mount(target *store.Target) (*AgentMount, error) {
 		return nil, fmt.Errorf("Mount: error starting rclone for sftp -> %w", err)
 	}
 
-	ls := exec.Command("bash", "-c", fmt.Sprintf("find %s -type f | xargs -P 8 -n 1 true", agentMount.Path))
-	ls.Env = os.Environ()
-
-	_ = ls.Start()
-
 	return agentMount, nil
 }
 

@@ -46,6 +46,12 @@ func getMutex(filePath string) *sync.RWMutex {
 }
 
 func (f *CustomFileInfo) Size() int64 {
+	// use metadata if >100mb
+	// ideally, text files still being written to would be less than 100mb anyways
+	if f.FileInfo.Size() >= 104857600 {
+		return f.FileInfo.Size()
+	}
+
 	cacheMutex.Lock()
 	if sizeCache == nil || mutexMap == nil {
 		initializeSizeCache()
