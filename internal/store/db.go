@@ -196,11 +196,6 @@ func (store *Store) GetJob(id string) (*Job, error) {
 		return nil, fmt.Errorf("GetJob: error scanning job row -> %w", err)
 	}
 
-	exclusions, err := store.GetAllJobExclusions(id)
-	if err == nil {
-		job.Exclusions = exclusions
-	}
-
 	if job.LastRunUpid != nil {
 		task, err := store.GetTaskByUPID(*job.LastRunUpid)
 		if err != nil {
@@ -327,11 +322,6 @@ func (store *Store) GetAllJobs() ([]Job, error) {
 		err := rows.Scan(&job.ID, &job.Store, &job.Target, &job.Schedule, &job.Comment, &job.NextRun, &job.LastRunUpid, &job.NotificationMode, &job.Namespace)
 		if err != nil {
 			return nil, fmt.Errorf("GetAllJobs: error scanning job row -> %w", err)
-		}
-
-		exclusions, err := store.GetAllJobExclusions(job.ID)
-		if err == nil {
-			job.Exclusions = exclusions
 		}
 
 		if job.LastRunUpid != nil {
