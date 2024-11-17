@@ -108,10 +108,12 @@ func (storeInstance *Store) GetTaskEndTime(task *Task) (int64, error) {
 	parsed := upidSplit[3]
 	logFolder := parsed[len(parsed)-2:]
 
-	logStat, err := os.Stat(fmt.Sprintf("/var/log/proxmox-backup/tasks/%s/%s", logFolder, task.UPID))
+	logPath := fmt.Sprintf("/var/log/proxmox-backup/tasks/%s/%s", logFolder, task.UPID)
+
+	logStat, err := os.Stat(logPath)
 	if err == nil {
 		return logStat.ModTime().Unix(), nil
 	}
 
-	return -1, fmt.Errorf("GetTaskEndTime: error getting tasks: not found")
+	return -1, fmt.Errorf("GetTaskEndTime: error getting tasks: not found (%s) -> %w", logPath, err)
 }
