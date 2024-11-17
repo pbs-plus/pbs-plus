@@ -5,6 +5,7 @@ package store
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -95,35 +96,21 @@ func (storeInstance *Store) GetTaskByUPID(upid string) (*Task, error) {
 }
 
 func (storeInstance *Store) GetTaskEndTime(task *Task) (int64, error) {
-	nextPage := true
-	var resp TasksResponse
-
 	if storeInstance.LastToken == nil && storeInstance.APIToken == nil {
 		return -1, fmt.Errorf("GetTaskEndTime: token is required")
 	}
 
-	page := 1
-	for nextPage {
-		start := (page - 1) * 50
-		err := storeInstance.ProxmoxHTTPRequest(
-			http.MethodGet,
-			fmt.Sprintf("/api2/json/nodes/localhost/tasks?typefilter=backup&running=false&start=%d&since=%d", start, task.StartTime),
-			nil,
-			&resp,
-		)
-		if err != nil {
-			return -1, fmt.Errorf("GetTaskEndTime: error creating http request -> %w", err)
-		}
+	upidSplit := strings.Split(task.UPID, ":")
+	if len(upidSplit) < 4 {
+		return -1, fmt.Errorf("GetTaskEndTime: error getting tasks: invalid upid")
+	}
 
-		for _, respTask := range resp.Data {
-			if respTask.UPID == task.UPID {
-				return respTask.EndTime, nil
-			}
-		}
+	parsed := upidSplit[3]
+	logFolder := parsed[len(parsed)-2:]
 
-		if resp.Total <= page*50 {
-			nextPage = false
-		}
+	logStat, err := os.Stat(fmt.Sprintf("/var/log/proxmox-backup/tasks/%s/%s", logFolder, task.UPID))
+	if err == nil {
+		return logStat.ModTime().Unix(), nil
 	}
 
 	return -1, fmt.Errorf("GetTaskEndTime: error getting tasks: not found")
