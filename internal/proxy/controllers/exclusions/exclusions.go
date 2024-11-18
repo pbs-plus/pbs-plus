@@ -18,6 +18,10 @@ func D2DExclusionHandler(storeInstance *store.Store) func(http.ResponseWriter, *
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		}
+
 		if r.Method == http.MethodGet {
 			all, err := storeInstance.GetAllExclusions()
 			if err != nil {
@@ -53,6 +57,10 @@ func ExtJsExclusionHandler(storeInstance *store.Store) func(http.ResponseWriter,
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 
 		err := r.ParseForm()
@@ -86,6 +94,10 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 		response := ExclusionConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+		}
+
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

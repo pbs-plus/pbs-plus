@@ -28,6 +28,10 @@ func D2DTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *htt
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		}
+
 		if r.Method == http.MethodGet {
 			all, err := storeInstance.GetAllTargets()
 			if err != nil {
@@ -104,7 +108,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) func(http.ResponseWriter,
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
-		if err := store.CheckAgentAuth(r); err != nil {
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		}
 
@@ -159,6 +163,10 @@ func ExtJsTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *h
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 
 		err := r.ParseForm()
@@ -196,6 +204,10 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWrit
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+		}
+
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

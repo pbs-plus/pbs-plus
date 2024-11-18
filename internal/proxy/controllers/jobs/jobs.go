@@ -20,6 +20,10 @@ func D2DJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.R
 			return
 		}
 
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		}
+
 		allJobs, err := storeInstance.GetAllJobs()
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
@@ -52,6 +56,10 @@ func ExtJsJobRunHandler(storeInstance *store.Store) func(http.ResponseWriter, *h
 			return
 		}
 
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		}
+
 		job, err := storeInstance.GetJob(pathVar["job"])
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
@@ -81,6 +89,10 @@ func ExtJsJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
+		}
+
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -121,6 +133,10 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter,
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
+		}
+
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
