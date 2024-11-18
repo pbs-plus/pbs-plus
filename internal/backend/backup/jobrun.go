@@ -208,5 +208,5 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		}
 	}()
 
-	return &task, nil
+	return task, nil
 }
