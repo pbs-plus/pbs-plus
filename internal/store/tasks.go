@@ -124,17 +124,18 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, taskChan chan
 						}
 					} else {
 						searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
-						log.Printf("Checking if %s contains %s\n", searchString, event.Name)
+						log.Printf("Checking if %s contains %s\n", event.Name, searchString)
 						if !strings.Contains(event.Name, ".tmp_") && strings.Contains(event.Name, searchString) {
+							log.Printf("Proceeding: %s contains %s\n", event.Name, searchString)
 							fileName := filepath.Base(event.Name)
-							colonSplit := strings.Split(fileName, ":")
-							actualUpid := colonSplit[:9]
 
-							newTask, err := storeInstance.GetTaskByUPID(strings.Join(actualUpid, ":") + ":")
+							log.Printf("Getting UPID: %s\n", fileName)
+							newTask, err := storeInstance.GetTaskByUPID(fileName)
 							if err != nil {
 								log.Printf("GetMostRecentTask: error getting task: %v\n", err)
-								continue
+								return
 							}
+							log.Printf("Sending UPID: %s\n", fileName)
 							taskChan <- *newTask
 							return
 						}
