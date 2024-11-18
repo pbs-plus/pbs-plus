@@ -5,6 +5,7 @@ package proxy
 import (
 	"bytes"
 	"compress/flate"
+	"compress/zlib"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -32,7 +33,11 @@ func CreateProxy(target *url.URL, storeInstance *store.Store) *httputil.ReverseP
 
 			body, err = io.ReadAll(flate.NewReader(resp.Body))
 			if err != nil {
-				body, err = io.ReadAll(resp.Body)
+				r, err := zlib.NewReader(resp.Body)
+				if err != nil {
+					return err
+				}
+				body, err = io.ReadAll(r)
 				if err != nil {
 					return err
 				}
