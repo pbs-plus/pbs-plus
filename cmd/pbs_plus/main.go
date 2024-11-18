@@ -132,6 +132,7 @@ func main() {
 	// Register routes
 	router.AddRoute("/api2/json/d2d/backup", jobs.D2DJobHandler(storeInstance))
 	router.AddRoute("/api2/json/d2d/target", targets.D2DTargetHandler(storeInstance))
+	router.AddRoute("/api2/json/d2d/target/agent", targets.D2DTargetAgentHandler(storeInstance))
 	router.AddRoute("/api2/json/d2d/exclusion", exclusions.D2DExclusionHandler(storeInstance))
 	router.AddRoute("/api2/json/d2d/partial-file", partial_files.D2DPartialFileHandler(storeInstance))
 	router.AddRoute("/api2/json/d2d/agent-log", agents.AgentLogHandler(storeInstance))

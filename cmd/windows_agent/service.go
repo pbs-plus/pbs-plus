@@ -4,10 +4,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/kardianos/service"
@@ -29,6 +32,11 @@ type agentService struct {
 	svc    service.Service
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+type AgentDrivesRequest struct {
+	Hostname     string   `json:"hostname"`
+	DriveLetters []string `json:"drive_letters"`
 }
 
 func (p *agentService) Start(s service.Service) error {
@@ -98,6 +106,35 @@ func (p *agentService) run() {
 	}
 
 	drives := getLocalDrives()
+
+	go func() {
+		driveLetters := []string{}
+		for _, drive := range drives {
+			driveLetters = append(driveLetters, drive.Letter)
+		}
+		hostname, _ := os.Hostname()
+		reqBody, err := json.Marshal(&AgentDrivesRequest{
+			Hostname:     hostname,
+			DriveLetters: driveLetters,
+		})
+
+		if err != nil {
+			logger.Errorf("Agent drives update error: %v", err)
+			return
+		}
+
+		err = agent.ProxmoxHTTPRequest(
+			http.MethodPost,
+			"/api2/json/d2d/target/agent",
+			bytes.NewBuffer(reqBody),
+			nil,
+		)
+		if err != nil {
+			logger.Errorf("Agent drives update error: %v", err)
+			return
+		}
+	}()
+
 	for _, drive := range drives {
 		drive.ErrorChan = make(chan string)
 		err = drive.serveSFTP(p)

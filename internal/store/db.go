@@ -40,6 +40,7 @@ type Job struct {
 type Target struct {
 	Name             string `db:"name" json:"name"`
 	Path             string `db:"path" json:"path"`
+	IsAgent          bool   `json:"is_agent"`
 	ConnectionStatus bool   `json:"connection_status"`
 }
 
@@ -448,11 +449,51 @@ func (store *Store) GetTarget(name string) (*Target, error) {
 		if err != nil {
 			syslogger.Errorf("GetTarget: error agent ping -> %v", err)
 		}
+		target.IsAgent = true
 	} else {
 		target.ConnectionStatus = utils.IsValid(target.Path)
+		target.IsAgent = false
 	}
 
 	return &target, nil
+}
+
+func (store *Store) GetAllTargetsByIP(ip string) ([]Target, error) {
+	query := `SELECT name, path FROM targets WHERE path LIKE ?;`
+	rows, err := store.Db.Query(query, fmt.Sprintf("agent://%s/%%", ip))
+	if err != nil {
+		return nil, fmt.Errorf("GetAllTargetsByIP: error getting select query -> %w", err)
+	}
+	defer rows.Close()
+
+	var targets []Target
+	targets = make([]Target, 0)
+	for rows.Next() {
+		var target Target
+		err := rows.Scan(&target.Name, &target.Path)
+		if err != nil {
+			return nil, fmt.Errorf("GetAllTargetsByIP: error scanning row from targets -> %w", err)
+		}
+
+		syslogger, err := syslog.InitializeLogger()
+		if err != nil {
+			return nil, fmt.Errorf("GetAllTargetsByIP: failed to initialize logger -> %w", err)
+		}
+		if strings.HasPrefix(target.Path, "agent://") {
+			target.ConnectionStatus, err = store.AgentPing(&target)
+			if err != nil {
+				syslogger.Errorf("GetAllTargetsByIP: error agent ping -> %v", err)
+			}
+			target.IsAgent = true
+		} else {
+			target.ConnectionStatus = utils.IsValid(target.Path)
+			target.IsAgent = false
+		}
+
+		targets = append(targets, target)
+	}
+
+	return targets, rows.Err()
 }
 
 // UpdateTarget updates an existing Target in the database
@@ -502,8 +543,10 @@ func (store *Store) GetAllTargets() ([]Target, error) {
 			if err != nil {
 				syslogger.Errorf("GetTarget: error agent ping -> %v", err)
 			}
+			target.IsAgent = true
 		} else {
 			target.ConnectionStatus = utils.IsValid(target.Path)
+			target.IsAgent = false
 		}
 
 		targets = append(targets, target)

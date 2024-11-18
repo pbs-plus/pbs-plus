@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/target"
@@ -88,6 +89,61 @@ func D2DTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *htt
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
+		}
+	}
+}
+
+type NewAgentHostnameRequest struct {
+	Hostname     string   `json:"hostname"`
+	DriveLetters []string `json:"drive_letters"`
+}
+
+func D2DTargetAgentHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
+	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+		}
+
+		var reqParsed NewAgentHostnameRequest
+		err := json.NewDecoder(r.Body).Decode(&reqParsed)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		clientIP := r.RemoteAddr
+
+		forwarded := r.Header.Get("X-FORWARDED-FOR")
+		if forwarded != "" {
+			clientIP = forwarded
+		}
+
+		clientIP = strings.Split(clientIP, ":")[0]
+
+		existingTargets, err := storeInstance.GetAllTargetsByIP(clientIP)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		for _, target := range existingTargets {
+			targetDrive := strings.Split(target.Path, "/")[3]
+			if !slices.Contains(reqParsed.DriveLetters, targetDrive) && strings.Contains(target.Name, reqParsed.Hostname) {
+				_ = storeInstance.DeleteTarget(target.Name)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w).Encode(map[string]bool{
+			"success": true,
+		})
+
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
 		}
 	}
 }
