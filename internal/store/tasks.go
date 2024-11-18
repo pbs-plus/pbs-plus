@@ -135,6 +135,7 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 								return
 							}
 							returnChan <- *newTask
+							return
 						}
 					}
 				}

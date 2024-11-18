@@ -133,6 +133,12 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
 	}
 
+	var task *store.Task
+	go func() {
+		taskC := <-taskChan
+		task = &taskC
+	}()
+
 	for {
 		line, err := logBuffer.ReadString('\n')
 		if err != nil && line != "" {
@@ -146,8 +152,9 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		time.Sleep(time.Millisecond * 100)
 	}
 
-	task, ok := <-taskChan
-	if !ok {
+	<-watchCtx.Done()
+
+	if task == nil {
 		return nil, fmt.Errorf("RunBackup: task not found -> %w", err)
 	}
 
