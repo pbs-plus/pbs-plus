@@ -129,7 +129,9 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 						searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
 						log.Printf("Checking %s == %s\n", event.Name, searchString)
 						if strings.Contains(event.Name, searchString) {
-							newTask, err := storeInstance.GetTaskByUPID(event.Name)
+							colonSplit := strings.Split(event.Name, ":")
+							actualUpid := colonSplit[:9]
+							newTask, err := storeInstance.GetTaskByUPID(strings.Join(actualUpid, ":") + ":")
 							if err != nil {
 								log.Printf("GetMostRecentTask: error getting tasks: %v\n", err)
 								return
