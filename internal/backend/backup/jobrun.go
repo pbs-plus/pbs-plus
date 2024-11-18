@@ -142,7 +142,11 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	log.Printf("Waiting for task: %s\n", job.ID)
-	<-taskChan
+
+	select {
+	case <-taskChan:
+	case <-watchCtx.Done():
+	}
 
 	if task == nil {
 		return nil, fmt.Errorf("RunBackup: task not found")
