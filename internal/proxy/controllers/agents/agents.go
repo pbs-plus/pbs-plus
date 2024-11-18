@@ -22,6 +22,10 @@ func AgentLogHandler(storeInstance *store.Store) func(http.ResponseWriter, *http
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
+		if err := store.CheckAgentAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		}
+
 		syslogger, err := syslog.InitializeLogger()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)

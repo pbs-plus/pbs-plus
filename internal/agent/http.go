@@ -3,13 +3,16 @@
 package agent
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/billgraziano/dpapi"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows/registry"
 )
@@ -22,8 +25,21 @@ func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error 
 	if err != nil {
 		return fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
 	}
-
 	defer key.Close()
+
+	var drivePublicKey *string
+	keyStr := "Software\\PBSPlus\\Config\\SFTP-C"
+	if driveKey, err := registry.OpenKey(registry.LOCAL_MACHINE, keyStr, registry.QUERY_VALUE); err == nil {
+		defer driveKey.Close()
+		if publicKey, _, err := driveKey.GetStringValue("ServerKey"); err == nil {
+			if decrypted, err := dpapi.Decrypt(publicKey); err == nil {
+				if decoded, err := base64.StdEncoding.DecodeString(decrypted); err == nil {
+					decodedStr := string(decoded)
+					drivePublicKey = &decodedStr
+				}
+			}
+		}
+	}
 
 	if serverUrl, _, err = key.GetStringValue("ServerURL"); err != nil || serverUrl == "" {
 		return fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
@@ -43,7 +59,13 @@ func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error 
 		return fmt.Errorf("ProxmoxHTTPRequest: error creating http request -> %w", err)
 	}
 
+	hostname, _ := os.Hostname()
+
 	req.Header.Add("Content-Type", "application/json")
+	if drivePublicKey != nil {
+		encodedKey := base64.StdEncoding.EncodeToString([]byte(*drivePublicKey))
+		req.Header.Set("Authorization", fmt.Sprintf("PBSPlusAPIAgent=%s---C:%s", hostname, encodedKey))
+	}
 
 	if httpClient == nil {
 		httpClient = &http.Client{

@@ -104,6 +104,10 @@ func D2DTargetAgentHandler(storeInstance *store.Store) func(http.ResponseWriter,
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
+		if err := store.CheckAgentAuth(r); err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		}
+
 		var reqParsed NewAgentHostnameRequest
 		err := json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {

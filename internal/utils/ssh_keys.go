@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -54,4 +55,31 @@ func generatePublicKey(privatekey *rsa.PublicKey) ([]byte, error) {
 	pubKeyBytes := ssh.MarshalAuthorizedKey(publicRsaKey)
 
 	return pubKeyBytes, nil
+}
+
+var pubKeyCache sync.Map
+
+func GeneratePublicKeyFromPrivateKey(encodedPrivateKey []byte) ([]byte, error) {
+	cached, ok := pubKeyCache.Load(encodedPrivateKey)
+	if ok {
+		return cached.([]byte), nil
+	}
+
+	block, _ := pem.Decode(encodedPrivateKey)
+	if block == nil || block.Type != "RSA PRIVATE KEY" {
+		return nil, fmt.Errorf("GeneratePublicKeyFromPrivateKey: invalid private key type or format")
+	}
+
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("GeneratePublicKeyFromPrivateKey: error parsing private key -> %w", err)
+	}
+
+	publicKey, err := generatePublicKey(&privateKey.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("GeneratePublicKeyFromPrivateKey: error generating public key -> %w", err)
+	}
+
+	pubKeyCache.Store(encodedPrivateKey, publicKey)
+	return publicKey, nil
 }
