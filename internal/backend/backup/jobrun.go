@@ -112,7 +112,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	cmd.Stdout = writer
 	cmd.Stderr = writer
 
-	var taskChan chan store.Task
+	taskChan := make(chan store.Task)
 	watchCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -142,7 +142,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	log.Printf("Waiting for task: %s\n", job.ID)
-
 	select {
 	case <-taskChan:
 	case <-watchCtx.Done():
