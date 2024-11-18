@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -204,19 +205,19 @@ func (store *Store) GetJob(id string) (*Job, error) {
 	if job.LastRunUpid != nil {
 		task, err := store.GetTaskByUPID(*job.LastRunUpid)
 		if err != nil {
-			return nil, fmt.Errorf("GetJob: error getting task by UPID -> %w", err)
-		}
-
-		job.LastRunEndtime = &task.EndTime
-
-		if task.Status == "stopped" {
-			job.LastRunState = &task.ExitStatus
-
-			tmpDuration := task.EndTime - task.StartTime
-			job.Duration = &tmpDuration
+			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
 		} else {
-			tmpDuration := time.Now().Unix() - task.StartTime
-			job.Duration = &tmpDuration
+			job.LastRunEndtime = &task.EndTime
+
+			if task.Status == "stopped" {
+				job.LastRunState = &task.ExitStatus
+
+				tmpDuration := task.EndTime - task.StartTime
+				job.Duration = &tmpDuration
+			} else {
+				tmpDuration := time.Now().Unix() - task.StartTime
+				job.Duration = &tmpDuration
+			}
 		}
 	}
 
@@ -337,19 +338,19 @@ func (store *Store) GetAllJobs() ([]Job, error) {
 		if job.LastRunUpid != nil {
 			task, err := store.GetTaskByUPID(*job.LastRunUpid)
 			if err != nil {
-				return nil, fmt.Errorf("GetAllJobs: error getting task by UPID -> %w", err)
-			}
-
-			job.LastRunEndtime = &task.EndTime
-
-			if task.Status == "stopped" {
-				job.LastRunState = &task.ExitStatus
-
-				tmpDuration := task.EndTime - task.StartTime
-				job.Duration = &tmpDuration
+				log.Printf("GetJob: error getting task by UPID -> %v\n", err)
 			} else {
-				tmpDuration := time.Now().Unix() - task.StartTime
-				job.Duration = &tmpDuration
+				job.LastRunEndtime = &task.EndTime
+
+				if task.Status == "stopped" {
+					job.LastRunState = &task.ExitStatus
+
+					tmpDuration := task.EndTime - task.StartTime
+					job.Duration = &tmpDuration
+				} else {
+					tmpDuration := time.Now().Unix() - task.StartTime
+					job.Duration = &tmpDuration
+				}
 			}
 		}
 
