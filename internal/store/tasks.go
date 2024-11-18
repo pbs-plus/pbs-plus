@@ -88,7 +88,6 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 	if err != nil {
 		return nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
-	defer watcher.Close()
 
 	err = watcher.Add(tasksParentPath)
 	if err != nil {
@@ -115,6 +114,7 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 	returnChan := make(chan Task)
 
 	go func() {
+		defer watcher.Close()
 		defer close(returnChan)
 		for {
 			select {
@@ -127,6 +127,7 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 						}
 					} else {
 						searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
+						log.Printf("Checking %s == %s\n", event.Name, searchString)
 						if strings.Contains(event.Name, searchString) {
 							newTask, err := storeInstance.GetTaskByUPID(event.Name)
 							if err != nil {
@@ -137,9 +138,7 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 						}
 					}
 				}
-			case err := <-watcher.Errors:
-				log.Println("Watcher error:", err)
-			case <-time.After(time.Second * 120):
+			case <-time.After(time.Second * 60):
 				log.Println("GetMostRecentTask: error getting tasks: timeout, not found")
 				return
 			case <-ctx.Done():
