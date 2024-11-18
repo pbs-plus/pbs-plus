@@ -3,18 +3,17 @@
 package store
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"time"
-)
 
-type TasksResponse struct {
-	Data  []Task `json:"data"`
-	Total int    `json:"total"`
-}
+	"github.com/fsnotify/fsnotify"
+)
 
 type TaskResponse struct {
 	Data  Task `json:"data"`
@@ -35,40 +34,122 @@ type Task struct {
 	ExitStatus string `json:"exitstatus"`
 }
 
-func (storeInstance *Store) GetMostRecentTask(job *Job, since *time.Time) (*Task, error) {
-	var resp TasksResponse
-	err := storeInstance.ProxmoxHTTPRequest(
-		http.MethodGet,
-		fmt.Sprintf("/api2/json/nodes/localhost/tasks?store=%s&typefilter=backup&start=0&limit=1&since=%d", job.Store, since.Unix()),
-		nil,
-		&resp,
-	)
+func isDir(path string) bool {
+	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("GetMostRecentTask: error creating http request -> %w", err)
+		log.Println("Error checking path:", err)
+		return false
+	}
+	return info.IsDir()
+}
+
+func encodeToHexEscapes(input string) string {
+	var encoded strings.Builder
+	for _, char := range input {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' {
+			encoded.WriteRune(char)
+		} else {
+			encoded.WriteString(fmt.Sprintf(`\x%02x`, char))
+		}
 	}
 
-	if len(resp.Data) == 0 {
-		return nil, fmt.Errorf("GetMostRecentTask: error getting tasks: not found")
-	}
+	return encoded.String()
+}
 
-	if strings.Contains(resp.Data[0].UPID, ":reader:") {
-		resp.Data[0].UPID = strings.ReplaceAll(resp.Data[0].UPID, ":reader:", ":backup:")
-		splittedUPID := strings.Split(resp.Data[0].UPID, ":")
-		currInVal, err := strconv.ParseInt(splittedUPID[4], 16, 64)
+func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (chan Task, error) {
+	tasksParentPath := "/var/log/proxmox-backup/tasks"
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostnameFile, err := os.ReadFile("/etc/hostname")
 		if err != nil {
-			return nil, fmt.Errorf("GetMostRecentTask: error converting hex -> %w", err)
-		}
-		splittedUPID[4] = fmt.Sprintf("%08X", currInVal-1)
-		idx := strings.LastIndex(splittedUPID[7], "-")
-		if idx != -1 && len(splittedUPID[7][idx+1:]) == 8 {
-			splittedUPID[7] = splittedUPID[7][:idx]
+			hostname = "localhost"
 		}
 
-		resp.Data[0].UPID = strings.Join(splittedUPID, ":")
-		resp.Data[0].WorkerType = "backup"
+		hostname = strings.TrimSpace(string(hostnameFile))
 	}
 
-	return &resp.Data[0], nil
+	target, err := storeInstance.GetTarget(job.Target)
+	if err != nil {
+		return nil, fmt.Errorf("GetMostRecentTask -> %w", err)
+	}
+
+	if target == nil {
+		return nil, fmt.Errorf("GetMostRecentTask: Target '%s' does not exist.", job.Target)
+	}
+
+	isAgent := strings.HasPrefix(target.Path, "agent://")
+
+	backupId := hostname
+	if isAgent {
+		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create watcher: %w", err)
+	}
+	defer watcher.Close()
+
+	err = watcher.Add(tasksParentPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add folder to watcher: %w", err)
+	}
+
+	err = filepath.Walk(tasksParentPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			log.Println("Error walking the path:", err)
+			return err
+		}
+		if info.IsDir() {
+			err = watcher.Add(path)
+			if err != nil {
+				log.Println("Failed to add directory to watcher:", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk folder: %w", err)
+	}
+
+	returnChan := make(chan Task)
+
+	go func() {
+		defer close(returnChan)
+		for {
+			select {
+			case event := <-watcher.Events:
+				if event.Op&fsnotify.Create == fsnotify.Create {
+					if isDir(event.Name) {
+						err = watcher.Add(event.Name)
+						if err != nil {
+							log.Println("Failed to add directory to watcher:", err)
+						}
+					} else {
+						searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
+						if strings.Contains(event.Name, searchString) {
+							newTask, err := storeInstance.GetTaskByUPID(event.Name)
+							if err != nil {
+								log.Printf("GetMostRecentTask: error getting tasks: %v\n", err)
+								return
+							}
+							returnChan <- *newTask
+						}
+					}
+				}
+			case err := <-watcher.Errors:
+				log.Println("Watcher error:", err)
+			case <-time.After(time.Second * 120):
+				log.Println("GetMostRecentTask: error getting tasks: timeout, not found")
+				return
+			case <-ctx.Done():
+				log.Println("GetMostRecentTask: error getting tasks: context cancelled, not found")
+				return
+			}
+		}
+	}()
+
+	return returnChan, nil
 }
 
 func (storeInstance *Store) GetTaskByUPID(upid string) (*Task, error) {

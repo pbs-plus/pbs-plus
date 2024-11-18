@@ -4,6 +4,7 @@ package backup
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -112,15 +113,26 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	cmd.Stdout = writer
 	cmd.Stderr = writer
 
+	var taskChan chan store.Task
+	watchCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		taskChan, err = storeInstance.GetMostRecentTask(watchCtx, job)
+		if err != nil {
+			log.Printf("RunBackup: unable to monitor tasks folder -> %v\n", err)
+			return
+		}
+	}()
+
 	err = cmd.Start()
 	if err != nil {
 		if agentMount != nil {
 			agentMount.Unmount()
 		}
+		cancel()
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
 	}
-
-	timeStarted := time.Now()
 
 	for {
 		line, err := logBuffer.ReadString('\n')
@@ -135,16 +147,9 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		time.Sleep(time.Millisecond * 100)
 	}
 
-	time.Sleep(time.Millisecond * 500)
-
-	task, err := storeInstance.GetMostRecentTask(job, &timeStarted)
-	if err != nil {
-		_ = cmd.Process.Kill()
-		if agentMount != nil {
-			agentMount.Unmount()
-		}
-
-		return nil, fmt.Errorf("RunBackup: unable to get most recent task -> %w", err)
+	task, ok := <-taskChan
+	if !ok {
+		return nil, fmt.Errorf("RunBackup: task not found -> %w", err)
 	}
 
 	job.LastRunUpid = &task.UPID
@@ -197,5 +202,5 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		}
 	}()
 
-	return task, nil
+	return &task, nil
 }
