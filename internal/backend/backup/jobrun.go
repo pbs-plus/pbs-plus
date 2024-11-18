@@ -137,7 +137,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	go func() {
 		taskC := <-taskChan
 		task = &taskC
-		cancel()
 	}()
 
 	for {
@@ -152,8 +151,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 
 		time.Sleep(time.Millisecond * 100)
 	}
-
-	<-watchCtx.Done()
 
 	if task == nil {
 		return nil, fmt.Errorf("RunBackup: task not found -> %w", err)
