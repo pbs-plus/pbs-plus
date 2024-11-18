@@ -118,11 +118,20 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	defer cancel()
 
 	go func() {
-		taskChan, err = storeInstance.GetMostRecentTask(watchCtx, job)
+		err = storeInstance.GetMostRecentTask(watchCtx, taskChan, job)
 		if err != nil {
 			log.Printf("RunBackup: unable to monitor tasks folder -> %v\n", err)
 			return
 		}
+	}()
+	var task *store.Task
+	go func() {
+		taskC := <-taskChan
+		log.Printf("Task received: %s\n", taskC.UPID)
+		task = &taskC
+
+		close(taskChan)
+		cancel()
 	}()
 
 	err = cmd.Start()
@@ -132,15 +141,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		}
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
 	}
-
-	var task *store.Task
-	go func() {
-		taskC := <-taskChan
-		log.Printf("Task received: %s\n", taskC.UPID)
-		task = &taskC
-
-		close(taskChan)
-	}()
 
 	for {
 		line, err := logBuffer.ReadString('\n')
@@ -155,8 +155,11 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		time.Sleep(time.Millisecond * 100)
 	}
 
+	log.Printf("Waiting for task: %s\n", job.ID)
+	<-watchCtx.Done()
+
 	if task == nil {
-		return nil, fmt.Errorf("RunBackup: task not found -> %w", err)
+		return nil, fmt.Errorf("RunBackup: task not found")
 	}
 
 	job.LastRunUpid = &task.UPID

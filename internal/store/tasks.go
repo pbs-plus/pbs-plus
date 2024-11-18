@@ -56,7 +56,7 @@ func encodeToHexEscapes(input string) string {
 	return encoded.String()
 }
 
-func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (chan Task, error) {
+func (storeInstance *Store) GetMostRecentTask(ctx context.Context, taskChan chan Task, job *Job) error {
 	tasksParentPath := "/var/log/proxmox-backup/tasks"
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -70,11 +70,11 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 
 	target, err := storeInstance.GetTarget(job.Target)
 	if err != nil {
-		return nil, fmt.Errorf("GetMostRecentTask -> %w", err)
+		return fmt.Errorf("GetMostRecentTask -> %w", err)
 	}
 
 	if target == nil {
-		return nil, fmt.Errorf("GetMostRecentTask: Target '%s' does not exist.", job.Target)
+		return fmt.Errorf("GetMostRecentTask: Target '%s' does not exist.", job.Target)
 	}
 
 	isAgent := strings.HasPrefix(target.Path, "agent://")
@@ -86,12 +86,12 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create watcher: %w", err)
+		return fmt.Errorf("failed to create watcher: %w", err)
 	}
 
 	err = watcher.Add(tasksParentPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to add folder to watcher: %w", err)
+		return fmt.Errorf("failed to add folder to watcher: %w", err)
 	}
 
 	err = filepath.Walk(tasksParentPath, func(path string, info os.FileInfo, err error) error {
@@ -108,10 +108,8 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to walk folder: %w", err)
+		return fmt.Errorf("failed to walk folder: %w", err)
 	}
-
-	returnChan := make(chan Task)
 
 	go func() {
 		defer watcher.Close()
@@ -131,12 +129,13 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 							fileName := filepath.Base(event.Name)
 							colonSplit := strings.Split(fileName, ":")
 							actualUpid := colonSplit[:9]
+
 							newTask, err := storeInstance.GetTaskByUPID(strings.Join(actualUpid, ":") + ":")
 							if err != nil {
-								log.Printf("GetMostRecentTask: error getting tasks: %v\n", err)
-								return
+								log.Printf("GetMostRecentTask: error getting task: %v\n", err)
+								continue
 							}
-							returnChan <- *newTask
+							taskChan <- *newTask
 							return
 						}
 					}
@@ -151,7 +150,7 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 		}
 	}()
 
-	return returnChan, nil
+	return nil
 }
 
 func (storeInstance *Store) GetTaskByUPID(upid string) (*Task, error) {
