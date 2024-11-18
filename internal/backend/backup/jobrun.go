@@ -137,6 +137,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	go func() {
 		taskC := <-taskChan
 		task = &taskC
+		cancel()
 	}()
 
 	for {
