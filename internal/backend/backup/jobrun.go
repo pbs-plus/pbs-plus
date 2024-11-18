@@ -136,7 +136,10 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	var task *store.Task
 	go func() {
 		taskC := <-taskChan
+		log.Printf("Task received: %s\n", taskC.UPID)
 		task = &taskC
+
+		close(taskChan)
 	}()
 
 	for {

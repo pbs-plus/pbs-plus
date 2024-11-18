@@ -115,7 +115,6 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 
 	go func() {
 		defer watcher.Close()
-		defer close(returnChan)
 		for {
 			select {
 			case event := <-watcher.Events:
