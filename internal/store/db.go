@@ -202,7 +202,7 @@ func (store *Store) GetJob(id string) (*Job, error) {
 		job.Exclusions = exclusions
 	}
 
-	if job.LastRunUpid != nil {
+	if job.LastRunUpid != nil && *job.LastRunUpid != "" {
 		task, err := store.GetTaskByUPID(*job.LastRunUpid)
 		if err != nil {
 			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
@@ -335,7 +335,7 @@ func (store *Store) GetAllJobs() ([]Job, error) {
 			job.Exclusions = exclusions
 		}
 
-		if job.LastRunUpid != nil {
+		if job.LastRunUpid != nil && *job.LastRunUpid != "" {
 			task, err := store.GetTaskByUPID(*job.LastRunUpid)
 			if err != nil {
 				log.Printf("GetJob: error getting task by UPID -> %v\n", err)
