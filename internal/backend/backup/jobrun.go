@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
@@ -140,19 +139,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 			agentMount.Unmount()
 		}
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
-	}
-
-	for {
-		line, err := logBuffer.ReadString('\n')
-		if err != nil && line != "" {
-			return nil, fmt.Errorf("RunBackup: log buffer readString error -> %w", err)
-		}
-
-		if strings.Contains(line, "Upload directory") {
-			break
-		}
-
-		time.Sleep(time.Millisecond * 100)
 	}
 
 	log.Printf("Waiting for task: %s\n", job.ID)
