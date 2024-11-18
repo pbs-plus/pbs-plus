@@ -127,8 +127,8 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, job *Job) (ch
 						}
 					} else {
 						searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
-						log.Printf("Checking %s == %s\n", event.Name, searchString)
-						if strings.Contains(event.Name, searchString) {
+						log.Printf("Checking if %s contains %s\n", searchString, event.Name)
+						if !strings.Contains(event.Name, ".tmp_") && strings.Contains(event.Name, searchString) {
 							fileName := filepath.Base(event.Name)
 							colonSplit := strings.Split(fileName, ":")
 							actualUpid := colonSplit[:9]
