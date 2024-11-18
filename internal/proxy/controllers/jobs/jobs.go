@@ -21,7 +21,8 @@ func D2DJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.R
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
 		}
 
 		allJobs, err := storeInstance.GetAllJobs()
@@ -57,7 +58,8 @@ func ExtJsJobRunHandler(storeInstance *store.Store) func(http.ResponseWriter, *h
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
 		}
 
 		job, err := storeInstance.GetJob(pathVar["job"])
@@ -92,7 +94,8 @@ func ExtJsJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -136,7 +139,8 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter,
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")

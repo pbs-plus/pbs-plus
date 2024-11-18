@@ -23,7 +23,8 @@ func AgentLogHandler(storeInstance *store.Store) func(http.ResponseWriter, *http
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
 		}
 
 		syslogger, err := syslog.InitializeLogger()

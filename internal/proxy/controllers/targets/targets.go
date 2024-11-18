@@ -26,10 +26,12 @@ func D2DTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *htt
 	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
 		}
 
 		if r.Method == http.MethodGet {
@@ -109,7 +111,8 @@ func D2DTargetAgentHandler(storeInstance *store.Store) func(http.ResponseWriter,
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
 		}
 
 		var reqParsed NewAgentHostnameRequest
@@ -164,7 +167,8 @@ func ExtJsTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *h
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -207,7 +211,8 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWrit
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")

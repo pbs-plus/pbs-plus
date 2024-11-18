@@ -96,5 +96,9 @@ func (storeInstance *Store) CheckProxyAuth(r *http.Request) error {
 		resp.Body.Close()
 	}()
 
+	if resp.StatusCode > 299 || resp.StatusCode < 200 {
+		return fmt.Errorf("CheckProxyAuth: invalid auth -> %w", err)
+	}
+
 	return nil
 }
