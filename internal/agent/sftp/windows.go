@@ -4,55 +4,39 @@ package sftp
 
 import (
 	"os"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-// FileStandardInfo contains extended information for the file.
-// FILE_STANDARD_INFO in WinBase.h
-// https://docs.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_standard_info
-type FileStandardInfo struct {
-	AllocationSize, EndOfFile int64
-	NumberOfLinks             uint32
-	DeletePending, Directory  bool
-}
-
-type FileAttributeTagInfo struct {
-	FileAttributes uint32
-	ReparseTag     uint32
-}
-
 func invalidAttributes(path string) (bool, error) {
-	file, err := os.Open(path)
+	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return true, err
+		return false, err
 	}
-	defer file.Close()
 
-	at := &FileAttributeTagInfo{}
-	err = windows.GetFileInformationByHandleEx(windows.Handle(file.Fd()), windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(at)), uint32(unsafe.Sizeof(*at)))
+	// Get file attributes
+	attributes, err := windows.GetFileAttributes(p)
 	if err != nil {
-		return true, err
+		return false, os.NewSyscallError("GetFileAttributes", err)
 	}
 
-	if at.FileAttributes&windows.FILE_ATTRIBUTE_TEMPORARY != 0 {
+	if attributes&windows.FILE_ATTRIBUTE_TEMPORARY != 0 {
 		return true, nil
 	}
 
-	if at.FileAttributes&windows.FILE_ATTRIBUTE_RECALL_ON_OPEN != 0 {
+	if attributes&windows.FILE_ATTRIBUTE_RECALL_ON_OPEN != 0 {
 		return true, nil
 	}
 
-	if at.FileAttributes&windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
+	if attributes&windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
 		return true, nil
 	}
 
-	if at.FileAttributes&windows.FILE_ATTRIBUTE_VIRTUAL != 0 {
+	if attributes&windows.FILE_ATTRIBUTE_VIRTUAL != 0 {
 		return true, nil
 	}
 
-	if at.FileAttributes&windows.FILE_ATTRIBUTE_OFFLINE != 0 {
+	if attributes&windows.FILE_ATTRIBUTE_OFFLINE != 0 {
 		return true, nil
 	}
 

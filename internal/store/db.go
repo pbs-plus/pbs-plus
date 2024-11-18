@@ -111,6 +111,8 @@ func (store *Store) CreateTables() error {
 		return fmt.Errorf("CreateTables: error creating target table -> %w", err)
 	}
 
+	_, exclusionCheck := store.Db.Query("SELECT * FROM exclusions;")
+
 	createExclusionTable := `
     CREATE TABLE IF NOT EXISTS exclusions (
         path TEXT PRIMARY KEY NOT NULL,
@@ -121,6 +123,16 @@ func (store *Store) CreateTables() error {
 	_, err = store.Db.Exec(createExclusionTable)
 	if err != nil {
 		return fmt.Errorf("CreateTables: error creating exclusions table -> %w", err)
+	}
+
+	if exclusionCheck != nil {
+		for _, path := range defaultExclusions {
+			_ = store.CreateExclusion(Exclusion{
+				Path:     path,
+				IsGlobal: true,
+				Comment:  "Generated from default list of exclusions",
+			})
+		}
 	}
 
 	createExclusionBridgeTable := `
