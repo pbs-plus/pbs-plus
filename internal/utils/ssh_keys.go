@@ -60,7 +60,7 @@ func generatePublicKey(privatekey *rsa.PublicKey) ([]byte, error) {
 var pubKeyCache sync.Map
 
 func GeneratePublicKeyFromPrivateKey(encodedPrivateKey []byte) ([]byte, error) {
-	cached, ok := pubKeyCache.Load(encodedPrivateKey)
+	cached, ok := pubKeyCache.Load(string(encodedPrivateKey))
 	if ok {
 		return cached.([]byte), nil
 	}
@@ -80,6 +80,6 @@ func GeneratePublicKeyFromPrivateKey(encodedPrivateKey []byte) ([]byte, error) {
 		return nil, fmt.Errorf("GeneratePublicKeyFromPrivateKey: error generating public key -> %w", err)
 	}
 
-	pubKeyCache.Store(encodedPrivateKey, publicKey)
+	pubKeyCache.Store(string(encodedPrivateKey), publicKey)
 	return publicKey, nil
 }
