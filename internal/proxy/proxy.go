@@ -64,7 +64,7 @@ func decompressBody(resp *http.Response) ([]byte, error) {
 func tryZlibDecompression(resp *http.Response) ([]byte, error) {
 	// Close and retry to get a fresh body stream
 	resp.Body.Close()
-	newResp, err := http.DefaultTransport.RoundTrip(resp.Request)
+	newResp, err := utils.BaseTransport.RoundTrip(resp.Request)
 	if err != nil {
 		return nil, err
 	}
