@@ -271,15 +271,8 @@ func (store *Store) SetSchedule(job Job) error {
 	fullTimerPath := filepath.Join(TimerBasePath, timerPath)
 
 	if job.Schedule == "" {
-		err := os.Remove(fullSvcPath)
-		if err != nil {
-			return fmt.Errorf("SetSchedule: error removing existing service -> %w", err)
-		}
-
-		err = os.Remove(fullTimerPath)
-		if err != nil {
-			return fmt.Errorf("SetSchedule: error removing existing timer -> %w", err)
-		}
+		_ = os.Remove(fullSvcPath)
+		_ = os.Remove(fullTimerPath)
 	} else {
 		err := generateService(&job)
 		if err != nil {
