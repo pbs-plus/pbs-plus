@@ -52,6 +52,27 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		srcPath = agentMount.Path
 	}
 
+	taskChan := make(chan store.Task)
+	watchCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		err = storeInstance.GetMostRecentTask(watchCtx, taskChan, job)
+		if err != nil {
+			log.Printf("RunBackup: unable to monitor tasks folder -> %v\n", err)
+			return
+		}
+	}()
+	var task *store.Task
+	go func() {
+		taskC := <-taskChan
+		log.Printf("Task received: %s\n", taskC.UPID)
+		task = &taskC
+
+		close(taskChan)
+		cancel()
+	}()
+
 	jobStore := fmt.Sprintf(
 		"%s@localhost:%s",
 		storeInstance.APIToken.TokenId,
@@ -111,35 +132,55 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 
 	cmd.Stdout = writer
 	cmd.Stderr = writer
-
-	taskChan := make(chan store.Task)
-	watchCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() {
-		err = storeInstance.GetMostRecentTask(watchCtx, taskChan, job)
-		if err != nil {
-			log.Printf("RunBackup: unable to monitor tasks folder -> %v\n", err)
-			return
-		}
-	}()
-	var task *store.Task
-	go func() {
-		taskC := <-taskChan
-		log.Printf("Task received: %s\n", taskC.UPID)
-		task = &taskC
-
-		close(taskChan)
-		cancel()
-	}()
-
 	err = cmd.Start()
 	if err != nil {
 		if agentMount != nil {
 			agentMount.Unmount()
 		}
+		cancel()
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
 	}
+
+	go func() {
+		defer func() {
+			if waitChan != nil {
+				close(waitChan)
+			}
+		}()
+		syslogger, err := syslog.InitializeLogger()
+		if err != nil {
+			cancel()
+			log.Printf("Failed to initialize logger: %s", err)
+			return
+		}
+
+		if agentMount != nil {
+			defer agentMount.Unmount()
+		}
+		err = cmd.Wait()
+		if err != nil {
+			cancel()
+			syslogger.Errorf("RunBackup (goroutine): error waiting for backup -> %v", err)
+			return
+		}
+
+		taskFound, err := storeInstance.GetTaskByUPID(task.UPID)
+		if err != nil {
+			cancel()
+			syslogger.Errorf("RunBackup (goroutine): unable to get task by UPID -> %v", err)
+			return
+		}
+
+		job.LastRunState = &taskFound.Status
+		job.LastRunEndtime = &taskFound.EndTime
+
+		err = storeInstance.UpdateJob(*job)
+		if err != nil {
+			cancel()
+			syslogger.Errorf("RunBackup (goroutine): unable to update job -> %v", err)
+			return
+		}
+	}()
 
 	log.Printf("Waiting for task: %s\n", job.ID)
 	select {
@@ -163,43 +204,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 
 		return nil, fmt.Errorf("RunBackup: unable to update job -> %w", err)
 	}
-
-	go func() {
-		defer func() {
-			if waitChan != nil {
-				close(waitChan)
-			}
-		}()
-		syslogger, err := syslog.InitializeLogger()
-		if err != nil {
-			log.Printf("Failed to initialize logger: %s", err)
-			return
-		}
-
-		if agentMount != nil {
-			defer agentMount.Unmount()
-		}
-		err = cmd.Wait()
-		if err != nil {
-			syslogger.Errorf("RunBackup (goroutine): error waiting for backup -> %v", err)
-			return
-		}
-
-		taskFound, err := storeInstance.GetTaskByUPID(task.UPID)
-		if err != nil {
-			syslogger.Errorf("RunBackup (goroutine): unable to get task by UPID -> %v", err)
-			return
-		}
-
-		job.LastRunState = &taskFound.Status
-		job.LastRunEndtime = &taskFound.EndTime
-
-		err = storeInstance.UpdateJob(*job)
-		if err != nil {
-			syslogger.Errorf("RunBackup (goroutine): unable to update job -> %v", err)
-			return
-		}
-	}()
 
 	return task, nil
 }
