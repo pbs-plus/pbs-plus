@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"compress/zlib"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -23,6 +25,7 @@ func decompressBody(resp *http.Response) ([]byte, error) {
 
 	switch resp.Header.Get("Content-Encoding") {
 	case "gzip":
+		// Handle Gzip encoding
 		gzReader, err := gzip.NewReader(resp.Body)
 		if err != nil {
 			return nil, err
@@ -31,23 +34,49 @@ func decompressBody(resp *http.Response) ([]byte, error) {
 		body, err = io.ReadAll(gzReader)
 
 	case "deflate":
+		// Try raw deflate first
 		deflateReader := flate.NewReader(resp.Body)
-		defer deflateReader.Close()
 		body, err = io.ReadAll(deflateReader)
+		deflateReader.Close()
 
-	case "br": // Brotli
+		if err != nil {
+			// Retry with zlib if raw deflate fails
+			resp.Body.Close()
+			return tryZlibDecompression(resp)
+		}
+
+	case "br": // Brotli encoding
 		brReader := brotli.NewReader(resp.Body)
 		body, err = io.ReadAll(brReader)
 
-	case "identity", "": // No compression
+	case "identity", "":
+		// No compression
 		body, err = io.ReadAll(resp.Body)
 
 	default:
-		// Unknown encoding, return an error
-		err = io.ErrUnexpectedEOF
+		err = errors.New("unsupported Content-Encoding: " + resp.Header.Get("Content-Encoding"))
 	}
 
 	return body, err
+}
+
+// tryZlibDecompression attempts to decompress using zlib for cases where deflate fails.
+func tryZlibDecompression(resp *http.Response) ([]byte, error) {
+	// Close and retry to get a fresh body stream
+	resp.Body.Close()
+	newResp, err := http.DefaultTransport.RoundTrip(resp.Request)
+	if err != nil {
+		return nil, err
+	}
+	defer newResp.Body.Close()
+
+	zlibReader, err := zlib.NewReader(newResp.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer zlibReader.Close()
+
+	return io.ReadAll(zlibReader)
 }
 
 func CreateProxy(target *url.URL, storeInstance *store.Store) *httputil.ReverseProxy {
