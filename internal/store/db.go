@@ -271,6 +271,10 @@ func (store *Store) SetSchedule(job Job) error {
 	fullTimerPath := filepath.Join(TimerBasePath, timerPath)
 
 	if job.Schedule == "" {
+		cmd := exec.Command("/usr/bin/systemctl", "disable", "--now", timerPath)
+		cmd.Env = os.Environ()
+		_ = cmd.Run()
+
 		_ = os.Remove(fullSvcPath)
 		_ = os.Remove(fullTimerPath)
 	} else {
