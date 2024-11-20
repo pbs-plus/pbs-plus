@@ -171,10 +171,17 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 			return
 		}
 
-		job.LastRunState = &taskFound.Status
-		job.LastRunEndtime = &taskFound.EndTime
+		latestJob, err := storeInstance.GetJob(job.ID)
+		if err != nil {
+			cancel()
+			syslogger.Errorf("RunBackup (goroutine): unable to update job -> %v", err)
+			return
+		}
 
-		err = storeInstance.UpdateJob(*job)
+		latestJob.LastRunState = &taskFound.Status
+		latestJob.LastRunEndtime = &taskFound.EndTime
+
+		err = storeInstance.UpdateJob(*latestJob)
 		if err != nil {
 			cancel()
 			syslogger.Errorf("RunBackup (goroutine): unable to update job -> %v", err)
