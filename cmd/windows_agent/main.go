@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -53,60 +54,26 @@ func main() {
 
 	if len(os.Args) > 1 {
 		cmd := os.Args[1]
-		switch cmd {
-		case "install":
-			status, err := s.Status()
-			if err == nil {
-				switch status {
-				case service.StatusStopped:
-					_ = s.Uninstall()
-				case service.StatusRunning:
-					_ = s.Stop()
-					_ = s.Uninstall()
-				case service.StatusUnknown:
-				}
-			}
-
+		if cmd == "install" || cmd == "uninstall" {
 			for _, drive := range getLocalDrives() {
 				_ = registry.DeleteKey(registry.LOCAL_MACHINE, fmt.Sprintf(`Software\PBSPlus\Config\SFTP-%s`, drive.Letter))
 			}
+		}
 
-			err = s.Install()
-			if err != nil {
-				logger.Errorf("Failed to install service: %s", err)
-			} else {
-				logger.Info("Service installed")
-			}
-			return
-		case "uninstall":
-			err = s.Uninstall()
-			if err != nil {
-				logger.Errorf("Failed to uninstall service: %s", err)
-			} else {
-				logger.Info("Service uninstalled")
-			}
-			return
-		case "start":
-			err = s.Start()
-			if err != nil {
-				logger.Errorf("Failed to start service: %s", err)
-			} else {
-				logger.Info("Service started")
-			}
-			return
-		case "stop":
-			err = s.Stop()
-			if err != nil {
-				logger.Errorf("Failed to stop service: %s", err)
-			} else {
-				logger.Info("Service stopped")
-			}
-			return
-		default:
-			logger.Errorf("Unknown command: %s", cmd)
-			logger.Info("Available commands: install, uninstall, start, stop")
+		err = service.Control(s, cmd)
+		if err != nil {
+			logger.Errorf("Failed to %s service: %s", cmd, err)
 			return
 		}
+
+		if cmd == "install" {
+			go func() {
+				<-time.After(10 * time.Second)
+				_ = s.Start()
+			}()
+		}
+
+		return
 	}
 
 	if !service.Interactive() {

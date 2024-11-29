@@ -38,14 +38,6 @@
       "when": "install"
     },
     {
-      "command": "[INSTALLDIR]pbs-plus-agent.exe start",
-      "when": "install"
-    },
-    {
-      "command": "[INSTALLDIR]pbs-plus-agent.exe stop",
-      "when": "uninstall"
-    },
-    {
       "command": "[INSTALLDIR]pbs-plus-agent.exe uninstall",
       "when": "uninstall"
     }
