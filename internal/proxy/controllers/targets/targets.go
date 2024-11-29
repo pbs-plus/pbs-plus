@@ -29,12 +29,12 @@ func D2DTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *htt
 			return
 		}
 
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
-		}
-
 		if r.Method == http.MethodGet {
+			if err := storeInstance.CheckProxyAuth(r); err != nil {
+				http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+				return
+			}
+
 			all, err := storeInstance.GetAllTargets()
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
