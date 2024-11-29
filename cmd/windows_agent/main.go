@@ -67,6 +67,10 @@ func main() {
 				}
 			}
 
+			for _, drive := range getLocalDrives() {
+				_ = registry.DeleteKey(registry.LOCAL_MACHINE, fmt.Sprintf(`Software\PBSPlus\Config\SFTP-%s`, drive.Letter))
+			}
+
 			err = s.Install()
 			if err != nil {
 				logger.Errorf("Failed to install service: %s", err)
