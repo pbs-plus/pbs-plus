@@ -39,9 +39,12 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 
 	snapshotPath := filepath.Join(vssFolder, driveLetter)
 	if knownSnap, err := knownSnaps.Get(snapshotPath); err == nil {
-		if time.Since(knownSnap.GetTimestamp()) < 15*time.Minute {
-			return knownSnap, nil
+		if _, err := vss.Get(snapshotPath); err == nil {
+			if time.Since(knownSnap.GetTimestamp()) < 15*time.Minute {
+				return knownSnap, nil
+			}
 		}
+
 		knownSnap.Close()
 		_ = vss.Remove(snapshotPath) // Clean up old snapshot link if expired
 		_ = os.Remove(snapshotPath)
