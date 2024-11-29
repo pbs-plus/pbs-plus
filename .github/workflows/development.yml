@@ -35,7 +35,7 @@ jobs:
         maintainer: Son Roy Almerol <github@snry.me>
         version: 'refs/tags/v0.0.0'
         arch: 'amd64'
-        depends: 'proxmox-backup (>= 3.2), proxmox-backup-client (>= 3.2.5), rclone'
+        depends: 'proxmox-backup (>= 3.2), proxmox-backup-client (>= 3.2.5), rclone, fuse3'
         desc: 'PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution'
         homepage: 'https://github.com/${{ github.repository }}'
     - name: Pre-release dev build
