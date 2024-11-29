@@ -5,6 +5,7 @@ package partial_files
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
@@ -111,7 +112,13 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 				return
 			}
 
-			partialFile, err := storeInstance.GetPartialFile(pathVar["partial_file"])
+			pathDecoded, err := url.QueryUnescape(pathVar["partial_file"])
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			partialFile, err := storeInstance.GetPartialFile(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -151,7 +158,13 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 		}
 
 		if r.Method == http.MethodGet {
-			partial_file, err := storeInstance.GetPartialFile(pathVar["partial_file"])
+			pathDecoded, err := url.QueryUnescape(pathVar["partial_file"])
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			partial_file, err := storeInstance.GetPartialFile(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -168,7 +181,13 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.DeletePartialFile(pathVar["partial_file"])
+			pathDecoded, err := url.QueryUnescape(pathVar["partial_file"])
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			err = storeInstance.DeletePartialFile(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

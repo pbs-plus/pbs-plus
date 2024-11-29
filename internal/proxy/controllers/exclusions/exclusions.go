@@ -5,6 +5,7 @@ package exclusions
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
@@ -112,7 +113,12 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 				return
 			}
 
-			exclusion, err := storeInstance.GetExclusion(pathVar["exclusion"])
+			pathDecoded, err := url.QueryUnescape(pathVar["exclusion"])
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+			exclusion, err := storeInstance.GetExclusion(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -157,7 +163,13 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 		}
 
 		if r.Method == http.MethodGet {
-			exclusion, err := storeInstance.GetExclusion(pathVar["exclusion"])
+			pathDecoded, err := url.QueryUnescape(pathVar["exclusion"])
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			exclusion, err := storeInstance.GetExclusion(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -174,7 +186,13 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.DeleteExclusion(pathVar["exclusion"])
+			pathDecoded, err := url.QueryUnescape(pathVar["exclusion"])
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			err = storeInstance.DeleteExclusion(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
