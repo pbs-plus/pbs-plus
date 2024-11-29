@@ -57,6 +57,7 @@ var ExcludedPathRegexes = CompileExcludedPaths()
 
 func wildcardToRegex(pattern string) string {
 	// Escape backslashes and convert path to regex-friendly format
+	pattern = strings.ReplaceAll(pattern, "/", "\\")
 	escapedPattern := regexp.QuoteMeta(pattern)
 
 	escapedPattern = strings.ReplaceAll(escapedPattern, ":", "")

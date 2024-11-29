@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -35,7 +34,7 @@ func main() {
 		return
 	}
 
-	tray := &agentTray{svc: s, ctx: context.Background()}
+	//tray := &agentTray{svc: s, ctx: context.Background()}
 
 	if len(os.Args) > 1 && os.Args[1] == "--set-server-url" {
 		if !isAdmin() {
@@ -112,10 +111,13 @@ func main() {
 			logger.Errorf("Error running service: %s", err)
 		}
 	} else {
-		err = tray.foregroundTray()
-		if err != nil {
-			logger.Errorf("Error running tray: %s", err)
-		}
+		return
+		/*
+			err = tray.foregroundTray()
+			if err != nil {
+				logger.Errorf("Error running tray: %s", err)
+			}
+		*/
 	}
 }
 

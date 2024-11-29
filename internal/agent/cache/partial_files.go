@@ -4,6 +4,7 @@ package cache
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 )
@@ -35,7 +36,8 @@ func CompilePartialFileList() []string {
 
 	fileExtensions := []string{}
 	for _, partial := range partialResp.Data {
-		fileExtensions = append(fileExtensions, partial.Substring)
+		windowsCompat := strings.ReplaceAll(partial.Substring, "/", "\\")
+		fileExtensions = append(fileExtensions, windowsCompat)
 	}
 	return fileExtensions
 }

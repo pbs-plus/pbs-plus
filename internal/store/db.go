@@ -561,6 +561,8 @@ func (store *Store) CreateExclusion(exclusion Exclusion) error {
 		isGlobalInt = 1
 	}
 
+	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
+
 	_, err := store.Db.Exec(query, exclusion.Path, isGlobalInt, exclusion.Comment)
 	if err != nil {
 		return fmt.Errorf("CreateExclusion: error inserting data to table -> %w", err)
@@ -596,6 +598,9 @@ func (store *Store) UpdateExclusion(exclusion Exclusion) error {
 	if exclusion.IsGlobal {
 		isGlobal = 1
 	}
+
+	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
+
 	_, err := store.Db.Exec(query, isGlobal, exclusion.Comment, exclusion.Path)
 	if err != nil {
 		return fmt.Errorf("UpdateExclusion: error updating exclusions table -> %w", err)
