@@ -35,7 +35,7 @@ type CustomRouter struct {
 // AddRoute registers a route with pattern and handler supporting path variables
 func (cr *CustomRouter) AddRoute(pattern string, handler func(http.ResponseWriter, *http.Request, map[string]string)) {
 	// Convert "{variable}" segments to named capture groups in regex
-	regexPattern := regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`).ReplaceAllString(pattern, `(?P<$1>[^/]+)`)
+	regexPattern := regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`).ReplaceAllString(pattern, `(?P<$1>[^/]+|.+?)`)
 	cr.routes = append(cr.routes, routeHandler{
 		pattern: regexp.MustCompile("^" + regexPattern + "$"),
 		handler: handler,
@@ -45,12 +45,17 @@ func (cr *CustomRouter) AddRoute(pattern string, handler func(http.ResponseWrite
 // ServeHTTP checks routes for a match, extracts path variables, and calls handlers
 func (cr *CustomRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, route := range cr.routes {
-		if match := route.pattern.FindStringSubmatch(r.URL.Path); match != nil {
+		if matches := route.pattern.FindStringSubmatch(r.URL.Path); matches != nil {
 			// Extract variables from matched path
 			vars := make(map[string]string)
 			for i, name := range route.pattern.SubexpNames() {
 				if i > 0 && name != "" {
-					vars[name] = match[i]
+					value, err := url.QueryUnescape(matches[i])
+					if err != nil {
+						http.Error(w, "Invalid URL encoding", http.StatusBadRequest)
+						return
+					}
+					vars[name] = value
 				}
 			}
 			route.handler(w, r, vars)
