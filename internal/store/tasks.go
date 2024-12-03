@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 type TaskResponse struct {
@@ -56,34 +57,8 @@ func encodeToHexEscapes(input string) string {
 	return encoded.String()
 }
 
-func (storeInstance *Store) GetMostRecentTask(ctx context.Context, taskChan chan Task, job *Job) error {
+func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, job *Job) error {
 	tasksParentPath := "/var/log/proxmox-backup/tasks"
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostnameFile, err := os.ReadFile("/etc/hostname")
-		if err != nil {
-			hostname = "localhost"
-		}
-
-		hostname = strings.TrimSpace(string(hostnameFile))
-	}
-
-	target, err := storeInstance.GetTarget(job.Target)
-	if err != nil {
-		return fmt.Errorf("GetMostRecentTask -> %w", err)
-	}
-
-	if target == nil {
-		return fmt.Errorf("GetMostRecentTask: Target '%s' does not exist.", job.Target)
-	}
-
-	isAgent := strings.HasPrefix(target.Path, "agent://")
-
-	backupId := hostname
-	if isAgent {
-		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
-	}
-
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("failed to create watcher: %w", err)
@@ -111,11 +86,50 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, taskChan chan
 		return fmt.Errorf("failed to walk folder: %w", err)
 	}
 
+	fileEventBufferred := make(chan fsnotify.Event, 100)
+	go func() {
+		for {
+			select {
+			case event := <-watcher.Events:
+				fileEventBufferred <- event
+			case <-ctx.Done():
+				log.Println("GetJobTask: error getting tasks: context cancelled, not found")
+				return
+			}
+		}
+	}()
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostnameFile, err := os.ReadFile("/etc/hostname")
+		if err != nil {
+			hostname = "localhost"
+		}
+
+		hostname = strings.TrimSpace(string(hostnameFile))
+	}
+
+	target, err := storeInstance.GetTarget(job.Target)
+	if err != nil {
+		return fmt.Errorf("GetJobTask -> %w", err)
+	}
+
+	if target == nil {
+		return fmt.Errorf("GetJobTask: Target '%s' does not exist.", job.Target)
+	}
+
+	isAgent := strings.HasPrefix(target.Path, "agent://")
+
+	backupId := hostname
+	if isAgent {
+		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
+	}
+
 	go func() {
 		defer watcher.Close()
 		for {
 			select {
-			case event := <-watcher.Events:
+			case event := <-fileEventBufferred:
 				if event.Op&fsnotify.Create == fsnotify.Create {
 					if isDir(event.Name) {
 						err = watcher.Add(event.Name)
@@ -127,25 +141,51 @@ func (storeInstance *Store) GetMostRecentTask(ctx context.Context, taskChan chan
 						log.Printf("Checking if %s contains %s\n", event.Name, searchString)
 						if !strings.Contains(event.Name, ".tmp_") && strings.Contains(event.Name, searchString) {
 							log.Printf("Proceeding: %s contains %s\n", event.Name, searchString)
-							fileName := filepath.Base(event.Name)
 
-							log.Printf("Getting UPID: %s\n", fileName)
-							newTask, err := storeInstance.GetTaskByUPID(fileName)
-							if err != nil {
-								log.Printf("GetMostRecentTask: error getting task: %v\n", err)
-								return
-							}
-							log.Printf("Sending UPID: %s\n", fileName)
-							taskChan <- *newTask
-							return
+							newLineChan := make(chan string)
+							go func() {
+								err := utils.TailFile(ctx, event.Name, newLineChan)
+								if err != nil {
+									fmt.Println("Error:", err)
+								}
+								close(newLineChan)
+							}()
+
+							go func() {
+								didxFileName := strings.ReplaceAll(job.Target, " ", "-")
+								for {
+									select {
+									case line := <-newLineChan:
+										if strings.Contains(line, didxFileName) {
+											fileName := filepath.Base(event.Name)
+
+											log.Printf("Getting UPID: %s\n", fileName)
+											newTask, err := storeInstance.GetTaskByUPID(fileName)
+											if err != nil {
+												log.Printf("GetJobTask: error getting task: %v\n", err)
+												return
+											}
+											log.Printf("Sending UPID: %s\n", fileName)
+											taskChan <- *newTask
+											return
+										}
+									case <-ctx.Done():
+										log.Println("GetJobTask: error getting tasks: context cancelled, not found")
+										return
+									case <-time.After(time.Second * 60):
+										log.Println("GetJobTask: error getting tasks: timeout, not found")
+										return
+									}
+								}
+							}()
 						}
 					}
 				}
 			case <-time.After(time.Second * 60):
-				log.Println("GetMostRecentTask: error getting tasks: timeout, not found")
+				log.Println("GetJobTask: error getting tasks: timeout, not found")
 				return
 			case <-ctx.Done():
-				log.Println("GetMostRecentTask: error getting tasks: context cancelled, not found")
+				log.Println("GetJobTask: error getting tasks: context cancelled, not found")
 				return
 			}
 		}
