@@ -11,11 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
+
+var backupMutex sync.Mutex
 
 func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{}) (*store.Task, error) {
 	if storeInstance.APIToken == nil {
@@ -53,13 +56,18 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	taskChan := make(chan store.Task)
+	taskReceived := make(chan interface{})
 	watchCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = storeInstance.GetJobTask(watchCtx, taskChan, job)
-	if err != nil {
-		return nil, fmt.Errorf("RunBackup: unable to monitor tasks folder -> %v\n", err)
-	}
+	backupMutex.Lock()
+	go func() {
+		err = storeInstance.GetJobTask(watchCtx, taskChan, job)
+		if err != nil {
+			log.Printf("RunBackup: unable to monitor tasks folder -> %v\n", err)
+			return
+		}
+	}()
 
 	var task *store.Task
 	go func() {
@@ -67,6 +75,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		log.Printf("Task received: %s\n", taskC.UPID)
 		task = &taskC
 
+		close(taskReceived)
 		close(taskChan)
 		cancel()
 	}()
@@ -135,9 +144,14 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		if agentMount != nil {
 			agentMount.Unmount()
 		}
+		backupMutex.Unlock()
+
 		cancel()
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
 	}
+
+	<-taskReceived
+	backupMutex.Unlock()
 
 	go func(currJob *store.Job, currTask *store.Task) {
 		defer func() {

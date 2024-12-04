@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 type TaskResponse struct {
@@ -127,6 +126,8 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, 
 
 	go func() {
 		defer watcher.Close()
+		defer close(fileEventBufferred)
+
 		for {
 			select {
 			case event := <-fileEventBufferred:
@@ -141,43 +142,17 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, 
 						log.Printf("Checking if %s contains %s\n", event.Name, searchString)
 						if !strings.Contains(event.Name, ".tmp_") && strings.Contains(event.Name, searchString) {
 							log.Printf("Proceeding: %s contains %s\n", event.Name, searchString)
+							fileName := filepath.Base(event.Name)
 
-							newLineChan := make(chan string)
-							go func() {
-								err := utils.TailFile(ctx, event.Name, newLineChan)
-								if err != nil {
-									fmt.Println("Error:", err)
-								}
-								close(newLineChan)
-							}()
-
-							go func() {
-								didxFileName := strings.ReplaceAll(job.Target, " ", "-")
-								for {
-									select {
-									case line := <-newLineChan:
-										if strings.Contains(line, didxFileName) {
-											fileName := filepath.Base(event.Name)
-
-											log.Printf("Getting UPID: %s\n", fileName)
-											newTask, err := storeInstance.GetTaskByUPID(fileName)
-											if err != nil {
-												log.Printf("GetJobTask: error getting task: %v\n", err)
-												return
-											}
-											log.Printf("Sending UPID: %s\n", fileName)
-											taskChan <- *newTask
-											return
-										}
-									case <-ctx.Done():
-										log.Println("GetJobTask: error getting tasks: context cancelled, not found")
-										return
-									case <-time.After(time.Second * 60):
-										log.Println("GetJobTask: error getting tasks: timeout, not found")
-										return
-									}
-								}
-							}()
+							log.Printf("Getting UPID: %s\n", fileName)
+							newTask, err := storeInstance.GetTaskByUPID(fileName)
+							if err != nil {
+								log.Printf("GetJobTask: error getting task: %v\n", err)
+								return
+							}
+							log.Printf("Sending UPID: %s\n", fileName)
+							taskChan <- *newTask
+							return
 						}
 					}
 				}
