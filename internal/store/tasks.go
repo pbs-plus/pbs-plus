@@ -85,19 +85,6 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, 
 		return fmt.Errorf("failed to walk folder: %w", err)
 	}
 
-	fileEventBufferred := make(chan fsnotify.Event, 100)
-	go func() {
-		for {
-			select {
-			case event := <-watcher.Events:
-				fileEventBufferred <- event
-			case <-ctx.Done():
-				log.Println("GetJobTask: error getting tasks: context cancelled, not found")
-				return
-			}
-		}
-	}()
-
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostnameFile, err := os.ReadFile("/etc/hostname")
@@ -126,11 +113,10 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, 
 
 	go func() {
 		defer watcher.Close()
-		defer close(fileEventBufferred)
 
 		for {
 			select {
-			case event := <-fileEventBufferred:
+			case event := <-watcher.Events:
 				if event.Op&fsnotify.Create == fsnotify.Create {
 					if isDir(event.Name) {
 						err = watcher.Add(event.Name)
