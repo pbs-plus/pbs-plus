@@ -21,6 +21,9 @@ import (
 var backupMutex sync.Mutex
 
 func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{}) (*store.Task, error) {
+	backupMutex.Lock()
+	defer backupMutex.Unlock()
+
 	if storeInstance.APIToken == nil {
 		return nil, fmt.Errorf("RunBackup: api token is required")
 	}
@@ -56,11 +59,9 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	taskChan := make(chan store.Task)
-	taskReceived := make(chan interface{})
 	watchCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	backupMutex.Lock()
 	go func() {
 		err = storeInstance.GetJobTask(watchCtx, taskChan, job)
 		if err != nil {
@@ -75,7 +76,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		log.Printf("Task received: %s\n", taskC.UPID)
 		task = &taskC
 
-		close(taskReceived)
 		close(taskChan)
 		cancel()
 	}()
@@ -144,14 +144,9 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		if agentMount != nil {
 			agentMount.Unmount()
 		}
-		backupMutex.Unlock()
-
 		cancel()
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
 	}
-
-	<-taskReceived
-	backupMutex.Unlock()
 
 	go func(currJob *store.Job, currTask *store.Task) {
 		defer func() {
