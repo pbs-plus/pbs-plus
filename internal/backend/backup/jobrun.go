@@ -110,13 +110,17 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		"--backup-id", backupId,
 	}
 
+	if !isAgent {
+		for _, exclusion := range store.WindowsStapleExclusions {
+			cmdArgs = append(cmdArgs, "--exclude", exclusion)
+		}
+	}
+
 	if job.Namespace != "" {
-		cmdArgs = append(cmdArgs, "--ns")
-		cmdArgs = append(cmdArgs, job.Namespace)
+		cmdArgs = append(cmdArgs, "--ns", job.Namespace)
 	} else if isAgent && job.Namespace == "" {
 		newNamespace := strings.ReplaceAll(job.Target, " - ", "/")
-		cmdArgs = append(cmdArgs, "--ns")
-		cmdArgs = append(cmdArgs, strings.ReplaceAll(job.Target, " - ", "/"))
+		cmdArgs = append(cmdArgs, "--ns", strings.ReplaceAll(job.Target, " - ", "/"))
 
 		_ = CreateNamespace(newNamespace, job, storeInstance)
 	}

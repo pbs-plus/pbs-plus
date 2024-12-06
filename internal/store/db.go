@@ -127,6 +127,14 @@ func (store *Store) CreateTables() error {
 	}
 
 	if exclusionCheck != nil {
+		for _, path := range WindowsStapleExclusions {
+			_ = store.CreateExclusion(Exclusion{
+				Path:     path,
+				IsGlobal: true,
+				Comment:  "Generated from default list of exclusions",
+			})
+		}
+
 		for _, path := range defaultExclusions {
 			_ = store.CreateExclusion(Exclusion{
 				Path:     path,
