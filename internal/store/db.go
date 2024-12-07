@@ -155,6 +155,10 @@ func (store *Store) CreateJob(job Job) error {
 		return fmt.Errorf("CreateJob: invalid namespace string -> %s", job.Namespace)
 	}
 
+	if !utils.IsValidPathString(job.Subpath) {
+		return fmt.Errorf("CreateJob: invalid subpath string -> %s", job.Subpath)
+	}
+
 	query := `INSERT INTO d2d_jobs (id, store, target, subpath, schedule, comment, next_run, last_run_upid, notification_mode, namespace) 
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`
 	_, err := store.Db.Exec(query, job.ID, job.Store, job.Target, job.Subpath, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace)
@@ -248,6 +252,10 @@ func (store *Store) GetJob(id string) (*Job, error) {
 func (store *Store) UpdateJob(job Job) error {
 	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
 		return fmt.Errorf("UpdateJob: invalid namespace string -> %s", job.Namespace)
+	}
+
+	if !utils.IsValidPathString(job.Subpath) {
+		return fmt.Errorf("UpdateJob: invalid subpath string -> %s", job.Subpath)
 	}
 
 	query := `UPDATE d2d_jobs SET store = ?, target = ?, subpath = ?, schedule = ?, comment = ?, next_run = ?, last_run_upid = ?, notification_mode = ?, namespace = ? WHERE id = ?;`

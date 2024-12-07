@@ -2,6 +2,8 @@ package utils
 
 import (
 	"os"
+	"strings"
+	"unicode"
 )
 
 func IsValid(path string) bool {
@@ -20,5 +22,23 @@ func IsValid(path string) bool {
 	}
 
 	// Path exists, return true and no error
+	return true
+}
+
+func IsValidPathString(path string) bool {
+	if path == "" {
+		return true
+	}
+
+	if strings.Contains(path, "//") {
+		return false
+	}
+
+	for _, r := range path {
+		if r == 0 || !unicode.IsPrint(r) {
+			return false
+		}
+	}
+
 	return true
 }
