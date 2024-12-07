@@ -96,8 +96,8 @@ Ext.define('PBS.D2DManagement.PartialFilePanel', {
     ],
     columns: [
 	{
-	    text: gettext('File Name'),
-	    dataIndex: 'substring',
+	    text: gettext('Path'),
+	    dataIndex: 'path',
 	    flex: 1,
 	},
 	{

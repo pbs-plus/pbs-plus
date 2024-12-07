@@ -73,8 +73,8 @@ func ExtJsPartialFileHandler(storeInstance *store.Store) func(http.ResponseWrite
 		}
 
 		newPartialFile := store.PartialFile{
-			Substring: r.FormValue("substring"),
-			Comment:   r.FormValue("comment"),
+			Path:    r.FormValue("path"),
+			Comment: r.FormValue("comment"),
 		}
 
 		err = storeInstance.CreatePartialFile(newPartialFile)
@@ -124,8 +124,8 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 				return
 			}
 
-			if r.FormValue("substring") != "" {
-				partialFile.Substring = r.FormValue("substring")
+			if r.FormValue("path") != "" {
+				partialFile.Path = r.FormValue("path")
 			}
 			if r.FormValue("comment") != "" {
 				partialFile.Comment = r.FormValue("comment")
@@ -134,8 +134,8 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 			if delArr, ok := r.Form["delete"]; ok {
 				for _, attr := range delArr {
 					switch attr {
-					case "substring":
-						partialFile.Substring = ""
+					case "path":
+						partialFile.Path = ""
 					case "comment":
 						partialFile.Comment = ""
 					}

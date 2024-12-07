@@ -4,23 +4,25 @@ package cache
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 type PartialFileData struct {
-	Substring string `json:"substring"`
-	Comment   string `json:"comment"`
+	Path    string `json:"path"`
+	Comment string `json:"comment"`
 }
 
 type PartialFileResp struct {
 	Data []PartialFileData `json:"data"`
 }
 
-var FileExtensions = CompilePartialFileList()
+var PartialFilePathRegexes = CompilePartialFileList()
 
-func CompilePartialFileList() []string {
+func CompilePartialFileList() []*regexp.Regexp {
 	var partialResp PartialFileResp
 	err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,
@@ -34,10 +36,19 @@ func CompilePartialFileList() []string {
 		}
 	}
 
-	fileExtensions := []string{}
-	for _, partial := range partialResp.Data {
-		windowsCompat := strings.ReplaceAll(partial.Substring, "/", "\\")
-		fileExtensions = append(fileExtensions, windowsCompat)
+	partialPatterns := []string{}
+
+	for _, partialPattern := range partialResp.Data {
+		trimmedLine := strings.TrimSpace(partialPattern.Path)
+		partialPatterns = append(partialPatterns, trimmedLine)
 	}
-	return fileExtensions
+
+	var compiledRegexes []*regexp.Regexp
+
+	// Compile excluded patterns
+	for _, pattern := range partialPatterns {
+		compiledRegexes = append(compiledRegexes, regexp.MustCompile("(?i)^"+utils.GlobToRegex(pattern)))
+	}
+
+	return compiledRegexes
 }

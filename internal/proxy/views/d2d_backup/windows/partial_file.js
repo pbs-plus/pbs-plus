@@ -5,7 +5,7 @@ Ext.define('PBS.D2DManagement.PartialFileEditWindow', {
 
     isCreate: true,
     isAdd: true,
-    subject: 'Disk Backup Potentially Partial File',
+    subject: 'Disk Backup Verify File Sizes',
     cbindData: function(initialConfig) {
 	let me = this;
 
@@ -21,8 +21,8 @@ Ext.define('PBS.D2DManagement.PartialFileEditWindow', {
 
     items: [
 	{
-	    fieldLabel: gettext('File Name'),
-	    name: 'substring',
+	    fieldLabel: gettext('Path'),
+	    name: 'path',
 	    xtype: 'pmxDisplayEditField',
 	    renderer: Ext.htmlEncode,
 	    allowBlank: false,

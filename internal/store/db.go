@@ -52,8 +52,8 @@ type Exclusion struct {
 }
 
 type PartialFile struct {
-	Substring string `db:"substring" json:"substring"`
-	Comment   string `db:"comment" json:"comment"`
+	Path    string `db:"path" json:"path"`
+	Comment string `db:"comment" json:"comment"`
 }
 
 // Store holds the database instance
@@ -133,7 +133,7 @@ func (store *Store) CreateTables() error {
 
 	createPartialFileTable := `
     CREATE TABLE IF NOT EXISTS partial_files (
-        substring TEXT PRIMARY KEY NOT NULL,
+        path TEXT PRIMARY KEY NOT NULL,
 				comment TEXT
     );`
 
@@ -651,22 +651,22 @@ func (store *Store) GetAllGlobalExclusions() ([]Exclusion, error) {
 }
 
 func (store *Store) CreatePartialFile(partialFile PartialFile) error {
-	query := `INSERT INTO partial_files (substring, comment) 
+	query := `INSERT INTO partial_files (path, comment) 
               VALUES (?, ?);`
 
-	_, err := store.Db.Exec(query, partialFile.Substring, partialFile.Comment)
+	_, err := store.Db.Exec(query, partialFile.Path, partialFile.Comment)
 	if err != nil {
 		return fmt.Errorf("CreatePartialFile: error inserting data to table -> %w", err)
 	}
 
 	return nil
 }
-func (store *Store) GetPartialFile(substring string) (*PartialFile, error) {
-	query := `SELECT substring, comment FROM partial_files WHERE substring = ?;`
-	row := store.Db.QueryRow(query, substring)
+func (store *Store) GetPartialFile(path string) (*PartialFile, error) {
+	query := `SELECT path, comment FROM partial_files WHERE path = ?;`
+	row := store.Db.QueryRow(query, path)
 
 	var partialFile PartialFile
-	err := row.Scan(&partialFile.Substring, &partialFile.Comment)
+	err := row.Scan(&partialFile.Path, &partialFile.Comment)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -679,8 +679,8 @@ func (store *Store) GetPartialFile(substring string) (*PartialFile, error) {
 
 // UpdatePartialFile updates an existing PartialFile in the database
 func (store *Store) UpdatePartialFile(partialFile PartialFile) error {
-	query := `UPDATE partial_files SET comment = ? WHERE substring = ?;`
-	_, err := store.Db.Exec(query, partialFile.Comment, partialFile.Substring)
+	query := `UPDATE partial_files SET comment = ? WHERE path = ?;`
+	_, err := store.Db.Exec(query, partialFile.Comment, partialFile.Path)
 	if err != nil {
 		return fmt.Errorf("UpdatePartialFile: error updating partialFiles table -> %w", err)
 	}
@@ -688,9 +688,9 @@ func (store *Store) UpdatePartialFile(partialFile PartialFile) error {
 }
 
 // DeletePartialFile deletes a PartialFile from the database
-func (store *Store) DeletePartialFile(substring string) error {
-	query := `DELETE FROM partial_files WHERE substring= ?;`
-	_, err := store.Db.Exec(query, substring)
+func (store *Store) DeletePartialFile(path string) error {
+	query := `DELETE FROM partial_files WHERE path = ?;`
+	_, err := store.Db.Exec(query, path)
 	if err != nil {
 		return fmt.Errorf("DeletePartialFile: error deleting partialFile -> %w", err)
 	}
@@ -699,7 +699,7 @@ func (store *Store) DeletePartialFile(substring string) error {
 }
 
 func (store *Store) GetAllPartialFiles() ([]PartialFile, error) {
-	query := `SELECT substring, comment FROM partial_files WHERE substring IS NOT NULL;`
+	query := `SELECT path, comment FROM partial_files WHERE path IS NOT NULL;`
 	rows, err := store.Db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllPartialFiles: error getting select query -> %w", err)
@@ -710,7 +710,7 @@ func (store *Store) GetAllPartialFiles() ([]PartialFile, error) {
 	partialFiles = make([]PartialFile, 0)
 	for rows.Next() {
 		var partialFile PartialFile
-		err := rows.Scan(&partialFile.Substring, &partialFile.Comment)
+		err := rows.Scan(&partialFile.Path, &partialFile.Comment)
 		if err != nil {
 			return nil, fmt.Errorf("GetAllPartialFiles: error scanning row from partialFiles -> %w", err)
 		}

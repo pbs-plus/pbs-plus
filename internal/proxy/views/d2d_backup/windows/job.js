@@ -125,10 +125,6 @@ Ext.define('PBS.D2DManagement.BackupJobEdit', {
 	fieldLabel: gettext('Exclusions'),
 	value: '',
 	emptyText: gettext('Newline delimited list of exclusions following the .pxarexclude patterns.'),
-	fieldStyle: {
-	    'white-space': 'pre-wrap',
-	    'font-family': 'monospace',
-	},
     },
 		],
 	    },

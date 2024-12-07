@@ -92,7 +92,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	knownSnaps.Save(newSnapshot)
 
 	cache.ExcludedPathRegexes = cache.CompileExcludedPaths()
-	cache.FileExtensions = cache.CompilePartialFileList()
+	cache.PartialFilePathRegexes = cache.CompilePartialFileList()
 
 	return newSnapshot, nil
 }

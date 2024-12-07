@@ -22,11 +22,10 @@ type CustomFileInfo struct {
 
 func (f *CustomFileInfo) Size() int64 {
 	metadataSize := f.FileInfo.Size()
-	baseName := filepath.Base(f.filePath)
 
 	scanFile := false
-	for _, fileExtension := range cache.FileExtensions {
-		if strings.Contains(baseName, fileExtension) {
+	for _, regex := range cache.PartialFilePathRegexes {
+		if regex.MatchString(f.filePath) {
 			scanFile = true
 			break
 		}

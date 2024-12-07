@@ -12,7 +12,6 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 type Logger struct {
@@ -70,18 +69,12 @@ func (l *Logger) Info(v ...any) {
 func (l *Logger) Errorf(format string, v ...any) {
 	log.Printf(format, v...)
 	_ = l.LogWriter.Error(fmt.Sprintf(format, v...))
-	if service.Interactive() {
-		utils.ShowMessageBox("Error", fmt.Sprintf(format, v...))
-	}
 	l.logToServer("error", fmt.Sprintf(format, v...))
 }
 
 func (l *Logger) Error(v ...any) {
 	log.Print(v...)
 	_ = l.LogWriter.Error(fmt.Sprint(v...))
-	if service.Interactive() {
-		utils.ShowMessageBox("Error", fmt.Sprint(v...))
-	}
 	l.logToServer("error", fmt.Sprint(v...))
 }
 

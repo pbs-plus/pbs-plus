@@ -2,7 +2,7 @@ Ext.define('pbs-disk-backup-job-status', {
     extend: 'Ext.data.Model',
     fields: [
 	'id', 'store', 'target', 'schedule', 'comment', 'duration',
-	'next-run', 'last-run-upid', 'last-run-state', 'last-run-endtime', 'exclusions',
+	'next-run', 'last-run-upid', 'last-run-state', 'last-run-endtime', 'rawexclusions',
     ],
     idProperty: 'id',
     proxy: {
@@ -22,7 +22,7 @@ Ext.define('pbs-model-targets', {
 Ext.define('pbs-model-exclusions', {
     extend: 'Ext.data.Model',
     fields: [
-	'path', 'comment', 'is_global',
+	'path', 'comment',
     ],
     idProperty: 'path',
 });
@@ -30,7 +30,7 @@ Ext.define('pbs-model-exclusions', {
 Ext.define('pbs-model-partial-files', {
     extend: 'Ext.data.Model',
     fields: [
-      'substring', 'comment',
+      'path', 'comment',
     ],
-    idProperty: 'substring',
+    idProperty: 'path',
 });

@@ -44,18 +44,6 @@ Ext.define('PBS.D2DManagement.ExclusionPanel', {
 	    this.getView().getStore().rstore.startUpdate();
 	},
 
-    render_status: function(value) {
-      if (value.toString() == "true") {
-        icon = 'check good';
-        text = "Applies to all jobs";
-      } else {
-        icon = 'times critical';
-        text = "Not applied by default";
-      }
-
-	return `<i class="fa fa-${icon}"></i> ${text}`;
-    },
-
 	init: function(view) {
 	    Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
 	},

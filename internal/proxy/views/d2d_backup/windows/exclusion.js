@@ -30,14 +30,6 @@ Ext.define('PBS.D2DManagement.ExclusionEditWindow', {
 		editable: '{isCreate}',
 	    },
 	},
-	{
-	    xtype: 'proxmoxcheckbox',
-	    name: 'is_global',
-	    fieldLabel: gettext('Apply to all jobs'),
-      checked: true,
-      defaultValue: true,
-      uncheckedValue: false,
-	},
 		    {
 			fieldLabel: gettext('Comment'),
 			xtype: 'proxmoxtextfield',
