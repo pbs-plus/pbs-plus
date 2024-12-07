@@ -130,6 +130,19 @@ func handleRequests(ctx context.Context, requests <-chan *ssh.Request, sftpReque
 			case "ping":
 				sftpRequest <- false
 				req.Reply(true, []byte("pong"))
+			case "snapshot":
+				sftpRequest <- false
+				driveLetter := string(req.Payload[1:])
+				if driveLetter != "" {
+					_, err := snapshots.Snapshot(driveLetter, true)
+					if err != nil {
+						req.Reply(false, []byte(fmt.Sprintf("failed to initialize snapshot: %v", err)))
+						return
+					}
+					req.Reply(true, []byte("success"))
+				} else {
+					req.Reply(false, nil)
+				}
 			default:
 				sftpRequest <- false
 				req.Reply(false, nil)
@@ -143,7 +156,7 @@ func handleRequests(ctx context.Context, requests <-chan *ssh.Request, sftpReque
 func handleSFTP(ctx context.Context, errChan chan string, channel ssh.Channel, driveLetter string) {
 	defer channel.Close()
 
-	snapshot, err := snapshots.Snapshot(driveLetter)
+	snapshot, err := snapshots.Snapshot(driveLetter, false)
 	if err != nil {
 		errChan <- fmt.Sprintf("failed to initialize snapshot: %v", err)
 		return
