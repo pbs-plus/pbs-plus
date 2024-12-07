@@ -5,6 +5,7 @@ package jobs
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
@@ -114,6 +115,22 @@ func ExtJsJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http
 			Comment:          r.FormValue("comment"),
 			Namespace:        r.FormValue("ns"),
 			NotificationMode: r.FormValue("notification-mode"),
+			Exclusions:       []store.Exclusion{},
+		}
+
+		rawExclusions := r.FormValue("rawexclusions")
+		for _, exclusion := range strings.Split(rawExclusions, "\n") {
+			exclusion = strings.TrimSpace(exclusion)
+			if exclusion == "" {
+				continue
+			}
+
+			exclusionInst := store.Exclusion{
+				Path:  exclusion,
+				JobID: newJob.ID,
+			}
+
+			newJob.Exclusions = append(newJob.Exclusions, exclusionInst)
 		}
 
 		err = storeInstance.CreateJob(newJob)
@@ -177,6 +194,25 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter,
 				job.NotificationMode = r.FormValue("notification-mode")
 			}
 
+			if r.FormValue("rawexclusions") != "" {
+				job.Exclusions = []store.Exclusion{}
+
+				rawExclusions := r.FormValue("rawexclusions")
+				for _, exclusion := range strings.Split(rawExclusions, "\n") {
+					exclusion = strings.TrimSpace(exclusion)
+					if exclusion == "" {
+						continue
+					}
+
+					exclusionInst := store.Exclusion{
+						Path:  exclusion,
+						JobID: job.ID,
+					}
+
+					job.Exclusions = append(job.Exclusions, exclusionInst)
+				}
+			}
+
 			if delArr, ok := r.Form["delete"]; ok {
 				for _, attr := range delArr {
 					switch attr {
@@ -192,6 +228,8 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter,
 						job.Namespace = ""
 					case "notification-mode":
 						job.NotificationMode = ""
+					case "rawexclusions":
+						job.Exclusions = []store.Exclusion{}
 					}
 				}
 			}

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -142,9 +141,6 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, 
 						}
 					}
 				}
-			case <-time.After(time.Second * 60):
-				log.Println("GetJobTask: error getting tasks: timeout, not found")
-				return
 			case <-ctx.Done():
 				log.Println("GetJobTask: error getting tasks: context cancelled, not found")
 				return

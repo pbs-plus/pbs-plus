@@ -27,13 +27,13 @@ Ext.define('PBS.D2DManagement', {
 	},
 	{
 	    xtype: 'pbsDiskExclusionPanel',
-	    title: 'Exclusions',
+	    title: 'Global Exclusions',
 	    itemId: 'exclusions',
 	    iconCls: 'fa fa-ban',
 	},
 	{
 	    xtype: 'pbsDiskPartialFilePanel',
-	    title: 'Potentially Partial Files',
+	    title: 'Verify File Sizes',
 	    itemId: 'partial-files',
 	    iconCls: 'fa fa-file',
 	},

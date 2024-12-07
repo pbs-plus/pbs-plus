@@ -118,6 +118,18 @@ Ext.define('PBS.D2DManagement.BackupJobEdit', {
 			    deleteEmpty: '{!isCreate}',
 			},
 		    },
+{
+	xtype: 'textarea',
+	name: 'rawexclusions',
+	height: '100%',
+	fieldLabel: gettext('Exclusions'),
+	value: '',
+	emptyText: gettext('Newline delimited list of exclusions following the .pxarexclude patterns.'),
+	fieldStyle: {
+	    'white-space': 'pre-wrap',
+	    'font-family': 'monospace',
+	},
+    },
 		],
 	    },
 	],

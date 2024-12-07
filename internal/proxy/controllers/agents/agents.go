@@ -14,6 +14,7 @@ import (
 type LogRequest struct {
 	Hostname string `json:"hostname"`
 	Message  string `json:"message"`
+	Level    string `json:"level"`
 }
 
 func AgentLogHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
@@ -42,7 +43,16 @@ func AgentLogHandler(storeInstance *store.Store) func(http.ResponseWriter, *http
 			return
 		}
 
-		syslogger.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+		switch reqParsed.Level {
+		case "info":
+			syslogger.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+		case "error":
+			syslogger.Errorf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+		case "warn":
+			syslogger.Warnf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+		default:
+			syslogger.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(map[string]string{"success": "true"})

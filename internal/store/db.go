@@ -34,6 +34,7 @@ type Job struct {
 	LastRunEndtime   *int64      `json:"last-run-endtime"`
 	Duration         *int64      `json:"duration"`
 	Exclusions       []Exclusion `json:"exclusions"`
+	RawExclusions    string      `json:"rawexclusions"`
 }
 
 // Target represents the pbs-model-targets model
@@ -44,16 +45,10 @@ type Target struct {
 	ConnectionStatus bool   `json:"connection_status"`
 }
 
-type ExclusionJobBridge struct {
-	ID            int    `db:"id" json:"id"`
-	ExclusionPath string `db:"exclusion_path" json:"exclusion_path"`
-	JobID         string `db:"job_id" json:"job_id"`
-}
-
 type Exclusion struct {
-	Path     string `db:"path" json:"path"`
-	IsGlobal bool   `db:"is_global" json:"is_global"`
-	Comment  string `db:"comment" json:"comment"`
+	JobID   string `db:"job_id" json:"job_id"`
+	Path    string `db:"path" json:"path"`
+	Comment string `db:"comment" json:"comment"`
 }
 
 type PartialFile struct {
@@ -116,9 +111,10 @@ func (store *Store) CreateTables() error {
 
 	createExclusionTable := `
     CREATE TABLE IF NOT EXISTS exclusions (
-        path TEXT PRIMARY KEY NOT NULL,
-        is_global INTEGER DEFAULT 0,
-				comment TEXT
+        path TEXT NOT NULL,
+        job_id TEXT,
+				comment TEXT,
+				PRIMARY KEY (path, job_id)
     );`
 
 	_, err = store.Db.Exec(createExclusionTable)
@@ -127,37 +123,12 @@ func (store *Store) CreateTables() error {
 	}
 
 	if exclusionCheck != nil {
-		for _, path := range WindowsStapleExclusions {
-			_ = store.CreateExclusion(Exclusion{
-				Path:     path,
-				IsGlobal: true,
-				Comment:  "Generated from default list of exclusions",
-			})
-		}
-
 		for _, path := range defaultExclusions {
 			_ = store.CreateExclusion(Exclusion{
-				Path:     path,
-				IsGlobal: true,
-				Comment:  "Generated from default list of exclusions",
+				Path:    path,
+				Comment: "Generated from default list of exclusions",
 			})
 		}
-	}
-
-	createExclusionBridgeTable := `
-    CREATE TABLE IF NOT EXISTS exclusion_bridges (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-				exclusion_path TEXT NOT NULL,
-				job_id TEXT NOT NULL,
-				FOREIGN KEY (exclusion_path)
-					REFERENCES exclusions (path) ON DELETE CASCADE ON UPDATE CASCADE,
-				FOREIGN KEY (job_id)
-					REFERENCES d2d_jobs (id) ON DELETE CASCADE ON UPDATE CASCADE
-    );`
-
-	_, err = store.Db.Exec(createExclusionBridgeTable)
-	if err != nil {
-		return fmt.Errorf("CreateTables: error creating exclusion_bridges table -> %w", err)
 	}
 
 	createPartialFileTable := `
@@ -187,11 +158,9 @@ func (store *Store) CreateJob(job Job) error {
 
 	if len(job.Exclusions) > 0 {
 		for _, exclusion := range job.Exclusions {
-			query := `INSERT INTO exclusion_bridges (exclusion_path, job_id) 
-              VALUES (?, ?);`
-			_, err := store.Db.Exec(query, exclusion.Path, job.ID)
+			err := store.CreateExclusion(exclusion)
 			if err != nil {
-				return fmt.Errorf("CreateJob: error inserting data to job table -> %w", err)
+				continue
 			}
 		}
 	}
@@ -221,6 +190,20 @@ func (store *Store) GetJob(id string) (*Job, error) {
 	exclusions, err := store.GetAllJobExclusions(id)
 	if err == nil {
 		job.Exclusions = exclusions
+
+		pathSlice := []string{}
+		for _, exclusion := range exclusions {
+			pathSlice = append(pathSlice, exclusion.Path)
+		}
+
+		job.RawExclusions = strings.Join(pathSlice, "\n")
+	}
+
+	globalExclusions, err := store.GetAllGlobalExclusions()
+	if err == nil {
+		for _, exclusion := range globalExclusions {
+			job.Exclusions = append(job.Exclusions, exclusion)
+		}
 	}
 
 	if job.LastRunUpid != nil && *job.LastRunUpid != "" {
@@ -261,6 +244,25 @@ func (store *Store) UpdateJob(job Job) error {
 	_, err := store.Db.Exec(query, job.Store, job.Target, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace, job.ID)
 	if err != nil {
 		return fmt.Errorf("UpdateJob: error updating job table -> %w", err)
+	}
+
+	query = `DELETE FROM exclusions WHERE job_id = ?;`
+	_, err = store.Db.Exec(query, job.ID)
+	if err != nil {
+		return fmt.Errorf("UpdateJob: error deleting exclusions from table -> %w", err)
+	}
+
+	if len(job.Exclusions) > 0 {
+		for _, exclusion := range job.Exclusions {
+			if exclusion.JobID != job.ID {
+				continue
+			}
+
+			err := store.CreateExclusion(exclusion)
+			if err != nil {
+				continue
+			}
+		}
 	}
 
 	err = store.SetSchedule(job)
@@ -351,6 +353,12 @@ func (store *Store) GetAllJobs() ([]Job, error) {
 		exclusions, err := store.GetAllJobExclusions(job.ID)
 		if err == nil {
 			job.Exclusions = exclusions
+			pathSlice := []string{}
+			for _, exclusion := range exclusions {
+				pathSlice = append(pathSlice, exclusion.Path)
+			}
+
+			job.RawExclusions = strings.Join(pathSlice, "\n")
 		}
 
 		if job.LastRunUpid != nil && *job.LastRunUpid != "" {
@@ -389,7 +397,7 @@ func (store *Store) GetAllJobs() ([]Job, error) {
 }
 
 func (store *Store) GetAllJobExclusions(jobId string) ([]Exclusion, error) {
-	query := `SELECT e.path, e.comment, e.is_global FROM exclusion_bridges b INNER JOIN exclusions e ON b.exclusion_path = e.path WHERE b.job_id = ?;`
+	query := `SELECT path, comment, job_id FROM exclusions WHERE job_id = ?;`
 	rows, err := store.Db.Query(query, jobId)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllJobExclusions: error getting job exclusions select query -> %w", err)
@@ -400,13 +408,10 @@ func (store *Store) GetAllJobExclusions(jobId string) ([]Exclusion, error) {
 	exclusions = make([]Exclusion, 0)
 	for rows.Next() {
 		var exclusion Exclusion
-		var isGlobalInt int
-		err := rows.Scan(&exclusion.Path, &exclusion.Comment, &isGlobalInt)
+		err := rows.Scan(&exclusion.Path, &exclusion.Comment, &exclusion.JobID)
 		if err != nil {
 			return nil, fmt.Errorf("GetAllJobExclusions: error scanning job row -> %w", err)
 		}
-
-		exclusion.IsGlobal = isGlobalInt == 1
 
 		exclusions = append(exclusions, exclusion)
 	}
@@ -561,17 +566,12 @@ func (store *Store) GetAllTargets() ([]Target, error) {
 }
 
 func (store *Store) CreateExclusion(exclusion Exclusion) error {
-	query := `INSERT INTO exclusions (path, is_global, comment) 
+	query := `INSERT INTO exclusions (path, comment, job_id) 
               VALUES (?, ?, ?);`
-
-	isGlobalInt := 0
-	if exclusion.IsGlobal {
-		isGlobalInt = 1
-	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
 
-	_, err := store.Db.Exec(query, exclusion.Path, isGlobalInt, exclusion.Comment)
+	_, err := store.Db.Exec(query, exclusion.Path, exclusion.Comment, exclusion.JobID)
 	if err != nil {
 		return fmt.Errorf("CreateExclusion: error inserting data to table -> %w", err)
 	}
@@ -580,13 +580,11 @@ func (store *Store) CreateExclusion(exclusion Exclusion) error {
 }
 
 func (store *Store) GetExclusion(path string) (*Exclusion, error) {
-	query := `SELECT path, is_global, comment FROM exclusions WHERE path = ?;`
+	query := `SELECT path, job_id, comment FROM exclusions WHERE path = ?;`
 	row := store.Db.QueryRow(query, path)
 
-	var isGlobalInt int
-
 	var exclusion Exclusion
-	err := row.Scan(&exclusion.Path, &isGlobalInt, &exclusion.Comment)
+	err := row.Scan(&exclusion.Path, &exclusion.JobID, &exclusion.Comment)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -594,22 +592,16 @@ func (store *Store) GetExclusion(path string) (*Exclusion, error) {
 		return nil, fmt.Errorf("GetExclusion: error scanning row from exclusions table -> %w", err)
 	}
 
-	exclusion.IsGlobal = isGlobalInt == 1
-
 	return &exclusion, nil
 }
 
 // UpdateExclusion updates an existing Exclusion in the database
 func (store *Store) UpdateExclusion(exclusion Exclusion) error {
-	query := `UPDATE exclusions SET is_global = ?, comment = ? WHERE path = ?;`
-	isGlobal := 0
-	if exclusion.IsGlobal {
-		isGlobal = 1
-	}
+	query := `UPDATE exclusions SET comment = ? WHERE path = ? AND job_id = ?;`
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
 
-	_, err := store.Db.Exec(query, isGlobal, exclusion.Comment, exclusion.Path)
+	_, err := store.Db.Exec(query, exclusion.Comment, exclusion.Path, exclusion.JobID)
 	if err != nil {
 		return fmt.Errorf("UpdateExclusion: error updating exclusions table -> %w", err)
 	}
@@ -618,7 +610,7 @@ func (store *Store) UpdateExclusion(exclusion Exclusion) error {
 
 // DeleteExclusion deletes a Exclusion from the database
 func (store *Store) DeleteExclusion(path string) error {
-	query := `DELETE FROM exclusions WHERE path = ?;`
+	query := `DELETE FROM exclusions WHERE path = ? AND (job_id IS NULL OR job_id = '');`
 	_, err := store.Db.Exec(query, path)
 	if err != nil {
 		return fmt.Errorf("DeleteExclusion: error deleting exclusion -> %w", err)
@@ -627,8 +619,8 @@ func (store *Store) DeleteExclusion(path string) error {
 	return nil
 }
 
-func (store *Store) GetAllExclusions() ([]Exclusion, error) {
-	query := `SELECT path, is_global, comment FROM exclusions WHERE path IS NOT NULL;`
+func (store *Store) GetAllGlobalExclusions() ([]Exclusion, error) {
+	query := `SELECT path, job_id, comment FROM exclusions WHERE path IS NOT NULL AND (job_id IS NULL OR job_id = '');`
 	rows, err := store.Db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllExclusions: error getting select query -> %w", err)
@@ -639,13 +631,10 @@ func (store *Store) GetAllExclusions() ([]Exclusion, error) {
 	exclusions = make([]Exclusion, 0)
 	for rows.Next() {
 		var exclusion Exclusion
-		var isGlobalInt int
-		err := rows.Scan(&exclusion.Path, &isGlobalInt, &exclusion.Comment)
+		err := rows.Scan(&exclusion.Path, &exclusion.JobID, &exclusion.Comment)
 		if err != nil {
 			return nil, fmt.Errorf("GetAllExclusions: error scanning row from exclusions -> %w", err)
 		}
-
-		exclusion.IsGlobal = isGlobalInt == 1
 
 		exclusions = append(exclusions, exclusion)
 	}

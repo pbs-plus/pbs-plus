@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
@@ -110,10 +111,12 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		"--backup-id", backupId,
 	}
 
-	if !isAgent {
-		for _, exclusion := range store.WindowsStapleExclusions {
-			cmdArgs = append(cmdArgs, "--exclude", exclusion)
+	for _, exclusion := range job.Exclusions {
+		if isAgent && exclusion.JobID != job.ID {
+			continue
 		}
+
+		cmdArgs = append(cmdArgs, "--exclude", exclusion.Path)
 	}
 
 	if job.Namespace != "" {
@@ -204,9 +207,21 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	select {
 	case <-taskChan:
 	case <-watchCtx.Done():
+	case <-time.After(time.Second * 60):
+		_ = cmd.Process.Kill()
+		if agentMount != nil {
+			agentMount.Unmount()
+		}
+
+		return nil, fmt.Errorf("RunBackup: timeout, task not found")
 	}
 
 	if task == nil {
+		_ = cmd.Process.Kill()
+		if agentMount != nil {
+			agentMount.Unmount()
+		}
+
 		return nil, fmt.Errorf("RunBackup: task not found")
 	}
 

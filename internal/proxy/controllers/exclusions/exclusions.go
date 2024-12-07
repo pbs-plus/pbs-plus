@@ -25,7 +25,7 @@ func D2DExclusionHandler(storeInstance *store.Store) func(http.ResponseWriter, *
 		}
 
 		if r.Method == http.MethodGet {
-			all, err := storeInstance.GetAllExclusions()
+			all, err := storeInstance.GetAllGlobalExclusions()
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -73,9 +73,8 @@ func ExtJsExclusionHandler(storeInstance *store.Store) func(http.ResponseWriter,
 		}
 
 		newExclusion := store.Exclusion{
-			Path:     r.FormValue("path"),
-			IsGlobal: r.FormValue("is_global") == "true" || r.FormValue("is_global") == "1",
-			Comment:  r.FormValue("comment"),
+			Path:    r.FormValue("path"),
+			Comment: r.FormValue("comment"),
 		}
 
 		err = storeInstance.CreateExclusion(newExclusion)
@@ -130,9 +129,6 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 			if r.FormValue("comment") != "" {
 				exclusion.Comment = r.FormValue("comment")
 			}
-			if r.FormValue("is_global") != "" {
-				exclusion.IsGlobal = r.FormValue("is_global") == "true" || r.FormValue("is_global") == "1"
-			}
 
 			if delArr, ok := r.Form["delete"]; ok {
 				for _, attr := range delArr {
@@ -141,8 +137,6 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 						exclusion.Path = ""
 					case "comment":
 						exclusion.Comment = ""
-					case "is_global":
-						exclusion.IsGlobal = false
 					}
 				}
 			}
