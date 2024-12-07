@@ -149,6 +149,10 @@ func (store *Store) CreateTables() error {
 
 // CreateJob inserts a new Job into the database
 func (store *Store) CreateJob(job Job) error {
+	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
+		return fmt.Errorf("CreateJob: invalid namespace string -> %s", job.Namespace)
+	}
+
 	query := `INSERT INTO d2d_jobs (id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace) 
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`
 	_, err := store.Db.Exec(query, job.ID, job.Store, job.Target, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace)
@@ -240,6 +244,10 @@ func (store *Store) GetJob(id string) (*Job, error) {
 
 // UpdateJob updates an existing Job in the database
 func (store *Store) UpdateJob(job Job) error {
+	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
+		return fmt.Errorf("UpdateJob: invalid namespace string -> %s", job.Namespace)
+	}
+
 	query := `UPDATE d2d_jobs SET store = ?, target = ?, schedule = ?, comment = ?, next_run = ?, last_run_upid = ?, notification_mode = ?, namespace = ? WHERE id = ?;`
 	_, err := store.Db.Exec(query, job.Store, job.Target, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace, job.ID)
 	if err != nil {

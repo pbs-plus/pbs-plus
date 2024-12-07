@@ -120,6 +120,8 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	if job.Namespace != "" {
+		_ = CreateNamespace(job.Namespace, job, storeInstance)
+
 		cmdArgs = append(cmdArgs, "--ns", job.Namespace)
 	} else if isAgent && job.Namespace == "" {
 		newNamespace := strings.ReplaceAll(job.Target, " - ", "/")
