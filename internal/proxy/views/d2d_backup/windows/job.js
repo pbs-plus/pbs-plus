@@ -91,7 +91,7 @@ Ext.define('PBS.D2DManagement.BackupJobEdit', {
         {
 			xtype: 'proxmoxtextfield',
       fieldLabel: gettext('Namespace'),
-      disabled: true,
+			emptyText: gettext('Root'),
       name: 'ns',
         },
 		],
