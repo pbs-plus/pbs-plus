@@ -571,6 +571,10 @@ func (store *Store) CreateExclusion(exclusion Exclusion) error {
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
 
+	if !utils.IsValidPattern(exclusion.Path) {
+		return fmt.Errorf("CreateExclusion: invalid path pattern -> %s", exclusion.Path)
+	}
+
 	_, err := store.Db.Exec(query, exclusion.Path, exclusion.Comment, exclusion.JobID)
 	if err != nil {
 		return fmt.Errorf("CreateExclusion: error inserting data to table -> %w", err)
@@ -600,6 +604,10 @@ func (store *Store) UpdateExclusion(exclusion Exclusion) error {
 	query := `UPDATE exclusions SET comment = ? WHERE path = ? AND job_id = ?;`
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
+
+	if !utils.IsValidPattern(exclusion.Path) {
+		return fmt.Errorf("UpdateExclusion: invalid path pattern -> %s", exclusion.Path)
+	}
 
 	_, err := store.Db.Exec(query, exclusion.Comment, exclusion.Path, exclusion.JobID)
 	if err != nil {
