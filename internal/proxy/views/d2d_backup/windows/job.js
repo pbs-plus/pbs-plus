@@ -73,6 +73,12 @@ Ext.define('PBS.D2DManagement.BackupJobEdit', {
 			fieldLabel: 'Target',
 			name: 'target',
 		    },
+        {
+			xtype: 'proxmoxtextfield',
+      fieldLabel: gettext('Subpath'),
+			emptyText: gettext('/'),
+      name: 'subpath',
+        },
 		    {
 			xtype: 'pbsDataStoreSelector',
 			fieldLabel: gettext('Local Datastore'),

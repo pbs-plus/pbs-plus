@@ -24,6 +24,7 @@ type Job struct {
 	ID               string      `db:"id" json:"id"`
 	Store            string      `db:"store" json:"store"`
 	Target           string      `db:"target" json:"target"`
+	Subpath          string      `db:"subpath" json:"subpath"`
 	Schedule         string      `db:"schedule" json:"schedule"`
 	Comment          string      `db:"comment" json:"comment"`
 	NotificationMode string      `db:"notification_mode" json:"notification-mode"`
@@ -82,6 +83,7 @@ func (store *Store) CreateTables() error {
         id TEXT PRIMARY KEY NOT NULL,
         store TEXT NOT NULL,
         target TEXT NOT NULL,
+				subpath TEXT,
         schedule TEXT,
         comment TEXT,
         next_run INTEGER,
@@ -153,9 +155,9 @@ func (store *Store) CreateJob(job Job) error {
 		return fmt.Errorf("CreateJob: invalid namespace string -> %s", job.Namespace)
 	}
 
-	query := `INSERT INTO d2d_jobs (id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace) 
+	query := `INSERT INTO d2d_jobs (id, store, target, subpath, schedule, comment, next_run, last_run_upid, notification_mode, namespace) 
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`
-	_, err := store.Db.Exec(query, job.ID, job.Store, job.Target, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace)
+	_, err := store.Db.Exec(query, job.ID, job.Store, job.Target, job.Subpath, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace)
 	if err != nil {
 		return fmt.Errorf("CreateJob: error inserting data to job table -> %w", err)
 	}
@@ -179,11 +181,11 @@ func (store *Store) CreateJob(job Job) error {
 
 // GetJob retrieves a Job by ID
 func (store *Store) GetJob(id string) (*Job, error) {
-	query := `SELECT id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM d2d_jobs WHERE id = ?;`
+	query := `SELECT id, store, target, subpath, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM d2d_jobs WHERE id = ?;`
 	row := store.Db.QueryRow(query, id)
 
 	var job Job
-	err := row.Scan(&job.ID, &job.Store, &job.Target, &job.Schedule, &job.Comment, &job.NextRun, &job.LastRunUpid, &job.NotificationMode, &job.Namespace)
+	err := row.Scan(&job.ID, &job.Store, &job.Target, &job.Subpath, &job.Schedule, &job.Comment, &job.NextRun, &job.LastRunUpid, &job.NotificationMode, &job.Namespace)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -248,8 +250,8 @@ func (store *Store) UpdateJob(job Job) error {
 		return fmt.Errorf("UpdateJob: invalid namespace string -> %s", job.Namespace)
 	}
 
-	query := `UPDATE d2d_jobs SET store = ?, target = ?, schedule = ?, comment = ?, next_run = ?, last_run_upid = ?, notification_mode = ?, namespace = ? WHERE id = ?;`
-	_, err := store.Db.Exec(query, job.Store, job.Target, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace, job.ID)
+	query := `UPDATE d2d_jobs SET store = ?, target = ?, subpath = ?, schedule = ?, comment = ?, next_run = ?, last_run_upid = ?, notification_mode = ?, namespace = ? WHERE id = ?;`
+	_, err := store.Db.Exec(query, job.Store, job.Target, job.Subpath, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace, job.ID)
 	if err != nil {
 		return fmt.Errorf("UpdateJob: error updating job table -> %w", err)
 	}
@@ -342,7 +344,7 @@ func (store *Store) DeleteJob(id string) error {
 
 // GetAllJobs retrieves all Job records from the database
 func (store *Store) GetAllJobs() ([]Job, error) {
-	query := `SELECT id, store, target, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM d2d_jobs WHERE id IS NOT NULL;`
+	query := `SELECT id, store, target, subpath, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM d2d_jobs WHERE id IS NOT NULL;`
 	rows, err := store.Db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllJobs: error getting job select query -> %w", err)
@@ -353,7 +355,7 @@ func (store *Store) GetAllJobs() ([]Job, error) {
 	jobs = make([]Job, 0)
 	for rows.Next() {
 		var job Job
-		err := rows.Scan(&job.ID, &job.Store, &job.Target, &job.Schedule, &job.Comment, &job.NextRun, &job.LastRunUpid, &job.NotificationMode, &job.Namespace)
+		err := rows.Scan(&job.ID, &job.Store, &job.Target, &job.Subpath, &job.Schedule, &job.Comment, &job.NextRun, &job.LastRunUpid, &job.NotificationMode, &job.Namespace)
 		if err != nil {
 			return nil, fmt.Errorf("GetAllJobs: error scanning job row -> %w", err)
 		}

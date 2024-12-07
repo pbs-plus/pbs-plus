@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,8 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 
 		srcPath = agentMount.Path
 	}
+
+	srcPath = filepath.Join(srcPath, job.Subpath)
 
 	taskChan := make(chan store.Task)
 	watchCtx, cancel := context.WithCancel(context.Background())
@@ -123,11 +126,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		_ = CreateNamespace(job.Namespace, job, storeInstance)
 
 		cmdArgs = append(cmdArgs, "--ns", job.Namespace)
-	} else if isAgent && job.Namespace == "" {
-		newNamespace := strings.ReplaceAll(job.Target, " - ", "/")
-		cmdArgs = append(cmdArgs, "--ns", strings.ReplaceAll(job.Target, " - ", "/"))
-
-		_ = CreateNamespace(newNamespace, job, storeInstance)
 	}
 
 	_ = FixDatastore(job, storeInstance)

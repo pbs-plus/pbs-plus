@@ -1,7 +1,7 @@
 Ext.define('pbs-disk-backup-job-status', {
     extend: 'Ext.data.Model',
     fields: [
-	'id', 'store', 'target', 'schedule', 'comment', 'duration',
+	'id', 'store', 'target', 'subpath', 'schedule', 'comment', 'duration',
 	'next-run', 'last-run-upid', 'last-run-state', 'last-run-endtime', 'rawexclusions',
     ],
     idProperty: 'id',

@@ -160,6 +160,12 @@ Ext.define('PBS.config.DiskBackupJobView', {
 	    sortable: true,
 	},
 	{
+	    header: gettext('Subpath'),
+	    dataIndex: 'subpath',
+	    width: 120,
+	    sortable: true,
+	},
+	{
 	    header: gettext('Datastore'),
 	    dataIndex: 'store',
 	    width: 120,

@@ -111,6 +111,7 @@ func ExtJsJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
 			Target:           r.FormValue("target"),
+			Subpath:          r.FormValue("subpath"),
 			Schedule:         r.FormValue("schedule"),
 			Comment:          r.FormValue("comment"),
 			Namespace:        r.FormValue("ns"),
@@ -181,6 +182,9 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter,
 			if r.FormValue("target") != "" {
 				job.Target = r.FormValue("target")
 			}
+			if r.FormValue("subpath") != "" {
+				job.Subpath = r.FormValue("subpath")
+			}
 			if r.FormValue("schedule") != "" {
 				job.Schedule = r.FormValue("schedule")
 			}
@@ -220,6 +224,8 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter,
 						job.Store = ""
 					case "target":
 						job.Target = ""
+					case "subpath":
+						job.Subpath = ""
 					case "schedule":
 						job.Schedule = ""
 					case "comment":
