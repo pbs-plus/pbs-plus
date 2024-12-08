@@ -160,7 +160,7 @@ func (store *Store) CreateJob(job Job) error {
 	}
 
 	query := `INSERT INTO d2d_jobs (id, store, target, subpath, schedule, comment, next_run, last_run_upid, notification_mode, namespace) 
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`
 	_, err := store.Db.Exec(query, job.ID, job.Store, job.Target, job.Subpath, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace)
 	if err != nil {
 		return fmt.Errorf("CreateJob: error inserting data to job table -> %w", err)
