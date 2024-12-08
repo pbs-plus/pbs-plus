@@ -174,6 +174,28 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
 	}
 
+	log.Printf("Waiting for task: %s\n", job.ID)
+	select {
+	case <-taskChan:
+	case <-watchCtx.Done():
+	case <-time.After(time.Second * 60):
+		_ = cmd.Process.Kill()
+		if agentMount != nil {
+			agentMount.Unmount()
+		}
+
+		return nil, fmt.Errorf("RunBackup: timeout, task not found")
+	}
+
+	if task == nil {
+		_ = cmd.Process.Kill()
+		if agentMount != nil {
+			agentMount.Unmount()
+		}
+
+		return nil, fmt.Errorf("RunBackup: task not found")
+	}
+
 	go func(currJob *store.Job, currTask *store.Task) {
 		defer func() {
 			if waitChan != nil {
@@ -221,28 +243,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 			return
 		}
 	}(job, task)
-
-	log.Printf("Waiting for task: %s\n", job.ID)
-	select {
-	case <-taskChan:
-	case <-watchCtx.Done():
-	case <-time.After(time.Second * 60):
-		_ = cmd.Process.Kill()
-		if agentMount != nil {
-			agentMount.Unmount()
-		}
-
-		return nil, fmt.Errorf("RunBackup: timeout, task not found")
-	}
-
-	if task == nil {
-		_ = cmd.Process.Kill()
-		if agentMount != nil {
-			agentMount.Unmount()
-		}
-
-		return nil, fmt.Errorf("RunBackup: task not found")
-	}
 
 	job.LastRunUpid = &task.UPID
 	job.LastRunState = &task.Status
