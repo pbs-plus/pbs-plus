@@ -200,21 +200,22 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 
 		writer := bufio.NewWriter(f)
 		for {
-			line, err := buffer.ReadString('\n')
-			if err != nil {
-				continue
-			}
-
-			if strings.HasPrefix(line, "Error: upload failed:") {
-				clientErrChan <- strings.TrimSuffix(line, "\n")
-			}
-
 			select {
 			case <-logCtx.Done():
 				writer.Flush()
 				return
 			default:
-				_, _ = writer.WriteString(line + "\n")
+				bufferContent := buffer.String()
+
+				if strings.Contains(bufferContent, "upload failed:") {
+					clientErrChan <- strings.TrimSuffix(bufferContent, "\n")
+				}
+
+				if _, err := writer.WriteString(bufferContent); err != nil {
+					log.Println("Write error:", err)
+					return
+				}
+
 				buffer.Reset()
 			}
 		}
