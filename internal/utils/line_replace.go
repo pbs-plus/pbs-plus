@@ -57,7 +57,7 @@ func ReplaceLastLine(filePath string, newLine string) error {
 		originalLastLine = strings.TrimSuffix(string(content), "\n")
 	}
 
-	if strings.Contains(originalLastLine, "TASK ERROR: connection error: not connected") {
+	if strings.Contains(originalLastLine, "TASK ERROR: connection error: not connected") && newLine != "" {
 		err = file.Truncate(int64(lastNewline + 1))
 		if err != nil {
 			return err
