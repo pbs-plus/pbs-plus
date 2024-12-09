@@ -19,6 +19,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 var backupMutex sync.Mutex
@@ -178,15 +179,19 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		return nil, fmt.Errorf("RunBackup: task not found")
 	}
 
+	clientErrChan := make(chan string)
+
 	logCtx, logCtxCancel := context.WithCancel(context.Background())
 	go func(ctx context.Context, currTask *store.Task, buffer *bytes.Buffer) {
-		err := os.MkdirAll("/var/log/proxmox-backup/pbs-plus", os.ModeDir)
+		defer close(clientErrChan)
+
+		err := os.MkdirAll("/var/log/proxmox-backup/pbs-plus-client", os.ModeDir)
 		if err != nil {
 			log.Println(err)
 			return
 		}
 
-		f, err := os.OpenFile(fmt.Sprintf("/var/log/proxmox-backup/pbs-plus/%s", task.UPID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(fmt.Sprintf("/var/log/proxmox-backup/pbs-plus-client/%s", task.UPID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			log.Println(err)
 			return
@@ -195,12 +200,23 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 
 		writer := bufio.NewWriter(f)
 		for {
+			line, err := buffer.ReadString('\n')
+			if err != nil {
+				continue
+			}
+
+			_, _ = writer.WriteString(line + "\n")
+
+			if strings.HasPrefix(line, "Error: upload failed:") {
+				clientErrChan <- strings.TrimSuffix(line, "\n")
+			}
+
 			select {
 			case <-logCtx.Done():
 				writer.Flush()
 				return
 			default:
-				io.Copy(writer, buffer)
+				_, _ = io.Copy(writer, buffer)
 				buffer.Reset()
 			}
 		}
@@ -211,7 +227,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 			if waitChan != nil {
 				close(waitChan)
 			}
-
 			logCtxCancel()
 		}()
 
@@ -221,6 +236,9 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 			log.Printf("Failed to initialize logger: %s", err)
 			return
 		}
+
+		taskPath := utils.GetTaskLogPath(task.UPID)
+		go utils.ReplaceLastLine(taskPath, <-clientErrChan)
 
 		if agentMount != nil {
 			defer agentMount.Unmount()
