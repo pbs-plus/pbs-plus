@@ -143,7 +143,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	logBuffer := bytes.Buffer{}
-	writer := io.MultiWriter(os.Stdout, &logBuffer)
+	writer := io.MultiWriter(os.Stdout, bufio.NewWriter(&logBuffer))
 
 	cmd.Stdout = writer
 	cmd.Stderr = writer
@@ -179,55 +179,40 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	logCtx, logCtxCancel := context.WithCancel(context.Background())
-	go func(ctx context.Context, task *store.Task) {
-		upidSplit := strings.Split(task.UPID, ":")
-		if len(upidSplit) < 4 {
-			return
-		}
-
-		parsed := upidSplit[3]
-		logFolder := parsed[len(parsed)-2:]
-
-		logFilePath := fmt.Sprintf("/var/log/proxmox-backup/tasks/%s/%s", logFolder, task.UPID)
-		logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY, 0644)
+	go func(ctx context.Context, currTask *store.Task, buffer *bytes.Buffer) {
+		err := os.MkdirAll("/var/log/proxmox-backup/pbs-plus", os.ModeDir)
 		if err != nil {
-			log.Printf("Log file for task %s does not exist or cannot be opened: %v", task.UPID, err)
+			log.Println(err)
 			return
 		}
-		defer logFile.Close()
 
-		writer := bufio.NewWriter(logFile)
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
+		f, err := os.OpenFile(fmt.Sprintf("/var/log/proxmox-backup/pbs-plus/%s", task.UPID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		defer f.Close()
 
+		writer := bufio.NewWriter(f)
 		for {
 			select {
 			case <-logCtx.Done():
 				writer.Flush()
 				return
-			case <-ticker.C:
-				lines := strings.Split(logBuffer.String(), "\n")
-				for _, line := range lines {
-					if line != "" {
-						_, err := writer.WriteString(line + "\n")
-						if err != nil {
-							log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
-							return
-						}
-					}
-				}
-				logBuffer.Reset()
-				writer.Flush()
+			default:
+				io.Copy(writer, buffer)
+				buffer.Reset()
 			}
 		}
-	}(logCtx, task)
+	}(logCtx, task, &logBuffer)
 
 	go func(currJob *store.Job, currTask *store.Task) {
-		defer logCtxCancel()
 		defer func() {
 			if waitChan != nil {
 				close(waitChan)
 			}
+
+			logCtxCancel()
 		}()
 
 		syslogger, err := syslog.InitializeLogger()
