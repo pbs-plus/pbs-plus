@@ -144,7 +144,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	logBuffer := bytes.Buffer{}
-	writer := io.MultiWriter(os.Stdout, bufio.NewWriter(&logBuffer))
+	writer := io.MultiWriter(os.Stdout, &logBuffer)
 
 	cmd.Stdout = writer
 	cmd.Stderr = writer
@@ -179,47 +179,56 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		return nil, fmt.Errorf("RunBackup: task not found")
 	}
 
-	clientErrChan := make(chan string)
-
 	logCtx, logCtxCancel := context.WithCancel(context.Background())
-	go func(ctx context.Context, currTask *store.Task, buffer *bytes.Buffer) {
-		defer close(clientErrChan)
+	go func(ctx context.Context, task *store.Task) {
+		logFilePath := utils.GetTaskLogPath(task.UPID)
 
-		err := os.MkdirAll("/var/log/proxmox-backup/pbs-plus-client", os.ModeDir)
+		logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Println(err)
+			log.Printf("Log file for task %s does not exist or cannot be opened: %v", task.UPID, err)
 			return
 		}
+		defer logFile.Close()
+		writer := bufio.NewWriter(logFile)
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
 
-		f, err := os.OpenFile(fmt.Sprintf("/var/log/proxmox-backup/pbs-plus-client/%s", task.UPID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		defer f.Close()
-
-		writer := bufio.NewWriter(f)
+		taskHasError := false
 		for {
+			formattedTime := time.Now().Format(time.RFC3339)
+
 			select {
 			case <-logCtx.Done():
+				if !taskHasError {
+					_, err := writer.WriteString(formattedTime + ": TASK OK\n")
+					if err != nil {
+						log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
+						return
+					}
+				}
 				writer.Flush()
 				return
-			default:
-				bufferContent := buffer.String()
+			case <-ticker.C:
+				lines := strings.Split(logBuffer.String(), "\n")
+				for _, line := range lines {
+					if line != "" {
+						if strings.Contains(line, "Error: upload failed:") {
+							line = strings.Replace(line, "Error:", "TASK ERROR:", 1)
+							taskHasError = true
+						}
 
-				if strings.Contains(bufferContent, "upload failed:") {
-					clientErrChan <- strings.TrimSuffix(bufferContent, "\n")
+						_, err := writer.WriteString(formattedTime + ": " + line + "\n")
+						if err != nil {
+							log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
+							return
+						}
+					}
 				}
-
-				if _, err := writer.WriteString(bufferContent); err != nil {
-					log.Println("Write error:", err)
-					return
-				}
-
-				buffer.Reset()
+				logBuffer.Reset()
+				writer.Flush()
 			}
 		}
-	}(logCtx, task, &logBuffer)
+	}(logCtx, task)
 
 	go func(currJob *store.Job, currTask *store.Task) {
 		defer func() {
@@ -235,9 +244,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 			log.Printf("Failed to initialize logger: %s", err)
 			return
 		}
-
-		taskPath := utils.GetTaskLogPath(task.UPID)
-		go utils.ReplaceLastLine(taskPath, <-clientErrChan)
 
 		if agentMount != nil {
 			defer agentMount.Unmount()
