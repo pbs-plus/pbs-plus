@@ -3,6 +3,7 @@
 package backup
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -177,12 +178,58 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		return nil, fmt.Errorf("RunBackup: task not found")
 	}
 
+	logCtx, logCtxCancel := context.WithCancel(context.Background())
+	go func(ctx context.Context, task *store.Task) {
+		upidSplit := strings.Split(task.UPID, ":")
+		if len(upidSplit) < 4 {
+			return
+		}
+
+		parsed := upidSplit[3]
+		logFolder := parsed[len(parsed)-2:]
+
+		logFilePath := fmt.Sprintf("/var/log/proxmox-backup/tasks/%s/%s", logFolder, task.UPID)
+		logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Printf("Log file for task %s does not exist or cannot be opened: %v", task.UPID, err)
+			return
+		}
+		defer logFile.Close()
+
+		writer := bufio.NewWriter(logFile)
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-logCtx.Done():
+				writer.Flush()
+				return
+			case <-ticker.C:
+				lines := strings.Split(logBuffer.String(), "\n")
+				for _, line := range lines {
+					if line != "" {
+						_, err := writer.WriteString(line + "\n")
+						if err != nil {
+							log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
+							return
+						}
+					}
+				}
+				logBuffer.Reset()
+				writer.Flush()
+			}
+		}
+	}(logCtx, task)
+
 	go func(currJob *store.Job, currTask *store.Task) {
+		defer logCtxCancel()
 		defer func() {
 			if waitChan != nil {
 				close(waitChan)
 			}
 		}()
+
 		syslogger, err := syslog.InitializeLogger()
 		if err != nil {
 			cancel()
