@@ -27,7 +27,7 @@ func getVSSFolder() (string, error) {
 	return configBasePath, nil
 }
 
-func Snapshot(driveLetter string, forceNew bool) (*WinVSSSnapshot, error) {
+func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	knownSnaps := &KnownSnapshots{registry: "KnownSnaps"}
 	volName := filepath.VolumeName(fmt.Sprintf("%s:", driveLetter))
 
@@ -40,7 +40,7 @@ func Snapshot(driveLetter string, forceNew bool) (*WinVSSSnapshot, error) {
 	snapshotPath := filepath.Join(vssFolder, driveLetter)
 	if knownSnap, err := knownSnaps.Get(snapshotPath); err == nil {
 		if _, err := vss.Get(snapshotPath); err == nil {
-			if time.Since(knownSnap.GetTimestamp()) < 15*time.Minute && !forceNew {
+			if time.Since(knownSnap.GetTimestamp()) < 2*time.Minute {
 				return knownSnap, nil
 			}
 		}

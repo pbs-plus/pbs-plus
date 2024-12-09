@@ -130,25 +130,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 
 	_ = FixDatastore(job, storeInstance)
 
-	if isAgent {
-		snapOk, err := storeInstance.AgentSnapshot(target)
-		if err != nil {
-			if agentMount != nil {
-				agentMount.Unmount()
-			}
-			cancel()
-			return nil, fmt.Errorf("RunBackup: agent snapshot error -> %w", err)
-		}
-
-		if !snapOk {
-			if agentMount != nil {
-				agentMount.Unmount()
-			}
-			cancel()
-			return nil, fmt.Errorf("RunBackup: agent snapshot error")
-		}
-	}
-
 	cmd := exec.Command("/usr/bin/proxmox-backup-client", cmdArgs...)
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_PASSWORD=%s", storeInstance.APIToken.Value))
