@@ -205,8 +205,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 				continue
 			}
 
-			_, _ = writer.WriteString(line + "\n")
-
 			if strings.HasPrefix(line, "Error: upload failed:") {
 				clientErrChan <- strings.TrimSuffix(line, "\n")
 			}
@@ -216,7 +214,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 				writer.Flush()
 				return
 			default:
-				_, _ = io.Copy(writer, buffer)
+				_, _ = writer.WriteString(line + "\n")
 				buffer.Reset()
 			}
 		}
