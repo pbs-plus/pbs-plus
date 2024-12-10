@@ -1,40 +1,72 @@
 package utils
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
 
-// Converts a glob pattern to a regex pattern
-func GlobToRegex(pattern string) string {
-	// Handle leading / or \ for current directory matches
-	if strings.HasPrefix(pattern, "/") || strings.HasPrefix(pattern, "\\") {
-		pattern = "." + pattern
-	} else {
-		pattern = "**/" + pattern
+// GlobToRegex converts a glob pattern to a regex-compatible string.
+func GlobToRegex(glob string) (string, error) {
+	// Check for negation at the start
+	negate := false
+	if strings.HasPrefix(glob, "!") {
+		negate = true
+		glob = glob[1:]
 	}
 
-	// Escape characters and replace glob wildcards
-	regexPattern := regexp.QuoteMeta(pattern)
-	regexPattern = strings.ReplaceAll(regexPattern, `\*\*`, `.*`)    // Double star for any depth
-	regexPattern = strings.ReplaceAll(regexPattern, `\*`, `[^/\\]*`) // Single star for single level
-	regexPattern = strings.ReplaceAll(regexPattern, `\?`, `.`)       // ? for any single character
-	regexPattern = strings.ReplaceAll(regexPattern, `\[`, `[`)       // Keep character sets
-	regexPattern = strings.ReplaceAll(regexPattern, `\]`, `]`)
-	regexPattern = strings.ReplaceAll(regexPattern, `\!`, `!`) // Keep negation sets
+	var regex strings.Builder
+	regex.WriteString(".*") // Match any path leading to the pattern
 
-	// Replace forward and backward slashes with a platform-agnostic pattern
-	regexPattern = strings.ReplaceAll(regexPattern, `/`, `[\\\\/]`)  // Match / or \
-	regexPattern = strings.ReplaceAll(regexPattern, `\\`, `[\\\\/]`) // Match / or \
-
-	// Handle trailing slashes for directories
-	if strings.HasSuffix(pattern, "/") || strings.HasSuffix(pattern, "\\") {
-		regexPattern += `(?:[\\/]|$)` // Match only directories
-	} else {
-		regexPattern += `(?:$|[\\/]$)` // Match files and subdirectories
+	for i := 0; i < len(glob); i++ {
+		c := glob[i]
+		switch c {
+		case '*':
+			if i+1 < len(glob) && glob[i+1] == '*' {
+				// Handle "**" for zero or more directories/files
+				regex.WriteString(".*")
+				i++ // Skip next '*'
+			} else {
+				// Handle "*" for zero or more characters except '/'
+				regex.WriteString("[^/\\\\]*")
+			}
+		case '.':
+			// Escape '.' in regex
+			regex.WriteString("\\.")
+		case '/':
+			// Match both '/' and '\'
+			regex.WriteString("[\\\\/]")
+		case '\\':
+			// Match literal '\' if escaped
+			regex.WriteString("\\\\")
+		case '[':
+			// Preserve character classes
+			endIdx := strings.IndexByte(glob[i:], ']')
+			if endIdx == -1 {
+				return "", fmt.Errorf("invalid glob pattern, unmatched '['")
+			}
+			class := glob[i : i+endIdx+1]
+			if negate {
+				// Add negation directly inside the character class
+				regex.WriteString("[^" + class[1:])
+			} else {
+				regex.WriteString(class)
+			}
+			i += endIdx
+		default:
+			// Escape all other special regex characters
+			if strings.ContainsRune(`+()|^$!`, rune(c)) {
+				regex.WriteString("\\")
+			}
+			regex.WriteByte(c)
+		}
 	}
 
-	return regexPattern
+	// Add optional end match
+	regex.WriteString("(?:$|[\\\\/])")
+
+	// Return the final regex
+	return regex.String(), nil
 }
 
 func IsValidPattern(pattern string) bool {
@@ -49,8 +81,12 @@ func IsValidPattern(pattern string) bool {
 	}()
 
 	// Convert to regex and attempt compilation
-	regex := GlobToRegex(pattern)
-	_, err := regexp.Compile(regex)
+	regex, err := GlobToRegex(pattern)
+	if err != nil {
+		return false
+	}
+
+	_, err = regexp.Compile(regex)
 	if err != nil {
 		isValid = false
 	}
