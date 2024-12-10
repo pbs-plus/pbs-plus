@@ -47,7 +47,11 @@ func CompilePartialFileList() []*regexp.Regexp {
 
 	// Compile excluded patterns
 	for _, pattern := range partialPatterns {
-		compiledRegexes = append(compiledRegexes, regexp.MustCompile("(?i)^"+utils.GlobToRegex(pattern)))
+		rexp, err := utils.GlobToRegex(pattern)
+		if err != nil {
+			continue
+		}
+		compiledRegexes = append(compiledRegexes, regexp.MustCompile("(?i)"+rexp))
 	}
 
 	return compiledRegexes
