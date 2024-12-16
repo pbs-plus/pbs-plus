@@ -208,14 +208,22 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		defer logFile.Close()
 		writer := bufio.NewWriter(logFile)
 
-		taskHasError := false
+		taskError := ""
+		hasLogs := false
+
 		for {
 			formattedTime := time.Now().Format(time.RFC3339)
 
 			select {
 			case <-ctx.Done():
-				if !taskHasError {
+				if taskError == "" && hasLogs {
 					_, err := writer.WriteString(formattedTime + ": TASK OK\n")
+					if err != nil {
+						log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
+						return
+					}
+				} else if taskError != "" {
+					_, err := writer.WriteString(formattedTime + ": " + taskError + "\n")
 					if err != nil {
 						log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
 						return
@@ -228,9 +236,11 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 					continue
 				}
 
+				hasLogs = true
+
 				if strings.Contains(logLine, "Error: upload failed:") {
-					logLine = strings.Replace(logLine, "Error:", "TASK ERROR:", 1)
-					taskHasError = true
+					taskError = strings.Replace(logLine, "Error:", "TASK ERROR:", 1)
+					continue
 				}
 
 				_, err := writer.WriteString(formattedTime + ": " + logLine + "\n")
