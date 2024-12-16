@@ -198,7 +198,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 			formattedTime := time.Now().Format(time.RFC3339)
 
 			select {
-			case <-logCtx.Done():
+			case <-ctx.Done():
 				if !taskHasError {
 					_, err := writer.WriteString(formattedTime + ": TASK OK\n")
 					if err != nil {

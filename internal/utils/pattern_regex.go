@@ -15,6 +15,9 @@ func GlobToRegex(glob string) (string, error) {
 		glob = glob[1:]
 	}
 
+	glob = strings.TrimSuffix(glob, "/")
+	glob = strings.TrimSuffix(glob, "\\")
+
 	var regex strings.Builder
 	regex.WriteString(".*") // Match any path leading to the pattern
 
