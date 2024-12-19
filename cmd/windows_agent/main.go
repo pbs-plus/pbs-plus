@@ -13,7 +13,12 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
+var Version = "v0.0.0"
+
 func main() {
+	execPath, _ := os.Executable()
+	_ = os.RemoveAll(execPath + ".old")
+
 	svcConfig := &service.Config{
 		Name:        "PBSPlusAgent",
 		DisplayName: "PBS Plus Agent",

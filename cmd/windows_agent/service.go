@@ -9,11 +9,14 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/kardianos/service"
+	"github.com/minio/selfupdate"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -26,6 +29,10 @@ type PingData struct {
 
 type PingResp struct {
 	Data PingData `json:"data"`
+}
+
+type VersionResp struct {
+	Version string `json:"version"`
 }
 
 type agentService struct {
@@ -43,6 +50,7 @@ func (p *agentService) Start(s service.Service) error {
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 
 	go p.startPing()
+	go p.versionCheck()
 	go p.run()
 
 	return nil
@@ -70,6 +78,62 @@ func (p *agentService) startPing() {
 			return
 		case <-time.After(time.Second * 5):
 			ping()
+		}
+	}
+}
+
+func (p *agentService) versionCheck() {
+	hasLogger := false
+	logger, err := syslog.InitializeLogger(p.svc)
+	if err == nil {
+		hasLogger = true
+	}
+
+	versionResp := VersionResp{
+		Version: Version,
+	}
+
+	versionCheck := func() {
+		_ = agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, &versionResp)
+	}
+
+	versionCheck()
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-time.After(time.Minute * 2):
+			if versionResp.Version != Version {
+				var dlResp io.Reader
+				err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary", dlResp, nil)
+				if err != nil {
+					if hasLogger {
+						logger.Errorf("Update download %s error: %s", versionResp.Version, err)
+					}
+					continue
+				}
+
+				err = selfupdate.Apply(dlResp, selfupdate.Options{})
+				if err != nil {
+					if hasLogger {
+						logger.Errorf("Update download %s error: %s", versionResp.Version, err)
+					}
+					continue
+				}
+
+				ex, err := os.Executable()
+				if err != nil {
+					if hasLogger {
+						logger.Errorf("Update download %s error: %s", versionResp.Version, err)
+					}
+					continue
+				}
+
+				var restartCmd *exec.Cmd
+				restartCmd = exec.Command(ex, "restart")
+				restartCmd.Start()
+			}
 		}
 	}
 }

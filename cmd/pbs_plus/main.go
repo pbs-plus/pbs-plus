@@ -15,10 +15,13 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/exclusions"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/jobs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/partial_files"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/plus"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/targets"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
+
+var Version = "v0.0.0"
 
 // routeHandler holds a pattern and handler that accepts path variables
 type routeHandler struct {
@@ -135,6 +138,8 @@ func main() {
 	}
 
 	// Register routes
+	router.AddRoute("/api2/json/plus/version", plus.VersionHandler(storeInstance, Version))
+	router.AddRoute("/api2/json/plus/binary", plus.DownloadBinary(storeInstance, Version))
 	router.AddRoute("/api2/json/d2d/backup", jobs.D2DJobHandler(storeInstance))
 	router.AddRoute("/api2/json/d2d/target", targets.D2DTargetHandler(storeInstance))
 	router.AddRoute("/api2/json/d2d/target/agent", targets.D2DTargetAgentHandler(storeInstance))
