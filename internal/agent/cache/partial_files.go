@@ -24,7 +24,7 @@ var PartialFilePathRegexes = CompilePartialFileList()
 
 func CompilePartialFileList() []*regexp.Regexp {
 	var partialResp PartialFileResp
-	err := agent.ProxmoxHTTPRequest(
+	_, err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,
 		"/api2/json/d2d/partial-file",
 		nil,

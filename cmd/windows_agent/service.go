@@ -59,7 +59,7 @@ func (p *agentService) Start(s service.Service) error {
 func (p *agentService) startPing() {
 	ping := func() {
 		var pingResp PingResp
-		pingErr := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/ping", nil, &pingResp)
+		_, pingErr := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/ping", nil, &pingResp)
 		if pingErr != nil {
 			agent.SetStatus(fmt.Sprintf("Error - (%s)", pingErr.Error()))
 		} else if !pingResp.Data.Pong {
@@ -94,7 +94,7 @@ func (p *agentService) versionCheck() {
 	}
 
 	versionCheck := func() {
-		_ = agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, &versionResp)
+		_, _ = agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, &versionResp)
 	}
 
 	versionCheck()
@@ -105,8 +105,8 @@ func (p *agentService) versionCheck() {
 			return
 		case <-time.After(time.Minute * 2):
 			if versionResp.Version != Version {
-				var dlResp io.Reader
-				err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary", dlResp, nil)
+				var dlResp io.ReadCloser
+				dlResp, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary", nil, nil)
 				if err != nil {
 					if hasLogger {
 						logger.Errorf("Update download %s error: %s", versionResp.Version, err)
@@ -114,11 +114,17 @@ func (p *agentService) versionCheck() {
 					continue
 				}
 
+				closeResp := func() {
+					_, _ = io.Copy(io.Discard, dlResp)
+					dlResp.Close()
+				}
+
 				err = selfupdate.Apply(dlResp, selfupdate.Options{})
 				if err != nil {
 					if hasLogger {
 						logger.Errorf("Update download %s error: %s", versionResp.Version, err)
 					}
+					closeResp()
 					continue
 				}
 
@@ -127,6 +133,7 @@ func (p *agentService) versionCheck() {
 					if hasLogger {
 						logger.Errorf("Update download %s error: %s", versionResp.Version, err)
 					}
+					closeResp()
 					continue
 				}
 
@@ -187,16 +194,20 @@ func (p *agentService) run() {
 			return
 		}
 
-		err = agent.ProxmoxHTTPRequest(
+		body, err := agent.ProxmoxHTTPRequest(
 			http.MethodPost,
 			"/api2/json/d2d/target/agent",
 			bytes.NewBuffer(reqBody),
 			nil,
 		)
+
 		if err != nil {
 			logger.Errorf("Agent drives update error: %v", err)
 			return
 		}
+
+		_, _ = io.Copy(io.Discard, body)
+		body.Close()
 	}()
 
 	for _, drive := range drives {

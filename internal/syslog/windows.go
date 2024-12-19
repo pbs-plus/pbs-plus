@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -46,12 +47,16 @@ func (l *Logger) logToServer(level string, msg string) {
 		return
 	}
 
-	_ = agent.ProxmoxHTTPRequest(
+	body, err := agent.ProxmoxHTTPRequest(
 		http.MethodPost,
 		"/api2/json/d2d/agent-log",
 		bytes.NewBuffer(reqBody),
 		nil,
 	)
+	if err == nil {
+		_, _ = io.Copy(io.Discard, body)
+		body.Close()
+	}
 }
 
 func (l *Logger) Infof(format string, v ...any) {

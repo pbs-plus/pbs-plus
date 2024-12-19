@@ -22,7 +22,7 @@ type ExclusionResp struct {
 
 func CompileExcludedPaths() []*regexp.Regexp {
 	var exclusionResp ExclusionResp
-	err := agent.ProxmoxHTTPRequest(
+	_, err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,
 		"/api2/json/d2d/exclusion",
 		nil,

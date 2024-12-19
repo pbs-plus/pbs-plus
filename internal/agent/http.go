@@ -19,11 +19,11 @@ import (
 
 var httpClient *http.Client
 
-func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error {
+func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) (io.ReadCloser, error) {
 	serverUrl := ""
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
 	if err != nil {
-		return fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
+		return nil, fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
 	}
 	defer key.Close()
 
@@ -42,7 +42,7 @@ func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error 
 	}
 
 	if serverUrl, _, err = key.GetStringValue("ServerURL"); err != nil || serverUrl == "" {
-		return fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
+		return nil, fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
 	}
 
 	req, err := http.NewRequest(
@@ -56,7 +56,7 @@ func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error 
 	)
 
 	if err != nil {
-		return fmt.Errorf("ProxmoxHTTPRequest: error creating http request -> %w", err)
+		return nil, fmt.Errorf("ProxmoxHTTPRequest: error creating http request -> %w", err)
 	}
 
 	hostname, _ := os.Hostname()
@@ -76,8 +76,13 @@ func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error 
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("ProxmoxHTTPRequest: error executing http request -> %w", err)
+		return nil, fmt.Errorf("ProxmoxHTTPRequest: error executing http request -> %w", err)
 	}
+
+	if respBody == nil {
+		return resp.Body, nil
+	}
+
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
@@ -85,15 +90,13 @@ func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error 
 
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("ProxmoxHTTPRequest: error getting body content -> %w", err)
+		return nil, fmt.Errorf("ProxmoxHTTPRequest: error getting body content -> %w", err)
 	}
 
-	if respBody != nil {
-		err = json.Unmarshal(rawBody, respBody)
-		if err != nil {
-			return fmt.Errorf("ProxmoxHTTPRequest: error json unmarshal body content (%s) -> %w", string(rawBody), err)
-		}
+	err = json.Unmarshal(rawBody, respBody)
+	if err != nil {
+		return nil, fmt.Errorf("ProxmoxHTTPRequest: error json unmarshal body content (%s) -> %w", string(rawBody), err)
 	}
 
-	return nil
+	return nil, nil
 }
