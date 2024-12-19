@@ -52,7 +52,7 @@ func DownloadBinary(storeInstance *store.Store, version string) func(http.Respon
 
 		// Construct the passthrough URL
 		baseURL := "https://github.com/sonroyaalmerol/pbs-plus/releases/download/"
-		targetURL := fmt.Sprintf("%sv%s/pbs-plus-agent-v%s-windows-amd64.exe", baseURL, version, version)
+		targetURL := fmt.Sprintf("%s%s/pbs-plus-agent-%s-windows-amd64.exe", baseURL, version, version)
 
 		// Proxy the request
 		req, err := http.NewRequest(http.MethodGet, targetURL, nil)
