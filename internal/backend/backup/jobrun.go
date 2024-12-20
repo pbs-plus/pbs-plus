@@ -211,19 +211,26 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		taskError := ""
 		hasLogs := false
 
+		_, err = writer.WriteString("--- proxmox-backup-client log starts here ---\n")
+		if err != nil {
+			log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
+			return
+		}
+		writer.Flush()
+
 		for {
 			formattedTime := time.Now().Format(time.RFC3339)
 
 			select {
 			case <-ctx.Done():
 				if taskError == "" && hasLogs {
-					_, err := writer.WriteString(formattedTime + ": TASK OK\n")
+					_, err := writer.WriteString(formattedTime + ": TASK OK")
 					if err != nil {
 						log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
 						return
 					}
 				} else if taskError != "" {
-					_, err := writer.WriteString(formattedTime + ": " + taskError + "\n")
+					_, err := writer.WriteString(formattedTime + ": " + taskError)
 					if err != nil {
 						log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
 						return
