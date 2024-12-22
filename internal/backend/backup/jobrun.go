@@ -12,18 +12,21 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/alexflint/go-filemutex"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-var backupMutex sync.Mutex
-
 func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{}) (*store.Task, error) {
+	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
+	if err != nil {
+		return nil, fmt.Errorf("RunBackup: failed to create mutex lock -> %w", err)
+	}
+
 	backupMutex.Lock()
 	defer backupMutex.Unlock()
 
