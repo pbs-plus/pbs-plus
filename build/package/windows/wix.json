@@ -13,6 +13,7 @@
     "guid": "",
     "vars": null
   },
+  "shortcuts": {},
   "choco": {
     "description": "Orchestrating backups with Proxmox Backup Server",
     "project-url": "https://github.com/sonroyaalmerol/pbs-plus",
