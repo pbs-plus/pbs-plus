@@ -121,6 +121,9 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		jobStore,
 		"--change-detection-mode=metadata",
 		"--backup-id", backupId,
+		"--crypt-mode=none",
+		"--skip-e2big-xattr", "true",
+		"--skip-lost-and-found", "true",
 	}
 
 	for _, exclusion := range job.Exclusions {
