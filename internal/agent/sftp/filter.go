@@ -5,7 +5,6 @@ package sftp
 import (
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
@@ -20,13 +19,6 @@ func (h *SftpHandler) skipFile(path string) bool {
 	if !stat.IsDir() {
 		// skip probably opened files
 		if h.Snapshot.TimeStarted.Sub(stat.ModTime()) <= time.Minute {
-			return true
-		}
-
-		d := stat.Sys().(*syscall.Win32FileAttributeData)
-		cTime := time.Unix(0, d.CreationTime.Nanoseconds())
-
-		if stat.ModTime().Before(cTime) {
 			return true
 		}
 	}
