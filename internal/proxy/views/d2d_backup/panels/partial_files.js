@@ -24,7 +24,7 @@ Ext.define('PBS.D2DManagement.PartialFilePanel', {
 		return;
 	    }
 	    Ext.create('PBS.D2DManagement.PartialFileEditWindow', {
-		contentid: selection[0].data.substring,
+		contentid: selection[0].data.path,
 		autoLoad: true,
 		listeners: {
 		    destroy: () => me.reload(),
