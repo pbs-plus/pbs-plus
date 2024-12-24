@@ -40,7 +40,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	snapshotPath := filepath.Join(vssFolder, driveLetter)
 	if knownSnap, err := knownSnaps.Get(snapshotPath); err == nil {
 		if _, err := vss.Get(snapshotPath); err == nil {
-			if time.Since(knownSnap.GetTimestamp()) < 2*time.Minute {
+			if time.Since(knownSnap.GetTimestamp()) < 30*time.Minute {
 				return knownSnap, nil
 			}
 		}
