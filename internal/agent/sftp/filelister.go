@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/pkg/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
@@ -28,6 +30,15 @@ func (f *CustomFileInfo) Size() int64 {
 		if regex.MatchString(f.filePath) {
 			scanFile = true
 			break
+		}
+	}
+
+	if !scanFile && metadataSize <= 10*1024*1024 {
+		d := f.Sys().(*syscall.Win32FileAttributeData)
+		cTime := time.Unix(0, d.CreationTime.Nanoseconds())
+
+		if f.ModTime().Before(cTime) {
+			scanFile = true
 		}
 	}
 
