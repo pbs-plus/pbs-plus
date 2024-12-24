@@ -29,6 +29,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 
 	backupMutex.Lock()
 	defer backupMutex.Unlock()
+	defer backupMutex.Close()
 
 	if storeInstance.APIToken == nil {
 		return nil, fmt.Errorf("RunBackup: api token is required")
