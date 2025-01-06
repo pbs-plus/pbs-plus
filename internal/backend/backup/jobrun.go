@@ -240,7 +240,67 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		if agentMount != nil {
 			defer agentMount.Unmount()
 		}
+
+		appendClientLogs := func() {
+			// Write accumulated logs to the file
+			logFilePath := utils.GetTaskLogPath(currTask.UPID)
+			logFile, err := waitForLogFile(logFilePath, 5*time.Second)
+			if err != nil {
+				log.Printf("Log file for task %s does not exist or cannot be opened: %v", currTask.UPID, err)
+				return
+			}
+			defer logFile.Close()
+
+			writer := bufio.NewWriter(logFile)
+			_, err = writer.WriteString("--- proxmox-backup-client log starts here ---\n")
+			if err != nil {
+				log.Printf("Failed to write logs for task %s: %v", currTask.UPID, err)
+				return
+			}
+
+			hasError := false
+			errorString := ""
+			logMu.Lock()
+			for _, logLine := range logLines {
+				formattedTime := time.Now().Format(time.RFC3339)
+				if strings.Contains(logLine, "Error: upload failed:") {
+					errorString = strings.Replace(logLine, "Error:", "TASK ERROR:", 1)
+					hasError = true
+					continue
+				}
+
+				_, err = writer.WriteString(fmt.Sprintf("%s: %s\n", formattedTime, logLine))
+				if err != nil {
+					logMu.Unlock()
+					log.Printf("Failed to write logs for task %s: %v", currTask.UPID, err)
+					return
+				}
+			}
+
+			formattedTime := time.Now().Format(time.RFC3339)
+			if !hasError {
+				_, err := writer.WriteString(formattedTime + ": TASK OK")
+				if err != nil {
+					logMu.Unlock()
+					log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
+					return
+				}
+			} else {
+				_, err = writer.WriteString(fmt.Sprintf("%s: %s", formattedTime, errorString))
+				if err != nil {
+					logMu.Unlock()
+					log.Printf("Failed to write logs for task %s: %v", currTask.UPID, err)
+					return
+				}
+			}
+
+			logMu.Unlock()
+
+			writer.Flush()
+		}
+
 		err = cmd.Wait()
+		defer appendClientLogs()
 		if err != nil {
 			cancel()
 			syslogger.Errorf("RunBackup (goroutine): error waiting for backup -> %v", err)
@@ -271,61 +331,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 			return
 		}
 
-		// Write accumulated logs to the file
-		logFilePath := utils.GetTaskLogPath(currTask.UPID)
-		logFile, err := waitForLogFile(logFilePath, 5*time.Second)
-		if err != nil {
-			log.Printf("Log file for task %s does not exist or cannot be opened: %v", currTask.UPID, err)
-			return
-		}
-		defer logFile.Close()
-
-		writer := bufio.NewWriter(logFile)
-		_, err = writer.WriteString("--- proxmox-backup-client log starts here ---\n")
-		if err != nil {
-			log.Printf("Failed to write logs for task %s: %v", currTask.UPID, err)
-			return
-		}
-
-		hasError := false
-		errorString := ""
-		logMu.Lock()
-		for _, logLine := range logLines {
-			formattedTime := time.Now().Format(time.RFC3339)
-			if strings.Contains(logLine, "Error: upload failed:") {
-				errorString = strings.Replace(logLine, "Error:", "TASK ERROR:", 1)
-				hasError = true
-				continue
-			}
-
-			_, err = writer.WriteString(fmt.Sprintf("%s: %s\n", formattedTime, logLine))
-			if err != nil {
-				logMu.Unlock()
-				log.Printf("Failed to write logs for task %s: %v", currTask.UPID, err)
-				return
-			}
-		}
-
-		formattedTime := time.Now().Format(time.RFC3339)
-		if !hasError {
-			_, err := writer.WriteString(formattedTime + ": TASK OK")
-			if err != nil {
-				logMu.Unlock()
-				log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
-				return
-			}
-		} else {
-			_, err = writer.WriteString(fmt.Sprintf("%s: %s", formattedTime, errorString))
-			if err != nil {
-				logMu.Unlock()
-				log.Printf("Failed to write logs for task %s: %v", currTask.UPID, err)
-				return
-			}
-		}
-
-		logMu.Unlock()
-
-		writer.Flush()
 	}(job, task)
 
 	job.LastRunUpid = &task.UPID
