@@ -69,7 +69,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) func(http.ResponseWriter, *h
 			return
 		}
 
-		task, err := backup.RunBackup(job, storeInstance, nil)
+		task, err := backup.RunBackup(job, storeInstance)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
