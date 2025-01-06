@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path"
 	"time"
 
 	"github.com/kardianos/service"
@@ -17,7 +18,11 @@ var Version = "v0.0.0"
 
 func main() {
 	execPath, _ := os.Executable()
-	_ = os.RemoveAll("." + execPath + ".old")
+	fileName := path.Base(execPath)
+	filePath := path.Dir(execPath)
+
+	fullOldPath := path.Join(filePath, "."+fileName+".old")
+	_ = os.RemoveAll(fullOldPath)
 
 	svcConfig := &service.Config{
 		Name:        "PBSPlusAgent",
