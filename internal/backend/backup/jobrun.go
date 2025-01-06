@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alexflint/go-filemutex"
@@ -21,6 +22,22 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
+func waitForLogFile(logFilePath string, maxWait time.Duration) (*os.File, error) {
+	deadline := time.Now().Add(maxWait)
+	for {
+		logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err == nil {
+			return logFile, nil // Successfully opened the file
+		}
+
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("log file %s not writable within %s: %v", logFilePath, maxWait, err)
+		}
+
+		time.Sleep(100 * time.Millisecond) // Retry after a short delay
+	}
+}
+
 func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{}) (*store.Task, error) {
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
 	if err != nil {
@@ -28,7 +45,10 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	backupMutex.Lock()
-	defer backupMutex.Unlock()
+	defer func() {
+		backupMutex.Unlock()
+		backupMutex.Close()
+	}()
 
 	if storeInstance.APIToken == nil {
 		return nil, fmt.Errorf("RunBackup: api token is required")
@@ -67,7 +87,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	srcPath = filepath.Join(srcPath, job.Subpath)
 
 	taskChan := make(chan store.Task)
-	logChan := make(chan string, 100)
 
 	watchCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -156,12 +175,17 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		return nil, fmt.Errorf("RunBackup: error creating stderr pipe -> %w", err)
 	}
 
+	var logLines []string
+	var logMu sync.Mutex // Mutex to ensure safe access to logLines across goroutines
+
 	go func() {
-		defer close(logChan)
 		readers := io.MultiReader(cmdStdout, cmdStderr)
 		scanner := bufio.NewScanner(readers)
 		for scanner.Scan() {
-			logChan <- scanner.Text()
+			logLine := scanner.Text()
+			logMu.Lock()
+			logLines = append(logLines, logLine) // Append log line to the array
+			logMu.Unlock()
 		}
 		if err := scanner.Err(); err != nil {
 			log.Printf("Log reader error: %v", err)
@@ -199,76 +223,11 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		return nil, fmt.Errorf("RunBackup: task not found")
 	}
 
-	logCtx, logCtxCancel := context.WithCancel(context.Background())
-	go func(ctx context.Context, task *store.Task) {
-		logFilePath := utils.GetTaskLogPath(task.UPID)
-
-		logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Printf("Log file for task %s does not exist or cannot be opened: %v", task.UPID, err)
-			return
-		}
-		defer logFile.Close()
-		writer := bufio.NewWriter(logFile)
-
-		taskError := ""
-		hasLogs := false
-
-		_, err = writer.WriteString("--- proxmox-backup-client log starts here ---\n")
-		if err != nil {
-			log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
-			return
-		}
-		writer.Flush()
-
-		for {
-			formattedTime := time.Now().Format(time.RFC3339)
-
-			select {
-			case <-ctx.Done():
-				if taskError == "" && hasLogs {
-					_, err := writer.WriteString(formattedTime + ": TASK OK")
-					if err != nil {
-						log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
-						return
-					}
-				} else if taskError != "" {
-					_, err := writer.WriteString(formattedTime + ": " + taskError)
-					if err != nil {
-						log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
-						return
-					}
-				}
-				writer.Flush()
-				return
-			case logLine, ok := <-logChan:
-				if !ok {
-					continue
-				}
-
-				hasLogs = true
-
-				if strings.Contains(logLine, "Error: upload failed:") {
-					taskError = strings.Replace(logLine, "Error:", "TASK ERROR:", 1)
-					continue
-				}
-
-				_, err := writer.WriteString(formattedTime + ": " + logLine + "\n")
-				if err != nil {
-					log.Printf("Failed to write logs for task %s: %v", task.UPID, err)
-					return
-				}
-				writer.Flush()
-			}
-		}
-	}(logCtx, task)
-
 	go func(currJob *store.Job, currTask *store.Task) {
 		defer func() {
 			if waitChan != nil {
 				close(waitChan)
 			}
-			logCtxCancel()
 		}()
 
 		syslogger, err := syslog.InitializeLogger()
@@ -311,20 +270,37 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 			syslogger.Errorf("RunBackup (goroutine): unable to update job -> %v", err)
 			return
 		}
-	}(job, task)
 
-	job.LastRunUpid = &task.UPID
-	job.LastRunState = &task.Status
+		// Write accumulated logs to the file
+		logFilePath := utils.GetTaskLogPath(currTask.UPID)
+		logFile, err := waitForLogFile(logFilePath, 5*time.Second)
+		if err != nil {
+			log.Printf("Log file for task %s does not exist or cannot be opened: %v", currTask.UPID, err)
+			return
+		}
+		defer logFile.Close()
 
-	err = storeInstance.UpdateJob(*job)
-	if err != nil {
-		_ = cmd.Process.Kill()
-		if agentMount != nil {
-			agentMount.Unmount()
+		writer := bufio.NewWriter(logFile)
+		_, err = writer.WriteString("--- proxmox-backup-client log starts here ---\n")
+		if err != nil {
+			log.Printf("Failed to write logs for task %s: %v", currTask.UPID, err)
+			return
 		}
 
-		return nil, fmt.Errorf("RunBackup: unable to update job -> %w", err)
-	}
+		logMu.Lock()
+		for _, logLine := range logLines {
+			formattedTime := time.Now().Format(time.RFC3339)
+			_, err = writer.WriteString(fmt.Sprintf("%s: %s\n", formattedTime, logLine))
+			if err != nil {
+				logMu.Unlock()
+				log.Printf("Failed to write logs for task %s: %v", currTask.UPID, err)
+				return
+			}
+		}
+		logMu.Unlock()
+
+		writer.Flush()
+	}(job, task)
 
 	return task, nil
 }
