@@ -38,7 +38,7 @@ func waitForLogFile(logFilePath string, maxWait time.Duration) (*os.File, error)
 	}
 }
 
-func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{}) (*store.Task, error) {
+func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) {
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to create mutex lock -> %w", err)
@@ -95,6 +95,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		err = storeInstance.GetJobTask(watchCtx, taskChan, job)
 		if err != nil {
 			log.Printf("RunBackup: unable to monitor tasks folder -> %v\n", err)
+			cancel()
 			return
 		}
 	}()
@@ -131,8 +132,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	cmdArgs := []string{
-		"--nofile=1024:1024",
-		"/usr/bin/proxmox-backup-client",
 		"backup",
 		fmt.Sprintf("%s.pxar:%s", strings.ReplaceAll(job.Target, " ", "-"), srcPath),
 		"--repository",
@@ -160,7 +159,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 
 	_ = FixDatastore(job, storeInstance)
 
-	cmd := exec.Command("/usr/bin/prlimit", cmdArgs...)
+	cmd := exec.Command("/usr/bin/proxmox-backup-client", cmdArgs...)
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_PASSWORD=%s", storeInstance.APIToken.Value))
 
@@ -183,6 +182,15 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	var logLines []string
 	var logMu sync.Mutex // Mutex to ensure safe access to logLines across goroutines
 
+	err = cmd.Start()
+	if err != nil {
+		if agentMount != nil {
+			agentMount.Unmount()
+		}
+		cancel()
+		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
+	}
+
 	go func() {
 		readers := io.MultiReader(cmdStdout, cmdStderr)
 		scanner := bufio.NewScanner(readers)
@@ -197,20 +205,11 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		}
 	}()
 
-	err = cmd.Start()
-	if err != nil {
-		if agentMount != nil {
-			agentMount.Unmount()
-		}
-		cancel()
-		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
-	}
-
 	log.Printf("Waiting for task: %s\n", job.ID)
 	select {
 	case <-taskChan:
 	case <-watchCtx.Done():
-	case <-time.After(time.Second * 60):
+	case <-time.After(time.Second * 20):
 		_ = cmd.Process.Kill()
 		if agentMount != nil {
 			agentMount.Unmount()
@@ -229,12 +228,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 	}
 
 	go func(currJob *store.Job, currTask *store.Task) {
-		defer func() {
-			if waitChan != nil {
-				close(waitChan)
-			}
-		}()
-
 		syslogger, err := syslog.InitializeLogger()
 		if err != nil {
 			cancel()
