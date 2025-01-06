@@ -93,54 +93,56 @@ func (p *agentService) versionCheck() {
 		Version: Version,
 	}
 
-	versionCheck := func() {
+	commonFunc := func() {
 		_, _ = agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, &versionResp)
+
+		if versionResp.Version != Version {
+			var dlResp io.ReadCloser
+			dlResp, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary", nil, nil)
+			if err != nil {
+				if hasLogger {
+					logger.Errorf("Update download %s error: %s", versionResp.Version, err)
+				}
+				return
+			}
+
+			closeResp := func() {
+				_, _ = io.Copy(io.Discard, dlResp)
+				dlResp.Close()
+			}
+
+			err = selfupdate.Apply(dlResp, selfupdate.Options{})
+			if err != nil {
+				if hasLogger {
+					logger.Errorf("Update download %s error: %s", versionResp.Version, err)
+				}
+				closeResp()
+				return
+			}
+
+			ex, err := os.Executable()
+			if err != nil {
+				if hasLogger {
+					logger.Errorf("Update download %s error: %s", versionResp.Version, err)
+				}
+				closeResp()
+				return
+			}
+
+			var restartCmd *exec.Cmd
+			restartCmd = exec.Command(ex, "restart")
+			restartCmd.Start()
+		}
 	}
 
-	versionCheck()
+	commonFunc()
 
 	for {
 		select {
 		case <-p.ctx.Done():
 			return
 		case <-time.After(time.Minute * 2):
-			if versionResp.Version != Version {
-				var dlResp io.ReadCloser
-				dlResp, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary", nil, nil)
-				if err != nil {
-					if hasLogger {
-						logger.Errorf("Update download %s error: %s", versionResp.Version, err)
-					}
-					continue
-				}
-
-				closeResp := func() {
-					_, _ = io.Copy(io.Discard, dlResp)
-					dlResp.Close()
-				}
-
-				err = selfupdate.Apply(dlResp, selfupdate.Options{})
-				if err != nil {
-					if hasLogger {
-						logger.Errorf("Update download %s error: %s", versionResp.Version, err)
-					}
-					closeResp()
-					continue
-				}
-
-				ex, err := os.Executable()
-				if err != nil {
-					if hasLogger {
-						logger.Errorf("Update download %s error: %s", versionResp.Version, err)
-					}
-					closeResp()
-					continue
-				}
-
-				var restartCmd *exec.Cmd
-				restartCmd = exec.Command(ex, "restart")
-				restartCmd.Start()
-			}
+			commonFunc()
 		}
 	}
 }
