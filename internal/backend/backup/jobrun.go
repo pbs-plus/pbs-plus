@@ -333,5 +333,18 @@ func RunBackup(job *store.Job, storeInstance *store.Store, waitChan chan struct{
 		writer.Flush()
 	}(job, task)
 
+	job.LastRunUpid = &task.UPID
+	job.LastRunState = &task.Status
+
+	err = storeInstance.UpdateJob(*job)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		if agentMount != nil {
+			agentMount.Unmount()
+		}
+
+		return nil, fmt.Errorf("RunBackup: unable to update job -> %w", err)
+	}
+
 	return task, nil
 }
