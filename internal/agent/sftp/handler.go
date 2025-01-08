@@ -38,7 +38,6 @@ func (h *SftpHandler) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 		return nil, os.ErrInvalid
 	}
 
-	go h.Snapshot.UpdateTimestamp()
 	h.setFilePath(r)
 
 	return os.Open(r.Filepath)
@@ -54,8 +53,6 @@ func (h *SftpHandler) Filecmd(r *sftp.Request) error {
 
 func (h *SftpHandler) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 	_ = r.WithContext(r.Context())
-
-	go h.Snapshot.UpdateTimestamp()
 
 	h.mu.Lock()
 	defer h.mu.Unlock()

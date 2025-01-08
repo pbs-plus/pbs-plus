@@ -14,6 +14,13 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
 )
 
+type WinVSSSnapshot struct {
+	SnapshotPath string    `json:"path"`
+	Id           string    `json:"vss_id"`
+	LastAccessed time.Time `json:"last_accessed"`
+	TimeStarted  time.Time `json:"time_started"`
+}
+
 func getVSSFolder() (string, error) {
 	tmpDir := os.TempDir()
 
@@ -27,26 +34,7 @@ func getVSSFolder() (string, error) {
 	return configBasePath, nil
 }
 
-func GetCurrentSnapshot(driveLetter string) (*WinVSSSnapshot, error) {
-	knownSnaps := &KnownSnapshots{registry: "KnownSnaps"}
-
-	// Check if there's an existing valid snapshot
-	vssFolder, err := getVSSFolder()
-	if err != nil {
-		return nil, fmt.Errorf("GetCurrentSnapshot: error getting app data folder -> %w", err)
-	}
-
-	snapshotPath := filepath.Join(vssFolder, driveLetter)
-	knownSnap, err := knownSnaps.Get(snapshotPath)
-	if err != nil {
-		return nil, fmt.Errorf("GetCurrentSnapshot: error getting known snap -> %w", err)
-	}
-
-	return knownSnap, nil
-}
-
 func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
-	knownSnaps := &KnownSnapshots{registry: "KnownSnaps"}
 	volName := filepath.VolumeName(fmt.Sprintf("%s:", driveLetter))
 
 	// Check if there's an existing valid snapshot
@@ -56,12 +44,6 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	}
 
 	snapshotPath := filepath.Join(vssFolder, driveLetter)
-	if knownSnap, err := knownSnaps.Get(snapshotPath); err == nil {
-		knownSnap.Close()
-		_ = vss.Remove(snapshotPath) // Clean up old snapshot link if expired
-		_ = os.Remove(snapshotPath)
-	}
-
 	timeStarted := time.Now()
 	// Attempt to create a new snapshot
 	err = vss.CreateLink(snapshotPath, volName)
@@ -101,38 +83,11 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		Id:           sc.ID,
 		TimeStarted:  timeStarted,
 	}
-	knownSnaps.Save(newSnapshot)
 
 	cache.ExcludedPathRegexes = cache.CompileExcludedPaths()
 	cache.PartialFilePathRegexes = cache.CompilePartialFileList()
 
 	return newSnapshot, nil
-}
-
-func (instance *WinVSSSnapshot) GetTimestamp() time.Time {
-	if instance.LastAccessed.IsZero() {
-		knownSnaps := &KnownSnapshots{
-			registry: "KnownSnaps",
-		}
-
-		snap, err := knownSnaps.Get(instance.SnapshotPath)
-		if err == nil {
-			instance.LastAccessed = snap.LastAccessed
-			return snap.LastAccessed
-		}
-	}
-
-	return instance.LastAccessed
-}
-
-func (instance *WinVSSSnapshot) UpdateTimestamp() {
-	knownSnaps := &KnownSnapshots{
-		registry: "KnownSnaps",
-	}
-
-	instance.LastAccessed = time.Now()
-
-	knownSnaps.Save(instance)
 }
 
 func (instance *WinVSSSnapshot) Close() {
@@ -143,38 +98,4 @@ func (instance *WinVSSSnapshot) Close() {
 
 	_ = vss.Remove(instance.Id)
 	_ = os.Remove(instance.SnapshotPath)
-
-	knownSnaps := &KnownSnapshots{
-		registry: "KnownSnaps",
-	}
-
-	knownSnaps.Delete(instance.SnapshotPath)
-}
-
-func CloseAllSnapshots() {
-	knownSnaps := &KnownSnapshots{
-		registry: "KnownSnaps",
-	}
-
-	if knownSnapshots, err := knownSnaps.GetAll(); err == nil {
-		for _, snapshot := range knownSnapshots {
-			snapshot.Close()
-		}
-	}
-}
-
-func GarbageCollect() {
-	knownSnaps := &KnownSnapshots{
-		registry: "KnownSnaps",
-	}
-
-	if knownSnapshots, err := knownSnaps.GetAll(); err == nil {
-		for _, snapshot := range knownSnapshots {
-			if knownSnap, err := knownSnaps.Get(snapshot.Id); err == nil {
-				if time.Since(knownSnap.GetTimestamp()) >= 30*time.Minute {
-					knownSnap.Close()
-				}
-			}
-		}
-	}
 }

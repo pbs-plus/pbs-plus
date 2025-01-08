@@ -18,8 +18,6 @@ import (
 )
 
 func Serve(ctx context.Context, errChan chan string, snapshot *snapshots.WinVSSSnapshot, driveLetter string) {
-	defer snapshot.Close()
-
 	sftpConfig, err := InitializeSFTPConfig(driveLetter)
 	if err != nil {
 		errChan <- fmt.Sprintf("Unable to initialize SFTP config: %s", err)
@@ -155,7 +153,6 @@ func handleSFTP(ctx context.Context, errChan chan string, channel ssh.Channel, s
 
 	sftpHandler, err := NewSftpHandler(ctx, snapshot)
 	if err != nil {
-		snapshot.Close()
 		errChan <- fmt.Sprintf("failed to initialize handler: %v", err)
 		return
 	}
