@@ -16,14 +16,13 @@ import (
 )
 
 type SftpHandler struct {
-	ctx         context.Context
-	DriveLetter string
-	Snapshot    *snapshots.WinVSSSnapshot
-	mu          sync.Mutex
+	ctx      context.Context
+	Snapshot *snapshots.WinVSSSnapshot
+	mu       sync.Mutex
 }
 
-func NewSftpHandler(ctx context.Context, driveLetter string, snapshot *snapshots.WinVSSSnapshot) (*sftp.Handlers, error) {
-	handler := &SftpHandler{ctx: ctx, DriveLetter: driveLetter, Snapshot: snapshot}
+func NewSftpHandler(ctx context.Context, snapshot *snapshots.WinVSSSnapshot) (*sftp.Handlers, error) {
+	handler := &SftpHandler{ctx: ctx, Snapshot: snapshot}
 
 	return &sftp.Handlers{
 		FileGet:  handler,

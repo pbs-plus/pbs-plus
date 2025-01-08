@@ -8,27 +8,55 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
 type AgentMount struct {
-	Path string
-	Cmd  *exec.Cmd
+	Hostname string
+	Drive    string
+	Path     string
+	Cmd      *exec.Cmd
+	WSHub    *websockets.Server
 }
 
-func Mount(target *store.Target) (*AgentMount, error) {
+func Mount(wsHub *websockets.Server, target *store.Target) (*AgentMount, error) {
 	if !utils.IsValid("/usr/bin/rclone") {
 		return nil, fmt.Errorf("Mount: rclone is missing! Please install rclone first before backing up from agent.")
 	}
 
-	agentMount := &AgentMount{}
-
+	splittedTargetName := strings.Split(target.Name, " - ")
+	targetHostname := splittedTargetName[0]
 	agentPath := strings.TrimPrefix(target.Path, "agent://")
 	agentPathParts := strings.Split(agentPath, "/")
-	agentHost := agentPathParts[0]
 	agentDrive := agentPathParts[1]
+
+	err := wsHub.SendCommand(targetHostname, websockets.Message{
+		Type:    "backup_start",
+		Content: agentDrive,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("RunBackup: Failed to send backup request to target '%s' -> %w", target.Name, err)
+	}
+
+respWait:
+	for {
+		select {
+		case resp := <-wsHub.ReceiveChan:
+			if resp.Type == "response-backup_start" && resp.Content == "Acknowledged: "+agentDrive {
+				break respWait
+			}
+		case <-time.After(time.Second * 15):
+			return nil, fmt.Errorf("RunBackup: Failed to receive backup acknowledgement from target '%s'", target.Name)
+		}
+	}
+
+	agentMount := &AgentMount{WSHub: wsHub, Hostname: targetHostname, Drive: agentDrive}
+
+	agentHost := agentPathParts[0]
 	agentDriveRune := []rune(agentDrive)[0]
 	agentPort, err := utils.DriveLetterPort(agentDriveRune)
 	if err != nil {
@@ -91,4 +119,9 @@ func (a *AgentMount) Unmount() {
 	umount.Env = os.Environ()
 
 	_ = umount.Run()
+
+	_ = a.WSHub.SendCommand(a.Hostname, websockets.Message{
+		Type:    "backup_close",
+		Content: a.Drive,
+	})
 }

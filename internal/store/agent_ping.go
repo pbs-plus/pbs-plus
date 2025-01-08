@@ -3,60 +3,32 @@
 package store
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
-	"golang.org/x/crypto/ssh"
+	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
 func (storeInstance *Store) AgentPing(agentTarget *Target) (bool, error) {
-	privKeyDir := filepath.Join(DbBasePath, "agent_keys")
-	privKeyFile := filepath.Join(privKeyDir, strings.ReplaceAll(fmt.Sprintf("%s.key", agentTarget.Name), " ", "-"))
+	splittedName := strings.Split(agentTarget.Name, " - ")
+	agentHostname := splittedName[0]
 
-	pemBytes, err := os.ReadFile(privKeyFile)
+	err := storeInstance.WSHub.SendCommand(agentHostname, websockets.Message{
+		Type:    "ping",
+		Content: "ping",
+	})
 	if err != nil {
-		return false, fmt.Errorf("AgentPing: error reading private key file -> %w", err)
+		return false, err
 	}
 
-	signer, err := ssh.ParsePrivateKey(pemBytes)
-	if err != nil {
-		return false, fmt.Errorf("AgentPing: error parsing private key -> %w", err)
+	for {
+		select {
+		case resp := <-storeInstance.WSHub.ReceiveChan:
+			if resp.Type == "ping" && resp.Content == "pong" {
+				return true, nil
+			}
+		case <-time.After(time.Second * 3):
+			return false, nil
+		}
 	}
-
-	agentPath := strings.TrimPrefix(agentTarget.Path, "agent://")
-	agentPathParts := strings.Split(agentPath, "/")
-	agentHost := agentPathParts[0]
-	agentDrive := agentPathParts[1]
-	agentDriveRune := []rune(agentDrive)[0]
-	agentPort, err := utils.DriveLetterPort(agentDriveRune)
-
-	sshConfig := &ssh.ClientConfig{
-		User:            "proxmox",
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         time.Second * 2,
-	}
-
-	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%s", agentHost, agentPort), sshConfig)
-	if err != nil {
-		return false, fmt.Errorf("AgentPing: error dialing ssh client -> %w", err)
-	}
-	defer client.Close()
-
-	session, err := client.NewSession()
-	if err != nil {
-		return false, fmt.Errorf("AgentPing: error creating new ssh session -> %w", err)
-	}
-	defer session.Close()
-
-	pong, err := session.SendRequest("ping", true, []byte{})
-	if err != nil {
-		return false, fmt.Errorf("AgentPing: error sending ping request -> %w", err)
-	}
-
-	return pong, nil
 }

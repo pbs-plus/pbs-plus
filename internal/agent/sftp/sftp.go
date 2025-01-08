@@ -13,17 +13,32 @@ import (
 
 	"github.com/pkg/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
 )
 
-func Serve(ctx context.Context, errChan chan string, sftpConfig *SFTPConfig, address, port string, driveLetter string) {
-	var listener net.Listener
+func Serve(ctx context.Context, errChan chan string, snapshot *snapshots.WinVSSSnapshot, driveLetter string) {
+	defer snapshot.Close()
 
+	sftpConfig, err := InitializeSFTPConfig(driveLetter)
+	if err != nil {
+		errChan <- fmt.Sprintf("Unable to initialize SFTP config: %s", err)
+	}
+	if err := sftpConfig.PopulateKeys(); err != nil {
+		errChan <- fmt.Sprintf("Unable to populate SFTP keys: %s", err)
+	}
+
+	port, err := utils.DriveLetterPort([]rune(driveLetter)[0])
+	if err != nil {
+		errChan <- fmt.Sprintf("Unable to determine port number: %s", err)
+	}
+
+	var listener net.Listener
 	listening := false
 
 	listen := func() {
 		var err error
-		listenAt := fmt.Sprintf("%s:%s", address, port)
+		listenAt := fmt.Sprintf("0.0.0.0:%s", port)
 		listener, err = net.Listen("tcp", listenAt)
 		if err != nil {
 			errChan <- fmt.Sprintf("Port is already in use! Failed to listen on %s: %v", listenAt, err)
@@ -57,12 +72,12 @@ func Serve(ctx context.Context, errChan chan string, sftpConfig *SFTPConfig, add
 				continue
 			}
 
-			go handleConnection(ctx, errChan, conn, sftpConfig, driveLetter)
+			go handleConnection(ctx, errChan, conn, sftpConfig, snapshot)
 		}
 	}
 }
 
-func handleConnection(ctx context.Context, errChan chan string, conn net.Conn, sftpConfig *SFTPConfig, driveLetter string) {
+func handleConnection(ctx context.Context, errChan chan string, conn net.Conn, sftpConfig *SFTPConfig, snapshot *snapshots.WinVSSSnapshot) {
 	defer conn.Close()
 
 	server, err := url.Parse(sftpConfig.Server)
@@ -86,8 +101,6 @@ func handleConnection(ctx context.Context, errChan chan string, conn net.Conn, s
 	go ssh.DiscardRequests(reqs)
 
 	for newChannel := range chans {
-		snapshots.GarbageCollect()
-
 		if newChannel.ChannelType() != "session" {
 			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
 			continue
@@ -102,7 +115,7 @@ func handleConnection(ctx context.Context, errChan chan string, conn net.Conn, s
 		go handleRequests(ctx, requests, sftpRequest)
 
 		if requested, ok := <-sftpRequest; ok && requested {
-			go handleSFTP(ctx, errChan, channel, driveLetter)
+			go handleSFTP(ctx, errChan, channel, snapshot)
 		} else {
 			channel.Close()
 		}
@@ -127,9 +140,6 @@ func handleRequests(ctx context.Context, requests <-chan *ssh.Request, sftpReque
 					sftpRequest <- false
 					req.Reply(false, nil)
 				}
-			case "ping":
-				sftpRequest <- false
-				req.Reply(true, []byte("pong"))
 			default:
 				sftpRequest <- false
 				req.Reply(false, nil)
@@ -140,16 +150,10 @@ func handleRequests(ctx context.Context, requests <-chan *ssh.Request, sftpReque
 	}
 }
 
-func handleSFTP(ctx context.Context, errChan chan string, channel ssh.Channel, driveLetter string) {
+func handleSFTP(ctx context.Context, errChan chan string, channel ssh.Channel, snapshot *snapshots.WinVSSSnapshot) {
 	defer channel.Close()
 
-	snapshot, err := snapshots.Snapshot(driveLetter)
-	if err != nil {
-		errChan <- fmt.Sprintf("failed to initialize snapshot: %v", err)
-		return
-	}
-
-	sftpHandler, err := NewSftpHandler(ctx, driveLetter, snapshot)
+	sftpHandler, err := NewSftpHandler(ctx, snapshot)
 	if err != nil {
 		snapshot.Close()
 		errChan <- fmt.Sprintf("failed to initialize handler: %v", err)

@@ -19,6 +19,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/targets"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
 var Version = "v0.0.0"
@@ -78,7 +79,8 @@ func main() {
 	jobRun := flag.String("job", "", "Job ID to execute")
 	flag.Parse()
 
-	storeInstance, err := store.Initialize()
+	wsHub := websockets.NewServer()
+	storeInstance, err := store.Initialize(wsHub)
 	if err != nil {
 		s.Errorf("Failed to initialize store: %v", err)
 		return
@@ -151,6 +153,7 @@ func main() {
 	router.AddRoute("/api2/extjs/config/d2d-partial-file/{partial_file}", partial_files.ExtJsPartialFileSingleHandler(storeInstance))
 	router.AddRoute("/api2/extjs/config/disk-backup-job", jobs.ExtJsJobHandler(storeInstance))
 	router.AddRoute("/api2/extjs/config/disk-backup-job/{job}", jobs.ExtJsJobSingleHandler(storeInstance))
+	router.AddRoute("/plus/ws", plus.WSHandler(storeInstance, wsHub))
 
 	s.Info("Starting proxy server on :8008")
 	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, router); err != nil {
