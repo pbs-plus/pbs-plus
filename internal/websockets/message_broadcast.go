@@ -1,6 +1,9 @@
 package websockets
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type BroadcastServer interface {
 	Subscribe() <-chan Message
@@ -17,7 +20,7 @@ type broadcastServer struct {
 }
 
 func (s *broadcastServer) Subscribe() <-chan Message {
-	newListener := make(chan Message)
+	newListener := make(chan Message, 10) // Buffered channel
 	s.addListener <- newListener
 	return newListener
 }
@@ -58,13 +61,21 @@ func (s *broadcastServer) serve(ctx context.Context) {
 			if !ok {
 				return
 			}
-			for _, listener := range s.listeners {
-				if listener != nil {
-					select {
-					case listener <- val:
-					case <-ctx.Done():
-						return
-					}
+			// Send to all listeners with timeout
+			for i, listener := range s.listeners {
+				if listener == nil {
+					continue
+				}
+				select {
+				case listener <- val:
+					// Message sent successfully
+				case <-time.After(100 * time.Millisecond):
+					// Listener is stuck, remove it
+					s.listeners[i] = s.listeners[len(s.listeners)-1]
+					s.listeners = s.listeners[:len(s.listeners)-1]
+					close(listener)
+				case <-ctx.Done():
+					return
 				}
 			}
 		}
@@ -73,7 +84,6 @@ func (s *broadcastServer) serve(ctx context.Context) {
 
 func NewBroadcastServer(ctx context.Context, source <-chan Message) BroadcastServer {
 	ctxLocal, ctxCancel := context.WithCancel(ctx)
-
 	service := &broadcastServer{
 		source:         source,
 		listeners:      make([]chan Message, 0),

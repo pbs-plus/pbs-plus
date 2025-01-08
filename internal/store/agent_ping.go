@@ -21,13 +21,16 @@ func (storeInstance *Store) AgentPing(agentTarget *Target) (bool, error) {
 		return false, err
 	}
 
+	listener := broadcast.Subscribe()
+	defer broadcast.CancelSubscription(listener)
+
 	for {
 		select {
-		case resp := <-broadcast.Subscribe():
+		case resp := <-listener:
 			if resp.Type == "ping" && resp.Content == "pong" {
 				return true, nil
 			}
-		case <-time.After(time.Second * 3):
+		case <-time.After(time.Second * 2):
 			return false, nil
 		}
 	}

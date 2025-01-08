@@ -42,10 +42,13 @@ func Mount(wsHub *websockets.Server, target *store.Target) (*AgentMount, error) 
 		return nil, fmt.Errorf("RunBackup: Failed to send backup request to target '%s' -> %w", target.Name, err)
 	}
 
+	listener := broadcast.Subscribe()
+	defer broadcast.CancelSubscription(listener)
+
 respWait:
 	for {
 		select {
-		case resp := <-broadcast.Subscribe():
+		case resp := <-listener:
 			if resp.Type == "response-backup_start" && resp.Content == "Acknowledged: "+agentDrive {
 				break respWait
 			}
