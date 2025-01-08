@@ -3,6 +3,7 @@
 package websockets
 
 import (
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -72,7 +73,10 @@ func NewWSClient(commandListener func(*websocket.Conn, Message)) error {
 
 	serverUrl = parsedUrl.String()
 
-	conn, _, err := websocket.DefaultDialer.Dial(serverUrl, headers)
+	dialer := websocket.DefaultDialer
+	dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+
+	conn, _, err := dialer.Dial(serverUrl, headers)
 	if err != nil {
 		return fmt.Errorf("NewWSClient: ws dial invalid -> %w", err)
 	}
