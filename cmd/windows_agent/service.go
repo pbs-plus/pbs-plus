@@ -226,14 +226,14 @@ func (p *agentService) run() {
 		}
 	}()
 
-	err = websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) { controllers.WSHandler(p.ctx, c, m, errChan) })
+	_, err = websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) { controllers.WSHandler(p.ctx, c, m, errChan) })
 	for err != nil {
 		logger.Errorf("WS connection error: %s", err)
 		select {
 		case <-p.ctx.Done():
 			return
 		case <-time.After(time.Second * 5):
-			err = websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) { controllers.WSHandler(p.ctx, c, m, errChan) })
+			_, err = websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) { controllers.WSHandler(p.ctx, c, m, errChan) })
 		}
 	}
 
