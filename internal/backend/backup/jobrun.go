@@ -188,6 +188,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	if err != nil {
 		if agentMount != nil {
 			agentMount.Unmount()
+			agentMount.CloseSFTP()
 		}
 		cancel()
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s) -> %w", cmd.String(), err)
@@ -215,6 +216,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		_ = cmd.Process.Kill()
 		if agentMount != nil {
 			agentMount.Unmount()
+			agentMount.CloseSFTP()
 		}
 
 		return nil, fmt.Errorf("RunBackup: timeout, task not found")
@@ -224,6 +226,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		_ = cmd.Process.Kill()
 		if agentMount != nil {
 			agentMount.Unmount()
+			agentMount.CloseSFTP()
 		}
 
 		return nil, fmt.Errorf("RunBackup: task not found")
@@ -239,6 +242,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 
 		if agentMount != nil {
 			defer agentMount.Unmount()
+			defer agentMount.CloseSFTP()
 		}
 
 		appendClientLogs := func() {
@@ -341,6 +345,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		_ = cmd.Process.Kill()
 		if agentMount != nil {
 			agentMount.Unmount()
+			agentMount.CloseSFTP()
 		}
 
 		return nil, fmt.Errorf("RunBackup: unable to update job -> %w", err)
