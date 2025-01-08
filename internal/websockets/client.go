@@ -64,6 +64,14 @@ func NewWSClient(commandListener func(*websocket.Conn, Message)) error {
 		return fmt.Errorf("NewWSClient: invalid server url path -> %w", err)
 	}
 
+	parsedUrl, err := url.Parse(serverUrl)
+	if err != nil {
+		return fmt.Errorf("NewWSClient: invalid server url path -> %w", err)
+	}
+	parsedUrl.Scheme = "wss"
+
+	serverUrl = parsedUrl.String()
+
 	conn, _, err := websocket.DefaultDialer.Dial(serverUrl, headers)
 	if err != nil {
 		return fmt.Errorf("NewWSClient: ws dial invalid -> %w", err)
