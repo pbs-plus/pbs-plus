@@ -34,7 +34,7 @@ func Mount(wsHub *websockets.Server, target *store.Target) (*AgentMount, error) 
 	agentPathParts := strings.Split(agentPath, "/")
 	agentDrive := agentPathParts[1]
 
-	err := wsHub.SendCommand(targetHostname, websockets.Message{
+	broadcast, err := wsHub.SendCommandWithBroadcast(targetHostname, websockets.Message{
 		Type:    "backup_start",
 		Content: agentDrive,
 	})
@@ -45,7 +45,7 @@ func Mount(wsHub *websockets.Server, target *store.Target) (*AgentMount, error) 
 respWait:
 	for {
 		select {
-		case resp := <-wsHub.ReceiveChan:
+		case resp := <-broadcast.Subscribe():
 			if resp.Type == "response-backup_start" && resp.Content == "Acknowledged: "+agentDrive {
 				break respWait
 			}

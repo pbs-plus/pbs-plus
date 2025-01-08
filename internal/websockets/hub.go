@@ -10,19 +10,20 @@ import (
 )
 
 type Message struct {
-	Type    string `json:"type"` // e.g., "command", "response"
-	Content string `json:"content"`
+	ClientID string
+	Type     string `json:"type"` // e.g., "command", "response"
+	Content  string `json:"content"`
 }
 
 type Client struct {
-	ID   string
-	Conn *websocket.Conn
+	ID        string
+	Conn      *websocket.Conn
+	Broadcast BroadcastServer
 }
 
 type Server struct {
-	Clients     map[string]*Client
-	ClientsMux  sync.Mutex
-	ReceiveChan chan Message
+	Clients    map[string]*Client
+	ClientsMux sync.Mutex
 }
 
 var upgrader = websocket.Upgrader{
@@ -33,8 +34,7 @@ var upgrader = websocket.Upgrader{
 
 func NewServer() *Server {
 	return &Server{
-		Clients:     make(map[string]*Client),
-		ReceiveChan: make(chan Message),
+		Clients: make(map[string]*Client),
 	}
 }
 
@@ -53,9 +53,14 @@ func (s *Server) HandleClientConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	msgs := make(chan Message)
+
+	broadcastServer := NewBroadcastServer(r.Context(), msgs)
+	defer broadcastServer.Close()
+
 	clientID := initMessage.Content
 	s.ClientsMux.Lock()
-	s.Clients[clientID] = &Client{ID: clientID, Conn: conn}
+	s.Clients[clientID] = &Client{ID: clientID, Conn: conn, Broadcast: broadcastServer}
 	s.ClientsMux.Unlock()
 
 	log.Printf("Client connected: %s", clientID)
@@ -71,7 +76,9 @@ func (s *Server) HandleClientConnection(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		s.ReceiveChan <- msg
+		msg.ClientID = clientID
+		msgs <- msg
+
 		log.Printf("Received message from %s: Type=%s, Content=%s", clientID, msg.Type, msg.Content)
 	}
 }
@@ -82,6 +89,7 @@ func (s *Server) RemoveClient(clientID string) {
 
 	if _, exists := s.Clients[clientID]; exists {
 		log.Printf("Removing client: %s", clientID)
+
 		delete(s.Clients, clientID)
 	}
 }
@@ -103,4 +111,13 @@ func (s *Server) SendCommand(clientID string, msg Message) error {
 	}
 
 	return nil
+}
+
+func (s *Server) SendCommandWithBroadcast(clientID string, msg Message) (BroadcastServer, error) {
+	err := s.SendCommand(clientID, msg)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.Clients[clientID].Broadcast, nil
 }
