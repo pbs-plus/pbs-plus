@@ -103,7 +103,7 @@ func (a *AgentMount) initializeConnection(target *store.Target) error {
 	return a.waitForAcknowledgement(ctx, listener)
 }
 
-func (a *AgentMount) waitForAcknowledgement(ctx context.Context, listener chan websockets.Message) error {
+func (a *AgentMount) waitForAcknowledgement(ctx context.Context, listener <-chan websockets.Message) error {
 	expectedResponse := "Acknowledged: " + a.Drive
 	
 	for {
