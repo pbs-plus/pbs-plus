@@ -27,6 +27,24 @@ func getVSSFolder() (string, error) {
 	return configBasePath, nil
 }
 
+func GetCurrentSnapshot(driveLetter string) (*WinVSSSnapshot, error) {
+	knownSnaps := &KnownSnapshots{registry: "KnownSnaps"}
+
+	// Check if there's an existing valid snapshot
+	vssFolder, err := getVSSFolder()
+	if err != nil {
+		return nil, fmt.Errorf("GetCurrentSnapshot: error getting app data folder -> %w", err)
+	}
+
+	snapshotPath := filepath.Join(vssFolder, driveLetter)
+	knownSnap, err := knownSnaps.Get(snapshotPath)
+	if err != nil {
+		return nil, fmt.Errorf("GetCurrentSnapshot: error getting known snap -> %w", err)
+	}
+
+	return knownSnap, nil
+}
+
 func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	knownSnaps := &KnownSnapshots{registry: "KnownSnaps"}
 	volName := filepath.VolumeName(fmt.Sprintf("%s:", driveLetter))
@@ -39,12 +57,6 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 
 	snapshotPath := filepath.Join(vssFolder, driveLetter)
 	if knownSnap, err := knownSnaps.Get(snapshotPath); err == nil {
-		if _, err := vss.Get(snapshotPath); err == nil {
-			if time.Since(knownSnap.GetTimestamp()) < 30*time.Minute {
-				return knownSnap, nil
-			}
-		}
-
 		knownSnap.Close()
 		_ = vss.Remove(snapshotPath) // Clean up old snapshot link if expired
 		_ = os.Remove(snapshotPath)

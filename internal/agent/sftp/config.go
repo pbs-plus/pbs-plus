@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/billgraziano/dpapi"
-	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/windows/registry"
@@ -36,7 +35,7 @@ func (s *SFTPConfig) GetRegistryKey() string {
 	return fmt.Sprintf("Software\\PBSPlus\\Config\\SFTP-%s", s.BasePath)
 }
 
-func InitializeSFTPConfig(svc service.Service, driveLetter string) (*SFTPConfig, error) {
+func InitializeSFTPConfig(driveLetter string) (*SFTPConfig, error) {
 	var err error
 
 	baseKey, _, err := registry.CreateKey(registry.LOCAL_MACHINE, "Software\\PBSPlus\\Config", registry.QUERY_VALUE)

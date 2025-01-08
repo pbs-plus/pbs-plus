@@ -15,11 +15,13 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/kardianos/service"
 	"github.com/minio/selfupdate"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -183,7 +185,7 @@ func (p *agentService) run() {
 	go func() {
 		driveLetters := []string{}
 		for _, drive := range drives {
-			driveLetters = append(driveLetters, drive.Letter)
+			driveLetters = append(driveLetters, drive)
 		}
 		hostname, _ := os.Hostname()
 		reqBody, err := json.Marshal(&AgentDrivesRequest{
@@ -212,35 +214,30 @@ func (p *agentService) run() {
 		body.Close()
 	}()
 
-	for _, drive := range drives {
-		drive.ErrorChan = make(chan string)
-		err = drive.serveSFTP(p)
-		for err != nil {
-			logger.Errorf("Drive SFTP error: %v", err)
+	errChan := make(chan string)
+	go func() {
+		for {
 			select {
 			case <-p.ctx.Done():
 				return
-			case <-time.After(time.Second * 5):
-				err = drive.serveSFTP(p)
+			case err := <-errChan:
+				logger.Errorf("SFTP error: %s", err)
 			}
 		}
+	}()
 
-		go func() {
-			defer close(drive.ErrorChan)
-
-			for {
-				select {
-				case <-p.ctx.Done():
-					return
-				case err := <-drive.ErrorChan:
-					logger.Errorf("SFTP %s drive error: %s", drive.Letter, err)
-				}
-			}
-		}()
+	err = websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) { controllers.WSHandler(p.ctx, c, m, errChan) })
+	for err != nil {
+		logger.Errorf("WS connection error: %s", err)
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-time.After(time.Second * 5):
+			err = websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) { controllers.WSHandler(p.ctx, c, m, errChan) })
+		}
 	}
 
 	<-p.ctx.Done()
-	snapshots.CloseAllSnapshots()
 }
 
 func (p *agentService) Stop(s service.Service) error {

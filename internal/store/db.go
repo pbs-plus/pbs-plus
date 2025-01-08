@@ -17,6 +17,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
 // Job represents the pbs-disk-backup-job-status model
@@ -63,16 +64,17 @@ type Store struct {
 	LastToken  *Token
 	APIToken   *APIToken
 	HTTPClient *http.Client
+	WSHub      *websockets.Server
 }
 
 // Initialize initializes the database connection and returns a Store instance
-func Initialize() (*Store, error) {
+func Initialize(wsHub *websockets.Server) (*Store, error) {
 	db, err := sql.Open("sqlite3", filepath.Join(DbBasePath, "d2d.db"))
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error initializing sqlite database -> %w", err)
 	}
 
-	return &Store{Db: db}, nil
+	return &Store{Db: db, WSHub: wsHub}, nil
 }
 
 // CreateTables creates the necessary tables in the SQLite database

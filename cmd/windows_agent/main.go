@@ -66,7 +66,7 @@ func main() {
 		cmd := os.Args[1]
 		if cmd == "install" || cmd == "uninstall" {
 			for _, drive := range getLocalDrives() {
-				_ = registry.DeleteKey(registry.LOCAL_MACHINE, fmt.Sprintf(`Software\PBSPlus\Config\SFTP-%s`, drive.Letter))
+				_ = registry.DeleteKey(registry.LOCAL_MACHINE, fmt.Sprintf(`Software\PBSPlus\Config\SFTP-%s`, drive))
 			}
 		}
 
