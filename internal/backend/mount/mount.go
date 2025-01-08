@@ -64,6 +64,7 @@ respWait:
 	agentPort, err := utils.DriveLetterPort(agentDriveRune)
 	if err != nil {
 		agentMount.Unmount()
+		agentMount.CloseSFTP()
 		return nil, fmt.Errorf("Mount: error mapping \"%c\" to network port -> %w", agentDriveRune, err)
 	}
 
@@ -107,6 +108,7 @@ respWait:
 	err = mnt.Start()
 	if err != nil {
 		agentMount.Unmount()
+		agentMount.CloseSFTP()
 		return nil, fmt.Errorf("Mount: error starting rclone for sftp -> %w", err)
 	}
 
@@ -123,6 +125,9 @@ func (a *AgentMount) Unmount() {
 
 	_ = umount.Run()
 
+}
+
+func (a *AgentMount) CloseSFTP() {
 	_ = a.WSHub.SendCommand(a.Hostname, websockets.Message{
 		Type:    "backup_close",
 		Content: a.Drive,
