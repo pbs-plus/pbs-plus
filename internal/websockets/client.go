@@ -19,15 +19,19 @@ import (
 )
 
 type WSClient struct {
-	ClientID string
-	Conn     *websocket.Conn
+	ClientID        string
+	Conn            *websocket.Conn
+	ServerURL       string
+	Headers         http.Header
+	CommandListener func(*websocket.Conn, Message)
+	done            chan struct{}
 }
 
-func NewWSClient(commandListener func(*websocket.Conn, Message)) error {
+func NewWSClient(commandListener func(*websocket.Conn, Message)) (*WSClient, error) {
 	serverUrl := ""
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
 	if err != nil {
-		return fmt.Errorf("NewWSClient: server url not found -> %w", err)
+		return nil, fmt.Errorf("NewWSClient: server url not found -> %w", err)
 	}
 	defer key.Close()
 
@@ -46,12 +50,12 @@ func NewWSClient(commandListener func(*websocket.Conn, Message)) error {
 	}
 
 	if serverUrl, _, err = key.GetStringValue("ServerURL"); err != nil || serverUrl == "" {
-		return fmt.Errorf("NewWSClient: server url not found -> %w", err)
+		return nil, fmt.Errorf("NewWSClient: server url not found -> %w", err)
 	}
 
 	clientID, err := os.Hostname()
 	if err != nil {
-		return fmt.Errorf("NewWSClient: hostname not found -> %w", err)
+		return nil, fmt.Errorf("NewWSClient: hostname not found -> %w", err)
 	}
 
 	headers := http.Header{}
@@ -62,76 +66,109 @@ func NewWSClient(commandListener func(*websocket.Conn, Message)) error {
 
 	serverUrl, err = url.JoinPath(serverUrl, "/plus/ws")
 	if err != nil {
-		return fmt.Errorf("NewWSClient: invalid server url path -> %w", err)
+		return nil, fmt.Errorf("NewWSClient: invalid server url path -> %w", err)
 	}
 
 	parsedUrl, err := url.Parse(serverUrl)
 	if err != nil {
-		return fmt.Errorf("NewWSClient: invalid server url path -> %w", err)
+		return nil, fmt.Errorf("NewWSClient: invalid server url path -> %w", err)
 	}
 	parsedUrl.Scheme = "wss"
-
 	serverUrl = parsedUrl.String()
 
+	client := &WSClient{
+		ClientID:        clientID,
+		ServerURL:       serverUrl,
+		Headers:         headers,
+		CommandListener: commandListener,
+		done:            make(chan struct{}),
+	}
+
+	go client.WaitInterrupt()
+	go client.maintainConnection()
+
+	return client, nil
+}
+
+func (client *WSClient) connect() error {
 	dialer := websocket.DefaultDialer
 	dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
-	conn, _, err := dialer.Dial(serverUrl, headers)
+	conn, _, err := dialer.Dial(client.ServerURL, client.Headers)
 	if err != nil {
-		return fmt.Errorf("NewWSClient: ws dial invalid -> %w", err)
+		return fmt.Errorf("connect: ws dial invalid -> %w", err)
 	}
+
+	client.Conn = conn
 
 	initMessage := Message{
 		Type:    "init",
-		Content: clientID,
+		Content: client.ClientID,
 	}
-
-	err = conn.WriteJSON(initMessage)
-	if err != nil {
-		return fmt.Errorf("NewWSClient: ws write message error -> %w", err)
+	if err := conn.WriteJSON(initMessage); err != nil {
+		conn.Close()
+		return fmt.Errorf("connect: ws write message error -> %w", err)
 	}
-
-	// Listen for messages from the server
-	go func() {
-		for {
-			var serverMessage Message
-			err := conn.ReadJSON(&serverMessage)
-			if err != nil {
-				log.Printf("Connection closed: %v", err)
-				return
-			}
-			log.Printf("Received message: Type=%s, Content=%s", serverMessage.Type, serverMessage.Content)
-
-			commandListener(conn, serverMessage)
-
-		}
-	}()
-
-	newClient := &WSClient{
-		ClientID: clientID,
-		Conn:     conn,
-	}
-
-	go newClient.WaitInterrupt()
 
 	return nil
+}
+
+func (client *WSClient) maintainConnection() {
+	backoff := time.Second
+	maxBackoff := time.Minute * 2
+
+	for {
+		err := client.connect()
+		if err != nil {
+			log.Printf("Connection failed: %v. Retrying in %v...", err, backoff)
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+
+		backoff = time.Second
+
+		// Start message listener
+		for {
+			var serverMessage Message
+			err := client.Conn.ReadJSON(&serverMessage)
+			if err != nil {
+				log.Printf("Connection closed: %v. Reconnecting...", err)
+				client.Conn.Close()
+				break
+			}
+			log.Printf("Received message: Type=%s, Content=%s", serverMessage.Type, serverMessage.Content)
+			client.CommandListener(client.Conn, serverMessage)
+		}
+
+		select {
+		case <-client.done:
+			return
+		default:
+			continue
+		}
+	}
 }
 
 func (client *WSClient) WaitInterrupt() {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
 
-	for {
-		select {
-		case <-interrupt:
-			// Gracefully close the connection
-			client.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-			time.Sleep(time.Second)
-			return
-		}
+	<-interrupt
+	close(client.done)
+	if client.Conn != nil {
+		client.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		time.Sleep(time.Second)
+		client.Conn.Close()
 	}
 }
 
 func (client *WSClient) Close() {
-	client.Conn.Close()
+	close(client.done)
+	if client.Conn != nil {
+		client.Conn.Close()
+	}
 }
