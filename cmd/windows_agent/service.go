@@ -161,12 +161,10 @@ func (p *agentService) run() {
 		key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
 		if err == nil {
 			defer key.Close()
-
 			if serverUrl, _, err := key.GetStringValue("ServerURL"); err == nil && serverUrl != "" {
 				return true
 			}
 		}
-
 		return false
 	}
 
@@ -181,7 +179,6 @@ func (p *agentService) run() {
 	}
 
 	drives := getLocalDrives()
-
 	go func() {
 		driveLetters := []string{}
 		for _, drive := range drives {
@@ -192,51 +189,57 @@ func (p *agentService) run() {
 			Hostname:     hostname,
 			DriveLetters: driveLetters,
 		})
-
 		if err != nil {
 			logger.Errorf("Agent drives update error: %v", err)
 			return
 		}
-
 		body, err := agent.ProxmoxHTTPRequest(
 			http.MethodPost,
 			"/api2/json/d2d/target/agent",
 			bytes.NewBuffer(reqBody),
 			nil,
 		)
-
 		if err != nil {
 			logger.Errorf("Agent drives update error: %v", err)
 			return
 		}
-
 		_, _ = io.Copy(io.Discard, body)
 		body.Close()
 	}()
 
+	infoChan := make(chan string)
 	errChan := make(chan string)
 	go func() {
 		for {
 			select {
 			case <-p.ctx.Done():
 				return
+			case info := <-infoChan:
+				logger.Info(info)
 			case err := <-errChan:
 				logger.Errorf("SFTP error: %s", err)
 			}
 		}
 	}()
 
-	_, err = websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) { controllers.WSHandler(p.ctx, c, m, errChan) })
-	for err != nil {
-		logger.Errorf("WS connection error: %s", err)
-		select {
-		case <-p.ctx.Done():
-			return
-		case <-time.After(time.Second * 5):
-			_, err = websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) { controllers.WSHandler(p.ctx, c, m, errChan) })
+	var wsClient *websockets.WSClient
+	for {
+		wsClient, err = websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) {
+			controllers.WSHandler(p.ctx, c, m, infoChan, errChan)
+		})
+		if err != nil {
+			logger.Errorf("WS connection error: %s", err)
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-time.After(time.Second * 5):
+				continue
+			}
 		}
+		break
 	}
 
+	defer wsClient.Close()
 	<-p.ctx.Done()
 }
 
