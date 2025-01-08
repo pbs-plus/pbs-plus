@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"time"
 
 	"github.com/billgraziano/dpapi"
@@ -25,6 +24,7 @@ type WSClient struct {
 	Headers         http.Header
 	CommandListener func(*websocket.Conn, Message)
 	done            chan struct{}
+    dialer          *websocket.Dialer
 }
 
 func NewWSClient(commandListener func(*websocket.Conn, Message)) (*WSClient, error) {
@@ -82,19 +82,18 @@ func NewWSClient(commandListener func(*websocket.Conn, Message)) (*WSClient, err
 		Headers:         headers,
 		CommandListener: commandListener,
 		done:            make(chan struct{}),
+        dialer: &websocket.Dialer{
+            TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+        },
 	}
 
-	go client.WaitInterrupt()
 	go client.maintainConnection()
 
 	return client, nil
 }
 
 func (client *WSClient) connect() error {
-	dialer := websocket.DefaultDialer
-	dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-
-	conn, _, err := dialer.Dial(client.ServerURL, client.Headers)
+	conn, _, err := client.dialer.Dial(client.ServerURL, client.Headers)
 	if err != nil {
 		return fmt.Errorf("connect: ws dial invalid -> %w", err)
 	}
@@ -150,19 +149,6 @@ func (client *WSClient) maintainConnection() {
 		default:
 			continue
 		}
-	}
-}
-
-func (client *WSClient) WaitInterrupt() {
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt)
-
-	<-interrupt
-	close(client.done)
-	if client.Conn != nil {
-		client.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		time.Sleep(time.Second)
-		client.Conn.Close()
 	}
 }
 
