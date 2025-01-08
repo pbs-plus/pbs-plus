@@ -1,7 +1,6 @@
 package websockets
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log"
