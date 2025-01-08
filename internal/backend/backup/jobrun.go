@@ -132,8 +132,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	}
 
 	cmdArgs := []string{
-		"--nofile=1024:1024",
-		"/usr/bin/proxmox-backup-client",
 		"backup",
 		fmt.Sprintf("%s.pxar:%s", strings.ReplaceAll(job.Target, " ", "-"), srcPath),
 		"--repository",
@@ -161,7 +159,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 
 	_ = FixDatastore(job, storeInstance)
 
-	cmd := exec.Command("/usr/bin/prlimit", cmdArgs...)
+	cmd := exec.Command("/usr/bin/proxmox-backup-client", cmdArgs...)
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_PASSWORD=%s", storeInstance.APIToken.Value))
 
