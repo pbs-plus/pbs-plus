@@ -44,9 +44,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	snapshotPath := filepath.Join(vssFolder, driveLetter)
 	timeStarted := time.Now()
 
-	if err := cleanupExistingSnapshot(snapshotPath); err != nil {
-		return nil, fmt.Errorf("Snapshot: cleanup failed -> %w", err)
-	}
+	cleanupExistingSnapshot(snapshotPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -119,16 +117,9 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 	}
 }
 
-func cleanupExistingSnapshot(path string) error {
-	if err := vss.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	return nil
+func cleanupExistingSnapshot(path string) {
+	_ = vss.Remove(path)
+	_ = os.Remove(path)
 }
 
 func (instance *WinVSSSnapshot) Close() {
