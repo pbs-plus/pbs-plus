@@ -13,7 +13,7 @@ func (storeInstance *Store) AgentPing(agentTarget *Target) (bool, error) {
 	splittedName := strings.Split(agentTarget.Name, " - ")
 	agentHostname := splittedName[0]
 
-	err := storeInstance.WSHub.SendCommand(agentHostname, websockets.Message{
+	broadcast, err := storeInstance.WSHub.SendCommandWithBroadcast(agentHostname, websockets.Message{
 		Type:    "ping",
 		Content: "ping",
 	})
@@ -23,7 +23,7 @@ func (storeInstance *Store) AgentPing(agentTarget *Target) (bool, error) {
 
 	for {
 		select {
-		case resp := <-storeInstance.WSHub.ReceiveChan:
+		case resp := <-broadcast.Subscribe():
 			if resp.Type == "ping" && resp.Content == "pong" {
 				return true, nil
 			}
