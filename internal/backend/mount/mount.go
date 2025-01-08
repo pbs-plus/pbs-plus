@@ -26,7 +26,7 @@ type AgentMount struct {
 	Hostname string
 	Drive    string
 	Path     string
-	cmd      *exec.Cmd
+	Cmd      *exec.Cmd
 	wsHub    *websockets.Server
 	mutex    sync.Mutex
 }
@@ -168,12 +168,12 @@ func (a *AgentMount) startRcloneMount(target *store.Target, agentHost, agentPort
 		":sftp:/", a.Path,
 	}
 
-	a.cmd = exec.Command("rclone", mountArgs...)
-	a.cmd.Env = os.Environ()
-	a.cmd.Stdout = os.Stdout
-	a.cmd.Stderr = os.Stderr
+	a.Cmd = exec.Command("rclone", mountArgs...)
+	a.Cmd.Env = os.Environ()
+	a.Cmd.Stdout = os.Stdout
+	a.Cmd.Stderr = os.Stderr
 
-	return a.cmd.Start()
+	return a.Cmd.Start()
 }
 
 // Unmount safely unmounts the SFTP connection
@@ -181,8 +181,8 @@ func (a *AgentMount) Unmount() {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
-	if a.cmd != nil && a.cmd.Process != nil {
-		_ = a.cmd.Process.Kill()
+	if a.Cmd != nil && a.Cmd.Process != nil {
+		_ = a.Cmd.Process.Kill()
 	}
 
 	if a.Path != "" {
