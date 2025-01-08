@@ -123,7 +123,12 @@ func cleanupExistingSnapshot(path string) error {
 	if err := vss.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return os.Remove(path)
+
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	return nil
 }
 
 func (instance *WinVSSSnapshot) Close() {
