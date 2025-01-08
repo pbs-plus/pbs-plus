@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"time"
@@ -56,6 +57,11 @@ func NewWSClient(commandListener func(*websocket.Conn, Message)) error {
 	if drivePublicKey != nil {
 		encodedKey := base64.StdEncoding.EncodeToString([]byte(*drivePublicKey))
 		headers.Set("Authorization", fmt.Sprintf("PBSPlusAPIAgent=%s---C:%s", clientID, encodedKey))
+	}
+
+	serverUrl, err = url.JoinPath(serverUrl, "/plus/ws")
+	if err != nil {
+		return fmt.Errorf("NewWSClient: invalid server url path -> %w", err)
 	}
 
 	conn, _, err := websocket.DefaultDialer.Dial(serverUrl, headers)
