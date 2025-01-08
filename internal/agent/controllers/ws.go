@@ -14,7 +14,6 @@ import (
 )
 
 var sftpSessions sync.Map
-var snapshotSessions sync.Map
 
 func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, infoChan chan string, errChan chan string) {
 	if m.Type == "ping" {
@@ -33,21 +32,17 @@ func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, inf
 		}
 		infoChan <- fmt.Sprintf("Snapshot of drive %s has been made.", m.Content)
 
-		if existing, ok := sftpSessions.LoadAndDelete(m.Content); ok {
-			existing.(context.CancelFunc)()
+		sftpSession := sftp.NewSFTPSession(ctx, snapshot, m.Content)
+
+		if existing, ok := sftpSessions.LoadAndDelete(m.Content); ok && existing != nil {
+			existing.(*sftp.SFTPSession).Close()
 		}
 
-		if existing, ok := snapshotSessions.LoadAndDelete(m.Content); ok && existing != nil {
-			existing.(*snapshots.WinVSSSnapshot).Close()
-		}
-
-		sftpCtx, sftpClose := context.WithCancel(ctx)
-		go sftp.Serve(sftpCtx, errChan, snapshot, m.Content)
+		go sftpSession.Serve(errChan)
 
 		infoChan <- fmt.Sprintf("SFTP access to snapshot of drive %s has been made.", m.Content)
 
-		sftpSessions.Store(m.Content, sftpClose)
-		snapshotSessions.Store(m.Content, snapshot)
+		sftpSessions.Store(m.Content, sftpSession)
 
 		response := websockets.Message{
 			Type:    "response-backup_start",
@@ -57,14 +52,9 @@ func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, inf
 	} else if m.Type == "backup_close" {
 		infoChan <- fmt.Sprintf("Received closure request for drive %s.", m.Content)
 
-		if existing, ok := sftpSessions.LoadAndDelete(m.Content); ok {
+		if existing, ok := sftpSessions.LoadAndDelete(m.Content); ok && existing != nil {
 			infoChan <- fmt.Sprintf("Cancelled existing backup context of drive %s.", m.Content)
-			existing.(context.CancelFunc)()
-		}
-
-		if existing, ok := snapshotSessions.LoadAndDelete(m.Content); ok && existing != nil {
-			infoChan <- fmt.Sprintf("Closed existing snapshot of drive %s.", m.Content)
-			existing.(*snapshots.WinVSSSnapshot).Close()
+			existing.(*sftp.SFTPSession).Close()
 		}
 
 		response := websockets.Message{
