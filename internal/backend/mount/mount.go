@@ -3,13 +3,11 @@
 package mount
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
@@ -17,138 +15,69 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
-const (
-	acknowledgementTimeout = 15 * time.Second
-	defaultMountPerms    = 0700
-)
-
 type AgentMount struct {
 	Hostname string
 	Drive    string
 	Path     string
 	Cmd      *exec.Cmd
-	wsHub    *websockets.Server
-	mutex    sync.Mutex
+	WSHub    *websockets.Server
 }
 
-// Mount creates a new SFTP mount point for the specified target
 func Mount(wsHub *websockets.Server, target *store.Target) (*AgentMount, error) {
-	if err := validatePrerequisites(); err != nil {
-		return nil, err
-	}
-
-	hostname, drive, err := parseTargetInfo(target)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse target info: %w", err)
-	}
-
-	agentMount := &AgentMount{
-		wsHub:    wsHub,
-		Hostname: hostname,
-		Drive:    drive,
-	}
-
-	if err := agentMount.initializeConnection(target); err != nil {
-		return nil, err
-	}
-
-	if err := agentMount.setupMountPoint(target); err != nil {
-		agentMount.Cleanup()
-		return nil, err
-	}
-
-	return agentMount, nil
-}
-
-func validatePrerequisites() error {
 	if !utils.IsValid("/usr/bin/rclone") {
-		return fmt.Errorf("rclone is missing! Please install rclone first before backing up from agent")
+		return nil, fmt.Errorf("Mount: rclone is missing! Please install rclone first before backing up from agent.")
 	}
-	return nil
-}
 
-func parseTargetInfo(target *store.Target) (hostname string, drive string, err error) {
 	splittedTargetName := strings.Split(target.Name, " - ")
-	if len(splittedTargetName) == 0 {
-		return "", "", fmt.Errorf("invalid target name format")
-	}
-
-	hostname = splittedTargetName[0]
+	targetHostname := splittedTargetName[0]
 	agentPath := strings.TrimPrefix(target.Path, "agent://")
 	agentPathParts := strings.Split(agentPath, "/")
-	
-	if len(agentPathParts) < 2 {
-		return "", "", fmt.Errorf("invalid agent path format")
-	}
-	
-	drive = agentPathParts[1]
-	return hostname, drive, nil
-}
+	agentDrive := agentPathParts[1]
 
-func (a *AgentMount) initializeConnection(target *store.Target) error {
-	ctx, cancel := context.WithTimeout(context.Background(), acknowledgementTimeout)
-	defer cancel()
-
-	broadcast, err := a.wsHub.SendCommandWithBroadcast(a.Hostname, websockets.Message{
+	broadcast, err := wsHub.SendCommandWithBroadcast(targetHostname, websockets.Message{
 		Type:    "backup_start",
-		Content: a.Drive,
+		Content: agentDrive,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to send backup request: %w", err)
+		return nil, fmt.Errorf("RunBackup: Failed to send backup request to target '%s' -> %w", target.Name, err)
 	}
 
 	listener := broadcast.Subscribe()
 	defer broadcast.CancelSubscription(listener)
 
-	return a.waitForAcknowledgement(ctx, listener)
-}
-
-func (a *AgentMount) waitForAcknowledgement(ctx context.Context, listener <-chan websockets.Message) error {
-	expectedResponse := "Acknowledged: " + a.Drive
-	
+respWait:
 	for {
 		select {
 		case resp := <-listener:
-			if resp.Type == "response-backup_start" && resp.Content == expectedResponse {
-				return nil
+			if resp.Type == "response-backup_start" && resp.Content == "Acknowledged: "+agentDrive {
+				break respWait
 			}
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for backup acknowledgement")
+		case <-time.After(time.Second * 15):
+			return nil, fmt.Errorf("RunBackup: Failed to receive backup acknowledgement from target '%s'", target.Name)
 		}
 	}
-}
 
-func (a *AgentMount) setupMountPoint(target *store.Target) error {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-
-	agentPathParts := strings.Split(strings.TrimPrefix(target.Path, "agent://"), "/")
-	if len(agentPathParts) < 2 {
-		return fmt.Errorf("invalid agent path")
-	}
+	agentMount := &AgentMount{WSHub: wsHub, Hostname: targetHostname, Drive: agentDrive}
 
 	agentHost := agentPathParts[0]
-	agentPort, err := utils.DriveLetterPort(rune(a.Drive[0]))
+	agentDriveRune := []rune(agentDrive)[0]
+	agentPort, err := utils.DriveLetterPort(agentDriveRune)
 	if err != nil {
-		return fmt.Errorf("error mapping '%c' to network port: %w", a.Drive[0], err)
+		agentMount.Unmount()
+		agentMount.CloseSFTP()
+		return nil, fmt.Errorf("Mount: error mapping \"%c\" to network port -> %w", agentDriveRune, err)
 	}
 
-	a.Path = filepath.Join(store.AgentMountBasePath, strings.ReplaceAll(target.Name, " ", "-"))
-	a.Unmount() // Clean up any existing mounts
+	agentMount.Path = filepath.Join(store.AgentMountBasePath, strings.ReplaceAll(target.Name, " ", "-"))
+	agentMount.Unmount()
 
-	if err := os.MkdirAll(a.Path, defaultMountPerms); err != nil {
-		return fmt.Errorf("error creating directory '%s': %w", a.Path, err)
+	err = os.MkdirAll(agentMount.Path, 0700)
+	if err != nil {
+		return nil, fmt.Errorf("Mount: error creating directory \"%s\" -> %w", agentMount.Path, err)
 	}
 
-	return a.startRcloneMount(target, agentHost, agentPort)
-}
-
-func (a *AgentMount) startRcloneMount(target *store.Target, agentHost, agentPort string) error {
-	privKeyFile := filepath.Join(
-		store.DbBasePath,
-		"agent_keys",
-		strings.ReplaceAll(fmt.Sprintf("%s.key", target.Name), " ", "-"),
-	)
+	privKeyDir := filepath.Join(store.DbBasePath, "agent_keys")
+	privKeyFile := filepath.Join(privKeyDir, strings.ReplaceAll(fmt.Sprintf("%s.key", target.Name), " ", "-"))
 
 	mountArgs := []string{
 		"mount",
@@ -165,45 +94,42 @@ func (a *AgentMount) startRcloneMount(target *store.Target, agentHost, agentPort
 		"--sftp-host", agentHost,
 		"--allow-other",
 		"--sftp-shell-type", "none",
-		":sftp:/", a.Path,
+		":sftp:/", agentMount.Path,
 	}
 
-	a.Cmd = exec.Command("rclone", mountArgs...)
-	a.Cmd.Env = os.Environ()
-	a.Cmd.Stdout = os.Stdout
-	a.Cmd.Stderr = os.Stderr
+	mnt := exec.Command("rclone", mountArgs...)
+	mnt.Env = os.Environ()
 
-	return a.Cmd.Start()
+	mnt.Stdout = os.Stdout
+	mnt.Stderr = os.Stderr
+
+	agentMount.Cmd = mnt
+
+	err = mnt.Start()
+	if err != nil {
+		agentMount.Unmount()
+		agentMount.CloseSFTP()
+		return nil, fmt.Errorf("Mount: error starting rclone for sftp -> %w", err)
+	}
+
+	return agentMount, nil
 }
 
-// Unmount safely unmounts the SFTP connection
 func (a *AgentMount) Unmount() {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-
 	if a.Cmd != nil && a.Cmd.Process != nil {
 		_ = a.Cmd.Process.Kill()
 	}
 
-	if a.Path != "" {
-		umount := exec.Command("umount", a.Path)
-		umount.Env = os.Environ()
-		_ = umount.Run()
-	}
+	umount := exec.Command("umount", a.Path)
+	umount.Env = os.Environ()
+
+	_ = umount.Run()
+
 }
 
-// CloseSFTP closes the SFTP connection
 func (a *AgentMount) CloseSFTP() {
-	if a.wsHub != nil && a.Hostname != "" && a.Drive != "" {
-		_ = a.wsHub.SendCommand(a.Hostname, websockets.Message{
-			Type:    "backup_close",
-			Content: a.Drive,
-		})
-	}
-}
-
-// Cleanup performs complete cleanup of resources
-func (a *AgentMount) Cleanup() {
-	a.Unmount()
-	a.CloseSFTP()
+	_ = a.WSHub.SendCommand(a.Hostname, websockets.Message{
+		Type:    "backup_close",
+		Content: a.Drive,
+	})
 }
