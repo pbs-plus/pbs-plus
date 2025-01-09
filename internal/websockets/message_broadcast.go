@@ -54,9 +54,7 @@ func (s *broadcastServer) serve(ctx context.Context) {
 		case newListener := <-s.addListener:
 			s.listeners.Store(newListener, struct{}{})
 		case listenerToRemove := <-s.removeListener:
-			if _, exists := s.listeners.LoadAndDelete(listenerToRemove); exists {
-				close(listenerToRemove)
-			}
+			_, _ := s.listeners.LoadAndDelete(listenerToRemove)
 		case val, ok := <-s.source:
 			if !ok {
 				return
@@ -88,7 +86,7 @@ func NewBroadcastServer(ctx context.Context, source <-chan Message) BroadcastSer
 	service := &broadcastServer{
 		source:         source,
 		addListener:    make(chan chan Message, 10),  // Buffered to avoid blocking
-		removeListener: make(chan chan Message, 10), // Buffered to avoid blocking
+		removeListener: make(chan (<-chan Message)),
 		cancel:         ctxCancel,
 	}
 	go service.serve(ctxLocal)
