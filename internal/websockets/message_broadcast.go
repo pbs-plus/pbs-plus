@@ -29,9 +29,7 @@ func (s *broadcastServer) Subscribe() <-chan Message {
 }
 
 func (s *broadcastServer) CancelSubscription(channel <-chan Message) {
-	if ch, ok := channel.(chan Message); ok {
-		s.removeListener <- ch
-	}
+	s.removeListener <- channel
 }
 
 func (s *broadcastServer) Close() {
