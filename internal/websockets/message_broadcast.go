@@ -16,7 +16,7 @@ type broadcastServer struct {
 	source         <-chan Message
 	listeners      sync.Map
 	addListener    chan chan Message
-	removeListener chan chan Message
+	removeListener chan (<-chan Message)
 	cancel         context.CancelFunc
 }
 
