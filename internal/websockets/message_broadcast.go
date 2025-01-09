@@ -54,7 +54,7 @@ func (s *broadcastServer) serve(ctx context.Context) {
 		case newListener := <-s.addListener:
 			s.listeners.Store(newListener, struct{}{})
 		case listenerToRemove := <-s.removeListener:
-			_, _ := s.listeners.LoadAndDelete(listenerToRemove)
+			_, _ = s.listeners.LoadAndDelete(listenerToRemove)
 		case val, ok := <-s.source:
 			if !ok {
 				return
