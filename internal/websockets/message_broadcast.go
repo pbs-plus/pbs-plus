@@ -2,6 +2,7 @@ package websockets
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -13,11 +14,13 @@ type BroadcastServer interface {
 
 type broadcastServer struct {
 	source         <-chan Message
-	listeners      []chan Message
+	listeners      sync.Map
 	addListener    chan chan Message
-	removeListener chan (<-chan Message)
+	removeListener chan chan Message
 	cancel         context.CancelFunc
 }
+
+const sendTimeout = 100 * time.Millisecond
 
 func (s *broadcastServer) Subscribe() <-chan Message {
 	newListener := make(chan Message, 10) // Buffered channel
@@ -26,7 +29,9 @@ func (s *broadcastServer) Subscribe() <-chan Message {
 }
 
 func (s *broadcastServer) CancelSubscription(channel <-chan Message) {
-	s.removeListener <- channel
+	if ch, ok := channel.(chan Message); ok {
+		s.removeListener <- ch
+	}
 }
 
 func (s *broadcastServer) Close() {
@@ -35,11 +40,13 @@ func (s *broadcastServer) Close() {
 
 func (s *broadcastServer) serve(ctx context.Context) {
 	defer func() {
-		for _, listener := range s.listeners {
-			if listener != nil {
+		// Close all listeners when shutting down
+		s.listeners.Range(func(key, _ interface{}) bool {
+			if listener, ok := key.(chan Message); ok {
 				close(listener)
 			}
-		}
+			return true
+		})
 	}()
 
 	for {
@@ -47,37 +54,33 @@ func (s *broadcastServer) serve(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case newListener := <-s.addListener:
-			s.listeners = append(s.listeners, newListener)
+			s.listeners.Store(newListener, struct{}{})
 		case listenerToRemove := <-s.removeListener:
-			for i, ch := range s.listeners {
-				if ch == listenerToRemove {
-					s.listeners[i] = s.listeners[len(s.listeners)-1]
-					s.listeners = s.listeners[:len(s.listeners)-1]
-					close(ch)
-					break
-				}
+			if _, exists := s.listeners.LoadAndDelete(listenerToRemove); exists {
+				close(listenerToRemove)
 			}
 		case val, ok := <-s.source:
 			if !ok {
 				return
 			}
-			// Send to all listeners with timeout
-			for i, listener := range s.listeners {
-				if listener == nil {
-					continue
+			// Broadcast the message to all listeners
+			s.listeners.Range(func(key, _ interface{}) bool {
+				listener, ok := key.(chan Message)
+				if !ok {
+					return true
 				}
 				select {
 				case listener <- val:
 					// Message sent successfully
-				case <-time.After(100 * time.Millisecond):
+				case <-time.After(sendTimeout):
 					// Listener is stuck, remove it
-					s.listeners[i] = s.listeners[len(s.listeners)-1]
-					s.listeners = s.listeners[:len(s.listeners)-1]
+					s.listeners.Delete(listener)
 					close(listener)
 				case <-ctx.Done():
-					return
+					return false
 				}
-			}
+				return true
+			})
 		}
 	}
 }
@@ -86,9 +89,8 @@ func NewBroadcastServer(ctx context.Context, source <-chan Message) BroadcastSer
 	ctxLocal, ctxCancel := context.WithCancel(ctx)
 	service := &broadcastServer{
 		source:         source,
-		listeners:      make([]chan Message, 0),
-		addListener:    make(chan chan Message),
-		removeListener: make(chan (<-chan Message)),
+		addListener:    make(chan chan Message, 10),  // Buffered to avoid blocking
+		removeListener: make(chan chan Message, 10), // Buffered to avoid blocking
 		cancel:         ctxCancel,
 	}
 	go service.serve(ctxLocal)
