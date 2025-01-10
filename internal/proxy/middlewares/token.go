@@ -3,8 +3,8 @@
 package middlewares
 
 import (
-	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
@@ -13,9 +13,8 @@ import (
 
 func AcquireToken(store *store.Store, next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if utils.IsRequestFromSelf(r) {
-			selfIP := utils.GetIPFromRequest(r)
-			allowedOrigin := fmt.Sprintf("https://%s:8007", selfIP)
+		if utils.OriginatedFromSelf(r) {
+			allowedOrigin := strings.TrimSuffix(r.Referer(), "/")
 			allowedHeaders := r.Header.Get("Access-Control-Request-Headers")
 			if allowedHeaders == "" {
 				allowedHeaders = "Content-Type, *"
