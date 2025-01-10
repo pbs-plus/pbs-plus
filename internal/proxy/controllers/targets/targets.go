@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/target"
-	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -22,8 +21,8 @@ type NewAgentRequest struct {
 	Hostname  string `json:"hostname"`
 }
 
-func D2DTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
@@ -51,8 +50,6 @@ func D2DTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *htt
 				Data:   all,
 				Digest: digest,
 			}
-
-			proxy.ExtractTokenFromRequest(r, storeInstance)
 
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(toReturn)
@@ -104,8 +101,8 @@ type NewAgentHostnameRequest struct {
 	DriveLetters []string `json:"drive_letters"`
 }
 
-func D2DTargetAgentHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
@@ -159,8 +156,8 @@ func D2DTargetAgentHandler(storeInstance *store.Store) func(http.ResponseWriter,
 	}
 }
 
-func ExtJsTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -195,16 +192,14 @@ func ExtJsTargetHandler(storeInstance *store.Store) func(http.ResponseWriter, *h
 			return
 		}
 
-		proxy.ExtractTokenFromRequest(r, storeInstance)
-
 		response.Status = http.StatusOK
 		response.Success = true
 		json.NewEncoder(w).Encode(response)
 	}
 }
 
-func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -229,7 +224,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWrit
 				return
 			}
 
-			target, err := storeInstance.GetTarget(pathVar["target"])
+			target, err := storeInstance.GetTarget(r.PathValue("target"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -259,8 +254,6 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWrit
 				return
 			}
 
-			proxy.ExtractTokenFromRequest(r, storeInstance)
-
 			response.Status = http.StatusOK
 			response.Success = true
 			json.NewEncoder(w).Encode(response)
@@ -269,13 +262,11 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWrit
 		}
 
 		if r.Method == http.MethodGet {
-			target, err := storeInstance.GetTarget(pathVar["target"])
+			target, err := storeInstance.GetTarget(r.PathValue("target"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-
-			proxy.ExtractTokenFromRequest(r, storeInstance)
 
 			response.Status = http.StatusOK
 			response.Success = true
@@ -286,13 +277,11 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(http.ResponseWrit
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.DeleteTarget(pathVar["target"])
+			err := storeInstance.DeleteTarget(r.PathValue("target"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-
-			proxy.ExtractTokenFromRequest(r, storeInstance)
 
 			response.Status = http.StatusOK
 			response.Success = true

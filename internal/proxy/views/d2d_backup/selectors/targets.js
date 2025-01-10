@@ -12,7 +12,7 @@ Ext.define('PBS.form.D2DTargetSelector', {
     store: {
 	proxy: {
 	    type: 'proxmox',
-	    url: '/api2/json/d2d/target',
+	    url: pbsPlusBaseUrl + '/api2/json/d2d/target',
 	},
 	autoLoad: true,
 	sorters: 'name',

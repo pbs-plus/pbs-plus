@@ -4,26 +4,25 @@ package mount
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
-	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
 type AgentMount struct {
-	Hostname string
-	Drive    string
-	Path     string
-	Cmd      *exec.Cmd
-	WSHub    *websockets.Server
+	Hostname      string
+	Drive         string
+	Path          string
+	Cmd           *exec.Cmd
+	StoreInstance *store.Store
 }
 
-func Mount(wsHub *websockets.Server, target *store.Target) (*AgentMount, error) {
+func Mount(storeInstance *store.Store, target *store.Target) (*AgentMount, error) {
 	if !utils.IsValid("/usr/bin/rclone") {
 		return nil, fmt.Errorf("Mount: rclone is missing! Please install rclone first before backing up from agent.")
 	}
@@ -34,30 +33,12 @@ func Mount(wsHub *websockets.Server, target *store.Target) (*AgentMount, error) 
 	agentPathParts := strings.Split(agentPath, "/")
 	agentDrive := agentPathParts[1]
 
-	broadcast, err := wsHub.SendCommandWithBroadcast(targetHostname, websockets.Message{
-		Type:    "backup_start",
-		Content: agentDrive,
-	})
+	err := storeInstance.ProxmoxHTTPRequest(http.MethodPost, fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostname, agentDrive), nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: Failed to send backup request to target '%s' -> %w", target.Name, err)
 	}
 
-	listener := broadcast.Subscribe()
-	defer broadcast.CancelSubscription(listener)
-
-respWait:
-	for {
-		select {
-		case resp := <-listener:
-			if resp.Type == "response-backup_start" && resp.Content == "Acknowledged: "+agentDrive {
-				break respWait
-			}
-		case <-time.After(time.Second * 15):
-			return nil, fmt.Errorf("RunBackup: Failed to receive backup acknowledgement from target '%s'", target.Name)
-		}
-	}
-
-	agentMount := &AgentMount{WSHub: wsHub, Hostname: targetHostname, Drive: agentDrive}
+	agentMount := &AgentMount{StoreInstance: storeInstance, Hostname: targetHostname, Drive: agentDrive}
 
 	agentHost := agentPathParts[0]
 	agentDriveRune := []rune(agentDrive)[0]
@@ -128,8 +109,5 @@ func (a *AgentMount) Unmount() {
 }
 
 func (a *AgentMount) CloseSFTP() {
-	_ = a.WSHub.SendCommand(a.Hostname, websockets.Message{
-		Type:    "backup_close",
-		Content: a.Drive,
-	})
+	_ = a.StoreInstance.ProxmoxHTTPRequest(http.MethodDelete, fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", a.Hostname, a.Drive), nil, nil)
 }

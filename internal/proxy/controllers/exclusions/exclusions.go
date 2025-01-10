@@ -7,14 +7,13 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-func D2DExclusionHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func D2DExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
@@ -42,8 +41,6 @@ func D2DExclusionHandler(storeInstance *store.Store) func(http.ResponseWriter, *
 				Digest: digest,
 			}
 
-			proxy.ExtractTokenFromRequest(r, storeInstance)
-
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(toReturn)
 
@@ -52,8 +49,8 @@ func D2DExclusionHandler(storeInstance *store.Store) func(http.ResponseWriter, *
 	}
 }
 
-func ExtJsExclusionHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := ExclusionConfigResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -83,16 +80,14 @@ func ExtJsExclusionHandler(storeInstance *store.Store) func(http.ResponseWriter,
 			return
 		}
 
-		proxy.ExtractTokenFromRequest(r, storeInstance)
-
 		response.Status = http.StatusOK
 		response.Success = true
 		json.NewEncoder(w).Encode(response)
 	}
 }
 
-func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := ExclusionConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -112,7 +107,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 				return
 			}
 
-			pathDecoded, err := url.QueryUnescape(pathVar["exclusion"])
+			pathDecoded, err := url.QueryUnescape(r.PathValue("exclusion"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -147,8 +142,6 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 				return
 			}
 
-			proxy.ExtractTokenFromRequest(r, storeInstance)
-
 			response.Status = http.StatusOK
 			response.Success = true
 			json.NewEncoder(w).Encode(response)
@@ -157,7 +150,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 		}
 
 		if r.Method == http.MethodGet {
-			pathDecoded, err := url.QueryUnescape(pathVar["exclusion"])
+			pathDecoded, err := url.QueryUnescape(r.PathValue("exclusion"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -169,8 +162,6 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 				return
 			}
 
-			proxy.ExtractTokenFromRequest(r, storeInstance)
-
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = exclusion
@@ -180,7 +171,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 		}
 
 		if r.Method == http.MethodDelete {
-			pathDecoded, err := url.QueryUnescape(pathVar["exclusion"])
+			pathDecoded, err := url.QueryUnescape(r.PathValue("exclusion"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -191,8 +182,6 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(http.ResponseW
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-
-			proxy.ExtractTokenFromRequest(r, storeInstance)
 
 			response.Status = http.StatusOK
 			response.Success = true

@@ -7,19 +7,26 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	urllib "net/url"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 func (storeInstance *Store) ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error {
-	req, err := http.NewRequest(
-		method,
-		fmt.Sprintf(
+	reqUrl := url
+	parsedURL, err := urllib.Parse(url)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		reqUrl = fmt.Sprintf(
 			"%s%s",
 			ProxyTargetURL,
 			url,
-		),
+		)
+	}
+
+	req, err := http.NewRequest(
+		method,
+		reqUrl,
 		body,
 	)
 

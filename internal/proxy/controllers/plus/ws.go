@@ -9,8 +9,8 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
-func WSHandler(storeInstance *store.Store, hub *websockets.Server) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func WSHandler(storeInstance *store.Store, hub *websockets.Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return

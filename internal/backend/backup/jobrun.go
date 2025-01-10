@@ -72,7 +72,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 
 	var agentMount *mount.AgentMount
 	if isAgent {
-		agentMount, err = mount.Mount(storeInstance.WSHub, target)
+		agentMount, err = mount.Mount(storeInstance, target)
 		if err != nil {
 			return nil, fmt.Errorf("RunBackup: mount initialization error -> %w", err)
 		}
