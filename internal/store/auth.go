@@ -5,13 +5,11 @@ package store
 import (
 	"encoding/base64"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
@@ -57,48 +55,48 @@ func (storeInstance *Store) CheckProxyAuth(r *http.Request) error {
 		return checkAgentAuth(r)
 	}
 
-	checkEndpoint := "/api2/json/version"
-	req, err := http.NewRequest(
-		http.MethodGet,
-		fmt.Sprintf(
-			"%s%s",
-			ProxyTargetURL,
-			checkEndpoint,
-		),
-		nil,
-	)
+	// checkEndpoint := "/api2/json/version"
+	// req, err := http.NewRequest(
+	// 	http.MethodGet,
+	// 	fmt.Sprintf(
+	// 		"%s%s",
+	// 		ProxyTargetURL,
+	// 		checkEndpoint,
+	// 	),
+	// 	nil,
+	// )
 
-	if err != nil {
-		return fmt.Errorf("CheckProxyAuth: error creating http request -> %w", err)
-	}
+	// if err != nil {
+	// 	return fmt.Errorf("CheckProxyAuth: error creating http request -> %w", err)
+	// }
 
-	for _, cookie := range r.Cookies() {
-		req.AddCookie(cookie)
-	}
+	// for _, cookie := range r.Cookies() {
+	// 	req.AddCookie(cookie)
+	// }
 
-	if authHead := r.Header.Get("Authorization"); authHead != "" {
-		req.Header.Set("Authorization", authHead)
-	}
+	// if authHead := r.Header.Get("Authorization"); authHead != "" {
+	// 	req.Header.Set("Authorization", authHead)
+	// }
 
-	if storeInstance.HTTPClient == nil {
-		storeInstance.HTTPClient = &http.Client{
-			Timeout:   time.Second * 30,
-			Transport: utils.BaseTransport,
-		}
-	}
+	// if storeInstance.HTTPClient == nil {
+	// 	storeInstance.HTTPClient = &http.Client{
+	// 		Timeout:   time.Second * 30,
+	// 		Transport: utils.BaseTransport,
+	// 	}
+	// }
 
-	resp, err := storeInstance.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("CheckProxyAuth: invalid auth -> %w", err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
+	// resp, err := storeInstance.HTTPClient.Do(req)
+	// if err != nil {
+	// 	return fmt.Errorf("CheckProxyAuth: invalid auth -> %w", err)
+	// }
+	// defer func() {
+	// 	_, _ = io.Copy(io.Discard, resp.Body)
+	// 	resp.Body.Close()
+	// }()
 
-	if resp.StatusCode > 299 || resp.StatusCode < 200 {
-		return fmt.Errorf("CheckProxyAuth: invalid auth -> %w", err)
-	}
+	// if resp.StatusCode > 299 || resp.StatusCode < 200 {
+	// 	return fmt.Errorf("CheckProxyAuth: invalid auth -> %w", err)
+	// }
 
 	return nil
 }
