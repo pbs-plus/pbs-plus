@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
@@ -27,10 +26,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if !utils.IsRequestFromSelf(r) {
-			http.Error(w, "authentication failed", http.StatusUnauthorized)
-			return
-		}
+		// TODO: add check for security
 
 		targetHostnameEnc := r.PathValue("target")
 		agentDriveEnc := r.PathValue("drive")
