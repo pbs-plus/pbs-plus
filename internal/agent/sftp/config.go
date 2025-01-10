@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/billgraziano/dpapi"
@@ -31,33 +32,35 @@ type SFTPConfig struct {
 	BasePath     string `json:"base_path"`
 }
 
+var InitializedConfigs sync.Map
+
 func (s *SFTPConfig) GetRegistryKey() string {
 	return fmt.Sprintf("Software\\PBSPlus\\Config\\SFTP-%s", s.BasePath)
 }
 
-func InitializeSFTPConfig(driveLetter string) (*SFTPConfig, error) {
+func InitializeSFTPConfig(driveLetter string) error {
 	var err error
 
 	baseKey, _, err := registry.CreateKey(registry.LOCAL_MACHINE, "Software\\PBSPlus\\Config", registry.QUERY_VALUE)
 	if err != nil {
-		return nil, fmt.Errorf("InitializeSFTPConfig: unable to create registry key -> %w", err)
+		return fmt.Errorf("InitializeSFTPConfig: unable to create registry key -> %w", err)
 	}
 
 	defer baseKey.Close()
 
 	var server string
 	if server, _, err = baseKey.GetStringValue("ServerURL"); err != nil {
-		return nil, fmt.Errorf("InitializeSFTPConfig: unable to get server url -> %w", err)
+		return fmt.Errorf("InitializeSFTPConfig: unable to get server url -> %w", err)
 	}
 
-	newSftpConfig := &SFTPConfig{
+	newSftpConfig := SFTPConfig{
 		BasePath: driveLetter,
 		Server:   server,
 	}
 
 	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, newSftpConfig.GetRegistryKey(), registry.QUERY_VALUE)
 	if err != nil {
-		return nil, fmt.Errorf("InitializeSFTPConfig: unable to create registry key -> %w", err)
+		return fmt.Errorf("InitializeSFTPConfig: unable to create registry key -> %w", err)
 	}
 
 	defer key.Close()
@@ -66,7 +69,9 @@ func InitializeSFTPConfig(driveLetter string) (*SFTPConfig, error) {
 		newSftpConfig.BasePath = basePath
 	}
 
-	return newSftpConfig, nil
+	InitializedConfigs.Store(driveLetter, newSftpConfig)
+
+	return newSftpConfig.PopulateKeys()
 }
 
 func (config *SFTPConfig) PopulateKeys() error {

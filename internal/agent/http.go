@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	urllib "net/url"
 	"os"
 	"strings"
 	"time"
@@ -44,12 +43,6 @@ func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) (io.Re
 
 	if serverUrl, _, err = key.GetStringValue("ServerURL"); err != nil || serverUrl == "" {
 		return nil, fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
-	}
-
-	if parsedUrl, err := urllib.Parse(serverUrl); err != nil {
-		return nil, fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
-	} else {
-		serverUrl = fmt.Sprintf("https://%s:8008", parsedUrl.Hostname())
 	}
 
 	req, err := http.NewRequest(

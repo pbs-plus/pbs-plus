@@ -33,6 +33,9 @@ func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, inf
 		infoChan <- fmt.Sprintf("Snapshot of drive %s has been made.", m.Content)
 
 		sftpSession := sftp.NewSFTPSession(ctx, snapshot, m.Content)
+		if sftpSession == nil {
+			errChan <- "Unable to find initialized SFTP config. Try restarting the service."
+		}
 
 		if existing, ok := sftpSessions.LoadAndDelete(m.Content); ok && existing != nil {
 			existing.(*sftp.SFTPSession).Close()
