@@ -11,6 +11,8 @@ import (
 
 func AcquireToken(store *store.Store, next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
 		_ = proxy.ExtractTokenFromRequest(r, store)
 		next.ServeHTTP(w, r)
 	}
