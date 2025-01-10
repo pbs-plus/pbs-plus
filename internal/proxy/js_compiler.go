@@ -21,7 +21,7 @@ func compileCustomJS() []byte {
 	result := []byte(`
 const pbsFullUrl = window.location.href;
 const pbsUrl = new URL(pbsFullUrl);
-const pbsPlusBaseUrl =` + "${pbsUrl.protocol}//${pbsUrl.hostname}:8008" + `;
+const pbsPlusBaseUrl = ` + "`${pbsUrl.protocol}//${pbsUrl.hostname}:8008`" + `;
 `)
 	err := fs.WalkDir(customJsFS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
