@@ -50,6 +50,7 @@ fetch(pbsPlusBaseUrl + "/plus/token", {
 	headers: pbsPlusTokenHeaders,
 })
 `)
+
 	err := fs.WalkDir(customJsFS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -121,8 +122,55 @@ func MountCompiledJS(targetPath string) error {
 	return nil
 }
 
+func MountModdedProxmoxLib(targetPath string) error {
+	// Check if something is already mounted at the target path
+	if isMounted(targetPath) {
+		if err := syscall.Unmount(targetPath, 0); err != nil {
+			return fmt.Errorf("failed to unmount existing file: %w", err)
+		}
+	}
+
+	// Create backup directory if it doesn't exist
+	backupDir := filepath.Join(os.TempDir(), "pbs-plus-backups")
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return fmt.Errorf("failed to create backup directory: %w", err)
+	}
+
+	// Create backup filename with timestamp
+	backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.backup", filepath.Base(targetPath)))
+
+	// Read existing file
+	original, err := os.ReadFile(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to read original file: %w", err)
+	}
+
+	// Create backup
+	if err := os.WriteFile(backupPath, original, 0644); err != nil {
+		return fmt.Errorf("failed to create backup: %w", err)
+	}
+
+	oldString := `if (!newopts.url.match(/^\/api2/))`
+	newString := `if (!newopts.url.match(/^\/api2/) && !newopts.url.match(/^[a-z][a-z\d+\-.]*:/i))`
+
+	// Perform the replacement
+	newContent := strings.Replace(string(original), oldString, newString, 1)
+
+	tempFile := filepath.Join(backupDir, filepath.Base(targetPath))
+	if err := os.WriteFile(tempFile, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to write new content: %w", err)
+	}
+
+	// Perform bind mount
+	if err := syscall.Mount(tempFile, targetPath, "", syscall.MS_BIND, ""); err != nil {
+		return fmt.Errorf("failed to mount file: %w", err)
+	}
+
+	return nil
+}
+
 // UnmountCompiledJS unmounts the file and restores the original
-func UnmountCompiledJS(targetPath string) error {
+func UnmountModdedFile(targetPath string) error {
 	// Unmount the file
 	if err := syscall.Unmount(targetPath, 0); err != nil {
 		return fmt.Errorf("failed to unmount file: %w", err)
