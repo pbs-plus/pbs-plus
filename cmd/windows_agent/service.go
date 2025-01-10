@@ -50,12 +50,6 @@ type AgentDrivesRequest struct {
 	DriveLetters []string `json:"drive_letters"`
 }
 
-type NewAgentRequest struct {
-	PublicKey string `json:"public_key"`
-	BasePath  string `json:"base_path"`
-	Hostname  string `json:"hostname"`
-}
-
 func (p *agentService) Start(s service.Service) error {
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 
