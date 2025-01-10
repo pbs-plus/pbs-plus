@@ -118,8 +118,8 @@ func main() {
 	mux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", middlewares.CORS(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance)))
 
 	// WebSocket-related routes
-	mux.HandleFunc("/plus/ws", plus.WSHandler(storeInstance, wsHub))
-	mux.HandleFunc("/plus/mount/{target}/{drive}", middlewares.CORS(storeInstance, plus.MountHandler(storeInstance, wsHub)))
+	mux.HandleFunc("/plus/ws", plus.WSHandler(storeInstance))
+	mux.HandleFunc("/plus/mount/{target}/{drive}", plus.MountHandler(storeInstance))
 
 	s.Info("Starting proxy server on :8008")
 	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, mux); err != nil {

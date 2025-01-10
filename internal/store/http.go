@@ -15,6 +15,7 @@ import (
 
 func (storeInstance *Store) ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error {
 	reqUrl := url
+
 	parsedURL, err := urllib.Parse(url)
 	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
 		reqUrl = fmt.Sprintf(
