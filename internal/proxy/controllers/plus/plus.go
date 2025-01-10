@@ -16,7 +16,7 @@ import (
 
 func MountHandler(storeInstance *store.Store, wsHub *websockets.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
+		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}

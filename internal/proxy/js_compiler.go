@@ -22,6 +22,27 @@ func compileCustomJS() []byte {
 const pbsFullUrl = window.location.href;
 const pbsUrl = new URL(pbsFullUrl);
 const pbsPlusBaseUrl = ` + "`${pbsUrl.protocol}//${pbsUrl.hostname}:8008`" + `;
+
+function getCookie(cName) {
+	const name = cName + "=";
+  const cDecoded = decodeURIComponent(document.cookie);
+  const cArr = cDecoded.split('; ');
+  let res;
+  cArr.forEach(val => {
+    if (val.indexOf(name) === 0) res = val.substring(name.length);
+  })
+  return res
+}
+
+fetch(pbsPlusBaseUrl + "/plus/token", {
+	method: "POST",
+	body: JSON.stringify({
+		"pbs_auth_cookie": getCookie("PBSAuthCookie"),
+	}),
+	headers: {
+		"Content-Type": "application/json",
+	},
+})
 `)
 	err := fs.WalkDir(customJsFS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
