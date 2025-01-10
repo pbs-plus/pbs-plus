@@ -34,14 +34,20 @@ function getCookie(cName) {
   return res
 }
 
+var pbsPlusTokenHeaders = {
+	"Content-Type": "application/json",
+};
+
+if (Proxmox.CSRFPreventionToken) {
+	pbsPlusTokenHeaders["Csrfpreventiontoken"] = Proxmox.CSRFPreventionToken;
+}
+
 fetch(pbsPlusBaseUrl + "/plus/token", {
 	method: "POST",
 	body: JSON.stringify({
 		"pbs_auth_cookie": getCookie("PBSAuthCookie"),
 	}),
-	headers: {
-		"Content-Type": "application/json",
-	},
+	headers: pbsPlusTokenHeaders,
 })
 `)
 	err := fs.WalkDir(customJsFS, ".", func(path string, d fs.DirEntry, err error) error {
