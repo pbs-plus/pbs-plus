@@ -55,3 +55,7 @@ func IsRequestFromSelf(r *http.Request) bool {
 	}
 	return false
 }
+
+func GetIPFromRequest(r *http.Request) string {
+	return strings.Split(r.RemoteAddr, ":")[0] // Extract the IP part
+}
