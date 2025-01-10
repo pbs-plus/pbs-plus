@@ -88,29 +88,30 @@ func main() {
 	mux := http.NewServeMux()
 
 	// API routes
-	mux.HandleFunc("/api2/json/plus/version", middlewares.AcquireToken(storeInstance, plus.VersionHandler(storeInstance, Version)))
-	mux.HandleFunc("/api2/json/plus/binary", middlewares.AcquireToken(storeInstance, plus.DownloadBinary(storeInstance, Version)))
-	mux.HandleFunc("/api2/json/d2d/backup", middlewares.AcquireToken(storeInstance, jobs.D2DJobHandler(storeInstance)))
-	mux.HandleFunc("/api2/json/d2d/target", middlewares.AcquireToken(storeInstance, targets.D2DTargetHandler(storeInstance)))
-	mux.HandleFunc("/api2/json/d2d/target/agent", middlewares.AcquireToken(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
-	mux.HandleFunc("/api2/json/d2d/exclusion", middlewares.AcquireToken(storeInstance, exclusions.D2DExclusionHandler(storeInstance)))
-	mux.HandleFunc("/api2/json/d2d/partial-file", middlewares.AcquireToken(storeInstance, partial_files.D2DPartialFileHandler(storeInstance)))
-	mux.HandleFunc("/api2/json/d2d/agent-log", middlewares.AcquireToken(storeInstance, agents.AgentLogHandler(storeInstance)))
+	mux.HandleFunc("/plus/token", middlewares.CORS(storeInstance, plus.TokenHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/plus/version", middlewares.CORS(storeInstance, plus.VersionHandler(storeInstance, Version)))
+	mux.HandleFunc("/api2/json/plus/binary", middlewares.CORS(storeInstance, plus.DownloadBinary(storeInstance, Version)))
+	mux.HandleFunc("/api2/json/d2d/backup", middlewares.CORS(storeInstance, jobs.D2DJobHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/d2d/target", middlewares.CORS(storeInstance, targets.D2DTargetHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/d2d/target/agent", middlewares.CORS(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/d2d/exclusion", middlewares.CORS(storeInstance, exclusions.D2DExclusionHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/d2d/partial-file", middlewares.CORS(storeInstance, partial_files.D2DPartialFileHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/d2d/agent-log", middlewares.CORS(storeInstance, agents.AgentLogHandler(storeInstance)))
 
 	// ExtJS routes with path parameters
-	mux.HandleFunc("/api2/extjs/d2d/backup/{job}", middlewares.AcquireToken(storeInstance, jobs.ExtJsJobRunHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/d2d-target", middlewares.AcquireToken(storeInstance, targets.ExtJsTargetHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/d2d-target/{target}", middlewares.AcquireToken(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/d2d-exclusion", middlewares.AcquireToken(storeInstance, exclusions.ExtJsExclusionHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", middlewares.AcquireToken(storeInstance, exclusions.ExtJsExclusionSingleHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/d2d-partial-file", middlewares.AcquireToken(storeInstance, partial_files.ExtJsPartialFileHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/d2d-partial-file/{partial_file}", middlewares.AcquireToken(storeInstance, partial_files.ExtJsPartialFileSingleHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/disk-backup-job", middlewares.AcquireToken(storeInstance, jobs.ExtJsJobHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", middlewares.AcquireToken(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/d2d/backup/{job}", middlewares.CORS(storeInstance, jobs.ExtJsJobRunHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-target", middlewares.CORS(storeInstance, targets.ExtJsTargetHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-target/{target}", middlewares.CORS(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-exclusion", middlewares.CORS(storeInstance, exclusions.ExtJsExclusionHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", middlewares.CORS(storeInstance, exclusions.ExtJsExclusionSingleHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-partial-file", middlewares.CORS(storeInstance, partial_files.ExtJsPartialFileHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-partial-file/{partial_file}", middlewares.CORS(storeInstance, partial_files.ExtJsPartialFileSingleHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/disk-backup-job", middlewares.CORS(storeInstance, jobs.ExtJsJobHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", middlewares.CORS(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance)))
 
 	// WebSocket-related routes
 	mux.HandleFunc("/plus/ws", plus.WSHandler(storeInstance, wsHub))
-	mux.HandleFunc("/plus/mount/{target}/{drive}", middlewares.AcquireToken(storeInstance, plus.MountHandler(storeInstance, wsHub)))
+	mux.HandleFunc("/plus/mount/{target}/{drive}", middlewares.CORS(storeInstance, plus.MountHandler(storeInstance, wsHub)))
 
 	s.Info("Starting proxy server on :8008")
 	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, mux); err != nil {
