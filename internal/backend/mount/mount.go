@@ -3,6 +3,7 @@
 package mount
 
 import (
+	"encoding/base32"
 	"fmt"
 	"net/http"
 	"os"
@@ -33,7 +34,10 @@ func Mount(storeInstance *store.Store, target *store.Target) (*AgentMount, error
 	agentPathParts := strings.Split(agentPath, "/")
 	agentDrive := agentPathParts[1]
 
-	err := storeInstance.ProxmoxHTTPRequest(http.MethodPost, fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostname, agentDrive), nil, nil)
+	targetHostnameEnc := base32.StdEncoding.EncodeToString([]byte(targetHostname))
+	agentDriveEnc := base32.StdEncoding.EncodeToString([]byte(agentDrive))
+
+	err := storeInstance.ProxmoxHTTPRequest(http.MethodPost, fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc), nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: Failed to send backup request to target '%s' -> %w", target.Name, err)
 	}

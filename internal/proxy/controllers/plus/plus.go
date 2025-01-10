@@ -3,6 +3,7 @@
 package plus
 
 import (
+	"encoding/base32"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,7 +15,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
-func MountHandler(storeInstance *store.Store, wsHub *websockets.Server) http.HandlerFunc {
+func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
@@ -31,11 +32,26 @@ func MountHandler(storeInstance *store.Store, wsHub *websockets.Server) http.Han
 			return
 		}
 
-		targetHostname := r.PathValue("target")
-		agentDrive := r.PathValue("drive")
+		targetHostnameEnc := r.PathValue("target")
+		agentDriveEnc := r.PathValue("drive")
+
+		targetHostnameBytes, err := base32.StdEncoding.DecodeString(targetHostnameEnc)
+		if err != nil {
+			http.Error(w, "invalid arguments", http.StatusBadRequest)
+			return
+		}
+
+		agentDriveBytes, err := base32.StdEncoding.DecodeString(agentDriveEnc)
+		if err != nil {
+			http.Error(w, "invalid arguments", http.StatusBadRequest)
+			return
+		}
+
+		targetHostname := string(targetHostnameBytes)
+		agentDrive := string(agentDriveBytes)
 
 		if r.Method == http.MethodPost {
-			broadcast, err := wsHub.SendCommandWithBroadcast(targetHostname, websockets.Message{
+			broadcast, err := storeInstance.WSHub.SendCommandWithBroadcast(targetHostname, websockets.Message{
 				Type:    "backup_start",
 				Content: agentDrive,
 			})
@@ -67,7 +83,7 @@ func MountHandler(storeInstance *store.Store, wsHub *websockets.Server) http.Han
 		}
 
 		if r.Method == http.MethodDelete {
-			_ = wsHub.SendCommand(targetHostname, websockets.Message{
+			_ = storeInstance.WSHub.SendCommand(targetHostname, websockets.Message{
 				Type:    "backup_close",
 				Content: agentDrive,
 			})
