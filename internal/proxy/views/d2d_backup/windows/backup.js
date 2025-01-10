@@ -13,7 +13,7 @@ Ext.define('PBS.D2DManagement.BackupWindow', {
     },
 
     title: gettext('Backup'),
-    url: `/api2/extjs/d2d/backup`,
+    url: pbsPlusBaseUrl + `/api2/extjs/d2d/backup`,
     showProgress: true,
     submitUrl: function(url, values) {
 	let id = values.id;

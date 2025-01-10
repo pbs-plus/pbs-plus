@@ -17,8 +17,8 @@ type LogRequest struct {
 	Level    string `json:"level"`
 }
 
-func AgentLogHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}

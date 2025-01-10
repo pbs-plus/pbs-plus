@@ -64,7 +64,7 @@ Ext.define('PBS.D2DManagement.PartialFilePanel', {
 	    model: 'pbs-model-partial-files',
 	    proxy: {
 		type: 'proxmox',
-		url: "/api2/json/d2d/partial-file",
+		url: pbsPlusBaseUrl + "/api2/json/d2d/partial-file",
 	    },
 	},
 	sorters: 'name',
@@ -89,8 +89,8 @@ Ext.define('PBS.D2DManagement.PartialFilePanel', {
 	},
 	{
 	    xtype: 'proxmoxStdRemoveButton',
-	    baseurl: '/api2/extjs/config/d2d-partial-file',
-      getUrl: (rec) => `/config/d2d-partial-file/${encodeURIComponent(rec.getId())}`,
+	    baseurl: pbsPlusBaseUrl + '/api2/extjs/config/d2d-partial-file',
+      getUrl: (rec) => pbsPlusBaseUrl + `/config/d2d-partial-file/${encodeURIComponent(rec.getId())}`,
 	    callback: 'reload',
 	},
     ],

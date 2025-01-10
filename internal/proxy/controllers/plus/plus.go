@@ -7,15 +7,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
-func VersionHandler(storeInstance *store.Store, version string) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func MountHandler(storeInstance *store.Store, wsHub *websockets.Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
@@ -23,26 +26,86 @@ func VersionHandler(storeInstance *store.Store, version string) func(http.Respon
 			return
 		}
 
-		if r.Method == http.MethodGet {
+		if !utils.IsRequestFromSelf(r) {
+			http.Error(w, "authentication failed", http.StatusUnauthorized)
+			return
+		}
 
-			toReturn := VersionResponse{
-				Version: version,
+		targetHostname := r.PathValue("target")
+		agentDrive := r.PathValue("drive")
+
+		if r.Method == http.MethodPost {
+			broadcast, err := wsHub.SendCommandWithBroadcast(targetHostname, websockets.Message{
+				Type:    "backup_start",
+				Content: agentDrive,
+			})
+			if err != nil {
+				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> %v", err), http.StatusInternalServerError)
+				return
 			}
 
-			proxy.ExtractTokenFromRequest(r, storeInstance)
+			listener := broadcast.Subscribe()
+			defer broadcast.CancelSubscription(listener)
+
+		respWait:
+			for {
+				select {
+				case resp := <-listener:
+					if resp.Type == "response-backup_start" && resp.Content == "Acknowledged: "+agentDrive {
+						break respWait
+					}
+				case <-time.After(time.Second * 15):
+					http.Error(w, fmt.Sprintf("MountHandler: Failed to receive backup acknowledgement from target -> %v", err), http.StatusInternalServerError)
+					return
+				}
+			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(toReturn)
+			json.NewEncoder(w).Encode(map[string]string{"status": "true"})
+
+			return
+		}
+
+		if r.Method == http.MethodDelete {
+			_ = wsHub.SendCommand(targetHostname, websockets.Message{
+				Type:    "backup_close",
+				Content: agentDrive,
+			})
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": "true"})
 
 			return
 		}
 	}
 }
 
-func DownloadBinary(storeInstance *store.Store, version string) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if err := storeInstance.CheckProxyAuth(r); err != nil {
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
+		}
+
+		toReturn := VersionResponse{
+			Version: version,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(toReturn)
+	}
+}
+
+func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
 		}
 
 		if err := storeInstance.CheckProxyAuth(r); err != nil {
@@ -62,11 +125,7 @@ func DownloadBinary(storeInstance *store.Store, version string) func(http.Respon
 		}
 
 		// Copy headers from the original request to the proxy request
-		for name, values := range r.Header {
-			for _, value := range values {
-				req.Header.Add(name, value)
-			}
-		}
+		copyHeaders(r.Header, req.Header)
 
 		// Perform the request
 		client := &http.Client{}
@@ -78,17 +137,22 @@ func DownloadBinary(storeInstance *store.Store, version string) func(http.Respon
 		defer resp.Body.Close()
 
 		// Copy headers from the upstream response to the client response
-		for name, values := range resp.Header {
-			for _, value := range values {
-				w.Header().Add(name, value)
-			}
-		}
+		copyHeaders(resp.Header, w.Header())
 
 		// Set the status code and copy the body
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			http.Error(w, "failed to write response body", http.StatusInternalServerError)
 			return
+		}
+	}
+}
+
+// copyHeaders is a helper function to copy headers from one Header map to another
+func copyHeaders(src, dst http.Header) {
+	for name, values := range src {
+		for _, value := range values {
+			dst.Add(name, value)
 		}
 	}
 }

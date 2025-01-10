@@ -76,7 +76,7 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	    model: 'pbs-model-targets',
 	    proxy: {
 		type: 'proxmox',
-		url: "/api2/json/d2d/target",
+		url: pbsPlusBaseUrl + "/api2/json/d2d/target",
 	    },
 	},
 	sorters: 'name',
@@ -101,7 +101,7 @@ Ext.define('PBS.D2DManagement.TargetPanel', {
 	},
 	{
 	    xtype: 'proxmoxStdRemoveButton',
-	    baseurl: '/api2/extjs/config/d2d-target',
+	    baseurl: pbsPlusBaseUrl + '/api2/extjs/config/d2d-target',
 	    callback: 'reload',
 	},
     ],

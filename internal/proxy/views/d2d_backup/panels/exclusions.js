@@ -64,7 +64,7 @@ Ext.define('PBS.D2DManagement.ExclusionPanel', {
 	    model: 'pbs-model-exclusions',
 	    proxy: {
 		type: 'proxmox',
-		url: "/api2/json/d2d/exclusion",
+		url: pbsPlusBaseUrl + "/api2/json/d2d/exclusion",
 	    },
 	},
 	sorters: 'name',
@@ -89,8 +89,8 @@ Ext.define('PBS.D2DManagement.ExclusionPanel', {
 	},
 	{
 	    xtype: 'proxmoxStdRemoveButton',
-	    baseurl: '/api2/extjs/config/d2d-exclusion',
-      getUrl: (rec) => `/config/d2d-exclusion/${encodeURIComponent(rec.getId())}`,
+	    baseurl: pbsPlusBaseUrl + '/api2/extjs/config/d2d-exclusion',
+      getUrl: (rec) => pbsPlusBaseUrl + `/config/d2d-exclusion/${encodeURIComponent(rec.getId())}`,
 	    callback: 'reload',
 	},
     ],

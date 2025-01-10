@@ -8,14 +8,13 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
-	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-func D2DJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
@@ -43,15 +42,13 @@ func D2DJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.R
 			Digest: digest,
 		}
 
-		proxy.ExtractTokenFromRequest(r, storeInstance)
-
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(toReturn)
 	}
 }
 
-func ExtJsJobRunHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := JobRunResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -63,7 +60,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) func(http.ResponseWriter, *h
 			return
 		}
 
-		job, err := storeInstance.GetJob(pathVar["job"])
+		job, err := storeInstance.GetJob(r.PathValue("job"))
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -77,8 +74,6 @@ func ExtJsJobRunHandler(storeInstance *store.Store) func(http.ResponseWriter, *h
 
 		w.Header().Set("Content-Type", "application/json")
 
-		proxy.ExtractTokenFromRequest(r, storeInstance)
-
 		response.Data = task.UPID
 		response.Status = http.StatusOK
 		response.Success = true
@@ -86,8 +81,8 @@ func ExtJsJobRunHandler(storeInstance *store.Store) func(http.ResponseWriter, *h
 	}
 }
 
-func ExtJsJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := JobConfigResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -140,16 +135,14 @@ func ExtJsJobHandler(storeInstance *store.Store) func(http.ResponseWriter, *http
 			return
 		}
 
-		proxy.ExtractTokenFromRequest(r, storeInstance)
-
 		response.Status = http.StatusOK
 		response.Success = true
 		json.NewEncoder(w).Encode(response)
 	}
 }
 
-func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := JobConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -164,7 +157,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter,
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodPut {
-			job, err := storeInstance.GetJob(pathVar["job"])
+			job, err := storeInstance.GetJob(r.PathValue("job"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -246,8 +239,6 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter,
 				return
 			}
 
-			proxy.ExtractTokenFromRequest(r, storeInstance)
-
 			response.Status = http.StatusOK
 			response.Success = true
 			json.NewEncoder(w).Encode(response)
@@ -256,13 +247,11 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter,
 		}
 
 		if r.Method == http.MethodGet {
-			job, err := storeInstance.GetJob(pathVar["job"])
+			job, err := storeInstance.GetJob(r.PathValue("job"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-
-			proxy.ExtractTokenFromRequest(r, storeInstance)
 
 			response.Status = http.StatusOK
 			response.Success = true
@@ -273,13 +262,11 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) func(http.ResponseWriter,
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.DeleteJob(pathVar["job"])
+			err := storeInstance.DeleteJob(r.PathValue("job"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-
-			proxy.ExtractTokenFromRequest(r, storeInstance)
 
 			response.Status = http.StatusOK
 			response.Success = true

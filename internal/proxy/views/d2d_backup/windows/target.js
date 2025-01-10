@@ -10,7 +10,7 @@ Ext.define('PBS.D2DManagement.TargetEditWindow', {
 	let me = this;
 
 	let contentid = initialConfig.contentid;
-	let baseurl = '/api2/extjs/config/d2d-target';
+	let baseurl = pbsPlusBaseUrl + '/api2/extjs/config/d2d-target';
 
 	me.isCreate = !contentid;
 	me.url = contentid ? `${baseurl}/${encodeURIComponent(contentid)}` : baseurl;

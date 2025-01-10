@@ -6,8 +6,6 @@ import (
 	"flag"
 	"log"
 	"net/http"
-	"net/url"
-	"regexp"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
@@ -17,58 +15,13 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/partial_files"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/plus"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/targets"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/middlewares"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
 var Version = "v0.0.0"
-
-// routeHandler holds a pattern and handler that accepts path variables
-type routeHandler struct {
-	pattern *regexp.Regexp
-	handler func(http.ResponseWriter, *http.Request, map[string]string)
-}
-
-// CustomRouter handles dynamic routes with path variables and a default handler
-type CustomRouter struct {
-	routes         []routeHandler
-	defaultHandler http.Handler
-}
-
-// AddRoute registers a route with pattern and handler supporting path variables
-func (cr *CustomRouter) AddRoute(pattern string, handler func(http.ResponseWriter, *http.Request, map[string]string)) {
-	// Convert "{variable}" segments to named capture groups in regex
-	regexPattern := regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`).ReplaceAllString(pattern, `(?P<$1>[^/]+|.+?)`)
-	cr.routes = append(cr.routes, routeHandler{
-		pattern: regexp.MustCompile("^" + regexPattern + "$"),
-		handler: handler,
-	})
-}
-
-// ServeHTTP checks routes for a match, extracts path variables, and calls handlers
-func (cr *CustomRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	for _, route := range cr.routes {
-		if matches := route.pattern.FindStringSubmatch(r.URL.Path); matches != nil {
-			// Extract variables from matched path
-			vars := make(map[string]string)
-			for i, name := range route.pattern.SubexpNames() {
-				if i > 0 && name != "" {
-					value, err := url.QueryUnescape(matches[i])
-					if err != nil {
-						http.Error(w, "Invalid URL encoding", http.StatusBadRequest)
-						return
-					}
-					vars[name] = value
-				}
-			}
-			route.handler(w, r, vars)
-			return
-		}
-	}
-	// Use the default handler if no routes match
-	cr.defaultHandler.ServeHTTP(w, r)
-}
 
 func main() {
 	s, err := syslog.InitializeLogger()
@@ -86,26 +39,18 @@ func main() {
 		return
 	}
 
-	targetURL, err := url.Parse(store.ProxyTargetURL)
-	if err != nil {
-		s.Errorf("Failed to parse target URL: %v", err)
-	}
-
-	proxy := proxy.CreateProxy(targetURL, storeInstance)
-
 	token, err := store.GetAPITokenFromFile()
 	if err != nil {
 		s.Error(err)
 	}
-
 	storeInstance.APIToken = token
 
-	err = storeInstance.CreateTables()
-	if err != nil {
+	if err = storeInstance.CreateTables(); err != nil {
 		s.Errorf("Failed to create store tables: %v", err)
 		return
 	}
 
+	// Handle single job execution
 	if *jobRun != "" {
 		if storeInstance.APIToken == nil {
 			return
@@ -122,44 +67,55 @@ func main() {
 			return
 		}
 
-		_, err = backup.RunBackup(jobTask, storeInstance)
-		if err != nil {
+		if _, err = backup.RunBackup(jobTask, storeInstance); err != nil {
 			s.Error(err)
 		}
-
 		return
 	}
 
-	// Set up router with routes and a reverse proxy as the default handler
-	router := &CustomRouter{
-		defaultHandler: proxy, // Set proxy as fallback for unmatched paths
+	pbsJsLocation := "/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js"
+	err = proxy.MountCompiledJS(pbsJsLocation)
+	if err != nil {
+		s.Errorf("Modified JS mounting failed: %v", err)
+		return
 	}
 
-	// Register routes
-	router.AddRoute("/api2/json/plus/version", plus.VersionHandler(storeInstance, Version))
-	router.AddRoute("/api2/json/plus/binary", plus.DownloadBinary(storeInstance, Version))
-	router.AddRoute("/api2/json/d2d/backup", jobs.D2DJobHandler(storeInstance))
-	router.AddRoute("/api2/json/d2d/target", targets.D2DTargetHandler(storeInstance))
-	router.AddRoute("/api2/json/d2d/target/agent", targets.D2DTargetAgentHandler(storeInstance))
-	router.AddRoute("/api2/json/d2d/exclusion", exclusions.D2DExclusionHandler(storeInstance))
-	router.AddRoute("/api2/json/d2d/partial-file", partial_files.D2DPartialFileHandler(storeInstance))
-	router.AddRoute("/api2/json/d2d/agent-log", agents.AgentLogHandler(storeInstance))
-	router.AddRoute("/api2/extjs/d2d/backup/{job}", jobs.ExtJsJobRunHandler(storeInstance))
-	router.AddRoute("/api2/extjs/config/d2d-target", targets.ExtJsTargetHandler(storeInstance))
-	router.AddRoute("/api2/extjs/config/d2d-target/{target}", targets.ExtJsTargetSingleHandler(storeInstance))
-	router.AddRoute("/api2/extjs/config/d2d-exclusion", exclusions.ExtJsExclusionHandler(storeInstance))
-	router.AddRoute("/api2/extjs/config/d2d-exclusion/{exclusion}", exclusions.ExtJsExclusionSingleHandler(storeInstance))
-	router.AddRoute("/api2/extjs/config/d2d-partial-file", partial_files.ExtJsPartialFileHandler(storeInstance))
-	router.AddRoute("/api2/extjs/config/d2d-partial-file/{partial_file}", partial_files.ExtJsPartialFileSingleHandler(storeInstance))
-	router.AddRoute("/api2/extjs/config/disk-backup-job", jobs.ExtJsJobHandler(storeInstance))
-	router.AddRoute("/api2/extjs/config/disk-backup-job/{job}", jobs.ExtJsJobSingleHandler(storeInstance))
-	router.AddRoute("/plus/ws", plus.WSHandler(storeInstance, wsHub))
+	defer func() {
+		_ = proxy.UnmountCompiledJS(pbsJsLocation)
+	}()
+
+	// Initialize router with Go 1.22's new pattern syntax
+	mux := http.NewServeMux()
+
+	// API routes
+	mux.HandleFunc("/api2/json/plus/version", middlewares.AcquireToken(storeInstance, plus.VersionHandler(storeInstance, Version)))
+	mux.HandleFunc("/api2/json/plus/binary", middlewares.AcquireToken(storeInstance, plus.DownloadBinary(storeInstance, Version)))
+	mux.HandleFunc("/api2/json/d2d/backup", middlewares.AcquireToken(storeInstance, jobs.D2DJobHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/d2d/target", middlewares.AcquireToken(storeInstance, targets.D2DTargetHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/d2d/target/agent", middlewares.AcquireToken(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/d2d/exclusion", middlewares.AcquireToken(storeInstance, exclusions.D2DExclusionHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/d2d/partial-file", middlewares.AcquireToken(storeInstance, partial_files.D2DPartialFileHandler(storeInstance)))
+	mux.HandleFunc("/api2/json/d2d/agent-log", middlewares.AcquireToken(storeInstance, agents.AgentLogHandler(storeInstance)))
+
+	// ExtJS routes with path parameters
+	mux.HandleFunc("/api2/extjs/d2d/backup/{job}", middlewares.AcquireToken(storeInstance, jobs.ExtJsJobRunHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-target", middlewares.AcquireToken(storeInstance, targets.ExtJsTargetHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-target/{target}", middlewares.AcquireToken(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-exclusion", middlewares.AcquireToken(storeInstance, exclusions.ExtJsExclusionHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", middlewares.AcquireToken(storeInstance, exclusions.ExtJsExclusionSingleHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-partial-file", middlewares.AcquireToken(storeInstance, partial_files.ExtJsPartialFileHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/d2d-partial-file/{partial_file}", middlewares.AcquireToken(storeInstance, partial_files.ExtJsPartialFileSingleHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/disk-backup-job", middlewares.AcquireToken(storeInstance, jobs.ExtJsJobHandler(storeInstance)))
+	mux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", middlewares.AcquireToken(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance)))
+
+	// WebSocket-related routes
+	mux.HandleFunc("/plus/ws", plus.WSHandler(storeInstance, wsHub))
+	mux.HandleFunc("/plus/mount/{target}/{drive}", middlewares.AcquireToken(storeInstance, plus.MountHandler(storeInstance, wsHub)))
 
 	s.Info("Starting proxy server on :8008")
-	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, router); err != nil {
+	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, mux); err != nil {
 		if s != nil {
 			s.Errorf("Server failed: %v", err)
-			return
 		}
 	}
 }

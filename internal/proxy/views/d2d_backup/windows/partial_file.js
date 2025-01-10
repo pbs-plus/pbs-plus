@@ -10,7 +10,7 @@ Ext.define('PBS.D2DManagement.PartialFileEditWindow', {
 	let me = this;
 
 	let contentid = initialConfig.contentid;
-	let baseurl = '/api2/extjs/config/d2d-partial-file';
+	let baseurl = pbsPlusBaseUrl + '/api2/extjs/config/d2d-partial-file';
 
 	me.isCreate = !contentid;
 	me.url = contentid ? `${baseurl}/${encodeURIComponent(contentid)}` : baseurl;

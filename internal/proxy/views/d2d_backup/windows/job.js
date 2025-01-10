@@ -16,7 +16,7 @@ Ext.define('PBS.D2DManagement.BackupJobEdit', {
     cbindData: function(initialConfig) {
 	let me = this;
 
-	let baseurl = '/api2/extjs/config/disk-backup-job';
+	let baseurl = pbsPlusBaseUrl + '/api2/extjs/config/disk-backup-job';
 	let id = initialConfig.id;
 
 	me.isCreate = !id;

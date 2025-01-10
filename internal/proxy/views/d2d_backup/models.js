@@ -7,7 +7,7 @@ Ext.define('pbs-disk-backup-job-status', {
     idProperty: 'id',
     proxy: {
 	type: 'proxmox',
-	url: '/api2/json/d2d/backup',
+	url: pbsPlusBaseUrl + '/api2/json/d2d/backup',
     },
 });
 

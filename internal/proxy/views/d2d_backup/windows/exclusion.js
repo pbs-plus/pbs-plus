@@ -10,7 +10,7 @@ Ext.define('PBS.D2DManagement.ExclusionEditWindow', {
 	let me = this;
 
 	let contentid = initialConfig.contentid;
-	let baseurl = '/api2/extjs/config/d2d-exclusion';
+	let baseurl = pbsPlusBaseUrl + '/api2/extjs/config/d2d-exclusion';
 
 	me.isCreate = !contentid;
 	me.url = contentid ? `${baseurl}/${encodeURIComponent(contentid)}` : baseurl;

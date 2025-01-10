@@ -7,14 +7,13 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-func D2DPartialFileHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func D2DPartialFileHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
@@ -42,8 +41,6 @@ func D2DPartialFileHandler(storeInstance *store.Store) func(http.ResponseWriter,
 				Digest: digest,
 			}
 
-			proxy.ExtractTokenFromRequest(r, storeInstance)
-
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(toReturn)
 
@@ -52,8 +49,8 @@ func D2DPartialFileHandler(storeInstance *store.Store) func(http.ResponseWriter,
 	}
 }
 
-func ExtJsPartialFileHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func ExtJsPartialFileHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := PartialFileConfigResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -83,16 +80,14 @@ func ExtJsPartialFileHandler(storeInstance *store.Store) func(http.ResponseWrite
 			return
 		}
 
-		proxy.ExtractTokenFromRequest(r, storeInstance)
-
 		response.Status = http.StatusOK
 		response.Success = true
 		json.NewEncoder(w).Encode(response)
 	}
 }
 
-func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.ResponseWriter, *http.Request, map[string]string) {
-	return func(w http.ResponseWriter, r *http.Request, pathVar map[string]string) {
+func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := PartialFileConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -112,7 +107,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 				return
 			}
 
-			pathDecoded, err := url.QueryUnescape(pathVar["partial_file"])
+			pathDecoded, err := url.QueryUnescape(r.PathValue("partial_file"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -148,8 +143,6 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 				return
 			}
 
-			proxy.ExtractTokenFromRequest(r, storeInstance)
-
 			response.Status = http.StatusOK
 			response.Success = true
 			json.NewEncoder(w).Encode(response)
@@ -158,7 +151,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 		}
 
 		if r.Method == http.MethodGet {
-			pathDecoded, err := url.QueryUnescape(pathVar["partial_file"])
+			pathDecoded, err := url.QueryUnescape(r.PathValue("partial_file"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -170,8 +163,6 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 				return
 			}
 
-			proxy.ExtractTokenFromRequest(r, storeInstance)
-
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = partial_file
@@ -181,7 +172,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 		}
 
 		if r.Method == http.MethodDelete {
-			pathDecoded, err := url.QueryUnescape(pathVar["partial_file"])
+			pathDecoded, err := url.QueryUnescape(r.PathValue("partial_file"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -192,8 +183,6 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(http.Respons
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-
-			proxy.ExtractTokenFromRequest(r, storeInstance)
 
 			response.Status = http.StatusOK
 			response.Success = true
