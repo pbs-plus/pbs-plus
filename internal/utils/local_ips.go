@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -53,5 +54,41 @@ func IsRequestFromSelf(r *http.Request) bool {
 			return true
 		}
 	}
+	return false
+}
+
+func OriginatedFromSelf(r *http.Request) bool {
+	referer := r.Referer()
+
+	parsedUrl, err := url.Parse(referer)
+	if err != nil {
+		return false
+	}
+
+	// Check if the hostname is an IP address
+	hostname := parsedUrl.Hostname()
+	ip := net.ParseIP(hostname)
+	if ip == nil {
+		ips, err := net.LookupIP(hostname)
+		if err != nil {
+			fmt.Println("Error resolving hostname:", err)
+			return false
+		}
+		ip = ips[0]
+	}
+
+	localIPs, err := GetLocalIPs()
+	if err != nil {
+		fmt.Println("Error fetching local IPs:", err)
+		return false
+	}
+
+	for _, localIP := range localIPs {
+		// Compare the resolved IP with local IPs
+		if ip.String() == localIP {
+			return true
+		}
+	}
+
 	return false
 }
