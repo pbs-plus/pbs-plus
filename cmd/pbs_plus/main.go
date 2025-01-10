@@ -80,8 +80,16 @@ func main() {
 		return
 	}
 
+	proxmoxLibLocation := "/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js"
+	err = proxy.MountModdedProxmoxLib(proxmoxLibLocation)
+	if err != nil {
+		s.Errorf("Modified JS mounting failed: %v", err)
+		return
+	}
+
 	defer func() {
-		_ = proxy.UnmountCompiledJS(pbsJsLocation)
+		_ = proxy.UnmountModdedFile(pbsJsLocation)
+		_ = proxy.UnmountModdedFile(proxmoxLibLocation)
 	}()
 
 	// Initialize router with Go 1.22's new pattern syntax
