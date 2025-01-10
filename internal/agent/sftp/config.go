@@ -53,7 +53,7 @@ func InitializeSFTPConfig(driveLetter string) error {
 		return fmt.Errorf("InitializeSFTPConfig: unable to get server url -> %w", err)
 	}
 
-	newSftpConfig := SFTPConfig{
+	newSftpConfig := &SFTPConfig{
 		BasePath: driveLetter,
 		Server:   server,
 	}

@@ -35,7 +35,7 @@ func NewSFTPSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, dri
 		return nil
 	}
 
-	sftpConfig, isValid := anyConfig.(SFTPConfig)
+	sftpConfig, isValid := anyConfig.(*SFTPConfig)
 	if !isValid {
 		cancel()
 		return nil
@@ -46,7 +46,7 @@ func NewSFTPSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, dri
 		Snapshot:    snapshot,
 		DriveLetter: driveLetter,
 		ctxCancel:   cancel,
-		Config:      &sftpConfig,
+		Config:      sftpConfig,
 	}
 }
 
