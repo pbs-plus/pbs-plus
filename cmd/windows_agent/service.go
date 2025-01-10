@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -60,14 +61,14 @@ func (p *agentService) Start(s service.Service) error {
 
 func (p *agentService) startPing() {
 	ping := func() {
-		var pingResp PingResp
-		_, pingErr := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/ping", nil, &pingResp)
+		_, pingErr := agent.ProxmoxHTTPRequest(http.MethodGet, "/", nil, nil)
 		if pingErr != nil {
+			if strings.Contains(pingErr.Error(), "404 page not found") {
+				agent.SetStatus("Connected")
+				return
+			}
+
 			agent.SetStatus(fmt.Sprintf("Error - (%s)", pingErr.Error()))
-		} else if !pingResp.Data.Pong {
-			agent.SetStatus("Error - server did not return expected data")
-		} else {
-			agent.SetStatus("Connected")
 		}
 	}
 
