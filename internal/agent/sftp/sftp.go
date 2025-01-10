@@ -29,11 +29,24 @@ type SFTPSession struct {
 func NewSFTPSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string) *SFTPSession {
 	cancellableCtx, cancel := context.WithCancel(ctx)
 
+	anyConfig, ok := InitializedConfigs.Load(driveLetter)
+	if !ok {
+		cancel()
+		return nil
+	}
+
+	sftpConfig, isValid := anyConfig.(SFTPConfig)
+	if !isValid {
+		cancel()
+		return nil
+	}
+
 	return &SFTPSession{
 		Context:     cancellableCtx,
 		Snapshot:    snapshot,
 		DriveLetter: driveLetter,
 		ctxCancel:   cancel,
+		Config:      &sftpConfig,
 	}
 }
 
@@ -57,17 +70,6 @@ func (s *SFTPSession) setupListener(port string) error {
 
 func (s *SFTPSession) Serve(errChan chan string) {
 	defer s.Close()
-
-	sftpConfig, err := InitializeSFTPConfig(s.DriveLetter)
-	if err != nil {
-		errChan <- fmt.Sprintf("Unable to initialize SFTP config: %v", err)
-		return
-	}
-
-	if err := sftpConfig.PopulateKeys(); err != nil {
-		errChan <- fmt.Sprintf("Unable to populate SFTP keys: %v", err)
-		return
-	}
 
 	port, err := utils.DriveLetterPort([]rune(s.DriveLetter)[0])
 	if err != nil {
@@ -95,10 +97,10 @@ func (s *SFTPSession) Serve(errChan chan string) {
 		}
 	}
 
-	s.acceptConnections(errChan, sftpConfig)
+	s.acceptConnections(errChan)
 }
 
-func (s *SFTPSession) acceptConnections(errChan chan string, sftpConfig *SFTPConfig) {
+func (s *SFTPSession) acceptConnections(errChan chan string) {
 	for {
 		select {
 		case <-s.Context.Done():
@@ -111,20 +113,20 @@ func (s *SFTPSession) acceptConnections(errChan chan string, sftpConfig *SFTPCon
 				}
 				return
 			}
-			go s.handleConnection(errChan, conn, sftpConfig)
+			go s.handleConnection(errChan, conn)
 		}
 	}
 }
 
-func (s *SFTPSession) handleConnection(errChan chan string, conn net.Conn, sftpConfig *SFTPConfig) {
+func (s *SFTPSession) handleConnection(errChan chan string, conn net.Conn) {
 	defer conn.Close()
 
-	if err := s.validateConnection(conn, sftpConfig); err != nil {
+	if err := s.validateConnection(conn); err != nil {
 		errChan <- err.Error()
 		return
 	}
 
-	sconn, chans, reqs, err := ssh.NewServerConn(conn, sftpConfig.ServerConfig)
+	sconn, chans, reqs, err := ssh.NewServerConn(conn, s.Config.ServerConfig)
 	if err != nil {
 		errChan <- fmt.Sprintf("Failed to perform SSH handshake: %v", err)
 		return
@@ -135,8 +137,8 @@ func (s *SFTPSession) handleConnection(errChan chan string, conn net.Conn, sftpC
 	s.handleChannels(errChan, chans)
 }
 
-func (s *SFTPSession) validateConnection(conn net.Conn, sftpConfig *SFTPConfig) error {
-	server, err := url.Parse(sftpConfig.Server)
+func (s *SFTPSession) validateConnection(conn net.Conn) error {
+	server, err := url.Parse(s.Config.Server)
 	if err != nil {
 		return fmt.Errorf("failed to parse server IP: %w", err)
 	}

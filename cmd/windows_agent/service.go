@@ -21,6 +21,7 @@ import (
 	"github.com/minio/selfupdate"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 	"golang.org/x/sys/windows/registry"
@@ -184,6 +185,12 @@ func (p *agentService) run() {
 		driveLetters := []string{}
 		for _, drive := range drives {
 			driveLetters = append(driveLetters, drive)
+
+			err := sftp.InitializeSFTPConfig(drive)
+			if err != nil {
+				logger.Errorf("Unable to initialize SFTP config: %v", err)
+				return
+			}
 		}
 		hostname, _ := os.Hostname()
 		reqBody, err := json.Marshal(&AgentDrivesRequest{
