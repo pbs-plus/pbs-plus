@@ -2,95 +2,112 @@ package websockets
 
 import (
 	"context"
-	"time"
+	"sync"
 )
 
 type BroadcastServer interface {
 	Subscribe() <-chan Message
 	CancelSubscription(<-chan Message)
 	Close()
+	Broadcast(msg Message) error
 }
 
 type broadcastServer struct {
-	source         <-chan Message
-	listeners      []chan Message
+	sync.RWMutex
+	listeners      map[chan Message]struct{}
 	addListener    chan chan Message
 	removeListener chan (<-chan Message)
 	cancel         context.CancelFunc
+	done           chan struct{}
+}
+
+func NewBroadcastServer(ctx context.Context) BroadcastServer {
+	ctxLocal, ctxCancel := context.WithCancel(ctx)
+
+	service := &broadcastServer{
+		listeners:      make(map[chan Message]struct{}),
+		addListener:    make(chan chan Message),
+		removeListener: make(chan (<-chan Message)),
+		cancel:         ctxCancel,
+		done:           make(chan struct{}),
+	}
+
+	go service.serve(ctxLocal)
+	return service
 }
 
 func (s *broadcastServer) Subscribe() <-chan Message {
-	newListener := make(chan Message, 10) // Buffered channel
+	newListener := make(chan Message, 32) // Increased buffer for better performance
 	s.addListener <- newListener
 	return newListener
 }
 
 func (s *broadcastServer) CancelSubscription(channel <-chan Message) {
-	s.removeListener <- channel
+	s.Lock()
+	for ch := range s.listeners {
+		if ch == channel {
+			delete(s.listeners, ch)
+			close(ch)
+			break
+		}
+	}
+	s.Unlock()
 }
 
 func (s *broadcastServer) Close() {
 	s.cancel()
+	<-s.done // Wait for serve goroutine to finish
+}
+
+func (s *broadcastServer) Broadcast(msg Message) error {
+	s.RLock()
+	deadListeners := make([]chan Message, 0)
+
+	// Attempt to send to all listeners
+	for listener := range s.listeners {
+		select {
+		case listener <- msg:
+			// Message sent successfully
+		default:
+			// Channel is full or stuck
+			deadListeners = append(deadListeners, listener)
+		}
+	}
+	s.RUnlock()
+
+	// Clean up dead listeners
+	if len(deadListeners) > 0 {
+		s.Lock()
+		for _, listener := range deadListeners {
+			delete(s.listeners, listener)
+			close(listener)
+		}
+		s.Unlock()
+	}
+
+	return nil
 }
 
 func (s *broadcastServer) serve(ctx context.Context) {
 	defer func() {
-		for _, listener := range s.listeners {
-			if listener != nil {
-				close(listener)
-			}
+		s.Lock()
+		for listener := range s.listeners {
+			close(listener)
 		}
+		clear(s.listeners)
+		s.Unlock()
+		close(s.done)
 	}()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+
 		case newListener := <-s.addListener:
-			s.listeners = append(s.listeners, newListener)
-		case listenerToRemove := <-s.removeListener:
-			for i, ch := range s.listeners {
-				if ch == listenerToRemove {
-					s.listeners[i] = s.listeners[len(s.listeners)-1]
-					s.listeners = s.listeners[:len(s.listeners)-1]
-					close(ch)
-					break
-				}
-			}
-		case val, ok := <-s.source:
-			if !ok {
-				return
-			}
-			// Send to all listeners with timeout
-			for i, listener := range s.listeners {
-				if listener == nil {
-					continue
-				}
-				select {
-				case listener <- val:
-					// Message sent successfully
-				case <-time.After(100 * time.Millisecond):
-					// Listener is stuck, remove it
-					s.listeners[i] = s.listeners[len(s.listeners)-1]
-					s.listeners = s.listeners[:len(s.listeners)-1]
-					close(listener)
-				case <-ctx.Done():
-					return
-				}
-			}
+			s.Lock()
+			s.listeners[newListener] = struct{}{}
+			s.Unlock()
 		}
 	}
-}
-
-func NewBroadcastServer(ctx context.Context, source <-chan Message) BroadcastServer {
-	ctxLocal, ctxCancel := context.WithCancel(ctx)
-	service := &broadcastServer{
-		source:         source,
-		listeners:      make([]chan Message, 0),
-		addListener:    make(chan chan Message),
-		removeListener: make(chan (<-chan Message)),
-		cancel:         ctxCancel,
-	}
-	go service.serve(ctxLocal)
-	return service
 }
