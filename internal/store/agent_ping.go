@@ -17,7 +17,7 @@ func (storeInstance *Store) AgentPing(agentTarget *Target) (bool, error) {
 		return false, nil
 	}
 
-	broadcast, err := storeInstance.WSHub.SendCommandWithBroadcast(agentHostname, websockets.Message{
+	err := storeInstance.WSHub.SendCommand(agentHostname, websockets.Message{
 		Type:    "ping",
 		Content: "ping",
 	})
@@ -25,8 +25,8 @@ func (storeInstance *Store) AgentPing(agentTarget *Target) (bool, error) {
 		return false, err
 	}
 
-	listener := broadcast.Subscribe()
-	defer broadcast.CancelSubscription(listener)
+	listener := storeInstance.WSHub.Broadcast.Subscribe()
+	defer storeInstance.WSHub.Broadcast.CancelSubscription(listener)
 
 	for {
 		select {

@@ -1,6 +1,7 @@
 package websockets
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -19,15 +20,18 @@ type Message struct {
 type Client struct {
 	ID        string
 	Conn      *websocket.Conn
-	Broadcast BroadcastServer
-	send      chan Message  // Buffered channel for outbound messages
-	done      chan struct{} // Channel to signal connection closure
-	mutex     sync.Mutex    // Mutex for conn operations
+	send      chan Message
+	broadcast BroadcastServer
+	done      chan struct{}
+	mutex     sync.Mutex
 }
 
 type Server struct {
 	Clients    map[string]*Client
-	ClientsMux sync.RWMutex // Using RWMutex for better concurrency
+	ClientsMux sync.RWMutex
+	// Add broadcast related fields
+	broadcastChan chan Message
+	Broadcast     BroadcastServer
 }
 
 var upgrader = websocket.Upgrader{
@@ -39,28 +43,84 @@ var upgrader = websocket.Upgrader{
 }
 
 func NewServer() *Server {
-	return &Server{
-		Clients: make(map[string]*Client),
+	s := &Server{
+		Clients:       make(map[string]*Client),
+		broadcastChan: make(chan Message, 100),
 	}
+	// Initialize the broadcast server
+	s.Broadcast = NewBroadcastServer(context.Background())
+	return s
 }
 
 func NewClient(id string, conn *websocket.Conn, broadcast BroadcastServer) *Client {
 	return &Client{
 		ID:        id,
 		Conn:      conn,
-		Broadcast: broadcast,
-		send:      make(chan Message, 256), // Buffered channel to prevent blocking
+		send:      make(chan Message, 256),
+		broadcast: broadcast,
 		done:      make(chan struct{}),
 	}
 }
 
-func (c *Client) readPump(msgs chan Message) {
+func (s *Server) HandleClientConnection(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Error upgrading connection: %v", err)
+		return
+	}
+
+	var initMessage Message
+	err = conn.ReadJSON(&initMessage)
+	if err != nil || initMessage.Type != "init" {
+		log.Printf("Invalid initialization message: %v", err)
+		conn.Close()
+		return
+	}
+
+	clientID := initMessage.Content
+	client := NewClient(clientID, conn, s.Broadcast)
+
+	// Subscribe to broadcasts
+	subscription := s.Broadcast.Subscribe()
+
+	s.ClientsMux.Lock()
+	s.Clients[clientID] = client
+	s.ClientsMux.Unlock()
+
+	// Start broadcast handler
+	go func() {
+		defer s.Broadcast.CancelSubscription(subscription)
+		for {
+			select {
+			case msg := <-subscription:
+				select {
+				case client.send <- msg:
+					// Message queued successfully
+				default:
+					// Client's buffer is full, consider disconnecting
+					log.Printf("Client %s message buffer full, dropping message", clientID)
+				}
+			case <-client.done:
+				return
+			}
+		}
+	}()
+
+	// Start the read/write pumps
+	go client.readPump(s)
+	go client.writePump()
+
+	log.Printf("Client connected: %s", clientID)
+}
+
+func (c *Client) readPump(s *Server) {
 	defer func() {
 		close(c.done)
+		s.RemoveClient(c.ID)
 		c.Conn.Close()
 	}()
 
-	c.Conn.SetReadLimit(512 * 1024) // 512KB max message size
+	c.Conn.SetReadLimit(512 * 1024)
 	c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.Conn.SetPongHandler(func(string) error {
 		c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -76,15 +136,21 @@ func (c *Client) readPump(msgs chan Message) {
 			}
 			return
 		}
-		msg.ClientID = c.ID
-		msgs <- msg
 
-		log.Printf("Received message from %s: Type=%s, Content=%s", msg.ClientID, msg.Type, msg.Content)
+		msg.ClientID = c.ID
+
+		// Send to broadcast server
+		if err := c.broadcast.Broadcast(msg); err != nil {
+			log.Printf("Error broadcasting message: %v", err)
+		}
+
+		// Handle direct messages or other types
+		log.Printf("Received message from %s: %s", c.ID, msg.Content)
 	}
 }
 
 func (c *Client) writePump() {
-	ticker := time.NewTicker(54 * time.Second) // Send pings every 54 seconds
+	ticker := time.NewTicker(54 * time.Second)
 	defer func() {
 		ticker.Stop()
 		c.Conn.Close()
@@ -104,7 +170,6 @@ func (c *Client) writePump() {
 			c.mutex.Unlock()
 
 			if err != nil {
-				log.Printf("error writing message: %v", err)
 				return
 			}
 
@@ -123,35 +188,13 @@ func (c *Client) writePump() {
 	}
 }
 
-func (s *Server) HandleClientConnection(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("Error upgrading connection: %v", err)
-		return
-	}
-
-	var initMessage Message
-	err = conn.ReadJSON(&initMessage)
-	if err != nil || initMessage.Type != "init" {
-		log.Printf("Invalid initialization message: %v", err)
-		conn.Close()
-		return
-	}
-
-	msgs := make(chan Message)
-	broadcastServer := NewBroadcastServer(r.Context(), msgs)
-
-	clientID := initMessage.Content
-	client := NewClient(clientID, conn, broadcastServer)
-
+func (s *Server) RemoveClient(clientID string) {
 	s.ClientsMux.Lock()
-	s.Clients[clientID] = client
+	if client, ok := s.Clients[clientID]; ok {
+		delete(s.Clients, clientID)
+		close(client.send)
+	}
 	s.ClientsMux.Unlock()
-
-	go client.readPump(msgs)
-	go client.writePump()
-
-	log.Printf("Client connected: %s", clientID)
 }
 
 func (s *Server) SendCommand(clientID string, msg Message) error {
@@ -169,17 +212,4 @@ func (s *Server) SendCommand(clientID string, msg Message) error {
 	case <-time.After(time.Second):
 		return fmt.Errorf("send timeout for client %s", clientID)
 	}
-}
-
-func (s *Server) SendCommandWithBroadcast(clientID string, msg Message) (BroadcastServer, error) {
-	err := s.SendCommand(clientID, msg)
-	if err != nil {
-		return nil, err
-	}
-
-	s.ClientsMux.RLock()
-	broadcastServer := s.Clients[clientID].Broadcast
-	s.ClientsMux.RUnlock()
-
-	return broadcastServer, nil
 }
