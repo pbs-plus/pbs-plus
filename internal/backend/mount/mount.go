@@ -113,5 +113,8 @@ func (a *AgentMount) Unmount() {
 }
 
 func (a *AgentMount) CloseSFTP() {
-	_ = a.StoreInstance.ProxmoxHTTPRequest(http.MethodDelete, fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", a.Hostname, a.Drive), nil, nil)
+	targetHostnameEnc := base32.StdEncoding.EncodeToString([]byte(a.Hostname))
+	agentDriveEnc := base32.StdEncoding.EncodeToString([]byte(a.Drive))
+
+	_ = a.StoreInstance.ProxmoxHTTPRequest(http.MethodDelete, fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc), nil, nil)
 }
