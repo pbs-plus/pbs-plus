@@ -191,7 +191,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 
 	_ = FixDatastore(job, storeInstance)
 
-	cmd := exec.Command("/usr/bin/prlimit")
+	cmd := exec.Command("/usr/bin/prlimit", cmdArgs...)
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_PASSWORD=%s", storeInstance.APIToken.Value))
 
