@@ -80,31 +80,9 @@ func (s *Server) HandleClientConnection(w http.ResponseWriter, r *http.Request) 
 	clientID := initMessage.Content
 	client := NewClient(clientID, conn, s.Broadcast)
 
-	// Subscribe to broadcasts
-	subscription := s.Broadcast.Subscribe()
-
 	s.ClientsMux.Lock()
 	s.Clients[clientID] = client
 	s.ClientsMux.Unlock()
-
-	// Start broadcast handler
-	go func() {
-		defer s.Broadcast.CancelSubscription(subscription)
-		for {
-			select {
-			case msg := <-subscription:
-				select {
-				case client.send <- msg:
-					// Message queued successfully
-				default:
-					// Client's buffer is full, consider disconnecting
-					log.Printf("Client %s message buffer full, dropping message", clientID)
-				}
-			case <-client.done:
-				return
-			}
-		}
-	}()
 
 	// Start the read/write pumps
 	go client.readPump(s)

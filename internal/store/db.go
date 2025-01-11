@@ -15,7 +15,6 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
@@ -469,16 +468,8 @@ func (store *Store) GetTarget(name string) (*Target, error) {
 		return nil, fmt.Errorf("GetTarget: error scanning row from targets table -> %w", err)
 	}
 
-	syslogger, err := syslog.InitializeLogger()
-	if err != nil {
-		return nil, fmt.Errorf("GetTarget: failed to initialize logger -> %w", err)
-	}
-
 	if strings.HasPrefix(target.Path, "agent://") {
-		target.ConnectionStatus, err = store.AgentPing(&target)
-		if err != nil {
-			syslogger.Errorf("GetTarget: error agent ping -> %v", err)
-		}
+		target.ConnectionStatus = store.AgentPing(&target)
 		target.IsAgent = true
 	} else {
 		target.ConnectionStatus = utils.IsValid(target.Path)
@@ -505,15 +496,8 @@ func (store *Store) GetAllTargetsByIP(ip string) ([]Target, error) {
 			return nil, fmt.Errorf("GetAllTargetsByIP: error scanning row from targets -> %w", err)
 		}
 
-		syslogger, err := syslog.InitializeLogger()
-		if err != nil {
-			return nil, fmt.Errorf("GetAllTargetsByIP: failed to initialize logger -> %w", err)
-		}
 		if strings.HasPrefix(target.Path, "agent://") {
-			target.ConnectionStatus, err = store.AgentPing(&target)
-			if err != nil {
-				syslogger.Errorf("GetAllTargetsByIP: error agent ping -> %v", err)
-			}
+			target.ConnectionStatus = store.AgentPing(&target)
 			target.IsAgent = true
 		} else {
 			target.ConnectionStatus = utils.IsValid(target.Path)
@@ -564,15 +548,8 @@ func (store *Store) GetAllTargets() ([]Target, error) {
 			return nil, fmt.Errorf("GetAllTargets: error scanning row from targets -> %w", err)
 		}
 
-		syslogger, err := syslog.InitializeLogger()
-		if err != nil {
-			return nil, fmt.Errorf("GetTarget: failed to initialize logger -> %w", err)
-		}
 		if strings.HasPrefix(target.Path, "agent://") {
-			target.ConnectionStatus, err = store.AgentPing(&target)
-			if err != nil {
-				syslogger.Errorf("GetTarget: error agent ping -> %v", err)
-			}
+			target.ConnectionStatus = store.AgentPing(&target)
 			target.IsAgent = true
 		} else {
 			target.ConnectionStatus = utils.IsValid(target.Path)

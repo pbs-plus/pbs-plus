@@ -4,38 +4,22 @@ package store
 
 import (
 	"strings"
-	"time"
-
-	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
-func (storeInstance *Store) AgentPing(agentTarget *Target) (bool, error) {
+func (storeInstance *Store) AgentPing(agentTarget *Target) bool {
 	splittedName := strings.Split(agentTarget.Name, " - ")
 	agentHostname := splittedName[0]
 
 	if storeInstance.WSHub == nil {
-		return false, nil
+		return false
 	}
 
-	err := storeInstance.WSHub.SendCommand(agentHostname, websockets.Message{
-		Type:    "ping",
-		Content: "ping",
-	})
-	if err != nil {
-		return false, err
+	storeInstance.WSHub.ClientsMux.RLock()
+	if client, ok := storeInstance.WSHub.Clients[agentHostname]; ok && client != nil {
+		storeInstance.WSHub.ClientsMux.RUnlock()
+		return true
 	}
+	storeInstance.WSHub.ClientsMux.RUnlock()
 
-	listener := storeInstance.WSHub.Broadcast.Subscribe()
-	defer storeInstance.WSHub.Broadcast.CancelSubscription(listener)
-
-	for {
-		select {
-		case resp := <-listener:
-			if resp.Type == "ping" && resp.Content == "pong" {
-				return true, nil
-			}
-		case <-time.After(time.Second * 2):
-			return false, nil
-		}
-	}
+	return false
 }
