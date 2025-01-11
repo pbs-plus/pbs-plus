@@ -14,27 +14,57 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/alexflint/go-filemutex"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"golang.org/x/sys/unix"
 )
 
 func waitForLogFile(logFilePath string, maxWait time.Duration) (*os.File, error) {
+	// Initialize inotify
+	fd, err := unix.InotifyInit()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize inotify: %v", err)
+	}
+	defer unix.Close(fd)
+
+	// Add watch for the file
+	wd, err := unix.InotifyAddWatch(fd, logFilePath, unix.IN_CLOSE_WRITE|unix.IN_CLOSE_NOWRITE)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add inotify watch: %v", err)
+	}
+	defer unix.InotifyRmWatch(fd, uint32(wd))
+
 	deadline := time.Now().Add(maxWait)
+	buffer := make([]byte, 4096)
+
 	for {
-		logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY, 0644)
-		if err == nil {
-			return logFile, nil // Successfully opened the file
-		}
-
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("log file %s not writable within %s: %v", logFilePath, maxWait, err)
+			return nil, fmt.Errorf("log file %s not writable within %s", logFilePath, maxWait)
 		}
 
-		time.Sleep(100 * time.Millisecond) // Retry after a short delay
+		// Read events
+		n, err := unix.Read(fd, buffer)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read inotify events: %v", err)
+		}
+
+		// Process events
+		events := buffer[:n]
+		for len(events) > 0 {
+			event := (*unix.InotifyEvent)(unsafe.Pointer(&events[0]))
+			if event.Mask&unix.IN_CLOSE_WRITE != 0 || event.Mask&unix.IN_CLOSE_NOWRITE != 0 {
+				logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY, 0644)
+				if err == nil {
+					return logFile, nil
+				}
+			}
+			events = events[unix.SizeofInotifyEvent+event.Len:]
+		}
 	}
 }
 
