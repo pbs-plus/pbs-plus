@@ -280,11 +280,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	defer stdout.Close()
 	defer stderr.Close()
 
-	// Start the backup process first
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s): %w", cmd.String(), err)
-	}
-
 	// Create task monitoring channel with buffer to prevent goroutine leak
 	taskChan := make(chan store.Task, 1)
 
@@ -300,6 +295,11 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		defer close(monitorDone)
 		task, monitorErr = monitorTask(monitorCtx, storeInstance, job, taskChan)
 	}()
+
+	// Start the backup process first
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s): %w", cmd.String(), err)
+	}
 
 	// Wait for either monitoring to complete or timeout
 	select {
