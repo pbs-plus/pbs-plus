@@ -31,7 +31,7 @@ type Server struct {
 	ClientsMux sync.RWMutex
 	// Add broadcast related fields
 	broadcastChan chan Message
-	broadcast     BroadcastServer
+	Broadcast     BroadcastServer
 }
 
 var upgrader = websocket.Upgrader{
@@ -48,7 +48,7 @@ func NewServer() *Server {
 		broadcastChan: make(chan Message, 100),
 	}
 	// Initialize the broadcast server
-	s.broadcast = NewBroadcastServer(context.Background())
+	s.Broadcast = NewBroadcastServer(context.Background())
 	return s
 }
 
@@ -78,10 +78,10 @@ func (s *Server) HandleClientConnection(w http.ResponseWriter, r *http.Request) 
 	}
 
 	clientID := initMessage.Content
-	client := NewClient(clientID, conn, s.broadcast)
+	client := NewClient(clientID, conn, s.Broadcast)
 
 	// Subscribe to broadcasts
-	subscription := s.broadcast.Subscribe()
+	subscription := s.Broadcast.Subscribe()
 
 	s.ClientsMux.Lock()
 	s.Clients[clientID] = client
@@ -89,7 +89,7 @@ func (s *Server) HandleClientConnection(w http.ResponseWriter, r *http.Request) 
 
 	// Start broadcast handler
 	go func() {
-		defer s.broadcast.CancelSubscription(subscription)
+		defer s.Broadcast.CancelSubscription(subscription)
 		for {
 			select {
 			case msg := <-subscription:
@@ -212,9 +212,4 @@ func (s *Server) SendCommand(clientID string, msg Message) error {
 	case <-time.After(time.Second):
 		return fmt.Errorf("send timeout for client %s", clientID)
 	}
-}
-
-// BroadcastMessage sends a message to all connected clients
-func (s *Server) BroadcastMessage(msg Message) error {
-	return s.broadcast.Broadcast(msg)
 }
