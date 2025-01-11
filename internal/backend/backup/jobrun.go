@@ -215,6 +215,17 @@ type openResult struct {
 }
 
 func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) {
+	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
+	if err != nil {
+		return nil, fmt.Errorf("RunBackup: failed to create mutex lock: %w", err)
+	}
+	defer backupMutex.Close() // Ensure mutex is always closed
+
+	if err := backupMutex.Lock(); err != nil {
+		return nil, fmt.Errorf("RunBackup: failed to acquire lock: %w", err)
+	}
+	defer backupMutex.Unlock()
+
 	// Create a context with timeout for the entire operation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -363,17 +374,6 @@ func mountAgent(ctx context.Context, storeInstance *store.Store, target *store.T
 }
 
 func monitorTask(ctx context.Context, storeInstance *store.Store, job *store.Job, taskChan chan store.Task) (*store.Task, error) {
-	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
-	if err != nil {
-		return nil, fmt.Errorf("RunBackup: failed to create mutex lock: %w", err)
-	}
-	defer backupMutex.Close() // Ensure mutex is always closed
-
-	if err := backupMutex.Lock(); err != nil {
-		return nil, fmt.Errorf("RunBackup: failed to acquire lock: %w", err)
-	}
-	defer backupMutex.Unlock()
-
 	errChan := make(chan error, 1)
 	resultChan := make(chan *store.Task, 1)
 
