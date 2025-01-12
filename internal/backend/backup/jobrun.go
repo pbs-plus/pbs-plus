@@ -390,14 +390,6 @@ func monitorTask(ctx context.Context, storeInstance *store.Store, job *store.Job
 		return nil, fmt.Errorf("failed to start task monitoring: %w", err)
 	}
 
-	// Wait for monitoring to be ready
-	select {
-	case <-readyChan:
-		// Monitoring is ready, continue
-	case <-ctx.Done():
-		return nil, fmt.Errorf("context cancelled while waiting for monitoring setup: %w", ctx.Err())
-	}
-
 	// Wait for task or context cancellation
 	select {
 	case taskResult := <-taskChan:
