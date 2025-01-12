@@ -20,6 +20,6 @@ func WSHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		storeInstance.WSHub.HandleClientConnection(w, r)
+		storeInstance.WSHub.ServeWS(w, r)
 	}
 }
