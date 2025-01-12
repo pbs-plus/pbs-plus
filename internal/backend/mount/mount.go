@@ -90,7 +90,7 @@ func Mount(storeInstance *store.Store, target *store.Target) (*AgentMount, error
 
 	agentMount.Cmd = mnt
 
-	err = mnt.Start()
+	err = mnt.Run()
 	if err != nil {
 		agentMount.Unmount()
 		agentMount.CloseSFTP()
