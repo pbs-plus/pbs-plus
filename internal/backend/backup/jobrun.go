@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -280,31 +281,22 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	defer stdout.Close()
 	defer stderr.Close()
 
-	// Create task monitoring channel with buffer to prevent goroutine leak
-	taskChan := make(chan store.Task, 1)
-
 	// Start monitoring in background first
-	monitorCtx, monitorCancel := context.WithCancel(ctx)
-	defer monitorCancel()
+	monitorCtx, monitorCancel := context.WithTimeout(ctx, 20*time.Second)
 
 	var task *store.Task
 	var monitorErr error
-	monitorDone := make(chan struct{})
-	monitorInitializedChan := make(chan struct{})
 
+	readyChan := make(chan struct{})
 	go func() {
-		defer close(monitorDone)
-		task, monitorErr = monitorTask(monitorCtx, storeInstance, job, taskChan, monitorInitializedChan)
+		defer monitorCancel()
+		task, monitorErr = storeInstance.GetJobTask(monitorCtx, readyChan, job)
 	}()
 
 	select {
-	case <-monitorInitializedChan:
-	case <-monitorDone:
-		if monitorErr != nil {
-			return nil, fmt.Errorf("RunBackup: task monitoring failed: %w", monitorErr)
-		}
+	case <-readyChan:
 	case <-monitorCtx.Done():
-		return nil, fmt.Errorf("RunBackup: timeout waiting for task")
+		return nil, fmt.Errorf("RunBackup: task monitoring crashed -> %w", monitorErr)
 	}
 
 	// Now start the backup process
@@ -313,50 +305,41 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s): %w", cmd.String(), err)
 	}
 
-	// Wait for either monitoring to complete or timeout
-	select {
-	case <-monitorDone:
-		if monitorErr != nil {
-			_ = cmd.Process.Kill()
-			return nil, fmt.Errorf("RunBackup: task monitoring failed: %w", monitorErr)
-		}
-	case <-monitorCtx.Done():
-		_ = cmd.Process.Kill()
-		return nil, fmt.Errorf("RunBackup: timeout waiting for task")
-	}
-
-	if task == nil {
-		_ = cmd.Process.Kill()
-		return nil, fmt.Errorf("RunBackup: no task created")
-	}
-
 	// Start collecting logs and wait for backup completion
 	var logLines []string
 	var logMu sync.Mutex
+	var logGlobalMu sync.Mutex
 
-	go collectLogs(ctx, stdout, stderr, &logLines, &logMu)
-
-	// Wait for backup completion
-	done := make(chan error, 1)
 	go func() {
-		done <- cmd.Wait()
+		logGlobalMu.Lock()
+		defer logGlobalMu.Unlock()
+
+		collectLogs(ctx, stdout, stderr, &logLines, &logMu)
 	}()
 
-	// Wait for completion or context cancellation
+	// Wait for either monitoring to complete or timeout
 	select {
-	case err := <-done:
-		if err != nil {
-			return task, fmt.Errorf("RunBackup: backup execution failed: %w", err)
+	case <-monitorCtx.Done():
+		if task == nil {
+			_ = cmd.Process.Kill()
+			return nil, fmt.Errorf("RunBackup: no task created")
 		}
-	case <-ctx.Done():
-		_ = cmd.Process.Kill()
-		return task, fmt.Errorf("RunBackup: backup timeout: %w", ctx.Err())
 	}
 
-	// Update job status
-	if err := updateJobStatus(job, task, storeInstance, logLines); err != nil {
+	if err := updateJobStatus(job, task, storeInstance, nil); err != nil {
 		return task, fmt.Errorf("RunBackup: failed to update job status: %w", err)
 	}
+
+	go func() {
+		_ = cmd.Wait()
+
+		logGlobalMu.Lock()
+		defer logGlobalMu.Unlock()
+
+		if err := updateJobStatus(job, task, storeInstance, logLines); err != nil {
+			log.Printf("RunBackup: failed to update job status: %v", err)
+		}
+	}()
 
 	return task, nil
 }
@@ -383,20 +366,6 @@ func mountAgent(ctx context.Context, storeInstance *store.Store, target *store.T
 	}
 
 	return agentMount, nil
-}
-
-func monitorTask(ctx context.Context, storeInstance *store.Store, job *store.Job, taskChan chan store.Task, readyChan chan struct{}) (*store.Task, error) {
-	if err := storeInstance.GetJobTask(ctx, taskChan, readyChan, job); err != nil {
-		return nil, fmt.Errorf("failed to start task monitoring: %w", err)
-	}
-
-	// Wait for task or context cancellation
-	select {
-	case taskResult := <-taskChan:
-		return &taskResult, nil
-	case <-ctx.Done():
-		return nil, fmt.Errorf("timeout waiting for task: %w", ctx.Err())
-	}
 }
 
 func prepareBackupCommand(ctx context.Context, job *store.Job, storeInstance *store.Store, srcPath string, isAgent bool) (*exec.Cmd, error) {
@@ -541,68 +510,40 @@ func collectLogs(ctx context.Context, stdout, stderr io.ReadCloser, logLines *[]
 }
 
 func updateJobStatus(job *store.Job, task *store.Task, storeInstance *store.Store, logLines []string) error {
-	errChan := make(chan error, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	syslogger, err := syslog.InitializeLogger()
+	if err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
 
-	go func() {
-		syslogger, err := syslog.InitializeLogger()
-		if err != nil {
-			errChan <- fmt.Errorf("failed to initialize logger: %w", err)
-			return
-		}
-
+	if logLines != nil {
 		// Write logs to file
 		if err := writeLogsToFile(task.UPID, logLines); err != nil {
 			syslogger.Errorf("Failed to write logs: %v", err)
-			errChan <- err
-			return
+			return err
 		}
-
-		// Update task status
-		taskFound, err := storeInstance.GetTaskByUPID(task.UPID)
-		if err != nil {
-			syslogger.Errorf("Unable to get task by UPID: %v", err)
-			errChan <- err
-			return
-		}
-
-		// Update job status
-		latestJob, err := storeInstance.GetJob(job.ID)
-		if err != nil {
-			syslogger.Errorf("Unable to get job: %v", err)
-			errChan <- err
-			return
-		}
-
-		latestJob.LastRunState = &taskFound.Status
-		latestJob.LastRunEndtime = &taskFound.EndTime
-
-		if err := storeInstance.UpdateJob(*latestJob); err != nil {
-			syslogger.Errorf("Unable to update job: %v", err)
-			errChan <- err
-			return
-		}
-
-		errChan <- nil
-	}()
-
-	// Update immediate job status
-	job.LastRunUpid = &task.UPID
-	job.LastRunState = &task.Status
-
-	if err := storeInstance.UpdateJob(*job); err != nil {
-		return fmt.Errorf("unable to update job: %w", err)
 	}
 
-	// Wait for background updates to complete with timeout
-	select {
-	case err := <-errChan:
-		if err != nil {
-			return fmt.Errorf("background job update failed: %w", err)
-		}
-	case <-ctx.Done():
-		return fmt.Errorf("job status update timed out: %w", ctx.Err())
+	// Update task status
+	taskFound, err := storeInstance.GetTaskByUPID(task.UPID)
+	if err != nil {
+		syslogger.Errorf("Unable to get task by UPID: %v", err)
+		return err
+	}
+
+	// Update job status
+	latestJob, err := storeInstance.GetJob(job.ID)
+	if err != nil {
+		syslogger.Errorf("Unable to get job: %v", err)
+		return err
+	}
+
+	latestJob.LastRunUpid = &taskFound.UPID
+	latestJob.LastRunState = &taskFound.Status
+	latestJob.LastRunEndtime = &taskFound.EndTime
+
+	if err := storeInstance.UpdateJob(*latestJob); err != nil {
+		syslogger.Errorf("Unable to update job: %v", err)
+		return err
 	}
 
 	return nil

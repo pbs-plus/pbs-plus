@@ -1,42 +1,44 @@
-Ext.define('PBS.D2DManagement.ExclusionEditWindow', {
-    extend: 'Proxmox.window.Edit',
-    alias: 'widget.pbsExclusionEditWindow',
-    mixins: ['Proxmox.Mixin.CBind'],
+Ext.define("PBS.D2DManagement.ExclusionEditWindow", {
+  extend: "Proxmox.window.Edit",
+  alias: "widget.pbsExclusionEditWindow",
+  mixins: ["Proxmox.Mixin.CBind"],
 
-    isCreate: true,
-    isAdd: true,
-    subject: 'Disk Backup Global Path Exclusion',
-    cbindData: function(initialConfig) {
-	let me = this;
+  isCreate: true,
+  isAdd: true,
+  subject: "Disk Backup Global Path Exclusion",
+  cbindData: function (initialConfig) {
+    let me = this;
 
-	let contentid = initialConfig.contentid;
-	let baseurl = pbsPlusBaseUrl + '/api2/extjs/config/d2d-exclusion';
+    let contentid = initialConfig.contentid;
+    let baseurl = pbsPlusBaseUrl + "/api2/extjs/config/d2d-exclusion";
 
-	me.isCreate = !contentid;
-	me.url = contentid ? `${baseurl}/${encodeURIComponent(contentid)}` : baseurl;
-	me.method = contentid ? 'PUT' : 'POST';
+    me.isCreate = !contentid;
+    me.url = contentid
+      ? `${baseurl}/${encodeURIComponent(contentid)}`
+      : baseurl;
+    me.method = contentid ? "PUT" : "POST";
 
-	return { };
+    return {};
+  },
+
+  items: [
+    {
+      fieldLabel: gettext("Path"),
+      name: "path",
+      xtype: "pmxDisplayEditField",
+      renderer: Ext.htmlEncode,
+      allowBlank: false,
+      cbind: {
+        editable: "{isCreate}",
+      },
     },
-
-    items: [
-	{
-	    fieldLabel: gettext('Path'),
-	    name: 'path',
-	    xtype: 'pmxDisplayEditField',
-	    renderer: Ext.htmlEncode,
-	    allowBlank: false,
-	    cbind: {
-		editable: '{isCreate}',
-	    },
-	},
-		    {
-			fieldLabel: gettext('Comment'),
-			xtype: 'proxmoxtextfield',
-			name: 'comment',
-			cbind: {
-			    deleteEmpty: '{!isCreate}',
-			},
-        },
-    ],
+    {
+      fieldLabel: gettext("Comment"),
+      xtype: "proxmoxtextfield",
+      name: "comment",
+      cbind: {
+        deleteEmpty: "{!isCreate}",
+      },
+    },
+  ],
 });
