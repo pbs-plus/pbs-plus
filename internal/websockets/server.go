@@ -1,3 +1,5 @@
+//go:build linux
+
 package websockets
 
 import (
@@ -12,10 +14,10 @@ import (
 )
 
 const (
-	writeWait        = 10 * time.Second
-	pongWait         = 60 * time.Second
-	pingPeriod       = (pongWait * 9) / 10
-	maxMessageSize   = 512 * 1024
+	writeWait       = 10 * time.Second
+	pongWait        = 60 * time.Second
+	pingPeriod      = (pongWait * 9) / 10
+	maxMessageSize  = 512 * 1024
 	broadcastBuffer = 256
 )
 
@@ -298,4 +300,11 @@ func (s *Server) SendToClient(clientID string, msg Message) error {
 	case <-time.After(writeWait):
 		return fmt.Errorf("send timeout for client %s", clientID)
 	}
+}
+
+func (s *Server) IsClientConnected(clientID string) bool {
+	s.clientsMux.RLock()
+	_, exists := s.clients[clientID]
+	s.clientsMux.RUnlock()
+	return exists
 }
