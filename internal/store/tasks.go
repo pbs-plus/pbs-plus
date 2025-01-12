@@ -55,16 +55,16 @@ func encodeToHexEscapes(input string) string {
 	return encoded.String()
 }
 
-func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, readyChan chan struct{}, job *Job) error {
+func (storeInstance *Store) GetJobTask(ctx context.Context, readyChan chan struct{}, job *Job) (*Task, error) {
 	tasksParentPath := "/var/log/proxmox-backup/tasks"
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return fmt.Errorf("failed to create watcher: %w", err)
+		return nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
 
 	err = watcher.Add(tasksParentPath)
 	if err != nil {
-		return fmt.Errorf("failed to add folder to watcher: %w", err)
+		return nil, fmt.Errorf("failed to add folder to watcher: %w", err)
 	}
 
 	err = filepath.Walk(tasksParentPath, func(path string, info os.FileInfo, err error) error {
@@ -81,7 +81,7 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, 
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("failed to walk folder: %w", err)
+		return nil, fmt.Errorf("failed to walk folder: %w", err)
 	}
 
 	hostname, err := os.Hostname()
@@ -96,11 +96,11 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, 
 
 	target, err := storeInstance.GetTarget(job.Target)
 	if err != nil {
-		return fmt.Errorf("GetJobTask -> %w", err)
+		return nil, fmt.Errorf("GetJobTask -> %w", err)
 	}
 
 	if target == nil {
-		return fmt.Errorf("GetJobTask: Target '%s' does not exist.", job.Target)
+		return nil, fmt.Errorf("GetJobTask: Target '%s' does not exist.", job.Target)
 	}
 
 	isAgent := strings.HasPrefix(target.Path, "agent://")
@@ -112,45 +112,37 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, 
 
 	close(readyChan)
 
-	go func() {
-		defer watcher.Close()
+	defer watcher.Close()
+	for {
+		select {
+		case event := <-watcher.Events:
+			if event.Op&fsnotify.Create == fsnotify.Create {
+				if isDir(event.Name) {
+					err = watcher.Add(event.Name)
+					if err != nil {
+						log.Println("Failed to add directory to watcher:", err)
+					}
+				} else {
+					searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
+					log.Printf("Checking if %s contains %s\n", event.Name, searchString)
+					if !strings.Contains(event.Name, ".tmp_") && strings.Contains(event.Name, searchString) {
+						log.Printf("Proceeding: %s contains %s\n", event.Name, searchString)
+						fileName := filepath.Base(event.Name)
 
-		for {
-			select {
-			case event := <-watcher.Events:
-				if event.Op&fsnotify.Create == fsnotify.Create {
-					if isDir(event.Name) {
-						err = watcher.Add(event.Name)
+						log.Printf("Getting UPID: %s\n", fileName)
+						newTask, err := storeInstance.GetTaskByUPID(fileName)
 						if err != nil {
-							log.Println("Failed to add directory to watcher:", err)
+							return nil, fmt.Errorf("GetJobTask: error getting task: %v\n", err)
 						}
-					} else {
-						searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
-						log.Printf("Checking if %s contains %s\n", event.Name, searchString)
-						if !strings.Contains(event.Name, ".tmp_") && strings.Contains(event.Name, searchString) {
-							log.Printf("Proceeding: %s contains %s\n", event.Name, searchString)
-							fileName := filepath.Base(event.Name)
-
-							log.Printf("Getting UPID: %s\n", fileName)
-							newTask, err := storeInstance.GetTaskByUPID(fileName)
-							if err != nil {
-								log.Printf("GetJobTask: error getting task: %v\n", err)
-								return
-							}
-							log.Printf("Sending UPID: %s\n", fileName)
-							taskChan <- *newTask
-							return
-						}
+						log.Printf("Sending UPID: %s\n", fileName)
+						return newTask, nil
 					}
 				}
-			case <-ctx.Done():
-				log.Println("GetJobTask: error getting tasks: context cancelled, not found")
-				return
 			}
+		case <-ctx.Done():
+			return nil, nil
 		}
-	}()
-
-	return nil
+	}
 }
 
 func (storeInstance *Store) GetTaskByUPID(upid string) (*Task, error) {
