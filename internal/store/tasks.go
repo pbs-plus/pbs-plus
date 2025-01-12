@@ -55,7 +55,7 @@ func encodeToHexEscapes(input string) string {
 	return encoded.String()
 }
 
-func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, job *Job) error {
+func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, readyChan chan struct{}, job *Job) error {
 	tasksParentPath := "/var/log/proxmox-backup/tasks"
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -109,6 +109,8 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, taskChan chan Task, 
 	if isAgent {
 		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
 	}
+
+	close(readyChan)
 
 	go func() {
 		defer watcher.Close()

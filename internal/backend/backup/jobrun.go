@@ -283,21 +283,33 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	// Create task monitoring channel with buffer to prevent goroutine leak
 	taskChan := make(chan store.Task, 1)
 
-	// Start monitoring in background
-	monitorCtx, monitorCancel := context.WithTimeout(ctx, 20*time.Second)
+	// Start monitoring in background first
+	monitorCtx, monitorCancel := context.WithCancel(ctx)
 	defer monitorCancel()
 
 	var task *store.Task
 	var monitorErr error
-
 	monitorDone := make(chan struct{})
+	monitorInitializedChan := make(chan struct{})
+
 	go func() {
 		defer close(monitorDone)
-		task, monitorErr = monitorTask(monitorCtx, storeInstance, job, taskChan)
+		task, monitorErr = monitorTask(monitorCtx, storeInstance, job, taskChan, monitorInitializedChan)
 	}()
 
-	// Start the backup process first
+	select {
+	case <-monitorInitializedChan:
+	case <-monitorDone:
+		if monitorErr != nil {
+			return nil, fmt.Errorf("RunBackup: task monitoring failed: %w", monitorErr)
+		}
+	case <-monitorCtx.Done():
+		return nil, fmt.Errorf("RunBackup: timeout waiting for task")
+	}
+
+	// Now start the backup process
 	if err := cmd.Start(); err != nil {
+		monitorCancel() // Cancel monitoring since backup failed to start
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s): %w", cmd.String(), err)
 	}
 
@@ -373,38 +385,17 @@ func mountAgent(ctx context.Context, storeInstance *store.Store, target *store.T
 	return agentMount, nil
 }
 
-func monitorTask(ctx context.Context, storeInstance *store.Store, job *store.Job, taskChan chan store.Task) (*store.Task, error) {
-	errChan := make(chan error, 1)
-	resultChan := make(chan *store.Task, 1)
-
-	monitorCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-
-	go func() {
-		if err := storeInstance.GetJobTask(monitorCtx, taskChan, job); err != nil {
-			errChan <- fmt.Errorf("unable to monitor tasks folder: %w", err)
-			return
-		}
-	}()
-
-	select {
-	case taskResult := <-taskChan:
-		if monitorCtx.Err() != nil {
-			errChan <- fmt.Errorf("context cancelled while receiving task")
-			return nil, <-errChan
-		}
-		resultChan <- &taskResult
-	case err := <-errChan:
-		return nil, err
-	case <-monitorCtx.Done():
-		return nil, fmt.Errorf("timeout waiting for task: %w", ctx.Err())
+func monitorTask(ctx context.Context, storeInstance *store.Store, job *store.Job, taskChan chan store.Task, readyChan chan struct{}) (*store.Task, error) {
+	if err := storeInstance.GetJobTask(ctx, taskChan, readyChan, job); err != nil {
+		return nil, fmt.Errorf("failed to start task monitoring: %w", err)
 	}
 
+	// Wait for task or context cancellation
 	select {
-	case result := <-resultChan:
-		return result, nil
-	case err := <-errChan:
-		return nil, err
+	case taskResult := <-taskChan:
+		return &taskResult, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("timeout waiting for task: %w", ctx.Err())
 	}
 }
 
