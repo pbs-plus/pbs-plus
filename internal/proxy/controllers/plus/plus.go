@@ -47,7 +47,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 		agentDrive := string(agentDriveBytes)
 
 		if r.Method == http.MethodPost {
-			err := storeInstance.WSHub.SendCommand(targetHostname, websockets.Message{
+			err := storeInstance.WSHub.SendToClient(targetHostname, websockets.Message{
 				Type:    "backup_start",
 				Content: agentDrive,
 			})
@@ -56,9 +56,8 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			listener := storeInstance.WSHub.Broadcast.Subscribe()
-			defer storeInstance.WSHub.Broadcast.CancelSubscription(listener)
-
+			listener, closeListener := storeInstance.WSHub.Subscribe()
+			defer closeListener()
 		respWait:
 			for {
 				select {
@@ -79,7 +78,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			_ = storeInstance.WSHub.SendCommand(targetHostname, websockets.Message{
+			_ = storeInstance.WSHub.SendToClient(targetHostname, websockets.Message{
 				Type:    "backup_close",
 				Content: agentDrive,
 			})

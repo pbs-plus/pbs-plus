@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net/http"
@@ -32,7 +33,9 @@ func main() {
 	jobRun := flag.String("job", "", "Job ID to execute")
 	flag.Parse()
 
-	wsHub := websockets.NewServer()
+	wsHub := websockets.NewServer(context.Background())
+	go wsHub.Run()
+
 	storeInstance, err := store.Initialize(wsHub)
 	if err != nil {
 		s.Errorf("Failed to initialize store: %v", err)
