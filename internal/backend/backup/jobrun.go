@@ -92,14 +92,13 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 
 	// Start collecting logs and wait for backup completion
 	var logLines []string
-	var logMu sync.Mutex
 	var logGlobalMu sync.Mutex
 
 	go func() {
 		logGlobalMu.Lock()
 		defer logGlobalMu.Unlock()
 
-		collectLogs(stdout, stderr, logLines, &logMu)
+		logLines = collectLogs(stdout, stderr)
 	}()
 
 	// Now start the backup process
