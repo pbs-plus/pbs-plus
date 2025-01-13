@@ -4,6 +4,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -13,53 +14,82 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
-var sftpSessions sync.Map
+var (
+	sftpSessions    sync.Map
+	ErrNoSFTPConfig = errors.New("unable to find initialized SFTP config")
+)
 
-func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, infoChan chan string, errChan chan string) {
-	if m.Type == "backup_start" {
-		infoChan <- fmt.Sprintf("Received backup request for drive %s.", m.Content)
+func sendResponse(c *websocket.Conn, msgType, content string) error {
+	response := websockets.Message{
+		Type:    "response-" + msgType,
+		Content: "Acknowledged: " + content,
+	}
+	return c.WriteJSON(response)
+}
 
-		snapshot, err := snapshots.Snapshot(m.Content)
-		if err != nil {
-			errChan <- fmt.Sprintf("Snapshot error: %v", err)
-			return
+func cleanupExistingSession(drive string, infoChan chan<- string) {
+	if existing, ok := sftpSessions.LoadAndDelete(drive); ok && existing != nil {
+		if session, ok := existing.(*sftp.SFTPSession); ok && session != nil {
+			session.Close()
+			infoChan <- fmt.Sprintf("Cancelled existing backup context of drive %s.", drive)
 		}
-		infoChan <- fmt.Sprintf("Snapshot of drive %s has been made.", m.Content)
+	}
+}
 
-		sftpSession := sftp.NewSFTPSession(ctx, snapshot, m.Content)
-		if sftpSession == nil {
-			errChan <- "Unable to find initialized SFTP config. Try restarting the service."
-		}
+func handleBackupStart(ctx context.Context, c *websocket.Conn, drive string, infoChan chan<- string, errChan chan<- string) error {
+	infoChan <- fmt.Sprintf("Received backup request for drive %s.", drive)
 
-		if existing, ok := sftpSessions.LoadAndDelete(m.Content); ok && existing != nil {
-			existing.(*sftp.SFTPSession).Close()
-		}
+	snapshot, err := snapshots.Snapshot(drive)
+	if err != nil {
+		return fmt.Errorf("snapshot error: %w", err)
+	}
+	infoChan <- fmt.Sprintf("Snapshot of drive %s has been made.", drive)
 
-		go sftpSession.Serve(errChan)
-
-		infoChan <- fmt.Sprintf("SFTP access to snapshot of drive %s has been made.", m.Content)
-
-		sftpSessions.Store(m.Content, sftpSession)
-
-		response := websockets.Message{
-			Type:    "response-backup_start",
-			Content: "Acknowledged: " + m.Content,
-		}
-		c.WriteJSON(response)
-	} else if m.Type == "backup_close" {
-		infoChan <- fmt.Sprintf("Received closure request for drive %s.", m.Content)
-
-		if existing, ok := sftpSessions.LoadAndDelete(m.Content); ok && existing != nil {
-			infoChan <- fmt.Sprintf("Cancelled existing backup context of drive %s.", m.Content)
-			existing.(*sftp.SFTPSession).Close()
-		}
-
-		response := websockets.Message{
-			Type:    "response-backup_close",
-			Content: "Acknowledged: " + m.Content,
-		}
-		c.WriteJSON(response)
+	sftpSession := sftp.NewSFTPSession(ctx, snapshot, drive)
+	if sftpSession == nil {
+		return ErrNoSFTPConfig
 	}
 
-	return
+	cleanupExistingSession(drive, infoChan)
+
+	go func() {
+		defer cleanupExistingSession(drive, infoChan)
+		sftpSession.Serve(errChan)
+	}()
+
+	infoChan <- fmt.Sprintf("SFTP access to snapshot of drive %s has been made.", drive)
+	sftpSessions.Store(drive, sftpSession)
+
+	return sendResponse(c, "backup_start", drive)
+}
+
+func handleBackupClose(c *websocket.Conn, drive string, infoChan chan<- string) error {
+	infoChan <- fmt.Sprintf("Received closure request for drive %s.", drive)
+	cleanupExistingSession(drive, infoChan)
+	return sendResponse(c, "backup_close", drive)
+}
+
+func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, infoChan chan<- string, errChan chan<- string) {
+	if c == nil {
+		errChan <- "nil WebSocket connection"
+		return
+	}
+
+	// Add timeout to context if needed
+	// ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// defer cancel()
+
+	var err error
+	switch m.Type {
+	case "backup_start":
+		err = handleBackupStart(ctx, c, m.Content, infoChan, errChan)
+	case "backup_close":
+		err = handleBackupClose(c, m.Content, infoChan)
+	default:
+		err = fmt.Errorf("unknown message type: %s", m.Type)
+	}
+
+	if err != nil {
+		errChan <- err.Error()
+	}
 }
