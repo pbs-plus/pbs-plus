@@ -86,8 +86,6 @@ func buildCommandArgs(storeInstance *store.Store, job *store.Job, srcPath string
 		cmdArgs = append(cmdArgs, "--ns", job.Namespace)
 	}
 
-	_ = FixDatastore(job, storeInstance)
-
 	return cmdArgs
 }
 
