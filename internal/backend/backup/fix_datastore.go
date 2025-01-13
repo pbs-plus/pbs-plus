@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -17,6 +18,14 @@ import (
 type NamespaceReq struct {
 	Name   string `json:"name"`
 	Parent string `json:"parent"`
+}
+
+type PBSStoreGroups struct {
+	Owner string `json:"owner"`
+}
+
+type PBSStoreGroupsResponse struct {
+	Data PBSStoreGroups `json:"data"`
 }
 
 func CreateNamespace(namespace string, job *store.Job, storeInstance *store.Store) error {
@@ -68,26 +77,65 @@ func CreateNamespace(namespace string, job *store.Job, storeInstance *store.Stor
 	return nil
 }
 
-func FixDatastore(job *store.Job, storeInstance *store.Store) error {
+func GetCurrentOwner(job *store.Job, storeInstance *store.Store) (string, error) {
 	if storeInstance == nil {
-		return fmt.Errorf("FixDatastore: store is required")
+		return "", fmt.Errorf("GetCurrentOwner: store is required")
 	}
 
 	if storeInstance.APIToken == nil {
-		return fmt.Errorf("FixDatastore: api token is required")
+		return "", fmt.Errorf("GetCurrentOwner: api token is required")
 	}
 
 	target, err := storeInstance.GetTarget(job.Target)
 	if err != nil {
-		return fmt.Errorf("FixDatastore -> %w", err)
+		return "", fmt.Errorf("GetCurrentOwner -> %w", err)
 	}
 
 	if target == nil {
-		return fmt.Errorf("FixDatastore: Target '%s' does not exist.", job.Target)
+		return "", fmt.Errorf("GetCurrentOwner: Target '%s' does not exist.", job.Target)
 	}
 
 	if !target.ConnectionStatus {
-		return fmt.Errorf("FixDatastore: Target '%s' is unreachable or does not exist.", job.Target)
+		return "", fmt.Errorf("GetCurrentOwner: Target '%s' is unreachable or does not exist.", job.Target)
+	}
+
+	params := url.Values{}
+	params.Add("ns", job.Namespace)
+
+	groupsResp := PBSStoreGroupsResponse{}
+	err = storeInstance.ProxmoxHTTPRequest(
+		http.MethodGet,
+		fmt.Sprintf("/api2/json/admin/datastore/%s/groups?%s", job.Store, params.Encode()),
+		nil,
+		&groupsResp,
+	)
+	if err != nil {
+		return "", fmt.Errorf("GetCurrentOwner: error creating http request -> %w", err)
+	}
+
+	return groupsResp.Data.Owner, nil
+}
+
+func SetDatastoreOwner(job *store.Job, storeInstance *store.Store, owner string) error {
+	if storeInstance == nil {
+		return fmt.Errorf("SetDatastoreOwner: store is required")
+	}
+
+	if storeInstance.APIToken == nil {
+		return fmt.Errorf("SetDatastoreOwner: api token is required")
+	}
+
+	target, err := storeInstance.GetTarget(job.Target)
+	if err != nil {
+		return fmt.Errorf("SetDatastoreOwner -> %w", err)
+	}
+
+	if target == nil {
+		return fmt.Errorf("SetDatastoreOwner: Target '%s' does not exist.", job.Target)
+	}
+
+	if !target.ConnectionStatus {
+		return fmt.Errorf("SetDatastoreOwner: Target '%s' is unreachable or does not exist.", job.Target)
 	}
 
 	jobStore := fmt.Sprintf(
@@ -95,13 +143,6 @@ func FixDatastore(job *store.Job, storeInstance *store.Store) error {
 		storeInstance.APIToken.TokenId,
 		job.Store,
 	)
-
-	newOwner := ""
-	if storeInstance.APIToken != nil {
-		newOwner = storeInstance.APIToken.TokenId
-	} else {
-		newOwner = storeInstance.LastToken.Username
-	}
 
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -122,7 +163,7 @@ func FixDatastore(job *store.Job, storeInstance *store.Store) error {
 	cmdArgs := []string{
 		"change-owner",
 		fmt.Sprintf("host/%s", backupId),
-		newOwner,
+		owner,
 		"--repository",
 		jobStore,
 	}
@@ -151,7 +192,19 @@ func FixDatastore(job *store.Job, storeInstance *store.Store) error {
 
 	err = cmd.Run()
 	if err != nil {
-		return fmt.Errorf("FixDatastore: proxmox-backup-client change-owner error (%s) -> %w", cmd.String(), err)
+		return fmt.Errorf("SetDatastoreOwner: proxmox-backup-client change-owner error (%s) -> %w", cmd.String(), err)
 	}
+
 	return nil
+}
+
+func FixDatastore(job *store.Job, storeInstance *store.Store) error {
+	newOwner := ""
+	if storeInstance.APIToken != nil {
+		newOwner = storeInstance.APIToken.TokenId
+	} else {
+		newOwner = storeInstance.LastToken.Username
+	}
+
+	return SetDatastoreOwner(job, storeInstance, newOwner)
 }

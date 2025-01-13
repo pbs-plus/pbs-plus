@@ -90,6 +90,9 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		return nil, fmt.Errorf("RunBackup: task monitoring crashed -> %w", monitorErr)
 	}
 
+	currOwner, _ := GetCurrentOwner(job, storeInstance)
+	_ = FixDatastore(job, storeInstance)
+
 	// Start collecting logs and wait for backup completion
 	var logLines []string
 	var logGlobalMu sync.Mutex
@@ -145,6 +148,10 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 
 		if err := updateJobStatus(job, task, storeInstance); err != nil {
 			log.Printf("RunBackup: failed to update job status: %v", err)
+		}
+
+		if currOwner != "" {
+			_ = SetDatastoreOwner(job, storeInstance, currOwner)
 		}
 
 		if agentMount != nil {
