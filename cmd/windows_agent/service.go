@@ -186,7 +186,7 @@ func (p *agentService) run() {
 		for _, drive := range drives {
 			driveLetters = append(driveLetters, drive)
 
-			err := sftp.InitializeSFTPConfig(drive)
+			err := sftp.InitializeSFTPConfig(p.ctx, drive)
 			if err != nil {
 				logger.Errorf("Unable to initialize SFTP config: %v", err)
 				return

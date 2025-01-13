@@ -16,13 +16,7 @@ import (
 var sftpSessions sync.Map
 
 func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, infoChan chan string, errChan chan string) {
-	if m.Type == "ping" {
-		response := websockets.Message{
-			Type:    "ping",
-			Content: "pong",
-		}
-		c.WriteJSON(response)
-	} else if m.Type == "backup_start" {
+	if m.Type == "backup_start" {
 		infoChan <- fmt.Sprintf("Received backup request for drive %s.", m.Content)
 
 		snapshot, err := snapshots.Snapshot(m.Content)
