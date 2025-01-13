@@ -372,7 +372,7 @@ func (p *agentService) initializeDrives() error {
 
 	for _, drive := range drives {
 		driveLetters = append(driveLetters, drive)
-		if err := sftp.InitializeSFTPConfig(p.ctx, drive); err != nil {
+		if err := sftp.InitializeSFTPConfig(drive); err != nil {
 			return fmt.Errorf("failed to initialize SFTP config for drive %s: %w", drive, err)
 		}
 	}

@@ -4,13 +4,10 @@
 package sftp
 
 import (
-	"bytes"
-	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -28,6 +25,7 @@ type SFTPConfig struct {
 	ServerConfig *ssh.ServerConfig
 	PrivateKey   []byte `json:"private_key"`
 	PublicKey    []byte `json:"public_key"`
+	ServerKey    []byte `json:"server_key"`
 	Server       string `json:"server"`
 	BasePath     string `json:"base_path"`
 }
@@ -35,25 +33,23 @@ type SFTPConfig struct {
 var (
 	InitializedConfigs sync.Map
 	httpClient         = &http.Client{
-		Timeout: 5 * time.Second, // Reduced timeout since we'll call this more frequently
+		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 			DisableCompression:  true,
-			DisableKeepAlives:   false,
-			MaxIdleConnsPerHost: 20, // Increased for more concurrent connections
-			IdleConnTimeout:     30 * time.Second,
+			MaxIdleConnsPerHost: 1,
 		},
 	}
 )
 
-func (s *SFTPConfig) GetRegistryKey() string {
+func (s *SFTPConfig) registryKey() string {
 	return fmt.Sprintf("Software\\PBSPlus\\Config\\SFTP-%s", s.BasePath)
 }
 
-func InitializeSFTPConfig(ctx context.Context, driveLetter string) error {
+func InitializeSFTPConfig(driveLetter string) error {
 	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, "Software\\PBSPlus\\Config", registry.QUERY_VALUE)
 	if err != nil {
-		return fmt.Errorf("initialize SFTP config: %w", err)
+		return fmt.Errorf("init SFTP config: %w", err)
 	}
 	defer baseKey.Close()
 
@@ -62,77 +58,60 @@ func InitializeSFTPConfig(ctx context.Context, driveLetter string) error {
 		return fmt.Errorf("get server URL: %w", err)
 	}
 
-	newSftpConfig := &SFTPConfig{
+	config := &SFTPConfig{
 		BasePath: driveLetter,
 		Server:   server,
 	}
 
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, newSftpConfig.GetRegistryKey(), registry.QUERY_VALUE)
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, config.registryKey(), registry.QUERY_VALUE)
 	if err == nil {
 		if basePath, _, err := key.GetStringValue("BasePath"); err == nil {
-			newSftpConfig.BasePath = basePath
+			config.BasePath = basePath
 		}
 		key.Close()
 	}
 
-	InitializedConfigs.Store(driveLetter, newSftpConfig)
-	return newSftpConfig.PopulateKeys(ctx)
+	InitializedConfigs.Store(driveLetter, config)
+	return config.populateKeys()
 }
 
-func (config *SFTPConfig) PopulateKeys(ctx context.Context) error {
-	configSSH := &ssh.ServerConfig{
-		NoClientAuth:  false,
-		ServerVersion: "SSH-2.0-PBS-D2D-Agent",
-		AuthLogCallback: func(conn ssh.ConnMetadata, method string, err error) {
-			if err != nil {
-				log.Printf("Agent: %s Authentication Attempt from %s", conn.User(), conn.RemoteAddr())
-			} else {
-				log.Printf("Agent: %s Authentication Accepted from %s", conn.User(), conn.RemoteAddr())
-			}
-		},
+func (config *SFTPConfig) populateKeys() error {
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, config.registryKey(), registry.QUERY_VALUE)
+	if err == nil {
+		if err := config.loadExistingKeys(key); err == nil {
+			key.Close()
+			return config.setupServerConfig()
+		}
+		key.Close()
 	}
 
-	if err := config.loadOrGenerateKeys(); err != nil {
-		return fmt.Errorf("load or generate keys: %w", err)
+	if err := config.generateNewKeys(); err != nil {
+		return fmt.Errorf("generate new keys: %w", err)
 	}
 
-	return config.finalizeConfig(ctx, configSSH)
+	return config.setupServerConfig()
 }
 
-func (config *SFTPConfig) loadOrGenerateKeys() error {
-	if err := config.loadExistingKeys(); err == nil {
-		return nil
+func (config *SFTPConfig) loadExistingKeys(key registry.Key) error {
+	keys := map[string]*[]byte{
+		"PrivateKey": &config.PrivateKey,
+		"PublicKey":  &config.PublicKey,
+		"ServerKey":  &config.ServerKey,
 	}
 
-	// Generate new keys if loading fails
-	privateKey, pubKey, err := utils.GenerateKeyPair(4096)
-	if err != nil {
-		return fmt.Errorf("generate SSH key pair: %w", err)
-	}
+	for name, dest := range keys {
+		encrypted, _, err := key.GetStringValue(name)
+		if err != nil {
+			return err
+		}
 
-	config.PrivateKey = privateKey
-	config.PublicKey = pubKey
+		decrypted, err := dpapi.Decrypt(encrypted)
+		if err != nil {
+			return err
+		}
 
-	return config.storeKeys()
-}
-
-func (config *SFTPConfig) loadExistingKeys() error {
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, config.GetRegistryKey(), registry.QUERY_VALUE)
-	if err != nil {
-		return err
-	}
-	defer key.Close()
-
-	keys := []struct {
-		name   string
-		target *[]byte
-	}{
-		{"PrivateKey", &config.PrivateKey},
-		{"PublicKey", &config.PublicKey},
-	}
-
-	for _, k := range keys {
-		if err := loadAndDecryptKey(key, k.name, k.target); err != nil {
+		*dest, err = base64.StdEncoding.DecodeString(decrypted)
+		if err != nil {
 			return err
 		}
 	}
@@ -140,107 +119,89 @@ func (config *SFTPConfig) loadExistingKeys() error {
 	return nil
 }
 
-func loadAndDecryptKey(key registry.Key, valueName string, target *[]byte) error {
-	encrypted, _, err := key.GetStringValue(valueName)
+func (config *SFTPConfig) generateNewKeys() error {
+	var err error
+	config.PrivateKey, config.PublicKey, err = utils.GenerateKeyPair(4096)
 	if err != nil {
-		return err
+		return fmt.Errorf("generate key pair: %w", err)
 	}
 
-	decrypted, err := dpapi.Decrypt(encrypted)
+	serverKey, err := config.getServerPublicKey()
 	if err != nil {
-		return fmt.Errorf("decrypt %s: %w", valueName, err)
+		return fmt.Errorf("get server public key: %w", err)
 	}
+	config.ServerKey = []byte(*serverKey)
 
-	*target, err = base64.StdEncoding.DecodeString(decrypted)
-	if err != nil {
-		return fmt.Errorf("decode %s: %w", valueName, err)
-	}
-
-	return nil
+	return config.saveKeys()
 }
 
-func (config *SFTPConfig) storeKeys() error {
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, config.GetRegistryKey(), registry.ALL_ACCESS)
+func (config *SFTPConfig) saveKeys() error {
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, config.registryKey(), registry.ALL_ACCESS)
 	if err != nil {
 		return fmt.Errorf("create registry key: %w", err)
 	}
 	defer key.Close()
 
-	keys := []struct {
-		name  string
-		value []byte
-	}{
-		{"PrivateKey", config.PrivateKey},
-		{"PublicKey", config.PublicKey},
+	keys := map[string][]byte{
+		"PrivateKey": config.PrivateKey,
+		"PublicKey":  config.PublicKey,
+		"ServerKey":  config.ServerKey,
 	}
 
-	for _, k := range keys {
-		if err := storeEncryptedKey(key, k.name, k.value); err != nil {
-			return err
+	for name, data := range keys {
+		encrypted, err := dpapi.Encrypt(base64.StdEncoding.EncodeToString(data))
+		if err != nil {
+			return fmt.Errorf("encrypt %s: %w", name, err)
+		}
+
+		if err := key.SetStringValue(name, encrypted); err != nil {
+			return fmt.Errorf("save %s: %w", name, err)
 		}
 	}
 
 	return nil
 }
 
-func storeEncryptedKey(key registry.Key, valueName string, data []byte) error {
-	encrypted, err := dpapi.Encrypt(base64.StdEncoding.EncodeToString(data))
-	if err != nil {
-		return fmt.Errorf("encrypt %s: %w", valueName, err)
-	}
-
-	if err := key.SetStringValue(valueName, encrypted); err != nil {
-		return fmt.Errorf("save %s: %w", valueName, err)
-	}
-
-	return nil
-}
-
-func (config *SFTPConfig) finalizeConfig(ctx context.Context, configSSH *ssh.ServerConfig) error {
-	parsedSigner, err := ssh.ParsePrivateKey(config.PrivateKey)
+func (config *SFTPConfig) setupServerConfig() error {
+	signer, err := ssh.ParsePrivateKey(config.PrivateKey)
 	if err != nil {
 		return fmt.Errorf("parse private key: %w", err)
 	}
-	configSSH.AddHostKey(parsedSigner)
 
-	// Get server key and set up callback
-	configSSH.PublicKeyCallback = func(conn ssh.ConnMetadata, auth ssh.PublicKey) (*ssh.Permissions, error) {
-		serverKey, err := config.getServerPublicKey(ctx, string(config.PublicKey))
-		if err != nil {
-			return nil, fmt.Errorf("fetch server key: %w", err)
-		}
-
-		parsedServerKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(*serverKey))
-		if err != nil {
-			return nil, fmt.Errorf("parse server key: %w", err)
-		}
-
-		if bytes.Equal(parsedServerKey.Marshal(), auth.Marshal()) {
-			return &ssh.Permissions{
-				Extensions: map[string]string{
-					"pubkey-fp": ssh.FingerprintSHA256(auth),
-				},
-			}, nil
-		}
-		return nil, fmt.Errorf("invalid public key for %s", conn.RemoteAddr())
+	serverKey, _, _, _, err := ssh.ParseAuthorizedKey(config.ServerKey)
+	if err != nil {
+		return fmt.Errorf("parse server key: %w", err)
 	}
 
-	config.ServerConfig = configSSH
+	config.ServerConfig = &ssh.ServerConfig{
+		NoClientAuth:  false,
+		ServerVersion: "SSH-2.0-PBS-D2D-Agent",
+		AuthLogCallback: func(conn ssh.ConnMetadata, method string, err error) {
+			if err != nil {
+				log.Printf("Auth attempt from %s@%s", conn.User(), conn.RemoteAddr())
+			} else {
+				log.Printf("Auth accepted from %s@%s", conn.User(), conn.RemoteAddr())
+			}
+		},
+		PublicKeyCallback: func(conn ssh.ConnMetadata, auth ssh.PublicKey) (*ssh.Permissions, error) {
+			if string(serverKey.Marshal()) == string(auth.Marshal()) {
+				return &ssh.Permissions{
+					Extensions: map[string]string{
+						"pubkey-fp": ssh.FingerprintSHA256(auth),
+					},
+				}, nil
+			}
+			return nil, fmt.Errorf("unknown public key for %s", conn.RemoteAddr())
+		},
+	}
+	config.ServerConfig.AddHostKey(signer)
 	return nil
 }
 
-type NewAgentResp struct {
-	PublicKey string `json:"public_key"`
-}
-
-func (config *SFTPConfig) getServerPublicKey(ctx context.Context, publicKey string) (*string, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, fmt.Errorf("get hostname: %w", err)
-	}
-
+func (config *SFTPConfig) getServerPublicKey() (*string, error) {
+	hostname, _ := os.Hostname()
 	reqBody, err := json.Marshal(map[string]string{
-		"public_key": publicKey,
+		"public_key": string(config.PublicKey),
 		"base_path":  config.BasePath,
 		"hostname":   hostname,
 	})
@@ -248,31 +209,22 @@ func (config *SFTPConfig) getServerPublicKey(ctx context.Context, publicKey stri
 		return nil, fmt.Errorf("marshal request body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
+	resp, err := httpClient.Post(
 		fmt.Sprintf("%s/api2/json/d2d/target", strings.TrimSuffix(config.Server, "/")),
-		bytes.NewReader(reqBody),
+		"application/json",
+		strings.NewReader(string(reqBody)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("execute request: %w", err)
+		return nil, fmt.Errorf("server request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response body: %w", err)
+	var result struct {
+		PublicKey string `json:"public_key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	var newAgentStruct NewAgentResp
-	if err := json.Unmarshal(body, &newAgentStruct); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
-
-	return &newAgentStruct.PublicKey, nil
+	return &result.PublicKey, nil
 }
