@@ -68,8 +68,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer stdout.Close()
-	defer stderr.Close()
 
 	// Start monitoring in background first
 	monitorCtx, monitorCancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -86,6 +84,9 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	select {
 	case <-readyChan:
 	case <-monitorCtx.Done():
+		stderr.Close()
+		stdout.Close()
+
 		return nil, fmt.Errorf("RunBackup: task monitoring crashed -> %w", monitorErr)
 	}
 
@@ -104,6 +105,10 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	// Now start the backup process
 	if err := cmd.Start(); err != nil {
 		monitorCancel() // Cancel monitoring since backup failed to start
+
+		stderr.Close()
+		stdout.Close()
+
 		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s): %w", cmd.String(), err)
 	}
 
@@ -111,16 +116,25 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	select {
 	case <-monitorCtx.Done():
 		if task == nil {
+			stderr.Close()
+			stdout.Close()
+
 			_ = cmd.Process.Kill()
 			return nil, fmt.Errorf("RunBackup: no task created")
 		}
 	}
 
 	if err := updateJobStatus(job, task, storeInstance); err != nil {
+		stderr.Close()
+		stdout.Close()
+
 		return task, fmt.Errorf("RunBackup: failed to update job status: %w", err)
 	}
 
 	go func() {
+		defer stdout.Close()
+		defer stderr.Close()
+
 		_ = cmd.Wait()
 
 		logGlobalMu.Lock()
