@@ -6,24 +6,23 @@ import (
 	"io"
 	"log"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-func collectLogs(stdout, stderr io.ReadCloser, logLines []string, logMu *sync.Mutex) {
+func collectLogs(stdout, stderr io.ReadCloser) []string {
+	logLines := []string{}
 	reader := bufio.NewScanner(io.MultiReader(stdout, stderr))
 
 	for reader.Scan() {
 		line := reader.Text()
 
 		log.Println(line)
-
-		logMu.Lock()
 		logLines = append(logLines, line)
-		logMu.Unlock()
 	}
+
+	return logLines
 }
 func writeLogsToFile(upid string, logLines []string) error {
 	if logLines == nil {
