@@ -108,6 +108,10 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	if err := cmd.Start(); err != nil {
 		monitorCancel() // Cancel monitoring since backup failed to start
 
+		if currOwner != "" {
+			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+		}
+
 		stderr.Close()
 		stdout.Close()
 
@@ -121,6 +125,10 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 			stderr.Close()
 			stdout.Close()
 
+			if currOwner != "" {
+				_ = SetDatastoreOwner(job, storeInstance, currOwner)
+			}
+
 			_ = cmd.Process.Kill()
 			return nil, fmt.Errorf("RunBackup: no task created")
 		}
@@ -129,6 +137,9 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	if err := updateJobStatus(job, task, storeInstance); err != nil {
 		stderr.Close()
 		stdout.Close()
+		if currOwner != "" {
+			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+		}
 
 		return task, fmt.Errorf("RunBackup: failed to update job status: %w", err)
 	}
