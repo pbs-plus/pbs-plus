@@ -3,14 +3,9 @@
 package backup
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"log"
-	"math"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,48 +14,7 @@ import (
 	"github.com/alexflint/go-filemutex"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
-
-func waitForLogFile(logFilePath string, maxWait time.Duration) (*os.File, error) {
-	start := time.Now()
-
-	for {
-		// Try to open the file with write permissions
-		file, err := os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
-		if err == nil {
-			return file, nil
-		}
-
-		// Check if we've exceeded the maximum wait time
-		if time.Since(start) > maxWait {
-			return nil, fmt.Errorf("timeout waiting for file %s to become writable: %v", logFilePath, err)
-		}
-
-		// Check if the error is due to permissions or if the file doesn't exist
-		if os.IsPermission(err) {
-			// File exists but we don't have permission
-			stat, statErr := os.Stat(logFilePath)
-			if statErr == nil {
-				// Check if file is writable by current user
-				if stat.Mode().Perm()&0200 == 0 {
-					return nil, fmt.Errorf("file %s exists but is not writable: %v", logFilePath, err)
-				}
-			}
-		}
-
-		// Sleep for a short duration before retrying
-		// Using exponential backoff with a maximum of 100ms
-		backoff := time.Duration(math.Min(100, math.Pow(2, float64(time.Since(start).Milliseconds()/100)))) * time.Millisecond
-		time.Sleep(backoff)
-	}
-}
-
-type openResult struct {
-	file *os.File
-	err  error
-}
 
 func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) {
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
@@ -95,8 +49,8 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 
 	var agentMount *mount.AgentMount
 	if isAgent {
-		if agentMount, err = mountAgent(storeInstance, target); err != nil {
-			return nil, err
+		if agentMount, err = mount.Mount(storeInstance, target); err != nil {
+			return nil, fmt.Errorf("RunBackup: mount initialization error: %w", err)
 		}
 		srcPath = agentMount.Path
 	}
@@ -135,12 +89,6 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		return nil, fmt.Errorf("RunBackup: task monitoring crashed -> %w", monitorErr)
 	}
 
-	// Now start the backup process
-	if err := cmd.Start(); err != nil {
-		monitorCancel() // Cancel monitoring since backup failed to start
-		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s): %w", cmd.String(), err)
-	}
-
 	// Start collecting logs and wait for backup completion
 	var logLines []string
 	var logMu sync.Mutex
@@ -150,8 +98,14 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		logGlobalMu.Lock()
 		defer logGlobalMu.Unlock()
 
-		collectLogs(stdout, stderr, &logLines, &logMu)
+		collectLogs(stdout, stderr, logLines, &logMu)
 	}()
+
+	// Now start the backup process
+	if err := cmd.Start(); err != nil {
+		monitorCancel() // Cancel monitoring since backup failed to start
+		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s): %w", cmd.String(), err)
+	}
 
 	// Wait for either monitoring to complete or timeout
 	select {
@@ -162,7 +116,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		}
 	}
 
-	if err := updateJobStatus(job, task, storeInstance, nil); err != nil {
+	if err := updateJobStatus(job, task, storeInstance); err != nil {
 		return task, fmt.Errorf("RunBackup: failed to update job status: %w", err)
 	}
 
@@ -172,7 +126,11 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 		logGlobalMu.Lock()
 		defer logGlobalMu.Unlock()
 
-		if err := updateJobStatus(job, task, storeInstance, &logLines); err != nil {
+		if err := writeLogsToFile(task.UPID, logLines); err != nil {
+			log.Printf("Failed to write logs: %v", err)
+		}
+
+		if err := updateJobStatus(job, task, storeInstance); err != nil {
 			log.Printf("RunBackup: failed to update job status: %v", err)
 		}
 
@@ -183,227 +141,4 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	}()
 
 	return task, nil
-}
-
-func mountAgent(storeInstance *store.Store, target *store.Target) (*mount.AgentMount, error) {
-	agentMount, err := mount.Mount(storeInstance, target)
-	if err != nil {
-		return nil, fmt.Errorf("RunBackup: mount initialization error: %w", err)
-	}
-
-	return agentMount, nil
-}
-
-func prepareBackupCommand(job *store.Job, storeInstance *store.Store, srcPath string, isAgent bool) (*exec.Cmd, error) {
-	if srcPath == "" {
-		return nil, fmt.Errorf("RunBackup: source path is required")
-	}
-
-	backupId, err := getBackupId(isAgent, job.Target)
-	if err != nil {
-		return nil, fmt.Errorf("RunBackup: failed to get backup ID: %w", err)
-	}
-
-	jobStore := fmt.Sprintf("%s@localhost:%s", storeInstance.APIToken.TokenId, job.Store)
-	if jobStore == "@localhost:" {
-		return nil, fmt.Errorf("RunBackup: invalid job store configuration")
-	}
-
-	cmdArgs := buildCommandArgs(storeInstance, job, srcPath, jobStore, backupId, isAgent)
-	if len(cmdArgs) == 0 {
-		return nil, fmt.Errorf("RunBackup: failed to build command arguments")
-	}
-
-	cmd := exec.Command("/usr/bin/prlimit", cmdArgs...)
-	cmd.Env = buildCommandEnv(storeInstance)
-
-	return cmd, nil
-}
-
-func getBackupId(isAgent bool, targetName string) (string, error) {
-	if !isAgent {
-		hostname, err := os.Hostname()
-		if err != nil {
-			hostnameBytes, err := os.ReadFile("/etc/hostname")
-			if err != nil {
-				return "localhost", nil
-			}
-			return strings.TrimSpace(string(hostnameBytes)), nil
-		}
-		return hostname, nil
-	}
-	if targetName == "" {
-		return "", fmt.Errorf("target name is required for agent backup")
-	}
-	return strings.TrimSpace(strings.Split(targetName, " - ")[0]), nil
-}
-
-func buildCommandArgs(storeInstance *store.Store, job *store.Job, srcPath string, jobStore string, backupId string, isAgent bool) []string {
-	if srcPath == "" || jobStore == "" || backupId == "" {
-		return nil
-	}
-
-	cmdArgs := []string{
-		"--nofile=1024:1024",
-		"/usr/bin/proxmox-backup-client",
-		"backup",
-		fmt.Sprintf("%s.pxar:%s", strings.ReplaceAll(job.Target, " ", "-"), srcPath),
-		"--repository", jobStore,
-		"--change-detection-mode=metadata",
-		"--backup-id", backupId,
-		"--crypt-mode=none",
-		"--skip-e2big-xattr", "true",
-		"--skip-lost-and-found", "true",
-	}
-
-	// Add exclusions
-	for _, exclusion := range job.Exclusions {
-		if isAgent && exclusion.JobID != job.ID {
-			continue
-		}
-		cmdArgs = append(cmdArgs, "--exclude", exclusion.Path)
-	}
-
-	// Add namespace if specified
-	if job.Namespace != "" {
-		_ = CreateNamespace(job.Namespace, job, storeInstance)
-		cmdArgs = append(cmdArgs, "--ns", job.Namespace)
-	}
-
-	_ = FixDatastore(job, storeInstance)
-
-	return cmdArgs
-}
-
-func buildCommandEnv(storeInstance *store.Store) []string {
-	if storeInstance == nil || storeInstance.APIToken == nil {
-		return os.Environ()
-	}
-
-	env := append(os.Environ(),
-		fmt.Sprintf("PBS_PASSWORD=%s", storeInstance.APIToken.Value))
-
-	// Add fingerprint if available
-	if pbsStatus, err := storeInstance.GetPBSStatus(); err == nil {
-		if fingerprint, ok := pbsStatus.Info["fingerprint"]; ok {
-			env = append(env, fmt.Sprintf("PBS_FINGERPRINT=%s", fingerprint))
-		}
-	}
-
-	return env
-}
-
-func setupCommandPipes(cmd *exec.Cmd) (io.ReadCloser, io.ReadCloser, error) {
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, fmt.Errorf("error creating stdout pipe: %w", err)
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		stdout.Close() // Clean up stdout if stderr fails
-		return nil, nil, fmt.Errorf("error creating stderr pipe: %w", err)
-	}
-
-	return stdout, stderr, nil
-}
-
-func collectLogs(stdout, stderr io.ReadCloser, logLines *[]string, logMu *sync.Mutex) {
-	reader := bufio.NewScanner(io.MultiReader(stdout, stderr))
-	reader.Buffer(make([]byte, 0, 64*1024), 1024*1024) // Increased buffer size
-
-	for reader.Scan() {
-		logMu.Lock()
-		*logLines = append(*logLines, reader.Text())
-		logMu.Unlock()
-	}
-}
-
-func updateJobStatus(job *store.Job, task *store.Task, storeInstance *store.Store, logLines *[]string) error {
-	syslogger, err := syslog.InitializeLogger()
-	if err != nil {
-		return fmt.Errorf("failed to initialize logger: %w", err)
-	}
-
-	if logLines != nil {
-		// Write logs to file
-		if err := writeLogsToFile(task.UPID, logLines); err != nil {
-			syslogger.Errorf("Failed to write logs: %v", err)
-			return err
-		}
-	}
-
-	// Update task status
-	taskFound, err := storeInstance.GetTaskByUPID(task.UPID)
-	if err != nil {
-		syslogger.Errorf("Unable to get task by UPID: %v", err)
-		return err
-	}
-
-	// Update job status
-	latestJob, err := storeInstance.GetJob(job.ID)
-	if err != nil {
-		syslogger.Errorf("Unable to get job: %v", err)
-		return err
-	}
-
-	latestJob.LastRunUpid = &taskFound.UPID
-	latestJob.LastRunState = &taskFound.Status
-	latestJob.LastRunEndtime = &taskFound.EndTime
-
-	if err := storeInstance.UpdateJob(*latestJob); err != nil {
-		syslogger.Errorf("Unable to update job: %v", err)
-		return err
-	}
-
-	return nil
-}
-
-func writeLogsToFile(upid string, logLines *[]string) error {
-	if logLines == nil {
-		return fmt.Errorf("logLines is nil")
-	}
-
-	logFilePath := utils.GetTaskLogPath(upid)
-	logFile, err := waitForLogFile(logFilePath, 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("log file cannot be opened: %w", err)
-	}
-	defer logFile.Close()
-
-	writer := bufio.NewWriter(logFile)
-	defer writer.Flush()
-
-	if _, err := writer.WriteString("--- proxmox-backup-client log starts here ---\n"); err != nil {
-		return fmt.Errorf("failed to write log header: %w", err)
-	}
-
-	hasError := false
-	var errorString string
-	timestamp := time.Now().Format(time.RFC3339)
-
-	for _, logLine := range *logLines {
-		if strings.Contains(logLine, "Error: upload failed:") {
-			errorString = strings.Replace(logLine, "Error:", "TASK ERROR:", 1)
-			hasError = true
-			continue
-		}
-
-		if _, err := writer.WriteString(fmt.Sprintf("%s: %s\n", timestamp, logLine)); err != nil {
-			return fmt.Errorf("failed to write log line: %w", err)
-		}
-	}
-
-	// Write final status
-	if hasError {
-		_, err = writer.WriteString(fmt.Sprintf("%s: %s", timestamp, errorString))
-	} else {
-		_, err = writer.WriteString(fmt.Sprintf("%s: TASK OK", timestamp))
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to write final status: %w", err)
-	}
-
-	return nil
 }
