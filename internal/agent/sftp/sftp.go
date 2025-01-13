@@ -82,7 +82,7 @@ func (s *SFTPSession) setupListener(port string) error {
 	return nil
 }
 
-func (s *SFTPSession) Serve(errChan chan string) {
+func (s *SFTPSession) Serve(errChan chan<- string) {
 	defer s.Close()
 
 	port, err := utils.DriveLetterPort([]rune(s.DriveLetter)[0])
@@ -122,7 +122,7 @@ func (s *SFTPSession) Serve(errChan chan string) {
 	s.acceptConnections(errChan)
 }
 
-func (s *SFTPSession) acceptConnections(errChan chan string) {
+func (s *SFTPSession) acceptConnections(errChan chan<- string) {
 	for {
 		select {
 		case <-s.Context.Done():
@@ -149,7 +149,7 @@ func (s *SFTPSession) acceptConnections(errChan chan string) {
 	}
 }
 
-func (s *SFTPSession) handleConnection(errChan chan string, conn net.Conn) {
+func (s *SFTPSession) handleConnection(errChan chan<- string, conn net.Conn) {
 	defer conn.Close()
 
 	// Set connection deadline
@@ -220,7 +220,7 @@ func (s *SFTPSession) validateConnection(conn net.Conn) error {
 	return nil
 }
 
-func (s *SFTPSession) handleChannels(errChan chan string, chans <-chan ssh.NewChannel) {
+func (s *SFTPSession) handleChannels(errChan chan<- string, chans <-chan ssh.NewChannel) {
 	for newChannel := range chans {
 		select {
 		case <-s.Context.Done():
@@ -241,7 +241,7 @@ func (s *SFTPSession) handleChannels(errChan chan string, chans <-chan ssh.NewCh
 	}
 }
 
-func (s *SFTPSession) handleChannel(errChan chan string, channel ssh.Channel, requests <-chan *ssh.Request) {
+func (s *SFTPSession) handleChannel(errChan chan<- string, channel ssh.Channel, requests <-chan *ssh.Request) {
 	defer channel.Close()
 
 	sftpRequested := make(chan bool, 1)
@@ -278,7 +278,7 @@ func handleRequests(ctx context.Context, requests <-chan *ssh.Request, sftpReque
 	}
 }
 
-func (s *SFTPSession) handleSFTP(errChan chan string, channel ssh.Channel) {
+func (s *SFTPSession) handleSFTP(errChan chan<- string, channel ssh.Channel) {
 	sftpHandler, err := NewSftpHandler(s.Context, s.Snapshot)
 	if err != nil {
 		errChan <- fmt.Sprintf("Failed to initialize handler: %v", err)
