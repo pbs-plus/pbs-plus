@@ -342,6 +342,8 @@ func (p *agentService) run() {
 		p.logger.Errorf("WebSocket connection failed: %v", err)
 		return
 	}
+
+	<-p.ctx.Done()
 }
 
 func (p *agentService) waitForServerURL() error {
@@ -419,11 +421,8 @@ func (p *agentService) handleLogs(infoChan, errChan chan string) {
 }
 
 func (p *agentService) connectWebSocket(infoChan, errChan chan string) error {
-	var wsClient *websockets.WSClient
-	var err error
-
 	for {
-		wsClient, err = websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) {
+		_, err := websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) {
 			controllers.WSHandler(p.ctx, c, m, infoChan, errChan)
 		})
 		if err != nil {
@@ -438,7 +437,5 @@ func (p *agentService) connectWebSocket(infoChan, errChan chan string) error {
 		break
 	}
 
-	defer wsClient.Close()
-	<-p.ctx.Done()
 	return nil
 }
