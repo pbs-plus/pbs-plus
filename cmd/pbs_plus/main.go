@@ -102,6 +102,7 @@ func main() {
 	mux.HandleFunc("/plus/token", middlewares.CORS(storeInstance, plus.TokenHandler(storeInstance)))
 	mux.HandleFunc("/api2/json/plus/version", middlewares.CORS(storeInstance, plus.VersionHandler(storeInstance, Version)))
 	mux.HandleFunc("/api2/json/plus/binary", middlewares.CORS(storeInstance, plus.DownloadBinary(storeInstance, Version)))
+	mux.HandleFunc("/api2/json/plus/binary/checksum", middlewares.CORS(storeInstance, plus.DownloadChecksum(storeInstance, Version)))
 	mux.HandleFunc("/api2/json/d2d/backup", middlewares.CORS(storeInstance, jobs.D2DJobHandler(storeInstance)))
 	mux.HandleFunc("/api2/json/d2d/target", middlewares.CORS(storeInstance, targets.D2DTargetHandler(storeInstance)))
 	mux.HandleFunc("/api2/json/d2d/target/agent", middlewares.CORS(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
