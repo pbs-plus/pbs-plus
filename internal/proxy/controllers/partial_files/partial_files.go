@@ -86,8 +86,8 @@ func ExtJsPartialFileHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func ExtJsPartialFileSingleHandler(storeInstance *store.Store) func(w http.ResponseWriter, r *http.Request, partialFile string) {
+	return func(w http.ResponseWriter, r *http.Request, partialFile string) {
 		response := PartialFileConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -107,7 +107,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc 
 				return
 			}
 
-			pathDecoded, err := url.QueryUnescape(r.PathValue("partial_file"))
+			pathDecoded, err := url.QueryUnescape(partialFile)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -151,7 +151,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc 
 		}
 
 		if r.Method == http.MethodGet {
-			pathDecoded, err := url.QueryUnescape(r.PathValue("partial_file"))
+			pathDecoded, err := url.QueryUnescape(partialFile)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -172,7 +172,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc 
 		}
 
 		if r.Method == http.MethodDelete {
-			pathDecoded, err := url.QueryUnescape(r.PathValue("partial_file"))
+			pathDecoded, err := url.QueryUnescape(partialFile)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
