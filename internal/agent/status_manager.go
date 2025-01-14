@@ -9,7 +9,7 @@ import (
 // BackupStatus manages the state of ongoing backups
 type BackupStatus struct {
 	activeBackups sync.Map
-	mu             sync.RWMutex
+	mu           sync.RWMutex
 }
 
 var (
@@ -44,5 +44,3 @@ func (bs *BackupStatus) HasActiveBackups() bool {
 	})
 	return hasActive
 }
-
-
