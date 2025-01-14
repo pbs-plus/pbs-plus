@@ -74,22 +74,13 @@ func handleBackupStart(ctx context.Context, c *websocket.Conn, drive string, inf
 
 func handleBackupClose(c *websocket.Conn, drive string, infoChan chan<- string) error {
 	infoChan <- fmt.Sprintf("Received closure request for drive %s.", drive)
-
-	defer func() {
-		infoChan <- fmt.Sprintf("Completed closure request for drive %s.", drive)
-	}()
-
 	cleanupExistingSession(drive, infoChan)
-
+	
+	// Mark backup as complete
 	backupStatus := agent.GetBackupStatus()
 	backupStatus.EndBackup(drive)
-
-	err := sendResponse(c, "backup_close", drive)
-	if err != nil {
-		return fmt.Errorf("failed to send backup_close response: %w", err)
-	}
-
-	return nil
+	
+	return sendResponse(c, "backup_close", drive)
 }
 
 func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, infoChan chan<- string, errChan chan<- string) {
@@ -98,7 +89,9 @@ func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, inf
 		return
 	}
 
-	infoChan <- fmt.Sprintf("Received message type: %s", m.Type)
+	// Add timeout to context if needed
+	// ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// defer cancel()
 
 	var err error
 	switch m.Type {
@@ -111,8 +104,6 @@ func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, inf
 	}
 
 	if err != nil {
-		errChan <- fmt.Sprintf("Error handling message type %s: %v", m.Type, err)
+		errChan <- err.Error()
 	}
-
-	infoChan <- fmt.Sprintf("Completed handling message type: %s", m.Type)
 }
