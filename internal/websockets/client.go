@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/billgraziano/dpapi"
 	"github.com/gorilla/websocket"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -80,17 +80,17 @@ func (b *exponentialBackoff) Reset() {
 func NewWSClient(commandListener func(*websocket.Conn, Message)) (*WSClient, error) {
 	serverURL, err := getServerURLFromRegistry()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get server URL: %w", err)
+		return nil, fmt.Errorf("failed to get server URL: %v", err)
 	}
 
 	clientID, err := os.Hostname()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get hostname: %w", err)
+		return nil, fmt.Errorf("failed to get hostname: %v", err)
 	}
 
 	headers, err := buildHeaders(clientID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build headers: %w", err)
+		return nil, fmt.Errorf("failed to build headers: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,7 +121,7 @@ func (c *WSClient) connectionManager() {
 		default:
 			if err := c.connect(); err != nil {
 				delay := backoff.NextBackOff()
-				log.Printf("Connection failed: %v. Retrying in %v...", err, delay)
+				syslog.L.Errorf("Connection failed: %v. Retrying in %v...", err, delay)
 
 				select {
 				case <-time.After(delay):
@@ -137,25 +137,19 @@ func (c *WSClient) connectionManager() {
 			wg := &sync.WaitGroup{}
 			wg.Add(2)
 
-			errChan := make(chan error, 2)
-
 			go func() {
 				defer wg.Done()
-				c.readPump(connCtx, errChan)
+				c.readPump(connCtx)
 			}()
 
 			go func() {
 				defer wg.Done()
-				c.writePump(connCtx, errChan)
+				c.writePump(connCtx)
 			}()
 
 			var err error
-			select {
-			case err = <-errChan:
-				log.Printf("Connection error: %v. Will reconnect...", err)
-			case <-c.ctx.Done():
-				err = c.ctx.Err()
-			}
+			<-c.ctx.Done()
+			err = c.ctx.Err()
 
 			connCancel()
 			wg.Wait()
@@ -196,7 +190,7 @@ func (c *WSClient) connect() error {
 
 	conn, _, err := dialer.DialContext(ctx, c.ServerURL, c.Headers)
 	if err != nil {
-		return fmt.Errorf("dial failed: %w", err)
+		return fmt.Errorf("dial failed: %v", err)
 	}
 
 	initMessage := Message{
@@ -207,7 +201,7 @@ func (c *WSClient) connect() error {
 	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	if err := conn.WriteJSON(initMessage); err != nil {
 		conn.Close()
-		return fmt.Errorf("init message failed: %w", err)
+		return fmt.Errorf("init message failed: %v", err)
 	}
 
 	c.conn = conn
@@ -215,10 +209,10 @@ func (c *WSClient) connect() error {
 	return nil
 }
 
-func (c *WSClient) readPump(ctx context.Context, errChan chan<- error) {
+func (c *WSClient) readPump(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			errChan <- fmt.Errorf("read pump panic: %v", r)
+			syslog.L.Errorf("read pump panic: %v", r)
 		}
 	}()
 
@@ -237,7 +231,7 @@ func (c *WSClient) readPump(ctx context.Context, errChan chan<- error) {
 			var msg Message
 			err := c.conn.ReadJSON(&msg)
 			if err != nil {
-				errChan <- fmt.Errorf("read error: %w", err)
+				syslog.L.Errorf("read error: %v", err)
 				return
 			}
 
@@ -248,12 +242,12 @@ func (c *WSClient) readPump(ctx context.Context, errChan chan<- error) {
 	}
 }
 
-func (c *WSClient) writePump(ctx context.Context, errChan chan<- error) {
+func (c *WSClient) writePump(ctx context.Context) {
 	ticker := time.NewTicker(clientPingPeriod)
 	defer func() {
 		ticker.Stop()
 		if r := recover(); r != nil {
-			errChan <- fmt.Errorf("write pump panic: %v", r)
+			syslog.L.Errorf("write pump panic: %v", r)
 		}
 	}()
 
@@ -261,7 +255,7 @@ func (c *WSClient) writePump(ctx context.Context, errChan chan<- error) {
 		select {
 		case message, ok := <-c.send:
 			if !ok {
-				errChan <- fmt.Errorf("send channel closed")
+				syslog.L.Errorf("send channel closed")
 				return
 			}
 
@@ -271,7 +265,7 @@ func (c *WSClient) writePump(ctx context.Context, errChan chan<- error) {
 			c.writeMutex.Unlock()
 
 			if err != nil {
-				errChan <- fmt.Errorf("write error: %w", err)
+				syslog.L.Errorf("write error: %v", err)
 				return
 			}
 
@@ -282,7 +276,7 @@ func (c *WSClient) writePump(ctx context.Context, errChan chan<- error) {
 			c.writeMutex.Unlock()
 
 			if err != nil {
-				errChan <- fmt.Errorf("ping error: %w", err)
+				syslog.L.Errorf("ping error: %v", err)
 				return
 			}
 
@@ -360,28 +354,28 @@ func validateRegistryValue(value string, maxLength int) (string, error) {
 func getServerURLFromRegistry() (string, error) {
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
 	if err != nil {
-		return "", fmt.Errorf("failed to open registry key: %w", err)
+		return "", fmt.Errorf("failed to open registry key: %v", err)
 	}
 	defer key.Close()
 
 	serverURL, _, err := key.GetStringValue("ServerURL")
 	if err != nil {
-		return "", fmt.Errorf("server URL not found: %w", err)
+		return "", fmt.Errorf("server URL not found: %v", err)
 	}
 
 	serverURL, err = validateRegistryValue(serverURL, 1024)
 	if err != nil {
-		return "", fmt.Errorf("invalid server URL: %w", err)
+		return "", fmt.Errorf("invalid server URL: %v", err)
 	}
 
 	serverURL, err = url.JoinPath(serverURL, "/plus/ws")
 	if err != nil {
-		return "", fmt.Errorf("invalid server URL path: %w", err)
+		return "", fmt.Errorf("invalid server URL path: %v", err)
 	}
 
 	parsedURL, err := url.Parse(serverURL)
 	if err != nil {
-		return "", fmt.Errorf("invalid server URL: %w", err)
+		return "", fmt.Errorf("invalid server URL: %v", err)
 	}
 
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
@@ -402,7 +396,7 @@ func buildHeaders(clientID string) (http.Header, error) {
 		if publicKey, _, err := driveKey.GetStringValue("ServerKey"); err == nil {
 			publicKey, err = validateRegistryValue(publicKey, 4096)
 			if err != nil {
-				return headers, fmt.Errorf("invalid server key: %w", err)
+				return headers, fmt.Errorf("invalid server key: %v", err)
 			}
 
 			if decrypted, err := dpapi.Decrypt(publicKey); err == nil {

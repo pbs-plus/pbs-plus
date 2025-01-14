@@ -25,15 +25,19 @@ type LogRemoteRequest struct {
 	Level    string `json:"level"`
 }
 
-func InitializeLogger(s service.Service) (*Logger, error) {
+var L *Logger
+
+func InitializeLogger(s service.Service) error {
 	logger, err := s.Logger(nil)
 	if err != nil {
-		return nil, fmt.Errorf("InitializeLogger: %w", err)
+		return fmt.Errorf("InitializeLogger: %w", err)
 	}
 
-	return &Logger{
+	L = &Logger{
 		LogWriter: logger,
-	}, nil
+	}
+
+	return nil
 }
 
 func (l *Logger) logToServer(level string, msg string) {

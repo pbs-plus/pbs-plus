@@ -16,6 +16,7 @@ import (
 
 	"github.com/minio/selfupdate"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 func (p *agentService) ensureTempDir() (string, error) {
@@ -111,7 +112,7 @@ func (p *agentService) verifyAndApplyUpdate(tempFile string) error {
 
 	backupPath := ex + ".backup"
 	if err := os.Link(ex, backupPath); err != nil && !os.IsExist(err) {
-		p.logger.Errorf("Failed to create backup: %v", err)
+		syslog.L.Errorf("Failed to create backup: %v", err)
 	}
 
 	updateFile, err := os.Open(tempFile)
@@ -122,7 +123,7 @@ func (p *agentService) verifyAndApplyUpdate(tempFile string) error {
 
 	if err := selfupdate.Apply(updateFile, selfupdate.Options{}); err != nil {
 		if backupErr := os.Rename(backupPath, ex); backupErr != nil {
-			p.logger.Errorf("Failed to restore backup after failed update: %v", backupErr)
+			syslog.L.Errorf("Failed to restore backup after failed update: %v", backupErr)
 		}
 		return fmt.Errorf("failed to apply update: %w", err)
 	}
@@ -187,13 +188,13 @@ func (p *agentService) cleanupOldUpdates() error {
 			path := filepath.Join(tempDir, entry.Name())
 			info, err := entry.Info()
 			if err != nil {
-				p.logger.Errorf("Failed to get file info for %s: %v", path, err)
+				syslog.L.Errorf("Failed to get file info for %s: %v", path, err)
 				continue
 			}
 
 			if time.Since(info.ModTime()) > 24*time.Hour {
 				if err := os.Remove(path); err != nil {
-					p.logger.Errorf("Failed to remove old update file %s: %v", path, err)
+					syslog.L.Errorf("Failed to remove old update file %s: %v", path, err)
 				}
 			}
 		}
@@ -207,49 +208,49 @@ func (p *agentService) versionCheck() {
 	defer ticker.Stop()
 
 	if err := p.cleanupOldUpdates(); err != nil {
-		p.logger.Errorf("Failed to clean up old updates: %v", err)
+		syslog.L.Errorf("Failed to clean up old updates: %v", err)
 	}
 
 	checkAndUpdate := func() {
 		// Check if there are any active backups
 		backupStatus := agent.GetBackupStatus()
 		if backupStatus.HasActiveBackups() {
-			p.logger.Info("Skipping version check - backup in progress")
+			syslog.L.Info("Skipping version check - backup in progress")
 			return
 		}
 
 		var versionResp VersionResp
 		_, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, &versionResp)
 		if err != nil {
-			p.logger.Errorf("Version check failed: %v", err)
+			syslog.L.Errorf("Version check failed: %v", err)
 			return
 		}
 
 		if versionResp.Version != Version {
-			p.logger.Infof("New version %s available, current version: %s", versionResp.Version, Version)
+			syslog.L.Infof("New version %s available, current version: %s", versionResp.Version, Version)
 
 			// Double check for active backups before starting update
 			if backupStatus.HasActiveBackups() {
-				p.logger.Info("Postponing update - backup started during version check")
+				syslog.L.Info("Postponing update - backup started during version check")
 				return
 			}
 
 			for retry := 0; retry < maxUpdateRetries; retry++ {
 				// Check again before each retry
 				if backupStatus.HasActiveBackups() {
-					p.logger.Info("Postponing update retry - backup in progress")
+					syslog.L.Info("Postponing update retry - backup in progress")
 					return
 				}
 
 				if err := p.performUpdate(); err != nil {
-					p.logger.Errorf("Update attempt %d failed: %v", retry+1, err)
+					syslog.L.Errorf("Update attempt %d failed: %v", retry+1, err)
 					time.Sleep(updateRetryDelay)
 					continue
 				}
-				p.logger.Infof("Successfully updated to version %s", versionResp.Version)
+				syslog.L.Infof("Successfully updated to version %s", versionResp.Version)
 				return
 			}
-			p.logger.Errorf("Failed to update after %d attempts", maxUpdateRetries)
+			syslog.L.Errorf("Failed to update after %d attempts", maxUpdateRetries)
 		}
 	}
 

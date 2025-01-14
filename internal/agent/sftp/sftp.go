@@ -14,6 +14,7 @@ import (
 
 	"github.com/pkg/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/crypto/ssh"
 )
@@ -82,12 +83,12 @@ func (s *SFTPSession) setupListener(port string) error {
 	return nil
 }
 
-func (s *SFTPSession) Serve(errChan chan<- string) {
+func (s *SFTPSession) Serve() {
 	defer s.Close()
 
 	port, err := utils.DriveLetterPort([]rune(s.DriveLetter)[0])
 	if err != nil {
-		errChan <- fmt.Sprintf("Unable to determine port number: %v", err)
+		syslog.L.Errorf("Unable to determine port number: %v", err)
 		return
 	}
 
@@ -98,7 +99,7 @@ func (s *SFTPSession) Serve(errChan chan<- string) {
 			break
 		}
 		if attempt == maxRetries-1 {
-			errChan <- fmt.Sprintf("Failed to start listener after %d attempts: %v", maxRetries, err)
+			syslog.L.Errorf("Failed to start listener after %d attempts: %v", maxRetries, err)
 			return
 		}
 		select {
@@ -119,10 +120,10 @@ func (s *SFTPSession) Serve(errChan chan<- string) {
 		close(shutdown)
 	}()
 
-	s.acceptConnections(errChan)
+	s.acceptConnections()
 }
 
-func (s *SFTPSession) acceptConnections(errChan chan<- string) {
+func (s *SFTPSession) acceptConnections() {
 	for {
 		select {
 		case <-s.Context.Done():
@@ -132,7 +133,7 @@ func (s *SFTPSession) acceptConnections(errChan chan<- string) {
 			if err != nil {
 				<-s.sem // Release semaphore on error
 				if !strings.Contains(err.Error(), "use of closed network connection") {
-					errChan <- fmt.Sprintf("Failed to accept connection: %v", err)
+					syslog.L.Errorf("Failed to accept connection: %v", err)
 				}
 				return
 			}
@@ -143,23 +144,23 @@ func (s *SFTPSession) acceptConnections(errChan chan<- string) {
 					<-s.sem // Release semaphore
 					s.connections.Done()
 				}()
-				s.handleConnection(errChan, conn)
+				s.handleConnection(conn)
 			}()
 		}
 	}
 }
 
-func (s *SFTPSession) handleConnection(errChan chan<- string, conn net.Conn) {
+func (s *SFTPSession) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	// Set connection deadline
 	if err := conn.SetDeadline(time.Now().Add(connectionTimeout)); err != nil {
-		errChan <- fmt.Sprintf("Failed to set connection deadline: %v", err)
+		syslog.L.Errorf("Failed to set connection deadline: %v", err)
 		return
 	}
 
 	if err := s.validateConnection(conn); err != nil {
-		errChan <- err.Error()
+		syslog.L.Error(err.Error())
 		return
 	}
 
@@ -183,11 +184,11 @@ func (s *SFTPSession) handleConnection(errChan chan<- string, conn net.Conn) {
 	select {
 	case err := <-handshakeErr:
 		if err != nil {
-			errChan <- fmt.Sprintf("Failed to perform SSH handshake: %v", err)
+			syslog.L.Errorf("Failed to perform SSH handshake: %v", err)
 			return
 		}
 	case <-handshakeCtx.Done():
-		errChan <- "SSH handshake timed out"
+		syslog.L.Error("SSH handshake timed out")
 		return
 	}
 
@@ -205,7 +206,7 @@ func (s *SFTPSession) handleConnection(errChan chan<- string, conn net.Conn) {
 		}
 	}()
 
-	s.handleChannels(errChan, chans)
+	s.handleChannels(chans)
 }
 
 func (s *SFTPSession) validateConnection(conn net.Conn) error {
@@ -220,7 +221,7 @@ func (s *SFTPSession) validateConnection(conn net.Conn) error {
 	return nil
 }
 
-func (s *SFTPSession) handleChannels(errChan chan<- string, chans <-chan ssh.NewChannel) {
+func (s *SFTPSession) handleChannels(chans <-chan ssh.NewChannel) {
 	for newChannel := range chans {
 		select {
 		case <-s.Context.Done():
@@ -236,12 +237,12 @@ func (s *SFTPSession) handleChannels(errChan chan<- string, chans <-chan ssh.New
 				continue
 			}
 
-			go s.handleChannel(errChan, channel, requests)
+			go s.handleChannel(channel, requests)
 		}
 	}
 }
 
-func (s *SFTPSession) handleChannel(errChan chan<- string, channel ssh.Channel, requests <-chan *ssh.Request) {
+func (s *SFTPSession) handleChannel(channel ssh.Channel, requests <-chan *ssh.Request) {
 	defer channel.Close()
 
 	sftpRequested := make(chan bool, 1)
@@ -250,7 +251,7 @@ func (s *SFTPSession) handleChannel(errChan chan<- string, channel ssh.Channel, 
 	select {
 	case requested, ok := <-sftpRequested:
 		if ok && requested {
-			s.handleSFTP(errChan, channel)
+			s.handleSFTP(channel)
 		}
 	case <-s.Context.Done():
 		return
@@ -278,10 +279,10 @@ func handleRequests(ctx context.Context, requests <-chan *ssh.Request, sftpReque
 	}
 }
 
-func (s *SFTPSession) handleSFTP(errChan chan<- string, channel ssh.Channel) {
+func (s *SFTPSession) handleSFTP(channel ssh.Channel) {
 	sftpHandler, err := NewSftpHandler(s.Context, s.Snapshot)
 	if err != nil {
-		errChan <- fmt.Sprintf("Failed to initialize handler: %v", err)
+		syslog.L.Errorf("Failed to initialize handler: %v", err)
 		return
 	}
 
@@ -295,6 +296,6 @@ func (s *SFTPSession) handleSFTP(errChan chan<- string, channel ssh.Channel) {
 	}()
 
 	if err := server.Serve(); err != nil {
-		errChan <- fmt.Sprintf("SFTP server error: %v", err)
+		syslog.L.Errorf("SFTP server error: %v", err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
@@ -28,17 +29,17 @@ func sendResponse(c *websocket.Conn, msgType, content string) error {
 	return c.WriteJSON(response)
 }
 
-func cleanupExistingSession(drive string, infoChan chan<- string) {
+func cleanupExistingSession(drive string) {
 	if existing, ok := sftpSessions.LoadAndDelete(drive); ok && existing != nil {
 		if session, ok := existing.(*sftp.SFTPSession); ok && session != nil {
 			session.Close()
-			infoChan <- fmt.Sprintf("Cancelled existing backup context of drive %s.", drive)
+			syslog.L.Infof("Cancelled existing backup context of drive %s.", drive)
 		}
 	}
 }
 
-func handleBackupStart(ctx context.Context, c *websocket.Conn, drive string, infoChan chan<- string, errChan chan<- string) error {
-	infoChan <- fmt.Sprintf("Received backup request for drive %s.", drive)
+func handleBackupStart(ctx context.Context, c *websocket.Conn, drive string) error {
+	syslog.L.Infof("Received backup request for drive %s.", drive)
 
 	// Get backup status singleton and mark backup as started
 	backupStatus := agent.GetBackupStatus()
@@ -49,43 +50,43 @@ func handleBackupStart(ctx context.Context, c *websocket.Conn, drive string, inf
 	if err != nil {
 		return fmt.Errorf("snapshot error: %w", err)
 	}
-	infoChan <- fmt.Sprintf("Snapshot of drive %s has been made.", drive)
+	syslog.L.Infof("Snapshot of drive %s has been made.", drive)
 
 	sftpSession := sftp.NewSFTPSession(ctx, snapshot, drive)
 	if sftpSession == nil {
 		return ErrNoSFTPConfig
 	}
 
-	cleanupExistingSession(drive, infoChan)
+	cleanupExistingSession(drive)
 
 	go func() {
 		defer func() {
-			cleanupExistingSession(drive, infoChan)
+			cleanupExistingSession(drive)
 			backupStatus.EndBackup(drive)
 		}()
-		sftpSession.Serve(errChan)
+		sftpSession.Serve()
 	}()
 
-	infoChan <- fmt.Sprintf("SFTP access to snapshot of drive %s has been made.", drive)
+	syslog.L.Infof("SFTP access to snapshot of drive %s has been made.", drive)
 	sftpSessions.Store(drive, sftpSession)
 
 	return sendResponse(c, "backup_start", drive)
 }
 
-func handleBackupClose(c *websocket.Conn, drive string, infoChan chan<- string) error {
-	infoChan <- fmt.Sprintf("Received closure request for drive %s.", drive)
-	cleanupExistingSession(drive, infoChan)
-	
+func handleBackupClose(c *websocket.Conn, drive string) error {
+	syslog.L.Infof("Received closure request for drive %s.", drive)
+	cleanupExistingSession(drive)
+
 	// Mark backup as complete
 	backupStatus := agent.GetBackupStatus()
 	backupStatus.EndBackup(drive)
-	
+
 	return sendResponse(c, "backup_close", drive)
 }
 
-func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, infoChan chan<- string, errChan chan<- string) {
+func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message) {
 	if c == nil {
-		errChan <- "nil WebSocket connection"
+		syslog.L.Error("nil WebSocket connection")
 		return
 	}
 
@@ -96,14 +97,14 @@ func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message, inf
 	var err error
 	switch m.Type {
 	case "backup_start":
-		err = handleBackupStart(ctx, c, m.Content, infoChan, errChan)
+		err = handleBackupStart(ctx, c, m.Content)
 	case "backup_close":
-		err = handleBackupClose(c, m.Content, infoChan)
+		err = handleBackupClose(c, m.Content)
 	default:
 		err = fmt.Errorf("unknown message type: %s", m.Type)
 	}
 
 	if err != nil {
-		errChan <- err.Error()
+		syslog.L.Error(err.Error())
 	}
 }

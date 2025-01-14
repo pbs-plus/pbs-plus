@@ -23,7 +23,6 @@ type watchdogService struct {
 	lastRestartTime time.Time
 	maxRestarts     int
 	restartWindow   time.Duration
-	logger          *syslog.Logger
 }
 
 func newWatchdogService(original *agentService) *watchdogService {
@@ -46,23 +45,17 @@ func (w *watchdogService) shouldRestart() bool {
 }
 
 func (w *watchdogService) Start(s service.Service) error {
-	var err error
-	w.logger, err = syslog.InitializeLogger(s)
-	if err != nil {
-		return fmt.Errorf("failed to initialize logger: %v", err)
-	}
-
 	go func() {
 		for {
 			err := w.runWithRecovery(s)
 			if err != nil {
-				w.logger.Errorf("Service failed with error: %v - Attempting restart", err)
+				syslog.L.Errorf("Service failed with error: %v - Attempting restart", err)
 
 				w.restartCount++
 				w.lastRestartTime = time.Now()
 
 				if !w.shouldRestart() {
-					w.logger.Errorf("Too many restart attempts (%d) within window. Waiting for window reset.", w.restartCount)
+					syslog.L.Errorf("Too many restart attempts (%d) within window. Waiting for window reset.", w.restartCount)
 					time.Sleep(w.restartWindow)
 					w.restartCount = 0
 				}
@@ -81,7 +74,7 @@ func (w *watchdogService) runWithRecovery(s service.Service) (err error) {
 		if r := recover(); r != nil {
 			stack := string(debug.Stack())
 			err = fmt.Errorf("service panicked: %v\nStack:\n%s", r, stack)
-			w.logger.Error(err)
+			syslog.L.Error(err)
 		}
 	}()
 
@@ -110,7 +103,7 @@ func main() {
 	}
 	prg.svc = s
 
-	logger, err := syslog.InitializeLogger(s)
+	err = syslog.InitializeLogger(s)
 	if err != nil {
 		fmt.Printf("Failed to initialize logger: %v\n", err)
 		return
@@ -119,7 +112,7 @@ func main() {
 	// Handle special commands (install, uninstall, etc.)
 	if len(os.Args) > 1 {
 		if err := handleServiceCommands(s, os.Args[1]); err != nil {
-			logger.Errorf("Command handling failed: %v", err)
+			syslog.L.Errorf("Command handling failed: %v", err)
 			return
 		}
 	}
@@ -128,10 +121,10 @@ func main() {
 	if !service.Interactive() {
 		err = s.Run()
 		if err != nil {
-			logger.Errorf("Service run failed: %v", err)
+			syslog.L.Errorf("Service run failed: %v", err)
 			// Instead of exiting, restart the service
 			if err := restartService(); err != nil {
-				logger.Errorf("Service restart failed: %v", err)
+				syslog.L.Errorf("Service restart failed: %v", err)
 			}
 		}
 	}

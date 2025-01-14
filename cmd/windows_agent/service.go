@@ -47,7 +47,6 @@ type agentService struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
-	logger *syslog.Logger
 }
 
 const (
@@ -57,14 +56,8 @@ const (
 )
 
 func (p *agentService) Start(s service.Service) error {
-	var err error
 	p.svc = s
 	p.ctx, p.cancel = context.WithCancel(context.Background())
-
-	p.logger, err = syslog.InitializeLogger(s)
-	if err != nil {
-		return fmt.Errorf("failed to initialize logger: %w", err)
-	}
 
 	p.wg.Add(2)
 	go func() {
@@ -88,24 +81,17 @@ func (p *agentService) Stop(s service.Service) error {
 func (p *agentService) run() {
 	agent.SetStatus("Starting")
 	if err := p.waitForServerURL(); err != nil {
-		p.logger.Errorf("Failed waiting for server URL: %v", err)
+		syslog.L.Errorf("Failed waiting for server URL: %v", err)
 		return
 	}
 
 	if err := p.initializeDrives(); err != nil {
-		p.logger.Errorf("Failed to initialize drives: %v", err)
+		syslog.L.Errorf("Failed to initialize drives: %v", err)
 		return
 	}
 
-	infoChan := make(chan string, 100)
-	errChan := make(chan string, 100)
-	defer close(infoChan)
-	defer close(errChan)
-
-	go p.handleLogs(infoChan, errChan)
-
-	if err := p.connectWebSocket(infoChan, errChan); err != nil {
-		p.logger.Errorf("WebSocket connection failed: %v", err)
+	if err := p.connectWebSocket(); err != nil {
+		syslog.L.Errorf("WebSocket connection failed: %v", err)
 		return
 	}
 
@@ -173,26 +159,13 @@ func (p *agentService) initializeDrives() error {
 	return nil
 }
 
-func (p *agentService) handleLogs(infoChan, errChan chan string) {
-	for {
-		select {
-		case <-p.ctx.Done():
-			return
-		case info := <-infoChan:
-			p.logger.Info(info)
-		case err := <-errChan:
-			p.logger.Errorf("SFTP error: %s", err)
-		}
-	}
-}
-
-func (p *agentService) connectWebSocket(infoChan, errChan chan string) error {
+func (p *agentService) connectWebSocket() error {
 	for {
 		_, err := websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) {
-			controllers.WSHandler(p.ctx, c, m, infoChan, errChan)
+			controllers.WSHandler(p.ctx, c, m)
 		})
 		if err != nil {
-			p.logger.Errorf("WS connection error: %s", err)
+			syslog.L.Errorf("WS connection error: %s", err)
 			select {
 			case <-p.ctx.Done():
 				return fmt.Errorf("context cancelled while connecting to WebSocket")
