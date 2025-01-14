@@ -21,13 +21,15 @@ import (
 )
 
 const (
-	writeTimeout     = 10 * time.Second
-	readTimeout      = 60 * time.Second
-	handshakeTimeout = 10 * time.Second
-	clientPingPeriod = 54 * time.Second
-	maxSendBuffer    = 256
-	reconnectTimeout = 2 * time.Minute
-	initialBackoff   = time.Second
+	writeTimeout      = 10 * time.Second
+	readTimeout       = 60 * time.Second
+	handshakeTimeout  = 10 * time.Second
+	clientPingPeriod  = 54 * time.Second
+	maxSendBuffer     = 256
+	reconnectTimeout  = 2 * time.Minute
+	initialBackoff    = time.Second
+	readRetryTimeout  = 1 * time.Minute // Maximum retry timeout for read pump
+	writeRetryTimeout = 1 * time.Minute // Maximum retry timeout for write pump
 )
 
 type WSClient struct {
@@ -210,6 +212,32 @@ func (c *WSClient) connect() error {
 }
 
 func (c *WSClient) readPump(ctx context.Context) {
+	backoff := newExponentialBackoff(initialBackoff, readRetryTimeout)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			if err := c.runReadPump(ctx); err != nil {
+				delay := backoff.NextBackOff()
+				syslog.L.Errorf("Read pump error: %v. Retrying in %v...", err, delay)
+
+				select {
+				case <-time.After(delay):
+					continue // Retry the read pump
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			// If we get here, the read pump exited without error (context cancelled)
+			return
+		}
+	}
+}
+
+func (c *WSClient) runReadPump(ctx context.Context) error {
 	defer func() {
 		if r := recover(); r != nil {
 			syslog.L.Errorf("read pump panic: %v", r)
@@ -226,13 +254,11 @@ func (c *WSClient) readPump(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		default:
 			var msg Message
-			err := c.conn.ReadJSON(&msg)
-			if err != nil {
-				syslog.L.Errorf("read error: %v", err)
-				return
+			if err := c.conn.ReadJSON(&msg); err != nil {
+				return fmt.Errorf("read error: %v", err)
 			}
 
 			if c.CommandListener != nil {
@@ -243,6 +269,32 @@ func (c *WSClient) readPump(ctx context.Context) {
 }
 
 func (c *WSClient) writePump(ctx context.Context) {
+	backoff := newExponentialBackoff(initialBackoff, writeRetryTimeout)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			if err := c.runWritePump(ctx); err != nil {
+				delay := backoff.NextBackOff()
+				syslog.L.Errorf("Write pump error: %v. Retrying in %v...", err, delay)
+
+				select {
+				case <-time.After(delay):
+					continue // Retry the write pump
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			// If we get here, the write pump exited without error (context cancelled)
+			return
+		}
+	}
+}
+
+func (c *WSClient) runWritePump(ctx context.Context) error {
 	ticker := time.NewTicker(clientPingPeriod)
 	defer func() {
 		ticker.Stop()
@@ -255,8 +307,7 @@ func (c *WSClient) writePump(ctx context.Context) {
 		select {
 		case message, ok := <-c.send:
 			if !ok {
-				syslog.L.Errorf("send channel closed")
-				return
+				return fmt.Errorf("send channel closed")
 			}
 
 			c.writeMutex.Lock()
@@ -265,8 +316,7 @@ func (c *WSClient) writePump(ctx context.Context) {
 			c.writeMutex.Unlock()
 
 			if err != nil {
-				syslog.L.Errorf("write error: %v", err)
-				return
+				return fmt.Errorf("write error: %v", err)
 			}
 
 		case <-ticker.C:
@@ -276,12 +326,11 @@ func (c *WSClient) writePump(ctx context.Context) {
 			c.writeMutex.Unlock()
 
 			if err != nil {
-				syslog.L.Errorf("ping error: %v", err)
-				return
+				return fmt.Errorf("ping error: %v", err)
 			}
 
 		case <-ctx.Done():
-			return
+			return nil
 		}
 	}
 }
