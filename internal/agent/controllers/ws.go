@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
@@ -39,6 +40,11 @@ func cleanupExistingSession(drive string, infoChan chan<- string) {
 func handleBackupStart(ctx context.Context, c *websocket.Conn, drive string, infoChan chan<- string, errChan chan<- string) error {
 	infoChan <- fmt.Sprintf("Received backup request for drive %s.", drive)
 
+	// Get backup status singleton and mark backup as started
+	backupStatus := agent.GetBackupStatus()
+	backupStatus.StartBackup(drive)
+	defer backupStatus.EndBackup(drive) // Ensure we mark backup as complete even if there's an error
+
 	snapshot, err := snapshots.Snapshot(drive)
 	if err != nil {
 		return fmt.Errorf("snapshot error: %w", err)
@@ -53,7 +59,10 @@ func handleBackupStart(ctx context.Context, c *websocket.Conn, drive string, inf
 	cleanupExistingSession(drive, infoChan)
 
 	go func() {
-		defer cleanupExistingSession(drive, infoChan)
+		defer func() {
+			cleanupExistingSession(drive, infoChan)
+			backupStatus.EndBackup(drive)
+		}()
 		sftpSession.Serve(errChan)
 	}()
 
@@ -66,6 +75,11 @@ func handleBackupStart(ctx context.Context, c *websocket.Conn, drive string, inf
 func handleBackupClose(c *websocket.Conn, drive string, infoChan chan<- string) error {
 	infoChan <- fmt.Sprintf("Received closure request for drive %s.", drive)
 	cleanupExistingSession(drive, infoChan)
+	
+	// Mark backup as complete
+	backupStatus := agent.GetBackupStatus()
+	backupStatus.EndBackup(drive)
+	
 	return sendResponse(c, "backup_close", drive)
 }
 
