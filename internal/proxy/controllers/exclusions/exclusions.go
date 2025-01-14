@@ -86,8 +86,8 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func ExtJsExclusionSingleHandler(storeInstance *store.Store) func(w http.ResponseWriter, r *http.Request, exclusionPath string) {
+	return func(w http.ResponseWriter, r *http.Request, exclusionPath string) {
 		response := ExclusionConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -107,7 +107,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			pathDecoded, err := url.QueryUnescape(r.PathValue("exclusion"))
+			pathDecoded, err := url.QueryUnescape(exclusionPath)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -150,7 +150,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			pathDecoded, err := url.QueryUnescape(r.PathValue("exclusion"))
+			pathDecoded, err := url.QueryUnescape(exclusionPath)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -171,7 +171,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			pathDecoded, err := url.QueryUnescape(r.PathValue("exclusion"))
+			pathDecoded, err := url.QueryUnescape(exclusionPath)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

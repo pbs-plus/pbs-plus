@@ -47,8 +47,8 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func ExtJsJobRunHandler(storeInstance *store.Store) func(w http.ResponseWriter, r *http.Request, jobStr string) {
+	return func(w http.ResponseWriter, r *http.Request, jobStr string) {
 		response := JobRunResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -60,7 +60,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		job, err := storeInstance.GetJob(r.PathValue("job"))
+		job, err := storeInstance.GetJob(jobStr)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -141,8 +141,8 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func ExtJsJobSingleHandler(storeInstance *store.Store) func(w http.ResponseWriter, r *http.Request, jobStr string) {
+	return func(w http.ResponseWriter, r *http.Request, jobStr string) {
 		response := JobConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -157,7 +157,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodPut {
-			job, err := storeInstance.GetJob(r.PathValue("job"))
+			job, err := storeInstance.GetJob(jobStr)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -247,7 +247,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			job, err := storeInstance.GetJob(r.PathValue("job"))
+			job, err := storeInstance.GetJob(jobStr)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -262,7 +262,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.DeleteJob(r.PathValue("job"))
+			err := storeInstance.DeleteJob(jobStr)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
