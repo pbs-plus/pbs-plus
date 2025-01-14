@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime/debug"
 	"time"
-	
+
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows/registry"
 )
+
+var Version = "v0.0.0"
 
 // watchdogService wraps the original service and adds resilience
 type watchdogService struct {
@@ -27,9 +28,9 @@ type watchdogService struct {
 
 func newWatchdogService(original *agentService) *watchdogService {
 	return &watchdogService{
-		agentService:    original,
-		maxRestarts:     5,              // Max restarts in window
-		restartWindow:   time.Hour * 1,  // Reset counter after 1 hour
+		agentService:  original,
+		maxRestarts:   5,             // Max restarts in window
+		restartWindow: time.Hour * 1, // Reset counter after 1 hour
 	}
 }
 
@@ -56,16 +57,16 @@ func (w *watchdogService) Start(s service.Service) error {
 			err := w.runWithRecovery(s)
 			if err != nil {
 				w.logger.Errorf("Service failed with error: %v - Attempting restart", err)
-				
+
 				w.restartCount++
 				w.lastRestartTime = time.Now()
-				
+
 				if !w.shouldRestart() {
 					w.logger.Errorf("Too many restart attempts (%d) within window. Waiting for window reset.", w.restartCount)
 					time.Sleep(w.restartWindow)
 					w.restartCount = 0
 				}
-				
+
 				time.Sleep(time.Second * 5) // Brief delay before restart
 				continue
 			}
@@ -83,7 +84,7 @@ func (w *watchdogService) runWithRecovery(s service.Service) (err error) {
 			w.logger.Error(err)
 		}
 	}()
-	
+
 	return w.agentService.Start(s)
 }
 
@@ -97,19 +98,11 @@ func main() {
 		DisplayName: "PBS Plus Agent",
 		Description: "Agent for orchestrating backups with PBS Plus",
 		UserName:    "",
-		// Add recovery actions
-		Option: service.KeyValue{
-			"RecoveryActions": []service.RecoveryAction{
-				{Type: service.ServiceRestart, Delay: 5 * time.Second},
-				{Type: service.ServiceRestart, Delay: 10 * time.Second},
-				{Type: service.ServiceRestart, Delay: 15 * time.Second},
-			},
-		},
 	}
 
 	prg := &agentService{}
 	watchdog := newWatchdogService(prg)
-	
+
 	s, err := service.New(watchdog, svcConfig)
 	if err != nil {
 		fmt.Printf("Failed to initialize service: %v\n", err)
@@ -125,7 +118,7 @@ func main() {
 
 	// Handle special commands (install, uninstall, etc.)
 	if len(os.Args) > 1 {
-		if err := handleServiceCommands(s, os.Args[1], logger); err != nil {
+		if err := handleServiceCommands(s, os.Args[1]); err != nil {
 			logger.Errorf("Command handling failed: %v", err)
 			return
 		}
@@ -149,7 +142,7 @@ func restartService() error {
 	return cmd.Run()
 }
 
-func handleServiceCommands(s service.Service, cmd string, logger *syslog.Logger) error {
+func handleServiceCommands(s service.Service, cmd string) error {
 	switch cmd {
 	case "install", "uninstall":
 		// Clean up registry before install/uninstall
@@ -166,16 +159,16 @@ func handleServiceCommands(s service.Service, cmd string, logger *syslog.Logger)
 				_ = s.Start()
 			}()
 		}
-	case "--set-server-url":
-		if !isAdmin() {
-			return fmt.Errorf("needs to be running as administrator")
-		}
-		if len(os.Args) > 2 {
-			serverUrl := os.Args[2]
-			if err := setServerURLAdmin(serverUrl); err != nil {
-				return fmt.Errorf("error setting server URL: %v", err)
-			}
-		}
+	// case "--set-server-url":
+	// 	if !isAdmin() {
+	// 		return fmt.Errorf("needs to be running as administrator")
+	// 	}
+	// 	if len(os.Args) > 2 {
+	// 		serverUrl := os.Args[2]
+	// 		if err := setServerURLAdmin(serverUrl); err != nil {
+	// 			return fmt.Errorf("error setting server URL: %v", err)
+	// 		}
+	// 	}
 	default:
 		err := service.Control(s, cmd)
 		if err != nil {
@@ -184,3 +177,4 @@ func handleServiceCommands(s service.Service, cmd string, logger *syslog.Logger)
 	}
 	return nil
 }
+
