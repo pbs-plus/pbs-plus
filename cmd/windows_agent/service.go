@@ -284,6 +284,13 @@ func (p *agentService) versionCheck() {
 	}
 
 	checkAndUpdate := func() {
+		// Check if there are any active backups
+		backupStatus := agent.GetBackupStatus()
+		if backupStatus.HasActiveBackups() {
+			p.logger.Info("Skipping version check - backup in progress")
+			return
+		}
+
 		var versionResp VersionResp
 		_, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, &versionResp)
 		if err != nil {
@@ -294,7 +301,19 @@ func (p *agentService) versionCheck() {
 		if versionResp.Version != Version {
 			p.logger.Infof("New version %s available, current version: %s", versionResp.Version, Version)
 
+			// Double check for active backups before starting update
+			if backupStatus.HasActiveBackups() {
+				p.logger.Info("Postponing update - backup started during version check")
+				return
+			}
+
 			for retry := 0; retry < maxUpdateRetries; retry++ {
+				// Check again before each retry
+				if backupStatus.HasActiveBackups() {
+					p.logger.Info("Postponing update retry - backup in progress")
+					return
+				}
+
 				if err := p.performUpdate(); err != nil {
 					p.logger.Errorf("Update attempt %d failed: %v", retry+1, err)
 					time.Sleep(updateRetryDelay)
