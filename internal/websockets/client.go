@@ -79,6 +79,7 @@ func NewWSClient(ctx context.Context) (*WSClient, error) {
 		send:         make(chan Message, maxSendBuffer),
 		writeCrashed: make(chan struct{}, 1),
 		readCrashed:  make(chan struct{}, 1),
+		handlers:     make(map[string]MessageHandler),
 	}
 
 	return client, nil
@@ -105,6 +106,18 @@ func (c *WSClient) Connect() error {
 	}
 	c.conn = conn
 	c.IsConnected = true
+
+	initMessage := Message{
+		Type:    "init",
+		Content: c.ClientID,
+	}
+
+	if err := c.writeMessage(initMessage); err != nil {
+		c.conn.Close(websocket.StatusPolicyViolation, "init message failed")
+		c.cancel()
+
+		return fmt.Errorf("init message failed: %v", err)
+	}
 
 	return nil
 }
@@ -192,13 +205,7 @@ func (c *WSClient) writeMessage(msg Message) error {
 		return err
 	}
 
-	w, err := c.conn.Writer(ctx, websocket.MessageText)
-	if err != nil {
-		return err
-	}
-	defer w.Close()
-
-	return json.NewEncoder(w).Encode(msg)
+	return wsjson.Write(ctx, client.conn, &msg)
 }
 
 func (c *WSClient) readMessage() error {
@@ -210,22 +217,13 @@ func (c *WSClient) readMessage() error {
 		return err
 	}
 
-	typ, r, err := c.conn.Reader(ctx)
+	var message Message
+	err = wsjson.Read(ctx, c.conn, &message)
 	if err != nil {
 		return err
 	}
 
-	if typ != websocket.MessageText {
-		return fmt.Errorf("unexpected message type: %v", typ)
-	}
-
-	var msg Message
-	err = json.NewDecoder(r).Decode(&msg)
-	if err != nil {
-		return err
-	}
-
-	c.handleMessage(msg)
+	c.handleMessage(message)
 	return nil
 }
 
