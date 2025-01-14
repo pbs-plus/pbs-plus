@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/billgraziano/dpapi"
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"golang.org/x/sys/windows/registry"
 	"golang.org/x/time/rate"
 )
