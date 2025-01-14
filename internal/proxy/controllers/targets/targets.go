@@ -198,8 +198,8 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsTargetSingleHandler(storeInstance *store.Store) func(w http.ResponseWriter, r *http.Request, job string) {
-    return func(w http.ResponseWriter, r *http.Request, job string) {
+func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -239,7 +239,6 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(w http.ResponseWr
 
 			if delArr, ok := r.Form["delete"]; ok {
 				for _, attr := range delArr {
-					switch attr { range delArr {
 					switch attr {
 					case "name":
 						target.Name = ""

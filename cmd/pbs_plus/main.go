@@ -7,7 +7,6 @@ import (
 	"flag"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
@@ -24,33 +23,6 @@ import (
 )
 
 var Version = "v0.0.0"
-
-// extractPathParam extracts a path parameter from the URL path
-func extractPathParam(path, pattern string) string {
-	patternParts := strings.Split(pattern, "/")
-	pathParts := strings.Split(path, "/")
-
-	if len(pathParts) != len(patternParts) {
-		return ""
-	}
-
-	for i, part := range patternParts {
-		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
-			// Return the entire remaining path for this parameter
-			return strings.Join(pathParts[i:], "/")
-		}
-	}
-
-	return ""
-}
-
-// createHandler wraps an http.HandlerFunc with path parameter extraction
-func createHandler(pattern string, handler func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		param := extractPathParam(r.URL.Path, pattern)
-		handler(w, r, param)
-	}
-}
 
 func main() {
 	s, err := syslog.InitializeLogger()
@@ -123,7 +95,7 @@ func main() {
 		_ = proxy.UnmountModdedFile(proxmoxLibLocation)
 	}()
 
-	// Initialize router
+	// Initialize router with Go 1.22's new pattern syntax
 	mux := http.NewServeMux()
 
 	// API routes
@@ -138,20 +110,20 @@ func main() {
 	mux.HandleFunc("/api2/json/d2d/partial-file", middlewares.CORS(storeInstance, partial_files.D2DPartialFileHandler(storeInstance)))
 	mux.HandleFunc("/api2/json/d2d/agent-log", middlewares.CORS(storeInstance, agents.AgentLogHandler(storeInstance)))
 
-	// ExtJS routes with path parameters - modified to handle encoded slashes
-	mux.HandleFunc("/api2/extjs/d2d/backup/", middlewares.CORS(storeInstance, createHandler("/api2/extjs/d2d/backup/{job}", jobs.ExtJsJobRunHandler(storeInstance))))
+	// ExtJS routes with path parameters
+	mux.HandleFunc("/api2/extjs/d2d/backup/{job}", middlewares.CORS(storeInstance, jobs.ExtJsJobRunHandler(storeInstance)))
 	mux.HandleFunc("/api2/extjs/config/d2d-target", middlewares.CORS(storeInstance, targets.ExtJsTargetHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/d2d-target/", middlewares.CORS(storeInstance, createHandler("/api2/extjs/config/d2d-target/{target}", targets.ExtJsTargetSingleHandler(storeInstance))))
+	mux.HandleFunc("/api2/extjs/config/d2d-target/{target}", middlewares.CORS(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance)))
 	mux.HandleFunc("/api2/extjs/config/d2d-exclusion", middlewares.CORS(storeInstance, exclusions.ExtJsExclusionHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/d2d-exclusion/", middlewares.CORS(storeInstance, createHandler("/api2/extjs/config/d2d-exclusion/{exclusion}", exclusions.ExtJsExclusionSingleHandler(storeInstance))))
+	mux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", middlewares.CORS(storeInstance, exclusions.ExtJsExclusionSingleHandler(storeInstance)))
 	mux.HandleFunc("/api2/extjs/config/d2d-partial-file", middlewares.CORS(storeInstance, partial_files.ExtJsPartialFileHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/d2d-partial-file/", middlewares.CORS(storeInstance, createHandler("/api2/extjs/config/d2d-partial-file/{partial_file}", partial_files.ExtJsPartialFileSingleHandler(storeInstance))))
+	mux.HandleFunc("/api2/extjs/config/d2d-partial-file/{partial_file}", middlewares.CORS(storeInstance, partial_files.ExtJsPartialFileSingleHandler(storeInstance)))
 	mux.HandleFunc("/api2/extjs/config/disk-backup-job", middlewares.CORS(storeInstance, jobs.ExtJsJobHandler(storeInstance)))
-	mux.HandleFunc("/api2/extjs/config/disk-backup-job/", middlewares.CORS(storeInstance, createHandler("/api2/extjs/config/disk-backup-job/{job}", jobs.ExtJsJobSingleHandler(storeInstance))))
+	mux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", middlewares.CORS(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance)))
 
 	// WebSocket-related routes
 	mux.HandleFunc("/plus/ws", plus.WSHandler(storeInstance))
-	mux.HandleFunc("/plus/mount/", plus.MountHandler(storeInstance))
+	mux.HandleFunc("/plus/mount/{target}/{drive}", plus.MountHandler(storeInstance))
 
 	s.Info("Starting proxy server on :8008")
 	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, mux); err != nil {
