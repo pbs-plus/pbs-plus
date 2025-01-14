@@ -4,6 +4,7 @@ package websockets
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -16,7 +17,6 @@ import (
 
 	"github.com/billgraziano/dpapi"
 	"github.com/coder/websocket"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows/registry"
 	"golang.org/x/time/rate"
 )
@@ -92,13 +92,13 @@ func (c *WSClient) Connect() error {
 		return nil
 	}
 
-	httpClient := &http.Client{
-		Transport: utils.BaseTransport,
-	}
-
 	conn, _, err := websocket.Dial(c.ctx, c.serverURL, &websocket.DialOptions{
 		Subprotocols: []string{"pbs"},
-		HTTPClient:   httpClient,
+		HTTPClient: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("dial failed: %w", err)
