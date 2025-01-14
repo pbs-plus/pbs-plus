@@ -16,6 +16,7 @@ import (
 
 	"github.com/billgraziano/dpapi"
 	"github.com/coder/websocket"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows/registry"
 	"golang.org/x/time/rate"
 )
@@ -91,8 +92,13 @@ func (c *WSClient) Connect() error {
 		return nil
 	}
 
+	httpClient := &http.Client{
+		Transport: utils.BaseTransport,
+	}
+
 	conn, _, err := websocket.Dial(c.ctx, c.serverURL, &websocket.DialOptions{
 		Subprotocols: []string{"pbs"},
+		HTTPClient:   httpClient,
 	})
 	if err != nil {
 		return fmt.Errorf("dial failed: %w", err)
