@@ -205,7 +205,7 @@ func (c *WSClient) writeMessage(msg Message) error {
 		return err
 	}
 
-	return wsjson.Write(ctx, client.conn, &msg)
+	return wsjson.Write(ctx, c.conn, &msg)
 }
 
 func (c *WSClient) readMessage() error {
