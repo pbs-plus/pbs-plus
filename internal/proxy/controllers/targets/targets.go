@@ -198,8 +198,8 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsTargetSingleHandler(storeInstance *store.Store) func(w http.ResponseWriter, r *http.Request, targetStr string) {
-	return func(w http.ResponseWriter, r *http.Request, targetStr string) {
+func ExtJsTargetSingleHandler(storeInstance *store.Store) func(w http.ResponseWriter, r *http.Request, job string) {
+    return func(w http.ResponseWriter, r *http.Request, job string) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -224,7 +224,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(w http.ResponseWr
 				return
 			}
 
-			target, err := storeInstance.GetTarget(targetStr)
+			target, err := storeInstance.GetTarget(r.PathValue("target"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -239,6 +239,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(w http.ResponseWr
 
 			if delArr, ok := r.Form["delete"]; ok {
 				for _, attr := range delArr {
+					switch attr { range delArr {
 					switch attr {
 					case "name":
 						target.Name = ""
@@ -262,7 +263,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(w http.ResponseWr
 		}
 
 		if r.Method == http.MethodGet {
-			target, err := storeInstance.GetTarget(targetStr)
+			target, err := storeInstance.GetTarget(r.PathValue("target"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -277,7 +278,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) func(w http.ResponseWr
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.DeleteTarget(targetStr)
+			err := storeInstance.DeleteTarget(r.PathValue("target"))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
