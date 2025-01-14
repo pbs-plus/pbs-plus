@@ -93,6 +93,8 @@ func (p *agentService) run() {
 		syslog.L.Errorf("WebSocket connection failed: %v", err)
 		return
 	}
+
+	<-p.ctx.Done()
 }
 
 func (p *agentService) waitForServerURL() error {
@@ -185,9 +187,8 @@ func (p *agentService) connectWebSocket() error {
 
 		client.Start()
 
-		select {
-		case <-p.ctx.Done():
-			return nil
-		}
+		break
 	}
+
+	return nil
 }
