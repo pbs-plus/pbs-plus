@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
@@ -94,8 +93,6 @@ func (p *agentService) run() {
 		syslog.L.Errorf("WebSocket connection failed: %v", err)
 		return
 	}
-
-	<-p.ctx.Done()
 }
 
 func (p *agentService) waitForServerURL() error {
@@ -161,11 +158,9 @@ func (p *agentService) initializeDrives() error {
 
 func (p *agentService) connectWebSocket() error {
 	for {
-		_, err := websockets.NewWSClient(func(c *websocket.Conn, m websockets.Message) {
-			controllers.WSHandler(p.ctx, c, m)
-		})
+		client, err := websockets.NewWSClient(p.ctx)
 		if err != nil {
-			syslog.L.Errorf("WS connection error: %s", err)
+			syslog.L.Errorf("WS client init error: %s", err)
 			select {
 			case <-p.ctx.Done():
 				return fmt.Errorf("context cancelled while connecting to WebSocket")
@@ -173,8 +168,26 @@ func (p *agentService) connectWebSocket() error {
 				continue
 			}
 		}
-		break
-	}
 
-	return nil
+		err = client.Connect()
+		if err != nil {
+			syslog.L.Errorf("WS client connect error: %s", err)
+			select {
+			case <-p.ctx.Done():
+				return fmt.Errorf("context cancelled while connecting to WebSocket")
+			case <-time.After(5 * time.Second):
+				continue
+			}
+		}
+
+		client.RegisterHandler("backup_start", controllers.BackupStartHandler(client))
+		client.RegisterHandler("backup_close", controllers.BackupCloseHandler(client))
+
+		client.Start()
+
+		select {
+		case <-p.ctx.Done():
+			return nil
+		}
+	}
 }

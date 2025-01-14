@@ -8,14 +8,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+	"golang.org/x/time/rate"
 )
 
 const (
-	writeWait       = 10 * time.Second
-	pongWait        = 60 * time.Second
-	pingPeriod      = (pongWait * 9) / 10
-	maxMessageSize  = 512 * 1024
 	broadcastBuffer = 256
 )
 
@@ -28,12 +26,13 @@ type Message struct {
 
 // Client represents a WebSocket client
 type Client struct {
-	ID     string
-	conn   *websocket.Conn
-	server *Server
-	send   chan Message
-	done   chan struct{}
-	once   sync.Once
+	ID          string
+	conn        *websocket.Conn
+	server      *Server
+	rateLimiter *rate.Limiter
+	send        chan Message
+	done        chan struct{}
+	once        sync.Once
 }
 
 // Server manages both WebSocket connections and message broadcasting
@@ -53,12 +52,6 @@ type Server struct {
 	done       chan struct{}
 	ctx        context.Context
 	cancel     context.CancelFunc
-}
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin:     func(r *http.Request) bool { return true },
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
 }
 
 // NewServer creates a new server instance
@@ -179,106 +172,89 @@ func (s *Server) Run() {
 
 // ServeWS handles WebSocket connections
 func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		Subprotocols: []string{"pbs"},
+	})
 	if err != nil {
-		log.Printf("Error upgrading connection: %v", err)
+		log.Printf("Error accepting websocket connection: %v", err)
+		return
+	}
+	defer conn.CloseNow()
+
+	if conn.Subprotocol() != "pbs" {
+		conn.Close(websocket.StatusPolicyViolation, "client must speak the pbs subprotocol")
 		return
 	}
 
+	l := rate.NewLimiter(rate.Every(time.Millisecond*100), 10)
+
 	// Read initialization message
 	var initMsg Message
-	if err := conn.ReadJSON(&initMsg); err != nil || initMsg.Type != "init" {
-		log.Printf("Invalid initialization message: %v", err)
-		conn.Close()
+	err = wsjson.Read(s.ctx, conn, &initMsg)
+	if err != nil || initMsg.Type != "init" {
+		conn.Close(websocket.StatusUnsupportedData, "initialization message is invalid")
 		return
 	}
 
 	client := &Client{
-		ID:     initMsg.Content,
-		conn:   conn,
-		server: s,
-		send:   make(chan Message, broadcastBuffer),
-		done:   make(chan struct{}),
+		ID:          initMsg.Content,
+		conn:        conn,
+		server:      s,
+		rateLimiter: l,
+		send:        make(chan Message, broadcastBuffer),
+		done:        make(chan struct{}),
 	}
 
 	s.register <- client
-
-	// Start client routines
-	go client.readPump()
-	go client.writePump()
-}
-
-func (c *Client) readPump() {
 	defer func() {
-		c.server.unregister <- c
+		client.server.unregister <- client
 	}()
 
-	c.conn.SetReadLimit(maxMessageSize)
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(pongWait))
-		return nil
-	})
-
 	for {
-		var message Message
-		err := c.conn.ReadJSON(&message)
+		err := client.handleMessage()
+		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+			return
+		}
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("Error reading message from client %s: %v", c.ID, err)
-			}
-			break
-		}
-
-		message.ClientID = c.ID
-		message.Time = time.Now()
-
-		// Send to broadcast channel
-		select {
-		case c.server.broadcast <- message:
-		default:
-			log.Printf("Broadcast channel full, dropping message from client %s", c.ID)
-		}
-	}
-}
-
-func (c *Client) writePump() {
-	ticker := time.NewTicker(pingPeriod)
-	defer func() {
-		ticker.Stop()
-		c.close()
-	}()
-
-	for {
-		select {
-		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-
-			if err := c.conn.WriteJSON(message); err != nil {
-				return
-			}
-
-		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				return
-			}
-
-		case <-c.done:
+			log.Printf("failed to read from %v: %v", r.RemoteAddr, err)
 			return
 		}
 	}
+}
+
+func (c *Client) handleMessage() error {
+	ctx, cancel := context.WithTimeout(c.server.ctx, time.Second*10)
+	defer cancel()
+
+	err := c.rateLimiter.Wait(ctx)
+	if err != nil {
+		return err
+	}
+
+	var message Message
+	err = wsjson.Read(ctx, c.conn, &message)
+	if err != nil {
+		return err
+	}
+
+	message.ClientID = c.ID
+	message.Time = time.Now()
+
+	// Send to broadcast channel
+	select {
+	case c.server.broadcast <- message:
+	default:
+		log.Printf("Broadcast channel full, dropping message from client %s", c.ID)
+	}
+
+	return nil
 }
 
 func (c *Client) close() {
 	c.once.Do(func() {
 		close(c.done)
 		close(c.send)
-		c.conn.Close()
+		c.conn.CloseNow()
 	})
 }
 
@@ -292,12 +268,12 @@ func (s *Server) SendToClient(clientID string, msg Message) error {
 		return fmt.Errorf("client %s not connected", clientID)
 	}
 
-	select {
-	case client.send <- msg:
-		return nil
-	case <-time.After(writeWait):
-		return fmt.Errorf("send timeout for client %s", clientID)
+	err := wsjson.Write(s.ctx, client.conn, &msg)
+	if err != nil {
+		return err
 	}
+
+	return nil
 }
 
 func (s *Server) IsClientConnected(clientID string) bool {

@@ -5,10 +5,8 @@ package controllers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 
-	"github.com/gorilla/websocket"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
@@ -21,12 +19,13 @@ var (
 	ErrNoSFTPConfig = errors.New("unable to find initialized SFTP config")
 )
 
-func sendResponse(c *websocket.Conn, msgType, content string) error {
+func sendResponse(c *websockets.WSClient, msgType, content string) {
 	response := websockets.Message{
 		Type:    "response-" + msgType,
 		Content: "Acknowledged: " + content,
 	}
-	return c.WriteJSON(response)
+
+	c.Send(response)
 }
 
 func cleanupExistingSession(drive string) {
@@ -38,73 +37,56 @@ func cleanupExistingSession(drive string) {
 	}
 }
 
-func handleBackupStart(ctx context.Context, c *websocket.Conn, drive string) error {
-	syslog.L.Infof("Received backup request for drive %s.", drive)
+func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {
+	return func(msg *websockets.Message) {
+		drive := msg.Content
+		syslog.L.Infof("Received backup request for drive %s.", drive)
 
-	// Get backup status singleton and mark backup as started
-	backupStatus := agent.GetBackupStatus()
-	backupStatus.StartBackup(drive)
-	defer backupStatus.EndBackup(drive) // Ensure we mark backup as complete even if there's an error
+		// Get backup status singleton and mark backup as started
+		backupStatus := agent.GetBackupStatus()
+		backupStatus.StartBackup(drive)
+		defer backupStatus.EndBackup(drive) // Ensure we mark backup as complete even if there's an error
 
-	snapshot, err := snapshots.Snapshot(drive)
-	if err != nil {
-		return fmt.Errorf("snapshot error: %w", err)
-	}
-	syslog.L.Infof("Snapshot of drive %s has been made.", drive)
+		snapshot, err := snapshots.Snapshot(drive)
+		if err != nil {
+			syslog.L.Errorf("snapshot error: %v", err)
+			return
+		}
+		syslog.L.Infof("Snapshot of drive %s has been made.", drive)
 
-	sftpSession := sftp.NewSFTPSession(ctx, snapshot, drive)
-	if sftpSession == nil {
-		return ErrNoSFTPConfig
-	}
+		sftpSession := sftp.NewSFTPSession(context.Background(), snapshot, drive)
+		if sftpSession == nil {
+			syslog.L.Error("SFTP session is nil.")
+			return
+		}
 
-	cleanupExistingSession(drive)
+		cleanupExistingSession(drive)
 
-	go func() {
-		defer func() {
-			cleanupExistingSession(drive)
-			backupStatus.EndBackup(drive)
+		go func() {
+			defer func() {
+				cleanupExistingSession(drive)
+				backupStatus.EndBackup(drive)
+			}()
+			sftpSession.Serve()
 		}()
-		sftpSession.Serve()
-	}()
 
-	syslog.L.Infof("SFTP access to snapshot of drive %s has been made.", drive)
-	sftpSessions.Store(drive, sftpSession)
+		syslog.L.Infof("SFTP access to snapshot of drive %s has been made.", drive)
+		sftpSessions.Store(drive, sftpSession)
 
-	return sendResponse(c, "backup_start", drive)
+		sendResponse(c, "backup_start", drive)
+	}
 }
 
-func handleBackupClose(c *websocket.Conn, drive string) error {
-	syslog.L.Infof("Received closure request for drive %s.", drive)
-	cleanupExistingSession(drive)
+func BackupCloseHandler(c *websockets.WSClient) func(msg *websockets.Message) {
+	return func(msg *websockets.Message) {
+		drive := msg.Content
 
-	// Mark backup as complete
-	backupStatus := agent.GetBackupStatus()
-	backupStatus.EndBackup(drive)
+		syslog.L.Infof("Received closure request for drive %s.", drive)
+		cleanupExistingSession(drive)
 
-	return sendResponse(c, "backup_close", drive)
-}
+		backupStatus := agent.GetBackupStatus()
+		backupStatus.EndBackup(drive)
 
-func WSHandler(ctx context.Context, c *websocket.Conn, m websockets.Message) {
-	if c == nil {
-		syslog.L.Error("nil WebSocket connection")
-		return
-	}
-
-	// Add timeout to context if needed
-	// ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	// defer cancel()
-
-	var err error
-	switch m.Type {
-	case "backup_start":
-		err = handleBackupStart(ctx, c, m.Content)
-	case "backup_close":
-		err = handleBackupClose(c, m.Content)
-	default:
-		err = fmt.Errorf("unknown message type: %s", m.Type)
-	}
-
-	if err != nil {
-		syslog.L.Error(err.Error())
+		sendResponse(c, "backup_close", drive)
 	}
 }

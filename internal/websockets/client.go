@@ -4,82 +4,51 @@ package websockets
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"sync"
 	"time"
 
 	"github.com/billgraziano/dpapi"
-	"github.com/gorilla/websocket"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/coder/websocket"
 	"golang.org/x/sys/windows/registry"
+	"golang.org/x/time/rate"
 )
 
 const (
-	writeTimeout      = 10 * time.Second
-	readTimeout       = 60 * time.Second
-	handshakeTimeout  = 10 * time.Second
-	clientPingPeriod  = 54 * time.Second
-	maxSendBuffer     = 256
-	reconnectTimeout  = 2 * time.Minute
-	initialBackoff    = time.Second
-	readRetryTimeout  = 1 * time.Minute // Maximum retry timeout for read pump
-	writeRetryTimeout = 1 * time.Minute // Maximum retry timeout for write pump
+	maxSendBuffer = 256
 )
 
+type MessageHandler func(msg *Message)
+
 type WSClient struct {
-	ClientID        string
-	ServerURL       string
-	Headers         http.Header
-	CommandListener func(*websocket.Conn, Message)
+	ClientID  string
+	serverURL string
+	headers   http.Header
+
+	rateLimiter *rate.Limiter
 
 	ctx         context.Context
 	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 	conn        *websocket.Conn
+	connMu      sync.Mutex
 	send        chan Message
-	reconnect   chan struct{}
-	mutex       sync.RWMutex
-	writeMutex  sync.Mutex
-	isConnected bool
-	closeOnce   sync.Once
+	IsConnected bool
+
+	handlers  map[string]MessageHandler
+	handlerMu sync.RWMutex
+
+	readCrashed  chan struct{}
+	writeCrashed chan struct{}
 }
 
-type exponentialBackoff struct {
-	current    time.Duration
-	initial    time.Duration
-	max        time.Duration
-	multiplier float64
-}
-
-func newExponentialBackoff(initial, max time.Duration) *exponentialBackoff {
-	return &exponentialBackoff{
-		initial:    initial,
-		max:        max,
-		current:    initial,
-		multiplier: 2.0,
-	}
-}
-
-func (b *exponentialBackoff) NextBackOff() time.Duration {
-	defer func() {
-		b.current = time.Duration(float64(b.current) * b.multiplier)
-		if b.current > b.max {
-			b.current = b.max
-		}
-	}()
-	return b.current
-}
-
-func (b *exponentialBackoff) Reset() {
-	b.current = b.initial
-}
-
-func NewWSClient(commandListener func(*websocket.Conn, Message)) (*WSClient, error) {
+func NewWSClient(ctx context.Context) (*WSClient, error) {
 	serverURL, err := getServerURLFromRegistry()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get server URL: %v", err)
@@ -95,299 +64,175 @@ func NewWSClient(commandListener func(*websocket.Conn, Message)) (*WSClient, err
 		return nil, fmt.Errorf("failed to build headers: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	client := &WSClient{
-		ClientID:        clientID,
-		ServerURL:       serverURL,
-		Headers:         headers,
-		CommandListener: commandListener,
-		ctx:             ctx,
-		cancel:          cancel,
-		send:            make(chan Message, maxSendBuffer),
-		reconnect:       make(chan struct{}, 1),
-	}
+	l := rate.NewLimiter(rate.Every(time.Millisecond*100), 10)
 
-	go client.connectionManager()
-	go client.handleSignals()
+	ctx, cancel := context.WithCancel(ctx)
+
+	client := &WSClient{
+		ClientID:     clientID,
+		serverURL:    serverURL,
+		headers:      headers,
+		ctx:          ctx,
+		cancel:       cancel,
+		rateLimiter:  l,
+		send:         make(chan Message, maxSendBuffer),
+		writeCrashed: make(chan struct{}, 1),
+		readCrashed:  make(chan struct{}, 1),
+	}
 
 	return client, nil
 }
 
-func (c *WSClient) connectionManager() {
-	backoff := newExponentialBackoff(initialBackoff, reconnectTimeout)
+func (c *WSClient) Connect() error {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
 
+	if c.IsConnected {
+		return nil
+	}
+
+	conn, _, err := websocket.Dial(c.ctx, c.serverURL, &websocket.DialOptions{
+		Subprotocols: []string{"pbs"},
+	})
+	if err != nil {
+		return fmt.Errorf("dial failed: %w", err)
+	}
+	c.conn = conn
+	c.IsConnected = true
+
+	return nil
+}
+
+func (c *WSClient) Close() error {
+	c.cancel()
+
+	return c.conn.Close(websocket.StatusNormalClosure, "client closing")
+}
+
+func (c *WSClient) Start() {
+	go c.receiveLoop()
+	go c.sendLoop()
+
+	go func() {
+		for {
+			select {
+			case <-c.ctx.Done():
+				c.connMu.Lock()
+				c.IsConnected = false
+				c.connMu.Unlock()
+				return
+			case <-c.readCrashed:
+				c.readCrashed = make(chan struct{}, 1)
+				go c.receiveLoop()
+			case <-c.writeCrashed:
+				c.writeCrashed = make(chan struct{}, 1)
+				go c.sendLoop()
+			}
+		}
+	}()
+}
+
+func (c *WSClient) RegisterHandler(msgType string, handler MessageHandler) {
+	c.handlerMu.Lock()
+	defer c.handlerMu.Unlock()
+	c.handlers[msgType] = handler
+}
+
+func (c *WSClient) Send(msg Message) {
+	c.send <- msg
+}
+
+func (c *WSClient) sendLoop() {
+	for {
+		select {
+		case msg := <-c.send:
+			err := c.writeMessage(msg)
+			if err != nil {
+				log.Printf("Error sending message: %v", err)
+				close(c.writeCrashed)
+				return
+			}
+		case <-c.ctx.Done():
+			return
+		}
+	}
+}
+
+func (c *WSClient) receiveLoop() {
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
 		default:
-			if err := c.connect(); err != nil {
-				delay := backoff.NextBackOff()
-				syslog.L.Errorf("Connection failed: %v. Retrying in %v...", err, delay)
-
-				select {
-				case <-time.After(delay):
-					continue // Continue trying to reconnect
-				case <-c.ctx.Done():
+			err := c.readMessage()
+			if err != nil {
+				if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
 					return
 				}
-			}
-
-			backoff.Reset()
-
-			connCtx, connCancel := context.WithCancel(c.ctx)
-			wg := &sync.WaitGroup{}
-			wg.Add(2)
-
-			go func() {
-				defer wg.Done()
-				c.readPump(connCtx)
-			}()
-
-			go func() {
-				defer wg.Done()
-				c.writePump(connCtx)
-			}()
-
-			var err error
-			<-c.ctx.Done()
-			err = c.ctx.Err()
-
-			connCancel()
-			wg.Wait()
-
-			c.mutex.Lock()
-			if c.conn != nil {
-				c.conn.Close()
-				c.conn = nil
-				c.isConnected = false
-			}
-			c.mutex.Unlock()
-
-			if err == context.Canceled {
+				log.Printf("Error reading message: %v", err)
+				close(c.readCrashed)
 				return
 			}
-
-			continue
 		}
 	}
 }
 
-func (c *WSClient) connect() error {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	if c.isConnected {
-		return nil
-	}
-
-	dialer := websocket.Dialer{
-		TLSClientConfig:  &tls.Config{InsecureSkipVerify: true},
-		Proxy:            http.ProxyFromEnvironment,
-		HandshakeTimeout: handshakeTimeout,
-	}
-
-	ctx, cancel := context.WithTimeout(c.ctx, handshakeTimeout)
+func (c *WSClient) writeMessage(msg Message) error {
+	ctx, cancel := context.WithTimeout(c.ctx, time.Second*5)
 	defer cancel()
 
-	conn, _, err := dialer.DialContext(ctx, c.ServerURL, c.Headers)
+	err := c.rateLimiter.Wait(ctx)
 	if err != nil {
-		return fmt.Errorf("dial failed: %v", err)
+		return err
 	}
 
-	initMessage := Message{
-		Type:    "init",
-		Content: c.ClientID,
+	w, err := c.conn.Writer(ctx, websocket.MessageText)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+
+	return json.NewEncoder(w).Encode(msg)
+}
+
+func (c *WSClient) readMessage() error {
+	ctx, cancel := context.WithTimeout(c.ctx, time.Second*5)
+	defer cancel()
+
+	err := c.rateLimiter.Wait(ctx)
+	if err != nil {
+		return err
 	}
 
-	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if err := conn.WriteJSON(initMessage); err != nil {
-		conn.Close()
-		return fmt.Errorf("init message failed: %v", err)
+	typ, r, err := c.conn.Reader(ctx)
+	if err != nil {
+		return err
 	}
 
-	c.conn = conn
-	c.isConnected = true
+	if typ != websocket.MessageText {
+		return fmt.Errorf("unexpected message type: %v", typ)
+	}
+
+	var msg Message
+	err = json.NewDecoder(r).Decode(&msg)
+	if err != nil {
+		return err
+	}
+
+	c.handleMessage(msg)
 	return nil
 }
 
-func (c *WSClient) readPump(ctx context.Context) {
-	backoff := newExponentialBackoff(initialBackoff, readRetryTimeout)
+func (c *WSClient) handleMessage(msg Message) {
+	c.handlerMu.RLock()
+	handler, exists := c.handlers[msg.Type]
+	c.handlerMu.RUnlock()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			if err := c.runReadPump(ctx); err != nil {
-				delay := backoff.NextBackOff()
-				syslog.L.Errorf("Read pump error: %v. Retrying in %v...", err, delay)
-
-				select {
-				case <-time.After(delay):
-					continue // Retry the read pump
-				case <-ctx.Done():
-					return
-				}
-			}
-
-			// If we get here, the read pump exited without error (context cancelled)
-			return
-		}
+	if exists {
+		handler(&msg)
+	} else {
+		log.Printf("No handler for message type: %s", msg.Type)
 	}
-}
-
-func (c *WSClient) runReadPump(ctx context.Context) error {
-	defer func() {
-		if r := recover(); r != nil {
-			syslog.L.Errorf("read pump panic: %v", r)
-		}
-	}()
-
-	c.conn.SetReadLimit(maxMessageSize)
-	c.conn.SetReadDeadline(time.Now().Add(readTimeout))
-	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(readTimeout))
-		return nil
-	})
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-			var msg Message
-			if err := c.conn.ReadJSON(&msg); err != nil {
-				return fmt.Errorf("read error: %v", err)
-			}
-
-			if c.CommandListener != nil {
-				c.CommandListener(c.conn, msg)
-			}
-		}
-	}
-}
-
-func (c *WSClient) writePump(ctx context.Context) {
-	backoff := newExponentialBackoff(initialBackoff, writeRetryTimeout)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			if err := c.runWritePump(ctx); err != nil {
-				delay := backoff.NextBackOff()
-				syslog.L.Errorf("Write pump error: %v. Retrying in %v...", err, delay)
-
-				select {
-				case <-time.After(delay):
-					continue // Retry the write pump
-				case <-ctx.Done():
-					return
-				}
-			}
-
-			// If we get here, the write pump exited without error (context cancelled)
-			return
-		}
-	}
-}
-
-func (c *WSClient) runWritePump(ctx context.Context) error {
-	ticker := time.NewTicker(clientPingPeriod)
-	defer func() {
-		ticker.Stop()
-		if r := recover(); r != nil {
-			syslog.L.Errorf("write pump panic: %v", r)
-		}
-	}()
-
-	for {
-		select {
-		case message, ok := <-c.send:
-			if !ok {
-				return fmt.Errorf("send channel closed")
-			}
-
-			c.writeMutex.Lock()
-			c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-			err := c.conn.WriteJSON(message)
-			c.writeMutex.Unlock()
-
-			if err != nil {
-				return fmt.Errorf("write error: %v", err)
-			}
-
-		case <-ticker.C:
-			c.writeMutex.Lock()
-			c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-			err := c.conn.WriteMessage(websocket.PingMessage, nil)
-			c.writeMutex.Unlock()
-
-			if err != nil {
-				return fmt.Errorf("ping error: %v", err)
-			}
-
-		case <-ctx.Done():
-			return nil
-		}
-	}
-}
-
-func (c *WSClient) SendMessage(msg Message) error {
-	c.mutex.RLock()
-	if !c.isConnected {
-		c.mutex.RUnlock()
-		return fmt.Errorf("not connected")
-	}
-	c.mutex.RUnlock()
-
-	select {
-	case c.send <- msg:
-		return nil
-	case <-time.After(writeTimeout):
-		return fmt.Errorf("send timeout")
-	case <-c.ctx.Done():
-		return fmt.Errorf("client closed")
-	}
-}
-
-func (c *WSClient) handleSignals() {
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt)
-
-	select {
-	case <-interrupt:
-		c.Close()
-	case <-c.ctx.Done():
-		signal.Stop(interrupt)
-		close(interrupt)
-	}
-}
-
-func (c *WSClient) Close() {
-	c.closeOnce.Do(func() {
-		c.cancel() // Cancel context first to stop all goroutines
-
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
-
-		if c.conn != nil {
-			// Best effort to send close message
-			c.writeMutex.Lock()
-			c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-			c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-			c.writeMutex.Unlock()
-
-			time.Sleep(time.Second) // Give time for close message to be sent
-			c.conn.Close()
-			c.conn = nil
-			c.isConnected = false
-		}
-
-		close(c.send)
-	})
 }
 
 func validateRegistryValue(value string, maxLength int) (string, error) {
