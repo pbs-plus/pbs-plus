@@ -32,7 +32,8 @@ type WSClient struct {
 	serverURL string
 	headers   http.Header
 
-	rateLimiter *rate.Limiter
+	readLimiter  *rate.Limiter
+	writeLimiter *rate.Limiter
 
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -65,8 +66,6 @@ func NewWSClient(ctx context.Context) (*WSClient, error) {
 		return nil, fmt.Errorf("failed to build headers: %v", err)
 	}
 
-	l := rate.NewLimiter(rate.Every(time.Millisecond*100), 10)
-
 	ctx, cancel := context.WithCancel(ctx)
 
 	client := &WSClient{
@@ -75,7 +74,8 @@ func NewWSClient(ctx context.Context) (*WSClient, error) {
 		headers:      headers,
 		ctx:          ctx,
 		cancel:       cancel,
-		rateLimiter:  l,
+		readLimiter:  rate.NewLimiter(rate.Every(time.Millisecond*100), 10),
+		writeLimiter: rate.NewLimiter(rate.Every(time.Millisecond*100), 10),
 		send:         make(chan Message, maxSendBuffer),
 		writeCrashed: make(chan struct{}, 1),
 		readCrashed:  make(chan struct{}, 1),
@@ -200,7 +200,7 @@ func (c *WSClient) writeMessage(msg Message) error {
 	ctx, cancel := context.WithTimeout(c.ctx, time.Second*5)
 	defer cancel()
 
-	err := c.rateLimiter.Wait(ctx)
+	err := c.writeLimiter.Wait(ctx)
 	if err != nil {
 		return err
 	}
@@ -212,7 +212,7 @@ func (c *WSClient) readMessage() error {
 	ctx, cancel := context.WithTimeout(c.ctx, time.Second*5)
 	defer cancel()
 
-	err := c.rateLimiter.Wait(ctx)
+	err := c.readLimiter.Wait(ctx)
 	if err != nil {
 		return err
 	}
