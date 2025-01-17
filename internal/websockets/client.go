@@ -95,6 +95,7 @@ func (c *WSClient) Connect() error {
 
 	conn, _, err := websocket.Dial(c.ctx, c.serverURL, &websocket.DialOptions{
 		Subprotocols: []string{"pbs"},
+		HTTPHeader:   c.headers,
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -106,18 +107,6 @@ func (c *WSClient) Connect() error {
 	}
 	c.conn = conn
 	c.IsConnected = true
-
-	initMessage := Message{
-		Type:    "init",
-		Content: c.ClientID,
-	}
-
-	if err := c.writeMessage(initMessage); err != nil {
-		c.conn.Close(websocket.StatusPolicyViolation, "init message failed")
-		c.cancel()
-
-		return fmt.Errorf("init message failed: %v", err)
-	}
 
 	return nil
 }
@@ -286,6 +275,7 @@ func getServerURLFromRegistry() (string, error) {
 
 func buildHeaders(clientID string) (http.Header, error) {
 	headers := http.Header{}
+	headers.Add("X-Client-ID", clientID)
 
 	keyStr := "Software\\PBSPlus\\Config\\SFTP-C"
 	if driveKey, err := registry.OpenKey(registry.LOCAL_MACHINE, keyStr, registry.QUERY_VALUE); err == nil {

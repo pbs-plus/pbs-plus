@@ -172,6 +172,13 @@ func (s *Server) Run() {
 
 // ServeWS handles WebSocket connections
 func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
+	clientID := r.Header.Get("X-Client-ID")
+	if clientID == "" {
+		log.Printf("Missing client ID header from %v", r.RemoteAddr)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		Subprotocols: []string{"pbs"},
 	})
@@ -188,16 +195,8 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	l := rate.NewLimiter(rate.Every(time.Millisecond*100), 10)
 
-	// Read initialization message
-	var initMsg Message
-	err = wsjson.Read(s.ctx, conn, &initMsg)
-	if err != nil || initMsg.Type != "init" {
-		conn.Close(websocket.StatusUnsupportedData, "initialization message is invalid")
-		return
-	}
-
 	client := &Client{
-		ID:          initMsg.Content,
+		ID:          clientID,
 		conn:        conn,
 		server:      s,
 		rateLimiter: l,
