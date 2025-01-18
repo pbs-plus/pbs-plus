@@ -269,9 +269,16 @@ func TestClientReconnection(t *testing.T) {
 	// Force disconnect
 	client.conn.Close(websocket.StatusGoingAway, "testing reconnection")
 
-	// Wait for disconnection to be detected
-	time.Sleep(100 * time.Millisecond)
-	assert.False(t, client.IsConnected)
+	// Wait for disconnection to be detected with timeout
+	disconnected := false
+	for i := 0; i < 50; i++ {
+		if !client.IsConnected {
+			disconnected = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	assert.True(t, disconnected, "Connection should have been marked as disconnected")
 
 	// Test reconnection
 	err = client.Connect()
@@ -308,16 +315,36 @@ func TestRateLimiting(t *testing.T) {
 
 	client.Start()
 
+	// Create a channel to receive message confirmations
+	received := make(chan struct{}, 1)
+	client.RegisterHandler("test", func(msg *Message) {
+		received <- struct{}{}
+	})
+
 	// Send messages rapidly
+	messageCount := 20
 	start := time.Now()
-	for i := 0; i < 20; i++ {
+
+	for i := 0; i < messageCount; i++ {
 		client.Send(Message{
 			Type:    "test",
 			Content: fmt.Sprintf("message %d", i),
 		})
+
+		// Wait for confirmation of message receipt
+		select {
+		case <-received:
+			// Message was received
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Timeout waiting for message %d", i)
+		}
 	}
+
 	duration := time.Since(start)
 
-	// Verify rate limiting worked (should take at least 2 seconds for 20 messages with 10 per second limit)
-	assert.Greater(t, duration.Seconds(), 2.0)
+	// With a rate limit of 10 messages per second, 20 messages should take at least 2 seconds
+	minExpectedDuration := 2 * time.Second
+	assert.Greater(t, duration.Seconds(), minExpectedDuration.Seconds(),
+		"Rate limiting should have caused the operations to take at least %v, but took %v",
+		minExpectedDuration, duration)
 }
