@@ -62,16 +62,16 @@ func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {
 
 		cleanupExistingSession(drive)
 
-        go func() {
-            defer func() {
-                if r := recover(); r != nil {
-                    syslog.L.Errorf("Panic in SFTP session for drive %s: %v", drive, r)
-                }
-                cleanupExistingSession(drive)
-                backupStatus.EndBackup(drive)
-            }()
-            sftpSession.Serve()
-        }()
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					syslog.L.Errorf("Panic in SFTP session for drive %s: %v", drive, r)
+				}
+				cleanupExistingSession(drive)
+				backupStatus.EndBackup(drive)
+			}()
+			sftpSession.Serve()
+		}()
 
 		syslog.L.Infof("SFTP access to snapshot of drive %s has been made.", drive)
 		sftpSessions.Store(drive, sftpSession)

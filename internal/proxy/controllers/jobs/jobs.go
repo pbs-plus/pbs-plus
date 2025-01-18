@@ -60,7 +60,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		job, err := storeInstance.GetJob(r.PathValue("job"))
+		job, err := storeInstance.GetJob(controllers.DecodePath(r.PathValue("job")))
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -157,7 +157,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodPut {
-			job, err := storeInstance.GetJob(r.PathValue("job"))
+			job, err := storeInstance.GetJob(controllers.DecodePath(r.PathValue("job")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -247,7 +247,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			job, err := storeInstance.GetJob(r.PathValue("job"))
+			job, err := storeInstance.GetJob(controllers.DecodePath(r.PathValue("job")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -262,7 +262,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.DeleteJob(r.PathValue("job"))
+			err := storeInstance.DeleteJob(controllers.DecodePath(r.PathValue("job")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

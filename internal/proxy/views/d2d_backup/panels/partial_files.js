@@ -91,7 +91,7 @@ Ext.define("PBS.D2DManagement.PartialFilePanel", {
       baseurl: pbsPlusBaseUrl + "/api2/extjs/config/d2d-partial-file",
       getUrl: (rec) =>
         pbsPlusBaseUrl +
-        `/config/d2d-partial-file/${encodeURIComponent(rec.getId())}`,
+        `/config/d2d-partial-file/${encodeURIComponent(encodePathValue(rec.getId()))}`,
       callback: "reload",
     },
   ],

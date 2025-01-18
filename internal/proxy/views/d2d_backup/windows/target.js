@@ -14,7 +14,7 @@ Ext.define("PBS.D2DManagement.TargetEditWindow", {
 
     me.isCreate = !contentid;
     me.url = contentid
-      ? `${baseurl}/${encodeURIComponent(contentid)}`
+      ? `${baseurl}/${encodeURIComponent(encodePathValue(contentid))}`
       : baseurl;
     me.method = contentid ? "PUT" : "POST";
 

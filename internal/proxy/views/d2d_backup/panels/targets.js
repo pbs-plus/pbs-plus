@@ -101,6 +101,9 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     {
       xtype: "proxmoxStdRemoveButton",
       baseurl: pbsPlusBaseUrl + "/api2/extjs/config/d2d-target",
+      getUrl: (rec) =>
+        pbsPlusBaseUrl +
+        `/config/d2d-target/${encodeURIComponent(encodePathValue(rec.getId()))}`,
       callback: "reload",
     },
   ],

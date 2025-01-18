@@ -91,7 +91,7 @@ Ext.define("PBS.D2DManagement.ExclusionPanel", {
       baseurl: pbsPlusBaseUrl + "/api2/extjs/config/d2d-exclusion",
       getUrl: (rec) =>
         pbsPlusBaseUrl +
-        `/config/d2d-exclusion/${encodeURIComponent(rec.getId())}`,
+        `/config/d2d-exclusion/${encodeURIComponent(encodedPathValue(rec.getId()))}`,
       callback: "reload",
     },
   ],

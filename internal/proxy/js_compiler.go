@@ -49,6 +49,14 @@ fetch(pbsPlusBaseUrl + "/plus/token", {
 	}),
 	headers: pbsPlusTokenHeaders,
 })
+
+function encodePathValue(path) {
+  const encoded = btoa(path)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+  return encoded;
+}
 `)
 
 	err := fs.WalkDir(customJsFS, ".", func(path string, d fs.DirEntry, err error) error {

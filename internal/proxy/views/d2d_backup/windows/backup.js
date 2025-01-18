@@ -21,7 +21,7 @@ Ext.define("PBS.D2DManagement.BackupWindow", {
   submitUrl: function (url, values) {
     let id = values.id;
     delete values.id;
-    return `${url}/${id}`;
+    return `${url}/${encodePathValue(id)}`;
   },
 
   layout: "hbox",

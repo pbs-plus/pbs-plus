@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
@@ -28,8 +29,8 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		// TODO: add check for security
 
-		targetHostnameEnc := r.PathValue("target")
-		agentDriveEnc := r.PathValue("drive")
+		targetHostnameEnc := controllers.DecodePath(r.PathValue("target"))
+		agentDriveEnc := controllers.DecodePath(r.PathValue("drive"))
 
 		targetHostnameBytes, err := base32.StdEncoding.DecodeString(targetHostnameEnc)
 		if err != nil {

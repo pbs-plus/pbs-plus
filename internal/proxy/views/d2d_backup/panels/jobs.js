@@ -129,6 +129,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
     {
       xtype: "proxmoxStdRemoveButton",
       baseurl: pbsPlusBaseUrl + "/api2/extjs/config/disk-backup-job",
+      getUrl: (rec) =>
+        pbsPlusBaseUrl +
+        `/config/disk-backup-job/${encodeURIComponent(encodePathValue(rec.getId()))}`,
       confirmMsg: gettext("Remove entry?"),
       callback: "reload",
     },
