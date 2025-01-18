@@ -61,10 +61,48 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, readyChan chan struc
 	if err != nil {
 		return nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
-
 	err = watcher.Add(tasksParentPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add folder to watcher: %w", err)
+	}
+
+	// Helper function to check if a file matches our search criteria
+	checkFile := func(filePath string, searchString string) (*Task, error) {
+		if !strings.Contains(filePath, ".tmp_") && strings.Contains(filePath, searchString) {
+			log.Printf("Proceeding: %s contains %s\n", filePath, searchString)
+			fileName := filepath.Base(filePath)
+			log.Printf("Getting UPID: %s\n", fileName)
+			newTask, err := storeInstance.GetTaskByUPID(fileName)
+			if err != nil {
+				return nil, fmt.Errorf("GetJobTask: error getting task: %v\n", err)
+			}
+			log.Printf("Sending UPID: %s\n", fileName)
+			return newTask, nil
+		}
+		return nil, nil
+	}
+
+	// Helper function to scan directory for matching files
+	scanDirectory := func(dirPath string, searchString string) (*Task, error) {
+		files, err := os.ReadDir(dirPath)
+		if err != nil {
+			log.Printf("Error reading directory %s: %v\n", dirPath, err)
+			return nil, nil
+		}
+
+		for _, file := range files {
+			if !file.IsDir() {
+				filePath := filepath.Join(dirPath, file.Name())
+				task, err := checkFile(filePath, searchString)
+				if err != nil {
+					return nil, err
+				}
+				if task != nil {
+					return task, nil
+				}
+			}
+		}
+		return nil, nil
 	}
 
 	err = filepath.Walk(tasksParentPath, func(path string, info os.FileInfo, err error) error {
@@ -90,7 +128,6 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, readyChan chan struc
 		if err != nil {
 			hostname = "localhost"
 		}
-
 		hostname = strings.TrimSpace(string(hostnameFile))
 	}
 
@@ -98,21 +135,21 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, readyChan chan struc
 	if err != nil {
 		return nil, fmt.Errorf("GetJobTask -> %w", err)
 	}
-
 	if target == nil {
 		return nil, fmt.Errorf("GetJobTask: Target '%s' does not exist.", job.Target)
 	}
 
 	isAgent := strings.HasPrefix(target.Path, "agent://")
-
 	backupId := hostname
 	if isAgent {
 		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
 	}
 
-	close(readyChan)
+	searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
 
+	close(readyChan)
 	defer watcher.Close()
+
 	for {
 		select {
 		case event := <-watcher.Events:
@@ -122,20 +159,21 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, readyChan chan struc
 					if err != nil {
 						log.Println("Failed to add directory to watcher:", err)
 					}
-				} else {
-					searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
-					log.Printf("Checking if %s contains %s\n", event.Name, searchString)
-					if !strings.Contains(event.Name, ".tmp_") && strings.Contains(event.Name, searchString) {
-						log.Printf("Proceeding: %s contains %s\n", event.Name, searchString)
-						fileName := filepath.Base(event.Name)
 
-						log.Printf("Getting UPID: %s\n", fileName)
-						newTask, err := storeInstance.GetTaskByUPID(fileName)
-						if err != nil {
-							return nil, fmt.Errorf("GetJobTask: error getting task: %v\n", err)
-						}
-						log.Printf("Sending UPID: %s\n", fileName)
-						return newTask, nil
+					task, err := scanDirectory(event.Name, searchString)
+					if err != nil {
+						return nil, err
+					}
+					if task != nil {
+						return task, nil
+					}
+				} else {
+					task, err := checkFile(event.Name, searchString)
+					if err != nil {
+						return nil, err
+					}
+					if task != nil {
+						return task, nil
 					}
 				}
 			}

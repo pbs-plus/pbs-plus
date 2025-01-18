@@ -24,6 +24,7 @@ func collectLogs(stdout, stderr io.ReadCloser) []string {
 
 	return logLines
 }
+
 func writeLogsToFile(upid string, logLines []string) error {
 	if logLines == nil {
 		return fmt.Errorf("logLines is nil")
