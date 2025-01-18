@@ -1,23 +1,16 @@
-//go:build windows
-
 package websockets
 
 import (
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
-	"os"
 	"sync"
 	"time"
 
-	"github.com/billgraziano/dpapi"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"golang.org/x/sys/windows/registry"
 	"golang.org/x/time/rate"
 )
 
@@ -26,6 +19,12 @@ const (
 )
 
 type MessageHandler func(msg *Message)
+
+type Config struct {
+	ServerURL string
+	ClientID  string
+	Headers   http.Header
+}
 
 type WSClient struct {
 	ClientID  string
@@ -50,28 +49,13 @@ type WSClient struct {
 	writeCrashed chan struct{}
 }
 
-func NewWSClient(ctx context.Context) (*WSClient, error) {
-	serverURL, err := getServerURLFromRegistry()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get server URL: %v", err)
-	}
-
-	clientID, err := os.Hostname()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get hostname: %v", err)
-	}
-
-	headers, err := buildHeaders(clientID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build headers: %v", err)
-	}
-
+func NewWSClient(ctx context.Context, config Config) (*WSClient, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	client := &WSClient{
-		ClientID:     clientID,
-		serverURL:    serverURL,
-		headers:      headers,
+		ClientID:     config.ClientID,
+		serverURL:    config.ServerURL,
+		headers:      config.Headers,
 		ctx:          ctx,
 		cancel:       cancel,
 		readLimiter:  rate.NewLimiter(rate.Every(time.Millisecond*100), 10),
@@ -113,7 +97,6 @@ func (c *WSClient) Connect() error {
 
 func (c *WSClient) Close() error {
 	c.cancel()
-
 	return c.conn.Close(websocket.StatusNormalClosure, "client closing")
 }
 
@@ -226,75 +209,4 @@ func (c *WSClient) handleMessage(msg Message) {
 	} else {
 		log.Printf("No handler for message type: %s", msg.Type)
 	}
-}
-
-func validateRegistryValue(value string, maxLength int) (string, error) {
-	if len(value) == 0 {
-		return "", fmt.Errorf("empty value")
-	}
-	if len(value) > maxLength {
-		return "", fmt.Errorf("value exceeds maximum length of %d", maxLength)
-	}
-	return value, nil
-}
-
-func getServerURLFromRegistry() (string, error) {
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
-	if err != nil {
-		return "", fmt.Errorf("failed to open registry key: %v", err)
-	}
-	defer key.Close()
-
-	serverURL, _, err := key.GetStringValue("ServerURL")
-	if err != nil {
-		return "", fmt.Errorf("server URL not found: %v", err)
-	}
-
-	serverURL, err = validateRegistryValue(serverURL, 1024)
-	if err != nil {
-		return "", fmt.Errorf("invalid server URL: %v", err)
-	}
-
-	serverURL, err = url.JoinPath(serverURL, "/plus/ws")
-	if err != nil {
-		return "", fmt.Errorf("invalid server URL path: %v", err)
-	}
-
-	parsedURL, err := url.Parse(serverURL)
-	if err != nil {
-		return "", fmt.Errorf("invalid server URL: %v", err)
-	}
-
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return "", fmt.Errorf("invalid URL scheme: %s", parsedURL.Scheme)
-	}
-
-	parsedURL.Scheme = "wss"
-	return parsedURL.String(), nil
-}
-
-func buildHeaders(clientID string) (http.Header, error) {
-	headers := http.Header{}
-	headers.Add("X-Client-ID", clientID)
-
-	keyStr := "Software\\PBSPlus\\Config\\SFTP-C"
-	if driveKey, err := registry.OpenKey(registry.LOCAL_MACHINE, keyStr, registry.QUERY_VALUE); err == nil {
-		defer driveKey.Close()
-
-		if publicKey, _, err := driveKey.GetStringValue("ServerKey"); err == nil {
-			publicKey, err = validateRegistryValue(publicKey, 4096)
-			if err != nil {
-				return headers, fmt.Errorf("invalid server key: %v", err)
-			}
-
-			if decrypted, err := dpapi.Decrypt(publicKey); err == nil {
-				if decoded, err := base64.StdEncoding.DecodeString(decrypted); err == nil {
-					encodedKey := base64.StdEncoding.EncodeToString(decoded)
-					headers.Set("Authorization", fmt.Sprintf("PBSPlusAPIAgent=%s---C:%s", clientID, encodedKey))
-				}
-			}
-		}
-	}
-
-	return headers, nil
 }

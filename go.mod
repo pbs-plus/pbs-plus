@@ -15,6 +15,7 @@ require (
 	github.com/minio/selfupdate v0.6.0
 	github.com/mxk/go-vss v1.2.0
 	github.com/pkg/sftp v1.13.7
+	github.com/stretchr/testify v1.9.0
 	golang.org/x/crypto v0.28.0
 	golang.org/x/sys v0.26.0
 	golang.org/x/time v0.9.0
@@ -35,5 +36,5 @@ require (
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/stretchr/testify v1.9.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

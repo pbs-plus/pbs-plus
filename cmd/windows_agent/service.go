@@ -160,7 +160,13 @@ func (p *agentService) initializeDrives() error {
 
 func (p *agentService) connectWebSocket() error {
 	for {
-		client, err := websockets.NewWSClient(p.ctx)
+		config, err := websockets.GetWindowsConfig()
+		if err != nil {
+			syslog.L.Errorf("WS client windoes config error: %s", err)
+			return err
+		}
+
+		client, err := websockets.NewWSClient(p.ctx, config)
 		if err != nil {
 			syslog.L.Errorf("WS client init error: %s", err)
 			select {
