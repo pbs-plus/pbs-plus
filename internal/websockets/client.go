@@ -106,7 +106,19 @@ func (c *WSClient) Close() error {
 	c.cancel()
 	c.IsConnected = false
 
-	return c.conn.Close(websocket.StatusNormalClosure, "client closing")
+	if c.conn != nil {
+		return c.conn.Close(websocket.StatusNormalClosure, "client closing")
+	}
+	return nil
+}
+
+func (c *WSClient) handleConnectionLoss() {
+	c.connMu.Lock()
+	c.IsConnected = false
+	c.connMu.Unlock()
+	// Signal the read/write loops to stop
+	c.readCrashed <- struct{}{}
+	c.writeCrashed <- struct{}{}
 }
 
 func (c *WSClient) Start() {
@@ -180,6 +192,7 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			log.Printf("Client %s: Receive loop context done", c.ClientID)
+			c.handleConnectionLoss()
 			return
 		default:
 			message := Message{}
@@ -188,9 +201,7 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
 					log.Printf("Client %s: Read error: %v", c.ClientID, err)
 				}
-				c.connMu.Lock()
-				c.IsConnected = false
-				c.connMu.Unlock()
+				c.handleConnectionLoss()
 				return
 			}
 
