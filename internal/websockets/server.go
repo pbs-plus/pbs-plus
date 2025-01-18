@@ -91,7 +91,9 @@ func (s *Server) Subscribe() (<-chan Message, func()) {
 
 // Run starts the server
 func (s *Server) Run() {
+	log.Printf("Server starting")
 	defer func() {
+		log.Printf("Server shutting down")
 		s.clientsMux.Lock()
 		for _, client := range s.clients {
 			client.close()
@@ -114,11 +116,13 @@ func (s *Server) Run() {
 			return
 
 		case client := <-s.register:
+			log.Printf("New client registered: %s", client.ID)
 			s.clientsMux.Lock()
 			s.clients[client.ID] = client
 			s.clientsMux.Unlock()
 
 		case client := <-s.unregister:
+			log.Printf("Client unregistering: %s", client.ID)
 			s.clientsMux.Lock()
 			if _, ok := s.clients[client.ID]; ok {
 				delete(s.clients, client.ID)
@@ -127,39 +131,27 @@ func (s *Server) Run() {
 			s.clientsMux.Unlock()
 
 		case msg := <-s.broadcast:
+			log.Printf("Broadcasting message: %+v", msg)
 			// Broadcast to all subscribers
 			s.subscribersMux.RLock()
-			deadChannels := make([]chan Message, 0)
 			for ch := range s.subscribers {
 				select {
 				case ch <- msg:
-					// Message sent successfully
+					log.Printf("Message sent to subscriber")
 				default:
-					// Channel is full or blocked
-					deadChannels = append(deadChannels, ch)
+					log.Printf("Subscriber channel full or blocked")
 				}
 			}
 			s.subscribersMux.RUnlock()
 
-			// Clean up dead channels
-			if len(deadChannels) > 0 {
-				s.subscribersMux.Lock()
-				for _, ch := range deadChannels {
-					if _, exists := s.subscribers[ch]; exists {
-						delete(s.subscribers, ch)
-						close(ch)
-					}
-				}
-				s.subscribersMux.Unlock()
-			}
-
-			// Also send to all WebSocket clients
+			// Send to all WebSocket clients
 			s.clientsMux.RLock()
 			for _, client := range s.clients {
 				select {
 				case client.send <- msg:
-					// Message sent successfully
+					log.Printf("Message sent to client: %s", client.ID)
 				default:
+					log.Printf("Client send channel full, unregistering client: %s", client.ID)
 					go func(c *Client) {
 						s.unregister <- c
 					}(client)
@@ -171,19 +163,24 @@ func (s *Server) Run() {
 }
 
 func (s *Server) handleClientMessages(client *Client) {
+	log.Printf("Starting message handling for client: %s", client.ID)
+
 	for {
 		select {
 		case <-s.ctx.Done():
+			log.Printf("Context done for client: %s", client.ID)
 			return
 		default:
 			message := Message{}
 			err := wsjson.Read(context.Background(), client.conn, &message)
 			if err != nil {
 				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-					log.Printf("read error: %v", err)
+					log.Printf("Read error for client %s: %v", client.ID, err)
 				}
 				return
 			}
+
+			log.Printf("Server received message from client %s: %+v", client.ID, message)
 
 			message.ClientID = client.ID
 			message.Time = time.Now()
@@ -191,9 +188,9 @@ func (s *Server) handleClientMessages(client *Client) {
 			// Send to broadcast channel with timeout
 			select {
 			case s.broadcast <- message:
-				// Message sent successfully
+				log.Printf("Message broadcasted successfully from client %s", client.ID)
 			case <-time.After(time.Second):
-				log.Printf("Broadcast channel full or blocked")
+				log.Printf("Broadcast channel full or blocked for client %s", client.ID)
 			}
 		}
 	}

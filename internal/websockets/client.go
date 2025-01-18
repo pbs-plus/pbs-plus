@@ -163,21 +163,30 @@ func (c *WSClient) RegisterHandler(msgType string, handler MessageHandler) {
 	c.handlers[msgType] = handler
 }
 
-func (c *WSClient) Send(msg Message) {
-	c.send <- msg
+func (c *WSClient) Send(msg Message) error {
+	log.Printf("Client %s: Sending message request: %+v", c.ClientID, msg)
+	select {
+	case c.send <- msg:
+		log.Printf("Client %s: Message queued successfully", c.ClientID)
+		return nil
+	case <-time.After(time.Second):
+		return fmt.Errorf("send channel full or blocked")
+	}
 }
 
 func (c *WSClient) receiveLoop(ctx context.Context) {
+	log.Printf("Client %s: Starting receive loop", c.ClientID)
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("Client %s: Receive loop context done", c.ClientID)
 			return
 		default:
 			message := Message{}
 			err := wsjson.Read(ctx, c.conn, &message)
 			if err != nil {
 				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-					log.Printf("read error: %v", err)
+					log.Printf("Client %s: Read error: %v", c.ClientID, err)
 				}
 				c.connMu.Lock()
 				c.IsConnected = false
@@ -185,30 +194,39 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 				return
 			}
 
+			log.Printf("Client %s: Received message: %+v", c.ClientID, message)
+
 			c.handlerMu.RLock()
 			handler, exists := c.handlers[message.Type]
 			c.handlerMu.RUnlock()
 
 			if exists {
+				log.Printf("Client %s: Calling handler for message type: %s", c.ClientID, message.Type)
 				handler(&message)
+			} else {
+				log.Printf("Client %s: No handler for message type: %s", c.ClientID, message.Type)
 			}
 		}
 	}
 }
 
 func (c *WSClient) sendLoop(ctx context.Context) {
+	log.Printf("Client %s: Starting send loop", c.ClientID)
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("Client %s: Send loop context done", c.ClientID)
 			return
 		case msg := <-c.send:
+			log.Printf("Client %s: Sending message: %+v", c.ClientID, msg)
 			err := wsjson.Write(ctx, c.conn, msg)
 			if err != nil {
 				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-					log.Printf("write error: %v", err)
+					log.Printf("Client %s: Write error: %v", c.ClientID, err)
 				}
 				return
 			}
+			log.Printf("Client %s: Message sent successfully", c.ClientID)
 		}
 	}
 }
