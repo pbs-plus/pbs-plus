@@ -96,13 +96,35 @@ func (c *WSClient) Connect() error {
 }
 
 func (c *WSClient) Close() error {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+
+	if !c.IsConnected {
+		return nil
+	}
+
 	c.cancel()
+	c.IsConnected = false
+
 	return c.conn.Close(websocket.StatusNormalClosure, "client closing")
 }
 
 func (c *WSClient) Start() {
-	go c.receiveLoop()
-	go c.sendLoop()
+	receiveCtx, receiveCancel := context.WithCancel(c.ctx)
+	sendCtx, sendCancel := context.WithCancel(c.ctx)
+
+	c.wg.Add(2)
+	go func() {
+		defer c.wg.Done()
+		defer receiveCancel()
+		c.receiveLoop(receiveCtx)
+	}()
+
+	go func() {
+		defer c.wg.Done()
+		defer sendCancel()
+		c.sendLoop(sendCtx)
+	}()
 
 	go func() {
 		for {
@@ -114,10 +136,22 @@ func (c *WSClient) Start() {
 				return
 			case <-c.readCrashed:
 				c.readCrashed = make(chan struct{}, 1)
-				go c.receiveLoop()
+				receiveCtx, receiveCancel = context.WithCancel(c.ctx)
+				c.wg.Add(1)
+				go func() {
+					defer c.wg.Done()
+					defer receiveCancel()
+					c.receiveLoop(receiveCtx)
+				}()
 			case <-c.writeCrashed:
 				c.writeCrashed = make(chan struct{}, 1)
-				go c.sendLoop()
+				sendCtx, sendCancel = context.WithCancel(c.ctx)
+				c.wg.Add(1)
+				go func() {
+					defer c.wg.Done()
+					defer sendCancel()
+					c.sendLoop(sendCtx)
+				}()
 			}
 		}
 	}()
@@ -133,7 +167,7 @@ func (c *WSClient) Send(msg Message) {
 	c.send <- msg
 }
 
-func (c *WSClient) sendLoop() {
+func (c *WSClient) sendLoop(ctx context.Context) {
 	for {
 		select {
 		case msg := <-c.send:
@@ -143,16 +177,16 @@ func (c *WSClient) sendLoop() {
 				close(c.writeCrashed)
 				return
 			}
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (c *WSClient) receiveLoop() {
+func (c *WSClient) receiveLoop(ctx context.Context) {
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return
 		default:
 			err := c.readMessage()
@@ -192,7 +226,10 @@ func (c *WSClient) readMessage() error {
 	var message Message
 	err = wsjson.Read(ctx, c.conn, &message)
 	if err != nil {
-		return err
+		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+			return nil
+		}
+		return fmt.Errorf("failed to read message: %w", err)
 	}
 
 	c.handleMessage(message)
