@@ -56,7 +56,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			listener, closeListener := storeInstance.WSHub.Subscribe()
+			listener, closeListener := storeInstance.WSHub.RegisterHandler()
 			defer closeListener()
 		respWait:
 			for {

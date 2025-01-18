@@ -12,15 +12,19 @@ type Logger struct {
 	LogWriter *syslog.Writer
 }
 
-func InitializeLogger() (*Logger, error) {
+var L *Logger
+
+func InitializeLogger() error {
 	syslogger, err := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-plus")
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &Logger{
+	L = &Logger{
 		LogWriter: syslogger,
-	}, nil
+	}
+
+	return nil
 }
 
 func (l *Logger) Infof(format string, v ...any) {

@@ -28,15 +28,8 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		syslogger, err := syslog.InitializeLogger()
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
-			return
-		}
-
 		var reqParsed LogRequest
-		err = json.NewDecoder(r.Body).Decode(&reqParsed)
+		err := json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
@@ -45,13 +38,13 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		switch reqParsed.Level {
 		case "info":
-			syslogger.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+			syslog.L.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
 		case "error":
-			syslogger.Errorf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+			syslog.L.Errorf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
 		case "warn":
-			syslogger.Warnf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+			syslog.L.Warnf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
 		default:
-			syslogger.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+			syslog.L.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

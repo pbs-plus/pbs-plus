@@ -25,7 +25,7 @@ import (
 var Version = "v0.0.0"
 
 func main() {
-	s, err := syslog.InitializeLogger()
+	err := syslog.InitializeLogger()
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %s", err)
 	}
@@ -38,18 +38,18 @@ func main() {
 
 	storeInstance, err := store.Initialize(wsHub)
 	if err != nil {
-		s.Errorf("Failed to initialize store: %v", err)
+		syslog.L.Errorf("Failed to initialize store: %v", err)
 		return
 	}
 
 	token, err := store.GetAPITokenFromFile()
 	if err != nil {
-		s.Error(err)
+		syslog.L.Error(err)
 	}
 	storeInstance.APIToken = token
 
 	if err = storeInstance.CreateTables(); err != nil {
-		s.Errorf("Failed to create store tables: %v", err)
+		syslog.L.Errorf("Failed to create store tables: %v", err)
 		return
 	}
 
@@ -61,17 +61,17 @@ func main() {
 
 		jobTask, err := storeInstance.GetJob(*jobRun)
 		if err != nil {
-			s.Error(err)
+			syslog.L.Error(err)
 			return
 		}
 
 		if jobTask.LastRunState == nil && jobTask.LastRunUpid != nil {
-			s.Info("A job is still running, skipping this schedule.")
+			syslog.L.Info("A job is still running, skipping this schedule.")
 			return
 		}
 
 		if _, err = backup.RunBackup(jobTask, storeInstance); err != nil {
-			s.Error(err)
+			syslog.L.Error(err)
 		}
 		return
 	}
@@ -79,14 +79,14 @@ func main() {
 	pbsJsLocation := "/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js"
 	err = proxy.MountCompiledJS(pbsJsLocation)
 	if err != nil {
-		s.Errorf("Modified JS mounting failed: %v", err)
+		syslog.L.Errorf("Modified JS mounting failed: %v", err)
 		return
 	}
 
 	proxmoxLibLocation := "/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js"
 	err = proxy.MountModdedProxmoxLib(proxmoxLibLocation)
 	if err != nil {
-		s.Errorf("Modified JS mounting failed: %v", err)
+		syslog.L.Errorf("Modified JS mounting failed: %v", err)
 		return
 	}
 
@@ -125,10 +125,10 @@ func main() {
 	mux.HandleFunc("/plus/ws", plus.WSHandler(storeInstance))
 	mux.HandleFunc("/plus/mount/{target}/{drive}", plus.MountHandler(storeInstance))
 
-	s.Info("Starting proxy server on :8008")
+	syslog.L.Info("Starting proxy server on :8008")
 	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, mux); err != nil {
-		if s != nil {
-			s.Errorf("Server failed: %v", err)
+		if syslog.L != nil {
+			syslog.L.Errorf("Server failed: %v", err)
 		}
 	}
 }
