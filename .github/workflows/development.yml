@@ -23,7 +23,7 @@ jobs:
           go mod download
       - name: Run tests
         run: |
-          go test -v -race ./...
+          GODEBUG=gctrace=1 go test -v -race ./... -count=1 -timeout 1m
 
   dev-build-linux-amd64:
     name: dev build linux/amd64

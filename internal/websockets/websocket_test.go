@@ -15,6 +15,7 @@ import (
 )
 
 func TestIntegration(t *testing.T) {
+	t.Log("Starting integration test")
 	// Setup server
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -102,6 +103,7 @@ func TestIntegration(t *testing.T) {
 }
 
 func TestMultipleClients(t *testing.T) {
+	t.Log("Starting multiple clients test")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -156,7 +158,19 @@ func TestMultipleClients(t *testing.T) {
 	clients[0].Send(broadcastMsg)
 
 	// Wait for all clients to receive the message
-	wg.Wait()
+	// Add timeout to wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Log("All clients received messages")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for clients to receive messages")
+	}
 
 	// Verify all clients received the message
 	for i := 0; i < numClients; i++ {
