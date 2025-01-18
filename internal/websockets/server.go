@@ -170,11 +170,38 @@ func (s *Server) Run() {
 	}
 }
 
-// ServeWS handles WebSocket connections
+func (s *Server) handleClientMessages(client *Client) {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+			message := Message{}
+			err := wsjson.Read(context.Background(), client.conn, &message)
+			if err != nil {
+				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+					log.Printf("read error: %v", err)
+				}
+				return
+			}
+
+			message.ClientID = client.ID
+			message.Time = time.Now()
+
+			// Send to broadcast channel with timeout
+			select {
+			case s.broadcast <- message:
+				// Message sent successfully
+			case <-time.After(time.Second):
+				log.Printf("Broadcast channel full or blocked")
+			}
+		}
+	}
+}
+
 func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 	clientID := r.Header.Get("X-Client-ID")
 	if clientID == "" {
-		log.Printf("Missing client ID header from %v", r.RemoteAddr)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -183,42 +210,26 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 		Subprotocols: []string{"pbs"},
 	})
 	if err != nil {
-		log.Printf("Error accepting websocket connection: %v", err)
 		return
 	}
-	defer conn.CloseNow()
-
-	if conn.Subprotocol() != "pbs" {
-		conn.Close(websocket.StatusPolicyViolation, "client must speak the pbs subprotocol")
-		return
-	}
-
-	l := rate.NewLimiter(rate.Every(time.Millisecond*100), 10)
 
 	client := &Client{
 		ID:          clientID,
 		conn:        conn,
 		server:      s,
-		rateLimiter: l,
+		rateLimiter: rate.NewLimiter(rate.Every(time.Millisecond*100), 10),
 		send:        make(chan Message, broadcastBuffer),
 		done:        make(chan struct{}),
 	}
 
 	s.register <- client
-	defer func() {
-		client.server.unregister <- client
-	}()
 
-	for {
-		err := client.handleMessage()
-		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
-			return
-		}
-		if err != nil {
-			log.Printf("failed to read from %v: %v", r.RemoteAddr, err)
-			return
-		}
-	}
+	// Start message handling in a separate goroutine
+	go s.handleClientMessages(client)
+
+	// Wait for client to be done
+	<-client.done
+	s.unregister <- client
 }
 
 func (c *Client) handleMessage() error {

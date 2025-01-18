@@ -167,35 +167,46 @@ func (c *WSClient) Send(msg Message) {
 	c.send <- msg
 }
 
-func (c *WSClient) sendLoop(ctx context.Context) {
-	for {
-		select {
-		case msg := <-c.send:
-			err := c.writeMessage(msg)
-			if err != nil {
-				log.Printf("Error sending message: %v", err)
-				close(c.writeCrashed)
-				return
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
 func (c *WSClient) receiveLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			err := c.readMessage()
+			message := Message{}
+			err := wsjson.Read(ctx, c.conn, &message)
 			if err != nil {
-				if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
-					return
+				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+					log.Printf("read error: %v", err)
 				}
-				log.Printf("Error reading message: %v", err)
-				close(c.readCrashed)
+				c.connMu.Lock()
+				c.IsConnected = false
+				c.connMu.Unlock()
+				return
+			}
+
+			c.handlerMu.RLock()
+			handler, exists := c.handlers[message.Type]
+			c.handlerMu.RUnlock()
+
+			if exists {
+				handler(&message)
+			}
+		}
+	}
+}
+
+func (c *WSClient) sendLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-c.send:
+			err := wsjson.Write(ctx, c.conn, msg)
+			if err != nil {
+				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+					log.Printf("write error: %v", err)
+				}
 				return
 			}
 		}

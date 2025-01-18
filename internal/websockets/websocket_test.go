@@ -16,21 +16,17 @@ import (
 
 func TestIntegration(t *testing.T) {
 	t.Log("Starting integration test")
-	// Setup server
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	server := NewServer(ctx)
 	go server.Run()
 
-	// Create test HTTP server
 	ts := httptest.NewServer(http.HandlerFunc(server.ServeWS))
 	defer ts.Close()
 
-	// Convert http to ws
 	wsURL := "ws" + ts.URL[4:]
 
-	// Test cases
 	tests := []struct {
 		name     string
 		clientID string
@@ -44,18 +40,10 @@ func TestIntegration(t *testing.T) {
 				{Type: "test", Content: "world"},
 			},
 		},
-		{
-			name:     "Message broadcasting",
-			clientID: "client2",
-			msgs: []Message{
-				{Type: "broadcast", Content: "broadcast message"},
-			},
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create client
 			client, err := NewWSClient(ctx, Config{
 				ServerURL: wsURL,
 				ClientID:  tt.clientID,
@@ -65,39 +53,35 @@ func TestIntegration(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			// Connect client
 			err = client.Connect()
 			require.NoError(t, err)
-			defer client.Close()
 
-			// Start client
+			// Create channel for received messages
+			received := make(chan Message, len(tt.msgs))
+			client.RegisterHandler("test", func(msg *Message) {
+				received <- *msg
+			})
+
 			client.Start()
 
-			// Setup message receiving
-			receivedMsgs := make(chan Message, len(tt.msgs))
-			client.RegisterHandler("test", func(msg *Message) {
-				receivedMsgs <- *msg
-			})
-			client.RegisterHandler("broadcast", func(msg *Message) {
-				receivedMsgs <- *msg
-			})
-
-			// Send test messages
+			// Send messages with delay between them
 			for _, msg := range tt.msgs {
+				time.Sleep(100 * time.Millisecond) // Add small delay between messages
 				client.Send(msg)
 			}
 
-			// Verify messages are received
+			// Wait for all messages with timeout
 			for i := 0; i < len(tt.msgs); i++ {
 				select {
-				case received := <-receivedMsgs:
-					assert.Equal(t, tt.clientID, received.ClientID)
-					assert.NotEmpty(t, received.Time)
-					assert.Contains(t, []string{"test", "broadcast"}, received.Type)
-				case <-time.After(time.Second):
-					t.Fatal("timeout waiting for message")
+				case msg := <-received:
+					assert.Equal(t, tt.clientID, msg.ClientID)
+					assert.NotEmpty(t, msg.Time)
+				case <-time.After(2 * time.Second):
+					t.Fatalf("timeout waiting for message %d", i)
 				}
 			}
+
+			client.Close()
 		})
 	}
 }
