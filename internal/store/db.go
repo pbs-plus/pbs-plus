@@ -3,23 +3,29 @@
 package store
 
 import (
-	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	configLib "github.com/sonroyaalmerol/pbs-plus/internal/config"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
-// Job represents the pbs-disk-backup-job-status model
+var defaultPaths = map[string]string{
+	"configBase":       "/etc/proxmox-backup/pbs-plus",
+	"jobs":             "/etc/proxmox-backup/pbs-plus/jobs.d",
+	"targets":          "/etc/proxmox-backup/pbs-plus/targets.d",
+	"exclusions":       "/etc/proxmox-backup/pbs-plus/exclusions.d",
+	"globalexclusions": "/etc/proxmox-backup/pbs-plus/globalexclusions.d",
+	"partialfiles":     "/etc/proxmox-backup/pbs-plus/partialfiles.d",
+}
+
 type Job struct {
 	ID               string      `db:"id" json:"id"`
 	Store            string      `db:"store" json:"store"`
@@ -57,116 +63,202 @@ type PartialFile struct {
 	Comment string `db:"comment" json:"comment"`
 }
 
-// Store holds the database instance
+// Store holds the configuration system
 type Store struct {
-	Db         *sql.DB
+	mu         sync.RWMutex
+	config     *configLib.SectionConfig
 	LastToken  *Token
 	APIToken   *APIToken
 	HTTPClient *http.Client
 	WSHub      *websockets.Server
 }
 
-// Initialize initializes the database connection and returns a Store instance
-func Initialize(wsHub *websockets.Server) (*Store, error) {
-	db, err := sql.Open("sqlite3", filepath.Join(DbBasePath, "d2d.db"))
-	if err != nil {
-		return nil, fmt.Errorf("Initialize: error initializing sqlite database -> %w", err)
+func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, error) {
+	// Create base directories
+	if paths == nil {
+		paths = defaultPaths
 	}
 
-	return &Store{Db: db, WSHub: wsHub}, nil
-}
-
-// CreateTables creates the necessary tables in the SQLite database
-func (store *Store) CreateTables() error {
-	// Create Job table if it doesn't exist
-	createJobTable := `
-    CREATE TABLE IF NOT EXISTS d2d_jobs (
-        id TEXT PRIMARY KEY NOT NULL,
-        store TEXT NOT NULL,
-        target TEXT NOT NULL,
-				subpath TEXT,
-        schedule TEXT,
-        comment TEXT,
-        next_run INTEGER,
-        last_run_upid TEXT,
-				namespace TEXT,
-				notification_mode TEXT
-    );`
-
-	_, err := store.Db.Exec(createJobTable)
-	if err != nil {
-		return fmt.Errorf("CreateTables: error creating job table -> %w", err)
-	}
-
-	// Create Target table if it doesn't exist
-	createTargetTable := `
-    CREATE TABLE IF NOT EXISTS targets (
-        name TEXT PRIMARY KEY NOT NULL,
-        path TEXT NOT NULL
-    );`
-
-	_, err = store.Db.Exec(createTargetTable)
-	if err != nil {
-		return fmt.Errorf("CreateTables: error creating target table -> %w", err)
-	}
-
-	_, exclusionCheck := store.Db.Query("SELECT * FROM exclusions;")
-
-	createExclusionTable := `
-    CREATE TABLE IF NOT EXISTS exclusions (
-        path TEXT NOT NULL,
-        job_id TEXT,
-				comment TEXT,
-				PRIMARY KEY (path, job_id)
-    );`
-
-	_, err = store.Db.Exec(createExclusionTable)
-	if err != nil {
-		return fmt.Errorf("CreateTables: error creating exclusions table -> %w", err)
-	}
-
-	if exclusionCheck != nil {
-		for _, path := range defaultExclusions {
-			_ = store.CreateExclusion(Exclusion{
-				Path:    path,
-				Comment: "Generated from default list of exclusions",
-			})
+	for _, path := range paths {
+		if err := os.MkdirAll(path, 0750); err != nil {
+			return nil, fmt.Errorf("Initialize: error creating directory %s: %w", path, err)
 		}
 	}
 
-	createPartialFileTable := `
-    CREATE TABLE IF NOT EXISTS partial_files (
-        path TEXT PRIMARY KEY NOT NULL,
-				comment TEXT
-    );`
-
-	_, err = store.Db.Exec(createPartialFileTable)
-	if err != nil {
-		return fmt.Errorf("CreateTables: error creating partial_files table -> %w", err)
+	// Initialize config system
+	minLength := 3
+	idSchema := &configLib.Schema{
+		Type:        configLib.TypeString,
+		Description: "Section identifier",
+		Required:    true,
+		MinLength:   &minLength,
 	}
 
-	return nil
+	config := configLib.NewSectionConfig(idSchema)
+
+	// Register plugins
+	jobPlugin := &configLib.SectionPlugin{
+		FolderPath: paths["jobs"],
+		TypeName:   "job",
+		Properties: map[string]*configLib.Schema{
+			"store": {
+				Type:        configLib.TypeString,
+				Description: "Storage name",
+				Required:    true,
+			},
+			"target": {
+				Type:        configLib.TypeString,
+				Description: "Backup target",
+				Required:    true,
+			},
+			"subpath": {
+				Type:        configLib.TypeString,
+				Description: "Backup subpath",
+				Required:    false,
+			},
+			"schedule": {
+				Type:        configLib.TypeString,
+				Description: "Backup schedule",
+				Required:    false,
+			},
+			"comment": {
+				Type:        configLib.TypeString,
+				Description: "Comment",
+				Required:    false,
+			},
+			"notification_mode": {
+				Type:        configLib.TypeString,
+				Description: "Notification mode",
+				Required:    false,
+			},
+			"namespace": {
+				Type:        configLib.TypeString,
+				Description: "Namespace",
+				Required:    false,
+			},
+		},
+	}
+
+	targetPlugin := &configLib.SectionPlugin{
+		FolderPath: paths["targets"],
+		TypeName:   "target",
+		Properties: map[string]*configLib.Schema{
+			"path": {
+				Type:        configLib.TypeString,
+				Description: "Target path",
+				Required:    true,
+			},
+		},
+	}
+
+	exclusionPlugin := &configLib.SectionPlugin{
+		FolderPath: paths["exclusions"],
+		TypeName:   "exclusion",
+		Properties: map[string]*configLib.Schema{
+			"path": {
+				Type:        configLib.TypeString,
+				Description: "Exclusion path pattern",
+				Required:    true,
+			},
+			"comment": {
+				Type:        configLib.TypeString,
+				Description: "Exclusion comment",
+				Required:    false,
+			},
+			"job_id": {
+				Type:        configLib.TypeString,
+				Description: "Associated job ID",
+				Required:    false,
+			},
+		},
+		Validations: []configLib.ValidationFunc{
+			func(data map[string]string) error {
+				if !utils.IsValidPattern(data["path"]) {
+					return fmt.Errorf("invalid exclusion pattern: %s", data["path"])
+				}
+				return nil
+			},
+		},
+	}
+
+	partialFilePlugin := &configLib.SectionPlugin{
+		FolderPath: paths["partialfiles"],
+		TypeName:   "partialfile",
+		Properties: map[string]*configLib.Schema{
+			"path": {
+				Type:        configLib.TypeString,
+				Description: "File path",
+				Required:    true,
+			},
+			"comment": {
+				Type:        configLib.TypeString,
+				Description: "File comment",
+				Required:    false,
+			},
+		},
+	}
+
+	config.RegisterPlugin(jobPlugin)
+	config.RegisterPlugin(targetPlugin)
+	config.RegisterPlugin(exclusionPlugin)
+	config.RegisterPlugin(partialFilePlugin)
+
+	store := &Store{
+		config:     config,
+		HTTPClient: &http.Client{},
+		WSHub:      wsHub,
+	}
+
+	return store, nil
 }
 
-// Job CRUD
+// Job CRUD functions maintaining the same interface
 
-// CreateJob inserts a new Job into the database
 func (store *Store) CreateJob(job Job) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
 	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
 		return fmt.Errorf("CreateJob: invalid namespace string -> %s", job.Namespace)
+	}
+
+	if !utils.IsValidID(job.ID) && job.ID != "" {
+		return fmt.Errorf("CreateJob: invalid id string -> %s", job.Namespace)
+	}
+
+	if err := utils.ValidateOnCalendar(job.Schedule); err != nil && job.Schedule != "" {
+		return fmt.Errorf("CreateJob: invalid schedule string -> %s", job.Schedule)
 	}
 
 	if !utils.IsValidPathString(job.Subpath) {
 		return fmt.Errorf("CreateJob: invalid subpath string -> %s", job.Subpath)
 	}
 
-	query := `INSERT INTO d2d_jobs (id, store, target, subpath, schedule, comment, next_run, last_run_upid, notification_mode, namespace) 
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`
-	_, err := store.Db.Exec(query, job.ID, job.Store, job.Target, job.Subpath, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace)
-	if err != nil {
-		return fmt.Errorf("CreateJob: error inserting data to job table -> %w", err)
+	// Convert job to config format
+	configData := &configLib.ConfigData{
+		Sections: map[string]*configLib.Section{
+			job.ID: {
+				Type: "job",
+				ID:   job.ID,
+				Properties: map[string]string{
+					"store":             job.Store,
+					"target":            job.Target,
+					"subpath":           job.Subpath,
+					"schedule":          job.Schedule,
+					"comment":           job.Comment,
+					"notification_mode": job.NotificationMode,
+					"namespace":         job.Namespace,
+				},
+			},
+		},
+		Order: []string{job.ID},
 	}
 
+	if err := store.config.Write(configData); err != nil {
+		return fmt.Errorf("CreateJob: error writing config: %w", err)
+	}
+
+	// Handle exclusions
 	if len(job.Exclusions) > 0 {
 		for _, exclusion := range job.Exclusions {
 			err := store.CreateExclusion(exclusion)
@@ -176,57 +268,69 @@ func (store *Store) CreateJob(job Job) error {
 		}
 	}
 
-	err = store.SetSchedule(job)
-	if err != nil {
-		return fmt.Errorf("CreateJob: error setting job schedule -> %w", err)
-	}
+	// Set up systemd schedule
+	store.SetSchedule(job)
 
 	return nil
 }
 
-// GetJob retrieves a Job by ID
 func (store *Store) GetJob(id string) (*Job, error) {
-	query := `SELECT id, store, target, subpath, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM d2d_jobs WHERE id = ?;`
-	row := store.Db.QueryRow(query, id)
+	store.mu.RLock()
+	defer store.mu.RUnlock()
 
-	var job Job
-	err := row.Scan(&job.ID, &job.Store, &job.Target, &job.Subpath, &job.Schedule, &job.Comment, &job.NextRun, &job.LastRunUpid, &job.NotificationMode, &job.Namespace)
+	plugin := store.config.GetPlugin("job")
+	jobPath := filepath.Join(plugin.FolderPath, utils.EncodePath(id))
+	configData, err := store.config.Parse(jobPath)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("GetJob: error scanning job row -> %w", err)
+		return nil, fmt.Errorf("GetJob: error reading config: %w", err)
 	}
 
+	section, exists := configData.Sections[id]
+	if !exists {
+		return nil, nil
+	}
+
+	// Convert config to Job struct
+	job := &Job{
+		ID:               id,
+		Store:            section.Properties["store"],
+		Target:           section.Properties["target"],
+		Subpath:          section.Properties["subpath"],
+		Schedule:         section.Properties["schedule"],
+		Comment:          section.Properties["comment"],
+		NotificationMode: section.Properties["notification_mode"],
+		Namespace:        section.Properties["namespace"],
+	}
+
+	// Get exclusions
 	exclusions, err := store.GetAllJobExclusions(id)
 	if err == nil {
 		job.Exclusions = exclusions
-
 		pathSlice := []string{}
 		for _, exclusion := range exclusions {
 			pathSlice = append(pathSlice, exclusion.Path)
 		}
-
 		job.RawExclusions = strings.Join(pathSlice, "\n")
 	}
 
+	// Get global exclusions
 	globalExclusions, err := store.GetAllGlobalExclusions()
 	if err == nil {
-		for _, exclusion := range globalExclusions {
-			job.Exclusions = append(job.Exclusions, exclusion)
-		}
+		job.Exclusions = append(job.Exclusions, globalExclusions...)
 	}
 
+	// Update dynamic fields
 	if job.LastRunUpid != nil && *job.LastRunUpid != "" {
 		task, err := store.GetTaskByUPID(*job.LastRunUpid)
 		if err != nil {
 			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
 		} else {
 			job.LastRunEndtime = &task.EndTime
-
 			if task.Status == "stopped" {
 				job.LastRunState = &task.ExitStatus
-
 				tmpDuration := task.EndTime - task.StartTime
 				job.Duration = &tmpDuration
 			} else {
@@ -236,39 +340,65 @@ func (store *Store) GetJob(id string) (*Job, error) {
 		}
 	}
 
-	nextSchedule, err := getNextSchedule(&job)
-	if err != nil {
-		nextSchedule = nil
-	}
-
-	if nextSchedule != nil {
+	// Get next schedule
+	nextSchedule, err := getNextSchedule(job)
+	if err == nil && nextSchedule != nil {
 		nextSchedUnix := nextSchedule.Unix()
 		job.NextRun = &nextSchedUnix
 	}
 
-	return &job, nil
+	return job, nil
 }
 
-// UpdateJob updates an existing Job in the database
 func (store *Store) UpdateJob(job Job) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
 	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
 		return fmt.Errorf("UpdateJob: invalid namespace string -> %s", job.Namespace)
 	}
 
+	if !utils.IsValidID(job.ID) && job.ID != "" {
+		return fmt.Errorf("CreateJob: invalid id string -> %s", job.Namespace)
+	}
+
+	if err := utils.ValidateOnCalendar(job.Schedule); err != nil && job.Schedule != "" {
+		return fmt.Errorf("CreateJob: invalid schedule string -> %s", job.Schedule)
+	}
+
 	if !utils.IsValidPathString(job.Subpath) {
-		return fmt.Errorf("UpdateJob: invalid subpath string -> %s", job.Subpath)
+		return fmt.Errorf("CreateJob: invalid subpath string -> %s", job.Subpath)
 	}
 
-	query := `UPDATE d2d_jobs SET store = ?, target = ?, subpath = ?, schedule = ?, comment = ?, next_run = ?, last_run_upid = ?, notification_mode = ?, namespace = ? WHERE id = ?;`
-	_, err := store.Db.Exec(query, job.Store, job.Target, job.Subpath, job.Schedule, job.Comment, job.NextRun, job.LastRunUpid, job.NotificationMode, job.Namespace, job.ID)
-	if err != nil {
-		return fmt.Errorf("UpdateJob: error updating job table -> %w", err)
+	// Convert job to config format
+	configData := &configLib.ConfigData{
+		Sections: map[string]*configLib.Section{
+			job.ID: {
+				Type: "job",
+				ID:   job.ID,
+				Properties: map[string]string{
+					"store":             job.Store,
+					"target":            job.Target,
+					"subpath":           job.Subpath,
+					"schedule":          job.Schedule,
+					"comment":           job.Comment,
+					"notification_mode": job.NotificationMode,
+					"namespace":         job.Namespace,
+				},
+			},
+		},
+		Order: []string{job.ID},
 	}
 
-	query = `DELETE FROM exclusions WHERE job_id = ?;`
-	_, err = store.Db.Exec(query, job.ID)
-	if err != nil {
-		return fmt.Errorf("UpdateJob: error deleting exclusions from table -> %w", err)
+	if err := store.config.Write(configData); err != nil {
+		return fmt.Errorf("UpdateJob: error writing config: %w", err)
+	}
+
+	// Update exclusions
+	plugin := store.config.GetPlugin("exclusion")
+	exclusionPath := filepath.Join(plugin.FolderPath, job.ID)
+	if err := os.RemoveAll(exclusionPath); err != nil {
+		return fmt.Errorf("UpdateJob: error removing old exclusions: %w", err)
 	}
 
 	if len(job.Exclusions) > 0 {
@@ -276,7 +406,6 @@ func (store *Store) UpdateJob(job Job) error {
 			if exclusion.JobID != job.ID {
 				continue
 			}
-
 			err := store.CreateExclusion(exclusion)
 			if err != nil {
 				continue
@@ -284,287 +413,230 @@ func (store *Store) UpdateJob(job Job) error {
 		}
 	}
 
-	err = store.SetSchedule(job)
-	if err != nil {
-		return fmt.Errorf("UpdateJob: error setting job schedule -> %w", err)
-	}
+	store.SetSchedule(job)
 
 	return nil
 }
 
-func (store *Store) SetSchedule(job Job) error {
-	svcPath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
-	fullSvcPath := filepath.Join(TimerBasePath, svcPath)
-
-	timerPath := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
-	fullTimerPath := filepath.Join(TimerBasePath, timerPath)
-
-	if job.Schedule == "" {
-		cmd := exec.Command("/usr/bin/systemctl", "disable", "--now", timerPath)
-		cmd.Env = os.Environ()
-		_ = cmd.Run()
-
-		_ = os.Remove(fullSvcPath)
-		_ = os.Remove(fullTimerPath)
-	} else {
-		err := generateService(&job)
-		if err != nil {
-			return fmt.Errorf("SetSchedule: error generating service -> %w", err)
-		}
-
-		err = generateTimer(&job)
-		if err != nil {
-			return fmt.Errorf("SetSchedule: error generating timer -> %w", err)
-		}
-	}
-
-	cmd := exec.Command("/usr/bin/systemctl", "daemon-reload")
-	cmd.Env = os.Environ()
-	err := cmd.Run()
-	if err != nil {
-		return fmt.Errorf("SetSchedule: error running daemon reload -> %w", err)
-	}
-
-	if job.Schedule == "" {
-		return nil
-	}
-
-	cmd = exec.Command("/usr/bin/systemctl", "enable", "--now", timerPath)
-	cmd.Env = os.Environ()
-	err = cmd.Run()
-	if err != nil {
-		return fmt.Errorf("SetSchedule: error running enable -> %w", err)
-	}
-
-	return nil
-}
-
-// DeleteJob deletes a Job from the database
-func (store *Store) DeleteJob(id string) error {
-	query := `DELETE FROM d2d_jobs WHERE id = ?;`
-	_, err := store.Db.Exec(query, id)
-	if err != nil {
-		return fmt.Errorf("DeleteJob: error deleting job from table -> %w", err)
-	}
-	deleteSchedule(id)
-
-	return nil
-}
-
-// GetAllJobs retrieves all Job records from the database
 func (store *Store) GetAllJobs() ([]Job, error) {
-	query := `SELECT id, store, target, subpath, schedule, comment, next_run, last_run_upid, notification_mode, namespace FROM d2d_jobs WHERE id IS NOT NULL;`
-	rows, err := store.Db.Query(query)
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	plugin := store.config.GetPlugin("job")
+	files, err := os.ReadDir(plugin.FolderPath)
 	if err != nil {
-		return nil, fmt.Errorf("GetAllJobs: error getting job select query -> %w", err)
+		return nil, fmt.Errorf("GetAllJobs: error reading jobs directory: %w", err)
 	}
-	defer rows.Close()
 
 	var jobs []Job
-	jobs = make([]Job, 0)
-	for rows.Next() {
-		var job Job
-		err := rows.Scan(&job.ID, &job.Store, &job.Target, &job.Subpath, &job.Schedule, &job.Comment, &job.NextRun, &job.LastRunUpid, &job.NotificationMode, &job.Namespace)
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		job, err := store.GetJob(utils.DecodePath(file.Name()))
 		if err != nil {
-			return nil, fmt.Errorf("GetAllJobs: error scanning job row -> %w", err)
+			continue
 		}
-
-		exclusions, err := store.GetAllJobExclusions(job.ID)
-		if err == nil {
-			job.Exclusions = exclusions
-			pathSlice := []string{}
-			for _, exclusion := range exclusions {
-				pathSlice = append(pathSlice, exclusion.Path)
-			}
-
-			job.RawExclusions = strings.Join(pathSlice, "\n")
-		}
-
-		if job.LastRunUpid != nil && *job.LastRunUpid != "" {
-			task, err := store.GetTaskByUPID(*job.LastRunUpid)
-			if err != nil {
-				log.Printf("GetJob: error getting task by UPID -> %v\n", err)
-			} else {
-				job.LastRunEndtime = &task.EndTime
-
-				if task.Status == "stopped" {
-					job.LastRunState = &task.ExitStatus
-
-					tmpDuration := task.EndTime - task.StartTime
-					job.Duration = &tmpDuration
-				} else {
-					tmpDuration := time.Now().Unix() - task.StartTime
-					job.Duration = &tmpDuration
-				}
-			}
-		}
-
-		nextSchedule, err := getNextSchedule(&job)
-		if err != nil {
-			nextSchedule = nil
-		}
-
-		if nextSchedule != nil {
-			nextSchedUnix := nextSchedule.Unix()
-			job.NextRun = &nextSchedUnix
-		}
-
-		jobs = append(jobs, job)
+		jobs = append(jobs, *job)
 	}
 
-	return jobs, rows.Err()
+	return jobs, nil
 }
 
-func (store *Store) GetAllJobExclusions(jobId string) ([]Exclusion, error) {
-	query := `SELECT path, comment, job_id FROM exclusions WHERE job_id = ?;`
-	rows, err := store.Db.Query(query, jobId)
-	if err != nil {
-		return nil, fmt.Errorf("GetAllJobExclusions: error getting job exclusions select query -> %w", err)
-	}
-	defer rows.Close()
+func (store *Store) DeleteJob(id string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
 
-	var exclusions []Exclusion
-	exclusions = make([]Exclusion, 0)
-	for rows.Next() {
-		var exclusion Exclusion
-		err := rows.Scan(&exclusion.Path, &exclusion.Comment, &exclusion.JobID)
-		if err != nil {
-			return nil, fmt.Errorf("GetAllJobExclusions: error scanning job row -> %w", err)
+	plugin := store.config.GetPlugin("job")
+	jobPath := filepath.Join(plugin.FolderPath, utils.EncodePath(id))
+	if err := os.Remove(jobPath); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("DeleteJob: error deleting job file: %w", err)
 		}
-
-		exclusions = append(exclusions, exclusion)
 	}
 
-	return exclusions, rows.Err()
+	deleteSchedule(id)
+	return nil
 }
 
-// Target CRUD
-
-// CreateTarget inserts a new Target into the database
+// Target functions
 func (store *Store) CreateTarget(target Target) error {
-	query := `INSERT INTO targets (name, path) VALUES (?, ?);`
-	_, err := store.Db.Exec(query, target.Name, target.Path)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if target.Path == "" {
+		return fmt.Errorf("UpdateTarget: target path empty -> %s", target.Path)
+	}
+
+	if !utils.ValidateTargetPath(target.Path) {
+		return fmt.Errorf("UpdateTarget: invalid target path -> %s", target.Path)
+	}
+
+	configData := &configLib.ConfigData{
+		Sections: map[string]*configLib.Section{
+			target.Name: {
+				Type: "target",
+				ID:   target.Name,
+				Properties: map[string]string{
+					"path": target.Path,
+				},
+			},
+		},
+		Order: []string{target.Name},
+	}
+
+	if err := store.config.Write(configData); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
 			return store.UpdateTarget(target)
 		}
-		return fmt.Errorf("CreateTarget: error inserting value to targets table -> %w", err)
+		return fmt.Errorf("CreateTarget: error writing config: %w", err)
 	}
 
 	return nil
 }
 
-// GetTarget retrieves a Target by ID
 func (store *Store) GetTarget(name string) (*Target, error) {
-	query := `SELECT name, path FROM targets WHERE name = ?;`
-	row := store.Db.QueryRow(query, name)
+	store.mu.RLock()
+	defer store.mu.RUnlock()
 
-	var target Target
-	err := row.Scan(&target.Name, &target.Path)
+	plugin := store.config.GetPlugin("target")
+	targetPath := filepath.Join(plugin.FolderPath, utils.EncodePath(name))
+	configData, err := store.config.Parse(targetPath)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("GetTarget: error scanning row from targets table -> %w", err)
+		return nil, fmt.Errorf("GetTarget: error reading config: %w", err)
+	}
+
+	section, exists := configData.Sections[name]
+	if !exists {
+		return nil, nil
+	}
+
+	target := &Target{
+		Name: name,
+		Path: section.Properties["path"],
 	}
 
 	if strings.HasPrefix(target.Path, "agent://") {
-		target.ConnectionStatus = store.AgentPing(&target)
+		target.ConnectionStatus = store.AgentPing(target)
 		target.IsAgent = true
 	} else {
 		target.ConnectionStatus = utils.IsValid(target.Path)
 		target.IsAgent = false
 	}
 
-	return &target, nil
+	return target, nil
 }
 
-func (store *Store) GetAllTargetsByIP(ip string) ([]Target, error) {
-	query := `SELECT name, path FROM targets WHERE path LIKE ?;`
-	rows, err := store.Db.Query(query, fmt.Sprintf("agent://%s/%%", ip))
-	if err != nil {
-		return nil, fmt.Errorf("GetAllTargetsByIP: error getting select query -> %w", err)
-	}
-	defer rows.Close()
-
-	var targets []Target
-	targets = make([]Target, 0)
-	for rows.Next() {
-		var target Target
-		err := rows.Scan(&target.Name, &target.Path)
-		if err != nil {
-			return nil, fmt.Errorf("GetAllTargetsByIP: error scanning row from targets -> %w", err)
-		}
-
-		if strings.HasPrefix(target.Path, "agent://") {
-			target.ConnectionStatus = store.AgentPing(&target)
-			target.IsAgent = true
-		} else {
-			target.ConnectionStatus = utils.IsValid(target.Path)
-			target.IsAgent = false
-		}
-
-		targets = append(targets, target)
-	}
-
-	return targets, rows.Err()
-}
-
-// UpdateTarget updates an existing Target in the database
 func (store *Store) UpdateTarget(target Target) error {
-	query := `UPDATE targets SET path = ? WHERE name = ?;`
-	_, err := store.Db.Exec(query, target.Path, target.Name)
-	if err != nil {
-		return fmt.Errorf("UpdateTarget: error updating targets table -> %w", err)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if target.Path == "" {
+		return fmt.Errorf("UpdateTarget: target path empty -> %s", target.Path)
 	}
+
+	if !utils.ValidateTargetPath(target.Path) {
+		return fmt.Errorf("UpdateTarget: invalid target path -> %s", target.Path)
+	}
+
+	configData := &configLib.ConfigData{
+		Sections: map[string]*configLib.Section{
+			target.Name: {
+				Type: "target",
+				ID:   target.Name,
+				Properties: map[string]string{
+					"path": target.Path,
+				},
+			},
+		},
+		Order: []string{target.Name},
+	}
+
+	if err := store.config.Write(configData); err != nil {
+		return fmt.Errorf("UpdateTarget: error writing config: %w", err)
+	}
+
 	return nil
 }
 
-// DeleteTarget deletes a Target from the database
 func (store *Store) DeleteTarget(name string) error {
-	query := `DELETE FROM targets WHERE name = ?;`
-	_, err := store.Db.Exec(query, name)
-	if err != nil {
-		return fmt.Errorf("DeleteTarget: error deleting target -> %w", err)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	plugin := store.config.GetPlugin("target")
+	targetPath := filepath.Join(plugin.FolderPath, utils.EncodePath(name))
+	if err := os.Remove(targetPath); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("DeleteTarget: error deleting target file: %w", err)
+		}
 	}
 
 	return nil
 }
 
 func (store *Store) GetAllTargets() ([]Target, error) {
-	query := `SELECT name, path FROM targets WHERE name IS NOT NULL;`
-	rows, err := store.Db.Query(query)
+	plugin := store.config.GetPlugin("target")
+	files, err := os.ReadDir(plugin.FolderPath)
 	if err != nil {
-		return nil, fmt.Errorf("GetAllTargets: error getting select query -> %w", err)
+		return nil, fmt.Errorf("GetAllTargets: error reading targets directory: %w", err)
 	}
-	defer rows.Close()
 
 	var targets []Target
-	targets = make([]Target, 0)
-	for rows.Next() {
-		var target Target
-		err := rows.Scan(&target.Name, &target.Path)
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		target, err := store.GetTarget(utils.DecodePath(file.Name()))
 		if err != nil {
-			return nil, fmt.Errorf("GetAllTargets: error scanning row from targets -> %w", err)
+			continue
 		}
-
-		if strings.HasPrefix(target.Path, "agent://") {
-			target.ConnectionStatus = store.AgentPing(&target)
-			target.IsAgent = true
-		} else {
-			target.ConnectionStatus = utils.IsValid(target.Path)
-			target.IsAgent = false
-		}
-
-		targets = append(targets, target)
+		targets = append(targets, *target)
 	}
 
-	return targets, rows.Err()
+	return targets, nil
 }
 
+func (store *Store) GetAllTargetsByIP(clientIP string) ([]Target, error) {
+	// Get all targets first
+	plugin := store.config.GetPlugin("target")
+	files, err := os.ReadDir(plugin.FolderPath)
+	if err != nil {
+		return nil, fmt.Errorf("GetAllTargetsByIP: error reading targets directory: %w", err)
+	}
+
+	var targets []Target
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		target, err := store.GetTarget(utils.DecodePath(file.Name()))
+		if err != nil {
+			continue
+		}
+
+		// Check if it's an agent target and matches the clientIP
+		if target.IsAgent {
+			// Split path into parts: ["agent:", "", "<clientIP>", "<driveLetter>"]
+			parts := strings.Split(target.Path, "/")
+			if len(parts) >= 3 && parts[2] == clientIP {
+				targets = append(targets, *target)
+			}
+		}
+	}
+
+	return targets, nil
+}
+
+// Exclusion functions
 func (store *Store) CreateExclusion(exclusion Exclusion) error {
-	query := `INSERT INTO exclusions (path, comment, job_id) 
-              VALUES (?, ?, ?);`
+	store.mu.Lock()
+	defer store.mu.Unlock()
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
 
@@ -572,148 +644,400 @@ func (store *Store) CreateExclusion(exclusion Exclusion) error {
 		return fmt.Errorf("CreateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
-	_, err := store.Db.Exec(query, exclusion.Path, exclusion.Comment, exclusion.JobID)
-	if err != nil {
-		return fmt.Errorf("CreateExclusion: error inserting data to table -> %w", err)
+	sectionType := "exclusion"
+	filename := utils.EncodePath(exclusion.JobID)
+	sectionProperties := map[string]string{
+		"path":    exclusion.Path,
+		"comment": exclusion.Comment,
+		"job_id":  exclusion.JobID,
+	}
+	plugin := store.config.GetPlugin("exclusion")
+
+	if exclusion.JobID == "" {
+		sectionProperties = map[string]string{
+			"path":    exclusion.Path,
+			"comment": exclusion.Comment,
+		}
+		filename = "global"
+	}
+
+	configPath := filepath.Join(plugin.FolderPath, filename)
+
+	// Read existing exclusions
+	var configData *configLib.ConfigData
+	existing, err := store.config.Parse(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("CreateExclusion: error reading existing config: %w", err)
+	}
+
+	if existing != nil {
+		configData = existing
+	} else {
+		configData = &configLib.ConfigData{
+			Sections: make(map[string]*configLib.Section),
+			Order:    make([]string, 0),
+			FilePath: configPath,
+		}
+	}
+
+	// Add new exclusion
+	sectionID := fmt.Sprintf("excl-%s", exclusion.Path)
+	configData.Sections[sectionID] = &configLib.Section{
+		Type:       sectionType,
+		ID:         sectionID,
+		Properties: sectionProperties,
+	}
+	configData.Order = append(configData.Order, sectionID)
+
+	if err := store.config.Write(configData); err != nil {
+		return fmt.Errorf("CreateExclusion: error writing config: %w", err)
 	}
 
 	return nil
 }
 
-func (store *Store) GetExclusion(path string) (*Exclusion, error) {
-	query := `SELECT path, job_id, comment FROM exclusions WHERE path = ?;`
-	row := store.Db.QueryRow(query, path)
-
-	var exclusion Exclusion
-	err := row.Scan(&exclusion.Path, &exclusion.JobID, &exclusion.Comment)
+func (store *Store) GetAllJobExclusions(jobId string) ([]Exclusion, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	plugin := store.config.GetPlugin("exclusion")
+	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(jobId))
+	configData, err := store.config.Parse(configPath)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
+		if os.IsNotExist(err) {
+			return []Exclusion{}, nil
 		}
-		return nil, fmt.Errorf("GetExclusion: error scanning row from exclusions table -> %w", err)
+		return nil, fmt.Errorf("GetAllJobExclusions: error reading config: %w", err)
 	}
+	var exclusions []Exclusion
+	seenPaths := make(map[string]bool)
 
-	return &exclusion, nil
+	for _, sectionID := range configData.Order {
+		section, exists := configData.Sections[sectionID]
+		if !exists || section.Type != "exclusion" {
+			continue
+		}
+		path := section.Properties["path"]
+		if seenPaths[path] {
+			continue // Skip duplicates
+		}
+		seenPaths[path] = true
+		exclusions = append(exclusions, Exclusion{
+			Path:    path,
+			Comment: section.Properties["comment"],
+			JobID:   jobId,
+		})
+	}
+	return exclusions, nil
 }
 
-// UpdateExclusion updates an existing Exclusion in the database
+func (store *Store) GetAllGlobalExclusions() ([]Exclusion, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	plugin := store.config.GetPlugin("exclusion")
+	configPath := filepath.Join(plugin.FolderPath, "global")
+	configData, err := store.config.Parse(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []Exclusion{}, nil
+		}
+		return nil, fmt.Errorf("GetAllGlobalExclusions: error reading config: %w", err)
+	}
+	var exclusions []Exclusion
+	seenPaths := make(map[string]bool)
+
+	for _, sectionID := range configData.Order {
+		section, exists := configData.Sections[sectionID]
+		if !exists || section.Type != "exclusion" {
+			continue
+		}
+		path := section.Properties["path"]
+		if seenPaths[path] {
+			continue // Skip duplicates
+		}
+		seenPaths[path] = true
+		exclusions = append(exclusions, Exclusion{
+			Path:    path,
+			Comment: section.Properties["comment"],
+		})
+	}
+	return exclusions, nil
+}
+
+func (store *Store) GetExclusion(path string) (*Exclusion, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	// Check global exclusions first
+	plugin := store.config.GetPlugin("exclusion")
+	globalPath := filepath.Join(plugin.FolderPath, "global")
+	if configData, err := store.config.Parse(globalPath); err == nil {
+		sectionID := fmt.Sprintf("excl-%s", path)
+		if section, exists := configData.Sections[sectionID]; exists && section.Type == "exclusion" {
+			return &Exclusion{
+				Path:    section.Properties["path"],
+				Comment: section.Properties["comment"],
+			}, nil
+		}
+	}
+
+	// Check job-specific exclusions
+	files, err := os.ReadDir(plugin.FolderPath)
+	if err != nil {
+		return nil, fmt.Errorf("GetExclusion: error reading directory: %w", err)
+	}
+
+	for _, file := range files {
+		if file.Name() == "global" {
+			continue
+		}
+		configPath := filepath.Join(plugin.FolderPath, file.Name())
+		configData, err := store.config.Parse(configPath)
+		if err != nil {
+			continue
+		}
+
+		sectionID := fmt.Sprintf("excl-%s", path)
+		if section, exists := configData.Sections[sectionID]; exists && section.Type == "exclusion" {
+			return &Exclusion{
+				Path:    section.Properties["path"],
+				Comment: section.Properties["comment"],
+				JobID:   section.Properties["job_id"],
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("GetExclusion: exclusion not found for path: %s", path)
+}
+
 func (store *Store) UpdateExclusion(exclusion Exclusion) error {
-	query := `UPDATE exclusions SET comment = ? WHERE path = ? AND job_id = ?;`
+	store.mu.Lock()
+	defer store.mu.Unlock()
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
-
 	if !utils.IsValidPattern(exclusion.Path) {
 		return fmt.Errorf("UpdateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
-	_, err := store.Db.Exec(query, exclusion.Comment, exclusion.Path, exclusion.JobID)
-	if err != nil {
-		return fmt.Errorf("UpdateExclusion: error updating exclusions table -> %w", err)
+	// Try to update in global exclusions first
+	plugin := store.config.GetPlugin("exclusion")
+	configPath := filepath.Join(plugin.FolderPath, "global")
+	if exclusion.JobID != "" {
+		configPath = filepath.Join(plugin.FolderPath, utils.EncodePath(exclusion.JobID))
 	}
-	return nil
+
+	configData, err := store.config.Parse(configPath)
+	if err != nil {
+		return fmt.Errorf("UpdateExclusion: error reading config: %w", err)
+	}
+
+	sectionID := fmt.Sprintf("excl-%s", exclusion.Path)
+	section, exists := configData.Sections[sectionID]
+	if !exists {
+		return fmt.Errorf("UpdateExclusion: exclusion not found for path: %s", exclusion.Path)
+	}
+
+	// Update properties
+	if exclusion.JobID == "" {
+		section.Properties = map[string]string{
+			"path":    exclusion.Path,
+			"comment": exclusion.Comment,
+		}
+	} else {
+		section.Properties = map[string]string{
+			"path":    exclusion.Path,
+			"comment": exclusion.Comment,
+			"job_id":  exclusion.JobID,
+		}
+	}
+
+	return store.config.Write(configData)
 }
 
-// DeleteExclusion deletes a Exclusion from the database
 func (store *Store) DeleteExclusion(path string) error {
-	query := `DELETE FROM exclusions WHERE path = ? AND (job_id IS NULL OR job_id = '');`
-	_, err := store.Db.Exec(query, path)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	path = strings.ReplaceAll(path, "\\", "/")
+	plugin := store.config.GetPlugin("exclusion")
+	sectionID := fmt.Sprintf("excl-%s", path)
+
+	// Try job-specific exclusions first
+	files, err := os.ReadDir(plugin.FolderPath)
 	if err != nil {
-		return fmt.Errorf("DeleteExclusion: error deleting exclusion -> %w", err)
+		return fmt.Errorf("DeleteExclusion: error reading directory: %w", err)
 	}
 
-	return nil
-}
-
-func (store *Store) GetAllGlobalExclusions() ([]Exclusion, error) {
-	query := `SELECT path, job_id, comment FROM exclusions WHERE path IS NOT NULL AND (job_id IS NULL OR job_id = '');`
-	rows, err := store.Db.Query(query)
-	if err != nil {
-		return nil, fmt.Errorf("GetAllExclusions: error getting select query -> %w", err)
-	}
-	defer rows.Close()
-
-	var exclusions []Exclusion
-	exclusions = make([]Exclusion, 0)
-	for rows.Next() {
-		var exclusion Exclusion
-		err := rows.Scan(&exclusion.Path, &exclusion.JobID, &exclusion.Comment)
+	for _, file := range files {
+		if file.Name() == "global" {
+			continue
+		}
+		configPath := filepath.Join(plugin.FolderPath, file.Name())
+		configData, err := store.config.Parse(configPath)
 		if err != nil {
-			return nil, fmt.Errorf("GetAllExclusions: error scanning row from exclusions -> %w", err)
+			continue
 		}
 
-		exclusions = append(exclusions, exclusion)
+		if _, exists := configData.Sections[sectionID]; exists {
+			delete(configData.Sections, sectionID)
+			newOrder := make([]string, 0)
+			for _, id := range configData.Order {
+				if id != sectionID {
+					newOrder = append(newOrder, id)
+				}
+			}
+			configData.Order = newOrder
+
+			// If the config is empty after deletion, remove the file
+			if len(configData.Sections) == 0 {
+				if err := os.Remove(configPath); err != nil {
+					return fmt.Errorf("DeleteExclusion: error removing empty config file: %w", err)
+				}
+				return nil
+			}
+
+			// Otherwise write the updated config
+			if err := store.config.Write(configData); err != nil {
+				return fmt.Errorf("DeleteExclusion: error writing config: %w", err)
+			}
+			return nil
+		}
 	}
 
-	return exclusions, rows.Err()
+	// Try global exclusion
+	globalPath := filepath.Join(plugin.FolderPath, "global")
+	if configData, err := store.config.Parse(globalPath); err == nil {
+		if _, exists := configData.Sections[sectionID]; exists {
+			delete(configData.Sections, sectionID)
+			newOrder := make([]string, 0)
+			for _, id := range configData.Order {
+				if id != sectionID {
+					newOrder = append(newOrder, id)
+				}
+			}
+			configData.Order = newOrder
+
+			// If the global config is empty after deletion, remove the file
+			if len(configData.Sections) == 0 {
+				if err := os.Remove(globalPath); err != nil {
+					return fmt.Errorf("DeleteExclusion: error removing empty global config file: %w", err)
+				}
+				return nil
+			}
+
+			// Otherwise write the updated config
+			if err := store.config.Write(configData); err != nil {
+				return fmt.Errorf("DeleteExclusion: error writing global config: %w", err)
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("DeleteExclusion: exclusion not found for path: %s", path)
 }
 
+// PartialFile functions
 func (store *Store) CreatePartialFile(partialFile PartialFile) error {
-	query := `INSERT INTO partial_files (path, comment) 
-              VALUES (?, ?);`
+	store.mu.Lock()
+	defer store.mu.Unlock()
 
-	_, err := store.Db.Exec(query, partialFile.Path, partialFile.Comment)
-	if err != nil {
-		return fmt.Errorf("CreatePartialFile: error inserting data to table -> %w", err)
+	if !utils.IsValidPattern(partialFile.Path) {
+		return fmt.Errorf("CreatePartialFile: invalid path pattern -> %s", partialFile.Path)
+	}
+
+	configData := &configLib.ConfigData{
+		Sections: map[string]*configLib.Section{
+			partialFile.Path: {
+				Type: "partialfile",
+				ID:   partialFile.Path,
+				Properties: map[string]string{
+					"path":    partialFile.Path,
+					"comment": partialFile.Comment,
+				},
+			},
+		},
+		Order: []string{partialFile.Path},
+	}
+
+	if err := store.config.Write(configData); err != nil {
+		return fmt.Errorf("CreatePartialFile: error writing config: %w", err)
 	}
 
 	return nil
 }
-func (store *Store) GetPartialFile(path string) (*PartialFile, error) {
-	query := `SELECT path, comment FROM partial_files WHERE path = ?;`
-	row := store.Db.QueryRow(query, path)
 
-	var partialFile PartialFile
-	err := row.Scan(&partialFile.Path, &partialFile.Comment)
+func (store *Store) GetPartialFile(path string) (*PartialFile, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	plugin := store.config.GetPlugin("partialfile")
+	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(path))
+	configData, err := store.config.Parse(configPath)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("GetPartialFile: error scanning row from partialFiles table -> %w", err)
+		return nil, fmt.Errorf("GetPartialFile: error reading config: %w", err)
 	}
 
-	return &partialFile, nil
+	section, exists := configData.Sections[path]
+	if !exists {
+		return nil, nil
+	}
+
+	return &PartialFile{
+		Path:    section.Properties["path"],
+		Comment: section.Properties["comment"],
+	}, nil
 }
 
-// UpdatePartialFile updates an existing PartialFile in the database
 func (store *Store) UpdatePartialFile(partialFile PartialFile) error {
-	query := `UPDATE partial_files SET comment = ? WHERE path = ?;`
-	_, err := store.Db.Exec(query, partialFile.Comment, partialFile.Path)
-	if err != nil {
-		return fmt.Errorf("UpdatePartialFile: error updating partialFiles table -> %w", err)
-	}
-	return nil
+	return store.CreatePartialFile(partialFile)
 }
 
-// DeletePartialFile deletes a PartialFile from the database
 func (store *Store) DeletePartialFile(path string) error {
-	query := `DELETE FROM partial_files WHERE path = ?;`
-	_, err := store.Db.Exec(query, path)
-	if err != nil {
-		return fmt.Errorf("DeletePartialFile: error deleting partialFile -> %w", err)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	plugin := store.config.GetPlugin("partialfile")
+	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(path))
+	if err := os.Remove(configPath); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("DeletePartialFile: error deleting file: %w", err)
+		}
 	}
 
 	return nil
 }
 
 func (store *Store) GetAllPartialFiles() ([]PartialFile, error) {
-	query := `SELECT path, comment FROM partial_files WHERE path IS NOT NULL;`
-	rows, err := store.Db.Query(query)
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	plugin := store.config.GetPlugin("partialfile")
+	files, err := os.ReadDir(plugin.FolderPath)
 	if err != nil {
-		return nil, fmt.Errorf("GetAllPartialFiles: error getting select query -> %w", err)
+		return nil, fmt.Errorf("GetAllPartialFiles: error reading directory: %w", err)
 	}
-	defer rows.Close()
 
 	var partialFiles []PartialFile
-	partialFiles = make([]PartialFile, 0)
-	for rows.Next() {
-		var partialFile PartialFile
-		err := rows.Scan(&partialFile.Path, &partialFile.Comment)
-		if err != nil {
-			return nil, fmt.Errorf("GetAllPartialFiles: error scanning row from partialFiles -> %w", err)
+	for _, file := range files {
+		if file.IsDir() {
+			continue
 		}
 
-		partialFiles = append(partialFiles, partialFile)
+		configPath := filepath.Join(plugin.FolderPath, file.Name())
+		configData, err := store.config.Parse(configPath)
+		if err != nil {
+			continue
+		}
+
+		for _, section := range configData.Sections {
+			partialFiles = append(partialFiles, PartialFile{
+				Path:    section.Properties["path"],
+				Comment: section.Properties["comment"],
+			})
+		}
 	}
 
-	return partialFiles, rows.Err()
+	return partialFiles, nil
 }

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 func generateTimer(job *Job) error {
@@ -138,4 +140,55 @@ func getNextSchedule(job *Job) (*time.Time, error) {
 	}
 
 	return nil, nil
+}
+
+func (store *Store) SetSchedule(job Job) {
+	svcPath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
+	fullSvcPath := filepath.Join(TimerBasePath, svcPath)
+
+	timerPath := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
+	fullTimerPath := filepath.Join(TimerBasePath, timerPath)
+
+	if job.Schedule == "" {
+		cmd := exec.Command("/usr/bin/systemctl", "disable", "--now", timerPath)
+		cmd.Env = os.Environ()
+		_ = cmd.Run()
+
+		_ = os.Remove(fullSvcPath)
+		_ = os.Remove(fullTimerPath)
+	} else {
+		err := generateService(&job)
+		if err != nil {
+			syslog.L.Errorf("SetSchedule: error generating service -> %v", err)
+			return
+		}
+
+		err = generateTimer(&job)
+		if err != nil {
+			syslog.L.Errorf("SetSchedule: error generating timer -> %v", err)
+			return
+		}
+	}
+
+	cmd := exec.Command("/usr/bin/systemctl", "daemon-reload")
+	cmd.Env = os.Environ()
+	err := cmd.Run()
+	if err != nil {
+		syslog.L.Errorf("SetSchedule: error running daemon reload -> %v", err)
+		return
+	}
+
+	if job.Schedule == "" {
+		return
+	}
+
+	cmd = exec.Command("/usr/bin/systemctl", "enable", "--now", timerPath)
+	cmd.Env = os.Environ()
+	err = cmd.Run()
+	if err != nil {
+		syslog.L.Errorf("SetSchedule: error running enable -> %v", err)
+		return
+	}
+
+	return
 }

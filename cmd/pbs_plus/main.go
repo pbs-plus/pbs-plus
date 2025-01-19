@@ -36,7 +36,7 @@ func main() {
 	wsHub := websockets.NewServer(context.Background())
 	go wsHub.Run()
 
-	storeInstance, err := store.Initialize(wsHub)
+	storeInstance, err := store.Initialize(wsHub, nil)
 	if err != nil {
 		syslog.L.Errorf("Failed to initialize store: %v", err)
 		return
@@ -47,11 +47,6 @@ func main() {
 		syslog.L.Error(err)
 	}
 	storeInstance.APIToken = token
-
-	if err = storeInstance.CreateTables(); err != nil {
-		syslog.L.Errorf("Failed to create store tables: %v", err)
-		return
-	}
 
 	// Handle single job execution
 	if *jobRun != "" {
