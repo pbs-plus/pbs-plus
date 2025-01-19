@@ -29,9 +29,6 @@ func TestIntegration(t *testing.T) {
 	server := NewServer(ctx)
 	go server.Run()
 
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
-
 	ts := httptest.NewServer(http.HandlerFunc(server.ServeWS))
 	defer ts.Close()
 
@@ -50,9 +47,6 @@ func TestIntegration(t *testing.T) {
 		err = client.Connect()
 		require.NoError(t, err)
 
-		// Wait for connection to establish
-		time.Sleep(100 * time.Millisecond)
-
 		messageReceived := make(chan struct{})
 		client.RegisterHandler("test", func(msg *Message) {
 			t.Logf("Received message: %+v", msg)
@@ -62,9 +56,6 @@ func TestIntegration(t *testing.T) {
 		client.Start()
 
 		clientMessage, cleanUp := server.RegisterHandler()
-
-		// Wait for client to start
-		time.Sleep(100 * time.Millisecond)
 
 		msg := Message{Type: "test", Content: "hello"}
 		err = client.Send(msg)

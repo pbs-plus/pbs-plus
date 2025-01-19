@@ -36,7 +36,7 @@ func TestConfigWatcher_BasicOperations(t *testing.T) {
 	config.RegisterPlugin(testPlugin)
 
 	t.Run("Watch File Creation", func(t *testing.T) {
-		testFile := filepath.Join(tempDir, utils.EncodePath("test-create"))
+		testFile := filepath.Join(tempDir, utils.EncodePath("test-create")+".cfg")
 		var mu sync.Mutex
 		var capturedConfig *ConfigData
 
@@ -95,7 +95,7 @@ func TestConfigWatcher_BasicOperations(t *testing.T) {
 	})
 
 	t.Run("Watch File Modification", func(t *testing.T) {
-		testFile := filepath.Join(tempDir, utils.EncodePath("test-mod"))
+		testFile := filepath.Join(tempDir, utils.EncodePath("test-mod")+".cfg")
 		var mu sync.Mutex
 		var capturedConfig *ConfigData
 		var callCount int
@@ -186,7 +186,7 @@ func TestConfigWatcher_Debouncing(t *testing.T) {
 	config.RegisterPlugin(testPlugin)
 
 	t.Run("Rapid Changes", func(t *testing.T) {
-		testFile := filepath.Join(tempDir, utils.EncodePath("test-rapid"))
+		testFile := filepath.Join(tempDir, utils.EncodePath("test-rapid")+".cfg")
 		var mu sync.Mutex
 		callCount := 0
 

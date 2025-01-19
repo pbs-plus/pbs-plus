@@ -242,7 +242,7 @@ func (sc *SectionConfig) Write(config *ConfigData) error {
 
 		filename := config.FilePath
 		if !sc.allowUnknown && config.FilePath == "" {
-			filename = filepath.Join(plugin.FolderPath, utils.EncodePath(sectionID))
+			filename = filepath.Join(plugin.FolderPath, utils.EncodePath(sectionID)+".cfg")
 		}
 
 		dir := filepath.Dir(filename)

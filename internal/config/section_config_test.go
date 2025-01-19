@@ -47,7 +47,7 @@ func TestSectionConfig_BasicOperations(t *testing.T) {
 	config.RegisterPlugin(testPlugin)
 
 	t.Run("Create and Read", func(t *testing.T) {
-		testFile := filepath.Join(tempDir, utils.EncodePath("test-basic-cr"))
+		testFile := filepath.Join(tempDir, utils.EncodePath("test-basic-cr")+".cfg")
 		testData := &ConfigData{
 			Sections: map[string]*Section{
 				"test-basic-cr": {
@@ -117,7 +117,7 @@ func TestSectionConfig_BasicOperations(t *testing.T) {
 		config := NewSectionConfig(idSchema)
 		config.allowUnknown = true
 
-		testFile := filepath.Join(tempDir, utils.EncodePath("test-allow-unknown"))
+		testFile := filepath.Join(tempDir, utils.EncodePath("test-allow-unknown")+".cfg")
 		testData := &ConfigData{
 			FilePath: testFile,
 			Sections: map[string]*Section{
@@ -155,7 +155,7 @@ func TestSectionConfig_ArrayProperties(t *testing.T) {
 	// Register a plugin with array property
 	arrayPlugin := &SectionPlugin{
 		FolderPath: tempDir,
-		TypeName:     "array-test",
+		TypeName: "array-test",
 		Properties: map[string]*Schema{
 			"tags": {
 				Type:        TypeArray,
@@ -170,7 +170,7 @@ func TestSectionConfig_ArrayProperties(t *testing.T) {
 	config.RegisterPlugin(arrayPlugin)
 
 	t.Run("Array Property Handling", func(t *testing.T) {
-		testFile := filepath.Join(tempDir, utils.EncodePath("test-array"))
+		testFile := filepath.Join(tempDir, utils.EncodePath("test-array")+".cfg")
 		testData := &ConfigData{
 			Sections: map[string]*Section{
 				"test-array": {

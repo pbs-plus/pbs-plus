@@ -18,12 +18,10 @@ import (
 )
 
 var defaultPaths = map[string]string{
-	"configBase":       "/etc/proxmox-backup/pbs-plus",
-	"jobs":             "/etc/proxmox-backup/pbs-plus/jobs.d",
-	"targets":          "/etc/proxmox-backup/pbs-plus/targets.d",
-	"exclusions":       "/etc/proxmox-backup/pbs-plus/exclusions.d",
-	"globalexclusions": "/etc/proxmox-backup/pbs-plus/globalexclusions.d",
-	"partialfiles":     "/etc/proxmox-backup/pbs-plus/partialfiles.d",
+	"jobs":         "/etc/proxmox-backup/pbs-plus/jobs.d",
+	"targets":      "/etc/proxmox-backup/pbs-plus/targets.d",
+	"exclusions":   "/etc/proxmox-backup/pbs-plus/exclusions.d",
+	"partialfiles": "/etc/proxmox-backup/pbs-plus/partialfiles.d",
 }
 
 type Job struct {
@@ -279,7 +277,7 @@ func (store *Store) GetJob(id string) (*Job, error) {
 	defer store.mu.RUnlock()
 
 	plugin := store.config.GetPlugin("job")
-	jobPath := filepath.Join(plugin.FolderPath, utils.EncodePath(id))
+	jobPath := filepath.Join(plugin.FolderPath, utils.EncodePath(id)+".cfg")
 	configData, err := store.config.Parse(jobPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -396,7 +394,7 @@ func (store *Store) UpdateJob(job Job) error {
 
 	// Update exclusions
 	plugin := store.config.GetPlugin("exclusion")
-	exclusionPath := filepath.Join(plugin.FolderPath, job.ID)
+	exclusionPath := filepath.Join(plugin.FolderPath, job.ID+".cfg")
 	if err := os.RemoveAll(exclusionPath); err != nil {
 		return fmt.Errorf("UpdateJob: error removing old exclusions: %w", err)
 	}
@@ -434,7 +432,7 @@ func (store *Store) GetAllJobs() ([]Job, error) {
 			continue
 		}
 
-		job, err := store.GetJob(utils.DecodePath(file.Name()))
+		job, err := store.GetJob(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
 		if err != nil {
 			continue
 		}
@@ -449,7 +447,7 @@ func (store *Store) DeleteJob(id string) error {
 	defer store.mu.Unlock()
 
 	plugin := store.config.GetPlugin("job")
-	jobPath := filepath.Join(plugin.FolderPath, utils.EncodePath(id))
+	jobPath := filepath.Join(plugin.FolderPath, utils.EncodePath(id)+".cfg")
 	if err := os.Remove(jobPath); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("DeleteJob: error deleting job file: %w", err)
@@ -501,7 +499,7 @@ func (store *Store) GetTarget(name string) (*Target, error) {
 	defer store.mu.RUnlock()
 
 	plugin := store.config.GetPlugin("target")
-	targetPath := filepath.Join(plugin.FolderPath, utils.EncodePath(name))
+	targetPath := filepath.Join(plugin.FolderPath, utils.EncodePath(name)+".cfg")
 	configData, err := store.config.Parse(targetPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -568,7 +566,7 @@ func (store *Store) DeleteTarget(name string) error {
 	defer store.mu.Unlock()
 
 	plugin := store.config.GetPlugin("target")
-	targetPath := filepath.Join(plugin.FolderPath, utils.EncodePath(name))
+	targetPath := filepath.Join(plugin.FolderPath, utils.EncodePath(name)+".cfg")
 	if err := os.Remove(targetPath); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("DeleteTarget: error deleting target file: %w", err)
@@ -591,7 +589,7 @@ func (store *Store) GetAllTargets() ([]Target, error) {
 			continue
 		}
 
-		target, err := store.GetTarget(utils.DecodePath(file.Name()))
+		target, err := store.GetTarget(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
 		if err != nil {
 			continue
 		}
@@ -661,7 +659,7 @@ func (store *Store) CreateExclusion(exclusion Exclusion) error {
 		filename = "global"
 	}
 
-	configPath := filepath.Join(plugin.FolderPath, filename)
+	configPath := filepath.Join(plugin.FolderPath, filename+".cfg")
 
 	// Read existing exclusions
 	var configData *configLib.ConfigData
@@ -700,7 +698,7 @@ func (store *Store) GetAllJobExclusions(jobId string) ([]Exclusion, error) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	plugin := store.config.GetPlugin("exclusion")
-	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(jobId))
+	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(jobId)+".cfg")
 	configData, err := store.config.Parse(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -734,7 +732,7 @@ func (store *Store) GetAllGlobalExclusions() ([]Exclusion, error) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	plugin := store.config.GetPlugin("exclusion")
-	configPath := filepath.Join(plugin.FolderPath, "global")
+	configPath := filepath.Join(plugin.FolderPath, "global.cfg")
 	configData, err := store.config.Parse(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -769,7 +767,7 @@ func (store *Store) GetExclusion(path string) (*Exclusion, error) {
 
 	// Check global exclusions first
 	plugin := store.config.GetPlugin("exclusion")
-	globalPath := filepath.Join(plugin.FolderPath, "global")
+	globalPath := filepath.Join(plugin.FolderPath, "global.cfg")
 	if configData, err := store.config.Parse(globalPath); err == nil {
 		sectionID := fmt.Sprintf("excl-%s", path)
 		if section, exists := configData.Sections[sectionID]; exists && section.Type == "exclusion" {
@@ -820,9 +818,9 @@ func (store *Store) UpdateExclusion(exclusion Exclusion) error {
 
 	// Try to update in global exclusions first
 	plugin := store.config.GetPlugin("exclusion")
-	configPath := filepath.Join(plugin.FolderPath, "global")
+	configPath := filepath.Join(plugin.FolderPath, "global.cfg")
 	if exclusion.JobID != "" {
-		configPath = filepath.Join(plugin.FolderPath, utils.EncodePath(exclusion.JobID))
+		configPath = filepath.Join(plugin.FolderPath, utils.EncodePath(exclusion.JobID)+".cfg")
 	}
 
 	configData, err := store.config.Parse(configPath)
@@ -904,7 +902,7 @@ func (store *Store) DeleteExclusion(path string) error {
 	}
 
 	// Try global exclusion
-	globalPath := filepath.Join(plugin.FolderPath, "global")
+	globalPath := filepath.Join(plugin.FolderPath, "global.cfg")
 	if configData, err := store.config.Parse(globalPath); err == nil {
 		if _, exists := configData.Sections[sectionID]; exists {
 			delete(configData.Sections, sectionID)
@@ -970,7 +968,7 @@ func (store *Store) GetPartialFile(path string) (*PartialFile, error) {
 	defer store.mu.RUnlock()
 
 	plugin := store.config.GetPlugin("partialfile")
-	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(path))
+	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(path)+".cfg")
 	configData, err := store.config.Parse(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -999,7 +997,7 @@ func (store *Store) DeletePartialFile(path string) error {
 	defer store.mu.Unlock()
 
 	plugin := store.config.GetPlugin("partialfile")
-	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(path))
+	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(path)+".cfg")
 	if err := os.Remove(configPath); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("DeletePartialFile: error deleting file: %w", err)
