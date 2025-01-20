@@ -96,11 +96,8 @@ func (c *WSClient) Connect() error {
 		HTTPHeader:   c.headers,
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
-				ResponseHeaderTimeout: 5 * time.Second,
-				IdleConnTimeout:       90 * time.Second,
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
-			Timeout: 10 * time.Second,
 		},
 	})
 	if err != nil {
