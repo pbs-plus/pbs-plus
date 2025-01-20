@@ -203,9 +203,12 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 	config.RegisterPlugin(partialFilePlugin)
 
 	store := &Store{
-		config:     config,
-		HTTPClient: &http.Client{},
-		WSHub:      wsHub,
+		config: config,
+		HTTPClient: &http.Client{
+			Timeout:   time.Second * 30,
+			Transport: utils.BaseTransport,
+		},
+		WSHub: wsHub,
 	}
 
 	return store, nil
