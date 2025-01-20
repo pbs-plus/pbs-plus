@@ -412,12 +412,15 @@ func defaultParseSectionContent(line string) (string, string, error) {
 	}
 
 	parts := strings.SplitN(line, " ", 2)
-	if len(parts) != 2 {
+	if len(parts) > 2 {
 		return "", "", fmt.Errorf("invalid property format")
 	}
 
 	key := strings.TrimSpace(parts[0])
-	value := strings.TrimSpace(parts[1])
+	value := ""
+	if len(parts) == 2 {
+		value = strings.TrimSpace(parts[1])
+	}
 
 	if key == "" {
 		return "", "", fmt.Errorf("empty property key")
