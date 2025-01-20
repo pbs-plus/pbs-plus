@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package snapshots
 
@@ -6,8 +7,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/mxk/go-vss"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 var (
@@ -22,85 +31,122 @@ type WinVSSSnapshot struct {
 	Id           string    `json:"vss_id"`
 	TimeStarted  time.Time `json:"time_started"`
 	closed       atomic.Bool
-	internal     *VSSSnapshot // Internal COM-based snapshot
 }
 
 // Snapshot creates a new VSS snapshot for the specified drive
 func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
-	volName := fmt.Sprintf("%s:", driveLetter)
+	volName := filepath.VolumeName(fmt.Sprintf("%s:", driveLetter))
 	timeStarted := time.Now()
-
-	// Initialize VSS
-	if err := InitializeVSS(); err != nil {
-		return nil, fmt.Errorf("failed to initialize VSS: %w", err)
-	}
 
 	// Create snapshot with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Create internal COM-based snapshot with retry
-	internalSnapshot, err := createSnapshotWithRetry(ctx, volName)
+	snapshotId, err := createSnapshotWithRetry(ctx, volName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("snapshot creation failed: %w", err)
 	}
 
-	// Get the device path for the snapshot
-	path, err := internalSnapshot.GetSnapshotPath()
+	// Validate snapshot
+	sc, err := vss.Get(snapshotId)
 	if err != nil {
-		internalSnapshot.Close()
-		return nil, fmt.Errorf("failed to get snapshot path: %w", err)
+		_ = vss.Remove(snapshotId)
+		return nil, fmt.Errorf("snapshot validation failed: %w", err)
 	}
 
 	snapshot := &WinVSSSnapshot{
-		SnapshotPath: path,
-		Id:           internalSnapshot.SnapshotID.String(),
+		SnapshotPath: sc.DeviceObject, // Use the DeviceObject path directly
+		Id:           sc.ID,
 		TimeStarted:  timeStarted,
-		internal:     internalSnapshot,
 	}
+
+	// Initialize caches
+	cache.ExcludedPathRegexes = cache.CompileExcludedPaths()
+	cache.PartialFilePathRegexes = cache.CompilePartialFileList()
 
 	return snapshot, nil
 }
 
-// createSnapshotWithRetry attempts to create a snapshot with retries on conflicts
-func createSnapshotWithRetry(ctx context.Context, volName string) (*VSSSnapshot, error) {
-	const retryInterval = time.Second
+func stopService(name string) error {
+	cmd := exec.Command("net", "stop", name)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
 
-	for {
-		// Try to create snapshot
-		internalSnapshot, err := CreateSnapshot(volName)
-		if err == nil {
-			return internalSnapshot, nil
-		}
+func startService(name string) error {
+	cmd := exec.Command("net", "start", name)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
 
-		// If error is not "shadow copy operation is already in progress", return error
-		if !isSnapshotInProgressError(err) {
-			return nil, fmt.Errorf("%w: %v", ErrSnapshotCreation, err)
-		}
+func reregisterVSSWriters() error {
+	services := []string{
+		"Winmgmt", // Windows Management Instrumentation
+		"VSS",     // Volume Shadow Copy
+		"swprv",   // Microsoft Software Shadow Copy Provider
+	}
 
-		// Wait and retry
-		select {
-		case <-ctx.Done():
-			return nil, ErrSnapshotTimeout
-		case <-time.After(retryInterval):
-			continue
+	for _, svc := range services {
+		if err := stopService(svc); err != nil {
+			return fmt.Errorf("failed to stop service %s: %w", svc, err)
 		}
 	}
+
+	for i := len(services) - 1; i >= 0; i-- {
+		if err := startService(services[i]); err != nil {
+			return fmt.Errorf("failed to start service %s: %w", services[i], err)
+		}
+	}
+
+	return nil
 }
 
-// isSnapshotInProgressError checks if the error indicates a snapshot is in progress
-func isSnapshotInProgressError(err error) bool {
-	return err != nil && err.Error() == "shadow copy operation is already in progress"
+func createSnapshotWithRetry(ctx context.Context, volName string) (string, error) {
+	const retryInterval = time.Second
+	var lastError error
+
+	for attempts := 0; attempts < 2; attempts++ {
+		for {
+			id, err := vss.Create(volName)
+			if err == nil {
+				return id, nil
+			}
+
+			lastError = err
+			if !strings.Contains(err.Error(), "shadow copy operation is already in progress") {
+				// If this is our first attempt and it's a VSS-related error,
+				// try re-registering writers
+				if attempts == 0 && (strings.Contains(err.Error(), "VSS") ||
+					strings.Contains(err.Error(), "shadow copy")) {
+					syslog.L.Error("VSS error detected, attempting to re-register writers...")
+					if reregErr := reregisterVSSWriters(); reregErr != nil {
+						syslog.L.Warnf("Warning: failed to re-register VSS writers: %v\n", reregErr)
+					}
+					// Break inner loop to start fresh after re-registration
+					break
+				}
+				return "", fmt.Errorf("%w: %v", ErrSnapshotCreation, err)
+			}
+
+			select {
+			case <-ctx.Done():
+				return "", ErrSnapshotTimeout
+			case <-time.After(retryInterval):
+				continue
+			}
+		}
+	}
+
+	return "", fmt.Errorf("%w: %v", ErrSnapshotCreation, lastError)
 }
 
-// Close cleans up the snapshot and associated resources
 func (s *WinVSSSnapshot) Close() {
 	if s == nil || !s.closed.CompareAndSwap(false, true) {
 		return
 	}
-
-	if s.internal != nil {
-		s.internal.Close()
-		s.internal = nil
+	if fileMap, ok := cache.SizeCache.Load(s.Id); ok {
+		clear(fileMap.(map[string]int64))
+		cache.SizeCache.Delete(s.Id)
 	}
+	_ = vss.Remove(s.Id)
 }
