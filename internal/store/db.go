@@ -13,6 +13,7 @@ import (
 	"time"
 
 	configLib "github.com/sonroyaalmerol/pbs-plus/internal/config"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
@@ -305,7 +306,7 @@ func (store *Store) GetJob(id string) (*Job, error) {
 
 	// Get exclusions
 	exclusions, err := store.GetAllJobExclusions(id)
-	if err == nil {
+	if err == nil && exclusions != nil {
 		job.Exclusions = exclusions
 		pathSlice := []string{}
 		for _, exclusion := range exclusions {
@@ -316,7 +317,7 @@ func (store *Store) GetJob(id string) (*Job, error) {
 
 	// Get global exclusions
 	globalExclusions, err := store.GetAllGlobalExclusions()
-	if err == nil {
+	if err == nil && globalExclusions != nil {
 		job.Exclusions = append(job.Exclusions, globalExclusions...)
 	}
 
@@ -406,6 +407,7 @@ func (store *Store) UpdateJob(job Job) error {
 			}
 			err := store.CreateExclusion(exclusion)
 			if err != nil {
+				syslog.L.Errorf("UpdateJob: error creating job exclusion: %v", err)
 				continue
 			}
 		}
@@ -433,7 +435,8 @@ func (store *Store) GetAllJobs() ([]Job, error) {
 		}
 
 		job, err := store.GetJob(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
-		if err != nil {
+		if err != nil || job == nil {
+			syslog.L.Errorf("GetAllJobs: error getting job: %v", err)
 			continue
 		}
 		jobs = append(jobs, *job)
@@ -591,6 +594,7 @@ func (store *Store) GetAllTargets() ([]Target, error) {
 
 		target, err := store.GetTarget(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
 		if err != nil {
+			syslog.L.Errorf("GetAllTargets: error getting target: %v", err)
 			continue
 		}
 		targets = append(targets, *target)
@@ -614,7 +618,8 @@ func (store *Store) GetAllTargetsByIP(clientIP string) ([]Target, error) {
 		}
 
 		target, err := store.GetTarget(utils.DecodePath(file.Name()))
-		if err != nil {
+		if err != nil || target == nil {
+			syslog.L.Errorf("GetAllTargetsByIP: error getting target: %v", err)
 			continue
 		}
 
@@ -1026,6 +1031,7 @@ func (store *Store) GetAllPartialFiles() ([]PartialFile, error) {
 		configPath := filepath.Join(plugin.FolderPath, file.Name())
 		configData, err := store.config.Parse(configPath)
 		if err != nil {
+			syslog.L.Errorf("GetAllPartialFiles: error getting partial file: %v", err)
 			continue
 		}
 
