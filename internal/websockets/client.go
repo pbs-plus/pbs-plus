@@ -97,6 +97,7 @@ func (c *WSClient) Connect() error {
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				IdleConnTimeout: 90 * time.Second,
 			},
 		},
 	})
@@ -150,6 +151,34 @@ func (c *WSClient) Close() error {
 			c.ClientID)
 	}
 	return nil
+}
+
+func (c *WSClient) pingLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			c.connMu.RLock()
+			if !c.IsConnected {
+				c.connMu.RUnlock()
+				return
+			}
+
+			err := c.conn.Ping(context.Background())
+			c.connMu.RUnlock()
+
+			if err != nil {
+				syslog.L.Errorf("[WSClient.PingLoop] Client %s: Ping failed - %v",
+					c.ClientID, err)
+				c.handleConnectionLoss()
+				return
+			}
+		}
+	}
 }
 
 func (c *WSClient) handleConnectionLoss() {
@@ -234,6 +263,13 @@ func (c *WSClient) Start() {
 		c.sendLoop(sendCtx)
 	}()
 
+	go func() {
+		defer receiveCancel()
+		defer sendCancel()
+
+		c.pingLoop()
+	}()
+
 	// Start supervisor
 	go c.superviseLoops(receiveCtx, receiveCancel, sendCtx, sendCancel)
 
@@ -310,12 +346,9 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 					continue
 				}
 
-				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-					syslog.L.Errorf("[WSClient.ReceiveLoop] Client %s: Message read error - %v",
-						c.ClientID, err)
-				}
-				c.handleConnectionLoss()
-				return
+				syslog.L.Errorf("[WSClient.ReceiveLoop] Client %s: Message read error - %v",
+					c.ClientID, err)
+				continue
 			}
 
 			syslog.L.Infof("[WSClient.ReceiveLoop] Client %s: Received message type '%s'",
@@ -356,8 +389,7 @@ func (c *WSClient) sendLoop(ctx context.Context) {
 				cancel()
 				syslog.L.Errorf("[WSClient.SendLoop] Client %s: Failed to send message type '%s' - %v",
 					c.ClientID, msg.Type, err)
-				c.handleConnectionLoss()
-				return
+				continue
 			}
 			cancel()
 
