@@ -135,6 +135,11 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 				Description: "Namespace",
 				Required:    false,
 			},
+			"last_run_upid": {
+				Type:        configLib.TypeString,
+				Description: "UPID of last ran task",
+				Required:    false,
+			},
 		},
 	}
 
@@ -236,6 +241,11 @@ func (store *Store) CreateJob(job Job) error {
 		return fmt.Errorf("CreateJob: invalid subpath string -> %s", job.Subpath)
 	}
 
+	lastRunUpid := ""
+	if job.LastRunUpid != nil {
+		lastRunUpid = *job.LastRunUpid
+	}
+
 	// Convert job to config format
 	configData := &configLib.ConfigData{
 		Sections: map[string]*configLib.Section{
@@ -250,6 +260,7 @@ func (store *Store) CreateJob(job Job) error {
 					"comment":           job.Comment,
 					"notification_mode": job.NotificationMode,
 					"namespace":         job.Namespace,
+					"last_run_upid":     lastRunUpid,
 				},
 			},
 		},
@@ -295,6 +306,8 @@ func (store *Store) GetJob(id string) (*Job, error) {
 		return nil, nil
 	}
 
+	lastRunUpid := section.Properties["last_run_upid"]
+
 	// Convert config to Job struct
 	job := &Job{
 		ID:               id,
@@ -305,6 +318,7 @@ func (store *Store) GetJob(id string) (*Job, error) {
 		Comment:          section.Properties["comment"],
 		NotificationMode: section.Properties["notification_mode"],
 		Namespace:        section.Properties["namespace"],
+		LastRunUpid:      &lastRunUpid,
 	}
 
 	// Get exclusions
@@ -372,6 +386,11 @@ func (store *Store) UpdateJob(job Job) error {
 		return fmt.Errorf("CreateJob: invalid subpath string -> %s", job.Subpath)
 	}
 
+	lastRunUpid := ""
+	if job.LastRunUpid != nil {
+		lastRunUpid = *job.LastRunUpid
+	}
+
 	// Convert job to config format
 	configData := &configLib.ConfigData{
 		Sections: map[string]*configLib.Section{
@@ -386,6 +405,7 @@ func (store *Store) UpdateJob(job Job) error {
 					"comment":           job.Comment,
 					"notification_mode": job.NotificationMode,
 					"namespace":         job.Namespace,
+					"last_run_upid":     lastRunUpid,
 				},
 			},
 		},
