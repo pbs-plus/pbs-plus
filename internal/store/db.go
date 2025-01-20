@@ -19,6 +19,7 @@ import (
 )
 
 var defaultPaths = map[string]string{
+	"init":         "/etc/proxmox-backup/pbs-plus/.init",
 	"jobs":         "/etc/proxmox-backup/pbs-plus/jobs.d",
 	"targets":      "/etc/proxmox-backup/pbs-plus/targets.d",
 	"exclusions":   "/etc/proxmox-backup/pbs-plus/exclusions.d",
@@ -76,6 +77,12 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 	// Create base directories
 	if paths == nil {
 		paths = defaultPaths
+	}
+
+	alreadyInitialized := false
+
+	if _, err := os.Stat(paths["init"]); !os.IsNotExist(err) {
+		alreadyInitialized = true
 	}
 
 	for _, path := range paths {
@@ -214,6 +221,18 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 			Transport: utils.BaseTransport,
 		},
 		WSHub: wsHub,
+	}
+
+	if !alreadyInitialized {
+		for _, exclusion := range defaultExclusions {
+			err := store.CreateExclusion(Exclusion{
+				Path:    exclusion,
+				Comment: "Generated exclusion from default list",
+			})
+			if err != nil {
+				syslog.L.Errorf("Initialize: error creating default exclusion: %v", err)
+			}
+		}
 	}
 
 	return store, nil
