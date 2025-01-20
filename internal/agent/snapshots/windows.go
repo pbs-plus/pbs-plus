@@ -1,5 +1,4 @@
 //go:build windows
-// +build windows
 
 package snapshots
 
@@ -7,14 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/mxk/go-vss"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
 )
 
 var (
@@ -29,88 +22,75 @@ type WinVSSSnapshot struct {
 	Id           string    `json:"vss_id"`
 	TimeStarted  time.Time `json:"time_started"`
 	closed       atomic.Bool
-}
-
-// getVSSFolder returns the path to the VSS working directory
-func getVSSFolder() (string, error) {
-	tmpDir := os.TempDir()
-	configBasePath := filepath.Join(tmpDir, "pbs-plus-vss")
-
-	if err := os.MkdirAll(configBasePath, 0750); err != nil {
-		return "", fmt.Errorf("failed to create VSS directory %q: %w", configBasePath, err)
-	}
-
-	return configBasePath, nil
+	internal     *VSSSnapshot // Internal COM-based snapshot
 }
 
 // Snapshot creates a new VSS snapshot for the specified drive
 func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
-	volName := filepath.VolumeName(fmt.Sprintf("%s:", driveLetter))
-
-	vssFolder, err := getVSSFolder()
-	if err != nil {
-		return nil, fmt.Errorf("error getting VSS folder: %w", err)
-	}
-
-	snapshotPath := filepath.Join(vssFolder, driveLetter)
+	volName := fmt.Sprintf("%s:", driveLetter)
 	timeStarted := time.Now()
 
-	// Clean up any existing snapshot before creating new one
-	cleanupExistingSnapshot(snapshotPath)
+	// Initialize VSS
+	if err := InitializeVSS(); err != nil {
+		return nil, fmt.Errorf("failed to initialize VSS: %w", err)
+	}
 
 	// Create snapshot with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	if err := createSnapshotWithRetry(ctx, snapshotPath, volName); err != nil {
-		cleanupExistingSnapshot(snapshotPath)
-		return nil, fmt.Errorf("snapshot creation failed: %w", err)
+	// Create internal COM-based snapshot with retry
+	internalSnapshot, err := createSnapshotWithRetry(ctx, volName)
+	if err != nil {
+		return nil, err
 	}
 
-	// Validate snapshot
-	sc, err := vss.Get(snapshotPath)
+	// Get the device path for the snapshot
+	path, err := internalSnapshot.GetSnapshotPath()
 	if err != nil {
-		cleanupExistingSnapshot(snapshotPath)
-		return nil, fmt.Errorf("snapshot validation failed: %w", err)
+		internalSnapshot.Close()
+		return nil, fmt.Errorf("failed to get snapshot path: %w", err)
 	}
 
 	snapshot := &WinVSSSnapshot{
-		SnapshotPath: snapshotPath,
-		Id:           sc.ID,
+		SnapshotPath: path,
+		Id:           internalSnapshot.SnapshotID.String(),
 		TimeStarted:  timeStarted,
+		internal:     internalSnapshot,
 	}
-
-	// Initialize caches
-	cache.ExcludedPathRegexes = cache.CompileExcludedPaths()
-	cache.PartialFilePathRegexes = cache.CompilePartialFileList()
 
 	return snapshot, nil
 }
 
 // createSnapshotWithRetry attempts to create a snapshot with retries on conflicts
-func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) error {
+func createSnapshotWithRetry(ctx context.Context, volName string) (*VSSSnapshot, error) {
 	const retryInterval = time.Second
 
 	for {
-		if err := vss.CreateLink(snapshotPath, volName); err == nil {
-			return nil
-		} else if !strings.Contains(err.Error(), "shadow copy operation is already in progress") {
-			return fmt.Errorf("%w: %v", ErrSnapshotCreation, err)
+		// Try to create snapshot
+		internalSnapshot, err := CreateSnapshot(volName)
+		if err == nil {
+			return internalSnapshot, nil
 		}
 
+		// If error is not "shadow copy operation is already in progress", return error
+		if !isSnapshotInProgressError(err) {
+			return nil, fmt.Errorf("%w: %v", ErrSnapshotCreation, err)
+		}
+
+		// Wait and retry
 		select {
 		case <-ctx.Done():
-			return ErrSnapshotTimeout
+			return nil, ErrSnapshotTimeout
 		case <-time.After(retryInterval):
 			continue
 		}
 	}
 }
 
-// cleanupExistingSnapshot removes any existing snapshot and its path
-func cleanupExistingSnapshot(path string) {
-	_ = vss.Remove(path)
-	_ = os.Remove(path)
+// isSnapshotInProgressError checks if the error indicates a snapshot is in progress
+func isSnapshotInProgressError(err error) bool {
+	return err != nil && err.Error() == "shadow copy operation is already in progress"
 }
 
 // Close cleans up the snapshot and associated resources
@@ -119,10 +99,8 @@ func (s *WinVSSSnapshot) Close() {
 		return
 	}
 
-	if fileMap, ok := cache.SizeCache.Load(s.Id); ok {
-		clear(fileMap.(map[string]int64))
-		cache.SizeCache.Delete(s.Id)
+	if s.internal != nil {
+		s.internal.Close()
+		s.internal = nil
 	}
-
-	cleanupExistingSnapshot(s.SnapshotPath)
 }
