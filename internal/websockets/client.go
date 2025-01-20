@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -301,6 +302,10 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 			cancel()
 
 			if err != nil {
+				if strings.Contains(err.Error(), "failed to read frame header: EOF") {
+					return
+				}
+
 				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
 					syslog.L.Errorf("[WSClient.ReceiveLoop] Client %s: Message read error - %v",
 						c.ClientID, err)
