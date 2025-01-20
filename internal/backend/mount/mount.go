@@ -69,6 +69,7 @@ func Mount(storeInstance *store.Store, target *store.Target) (*AgentMount, error
 		"--daemon",
 		"--no-seek",
 		"--read-only",
+		"--vfs-cache-mode=off",
 		"--uid", "0",
 		"--gid", "0",
 		"--sftp-disable-hashcheck",
