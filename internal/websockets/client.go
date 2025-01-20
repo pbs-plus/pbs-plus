@@ -153,34 +153,6 @@ func (c *WSClient) Close() error {
 	return nil
 }
 
-func (c *WSClient) pingLoop() {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		case <-ticker.C:
-			c.connMu.RLock()
-			if !c.IsConnected {
-				c.connMu.RUnlock()
-				return
-			}
-
-			err := c.conn.Ping(context.Background())
-			c.connMu.RUnlock()
-
-			if err != nil {
-				syslog.L.Errorf("[WSClient.PingLoop] Client %s: Ping failed - %v",
-					c.ClientID, err)
-				c.handleConnectionLoss()
-				return
-			}
-		}
-	}
-}
-
 func (c *WSClient) handleConnectionLoss() {
 	syslog.L.Infof("[WSClient.ConnectionHandler] Client %s: Connection lost, initiating reconnection",
 		c.ClientID)
@@ -263,13 +235,6 @@ func (c *WSClient) Start() {
 		c.sendLoop(sendCtx)
 	}()
 
-	go func() {
-		defer receiveCancel()
-		defer sendCancel()
-
-		c.pingLoop()
-	}()
-
 	// Start supervisor
 	go c.superviseLoops(receiveCtx, receiveCancel, sendCtx, sendCancel)
 
@@ -335,20 +300,20 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 				continue
 			}
 
-			messageCtx, cancel := context.WithTimeout(ctx, messageTimeout)
 			message := Message{}
 
-			err := wsjson.Read(messageCtx, c.conn, &message)
-			cancel()
-
+			err := wsjson.Read(ctx, c.conn, &message)
 			if err != nil {
 				if strings.Contains(err.Error(), "failed to read frame header: EOF") {
 					continue
 				}
 
-				syslog.L.Errorf("[WSClient.ReceiveLoop] Client %s: Message read error - %v",
-					c.ClientID, err)
-				continue
+				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+					syslog.L.Errorf("[WSClient.ReceiveLoop] Client %s: Message read error - %v",
+						c.ClientID, err)
+				}
+				c.handleConnectionLoss()
+				return
 			}
 
 			syslog.L.Infof("[WSClient.ReceiveLoop] Client %s: Received message type '%s'",
@@ -389,7 +354,8 @@ func (c *WSClient) sendLoop(ctx context.Context) {
 				cancel()
 				syslog.L.Errorf("[WSClient.SendLoop] Client %s: Failed to send message type '%s' - %v",
 					c.ClientID, msg.Type, err)
-				continue
+				c.handleConnectionLoss()
+				return
 			}
 			cancel()
 

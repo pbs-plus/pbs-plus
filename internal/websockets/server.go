@@ -178,12 +178,9 @@ func (s *Server) handleClientMessages(client *Client) {
 				client.ID)
 			return
 		default:
-			messageCtx, cancel := context.WithTimeout(s.ctx, messageTimeout)
 			message := Message{}
 
-			err := wsjson.Read(messageCtx, client.conn, &message)
-			cancel()
-
+			err := wsjson.Read(s.ctx, client.conn, &message)
 			if err != nil {
 				if strings.Contains(err.Error(), "failed to read frame header: EOF") {
 					continue
