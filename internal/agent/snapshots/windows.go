@@ -24,7 +24,6 @@ var (
 	ErrInvalidSnapshot  = errors.New("invalid snapshot")
 )
 
-// WinVSSSnapshot represents a Windows Volume Shadow Copy snapshot
 type WinVSSSnapshot struct {
 	SnapshotPath string    `json:"path"`
 	Id           string    `json:"vss_id"`
@@ -32,7 +31,6 @@ type WinVSSSnapshot struct {
 	closed       atomic.Bool
 }
 
-// getVSSFolder returns the path to the VSS working directory
 func getVSSFolder() (string, error) {
 	tmpDir := os.TempDir()
 	configBasePath := filepath.Join(tmpDir, "pbs-plus-vss")
@@ -53,10 +51,8 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	snapshotPath := filepath.Join(vssFolder, driveLetter)
 	timeStarted := time.Now()
 
-	// Clean up any existing snapshot before creating new one
 	cleanupExistingSnapshot(snapshotPath)
 
-	// Create snapshot with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -65,7 +61,6 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		return nil, fmt.Errorf("snapshot creation failed: %w", err)
 	}
 
-	// Validate snapshot
 	sc, err := vss.Get(snapshotPath)
 	if err != nil {
 		cleanupExistingSnapshot(snapshotPath)
@@ -78,7 +73,6 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		TimeStarted:  timeStarted,
 	}
 
-	// Initialize caches
 	cache.ExcludedPathRegexes = cache.CompileExcludedPaths()
 	cache.PartialFilePathRegexes = cache.CompilePartialFileList()
 
@@ -93,14 +87,12 @@ func reregisterVSSWriters() error {
 		"swprv",   // Microsoft Software Shadow Copy Provider
 	}
 
-	// Stop services in order
 	for _, svc := range services {
 		if err := exec.Command("net", "stop", svc).Run(); err != nil {
 			return fmt.Errorf("failed to stop service %s: %w", svc, err)
 		}
 	}
 
-	// Start services in reverse order
 	for i := len(services) - 1; i >= 0; i-- {
 		if err := exec.Command("net", "start", services[i]).Run(); err != nil {
 			return fmt.Errorf("failed to start service %s: %w", services[i], err)
@@ -110,7 +102,6 @@ func reregisterVSSWriters() error {
 	return nil
 }
 
-// createSnapshotWithRetry attempts to create a snapshot with retries on conflicts
 func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) error {
 	const retryInterval = time.Second
 	var lastError error
@@ -147,13 +138,14 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 	return fmt.Errorf("%w: %v", ErrSnapshotCreation, lastError)
 }
 
-// cleanupExistingSnapshot removes any existing snapshot and its path
 func cleanupExistingSnapshot(path string) {
-	_ = vss.Remove(path)
+	if sc, err := vss.Get(path); err == nil {
+		_ = vss.Remove(sc.ID)
+	}
+
 	_ = os.Remove(path)
 }
 
-// Close cleans up the snapshot and associated resources
 func (s *WinVSSSnapshot) Close() {
 	if s == nil || !s.closed.CompareAndSwap(false, true) {
 		return
@@ -162,5 +154,7 @@ func (s *WinVSSSnapshot) Close() {
 		clear(fileMap.(map[string]int64))
 		cache.SizeCache.Delete(s.Id)
 	}
-	cleanupExistingSnapshot(s.SnapshotPath)
+
+	_ = vss.Remove(s.Id)
+	_ = os.Remove(s.SnapshotPath)
 }
