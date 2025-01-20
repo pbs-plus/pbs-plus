@@ -295,6 +295,13 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 				c.ClientID)
 			return
 		default:
+			// Process message with rate limiting
+			if err := c.readLimiter.Wait(ctx); err != nil {
+				syslog.L.Warnf("[WSClient.ReceiveLoop] Client %s: Rate limit exceeded, skipping message",
+					c.ClientID)
+				continue
+			}
+
 			messageCtx, cancel := context.WithTimeout(ctx, messageTimeout)
 			message := Message{}
 
@@ -303,7 +310,7 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 
 			if err != nil {
 				if strings.Contains(err.Error(), "failed to read frame header: EOF") {
-					return
+					continue
 				}
 
 				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
@@ -316,13 +323,6 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 
 			syslog.L.Infof("[WSClient.ReceiveLoop] Client %s: Received message type '%s'",
 				c.ClientID, message.Type)
-
-			// Process message with rate limiting
-			if err := c.readLimiter.Wait(ctx); err != nil {
-				syslog.L.Warnf("[WSClient.ReceiveLoop] Client %s: Rate limit exceeded, skipping message",
-					c.ClientID)
-				continue
-			}
 
 			c.handlerMu.RLock()
 			handler, exists := c.handlers[message.Type]

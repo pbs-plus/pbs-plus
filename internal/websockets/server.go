@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -184,6 +185,10 @@ func (s *Server) handleClientMessages(client *Client) {
 			cancel()
 
 			if err != nil {
+				if strings.Contains(err.Error(), "failed to read frame header: EOF") {
+					continue
+				}
+
 				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
 					syslog.L.Errorf("[WSServer.MessageHandler] Read error for client %s: %v",
 						client.ID, err)
