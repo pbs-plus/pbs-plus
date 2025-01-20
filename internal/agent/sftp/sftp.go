@@ -25,6 +25,8 @@ const (
 	sshHandshakeTimeout      = 30 * time.Second
 	maxRetries               = 5
 	retryInterval            = 5 * time.Second
+	reconnectDelay           = 1 * time.Second
+	maxReconnectAttempts     = 3
 )
 
 type SFTPSession struct {
@@ -35,7 +37,9 @@ type SFTPSession struct {
 	Config      *SFTPConfig
 	listener    net.Listener
 	connections sync.WaitGroup
-	sem         chan struct{} // Connection semaphore
+	sem         chan struct{}
+	isRunning   bool
+	mu          sync.Mutex // Protects isRunning
 }
 
 func NewSFTPSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string) *SFTPSession {
@@ -60,15 +64,19 @@ func NewSFTPSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, dri
 		ctxCancel:   cancel,
 		Config:      sftpConfig,
 		sem:         make(chan struct{}, maxConcurrentConnections),
+		isRunning:   true,
 	}
 }
 
 func (s *SFTPSession) Close() {
+	s.mu.Lock()
+	s.isRunning = false
+	s.mu.Unlock()
+
 	s.ctxCancel()
 	if s.listener != nil {
 		s.listener.Close()
 	}
-	// Wait for all connections to finish
 	s.connections.Wait()
 	s.Snapshot.Close()
 }
@@ -86,127 +94,166 @@ func (s *SFTPSession) setupListener(port string) error {
 func (s *SFTPSession) Serve() {
 	defer s.Close()
 
+	for {
+		s.mu.Lock()
+		if !s.isRunning {
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+
+		if err := s.serveOnce(); err != nil {
+			if strings.Contains(err.Error(), "use of closed network connection") {
+				return
+			}
+			syslog.L.Errorf("SFTP session error, attempting reconnect: %v", err)
+			select {
+			case <-s.Context.Done():
+				return
+			case <-time.After(reconnectDelay):
+				continue
+			}
+		}
+	}
+}
+
+func (s *SFTPSession) serveOnce() error {
 	port, err := utils.DriveLetterPort([]rune(s.DriveLetter)[0])
 	if err != nil {
-		syslog.L.Errorf("Unable to determine port number: %v", err)
-		return
+		return fmt.Errorf("unable to determine port number: %v", err)
 	}
 
 	// Setup listener with retries
+	var listenerErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		err := s.setupListener(port)
-		if err == nil {
-			break
+		if err := s.setupListener(port); err != nil {
+			listenerErr = err
+			select {
+			case <-s.Context.Done():
+				return err
+			case <-time.After(retryInterval):
+				continue
+			}
 		}
-		if attempt == maxRetries-1 {
-			syslog.L.Errorf("Failed to start listener after %d attempts: %v", maxRetries, err)
-			return
-		}
-		select {
-		case <-s.Context.Done():
-			return
-		case <-time.After(retryInterval):
-			continue
-		}
+		listenerErr = nil
+		break
+	}
+	if listenerErr != nil {
+		return fmt.Errorf("failed to start listener after %d attempts: %v", maxRetries, listenerErr)
 	}
 
-	// Setup graceful shutdown
-	shutdown := make(chan struct{})
-	defer close(shutdown)
-
-	go func() {
-		<-s.Context.Done()
-		s.listener.Close()
-		close(shutdown)
-	}()
-
-	s.acceptConnections()
+	return s.acceptConnections()
 }
 
-func (s *SFTPSession) acceptConnections() {
+func (s *SFTPSession) acceptConnections() error {
 	for {
 		select {
 		case <-s.Context.Done():
-			return
-		case s.sem <- struct{}{}: // Acquire semaphore
+			return nil
+		case s.sem <- struct{}{}:
 			conn, err := s.listener.Accept()
 			if err != nil {
-				<-s.sem // Release semaphore on error
-				if !strings.Contains(err.Error(), "use of closed network connection") {
-					syslog.L.Errorf("Failed to accept connection: %v", err)
-				}
-				return
+				<-s.sem
+				return fmt.Errorf("accept error: %v", err)
 			}
 
 			s.connections.Add(1)
 			go func() {
 				defer func() {
-					<-s.sem // Release semaphore
+					<-s.sem
 					s.connections.Done()
 				}()
-				s.handleConnection(conn)
+				s.handleConnectionWithRetry(conn)
 			}()
 		}
 	}
 }
 
-func (s *SFTPSession) handleConnection(conn net.Conn) {
+func (s *SFTPSession) handleConnectionWithRetry(conn net.Conn) {
 	defer conn.Close()
 
-	// Set connection deadline
-	if err := conn.SetDeadline(time.Now().Add(connectionTimeout)); err != nil {
-		syslog.L.Errorf("Failed to set connection deadline: %v", err)
+	for attempt := 0; attempt < maxReconnectAttempts; attempt++ {
+		if err := s.handleConnection(conn); err != nil {
+			syslog.L.Errorf("Connection handling failed (attempt %d/%d): %v",
+				attempt+1, maxReconnectAttempts, err)
+
+			select {
+			case <-s.Context.Done():
+				return
+			case <-time.After(reconnectDelay):
+				continue
+			}
+		}
 		return
+	}
+}
+
+func (s *SFTPSession) handleConnection(conn net.Conn) error {
+	if err := conn.SetDeadline(time.Now().Add(connectionTimeout)); err != nil {
+		return fmt.Errorf("failed to set connection deadline: %v", err)
 	}
 
 	if err := s.validateConnection(conn); err != nil {
-		syslog.L.Error(err.Error())
-		return
+		return err
 	}
 
-	// Create context with timeout for SSH handshake
 	handshakeCtx, cancel := context.WithTimeout(s.Context, sshHandshakeTimeout)
 	defer cancel()
 
-	// Create error channel for handshake
-	handshakeErr := make(chan error, 1)
-	var sconn *ssh.ServerConn
-	var chans <-chan ssh.NewChannel
-	var reqs <-chan *ssh.Request
+	sconn, chans, reqs, err := s.performSSHHandshake(handshakeCtx, conn)
+	if err != nil {
+		return fmt.Errorf("SSH handshake failed: %v", err)
+	}
+	defer sconn.Close()
 
-	// Perform SSH handshake with timeout
+	// Handle SSH requests with context awareness
+	go s.handleSSHRequests(sconn, reqs)
+
+	return s.handleChannels(chans)
+}
+
+func (s *SFTPSession) performSSHHandshake(ctx context.Context, conn net.Conn) (*ssh.ServerConn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	handshakeErr := make(chan error, 1)
+	var result struct {
+		sconn *ssh.ServerConn
+		chans <-chan ssh.NewChannel
+		reqs  <-chan *ssh.Request
+	}
+
 	go func() {
 		var err error
-		sconn, chans, reqs, err = ssh.NewServerConn(conn, s.Config.ServerConfig)
+		result.sconn, result.chans, result.reqs, err = ssh.NewServerConn(conn, s.Config.ServerConfig)
 		handshakeErr <- err
 	}()
 
 	select {
 	case err := <-handshakeErr:
 		if err != nil {
-			syslog.L.Errorf("Failed to perform SSH handshake: %v", err)
-			return
+			return nil, nil, nil, err
 		}
-	case <-handshakeCtx.Done():
-		syslog.L.Error("SSH handshake timed out")
-		return
+		return result.sconn, result.chans, result.reqs, nil
+	case <-ctx.Done():
+		return nil, nil, nil, fmt.Errorf("SSH handshake timed out")
 	}
+}
 
-	defer sconn.Close()
-
-	// Handle SSH requests with context awareness
+func (s *SFTPSession) handleSSHRequests(sconn *ssh.ServerConn, reqs <-chan *ssh.Request) {
 	go func() {
-		select {
-		case <-s.Context.Done():
-			sconn.Close()
-		case req := <-reqs:
-			if req != nil {
-				ssh.DiscardRequests(reqs)
+		for {
+			select {
+			case <-s.Context.Done():
+				sconn.Close()
+				return
+			case req, ok := <-reqs:
+				if !ok {
+					return
+				}
+				if req != nil {
+					go ssh.DiscardRequests(reqs)
+				}
 			}
 		}
 	}()
-
-	s.handleChannels(chans)
 }
 
 func (s *SFTPSession) validateConnection(conn net.Conn) error {
@@ -215,18 +262,23 @@ func (s *SFTPSession) validateConnection(conn net.Conn) error {
 		return fmt.Errorf("failed to parse server IP: %w", err)
 	}
 
-	if !strings.Contains(conn.RemoteAddr().String(), server.Hostname()) {
-		return fmt.Errorf("WARNING: unregistered client attempted to connect: %s", conn.RemoteAddr().String())
+	remoteAddr := conn.RemoteAddr().String()
+	if !strings.Contains(remoteAddr, server.Hostname()) {
+		return fmt.Errorf("unregistered client attempted to connect: %s", remoteAddr)
 	}
 	return nil
 }
 
-func (s *SFTPSession) handleChannels(chans <-chan ssh.NewChannel) {
-	for newChannel := range chans {
+func (s *SFTPSession) handleChannels(chans <-chan ssh.NewChannel) error {
+	for {
 		select {
 		case <-s.Context.Done():
-			return
-		default:
+			return nil
+		case newChannel, ok := <-chans:
+			if !ok {
+				return nil
+			}
+
 			if newChannel.ChannelType() != "session" {
 				newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
 				continue
@@ -234,68 +286,104 @@ func (s *SFTPSession) handleChannels(chans <-chan ssh.NewChannel) {
 
 			channel, requests, err := newChannel.Accept()
 			if err != nil {
+				syslog.L.Errorf("Failed to accept channel: %v", err)
 				continue
 			}
 
-			go s.handleChannel(channel, requests)
+			go func() {
+				if err := s.handleChannel(channel, requests); err != nil {
+					syslog.L.Errorf("Channel handling error: %v", err)
+				}
+			}()
 		}
 	}
 }
 
-func (s *SFTPSession) handleChannel(channel ssh.Channel, requests <-chan *ssh.Request) {
+func (s *SFTPSession) handleChannel(channel ssh.Channel, requests <-chan *ssh.Request) error {
 	defer channel.Close()
 
 	sftpRequested := make(chan bool, 1)
-	go handleRequests(s.Context, requests, sftpRequested)
+	errChan := make(chan error, 1)
+
+	go func() {
+		err := s.handleRequests(requests, sftpRequested)
+		if err != nil {
+			errChan <- err
+		}
+	}()
 
 	select {
-	case requested, ok := <-sftpRequested:
-		if ok && requested {
-			s.handleSFTP(channel)
-		}
 	case <-s.Context.Done():
-		return
+		return fmt.Errorf("context cancelled")
+	case err := <-errChan:
+		return fmt.Errorf("request handling error: %w", err)
+	case requested, ok := <-sftpRequested:
+		if !ok {
+			return fmt.Errorf("SFTP request channel closed")
+		}
+		if requested {
+			return s.handleSFTP(channel)
+		}
+		return fmt.Errorf("SFTP not requested")
 	}
 }
 
-func handleRequests(ctx context.Context, requests <-chan *ssh.Request, sftpRequest chan<- bool) {
+func (s *SFTPSession) handleRequests(requests <-chan *ssh.Request, sftpRequest chan<- bool) error {
 	defer close(sftpRequest)
 
 	for {
 		select {
+		case <-s.Context.Done():
+			return fmt.Errorf("context cancelled")
 		case req, ok := <-requests:
 			if !ok {
-				return
+				return nil
 			}
+
 			if req.Type == "subsystem" && string(req.Payload[4:]) == "sftp" {
 				sftpRequest <- true
-				req.Reply(true, nil)
-				return
+				if err := req.Reply(true, nil); err != nil {
+					return fmt.Errorf("failed to reply to SFTP request: %w", err)
+				}
+				return nil
 			}
-			req.Reply(false, nil)
-		case <-ctx.Done():
-			return
+
+			if err := req.Reply(false, nil); err != nil {
+				return fmt.Errorf("failed to reply to non-SFTP request: %w", err)
+			}
 		}
 	}
 }
 
-func (s *SFTPSession) handleSFTP(channel ssh.Channel) {
+func (s *SFTPSession) handleSFTP(channel ssh.Channel) error {
 	sftpHandler, err := NewSftpHandler(s.Context, s.Snapshot)
 	if err != nil {
-		syslog.L.Errorf("Failed to initialize handler: %v", err)
-		return
+		return fmt.Errorf("failed to initialize SFTP handler: %w", err)
 	}
 
 	server := sftp.NewRequestServer(channel, *sftpHandler)
 	defer server.Close()
 
-	// Ensure server is closed when context is done
+	// Handle server shutdown when context is done
 	go func() {
 		<-s.Context.Done()
 		server.Close()
 	}()
 
-	if err := server.Serve(); err != nil {
-		syslog.L.Errorf("SFTP server error: %v", err)
+	// Start serving with error tracking
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- server.Serve()
+	}()
+
+	// Wait for either context cancellation or server error
+	select {
+	case <-s.Context.Done():
+		return fmt.Errorf("context cancelled")
+	case err := <-serveDone:
+		if err != nil && !strings.Contains(err.Error(), "EOF") {
+			return fmt.Errorf("SFTP server error: %w", err)
+		}
+		return nil
 	}
 }
