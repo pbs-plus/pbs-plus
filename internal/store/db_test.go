@@ -25,6 +25,8 @@ var (
 	testTargetsPath      string
 	testExclusionsPath   string
 	testPartialFilesPath string
+	testCertPath         string
+	testKeyPath          string
 )
 
 // TestMain handles setup and teardown for all tests
@@ -47,6 +49,8 @@ func TestMain(m *testing.M) {
 	testTargetsPath = filepath.Join(testBasePath, "targets.d")
 	testExclusionsPath = filepath.Join(testBasePath, "exclusions.d")
 	testPartialFilesPath = filepath.Join(testBasePath, "partialfiles.d")
+	testCertPath = filepath.Join(testBasePath, "ca.crt")
+	testKeyPath = filepath.Join(testBasePath, "ca.key")
 
 	// Run tests
 	code := m.Run()
@@ -65,6 +69,8 @@ func setupTestStore(t *testing.T) *Store {
 		"targets":      testTargetsPath,
 		"exclusions":   testExclusionsPath,
 		"partialfiles": testPartialFilesPath,
+		"cert":         testPartialFilesPath,
+		"key":          testPartialFilesPath,
 	}
 
 	for _, path := range paths {
@@ -72,7 +78,11 @@ func setupTestStore(t *testing.T) *Store {
 		require.NoError(t, err)
 	}
 
-	for _, path := range paths {
+	for key, path := range paths {
+		if key == "cert" || key == "key" {
+			continue
+		}
+
 		err := os.MkdirAll(path, 0750)
 		require.NoError(t, err)
 	}

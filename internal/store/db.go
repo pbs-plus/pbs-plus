@@ -77,9 +77,23 @@ type Store struct {
 }
 
 func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, error) {
+	certGen := &auth.CertGenerator{}
+
 	// Create base directories
 	if paths == nil {
 		paths = defaultPaths
+
+		var err error
+		certGen, err = auth.NewCertGenerator()
+		if err != nil {
+			return nil, fmt.Errorf("Initialize: error initializing cert gen: %w", err)
+		}
+	} else {
+		var err error
+		certGen, err = auth.NewCertGenerator(auth.WithPaths(paths["cert"], paths["key"]))
+		if err != nil {
+			return nil, fmt.Errorf("Initialize: error initializing cert gen: %w", err)
+		}
 	}
 
 	alreadyInitialized := false
@@ -92,11 +106,6 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 		if err := os.MkdirAll(path, 0750); err != nil {
 			return nil, fmt.Errorf("Initialize: error creating directory %s: %w", path, err)
 		}
-	}
-
-	certGen, err := auth.NewCertGenerator()
-	if err != nil {
-		return nil, fmt.Errorf("Initialize: error initializing cert gen: %w", err)
 	}
 
 	// Initialize config system
