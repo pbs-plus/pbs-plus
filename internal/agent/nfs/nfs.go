@@ -103,14 +103,17 @@ func (h *NFSHandler) HandleLimit() int {
 // ToHandle converts a filesystem path to an opaque handle
 func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
 	fullPath := filepath.Join(path...)
+	syslog.L.Infof("[NFS.ToHandle] Converting path to handle: %s", fullPath)
+
 	handle := []byte(fullPath)
-	// Ensure handle doesn't exceed FHSize
 	if len(handle) > nfs.FHSize {
 		hash := sha256.Sum256(handle)
 		handle = hash[:]
+		syslog.L.Infof("[NFS.ToHandle] Path too long, using hash")
 	}
-	// Store the mapping
+
 	h.handles.Store(string(handle), fullPath)
+	syslog.L.Infof("[NFS.ToHandle] Stored handle for path: %s", fullPath)
 	return handle
 }
 
@@ -118,13 +121,17 @@ func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
 func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
 	value, ok := h.handles.Load(string(fh))
 	if !ok {
+		syslog.L.Errorf("[NFS.FromHandle] Handle not found: %x", fh)
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
 	fullPath, ok := value.(string)
 	if !ok {
+		syslog.L.Errorf("[NFS.FromHandle] Invalid handle value type")
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
+
+	syslog.L.Infof("[NFS.FromHandle] Converting handle to path: %s", fullPath)
 
 	// Create filesystem for this path
 	fs := &ReadOnlyFS{
@@ -135,6 +142,7 @@ func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
 
 	// If this is the root mount point ("/mount"), use the base path
 	if fullPath == "/mount" || fullPath == "mount" {
+		syslog.L.Infof("[NFS.FromHandle] Accessing root mount point")
 		return fs, []string{}, nil
 	}
 
@@ -147,6 +155,7 @@ func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
 	}
 
 	components := strings.Split(relPath, string(os.PathSeparator))
+	syslog.L.Infof("[NFS.FromHandle] Path components: %v", components)
 	return fs, components, nil
 }
 
@@ -273,13 +282,25 @@ func (fs *ReadOnlyFS) Create(filename string) (billy.File, error) {
 }
 
 func (fs *ReadOnlyFS) Open(filename string) (billy.File, error) {
+	syslog.L.Infof("[NFS.Open] Opening file: %s", filename)
+
+	// Handle root path
+	if filename == "" || filename == "/" || filename == "\\" {
+		syslog.L.Infof("[NFS.Open] Attempted to open root directory")
+		return nil, fmt.Errorf("cannot open directory")
+	}
+
 	fullPath := filepath.Join(fs.basePath, filepath.Clean(filename))
+	syslog.L.Infof("[NFS.Open] Full path: %s", fullPath)
+
 	if skipFile(fullPath, fs.snapshot) {
+		syslog.L.Infof("[NFS.Open] File skipped: %s", fullPath)
 		return nil, os.ErrNotExist
 	}
 
 	file, err := os.Open(fullPath)
 	if err != nil {
+		syslog.L.Errorf("[NFS.Open] Failed to open file: %v", err)
 		return nil, err
 	}
 
@@ -302,21 +323,35 @@ func (fs *ReadOnlyFS) Stat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *ReadOnlyFS) ReadDir(path string) ([]os.FileInfo, error) {
-	fullPath := filepath.Join(fs.basePath, filepath.Clean(path))
-	entries, err := os.ReadDir(fullPath)
+	syslog.L.Infof("[NFS.ReadDir] Reading directory: %s", path)
+
+	// Handle root path
+	dirPath := path
+	if path == "" || path == "/" || path == "\\" {
+		dirPath = fs.basePath
+	} else {
+		dirPath = filepath.Join(fs.basePath, filepath.Clean(path))
+	}
+
+	syslog.L.Infof("[NFS.ReadDir] Full directory path: %s", dirPath)
+
+	entries, err := os.ReadDir(dirPath)
 	if err != nil {
+		syslog.L.Errorf("[NFS.ReadDir] Failed to read directory: %v", err)
 		return nil, err
 	}
 
 	var fileInfos []os.FileInfo
 	for _, entry := range entries {
-		entryPath := filepath.Join(fullPath, entry.Name())
+		entryPath := filepath.Join(dirPath, entry.Name())
 		if skipFile(entryPath, fs.snapshot) {
+			syslog.L.Infof("[NFS.ReadDir] Skipping file: %s", entryPath)
 			continue
 		}
 
 		info, err := entry.Info()
 		if err != nil {
+			syslog.L.Errorf("[NFS.ReadDir] Failed to get file info: %v", err)
 			continue
 		}
 		fileInfos = append(fileInfos, &CustomFileInfo{
@@ -325,6 +360,8 @@ func (fs *ReadOnlyFS) ReadDir(path string) ([]os.FileInfo, error) {
 			snapshotId: fs.snapshot.Id,
 		})
 	}
+
+	syslog.L.Infof("[NFS.ReadDir] Found %d entries in %s", len(fileInfos), dirPath)
 	return fileInfos, nil
 }
 
