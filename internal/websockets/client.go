@@ -11,7 +11,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/time/rate"
@@ -34,6 +33,8 @@ type (
 		ServerURL string
 		ClientID  string
 		Headers   http.Header
+		rootCAs   *x509.CertPool
+		cert      tls.Certificate
 	}
 
 	WSClient struct {
@@ -62,35 +63,6 @@ type (
 )
 
 func NewWSClient(ctx context.Context, config Config) (*WSClient, error) {
-	serverCertReg, err := registry.GetEntry(registry.AUTH, "ServerCert", true)
-	if err != nil {
-		return nil, fmt.Errorf("NewWSClient: server cert not found -> %w", err)
-	}
-
-	rootCAs := x509.NewCertPool()
-	if ok := rootCAs.AppendCertsFromPEM([]byte(serverCertReg.Value)); !ok {
-		return nil, fmt.Errorf("NewWSClient: failed to append CA certificate")
-	}
-
-	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
-	if err != nil {
-		return nil, fmt.Errorf("NewWSClient: cert not found -> %w", err)
-	}
-
-	keyReg, err := registry.GetEntry(registry.AUTH, "Key", true)
-	if err != nil {
-		return nil, fmt.Errorf("NewWSClient: key not found -> %w", err)
-	}
-
-	certPEM := []byte(certReg.Value)
-	keyPEM := []byte(keyReg.Value)
-
-	// Configure TLS client
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("NewWSClient: failed to load client certificate: %w", err)
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 
 	client := &WSClient{
@@ -103,8 +75,8 @@ func NewWSClient(ctx context.Context, config Config) (*WSClient, error) {
 		writeLimiter: rate.NewLimiter(rate.Every(rateLimit), rateBurst),
 		send:         make(chan Message, maxSendBuffer),
 		handlers:     make(map[string]MessageHandler),
-		rootCAs:      rootCAs,
-		cert:         cert,
+		rootCAs:      config.rootCAs,
+		cert:         config.cert,
 	}
 
 	syslog.L.Infof("[WSClient.New] Client %s: Initialized new WebSocket client for server %s",

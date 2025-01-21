@@ -13,19 +13,32 @@ import (
 	"time"
 )
 
-const (
-	caCertPath = "/etc/proxmox-backup/pbs-plus/ca.crt"
-	caKeyPath  = "/etc/proxmox-backup/pbs-plus/ca.key"
+var (
+	defaultCertPath = "/etc/proxmox-backup/pbs-plus/ca.crt"
+	defaultKeyPath  = "/etc/proxmox-backup/pbs-plus/ca.key"
 )
 
 type CertGenerator struct {
 	CA        *x509.Certificate
 	CAPrivKey *rsa.PrivateKey
+	certPath  string
+	keyPath   string
 }
 
-func loadExistingCA() (*x509.Certificate, *rsa.PrivateKey, error) {
+// CertGeneratorOption defines functional options for CertGenerator
+type CertGeneratorOption func(*CertGenerator)
+
+// WithPaths allows setting custom paths for certificates and keys
+func WithPaths(certPath, keyPath string) CertGeneratorOption {
+	return func(cg *CertGenerator) {
+		cg.certPath = certPath
+		cg.keyPath = keyPath
+	}
+}
+
+func loadExistingCA(certPath, keyPath string) (*x509.Certificate, *rsa.PrivateKey, error) {
 	// Read CA certificate
-	certPEM, err := os.ReadFile(caCertPath)
+	certPEM, err := os.ReadFile(certPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read CA certificate: %w", err)
 	}
@@ -43,7 +56,7 @@ func loadExistingCA() (*x509.Certificate, *rsa.PrivateKey, error) {
 	}
 
 	// Read private key
-	keyPEM, err := os.ReadFile(caKeyPath)
+	keyPEM, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read CA private key: %w", err)
 	}
@@ -63,7 +76,7 @@ func loadExistingCA() (*x509.Certificate, *rsa.PrivateKey, error) {
 	return cert, privKey, nil
 }
 
-func generateNewCA() (*x509.Certificate, *rsa.PrivateKey, error) {
+func generateNewCA(certPath, keyPath string) (*x509.Certificate, *rsa.PrivateKey, error) {
 	// Generate CA key pair
 	CAPrivKey, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
@@ -98,7 +111,7 @@ func generateNewCA() (*x509.Certificate, *rsa.PrivateKey, error) {
 	}
 
 	// Ensure directory exists
-	err = os.MkdirAll(filepath.Dir(caCertPath), 0755)
+	err = os.MkdirAll(filepath.Dir(certPath), 0755)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create directory: %w", err)
 	}
@@ -108,7 +121,7 @@ func generateNewCA() (*x509.Certificate, *rsa.PrivateKey, error) {
 		Type:  "CERTIFICATE",
 		Bytes: caCertBytes,
 	})
-	err = os.WriteFile(caCertPath, certPEM, 0644)
+	err = os.WriteFile(certPath, certPEM, 0644)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to save CA certificate: %w", err)
 	}
@@ -118,7 +131,7 @@ func generateNewCA() (*x509.Certificate, *rsa.PrivateKey, error) {
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(CAPrivKey),
 	})
-	err = os.WriteFile(caKeyPath, keyPEM, 0600)
+	err = os.WriteFile(keyPath, keyPEM, 0600)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to save CA private key: %w", err)
 	}
@@ -126,19 +139,28 @@ func generateNewCA() (*x509.Certificate, *rsa.PrivateKey, error) {
 	return ca, CAPrivKey, nil
 }
 
-func NewCertGenerator() (*CertGenerator, error) {
-	ca, CAPrivKey, err := loadExistingCA()
+func NewCertGenerator(opts ...CertGeneratorOption) (*CertGenerator, error) {
+	cg := &CertGenerator{
+		certPath: defaultCertPath,
+		keyPath:  defaultKeyPath,
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(cg)
+	}
+
+	ca, CAPrivKey, err := loadExistingCA(cg.certPath, cg.keyPath)
 	if err != nil {
-		ca, CAPrivKey, err = generateNewCA()
+		ca, CAPrivKey, err = generateNewCA(cg.certPath, cg.keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate new CA: %w", err)
 		}
 	}
 
-	return &CertGenerator{
-		CA:        ca,
-		CAPrivKey: CAPrivKey,
-	}, nil
+	cg.CA = ca
+	cg.CAPrivKey = CAPrivKey
+	return cg, nil
 }
 
 func (cg *CertGenerator) GenerateCert(csrPEM string) (certPEM []byte, err error) {

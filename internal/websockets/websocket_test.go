@@ -39,7 +39,7 @@ func TestIntegration(t *testing.T) {
 			ServerURL: wsURL,
 			ClientID:  "test-client",
 			Headers: http.Header{
-				"X-Client-ID": []string{"test-client"},
+				"X-PBS-Agent": []string{"test-client"},
 			},
 		})
 		require.NoError(t, err)
@@ -103,7 +103,7 @@ func TestClientReconnection(t *testing.T) {
 		ServerURL: wsURL,
 		ClientID:  "reconnect-test",
 		Headers: http.Header{
-			"X-Client-ID": []string{"reconnect-test"},
+			"X-PBS-Agent": []string{"reconnect-test"},
 		},
 	})
 	require.NoError(t, err)

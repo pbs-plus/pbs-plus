@@ -3,14 +3,14 @@
 package websockets
 
 import (
-	"encoding/base64"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 
-	"github.com/billgraziano/dpapi"
-	"golang.org/x/sys/windows/registry"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
 )
 
 func GetWindowsConfig() (Config, error) {
@@ -29,10 +29,41 @@ func GetWindowsConfig() (Config, error) {
 		return Config{}, fmt.Errorf("failed to build headers: %v", err)
 	}
 
+	serverCertReg, err := registry.GetEntry(registry.AUTH, "ServerCert", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("GetWindowsConfig: server cert not found -> %w", err)
+	}
+
+	rootCAs := x509.NewCertPool()
+	if ok := rootCAs.AppendCertsFromPEM([]byte(serverCertReg.Value)); !ok {
+		return Config{}, fmt.Errorf("GetWindowsConfig: failed to append CA certificate")
+	}
+
+	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("GetWindowsConfig: cert not found -> %w", err)
+	}
+
+	keyReg, err := registry.GetEntry(registry.AUTH, "Key", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("GetWindowsConfig: key not found -> %w", err)
+	}
+
+	certPEM := []byte(certReg.Value)
+	keyPEM := []byte(keyReg.Value)
+
+	// Configure TLS client
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return Config{}, fmt.Errorf("NewWSClient: failed to load client certificate: %w", err)
+	}
+
 	return Config{
 		ServerURL: serverURL,
 		ClientID:  clientID,
 		Headers:   headers,
+		cert:      cert,
+		rootCAs:   rootCAs,
 	}, nil
 }
 
@@ -47,18 +78,12 @@ func validateRegistryValue(value string, maxLength int) (string, error) {
 }
 
 func getServerURLFromRegistry() (string, error) {
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
+	serverUrlReg, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
-		return "", fmt.Errorf("failed to open registry key: %v", err)
-	}
-	defer key.Close()
-
-	serverURL, _, err := key.GetStringValue("ServerURL")
-	if err != nil {
-		return "", fmt.Errorf("server URL not found: %v", err)
+		return "", fmt.Errorf("invalid server URL: %v", err)
 	}
 
-	serverURL, err = validateRegistryValue(serverURL, 1024)
+	serverURL, err := validateRegistryValue(serverUrlReg.Value, 1024)
 	if err != nil {
 		return "", fmt.Errorf("invalid server URL: %v", err)
 	}
@@ -84,25 +109,6 @@ func getServerURLFromRegistry() (string, error) {
 func buildHeaders(clientID string) (http.Header, error) {
 	headers := http.Header{}
 	headers.Add("X-PBS-Agent", clientID)
-
-	keyStr := "Software\\PBSPlus\\Config\\SFTP-C"
-	if driveKey, err := registry.OpenKey(registry.LOCAL_MACHINE, keyStr, registry.QUERY_VALUE); err == nil {
-		defer driveKey.Close()
-
-		if publicKey, _, err := driveKey.GetStringValue("ServerKey"); err == nil {
-			publicKey, err = validateRegistryValue(publicKey, 4096)
-			if err != nil {
-				return headers, fmt.Errorf("invalid server key: %v", err)
-			}
-
-			if decrypted, err := dpapi.Decrypt(publicKey); err == nil {
-				if decoded, err := base64.StdEncoding.DecodeString(decrypted); err == nil {
-					encodedKey := base64.StdEncoding.EncodeToString(decoded)
-					headers.Set("Authorization", fmt.Sprintf("PBSPlusAPIAgent=%s---C:%s", clientID, encodedKey))
-				}
-			}
-		}
-	}
 
 	return headers, nil
 }
