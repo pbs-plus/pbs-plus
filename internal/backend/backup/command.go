@@ -98,7 +98,7 @@ func buildCommandEnv(storeInstance *store.Store) []string {
 
 	env := append(os.Environ(),
 		fmt.Sprintf("PBS_PASSWORD=%s", storeInstance.APIToken.Value))
-	env = append(env, "PBS_LOG=debug")
+	// env = append(env, "PBS_LOG=debug")
 
 	// Add fingerprint if available
 	if pbsStatus, err := storeInstance.GetPBSStatus(); err == nil {

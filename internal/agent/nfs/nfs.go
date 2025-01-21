@@ -103,7 +103,6 @@ func (h *NFSHandler) HandleLimit() int {
 // ToHandle converts a filesystem path to an opaque handle
 func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
 	fullPath := filepath.Join(path...)
-	syslog.L.Infof("[NFS.ToHandle] Converting path to handle: %s", fullPath)
 
 	// Special case for empty path (root)
 	if fullPath == "" {
@@ -119,7 +118,6 @@ func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
 	}
 
 	h.handles.Store(string(handle), fullPath)
-	syslog.L.Infof("[NFS.ToHandle] Created handle for path: %s", fullPath)
 	return handle
 }
 
@@ -290,19 +288,14 @@ func (fs *ReadOnlyFS) Create(filename string) (billy.File, error) {
 }
 
 func (fs *ReadOnlyFS) Open(filename string) (billy.File, error) {
-	syslog.L.Infof("[NFS.Open] Opening file: %s", filename)
-
 	// Handle root path
 	if filename == "" || filename == "/" || filename == "\\" {
-		syslog.L.Infof("[NFS.Open] Attempted to open root directory")
 		return nil, fmt.Errorf("cannot open directory")
 	}
 
 	fullPath := filepath.Join(fs.basePath, filepath.Clean(filename))
-	syslog.L.Infof("[NFS.Open] Full path: %s", fullPath)
 
 	if skipFile(fullPath, fs.snapshot) {
-		syslog.L.Infof("[NFS.Open] File skipped: %s", fullPath)
 		return nil, os.ErrNotExist
 	}
 
@@ -363,8 +356,6 @@ func (fs *ReadOnlyFS) Lstat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *ReadOnlyFS) ReadDir(path string) ([]os.FileInfo, error) {
-	syslog.L.Infof("[NFS.ReadDir] Reading directory: %s", path)
-
 	// Handle root path
 	dirPath := path
 	if path == "" || path == "/" || path == "\\" {
@@ -372,8 +363,6 @@ func (fs *ReadOnlyFS) ReadDir(path string) ([]os.FileInfo, error) {
 	} else {
 		dirPath = filepath.Join(fs.basePath, filepath.Clean(path))
 	}
-
-	syslog.L.Infof("[NFS.ReadDir] Full directory path: %s", dirPath)
 
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
@@ -385,7 +374,6 @@ func (fs *ReadOnlyFS) ReadDir(path string) ([]os.FileInfo, error) {
 	for _, entry := range entries {
 		entryPath := filepath.Join(dirPath, entry.Name())
 		if skipFile(entryPath, fs.snapshot) {
-			syslog.L.Infof("[NFS.ReadDir] Skipping file: %s", entryPath)
 			continue
 		}
 
@@ -401,7 +389,6 @@ func (fs *ReadOnlyFS) ReadDir(path string) ([]os.FileInfo, error) {
 		})
 	}
 
-	syslog.L.Infof("[NFS.ReadDir] Found %d entries in %s", len(fileInfos), dirPath)
 	return fileInfos, nil
 }
 
