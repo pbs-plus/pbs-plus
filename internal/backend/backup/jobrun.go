@@ -167,7 +167,7 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 
 		if agentMount != nil {
 			agentMount.Unmount()
-			agentMount.CloseSFTP()
+			agentMount.CloseMount()
 		}
 	}()
 

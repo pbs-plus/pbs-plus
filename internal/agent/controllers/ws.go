@@ -4,19 +4,17 @@ package controllers
 
 import (
 	"context"
-	"errors"
 	"sync"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/sftp"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
 var (
-	sftpSessions    sync.Map
-	ErrNoSFTPConfig = errors.New("unable to find initialized SFTP config")
+	nfsSessions sync.Map
 )
 
 func sendResponse(c *websockets.WSClient, msgType, content string) {
@@ -29,8 +27,8 @@ func sendResponse(c *websockets.WSClient, msgType, content string) {
 }
 
 func cleanupExistingSession(drive string) {
-	if existing, ok := sftpSessions.LoadAndDelete(drive); ok && existing != nil {
-		if session, ok := existing.(*sftp.SFTPSession); ok && session != nil {
+	if existing, ok := nfsSessions.LoadAndDelete(drive); ok && existing != nil {
+		if session, ok := existing.(*nfs.NFSSession); ok && session != nil {
 			session.Close()
 			syslog.L.Infof("Cancelled existing backup context of drive %s.", drive)
 		}
@@ -54,9 +52,9 @@ func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {
 		}
 		syslog.L.Infof("Snapshot of drive %s has been made.", drive)
 
-		sftpSession := sftp.NewSFTPSession(context.Background(), snapshot, drive)
-		if sftpSession == nil {
-			syslog.L.Error("SFTP session is nil.")
+		nfsSession := nfs.NewNFSSession(context.Background(), snapshot, drive)
+		if nfsSession == nil {
+			syslog.L.Error("NFS session is nil.")
 			return
 		}
 
@@ -65,16 +63,16 @@ func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					syslog.L.Errorf("Panic in SFTP session for drive %s: %v", drive, r)
+					syslog.L.Errorf("Panic in NFS session for drive %s: %v", drive, r)
 				}
 				cleanupExistingSession(drive)
 				backupStatus.EndBackup(drive)
 			}()
-			sftpSession.Serve()
+			nfsSession.Serve()
 		}()
 
-		syslog.L.Infof("SFTP access to snapshot of drive %s has been made.", drive)
-		sftpSessions.Store(drive, sftpSession)
+		syslog.L.Infof("NFS access to snapshot of drive %s has been made.", drive)
+		nfsSessions.Store(drive, nfsSession)
 
 		sendResponse(c, "backup_start", drive)
 	}

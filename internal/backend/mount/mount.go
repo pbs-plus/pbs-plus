@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -24,98 +25,120 @@ type AgentMount struct {
 }
 
 func Mount(storeInstance *store.Store, target *store.Target) (*AgentMount, error) {
-	if !utils.IsValid("/usr/bin/rclone") {
-		return nil, fmt.Errorf("Mount: rclone is missing! Please install rclone first before backing up from agent.")
-	}
-
+	// Parse target information
 	splittedTargetName := strings.Split(target.Name, " - ")
 	targetHostname := splittedTargetName[0]
 	agentPath := strings.TrimPrefix(target.Path, "agent://")
 	agentPathParts := strings.Split(agentPath, "/")
+	agentHost := agentPathParts[0]
 	agentDrive := agentPathParts[1]
 
+	// Encode hostname and drive for API call
 	targetHostnameEnc := base32.StdEncoding.EncodeToString([]byte(targetHostname))
 	agentDriveEnc := base32.StdEncoding.EncodeToString([]byte(agentDrive))
 
-	err := storeInstance.ProxmoxHTTPRequest(http.MethodPost, fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc), nil, nil)
+	// Request mount from agent
+	err := storeInstance.ProxmoxHTTPRequest(
+		http.MethodPost,
+		fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc),
+		nil,
+		nil,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("RunBackup: Failed to send backup request to target '%s' -> %w", target.Name, err)
+		return nil, fmt.Errorf("Mount: Failed to send mount request to target '%s' -> %w", target.Name, err)
 	}
 
-	agentMount := &AgentMount{StoreInstance: storeInstance, Hostname: targetHostname, Drive: agentDrive}
+	agentMount := &AgentMount{
+		StoreInstance: storeInstance,
+		Hostname:      targetHostname,
+		Drive:         agentDrive,
+	}
 
-	agentHost := agentPathParts[0]
+	// Get port for NFS connection
 	agentDriveRune := []rune(agentDrive)[0]
 	agentPort, err := utils.DriveLetterPort(agentDriveRune)
 	if err != nil {
 		agentMount.Unmount()
-		agentMount.CloseSFTP()
 		return nil, fmt.Errorf("Mount: error mapping \"%c\" to network port -> %w", agentDriveRune, err)
 	}
 
+	// Setup mount path
 	agentMount.Path = filepath.Join(store.AgentMountBasePath, strings.ReplaceAll(target.Name, " ", "-"))
-	agentMount.Unmount()
+	agentMount.Unmount() // Ensure clean mount point
 
+	// Create mount directory if it doesn't exist
 	err = os.MkdirAll(agentMount.Path, 0700)
 	if err != nil {
 		return nil, fmt.Errorf("Mount: error creating directory \"%s\" -> %w", agentMount.Path, err)
 	}
 
-	privKeyDir := filepath.Join(store.DbBasePath, "agent_keys")
-	privKeyFile := filepath.Join(privKeyDir, strings.ReplaceAll(fmt.Sprintf("%s.key", target.Name), " ", "-"))
-
+	// Mount using NFS
 	mountArgs := []string{
-		"mount",
-		"--daemon",
-		"--no-seek",
-		"--read-only",
-		"--vfs-cache-mode=off",
-		"--uid", "0",
-		"--gid", "0",
-		"--sftp-disable-hashcheck",
-		"--sftp-idle-timeout", "0",
-		"--sftp-key-file", privKeyFile,
-		"--sftp-port", agentPort,
-		"--sftp-user", "proxmox",
-		"--sftp-host", agentHost,
-		"--allow-other",
-		"--sftp-shell-type", "none",
-		":sftp:/", agentMount.Path,
+		"-t", "nfs",
+		"-o", fmt.Sprintf("port=%s,mountport=%s,vers=3,ro,nolock", agentPort, agentPort),
+		fmt.Sprintf("%s:/mount", agentHost),
+		agentMount.Path,
 	}
 
-	mnt := exec.Command("rclone", mountArgs...)
+	// Mount the NFS share
+	mnt := exec.Command("mount", mountArgs...)
 	mnt.Env = os.Environ()
-
 	mnt.Stdout = os.Stdout
 	mnt.Stderr = os.Stderr
-
 	agentMount.Cmd = mnt
 
-	err = mnt.Run()
-	if err != nil {
-		agentMount.Unmount()
-		agentMount.CloseSFTP()
-		return nil, fmt.Errorf("Mount: error starting rclone for sftp -> %w", err)
+	// Try mounting with retries
+	const maxRetries = 3
+	const retryDelay = 2 * time.Second
+
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		err = mnt.Run()
+		if err == nil {
+			return agentMount, nil
+		}
+		lastErr = err
+		if i < maxRetries-1 {
+			time.Sleep(retryDelay)
+		}
 	}
 
-	return agentMount, nil
+	// If all retries failed, clean up and return error
+	agentMount.Unmount()
+	return nil, fmt.Errorf("Mount: error mounting NFS share after %d attempts -> %w", maxRetries, lastErr)
 }
 
 func (a *AgentMount) Unmount() {
+	if a.Path == "" {
+		return
+	}
+
+	// First try a clean unmount
+	umount := exec.Command("umount", a.Path)
+	umount.Env = os.Environ()
+	err := umount.Run()
+
+	// If clean unmount fails, try force unmount
+	if err != nil {
+		forceUmount := exec.Command("umount", "-f", a.Path)
+		forceUmount.Env = os.Environ()
+		_ = forceUmount.Run()
+	}
+
+	// Kill any lingering mount process
 	if a.Cmd != nil && a.Cmd.Process != nil {
 		_ = a.Cmd.Process.Kill()
 	}
-
-	umount := exec.Command("umount", a.Path)
-	umount.Env = os.Environ()
-
-	_ = umount.Run()
-
 }
 
-func (a *AgentMount) CloseSFTP() {
+func (a *AgentMount) CloseMount() {
 	targetHostnameEnc := base32.StdEncoding.EncodeToString([]byte(a.Hostname))
 	agentDriveEnc := base32.StdEncoding.EncodeToString([]byte(a.Drive))
 
-	_ = a.StoreInstance.ProxmoxHTTPRequest(http.MethodDelete, fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc), nil, nil)
+	_ = a.StoreInstance.ProxmoxHTTPRequest(
+		http.MethodDelete,
+		fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc),
+		nil,
+		nil,
+	)
 }
