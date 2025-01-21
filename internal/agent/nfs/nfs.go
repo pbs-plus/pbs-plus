@@ -191,15 +191,18 @@ func (h *NFSHandler) validateConnection(conn net.Conn) error {
 func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequest) (nfs.MountStatus, billy.Filesystem, []nfs.AuthFlavor) {
 	syslog.L.Infof("[NFS.Mount] Received mount request for path: %s from %s",
 		string(req.Dirpath), conn.RemoteAddr().String())
+	syslog.L.Infof("[NFS.Mount] Request details: %+v", req)
 
 	if err := h.validateConnection(conn); err != nil {
 		syslog.L.Errorf("[NFS.Mount] Connection validation failed: %v", err)
 		return nfs.MountStatusErrPerm, nil, nil
 	}
 
-	// Store the root handle explicitly
-	rootHandle := []byte("/mount")
-	h.handles.Store(string(rootHandle), h.session.Snapshot.SnapshotPath)
+	// Check if the snapshot path exists
+	if _, err := os.Stat(h.session.Snapshot.SnapshotPath); os.IsNotExist(err) {
+		syslog.L.Errorf("[NFS.Mount] Snapshot path does not exist: %s", h.session.Snapshot.SnapshotPath)
+		return nfs.MountStatusErrNoEnt, nil, nil
+	}
 
 	fs := &ReadOnlyFS{
 		basePath: h.session.Snapshot.SnapshotPath,
@@ -209,7 +212,15 @@ func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequ
 
 	syslog.L.Infof("[NFS.Mount] Serving snapshot path: %s", h.session.Snapshot.SnapshotPath)
 	syslog.L.Infof("[NFS.Mount] Root path: %s", fs.Root())
-	syslog.L.Infof("[NFS.Mount] Stored root handle mapping: /mount -> %s", h.session.Snapshot.SnapshotPath)
+	syslog.L.Infof("[NFS.Mount] Filesystem created successfully")
+
+	// Try to read the root directory to verify access
+	files, err := fs.ReadDir("/")
+	if err != nil {
+		syslog.L.Errorf("[NFS.Mount] Failed to read root directory: %v", err)
+		return nfs.MountStatusErrIO, nil, nil
+	}
+	syslog.L.Infof("[NFS.Mount] Successfully read root directory, found %d entries", len(files))
 
 	return nfs.MountStatusOk, fs, []nfs.AuthFlavor{nfs.AuthFlavorNull}
 }
@@ -470,9 +481,51 @@ func (s *NFSSession) Serve() error {
 		session: s,
 	}
 
+	nfs.SetLogger(&nfsLogger{})
+
 	cachingHandler := nfshelper.NewCachingHandler(handler, 1000)
 
 	syslog.L.Infof("[NFS.Serve] Serving NFS on port %s", port)
 
 	return nfs.Serve(listener, cachingHandler)
+}
+
+type nfsLogger struct {
+	nfs.Logger
+}
+
+func (l *nfsLogger) Info(v ...interface{}) {
+	v = append([]interface{}{"[NFS.Info] "}, v...)
+	syslog.L.Info(v...)
+}
+
+func (l *nfsLogger) Infof(format string, v ...interface{}) {
+	syslog.L.Infof("[NFS.Info] "+format, v...)
+}
+
+func (l *nfsLogger) Print(v ...interface{}) {
+	v = append([]interface{}{"[NFS.Print] "}, v...)
+	syslog.L.Info(v...)
+}
+
+func (l *nfsLogger) Printf(format string, v ...interface{}) {
+	syslog.L.Infof("[NFS.Print] "+format, v...)
+}
+
+func (l *nfsLogger) Debug(v ...interface{}) {
+	v = append([]interface{}{"[NFS.Debug] "}, v...)
+	syslog.L.Info(v...)
+}
+
+func (l *nfsLogger) Debugf(format string, v ...interface{}) {
+	syslog.L.Infof("[NFS.Debug] "+format, v...)
+}
+
+func (l *nfsLogger) Error(v ...interface{}) {
+	v = append([]interface{}{"[NFS.Error] "}, v...)
+	syslog.L.Info(v...)
+}
+
+func (l *nfsLogger) Errorf(format string, v ...interface{}) {
+	syslog.L.Infof("[NFS.Error] "+format, v...)
 }
