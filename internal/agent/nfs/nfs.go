@@ -105,6 +105,14 @@ func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
 	fullPath := filepath.Join(path...)
 	syslog.L.Infof("[NFS.ToHandle] Converting path to handle: %s", fullPath)
 
+	// Special case for root
+	if fullPath == "" || fullPath == "/" || fullPath == "\\" {
+		rootHandle := []byte("/mount")
+		h.handles.Store(string(rootHandle), h.session.Snapshot.SnapshotPath)
+		syslog.L.Infof("[NFS.ToHandle] Generated root handle")
+		return rootHandle
+	}
+
 	handle := []byte(fullPath)
 	if len(handle) > nfs.FHSize {
 		hash := sha256.Sum256(handle)
@@ -112,8 +120,9 @@ func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
 		syslog.L.Infof("[NFS.ToHandle] Path too long, using hash")
 	}
 
-	h.handles.Store(string(handle), fullPath)
-	syslog.L.Infof("[NFS.ToHandle] Stored handle for path: %s", fullPath)
+	actualPath := filepath.Join(h.session.Snapshot.SnapshotPath, fullPath)
+	h.handles.Store(string(handle), actualPath)
+	syslog.L.Infof("[NFS.ToHandle] Stored handle for path: %s -> %s", fullPath, actualPath)
 	return handle
 }
 
@@ -131,31 +140,32 @@ func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
-	syslog.L.Infof("[NFS.FromHandle] Converting handle to path: %s", fullPath)
+	syslog.L.Infof("[NFS.FromHandle] Looking up path for handle: %s", fullPath)
 
-	// Create filesystem for this path
 	fs := &ReadOnlyFS{
 		basePath: h.session.Snapshot.SnapshotPath,
 		snapshot: h.session.Snapshot,
 		ctx:      h.session.Context,
 	}
 
-	// If this is the root mount point ("/mount"), use the base path
-	if fullPath == "/mount" || fullPath == "mount" {
-		syslog.L.Infof("[NFS.FromHandle] Accessing root mount point")
+	// If this is the root/snapshot path, return empty component list
+	if fullPath == h.session.Snapshot.SnapshotPath {
+		syslog.L.Infof("[NFS.FromHandle] Accessing root path")
 		return fs, []string{}, nil
 	}
 
-	// For other paths, calculate relative path
-	cleanPath := filepath.Clean(fullPath)
-	relPath, err := filepath.Rel(h.session.Snapshot.SnapshotPath, cleanPath)
+	// Get relative path from snapshot path
+	relPath, err := filepath.Rel(h.session.Snapshot.SnapshotPath, fullPath)
 	if err != nil {
 		syslog.L.Errorf("[NFS.FromHandle] Failed to get relative path: %v", err)
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
-	components := strings.Split(relPath, string(os.PathSeparator))
-	syslog.L.Infof("[NFS.FromHandle] Path components: %v", components)
+	// Convert Windows path separators to forward slashes
+	relPath = strings.ReplaceAll(relPath, "\\", "/")
+	components := strings.Split(relPath, "/")
+
+	syslog.L.Infof("[NFS.FromHandle] Resolved path components: %v", components)
 	return fs, components, nil
 }
 
@@ -179,7 +189,6 @@ func (h *NFSHandler) validateConnection(conn net.Conn) error {
 }
 
 func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequest) (nfs.MountStatus, billy.Filesystem, []nfs.AuthFlavor) {
-	// Add logging to debug the mount request
 	syslog.L.Infof("[NFS.Mount] Received mount request for path: %s from %s",
 		string(req.Dirpath), conn.RemoteAddr().String())
 
@@ -187,6 +196,10 @@ func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequ
 		syslog.L.Errorf("[NFS.Mount] Connection validation failed: %v", err)
 		return nfs.MountStatusErrPerm, nil, nil
 	}
+
+	// Store the root handle explicitly
+	rootHandle := []byte("/mount")
+	h.handles.Store(string(rootHandle), h.session.Snapshot.SnapshotPath)
 
 	fs := &ReadOnlyFS{
 		basePath: h.session.Snapshot.SnapshotPath,
@@ -196,6 +209,7 @@ func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequ
 
 	syslog.L.Infof("[NFS.Mount] Serving snapshot path: %s", h.session.Snapshot.SnapshotPath)
 	syslog.L.Infof("[NFS.Mount] Root path: %s", fs.Root())
+	syslog.L.Infof("[NFS.Mount] Stored root handle mapping: /mount -> %s", h.session.Snapshot.SnapshotPath)
 
 	return nfs.MountStatusOk, fs, []nfs.AuthFlavor{nfs.AuthFlavorNull}
 }
