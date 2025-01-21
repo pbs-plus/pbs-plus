@@ -75,7 +75,7 @@ func Mount(storeInstance *store.Store, target *store.Target) (*AgentMount, error
 	// Mount using NFS
 	mountArgs := []string{
 		"-t", "nfs",
-		"-o", fmt.Sprintf("port=%s,mountport=%s,vers=3,ro,nolock", agentPort, agentPort),
+		"-o", fmt.Sprintf("port=%s,mountport=%s,vers=3,ro,tcp,noacl", agentPort, agentPort),
 		fmt.Sprintf("%s:/mount", agentHost),
 		agentMount.Path,
 	}

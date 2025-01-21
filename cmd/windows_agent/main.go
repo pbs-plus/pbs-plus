@@ -118,14 +118,12 @@ func main() {
 	}
 
 	// Run the service
-	if !service.Interactive() {
-		err = s.Run()
-		if err != nil {
-			syslog.L.Errorf("Service run failed: %v", err)
-			// Instead of exiting, restart the service
-			if err := restartService(); err != nil {
-				syslog.L.Errorf("Service restart failed: %v", err)
-			}
+	err = s.Run()
+	if err != nil {
+		syslog.L.Errorf("Service run failed: %v", err)
+		// Instead of exiting, restart the service
+		if err := restartService(); err != nil {
+			syslog.L.Errorf("Service restart failed: %v", err)
 		}
 	}
 }
@@ -170,4 +168,3 @@ func handleServiceCommands(s service.Service, cmd string) error {
 	}
 	return nil
 }
-

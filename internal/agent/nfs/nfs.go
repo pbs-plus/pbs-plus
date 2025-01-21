@@ -105,24 +105,21 @@ func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
 	fullPath := filepath.Join(path...)
 	syslog.L.Infof("[NFS.ToHandle] Converting path to handle: %s", fullPath)
 
-	// Special case for root
-	if fullPath == "" || fullPath == "/" || fullPath == "\\" {
-		rootHandle := []byte("/mount")
-		h.handles.Store(string(rootHandle), h.session.Snapshot.SnapshotPath)
-		syslog.L.Infof("[NFS.ToHandle] Generated root handle")
-		return rootHandle
+	// Special case for empty path (root)
+	if fullPath == "" {
+		handle := []byte{0} // Use a special handle for root
+		h.handles.Store(string(handle), "/")
+		return handle
 	}
 
 	handle := []byte(fullPath)
 	if len(handle) > nfs.FHSize {
 		hash := sha256.Sum256(handle)
 		handle = hash[:]
-		syslog.L.Infof("[NFS.ToHandle] Path too long, using hash")
 	}
 
-	actualPath := filepath.Join(h.session.Snapshot.SnapshotPath, fullPath)
-	h.handles.Store(string(handle), actualPath)
-	syslog.L.Infof("[NFS.ToHandle] Stored handle for path: %s -> %s", fullPath, actualPath)
+	h.handles.Store(string(handle), fullPath)
+	syslog.L.Infof("[NFS.ToHandle] Created handle for path: %s", fullPath)
 	return handle
 }
 
@@ -130,17 +127,23 @@ func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
 func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
 	value, ok := h.handles.Load(string(fh))
 	if !ok {
+		// Special case for root handle
+		if len(fh) == 1 && fh[0] == 0 {
+			fs := &ReadOnlyFS{
+				basePath: h.session.Snapshot.SnapshotPath,
+				snapshot: h.session.Snapshot,
+				ctx:      h.session.Context,
+			}
+			return fs, []string{}, nil
+		}
 		syslog.L.Errorf("[NFS.FromHandle] Handle not found: %x", fh)
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
-	fullPath, ok := value.(string)
+	path, ok := value.(string)
 	if !ok {
-		syslog.L.Errorf("[NFS.FromHandle] Invalid handle value type")
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
-
-	syslog.L.Infof("[NFS.FromHandle] Looking up path for handle: %s", fullPath)
 
 	fs := &ReadOnlyFS{
 		basePath: h.session.Snapshot.SnapshotPath,
@@ -148,24 +151,11 @@ func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
 		ctx:      h.session.Context,
 	}
 
-	// If this is the root/snapshot path, return empty component list
-	if fullPath == h.session.Snapshot.SnapshotPath {
-		syslog.L.Infof("[NFS.FromHandle] Accessing root path")
+	if path == "/" {
 		return fs, []string{}, nil
 	}
 
-	// Get relative path from snapshot path
-	relPath, err := filepath.Rel(h.session.Snapshot.SnapshotPath, fullPath)
-	if err != nil {
-		syslog.L.Errorf("[NFS.FromHandle] Failed to get relative path: %v", err)
-		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
-	}
-
-	// Convert Windows path separators to forward slashes
-	relPath = strings.ReplaceAll(relPath, "\\", "/")
-	components := strings.Split(relPath, "/")
-
-	syslog.L.Infof("[NFS.FromHandle] Resolved path components: %v", components)
+	components := strings.Split(path, "/")
 	return fs, components, nil
 }
 
@@ -191,17 +181,10 @@ func (h *NFSHandler) validateConnection(conn net.Conn) error {
 func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequest) (nfs.MountStatus, billy.Filesystem, []nfs.AuthFlavor) {
 	syslog.L.Infof("[NFS.Mount] Received mount request for path: %s from %s",
 		string(req.Dirpath), conn.RemoteAddr().String())
-	syslog.L.Infof("[NFS.Mount] Request details: %+v", req)
 
 	if err := h.validateConnection(conn); err != nil {
 		syslog.L.Errorf("[NFS.Mount] Connection validation failed: %v", err)
 		return nfs.MountStatusErrPerm, nil, nil
-	}
-
-	// Check if the snapshot path exists
-	if _, err := os.Stat(h.session.Snapshot.SnapshotPath); os.IsNotExist(err) {
-		syslog.L.Errorf("[NFS.Mount] Snapshot path does not exist: %s", h.session.Snapshot.SnapshotPath)
-		return nfs.MountStatusErrNoEnt, nil, nil
 	}
 
 	fs := &ReadOnlyFS{
@@ -210,18 +193,18 @@ func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequ
 		ctx:      h.session.Context,
 	}
 
-	syslog.L.Infof("[NFS.Mount] Serving snapshot path: %s", h.session.Snapshot.SnapshotPath)
-	syslog.L.Infof("[NFS.Mount] Root path: %s", fs.Root())
-	syslog.L.Infof("[NFS.Mount] Filesystem created successfully")
+	// Initialize root handle
+	rootHandle := []byte{0}
+	h.handles.Store(string(rootHandle), "/")
 
-	// Try to read the root directory to verify access
-	files, err := fs.ReadDir("/")
+	// Verify root directory is accessible
+	_, err := fs.GetFileInfo("/")
 	if err != nil {
-		syslog.L.Errorf("[NFS.Mount] Failed to read root directory: %v", err)
-		return nfs.MountStatusErrIO, nil, nil
+		syslog.L.Errorf("[NFS.Mount] Root directory not accessible: %v", err)
+		return nfs.MountStatusErrNoEnt, nil, nil
 	}
-	syslog.L.Infof("[NFS.Mount] Successfully read root directory, found %d entries", len(files))
 
+	syslog.L.Infof("[NFS.Mount] Mount successful, serving from: %s", fs.basePath)
 	return nfs.MountStatusOk, fs, []nfs.AuthFlavor{nfs.AuthFlavorNull}
 }
 
@@ -339,12 +322,44 @@ func (fs *ReadOnlyFS) OpenFile(filename string, flag int, perm os.FileMode) (bil
 	return fs.Open(filename)
 }
 
-func (fs *ReadOnlyFS) Stat(filename string) (os.FileInfo, error) {
+func (fs *ReadOnlyFS) GetFileInfo(filename string) (os.FileInfo, error) {
+	// Handle root directory
+	if filename == "" || filename == "/" {
+		info, err := os.Stat(fs.basePath)
+		if err != nil {
+			syslog.L.Errorf("[NFS.GetFileInfo] Error getting root info: %v", err)
+			return nil, err
+		}
+		return &CustomFileInfo{
+			FileInfo:   info,
+			filePath:   fs.basePath,
+			snapshotId: fs.snapshot.Id,
+		}, nil
+	}
+
 	fullPath := filepath.Join(fs.basePath, filepath.Clean(filename))
 	if skipFile(fullPath, fs.snapshot) {
 		return nil, os.ErrNotExist
 	}
-	return os.Stat(fullPath)
+
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &CustomFileInfo{
+		FileInfo:   info,
+		filePath:   fullPath,
+		snapshotId: fs.snapshot.Id,
+	}, nil
+}
+
+func (fs *ReadOnlyFS) Stat(filename string) (os.FileInfo, error) {
+	return fs.GetFileInfo(filename)
+}
+
+func (fs *ReadOnlyFS) Lstat(filename string) (os.FileInfo, error) {
+	return fs.GetFileInfo(filename)
 }
 
 func (fs *ReadOnlyFS) ReadDir(path string) ([]os.FileInfo, error) {
@@ -404,14 +419,6 @@ func (fs *ReadOnlyFS) Join(elem ...string) string {
 
 func (fs *ReadOnlyFS) MkdirAll(filename string, perm os.FileMode) error {
 	return fmt.Errorf("filesystem is read-only")
-}
-
-func (fs *ReadOnlyFS) Lstat(filename string) (os.FileInfo, error) {
-	fullPath := filepath.Join(fs.basePath, filepath.Clean(filename))
-	if skipFile(fullPath, fs.snapshot) {
-		return nil, os.ErrNotExist
-	}
-	return os.Lstat(fullPath)
 }
 
 func (fs *ReadOnlyFS) Symlink(target, link string) error {
@@ -481,51 +488,11 @@ func (s *NFSSession) Serve() error {
 		session: s,
 	}
 
-	nfs.SetLogger(&nfsLogger{})
+	// nfs.SetLogger(&nfsLogger{})
 
 	cachingHandler := nfshelper.NewCachingHandler(handler, 1000)
 
 	syslog.L.Infof("[NFS.Serve] Serving NFS on port %s", port)
 
 	return nfs.Serve(listener, cachingHandler)
-}
-
-type nfsLogger struct {
-	nfs.Logger
-}
-
-func (l *nfsLogger) Info(v ...interface{}) {
-	v = append([]interface{}{"[NFS.Info] "}, v...)
-	syslog.L.Info(v...)
-}
-
-func (l *nfsLogger) Infof(format string, v ...interface{}) {
-	syslog.L.Infof("[NFS.Info] "+format, v...)
-}
-
-func (l *nfsLogger) Print(v ...interface{}) {
-	v = append([]interface{}{"[NFS.Print] "}, v...)
-	syslog.L.Info(v...)
-}
-
-func (l *nfsLogger) Printf(format string, v ...interface{}) {
-	syslog.L.Infof("[NFS.Print] "+format, v...)
-}
-
-func (l *nfsLogger) Debug(v ...interface{}) {
-	v = append([]interface{}{"[NFS.Debug] "}, v...)
-	syslog.L.Info(v...)
-}
-
-func (l *nfsLogger) Debugf(format string, v ...interface{}) {
-	syslog.L.Infof("[NFS.Debug] "+format, v...)
-}
-
-func (l *nfsLogger) Error(v ...interface{}) {
-	v = append([]interface{}{"[NFS.Error] "}, v...)
-	syslog.L.Info(v...)
-}
-
-func (l *nfsLogger) Errorf(format string, v ...interface{}) {
-	syslog.L.Infof("[NFS.Error] "+format, v...)
 }
