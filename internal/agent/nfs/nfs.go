@@ -116,7 +116,6 @@ func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
 
 // FromHandle converts an opaque handle back to a filesystem and path
 func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
-	// Lookup the path from our handle mapping
 	value, ok := h.handles.Load(string(fh))
 	if !ok {
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
@@ -134,10 +133,16 @@ func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
 		ctx:      h.session.Context,
 	}
 
-	// Split path into components
+	// If this is the root mount point ("/mount"), use the base path
+	if fullPath == "/mount" || fullPath == "mount" {
+		return fs, []string{}, nil
+	}
+
+	// For other paths, calculate relative path
 	cleanPath := filepath.Clean(fullPath)
 	relPath, err := filepath.Rel(h.session.Snapshot.SnapshotPath, cleanPath)
 	if err != nil {
+		syslog.L.Errorf("[NFS.FromHandle] Failed to get relative path: %v", err)
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
@@ -165,15 +170,23 @@ func (h *NFSHandler) validateConnection(conn net.Conn) error {
 }
 
 func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequest) (nfs.MountStatus, billy.Filesystem, []nfs.AuthFlavor) {
+	// Add logging to debug the mount request
+	syslog.L.Infof("[NFS.Mount] Received mount request for path: %s from %s",
+		string(req.Dirpath), conn.RemoteAddr().String())
+
+	if err := h.validateConnection(conn); err != nil {
+		syslog.L.Errorf("[NFS.Mount] Connection validation failed: %v", err)
+		return nfs.MountStatusErrPerm, nil, nil
+	}
+
 	fs := &ReadOnlyFS{
 		basePath: h.session.Snapshot.SnapshotPath,
 		snapshot: h.session.Snapshot,
 		ctx:      h.session.Context,
 	}
 
-	if err := h.validateConnection(conn); err != nil {
-		return nfs.MountStatusErrPerm, nil, nil
-	}
+	syslog.L.Infof("[NFS.Mount] Serving snapshot path: %s", h.session.Snapshot.SnapshotPath)
+	syslog.L.Infof("[NFS.Mount] Root path: %s", fs.Root())
 
 	return nfs.MountStatusOk, fs, []nfs.AuthFlavor{nfs.AuthFlavorNull}
 }
@@ -407,6 +420,8 @@ func (s *NFSSession) Serve() error {
 	}
 
 	cachingHandler := nfshelper.NewCachingHandler(handler, 1000)
+
+	syslog.L.Infof("[NFS.Serve] Serving NFS on port %s", port)
 
 	return nfs.Serve(listener, cachingHandler)
 }
