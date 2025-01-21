@@ -73,11 +73,7 @@ func setupTestStore(t *testing.T) *Store {
 		"key":          testKeyPath,
 	}
 
-	for key, path := range paths {
-		if key == "cert" || key == "key" {
-			continue
-		}
-
+	for _, path := range paths {
 		err := os.RemoveAll(path)
 		require.NoError(t, err)
 	}

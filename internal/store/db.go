@@ -102,7 +102,11 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 		alreadyInitialized = true
 	}
 
-	for _, path := range paths {
+	for key, path := range paths {
+		if key == "cert" || key == "key" {
+			continue
+		}
+
 		if err := os.MkdirAll(path, 0750); err != nil {
 			return nil, fmt.Errorf("Initialize: error creating directory %s: %w", path, err)
 		}
