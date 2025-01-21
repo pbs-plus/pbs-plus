@@ -83,7 +83,7 @@ func getServerURLFromRegistry() (string, error) {
 
 func buildHeaders(clientID string) (http.Header, error) {
 	headers := http.Header{}
-	headers.Add("X-Client-ID", clientID)
+	headers.Add("X-PBS-Agent", clientID)
 
 	keyStr := "Software\\PBSPlus\\Config\\SFTP-C"
 	if driveKey, err := registry.OpenKey(registry.LOCAL_MACHINE, keyStr, registry.QUERY_VALUE); err == nil {

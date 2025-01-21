@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/auth"
 	configLib "github.com/sonroyaalmerol/pbs-plus/internal/config"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -50,6 +51,7 @@ type Target struct {
 	Path             string `db:"path" json:"path"`
 	IsAgent          bool   `json:"is_agent"`
 	ConnectionStatus bool   `json:"connection_status"`
+	Auth             string `json:"auth"`
 }
 
 type Exclusion struct {
@@ -65,12 +67,13 @@ type PartialFile struct {
 
 // Store holds the configuration system
 type Store struct {
-	mu         sync.RWMutex
-	config     *configLib.SectionConfig
-	LastToken  *Token
-	APIToken   *APIToken
-	HTTPClient *http.Client
-	WSHub      *websockets.Server
+	mu            sync.RWMutex
+	config        *configLib.SectionConfig
+	LastToken     *Token
+	APIToken      *APIToken
+	HTTPClient    *http.Client
+	WSHub         *websockets.Server
+	CertGenerator *auth.CertGenerator
 }
 
 func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, error) {
@@ -89,6 +92,11 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 		if err := os.MkdirAll(path, 0750); err != nil {
 			return nil, fmt.Errorf("Initialize: error creating directory %s: %w", path, err)
 		}
+	}
+
+	certGen, err := auth.NewCertGenerator()
+	if err != nil {
+		return nil, fmt.Errorf("Initialize: error initializing cert gen: %w", err)
 	}
 
 	// Initialize config system
@@ -159,6 +167,11 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 				Description: "Target path",
 				Required:    true,
 			},
+			"auth": {
+				Type:        configLib.TypeString,
+				Description: "Auth used by target (only applicable to agents)",
+				Required:    false,
+			},
 		},
 	}
 
@@ -220,7 +233,8 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 			Timeout:   time.Second * 30,
 			Transport: utils.BaseTransport,
 		},
-		WSHub: wsHub,
+		WSHub:         wsHub,
+		CertGenerator: certGen,
 	}
 
 	if !alreadyInitialized {
@@ -523,6 +537,7 @@ func (store *Store) CreateTarget(target Target) error {
 				ID:   target.Name,
 				Properties: map[string]string{
 					"path": target.Path,
+					"auth": target.Auth,
 				},
 			},
 		},
@@ -561,6 +576,7 @@ func (store *Store) GetTarget(name string) (*Target, error) {
 	target := &Target{
 		Name: name,
 		Path: section.Properties["path"],
+		Auth: section.Properties["auth"],
 	}
 
 	if strings.HasPrefix(target.Path, "agent://") {
@@ -593,6 +609,7 @@ func (store *Store) UpdateTarget(target Target) error {
 				ID:   target.Name,
 				Properties: map[string]string{
 					"path": target.Path,
+					"auth": target.Auth,
 				},
 			},
 		},

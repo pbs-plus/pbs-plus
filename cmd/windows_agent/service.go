@@ -17,9 +17,10 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/auth"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/sftp"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 	"golang.org/x/sys/windows/registry"
 )
@@ -120,24 +121,19 @@ func (p *agentService) waitForServerURL() error {
 }
 
 func (p *agentService) initializeDrives() error {
-	drives := getLocalDrives()
-	driveLetters := make([]string, 0, len(drives))
-
-	for _, drive := range drives {
-		driveLetters = append(driveLetters, drive)
-		if err := sftp.InitializeSFTPConfig(drive); err != nil {
-			return fmt.Errorf("failed to initialize SFTP config for drive %s: %w", drive, err)
-		}
-	}
-
 	hostname, err := os.Hostname()
 	if err != nil {
 		return fmt.Errorf("failed to get hostname: %w", err)
 	}
 
+	err = auth.RegisterAgent(hostname)
+	if err != nil {
+		return fmt.Errorf("failed to register agent: %w", err)
+	}
+
 	reqBody, err := json.Marshal(&AgentDrivesRequest{
 		Hostname:     hostname,
-		DriveLetters: driveLetters,
+		DriveLetters: utils.GetLocalDrives(),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal drive request: %w", err)

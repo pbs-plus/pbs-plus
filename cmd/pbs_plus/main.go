@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"log"
 	"net/http"
@@ -120,8 +122,22 @@ func main() {
 	mux.HandleFunc("/plus/ws", plus.WSHandler(storeInstance))
 	mux.HandleFunc("/plus/mount/{target}/{drive}", plus.MountHandler(storeInstance))
 
+	caCertPool := x509.NewCertPool()
+	caCertPool.AddCert(storeInstance.CertGenerator.CA)
+
+	tlsConfig := &tls.Config{
+		ClientAuth: tls.RequestClientCert,
+		ClientCAs:  caCertPool,
+	}
+
+	server := &http.Server{
+		Addr:      ":8008",
+		TLSConfig: tlsConfig,
+		Handler:   mux,
+	}
+
 	syslog.L.Info("Starting proxy server on :8008")
-	if err := http.ListenAndServeTLS(":8008", store.CertFile, store.KeyFile, mux); err != nil {
+	if err := server.ListenAndServeTLS(store.CertFile, store.KeyFile); err != nil {
 		if syslog.L != nil {
 			syslog.L.Errorf("Server failed: %v", err)
 		}

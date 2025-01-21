@@ -3,56 +3,77 @@
 package store
 
 import (
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
-	"reflect"
 	"strings"
-
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"time"
 )
 
-func checkAgentAuth(r *http.Request) error {
-	auth := r.Header.Get("Authorization")
-
-	privKeyDir := filepath.Join(DbBasePath, "agent_keys")
-
-	authTok := strings.TrimPrefix(auth, "PBSPlusAPIAgent=")
-	authSplit := strings.Split(authTok, ":")
-
-	privKeyFilePath := filepath.Join(
-		privKeyDir,
-		fmt.Sprintf("%s.key", authSplit[0]),
-	)
-
-	privKeyFile, err := os.ReadFile(privKeyFilePath)
-	if err != nil {
-		return fmt.Errorf("CheckAgentAuth: error opening private key file \"%s\" -> %w", privKeyFilePath, err)
+func checkAgentAuth(storeInstance *Store, r *http.Request) error {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return fmt.Errorf("CheckAgentAuth: client certificate required")
 	}
 
-	pubKey, err := utils.GeneratePublicKeyFromPrivateKey(privKeyFile)
-	if err != nil {
-		return fmt.Errorf("CheckAgentAuth: error generating pub key \"%s\" -> %w", privKeyFilePath, err)
+	agentHostname := r.Header.Get("X-PBS-Agent")
+	if agentHostname == "" {
+		return fmt.Errorf("CheckAgentAuth: missing X-PBS-Agent header")
 	}
 
-	passedPub, err := base64.StdEncoding.DecodeString(authSplit[1])
+	targetEncoded, err := storeInstance.GetTarget(fmt.Sprintf("%s - C", strings.TrimSpace(agentHostname)))
 	if err != nil {
-		return fmt.Errorf("CheckAgentAuth: error pub key -> %w", err)
+		return fmt.Errorf("CheckAgentAuth: failed to get target: %w", err)
 	}
 
-	if !reflect.DeepEqual(pubKey, passedPub) {
-		return fmt.Errorf("CheckAgentAuth: invalid auth")
+	storedCertPEM, err := base64.StdEncoding.DecodeString(targetEncoded.Auth)
+	if err != nil {
+		return fmt.Errorf("CheckAgentAuth: invalid stored cert")
+	}
+
+	block, _ := pem.Decode(storedCertPEM)
+	if block == nil {
+		return fmt.Errorf("CheckAgentAuth: failed to decode stored certificate PEM")
+	}
+
+	storedCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("CheckAgentAuth: failed to parse stored certificate: %w", err)
+	}
+
+	clientCert := r.TLS.PeerCertificates[0]
+
+	if !clientCert.NotBefore.Equal(storedCert.NotBefore) ||
+		!clientCert.NotAfter.Equal(storedCert.NotAfter) ||
+		clientCert.SerialNumber.Cmp(storedCert.SerialNumber) != 0 ||
+		clientCert.Subject.CommonName != storedCert.Subject.CommonName {
+		return fmt.Errorf("CheckAgentAuth: certificate mismatch")
+	}
+
+	if time.Now().After(clientCert.NotAfter) {
+		return fmt.Errorf("CheckAgentAuth: certificate has expired")
+	}
+
+	roots := x509.NewCertPool()
+	roots.AddCert(storeInstance.CertGenerator.CA)
+	opts := x509.VerifyOptions{
+		Roots:         roots,
+		CurrentTime:   time.Now(),
+		Intermediates: x509.NewCertPool(),
+	}
+	_, err = clientCert.Verify(opts)
+	if err != nil {
+		return fmt.Errorf("CheckAgentAuth: certificate verification failed: %w", err)
 	}
 
 	return nil
 }
 
 func (storeInstance *Store) CheckProxyAuth(r *http.Request) error {
-	auth := r.Header.Get("Authorization")
-	if strings.HasPrefix(auth, "PBSPlusAPIAgent=") {
-		return checkAgentAuth(r)
+	agentHostname := r.Header.Get("X-PBS-Agent")
+	if strings.TrimSpace(agentHostname) != "" {
+		return checkAgentAuth(storeInstance, r)
 	}
 
 	// checkEndpoint := "/api2/json/version"

@@ -4,6 +4,7 @@ package targets
 
 import (
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"slices"
@@ -16,9 +17,9 @@ import (
 )
 
 type NewAgentRequest struct {
-	PublicKey string `json:"public_key"`
-	BasePath  string `json:"base_path"`
-	Hostname  string `json:"hostname"`
+	Hostname string   `json:"hostname"`
+	CSR      string   `json:"csr"`
+	Drives   []string `json:"drives"`
 }
 
 func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -75,16 +76,23 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			clientIP = strings.Split(clientIP, ":")[0]
 
-			agentPubKey, err := target.RegisterAgent(storeInstance, reqParsed.Hostname, clientIP, reqParsed.BasePath)
+			clientCert, err := target.RegisterAgent(storeInstance, reqParsed.Hostname, clientIP, reqParsed.CSR, reqParsed.Drives)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
 
+			// Get CA certificate in PEM format
+			caCertPEM := pem.EncodeToMemory(&pem.Block{
+				Type:  "CERTIFICATE",
+				Bytes: storeInstance.CertGenerator.CA.Raw,
+			})
+
 			w.Header().Set("Content-Type", "application/json")
 			err = json.NewEncoder(w).Encode(map[string]string{
-				"public_key": string(agentPubKey),
+				"cert_pem":    string(clientCert),
+				"ca_cert_pem": string(caCertPEM),
 			})
 
 			if err != nil {

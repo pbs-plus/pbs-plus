@@ -1,12 +1,12 @@
 //go:build windows
 
-package main
+package utils
 
 import (
 	"os"
 )
 
-func getLocalDrives() (r []string) {
+func GetLocalDrives() (r []string) {
 	for _, drive := range "ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
 		f, err := os.Open(string(drive) + ":\\")
 		if err == nil {
