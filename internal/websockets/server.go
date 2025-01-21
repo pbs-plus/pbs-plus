@@ -218,9 +218,9 @@ func (s *Server) handleClientMessages(client *Client) {
 }
 
 func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
-	clientID := r.Header.Get("X-Client-ID")
+	clientID := r.Header.Get("X-PBS-Agent")
 	if clientID == "" {
-		syslog.L.Errorf("[WSServer.ServeWS] Connection rejected: missing X-Client-ID header")
+		syslog.L.Errorf("[WSServer.ServeWS] Connection rejected: missing X-PBS-Agent header")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}

@@ -69,8 +69,8 @@ func setupTestStore(t *testing.T) *Store {
 		"targets":      testTargetsPath,
 		"exclusions":   testExclusionsPath,
 		"partialfiles": testPartialFilesPath,
-		"cert":         testPartialFilesPath,
-		"key":          testPartialFilesPath,
+		"cert":         testCertPath,
+		"key":          testKeyPath,
 	}
 
 	for _, path := range paths {
