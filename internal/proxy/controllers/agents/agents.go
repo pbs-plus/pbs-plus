@@ -112,7 +112,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		encodedCert := base64.StdEncoding.EncodeToString(cert)
-		encodedCA := base64.StdEncoding.EncodeToString([]byte(storeInstance.CertGenerator.GetEncodedCA()))
+		encodedCA := base64.StdEncoding.EncodeToString(storeInstance.CertGenerator.GetCAPEM())
 
 		clientIP := r.RemoteAddr
 

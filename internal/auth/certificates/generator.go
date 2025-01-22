@@ -5,7 +5,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -104,8 +103,8 @@ func NewGenerator(options *Options) (*Generator, error) {
 	}, nil
 }
 
-func (g *Generator) GetEncodedCA() string {
-	return base64.StdEncoding.EncodeToString(EncodeCertPEM(g.ca.Raw))
+func (g *Generator) GetCAPEM() []byte {
+	return EncodeCertPEM(g.ca.Raw)
 }
 
 // GenerateCA generates a new CA certificate and private key

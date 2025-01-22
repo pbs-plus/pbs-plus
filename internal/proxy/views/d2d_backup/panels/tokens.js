@@ -77,6 +77,15 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
     },
     "-",
     {
+			xtype: 'button',
+			iconCls: 'fa fa-clipboard',
+			handler: async function(b) {
+			    var el = document.getElementById('fingerprintField');
+			    await navigator.clipboard.writeText(el.value);
+			},
+			text: gettext('Copy'),
+		},
+    {
       xtype: "proxmoxStdRemoveButton",
       baseurl: pbsPlusBaseUrl + "/api2/extjs/config/d2d-token",
       getUrl: (rec) =>

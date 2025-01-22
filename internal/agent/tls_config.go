@@ -18,7 +18,7 @@ func GetTLSConfig() (*tls.Config, error) {
 
 	rootCAs := x509.NewCertPool()
 	if ok := rootCAs.AppendCertsFromPEM([]byte(serverCertReg.Value)); !ok {
-		return nil, fmt.Errorf("failed to append CA certificate")
+		return nil, fmt.Errorf("failed to append CA certificate: %s", serverCertReg.Value)
 	}
 
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
