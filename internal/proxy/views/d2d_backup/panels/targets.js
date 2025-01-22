@@ -103,7 +103,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       baseurl: pbsPlusBaseUrl + "/api2/extjs/config/d2d-target",
       getUrl: (rec) =>
         pbsPlusBaseUrl +
-        `/config/d2d-target/${encodeURIComponent(encodePathValue(rec.getId()))}`,
+        `/api2/extjs/config/d2d-target/${encodeURIComponent(encodePathValue(rec.getId()))}`,
       callback: "reload",
     },
   ],

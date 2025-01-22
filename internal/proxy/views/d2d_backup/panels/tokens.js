@@ -96,7 +96,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       baseurl: pbsPlusBaseUrl + "/api2/extjs/config/d2d-token",
       getUrl: (rec) =>
         pbsPlusBaseUrl +
-        `/config/d2d-token/${encodeURIComponent(encodePathValue(rec.getId()))}`,
+        `/api2/extjs/config/d2d-token/${encodeURIComponent(encodePathValue(rec.getId()))}`,
       callback: "reload",
     },
   ],
