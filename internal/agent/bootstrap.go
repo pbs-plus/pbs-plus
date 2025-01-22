@@ -32,12 +32,12 @@ type BootstrapResponse struct {
 
 func Bootstrap() error {
 	token, err := registry.GetEntry(registry.CONFIG, "BootstrapToken", false)
-	if err != nil {
+	if err != nil || token == nil {
 		return fmt.Errorf("Bootstrap: token not found -> %w", err)
 	}
 
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
-	if err != nil {
+	if err != nil || serverUrl == nil {
 		return fmt.Errorf("Bootstrap: server url not found -> %w", err)
 	}
 
@@ -74,7 +74,7 @@ func Bootstrap() error {
 	}
 
 	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token.Value))
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", strings.TrimSpace(token.Value)))
 
 	if httpClient == nil {
 		httpClient = &http.Client{

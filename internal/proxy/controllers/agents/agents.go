@@ -71,7 +71,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		authHeaderSplit := strings.Split(authHeader, " ")
 		if len(authHeaderSplit) != 2 || authHeaderSplit[0] == "Bearer" {
 			w.WriteHeader(http.StatusUnauthorized)
-			controllers.WriteErrorResponse(w, fmt.Errorf("unauthorized bearer access"))
+			controllers.WriteErrorResponse(w, fmt.Errorf("unauthorized bearer access: %s", authHeader))
 			return
 		}
 
