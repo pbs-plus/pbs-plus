@@ -241,7 +241,7 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 
 	tokenPlugin := &configLib.SectionPlugin{
 		FolderPath: paths["tokens"],
-		TypeName:   "tokens",
+		TypeName:   "token",
 		Properties: map[string]*configLib.Schema{
 			"token": {
 				Type:        configLib.TypeString,

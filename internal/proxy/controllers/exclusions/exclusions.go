@@ -16,6 +16,7 @@ func D2DExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		if r.Method == http.MethodGet {
@@ -49,6 +50,7 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 		response := ExclusionConfigResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")

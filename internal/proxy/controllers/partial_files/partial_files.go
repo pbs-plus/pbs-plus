@@ -16,6 +16,7 @@ func D2DPartialFileHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		if r.Method == http.MethodGet {
@@ -49,6 +50,7 @@ func ExtJsPartialFileHandler(storeInstance *store.Store) http.HandlerFunc {
 		response := PartialFileConfigResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -81,6 +83,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc 
 		response := PartialFileConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")

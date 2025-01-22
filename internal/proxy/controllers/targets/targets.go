@@ -21,29 +21,27 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if r.Method == http.MethodGet {
-			all, err := storeInstance.GetAllTargets()
-			if err != nil {
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
-
-			digest, err := utils.CalculateDigest(all)
-			if err != nil {
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
-
-			toReturn := TargetsResponse{
-				Data:   all,
-				Digest: digest,
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(toReturn)
-
+		all, err := storeInstance.GetAllTargets()
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
 			return
 		}
+
+		digest, err := utils.CalculateDigest(all)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		toReturn := TargetsResponse{
+			Data:   all,
+			Digest: digest,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(toReturn)
+
+		return
 	}
 }
 
@@ -56,6 +54,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		var reqParsed NewAgentHostnameRequest
@@ -107,6 +106,7 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -144,6 +144,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
