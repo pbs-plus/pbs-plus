@@ -1,5 +1,11 @@
 package utils
 
+import (
+	"bufio"
+	"os"
+	"strings"
+)
+
 func IsMounted(path string) bool {
 	// Open /proc/self/mountinfo to check mounts
 	mountInfoFile, err := os.Open("/proc/self/mountinfo")
