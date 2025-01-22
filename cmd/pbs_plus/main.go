@@ -120,22 +120,22 @@ func main() {
 			syslog.L.Errorf("Generating certificates failed: %v", err)
 			return
 		}
-
-		err = os.Chown(serverConfig.KeyFile, 0, 34)
-		if err != nil {
-			syslog.L.Errorf("Changing permissions of key failed: %v", err)
-			return
-		}
-
-		err = os.Chown(serverConfig.CertFile, 0, 34)
-		if err != nil {
-			syslog.L.Errorf("Changing permissions of cert failed: %v", err)
-			return
-		}
 	}
 
 	if err := serverConfig.Validate(); err != nil {
 		syslog.L.Errorf("Validating server config failed: %v", err)
+		return
+	}
+
+	err = os.Chown(serverConfig.KeyFile, 0, 34)
+	if err != nil {
+		syslog.L.Errorf("Changing permissions of key failed: %v", err)
+		return
+	}
+
+	err = os.Chown(serverConfig.CertFile, 0, 34)
+	if err != nil {
+		syslog.L.Errorf("Changing permissions of cert failed: %v", err)
 		return
 	}
 
