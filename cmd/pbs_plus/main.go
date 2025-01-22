@@ -109,12 +109,11 @@ func main() {
 		return
 	}
 
-	storeInstance.CertGenerator = generator
-
 	serverConfig := server.DefaultConfig()
 	serverConfig.CertFile = filepath.Join(certOpts.OutputDir, "server.crt")
 	serverConfig.KeyFile = filepath.Join(certOpts.OutputDir, "server.key")
 	serverConfig.CAFile = filepath.Join(certOpts.OutputDir, "ca.crt")
+	serverConfig.CAKey = filepath.Join(certOpts.OutputDir, "ca.key")
 	serverConfig.TokenSecret = string(csrfKey)
 
 	if err := generator.ValidateExistingCerts(); err != nil {
@@ -133,6 +132,8 @@ func main() {
 		syslog.L.Errorf("Validating server config failed: %v", err)
 		return
 	}
+
+	storeInstance.CertGenerator = generator
 
 	err = os.Chown(serverConfig.KeyFile, 0, 34)
 	if err != nil {

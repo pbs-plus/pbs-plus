@@ -255,6 +255,7 @@ func (g *Generator) savePrivateKey(filename string, key *rsa.PrivateKey) error {
 func (g *Generator) ValidateExistingCerts() error {
 	serverCertPath := filepath.Join(g.options.OutputDir, "server.crt")
 	caPath := filepath.Join(g.options.OutputDir, "ca.crt")
+	caKeyPath := filepath.Join(g.options.OutputDir, "ca.key")
 
 	// Check if files exist
 	if _, err := os.Stat(serverCertPath); os.IsNotExist(err) {
@@ -291,6 +292,22 @@ func (g *Generator) ValidateExistingCerts() error {
 	if err != nil {
 		return fmt.Errorf("failed to parse CA certificate: %w", err)
 	}
+
+	caKeyPEM, err := os.ReadFile(caKeyPath)
+	if err != nil {
+		return fmt.Errorf("failed to read CA key: %w", err)
+	}
+	block, _ = pem.Decode(caKeyPEM)
+	if block == nil {
+		return fmt.Errorf("failed to parse CA key PEM")
+	}
+	caPriv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse CA certificate: %w", err)
+	}
+
+	g.ca = caCert
+	g.caKey = caPriv
 
 	// Verify server certificate is signed by CA
 	roots := x509.NewCertPool()

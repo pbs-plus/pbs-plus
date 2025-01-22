@@ -16,6 +16,7 @@ type Config struct {
 	CertFile string
 	KeyFile  string
 	CAFile   string
+	CAKey    string
 
 	// Token configuration
 	TokenExpiration time.Duration
@@ -49,7 +50,7 @@ func DefaultConfig() *Config {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
-	if c.CertFile == "" || c.KeyFile == "" || c.CAFile == "" {
+	if c.CertFile == "" || c.KeyFile == "" || c.CAFile == "" || c.CAKey == "" {
 		return authErrors.ErrCertificateRequired
 	}
 
