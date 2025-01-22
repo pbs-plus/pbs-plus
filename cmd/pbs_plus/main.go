@@ -7,6 +7,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
@@ -117,6 +118,18 @@ func main() {
 
 		if err := generator.GenerateCert("server"); err != nil {
 			syslog.L.Errorf("Generating certificates failed: %v", err)
+			return
+		}
+
+		err = os.Chown(serverConfig.KeyFile, 0, 34)
+		if err != nil {
+			syslog.L.Errorf("Changing permissions of key failed: %v", err)
+			return
+		}
+
+		err = os.Chown(serverConfig.CertFile, 0, 34)
+		if err != nil {
+			syslog.L.Errorf("Changing permissions of cert failed: %v", err)
 			return
 		}
 	}

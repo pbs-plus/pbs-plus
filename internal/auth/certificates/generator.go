@@ -227,11 +227,6 @@ func (g *Generator) saveCertificate(filename string, certBytes []byte) error {
 		return authErrors.WrapError("encode_cert", err)
 	}
 
-	err = os.Chown(filePath, 0, 34)
-	if err != nil {
-		return authErrors.WrapError("chown_cert_file", err)
-	}
-
 	return nil
 }
 
@@ -252,11 +247,6 @@ func (g *Generator) savePrivateKey(filename string, key *rsa.PrivateKey) error {
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	}); err != nil {
 		return authErrors.WrapError("encode_key", err)
-	}
-
-	err = os.Chown(filePath, 0, 34)
-	if err != nil {
-		return authErrors.WrapError("chown_key_file", err)
 	}
 
 	return nil
