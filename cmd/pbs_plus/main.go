@@ -126,6 +126,15 @@ func main() {
 		return
 	}
 
+	err = serverConfig.Mount()
+	if err != nil {
+		syslog.L.Errorf("Mounting certificates failed: %v", err)
+		return
+	}
+	defer func() {
+		_ = serverConfig.Unmount()
+	}()
+
 	// Initialize token manager
 	tokenManager, err := token.NewManager(token.Config{
 		TokenExpiration: serverConfig.TokenExpiration,

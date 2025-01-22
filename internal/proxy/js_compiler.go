@@ -3,7 +3,6 @@
 package proxy
 
 import (
-	"bufio"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -12,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 //go:embed all:views
@@ -83,7 +84,7 @@ function encodePathValue(path) {
 // MountCompiledJS creates a backup of the target file and mounts the compiled JS over it
 func MountCompiledJS(targetPath string) error {
 	// Check if something is already mounted at the target path
-	if isMounted(targetPath) {
+	if utils.IsMounted(targetPath) {
 		if err := syscall.Unmount(targetPath, 0); err != nil {
 			return fmt.Errorf("failed to unmount existing file: %w", err)
 		}
@@ -132,7 +133,7 @@ func MountCompiledJS(targetPath string) error {
 
 func MountModdedProxmoxLib(targetPath string) error {
 	// Check if something is already mounted at the target path
-	if isMounted(targetPath) {
+	if utils.IsMounted(targetPath) {
 		if err := syscall.Unmount(targetPath, 0); err != nil {
 			return fmt.Errorf("failed to unmount existing file: %w", err)
 		}
@@ -204,24 +205,4 @@ func UnmountModdedFile(targetPath string) error {
 	}
 
 	return nil
-}
-
-func isMounted(path string) bool {
-	// Open /proc/self/mountinfo to check mounts
-	mountInfoFile, err := os.Open("/proc/self/mountinfo")
-	if err != nil {
-		return false
-	}
-	defer mountInfoFile.Close()
-
-	scanner := bufio.NewScanner(mountInfoFile)
-	for scanner.Scan() {
-		line := scanner.Text()
-		fields := strings.Fields(line)
-		if len(fields) >= 5 && fields[4] == path {
-			return true
-		}
-	}
-
-	return false
 }
