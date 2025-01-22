@@ -3,7 +3,6 @@ package websockets
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net/http"
 	"sync"
@@ -32,8 +31,6 @@ type (
 		ServerURL string
 		ClientID  string
 		Headers   http.Header
-		rootCAs   *x509.CertPool
-		cert      tls.Certificate
 	}
 
 	WSClient struct {
@@ -41,8 +38,7 @@ type (
 		serverURL string
 		headers   http.Header
 
-		cert    tls.Certificate
-		rootCAs *x509.CertPool
+		TLSConfig *tls.Config
 
 		readLimiter  *rate.Limiter
 		writeLimiter *rate.Limiter
@@ -61,7 +57,7 @@ type (
 	}
 )
 
-func NewWSClient(ctx context.Context, config Config) (*WSClient, error) {
+func NewWSClient(ctx context.Context, config Config, tlsConfig *tls.Config) (*WSClient, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	client := &WSClient{
@@ -74,8 +70,7 @@ func NewWSClient(ctx context.Context, config Config) (*WSClient, error) {
 		writeLimiter: rate.NewLimiter(rate.Every(rateLimit), rateBurst),
 		send:         make(chan Message, maxSendBuffer),
 		handlers:     make(map[string]MessageHandler),
-		rootCAs:      config.rootCAs,
-		cert:         config.cert,
+		TLSConfig:    tlsConfig,
 	}
 
 	syslog.L.Infof("[WSClient.New] Client %s: Initialized new WebSocket client for server %s",
@@ -104,9 +99,7 @@ func (c *WSClient) Connect() error {
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				IdleConnTimeout: 90 * time.Second,
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
-				},
+				TLSClientConfig: c.TLSConfig,
 			},
 		},
 	})

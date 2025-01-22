@@ -4,6 +4,7 @@ package websockets
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,8 @@ func TestIntegration(t *testing.T) {
 			Headers: http.Header{
 				"X-PBS-Agent": []string{"test-client"},
 			},
+		}, &tls.Config{
+			InsecureSkipVerify: true,
 		})
 		require.NoError(t, err)
 
@@ -105,6 +108,8 @@ func TestClientReconnection(t *testing.T) {
 		Headers: http.Header{
 			"X-PBS-Agent": []string{"reconnect-test"},
 		},
+	}, &tls.Config{
+		InsecureSkipVerify: true,
 	})
 	require.NoError(t, err)
 

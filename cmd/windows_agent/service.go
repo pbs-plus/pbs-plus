@@ -17,12 +17,11 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/auth"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
-	"golang.org/x/sys/windows/registry"
 )
 
 type PingData struct {
@@ -85,6 +84,11 @@ func (p *agentService) run() {
 		return
 	}
 
+	if err := p.waitForBootstrap(); err != nil {
+		syslog.L.Errorf("Failed waiting for bootstrap: %v", err)
+		return
+	}
+
 	if err := p.initializeDrives(); err != nil {
 		syslog.L.Errorf("Failed to initialize drives: %v", err)
 		return
@@ -103,12 +107,9 @@ func (p *agentService) waitForServerURL() error {
 	defer ticker.Stop()
 
 	for {
-		key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Config`, registry.QUERY_VALUE)
-		if err == nil {
-			defer key.Close()
-			if serverUrl, _, err := key.GetStringValue("ServerURL"); err == nil && serverUrl != "" {
-				return nil
-			}
+		entry, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
+		if err == nil && entry != nil {
+			return nil
 		}
 
 		select {
@@ -120,15 +121,32 @@ func (p *agentService) waitForServerURL() error {
 	}
 }
 
+func (p *agentService) waitForBootstrap() error {
+	for {
+		serverCA, _ := registry.GetEntry(registry.AUTH, "ServerCA", true)
+		cert, _ := registry.GetEntry(registry.AUTH, "Cert", true)
+		priv, _ := registry.GetEntry(registry.AUTH, "Priv", true)
+
+		if serverCA != nil && cert != nil && priv != nil {
+			return nil
+		} else {
+			err := agent.Bootstrap()
+			syslog.L.Errorf("Bootstrap error: %v", err)
+		}
+
+		select {
+		case <-p.ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for server URL")
+		case <-time.After(time.Second * 5):
+			continue
+		}
+	}
+}
+
 func (p *agentService) initializeDrives() error {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return fmt.Errorf("failed to get hostname: %w", err)
-	}
-
-	err = auth.RegisterAgent(hostname)
-	if err != nil {
-		return fmt.Errorf("failed to register agent: %w", err)
 	}
 
 	reqBody, err := json.Marshal(&AgentDrivesRequest{
@@ -158,11 +176,17 @@ func (p *agentService) connectWebSocket() error {
 	for {
 		config, err := websockets.GetWindowsConfig()
 		if err != nil {
-			syslog.L.Errorf("WS client windoes config error: %s", err)
+			syslog.L.Errorf("WS client windows config error: %s", err)
 			return err
 		}
 
-		client, err := websockets.NewWSClient(p.ctx, config)
+		tlsConfig, err := agent.GetTLSConfig()
+		if err != nil {
+			syslog.L.Errorf("WS client tls config error: %s", err)
+			return err
+		}
+
+		client, err := websockets.NewWSClient(p.ctx, config, tlsConfig)
 		if err != nil {
 			syslog.L.Errorf("WS client init error: %s", err)
 			select {

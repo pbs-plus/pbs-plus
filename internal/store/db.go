@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
+	"github.com/sonroyaalmerol/pbs-plus/internal/auth/token"
 	configLib "github.com/sonroyaalmerol/pbs-plus/internal/config"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -24,6 +27,7 @@ var defaultPaths = map[string]string{
 	"targets":      "/etc/proxmox-backup/pbs-plus/targets.d",
 	"exclusions":   "/etc/proxmox-backup/pbs-plus/exclusions.d",
 	"partialfiles": "/etc/proxmox-backup/pbs-plus/partialfiles.d",
+	"tokens":       "/etc/proxmox-backup/pbs-plus/tokens.d",
 }
 
 type Job struct {
@@ -51,6 +55,7 @@ type Target struct {
 	IsAgent          bool   `json:"is_agent"`
 	ConnectionStatus bool   `json:"connection_status"`
 	Auth             string `json:"auth"`
+	TokenUsed        string `json:"token_used"`
 }
 
 type Exclusion struct {
@@ -64,14 +69,24 @@ type PartialFile struct {
 	Comment string `db:"comment" json:"comment"`
 }
 
+type AgentToken struct {
+	Token     string
+	Comment   string
+	CreatedAt int64
+	Revoked   bool
+	Invalid   bool
+}
+
 // Store holds the configuration system
 type Store struct {
-	mu         sync.RWMutex
-	config     *configLib.SectionConfig
-	LastToken  *Token
-	APIToken   *APIToken
-	HTTPClient *http.Client
-	WSHub      *websockets.Server
+	mu            sync.RWMutex
+	config        *configLib.SectionConfig
+	LastToken     *Token
+	APIToken      *APIToken
+	HTTPClient    *http.Client
+	WSHub         *websockets.Server
+	TokenManager  *token.Manager
+	CertGenerator *certificates.Generator
 }
 
 func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, error) {
@@ -169,6 +184,11 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 				Description: "Auth used by target (only applicable to agents)",
 				Required:    false,
 			},
+			"token_used": {
+				Type:        configLib.TypeString,
+				Description: "Token used (only applicable to agents)",
+				Required:    false,
+			},
 		},
 	}
 
@@ -219,10 +239,38 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 		},
 	}
 
+	tokenPlugin := &configLib.SectionPlugin{
+		FolderPath: paths["tokens"],
+		TypeName:   "tokens",
+		Properties: map[string]*configLib.Schema{
+			"token": {
+				Type:        configLib.TypeString,
+				Description: "JWT Token",
+				Required:    true,
+			},
+			"comment": {
+				Type:        configLib.TypeString,
+				Description: "Comment",
+				Required:    false,
+			},
+			"created_at": {
+				Type:        configLib.TypeString,
+				Description: "Date/time created",
+				Required:    true,
+			},
+			"revoked": {
+				Type:        configLib.TypeBool,
+				Description: "Token revoked",
+				Required:    false,
+			},
+		},
+	}
+
 	config.RegisterPlugin(jobPlugin)
 	config.RegisterPlugin(targetPlugin)
 	config.RegisterPlugin(exclusionPlugin)
 	config.RegisterPlugin(partialFilePlugin)
+	config.RegisterPlugin(tokenPlugin)
 
 	store := &Store{
 		config: config,
@@ -532,8 +580,9 @@ func (store *Store) CreateTarget(target Target) error {
 				Type: "target",
 				ID:   target.Name,
 				Properties: map[string]string{
-					"path": target.Path,
-					"auth": target.Auth,
+					"path":       target.Path,
+					"auth":       target.Auth,
+					"token_used": target.TokenUsed,
 				},
 			},
 		},
@@ -570,9 +619,10 @@ func (store *Store) GetTarget(name string) (*Target, error) {
 	}
 
 	target := &Target{
-		Name: name,
-		Path: section.Properties["path"],
-		Auth: section.Properties["auth"],
+		Name:      name,
+		Path:      section.Properties["path"],
+		Auth:      section.Properties["auth"],
+		TokenUsed: section.Properties["token_used"],
 	}
 
 	if strings.HasPrefix(target.Path, "agent://") {
@@ -604,8 +654,9 @@ func (store *Store) UpdateTarget(target Target) error {
 				Type: "target",
 				ID:   target.Name,
 				Properties: map[string]string{
-					"path": target.Path,
-					"auth": target.Auth,
+					"path":       target.Path,
+					"auth":       target.Auth,
+					"token_used": target.TokenUsed,
 				},
 			},
 		},
@@ -672,9 +723,9 @@ func (store *Store) GetAllTargetsByIP(clientIP string) ([]Target, error) {
 			continue
 		}
 
-		target, err := store.GetTarget(utils.DecodePath(file.Name()))
-		if err != nil || target == nil {
-			syslog.L.Errorf("GetAllTargetsByIP: error getting target: %v", err)
+		target, err := store.GetTarget(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
+		if err != nil {
+			syslog.L.Errorf("GetAllTargets: error getting target: %v", err)
 			continue
 		}
 
@@ -1099,4 +1150,135 @@ func (store *Store) GetAllPartialFiles() ([]PartialFile, error) {
 	}
 
 	return partialFiles, nil
+}
+
+func (store *Store) CreateToken(comment string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	token, err := store.TokenManager.GenerateToken()
+	if err != nil {
+		return fmt.Errorf("CreateToken: error generating token: %w", err)
+	}
+
+	configData := &configLib.ConfigData{
+		Sections: map[string]*configLib.Section{
+			token: {
+				Type: "token",
+				ID:   token,
+				Properties: map[string]string{
+					"token":      token,
+					"comment":    comment,
+					"created_at": strconv.FormatInt(time.Now().Unix(), 10),
+				},
+			},
+		},
+		Order: []string{token},
+	}
+
+	if err := store.config.Write(configData); err != nil {
+		return fmt.Errorf("CreateToken: error writing config: %w", err)
+	}
+
+	return nil
+}
+
+func (store *Store) GetToken(token string) (*AgentToken, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	plugin := store.config.GetPlugin("token")
+	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(token)+".cfg")
+	configData, err := store.config.Parse(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("GetToken: error reading config: %w", err)
+	}
+
+	section, exists := configData.Sections[token]
+	if !exists {
+		return nil, nil
+	}
+
+	createdAt, err := strconv.ParseInt(section.Properties["created_at"], 10, 64)
+	if err != nil {
+		createdAt = 0
+	}
+
+	revoked, err := strconv.ParseBool(section.Properties["revoked"])
+	if err != nil {
+		revoked = false
+	}
+
+	invalid := false
+	if err := store.TokenManager.ValidateToken(token); err != nil {
+		invalid = true
+	}
+
+	return &AgentToken{
+		Token:     section.Properties["token"],
+		Comment:   section.Properties["comment"],
+		CreatedAt: createdAt,
+		Revoked:   revoked,
+		Invalid:   invalid,
+	}, nil
+}
+
+func (store *Store) GetAllTokens() ([]AgentToken, error) {
+	plugin := store.config.GetPlugin("token")
+	files, err := os.ReadDir(plugin.FolderPath)
+	if err != nil {
+		return nil, fmt.Errorf("GetAllTokens: error reading directory: %w", err)
+	}
+
+	var tokens []AgentToken
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		token, err := store.GetToken(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
+		if err != nil || token == nil {
+			syslog.L.Errorf("GetAllTokens: error getting token: %v", err)
+			continue
+		}
+
+		tokens = append(tokens, *token)
+	}
+
+	return tokens, nil
+}
+
+func (store *Store) RevokeToken(token AgentToken) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if token.Revoked {
+		return nil
+	}
+
+	configData := &configLib.ConfigData{
+		Sections: map[string]*configLib.Section{
+			token.Token: {
+				Type: "token",
+				ID:   token.Token,
+				Properties: map[string]string{
+					"token":      token.Token,
+					"comment":    token.Comment,
+					"created_at": strconv.FormatInt(token.CreatedAt, 10),
+					"revoked":    strconv.FormatBool(true),
+					"invalid":    strconv.FormatBool(token.Invalid),
+				},
+			},
+		},
+		Order: []string{token.Token},
+	}
+
+	if err := store.config.Write(configData); err != nil {
+		return fmt.Errorf("RevokeToken: error writing config: %w", err)
+	}
+
+	return nil
 }

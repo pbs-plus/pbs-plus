@@ -5,14 +5,13 @@ package middlewares
 import (
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 )
 
-func Auth(store *store.Store, next http.Handler) http.HandlerFunc {
+func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := checkAgentAuth(store, r); err != nil {
+		if err := checkAgentAuth(r); err != nil {
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
@@ -21,7 +20,39 @@ func Auth(store *store.Store, next http.Handler) http.HandlerFunc {
 	}
 }
 
-func checkAgentAuth(storeInstance *store.Store, r *http.Request) error {
+func ServerOnly(store *store.Store, next http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := checkProxyAuth(r); err != nil {
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	}
+}
+
+func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authenticated := false
+
+		if err := checkAgentAuth(r); err == nil {
+			authenticated = true
+		}
+
+		if err := checkProxyAuth(r); err == nil {
+			authenticated = true
+		}
+
+		if !authenticated {
+			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	}
+}
+
+func checkAgentAuth(r *http.Request) error {
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
 		return fmt.Errorf("CheckAgentAuth: client certificate required")
 	}
@@ -34,12 +65,11 @@ func checkAgentAuth(storeInstance *store.Store, r *http.Request) error {
 	return nil
 }
 
-func checkProxyAuth(storeInstance *store.Store, r *http.Request) error {
+func checkProxyAuth(r *http.Request) error {
 	agentHostname := r.Header.Get("X-PBS-Agent")
-	if strings.TrimSpace(agentHostname) != "" {
-		return checkAgentAuth(storeInstance, r)
+	if agentHostname != "" {
+		return fmt.Errorf("CheckProxyAuth: agent unauthorized")
 	}
-
 	// checkEndpoint := "/api2/json/version"
 	// req, err := http.NewRequest(
 	// 	http.MethodGet,

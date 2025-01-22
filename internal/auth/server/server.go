@@ -18,10 +18,8 @@ type Config struct {
 	CAFile   string
 
 	// Token configuration
-	TokenExpiration      time.Duration
-	TokenSecret          string
-	MaxTokens            int
-	TokenCleanupInterval time.Duration
+	TokenExpiration time.Duration
+	TokenSecret     string
 
 	// Server configuration
 	Address        string
@@ -37,14 +35,12 @@ type Config struct {
 // DefaultConfig returns a default server configuration
 func DefaultConfig() *Config {
 	return &Config{
-		Address:        ":8443",
+		Address:        ":8008",
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   10 * time.Second,
 		MaxHeaderBytes: 1 << 20, // 1MB
 
-		TokenExpiration:      24 * time.Hour,
-		MaxTokens:            1000,
-		TokenCleanupInterval: 1 * time.Hour,
+		TokenExpiration: 24 * time.Hour,
 
 		RateLimit: 100.0,
 		RateBurst: 200,

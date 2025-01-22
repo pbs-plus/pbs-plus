@@ -5,8 +5,11 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"math"
 	"math/big"
 	"net"
 	"os"
@@ -36,14 +39,45 @@ type Options struct {
 
 // DefaultOptions returns default certificate generation options
 func DefaultOptions() *Options {
+	// Get all non-loopback interfaces
+	interfaces, err := net.Interfaces()
+	hostnames := []string{"localhost"}
+	ips := []net.IP{net.ParseIP("127.0.0.1")}
+
+	if err == nil {
+		for _, i := range interfaces {
+			// Skip loopback
+			if i.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, err := i.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				switch v := addr.(type) {
+				case *net.IPNet:
+					if ip4 := v.IP.To4(); ip4 != nil {
+						ips = append(ips, ip4)
+					}
+				}
+			}
+		}
+	}
+
+	// Try to get hostname
+	if hostname, err := os.Hostname(); err == nil {
+		hostnames = append(hostnames, hostname)
+	}
+
 	return &Options{
 		Organization: "PBS Plus",
 		CommonName:   "PBS Plus CA",
 		ValidDays:    365,
 		KeySize:      2048,
-		OutputDir:    "certs",
-		Hostnames:    []string{"localhost"},
-		IPs:          []net.IP{net.ParseIP("127.0.0.1")},
+		OutputDir:    "/etc/proxmox-backup/pbs-plus/certs",
+		Hostnames:    hostnames,
+		IPs:          ips,
 	}
 }
 
@@ -68,6 +102,10 @@ func NewGenerator(options *Options) (*Generator, error) {
 	return &Generator{
 		options: options,
 	}, nil
+}
+
+func (g *Generator) GetEncodedCA() string {
+	return base64.StdEncoding.EncodeToString(EncodeCertPEM(g.ca.Raw))
 }
 
 // GenerateCA generates a new CA certificate and private key
@@ -209,4 +247,155 @@ func (g *Generator) savePrivateKey(filename string, key *rsa.PrivateKey) error {
 	}
 
 	return nil
+}
+
+func (g *Generator) ValidateExistingCerts() error {
+	serverCertPath := filepath.Join(g.options.OutputDir, "server.crt")
+	caPath := filepath.Join(g.options.OutputDir, "ca.crt")
+
+	// Check if files exist
+	if _, err := os.Stat(serverCertPath); os.IsNotExist(err) {
+		return fmt.Errorf("server certificate not found: %s", serverCertPath)
+	}
+	if _, err := os.Stat(caPath); os.IsNotExist(err) {
+		return fmt.Errorf("CA certificate not found: %s", caPath)
+	}
+
+	// Load server certificate
+	serverCertPEM, err := os.ReadFile(serverCertPath)
+	if err != nil {
+		return fmt.Errorf("failed to read server certificate: %w", err)
+	}
+	block, _ := pem.Decode(serverCertPEM)
+	if block == nil {
+		return fmt.Errorf("failed to parse server certificate PEM")
+	}
+	serverCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse server certificate: %w", err)
+	}
+
+	// Load CA certificate
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+	block, _ = pem.Decode(caPEM)
+	if block == nil {
+		return fmt.Errorf("failed to parse CA certificate PEM")
+	}
+	caCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse CA certificate: %w", err)
+	}
+
+	// Verify server certificate is signed by CA
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	opts := x509.VerifyOptions{
+		Roots: roots,
+		KeyUsages: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+		},
+	}
+
+	if _, err := serverCert.Verify(opts); err != nil {
+		return fmt.Errorf("server certificate validation failed: %w", err)
+	}
+
+	// Check certificate expiry
+	now := time.Now()
+	if now.Before(serverCert.NotBefore) {
+		return fmt.Errorf("server certificate is not yet valid")
+	}
+	if now.After(serverCert.NotAfter) {
+		return fmt.Errorf("server certificate has expired")
+	}
+	if now.Before(caCert.NotBefore) {
+		return fmt.Errorf("CA certificate is not yet valid")
+	}
+	if now.After(caCert.NotAfter) {
+		return fmt.Errorf("CA certificate has expired")
+	}
+
+	return nil
+}
+
+func GenerateCSR(commonName string, keySize int) ([]byte, *rsa.PrivateKey, error) {
+	privKey, err := rsa.GenerateKey(rand.Reader, keySize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate private key: %w", err)
+	}
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: commonName,
+		},
+		SignatureAlgorithm: x509.SHA256WithRSA,
+	}
+
+	csrBytes, err := x509.CreateCertificateRequest(rand.Reader, template, privKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create CSR: %w", err)
+	}
+
+	return csrBytes, privKey, nil
+}
+
+func (g *Generator) SignCSR(csr []byte) ([]byte, error) {
+	caKey := g.caKey
+	caCert := g.ca
+	validDays := g.options.ValidDays
+
+	// Parse CSR
+	csrObj, err := x509.ParseCertificateRequest(csr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CSR: %w", err)
+	}
+	if err := csrObj.CheckSignature(); err != nil {
+		return nil, fmt.Errorf("CSR signature check failed: %w", err)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject:      csrObj.Subject,
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().AddDate(0, 0, validDays),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+
+	certBytes, err := x509.CreateCertificate(rand.Reader, template, caCert, csrObj.PublicKey, caKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	return certBytes, nil
+}
+
+// Helper functions to encode to PEM
+func EncodeCertPEM(cert []byte) []byte {
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert,
+	})
+}
+
+func EncodeKeyPEM(key *rsa.PrivateKey) []byte {
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+}
+
+func EncodeCSRPEM(csr []byte) []byte {
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE REQUEST",
+		Bytes: csr,
+	})
 }

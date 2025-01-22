@@ -3,9 +3,7 @@ package token
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt"
@@ -14,14 +12,12 @@ import (
 
 // Claims represents the JWT claims
 type Claims struct {
-	AgentID string `json:"agent_id"`
 	jwt.StandardClaims
 }
 
 // Manager handles token generation and validation
 type Manager struct {
 	secret []byte
-	tokens sync.Map
 	config Config
 }
 
@@ -31,10 +27,6 @@ type Config struct {
 	TokenExpiration time.Duration
 	// SecretKey is the key used to sign tokens
 	SecretKey string
-	// MaxTokens is the maximum number of valid tokens allowed
-	MaxTokens int
-	// CleanupInterval is how often to clean up expired tokens
-	CleanupInterval time.Duration
 }
 
 // NewManager creates a new token manager
@@ -52,34 +44,17 @@ func NewManager(config Config) (*Manager, error) {
 		config.TokenExpiration = 24 * time.Hour
 	}
 
-	if config.MaxTokens == 0 {
-		config.MaxTokens = 1000
-	}
-
-	if config.CleanupInterval == 0 {
-		config.CleanupInterval = 1 * time.Hour
-	}
-
 	m := &Manager{
 		secret: []byte(config.SecretKey),
 		config: config,
 	}
 
-	// Start cleanup routine
-	go m.cleanupRoutine()
-
 	return m, nil
 }
 
 // GenerateToken creates a new JWT token for an agent
-func (m *Manager) GenerateToken(agentID string) (string, error) {
-	// Check if we've reached the maximum number of tokens
-	if m.countTokens() >= m.config.MaxTokens {
-		return "", authErrors.WrapError("generate_token", errors.New("maximum token limit reached"))
-	}
-
+func (m *Manager) GenerateToken() (string, error) {
 	claims := Claims{
-		AgentID: agentID,
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: time.Now().Add(m.config.TokenExpiration).Unix(),
 			IssuedAt:  time.Now().Unix(),
@@ -92,74 +67,24 @@ func (m *Manager) GenerateToken(agentID string) (string, error) {
 		return "", authErrors.WrapError("generate_token", err)
 	}
 
-	m.tokens.Store(tokenString, time.Now().Add(m.config.TokenExpiration))
 	return tokenString, nil
 }
 
 // ValidateToken checks if a token is valid
-func (m *Manager) ValidateToken(tokenString string) (string, error) {
-	// First check if token exists in our store
-	if _, ok := m.tokens.Load(tokenString); !ok {
-		return "", authErrors.ErrInvalidToken
-	}
-
+func (m *Manager) ValidateToken(tokenString string) error {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, authErrors.WrapError("validate_token", fmt.Errorf("unexpected signing method: %v", token.Header["alg"]))
 		}
 		return m.secret, nil
 	})
-
 	if err != nil {
-		return "", authErrors.WrapError("validate_token", err)
+		return authErrors.WrapError("validate_token", err)
 	}
 
-	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-		return claims.AgentID, nil
+	if _, ok := token.Claims.(*Claims); ok && token.Valid {
+		return nil
 	}
 
-	return "", authErrors.ErrInvalidToken
-}
-
-// RevokeToken removes a token from the valid tokens list
-func (m *Manager) RevokeToken(tokenString string) {
-	m.tokens.Delete(tokenString)
-}
-
-// cleanupRoutine periodically removes expired tokens
-func (m *Manager) cleanupRoutine() {
-	ticker := time.NewTicker(m.config.CleanupInterval)
-	for range ticker.C {
-		now := time.Now()
-		m.tokens.Range(func(key, value interface{}) bool {
-			if expiry, ok := value.(time.Time); ok && now.After(expiry) {
-				m.tokens.Delete(key)
-			}
-			return true
-		})
-	}
-}
-
-// countTokens returns the current number of valid tokens
-func (m *Manager) countTokens() int {
-	count := 0
-	m.tokens.Range(func(_, _ interface{}) bool {
-		count++
-		return true
-	})
-	return count
-}
-
-// GetValidTokens returns a list of all valid tokens and their expiry times
-func (m *Manager) GetValidTokens() map[string]time.Time {
-	tokens := make(map[string]time.Time)
-	m.tokens.Range(func(key, value interface{}) bool {
-		if k, ok := key.(string); ok {
-			if v, ok := value.(time.Time); ok {
-				tokens[k] = v
-			}
-		}
-		return true
-	})
-	return tokens
+	return authErrors.ErrInvalidToken
 }

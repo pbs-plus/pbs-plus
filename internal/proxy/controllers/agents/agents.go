@@ -3,8 +3,11 @@
 package agents
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
@@ -44,6 +47,100 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(map[string]string{"success": "true"})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+	}
+}
+
+type BootstrapRequest struct {
+	Hostname string   `json:"hostname"`
+	CSR      string   `json:"csr"`
+	Drives   []string `json:"drives"`
+}
+
+func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+		}
+
+		authHeader := r.Header.Get("Authorization")
+		authHeaderSplit := strings.Split(authHeader, " ")
+		if len(authHeader) != 2 || authHeaderSplit[0] == "Bearer" {
+			w.WriteHeader(http.StatusUnauthorized)
+			controllers.WriteErrorResponse(w, fmt.Errorf("unauthorized access"))
+			return
+		}
+
+		tokenStr := authHeaderSplit[1]
+		token, err := storeInstance.GetToken(tokenStr)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			controllers.WriteErrorResponse(w, fmt.Errorf("unauthorized access"))
+			return
+		}
+
+		if token.Invalid || token.Revoked {
+			w.WriteHeader(http.StatusUnauthorized)
+			controllers.WriteErrorResponse(w, fmt.Errorf("unauthorized access"))
+			return
+		}
+
+		var reqParsed BootstrapRequest
+		err = json.NewDecoder(r.Body).Decode(&reqParsed)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		decodedCSR, err := base64.StdEncoding.DecodeString(reqParsed.CSR)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		cert, err := storeInstance.CertGenerator.SignCSR(decodedCSR)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		encodedCert := base64.StdEncoding.EncodeToString(cert)
+		encodedCA := base64.StdEncoding.EncodeToString([]byte(storeInstance.CertGenerator.GetEncodedCA()))
+
+		clientIP := r.RemoteAddr
+
+		forwarded := r.Header.Get("X-FORWARDED-FOR")
+		if forwarded != "" {
+			clientIP = forwarded
+		}
+
+		clientIP = strings.Split(clientIP, ":")[0]
+
+		for _, drive := range reqParsed.Drives {
+			newTarget := store.Target{
+				Name:      fmt.Sprintf("%s - %s", reqParsed.Hostname, drive),
+				Path:      fmt.Sprintf("agent://%s/%s", clientIP, drive),
+				Auth:      encodedCert,
+				TokenUsed: tokenStr,
+			}
+
+			err := storeInstance.CreateTarget(newTarget)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w).Encode(map[string]string{"ca": encodedCA, "cert": encodedCert})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)

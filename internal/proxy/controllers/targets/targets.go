@@ -22,7 +22,7 @@ type NewAgentRequest struct {
 
 func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
@@ -49,50 +49,6 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			json.NewEncoder(w).Encode(toReturn)
 
 			return
-		}
-
-		if r.Method == http.MethodPost {
-			var reqParsed NewAgentRequest
-			err := json.NewDecoder(r.Body).Decode(&reqParsed)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
-
-			clientIP := r.RemoteAddr
-
-			forwarded := r.Header.Get("X-FORWARDED-FOR")
-			if forwarded != "" {
-				clientIP = forwarded
-			}
-
-			clientIP = strings.Split(clientIP, ":")[0]
-
-			//clientCert, err := target.RegisterAgent(storeInstance, reqParsed.Hostname, clientIP, reqParsed.CSR, reqParsed.Drives)
-			//if err != nil {
-			//	w.WriteHeader(http.StatusInternalServerError)
-			//	controllers.WriteErrorResponse(w, err)
-			//	return
-			//}
-
-			// Get CA certificate in PEM format
-			//caCertPEM := pem.EncodeToMemory(&pem.Block{
-			//	Type:  "CERTIFICATE",
-			//	Bytes: storeInstance.CertGenerator.CA.Raw,
-			//})
-
-			//w.Header().Set("Content-Type", "application/json")
-			//err = json.NewEncoder(w).Encode(map[string]string{
-			//	"cert_pem":    string(clientCert),
-			//	"ca_cert_pem": string(caCertPEM),
-			//})
-
-			//if err != nil {
-			//	w.WriteHeader(http.StatusInternalServerError)
-			//	controllers.WriteErrorResponse(w, err)
-			//	return
-			//}
 		}
 	}
 }
