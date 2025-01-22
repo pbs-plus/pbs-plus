@@ -4,7 +4,6 @@ package tokens
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
@@ -56,11 +55,6 @@ func ExtJsTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 		err := r.ParseForm()
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
-			return
-		}
-
-		if !utils.IsValid(r.FormValue("path")) {
-			controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", r.FormValue("path")))
 			return
 		}
 
