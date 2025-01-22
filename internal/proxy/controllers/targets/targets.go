@@ -88,11 +88,11 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			//	"ca_cert_pem": string(caCertPEM),
 			//})
 
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
+			//if err != nil {
+			//	w.WriteHeader(http.StatusInternalServerError)
+			//	controllers.WriteErrorResponse(w, err)
+			//	return
+			//}
 		}
 	}
 }
