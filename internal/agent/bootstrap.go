@@ -108,12 +108,12 @@ func Bootstrap() error {
 		return fmt.Errorf("Bootstrap: error json unmarshal body content (%s) -> %w", string(rawBody), err)
 	}
 
-	decodedCA, err := base64.RawStdEncoding.DecodeString(bootstrapResp.CA)
+	decodedCA, err := base64.StdEncoding.DecodeString(bootstrapResp.CA)
 	if err != nil {
 		return fmt.Errorf("Bootstrap: error decoding ca content (%s) -> %w", string(bootstrapResp.CA), err)
 	}
 
-	decodedCert, err := base64.RawStdEncoding.DecodeString(bootstrapResp.Cert)
+	decodedCert, err := base64.StdEncoding.DecodeString(bootstrapResp.Cert)
 	if err != nil {
 		return fmt.Errorf("Bootstrap: error decoding cert content (%s) -> %w", string(bootstrapResp.Cert), err)
 	}
