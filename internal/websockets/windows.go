@@ -3,8 +3,6 @@
 package websockets
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -29,41 +27,10 @@ func GetWindowsConfig() (Config, error) {
 		return Config{}, fmt.Errorf("failed to build headers: %v", err)
 	}
 
-	serverCertReg, err := registry.GetEntry(registry.AUTH, "ServerCert", true)
-	if err != nil {
-		return Config{}, fmt.Errorf("GetWindowsConfig: server cert not found -> %w", err)
-	}
-
-	rootCAs := x509.NewCertPool()
-	if ok := rootCAs.AppendCertsFromPEM([]byte(serverCertReg.Value)); !ok {
-		return Config{}, fmt.Errorf("GetWindowsConfig: failed to append CA certificate")
-	}
-
-	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
-	if err != nil {
-		return Config{}, fmt.Errorf("GetWindowsConfig: cert not found -> %w", err)
-	}
-
-	keyReg, err := registry.GetEntry(registry.AUTH, "Key", true)
-	if err != nil {
-		return Config{}, fmt.Errorf("GetWindowsConfig: key not found -> %w", err)
-	}
-
-	certPEM := []byte(certReg.Value)
-	keyPEM := []byte(keyReg.Value)
-
-	// Configure TLS client
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return Config{}, fmt.Errorf("NewWSClient: failed to load client certificate: %w", err)
-	}
-
 	return Config{
 		ServerURL: serverURL,
 		ClientID:  clientID,
 		Headers:   headers,
-		cert:      cert,
-		rootCAs:   rootCAs,
 	}, nil
 }
 

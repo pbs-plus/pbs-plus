@@ -20,6 +20,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/partial_files"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/plus"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/targets"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/tokens"
 	mw "github.com/sonroyaalmerol/pbs-plus/internal/proxy/middlewares"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -153,6 +154,7 @@ func main() {
 	mux.HandleFunc("/api2/json/d2d/backup", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, jobs.D2DJobHandler(storeInstance))))
 	mux.HandleFunc("/api2/json/d2d/target", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, targets.D2DTargetHandler(storeInstance))))
 	mux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, mw.CORS(storeInstance, targets.D2DTargetAgentHandler(storeInstance))))
+	mux.HandleFunc("/api2/json/d2d/token", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, tokens.D2DTokenHandler(storeInstance))))
 	mux.HandleFunc("/api2/json/d2d/exclusion", mw.AgentOrServer(storeInstance, mw.CORS(storeInstance, exclusions.D2DExclusionHandler(storeInstance))))
 	mux.HandleFunc("/api2/json/d2d/partial-file", mw.AgentOrServer(storeInstance, mw.CORS(storeInstance, partial_files.D2DPartialFileHandler(storeInstance))))
 	mux.HandleFunc("/api2/json/d2d/agent-log", mw.AgentOnly(storeInstance, mw.CORS(storeInstance, agents.AgentLogHandler(storeInstance))))
@@ -161,6 +163,8 @@ func main() {
 	mux.HandleFunc("/api2/extjs/d2d/backup/{job}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, jobs.ExtJsJobRunHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/d2d-target", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, targets.ExtJsTargetHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/d2d-target/{target}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance))))
+	mux.HandleFunc("/api2/extjs/config/d2d-token", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, tokens.ExtJsTokenHandler(storeInstance))))
+	mux.HandleFunc("/api2/extjs/config/d2d-token/{token}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, tokens.ExtJsTokenSingleHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/d2d-exclusion", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, exclusions.ExtJsExclusionHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, exclusions.ExtJsExclusionSingleHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/d2d-partial-file", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, partial_files.ExtJsPartialFileHandler(storeInstance))))

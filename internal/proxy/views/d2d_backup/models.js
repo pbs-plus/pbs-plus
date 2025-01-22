@@ -27,6 +27,12 @@ Ext.define("pbs-model-targets", {
   idProperty: "name",
 });
 
+Ext.define("pbs-model-tokens", {
+  extend: "Ext.data.Model",
+  fields: ["token", "comment", "created_at", "valid"],
+  idProperty: "token",
+});
+
 Ext.define("pbs-model-exclusions", {
   extend: "Ext.data.Model",
   fields: ["path", "comment"],

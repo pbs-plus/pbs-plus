@@ -14,12 +14,6 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-type NewAgentRequest struct {
-	Hostname string   `json:"hostname"`
-	CSR      string   `json:"csr"`
-	Drives   []string `json:"drives"`
-}
-
 func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

@@ -1212,7 +1212,7 @@ func (store *Store) GetToken(token string) (*AgentToken, error) {
 		revoked = false
 	}
 
-	invalid := false
+	invalid := revoked
 	if err := store.TokenManager.ValidateToken(token); err != nil {
 		invalid = true
 	}
@@ -1245,13 +1245,17 @@ func (store *Store) GetAllTokens() ([]AgentToken, error) {
 			continue
 		}
 
+		if token.Invalid {
+			continue
+		}
+
 		tokens = append(tokens, *token)
 	}
 
 	return tokens, nil
 }
 
-func (store *Store) RevokeToken(token AgentToken) error {
+func (store *Store) RevokeToken(token *AgentToken) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
@@ -1269,7 +1273,6 @@ func (store *Store) RevokeToken(token AgentToken) error {
 					"comment":    token.Comment,
 					"created_at": strconv.FormatInt(token.CreatedAt, 10),
 					"revoked":    strconv.FormatBool(true),
-					"invalid":    strconv.FormatBool(token.Invalid),
 				},
 			},
 		},

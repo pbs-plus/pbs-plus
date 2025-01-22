@@ -20,6 +20,12 @@ Ext.define("PBS.D2DManagement", {
       iconCls: "fa fa-floppy-o",
     },
     {
+      xtype: "pbsDiskTokenPanel",
+      title: "Agent Bootstrap",
+      itemId: "tokens",
+      iconCls: "fa fa-handshake-o",
+    },
+    {
       xtype: "pbsDiskTargetPanel",
       title: "Targets",
       itemId: "targets",
