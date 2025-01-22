@@ -70,11 +70,11 @@ type PartialFile struct {
 }
 
 type AgentToken struct {
-	Token     string
-	Comment   string
-	CreatedAt int64
-	Revoked   bool
-	Invalid   bool
+	Token     string `json:"token"`
+	Comment   string `json:"comment"`
+	CreatedAt int64  `json:"created_at"`
+	Revoked   bool   `json:"revoked"`
+	Invalid   bool   `json:"invalid"`
 }
 
 // Store holds the configuration system
