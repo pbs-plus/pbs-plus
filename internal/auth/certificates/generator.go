@@ -264,6 +264,9 @@ func (g *Generator) ValidateExistingCerts() error {
 	if _, err := os.Stat(caPath); os.IsNotExist(err) {
 		return fmt.Errorf("CA certificate not found: %s", caPath)
 	}
+	if _, err := os.Stat(caKeyPath); os.IsNotExist(err) {
+		return fmt.Errorf("CA certificate not found: %s", caPath)
+	}
 
 	// Load server certificate
 	serverCertPEM, err := os.ReadFile(serverCertPath)
@@ -293,6 +296,8 @@ func (g *Generator) ValidateExistingCerts() error {
 		return fmt.Errorf("failed to parse CA certificate: %w", err)
 	}
 
+	g.ca = caCert
+
 	caKeyPEM, err := os.ReadFile(caKeyPath)
 	if err != nil {
 		return fmt.Errorf("failed to read CA key: %w", err)
@@ -301,13 +306,13 @@ func (g *Generator) ValidateExistingCerts() error {
 	if block == nil {
 		return fmt.Errorf("failed to parse CA key PEM")
 	}
-	caPriv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+
+	caKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("failed to parse CA certificate: %w", err)
+		return fmt.Errorf("failed to parse CA key: %w", err)
 	}
 
-	g.ca = caCert
-	g.caKey = caPriv
+	g.caKey = caKey
 
 	// Verify server certificate is signed by CA
 	roots := x509.NewCertPool()

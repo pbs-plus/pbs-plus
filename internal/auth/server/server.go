@@ -50,7 +50,7 @@ func DefaultConfig() *Config {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
-	if c.CertFile == "" || c.KeyFile == "" || c.CAFile == "" || c.CAKey == "" {
+	if c.CertFile == "" || c.KeyFile == "" || c.CAFile == "" {
 		return authErrors.ErrCertificateRequired
 	}
 
