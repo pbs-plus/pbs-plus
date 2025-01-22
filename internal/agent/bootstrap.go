@@ -156,7 +156,5 @@ func Bootstrap() error {
 		return fmt.Errorf("Bootstrap: error storing priv to registry -> %w", err)
 	}
 
-	_ = registry.DeleteEntry(registry.CONFIG, "BootstrapToken")
-
 	return nil
 }

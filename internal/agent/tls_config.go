@@ -37,7 +37,7 @@ func GetTLSConfig() (*tls.Config, error) {
 	// Configure TLS client
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		return nil, fmt.Errorf("failed to load client certificate: %w\n%v\n%v", err, certPEM, keyPEM)
 	}
 
 	return &tls.Config{

@@ -418,7 +418,7 @@ func (g *Generator) SignCSR(csr []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create certificate: %w", err)
 	}
 
-	return certBytes, nil
+	return EncodeCertPEM(certBytes), nil
 }
 
 // Helper functions to encode to PEM
