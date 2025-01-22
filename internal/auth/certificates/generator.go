@@ -346,9 +346,23 @@ func GenerateCSR(commonName string, keySize int) ([]byte, *rsa.PrivateKey, error
 }
 
 func (g *Generator) SignCSR(csr []byte) ([]byte, error) {
-	caKey := g.caKey
-	caCert := g.ca
+	if g == nil {
+		return nil, fmt.Errorf("generator is nil")
+	}
+	if g.caKey == nil {
+		return nil, fmt.Errorf("CA private key is nil")
+	}
+	if g.ca == nil {
+		return nil, fmt.Errorf("CA certificate is nil")
+	}
+	if g.options == nil {
+		return nil, fmt.Errorf("options are nil")
+	}
+
 	validDays := g.options.ValidDays
+	if validDays <= 0 {
+		return nil, fmt.Errorf("invalid validity period: %d days", validDays)
+	}
 
 	// Parse CSR
 	csrObj, err := x509.ParseCertificateRequest(csr)
@@ -357,6 +371,11 @@ func (g *Generator) SignCSR(csr []byte) ([]byte, error) {
 	}
 	if err := csrObj.CheckSignature(); err != nil {
 		return nil, fmt.Errorf("CSR signature check failed: %w", err)
+	}
+
+	// Validate public key
+	if csrObj.PublicKey == nil {
+		return nil, fmt.Errorf("CSR public key is nil")
 	}
 
 	serialNumber, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
@@ -373,7 +392,7 @@ func (g *Generator) SignCSR(csr []byte) ([]byte, error) {
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 
-	certBytes, err := x509.CreateCertificate(rand.Reader, template, caCert, csrObj.PublicKey, caKey)
+	certBytes, err := x509.CreateCertificate(rand.Reader, template, g.ca, csrObj.PublicKey, g.caKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create certificate: %w", err)
 	}
