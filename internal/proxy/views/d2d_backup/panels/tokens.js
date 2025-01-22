@@ -15,6 +15,16 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
         },
       }).show();
     },
+    
+    onCopy: async function () {
+      let me = this;
+      let view = me.getView();
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
+			await navigator.clipboard.writeText(selection[0].data.token);
+    },
 
     reload: function () {
       this.getView().getStore().rstore.load();
@@ -77,14 +87,10 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
     },
     "-",
     {
-			xtype: 'button',
-			iconCls: 'fa fa-clipboard',
-			handler: async function(b) {
-			    var el = document.getElementById('fingerprintField');
-			    await navigator.clipboard.writeText(el.value);
-			},
-			text: gettext('Copy'),
-		},
+      text: gettext("Copy Token"),
+      xtype: "proxmoxButton",
+      handler: "onCopy",
+    },
     {
       xtype: "proxmoxStdRemoveButton",
       baseurl: pbsPlusBaseUrl + "/api2/extjs/config/d2d-token",
