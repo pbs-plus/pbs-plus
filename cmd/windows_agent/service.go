@@ -122,6 +122,9 @@ func (p *agentService) waitForServerURL() error {
 }
 
 func (p *agentService) waitForBootstrap() error {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		serverCA, _ := registry.GetEntry(registry.AUTH, "ServerCA", true)
 		cert, _ := registry.GetEntry(registry.AUTH, "Cert", true)
@@ -137,7 +140,7 @@ func (p *agentService) waitForBootstrap() error {
 		select {
 		case <-p.ctx.Done():
 			return fmt.Errorf("context cancelled while waiting for server URL")
-		case <-time.After(time.Second * 5):
+		case <-ticker.C:
 			continue
 		}
 	}

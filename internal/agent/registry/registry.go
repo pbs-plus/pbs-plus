@@ -3,7 +3,6 @@
 package registry
 
 import (
-	"encoding/base64"
 	"fmt"
 
 	"github.com/billgraziano/dpapi"
@@ -31,15 +30,10 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 	}
 
 	if isSecret {
-		decrypted, err := dpapi.Decrypt(value)
+		value, err = dpapi.Decrypt(value)
 		if err != nil {
 			return nil, fmt.Errorf("GetEntry error: %w", err)
 		}
-		byteValue, err := base64.StdEncoding.DecodeString(decrypted)
-		if err != nil {
-			return nil, fmt.Errorf("GetEntry error: %w", err)
-		}
-		value = string(byteValue)
 	}
 
 	return &RegistryEntry{
@@ -64,9 +58,7 @@ func CreateEntry(entry *RegistryEntry) error {
 
 	value := entry.Value
 	if entry.IsSecret {
-		// For secrets, we need to base64 encode and encrypt
-		encoded := base64.StdEncoding.EncodeToString([]byte(value))
-		encrypted, err := dpapi.Encrypt(encoded)
+		encrypted, err := dpapi.Encrypt(value)
 		if err != nil {
 			return fmt.Errorf("CreateEntry error encrypting: %w", err)
 		}
