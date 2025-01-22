@@ -83,7 +83,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if token.Invalid || token.Revoked {
+		if token.Revoked {
 			w.WriteHeader(http.StatusUnauthorized)
 			controllers.WriteErrorResponse(w, fmt.Errorf("token already revoked"))
 			return

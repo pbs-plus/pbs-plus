@@ -74,7 +74,6 @@ type AgentToken struct {
 	Comment   string `json:"comment"`
 	CreatedAt int64  `json:"created_at"`
 	Revoked   bool   `json:"revoked"`
-	Invalid   bool   `json:"invalid"`
 }
 
 // Store holds the configuration system
@@ -1170,6 +1169,7 @@ func (store *Store) CreateToken(comment string) error {
 					"token":      token,
 					"comment":    comment,
 					"created_at": strconv.FormatInt(time.Now().Unix(), 10),
+					"revoked":    "false",
 				},
 			},
 		},
@@ -1212,9 +1212,8 @@ func (store *Store) GetToken(token string) (*AgentToken, error) {
 		revoked = false
 	}
 
-	invalid := revoked
 	if err := store.TokenManager.ValidateToken(token); err != nil {
-		invalid = true
+		revoked = true
 	}
 
 	return &AgentToken{
@@ -1222,7 +1221,6 @@ func (store *Store) GetToken(token string) (*AgentToken, error) {
 		Comment:   section.Properties["comment"],
 		CreatedAt: createdAt,
 		Revoked:   revoked,
-		Invalid:   invalid,
 	}, nil
 }
 
@@ -1245,7 +1243,7 @@ func (store *Store) GetAllTokens() ([]AgentToken, error) {
 			continue
 		}
 
-		if token.Invalid {
+		if token.Revoked {
 			continue
 		}
 
@@ -1272,7 +1270,7 @@ func (store *Store) RevokeToken(token *AgentToken) error {
 					"token":      token.Token,
 					"comment":    token.Comment,
 					"created_at": strconv.FormatInt(token.CreatedAt, 10),
-					"revoked":    strconv.FormatBool(true),
+					"revoked":    "true",
 				},
 			},
 		},

@@ -103,12 +103,19 @@ func main() {
 		return
 	}
 
+	csrfKey, err := os.ReadFile("/etc/proxmox-backup/csrf.key")
+	if err != nil {
+		syslog.L.Errorf("CSRF key not found: %v", err)
+		return
+	}
+
 	storeInstance.CertGenerator = generator
 
 	serverConfig := server.DefaultConfig()
 	serverConfig.CertFile = filepath.Join(certOpts.OutputDir, "server.crt")
 	serverConfig.KeyFile = filepath.Join(certOpts.OutputDir, "server.key")
 	serverConfig.CAFile = filepath.Join(certOpts.OutputDir, "ca.crt")
+	serverConfig.TokenSecret = string(csrfKey)
 
 	if err := generator.ValidateExistingCerts(); err != nil {
 		if err := generator.GenerateCA(); err != nil {

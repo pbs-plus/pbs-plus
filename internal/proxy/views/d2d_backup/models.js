@@ -29,7 +29,7 @@ Ext.define("pbs-model-targets", {
 
 Ext.define("pbs-model-tokens", {
   extend: "Ext.data.Model",
-  fields: ["token", "comment", "created_at", "valid"],
+  fields: ["token", "comment", "created_at", "revoked"],
   idProperty: "token",
 });
 

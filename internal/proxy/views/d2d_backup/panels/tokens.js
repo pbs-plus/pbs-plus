@@ -98,7 +98,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
     },
     {
       header: gettext("Validity"),
-      dataIndex: "invalid",
+      dataIndex: "revoked",
       renderer: "render_valid",
       flex: 3,
     },
