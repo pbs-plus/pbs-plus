@@ -11,7 +11,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/sonroyaalmerol/pbs-plus/internal/auth"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/time/rate"
 )
@@ -105,7 +104,9 @@ func (c *WSClient) Connect() error {
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				IdleConnTimeout: 90 * time.Second,
-				TLSClientConfig: auth.GetClientTLSConfig(c.cert, c.rootCAs),
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
 			},
 		},
 	})

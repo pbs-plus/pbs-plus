@@ -1,0 +1,103 @@
+package server
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"os"
+	"time"
+
+	authErrors "github.com/sonroyaalmerol/pbs-plus/internal/auth/errors"
+)
+
+// Config represents the server configuration
+type Config struct {
+	// Server TLS configuration
+	CertFile string
+	KeyFile  string
+	CAFile   string
+
+	// Token configuration
+	TokenExpiration      time.Duration
+	TokenSecret          string
+	MaxTokens            int
+	TokenCleanupInterval time.Duration
+
+	// Server configuration
+	Address        string
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	MaxHeaderBytes int
+
+	// Rate limiting
+	RateLimit float64 // Requests per second
+	RateBurst int     // Maximum burst size
+}
+
+// DefaultConfig returns a default server configuration
+func DefaultConfig() *Config {
+	return &Config{
+		Address:        ":8443",
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1MB
+
+		TokenExpiration:      24 * time.Hour,
+		MaxTokens:            1000,
+		TokenCleanupInterval: 1 * time.Hour,
+
+		RateLimit: 100.0,
+		RateBurst: 200,
+	}
+}
+
+// Validate checks if the configuration is valid
+func (c *Config) Validate() error {
+	if c.CertFile == "" || c.KeyFile == "" || c.CAFile == "" {
+		return authErrors.ErrCertificateRequired
+	}
+
+	// Check if certificate files exist
+	files := []string{c.CertFile, c.KeyFile, c.CAFile}
+	for _, file := range files {
+		if _, err := os.Stat(file); err != nil {
+			return authErrors.WrapError("validate_config", err)
+		}
+	}
+
+	return nil
+}
+
+// LoadTLSConfig creates a TLS configuration from the server config
+func (c *Config) LoadTLSConfig() (*tls.Config, error) {
+	// Load server certificate
+	cert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
+	if err != nil {
+		return nil, authErrors.WrapError("load_tls_config", err)
+	}
+
+	// Load CA cert
+	caCert, err := os.ReadFile(c.CAFile)
+	if err != nil {
+		return nil, authErrors.WrapError("load_tls_config", err)
+	}
+
+	caCertPool := x509.NewCertPool()
+	if !caCertPool.AppendCertsFromPEM(caCert) {
+		return nil, authErrors.WrapError("load_tls_config",
+			errors.New("failed to append CA certificate"))
+	}
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientCAs:    caCertPool,
+		ClientAuth:   tls.VerifyClientCertIfGiven,
+		MinVersion:   tls.VersionTLS12,
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		},
+	}, nil
+}

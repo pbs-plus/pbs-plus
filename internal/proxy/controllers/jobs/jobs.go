@@ -20,11 +20,6 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
-		}
-
 		allJobs, err := storeInstance.GetAllJobs()
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
@@ -55,11 +50,6 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
-		}
-
 		job, err := storeInstance.GetJob(utils.DecodePath(r.PathValue("job")))
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
@@ -86,11 +76,6 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		response := JobConfigResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
-
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
 
@@ -146,11 +131,6 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		response := JobConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
-
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
 

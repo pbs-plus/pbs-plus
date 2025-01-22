@@ -18,11 +18,6 @@ func D2DPartialFileHandler(storeInstance *store.Store) http.HandlerFunc {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
-		}
-
 		if r.Method == http.MethodGet {
 			all, err := storeInstance.GetAllPartialFiles()
 			if err != nil {
@@ -56,11 +51,6 @@ func ExtJsPartialFileHandler(storeInstance *store.Store) http.HandlerFunc {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 
 		err := r.ParseForm()
@@ -91,11 +81,6 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc 
 		response := PartialFileConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-		}
-
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")

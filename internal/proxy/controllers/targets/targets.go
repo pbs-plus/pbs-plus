@@ -4,13 +4,11 @@ package targets
 
 import (
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/backend/target"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -30,11 +28,6 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			if err := storeInstance.CheckProxyAuth(r); err != nil {
-				http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-				return
-			}
-
 			all, err := storeInstance.GetAllTargets()
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
@@ -76,24 +69,24 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			clientIP = strings.Split(clientIP, ":")[0]
 
-			clientCert, err := target.RegisterAgent(storeInstance, reqParsed.Hostname, clientIP, reqParsed.CSR, reqParsed.Drives)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
+			//clientCert, err := target.RegisterAgent(storeInstance, reqParsed.Hostname, clientIP, reqParsed.CSR, reqParsed.Drives)
+			//if err != nil {
+			//	w.WriteHeader(http.StatusInternalServerError)
+			//	controllers.WriteErrorResponse(w, err)
+			//	return
+			//}
 
 			// Get CA certificate in PEM format
-			caCertPEM := pem.EncodeToMemory(&pem.Block{
-				Type:  "CERTIFICATE",
-				Bytes: storeInstance.CertGenerator.CA.Raw,
-			})
+			//caCertPEM := pem.EncodeToMemory(&pem.Block{
+			//	Type:  "CERTIFICATE",
+			//	Bytes: storeInstance.CertGenerator.CA.Raw,
+			//})
 
-			w.Header().Set("Content-Type", "application/json")
-			err = json.NewEncoder(w).Encode(map[string]string{
-				"cert_pem":    string(clientCert),
-				"ca_cert_pem": string(caCertPEM),
-			})
+			//w.Header().Set("Content-Type", "application/json")
+			//err = json.NewEncoder(w).Encode(map[string]string{
+			//	"cert_pem":    string(clientCert),
+			//	"ca_cert_pem": string(caCertPEM),
+			//})
 
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
@@ -113,11 +106,6 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-		}
-
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
 		}
 
 		var reqParsed NewAgentHostnameRequest
@@ -171,11 +159,6 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 
 		err := r.ParseForm()
@@ -211,11 +194,6 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-		}
-
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")

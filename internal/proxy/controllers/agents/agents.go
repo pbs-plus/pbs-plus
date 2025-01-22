@@ -23,11 +23,6 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
-		}
-
 		var reqParsed LogRequest
 		err := json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {

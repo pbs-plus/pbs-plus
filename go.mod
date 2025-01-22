@@ -11,11 +11,10 @@ require (
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/getlantern/systray v1.2.2
 	github.com/go-git/go-billy/v5 v5.6.2
-	github.com/hanwen/go-fuse/v2 v2.7.2
+	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/kardianos/service v1.2.2
 	github.com/minio/selfupdate v0.6.0
 	github.com/mxk/go-vss v1.2.0
-	github.com/pkg/sftp v1.13.7
 	github.com/stretchr/testify v1.10.0
 	github.com/willscott/go-nfs v0.0.2
 	golang.org/x/crypto v0.32.0
@@ -36,7 +35,6 @@ require (
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/google/uuid v1.5.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
-	github.com/kr/fs v0.1.0 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect

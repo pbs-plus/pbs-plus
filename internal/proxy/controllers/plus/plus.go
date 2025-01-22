@@ -22,11 +22,6 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
-		}
-
 		// TODO: add check for security
 
 		targetHostnameEnc := utils.DecodePath(r.PathValue("target"))
@@ -99,11 +94,6 @@ func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc
 			return
 		}
 
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
-		}
-
 		toReturn := VersionResponse{
 			Version: version,
 		}
@@ -117,11 +107,6 @@ func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
-			return
-		}
-
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
 
@@ -164,11 +149,6 @@ func DownloadChecksum(storeInstance *store.Store, version string) http.HandlerFu
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
-			return
-		}
-
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
 

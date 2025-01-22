@@ -15,11 +15,6 @@ func WSHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if err := storeInstance.CheckProxyAuth(r); err != nil {
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-			return
-		}
-
 		storeInstance.WSHub.ServeWS(w, r)
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/auth"
 	configLib "github.com/sonroyaalmerol/pbs-plus/internal/config"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -67,33 +66,18 @@ type PartialFile struct {
 
 // Store holds the configuration system
 type Store struct {
-	mu            sync.RWMutex
-	config        *configLib.SectionConfig
-	LastToken     *Token
-	APIToken      *APIToken
-	HTTPClient    *http.Client
-	WSHub         *websockets.Server
-	CertGenerator *auth.CertGenerator
+	mu         sync.RWMutex
+	config     *configLib.SectionConfig
+	LastToken  *Token
+	APIToken   *APIToken
+	HTTPClient *http.Client
+	WSHub      *websockets.Server
 }
 
 func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, error) {
-	certGen := &auth.CertGenerator{}
-
 	// Create base directories
 	if paths == nil {
 		paths = defaultPaths
-
-		var err error
-		certGen, err = auth.NewCertGenerator()
-		if err != nil {
-			return nil, fmt.Errorf("Initialize: error initializing cert gen: %w", err)
-		}
-	} else {
-		var err error
-		certGen, err = auth.NewCertGenerator(auth.WithPaths(paths["cert"], paths["key"]))
-		if err != nil {
-			return nil, fmt.Errorf("Initialize: error initializing cert gen: %w", err)
-		}
 	}
 
 	alreadyInitialized := false
@@ -246,8 +230,7 @@ func Initialize(wsHub *websockets.Server, paths map[string]string) (*Store, erro
 			Timeout:   time.Second * 30,
 			Transport: utils.BaseTransport,
 		},
-		WSHub:         wsHub,
-		CertGenerator: certGen,
+		WSHub: wsHub,
 	}
 
 	if !alreadyInitialized {
