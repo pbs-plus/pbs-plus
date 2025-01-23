@@ -21,28 +21,30 @@ import (
 func RunBackup(job *types.Job, storeInstance *store.Store) (*proxmox.Task, error) {
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create mutex: %w", err)
+		return nil, fmt.Errorf("RunBackup: failed to create mutex lock: %w", err)
 	}
-	defer backupMutex.Close()
+	defer backupMutex.Close() // Ensure mutex is always closed
 
 	if err := backupMutex.Lock(); err != nil {
-		return nil, fmt.Errorf("failed to acquire lock: %w", err)
+		return nil, fmt.Errorf("RunBackup: failed to acquire lock: %w", err)
 	}
 	defer backupMutex.Unlock()
 
 	if proxmox.Session.APIToken == nil {
-		return nil, fmt.Errorf("api token required")
+		return nil, fmt.Errorf("RunBackup: api token is required")
 	}
 
+	// Validate and setup target
 	target, err := storeInstance.Database.GetTarget(job.Target)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get target: %w", err)
+		return nil, fmt.Errorf("RunBackup: failed to get target: %w", err)
 	}
 	if target == nil {
-		return nil, fmt.Errorf("target '%s' not found", job.Target)
+		return nil, fmt.Errorf("RunBackup: Target '%s' does not exist", job.Target)
 	}
+
 	if !storeInstance.WSHub.AgentPing(target) {
-		return nil, fmt.Errorf("target '%s' unreachable", job.Target)
+		return nil, fmt.Errorf("RunBackup: Target '%s' is unreachable or does not exist", job.Target)
 	}
 
 	srcPath := target.Path
@@ -51,125 +53,126 @@ func RunBackup(job *types.Job, storeInstance *store.Store) (*proxmox.Task, error
 	var agentMount *mount.AgentMount
 	if isAgent {
 		if agentMount, err = mount.Mount(storeInstance, target); err != nil {
-			return nil, fmt.Errorf("mount error: %w", err)
+			return nil, fmt.Errorf("RunBackup: mount initialization error: %w", err)
 		}
-		defer func() {
-			agentMount.Unmount()
-			agentMount.CloseMount()
-		}()
 		srcPath = agentMount.Path
 	}
 
 	srcPath = filepath.Join(srcPath, job.Subpath)
 
+	// Prepare backup command
 	cmd, err := prepareBackupCommand(job, storeInstance, srcPath, isAgent)
 	if err != nil {
 		return nil, err
 	}
 
+	// Setup command pipes
 	stdout, stderr, err := setupCommandPipes(cmd)
 	if err != nil {
 		return nil, err
 	}
-	defer stdout.Close()
-	defer stderr.Close()
 
-	logCollector := NewLogCollector(1000)
-	go logCollector.collectLogs(stdout, stderr)
+	// Start monitoring in background first
+	monitorCtx, monitorCancel := context.WithTimeout(context.Background(), 20*time.Second)
 
 	var task *proxmox.Task
-	monitorCtx, monitorCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer monitorCancel()
+	var monitorErr error
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	errorChan := make(chan error, 1)
-
+	readyChan := make(chan struct{})
 	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(500 * time.Millisecond)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-monitorCtx.Done():
-				errorChan <- fmt.Errorf("monitoring timed out")
-				return
-			case <-ticker.C:
-				if t, err := proxmox.Session.GetJobTask(monitorCtx, nil, job, target); err != nil {
-					continue
-				} else if t != nil {
-					task = t
-					return
-				}
-			}
-		}
+		defer monitorCancel()
+		task, monitorErr = proxmox.Session.GetJobTask(monitorCtx, readyChan, job, target)
 	}()
 
-	wg.Wait()
-
 	select {
-	case err := <-errorChan:
-		return nil, err
-	default:
-		if task == nil {
-			return nil, fmt.Errorf("no task created")
-		}
+	case <-readyChan:
+	case <-monitorCtx.Done():
+		stderr.Close()
+		stdout.Close()
+
+		return nil, fmt.Errorf("RunBackup: task monitoring crashed -> %w", monitorErr)
 	}
 
 	currOwner, _ := GetCurrentOwner(job, storeInstance)
 	_ = FixDatastore(job, storeInstance)
 
+	// Start collecting logs and wait for backup completion
+	var logLines []string
+	var logGlobalMu sync.Mutex
+
+	go func() {
+		logGlobalMu.Lock()
+		defer logGlobalMu.Unlock()
+
+		logLines = collectLogs(stdout, stderr)
+	}()
+
+	// Now start the backup process
 	if err := cmd.Start(); err != nil {
+		monitorCancel() // Cancel monitoring since backup failed to start
+
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
 		}
-		return nil, fmt.Errorf("backup start failed: %w", err)
+
+		stderr.Close()
+		stdout.Close()
+
+		return nil, fmt.Errorf("RunBackup: proxmox-backup-client start error (%s): %w", cmd.String(), err)
 	}
 
-	completionCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
-	defer cancel()
-
-	go func() {
-		select {
-		case <-completionCtx.Done():
-			cmd.Process.Kill()
-		case <-logCollector.done:
-		}
-	}()
-
-	cmdErr := make(chan error, 1)
-	go func() {
-		cmdErr <- cmd.Wait()
-	}()
-
+	// Wait for either monitoring to complete or timeout
 	select {
-	case err = <-cmdErr:
-		if err != nil {
+	case <-monitorCtx.Done():
+		if task == nil {
+			stderr.Close()
+			stdout.Close()
+
 			if currOwner != "" {
 				_ = SetDatastoreOwner(job, storeInstance, currOwner)
 			}
-			return task, fmt.Errorf("backup failed: %w", err)
-		}
-	case <-completionCtx.Done():
-		cmd.Process.Kill()
-		if currOwner != "" {
-			_ = SetDatastoreOwner(job, storeInstance, currOwner)
-		}
-		return task, fmt.Errorf("backup timed out")
-	}
 
-	if err := writeLogsToFile(task.UPID, logCollector.lines); err != nil {
-		log.Printf("Failed to write logs: %v", err)
+			_ = cmd.Process.Kill()
+			return nil, fmt.Errorf("RunBackup: no task created")
+		}
 	}
 
 	if err := updateJobStatus(job, task, storeInstance); err != nil {
-		log.Printf("Failed to update job status: %v", err)
+		stderr.Close()
+		stdout.Close()
+		if currOwner != "" {
+			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+		}
+
+		return task, fmt.Errorf("RunBackup: failed to update job status: %w", err)
 	}
 
-	if currOwner != "" {
-		_ = SetDatastoreOwner(job, storeInstance, currOwner)
-	}
+	go func() {
+		defer stdout.Close()
+		defer stderr.Close()
+
+		_ = cmd.Wait()
+
+		logGlobalMu.Lock()
+		defer logGlobalMu.Unlock()
+
+		if err := writeLogsToFile(task.UPID, logLines); err != nil {
+			log.Printf("Failed to write logs: %v", err)
+		}
+
+		if err := updateJobStatus(job, task, storeInstance); err != nil {
+			log.Printf("RunBackup: failed to update job status: %v", err)
+		}
+
+		if currOwner != "" {
+			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+		}
+
+		if agentMount != nil {
+			agentMount.Unmount()
+			agentMount.CloseMount()
+		}
+	}()
 
 	return task, nil
 }

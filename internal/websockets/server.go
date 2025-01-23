@@ -16,6 +16,7 @@ import (
 const (
 	handlerBuffer  = 256
 	handlerTimeout = 1 * time.Second
+	closeTimeout   = 5 * time.Second
 )
 
 type Message struct {
@@ -95,12 +96,23 @@ func (s *Server) Run() {
 
 		s.clientsMux.Lock()
 		clientCount := len(s.clients)
-		for id, client := range s.clients {
-			syslog.L.Infof("[WSServer.Run] Closing connection for client %s", id)
-			client.close()
+		clients := make([]*Client, 0, clientCount)
+		for _, client := range s.clients {
+			clients = append(clients, client)
 		}
 		clear(s.clients)
 		s.clientsMux.Unlock()
+
+		var wg sync.WaitGroup
+		for _, client := range clients {
+			wg.Add(1)
+			go func(c *Client) {
+				defer wg.Done()
+				syslog.L.Infof("[WSServer.Run] Closing connection for client %s", c.ID)
+				c.close()
+			}(client)
+		}
+		wg.Wait()
 		syslog.L.Infof("[WSServer.Run] Closed %d client connections", clientCount)
 
 		s.handlersMux.Lock()
@@ -133,30 +145,42 @@ func (s *Server) Run() {
 			s.clientsMux.Lock()
 			if _, ok := s.clients[client.ID]; ok {
 				delete(s.clients, client.ID)
-				client.close()
 				syslog.L.Infof("[WSServer.Run] Client %s unregistered (remaining clients: %d)",
 					client.ID, len(s.clients))
 			}
 			s.clientsMux.Unlock()
 
+			// Close client connection asynchronously
+			go client.close()
+
 		case msg := <-s.handler:
 			s.handlersMux.RLock()
-
-			ctx, cancel := context.WithTimeout(s.ctx, handlerTimeout)
+			handlers := make([]chan Message, 0, len(s.handlers))
 			for ch := range s.handlers {
-				select {
-				case ch <- msg:
-				case <-ctx.Done():
-					syslog.L.Warnf("[WSServer.Run] Receive timeout for message from client %s",
-						msg.ClientID)
-				default:
-					syslog.L.Warnf("[WSServer.Run] Receive channel full, message from client %s dropped",
-						msg.ClientID)
-				}
+				handlers = append(handlers, ch)
 			}
-			cancel()
-
 			s.handlersMux.RUnlock()
+
+			var wg sync.WaitGroup
+			for _, ch := range handlers {
+				wg.Add(1)
+				go func(c chan Message) {
+					defer wg.Done()
+					ctx, cancel := context.WithTimeout(s.ctx, handlerTimeout)
+					defer cancel()
+
+					select {
+					case c <- msg:
+					case <-ctx.Done():
+						syslog.L.Warnf("[WSServer.Run] Receive timeout for message from client %s",
+							msg.ClientID)
+					default:
+						syslog.L.Warnf("[WSServer.Run] Receive channel full, message from client %s dropped",
+							msg.ClientID)
+					}
+				}(ch)
+			}
+			wg.Wait()
 			syslog.L.Infof("[WSServer.Run] Message (%s) from %s successfully received", msg.Type, msg.ClientID)
 		}
 	}
@@ -178,7 +202,11 @@ func (s *Server) handleClientMessages(client *Client) {
 		default:
 			message := Message{}
 
-			err := wsjson.Read(s.ctx, client.conn, &message)
+			// Add timeout for message reading
+			readCtx, cancel := context.WithTimeout(s.ctx, messageTimeout)
+			err := wsjson.Read(readCtx, client.conn, &message)
+			cancel()
+
 			if err != nil {
 				if strings.Contains(err.Error(), "failed to read frame header: EOF") {
 					continue
@@ -235,7 +263,6 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 		done:   make(chan struct{}),
 	}
 
-	// Register with timeout
 	registerCtx, cancel := context.WithTimeout(s.ctx, operationTimeout)
 	select {
 	case s.register <- client:
@@ -266,11 +293,15 @@ func (c *Client) close() {
 	c.once.Do(func() {
 		syslog.L.Infof("[WSServer.Client] Closing connection for client %s", c.ID)
 		close(c.done)
-		close(c.send)
-		if err := c.conn.Close(websocket.StatusNormalClosure, "client disconnecting"); err != nil {
+
+		err := c.conn.Close(websocket.StatusNormalClosure, "client disconnecting")
+		if err != nil {
 			syslog.L.Errorf("[WSServer.Client] Error closing connection for client %s: %v",
 				c.ID, err)
 		}
+
+		// Close send channel after connection is closed
+		close(c.send)
 	})
 }
 
