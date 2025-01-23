@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
@@ -62,23 +61,17 @@ func (f *CustomFileInfo) Size() int64 {
 	return byteCount
 }
 
-func skipFile(path string, snapshot *snapshots.WinVSSSnapshot) bool {
-	stat, err := os.Lstat(path)
+func (f *CustomFileInfo) Sys() any {
+	statWin, err := Stat(f.filePath)
 	if err != nil {
-		return true
+		return f.FileInfo.Sys()
 	}
 
-	if !stat.IsDir() {
-		// Skip recently modified files
-		if snapshot.TimeStarted.Sub(stat.ModTime()) <= time.Minute {
-			return true
-		}
-	}
+	return statWin
+}
 
-	// Check path against exclusion patterns
-	snapSplit := strings.Split(snapshot.SnapshotPath, "\\")
-	snapRoot := strings.Join(snapSplit[:len(snapSplit)-1], "\\")
-	pathWithoutSnap := strings.TrimPrefix(path, snapRoot)
+func skipFile(path string, snapshot *snapshots.WinVSSSnapshot) bool {
+	pathWithoutSnap := strings.TrimPrefix(path, snapshot.SnapshotPath)
 	normalizedPath := strings.ToUpper(strings.TrimPrefix(pathWithoutSnap, "\\"))
 
 	if strings.TrimSpace(normalizedPath) == "" {

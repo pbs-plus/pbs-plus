@@ -16,12 +16,12 @@ import (
 	"time"
 
 	"github.com/go-git/go-billy/v5"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	nfs "github.com/willscott/go-nfs"
 	nfshelper "github.com/willscott/go-nfs/helpers"
-	"golang.org/x/sys/windows/registry"
 )
 
 type NFSSession struct {
@@ -37,25 +37,10 @@ type NFSSession struct {
 	serverURL   string
 }
 
-func getServerURL() (string, error) {
-	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, "Software\\PBSPlus\\Config", registry.QUERY_VALUE)
-	if err != nil {
-		return "", fmt.Errorf("init SFTP config: %w", err)
-	}
-	defer baseKey.Close()
-
-	server, _, err := baseKey.GetStringValue("ServerURL")
-	if err != nil {
-		return "", fmt.Errorf("get server URL: %w", err)
-	}
-
-	return server, nil
-}
-
 func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string) *NFSSession {
 	cancellableCtx, cancel := context.WithCancel(ctx)
 
-	url, err := getServerURL()
+	url, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
 		syslog.L.Errorf("[NewNFSSession] unable to get server url: %v", err)
 
@@ -69,7 +54,7 @@ func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driv
 		DriveLetter: driveLetter,
 		ctxCancel:   cancel,
 		isRunning:   true,
-		serverURL:   url,
+		serverURL:   url.Value,
 	}
 }
 
