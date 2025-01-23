@@ -4,9 +4,7 @@ package nfs
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
-	"math"
 	"net"
 	"net/url"
 	"strings"
@@ -20,9 +18,8 @@ import (
 )
 
 type NFSHandler struct {
-	mu        sync.Mutex
-	session   *NFSSession
-	currentFS billy.Filesystem
+	mu      sync.Mutex
+	session *NFSSession
 }
 
 // Verify Handler interface implementation
@@ -30,30 +27,20 @@ var _ nfs.Handler = (*NFSHandler)(nil)
 
 // HandleLimit returns the maximum number of handles that can be stored
 func (h *NFSHandler) HandleLimit() int {
-	return math.MaxInt32
+	return -1
 }
 
-// ToHandle converts a filesystem path to a stable, unique handle
+// ToHandle converts a filesystem path to an opaque handle
 func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
-	// Create hash of filesystem pointer and path for uniqueness
-	hash := sha256.New()
-	hash.Write([]byte(fmt.Sprintf("%p", fs)))
-	hash.Write([]byte(strings.Join(path, "/")))
-	return hash.Sum(nil)
+	return []byte{}
 }
 
-// FromHandle converts handle back to filesystem and path
+// FromHandle converts an opaque handle back to a filesystem and path
 func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
-	// Since we don't cache, we can only validate handle format
-	if len(fh) != sha256.Size {
-		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
-	}
-
-	// Always return current filesystem since we're stateless
-	return h.currentFS, []string{}, nil
+	return nil, []string{}, nil
 }
 
-// InvalidateHandle is no-op since we don't cache
+// InvalidateHandle removes a file handle from the cache
 func (h *NFSHandler) InvalidateHandle(fs billy.Filesystem, fh []byte) error {
 	return nil
 }
@@ -83,9 +70,6 @@ func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequ
 
 	fs := vssfs.NewVSSFS(h.session.Snapshot, h.session.ExcludedPaths, h.session.PartialFiles)
 	syslog.L.Infof("[NFS.Mount] Mount successful, serving from: %s", h.session.Snapshot.SnapshotPath)
-
-	h.currentFS = fs
-
 	return nfs.MountStatusOk, fs, []nfs.AuthFlavor{nfs.AuthFlavorNull}
 }
 
