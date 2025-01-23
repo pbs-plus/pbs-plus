@@ -8,6 +8,7 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alexflint/go-filemutex"
@@ -76,28 +77,44 @@ func RunBackup(job *types.Job, storeInstance *store.Store) (*proxmox.Task, error
 	logCollector := NewLogCollector(1000)
 	go logCollector.collectLogs(stdout, stderr)
 
+	var task *proxmox.Task
 	monitorCtx, monitorCancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer monitorCancel()
 
-	taskChan := make(chan *proxmox.Task, 1)
-	errChan := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	errorChan := make(chan error, 1)
 
 	go func() {
-		task, err := proxmox.Session.GetJobTask(monitorCtx, nil, job, target)
-		if err != nil {
-			errChan <- err
-			return
+		defer wg.Done()
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-monitorCtx.Done():
+				errorChan <- fmt.Errorf("monitoring timed out")
+				return
+			case <-ticker.C:
+				if t, err := proxmox.Session.GetJobTask(monitorCtx, nil, job, target); err != nil {
+					continue
+				} else if t != nil {
+					task = t
+					return
+				}
+			}
 		}
-		taskChan <- task
 	}()
 
-	var task *proxmox.Task
+	wg.Wait()
+
 	select {
-	case task = <-taskChan:
-	case err = <-errChan:
-		return nil, fmt.Errorf("monitoring failed: %w", err)
-	case <-monitorCtx.Done():
-		return nil, fmt.Errorf("monitoring timed out")
+	case err := <-errorChan:
+		return nil, err
+	default:
+		if task == nil {
+			return nil, fmt.Errorf("no task created")
+		}
 	}
 
 	currOwner, _ := GetCurrentOwner(job, storeInstance)
