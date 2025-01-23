@@ -40,6 +40,8 @@ func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {
 		drive := msg.Content
 		syslog.L.Infof("Received backup request for drive %s.", drive)
 
+		cleanupExistingSession(drive)
+
 		// Get backup status singleton and mark backup as started
 		backupStatus := agent.GetBackupStatus()
 		backupStatus.StartBackup(drive)
@@ -57,8 +59,6 @@ func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {
 			syslog.L.Error("NFS session is nil.")
 			return
 		}
-
-		cleanupExistingSession(drive)
 
 		go func() {
 			defer func() {

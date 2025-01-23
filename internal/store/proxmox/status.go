@@ -31,7 +31,7 @@ func (proxmoxSess *ProxmoxSession) GetPBSStatus() (*PBSStatus, error) {
 
 	err := proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodGet,
-		"/api2/json/nodes/localhost/status",
+		"https://localhost:8007/api2/json/nodes/localhost/status",
 		nil,
 		&resp,
 	)

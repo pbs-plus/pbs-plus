@@ -1,10 +1,8 @@
 //go:build windows
-// +build windows
 
-package nfs
+package vssfs
 
 import (
-	"io"
 	"os"
 	"strings"
 
@@ -12,63 +10,6 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"golang.org/x/sys/windows"
 )
-
-type CustomFileInfo struct {
-	os.FileInfo
-	filePath   string
-	snapshotId string
-}
-
-func (f *CustomFileInfo) Size() int64 {
-	metadataSize := f.FileInfo.Size()
-	scanFile := false
-
-	// Check if file matches partial file patterns
-	for _, regex := range cache.PartialFilePathRegexes {
-		if regex.MatchString(f.filePath) {
-			scanFile = true
-			break
-		}
-	}
-
-	if !scanFile {
-		return metadataSize
-	}
-
-	// Check size cache
-	if snapSizes, ok := cache.SizeCache.Load(f.snapshotId); ok {
-		if cachedSize, ok := snapSizes.(map[string]int64)[f.filePath]; ok {
-			return cachedSize
-		}
-	}
-
-	// Compute actual file size
-	file, err := os.Open(f.filePath)
-	if err != nil {
-		return 0
-	}
-	defer file.Close()
-
-	byteCount, err := io.Copy(io.Discard, file)
-	if err != nil {
-		return 0
-	}
-
-	// Cache the computed size
-	snapSizes, _ := cache.SizeCache.LoadOrStore(f.snapshotId, map[string]int64{})
-	snapSizes.(map[string]int64)[f.filePath] = byteCount
-
-	return byteCount
-}
-
-func (f *CustomFileInfo) Sys() any {
-	statWin, err := Stat(f.filePath)
-	if err != nil {
-		return f.FileInfo.Sys()
-	}
-
-	return statWin
-}
 
 func skipFile(path string, snapshot *snapshots.WinVSSSnapshot) bool {
 	pathWithoutSnap := strings.TrimPrefix(path, snapshot.SnapshotPath)
