@@ -10,9 +10,11 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func prepareBackupCommand(job *store.Job, storeInstance *store.Store, srcPath string, isAgent bool) (*exec.Cmd, error) {
+func prepareBackupCommand(job *types.Job, storeInstance *store.Store, srcPath string, isAgent bool) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
@@ -22,7 +24,7 @@ func prepareBackupCommand(job *store.Job, storeInstance *store.Store, srcPath st
 		return nil, fmt.Errorf("RunBackup: failed to get backup ID: %w", err)
 	}
 
-	jobStore := fmt.Sprintf("%s@localhost:%s", storeInstance.APIToken.TokenId, job.Store)
+	jobStore := fmt.Sprintf("%s@localhost:%s", proxmox.Session.APIToken.TokenId, job.Store)
 	if jobStore == "@localhost:" {
 		return nil, fmt.Errorf("RunBackup: invalid job store configuration")
 	}
@@ -56,7 +58,7 @@ func getBackupId(isAgent bool, targetName string) (string, error) {
 	return strings.TrimSpace(strings.Split(targetName, " - ")[0]), nil
 }
 
-func buildCommandArgs(storeInstance *store.Store, job *store.Job, srcPath string, jobStore string, backupId string, isAgent bool) []string {
+func buildCommandArgs(storeInstance *store.Store, job *types.Job, srcPath string, jobStore string, backupId string, isAgent bool) []string {
 	if srcPath == "" || jobStore == "" || backupId == "" {
 		return nil
 	}
@@ -92,16 +94,16 @@ func buildCommandArgs(storeInstance *store.Store, job *store.Job, srcPath string
 }
 
 func buildCommandEnv(storeInstance *store.Store) []string {
-	if storeInstance == nil || storeInstance.APIToken == nil {
+	if storeInstance == nil || proxmox.Session.APIToken == nil {
 		return os.Environ()
 	}
 
 	env := append(os.Environ(),
-		fmt.Sprintf("PBS_PASSWORD=%s", storeInstance.APIToken.Value))
+		fmt.Sprintf("PBS_PASSWORD=%s", proxmox.Session.APIToken.Value))
 	// env = append(env, "PBS_LOG=debug")
 
 	// Add fingerprint if available
-	if pbsStatus, err := storeInstance.GetPBSStatus(); err == nil {
+	if pbsStatus, err := proxmox.Session.GetPBSStatus(); err == nil {
 		if fingerprint, ok := pbsStatus.Info["fingerprint"]; ok {
 			env = append(env, fmt.Sprintf("PBS_FINGERPRINT=%s", fingerprint))
 		}
