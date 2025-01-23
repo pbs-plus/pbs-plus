@@ -29,8 +29,8 @@ type NFSSession struct {
 	isRunning     bool
 	mu            sync.Mutex // Protects isRunning
 	serverURL     string
-	ExcludedPaths []regexp.Regexp
-	PartialFiles  []regexp.Regexp
+	ExcludedPaths []*regexp.Regexp
+	PartialFiles  []*regexp.Regexp
 }
 
 func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string) *NFSSession {

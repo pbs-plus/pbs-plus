@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func skipFile(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []regexp.Regexp) bool {
+func skipFile(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*regexp.Regexp) bool {
 	pathWithoutSnap := strings.TrimPrefix(path, snapshot.SnapshotPath)
 	normalizedPath := strings.ToUpper(strings.TrimPrefix(pathWithoutSnap, "\\"))
 

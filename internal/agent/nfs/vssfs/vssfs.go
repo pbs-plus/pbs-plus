@@ -19,11 +19,11 @@ import (
 type VSSFS struct {
 	billy.Filesystem
 	snapshot      *snapshots.WinVSSSnapshot
-	ExcludedPaths []regexp.Regexp
-	PartialFiles  []regexp.Regexp
+	ExcludedPaths []*regexp.Regexp
+	PartialFiles  []*regexp.Regexp
 }
 
-func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, excludedPaths []regexp.Regexp, partialFiles []regexp.Regexp) billy.Filesystem {
+func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, excludedPaths []*regexp.Regexp, partialFiles []*regexp.Regexp) billy.Filesystem {
 	return &VSSFS{
 		Filesystem:    osfs.New(snapshot.SnapshotPath),
 		snapshot:      snapshot,
@@ -135,5 +135,5 @@ func (fs *VSSFS) Readlink(link string) (string, error) {
 
 // Preserve Chroot functionality while maintaining read-only nature
 func (fs *VSSFS) Chroot(path string) (billy.Filesystem, error) {
-	return NewVSSFS(fs.snapshot), nil
+	return NewVSSFS(fs.snapshot, fs.ExcludedPaths, fs.PartialFiles), nil
 }
