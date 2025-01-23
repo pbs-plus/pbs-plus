@@ -98,7 +98,7 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 		return nil, err
 	}
 
-	return info, nil
+	return &VSSFileInfo{FileInfo: info, path: fullPath}, nil
 }
 
 func (fs *VSSFS) Lstat(filename string) (os.FileInfo, error) {
