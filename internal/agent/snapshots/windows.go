@@ -28,6 +28,7 @@ type WinVSSSnapshot struct {
 	SnapshotPath string    `json:"path"`
 	Id           string    `json:"vss_id"`
 	TimeStarted  time.Time `json:"time_started"`
+	DriveLetter  string
 	closed       atomic.Bool
 }
 
@@ -71,6 +72,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		SnapshotPath: snapshotPath,
 		Id:           sc.ID,
 		TimeStarted:  timeStarted,
+		DriveLetter:  driveLetter,
 	}
 
 	return snapshot, nil

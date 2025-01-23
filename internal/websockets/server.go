@@ -31,7 +31,8 @@ type Client struct {
 	conn   *websocket.Conn
 	server *Server
 	send   chan Message
-	done   chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
 	once   sync.Once
 }
 
@@ -45,7 +46,6 @@ type Server struct {
 	register   chan *Client
 	unregister chan *Client
 	handler    chan Message
-	done       chan struct{}
 	ctx        context.Context
 	cancel     context.CancelFunc
 }
@@ -58,7 +58,6 @@ func NewServer(ctx context.Context) *Server {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		handler:    make(chan Message, handlerBuffer),
-		done:       make(chan struct{}),
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -124,7 +123,7 @@ func (s *Server) Run() {
 		s.handlersMux.Unlock()
 		syslog.L.Infof("[WSServer.Run] Closed %d handler channels", subCount)
 
-		close(s.done)
+		s.cancel()
 		syslog.L.Infof("[WSServer.Run] Server shutdown complete")
 	}()
 
@@ -195,14 +194,14 @@ func (s *Server) handleClientMessages(client *Client) {
 			syslog.L.Infof("[WSServer.MessageHandler] Stopping message handling for client %s (server shutdown)",
 				client.ID)
 			return
-		case <-client.done:
+		case <-client.ctx.Done():
 			syslog.L.Infof("[WSServer.MessageHandler] Stopping message handling for client %s (client disconnected)",
 				client.ID)
 			return
 		default:
 			message := Message{}
 
-			err := wsjson.Read(s.ctx, client.conn, &message)
+			err := wsjson.Read(client.ctx, client.conn, &message)
 			if err != nil {
 				if strings.Contains(err.Error(), "failed to read frame header: EOF") {
 					continue
@@ -218,7 +217,7 @@ func (s *Server) handleClientMessages(client *Client) {
 			message.ClientID = client.ID
 			message.Time = time.Now()
 
-			handlerCtx, cancel := context.WithTimeout(s.ctx, handlerTimeout)
+			handlerCtx, cancel := context.WithTimeout(client.ctx, handlerTimeout)
 			select {
 			case s.handler <- message:
 				syslog.L.Infof("[WSServer.MessageHandler] Message from client %s queued for receive handler",
@@ -251,15 +250,17 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	syslog.L.Infof("[WSServer.ServeWS] New connection accepted for client %s", clientID)
 
+	ctx, cCancel := context.WithCancel(s.ctx)
 	client := &Client{
 		ID:     clientID,
 		conn:   conn,
 		server: s,
 		send:   make(chan Message, handlerBuffer),
-		done:   make(chan struct{}),
+		ctx:    ctx,
+		cancel: cCancel,
 	}
 
-	registerCtx, cancel := context.WithTimeout(s.ctx, operationTimeout)
+	registerCtx, cancel := context.WithTimeout(client.ctx, operationTimeout)
 	select {
 	case s.register <- client:
 		syslog.L.Infof("[WSServer.ServeWS] Client %s registered successfully", clientID)
@@ -273,7 +274,7 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	go s.handleClientMessages(client)
 
-	<-client.done
+	<-client.ctx.Done()
 
 	unregisterCtx, cancel := context.WithTimeout(s.ctx, operationTimeout)
 	select {
@@ -288,7 +289,7 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 func (c *Client) close() {
 	c.once.Do(func() {
 		syslog.L.Infof("[WSServer.Client] Closing connection for client %s", c.ID)
-		close(c.done)
+		c.cancel()
 
 		err := c.conn.Close(websocket.StatusNormalClosure, "client disconnecting")
 		if err != nil {
@@ -312,7 +313,7 @@ func (s *Server) SendToClient(clientID string, msg Message) error {
 
 	syslog.L.Infof("[WSServer.SendToClient] Sending message to client %s", clientID)
 
-	ctx, cancel := context.WithTimeout(s.ctx, messageTimeout)
+	ctx, cancel := context.WithTimeout(client.ctx, messageTimeout)
 	defer cancel()
 
 	if err := wsjson.Write(ctx, client.conn, &msg); err != nil {

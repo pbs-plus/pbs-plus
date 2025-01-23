@@ -15,6 +15,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	nfs "github.com/willscott/go-nfs"
+	"golang.org/x/sys/windows"
 )
 
 type NFSHandler struct {
@@ -78,7 +79,21 @@ func (h *NFSHandler) Change(fs billy.Filesystem) billy.Change {
 }
 
 func (h *NFSHandler) FSStat(ctx context.Context, fs billy.Filesystem, stat *nfs.FSStat) error {
-	stat.TotalSize = 1 << 40
+	driveLetter := h.session.Snapshot.DriveLetter
+	drivePath := driveLetter + `:\`
+
+	var totalBytes uint64
+	err := windows.GetDiskFreeSpaceEx(
+		windows.StringToUTF16Ptr(drivePath),
+		nil,
+		&totalBytes,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	stat.TotalSize = totalBytes
 	stat.FreeSize = 0
 	stat.AvailableSize = 0
 	stat.TotalFiles = 1 << 20
