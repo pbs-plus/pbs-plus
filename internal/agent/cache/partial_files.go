@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
@@ -40,6 +41,8 @@ func CompilePartialFileList() []*regexp.Regexp {
 		trimmedLine := strings.TrimSpace(partialPattern.Path)
 		partialPatterns = append(partialPatterns, trimmedLine)
 	}
+
+	syslog.L.Infof("Retrieved partial files: %v", partialPatterns)
 
 	var compiledRegexes []*regexp.Regexp
 

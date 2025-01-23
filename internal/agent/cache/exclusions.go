@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
@@ -40,6 +41,8 @@ func CompileExcludedPaths() []*regexp.Regexp {
 		trimmedLine := strings.TrimSpace(userExclusions.Path)
 		excludedPatterns = append(excludedPatterns, trimmedLine)
 	}
+
+	syslog.L.Infof("Retrieved exclusions: %v", excludedPatterns)
 
 	var compiledRegexes []*regexp.Regexp
 
