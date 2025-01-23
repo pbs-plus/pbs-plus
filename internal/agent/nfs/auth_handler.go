@@ -4,7 +4,9 @@ package nfs
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"strings"
@@ -18,8 +20,9 @@ import (
 )
 
 type NFSHandler struct {
-	mu      sync.Mutex
-	session *NFSSession
+	mu        sync.Mutex
+	session   *NFSSession
+	currentFS billy.Filesystem
 }
 
 // Verify Handler interface implementation
@@ -27,20 +30,30 @@ var _ nfs.Handler = (*NFSHandler)(nil)
 
 // HandleLimit returns the maximum number of handles that can be stored
 func (h *NFSHandler) HandleLimit() int {
-	return 1000 // Configurable limit
+	return math.MaxInt32
 }
 
-// ToHandle converts a filesystem path to an opaque handle
+// ToHandle converts a filesystem path to a stable, unique handle
 func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
-	return []byte{}
+	// Create hash of filesystem pointer and path for uniqueness
+	hash := sha256.New()
+	hash.Write([]byte(fmt.Sprintf("%p", fs)))
+	hash.Write([]byte(strings.Join(path, "/")))
+	return hash.Sum(nil)
 }
 
-// FromHandle converts an opaque handle back to a filesystem and path
+// FromHandle converts handle back to filesystem and path
 func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
-	return nil, []string{}, nil
+	// Since we don't cache, we can only validate handle format
+	if len(fh) != sha256.Size {
+		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
+	}
+
+	// Always return current filesystem since we're stateless
+	return h.currentFS, []string{}, nil
 }
 
-// InvalidateHandle removes a file handle from the cache
+// InvalidateHandle is no-op since we don't cache
 func (h *NFSHandler) InvalidateHandle(fs billy.Filesystem, fh []byte) error {
 	return nil
 }
@@ -70,6 +83,9 @@ func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequ
 
 	fs := vssfs.NewVSSFS(h.session.Snapshot, h.session.ExcludedPaths, h.session.PartialFiles)
 	syslog.L.Infof("[NFS.Mount] Mount successful, serving from: %s", h.session.Snapshot.SnapshotPath)
+
+	h.currentFS = fs
+
 	return nfs.MountStatusOk, fs, []nfs.AuthFlavor{nfs.AuthFlavorNull}
 }
 

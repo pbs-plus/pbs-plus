@@ -76,7 +76,7 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 	// Mount using NFS
 	mountArgs := []string{
 		"-t", "nfs",
-		"-o", fmt.Sprintf("port=%s,mountport=%s,vers=3,ro,tcp,noacl", agentPort, agentPort),
+		"-o", fmt.Sprintf("port=%s,mountport=%s,vers=3,ro,tcp,noacl,lookupcache=none,noac", agentPort, agentPort),
 		fmt.Sprintf("%s:/mount", agentHost),
 		agentMount.Path,
 	}
@@ -106,7 +106,6 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 
 	// If all retries failed, clean up and return error
 	agentMount.Unmount()
-	agentMount.CloseMount()
 	return nil, fmt.Errorf("Mount: error mounting NFS share after %d attempts -> %w", maxRetries, lastErr)
 }
 
