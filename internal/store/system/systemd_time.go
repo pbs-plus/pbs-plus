@@ -79,10 +79,14 @@ func DeleteSchedule(id string) {
 	timerFilePath := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(id, " ", "-"))
 	timerFullPath := filepath.Join(constants.TimerBasePath, timerFilePath)
 
+	cmd := exec.Command("/usr/bin/systemctl", "stop", timerFilePath)
+	cmd.Env = os.Environ()
+	_ = cmd.Run()
+
 	_ = os.Remove(svcFullPath)
 	_ = os.Remove(timerFullPath)
 
-	cmd := exec.Command("/usr/bin/systemctl", "daemon-reload")
+	cmd = exec.Command("/usr/bin/systemctl", "daemon-reload")
 	cmd.Env = os.Environ()
 	_ = cmd.Run()
 }
