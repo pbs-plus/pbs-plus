@@ -42,7 +42,7 @@ func RunBackup(job *types.Job, storeInstance *store.Store) (*proxmox.Task, error
 	if target == nil {
 		return nil, fmt.Errorf("RunBackup: Target '%s' does not exist", job.Target)
 	}
-	if !target.ConnectionStatus {
+	if !storeInstance.WSHub.AgentPing(target) {
 		return nil, fmt.Errorf("RunBackup: Target '%s' is unreachable or does not exist", job.Target)
 	}
 
