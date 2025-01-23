@@ -11,18 +11,35 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-func collectLogs(stdout, stderr io.ReadCloser) []string {
-	logLines := []string{}
-	reader := bufio.NewScanner(io.MultiReader(stdout, stderr))
+type LogCollector struct {
+	logChan chan string
+	done    chan struct{}
+	lines   []string
+}
 
-	for reader.Scan() {
-		line := reader.Text()
-
-		log.Println(line)
-		logLines = append(logLines, line)
+func NewLogCollector(initialCapacity int) *LogCollector {
+	return &LogCollector{
+		logChan: make(chan string, 1000),
+		done:    make(chan struct{}),
+		lines:   make([]string, 0, initialCapacity),
 	}
+}
 
-	return logLines
+func (lc *LogCollector) collectLogs(stdout, stderr io.ReadCloser) {
+	go func() {
+		defer close(lc.done)
+		reader := bufio.NewScanner(io.MultiReader(stdout, stderr))
+		for reader.Scan() {
+			line := reader.Text()
+			log.Println(line)
+			lc.logChan <- line
+		}
+		close(lc.logChan)
+	}()
+
+	for line := range lc.logChan {
+		lc.lines = append(lc.lines, line)
+	}
 }
 
 func writeLogsToFile(upid string, logLines []string) error {

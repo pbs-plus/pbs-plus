@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
@@ -157,6 +158,10 @@ func main() {
 	defer func() {
 		_ = serverConfig.Unmount()
 	}()
+
+	proxy := exec.Command("/usr/bin/systemctl", "restart", "proxmox-backup-proxy")
+	proxy.Env = os.Environ()
+	_ = proxy.Run()
 
 	// Initialize token manager
 	tokenManager, err := token.NewManager(token.Config{

@@ -11,7 +11,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -27,13 +26,12 @@ type Message struct {
 }
 
 type Client struct {
-	ID          string
-	conn        *websocket.Conn
-	server      *Server
-	rateLimiter *rate.Limiter
-	send        chan Message
-	done        chan struct{}
-	once        sync.Once
+	ID     string
+	conn   *websocket.Conn
+	server *Server
+	send   chan Message
+	done   chan struct{}
+	once   sync.Once
 }
 
 type Server struct {
@@ -196,13 +194,6 @@ func (s *Server) handleClientMessages(client *Client) {
 			message.ClientID = client.ID
 			message.Time = time.Now()
 
-			// Apply rate limiting
-			if err := client.rateLimiter.Wait(s.ctx); err != nil {
-				syslog.L.Warnf("[WSServer.MessageHandler] Rate limit exceeded for client %s",
-					client.ID)
-				continue
-			}
-
 			handlerCtx, cancel := context.WithTimeout(s.ctx, handlerTimeout)
 			select {
 			case s.handler <- message:
@@ -237,12 +228,11 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 	syslog.L.Infof("[WSServer.ServeWS] New connection accepted for client %s", clientID)
 
 	client := &Client{
-		ID:          clientID,
-		conn:        conn,
-		server:      s,
-		rateLimiter: rate.NewLimiter(rate.Every(rateLimit), rateBurst),
-		send:        make(chan Message, handlerBuffer),
-		done:        make(chan struct{}),
+		ID:     clientID,
+		conn:   conn,
+		server: s,
+		send:   make(chan Message, handlerBuffer),
+		done:   make(chan struct{}),
 	}
 
 	// Register with timeout

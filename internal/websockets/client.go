@@ -11,7 +11,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -40,9 +39,6 @@ type (
 
 		TLSConfig *tls.Config
 
-		readLimiter  *rate.Limiter
-		writeLimiter *rate.Limiter
-
 		ctx    context.Context
 		cancel context.CancelFunc
 		wg     sync.WaitGroup
@@ -61,16 +57,14 @@ func NewWSClient(ctx context.Context, config Config, tlsConfig *tls.Config) (*WS
 	ctx, cancel := context.WithCancel(ctx)
 
 	client := &WSClient{
-		ClientID:     config.ClientID,
-		serverURL:    config.ServerURL,
-		headers:      config.Headers,
-		ctx:          ctx,
-		cancel:       cancel,
-		readLimiter:  rate.NewLimiter(rate.Every(rateLimit), rateBurst),
-		writeLimiter: rate.NewLimiter(rate.Every(rateLimit), rateBurst),
-		send:         make(chan Message, maxSendBuffer),
-		handlers:     make(map[string]MessageHandler),
-		TLSConfig:    tlsConfig,
+		ClientID:  config.ClientID,
+		serverURL: config.ServerURL,
+		headers:   config.Headers,
+		ctx:       ctx,
+		cancel:    cancel,
+		send:      make(chan Message, maxSendBuffer),
+		handlers:  make(map[string]MessageHandler),
+		TLSConfig: tlsConfig,
 	}
 
 	syslog.L.Infof("[WSClient.New] Client %s: Initialized new WebSocket client for server %s",
@@ -295,13 +289,6 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 				c.ClientID)
 			return
 		default:
-			// Process message with rate limiting
-			if err := c.readLimiter.Wait(ctx); err != nil {
-				syslog.L.Warnf("[WSClient.ReceiveLoop] Client %s: Rate limit exceeded, skipping message",
-					c.ClientID)
-				continue
-			}
-
 			message := Message{}
 
 			err := wsjson.Read(ctx, c.conn, &message)
@@ -364,10 +351,6 @@ func (c *WSClient) sendLoop(ctx context.Context) {
 }
 
 func (c *WSClient) writeMessage(ctx context.Context, msg Message) error {
-	if err := c.writeLimiter.Wait(ctx); err != nil {
-		return fmt.Errorf("rate limit exceeded: %w", err)
-	}
-
 	return wsjson.Write(ctx, c.conn, &msg)
 }
 
