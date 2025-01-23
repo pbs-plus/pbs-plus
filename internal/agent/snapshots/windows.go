@@ -73,9 +73,6 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		TimeStarted:  timeStarted,
 	}
 
-	cache.ExcludedPathRegexes = cache.CompileExcludedPaths()
-	cache.PartialFilePathRegexes = cache.CompilePartialFileList()
-
 	return snapshot, nil
 }
 

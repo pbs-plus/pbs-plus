@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"regexp"
 	"sync"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
@@ -18,16 +19,18 @@ import (
 )
 
 type NFSSession struct {
-	Context     context.Context
-	ctxCancel   context.CancelFunc
-	Snapshot    *snapshots.WinVSSSnapshot
-	DriveLetter string
-	listener    net.Listener
-	connections sync.WaitGroup
-	sem         chan struct{}
-	isRunning   bool
-	mu          sync.Mutex // Protects isRunning
-	serverURL   string
+	Context       context.Context
+	ctxCancel     context.CancelFunc
+	Snapshot      *snapshots.WinVSSSnapshot
+	DriveLetter   string
+	listener      net.Listener
+	connections   sync.WaitGroup
+	sem           chan struct{}
+	isRunning     bool
+	mu            sync.Mutex // Protects isRunning
+	serverURL     string
+	ExcludedPaths []regexp.Regexp
+	PartialFiles  []regexp.Regexp
 }
 
 func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string) *NFSSession {

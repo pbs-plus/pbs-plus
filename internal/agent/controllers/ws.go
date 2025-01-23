@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -59,6 +60,9 @@ func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {
 			syslog.L.Error("NFS session is nil.")
 			return
 		}
+
+		nfsSession.ExcludedPaths = cache.CompileExcludedPaths()
+		nfsSession.PartialFiles = cache.CompilePartialFileList()
 
 		go func() {
 			defer func() {

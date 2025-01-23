@@ -56,7 +56,7 @@ func (proxmoxSess *ProxmoxSession) CreateAPIToken() (*APIToken, error) {
 
 	_ = proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodDelete,
-		fmt.Sprintf("https://localhost:8007/api2/json/access/users/%s/token/pbs-plus-auth", proxmoxSess.LastToken.Username),
+		fmt.Sprintf("/api2/json/access/users/%s/token/pbs-plus-auth", proxmoxSess.LastToken.Username),
 		nil,
 		nil,
 	)
@@ -71,7 +71,7 @@ func (proxmoxSess *ProxmoxSession) CreateAPIToken() (*APIToken, error) {
 	var tokenResp APITokenResponse
 	err = proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodPost,
-		fmt.Sprintf("https://localhost:8007/api2/json/access/users/%s/token/pbs-plus-auth", proxmoxSess.LastToken.Username),
+		fmt.Sprintf("/api2/json/access/users/%s/token/pbs-plus-auth", proxmoxSess.LastToken.Username),
 		bytes.NewBuffer(reqBody),
 		&tokenResp,
 	)
@@ -92,7 +92,7 @@ func (proxmoxSess *ProxmoxSession) CreateAPIToken() (*APIToken, error) {
 
 	err = proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodPut,
-		"https://localhost:8007/api2/json/access/acl",
+		"/api2/json/access/acl",
 		bytes.NewBuffer(aclBody),
 		nil,
 	)

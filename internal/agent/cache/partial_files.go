@@ -20,9 +20,7 @@ type PartialFileResp struct {
 	Data []PartialFileData `json:"data"`
 }
 
-var PartialFilePathRegexes = CompilePartialFileList()
-
-func CompilePartialFileList() []*regexp.Regexp {
+func CompilePartialFileList() []regexp.Regexp {
 	var partialResp PartialFileResp
 	_, err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,

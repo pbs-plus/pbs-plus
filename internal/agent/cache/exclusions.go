@@ -20,7 +20,7 @@ type ExclusionResp struct {
 	Data []ExclusionData `json:"data"`
 }
 
-func CompileExcludedPaths() []*regexp.Regexp {
+func CompileExcludedPaths() []regexp.Regexp {
 	var exclusionResp ExclusionResp
 	_, err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,
@@ -54,6 +54,3 @@ func CompileExcludedPaths() []*regexp.Regexp {
 
 	return compiledRegexes
 }
-
-// Precompiled regex patterns for excluded paths
-var ExcludedPathRegexes = CompileExcludedPaths()

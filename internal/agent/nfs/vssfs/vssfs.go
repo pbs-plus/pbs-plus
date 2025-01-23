@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -17,13 +18,17 @@ import (
 // VSSFS extends osfs while enforcing read-only operations
 type VSSFS struct {
 	billy.Filesystem
-	snapshot *snapshots.WinVSSSnapshot
+	snapshot      *snapshots.WinVSSSnapshot
+	ExcludedPaths []regexp.Regexp
+	PartialFiles  []regexp.Regexp
 }
 
-func NewVSSFS(snapshot *snapshots.WinVSSSnapshot) billy.Filesystem {
+func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, excludedPaths []regexp.Regexp, partialFiles []regexp.Regexp) billy.Filesystem {
 	return &VSSFS{
-		Filesystem: osfs.New(snapshot.SnapshotPath),
-		snapshot:   snapshot,
+		Filesystem:    osfs.New(snapshot.SnapshotPath),
+		snapshot:      snapshot,
+		ExcludedPaths: excludedPaths,
+		PartialFiles:  partialFiles,
 	}
 }
 
@@ -38,7 +43,7 @@ func (fs *VSSFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.Fi
 	}
 
 	fullPath := filepath.Join(fs.Root(), filepath.Clean(filename))
-	if skipFile(fullPath, fs.snapshot) {
+	if skipFile(fullPath, fs.snapshot, fs.ExcludedPaths) {
 		return nil, os.ErrNotExist
 	}
 
@@ -84,7 +89,7 @@ func (fs *VSSFS) Chtimes(name string, atime time.Time, mtime time.Time) error {
 // Override read operations to check if file should be skipped
 func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 	fullPath := filepath.Join(fs.Root(), filepath.Clean(filename))
-	if skipFile(fullPath, fs.snapshot) {
+	if skipFile(fullPath, fs.snapshot, fs.ExcludedPaths) {
 		return nil, os.ErrNotExist
 	}
 
@@ -109,7 +114,7 @@ func (fs *VSSFS) ReadDir(path string) ([]os.FileInfo, error) {
 	var fileInfos []os.FileInfo
 	for _, entry := range entries {
 		entryPath := filepath.Join(fs.Root(), path, entry.Name())
-		if skipFile(entryPath, fs.snapshot) {
+		if skipFile(entryPath, fs.snapshot, fs.ExcludedPaths) {
 			continue
 		}
 
@@ -122,7 +127,7 @@ func (fs *VSSFS) ReadDir(path string) ([]os.FileInfo, error) {
 
 func (fs *VSSFS) Readlink(link string) (string, error) {
 	fullPath := filepath.Join(fs.Root(), filepath.Clean(link))
-	if skipFile(fullPath, fs.snapshot) {
+	if skipFile(fullPath, fs.snapshot, fs.ExcludedPaths) {
 		return "", os.ErrNotExist
 	}
 	return fs.Filesystem.Readlink(link)

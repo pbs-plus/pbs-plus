@@ -4,14 +4,14 @@ package vssfs
 
 import (
 	"os"
+	"regexp"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"golang.org/x/sys/windows"
 )
 
-func skipFile(path string, snapshot *snapshots.WinVSSSnapshot) bool {
+func skipFile(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []regexp.Regexp) bool {
 	pathWithoutSnap := strings.TrimPrefix(path, snapshot.SnapshotPath)
 	normalizedPath := strings.ToUpper(strings.TrimPrefix(pathWithoutSnap, "\\"))
 
@@ -19,7 +19,7 @@ func skipFile(path string, snapshot *snapshots.WinVSSSnapshot) bool {
 		return false
 	}
 
-	for _, regex := range cache.ExcludedPathRegexes {
+	for _, regex := range exclusions {
 		if regex.MatchString(normalizedPath) {
 			return true
 		}
