@@ -9,6 +9,7 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
@@ -20,7 +21,7 @@ func D2DPartialFileHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			all, err := storeInstance.GetAllPartialFiles()
+			all, err := storeInstance.Database.GetAllPartialFiles()
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -61,12 +62,12 @@ func ExtJsPartialFileHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newPartialFile := store.PartialFile{
+		newPartialFile := types.PartialFile{
 			Path:    r.FormValue("path"),
 			Comment: r.FormValue("comment"),
 		}
 
-		err = storeInstance.CreatePartialFile(newPartialFile)
+		err = storeInstance.Database.CreatePartialFile(newPartialFile)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -101,7 +102,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc 
 				return
 			}
 
-			partialFile, err := storeInstance.GetPartialFile(pathDecoded)
+			partialFile, err := storeInstance.Database.GetPartialFile(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -125,7 +126,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc 
 				}
 			}
 
-			err = storeInstance.UpdatePartialFile(*partialFile)
+			err = storeInstance.Database.UpdatePartialFile(*partialFile)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -145,7 +146,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc 
 				return
 			}
 
-			partial_file, err := storeInstance.GetPartialFile(pathDecoded)
+			partial_file, err := storeInstance.Database.GetPartialFile(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -166,7 +167,7 @@ func ExtJsPartialFileSingleHandler(storeInstance *store.Store) http.HandlerFunc 
 				return
 			}
 
-			err = storeInstance.DeletePartialFile(pathDecoded)
+			err = storeInstance.Database.DeletePartialFile(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

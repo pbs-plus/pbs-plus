@@ -13,18 +13,20 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 type AgentMount struct {
-	Hostname      string
-	Drive         string
-	Path          string
-	Cmd           *exec.Cmd
-	StoreInstance *store.Store
+	Hostname string
+	Drive    string
+	Path     string
+	Cmd      *exec.Cmd
 }
 
-func Mount(storeInstance *store.Store, target *store.Target) (*AgentMount, error) {
+func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error) {
 	// Parse target information
 	splittedTargetName := strings.Split(target.Name, " - ")
 	targetHostname := splittedTargetName[0]
@@ -38,7 +40,7 @@ func Mount(storeInstance *store.Store, target *store.Target) (*AgentMount, error
 	agentDriveEnc := base32.StdEncoding.EncodeToString([]byte(agentDrive))
 
 	// Request mount from agent
-	err := storeInstance.ProxmoxHTTPRequest(
+	err := proxmox.Session.ProxmoxHTTPRequest(
 		http.MethodPost,
 		fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc),
 		nil,
@@ -49,9 +51,8 @@ func Mount(storeInstance *store.Store, target *store.Target) (*AgentMount, error
 	}
 
 	agentMount := &AgentMount{
-		StoreInstance: storeInstance,
-		Hostname:      targetHostname,
-		Drive:         agentDrive,
+		Hostname: targetHostname,
+		Drive:    agentDrive,
 	}
 
 	// Get port for NFS connection
@@ -63,7 +64,7 @@ func Mount(storeInstance *store.Store, target *store.Target) (*AgentMount, error
 	}
 
 	// Setup mount path
-	agentMount.Path = filepath.Join(store.AgentMountBasePath, strings.ReplaceAll(target.Name, " ", "-"))
+	agentMount.Path = filepath.Join(constants.AgentMountBasePath, strings.ReplaceAll(target.Name, " ", "-"))
 	agentMount.Unmount() // Ensure clean mount point
 
 	// Create mount directory if it doesn't exist
@@ -135,7 +136,7 @@ func (a *AgentMount) CloseMount() {
 	targetHostnameEnc := base32.StdEncoding.EncodeToString([]byte(a.Hostname))
 	agentDriveEnc := base32.StdEncoding.EncodeToString([]byte(a.Drive))
 
-	_ = a.StoreInstance.ProxmoxHTTPRequest(
+	_ = proxmox.Session.ProxmoxHTTPRequest(
 		http.MethodDelete,
 		fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc),
 		nil,

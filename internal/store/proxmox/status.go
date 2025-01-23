@@ -1,6 +1,6 @@
 //go:build linux
 
-package store
+package proxmox
 
 import (
 	"fmt"
@@ -26,10 +26,10 @@ type PBSStatusResponse struct {
 	Data PBSStatus `json:"data"`
 }
 
-func (storeInstance *Store) GetPBSStatus() (*PBSStatus, error) {
+func (proxmoxSess *ProxmoxSession) GetPBSStatus() (*PBSStatus, error) {
 	var resp PBSStatusResponse
 
-	err := storeInstance.ProxmoxHTTPRequest(
+	err := proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodGet,
 		"/api2/json/nodes/localhost/status",
 		nil,

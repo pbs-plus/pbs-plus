@@ -8,6 +8,7 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
@@ -18,7 +19,7 @@ func D2DTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		all, err := storeInstance.GetAllTokens()
+		all, err := storeInstance.Database.GetAllTokens()
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -58,11 +59,11 @@ func ExtJsTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newToken := store.AgentToken{
+		newToken := types.AgentToken{
 			Comment: r.FormValue("comment"),
 		}
 
-		err = storeInstance.CreateToken(newToken.Comment)
+		err = storeInstance.Database.CreateToken(newToken.Comment)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -85,7 +86,7 @@ func ExtJsTokenSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodGet {
-			token, err := storeInstance.GetToken(utils.DecodePath(r.PathValue("token")))
+			token, err := storeInstance.Database.GetToken(utils.DecodePath(r.PathValue("token")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -100,13 +101,13 @@ func ExtJsTokenSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			token, err := storeInstance.GetToken(utils.DecodePath(r.PathValue("token")))
+			token, err := storeInstance.Database.GetToken(utils.DecodePath(r.PathValue("token")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
 
-			err = storeInstance.RevokeToken(token)
+			err = storeInstance.Database.RevokeToken(token)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

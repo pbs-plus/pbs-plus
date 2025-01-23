@@ -1,6 +1,6 @@
 //go:build linux
 
-package store
+package proxmox
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
 type TaskResponse struct {
@@ -55,7 +56,7 @@ func encodeToHexEscapes(input string) string {
 	return encoded.String()
 }
 
-func (storeInstance *Store) GetJobTask(ctx context.Context, readyChan chan struct{}, job *Job) (*Task, error) {
+func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan chan struct{}, job *types.Job, target *types.Target) (*Task, error) {
 	tasksParentPath := "/var/log/proxmox-backup/tasks"
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -72,7 +73,7 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, readyChan chan struc
 			log.Printf("Proceeding: %s contains %s\n", filePath, searchString)
 			fileName := filepath.Base(filePath)
 			log.Printf("Getting UPID: %s\n", fileName)
-			newTask, err := storeInstance.GetTaskByUPID(fileName)
+			newTask, err := proxmoxSess.GetTaskByUPID(fileName)
 			if err != nil {
 				return nil, fmt.Errorf("GetJobTask: error getting task: %v\n", err)
 			}
@@ -131,14 +132,6 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, readyChan chan struc
 		hostname = strings.TrimSpace(string(hostnameFile))
 	}
 
-	target, err := storeInstance.GetTarget(job.Target)
-	if err != nil {
-		return nil, fmt.Errorf("GetJobTask -> %w", err)
-	}
-	if target == nil {
-		return nil, fmt.Errorf("GetJobTask: Target '%s' does not exist.", job.Target)
-	}
-
 	isAgent := strings.HasPrefix(target.Path, "agent://")
 	backupId := hostname
 	if isAgent {
@@ -183,9 +176,9 @@ func (storeInstance *Store) GetJobTask(ctx context.Context, readyChan chan struc
 	}
 }
 
-func (storeInstance *Store) GetTaskByUPID(upid string) (*Task, error) {
+func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (*Task, error) {
 	var resp TaskResponse
-	err := storeInstance.ProxmoxHTTPRequest(
+	err := proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodGet,
 		fmt.Sprintf("/api2/json/nodes/localhost/tasks/%s/status", upid),
 		nil,
@@ -196,7 +189,7 @@ func (storeInstance *Store) GetTaskByUPID(upid string) (*Task, error) {
 	}
 
 	if resp.Data.Status == "stopped" {
-		endTime, err := storeInstance.GetTaskEndTime(&resp.Data)
+		endTime, err := proxmoxSess.GetTaskEndTime(&resp.Data)
 		if err != nil {
 			return nil, fmt.Errorf("GetTaskByUPID: error getting task end time -> %w", err)
 		}
@@ -207,8 +200,8 @@ func (storeInstance *Store) GetTaskByUPID(upid string) (*Task, error) {
 	return &resp.Data, nil
 }
 
-func (storeInstance *Store) GetTaskEndTime(task *Task) (int64, error) {
-	if storeInstance.LastToken == nil && storeInstance.APIToken == nil {
+func (proxmoxSess *ProxmoxSession) GetTaskEndTime(task *Task) (int64, error) {
+	if proxmoxSess.LastToken == nil && proxmoxSess.APIToken == nil {
 		return -1, fmt.Errorf("GetTaskEndTime: token is required")
 	}
 

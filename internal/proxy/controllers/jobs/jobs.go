@@ -10,6 +10,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
@@ -20,7 +21,7 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		allJobs, err := storeInstance.GetAllJobs()
+		allJobs, err := storeInstance.Database.GetAllJobs()
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -50,7 +51,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		job, err := storeInstance.GetJob(utils.DecodePath(r.PathValue("job")))
+		job, err := storeInstance.Database.GetJob(utils.DecodePath(r.PathValue("job")))
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -87,7 +88,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newJob := store.Job{
+		newJob := types.Job{
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
 			Target:           r.FormValue("target"),
@@ -96,7 +97,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			Comment:          r.FormValue("comment"),
 			Namespace:        r.FormValue("ns"),
 			NotificationMode: r.FormValue("notification-mode"),
-			Exclusions:       []store.Exclusion{},
+			Exclusions:       []types.Exclusion{},
 		}
 
 		rawExclusions := r.FormValue("rawexclusions")
@@ -106,7 +107,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				continue
 			}
 
-			exclusionInst := store.Exclusion{
+			exclusionInst := types.Exclusion{
 				Path:  exclusion,
 				JobID: newJob.ID,
 			}
@@ -114,7 +115,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			newJob.Exclusions = append(newJob.Exclusions, exclusionInst)
 		}
 
-		err = storeInstance.CreateJob(newJob)
+		err = storeInstance.Database.CreateJob(newJob)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -137,7 +138,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodPut {
-			job, err := storeInstance.GetJob(utils.DecodePath(r.PathValue("job")))
+			job, err := storeInstance.Database.GetJob(utils.DecodePath(r.PathValue("job")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -172,7 +173,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			if r.FormValue("rawexclusions") != "" {
-				job.Exclusions = []store.Exclusion{}
+				job.Exclusions = []types.Exclusion{}
 
 				rawExclusions := r.FormValue("rawexclusions")
 				for _, exclusion := range strings.Split(rawExclusions, "\n") {
@@ -181,7 +182,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						continue
 					}
 
-					exclusionInst := store.Exclusion{
+					exclusionInst := types.Exclusion{
 						Path:  exclusion,
 						JobID: job.ID,
 					}
@@ -208,12 +209,12 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					case "notification-mode":
 						job.NotificationMode = ""
 					case "rawexclusions":
-						job.Exclusions = []store.Exclusion{}
+						job.Exclusions = []types.Exclusion{}
 					}
 				}
 			}
 
-			err = storeInstance.UpdateJob(*job)
+			err = storeInstance.Database.UpdateJob(*job)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -227,7 +228,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			job, err := storeInstance.GetJob(utils.DecodePath(r.PathValue("job")))
+			job, err := storeInstance.Database.GetJob(utils.DecodePath(r.PathValue("job")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -242,7 +243,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.DeleteJob(utils.DecodePath(r.PathValue("job")))
+			err := storeInstance.Database.DeleteJob(utils.DecodePath(r.PathValue("job")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

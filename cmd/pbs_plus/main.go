@@ -24,6 +24,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/tokens"
 	mw "github.com/sonroyaalmerol/pbs-plus/internal/proxy/middlewares"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
@@ -35,6 +36,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %s", err)
 	}
+	proxmox.InitializeProxmox()
 
 	jobRun := flag.String("job", "", "Job ID to execute")
 	flag.Parse()
@@ -48,19 +50,19 @@ func main() {
 		return
 	}
 
-	apiToken, err := store.GetAPITokenFromFile()
+	apiToken, err := proxmox.GetAPITokenFromFile()
 	if err != nil {
 		syslog.L.Error(err)
 	}
-	storeInstance.APIToken = apiToken
+	proxmox.Session.APIToken = apiToken
 
 	// Handle single job execution
 	if *jobRun != "" {
-		if storeInstance.APIToken == nil {
+		if proxmox.Session.APIToken == nil {
 			return
 		}
 
-		jobTask, err := storeInstance.GetJob(*jobRun)
+		jobTask, err := storeInstance.Database.GetJob(*jobRun)
 		if err != nil {
 			syslog.L.Error(err)
 			return
@@ -165,7 +167,7 @@ func main() {
 		syslog.L.Errorf("Initializing token manager failed: %v", err)
 		return
 	}
-	storeInstance.TokenManager = tokenManager
+	storeInstance.Database.TokenManager = tokenManager
 
 	// Setup HTTP server
 	tlsConfig, err := serverConfig.LoadTLSConfig()

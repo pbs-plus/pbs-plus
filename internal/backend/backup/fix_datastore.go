@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
 type NamespaceReq struct {
@@ -28,12 +30,12 @@ type PBSStoreGroupsResponse struct {
 	Data PBSStoreGroups `json:"data"`
 }
 
-func CreateNamespace(namespace string, job *store.Job, storeInstance *store.Store) error {
+func CreateNamespace(namespace string, job *types.Job, storeInstance *store.Store) error {
 	if storeInstance == nil {
 		return fmt.Errorf("CreateNamespace: store is required")
 	}
 
-	if storeInstance.APIToken == nil {
+	if proxmox.Session.APIToken == nil {
 		return fmt.Errorf("CreateNamespace: api token is required")
 	}
 
@@ -60,7 +62,7 @@ func CreateNamespace(namespace string, job *store.Job, storeInstance *store.Stor
 			}
 		}
 
-		_ = storeInstance.ProxmoxHTTPRequest(
+		_ = proxmox.Session.ProxmoxHTTPRequest(
 			http.MethodPost,
 			fmt.Sprintf("/api2/json/admin/datastore/%s/namespace", job.Store),
 			bytes.NewBuffer(reqBody),
@@ -69,7 +71,7 @@ func CreateNamespace(namespace string, job *store.Job, storeInstance *store.Stor
 	}
 
 	job.Namespace = namespace
-	err := storeInstance.UpdateJob(*job)
+	err := storeInstance.Database.UpdateJob(*job)
 	if err != nil {
 		return fmt.Errorf("CreateNamespace: error updating job to namespace -> %w", err)
 	}
@@ -77,16 +79,16 @@ func CreateNamespace(namespace string, job *store.Job, storeInstance *store.Stor
 	return nil
 }
 
-func GetCurrentOwner(job *store.Job, storeInstance *store.Store) (string, error) {
+func GetCurrentOwner(job *types.Job, storeInstance *store.Store) (string, error) {
 	if storeInstance == nil {
 		return "", fmt.Errorf("GetCurrentOwner: store is required")
 	}
 
-	if storeInstance.APIToken == nil {
+	if proxmox.Session.APIToken == nil {
 		return "", fmt.Errorf("GetCurrentOwner: api token is required")
 	}
 
-	target, err := storeInstance.GetTarget(job.Target)
+	target, err := storeInstance.Database.GetTarget(job.Target)
 	if err != nil {
 		return "", fmt.Errorf("GetCurrentOwner -> %w", err)
 	}
@@ -103,7 +105,7 @@ func GetCurrentOwner(job *store.Job, storeInstance *store.Store) (string, error)
 	params.Add("ns", job.Namespace)
 
 	groupsResp := PBSStoreGroupsResponse{}
-	err = storeInstance.ProxmoxHTTPRequest(
+	err = proxmox.Session.ProxmoxHTTPRequest(
 		http.MethodGet,
 		fmt.Sprintf("/api2/json/admin/datastore/%s/groups?%s", job.Store, params.Encode()),
 		nil,
@@ -116,16 +118,16 @@ func GetCurrentOwner(job *store.Job, storeInstance *store.Store) (string, error)
 	return groupsResp.Data.Owner, nil
 }
 
-func SetDatastoreOwner(job *store.Job, storeInstance *store.Store, owner string) error {
+func SetDatastoreOwner(job *types.Job, storeInstance *store.Store, owner string) error {
 	if storeInstance == nil {
 		return fmt.Errorf("SetDatastoreOwner: store is required")
 	}
 
-	if storeInstance.APIToken == nil {
+	if proxmox.Session.APIToken == nil {
 		return fmt.Errorf("SetDatastoreOwner: api token is required")
 	}
 
-	target, err := storeInstance.GetTarget(job.Target)
+	target, err := storeInstance.Database.GetTarget(job.Target)
 	if err != nil {
 		return fmt.Errorf("SetDatastoreOwner -> %w", err)
 	}
@@ -140,7 +142,7 @@ func SetDatastoreOwner(job *store.Job, storeInstance *store.Store, owner string)
 
 	jobStore := fmt.Sprintf(
 		"%s@localhost:%s",
-		storeInstance.APIToken.TokenId,
+		proxmox.Session.APIToken.TokenId,
 		job.Store,
 	)
 
@@ -178,9 +180,9 @@ func SetDatastoreOwner(job *store.Job, storeInstance *store.Store, owner string)
 
 	cmd := exec.Command("/usr/bin/proxmox-backup-client", cmdArgs...)
 	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_PASSWORD=%s", storeInstance.APIToken.Value))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_PASSWORD=%s", proxmox.Session.APIToken.Value))
 
-	pbsStatus, err := storeInstance.GetPBSStatus()
+	pbsStatus, err := proxmox.Session.GetPBSStatus()
 	if err == nil {
 		if fingerprint, ok := pbsStatus.Info["fingerprint"]; ok {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_FINGERPRINT=%s", fingerprint))
@@ -198,12 +200,12 @@ func SetDatastoreOwner(job *store.Job, storeInstance *store.Store, owner string)
 	return nil
 }
 
-func FixDatastore(job *store.Job, storeInstance *store.Store) error {
+func FixDatastore(job *types.Job, storeInstance *store.Store) error {
 	newOwner := ""
-	if storeInstance.APIToken != nil {
-		newOwner = storeInstance.APIToken.TokenId
+	if proxmox.Session.APIToken != nil {
+		newOwner = proxmox.Session.APIToken.TokenId
 	} else {
-		newOwner = storeInstance.LastToken.Username
+		newOwner = proxmox.Session.LastToken.Username
 	}
 
 	return SetDatastoreOwner(job, storeInstance, newOwner)

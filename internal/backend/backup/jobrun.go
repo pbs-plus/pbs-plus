@@ -14,9 +14,11 @@ import (
 	"github.com/alexflint/go-filemutex"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) {
+func RunBackup(job *types.Job, storeInstance *store.Store) (*proxmox.Task, error) {
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to create mutex lock: %w", err)
@@ -28,12 +30,12 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	}
 	defer backupMutex.Unlock()
 
-	if storeInstance.APIToken == nil {
+	if proxmox.Session.APIToken == nil {
 		return nil, fmt.Errorf("RunBackup: api token is required")
 	}
 
 	// Validate and setup target
-	target, err := storeInstance.GetTarget(job.Target)
+	target, err := storeInstance.Database.GetTarget(job.Target)
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to get target: %w", err)
 	}
@@ -72,13 +74,13 @@ func RunBackup(job *store.Job, storeInstance *store.Store) (*store.Task, error) 
 	// Start monitoring in background first
 	monitorCtx, monitorCancel := context.WithTimeout(context.Background(), 20*time.Second)
 
-	var task *store.Task
+	var task *proxmox.Task
 	var monitorErr error
 
 	readyChan := make(chan struct{})
 	go func() {
 		defer monitorCancel()
-		task, monitorErr = storeInstance.GetJobTask(monitorCtx, readyChan, job)
+		task, monitorErr = proxmox.Session.GetJobTask(monitorCtx, readyChan, job, target)
 	}()
 
 	select {

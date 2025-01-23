@@ -2,17 +2,19 @@
 
 package jobs
 
-import "github.com/sonroyaalmerol/pbs-plus/internal/store"
+import (
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+)
 
 type JobsResponse struct {
-	Data   []store.Job `json:"data"`
+	Data   []types.Job `json:"data"`
 	Digest string      `json:"digest"`
 }
 
 type JobConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    *store.Job        `json:"data"`
+	Data    *types.Job        `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }

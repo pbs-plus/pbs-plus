@@ -1,6 +1,6 @@
 //go:build linux
 
-package store
+package system
 
 import (
 	"bufio"
@@ -11,10 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
-func generateTimer(job *Job) error {
+func generateTimer(job *types.Job) error {
 	content := fmt.Sprintf(`[Unit]
 Description=%s Backup Job Timer
 
@@ -26,7 +28,7 @@ Persistent=false
 WantedBy=timers.target`, job.ID, job.Schedule)
 
 	filePath := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
-	fullPath := filepath.Join(TimerBasePath, filePath)
+	fullPath := filepath.Join(constants.TimerBasePath, filePath)
 
 	file, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
@@ -43,7 +45,7 @@ WantedBy=timers.target`, job.ID, job.Schedule)
 	return nil
 }
 
-func generateService(job *Job) error {
+func generateService(job *types.Job) error {
 	content := fmt.Sprintf(`[Unit]
 Description=%s Backup Job Service
 After=network-online.target
@@ -54,7 +56,7 @@ Type=oneshot
 ExecStart=/usr/bin/pbs-plus -job="%s"`, job.ID, job.ID)
 
 	filePath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
-	fullPath := filepath.Join(TimerBasePath, filePath)
+	fullPath := filepath.Join(constants.TimerBasePath, filePath)
 
 	file, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
@@ -70,12 +72,12 @@ ExecStart=/usr/bin/pbs-plus -job="%s"`, job.ID, job.ID)
 	return nil
 }
 
-func deleteSchedule(id string) {
+func DeleteSchedule(id string) {
 	svcFilePath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(id, " ", "-"))
-	svcFullPath := filepath.Join(TimerBasePath, svcFilePath)
+	svcFullPath := filepath.Join(constants.TimerBasePath, svcFilePath)
 
 	timerFilePath := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(id, " ", "-"))
-	timerFullPath := filepath.Join(TimerBasePath, timerFilePath)
+	timerFullPath := filepath.Join(constants.TimerBasePath, timerFilePath)
 
 	_ = os.Remove(svcFullPath)
 	_ = os.Remove(timerFullPath)
@@ -94,7 +96,7 @@ type TimerInfo struct {
 	Activates string
 }
 
-func getNextSchedule(job *Job) (*time.Time, error) {
+func GetNextSchedule(job *types.Job) (*time.Time, error) {
 	if job.Schedule == "" {
 		return nil, nil
 	}
@@ -142,12 +144,12 @@ func getNextSchedule(job *Job) (*time.Time, error) {
 	return nil, nil
 }
 
-func (store *Store) SetSchedule(job Job) {
+func SetSchedule(job types.Job) {
 	svcPath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
-	fullSvcPath := filepath.Join(TimerBasePath, svcPath)
+	fullSvcPath := filepath.Join(constants.TimerBasePath, svcPath)
 
 	timerPath := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
-	fullTimerPath := filepath.Join(TimerBasePath, timerPath)
+	fullTimerPath := filepath.Join(constants.TimerBasePath, timerPath)
 
 	if job.Schedule == "" {
 		cmd := exec.Command("/usr/bin/systemctl", "disable", "--now", timerPath)

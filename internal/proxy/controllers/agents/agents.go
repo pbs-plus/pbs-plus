@@ -11,6 +11,7 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
@@ -76,7 +77,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		tokenStr := authHeaderSplit[1]
-		token, err := storeInstance.GetToken(tokenStr)
+		token, err := storeInstance.Database.GetToken(tokenStr)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			controllers.WriteErrorResponse(w, fmt.Errorf("token not found"))
@@ -124,14 +125,14 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		clientIP = strings.Split(clientIP, ":")[0]
 
 		for _, drive := range reqParsed.Drives {
-			newTarget := store.Target{
+			newTarget := types.Target{
 				Name:      fmt.Sprintf("%s - %s", reqParsed.Hostname, drive),
 				Path:      fmt.Sprintf("agent://%s/%s", clientIP, drive),
 				Auth:      encodedCert,
 				TokenUsed: tokenStr,
 			}
 
-			err := storeInstance.CreateTarget(newTarget)
+			err := storeInstance.Database.CreateTarget(newTarget)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				controllers.WriteErrorResponse(w, err)

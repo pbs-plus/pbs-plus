@@ -4,19 +4,21 @@ package backup
 
 import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
-func updateJobStatus(job *store.Job, task *store.Task, storeInstance *store.Store) error {
+func updateJobStatus(job *types.Job, task *proxmox.Task, storeInstance *store.Store) error {
 	// Update task status
-	taskFound, err := storeInstance.GetTaskByUPID(task.UPID)
+	taskFound, err := proxmox.Session.GetTaskByUPID(task.UPID)
 	if err != nil {
 		syslog.L.Errorf("Unable to get task by UPID: %v", err)
 		return err
 	}
 
 	// Update job status
-	latestJob, err := storeInstance.GetJob(job.ID)
+	latestJob, err := storeInstance.Database.GetJob(job.ID)
 	if err != nil {
 		syslog.L.Errorf("Unable to get job: %v", err)
 		return err
@@ -26,11 +28,10 @@ func updateJobStatus(job *store.Job, task *store.Task, storeInstance *store.Stor
 	latestJob.LastRunState = &taskFound.Status
 	latestJob.LastRunEndtime = &taskFound.EndTime
 
-	if err := storeInstance.UpdateJob(*latestJob); err != nil {
+	if err := storeInstance.Database.UpdateJob(*latestJob); err != nil {
 		syslog.L.Errorf("Unable to update job: %v", err)
 		return err
 	}
 
 	return nil
 }
-

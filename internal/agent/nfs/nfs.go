@@ -318,7 +318,7 @@ func (fs *ReadOnlyFS) OpenFile(filename string, flag int, perm os.FileMode) (bil
 func (fs *ReadOnlyFS) GetFileInfo(filename string) (os.FileInfo, error) {
 	// Handle root directory
 	if filename == "" || filename == "/" {
-		info, err := os.Stat(fs.basePath)
+		info, err := os.Lstat(fs.basePath)
 		if err != nil {
 			syslog.L.Errorf("[NFS.GetFileInfo] Error getting root info: %v", err)
 			return nil, err
@@ -335,7 +335,7 @@ func (fs *ReadOnlyFS) GetFileInfo(filename string) (os.FileInfo, error) {
 		return nil, os.ErrNotExist
 	}
 
-	info, err := os.Stat(fullPath)
+	info, err := os.Lstat(fullPath)
 	if err != nil {
 		return nil, err
 	}

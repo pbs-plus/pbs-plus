@@ -1,6 +1,6 @@
 //go:build linux
 
-package store
+package proxmox
 
 import (
 	"encoding/json"
@@ -10,17 +10,35 @@ import (
 	urllib "net/url"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-func (storeInstance *Store) ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error {
+var Session *ProxmoxSession
+
+type ProxmoxSession struct {
+	LastToken  *Token
+	APIToken   *APIToken
+	HTTPClient *http.Client
+}
+
+func InitializeProxmox() {
+	Session = &ProxmoxSession{
+		HTTPClient: &http.Client{
+			Timeout:   time.Second * 30,
+			Transport: utils.BaseTransport,
+		},
+	}
+}
+
+func (proxmoxSess *ProxmoxSession) ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) error {
 	reqUrl := url
 
 	parsedURL, err := urllib.Parse(url)
 	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
 		reqUrl = fmt.Sprintf(
 			"%s%s",
-			ProxyTargetURL,
+			constants.ProxyTargetURL,
 			url,
 		)
 	}
@@ -35,32 +53,32 @@ func (storeInstance *Store) ProxmoxHTTPRequest(method, url string, body io.Reade
 		return fmt.Errorf("ProxmoxHTTPRequest: error creating http request -> %w", err)
 	}
 
-	if storeInstance.LastToken == nil && storeInstance.APIToken == nil {
+	if proxmoxSess.LastToken == nil && proxmoxSess.APIToken == nil {
 		return fmt.Errorf("ProxmoxHTTPRequest: token is required")
 	}
 
-	if storeInstance.LastToken != nil {
-		req.Header.Set("Csrfpreventiontoken", storeInstance.LastToken.CSRFToken)
+	if proxmoxSess.LastToken != nil {
+		req.Header.Set("Csrfpreventiontoken", proxmoxSess.LastToken.CSRFToken)
 
 		req.AddCookie(&http.Cookie{
 			Name:  "PBSAuthCookie",
-			Value: storeInstance.LastToken.Ticket,
+			Value: proxmoxSess.LastToken.Ticket,
 			Path:  "/",
 		})
-	} else if storeInstance.APIToken != nil {
-		req.Header.Set("Authorization", fmt.Sprintf("PBSAPIToken=%s:%s", storeInstance.APIToken.TokenId, storeInstance.APIToken.Value))
+	} else if proxmoxSess.APIToken != nil {
+		req.Header.Set("Authorization", fmt.Sprintf("PBSAPIToken=%s:%s", proxmoxSess.APIToken.TokenId, proxmoxSess.APIToken.Value))
 	}
 
 	req.Header.Add("Content-Type", "application/json")
 
-	if storeInstance.HTTPClient == nil {
-		storeInstance.HTTPClient = &http.Client{
+	if proxmoxSess.HTTPClient == nil {
+		proxmoxSess.HTTPClient = &http.Client{
 			Timeout:   time.Second * 30,
 			Transport: utils.BaseTransport,
 		}
 	}
 
-	resp, err := storeInstance.HTTPClient.Do(req)
+	resp, err := proxmoxSess.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("ProxmoxHTTPRequest: error executing http request -> %w", err)
 	}

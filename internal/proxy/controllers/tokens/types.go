@@ -2,17 +2,19 @@
 
 package tokens
 
-import "github.com/sonroyaalmerol/pbs-plus/internal/store"
+import (
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+)
 
 type TokensResponse struct {
-	Data   []store.AgentToken `json:"data"`
+	Data   []types.AgentToken `json:"data"`
 	Digest string             `json:"digest"`
 }
 
 type TokenConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    *store.AgentToken `json:"data"`
+	Data    *types.AgentToken `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }

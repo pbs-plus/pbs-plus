@@ -1,6 +1,6 @@
-package store
+package constants
 
-var defaultExclusions = []string{
+var DefaultExclusions = []string{
 	`hiberfil.sys`,
 	`pagefile.sys`,
 	`swapfile.sys`,

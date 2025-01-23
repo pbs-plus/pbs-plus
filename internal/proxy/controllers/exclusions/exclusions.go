@@ -9,6 +9,7 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
@@ -20,7 +21,7 @@ func D2DExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			all, err := storeInstance.GetAllGlobalExclusions()
+			all, err := storeInstance.Database.GetAllGlobalExclusions()
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -61,12 +62,12 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newExclusion := store.Exclusion{
+		newExclusion := types.Exclusion{
 			Path:    r.FormValue("path"),
 			Comment: r.FormValue("comment"),
 		}
 
-		err = storeInstance.CreateExclusion(newExclusion)
+		err = storeInstance.Database.CreateExclusion(newExclusion)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -99,7 +100,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-			exclusion, err := storeInstance.GetExclusion(pathDecoded)
+			exclusion, err := storeInstance.Database.GetExclusion(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -123,7 +124,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.UpdateExclusion(*exclusion)
+			err = storeInstance.Database.UpdateExclusion(*exclusion)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -143,7 +144,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			exclusion, err := storeInstance.GetExclusion(pathDecoded)
+			exclusion, err := storeInstance.Database.GetExclusion(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -164,7 +165,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			err = storeInstance.DeleteExclusion(pathDecoded)
+			err = storeInstance.Database.DeleteExclusion(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

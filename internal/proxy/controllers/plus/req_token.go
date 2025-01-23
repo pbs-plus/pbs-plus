@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
@@ -37,22 +39,22 @@ func TokenHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		token := store.Token{}
+		token := proxmox.Token{}
 
 		token.CSRFToken = r.Header.Get("csrfpreventiontoken")
 		token.Ticket = decodedAuthCookie
 		token.Username = cookieSplit[1]
 
-		storeInstance.LastToken = &token
+		proxmox.Session.LastToken = &token
 
-		if !utils.IsValid(filepath.Join(store.DbBasePath, "pbs-plus-token.json")) {
-			apiToken, err := storeInstance.CreateAPIToken()
+		if !utils.IsValid(filepath.Join(constants.DbBasePath, "pbs-plus-token.json")) {
+			apiToken, err := proxmox.Session.CreateAPIToken()
 			if err != nil {
 				http.Error(w, fmt.Sprintf("ExtractTokenFromRequest: error creating API token -> %v", err), http.StatusInternalServerError)
 				return
 			}
 
-			storeInstance.APIToken = apiToken
+			proxmox.Session.APIToken = apiToken
 
 			err = apiToken.SaveToFile()
 			if err != nil {

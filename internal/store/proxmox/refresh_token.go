@@ -1,6 +1,6 @@
 //go:build linux
 
-package store
+package proxmox
 
 import (
 	"bytes"
@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 )
 
 type Token struct {
@@ -47,14 +49,14 @@ type APIToken struct {
 	Value   string `json:"value"`
 }
 
-func (storeInstance *Store) CreateAPIToken() (*APIToken, error) {
-	if storeInstance.LastToken == nil {
+func (proxmoxSess *ProxmoxSession) CreateAPIToken() (*APIToken, error) {
+	if proxmoxSess.LastToken == nil {
 		return nil, fmt.Errorf("CreateAPIToken: token required")
 	}
 
-	_ = storeInstance.ProxmoxHTTPRequest(
+	_ = proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodDelete,
-		fmt.Sprintf("/api2/json/access/users/%s/token/pbs-plus-auth", storeInstance.LastToken.Username),
+		fmt.Sprintf("/api2/json/access/users/%s/token/pbs-plus-auth", proxmoxSess.LastToken.Username),
 		nil,
 		nil,
 	)
@@ -67,9 +69,9 @@ func (storeInstance *Store) CreateAPIToken() (*APIToken, error) {
 	}
 
 	var tokenResp APITokenResponse
-	err = storeInstance.ProxmoxHTTPRequest(
+	err = proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodPost,
-		fmt.Sprintf("/api2/json/access/users/%s/token/pbs-plus-auth", storeInstance.LastToken.Username),
+		fmt.Sprintf("/api2/json/access/users/%s/token/pbs-plus-auth", proxmoxSess.LastToken.Username),
 		bytes.NewBuffer(reqBody),
 		&tokenResp,
 	)
@@ -88,7 +90,7 @@ func (storeInstance *Store) CreateAPIToken() (*APIToken, error) {
 		return nil, fmt.Errorf("CreateAPIToken: error creating acl body -> %w", err)
 	}
 
-	err = storeInstance.ProxmoxHTTPRequest(
+	err = proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodPut,
 		"/api2/json/access/acl",
 		bytes.NewBuffer(aclBody),
@@ -109,7 +111,7 @@ func (token *APIToken) SaveToFile() error {
 	}
 
 	tokenFileContent, _ := json.Marshal(token)
-	file, err := os.OpenFile(filepath.Join(DbBasePath, "pbs-plus-token.json"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	file, err := os.OpenFile(filepath.Join(constants.DbBasePath, "pbs-plus-token.json"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -124,7 +126,7 @@ func (token *APIToken) SaveToFile() error {
 }
 
 func GetAPITokenFromFile() (*APIToken, error) {
-	jsonFile, err := os.Open(filepath.Join(DbBasePath, "pbs-plus-token.json"))
+	jsonFile, err := os.Open(filepath.Join(constants.DbBasePath, "pbs-plus-token.json"))
 	if err != nil {
 		return nil, err
 	}

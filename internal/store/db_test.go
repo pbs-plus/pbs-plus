@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 	"github.com/stretchr/testify/assert"
@@ -97,7 +98,7 @@ func TestJobCRUD(t *testing.T) {
 	store := setupTestStore(t)
 
 	t.Run("Basic CRUD Operations", func(t *testing.T) {
-		job := Job{
+		job := types.Job{
 			ID:               "test-job-1",
 			Store:            "local",
 			Target:           "test-target",
@@ -108,11 +109,11 @@ func TestJobCRUD(t *testing.T) {
 			Namespace:        "test",
 		}
 
-		err := store.CreateJob(job)
+		err := store.Database.CreateJob(job)
 		assert.NoError(t, err)
 
 		// Test Get
-		retrievedJob, err := store.GetJob(job.ID)
+		retrievedJob, err := store.Database.GetJob(job.ID)
 		assert.NoError(t, err)
 		assert.NotNil(t, retrievedJob)
 		assert.Equal(t, job.ID, retrievedJob.ID)
@@ -121,23 +122,23 @@ func TestJobCRUD(t *testing.T) {
 
 		// Test Update
 		job.Comment = "Updated comment"
-		err = store.UpdateJob(job)
+		err = store.Database.UpdateJob(job)
 		assert.NoError(t, err)
 
-		updatedJob, err := store.GetJob(job.ID)
+		updatedJob, err := store.Database.GetJob(job.ID)
 		assert.NoError(t, err)
 		assert.Equal(t, "Updated comment", updatedJob.Comment)
 
 		// Test GetAll
-		jobs, err := store.GetAllJobs()
+		jobs, err := store.Database.GetAllJobs()
 		assert.NoError(t, err)
 		assert.Len(t, jobs, 1)
 
 		// Test Delete
-		err = store.DeleteJob(job.ID)
+		err = store.Database.DeleteJob(job.ID)
 		assert.NoError(t, err)
 
-		deletedJob, err := store.GetJob(job.ID)
+		deletedJob, err := store.Database.GetJob(job.ID)
 		assert.NoError(t, err)
 		assert.Nil(t, deletedJob)
 	})
@@ -151,7 +152,7 @@ func TestJobCRUD(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				job := Job{
+				job := types.Job{
 					ID:               fmt.Sprintf("concurrent-job-%d", idx),
 					Store:            "local",
 					Target:           "test-target",
@@ -161,20 +162,20 @@ func TestJobCRUD(t *testing.T) {
 					NotificationMode: "always",
 					Namespace:        "test",
 				}
-				err := store.CreateJob(job)
+				err := store.Database.CreateJob(job)
 				assert.NoError(t, err)
 			}(i)
 		}
 		wg.Wait()
 
 		// Verify all jobs were created
-		jobs, err := store.GetAllJobs()
+		jobs, err := store.Database.GetAllJobs()
 		assert.NoError(t, err)
 		assert.Len(t, jobs, jobCount)
 	})
 
 	t.Run("Special Characters", func(t *testing.T) {
-		job := Job{
+		job := types.Job{
 			ID:               "test-job-special-!@#$%^",
 			Store:            "local",
 			Target:           "test-target",
@@ -184,7 +185,7 @@ func TestJobCRUD(t *testing.T) {
 			NotificationMode: "always",
 			Namespace:        "test",
 		}
-		err := store.CreateJob(job)
+		err := store.Database.CreateJob(job)
 		assert.Error(t, err) // Should reject special characters
 	})
 }
@@ -194,13 +195,13 @@ func TestJobValidation(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		job     Job
+		job     types.Job
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid job with all fields",
-			job: Job{
+			job: types.Job{
 				ID:               "test-valid",
 				Store:            "local",
 				Target:           "test",
@@ -214,7 +215,7 @@ func TestJobValidation(t *testing.T) {
 		},
 		{
 			name: "invalid schedule string",
-			job: Job{
+			job: types.Job{
 				ID:        "test-invalid-cron",
 				Store:     "local",
 				Target:    "test",
@@ -226,7 +227,7 @@ func TestJobValidation(t *testing.T) {
 		},
 		{
 			name: "empty required fields",
-			job: Job{
+			job: types.Job{
 				ID: "test-empty",
 			},
 			wantErr: true,
@@ -234,7 +235,7 @@ func TestJobValidation(t *testing.T) {
 		},
 		{
 			name: "very long fields",
-			job: Job{
+			job: types.Job{
 				ID:        strings.Repeat("a", 256),
 				Store:     "local",
 				Target:    "test",
@@ -247,7 +248,7 @@ func TestJobValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.CreateJob(tt.job)
+			err := store.Database.CreateJob(tt.job)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" && err != nil {
@@ -265,13 +266,13 @@ func TestTargetValidation(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		target  Target
+		target  types.Target
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid local target",
-			target: Target{
+			target: types.Target{
 				Name: "local-target",
 				Path: "/valid/path",
 			},
@@ -279,7 +280,7 @@ func TestTargetValidation(t *testing.T) {
 		},
 		{
 			name: "valid agent target",
-			target: Target{
+			target: types.Target{
 				Name: "agent-target",
 				Path: "agent://192.168.1.100/C",
 			},
@@ -287,7 +288,7 @@ func TestTargetValidation(t *testing.T) {
 		},
 		{
 			name: "invalid agent URL",
-			target: Target{
+			target: types.Target{
 				Name: "invalid-agent",
 				Path: "agent:/invalid-url",
 			},
@@ -296,7 +297,7 @@ func TestTargetValidation(t *testing.T) {
 		},
 		{
 			name: "empty path",
-			target: Target{
+			target: types.Target{
 				Name: "empty-path",
 				Path: "",
 			},
@@ -307,7 +308,7 @@ func TestTargetValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.CreateTarget(tt.target)
+			err := store.Database.CreateTarget(tt.target)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" && err != nil {
@@ -325,12 +326,12 @@ func TestExclusionPatternValidation(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		exclusion Exclusion
+		exclusion types.Exclusion
 		wantErr   bool
 	}{
 		{
 			name: "valid glob pattern",
-			exclusion: Exclusion{
+			exclusion: types.Exclusion{
 				Path:    "*.tmp",
 				Comment: "Temporary files",
 			},
@@ -338,7 +339,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 		},
 		{
 			name: "valid regex pattern",
-			exclusion: Exclusion{
+			exclusion: types.Exclusion{
 				Path:    "^.*\\.bak$",
 				Comment: "Backup files",
 			},
@@ -346,7 +347,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 		},
 		{
 			name: "invalid pattern syntax",
-			exclusion: Exclusion{
+			exclusion: types.Exclusion{
 				Path:    "[invalid[pattern",
 				Comment: "Invalid pattern",
 			},
@@ -354,7 +355,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 		},
 		{
 			name: "empty pattern",
-			exclusion: Exclusion{
+			exclusion: types.Exclusion{
 				Path:    "",
 				Comment: "Empty pattern",
 			},
@@ -364,7 +365,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.CreateExclusion(tt.exclusion)
+			err := store.Database.CreateExclusion(tt.exclusion)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -379,12 +380,12 @@ func TestPartialFileValidation(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		partialFile PartialFile
+		partialFile types.PartialFile
 		wantErr     bool
 	}{
 		{
 			name: "valid partial file",
-			partialFile: PartialFile{
+			partialFile: types.PartialFile{
 				Path:    "/valid/path/to/large/file",
 				Comment: "Valid partial file",
 			},
@@ -392,7 +393,7 @@ func TestPartialFileValidation(t *testing.T) {
 		},
 		{
 			name: "empty path",
-			partialFile: PartialFile{
+			partialFile: types.PartialFile{
 				Path:    "",
 				Comment: "Empty path",
 			},
@@ -400,7 +401,7 @@ func TestPartialFileValidation(t *testing.T) {
 		},
 		{
 			name: "invalid pattern syntax",
-			partialFile: PartialFile{
+			partialFile: types.PartialFile{
 				Path:    "[invalid[pattern",
 				Comment: "Invalid pattern",
 			},
@@ -408,7 +409,7 @@ func TestPartialFileValidation(t *testing.T) {
 		},
 		{
 			name: "very long path",
-			partialFile: PartialFile{
+			partialFile: types.PartialFile{
 				Path:    "/" + strings.Repeat("a/", 255),
 				Comment: "Very long path",
 			},
@@ -418,7 +419,7 @@ func TestPartialFileValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.CreatePartialFile(tt.partialFile)
+			err := store.Database.CreatePartialFile(tt.partialFile)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -438,18 +439,18 @@ func TestConcurrentOperations(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				target := Target{
+				target := types.Target{
 					Name: fmt.Sprintf("concurrent-target-%d", idx),
 					Path: fmt.Sprintf("/path/to/target-%d", idx),
 				}
-				err := store.CreateTarget(target)
+				err := store.Database.CreateTarget(target)
 				assert.NoError(t, err)
 			}(i)
 		}
 		wg.Wait()
 
 		// Verify all targets were created
-		targets, err := store.GetAllTargets()
+		targets, err := store.Database.GetAllTargets()
 		assert.NoError(t, err)
 		assert.Len(t, targets, targetCount)
 	})
@@ -470,11 +471,11 @@ func TestConcurrentOperations(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					target := Target{
+					target := types.Target{
 						Name: fmt.Sprintf("concurrent-target-%d", i),
 						Path: fmt.Sprintf("/path/to/target-%d", i),
 					}
-					_ = store.CreateTarget(target)
+					_ = store.Database.CreateTarget(target)
 				}
 			}
 			doneCh <- struct{}{}
@@ -488,7 +489,7 @@ func TestConcurrentOperations(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					_, _ = store.GetAllTargets()
+					_, _ = store.Database.GetAllTargets()
 				}
 			}
 			doneCh <- struct{}{}

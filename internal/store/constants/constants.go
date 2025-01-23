@@ -1,4 +1,4 @@
-package store
+package constants
 
 const (
 	ProxyTargetURL     = "https://127.0.0.1:8007"        // The target server URL

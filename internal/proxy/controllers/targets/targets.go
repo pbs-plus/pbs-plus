@@ -11,6 +11,7 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
@@ -21,10 +22,16 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		all, err := storeInstance.GetAllTargets()
+		all, err := storeInstance.Database.GetAllTargets()
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
+		}
+
+		for i, target := range all {
+			if target.IsAgent {
+				all[i].ConnectionStatus = storeInstance.WSHub.AgentPing(&target)
+			}
 		}
 
 		digest, err := utils.CalculateDigest(all)
@@ -74,7 +81,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		clientIP = strings.Split(clientIP, ":")[0]
 
-		existingTargets, err := storeInstance.GetAllTargetsByIP(clientIP)
+		existingTargets, err := storeInstance.Database.GetAllTargetsByIP(clientIP)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
@@ -84,7 +91,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		for _, target := range existingTargets {
 			targetDrive := strings.Split(target.Path, "/")[3]
 			if !slices.Contains(reqParsed.DriveLetters, targetDrive) && strings.Contains(target.Name, reqParsed.Hostname) {
-				_ = storeInstance.DeleteTarget(target.Name)
+				_ = storeInstance.Database.DeleteTarget(target.Name)
 			}
 		}
 
@@ -122,12 +129,12 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newTarget := store.Target{
+		newTarget := types.Target{
 			Name: r.FormValue("name"),
 			Path: r.FormValue("path"),
 		}
 
-		err = storeInstance.CreateTarget(newTarget)
+		err = storeInstance.Database.CreateTarget(newTarget)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -161,7 +168,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			target, err := storeInstance.GetTarget(utils.DecodePath(r.PathValue("target")))
+			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -185,7 +192,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.UpdateTarget(*target)
+			err = storeInstance.Database.UpdateTarget(*target)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -199,10 +206,14 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			target, err := storeInstance.GetTarget(utils.DecodePath(r.PathValue("target")))
+			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
+			}
+
+			if target.IsAgent {
+				target.ConnectionStatus = storeInstance.WSHub.AgentPing(target)
 			}
 
 			response.Status = http.StatusOK
@@ -214,7 +225,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.DeleteTarget(utils.DecodePath(r.PathValue("target")))
+			err := storeInstance.Database.DeleteTarget(utils.DecodePath(r.PathValue("target")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
