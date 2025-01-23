@@ -460,7 +460,7 @@ func (s *NFSSession) Serve() error {
 		session: s,
 	}
 
-	// nfs.SetLogger(&nfsLogger{})
+	nfs.SetLogger(&nfsLogger{})
 
 	cachingHandler := nfshelper.NewCachingHandler(handler, 1000)
 
