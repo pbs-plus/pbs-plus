@@ -14,9 +14,7 @@ import (
 )
 
 const (
-	handlerBuffer  = 256
-	handlerTimeout = 1 * time.Second
-	closeTimeout   = 5 * time.Second
+	handlerBuffer = 256
 )
 
 type Message struct {
@@ -30,40 +28,28 @@ type Client struct {
 	ID     string
 	conn   *websocket.Conn
 	server *Server
-	send   chan Message
 	ctx    context.Context
 	cancel context.CancelFunc
 	once   sync.Once
 }
 
 type Server struct {
-	clients    map[string]*Client
-	clientsMux sync.RWMutex
-
+	clients     map[string]*Client
+	clientsMux  sync.RWMutex
 	handlers    map[chan Message]struct{}
 	handlersMux sync.RWMutex
-
-	register   chan *Client
-	unregister chan *Client
-	handler    chan Message
-	ctx        context.Context
-	cancel     context.CancelFunc
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 func NewServer(ctx context.Context) *Server {
 	ctx, cancel := context.WithCancel(ctx)
-	server := &Server{
-		clients:    make(map[string]*Client),
-		handlers:   make(map[chan Message]struct{}),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		handler:    make(chan Message, handlerBuffer),
-		ctx:        ctx,
-		cancel:     cancel,
+	return &Server{
+		clients:  make(map[string]*Client),
+		handlers: make(map[chan Message]struct{}),
+		ctx:      ctx,
+		cancel:   cancel,
 	}
-
-	syslog.L.Infof("[WSServer.New] WebSocket server initialized")
-	return server
 }
 
 func (s *Server) RegisterHandler() (<-chan Message, func()) {
@@ -73,14 +59,11 @@ func (s *Server) RegisterHandler() (<-chan Message, func()) {
 	s.handlers[ch] = struct{}{}
 	s.handlersMux.Unlock()
 
-	syslog.L.Infof("[WSServer.RegisterHandler] New handler registered")
-
 	cleanup := func() {
 		s.handlersMux.Lock()
 		if _, exists := s.handlers[ch]; exists {
 			delete(s.handlers, ch)
 			close(ch)
-			syslog.L.Infof("[WSServer.RegisterHandler] Handler unregistered and channel closed")
 		}
 		s.handlersMux.Unlock()
 	}
@@ -88,128 +71,21 @@ func (s *Server) RegisterHandler() (<-chan Message, func()) {
 	return ch, cleanup
 }
 
-func (s *Server) Run() {
-	syslog.L.Infof("[WSServer.Run] Server starting")
-	defer func() {
-		syslog.L.Infof("[WSServer.Run] Server initiating shutdown sequence")
-
-		s.clientsMux.Lock()
-		clientCount := len(s.clients)
-		clients := make([]*Client, 0, clientCount)
-		for _, client := range s.clients {
-			clients = append(clients, client)
-		}
-		clear(s.clients)
-		s.clientsMux.Unlock()
-
-		var wg sync.WaitGroup
-		for _, client := range clients {
-			wg.Add(1)
-			go func(c *Client) {
-				defer wg.Done()
-				syslog.L.Infof("[WSServer.Run] Closing connection for client %s", c.ID)
-				c.close()
-			}(client)
-		}
-		wg.Wait()
-		syslog.L.Infof("[WSServer.Run] Closed %d client connections", clientCount)
-
-		s.handlersMux.Lock()
-		subCount := len(s.handlers)
-		for ch := range s.handlers {
-			close(ch)
-		}
-		clear(s.handlers)
-		s.handlersMux.Unlock()
-		syslog.L.Infof("[WSServer.Run] Closed %d handler channels", subCount)
-
-		s.cancel()
-		syslog.L.Infof("[WSServer.Run] Server shutdown complete")
-	}()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-
-		case client := <-s.register:
-			s.clientsMux.Lock()
-			s.clients[client.ID] = client
-			clientCount := len(s.clients)
-			s.clientsMux.Unlock()
-			syslog.L.Infof("[WSServer.Run] Client %s registered (total clients: %d)",
-				client.ID, clientCount)
-
-		case client := <-s.unregister:
-			s.clientsMux.Lock()
-			if _, ok := s.clients[client.ID]; ok {
-				delete(s.clients, client.ID)
-				syslog.L.Infof("[WSServer.Run] Client %s unregistered (remaining clients: %d)",
-					client.ID, len(s.clients))
-			}
-			s.clientsMux.Unlock()
-
-			// Close client connection asynchronously
-			go client.close()
-
-		case msg := <-s.handler:
-			s.handlersMux.RLock()
-			handlers := make([]chan Message, 0, len(s.handlers))
-			for ch := range s.handlers {
-				handlers = append(handlers, ch)
-			}
-			s.handlersMux.RUnlock()
-
-			var wg sync.WaitGroup
-			for _, ch := range handlers {
-				wg.Add(1)
-				go func(c chan Message) {
-					defer wg.Done()
-					ctx, cancel := context.WithTimeout(s.ctx, handlerTimeout)
-					defer cancel()
-
-					select {
-					case c <- msg:
-					case <-ctx.Done():
-						syslog.L.Warnf("[WSServer.Run] Receive timeout for message from client %s",
-							msg.ClientID)
-					default:
-						syslog.L.Warnf("[WSServer.Run] Receive channel full, message from client %s dropped",
-							msg.ClientID)
-					}
-				}(ch)
-			}
-			wg.Wait()
-			syslog.L.Infof("[WSServer.Run] Message (%s) from %s successfully received", msg.Type, msg.ClientID)
-		}
-	}
-}
-
 func (s *Server) handleClientMessages(client *Client) {
-	syslog.L.Infof("[WSServer.MessageHandler] Starting message handling for client %s", client.ID)
-
 	for {
 		select {
 		case <-s.ctx.Done():
-			syslog.L.Infof("[WSServer.MessageHandler] Stopping message handling for client %s (server shutdown)",
-				client.ID)
 			return
 		case <-client.ctx.Done():
-			syslog.L.Infof("[WSServer.MessageHandler] Stopping message handling for client %s (client disconnected)",
-				client.ID)
 			return
 		default:
 			message := Message{}
-
 			err := wsjson.Read(client.ctx, client.conn, &message)
 			if err != nil {
-				if strings.Contains(err.Error(), "failed to read frame header: EOF") {
-					continue
-				}
-
-				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-					syslog.L.Errorf("[WSServer.MessageHandler] Read error for client %s: %v",
-						client.ID, err)
+				if !strings.Contains(err.Error(), "failed to read frame header: EOF") {
+					if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+						syslog.L.Errorf("[WSServer.MessageHandler] Read error for client %s: %v", client.ID, err)
+					}
 				}
 				return
 			}
@@ -217,24 +93,40 @@ func (s *Server) handleClientMessages(client *Client) {
 			message.ClientID = client.ID
 			message.Time = time.Now()
 
-			handlerCtx, cancel := context.WithTimeout(client.ctx, handlerTimeout)
-			select {
-			case s.handler <- message:
-				syslog.L.Infof("[WSServer.MessageHandler] Message from client %s queued for receive handler",
-					client.ID)
-			case <-handlerCtx.Done():
-				syslog.L.Errorf("[WSServer.MessageHandler] Receive handler timeout for message from client %s",
-					client.ID)
+			s.handlersMux.RLock()
+			for ch := range s.handlers {
+				select {
+				case ch <- message:
+				default:
+					syslog.L.Warnf("[WSServer.MessageHandler] Handler channel full, dropping message from client %s", client.ID)
+				}
 			}
-			cancel()
+			s.handlersMux.RUnlock()
 		}
 	}
+}
+
+func (s *Server) Register(client *Client) {
+	s.clientsMux.Lock()
+	s.clients[client.ID] = client
+	s.clientsMux.Unlock()
+}
+
+func (s *Server) Unregister(client *Client) {
+	if client == nil {
+		return
+	}
+	s.clientsMux.Lock()
+	if _, ok := s.clients[client.ID]; ok {
+		client.close()
+		delete(s.clients, client.ID)
+	}
+	s.clientsMux.Unlock()
 }
 
 func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 	clientID := r.Header.Get("X-PBS-Agent")
 	if clientID == "" {
-		syslog.L.Errorf("[WSServer.ServeWS] Connection rejected: missing X-PBS-Agent header")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -243,62 +135,29 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 		Subprotocols: []string{"pbs"},
 	})
 	if err != nil {
-		syslog.L.Errorf("[WSServer.ServeWS] Connection acceptance failed for client %s: %v",
-			clientID, err)
 		return
 	}
 
-	syslog.L.Infof("[WSServer.ServeWS] New connection accepted for client %s", clientID)
-
-	ctx, cCancel := context.WithCancel(s.ctx)
+	ctx, cancel := context.WithCancel(s.ctx)
 	client := &Client{
 		ID:     clientID,
 		conn:   conn,
 		server: s,
-		send:   make(chan Message, handlerBuffer),
 		ctx:    ctx,
-		cancel: cCancel,
+		cancel: cancel,
 	}
 
-	registerCtx, cancel := context.WithTimeout(client.ctx, operationTimeout)
-	select {
-	case s.register <- client:
-		syslog.L.Infof("[WSServer.ServeWS] Client %s registered successfully", clientID)
-	case <-registerCtx.Done():
-		syslog.L.Errorf("[WSServer.ServeWS] Registration timeout for client %s", clientID)
-		conn.Close(websocket.StatusInternalError, "registration timeout")
-		cancel()
-		return
-	}
-	cancel()
-
+	s.Register(client)
 	go s.handleClientMessages(client)
 
 	<-client.ctx.Done()
-
-	unregisterCtx, cancel := context.WithTimeout(s.ctx, operationTimeout)
-	select {
-	case s.unregister <- client:
-		syslog.L.Infof("[WSServer.ServeWS] Client %s unregistered successfully", clientID)
-	case <-unregisterCtx.Done():
-		syslog.L.Errorf("[WSServer.ServeWS] Unregistration timeout for client %s", clientID)
-	}
-	cancel()
+	s.Unregister(client)
 }
 
 func (c *Client) close() {
 	c.once.Do(func() {
-		syslog.L.Infof("[WSServer.Client] Closing connection for client %s", c.ID)
 		c.cancel()
-
-		err := c.conn.Close(websocket.StatusNormalClosure, "client disconnecting")
-		if err != nil {
-			syslog.L.Errorf("[WSServer.Client] Error closing connection for client %s: %v",
-				c.ID, err)
-		}
-
-		// Close send channel after connection is closed
-		close(c.send)
+		c.conn.Close(websocket.StatusNormalClosure, "client disconnecting")
 	})
 }
 
@@ -311,18 +170,13 @@ func (s *Server) SendToClient(clientID string, msg Message) error {
 		return fmt.Errorf("client %s not connected", clientID)
 	}
 
-	syslog.L.Infof("[WSServer.SendToClient] Sending message to client %s", clientID)
-
 	ctx, cancel := context.WithTimeout(client.ctx, messageTimeout)
 	defer cancel()
 
 	if err := wsjson.Write(ctx, client.conn, &msg); err != nil {
-		syslog.L.Errorf("[WSServer.SendToClient] Failed to send message to client %s: %v",
-			clientID, err)
 		return fmt.Errorf("failed to send message: %w", err)
 	}
 
-	syslog.L.Infof("[WSServer.SendToClient] Message sent successfully to client %s", clientID)
 	return nil
 }
 
@@ -331,4 +185,42 @@ func (s *Server) IsClientConnected(clientID string) bool {
 	_, exists := s.clients[clientID]
 	s.clientsMux.RUnlock()
 	return exists
+}
+
+func (s *Server) Run() {
+	defer func() {
+		s.clientsMux.Lock()
+		for _, client := range s.clients {
+			client.close()
+		}
+		clear(s.clients)
+		s.clientsMux.Unlock()
+
+		s.handlersMux.Lock()
+		for ch := range s.handlers {
+			close(ch)
+		}
+		clear(s.handlers)
+		s.handlersMux.Unlock()
+
+		s.cancel()
+	}()
+
+	<-s.ctx.Done()
+}
+
+func (s *Server) cleanup() {
+	s.clientsMux.Lock()
+	for _, client := range s.clients {
+		client.close()
+	}
+	clear(s.clients)
+	s.clientsMux.Unlock()
+
+	s.handlersMux.Lock()
+	for ch := range s.handlers {
+		close(ch)
+	}
+	clear(s.handlers)
+	s.handlersMux.Unlock()
 }
