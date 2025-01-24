@@ -38,9 +38,3 @@ Ext.define("pbs-model-exclusions", {
   fields: ["path", "comment"],
   idProperty: "path",
 });
-
-Ext.define("pbs-model-partial-files", {
-  extend: "Ext.data.Model",
-  fields: ["path", "comment"],
-  idProperty: "path",
-});

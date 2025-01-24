@@ -37,11 +37,5 @@ Ext.define("PBS.D2DManagement", {
       itemId: "exclusions",
       iconCls: "fa fa-ban",
     },
-    {
-      xtype: "pbsDiskPartialFilePanel",
-      title: "Verify File Sizes",
-      itemId: "partial-files",
-      iconCls: "fa fa-file",
-    },
   ],
 });
