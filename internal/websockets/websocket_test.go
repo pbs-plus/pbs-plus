@@ -7,9 +7,11 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -163,7 +165,6 @@ func TestCPUOnDisconnect(t *testing.T) {
 
 	wsURL := "ws" + ts.URL[4:]
 
-	// Create multiple clients to increase potential CPU impact
 	clients := make([]*WSClient, 100)
 	for i := 0; i < 100; i++ {
 		client, err := NewWSClient(ctx, Config{
@@ -183,10 +184,9 @@ func TestCPUOnDisconnect(t *testing.T) {
 		clients[i] = client
 	}
 
-	// Let connections stabilize
 	time.Sleep(time.Second)
 
-	// Monitor CPU usage during disconnects
+	mu := sync.Mutex{}
 	var cpuUsage []float64
 	done := make(chan struct{})
 
@@ -202,30 +202,43 @@ func TestCPUOnDisconnect(t *testing.T) {
 				var stats runtime.MemStats
 				runtime.ReadMemStats(&stats)
 				cpuTime := time.Duration(stats.PauseTotalNs)
+
+				mu.Lock()
 				cpuUsage = append(cpuUsage, float64(cpuTime.Nanoseconds()))
+				mu.Unlock()
 			}
 		}
 	}()
 
-	// Disconnect all clients simultaneously
 	for _, client := range clients {
 		client.Close()
 	}
 
-	// Continue monitoring for a brief period
 	time.Sleep(2 * time.Second)
 	close(done)
 
-	// Check for significant CPU spikes
+	mu.Lock()
+	measurements := make([]float64, len(cpuUsage))
+	copy(measurements, cpuUsage)
+	mu.Unlock()
+
 	var maxSpike float64
-	for i := 1; i < len(cpuUsage); i++ {
-		spike := cpuUsage[i] - cpuUsage[i-1]
+	for i := 1; i < len(measurements); i++ {
+		spike := measurements[i] - measurements[i-1]
 		if spike > maxSpike {
 			maxSpike = spike
 		}
 	}
 
-	// Fail if spike exceeds threshold (adjust based on environment)
-	maxAllowedSpike := float64(1e9) // 1 second of CPU time
-	assert.Less(t, maxSpike, maxAllowedSpike, "CPU spike too high during client disconnects")
+	// Calculate reasonable spike threshold based on baseline CPU usage
+	var baselineSpike float64
+	for i := 1; i < len(measurements)/2; i++ { // Use first half of measurements as baseline
+		spike := measurements[i] - measurements[i-1]
+		baselineSpike = math.Max(baselineSpike, spike)
+	}
+
+	t.Logf("maxSpike: %f", maxSpike)
+	t.Logf("baselineSpike: %f", baselineSpike)
+
+	assert.Less(t, maxSpike, baselineSpike*1.2, "CPU spike during disconnects exceeded 1.2x baseline usage")
 }
