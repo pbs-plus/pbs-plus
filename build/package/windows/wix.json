@@ -6,7 +6,8 @@
   "files": {
     "guid": "00a83f86-98b2-43f6-ba9a-b81b632c522f",
     "items": [
-      "pbs-plus-agent.exe"
+      "pbs-plus-agent.exe",
+      "register-server.reg"
     ]
   },
   "env": {

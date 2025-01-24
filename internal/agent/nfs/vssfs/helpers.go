@@ -4,7 +4,6 @@ package vssfs
 
 import (
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -18,13 +17,6 @@ func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*reg
 
 	if strings.TrimSpace(normalizedPath) == "" {
 		return false
-	}
-
-	baseName := filepath.Base(normalizedPath)
-	for _, regex := range exclusions {
-		if regex.MatchString(baseName) {
-			return true
-		}
 	}
 
 	for _, regex := range exclusions {

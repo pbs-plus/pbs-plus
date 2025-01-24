@@ -68,29 +68,42 @@ func (p *agentService) calculateMD5(filepath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func (p *agentService) downloadUpdate() (string, io.ReadCloser, error) {
+func (p *agentService) downloadUpdate() (string, error) {
 	tempDir, err := p.ensureTempDir()
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 
 	tempFile := filepath.Join(tempDir, fmt.Sprintf("update-%s.tmp", time.Now().Format("20060102150405")))
 	file, err := os.Create(tempFile)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to create temporary file: %w", err)
+		return "", fmt.Errorf("failed to create temporary file: %w", err)
 	}
 
 	dlResp, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary", nil, nil)
 	if err != nil {
 		file.Close()
 		os.Remove(tempFile)
-		return "", nil, fmt.Errorf("failed to download update: %w", err)
+		return "", fmt.Errorf("failed to download update: %w", err)
 	}
+	defer func() {
+		if dlResp != nil {
+			_, _ = io.Copy(io.Discard, dlResp)
+			dlResp.Close()
+		}
+	}()
 
-	return tempFile, dlResp, nil
+	if _, err := io.Copy(file, dlResp); err != nil {
+		file.Close()
+		os.Remove(tempFile)
+		return "", fmt.Errorf("failed to save update file: %w", err)
+	}
+	file.Close()
+
+	return tempFile, nil
 }
 
-func (p *agentService) verifyAndApplyUpdate(tempFile string) error {
+func (p *agentService) verifyUpdate(tempFile string) error {
 	expectedMD5, err := p.downloadAndVerifyMD5()
 	if err != nil {
 		return fmt.Errorf("failed to get expected MD5: %w", err)
@@ -105,6 +118,9 @@ func (p *agentService) verifyAndApplyUpdate(tempFile string) error {
 		return fmt.Errorf("MD5 mismatch: expected %s, got %s", expectedMD5, actualMD5)
 	}
 
+	return nil
+}
+func (p *agentService) applyUpdate(tempFile string) error {
 	ex, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
@@ -135,30 +151,17 @@ func (p *agentService) verifyAndApplyUpdate(tempFile string) error {
 }
 
 func (p *agentService) performUpdate() error {
-	tempFile, dlResp, err := p.downloadUpdate()
+	tempFile, err := p.downloadUpdate()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if dlResp != nil {
-			_, _ = io.Copy(io.Discard, dlResp)
-			dlResp.Close()
-		}
-	}()
 
-	file, err := os.OpenFile(tempFile, os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open temp file: %w", err)
-	}
-
-	if _, err := io.Copy(file, dlResp); err != nil {
-		file.Close()
+	if err := p.verifyUpdate(tempFile); err != nil {
 		os.Remove(tempFile)
-		return fmt.Errorf("failed to save update file: %w", err)
+		return err
 	}
-	file.Close()
 
-	if err := p.verifyAndApplyUpdate(tempFile); err != nil {
+	if err := p.applyUpdate(tempFile); err != nil {
 		os.Remove(tempFile)
 		return err
 	}

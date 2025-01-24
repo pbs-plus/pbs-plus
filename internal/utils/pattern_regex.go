@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// GlobToRegex converts a glob pattern to a regex-compatible string
+// GlobToRegex converts a glob pattern to a case-insensitive regex without start/end anchors
 func GlobToRegex(glob string) (string, error) {
 	negate := false
 	if strings.HasPrefix(glob, "!") {
@@ -16,7 +16,6 @@ func GlobToRegex(glob string) (string, error) {
 
 	glob = strings.TrimRight(glob, "/\\")
 	var regexStr strings.Builder
-	regexStr.WriteString("^") // Start anchor
 
 	i := 0
 	for i < len(glob) {
@@ -24,12 +23,10 @@ func GlobToRegex(glob string) (string, error) {
 		switch c {
 		case '*':
 			if i+1 < len(glob) && glob[i+1] == '*' {
-				// Double star - match across directories
 				regexStr.WriteString(".*")
 				i += 2
 				continue
 			}
-			// Single star - non-separator characters
 			regexStr.WriteString(`[^/\\]*`)
 		case '?':
 			regexStr.WriteString(`[^/\\]`)
@@ -56,11 +53,13 @@ func GlobToRegex(glob string) (string, error) {
 		i++
 	}
 
-	regexStr.WriteString(`$`) // End anchor
-
 	finalRegex := regexStr.String()
 	if negate {
-		finalRegex = fmt.Sprintf("^(?!%s).*", finalRegex[1:])
+		// Case-insensitive negative lookahead
+		finalRegex = fmt.Sprintf("^(?!.*(?i:%s)).*$", finalRegex)
+	} else {
+		// Prepend case-insensitive flag
+		finalRegex = "(?i)" + finalRegex
 	}
 
 	return finalRegex, nil
