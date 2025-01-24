@@ -65,15 +65,42 @@ jobs:
         name: windows-binary
         path: ${{steps.go_build.outputs.release_asset_dir}}/pbs-plus-agent.exe
 
+  release-windows-amd64-updater:
+    name: release updater windows/amd64
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: wangyoucao577/go-release-action@v1
+      id: go_build_updater
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        goos: windows 
+        goarch: amd64
+        compress_assets: false
+        executable_compression: upx 
+        binary_name: pbs-plus-updater
+        project_path: ./cmd/windows_updater
+        ldflags: "-H=windowsgui"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: windows-updater-binary
+        path: ${{steps.go_build_updater.outputs.release_asset_dir}}/pbs-plus-updater.exe
+
   release-windows-amd64-agent-installer:
     name: release agent installer windows/amd64
     runs-on: windows-latest
-    needs: release-windows-amd64-agent
+    needs:
+      - release-windows-amd64-agent
+      - release-windows-amd64-updater
     steps:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4
       with:
         name: windows-binary
+        path: ./build/package/windows/
+    - uses: actions/download-artifact@v4
+      with:
+        name: windows-updater-binary
         path: ./build/package/windows/
     - id: version
       shell: pwsh

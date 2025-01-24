@@ -14,26 +14,61 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minio/selfupdate"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
-func (p *agentService) ensureTempDir() (string, error) {
+const (
+	tempUpdateDir    = "updates"
+	mainServiceName  = "PBSPlusAgent"
+	mainBinaryName   = "pbs-plus-agent.exe"
+	maxUpdateRetries = 3
+	updateRetryDelay = 5 * time.Second
+)
+
+type VersionResp struct {
+	Version string `json:"version"`
+}
+
+func (p *UpdaterService) getMainBinaryPath() (string, error) {
 	ex, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("failed to get executable path: %w", err)
 	}
 
+	return filepath.Join(filepath.Dir(ex), mainBinaryName), nil
+}
+
+func (p *UpdaterService) getMainServiceVersion() (string, error) {
+	mainBinary, err := p.getMainBinaryPath()
+	if err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command(mainBinary, "--version")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get main service version: %w", err)
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
+func (p *UpdaterService) ensureTempDir() (string, error) {
+	ex, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+
 	tempDir := filepath.Join(filepath.Dir(ex), tempUpdateDir)
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create temp directory: %w", err)
+		return "", err
 	}
 
 	return tempDir, nil
 }
 
-func (p *agentService) downloadAndVerifyMD5() (string, error) {
+func (p *UpdaterService) downloadAndVerifyMD5() (string, error) {
 	md5Resp, err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,
 		"/api2/json/plus/binary/checksum",
@@ -53,10 +88,10 @@ func (p *agentService) downloadAndVerifyMD5() (string, error) {
 	return strings.TrimSpace(string(md5Bytes)), nil
 }
 
-func (p *agentService) calculateMD5(filepath string) (string, error) {
+func (p *UpdaterService) calculateMD5(filepath string) (string, error) {
 	file, err := os.Open(filepath)
 	if err != nil {
-		return "", fmt.Errorf("failed to open file for MD5 calculation: %w", err)
+		return "", fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
 
@@ -68,7 +103,7 @@ func (p *agentService) calculateMD5(filepath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func (p *agentService) downloadUpdate() (string, error) {
+func (p *UpdaterService) downloadUpdate() (string, error) {
 	tempDir, err := p.ensureTempDir()
 	if err != nil {
 		return "", err
@@ -103,7 +138,7 @@ func (p *agentService) downloadUpdate() (string, error) {
 	return tempFile, nil
 }
 
-func (p *agentService) verifyUpdate(tempFile string) error {
+func (p *UpdaterService) verifyUpdate(tempFile string) error {
 	expectedMD5, err := p.downloadAndVerifyMD5()
 	if err != nil {
 		return fmt.Errorf("failed to get expected MD5: %w", err)
@@ -120,28 +155,70 @@ func (p *agentService) verifyUpdate(tempFile string) error {
 
 	return nil
 }
-func (p *agentService) applyUpdate(tempFile string) error {
-	ex, err := os.Executable()
+
+func (p *UpdaterService) stopMainService() error {
+	stopCmd := exec.Command("sc", "stop", mainServiceName)
+	return stopCmd.Run()
+}
+
+func (p *UpdaterService) startMainService() error {
+	startCmd := exec.Command("sc", "start", mainServiceName)
+	return startCmd.Run()
+}
+
+func (p *UpdaterService) applyUpdate(tempFile string) error {
+	mainBinary, err := p.getMainBinaryPath()
 	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
+		return err
 	}
 
-	backupPath := ex + ".backup"
-	if err := os.Link(ex, backupPath); err != nil && !os.IsExist(err) {
+	backupPath := mainBinary + ".backup"
+
+	// Stop service before update
+	if err := p.stopMainService(); err != nil {
+		return fmt.Errorf("failed to stop service: %w", err)
+	}
+
+	// Wait for service to fully stop
+	time.Sleep(5 * time.Second)
+
+	// Create backup of current binary
+	if err := os.Link(mainBinary, backupPath); err != nil && !os.IsExist(err) {
 		syslog.L.Errorf("Failed to create backup: %v", err)
 	}
 
-	updateFile, err := os.Open(tempFile)
+	// Copy new binary over the old one
+	srcFile, err := os.Open(tempFile)
 	if err != nil {
 		return fmt.Errorf("failed to open update file: %w", err)
 	}
-	defer updateFile.Close()
+	defer srcFile.Close()
 
-	if err := selfupdate.Apply(updateFile, selfupdate.Options{}); err != nil {
-		if backupErr := os.Rename(backupPath, ex); backupErr != nil {
+	dstFile, err := os.OpenFile(mainBinary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to open destination file: %w", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		// Attempt to restore backup on failure
+		if backupErr := os.Rename(backupPath, mainBinary); backupErr != nil {
 			syslog.L.Errorf("Failed to restore backup after failed update: %v", backupErr)
 		}
-		return fmt.Errorf("failed to apply update: %w", err)
+		return fmt.Errorf("failed to copy update file: %w", err)
+	}
+
+	// Start service after update
+	if err := p.startMainService(); err != nil {
+		syslog.L.Errorf("Failed to start service after update: %v", err)
+		// Attempt to restore backup and restart service
+		if backupErr := os.Rename(backupPath, mainBinary); backupErr != nil {
+			syslog.L.Errorf("Failed to restore backup after failed service start: %v", backupErr)
+		}
+		if startErr := p.startMainService(); startErr != nil {
+			syslog.L.Errorf("Failed to start service after restore: %v", startErr)
+		}
+		return fmt.Errorf("failed to start service: %w", err)
 	}
 
 	os.Remove(backupPath)
@@ -150,7 +227,7 @@ func (p *agentService) applyUpdate(tempFile string) error {
 	return nil
 }
 
-func (p *agentService) performUpdate() error {
+func (p *UpdaterService) performUpdate() error {
 	tempFile, err := p.downloadUpdate()
 	if err != nil {
 		return err
@@ -166,16 +243,10 @@ func (p *agentService) performUpdate() error {
 		return err
 	}
 
-	ex, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
-	}
-
-	restartCmd := exec.Command(ex, "restart")
-	return restartCmd.Start()
+	return nil
 }
 
-func (p *agentService) cleanupOldUpdates() error {
+func (p *UpdaterService) cleanupOldUpdates() error {
 	tempDir, err := p.ensureTempDir()
 	if err != nil {
 		return err
@@ -191,80 +262,14 @@ func (p *agentService) cleanupOldUpdates() error {
 			path := filepath.Join(tempDir, entry.Name())
 			info, err := entry.Info()
 			if err != nil {
-				syslog.L.Errorf("Failed to get file info for %s: %v", path, err)
 				continue
 			}
 
 			if time.Since(info.ModTime()) > 24*time.Hour {
-				if err := os.Remove(path); err != nil {
-					syslog.L.Errorf("Failed to remove old update file %s: %v", path, err)
-				}
+				_ = os.Remove(path)
 			}
 		}
 	}
 
 	return nil
-}
-
-func (p *agentService) versionCheck() {
-	ticker := time.NewTicker(2 * time.Minute)
-	defer ticker.Stop()
-
-	if err := p.cleanupOldUpdates(); err != nil {
-		syslog.L.Errorf("Failed to clean up old updates: %v", err)
-	}
-
-	checkAndUpdate := func() {
-		// Check if there are any active backups
-		backupStatus := agent.GetBackupStatus()
-		if backupStatus.HasActiveBackups() {
-			syslog.L.Info("Skipping version check - backup in progress")
-			return
-		}
-
-		var versionResp VersionResp
-		_, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, &versionResp)
-		if err != nil {
-			syslog.L.Errorf("Version check failed: %v", err)
-			return
-		}
-
-		if versionResp.Version != Version {
-			syslog.L.Infof("New version %s available, current version: %s", versionResp.Version, Version)
-
-			// Double check for active backups before starting update
-			if backupStatus.HasActiveBackups() {
-				syslog.L.Info("Postponing update - backup started during version check")
-				return
-			}
-
-			for retry := 0; retry < maxUpdateRetries; retry++ {
-				// Check again before each retry
-				if backupStatus.HasActiveBackups() {
-					syslog.L.Info("Postponing update retry - backup in progress")
-					return
-				}
-
-				if err := p.performUpdate(); err != nil {
-					syslog.L.Errorf("Update attempt %d failed: %v", retry+1, err)
-					time.Sleep(updateRetryDelay)
-					continue
-				}
-				syslog.L.Infof("Successfully updated to version %s", versionResp.Version)
-				return
-			}
-			syslog.L.Errorf("Failed to update after %d attempts", maxUpdateRetries)
-		}
-	}
-
-	checkAndUpdate()
-
-	for {
-		select {
-		case <-p.ctx.Done():
-			return
-		case <-ticker.C:
-			checkAndUpdate()
-		}
-	}
 }

@@ -7,6 +7,7 @@
     "guid": "00a83f86-98b2-43f6-ba9a-b81b632c522f",
     "items": [
       "pbs-plus-agent.exe",
+      "pbs-plus-updater.exe",
       "register-server.reg"
     ]
   },
@@ -27,7 +28,15 @@
       "when": "install"
     },
     {
+      "command": "[INSTALLDIR]pbs-plus-updater.exe install",
+      "when": "install"
+    },
+    {
       "command": "[INSTALLDIR]pbs-plus-agent.exe uninstall",
+      "when": "uninstall"
+    },
+    {
+      "command": "[INSTALLDIR]pbs-plus-updater.exe uninstall",
       "when": "uninstall"
     }
   ]

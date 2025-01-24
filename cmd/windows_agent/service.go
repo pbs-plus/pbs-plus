@@ -32,10 +32,6 @@ type PingResp struct {
 	Data PingData `json:"data"`
 }
 
-type VersionResp struct {
-	Version string `json:"version"`
-}
-
 type AgentDrivesRequest struct {
 	Hostname     string   `json:"hostname"`
 	DriveLetters []string `json:"drive_letters"`
@@ -48,21 +44,11 @@ type agentService struct {
 	wg     sync.WaitGroup
 }
 
-const (
-	updateRetryDelay = 5 * time.Second
-	maxUpdateRetries = 3
-	tempUpdateDir    = "updates"
-)
-
 func (p *agentService) Start(s service.Service) error {
 	p.svc = s
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 
-	p.wg.Add(2)
-	go func() {
-		defer p.wg.Done()
-		p.versionCheck()
-	}()
+	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
 		p.run()

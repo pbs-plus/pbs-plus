@@ -11,7 +11,6 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -136,11 +135,12 @@ func restartService() error {
 
 func handleServiceCommands(s service.Service, cmd string) error {
 	switch cmd {
+	case "version":
+		fmt.Printf("%s", Version)
+		os.Exit(0)
 	case "install", "uninstall":
 		// Clean up registry before install/uninstall
-		for _, drive := range utils.GetLocalDrives() {
-			_ = registry.DeleteKey(registry.LOCAL_MACHINE, fmt.Sprintf(`Software\PBSPlus\Auth`, drive))
-		}
+		_ = registry.DeleteKey(registry.LOCAL_MACHINE, `Software\PBSPlus\Auth`)
 		err := service.Control(s, cmd)
 		if err != nil {
 			return fmt.Errorf("failed to %s service: %v", cmd, err)
