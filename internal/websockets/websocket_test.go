@@ -5,9 +5,11 @@ package websockets
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 	"time"
 
@@ -147,4 +149,83 @@ func TestClientReconnection(t *testing.T) {
 
 	t.Log("Finished test, closing client.")
 	client.Close()
+}
+
+func TestCPUOnDisconnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	server := NewServer(ctx)
+	go server.Run()
+
+	ts := httptest.NewServer(http.HandlerFunc(server.ServeWS))
+	defer ts.Close()
+
+	wsURL := "ws" + ts.URL[4:]
+
+	// Create multiple clients to increase potential CPU impact
+	clients := make([]*WSClient, 100)
+	for i := 0; i < 100; i++ {
+		client, err := NewWSClient(ctx, Config{
+			ServerURL: wsURL,
+			ClientID:  fmt.Sprintf("cpu-test-%d", i),
+			Headers: http.Header{
+				"X-PBS-Agent": []string{fmt.Sprintf("cpu-test-%d", i)},
+			},
+		}, &tls.Config{
+			InsecureSkipVerify: true,
+		})
+		require.NoError(t, err)
+
+		err = client.Connect()
+		require.NoError(t, err)
+		client.Start()
+		clients[i] = client
+	}
+
+	// Let connections stabilize
+	time.Sleep(time.Second)
+
+	// Monitor CPU usage during disconnects
+	var cpuUsage []float64
+	done := make(chan struct{})
+
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				var stats runtime.MemStats
+				runtime.ReadMemStats(&stats)
+				cpuTime := time.Duration(stats.PauseTotalNs)
+				cpuUsage = append(cpuUsage, float64(cpuTime.Nanoseconds()))
+			}
+		}
+	}()
+
+	// Disconnect all clients simultaneously
+	for _, client := range clients {
+		client.Close()
+	}
+
+	// Continue monitoring for a brief period
+	time.Sleep(2 * time.Second)
+	close(done)
+
+	// Check for significant CPU spikes
+	var maxSpike float64
+	for i := 1; i < len(cpuUsage); i++ {
+		spike := cpuUsage[i] - cpuUsage[i-1]
+		if spike > maxSpike {
+			maxSpike = spike
+		}
+	}
+
+	// Fail if spike exceeds threshold (adjust based on environment)
+	maxAllowedSpike := float64(1e9) // 1 second of CPU time
+	assert.Less(t, maxSpike, maxAllowedSpike, "CPU spike too high during client disconnects")
 }
