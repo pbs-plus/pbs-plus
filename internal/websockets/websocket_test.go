@@ -7,11 +7,10 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
-	"sync"
+	"os"
+	"runtime/pprof"
 	"testing"
 	"time"
 
@@ -154,18 +153,24 @@ func TestClientReconnection(t *testing.T) {
 }
 
 func TestCPUOnDisconnect(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	server := NewServer(ctx)
 	go server.Run()
-
 	ts := httptest.NewServer(http.HandlerFunc(server.ServeWS))
 	defer ts.Close()
 
 	wsURL := "ws" + ts.URL[4:]
-
 	clients := make([]*WSClient, 100)
+	defer func() {
+		for _, client := range clients {
+			if client != nil {
+				client.Close()
+			}
+		}
+	}()
+
 	for i := 0; i < 100; i++ {
 		client, err := NewWSClient(ctx, Config{
 			ServerURL: wsURL,
@@ -184,61 +189,42 @@ func TestCPUOnDisconnect(t *testing.T) {
 		clients[i] = client
 	}
 
+	baselineFile, err := os.Create("cpu-baseline.prof")
+	require.NoError(t, err)
+	defer os.Remove(baselineFile.Name())
+
+	err = pprof.StartCPUProfile(baselineFile)
+	require.NoError(t, err)
+
+	time.Sleep(time.Second * 5)
+
+	pprof.StopCPUProfile()
+	baselineStats, err := os.ReadFile(baselineFile.Name())
+	require.NoError(t, err)
+
 	time.Sleep(time.Second)
-
-	mu := sync.Mutex{}
-	var cpuUsage []float64
-	done := make(chan struct{})
-
-	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				var stats runtime.MemStats
-				runtime.ReadMemStats(&stats)
-				cpuTime := time.Duration(stats.PauseTotalNs)
-
-				mu.Lock()
-				cpuUsage = append(cpuUsage, float64(cpuTime.Nanoseconds()))
-				mu.Unlock()
-			}
-		}
-	}()
 
 	for _, client := range clients {
 		client.Close()
 	}
 
-	time.Sleep(2 * time.Second)
-	close(done)
+	peakFile, err := os.Create("cpu-peak.prof")
+	require.NoError(t, err)
+	defer os.Remove(peakFile.Name())
 
-	mu.Lock()
-	measurements := make([]float64, len(cpuUsage))
-	copy(measurements, cpuUsage)
-	mu.Unlock()
+	err = pprof.StartCPUProfile(peakFile)
+	require.NoError(t, err)
 
-	var maxSpike float64
-	for i := 1; i < len(measurements); i++ {
-		spike := measurements[i] - measurements[i-1]
-		if spike > maxSpike {
-			maxSpike = spike
-		}
-	}
+	time.Sleep(time.Second * 5)
 
-	// Calculate reasonable spike threshold based on baseline CPU usage
-	var baselineSpike float64
-	for i := 1; i < len(measurements)/2; i++ { // Use first half of measurements as baseline
-		spike := measurements[i] - measurements[i-1]
-		baselineSpike = math.Max(baselineSpike, spike)
-	}
+	pprof.StopCPUProfile()
+	peakStats, err := os.ReadFile(peakFile.Name())
+	require.NoError(t, err)
 
-	t.Logf("maxSpike: %f", maxSpike)
-	t.Logf("baselineSpike: %f", baselineSpike)
+	baselineCPURate := float64(len(baselineStats)) / 5
+	peakCPURate := float64(len(peakStats)) / 5
 
-	assert.Less(t, maxSpike, baselineSpike*1.2, "CPU spike during disconnects exceeded 1.2x baseline usage")
+	t.Logf("Baseline CPU: %f bytes/s", baselineCPURate)
+	t.Logf("Peak CPU: %f bytes/s", peakCPURate)
+	assert.Less(t, peakCPURate/baselineCPURate, 1.2, "CPU usage more than 1.2x during disconnects")
 }
