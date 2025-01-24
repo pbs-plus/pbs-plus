@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"regexp"
 	"sync"
 
@@ -25,18 +26,17 @@ type NFSSession struct {
 	DriveLetter   string
 	listener      net.Listener
 	connections   sync.WaitGroup
-	sem           chan struct{}
 	isRunning     bool
-	mu            sync.Mutex // Protects isRunning
-	serverURL     string
+	serverURL     *url.URL
 	ExcludedPaths []*regexp.Regexp
 	PartialFiles  []*regexp.Regexp
+	statusMu      sync.RWMutex
 }
 
 func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string) *NFSSession {
 	cancellableCtx, cancel := context.WithCancel(ctx)
 
-	url, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
+	urlStr, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
 		syslog.L.Errorf("[NewNFSSession] unable to get server url: %v", err)
 
@@ -44,20 +44,22 @@ func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driv
 		return nil
 	}
 
+	parsedURL, _ := url.Parse(urlStr.Value)
+
 	return &NFSSession{
 		Context:     cancellableCtx,
 		Snapshot:    snapshot,
 		DriveLetter: driveLetter,
 		ctxCancel:   cancel,
 		isRunning:   true,
-		serverURL:   url.Value,
+		serverURL:   parsedURL,
 	}
 }
 
 func (s *NFSSession) Close() {
-	s.mu.Lock()
+	s.statusMu.Lock()
 	s.isRunning = false
-	s.mu.Unlock()
+	s.statusMu.Unlock()
 
 	s.ctxCancel()
 	if s.listener != nil {
@@ -91,4 +93,11 @@ func (s *NFSSession) Serve() error {
 	cachedHandler := nfshelper.NewCachingHandler(handler, 1000)
 
 	return nfs.Serve(listener, cachedHandler)
+}
+
+func (s *NFSSession) IsRunning() bool {
+	s.statusMu.RLock()
+	defer s.statusMu.RUnlock()
+
+	return s.isRunning
 }

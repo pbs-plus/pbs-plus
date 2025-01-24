@@ -6,93 +6,71 @@ import (
 	"strings"
 )
 
-// GlobToRegex converts a glob pattern to a regex-compatible string.
+// GlobToRegex converts a glob pattern to a regex-compatible string
 func GlobToRegex(glob string) (string, error) {
-	// Check for negation at the start
 	negate := false
 	if strings.HasPrefix(glob, "!") {
 		negate = true
 		glob = glob[1:]
 	}
 
-	glob = strings.TrimSuffix(glob, "/")
-	glob = strings.TrimSuffix(glob, "\\")
+	glob = strings.TrimRight(glob, "/\\")
+	var regexStr strings.Builder
+	regexStr.WriteString("^") // Start anchor
 
-	var regex strings.Builder
-	regex.WriteString(".*") // Match any path leading to the pattern
-
-	for i := 0; i < len(glob); i++ {
+	i := 0
+	for i < len(glob) {
 		c := glob[i]
 		switch c {
 		case '*':
 			if i+1 < len(glob) && glob[i+1] == '*' {
-				// Handle "**" for zero or more directories/files
-				regex.WriteString(".*")
-				i++ // Skip next '*'
-			} else {
-				// Handle "*" for zero or more characters except '/'
-				regex.WriteString("[^/\\\\]*")
+				// Double star - match across directories
+				regexStr.WriteString(".*")
+				i += 2
+				continue
 			}
+			// Single star - non-separator characters
+			regexStr.WriteString(`[^/\\]*`)
+		case '?':
+			regexStr.WriteString(`[^/\\]`)
 		case '.':
-			// Escape '.' in regex
-			regex.WriteString("\\.")
-		case '/':
-			// Match both '/' and '\'
-			regex.WriteString("[\\\\/]")
-		case '\\':
-			// Match literal '\' if escaped
-			regex.WriteString("\\\\")
+			regexStr.WriteString(`\.`)
+		case '\\', '/':
+			regexStr.WriteString(`[/\\]`)
 		case '[':
-			// Preserve character classes
-			endIdx := strings.IndexByte(glob[i:], ']')
-			if endIdx == -1 {
-				return "", fmt.Errorf("invalid glob pattern, unmatched '['")
+			end := strings.IndexByte(glob[i:], ']')
+			if end == -1 {
+				return "", fmt.Errorf("unclosed character class")
 			}
-			class := glob[i : i+endIdx+1]
-			if negate {
-				// Add negation directly inside the character class
-				regex.WriteString("[^" + class[1:])
-			} else {
-				regex.WriteString(class)
-			}
-			i += endIdx
+			end += i
+			regexStr.WriteString(regexp.QuoteMeta(glob[i : end+1]))
+			i = end
+		case '{':
+			return "", fmt.Errorf("brace expansions not supported")
 		default:
-			// Escape all other special regex characters
-			if strings.ContainsRune(`+()|^$!`, rune(c)) {
-				regex.WriteString("\\")
+			if strings.ContainsRune(`+()|$.^`, rune(c)) {
+				regexStr.WriteByte('\\')
 			}
-			regex.WriteByte(c)
+			regexStr.WriteByte(c)
 		}
+		i++
 	}
 
-	// Add optional end match
-	regex.WriteString("(?:$|[\\\\/])")
+	regexStr.WriteString(`$`) // End anchor
 
-	// Return the final regex
-	return regex.String(), nil
+	finalRegex := regexStr.String()
+	if negate {
+		finalRegex = fmt.Sprintf("^(?!%s).*", finalRegex[1:])
+	}
+
+	return finalRegex, nil
 }
 
 func IsValidPattern(pattern string) bool {
-	isValid := true
-
-	// Attempt to convert the glob pattern to regex
-	defer func() {
-		// Recover in case of panic during regex compilation
-		if r := recover(); r != nil {
-			isValid = false
-		}
-	}()
-
-	// Convert to regex and attempt compilation
-	regex, err := GlobToRegex(pattern)
+	regexStr, err := GlobToRegex(pattern)
 	if err != nil {
 		return false
 	}
-
-	_, err = regexp.Compile(regex)
-	if err != nil {
-		isValid = false
-	}
-
-	return isValid
+	_, err = regexp.Compile(regexStr)
+	return err == nil
 }

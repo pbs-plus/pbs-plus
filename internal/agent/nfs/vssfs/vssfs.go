@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"golang.org/x/sys/windows"
 )
 
 // VSSFS extends osfs while enforcing read-only operations
@@ -21,7 +23,15 @@ type VSSFS struct {
 	snapshot      *snapshots.WinVSSSnapshot
 	ExcludedPaths []*regexp.Regexp
 	PartialFiles  []*regexp.Regexp
+	idCache       sync.Map // Key: fullPath (string), Value: *cachedID
 }
+
+type cachedID struct {
+	stableID uint64
+	nLinks   uint32
+}
+
+var _ billy.Filesystem = (*VSSFS)(nil)
 
 func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, excludedPaths []*regexp.Regexp, partialFiles []*regexp.Regexp) billy.Filesystem {
 	return &VSSFS{
@@ -43,7 +53,7 @@ func (fs *VSSFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.Fi
 	}
 
 	fullPath := filepath.Join(fs.Root(), filepath.Clean(filename))
-	if skipFile(fullPath, fs.snapshot, fs.ExcludedPaths) {
+	if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
 		return nil, os.ErrNotExist
 	}
 
@@ -89,16 +99,49 @@ func (fs *VSSFS) Chtimes(name string, atime time.Time, mtime time.Time) error {
 // Override read operations to check if file should be skipped
 func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 	fullPath := filepath.Join(fs.Root(), filepath.Clean(filename))
-	if skipFile(fullPath, fs.snapshot, fs.ExcludedPaths) {
-		return nil, os.ErrNotExist
+
+	// Check cache first
+	if cached, exists := fs.idCache.Load(fullPath); exists {
+		ci := cached.(*cachedID)
+		return &VSSFileInfo{
+			FileInfo: nil, // Will be populated below
+			stableID: ci.stableID,
+			nLinks:   ci.nLinks,
+		}, nil
 	}
 
+	// Get base file info (single system call)
 	info, err := fs.Filesystem.Stat(filename)
 	if err != nil {
 		return nil, err
 	}
 
-	return &VSSFileInfo{FileInfo: info, path: fullPath}, nil
+	// Check if we can compute ID without opening the file
+	if fi, ok := info.Sys().(*windows.ByHandleFileInformation); ok {
+		// Use existing syscall data
+		stableID, nLinks := computeIDFromExisting(fi)
+		fs.idCache.Store(fullPath, &cachedID{
+			stableID: stableID,
+			nLinks:   nLinks,
+		})
+		return &VSSFileInfo{
+			FileInfo: info,
+			stableID: stableID,
+			nLinks:   nLinks,
+		}, nil
+	}
+
+	// Fallback to handle-based computation with caching
+	stableID, nLinks, err := fs.computeAndCacheID(fullPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &VSSFileInfo{
+		FileInfo: info,
+		stableID: stableID,
+		nLinks:   nLinks,
+	}, nil
 }
 
 func (fs *VSSFS) Lstat(filename string) (os.FileInfo, error) {
@@ -106,6 +149,10 @@ func (fs *VSSFS) Lstat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *VSSFS) ReadDir(path string) ([]os.FileInfo, error) {
+	if skipPath(path, fs.snapshot, fs.ExcludedPaths) {
+		return nil, os.ErrNotExist
+	}
+
 	entries, err := fs.Filesystem.ReadDir(path)
 	if err != nil {
 		return nil, err
@@ -114,7 +161,7 @@ func (fs *VSSFS) ReadDir(path string) ([]os.FileInfo, error) {
 	var fileInfos []os.FileInfo
 	for _, entry := range entries {
 		entryPath := filepath.Join(fs.Root(), path, entry.Name())
-		if skipFile(entryPath, fs.snapshot, fs.ExcludedPaths) {
+		if skipPath(entryPath, fs.snapshot, fs.ExcludedPaths) {
 			continue
 		}
 
@@ -127,7 +174,7 @@ func (fs *VSSFS) ReadDir(path string) ([]os.FileInfo, error) {
 
 func (fs *VSSFS) Readlink(link string) (string, error) {
 	fullPath := filepath.Join(fs.Root(), filepath.Clean(link))
-	if skipFile(fullPath, fs.snapshot, fs.ExcludedPaths) {
+	if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
 		return "", os.ErrNotExist
 	}
 	return fs.Filesystem.Readlink(link)
@@ -136,4 +183,29 @@ func (fs *VSSFS) Readlink(link string) (string, error) {
 // Preserve Chroot functionality while maintaining read-only nature
 func (fs *VSSFS) Chroot(path string) (billy.Filesystem, error) {
 	return NewVSSFS(fs.snapshot, fs.ExcludedPaths, fs.PartialFiles), nil
+}
+
+func (fs *VSSFS) computeAndCacheID(fullPath string) (uint64, uint32, error) {
+	// Use sync.Once or similar pattern to prevent concurrent recomputation
+	var result struct {
+		id    uint64
+		links uint32
+		err   error
+	}
+
+	actual, _ := fs.idCache.LoadOrStore(fullPath, &sync.Once{})
+	once := actual.(*sync.Once)
+	once.Do(func() {
+		var fi windows.ByHandleFileInformation
+		result.id, result.links, result.err = getFileIDWindows(fullPath, &fi)
+
+		if result.err == nil {
+			fs.idCache.Store(fullPath, &cachedID{
+				stableID: result.id,
+				nLinks:   result.links,
+			})
+		}
+	})
+
+	return result.id, result.links, result.err
 }

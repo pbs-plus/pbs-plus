@@ -6,8 +6,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -47,17 +45,17 @@ func (h *NFSHandler) InvalidateHandle(fs billy.Filesystem, fh []byte) error {
 }
 
 func (h *NFSHandler) validateConnection(conn net.Conn) error {
-	server, err := url.Parse(h.session.serverURL)
-	if err != nil {
-		return fmt.Errorf("failed to parse server IP: %w", err)
-	}
-
 	remoteAddr := conn.RemoteAddr().String()
 
-	if !strings.Contains(remoteAddr, server.Hostname()) {
-		return fmt.Errorf("unregistered client attempted to connect: %s", remoteAddr)
+	clientIP, _, _ := net.SplitHostPort(remoteAddr)
+	serverIPs, _ := net.LookupHost(h.session.serverURL.Hostname())
+	for _, ip := range serverIPs {
+		if clientIP == ip {
+			return nil
+		}
 	}
-	return nil
+
+	return fmt.Errorf("unregistered client attempted to connect: %s", remoteAddr)
 }
 
 func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequest) (nfs.MountStatus, billy.Filesystem, []nfs.AuthFlavor) {
