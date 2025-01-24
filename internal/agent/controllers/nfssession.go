@@ -10,12 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alexflint/go-filemutex"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 type NFSSessionStore struct {
-	mu       sync.RWMutex
+	mu       *filemutex.FileMutex
 	sessions map[string]*NFSSessionData
 	filepath string
 }
@@ -26,6 +27,8 @@ type NFSSessionData struct {
 	ExcludedPaths []string  `json:"excluded_paths_patterns"`
 	PartialFiles  []string  `json:"partial_files_patterns"`
 }
+
+var nfsSessions sync.Map
 
 func regexpToPatterns(regexps []*regexp.Regexp) []string {
 	patterns := make([]string, len(regexps))
@@ -47,9 +50,16 @@ func GetNFSSessionStore() *NFSSessionStore {
 			panic(err)
 		}
 		storePath := filepath.Join(filepath.Dir(execPath), "nfssessions.json")
+		storeLockPath := filepath.Join(filepath.Dir(execPath), "nfssessions.lock")
+		mutex, err := filemutex.New(storeLockPath)
+		if err != nil {
+			panic(err)
+		}
+
 		store = &NFSSessionStore{
 			sessions: make(map[string]*NFSSessionData),
 			filepath: storePath,
+			mu:       mutex,
 		}
 		store.load()
 	})
