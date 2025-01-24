@@ -42,8 +42,13 @@ func main() {
 	jobRun := flag.String("job", "", "Job ID to execute")
 	flag.Parse()
 
-	wsHub := websockets.NewServer(context.Background())
-	go wsHub.Run()
+	var wsHub *websockets.Server
+	wsHub = nil
+
+	if *jobRun == "" {
+		wsHub = websockets.NewServer(context.Background())
+		go wsHub.Run()
+	}
 
 	storeInstance, err := store.Initialize(wsHub, nil)
 	if err != nil {
@@ -74,7 +79,7 @@ func main() {
 			return
 		}
 
-		if _, err = backup.RunBackup(jobTask, storeInstance); err != nil {
+		if _, err = backup.RunBackup(jobTask, storeInstance, true); err != nil {
 			syslog.L.Error(err)
 		}
 		return

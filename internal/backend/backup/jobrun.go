@@ -18,7 +18,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func RunBackup(job *types.Job, storeInstance *store.Store) (*proxmox.Task, error) {
+func RunBackup(job *types.Job, storeInstance *store.Store, skipCheck bool) (*proxmox.Task, error) {
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to create mutex lock: %w", err)
@@ -43,7 +43,7 @@ func RunBackup(job *types.Job, storeInstance *store.Store) (*proxmox.Task, error
 		return nil, fmt.Errorf("RunBackup: Target '%s' does not exist", job.Target)
 	}
 
-	if !storeInstance.WSHub.AgentPing(target) {
+	if !skipCheck && !storeInstance.WSHub.AgentPing(target) {
 		return nil, fmt.Errorf("RunBackup: Target '%s' is unreachable or does not exist", job.Target)
 	}
 
