@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sync"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -24,7 +23,6 @@ type VSSFS struct {
 	snapshot      *snapshots.WinVSSSnapshot
 	ExcludedPaths []*regexp.Regexp
 	PartialFiles  []*regexp.Regexp
-	idCache       sync.Map // Key: fullPath (string), Value: *cachedID
 	root          string
 }
 
@@ -144,49 +142,11 @@ func (fs *VSSFS) Readlink(link string) (string, error) {
 	return fs.Filesystem.Readlink(link)
 }
 
-func (fs *VSSFS) computeAndCacheID(fullPath string) (uint64, uint32, error) {
-	// Use sync.Once or similar pattern to prevent concurrent recomputation
-	var result struct {
-		id    uint64
-		links uint32
-		err   error
-	}
-
-	actual, _ := fs.idCache.LoadOrStore(fullPath, &sync.Once{})
-	once := actual.(*sync.Once)
-	once.Do(func() {
-		var fi windows.ByHandleFileInformation
-		result.id, result.links, result.err = getFileIDWindows(fullPath, &fi)
-
-		if result.err == nil {
-			fs.idCache.Store(fullPath, &cachedID{
-				stableID: result.id,
-				nLinks:   result.links,
-			})
-		}
-	})
-
-	return result.id, result.links, result.err
-}
-
 func (fs *VSSFS) getVSSFileInfo(path string, info os.FileInfo) (*VSSFileInfo, error) {
 	fullPath := filepath.Join(fs.Root(), filepath.Clean(path))
 
-	if cached, exists := fs.idCache.Load(fullPath); exists {
-		ci := cached.(*cachedID)
-		return &VSSFileInfo{
-			FileInfo: info,
-			stableID: ci.stableID,
-			nLinks:   ci.nLinks,
-		}, nil
-	}
-
 	if fi, ok := info.Sys().(*windows.ByHandleFileInformation); ok {
 		stableID, nLinks := computeIDFromExisting(fi)
-		fs.idCache.Store(fullPath, &cachedID{
-			stableID: stableID,
-			nLinks:   nLinks,
-		})
 		return &VSSFileInfo{
 			FileInfo: info,
 			stableID: stableID,
@@ -194,10 +154,12 @@ func (fs *VSSFS) getVSSFileInfo(path string, info os.FileInfo) (*VSSFileInfo, er
 		}, nil
 	}
 
-	stableID, nLinks, err := fs.computeAndCacheID(fullPath)
+	var fi windows.ByHandleFileInformation
+	stableID, nLinks, err := getFileIDWindows(fullPath, &fi)
 	if err != nil {
 		return nil, err
 	}
+
 	return &VSSFileInfo{
 		FileInfo: info,
 		stableID: stableID,

@@ -7,21 +7,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"golang.org/x/sys/windows"
-)
-
-type attrCacheEntry struct {
-	expiry  time.Time
-	invalid bool
-}
-
-var (
-	attrCache sync.Map // map[string]attrCacheEntry
-	cacheTTL  = 5 * time.Minute
 )
 
 func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*regexp.Regexp) bool {
@@ -54,20 +42,7 @@ func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*reg
 }
 
 func hasInvalidAttributes(path string) (bool, error) {
-	if entry, ok := attrCache.Load(path); ok {
-		if time.Now().Before(entry.(attrCacheEntry).expiry) {
-			return entry.(attrCacheEntry).invalid, nil
-		}
-	}
-
 	invalid := false
-
-	defer func() {
-		attrCache.Store(path, attrCacheEntry{
-			expiry:  time.Now().Add(cacheTTL),
-			invalid: invalid,
-		})
-	}()
 
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {

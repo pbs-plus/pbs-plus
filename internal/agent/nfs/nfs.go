@@ -90,7 +90,7 @@ func (s *NFSSession) Serve() error {
 
 	syslog.L.Infof("[NFS.Serve] Serving NFS on port %s", port)
 
-	cachedHandler := nfshelper.NewCachingHandler(handler, 1000)
+	cachedHandler := nfshelper.NewCachingHandler(handler, 1024)
 
 	return nfs.Serve(listener, cachedHandler)
 }
