@@ -67,7 +67,7 @@ func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequ
 		return nfs.MountStatusErrPerm, nil, nil
 	}
 
-	fs := vssfs.NewVSSFS(h.session.Snapshot, h.session.ExcludedPaths, h.session.PartialFiles)
+	fs := vssfs.NewVSSFS(h.session.Snapshot, "/", h.session.ExcludedPaths, h.session.PartialFiles)
 	syslog.L.Infof("[NFS.Mount] Mount successful, serving from: %s", h.session.Snapshot.SnapshotPath)
 	return nfs.MountStatusOk, fs, []nfs.AuthFlavor{nfs.AuthFlavorNull}
 }

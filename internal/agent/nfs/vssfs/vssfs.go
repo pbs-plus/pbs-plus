@@ -14,6 +14,7 @@ import (
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
 
@@ -24,6 +25,7 @@ type VSSFS struct {
 	ExcludedPaths []*regexp.Regexp
 	PartialFiles  []*regexp.Regexp
 	idCache       sync.Map // Key: fullPath (string), Value: *cachedID
+	root          string
 }
 
 type cachedID struct {
@@ -33,12 +35,13 @@ type cachedID struct {
 
 var _ billy.Filesystem = (*VSSFS)(nil)
 
-func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, excludedPaths []*regexp.Regexp, partialFiles []*regexp.Regexp) billy.Filesystem {
+func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths []*regexp.Regexp, partialFiles []*regexp.Regexp) billy.Filesystem {
 	return &VSSFS{
-		Filesystem:    osfs.New(snapshot.SnapshotPath),
+		Filesystem:    osfs.New(filepath.Join(snapshot.SnapshotPath, baseDir)),
 		snapshot:      snapshot,
 		ExcludedPaths: excludedPaths,
 		PartialFiles:  partialFiles,
+		root:          filepath.Join(snapshot.SnapshotPath, baseDir),
 	}
 }
 
@@ -96,80 +99,41 @@ func (fs *VSSFS) Chtimes(name string, atime time.Time, mtime time.Time) error {
 	return fmt.Errorf("filesystem is read-only")
 }
 
-// Override read operations to check if file should be skipped
-func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
-	fullPath := filepath.Join(fs.Root(), filepath.Clean(filename))
-
-	// Check cache first
-	if cached, exists := fs.idCache.Load(fullPath); exists {
-		ci := cached.(*cachedID)
-		return &VSSFileInfo{
-			FileInfo: nil, // Will be populated below
-			stableID: ci.stableID,
-			nLinks:   ci.nLinks,
-		}, nil
-	}
-
-	// Get base file info (single system call)
-	info, err := fs.Filesystem.Stat(filename)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check if we can compute ID without opening the file
-	if fi, ok := info.Sys().(*windows.ByHandleFileInformation); ok {
-		// Use existing syscall data
-		stableID, nLinks := computeIDFromExisting(fi)
-		fs.idCache.Store(fullPath, &cachedID{
-			stableID: stableID,
-			nLinks:   nLinks,
-		})
-		return &VSSFileInfo{
-			FileInfo: info,
-			stableID: stableID,
-			nLinks:   nLinks,
-		}, nil
-	}
-
-	// Fallback to handle-based computation with caching
-	stableID, nLinks, err := fs.computeAndCacheID(fullPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return &VSSFileInfo{
-		FileInfo: info,
-		stableID: stableID,
-		nLinks:   nLinks,
-	}, nil
-}
-
 func (fs *VSSFS) Lstat(filename string) (os.FileInfo, error) {
 	return fs.Stat(filename)
 }
 
-func (fs *VSSFS) ReadDir(path string) ([]os.FileInfo, error) {
-	if skipPath(path, fs.snapshot, fs.ExcludedPaths) {
-		return nil, os.ErrNotExist
+func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
+	info, err := fs.Filesystem.Stat(filename)
+	if err != nil {
+		return nil, err
 	}
+	return fs.getVSSFileInfo(filename, info)
+}
 
-	entries, err := fs.Filesystem.ReadDir(path)
+func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
+	entries, err := fs.Filesystem.ReadDir(dirname)
 	if err != nil {
 		return nil, err
 	}
 
-	var fileInfos []os.FileInfo
+	fullDirPath := filepath.Join(fs.Root(), dirname)
+
+	results := make([]os.FileInfo, 0, len(entries)) // Single allocation with capacity
 	for _, entry := range entries {
-		entryPath := filepath.Join(fs.Root(), path, entry.Name())
-		if skipPath(entryPath, fs.snapshot, fs.ExcludedPaths) {
+		fullPath := filepath.Clean(filepath.Join(fullDirPath, entry.Name()))
+		if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
 			continue
 		}
 
-		info := entry
-		fileInfos = append(fileInfos, info)
+		vssInfo, err := fs.getVSSFileInfo(filepath.Join(dirname, entry.Name()), entry)
+		if err != nil {
+			syslog.L.Infof("error: %s -> %v", fullPath, err)
+			return nil, err
+		}
+		results = append(results, vssInfo)
 	}
-
-	return fileInfos, nil
+	return results, nil
 }
 
 func (fs *VSSFS) Readlink(link string) (string, error) {
@@ -178,11 +142,6 @@ func (fs *VSSFS) Readlink(link string) (string, error) {
 		return "", os.ErrNotExist
 	}
 	return fs.Filesystem.Readlink(link)
-}
-
-// Preserve Chroot functionality while maintaining read-only nature
-func (fs *VSSFS) Chroot(path string) (billy.Filesystem, error) {
-	return NewVSSFS(fs.snapshot, fs.ExcludedPaths, fs.PartialFiles), nil
 }
 
 func (fs *VSSFS) computeAndCacheID(fullPath string) (uint64, uint32, error) {
@@ -208,4 +167,40 @@ func (fs *VSSFS) computeAndCacheID(fullPath string) (uint64, uint32, error) {
 	})
 
 	return result.id, result.links, result.err
+}
+
+func (fs *VSSFS) getVSSFileInfo(path string, info os.FileInfo) (*VSSFileInfo, error) {
+	fullPath := filepath.Join(fs.Root(), filepath.Clean(path))
+
+	if cached, exists := fs.idCache.Load(fullPath); exists {
+		ci := cached.(*cachedID)
+		return &VSSFileInfo{
+			FileInfo: info,
+			stableID: ci.stableID,
+			nLinks:   ci.nLinks,
+		}, nil
+	}
+
+	if fi, ok := info.Sys().(*windows.ByHandleFileInformation); ok {
+		stableID, nLinks := computeIDFromExisting(fi)
+		fs.idCache.Store(fullPath, &cachedID{
+			stableID: stableID,
+			nLinks:   nLinks,
+		})
+		return &VSSFileInfo{
+			FileInfo: info,
+			stableID: stableID,
+			nLinks:   nLinks,
+		}, nil
+	}
+
+	stableID, nLinks, err := fs.computeAndCacheID(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	return &VSSFileInfo{
+		FileInfo: info,
+		stableID: stableID,
+		nLinks:   nLinks,
+	}, nil
 }

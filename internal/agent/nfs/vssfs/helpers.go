@@ -107,7 +107,6 @@ func getFileIDWindows(path string, fi *windows.ByHandleFileInformation) (uint64,
 		return 0, 0, err
 	}
 
-	// Single system call with optimal flags
 	handle, err := windows.CreateFile(
 		pathPtr,
 		windows.GENERIC_READ,
@@ -116,7 +115,7 @@ func getFileIDWindows(path string, fi *windows.ByHandleFileInformation) (uint64,
 		windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|
 			windows.FILE_FLAG_OPEN_REPARSE_POINT|
-			windows.FILE_FLAG_SEQUENTIAL_SCAN,
+			windows.FILE_FLAG_POSIX_SEMANTICS, // Added for better POSIX compliance
 		0,
 	)
 	if err != nil {
@@ -128,9 +127,10 @@ func getFileIDWindows(path string, fi *windows.ByHandleFileInformation) (uint64,
 		return 0, 0, err
 	}
 
-	// Compute stable ID from retrieved information
+	// Combine all available file information for maximum uniqueness
 	fileIndex := uint64(fi.FileIndexHigh)<<32 | uint64(fi.FileIndexLow)
-	stableID := (uint64(fi.VolumeSerialNumber) << 32) | (fileIndex & 0xFFFFFFFF)
+	stableID := uint64(fi.VolumeSerialNumber)<<48 | // Use 16 bits from volume serial
+		(fileIndex & 0xFFFFFFFFFFFF) // Use 48 bits from file index high and low
 
 	return stableID, fi.NumberOfLinks, nil
 }
@@ -138,5 +138,5 @@ func getFileIDWindows(path string, fi *windows.ByHandleFileInformation) (uint64,
 // Use existing syscall data when possible
 func computeIDFromExisting(fi *windows.ByHandleFileInformation) (uint64, uint32) {
 	fileIndex := uint64(fi.FileIndexHigh)<<32 | uint64(fi.FileIndexLow)
-	return (uint64(fi.VolumeSerialNumber) << 32) | (fileIndex & 0xFFFFFFFF), fi.NumberOfLinks
+	return uint64(fi.VolumeSerialNumber)<<48 | (fileIndex & 0xFFFFFFFFFFFF), fi.NumberOfLinks
 }

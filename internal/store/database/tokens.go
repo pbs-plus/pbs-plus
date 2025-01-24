@@ -137,10 +137,6 @@ func (database *Database) GetAllTokens() ([]types.AgentToken, error) {
 			continue
 		}
 
-		if token.Revoked {
-			continue
-		}
-
 		tokens = append(tokens, *token)
 	}
 
