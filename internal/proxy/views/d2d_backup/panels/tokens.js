@@ -23,7 +23,39 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       if (!selection || selection.length < 1) {
         return;
       }
-			await navigator.clipboard.writeText(selection[0].data.token);
+
+      let token = selection[0].data.token
+      Ext.create('Ext.window.Window', {
+		    modal: true,
+		    width: 600,
+		    title: gettext('Bootstrap Token'),
+		    layout: 'form',
+		    bodyPadding: '10 0',
+		    items: [
+		      {
+			      xtype: 'textfield',
+			      inputId: 'token',
+			      value: token,
+			      editable: false,
+		      },
+		    ],
+		    buttons: [
+		      {
+			      xtype: 'button',
+			      iconCls: 'fa fa-clipboard',
+			      handler: async function(b) {
+			        await navigator.clipboard.writeText(token);
+			      },
+	  		    text: gettext('Copy'),
+	  	    },
+	  	    {
+	  		    text: gettext('Ok'),
+	  		    handler: function() {
+	  		      this.up('window').close();
+			      },
+		      },
+		    ],
+	    }).show();
     },
 
     reload: function () {
@@ -59,7 +91,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
     beforedestroy: "stopStore",
     deactivate: "stopStore",
     activate: "startStore",
-    itemdblclick: "onEdit",
+    itemdblclick: "onCopy",
   },
 
   store: {
@@ -90,6 +122,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       text: gettext("Copy Token"),
       xtype: "proxmoxButton",
       handler: "onCopy",
+      disabled: true,
     },
     {
       xtype: "proxmoxStdRemoveButton",
