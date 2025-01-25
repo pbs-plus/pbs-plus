@@ -158,6 +158,7 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 		entryName := entry.Name()
 		entryPath := filepath.Join(dirname, entryName)
 		normalizedEntry := fs.normalizePath(entryPath)
+
 		fullPath := filepath.Join(fs.root, filepath.Clean(normalizedEntry))
 
 		if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
@@ -222,7 +223,8 @@ func (fs *VSSFS) getVSSFileInfo(path string, baseInfo os.FileInfo) (*VSSFileInfo
 	if cached, exists := fs.fileInfoCache[path]; exists {
 		fs.CacheMu.RUnlock()
 		return cached, nil
-	}s.CacheMu.RUnlock()
+	}
+	fs.CacheMu.RUnlock()
 
 	// Generate stable ID if needed
 	stableID, err := fs.getStableID(path)
@@ -272,4 +274,3 @@ func (fs *VSSFS) normalizePath(path string) string {
 
 	return cleanPath
 }
-
