@@ -20,51 +20,6 @@ import (
 
 type mockHandler struct {
 	nfs.Handler
-	readDirContents  map[string][]fs.FileInfo
-	readFileContents map[string][]byte
-}
-
-func newMockHandler() *mockHandler {
-	return &mockHandler{
-		readDirContents:  make(map[string][]fs.FileInfo),
-		readFileContents: make(map[string][]byte),
-	}
-}
-
-func (m *mockHandler) SetReadDir(path string, contents []fs.FileInfo) {
-	m.readDirContents[path] = contents
-}
-
-func (m *mockHandler) SetReadFile(path string, contents []byte) {
-	m.readFileContents[path] = contents
-}
-
-func (m *mockHandler) ReadDir(path string) ([]fs.FileInfo, error) {
-	if contents, ok := m.readDirContents[path]; ok {
-		return contents, nil
-	}
-	return nil, os.ErrNotExist
-}
-
-func (m *mockHandler) ReadFile(path string) ([]byte, error) {
-	if contents, ok := m.readFileContents[path]; ok {
-		return contents, nil
-	}
-	return nil, os.ErrNotExist
-}
-
-func setupTestEnvironment(t *testing.T) (*mockHandler, nfs.Handler) {
-	mock := newMockHandler()
-
-	files := []fakeFileInfo{
-		{name: "main.go", size: 100},
-		{name: "util.go", size: 200},
-	}
-
-	mock.SetReadDir("project/src", []fs.FileInfo{&files[0], &files[1]})
-	mock.SetReadFile("project/src/main.go", []byte("package main"))
-
-	return mock, NewReadOnlyHandler(mock)
 }
 
 func setupTestFS(t *testing.T) (string, billy.Filesystem) {
