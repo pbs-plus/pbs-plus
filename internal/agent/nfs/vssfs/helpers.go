@@ -56,7 +56,6 @@ func hasInvalidAttributes(path string) (bool, error) {
 		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
 		windows.FILE_ATTRIBUTE_VIRTUAL,
 		windows.FILE_ATTRIBUTE_OFFLINE,
-		windows.FILE_ATTRIBUTE_REPARSE_POINT,
 	}
 	for _, attr := range invalidAttributes {
 		if attributes&attr != 0 {
