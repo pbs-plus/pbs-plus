@@ -26,10 +26,9 @@ type VSSFS struct {
 	PartialFiles  *pattern.Matcher
 	root          string
 
-	fileInfoCache map[string]*VSSFileInfo
-	PathToID      map[string]uint64 // Maps file path to stableID
-	IDToPath      map[uint64]string // Maps stableID to file path
-	CacheMu       sync.RWMutex      // Protects the caches
+	mu       sync.RWMutex
+	PathToID map[string]uint64
+	IDToPath map[uint64]string
 }
 
 type cachedID struct {
@@ -46,36 +45,11 @@ func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths 
 		ExcludedPaths: excludedPaths,
 		PartialFiles:  partialFiles,
 		root:          filepath.Join(snapshot.SnapshotPath, baseDir),
-		fileInfoCache: make(map[string]*VSSFileInfo),
 		PathToID:      make(map[string]uint64),
 		IDToPath:      make(map[uint64]string),
 	}
 
-	go fs.buildIDMap()
-
 	return fs
-}
-
-func (fs *VSSFS) buildIDMap() {
-	root := fs.Root()
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		// Skip excluded paths early
-		if skipPath(path, fs.snapshot, fs.ExcludedPaths) {
-			return nil
-		}
-
-		// Compute relative path
-		relPath, _ := filepath.Rel(root, path)
-		if relPath == "." {
-			relPath = "/"
-		} else {
-			relPath = "/" + filepath.ToSlash(relPath)
-		}
-
-		// Get or create file ID
-		fs.getVSSFileInfo(relPath, info)
-		return nil
-	})
 }
 
 // Override write operations to return read-only errors
@@ -180,10 +154,41 @@ func (fs *VSSFS) Readlink(link string) (string, error) {
 	return fs.Filesystem.Readlink(link)
 }
 
+func (fs *VSSFS) getStableID(path string) (uint64, error) {
+	// Check existing cache with read lock
+	fs.mu.RLock()
+	if id, exists := fs.PathToID[path]; exists {
+		fs.mu.RUnlock()
+		return id, nil
+	}
+	fs.mu.RUnlock()
+
+	// Generate ID on demand
+	fullPath := filepath.Join(fs.root, filepath.Clean(path))
+	var fi windows.ByHandleFileInformation
+	stableID, _, err := getFileIDWindows(fullPath, &fi)
+	if err != nil {
+		return 0, err
+	}
+
+	// Update cache with write lock
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	// Double-check in case another goroutine added it while we waited
+	if existing, exists := fs.PathToID[path]; exists {
+		return existing, nil
+	}
+
+	fs.PathToID[path] = stableID
+	fs.IDToPath[stableID] = path
+	return stableID, nil
+}
+
 func (fs *VSSFS) getVSSFileInfo(path string, info os.FileInfo) (*VSSFileInfo, error) {
-	fs.CacheMu.RLock()
+	fs.mu.RLock()
 	cachedID, exists := fs.PathToID[path]
-	fs.CacheMu.RUnlock()
+	fs.mu.RUnlock()
 
 	if exists {
 		return &VSSFileInfo{
@@ -201,10 +206,10 @@ func (fs *VSSFS) getVSSFileInfo(path string, info os.FileInfo) (*VSSFileInfo, er
 		return nil, err
 	}
 
-	fs.CacheMu.Lock()
+	fs.mu.Lock()
 	fs.PathToID[path] = stableID
 	fs.IDToPath[stableID] = path
-	fs.CacheMu.Unlock()
+	fs.mu.Unlock()
 
 	return &VSSFileInfo{
 		FileInfo: info,

@@ -25,49 +25,37 @@ func NewVSSIDCachingHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) *VSSIDC
 	}
 }
 
-// ToHandle converts a filesystem path to a stable ID handle.
 func (h *VSSIDCachingHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 	vssFS, ok := f.(*VSSFS)
 	if !ok || vssFS != h.vssFS {
 		return nil
 	}
 
-	// Construct the path with forward slashes to match VSSFS's keys.
 	joinedPath := "/" + strings.Join(path, "/")
-	if len(path) == 0 {
-		joinedPath = "/"
-	}
-
-	vssFS.CacheMu.RLock()
-	stableID, exists := vssFS.PathToID[joinedPath]
-	vssFS.CacheMu.RUnlock()
-
-	if !exists {
+	stableID, err := vssFS.getStableID(joinedPath)
+	if err != nil {
 		return nil
 	}
 
-	// Encode stableID as 8-byte handle.
 	handle := make([]byte, 8)
 	binary.BigEndian.PutUint64(handle, stableID)
 	return handle
 }
 
-// FromHandle converts a stable ID handle back to the filesystem and path.
 func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []string, error) {
 	if len(handle) != 8 {
-		return nil, nil, fmt.Errorf("invalid handle length")
+		return nil, nil, fmt.Errorf("invalid handle")
 	}
 
 	stableID := binary.BigEndian.Uint64(handle)
-	h.vssFS.CacheMu.RLock()
+	h.vssFS.mu.RLock()
 	path, exists := h.vssFS.IDToPath[stableID]
-	h.vssFS.CacheMu.RUnlock()
+	h.vssFS.mu.RUnlock()
 
 	if !exists {
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
-	// Split the stored path into components.
 	var parts []string
 	if path != "/" {
 		parts = strings.Split(strings.TrimPrefix(path, "/"), "/")
@@ -77,8 +65,8 @@ func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []str
 
 // HandleLimit returns the number of precomputed handles.
 func (h *VSSIDCachingHandler) HandleLimit() int {
-	h.vssFS.CacheMu.RLock()
-	defer h.vssFS.CacheMu.RUnlock()
+	h.vssFS.mu.RLock()
+	defer h.vssFS.mu.RUnlock()
 	return len(h.vssFS.IDToPath)
 }
 
