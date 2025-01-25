@@ -141,11 +141,6 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	for _, entry := range entries {
 		entryPath := filepath.Join(dirname, entry.Name())
 		normalizedEntry := fs.normalizePath(entryPath)
-		fullPath := filepath.Join(fs.root, entryPath)
-
-		if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
-			continue
-		}
 
 		vssInfo, err := fs.getVSSFileInfo(normalizedEntry, entry)
 		if err != nil {
@@ -159,10 +154,6 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 }
 
 func (fs *VSSFS) Readlink(link string) (string, error) {
-	fullPath := filepath.Join(fs.Root(), filepath.Clean(link))
-	if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
-		return "", os.ErrNotExist
-	}
 	return fs.Filesystem.Readlink(link)
 }
 
