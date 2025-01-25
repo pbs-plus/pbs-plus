@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sync"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs/readonly_cache"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -89,7 +90,12 @@ func (s *NFSSession) Serve() error {
 
 	syslog.L.Infof("[NFS.Serve] Serving NFS on port %s", port)
 
-	cachedHandler := NewSmartCachingHandler(handler)
+	cachedHandler := readonly_cache.NewReadOnlyHandler(handler)
+	defer func() {
+		if toClean, ok := cachedHandler.(*readonly_cache.ReadOnlyHandler); ok {
+			toClean.Cleanup()
+		}
+	}()
 
 	return nfs.Serve(listener, cachedHandler)
 }

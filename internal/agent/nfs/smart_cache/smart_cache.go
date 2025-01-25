@@ -1,6 +1,6 @@
 //go:build windows
 
-package nfs
+package smart_cache
 
 import (
 	"io/fs"
