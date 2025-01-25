@@ -4,16 +4,12 @@ package nfs
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"net"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	nfs "github.com/willscott/go-nfs"
 	"golang.org/x/sys/windows"
@@ -29,76 +25,16 @@ var _ nfs.Handler = (*NFSHandler)(nil)
 
 // ToHandle converts a filesystem path to an opaque handle
 func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
-	vssFS, ok := fs.(*vssfs.VSSFS)
-	if !ok {
-		return nil
-	}
-	fullPath := "/" + filepath.ToSlash(filepath.Join(path...))
-
-	vssFS.CacheMu.RLock()
-	stableID, exists := vssFS.PathToID[fullPath]
-	vssFS.CacheMu.RUnlock()
-
-	if !exists {
-		return nil
-	}
-
-	handle := make([]byte, 8)
-	binary.LittleEndian.PutUint64(handle, stableID)
-	return handle
+	return nil
 }
 
 // FromHandle converts an opaque handle back to a filesystem and path
 func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
-	h.session.handleUsageMu.Lock()
-	h.session.HandleUsage++
-	h.session.handleUsageMu.Unlock()
-
-	if len(fh) != 8 {
-		return nil, nil, fmt.Errorf("invalid handle")
-	}
-	stableID := binary.LittleEndian.Uint64(fh)
-
-	vssFS, ok := h.session.FS.(*vssfs.VSSFS)
-	if !ok {
-		return nil, nil, fmt.Errorf("invalid filesystem")
-	}
-
-	vssFS.CacheMu.RLock()
-	pathStr, exists := vssFS.IDToPath[stableID]
-	vssFS.CacheMu.RUnlock()
-
-	if !exists {
-		return nil, nil, fmt.Errorf("handle not found")
-	}
-
-	// Split path into components (e.g., "/dir/file" → ["dir", "file"])
-	var path []string
-	if pathStr != "/" {
-		path = strings.Split(strings.TrimPrefix(pathStr, "/"), "/")
-	}
-	return vssFS, path, nil
+	return nil, nil, nil
 }
 
 func (h *NFSHandler) HandleLimit() int {
-	// Use a fixed maximum that's within typical system limits
-	const maxHandles = 1000000 // 1 million handles
-	if h.session == nil || h.session.FS == nil {
-		return 0
-	}
-
-	vssFS := h.session.FS.(*vssfs.VSSFS)
-	vssFS.CacheMu.RLock()
-	fileCount := len(vssFS.PathToID)
-	vssFS.CacheMu.RUnlock()
-
-	// Return whichever is smaller: actual file count or safe maximum
-	if fileCount > maxHandles {
-		syslog.L.Warnf("Handle count capped to %d (actual: %d files)", maxHandles, fileCount)
-		return maxHandles
-	}
-
-	return fileCount
+	return -1
 }
 
 // InvalidateHandle - Required by interface but no-op in read-only FS

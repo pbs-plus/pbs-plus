@@ -98,7 +98,9 @@ func (s *NFSSession) Serve() error {
 
 	syslog.L.Infof("[NFS.Serve] Serving NFS on port %s", port)
 
-	return nfs.Serve(listener, handler)
+	vssHandler := vssfs.NewVSSIDCachingHandler(s.FS.(*vssfs.VSSFS), handler)
+
+	return nfs.Serve(listener, vssHandler)
 }
 
 func (s *NFSSession) IsRunning() bool {
