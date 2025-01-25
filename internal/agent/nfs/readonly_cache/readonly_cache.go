@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,8 +67,13 @@ func validatePath(path []string) error {
 		if p == "" {
 			return errors.New("empty path component")
 		}
+
+		if p == ".." || strings.Contains(p, "../") || strings.Contains(p, "/..") {
+			return errors.New("path traversal not allowed")
+		}
+
 		if filepath.Clean(p) != p {
-			return errors.New("path contains invalid characters or traversal")
+			return errors.New("path contains invalid characters")
 		}
 	}
 	return nil
