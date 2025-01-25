@@ -1,0 +1,33 @@
+on:
+ pull_request:
+   branches:
+     - main
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+          cache: true
+      - run: go mod download
+      - name: Run Linux tests
+        shell: bash
+        if: matrix.os == 'ubuntu-latest'
+        run: GODEBUG=gctrace=1 go test -v -race ./... -count=1 -timeout 1m
+      - name: Run Windows tests
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $env:GODEBUG='gctrace=1'
+          go test -v -race ./internal/agent/nfs/... -tags=windows -count=1 -timeout 1m
+
