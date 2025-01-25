@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -24,6 +25,11 @@ type VSSFS struct {
 	ExcludedPaths *pattern.Matcher
 	PartialFiles  *pattern.Matcher
 	root          string
+
+	fileInfoCache map[string]*VSSFileInfo
+	PathToID      map[string]uint64 // Maps file path to stableID
+	IDToPath      map[uint64]string // Maps stableID to file path
+	CacheMu       sync.RWMutex      // Protects the caches
 }
 
 type cachedID struct {
@@ -34,13 +40,42 @@ type cachedID struct {
 var _ billy.Filesystem = (*VSSFS)(nil)
 
 func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths *pattern.Matcher, partialFiles *pattern.Matcher) billy.Filesystem {
-	return &VSSFS{
+	fs := &VSSFS{
 		Filesystem:    osfs.New(filepath.Join(snapshot.SnapshotPath, baseDir)),
 		snapshot:      snapshot,
 		ExcludedPaths: excludedPaths,
 		PartialFiles:  partialFiles,
 		root:          filepath.Join(snapshot.SnapshotPath, baseDir),
+		fileInfoCache: make(map[string]*VSSFileInfo),
+		PathToID:      make(map[string]uint64),
+		IDToPath:      make(map[uint64]string),
 	}
+
+	go fs.buildIDMap()
+
+	return fs
+}
+
+func (fs *VSSFS) buildIDMap() {
+	root := fs.Root()
+	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		// Skip excluded paths early
+		if skipPath(path, fs.snapshot, fs.ExcludedPaths) {
+			return nil
+		}
+
+		// Compute relative path
+		relPath, _ := filepath.Rel(root, path)
+		if relPath == "." {
+			relPath = "/"
+		} else {
+			relPath = "/" + filepath.ToSlash(relPath)
+		}
+
+		// Get or create file ID
+		fs.getVSSFileInfo(relPath, info)
+		return nil
+	})
 }
 
 // Override write operations to return read-only errors
@@ -116,6 +151,9 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	}
 
 	fullDirPath := filepath.Join(fs.Root(), dirname)
+	if skipPath(fullDirPath, fs.snapshot, fs.ExcludedPaths) {
+		return nil, os.ErrNotExist
+	}
 
 	results := make([]os.FileInfo, 0, len(entries)) // Single allocation with capacity
 	for _, entry := range entries {
@@ -143,26 +181,34 @@ func (fs *VSSFS) Readlink(link string) (string, error) {
 }
 
 func (fs *VSSFS) getVSSFileInfo(path string, info os.FileInfo) (*VSSFileInfo, error) {
-	fullPath := filepath.Join(fs.Root(), filepath.Clean(path))
+	fs.CacheMu.RLock()
+	cachedID, exists := fs.PathToID[path]
+	fs.CacheMu.RUnlock()
 
-	if fi, ok := info.Sys().(*windows.ByHandleFileInformation); ok {
-		stableID, nLinks := computeIDFromExisting(fi)
+	if exists {
 		return &VSSFileInfo{
 			FileInfo: info,
-			stableID: stableID,
-			nLinks:   nLinks,
+			stableID: cachedID,
+			nLinks:   1, // Adjust based on actual data if available
 		}, nil
 	}
 
+	// Fallback for uncached files (should rarely happen)
+	fullPath := filepath.Join(fs.Root(), filepath.Clean(path))
 	var fi windows.ByHandleFileInformation
-	stableID, nLinks, err := getFileIDWindows(fullPath, &fi)
+	stableID, _, err := getFileIDWindows(fullPath, &fi)
 	if err != nil {
 		return nil, err
 	}
 
+	fs.CacheMu.Lock()
+	fs.PathToID[path] = stableID
+	fs.IDToPath[stableID] = path
+	fs.CacheMu.Unlock()
+
 	return &VSSFileInfo{
 		FileInfo: info,
 		stableID: stableID,
-		nLinks:   nLinks,
+		nLinks:   fi.NumberOfLinks,
 	}, nil
 }
