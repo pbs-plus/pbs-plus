@@ -4,12 +4,11 @@ package cache
 
 import (
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 )
 
 type ExclusionData struct {
@@ -21,7 +20,7 @@ type ExclusionResp struct {
 	Data []ExclusionData `json:"data"`
 }
 
-func CompileExcludedPaths() []*regexp.Regexp {
+func CompileExcludedPaths() (*pattern.Matcher, error) {
 	var exclusionResp ExclusionResp
 	_, err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,
@@ -44,16 +43,5 @@ func CompileExcludedPaths() []*regexp.Regexp {
 
 	syslog.L.Infof("Retrieved exclusions: %v", excludedPatterns)
 
-	var compiledRegexes []*regexp.Regexp
-
-	// Compile excluded patterns
-	for _, pattern := range excludedPatterns {
-		rexp, err := utils.GlobToRegex(pattern)
-		if err != nil {
-			continue
-		}
-		compiledRegexes = append(compiledRegexes, regexp.MustCompile("(?i)"+rexp))
-	}
-
-	return compiledRegexes
+	return pattern.NewMatcher(excludedPatterns)
 }

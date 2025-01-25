@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sync"
 	"time"
 
@@ -29,14 +28,6 @@ type NFSSessionData struct {
 }
 
 var nfsSessions sync.Map
-
-func regexpToPatterns(regexps []*regexp.Regexp) []string {
-	patterns := make([]string, len(regexps))
-	for i, r := range regexps {
-		patterns[i] = r.String()
-	}
-	return patterns
-}
 
 var (
 	store *NFSSessionStore
@@ -108,8 +99,8 @@ func (s *NFSSessionStore) Store(drive string, session *nfs.NFSSession) error {
 	sessionData := &NFSSessionData{
 		Drive:         drive,
 		StartTime:     time.Now(),
-		ExcludedPaths: regexpToPatterns(session.ExcludedPaths),
-		PartialFiles:  regexpToPatterns(session.PartialFiles),
+		ExcludedPaths: session.ExcludedPaths.ToStringArray(),
+		PartialFiles:  session.PartialFiles.ToStringArray(),
 	}
 
 	s.sessions[drive] = sessionData

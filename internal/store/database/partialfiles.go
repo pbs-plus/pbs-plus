@@ -9,6 +9,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 )
 
 func (database *Database) RegisterPartialFilePlugin() {
@@ -36,7 +37,7 @@ func (database *Database) CreatePartialFile(partialFile types.PartialFile) error
 	database.mu.Lock()
 	defer database.mu.Unlock()
 
-	if !utils.IsValidPattern(partialFile.Path) {
+	if !pattern.IsValidPattern(partialFile.Path) {
 		return fmt.Errorf("CreatePartialFile: invalid path pattern -> %s", partialFile.Path)
 	}
 

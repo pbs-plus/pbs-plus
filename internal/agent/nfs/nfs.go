@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"regexp"
 	"sync"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	nfs "github.com/willscott/go-nfs"
 	"github.com/willscott/go-nfs/helpers"
 )
@@ -28,8 +28,8 @@ type NFSSession struct {
 	connections   sync.WaitGroup
 	isRunning     bool
 	serverURL     *url.URL
-	ExcludedPaths []*regexp.Regexp
-	PartialFiles  []*regexp.Regexp
+	ExcludedPaths *pattern.Matcher
+	PartialFiles  *pattern.Matcher
 	statusMu      sync.RWMutex
 }
 

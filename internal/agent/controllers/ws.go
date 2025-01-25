@@ -48,8 +48,20 @@ func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {
 			return
 		}
 
-		nfsSession.ExcludedPaths = cache.CompileExcludedPaths()
-		nfsSession.PartialFiles = cache.CompilePartialFileList()
+		excludedPaths, err := cache.CompileExcludedPaths()
+		if err != nil {
+			syslog.L.Errorf("exclusion compilation error: %v", err)
+			return
+		}
+
+		partialFiles, err := cache.CompilePartialFileList()
+		if err != nil {
+			syslog.L.Errorf("partial files compilation error: %v", err)
+			return
+		}
+
+		nfsSession.ExcludedPaths = excludedPaths
+		nfsSession.PartialFiles = partialFiles
 
 		if err := store.Store(drive, nfsSession); err != nil {
 			syslog.L.Errorf("Error storing session: %v", err)

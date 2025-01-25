@@ -9,6 +9,7 @@ import (
 	configLib "github.com/sonroyaalmerol/pbs-plus/internal/config"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 )
 
 func (database *Database) RegisterExclusionPlugin() {
@@ -34,7 +35,7 @@ func (database *Database) RegisterExclusionPlugin() {
 		},
 		Validations: []configLib.ValidationFunc{
 			func(data map[string]string) error {
-				if !utils.IsValidPattern(data["path"]) {
+				if !pattern.IsValidPattern(data["path"]) {
 					return fmt.Errorf("invalid exclusion pattern: %s", data["path"])
 				}
 				return nil
@@ -51,7 +52,7 @@ func (database *Database) CreateExclusion(exclusion types.Exclusion) error {
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
 
-	if !utils.IsValidPattern(exclusion.Path) {
+	if !pattern.IsValidPattern(exclusion.Path) {
 		return fmt.Errorf("CreateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
@@ -225,7 +226,7 @@ func (database *Database) UpdateExclusion(exclusion types.Exclusion) error {
 	defer database.mu.Unlock()
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
-	if !utils.IsValidPattern(exclusion.Path) {
+	if !pattern.IsValidPattern(exclusion.Path) {
 		return fmt.Errorf("UpdateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
