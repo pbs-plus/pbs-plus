@@ -7,6 +7,7 @@ import (
 )
 
 type Pattern struct {
+	rawString         string
 	isNegative        bool
 	segments          []segmentInfo
 	hasDoubleWildcard bool
@@ -49,10 +50,11 @@ func NewPattern(glob string) (*Pattern, error) {
 			segments:    []segmentInfo{},
 			literals:    make(map[int]string),
 			minSegments: 0,
+			rawString:   glob,
 		}, nil
 	}
 
-	p := &Pattern{}
+	p := &Pattern{rawString: glob}
 	if glob[0] == '!' {
 		p.isNegative = true
 		glob = glob[1:]
@@ -124,6 +126,10 @@ func (p *Pattern) Match(path string) bool {
 
 	matched := p.matchSegments(upperParts)
 	return matched != p.isNegative
+}
+
+func (p *Pattern) String() string {
+	return p.rawString
 }
 
 func normalizePath(path string) string {

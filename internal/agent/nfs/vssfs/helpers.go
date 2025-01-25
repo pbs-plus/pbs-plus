@@ -20,8 +20,8 @@ func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions *patte
 		return false
 	}
 
-	if matched, _ := exclusions.Match(normalizedPath); matched {
-		syslog.L.Infof("Skipping due to exclusion matching: %s", path)
+	if matched, pattern := exclusions.Match(normalizedPath); matched {
+		syslog.L.Infof("Skipping due to exclusion matching (%s): %s", pattern.String(), path)
 		return true
 	}
 
