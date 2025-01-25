@@ -79,9 +79,13 @@ func main() {
 			return
 		}
 
-		if _, err = backup.RunBackup(jobTask, storeInstance, true); err != nil {
+		op, err := backup.RunBackup(jobTask, storeInstance, true)
+		if err != nil {
 			syslog.L.Error(err)
+			return
 		}
+
+		op.Wait()
 		return
 	}
 

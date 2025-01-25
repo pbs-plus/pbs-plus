@@ -18,12 +18,25 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func RunBackup(job *types.Job, storeInstance *store.Store, skipCheck bool) (*proxmox.Task, error) {
+type BackupOperation struct {
+	Task      *proxmox.Task
+	waitGroup *sync.WaitGroup
+	err       error
+}
+
+func (b *BackupOperation) Wait() error {
+	if b.waitGroup != nil {
+		b.waitGroup.Wait()
+	}
+	return b.err
+}
+
+func RunBackup(job *types.Job, storeInstance *store.Store, skipCheck bool) (*BackupOperation, error) {
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to create mutex lock: %w", err)
 	}
-	defer backupMutex.Close() // Ensure mutex is always closed
+	defer backupMutex.Close()
 
 	if err := backupMutex.Lock(); err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to acquire lock: %w", err)
@@ -144,14 +157,27 @@ func RunBackup(job *types.Job, storeInstance *store.Store, skipCheck bool) (*pro
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
 		}
 
-		return task, fmt.Errorf("RunBackup: failed to update job status: %w", err)
+		return &BackupOperation{
+			Task: task,
+		}, fmt.Errorf("RunBackup: failed to update job status: %w", err)
+	}
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
+	operation := &BackupOperation{
+		Task:      task,
+		waitGroup: wg,
 	}
 
 	go func() {
 		defer stdout.Close()
 		defer stderr.Close()
+		defer wg.Done()
 
-		_ = cmd.Wait()
+		if err := cmd.Wait(); err != nil {
+			operation.err = err
+		}
 
 		logGlobalMu.Lock()
 		defer logGlobalMu.Unlock()
@@ -174,5 +200,5 @@ func RunBackup(job *types.Job, storeInstance *store.Store, skipCheck bool) (*pro
 		}
 	}()
 
-	return task, nil
+	return operation, nil
 }
