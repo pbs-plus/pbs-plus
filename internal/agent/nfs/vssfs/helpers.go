@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
 )
@@ -20,11 +21,13 @@ func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions *patte
 	}
 
 	if matched, _ := exclusions.Match(normalizedPath); matched {
+		syslog.L.Infof("Skipping due to exclusion matching: %s", path)
 		return true
 	}
 
 	invalid, err := hasInvalidAttributes(path)
 	if err != nil || invalid {
+		syslog.L.Infof("Skipping due to invalid attributes: %s", path)
 		return true
 	}
 
