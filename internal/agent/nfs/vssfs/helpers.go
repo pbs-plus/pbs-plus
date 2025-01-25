@@ -35,36 +35,32 @@ func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions *patte
 }
 
 func hasInvalidAttributes(path string) (bool, error) {
-	invalid := false
-
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		invalid = false
-		return invalid, err
+		return false, err
 	}
 
 	attributes, err := windows.GetFileAttributes(p)
 	if err != nil {
-		invalid = false
-		return invalid, os.NewSyscallError("GetFileAttributes", err)
+		return false, os.NewSyscallError("GetFileAttributes", err)
 	}
 
-	// Check for invalid Windows file attributes
-	invalidAttributes := []uint32{
-		windows.FILE_ATTRIBUTE_TEMPORARY,
-		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN,
-		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
-		windows.FILE_ATTRIBUTE_VIRTUAL,
-		windows.FILE_ATTRIBUTE_OFFLINE,
+	invalidAttributes := map[uint32]string{
+		windows.FILE_ATTRIBUTE_TEMPORARY:             "TEMPORARY",
+		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN:        "RECALL_ON_OPEN",
+		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: "RECALL_ON_DATA_ACCESS",
+		windows.FILE_ATTRIBUTE_VIRTUAL:               "VIRTUAL",
+		windows.FILE_ATTRIBUTE_OFFLINE:               "OFFLINE",
+		windows.FILE_ATTRIBUTE_REPARSE_POINT:         "REPARSE_POINT",
 	}
-	for _, attr := range invalidAttributes {
+
+	for attr, name := range invalidAttributes {
 		if attributes&attr != 0 {
-			invalid = true
-			return invalid, nil
+			syslog.L.Infof("Invalid attribute detected: %s", name)
+			return true, nil
 		}
 	}
-
-	return invalid, nil
+	return false, nil
 }
 
 func getFileIDWindows(path string, fi *windows.ByHandleFileInformation) (uint64, uint32, error) {
