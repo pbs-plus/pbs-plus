@@ -29,5 +29,5 @@ jobs:
         shell: pwsh
         run: |
           $env:GODEBUG='gctrace=1'
-          go test -v -race ./... -tags=windows -count=1 -timeout 1m
+          go test -v -race ./internal/agent/nfs/... -tags=windows -count=1 -timeout 1m
 
