@@ -50,6 +50,7 @@ func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths 
 		root:          filepath.Join(snapshot.SnapshotPath, baseDir),
 		PathToID:      make(map[string]uint64),
 		IDToPath:      make(map[uint64]string),
+		fileInfoCache: make(map[string]*VSSFileInfo),
 	}
 
 	// Initialize root directory
