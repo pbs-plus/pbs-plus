@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
 )
@@ -20,14 +19,12 @@ func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions *patte
 		return false
 	}
 
-	if matched, pattern := exclusions.Match(normalizedPath); matched {
-		syslog.L.Infof("Skipping due to exclusion matching (%s): %s", pattern.String(), path)
+	if matched, _ := exclusions.Match(normalizedPath); matched {
 		return true
 	}
 
 	invalid, err := hasInvalidAttributes(path)
 	if err != nil || invalid {
-		syslog.L.Infof("Skipping due to invalid attributes: %s", path)
 		return true
 	}
 
@@ -54,9 +51,8 @@ func hasInvalidAttributes(path string) (bool, error) {
 		windows.FILE_ATTRIBUTE_REPARSE_POINT:         "REPARSE_POINT",
 	}
 
-	for attr, name := range invalidAttributes {
+	for attr, _ := range invalidAttributes {
 		if attributes&attr != 0 {
-			syslog.L.Infof("Invalid attribute detected: %s", name)
 			return true, nil
 		}
 	}
@@ -102,3 +98,4 @@ func computeIDFromExisting(fi *windows.ByHandleFileInformation) (uint64, uint32)
 	fileIndex := uint64(fi.FileIndexHigh)<<32 | uint64(fi.FileIndexLow)
 	return uint64(fi.VolumeSerialNumber)<<48 | (fileIndex & 0xFFFFFFFFFFFF), fi.NumberOfLinks
 }
+

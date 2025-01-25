@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/go-git/go-billy/v5"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	nfs "github.com/willscott/go-nfs"
 )
 
@@ -60,8 +59,6 @@ func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []str
 	h.vssFS.mu.RLock()
 	path, exists := h.vssFS.IDToPath[stableID]
 	h.vssFS.mu.RUnlock()
-
-	syslog.L.Infof("Looking up ID %d → Path '%s' (exists: %t)", stableID, path, exists)
 
 	if !exists {
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}

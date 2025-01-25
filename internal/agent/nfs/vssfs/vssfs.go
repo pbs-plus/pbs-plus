@@ -141,7 +141,6 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	normalizedDir := fs.normalizePath(dirname)
-	syslog.L.Infof("Reading directory: %s (normalized: %s)", dirname, normalizedDir)
 
 	// Verify directory exists in cache
 	if _, err := fs.getStableID(normalizedDir); err != nil {
@@ -162,22 +161,18 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 		fullPath := filepath.Join(fs.root, filepath.Clean(normalizedEntry))
 
 		if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
-			syslog.L.Infof("Skipping excluded entry: %s", normalizedEntry)
 			continue
 		}
 
 		// Convert to VSSFileInfo
 		vssInfo, err := fs.getVSSFileInfo(normalizedEntry, entry)
 		if err != nil {
-			syslog.L.Warnf("Skipping entry due to ID error: %s - %v", normalizedEntry, err)
 			continue
 		}
 
-		syslog.L.Infof("Adding entry: %s (ID: %d)", normalizedEntry, vssInfo.stableID)
 		results = append(results, vssInfo)
 	}
 
-	syslog.L.Infof("Returning %d entries for %s", len(results), normalizedDir)
 	return results, nil
 }
 
