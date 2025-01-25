@@ -39,17 +39,13 @@ func (h *VSSIDCachingHandler) ToHandle(f billy.Filesystem, path []string) []byte
 		return nil
 	}
 
-	vssFS.mu.RLock()
-	stableID, exists := vssFS.PathToID[joinedPath]
-	vssFS.mu.RUnlock()
-
-	if !exists {
-		return nil
+	if id, exists := vssFS.PathToID.Load(joinedPath); exists {
+		handle := make([]byte, 8)
+		binary.BigEndian.PutUint64(handle, id.(uint64))
+		return handle
 	}
 
-	handle := make([]byte, 8)
-	binary.BigEndian.PutUint64(handle, stableID)
-	return handle
+	return nil
 }
 
 func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []string, error) {
@@ -57,20 +53,17 @@ func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []str
 		return nil, nil, fmt.Errorf("invalid handle")
 	}
 	stableID := binary.BigEndian.Uint64(handle)
-	h.vssFS.mu.RLock()
-	path, exists := h.vssFS.IDToPath[stableID]
-	h.vssFS.mu.RUnlock()
 
-	if !exists {
-		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
+	if path, exists := h.vssFS.IDToPath.Load(stableID); exists {
+		// Split path into components using the normalized version
+		var parts []string
+		if path != "/" {
+			parts = strings.Split(strings.TrimPrefix(path.(string), "/"), "/")
+		}
+		return h.vssFS, parts, nil
 	}
 
-	// Split path into components using the normalized version
-	var parts []string
-	if path != "/" {
-		parts = strings.Split(strings.TrimPrefix(path, "/"), "/")
-	}
-	return h.vssFS, parts, nil
+	return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 }
 
 // HandleLimit returns the number of precomputed handles.

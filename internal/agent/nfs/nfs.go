@@ -21,18 +21,16 @@ import (
 )
 
 type NFSSession struct {
-	Context       context.Context
-	ctxCancel     context.CancelFunc
-	Snapshot      *snapshots.WinVSSSnapshot
-	DriveLetter   string
-	listener      net.Listener
-	connections   sync.WaitGroup
-	isRunning     bool
-	serverURL     *url.URL
-	FS            billy.Filesystem
-	statusMu      sync.RWMutex
-	HandleUsage   int
-	handleUsageMu sync.Mutex
+	Context     context.Context
+	ctxCancel   context.CancelFunc
+	Snapshot    *snapshots.WinVSSSnapshot
+	DriveLetter string
+	listener    net.Listener
+	connections sync.WaitGroup
+	isRunning   bool
+	serverURL   *url.URL
+	FS          billy.Filesystem
+	statusMu    sync.RWMutex
 }
 
 func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string, excludedPaths *pattern.Matcher, partialFiles *pattern.Matcher) *NFSSession {

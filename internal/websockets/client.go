@@ -14,13 +14,15 @@ import (
 )
 
 const (
-	maxSendBuffer    = 256
-	maxRetryAttempts = 10
-	messageTimeout   = 5 * time.Second
-	operationTimeout = 10 * time.Second
-	rateLimit        = 100 * time.Millisecond
-	rateBurst        = 10
-	maxMessageSize   = 1024 * 1024 // 1MB
+	maxSendBuffer     = 256
+	maxRetryAttempts  = 10
+	messageTimeout    = 5 * time.Second
+	operationTimeout  = 10 * time.Second
+	rateLimit         = 100 * time.Millisecond
+	rateBurst         = 10
+	maxMessageSize    = 1024 * 1024 // 1MB
+	handlerPoolSize   = 100         // Max concurrent message handlers
+	reconnectCooldown = 1 * time.Second
 )
 
 type (
@@ -48,8 +50,12 @@ type (
 		send        chan Message
 		IsConnected bool
 
-		handlers  map[string]MessageHandler
-		handlerMu sync.RWMutex
+		handlers       map[string]MessageHandler
+		handlerMu      sync.RWMutex
+		handlerWorkers chan struct{}
+
+		reconnecting bool
+		reconnectMu  sync.Mutex
 	}
 )
 
@@ -65,6 +71,8 @@ func NewWSClient(ctx context.Context, config Config, tlsConfig *tls.Config) (*WS
 		send:      make(chan Message, maxSendBuffer),
 		handlers:  make(map[string]MessageHandler),
 		TLSConfig: tlsConfig,
+
+		handlerWorkers: make(chan struct{}, handlerPoolSize),
 	}
 
 	syslog.L.Infof("[WSClient.New] Client %s: Initialized new WebSocket client for server %s",
@@ -150,6 +158,15 @@ func (c *WSClient) Close() error {
 }
 
 func (c *WSClient) handleConnectionLoss() {
+	c.reconnectMu.Lock()
+	defer c.reconnectMu.Unlock()
+
+	if c.reconnecting {
+		return
+	}
+	c.reconnecting = true
+	defer func() { c.reconnecting = false }()
+
 	syslog.L.Infof("[WSClient.ConnectionHandler] Client %s: Connection lost, initiating reconnection",
 		c.ClientID)
 
@@ -186,6 +203,9 @@ func (c *WSClient) Send(msg Message) error {
 	timeoutCtx, cancel := context.WithTimeout(c.ctx, operationTimeout)
 	defer cancel()
 
+	ticker := time.NewTicker(rateLimit)
+	defer ticker.Stop()
+
 	syslog.L.Infof("[WSClient.Send] Client %s: Queueing message type '%s'",
 		c.ClientID, msg.Type)
 
@@ -194,6 +214,11 @@ func (c *WSClient) Send(msg Message) error {
 		syslog.L.Infof("[WSClient.Send] Client %s: Message type '%s' queued successfully",
 			c.ClientID, msg.Type)
 		return nil
+	case <-ticker.C:
+		err := fmt.Errorf("send rate limit exceeded")
+		syslog.L.Warnf("[WSClient.Send] Client %s: Rate limit exceeded for message type '%s'",
+			c.ClientID, msg.Type)
+		return err
 	case <-timeoutCtx.Done():
 		err := fmt.Errorf("send operation timed out")
 		syslog.L.Errorf("[WSClient.Send] Client %s: Failed to queue message type '%s' - %v",
@@ -205,7 +230,6 @@ func (c *WSClient) Send(msg Message) error {
 func (c *WSClient) Start() {
 	syslog.L.Infof("[WSClient.Start] Client %s: Starting client", c.ClientID)
 
-	// Initial connection
 	if err := c.Connect(); err != nil {
 		syslog.L.Errorf("[WSClient.Start] Client %s: Initial connection failed - %v",
 			c.ClientID, err)
@@ -217,21 +241,18 @@ func (c *WSClient) Start() {
 
 	c.wg.Add(2)
 
-	// Start receive loop
 	go func() {
 		defer c.wg.Done()
 		defer receiveCancel()
 		c.receiveLoop(receiveCtx)
 	}()
 
-	// Start send loop
 	go func() {
 		defer c.wg.Done()
 		defer sendCancel()
 		c.sendLoop(sendCtx)
 	}()
 
-	// Start supervisor
 	go c.superviseLoops(receiveCtx, receiveCancel, sendCtx, sendCancel)
 
 	syslog.L.Infof("[WSClient.Start] Client %s: Client started successfully", c.ClientID)
@@ -252,8 +273,9 @@ func (c *WSClient) superviseLoops(receiveCtx context.Context, receiveCancel cont
 
 		case <-receiveCtx.Done():
 			if c.ctx.Err() != nil {
-				return // Don't restart if main context is cancelled
+				return
 			}
+			time.Sleep(reconnectCooldown)
 			syslog.L.Infof("[WSClient.Supervisor] Client %s: Restarting receive loop", c.ClientID)
 			receiveCtx, receiveCancel = context.WithCancel(c.ctx)
 			c.wg.Add(1)
@@ -265,8 +287,9 @@ func (c *WSClient) superviseLoops(receiveCtx context.Context, receiveCancel cont
 
 		case <-sendCtx.Done():
 			if c.ctx.Err() != nil {
-				return // Don't restart if main context is cancelled
+				return
 			}
+			time.Sleep(reconnectCooldown)
 			syslog.L.Infof("[WSClient.Supervisor] Client %s: Restarting send loop", c.ClientID)
 			sendCtx, sendCancel = context.WithCancel(c.ctx)
 			c.wg.Add(1)
@@ -289,8 +312,7 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 				c.ClientID)
 			return
 		default:
-			message := Message{}
-
+			var message Message
 			err := wsjson.Read(ctx, c.conn, &message)
 			if err != nil {
 				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
@@ -309,11 +331,18 @@ func (c *WSClient) receiveLoop(ctx context.Context) {
 			c.handlerMu.RUnlock()
 
 			if exists {
-				go func() {
-					handler(&message)
-				}()
+				select {
+				case c.handlerWorkers <- struct{}{}:
+					go func() {
+						defer func() { <-c.handlerWorkers }()
+						handler(&message)
+					}()
+				default:
+					syslog.L.Warnf("[WSClient.ReceiveLoop] Client %s: Handler workers busy, dropping message type '%s'",
+						c.ClientID, message.Type)
+				}
 			} else {
-				syslog.L.Warnf("[WSClient.ReceiveLoop] Client %s: No handler registered for message type '%s'",
+				syslog.L.Infof("[WSClient.ReceiveLoop] Client %s: No handler for message type '%s'",
 					c.ClientID, message.Type)
 			}
 		}
@@ -331,7 +360,7 @@ func (c *WSClient) sendLoop(ctx context.Context) {
 			return
 
 		case msg := <-c.send:
-			syslog.L.Infof("[WSClient.SendLoop] Client %s: Processing message type '%s' for sending",
+			syslog.L.Infof("[WSClient.SendLoop] Client %s: Processing message type '%s'",
 				c.ClientID, msg.Type)
 
 			messageCtx, cancel := context.WithTimeout(ctx, messageTimeout)
@@ -344,7 +373,7 @@ func (c *WSClient) sendLoop(ctx context.Context) {
 			}
 			cancel()
 
-			syslog.L.Infof("[WSClient.SendLoop] Client %s: Message type '%s' sent successfully",
+			syslog.L.Infof("[WSClient.SendLoop] Client %s: Message type '%s' sent",
 				c.ClientID, msg.Type)
 		}
 	}
@@ -359,7 +388,7 @@ func (c *WSClient) RegisterHandler(msgType string, handler MessageHandler) {
 	c.handlers[msgType] = handler
 	c.handlerMu.Unlock()
 
-	syslog.L.Infof("[WSClient.RegisterHandler] Client %s: Handler registered for message type '%s'",
+	syslog.L.Infof("[WSClient.RegisterHandler] Client %s: Handler registered for type '%s'",
 		c.ClientID, msgType)
 }
 
