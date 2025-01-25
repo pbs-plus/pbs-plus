@@ -142,13 +142,15 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	normalizedDir := fs.normalizePath(dirname)
 
 	// Verify root directory exists in cache
-	if normalizedDir == "/" {
-		if _, err := fs.getStableID("/"); err != nil {
-			return nil, fmt.Errorf("root directory inaccessible: %w", err)
-		}
+	if _, err := fs.getStableID(normalizedDir); err != nil {
+		return nil, fmt.Errorf("root directory inaccessible: %w", err)
 	}
 
-	entries, err := fs.Filesystem.ReadDir(dirname)
+	// Get physical path for os operations
+	physicalPath := filepath.Join(fs.root, filepath.Clean(dirname))
+	syslog.L.Infof("Physical path: %s", physicalPath)
+
+	entries, err := fs.Filesystem.ReadDir(physicalPath)
 	if err != nil {
 		return nil, err
 	}
@@ -192,34 +194,40 @@ func (fs *VSSFS) Readlink(link string) (string, error) {
 
 func (fs *VSSFS) getStableID(rawPath string) (uint64, error) {
 	path := fs.normalizePath(rawPath)
+	syslog.L.Infof("Getting stable ID for: %s", path)
 
-	// Check existing cache with read lock
+	// Check cache with read lock first
 	fs.mu.RLock()
 	if id, exists := fs.PathToID[path]; exists {
 		fs.mu.RUnlock()
+		syslog.L.Infof("Cache hit for %s: %d", path, id)
 		return id, nil
 	}
 	fs.mu.RUnlock()
 
-	// Generate ID on demand
-	fullPath := filepath.Join(fs.root, filepath.Clean(path))
+	// Generate on demand
+	physicalPath := filepath.Join(fs.root, filepath.Clean(rawPath))
 	var fi windows.ByHandleFileInformation
-	stableID, _, err := getFileIDWindows(fullPath, &fi)
+	stableID, _, err := getFileIDWindows(physicalPath, &fi)
 	if err != nil {
-		return 0, err
+		syslog.L.Errorf("Failed to generate ID for %s (%s): %v", path, physicalPath, err)
+		return 0, fmt.Errorf("failed to get file ID: %w", err)
 	}
 
 	// Update cache with write lock
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
-	// Double-check in case another goroutine added it while we waited
+	// Double-check after acquiring write lock
 	if existing, exists := fs.PathToID[path]; exists {
+		syslog.L.Infof("Race condition avoided for %s: %d", path, existing)
 		return existing, nil
 	}
 
+	syslog.L.Infof("Caching new entry: %s → %d", path, stableID)
 	fs.PathToID[path] = stableID
 	fs.IDToPath[stableID] = path
+
 	return stableID, nil
 }
 
