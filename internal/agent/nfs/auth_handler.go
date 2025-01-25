@@ -50,6 +50,10 @@ func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
 
 // FromHandle converts an opaque handle back to a filesystem and path
 func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
+	h.session.handleUsageMu.Lock()
+	h.session.HandleUsage++
+	h.session.handleUsageMu.Unlock()
+
 	if len(fh) != 8 {
 		return nil, nil, fmt.Errorf("invalid handle")
 	}
@@ -77,15 +81,24 @@ func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
 }
 
 func (h *NFSHandler) HandleLimit() int {
-	// Return actual number of files in the snapshot
+	// Use a fixed maximum that's within typical system limits
+	const maxHandles = 1000000 // 1 million handles
 	if h.session == nil || h.session.FS == nil {
 		return 0
 	}
-	vssFS := h.session.FS.(*vssfs.VSSFS)
 
+	vssFS := h.session.FS.(*vssfs.VSSFS)
 	vssFS.CacheMu.RLock()
-	defer vssFS.CacheMu.RUnlock()
-	return len(vssFS.PathToID)
+	fileCount := len(vssFS.PathToID)
+	vssFS.CacheMu.RUnlock()
+
+	// Return whichever is smaller: actual file count or safe maximum
+	if fileCount > maxHandles {
+		syslog.L.Warnf("Handle count capped to %d (actual: %d files)", maxHandles, fileCount)
+		return maxHandles
+	}
+
+	return fileCount
 }
 
 // InvalidateHandle - Required by interface but no-op in read-only FS

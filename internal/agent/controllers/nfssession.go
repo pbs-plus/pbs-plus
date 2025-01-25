@@ -11,6 +11,7 @@ import (
 
 	"github.com/alexflint/go-filemutex"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
@@ -99,8 +100,8 @@ func (s *NFSSessionStore) Store(drive string, session *nfs.NFSSession) error {
 	sessionData := &NFSSessionData{
 		Drive:         drive,
 		StartTime:     time.Now(),
-		ExcludedPaths: session.ExcludedPaths.ToStringArray(),
-		PartialFiles:  session.PartialFiles.ToStringArray(),
+		ExcludedPaths: session.FS.(*vssfs.VSSFS).ExcludedPaths.ToStringArray(),
+		PartialFiles:  session.FS.(*vssfs.VSSFS).PartialFiles.ToStringArray(),
 	}
 
 	s.sessions[drive] = sessionData
