@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,23 @@ func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths 
 		root:          filepath.Join(snapshot.SnapshotPath, baseDir),
 		PathToID:      make(map[string]uint64),
 		IDToPath:      make(map[uint64]string),
+	}
+
+	// Initialize root directory
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	// Pre-cache root directory
+	rootPath := fs.normalizePath("/")
+	fullRootPath := filepath.Join(fs.root, filepath.Clean("/"))
+
+	var fi windows.ByHandleFileInformation
+	rootID, _, err := getFileIDWindows(fullRootPath, &fi)
+	if err == nil {
+		fs.PathToID[rootPath] = rootID
+		fs.IDToPath[rootID] = rootPath
+	} else {
+		syslog.L.Errorf("Failed to initialize root directory: %v", err)
 	}
 
 	return fs
@@ -119,30 +137,48 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
+	syslog.L.Infof("Reading directory: %s", dirname)
+
+	normalizedDir := fs.normalizePath(dirname)
+
+	// Verify root directory exists in cache
+	if normalizedDir == "/" {
+		if _, err := fs.getStableID("/"); err != nil {
+			return nil, fmt.Errorf("root directory inaccessible: %w", err)
+		}
+	}
+
 	entries, err := fs.Filesystem.ReadDir(dirname)
 	if err != nil {
 		return nil, err
 	}
 
-	fullDirPath := filepath.Join(fs.Root(), dirname)
-	if skipPath(fullDirPath, fs.snapshot, fs.ExcludedPaths) {
-		return nil, os.ErrNotExist
-	}
-
-	results := make([]os.FileInfo, 0, len(entries)) // Single allocation with capacity
+	results := make([]os.FileInfo, 0, len(entries))
 	for _, entry := range entries {
-		fullPath := filepath.Clean(filepath.Join(fullDirPath, entry.Name()))
-		if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
+		entryPath := filepath.Join(dirname, entry.Name())
+
+		// Use normalized path for exclusion checks
+		normalizedEntry := fs.normalizePath(entryPath)
+		if skipPath(normalizedEntry, fs.snapshot, fs.ExcludedPaths) {
 			continue
 		}
 
-		vssInfo, err := fs.getVSSFileInfo(filepath.Join(dirname, entry.Name()), entry)
+		// Ensure the entry is added to the cache
+		stableID, err := fs.getStableID(normalizedEntry)
 		if err != nil {
-			syslog.L.Infof("error: %s -> %v", fullPath, err)
-			return nil, err
+			syslog.L.Warnf("Skipping inaccessible entry: %s - %v", normalizedEntry, err)
+			continue
 		}
-		results = append(results, vssInfo)
+
+		results = append(results, &VSSFileInfo{
+			FileInfo: entry,
+			stableID: stableID,
+			nLinks:   1,
+		})
 	}
+
+	syslog.L.Infof("Found %d entries in %s", len(results), dirname)
+
 	return results, nil
 }
 
@@ -154,7 +190,9 @@ func (fs *VSSFS) Readlink(link string) (string, error) {
 	return fs.Filesystem.Readlink(link)
 }
 
-func (fs *VSSFS) getStableID(path string) (uint64, error) {
+func (fs *VSSFS) getStableID(rawPath string) (uint64, error) {
+	path := fs.normalizePath(rawPath)
+
 	// Check existing cache with read lock
 	fs.mu.RLock()
 	if id, exists := fs.PathToID[path]; exists {
@@ -216,4 +254,26 @@ func (fs *VSSFS) getVSSFileInfo(path string, info os.FileInfo) (*VSSFileInfo, er
 		stableID: stableID,
 		nLinks:   fi.NumberOfLinks,
 	}, nil
+}
+
+func (fs *VSSFS) normalizePath(path string) string {
+	// Convert to forward slashes and clean path
+	cleanPath := filepath.ToSlash(filepath.Clean(path))
+
+	// Ensure root is represented as "/"
+	if cleanPath == "." || cleanPath == "" {
+		return "/"
+	}
+
+	// Add leading slash if missing
+	if !strings.HasPrefix(cleanPath, "/") {
+		cleanPath = "/" + cleanPath
+	}
+
+	// Remove trailing slash (except for root)
+	if len(cleanPath) > 1 && strings.HasSuffix(cleanPath, "/") {
+		cleanPath = cleanPath[:len(cleanPath)-1]
+	}
+
+	return cleanPath
 }

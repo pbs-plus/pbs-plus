@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-git/go-billy/v5"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	nfs "github.com/willscott/go-nfs"
 )
 
@@ -31,9 +32,15 @@ func (h *VSSIDCachingHandler) ToHandle(f billy.Filesystem, path []string) []byte
 		return nil
 	}
 
-	joinedPath := "/" + strings.Join(path, "/")
+	// Handle root path explicitly
+	if len(path) == 0 {
+		path = []string{""}
+	}
+
+	joinedPath := vssFS.normalizePath(strings.Join(path, "/"))
 	stableID, err := vssFS.getStableID(joinedPath)
 	if err != nil {
+		syslog.L.Warnf("Handle generation failed for %s: %v", joinedPath, err)
 		return nil
 	}
 
@@ -46,16 +53,18 @@ func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []str
 	if len(handle) != 8 {
 		return nil, nil, fmt.Errorf("invalid handle")
 	}
-
 	stableID := binary.BigEndian.Uint64(handle)
 	h.vssFS.mu.RLock()
 	path, exists := h.vssFS.IDToPath[stableID]
 	h.vssFS.mu.RUnlock()
 
+	syslog.L.Infof("Looking up ID %d → Path '%s' (exists: %t)", stableID, path, exists)
+
 	if !exists {
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
+	// Split path into components using the normalized version
 	var parts []string
 	if path != "/" {
 		parts = strings.Split(strings.TrimPrefix(path, "/"), "/")
