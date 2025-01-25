@@ -4,12 +4,11 @@ package cache
 
 import (
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 )
 
 type PartialFileData struct {
@@ -21,7 +20,7 @@ type PartialFileResp struct {
 	Data []PartialFileData `json:"data"`
 }
 
-func CompilePartialFileList() []*regexp.Regexp {
+func CompilePartialFileList() []*pattern.Pattern {
 	var partialResp PartialFileResp
 	_, err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,
@@ -44,16 +43,16 @@ func CompilePartialFileList() []*regexp.Regexp {
 
 	syslog.L.Infof("Retrieved partial files: %v", partialPatterns)
 
-	var compiledRegexes []*regexp.Regexp
+	var compiledPatterns []*pattern.Pattern
 
 	// Compile excluded patterns
-	for _, pattern := range partialPatterns {
-		rexp, err := utils.GlobToRegex(pattern)
+	for _, patternStr := range partialPatterns {
+		ptrn, err := pattern.NewPattern(patternStr)
 		if err != nil {
 			continue
 		}
-		compiledRegexes = append(compiledRegexes, regexp.MustCompile("(?i)"+rexp))
+		compiledPatterns = append(compiledPatterns, ptrn)
 	}
 
-	return compiledRegexes
+	return compiledPatterns
 }
