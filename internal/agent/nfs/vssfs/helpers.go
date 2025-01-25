@@ -4,14 +4,14 @@ package vssfs
 
 import (
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
 )
 
-func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*regexp.Regexp) bool {
+func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*pattern.Pattern) bool {
 	pathWithoutSnap := strings.TrimPrefix(path, snapshot.SnapshotPath)
 	normalizedPath := strings.ToUpper(strings.TrimPrefix(pathWithoutSnap, "\\"))
 
@@ -19,8 +19,8 @@ func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*reg
 		return false
 	}
 
-	for _, regex := range exclusions {
-		if regex.MatchString(normalizedPath) {
+	for _, pattern := range exclusions {
+		if pattern.Match(normalizedPath) {
 			return true
 		}
 	}
@@ -57,7 +57,6 @@ func hasInvalidAttributes(path string) (bool, error) {
 		windows.FILE_ATTRIBUTE_OFFLINE,
 		windows.FILE_ATTRIBUTE_REPARSE_POINT,
 	}
-
 	for _, attr := range invalidAttributes {
 		if attributes&attr != 0 {
 			invalid = true

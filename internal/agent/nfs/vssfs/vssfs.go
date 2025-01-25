@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
 )
 
@@ -21,8 +21,8 @@ import (
 type VSSFS struct {
 	billy.Filesystem
 	snapshot      *snapshots.WinVSSSnapshot
-	ExcludedPaths []*regexp.Regexp
-	PartialFiles  []*regexp.Regexp
+	ExcludedPaths []*pattern.Pattern
+	PartialFiles  []*pattern.Pattern
 	root          string
 }
 
@@ -33,7 +33,7 @@ type cachedID struct {
 
 var _ billy.Filesystem = (*VSSFS)(nil)
 
-func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths []*regexp.Regexp, partialFiles []*regexp.Regexp) billy.Filesystem {
+func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths []*pattern.Pattern, partialFiles []*pattern.Pattern) billy.Filesystem {
 	return &VSSFS{
 		Filesystem:    osfs.New(filepath.Join(snapshot.SnapshotPath, baseDir)),
 		snapshot:      snapshot,
