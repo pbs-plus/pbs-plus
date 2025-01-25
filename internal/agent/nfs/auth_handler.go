@@ -4,8 +4,11 @@ package nfs
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,23 +27,70 @@ type NFSHandler struct {
 // Verify Handler interface implementation
 var _ nfs.Handler = (*NFSHandler)(nil)
 
-// HandleLimit returns the maximum number of handles that can be stored
-func (h *NFSHandler) HandleLimit() int {
-	return -1
-}
-
 // ToHandle converts a filesystem path to an opaque handle
 func (h *NFSHandler) ToHandle(fs billy.Filesystem, path []string) []byte {
-	return []byte{}
+	vssFS, ok := fs.(*vssfs.VSSFS)
+	if !ok {
+		return nil
+	}
+	fullPath := "/" + filepath.ToSlash(filepath.Join(path...))
+
+	vssFS.CacheMu.RLock()
+	stableID, exists := vssFS.PathToID[fullPath]
+	vssFS.CacheMu.RUnlock()
+
+	if !exists {
+		return nil
+	}
+
+	handle := make([]byte, 8)
+	binary.LittleEndian.PutUint64(handle, stableID)
+	return handle
 }
 
 // FromHandle converts an opaque handle back to a filesystem and path
 func (h *NFSHandler) FromHandle(fh []byte) (billy.Filesystem, []string, error) {
-	return nil, []string{}, nil
+	if len(fh) != 8 {
+		return nil, nil, fmt.Errorf("invalid handle")
+	}
+	stableID := binary.LittleEndian.Uint64(fh)
+
+	vssFS, ok := h.session.FS.(*vssfs.VSSFS)
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid filesystem")
+	}
+
+	vssFS.CacheMu.RLock()
+	pathStr, exists := vssFS.IDToPath[stableID]
+	vssFS.CacheMu.RUnlock()
+
+	if !exists {
+		return nil, nil, fmt.Errorf("handle not found")
+	}
+
+	// Split path into components (e.g., "/dir/file" → ["dir", "file"])
+	var path []string
+	if pathStr != "/" {
+		path = strings.Split(strings.TrimPrefix(pathStr, "/"), "/")
+	}
+	return vssFS, path, nil
 }
 
-// InvalidateHandle removes a file handle from the cache
+func (h *NFSHandler) HandleLimit() int {
+	// Return actual number of files in the snapshot
+	if h.session == nil || h.session.FS == nil {
+		return 0
+	}
+	vssFS := h.session.FS.(*vssfs.VSSFS)
+
+	vssFS.CacheMu.RLock()
+	defer vssFS.CacheMu.RUnlock()
+	return len(vssFS.PathToID)
+}
+
+// InvalidateHandle - Required by interface but no-op in read-only FS
 func (h *NFSHandler) InvalidateHandle(fs billy.Filesystem, fh []byte) error {
+	// In read-only FS, handles never become invalid
 	return nil
 }
 
@@ -67,9 +117,8 @@ func (h *NFSHandler) Mount(ctx context.Context, conn net.Conn, req nfs.MountRequ
 		return nfs.MountStatusErrPerm, nil, nil
 	}
 
-	fs := vssfs.NewVSSFS(h.session.Snapshot, "/", h.session.ExcludedPaths, h.session.PartialFiles)
 	syslog.L.Infof("[NFS.Mount] Mount successful, serving from: %s", h.session.Snapshot.SnapshotPath)
-	return nfs.MountStatusOk, fs, []nfs.AuthFlavor{nfs.AuthFlavorNull}
+	return nfs.MountStatusOk, h.session.FS, []nfs.AuthFlavor{nfs.AuthFlavorNull}
 }
 
 func (h *NFSHandler) Change(fs billy.Filesystem) billy.Change {

@@ -10,30 +10,30 @@ import (
 	"net/url"
 	"sync"
 
+	"github.com/go-git/go-billy/v5"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	nfs "github.com/willscott/go-nfs"
-	"github.com/willscott/go-nfs/helpers"
 )
 
 type NFSSession struct {
-	Context       context.Context
-	ctxCancel     context.CancelFunc
-	Snapshot      *snapshots.WinVSSSnapshot
-	DriveLetter   string
-	listener      net.Listener
-	connections   sync.WaitGroup
-	isRunning     bool
-	serverURL     *url.URL
-	ExcludedPaths *pattern.Matcher
-	PartialFiles  *pattern.Matcher
-	statusMu      sync.RWMutex
+	Context     context.Context
+	ctxCancel   context.CancelFunc
+	Snapshot    *snapshots.WinVSSSnapshot
+	DriveLetter string
+	listener    net.Listener
+	connections sync.WaitGroup
+	isRunning   bool
+	serverURL   *url.URL
+	FS          billy.Filesystem
+	statusMu    sync.RWMutex
 }
 
-func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string) *NFSSession {
+func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string, excludedPaths *pattern.Matcher, partialFiles *pattern.Matcher) *NFSSession {
 	cancellableCtx, cancel := context.WithCancel(ctx)
 
 	urlStr, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
@@ -53,6 +53,12 @@ func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driv
 		ctxCancel:   cancel,
 		isRunning:   true,
 		serverURL:   parsedURL,
+		FS: vssfs.NewVSSFS(
+			snapshot,
+			"/",
+			excludedPaths, // Initialize from config/registry
+			partialFiles,  // Initialize from config/registry
+		),
 	}
 }
 
@@ -90,9 +96,7 @@ func (s *NFSSession) Serve() error {
 
 	syslog.L.Infof("[NFS.Serve] Serving NFS on port %s", port)
 
-	cachedHandler := helpers.NewCachingHandler(handler, int(^uint(0)>>1))
-
-	return nfs.Serve(listener, cachedHandler)
+	return nfs.Serve(listener, handler)
 }
 
 func (s *NFSSession) IsRunning() bool {
