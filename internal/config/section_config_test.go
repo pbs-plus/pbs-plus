@@ -1,3 +1,5 @@
+//go:build linux
+
 package config
 
 import (
@@ -155,7 +157,7 @@ func TestSectionConfig_ArrayProperties(t *testing.T) {
 	// Register a plugin with array property
 	arrayPlugin := &SectionPlugin{
 		FolderPath: tempDir,
-		TypeName: "array-test",
+		TypeName:     "array-test",
 		Properties: map[string]*Schema{
 			"tags": {
 				Type:        TypeArray,
