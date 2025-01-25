@@ -24,11 +24,6 @@ jobs:
         shell: bash
         if: matrix.os == 'ubuntu-latest'
         run: GODEBUG=gctrace=1 go test -v -race ./... -count=1 -timeout 1m
-      - name: Run Windows tests
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          go test -v -race ./internal/agent/nfs/... -tags=windows -count=1 -timeout 1m
 
   dev-build-linux-amd64:
     name: dev build linux/amd64

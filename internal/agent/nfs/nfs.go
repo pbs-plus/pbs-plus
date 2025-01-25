@@ -17,6 +17,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	nfs "github.com/willscott/go-nfs"
+	"github.com/willscott/go-nfs/helpers"
 )
 
 type NFSSession struct {
@@ -90,12 +91,7 @@ func (s *NFSSession) Serve() error {
 
 	syslog.L.Infof("[NFS.Serve] Serving NFS on port %s", port)
 
-	cachedHandler := readonly_cache.NewReadOnlyHandler(handler)
-	defer func() {
-		if toClean, ok := cachedHandler.(*readonly_cache.ReadOnlyHandler); ok {
-			toClean.Cleanup()
-		}
-	}()
+	cachedHandler := helpers.NewCachingHandler(handler, int(^uint(0)>>1))
 
 	return nfs.Serve(listener, cachedHandler)
 }
