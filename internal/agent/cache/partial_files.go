@@ -20,7 +20,7 @@ type PartialFileResp struct {
 	Data []PartialFileData `json:"data"`
 }
 
-func CompilePartialFileList() []*pattern.Pattern {
+func CompilePartialFileList() (*pattern.Matcher, error) {
 	var partialResp PartialFileResp
 	_, err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,
@@ -43,16 +43,5 @@ func CompilePartialFileList() []*pattern.Pattern {
 
 	syslog.L.Infof("Retrieved partial files: %v", partialPatterns)
 
-	var compiledPatterns []*pattern.Pattern
-
-	// Compile excluded patterns
-	for _, patternStr := range partialPatterns {
-		ptrn, err := pattern.NewPattern(patternStr)
-		if err != nil {
-			continue
-		}
-		compiledPatterns = append(compiledPatterns, ptrn)
-	}
-
-	return compiledPatterns
+	return pattern.NewMatcher(partialPatterns)
 }

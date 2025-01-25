@@ -20,7 +20,7 @@ type ExclusionResp struct {
 	Data []ExclusionData `json:"data"`
 }
 
-func CompileExcludedPaths() []*pattern.Pattern {
+func CompileExcludedPaths() (*pattern.Matcher, error) {
 	var exclusionResp ExclusionResp
 	_, err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,
@@ -43,16 +43,5 @@ func CompileExcludedPaths() []*pattern.Pattern {
 
 	syslog.L.Infof("Retrieved exclusions: %v", excludedPatterns)
 
-	var compiledPatterns []*pattern.Pattern
-
-	// Compile excluded patterns
-	for _, patternStr := range excludedPatterns {
-		ptrn, err := pattern.NewPattern(patternStr)
-		if err != nil {
-			continue
-		}
-		compiledPatterns = append(compiledPatterns, ptrn)
-	}
-
-	return compiledPatterns
+	return pattern.NewMatcher(excludedPatterns)
 }

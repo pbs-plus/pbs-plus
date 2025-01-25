@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*pattern.Pattern) bool {
+func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions *pattern.Matcher) bool {
 	pathWithoutSnap := strings.TrimPrefix(path, snapshot.SnapshotPath)
 	normalizedPath := strings.ToUpper(strings.TrimPrefix(pathWithoutSnap, "\\"))
 
@@ -19,10 +19,8 @@ func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*pat
 		return false
 	}
 
-	for _, pattern := range exclusions {
-		if pattern.Match(normalizedPath) {
-			return true
-		}
+	if matched, _ := exclusions.Match(normalizedPath); matched {
+		return true
 	}
 
 	invalid, err := hasInvalidAttributes(path)

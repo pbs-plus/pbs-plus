@@ -28,8 +28,8 @@ type NFSSession struct {
 	connections   sync.WaitGroup
 	isRunning     bool
 	serverURL     *url.URL
-	ExcludedPaths []*pattern.Pattern
-	PartialFiles  []*pattern.Pattern
+	ExcludedPaths *pattern.Matcher
+	PartialFiles  *pattern.Matcher
 	statusMu      sync.RWMutex
 }
 
