@@ -27,9 +27,11 @@ type VSSFS struct {
 	PartialFiles  *pattern.Matcher
 	root          string
 
-	mu       sync.RWMutex
-	PathToID map[string]uint64
-	IDToPath map[uint64]string
+	mu            sync.RWMutex
+	PathToID      map[string]uint64
+	IDToPath      map[uint64]string
+	fileInfoCache map[string]*VSSFileInfo
+	CacheMu       sync.RWMutex // Protects the caches
 }
 
 type cachedID struct {
@@ -137,50 +139,42 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
-	syslog.L.Infof("Reading directory: %s", dirname)
-
 	normalizedDir := fs.normalizePath(dirname)
+	syslog.L.Infof("Reading directory: %s (normalized: %s)", dirname, normalizedDir)
 
-	// Verify root directory exists in cache
+	// Verify directory exists in cache
 	if _, err := fs.getStableID(normalizedDir); err != nil {
-		return nil, fmt.Errorf("root directory inaccessible: %w", err)
+		return nil, fmt.Errorf("directory inaccessible: %w", err)
 	}
 
-	// Get physical path for os operations
-	physicalPath := filepath.Join(fs.root, filepath.Clean(dirname))
-	syslog.L.Infof("Physical path: %s", physicalPath)
-
-	entries, err := fs.Filesystem.ReadDir(physicalPath)
+	entries, err := fs.Filesystem.ReadDir(dirname)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read directory: %w", err)
 	}
 
 	results := make([]os.FileInfo, 0, len(entries))
 	for _, entry := range entries {
-		entryPath := filepath.Join(dirname, entry.Name())
-
-		// Use normalized path for exclusion checks
+		entryName := entry.Name()
+		entryPath := filepath.Join(dirname, entryName)
 		normalizedEntry := fs.normalizePath(entryPath)
+
 		if skipPath(normalizedEntry, fs.snapshot, fs.ExcludedPaths) {
+			syslog.L.Infof("Skipping excluded entry: %s", normalizedEntry)
 			continue
 		}
 
-		// Ensure the entry is added to the cache
-		stableID, err := fs.getStableID(normalizedEntry)
+		// Convert to VSSFileInfo
+		vssInfo, err := fs.getVSSFileInfo(normalizedEntry, entry)
 		if err != nil {
-			syslog.L.Warnf("Skipping inaccessible entry: %s - %v", normalizedEntry, err)
+			syslog.L.Warnf("Skipping entry due to ID error: %s - %v", normalizedEntry, err)
 			continue
 		}
 
-		results = append(results, &VSSFileInfo{
-			FileInfo: entry,
-			stableID: stableID,
-			nLinks:   1,
-		})
+		syslog.L.Infof("Adding entry: %s (ID: %d)", normalizedEntry, vssInfo.stableID)
+		results = append(results, vssInfo)
 	}
 
-	syslog.L.Infof("Found %d entries in %s", len(results), dirname)
-
+	syslog.L.Infof("Returning %d entries for %s", len(results), normalizedDir)
 	return results, nil
 }
 
@@ -192,76 +186,68 @@ func (fs *VSSFS) Readlink(link string) (string, error) {
 	return fs.Filesystem.Readlink(link)
 }
 
-func (fs *VSSFS) getStableID(rawPath string) (uint64, error) {
-	path := fs.normalizePath(rawPath)
-	syslog.L.Infof("Getting stable ID for: %s", path)
-
-	// Check cache with read lock first
+func (fs *VSSFS) getStableID(path string) (uint64, error) {
 	fs.mu.RLock()
 	if id, exists := fs.PathToID[path]; exists {
 		fs.mu.RUnlock()
-		syslog.L.Infof("Cache hit for %s: %d", path, id)
 		return id, nil
 	}
 	fs.mu.RUnlock()
 
-	// Generate on demand
-	physicalPath := filepath.Join(fs.root, filepath.Clean(rawPath))
+	fullPath := filepath.Join(fs.root, filepath.Clean(path))
 	var fi windows.ByHandleFileInformation
-	stableID, _, err := getFileIDWindows(physicalPath, &fi)
+	stableID, _, err := getFileIDWindows(fullPath, &fi)
 	if err != nil {
-		syslog.L.Errorf("Failed to generate ID for %s (%s): %v", path, physicalPath, err)
-		return 0, fmt.Errorf("failed to get file ID: %w", err)
+		return 0, err
 	}
 
-	// Update cache with write lock
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
-	// Double-check after acquiring write lock
+	// Double-check after lock
 	if existing, exists := fs.PathToID[path]; exists {
-		syslog.L.Infof("Race condition avoided for %s: %d", path, existing)
 		return existing, nil
 	}
 
-	syslog.L.Infof("Caching new entry: %s → %d", path, stableID)
 	fs.PathToID[path] = stableID
 	fs.IDToPath[stableID] = path
-
 	return stableID, nil
 }
 
-func (fs *VSSFS) getVSSFileInfo(path string, info os.FileInfo) (*VSSFileInfo, error) {
-	fs.mu.RLock()
-	cachedID, exists := fs.PathToID[path]
-	fs.mu.RUnlock()
-
-	if exists {
-		return &VSSFileInfo{
-			FileInfo: info,
-			stableID: cachedID,
-			nLinks:   1, // Adjust based on actual data if available
-		}, nil
+func (fs *VSSFS) getVSSFileInfo(path string, baseInfo os.FileInfo) (*VSSFileInfo, error) {
+	// Check cache first
+	fs.CacheMu.RLock()
+	if cached, exists := fs.fileInfoCache[path]; exists {
+		fs.CacheMu.RUnlock()
+		return cached, nil
 	}
+	fs.CacheMu.RUnlock()
 
-	// Fallback for uncached files (should rarely happen)
-	fullPath := filepath.Join(fs.Root(), filepath.Clean(path))
-	var fi windows.ByHandleFileInformation
-	stableID, _, err := getFileIDWindows(fullPath, &fi)
+	// Generate stable ID if needed
+	stableID, err := fs.getStableID(path)
 	if err != nil {
 		return nil, err
 	}
 
-	fs.mu.Lock()
-	fs.PathToID[path] = stableID
-	fs.IDToPath[stableID] = path
-	fs.mu.Unlock()
+	// Get number of links from Windows attributes
+	fullPath := filepath.Join(fs.root, filepath.Clean(path))
+	var fi windows.ByHandleFileInformation
+	if _, _, err := getFileIDWindows(fullPath, &fi); err != nil {
+		return nil, err
+	}
 
-	return &VSSFileInfo{
-		FileInfo: info,
+	// Create and cache the VSSFileInfo
+	vssInfo := &VSSFileInfo{
+		FileInfo: baseInfo,
 		stableID: stableID,
 		nLinks:   fi.NumberOfLinks,
-	}, nil
+	}
+
+	fs.CacheMu.Lock()
+	fs.fileInfoCache[path] = vssInfo
+	fs.CacheMu.Unlock()
+
+	return vssInfo, nil
 }
 
 func (fs *VSSFS) normalizePath(path string) string {
