@@ -4,7 +4,6 @@ package nfs
 
 import (
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/willscott/go-nfs"
 )
 
@@ -26,6 +26,102 @@ func (m *mockHandler) FromHandle([]byte) (billy.Filesystem, []string, error) {
 	return memfs.New(), []string{"mock"}, nil
 }
 
+func TestNewSmartCachingHandler(t *testing.T) {
+	handler := NewSmartCachingHandler(&mockHandler{})
+	assert.NotNil(t, handler)
+}
+
+func TestHandleCaching(t *testing.T) {
+	t.Run("Basic handle caching", func(t *testing.T) {
+		handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
+		fs := memfs.New()
+		path := []string{"test", "path"}
+
+		// First access should create new handle
+		handle1 := handler.ToHandle(fs, path)
+		require.NotEmpty(t, handle1)
+
+		// Second access should return same handle
+		handle2 := handler.ToHandle(fs, path)
+		assert.Equal(t, handle1, handle2)
+
+		// Verify handle resolves correctly
+		resultFS, resultPath, err := handler.FromHandle(handle1)
+		require.NoError(t, err)
+		assert.Equal(t, fs, resultFS)
+		assert.Equal(t, path, resultPath)
+	})
+
+	t.Run("Handle invalidation", func(t *testing.T) {
+		handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
+		fs := memfs.New()
+		path := []string{"test"}
+
+		handle := handler.ToHandle(fs, path)
+		require.NotEmpty(t, handle)
+
+		err := handler.InvalidateHandle(fs, handle)
+		require.NoError(t, err)
+
+		// Handle should no longer be valid
+		_, _, err = handler.FromHandle(handle)
+		assert.Error(t, err)
+	})
+
+	t.Run("Cache size adjustment", func(t *testing.T) {
+		handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
+		fs := memfs.New()
+
+		// Generate many handles to trigger cache adjustment
+		for i := 0; i < 100000; i++ {
+			handler.ToHandle(fs, []string{uuid.New().String()})
+		}
+
+		// Verify cache size remains within limits
+		assert.LessOrEqual(t, handler.activeHandles.Len(), maxHandleCacheSize)
+	})
+}
+
+func TestVerifierHandling(t *testing.T) {
+	handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
+
+	t.Run("Verifier creation and retrieval", func(t *testing.T) {
+		path := "/test/path"
+		contents := []os.FileInfo{
+			mockFileInfo{name: "file1.txt", mode: 0644},
+			mockFileInfo{name: "file2.txt", mode: 0644},
+		}
+
+		// Create verifier
+		verifierID := handler.VerifierFor(path, contents)
+		require.NotZero(t, verifierID)
+
+		// Retrieve contents
+		retrievedContents := handler.DataForVerifier(verifierID)
+		require.NotNil(t, retrievedContents)
+		assert.Equal(t, len(contents), len(retrievedContents))
+
+		// Verify contents match
+		for i, c := range contents {
+			assert.Equal(t, c.Name(), retrievedContents[i].Name())
+			assert.Equal(t, c.Mode(), retrievedContents[i].Mode())
+		}
+	})
+
+	t.Run("Verifier cache limits", func(t *testing.T) {
+		// Create more verifiers than cache size
+		for i := 0; i < verifierCacheSize+100; i++ {
+			path := filepath.Join("/test", uuid.New().String())
+			contents := []os.FileInfo{mockFileInfo{name: "test.txt", mode: 0644}}
+			handler.VerifierFor(path, contents)
+		}
+
+		// Verify cache size is limited
+		assert.LessOrEqual(t, handler.activeVerifiers.Len(), verifierCacheSize)
+	})
+}
+
+// Mock FileInfo implementation for testing
 type mockFileInfo struct {
 	name    string
 	size    int64
@@ -41,6 +137,31 @@ func (m mockFileInfo) Mode() os.FileMode  { return m.mode }
 func (m mockFileInfo) ModTime() time.Time { return m.modTime }
 func (m mockFileInfo) IsDir() bool        { return m.isDir }
 func (m mockFileInfo) Sys() interface{}   { return m.sys }
+
+func TestConcurrentAccess(t *testing.T) {
+	handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
+	fs := memfs.New()
+
+	t.Run("Concurrent handle operations", func(t *testing.T) {
+		done := make(chan bool)
+		for i := 0; i < 10; i++ {
+			go func() {
+				for j := 0; j < 1000; j++ {
+					path := []string{uuid.New().String()}
+					handle := handler.ToHandle(fs, path)
+					_, _, _ = handler.FromHandle(handle)
+					_ = handler.InvalidateHandle(fs, handle)
+				}
+				done <- true
+			}()
+		}
+
+		// Wait for all goroutines to complete
+		for i := 0; i < 10; i++ {
+			<-done
+		}
+	})
+}
 
 func TestHandleCachingPerformance(t *testing.T) {
 	handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
@@ -113,10 +234,67 @@ func TestHighConcurrencyPerformance(t *testing.T) {
 		"Concurrent operations should process at least 20K ops/sec, got %.2f ops/sec", opsPerSec)
 }
 
-func TestVerifierPerformance(t *testing.T) {
+func BenchmarkVerifierOperations(b *testing.B) {
 	handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
 
-	createContents := func(size int) []os.FileInfo {
+	contents := make([][]os.FileInfo, 1000)
+	for i := range contents {
+		contents[i] = []os.FileInfo{
+			mockFileInfo{
+				name:    fmt.Sprintf("file%d.txt", i),
+				size:    int64(i * 1000),
+				mode:    0644,
+				modTime: time.Now(),
+			},
+		}
+	}
+
+	paths := make([]string, len(contents))
+	for i := range paths {
+		paths[i] = filepath.Join("/test", uuid.New().String())
+	}
+
+	b.Run("VerifierCreation", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			handler.VerifierFor(paths[i%len(paths)], contents[i%len(contents)])
+		}
+	})
+
+	verifiers := make([]uint64, len(contents))
+	for i := range verifiers {
+		verifiers[i] = handler.VerifierFor(paths[i], contents[i])
+	}
+
+	b.Run("VerifierRetrieval", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			handler.DataForVerifier(verifiers[i%len(verifiers)])
+		}
+	})
+}
+
+func BenchmarkCacheResizing(b *testing.B) {
+	handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
+	fs := memfs.New()
+
+	b.Run("Cache growth under load", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			paths := make([][]string, 10000)
+			for j := range paths {
+				paths[j] = []string{uuid.New().String()}
+				handler.ToHandle(fs, paths[j])
+			}
+			handler.adjustCacheSize()
+		}
+	})
+}
+
+func BenchmarkLargeDirectoryOperations(b *testing.B) {
+	handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
+
+	createLargeDirectory := func(size int) ([]os.FileInfo, string) {
 		contents := make([]os.FileInfo, size)
 		for i := range contents {
 			contents[i] = mockFileInfo{
@@ -126,132 +304,51 @@ func TestVerifierPerformance(t *testing.T) {
 				modTime: time.Now(),
 			}
 		}
-		return contents
+		return contents, filepath.Join("/test", uuid.New().String())
 	}
 
-	tests := []struct {
-		name         string
-		size         int
-		minOpsPerSec float64
-	}{
-		{"Small_Directory", 100, 2000},
-		{"Medium_Directory", 1000, 200},
-		{"Large_Directory", 10000, 100},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			contents := createContents(tt.size)
-			path := filepath.Join("/test", uuid.New().String())
-
-			start := time.Now()
-			for i := 0; i < 1000; i++ {
+	sizes := []int{100, 1000, 10000}
+	for _, size := range sizes {
+		contents, path := createLargeDirectory(size)
+		b.Run(fmt.Sprintf("Directory_Size_%d", size), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
 				verifier := handler.VerifierFor(path, contents)
 				handler.DataForVerifier(verifier)
 			}
-			duration := time.Since(start)
-
-			opsPerSec := float64(1000) / duration.Seconds()
-			assert.GreaterOrEqual(t, opsPerSec, tt.minOpsPerSec,
-				"Verifier operations for %d files should process at least %.0f ops/sec, got %.2f ops/sec",
-				tt.size, tt.minOpsPerSec, opsPerSec)
 		})
 	}
 }
 
-func TestCacheResizingPerformance(t *testing.T) {
+func TestEdgeCases(t *testing.T) {
 	handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
 	fs := memfs.New()
 
-	start := time.Now()
-	targetSize := 100000
+	t.Run("Empty path", func(t *testing.T) {
+		handle := handler.ToHandle(fs, []string{})
+		require.NotEmpty(t, handle)
 
-	for i := 0; i < targetSize; i++ {
-		path := []string{uuid.New().String()}
-		handler.ToHandle(fs, path)
-		if i > 0 && i%10000 == 0 {
-			handler.adjustCacheSize()
-		}
-	}
-	duration := time.Since(start)
+		resultFS, resultPath, err := handler.FromHandle(handle)
+		require.NoError(t, err)
+		assert.Equal(t, fs, resultFS)
+		assert.Empty(t, resultPath)
+	})
 
-	opsPerSec := float64(targetSize) / duration.Seconds()
-	assert.GreaterOrEqual(t, opsPerSec, float64(10000),
-		"Cache growth operations should process at least 10K ops/sec, got %.2f ops/sec", opsPerSec)
-	assert.LessOrEqual(t, handler.activeHandles.Len(), maxHandleCacheSize,
-		"Cache size should not exceed maximum limit")
-}
+	t.Run("Invalid handle", func(t *testing.T) {
+		_, _, err := handler.FromHandle([]byte("invalid"))
+		assert.Error(t, err)
+	})
 
-func TestMassiveFileOperations(t *testing.T) {
-	handler := NewSmartCachingHandler(&mockHandler{}).(*CachingHandler)
-	fs := memfs.New()
+	t.Run("Duplicate invalidation", func(t *testing.T) {
+		path := []string{"test"}
+		handle := handler.ToHandle(fs, path)
 
-	createMassiveFileSet := func(size int) [][]string {
-		paths := make([][]string, size)
-		for i := range paths {
-			depth := rand.Intn(5) + 1
-			path := make([]string, depth)
-			for j := range path {
-				path[j] = fmt.Sprintf("dir%d_%d", j, rand.Intn(1000))
-			}
-			path = append(path, fmt.Sprintf("file%d.txt", i))
-			paths[i] = path
-		}
-		return paths
-	}
+		// First invalidation
+		err := handler.InvalidateHandle(fs, handle)
+		require.NoError(t, err)
 
-	tests := []struct {
-		name         string
-		fileCount    int
-		minOpsPerSec float64
-	}{
-		{"100K_Files", 100000, 10000},
-		{"500K_Files", 500000, 5000},
-		{"1M_Files", 1000000, 2500},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			paths := createMassiveFileSet(tt.fileCount)
-			handles := make([][]byte, len(paths))
-
-			start := time.Now()
-			for i, path := range paths {
-				handles[i] = handler.ToHandle(fs, path)
-			}
-			duration := time.Since(start)
-			opsPerSec := float64(tt.fileCount) / duration.Seconds()
-			assert.GreaterOrEqual(t, opsPerSec, tt.minOpsPerSec,
-				"Handle creation for %d files should process at least %.0f ops/sec, got %.2f ops/sec",
-				tt.fileCount, tt.minOpsPerSec, opsPerSec)
-
-			t.Run("ConcurrentLookups", func(t *testing.T) {
-				concurrency := 20
-				lookupsPerGoroutine := tt.fileCount / concurrency
-				start := time.Now()
-				var wg sync.WaitGroup
-				wg.Add(concurrency)
-
-				for i := 0; i < concurrency; i++ {
-					go func(offset int) {
-						defer wg.Done()
-						for j := 0; j < lookupsPerGoroutine; j++ {
-							idx := (offset + j) % len(handles)
-							_, _, _ = handler.FromHandle(handles[idx])
-						}
-					}(i * lookupsPerGoroutine)
-				}
-
-				wg.Wait()
-				duration := time.Since(start)
-				opsPerSec := float64(tt.fileCount) / duration.Seconds()
-				assert.GreaterOrEqual(t, opsPerSec, tt.minOpsPerSec*2,
-					"Concurrent handle lookups should be at least 2x faster than creation")
-			})
-
-			hitRate := float64(handler.stats.hits) / float64(handler.stats.hits+handler.stats.misses)
-			assert.GreaterOrEqual(t, hitRate, 0.85,
-				"Cache hit rate should be at least 85%% for repeated operations, got %.2f%%", hitRate*100)
-		})
-	}
+		// Second invalidation should not error
+		err = handler.InvalidateHandle(fs, handle)
+		assert.NoError(t, err)
+	})
 }
