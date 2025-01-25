@@ -27,9 +27,14 @@ type VSSFS struct {
 	PartialFiles  *pattern.Matcher
 	root          string
 
-	PathToID      sync.Map // map[string]uint64
+	PathToID      sync.Map // map[string]*FileID
 	IDToPath      sync.Map // map[uint64]string
 	fileInfoCache sync.Map // map[string]*VSSFileInfo
+}
+
+type FileID struct {
+	ID    uint64
+	nLink uint32
 }
 
 var _ billy.Filesystem = (*VSSFS)(nil)
@@ -48,9 +53,12 @@ func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths 
 	fullRootPath := filepath.Join(fs.root, filepath.Clean("/"))
 
 	var fi windows.ByHandleFileInformation
-	rootID, _, _, err := getFileIDWindows(fullRootPath, &fi)
+	rootID, nlink, _, err := getFileIDWindows(fullRootPath, &fi)
 	if err == nil {
-		fs.PathToID.Store(rootPath, rootID)
+		fs.PathToID.Store(rootPath, &FileID{
+			ID:    rootID,
+			nLink: nlink,
+		})
 		fs.IDToPath.Store(rootID, rootPath)
 	} else {
 		syslog.L.Errorf("Failed to initialize root directory: %v", err)
@@ -141,6 +149,11 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	for _, entry := range entries {
 		entryPath := filepath.Join(dirname, entry.Name())
 		normalizedEntry := fs.normalizePath(entryPath)
+		fullPath := filepath.Join(fs.root, entryPath)
+
+		if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
+			continue
+		}
 
 		vssInfo, err := fs.getVSSFileInfo(normalizedEntry, entry)
 		if err != nil {
@@ -154,24 +167,29 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 }
 
 func (fs *VSSFS) Readlink(link string) (string, error) {
+	fullPath := filepath.Join(fs.Root(), filepath.Clean(link))
+	if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
+		return "", os.ErrNotExist
+	}
 	return fs.Filesystem.Readlink(link)
 }
 
-func (fs *VSSFS) getStableID(path string) (uint64, error) {
+func (fs *VSSFS) getStableID(path string) (*FileID, error) {
 	if id, ok := fs.PathToID.Load(path); ok {
-		return id.(uint64), nil
+		return id.(*FileID), nil
 	}
 
 	fullPath := filepath.Join(fs.root, filepath.Clean(path))
 	var fi windows.ByHandleFileInformation
-	stableID, _, _, err := getFileIDWindows(fullPath, &fi)
+	stableID, nLink, _, err := getFileIDWindows(fullPath, &fi)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	fs.PathToID.Store(path, stableID)
+	toRet := &FileID{ID: stableID, nLink: nLink}
+	fs.PathToID.Store(path, toRet)
 	fs.IDToPath.Store(stableID, path)
-	return stableID, nil
+	return toRet, nil
 }
 
 func (fs *VSSFS) getVSSFileInfo(path string, baseInfo os.FileInfo) (*VSSFileInfo, error) {
@@ -184,17 +202,10 @@ func (fs *VSSFS) getVSSFileInfo(path string, baseInfo os.FileInfo) (*VSSFileInfo
 		return nil, err
 	}
 
-	fullPath := filepath.Join(fs.root, filepath.Clean(path))
-	var fi windows.ByHandleFileInformation
-	_, nLinks, _, err := getFileIDWindows(fullPath, &fi)
-	if err != nil {
-		return nil, err
-	}
-
 	vssInfo := &VSSFileInfo{
 		FileInfo: baseInfo,
-		stableID: stableID,
-		nLinks:   nLinks,
+		stableID: stableID.ID,
+		nLinks:   stableID.nLink,
 	}
 
 	fs.fileInfoCache.Store(path, vssInfo)
