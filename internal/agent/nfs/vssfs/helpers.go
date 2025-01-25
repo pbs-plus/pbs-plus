@@ -51,7 +51,7 @@ func hasInvalidAttributes(path string) (bool, error) {
 		windows.FILE_ATTRIBUTE_REPARSE_POINT:         "REPARSE_POINT",
 	}
 
-	for attr, _ := range invalidAttributes {
+	for attr := range invalidAttributes {
 		if attributes&attr != 0 {
 			return true, nil
 		}
@@ -98,4 +98,3 @@ func computeIDFromExisting(fi *windows.ByHandleFileInformation) (uint64, uint32)
 	fileIndex := uint64(fi.FileIndexHigh)<<32 | uint64(fi.FileIndexLow)
 	return uint64(fi.VolumeSerialNumber)<<48 | (fileIndex & 0xFFFFFFFFFFFF), fi.NumberOfLinks
 }
-

@@ -142,7 +142,7 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	normalizedDir := fs.normalizePath(dirname)
 
-	// Verify directory exists in cache
+	// Ensure directory is cached
 	if _, err := fs.getStableID(normalizedDir); err != nil {
 		return nil, fmt.Errorf("directory inaccessible: %w", err)
 	}
@@ -154,13 +154,16 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 
 	results := make([]os.FileInfo, 0, len(entries))
 	for _, entry := range entries {
-		entryName := entry.Name()
-		entryPath := filepath.Join(dirname, entryName)
+		entryPath := filepath.Join(dirname, entry.Name())
 		normalizedEntry := fs.normalizePath(entryPath)
-
 		fullPath := filepath.Join(fs.root, filepath.Clean(normalizedEntry))
 
 		if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
+			continue // Skip excluded paths early
+		}
+
+		// Pre-cache this entry's stable ID
+		if _, err := fs.getStableID(normalizedEntry); err != nil {
 			continue
 		}
 
@@ -251,6 +254,9 @@ func (fs *VSSFS) getVSSFileInfo(path string, baseInfo os.FileInfo) (*VSSFileInfo
 func (fs *VSSFS) normalizePath(path string) string {
 	// Convert to forward slashes and clean path
 	cleanPath := filepath.ToSlash(filepath.Clean(path))
+
+	// Normalize to uppercase for case insensitivity
+	cleanPath = strings.ToUpper(cleanPath)
 
 	// Ensure root is represented as "/"
 	if cleanPath == "." || cleanPath == "" {

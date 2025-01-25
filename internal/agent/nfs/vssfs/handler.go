@@ -5,6 +5,7 @@ package vssfs
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/go-git/go-billy/v5"
@@ -74,9 +75,7 @@ func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []str
 
 // HandleLimit returns the number of precomputed handles.
 func (h *VSSIDCachingHandler) HandleLimit() int {
-	h.vssFS.mu.RLock()
-	defer h.vssFS.mu.RUnlock()
-	return len(h.vssFS.IDToPath)
+	return math.MaxInt
 }
 
 // InvalidateHandle is a no-op as handles are immutable.
