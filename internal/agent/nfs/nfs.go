@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"sync"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs/readonly_cache"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
