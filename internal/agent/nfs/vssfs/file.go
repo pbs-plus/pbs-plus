@@ -26,8 +26,13 @@ func (fi *VSSFileInfo) Mode() os.FileMode  { return fi.mode }
 func (fi *VSSFileInfo) ModTime() time.Time { return fi.modTime }
 func (fi *VSSFileInfo) IsDir() bool        { return fi.isDir }
 func (vi *VSSFileInfo) Sys() interface{} {
+	nlink := uint32(1)
+	if vi.IsDir() {
+		nlink = 2 // Minimum links for directories (self + parent)
+	}
+
 	return file.FileInfo{
-		Nlink:  1,
+		Nlink:  nlink,
 		UID:    1000,
 		GID:    1000,
 		Major:  0,
@@ -37,14 +42,20 @@ func (vi *VSSFileInfo) Sys() interface{} {
 }
 
 func createFileInfoFromFindData(name string, fd *windows.Win32finddata) os.FileInfo {
-	mode := os.FileMode(0)
-	if fd.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		mode |= os.ModeDir
-	}
+	var mode os.FileMode
+
+	// Set base permissions
 	if fd.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
-		mode |= 0444
+		mode = 0444 // Read-only for everyone
 	} else {
-		mode |= 0666
+		mode = 0666 // Read-write for everyone
+	}
+
+	// Add directory flag and execute permissions
+	if fd.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		mode |= os.ModeDir | 0111 // Add execute bits for traversal
+		// Set directory-specific permissions
+		mode = (mode & 0666) | 0111 | os.ModeDir // Final mode: drwxr-xr-x
 	}
 
 	size := int64(fd.FileSizeHigh)<<32 + int64(fd.FileSizeLow)
