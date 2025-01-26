@@ -3,7 +3,6 @@
 package vssfs
 
 import (
-	"os"
 	"strings"
 
 	"github.com/cespare/xxhash/v2"
@@ -12,7 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*pattern.GlobPattern) bool {
+func skipPathWithAttributes(path string, attrs uint32, snapshot *snapshots.WinVSSSnapshot, exclusions []*pattern.GlobPattern) bool {
 	pathWithoutSnap := strings.TrimPrefix(path, snapshot.SnapshotPath)
 	normalizedPath := strings.ToUpper(strings.TrimPrefix(pathWithoutSnap, "\\"))
 
@@ -26,25 +25,10 @@ func skipPath(path string, snapshot *snapshots.WinVSSSnapshot, exclusions []*pat
 		}
 	}
 
-	invalid, err := hasInvalidAttributes(path)
-	if err != nil || invalid {
-		return true
-	}
-
-	return false
+	return hasInvalidAttributes(attrs)
 }
 
-func hasInvalidAttributes(path string) (bool, error) {
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return false, err
-	}
-
-	attributes, err := windows.GetFileAttributes(p)
-	if err != nil {
-		return false, os.NewSyscallError("GetFileAttributes", err)
-	}
-
+func hasInvalidAttributes(attrs uint32) bool {
 	invalidAttributes := map[uint32]string{
 		windows.FILE_ATTRIBUTE_TEMPORARY:             "TEMPORARY",
 		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN:        "RECALL_ON_OPEN",
@@ -55,11 +39,11 @@ func hasInvalidAttributes(path string) (bool, error) {
 	}
 
 	for attr := range invalidAttributes {
-		if attributes&attr != 0 {
-			return true, nil
+		if attrs&attr != 0 {
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 func getFileIDWindows(path string) uint64 {

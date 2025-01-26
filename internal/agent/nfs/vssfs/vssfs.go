@@ -15,6 +15,7 @@ import (
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
+	"golang.org/x/sys/windows"
 )
 
 // VSSFS extends osfs while enforcing read-only operations
@@ -109,51 +110,98 @@ func (fs *VSSFS) Lstat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
-	info, err := fs.Filesystem.Stat(filename)
+	fullPath := filepath.Join(fs.root, filename)
+	pathPtr, err := windows.UTF16PtrFromString(fullPath)
 	if err != nil {
 		return nil, err
 	}
+
+	var findData windows.Win32finddata
+	handle, err := windows.FindFirstFile(pathPtr, &findData)
+	if err != nil {
+		return nil, err
+	}
+	windows.FindClose(handle)
+
+	foundName := windows.UTF16ToString(findData.FileName[:])
+	if foundName != filepath.Base(filename) {
+		return nil, os.ErrNotExist
+	}
+
+	info := createFileInfoFromFindData(foundName, &findData)
 	return fs.getVSSFileInfo(filename, info)
 }
 
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
-	normalizedDir := fs.normalizePath(dirname)
-
-	if _, err := fs.getStableID(normalizedDir); err != nil {
-		return nil, fmt.Errorf("directory inaccessible: %w", err)
-	}
-
-	entries, err := fs.Filesystem.ReadDir(dirname)
+	fullDirPath := filepath.Join(fs.root, dirname)
+	searchPath := filepath.Join(fullDirPath, "*")
+	searchPathPtr, err := windows.UTF16PtrFromString(searchPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read directory: %w", err)
+		return nil, err
 	}
 
-	results := make([]os.FileInfo, 0, len(entries))
-	for _, entry := range entries {
-		entryPath := filepath.Join(dirname, entry.Name())
-		normalizedEntry := fs.normalizePath(entryPath)
+	var findData windows.Win32finddata
+	handle, err := windows.FindFirstFile(searchPathPtr, &findData)
+	if err != nil {
+		if err == windows.ERROR_FILE_NOT_FOUND {
+			return nil, os.ErrNotExist
+		}
+		return nil, err
+	}
+	defer windows.FindClose(handle)
+
+	var entries []os.FileInfo
+	for {
+		name := windows.UTF16ToString(findData.FileName[:])
+		if name == "." || name == ".." {
+			if err := windows.FindNextFile(handle, &findData); err != nil {
+				if err == windows.ERROR_NO_MORE_FILES {
+					break
+				}
+				return nil, err
+			}
+			continue
+		}
+
+		entryPath := filepath.Join(dirname, name)
 		fullPath := filepath.Join(fs.root, entryPath)
 
-		if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
+		if skipPathWithAttributes(fullPath, findData.FileAttributes, fs.snapshot, fs.ExcludedPaths) {
+			if err := windows.FindNextFile(handle, &findData); err != nil {
+				if err == windows.ERROR_NO_MORE_FILES {
+					break
+				}
+				return nil, err
+			}
 			continue
 		}
 
-		vssInfo, err := fs.getVSSFileInfo(normalizedEntry, entry)
+		info := createFileInfoFromFindData(name, &findData)
+		vssInfo, err := fs.getVSSFileInfo(entryPath, info)
 		if err != nil {
+			if err := windows.FindNextFile(handle, &findData); err != nil {
+				if err == windows.ERROR_NO_MORE_FILES {
+					break
+				}
+				return nil, err
+			}
 			continue
 		}
 
-		results = append(results, vssInfo)
+		entries = append(entries, vssInfo)
+
+		if err := windows.FindNextFile(handle, &findData); err != nil {
+			if err == windows.ERROR_NO_MORE_FILES {
+				break
+			}
+			return nil, err
+		}
 	}
 
-	return results, nil
+	return entries, nil
 }
 
 func (fs *VSSFS) Readlink(link string) (string, error) {
-	fullPath := filepath.Join(fs.Root(), filepath.Clean(link))
-	if skipPath(fullPath, fs.snapshot, fs.ExcludedPaths) {
-		return "", os.ErrNotExist
-	}
 	return fs.Filesystem.Readlink(link)
 }
 
