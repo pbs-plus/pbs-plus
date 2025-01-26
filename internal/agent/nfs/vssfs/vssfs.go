@@ -14,6 +14,7 @@ import (
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 )
 
@@ -165,6 +166,7 @@ func (fs *VSSFS) getStableID(path string) (uint64, error) {
 	}
 
 	stableID := getFileIDWindows(path)
+
 	fs.PathToID.Store(path, stableID)
 	fs.IDToPath.Store(stableID, path)
 	return stableID, nil
