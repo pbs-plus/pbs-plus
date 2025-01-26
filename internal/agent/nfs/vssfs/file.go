@@ -3,6 +3,7 @@
 package vssfs
 
 import (
+	"io/fs"
 	"os"
 	"time"
 
@@ -15,15 +16,15 @@ type VSSFileInfo struct {
 	stableID uint64
 	name     string
 	size     int64
+	mode     fs.FileMode
 	modTime  time.Time
-	isDir    bool
 }
 
 func (fi *VSSFileInfo) Name() string       { return fi.name }
 func (fi *VSSFileInfo) Size() int64        { return fi.size }
-func (fi *VSSFileInfo) Mode() os.FileMode  { return fi.FileInfo.Mode() }
+func (fi *VSSFileInfo) Mode() fs.FileMode  { return fi.mode }
 func (fi *VSSFileInfo) ModTime() time.Time { return fi.modTime }
-func (fi *VSSFileInfo) IsDir() bool        { return fi.FileInfo.IsDir() }
+func (fi *VSSFileInfo) IsDir() bool        { return fi.Mode().IsDir() }
 func (vi *VSSFileInfo) Sys() interface{} {
 	nlink := uint32(1)
 	if vi.IsDir() {
@@ -41,12 +42,29 @@ func (vi *VSSFileInfo) Sys() interface{} {
 }
 
 func createFileInfoFromFindData(name string, fd *windows.Win32finddata) os.FileInfo {
+	var mode fs.FileMode
+
+	// Set base permissions
+	if fd.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
+		mode = 0444 // Read-only for everyone
+	} else {
+		mode = 0666 // Read-write for everyone
+	}
+
+	// Add directory flag and execute permissions
+	if fd.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		mode |= os.ModeDir | 0111 // Add execute bits for traversal
+		// Set directory-specific permissions
+		mode = (mode & 0666) | 0111 | os.ModeDir // Final mode: drwxr-xr-x
+	}
+
 	size := int64(fd.FileSizeHigh)<<32 + int64(fd.FileSizeLow)
 	modTime := time.Unix(0, fd.LastWriteTime.Nanoseconds())
 
 	return &VSSFileInfo{
 		name:    name,
 		size:    size,
+		mode:    mode,
 		modTime: modTime,
 	}
 }
