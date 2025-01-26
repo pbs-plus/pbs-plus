@@ -5,7 +5,6 @@ package vssfs
 import (
 	"encoding/binary"
 	"fmt"
-	"math"
 	"path/filepath"
 	"strings"
 
@@ -13,21 +12,21 @@ import (
 	nfs "github.com/willscott/go-nfs"
 )
 
-// VSSIDCachingHandler uses VSSFS's PathToID and IDToPath for handle management.
-type VSSIDCachingHandler struct {
+// VSSIDHandler uses VSSFS's PathToID and IDToPath for handle management.
+type VSSIDHandler struct {
 	nfs.Handler
 	vssFS *VSSFS
 }
 
-// NewVSSIDCachingHandler initializes the handler with a reference to VSSFS.
-func NewVSSIDCachingHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) *VSSIDCachingHandler {
-	return &VSSIDCachingHandler{
+// NewVSSIDHandler initializes the handler with a reference to VSSFS.
+func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) *VSSIDHandler {
+	return &VSSIDHandler{
 		Handler: underlyingHandler,
 		vssFS:   vssFS,
 	}
 }
 
-func (h *VSSIDCachingHandler) ToHandle(f billy.Filesystem, path []string) []byte {
+func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 	vssFS, ok := f.(*VSSFS)
 	if !ok || vssFS != h.vssFS {
 		return nil
@@ -42,25 +41,25 @@ func (h *VSSIDCachingHandler) ToHandle(f billy.Filesystem, path []string) []byte
 		return nil
 	}
 
-	if id, exists := vssFS.PathToID.Load(fullWindowsPath); exists {
+	if id, exists := vssFS.PathToID.Get(fullWindowsPath); exists {
 		handle := make([]byte, 8)
-		binary.BigEndian.PutUint64(handle, id.(uint64))
+		binary.BigEndian.PutUint64(handle, id)
 		return handle
 	}
 
 	return nil
 }
 
-func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []string, error) {
+func (h *VSSIDHandler) FromHandle(handle []byte) (billy.Filesystem, []string, error) {
 	if len(handle) != 8 {
 		return nil, nil, fmt.Errorf("invalid handle")
 	}
 	stableID := binary.BigEndian.Uint64(handle)
 
-	if winPath, exists := h.vssFS.IDToPath.Load(stableID); exists {
+	if winPath, exists := h.vssFS.IDToPath.Get(stableID); exists {
 		// Convert Windows path back to NFS format
 		relativePath := strings.TrimPrefix(
-			filepath.ToSlash(winPath.(string)),
+			filepath.ToSlash(winPath),
 			filepath.ToSlash(h.vssFS.Root()),
 		)
 
@@ -81,11 +80,11 @@ func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []str
 }
 
 // HandleLimit returns the number of precomputed handles.
-func (h *VSSIDCachingHandler) HandleLimit() int {
-	return math.MaxInt
+func (h *VSSIDHandler) HandleLimit() int {
+	return CacheLimit
 }
 
 // InvalidateHandle is a no-op as handles are immutable.
-func (h *VSSIDCachingHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) error {
+func (h *VSSIDHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) error {
 	return nil
 }
