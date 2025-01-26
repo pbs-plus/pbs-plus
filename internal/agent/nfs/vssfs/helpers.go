@@ -61,9 +61,5 @@ func hasInvalidAttributes(path string) (bool, error) {
 }
 
 func getFileIDWindows(path string) uint64 {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return xxhash.Sum64String(path)
-	}
-	return xxhash.Sum64String(path + fi.ModTime().String())
+	return xxhash.Sum64String(path)
 }

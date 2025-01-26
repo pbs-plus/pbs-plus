@@ -43,9 +43,8 @@ func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths 
 
 	// Pre-cache root directory
 	rootPath := fs.normalizePath("/")
-	fullRootPath := filepath.Join(fs.root, filepath.Clean("/"))
 
-	rootID := getFileIDWindows(fullRootPath)
+	rootID := getFileIDWindows(rootPath)
 	fs.PathToID.Store(rootPath, rootID)
 	fs.IDToPath.Store(rootID, rootPath)
 	fs.IDToPath.Store(rootID, rootPath)
@@ -165,8 +164,7 @@ func (fs *VSSFS) getStableID(path string) (uint64, error) {
 		return id.(uint64), nil
 	}
 
-	fullPath := filepath.Join(fs.root, filepath.Clean(path))
-	stableID := getFileIDWindows(fullPath)
+	stableID := getFileIDWindows(path)
 	fs.PathToID.Store(path, stableID)
 	fs.IDToPath.Store(stableID, path)
 	return stableID, nil
