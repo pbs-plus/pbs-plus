@@ -226,9 +226,6 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 			continue
 		}
 
-		if dirname == "/" {
-			name = "/"
-		}
 		info := createFileInfoFromFindData(name, fullPath, &findData, fs)
 		entries = append(entries, info)
 		if err := windows.FindNextFile(handle, &findData); err != nil {
