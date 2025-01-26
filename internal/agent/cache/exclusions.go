@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gobwas/glob"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
@@ -20,7 +21,7 @@ type ExclusionResp struct {
 	Data []ExclusionData `json:"data"`
 }
 
-func CompileExcludedPaths() (*pattern.Matcher, error) {
+func CompileExcludedPaths() ([]*pattern.GlobPattern, error) {
 	var exclusionResp ExclusionResp
 	_, err := agent.ProxmoxHTTPRequest(
 		http.MethodGet,
@@ -34,14 +35,21 @@ func CompileExcludedPaths() (*pattern.Matcher, error) {
 		}
 	}
 
-	excludedPatterns := []string{}
+	excludedPatterns := []*pattern.GlobPattern{}
 
 	for _, userExclusions := range exclusionResp.Data {
 		trimmedLine := strings.TrimSpace(userExclusions.Path)
-		excludedPatterns = append(excludedPatterns, trimmedLine)
+		glob, err := glob.Compile(trimmedLine)
+		if err != nil {
+			continue
+		}
+		excludedPatterns = append(excludedPatterns, &pattern.GlobPattern{
+			Glob: glob,
+			RawString: trimmedLine,
+		})
 	}
 
 	syslog.L.Infof("Retrieved exclusions: %v", excludedPatterns)
 
-	return pattern.NewMatcher(excludedPatterns)
+	return excludedPatterns, nil
 }

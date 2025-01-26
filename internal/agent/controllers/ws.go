@@ -48,13 +48,7 @@ func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {
 			return
 		}
 
-		partialFiles, err := cache.CompilePartialFileList()
-		if err != nil {
-			syslog.L.Errorf("partial files compilation error: %v", err)
-			return
-		}
-
-		nfsSession := nfs.NewNFSSession(context.Background(), snapshot, drive, excludedPaths, partialFiles)
+		nfsSession := nfs.NewNFSSession(context.Background(), snapshot, drive, excludedPaths)
 		if nfsSession == nil {
 			syslog.L.Error("NFS session is nil.")
 			return

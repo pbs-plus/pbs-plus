@@ -21,8 +21,7 @@ import (
 type VSSFS struct {
 	billy.Filesystem
 	snapshot      *snapshots.WinVSSSnapshot
-	ExcludedPaths *pattern.Matcher
-	PartialFiles  *pattern.Matcher
+	ExcludedPaths []*pattern.GlobPattern
 	root          string
 
 	PathToID      sync.Map // map[string]uint64
@@ -32,12 +31,11 @@ type VSSFS struct {
 
 var _ billy.Filesystem = (*VSSFS)(nil)
 
-func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths *pattern.Matcher, partialFiles *pattern.Matcher) billy.Filesystem {
+func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths []*pattern.GlobPattern) billy.Filesystem {
 	fs := &VSSFS{
 		Filesystem:    osfs.New(filepath.Join(snapshot.SnapshotPath, baseDir), osfs.WithBoundOS()),
 		snapshot:      snapshot,
 		ExcludedPaths: excludedPaths,
-		PartialFiles:  partialFiles,
 		root:          filepath.Join(snapshot.SnapshotPath, baseDir),
 	}
 

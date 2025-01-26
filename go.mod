@@ -12,9 +12,8 @@ require (
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/getlantern/systray v1.2.2
 	github.com/go-git/go-billy/v5 v5.6.2
+	github.com/gobwas/glob v0.2.3
 	github.com/golang-jwt/jwt v3.2.2+incompatible
-	github.com/google/uuid v1.6.0
-	github.com/hashicorp/golang-lru/arc/v2 v2.0.7
 	github.com/kardianos/service v1.2.2
 	github.com/mxk/go-vss v1.2.0
 	github.com/stretchr/testify v1.10.0
@@ -35,7 +34,6 @@ require (
 	github.com/getlantern/ops v0.0.0-20190325191751-d70cb0d6f85f // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-stack/stack v1.8.0 // indirect
-	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
