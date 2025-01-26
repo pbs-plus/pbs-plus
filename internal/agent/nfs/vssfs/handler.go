@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-git/go-billy/v5"
@@ -32,14 +33,15 @@ func (h *VSSIDCachingHandler) ToHandle(f billy.Filesystem, path []string) []byte
 		return nil
 	}
 
-	joinedPath := vssFS.normalizePath(strings.Join(path, "/"))
+	joinedPath := strings.Join(path, "/")
+	windowsPath := filepath.Join(f.Root(), strings.Join(path, "\\"))
 
 	// Get through VSSFileInfo to ensure cache population
 	if _, err := vssFS.Stat(joinedPath); err != nil {
 		return nil
 	}
 
-	if id, exists := vssFS.PathToID.Load(joinedPath); exists {
+	if id, exists := vssFS.PathToID.Load(windowsPath); exists {
 		handle := make([]byte, 8)
 		binary.BigEndian.PutUint64(handle, id.(uint64))
 		return handle
@@ -54,11 +56,16 @@ func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []str
 	}
 	stableID := binary.BigEndian.Uint64(handle)
 
-	if path, exists := h.vssFS.IDToPath.Load(stableID); exists {
+	if winPath, exists := h.vssFS.IDToPath.Load(stableID); exists {
 		// Split path into components using the normalized version
+		path := strings.ReplaceAll(strings.TrimPrefix(winPath.(string), h.vssFS.root), "\\", "/")
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+
 		var parts []string
 		if path != "/" {
-			parts = strings.Split(strings.TrimPrefix(path.(string), "/"), "/")
+			parts = strings.Split(strings.TrimPrefix(path, "/"), "/")
 		}
 		return h.vssFS, parts, nil
 	}

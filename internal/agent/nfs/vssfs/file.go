@@ -40,7 +40,7 @@ func (vi *VSSFileInfo) Sys() interface{} {
 	}
 }
 
-func createFileInfoFromFindData(name string, fd *windows.Win32finddata) os.FileInfo {
+func createFileInfoFromFindData(name string, path string, fd *windows.Win32finddata, vssfs *VSSFS) os.FileInfo {
 	var mode fs.FileMode
 
 	// Set base permissions
@@ -60,10 +60,14 @@ func createFileInfoFromFindData(name string, fd *windows.Win32finddata) os.FileI
 	size := int64(fd.FileSizeHigh)<<32 + int64(fd.FileSizeLow)
 	modTime := time.Unix(0, fd.LastWriteTime.Nanoseconds())
 
+	stableID := getFileIDWindows(path)
+	vssfs.PathToID.Store(path, stableID)
+
 	return &VSSFileInfo{
-		name:    name,
-		size:    size,
-		mode:    mode,
-		modTime: modTime,
+		name:     name,
+		size:     size,
+		mode:     mode,
+		modTime:  modTime,
+		stableID: getFileIDWindows(path),
 	}
 }

@@ -41,11 +41,10 @@ func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths 
 	}
 
 	// Pre-cache root directory
-	rootPath := fs.normalizePath("/")
+	rootPath := filepath.Join(snapshot.SnapshotPath, baseDir)
 
 	rootID := getFileIDWindows(rootPath)
 	fs.PathToID.Store(rootPath, rootID)
-	fs.IDToPath.Store(rootID, rootPath)
 	fs.IDToPath.Store(rootID, rootPath)
 
 	return fs
@@ -59,11 +58,6 @@ func (fs *VSSFS) Create(filename string) (billy.File, error) {
 func (fs *VSSFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
 	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		return nil, fmt.Errorf("filesystem is read-only")
-	}
-
-	normalizedPath := fs.normalizePath(filename)
-	if _, err := fs.getStableID(normalizedPath); err != nil {
-		return nil, os.ErrNotExist
 	}
 
 	return fs.Filesystem.OpenFile(filename, flag, perm)
@@ -148,16 +142,17 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 		return nil, os.ErrNotExist
 	}
 
-	nfsName := filepath.ToSlash(windowsPath)
+	// Use foundName as the file name for FileInfo
+	name := foundName
 	if filename == "." {
-		nfsName = "."
+		name = "."
 	}
-	log.Printf("Stat: using NFS name: %s", nfsName)
+	log.Printf("Stat: using file name: %s", name)
 
-	info := createFileInfoFromFindData(nfsName, &findData)
+	info := createFileInfoFromFindData(name, fullPath, &findData, fs)
 	log.Printf("Stat: createFileInfoFromFindData result: %+v", info)
 
-	return info, err
+	return info, nil
 }
 
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
@@ -227,7 +222,7 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 			continue
 		}
 
-		info := createFileInfoFromFindData(name, &findData)
+		info := createFileInfoFromFindData(name, fullPath, &findData, fs)
 		entries = append(entries, info)
 		if err := windows.FindNextFile(handle, &findData); err != nil {
 			if err == windows.ERROR_NO_MORE_FILES {
@@ -240,18 +235,6 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 
 	log.Printf("ReadDir: completed with %d entries", len(entries))
 	return entries, nil
-}
-
-func (fs *VSSFS) getStableID(path string) (uint64, error) {
-	if id, ok := fs.PathToID.Load(path); ok {
-		return id.(uint64), nil
-	}
-
-	stableID := getFileIDWindows(path)
-
-	fs.PathToID.Store(path, stableID)
-	fs.IDToPath.Store(stableID, path)
-	return stableID, nil
 }
 
 func mapWinError(err error, path string) error {
@@ -269,29 +252,4 @@ func mapWinError(err error, path string) error {
 			Err:  err,
 		}
 	}
-}
-
-// Updated normalizePath function
-func (fs *VSSFS) normalizePath(path string) string {
-	// Convert to Windows path first
-	winPath := filepath.FromSlash(path)
-
-	// Clean using Windows semantics
-	cleanPath := filepath.Clean(winPath)
-
-	// Convert to NFS-style path for storage
-	nfsPath := filepath.ToSlash(cleanPath)
-
-	// Handle root path
-	if nfsPath == "." {
-		return "/"
-	}
-
-	// Ensure leading slash
-	if !strings.HasPrefix(nfsPath, "/") {
-		nfsPath = "/" + nfsPath
-	}
-
-	// Normalize case (Windows is case-insensitive)
-	return strings.ToUpper(nfsPath)
 }
