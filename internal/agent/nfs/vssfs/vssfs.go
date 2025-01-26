@@ -26,9 +26,8 @@ type VSSFS struct {
 	ExcludedPaths []*pattern.GlobPattern
 	root          string
 
-	PathToID      sync.Map // map[string]uint64
-	IDToPath      sync.Map // map[uint64]string
-	fileInfoCache sync.Map // map[string]*VSSFileInfo
+	PathToID sync.Map // map[string]uint64
+	IDToPath sync.Map // map[uint64]string
 }
 
 var _ billy.Filesystem = (*VSSFS)(nil)
@@ -157,12 +156,8 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 
 	info := createFileInfoFromFindData(nfsName, &findData)
 	log.Printf("Stat: createFileInfoFromFindData result: %+v", info)
-	normalizedPath := fs.normalizePath(filename)
-	log.Printf("Stat: normalized path: %s", normalizedPath)
 
-	vssInfo, err := fs.getVSSFileInfo(normalizedPath, info)
-	log.Printf("Stat: getVSSFileInfo result: %v, error: %v", vssInfo, err)
-	return vssInfo, err
+	return info, err
 }
 
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
@@ -233,13 +228,7 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 		}
 
 		info := createFileInfoFromFindData(name, &findData)
-		vssInfo, err := fs.getVSSFileInfo(nfsEntryPath, info)
-		if err != nil {
-			log.Printf("ReadDir: getVSSFileInfo error: %v", err)
-			continue
-		}
-
-		entries = append(entries, vssInfo)
+		entries = append(entries, info)
 		if err := windows.FindNextFile(handle, &findData); err != nil {
 			if err == windows.ERROR_NO_MORE_FILES {
 				break
@@ -263,25 +252,6 @@ func (fs *VSSFS) getStableID(path string) (uint64, error) {
 	fs.PathToID.Store(path, stableID)
 	fs.IDToPath.Store(stableID, path)
 	return stableID, nil
-}
-
-func (fs *VSSFS) getVSSFileInfo(path string, baseInfo os.FileInfo) (*VSSFileInfo, error) {
-	if cached, exists := fs.fileInfoCache.Load(path); exists {
-		return cached.(*VSSFileInfo), nil
-	}
-
-	stableID, err := fs.getStableID(path)
-	if err != nil {
-		return nil, err
-	}
-
-	vssInfo := &VSSFileInfo{
-		FileInfo: baseInfo,
-		stableID: stableID,
-	}
-
-	fs.fileInfoCache.Store(path, vssInfo)
-	return vssInfo, nil
 }
 
 func mapWinError(err error, path string) error {

@@ -12,7 +12,6 @@ import (
 )
 
 type VSSFileInfo struct {
-	os.FileInfo
 	stableID uint64
 	name     string
 	size     int64
