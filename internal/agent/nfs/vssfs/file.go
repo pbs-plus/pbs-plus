@@ -16,11 +16,14 @@ type VSSFileInfo struct {
 	name     string
 	size     int64
 	modTime  time.Time
+	isDir    bool
 }
 
 func (fi *VSSFileInfo) Name() string       { return fi.name }
 func (fi *VSSFileInfo) Size() int64        { return fi.size }
+func (fi *VSSFileInfo) Mode() os.FileMode  { return fi.FileInfo.Mode() }
 func (fi *VSSFileInfo) ModTime() time.Time { return fi.modTime }
+func (fi *VSSFileInfo) IsDir() bool        { return fi.FileInfo.IsDir() }
 func (vi *VSSFileInfo) Sys() interface{} {
 	nlink := uint32(1)
 	if vi.IsDir() {
