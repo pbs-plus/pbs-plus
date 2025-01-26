@@ -62,6 +62,7 @@ func createFileInfoFromFindData(name string, path string, fd *windows.Win32findd
 
 	stableID := getFileIDWindows(path)
 	vssfs.PathToID.Store(path, stableID)
+	vssfs.IDToPath.Store(stableID, path)
 
 	return &VSSFileInfo{
 		name:     name,
