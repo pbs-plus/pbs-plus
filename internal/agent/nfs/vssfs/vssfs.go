@@ -5,6 +5,7 @@ package vssfs
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,33 +111,46 @@ func (fs *VSSFS) Lstat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
+	log.Printf("Stat: starting for filename: %s", filename)
 	fullPath := filepath.Join(fs.root, filename)
+	log.Printf("Stat: full path: %s", fullPath)
+
 	pathPtr, err := windows.UTF16PtrFromString(fullPath)
 	if err != nil {
+		log.Printf("Stat: UTF16PtrFromString error: %v", err)
 		return nil, err
 	}
 
 	var findData windows.Win32finddata
 	handle, err := windows.FindFirstFile(pathPtr, &findData)
 	if err != nil {
+		log.Printf("Stat: FindFirstFile error: %v", err)
 		return nil, err
 	}
 	windows.FindClose(handle)
 
 	foundName := windows.UTF16ToString(findData.FileName[:])
+	log.Printf("Stat: found name: %s, base filename: %s", foundName, filepath.Base(filename))
 	if foundName != filepath.Base(filename) {
+		log.Printf("Stat: name mismatch, returning ErrNotExist")
 		return nil, os.ErrNotExist
 	}
 
 	info := createFileInfoFromFindData(foundName, &findData)
-	return fs.getVSSFileInfo(filename, info)
+	vssInfo, err := fs.getVSSFileInfo(filename, info)
+	log.Printf("Stat: getVSSFileInfo result: %v, error: %v", vssInfo, err)
+	return vssInfo, err
 }
 
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
+	log.Printf("ReadDir: starting for dirname: %s", dirname)
 	fullDirPath := filepath.Join(fs.root, dirname)
 	searchPath := filepath.Join(fullDirPath, "*")
+	log.Printf("ReadDir: search path: %s", searchPath)
+
 	searchPathPtr, err := windows.UTF16PtrFromString(searchPath)
 	if err != nil {
+		log.Printf("ReadDir: UTF16PtrFromString error: %v", err)
 		return nil, err
 	}
 
@@ -144,8 +158,10 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	handle, err := windows.FindFirstFile(searchPathPtr, &findData)
 	if err != nil {
 		if err == windows.ERROR_FILE_NOT_FOUND {
+			log.Printf("ReadDir: directory not found")
 			return nil, os.ErrNotExist
 		}
+		log.Printf("ReadDir: FindFirstFile error: %v", err)
 		return nil, err
 	}
 	defer windows.FindClose(handle)
@@ -153,11 +169,15 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	var entries []os.FileInfo
 	for {
 		name := windows.UTF16ToString(findData.FileName[:])
+		log.Printf("ReadDir: processing entry: %s", name)
+
 		if name == "." || name == ".." {
+			log.Printf("ReadDir: skipping special directory: %s", name)
 			if err := windows.FindNextFile(handle, &findData); err != nil {
 				if err == windows.ERROR_NO_MORE_FILES {
 					break
 				}
+				log.Printf("ReadDir: FindNextFile error: %v", err)
 				return nil, err
 			}
 			continue
@@ -165,12 +185,15 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 
 		entryPath := filepath.Join(dirname, name)
 		fullPath := filepath.Join(fs.root, entryPath)
+		log.Printf("ReadDir: full path for entry: %s", fullPath)
 
 		if skipPathWithAttributes(fullPath, findData.FileAttributes, fs.snapshot, fs.ExcludedPaths) {
+			log.Printf("ReadDir: skipping excluded path: %s", fullPath)
 			if err := windows.FindNextFile(handle, &findData); err != nil {
 				if err == windows.ERROR_NO_MORE_FILES {
 					break
 				}
+				log.Printf("ReadDir: FindNextFile error: %v", err)
 				return nil, err
 			}
 			continue
@@ -179,25 +202,28 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 		info := createFileInfoFromFindData(name, &findData)
 		vssInfo, err := fs.getVSSFileInfo(entryPath, info)
 		if err != nil {
+			log.Printf("ReadDir: getVSSFileInfo error for %s: %v", entryPath, err)
 			if err := windows.FindNextFile(handle, &findData); err != nil {
 				if err == windows.ERROR_NO_MORE_FILES {
 					break
 				}
+				log.Printf("ReadDir: FindNextFile error: %v", err)
 				return nil, err
 			}
 			continue
 		}
 
 		entries = append(entries, vssInfo)
-
 		if err := windows.FindNextFile(handle, &findData); err != nil {
 			if err == windows.ERROR_NO_MORE_FILES {
 				break
 			}
+			log.Printf("ReadDir: FindNextFile error: %v", err)
 			return nil, err
 		}
 	}
 
+	log.Printf("ReadDir: completed with %d entries", len(entries))
 	return entries, nil
 }
 
