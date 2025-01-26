@@ -62,6 +62,7 @@ func hasInvalidAttributes(path string) (bool, error) {
 }
 
 func getFileIDWindows(path string) uint64 {
+	path = strings.ToUpper(path)
 	hash := xxhash.Sum64String(path)
 	syslog.L.Infof("Stable ID for %s: %d", path, hash)
 	return hash
