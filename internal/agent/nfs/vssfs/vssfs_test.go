@@ -272,6 +272,8 @@ func TestNFSMetadata(t *testing.T) {
 		vssInfo := info.(*VSSFileInfo)
 		sys := vssInfo.Sys().(file.FileInfo)
 
+		t.Logf("Info: %+v", vssInfo)
+
 		assert.NotZero(t, sys.Fileid)
 		assert.Equal(t, uint32(2), sys.Nlink)
 	})
