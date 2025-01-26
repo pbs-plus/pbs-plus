@@ -131,7 +131,7 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 
 	foundName := windows.UTF16ToString(findData.FileName[:])
 	log.Printf("Stat: found name: %s, base filename: %s", foundName, filepath.Base(filename))
-	if foundName != filepath.Base(filename) {
+	if foundName != filepath.Base(filename) && filepath.Base(filename) != "\\" {
 		log.Printf("Stat: name mismatch, returning ErrNotExist")
 		return nil, os.ErrNotExist
 	}
