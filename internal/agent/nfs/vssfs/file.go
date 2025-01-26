@@ -11,12 +11,11 @@ import (
 type VSSFileInfo struct {
 	os.FileInfo
 	stableID uint64
-	nLinks   uint32
 }
 
 func (vi *VSSFileInfo) Sys() interface{} {
 	return file.FileInfo{
-		Nlink:  vi.nLinks,
+		Nlink:  1,
 		UID:    1000,
 		GID:    1000,
 		Major:  0,

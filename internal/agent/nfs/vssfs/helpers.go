@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
@@ -59,37 +60,6 @@ func hasInvalidAttributes(path string) (bool, error) {
 	return false, nil
 }
 
-func getFileIDWindows(path string, fi *windows.ByHandleFileInformation) (uint64, uint32, uint32, error) {
-	pathPtr, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-
-	handle, err := windows.CreateFile(
-		pathPtr,
-		windows.GENERIC_READ,
-		windows.FILE_SHARE_READ,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
-		0,
-	)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	defer windows.CloseHandle(handle)
-
-	if err := windows.GetFileInformationByHandle(handle, fi); err != nil {
-		return 0, 0, 0, err
-	}
-
-	fileIndex := uint64(fi.FileIndexHigh)<<32 | uint64(fi.FileIndexLow)
-	stableID := uint64(fi.VolumeSerialNumber)<<48 | (fileIndex & 0xFFFFFFFFFFFF)
-	return stableID, fi.NumberOfLinks, fi.FileAttributes, nil
-}
-
-// Use existing syscall data when possible
-func computeIDFromExisting(fi *windows.ByHandleFileInformation) (uint64, uint32) {
-	fileIndex := uint64(fi.FileIndexHigh)<<32 | uint64(fi.FileIndexLow)
-	return uint64(fi.VolumeSerialNumber)<<48 | (fileIndex & 0xFFFFFFFFFFFF), fi.NumberOfLinks
+func getFileIDWindows(path string) uint64 {
+	return xxhash.Sum64String(path)
 }

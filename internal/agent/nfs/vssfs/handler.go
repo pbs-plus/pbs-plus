@@ -41,7 +41,7 @@ func (h *VSSIDCachingHandler) ToHandle(f billy.Filesystem, path []string) []byte
 
 	if id, exists := vssFS.PathToID.Load(joinedPath); exists {
 		handle := make([]byte, 8)
-		binary.BigEndian.PutUint64(handle, id.(*FileID).ID)
+		binary.BigEndian.PutUint64(handle, id.(uint64))
 		return handle
 	}
 
