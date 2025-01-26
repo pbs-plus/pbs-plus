@@ -151,7 +151,7 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 
 	nfsName := filepath.ToSlash(windowsPath)
 	normalizedPath := fs.normalizePath(filename)
-	if filename == "." {
+	if nfsName == "." {
 		nfsName = normalizedPath
 	}
 	log.Printf("Stat: using NFS name: %s", nfsName)
