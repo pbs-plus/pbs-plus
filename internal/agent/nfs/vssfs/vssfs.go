@@ -150,13 +150,13 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 	}
 
 	nfsName := filepath.ToSlash(windowsPath)
+	normalizedPath := fs.normalizePath(filename)
 	if filename == "." {
-		nfsName = "."
+		nfsName = normalizedPath
 	}
 	log.Printf("Stat: using NFS name: %s", nfsName)
 
 	info := createFileInfoFromFindData(nfsName, &findData)
-	normalizedPath := fs.normalizePath(filename)
 	log.Printf("Stat: normalized path: %s", normalizedPath)
 
 	vssInfo, err := fs.getVSSFileInfo(normalizedPath, info)
