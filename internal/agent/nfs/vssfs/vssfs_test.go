@@ -111,8 +111,7 @@ func TestReadDir(t *testing.T) {
 	defer cleanup()
 
 	excluded := []*pattern.GlobPattern{
-		{Glob: glob.MustCompile(strings.ToUpper("excluded_dir"))},
-		{Glob: glob.MustCompile(strings.ToUpper("system_file.txt"))},
+		{Glob: glob.MustCompile(strings.ToUpper("**/excluded_dir/**"))},
 	}
 	fs := NewVSSFS(snapshot, "testdata", excluded).(*VSSFS)
 

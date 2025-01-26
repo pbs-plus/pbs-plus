@@ -14,6 +14,7 @@ import (
 func skipPathWithAttributes(path string, attrs uint32, snapshot *snapshots.WinVSSSnapshot, exclusions []*pattern.GlobPattern) bool {
 	pathWithoutSnap := strings.TrimPrefix(path, snapshot.SnapshotPath)
 	normalizedPath := strings.ToUpper(strings.TrimPrefix(pathWithoutSnap, "\\"))
+	normalizedPath = strings.ReplaceAll(normalizedPath, "\\", "/")
 
 	if strings.TrimSpace(normalizedPath) == "" {
 		return false
