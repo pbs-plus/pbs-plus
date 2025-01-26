@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/osfs"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs/windows_utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
@@ -159,13 +160,8 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 
 	searchPath := filepath.Join(fullDirPath, "*")
 
-	searchPathPtr, err := windows.UTF16PtrFromString(searchPath)
-	if err != nil {
-		return nil, err
-	}
-
 	var findData windows.Win32finddata
-	handle, err := windows.FindFirstFile(searchPathPtr, &findData)
+	handle, err := windows_utils.FindFirstFileEx(searchPath, &findData)
 	if err != nil {
 		return nil, mapWinError(err, dirname)
 	}
