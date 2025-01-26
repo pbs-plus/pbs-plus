@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/mxk/go-vss"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
 )
 
 var (
@@ -48,6 +47,7 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error getting VSS folder: %w", err)
 	}
+
 
 	snapshotPath := filepath.Join(vssFolder, driveLetter)
 	timeStarted := time.Now()
@@ -103,7 +103,6 @@ func reregisterVSSWriters() error {
 
 func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) error {
 	const retryInterval = time.Second
-	var lastError error
 
 	for attempts := 0; attempts < 2; attempts++ {
 		for {
@@ -149,11 +148,8 @@ func (s *WinVSSSnapshot) Close() {
 	if s == nil || !s.closed.CompareAndSwap(false, true) {
 		return
 	}
-	if fileMap, ok := cache.SizeCache.Load(s.Id); ok {
-		clear(fileMap.(map[string]int64))
-		cache.SizeCache.Delete(s.Id)
-	}
 
 	_ = vss.Remove(s.Id)
 	_ = os.Remove(s.SnapshotPath)
 }
+
