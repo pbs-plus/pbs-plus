@@ -34,7 +34,7 @@ var _ billy.Filesystem = (*VSSFS)(nil)
 
 func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths *pattern.Matcher, partialFiles *pattern.Matcher) billy.Filesystem {
 	fs := &VSSFS{
-		Filesystem:    osfs.New(filepath.Join(snapshot.SnapshotPath, baseDir)),
+		Filesystem:    osfs.New(filepath.Join(snapshot.SnapshotPath, baseDir), osfs.WithBoundOS()),
 		snapshot:      snapshot,
 		ExcludedPaths: excludedPaths,
 		PartialFiles:  partialFiles,
