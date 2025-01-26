@@ -156,6 +156,7 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 	log.Printf("Stat: using NFS name: %s", nfsName)
 
 	info := createFileInfoFromFindData(nfsName, &findData)
+	log.Printf("Stat: createFileInfoFromFindData result: %+v", info)
 	normalizedPath := fs.normalizePath(filename)
 	log.Printf("Stat: normalized path: %s", normalizedPath)
 
