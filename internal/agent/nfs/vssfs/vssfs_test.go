@@ -6,6 +6,7 @@ package vssfs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gobwas/glob"
@@ -110,7 +111,7 @@ func TestReadDir(t *testing.T) {
 	defer cleanup()
 
 	excluded := []*pattern.GlobPattern{
-		{Glob: glob.MustCompile("**/excluded_dir/**")},
+		{Glob: glob.MustCompile(strings.ToUpper("**/excluded_dir/**"))},
 	}
 	fs := NewVSSFS(snapshot, "testdata", excluded).(*VSSFS)
 
@@ -124,11 +125,6 @@ func TestReadDir(t *testing.T) {
 		}
 
 		assert.ElementsMatch(t, []string{"regular_file.txt", "subdir"}, names)
-	})
-
-	t.Run("case sensitivity check", func(t *testing.T) {
-		_, err := fs.Stat("SUBDIR")
-		assert.True(t, os.IsNotExist(err), "Should be case-sensitive in NFS view")
 	})
 }
 

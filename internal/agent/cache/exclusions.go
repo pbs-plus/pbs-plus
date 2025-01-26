@@ -39,12 +39,12 @@ func CompileExcludedPaths() ([]*pattern.GlobPattern, error) {
 
 	for _, userExclusions := range exclusionResp.Data {
 		trimmedLine := strings.TrimSpace(userExclusions.Path)
-		glob, err := glob.Compile(trimmedLine)
+		glob, err := glob.Compile(strings.ToUpper(trimmedLine))
 		if err != nil {
 			continue
 		}
 		excludedPatterns = append(excludedPatterns, &pattern.GlobPattern{
-			Glob: glob,
+			Glob:      glob,
 			RawString: trimmedLine,
 		})
 	}
