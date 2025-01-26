@@ -113,13 +113,14 @@ func (fs *VSSFS) Lstat(filename string) (os.FileInfo, error) {
 func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 	log.Printf("Stat: starting for filename: %s", filename)
 
-	windowsFilename := filepath.FromSlash(filename)
-	fullPath := filepath.Join(fs.root, windowsFilename)
-	log.Printf("Stat: converted path: %s", fullPath)
+	windowsPath := filepath.FromSlash(filename)
+	fullPath := filepath.Join(fs.root, windowsPath)
+	log.Printf("Stat: converted to Windows path: %s", fullPath)
 
-	if filename == "." {
+	if filename == "." || filename == "" {
 		fullPath = fs.root
-		log.Printf("Stat: using root path for '.': %s", fullPath)
+		windowsPath = "."
+		log.Printf("Stat: using root path: %s", fullPath)
 	}
 
 	pathPtr, err := windows.UTF16PtrFromString(fullPath)
@@ -132,25 +133,29 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 	handle, err := windows.FindFirstFile(pathPtr, &findData)
 	if err != nil {
 		log.Printf("Stat: FindFirstFile error: %v", err)
-		return nil, err
+		return nil, mapWinError(err, filename)
 	}
-	windows.FindClose(handle)
-
-	baseName := filepath.Base(fullPath)
-	if filename == "." {
-		baseName = "."
-	}
-	log.Printf("Stat: comparing base name: %s", baseName)
+	defer windows.FindClose(handle)
 
 	foundName := windows.UTF16ToString(findData.FileName[:])
-	log.Printf("Stat: found name: %s, isDir: %v", foundName, (findData.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY) != 0)
+	expectedName := filepath.Base(fullPath)
+	if filename == "." {
+		expectedName = "."
+	}
+	log.Printf("Stat: found name: %s, expected: %s", foundName, expectedName)
 
-	if foundName != baseName && !(filename == "." && (findData.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY) != 0) && baseName != "\\" {
+	if !strings.EqualFold(foundName, expectedName) {
 		log.Printf("Stat: name mismatch, returning ErrNotExist")
 		return nil, os.ErrNotExist
 	}
 
-	info := createFileInfoFromFindData(baseName, &findData)
+	nfsName := filepath.ToSlash(windowsPath)
+	if filename == "." {
+		nfsName = "."
+	}
+	log.Printf("Stat: using NFS name: %s", nfsName)
+
+	info := createFileInfoFromFindData(nfsName, &findData)
 	normalizedPath := fs.normalizePath(filename)
 	log.Printf("Stat: normalized path: %s", normalizedPath)
 
@@ -163,15 +168,15 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	log.Printf("ReadDir: starting for dirname: %s", dirname)
 
 	windowsDir := filepath.FromSlash(dirname)
-	normalizedDir := fs.normalizePath(windowsDir)
-	log.Printf("ReadDir: normalized dir: %s", normalizedDir)
+	fullDirPath := filepath.Join(fs.root, windowsDir)
+	log.Printf("ReadDir: converted to Windows path: %s", fullDirPath)
 
-	if _, err := fs.getStableID(normalizedDir); err != nil {
-		log.Printf("ReadDir: directory inaccessible: %v", err)
-		return nil, fmt.Errorf("directory inaccessible: %w", err)
+	if dirname == "." || dirname == "" {
+		windowsDir = "."
+		fullDirPath = fs.root
+		log.Printf("ReadDir: using root directory: %s", fullDirPath)
 	}
 
-	fullDirPath := filepath.Join(fs.root, windowsDir)
 	searchPath := filepath.Join(fullDirPath, "*")
 	log.Printf("ReadDir: search path: %s", searchPath)
 
@@ -184,12 +189,8 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	var findData windows.Win32finddata
 	handle, err := windows.FindFirstFile(searchPathPtr, &findData)
 	if err != nil {
-		if err == windows.ERROR_FILE_NOT_FOUND {
-			log.Printf("ReadDir: directory not found")
-			return nil, os.ErrNotExist
-		}
 		log.Printf("ReadDir: FindFirstFile error: %v", err)
-		return nil, err
+		return nil, mapWinError(err, dirname)
 	}
 	defer windows.FindClose(handle)
 
@@ -210,9 +211,13 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 			continue
 		}
 
-		unixEntryPath := filepath.ToSlash(filepath.Join(dirname, name))
-		fullPath := filepath.Join(fs.root, windowsDir, name)
-		log.Printf("ReadDir: entry paths - unix: %s, full: %s", unixEntryPath, fullPath)
+		winEntryPath := filepath.Join(windowsDir, name)
+		fullPath := filepath.Join(fs.root, winEntryPath)
+		nfsEntryPath := filepath.ToSlash(winEntryPath)
+		if dirname == "." {
+			nfsEntryPath = name
+		}
+		log.Printf("ReadDir: paths - Windows: %s, full: %s, NFS: %s", winEntryPath, fullPath, nfsEntryPath)
 
 		if skipPathWithAttributes(fullPath, findData.FileAttributes, fs.snapshot, fs.ExcludedPaths) {
 			log.Printf("ReadDir: skipping excluded path: %s", fullPath)
@@ -227,16 +232,9 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 		}
 
 		info := createFileInfoFromFindData(name, &findData)
-		vssInfo, err := fs.getVSSFileInfo(unixEntryPath, info)
+		vssInfo, err := fs.getVSSFileInfo(nfsEntryPath, info)
 		if err != nil {
-			log.Printf("ReadDir: getVSSFileInfo error for %s: %v", unixEntryPath, err)
-			if err := windows.FindNextFile(handle, &findData); err != nil {
-				if err == windows.ERROR_NO_MORE_FILES {
-					break
-				}
-				log.Printf("ReadDir: FindNextFile error: %v", err)
-				return nil, err
-			}
+			log.Printf("ReadDir: getVSSFileInfo error: %v", err)
 			continue
 		}
 
@@ -247,16 +245,6 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 			}
 			log.Printf("ReadDir: FindNextFile error: %v", err)
 			return nil, err
-		}
-	}
-
-	if dirname == "." {
-		log.Printf("ReadDir: handling special case for '.'")
-		selfInfo, err := fs.Stat(".")
-		if err == nil {
-			entries = append([]os.FileInfo{selfInfo}, entries...)
-		} else {
-			log.Printf("ReadDir: error getting self info: %v", err)
 		}
 	}
 
@@ -295,33 +283,44 @@ func (fs *VSSFS) getVSSFileInfo(path string, baseInfo os.FileInfo) (*VSSFileInfo
 	return vssInfo, nil
 }
 
+func mapWinError(err error, path string) error {
+	switch err {
+	case windows.ERROR_FILE_NOT_FOUND:
+		return os.ErrNotExist
+	case windows.ERROR_PATH_NOT_FOUND:
+		return os.ErrNotExist
+	case windows.ERROR_ACCESS_DENIED:
+		return os.ErrPermission
+	default:
+		return &os.PathError{
+			Op:   "access",
+			Path: path,
+			Err:  err,
+		}
+	}
+}
+
+// Updated normalizePath function
 func (fs *VSSFS) normalizePath(path string) string {
-	// Convert to forward slashes first
-	cleanPath := filepath.ToSlash(path)
+	// Convert to Windows path first
+	winPath := filepath.FromSlash(path)
 
-	// Remove any volume name (for Windows paths)
-	cleanPath = strings.TrimPrefix(cleanPath, filepath.VolumeName(cleanPath))
+	// Clean using Windows semantics
+	cleanPath := filepath.Clean(winPath)
 
-	// Clean the path
-	cleanPath = filepath.Clean(cleanPath)
-
-	// Normalize to uppercase for case insensitivity
-	cleanPath = strings.ToUpper(cleanPath)
+	// Convert to NFS-style path for storage
+	nfsPath := filepath.ToSlash(cleanPath)
 
 	// Handle root path
-	if cleanPath == "." || cleanPath == "" {
+	if nfsPath == "." {
 		return "/"
 	}
 
 	// Ensure leading slash
-	if !strings.HasPrefix(cleanPath, "/") {
-		cleanPath = "/" + cleanPath
+	if !strings.HasPrefix(nfsPath, "/") {
+		nfsPath = "/" + nfsPath
 	}
 
-	// Remove trailing slash (except root)
-	if len(cleanPath) > 1 && strings.HasSuffix(cleanPath, "/") {
-		cleanPath = cleanPath[:len(cleanPath)-1]
-	}
-
-	return cleanPath
+	// Normalize case (Windows is case-insensitive)
+	return strings.ToUpper(nfsPath)
 }
