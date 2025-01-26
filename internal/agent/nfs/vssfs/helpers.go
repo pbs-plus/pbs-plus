@@ -20,9 +20,11 @@ func skipPathWithAttributes(path string, attrs uint32, snapshot *snapshots.WinVS
 		return false
 	}
 
-	for _, excl := range exclusions {
-		if excl.Match(normalizedPath) {
-			return true
+	if exclusions != nil {
+		for _, excl := range exclusions {
+			if excl.Match(normalizedPath) {
+				return true
+			}
 		}
 	}
 
