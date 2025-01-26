@@ -8,7 +8,6 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
 )
@@ -64,6 +63,5 @@ func hasInvalidAttributes(path string) (bool, error) {
 func getFileIDWindows(path string) uint64 {
 	path = strings.ToUpper(path)
 	hash := xxhash.Sum64String(path)
-	syslog.L.Infof("Stable ID for %s: %d", path, hash)
 	return hash
 }
