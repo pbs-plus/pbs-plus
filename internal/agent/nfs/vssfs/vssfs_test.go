@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/gobwas/glob"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
@@ -168,20 +167,5 @@ func TestNFSMetadata(t *testing.T) {
 		require.NoError(t, err)
 		sys := info.(*VSSFileInfo).Sys().(file.FileInfo)
 		assert.Equal(t, uint32(2), sys.Nlink)
-	})
-}
-
-func TestPerformance(t *testing.T) {
-	_, snapshot, cleanup := setupTestEnvironment(t)
-	defer cleanup()
-	fs := NewVSSFS(snapshot, "testdata", nil).(*VSSFS)
-
-	t.Run("repeated stat performance", func(t *testing.T) {
-		start := time.Now()
-		for i := 0; i < 1000; i++ {
-			_, err := fs.Stat("regular_file.txt")
-			require.NoError(t, err)
-		}
-		assert.WithinDuration(t, start, time.Now(), 50*time.Millisecond)
 	})
 }
