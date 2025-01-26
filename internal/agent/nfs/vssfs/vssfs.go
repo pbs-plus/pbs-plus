@@ -5,7 +5,6 @@ package vssfs
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,28 +103,22 @@ func (fs *VSSFS) Lstat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
-	log.Printf("Stat: starting for filename: %s", filename)
-
 	windowsPath := filepath.FromSlash(filename)
 	fullPath := filepath.Join(fs.root, windowsPath)
-	log.Printf("Stat: converted to Windows path: %s", fullPath)
 
 	if filename == "." || filename == "" {
 		fullPath = fs.root
 		windowsPath = "."
-		log.Printf("Stat: using root path: %s", fullPath)
 	}
 
 	pathPtr, err := windows.UTF16PtrFromString(fullPath)
 	if err != nil {
-		log.Printf("Stat: UTF16PtrFromString error: %v", err)
 		return nil, err
 	}
 
 	var findData windows.Win32finddata
 	handle, err := windows.FindFirstFile(pathPtr, &findData)
 	if err != nil {
-		log.Printf("Stat: FindFirstFile error: %v", err)
 		return nil, mapWinError(err, filename)
 	}
 	defer windows.FindClose(handle)
@@ -136,10 +129,7 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 		expectedName = foundName
 	}
 
-	log.Printf("Stat: found name: %s, expected: %s", foundName, expectedName)
-
 	if !strings.EqualFold(foundName, expectedName) {
-		log.Printf("Stat: name mismatch, returning ErrNotExist")
 		return nil, os.ErrNotExist
 	}
 
@@ -151,40 +141,32 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 	if filename == "/" {
 		name = "/"
 	}
-	log.Printf("Stat: using file name: %s", name)
 
 	info := createFileInfoFromFindData(name, fullPath, &findData, fs)
-	log.Printf("Stat: createFileInfoFromFindData result: %+v", info)
 
 	return info, nil
 }
 
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
-	log.Printf("ReadDir: starting for dirname: %s", dirname)
 
 	windowsDir := filepath.FromSlash(dirname)
 	fullDirPath := filepath.Join(fs.root, windowsDir)
-	log.Printf("ReadDir: converted to Windows path: %s", fullDirPath)
 
 	if dirname == "." || dirname == "" {
 		windowsDir = "."
 		fullDirPath = fs.root
-		log.Printf("ReadDir: using root directory: %s", fullDirPath)
 	}
 
 	searchPath := filepath.Join(fullDirPath, "*")
-	log.Printf("ReadDir: search path: %s", searchPath)
 
 	searchPathPtr, err := windows.UTF16PtrFromString(searchPath)
 	if err != nil {
-		log.Printf("ReadDir: UTF16PtrFromString error: %v", err)
 		return nil, err
 	}
 
 	var findData windows.Win32finddata
 	handle, err := windows.FindFirstFile(searchPathPtr, &findData)
 	if err != nil {
-		log.Printf("ReadDir: FindFirstFile error: %v", err)
 		return nil, mapWinError(err, dirname)
 	}
 	defer windows.FindClose(handle)
@@ -192,15 +174,12 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	var entries []os.FileInfo
 	for {
 		name := windows.UTF16ToString(findData.FileName[:])
-		log.Printf("ReadDir: processing entry: %s", name)
 
 		if name == "." || name == ".." {
-			log.Printf("ReadDir: skipping special directory: %s", name)
 			if err := windows.FindNextFile(handle, &findData); err != nil {
 				if err == windows.ERROR_NO_MORE_FILES {
 					break
 				}
-				log.Printf("ReadDir: FindNextFile error: %v", err)
 				return nil, err
 			}
 			continue
@@ -208,19 +187,12 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 
 		winEntryPath := filepath.Join(windowsDir, name)
 		fullPath := filepath.Join(fs.root, winEntryPath)
-		nfsEntryPath := filepath.ToSlash(winEntryPath)
-		if dirname == "." {
-			nfsEntryPath = name
-		}
-		log.Printf("ReadDir: paths - Windows: %s, full: %s, NFS: %s", winEntryPath, fullPath, nfsEntryPath)
 
 		if skipPathWithAttributes(fullPath, findData.FileAttributes, fs.snapshot, fs.ExcludedPaths) {
-			log.Printf("ReadDir: skipping excluded path: %s", fullPath)
 			if err := windows.FindNextFile(handle, &findData); err != nil {
 				if err == windows.ERROR_NO_MORE_FILES {
 					break
 				}
-				log.Printf("ReadDir: FindNextFile error: %v", err)
 				return nil, err
 			}
 			continue
@@ -232,12 +204,10 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 			if err == windows.ERROR_NO_MORE_FILES {
 				break
 			}
-			log.Printf("ReadDir: FindNextFile error: %v", err)
 			return nil, err
 		}
 	}
 
-	log.Printf("ReadDir: completed with %d entries", len(entries))
 	return entries, nil
 }
 
