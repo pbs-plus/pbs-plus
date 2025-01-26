@@ -33,15 +33,16 @@ func (h *VSSIDCachingHandler) ToHandle(f billy.Filesystem, path []string) []byte
 		return nil
 	}
 
-	joinedPath := strings.Join(path, "/")
-	windowsPath := filepath.Join(f.Root(), strings.Join(path, "\\"))
+	// Convert NFS path to Windows format for internal storage
+	windowsPath := filepath.Join(path...)
+	fullWindowsPath := filepath.Join(vssFS.Root(), windowsPath)
 
-	// Get through VSSFileInfo to ensure cache population
-	if _, err := vssFS.Stat(joinedPath); err != nil {
+	// Ensure path exists in cache
+	if _, err := vssFS.Stat(strings.Join(path, "/")); err != nil {
 		return nil
 	}
 
-	if id, exists := vssFS.PathToID.Load(windowsPath); exists {
+	if id, exists := vssFS.PathToID.Load(fullWindowsPath); exists {
 		handle := make([]byte, 8)
 		binary.BigEndian.PutUint64(handle, id.(uint64))
 		return handle
@@ -57,15 +58,21 @@ func (h *VSSIDCachingHandler) FromHandle(handle []byte) (billy.Filesystem, []str
 	stableID := binary.BigEndian.Uint64(handle)
 
 	if winPath, exists := h.vssFS.IDToPath.Load(stableID); exists {
-		// Split path into components using the normalized version
-		path := strings.ReplaceAll(strings.TrimPrefix(winPath.(string), h.vssFS.root), "\\", "/")
-		if !strings.HasPrefix(path, "/") {
-			path = "/" + path
+		// Convert Windows path back to NFS format
+		relativePath := strings.TrimPrefix(
+			filepath.ToSlash(winPath.(string)),
+			filepath.ToSlash(h.vssFS.Root()),
+		)
+
+		// Clean and split path components
+		cleanPath := filepath.ToSlash(filepath.Clean(relativePath))
+		if cleanPath == "." {
+			return h.vssFS, []string{}, nil
 		}
 
 		var parts []string
-		if path != "/" {
-			parts = strings.Split(strings.TrimPrefix(path, "/"), "/")
+		if cleanPath != "" {
+			parts = strings.Split(strings.TrimPrefix(cleanPath, "/"), "/")
 		}
 		return h.vssFS, parts, nil
 	}
