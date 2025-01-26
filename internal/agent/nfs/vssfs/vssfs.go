@@ -133,8 +133,9 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 	foundName := windows.UTF16ToString(findData.FileName[:])
 	expectedName := filepath.Base(fullPath)
 	if filename == "." {
-		expectedName = "."
+		expectedName = foundName
 	}
+
 	log.Printf("Stat: found name: %s, expected: %s", foundName, expectedName)
 
 	if !strings.EqualFold(foundName, expectedName) {
@@ -146,6 +147,9 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 	name := foundName
 	if filename == "." {
 		name = "."
+	}
+	if filename == "/" {
+		name = "/"
 	}
 	log.Printf("Stat: using file name: %s", name)
 
@@ -222,6 +226,9 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 			continue
 		}
 
+		if dirname == "/" {
+			name = "/"
+		}
 		info := createFileInfoFromFindData(name, fullPath, &findData, fs)
 		entries = append(entries, info)
 		if err := windows.FindNextFile(handle, &findData); err != nil {

@@ -6,12 +6,9 @@ package vssfs
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/gobwas/glob"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/willscott/go-nfs/file"
@@ -68,10 +65,7 @@ func TestStat(t *testing.T) {
 	_, snapshot, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
-	excluded := []*pattern.GlobPattern{
-		{Glob: glob.MustCompile("**/excluded_dir/**")},
-	}
-	fs := NewVSSFS(snapshot, "testdata", excluded).(*VSSFS)
+	fs := NewVSSFS(snapshot, "testdata", nil).(*VSSFS)
 
 	t.Run("regular file", func(t *testing.T) {
 		info, err := fs.Stat("regular_file.txt")
@@ -99,21 +93,13 @@ func TestStat(t *testing.T) {
 		assert.True(t, info.IsDir())
 		assert.Equal(t, ".", info.Name())
 	})
-
-	t.Run("system file exclusion", func(t *testing.T) {
-		_, err := fs.Stat("system_file.txt")
-		assert.True(t, os.IsNotExist(err))
-	})
 }
 
 func TestReadDir(t *testing.T) {
 	_, snapshot, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
-	excluded := []*pattern.GlobPattern{
-		{Glob: glob.MustCompile(strings.ToUpper("**/excluded_dir/**"))},
-	}
-	fs := NewVSSFS(snapshot, "testdata", excluded).(*VSSFS)
+	fs := NewVSSFS(snapshot, "testdata", nil).(*VSSFS)
 
 	t.Run("root directory listing", func(t *testing.T) {
 		entries, err := fs.ReadDir("/")
@@ -124,7 +110,7 @@ func TestReadDir(t *testing.T) {
 			names[i] = e.Name()
 		}
 
-		assert.ElementsMatch(t, []string{"regular_file.txt", "subdir"}, names)
+		assert.ElementsMatch(t, []string{"regular_file.txt", "subdir", "system_file.txt", "excluded_dir"}, names)
 	})
 }
 
