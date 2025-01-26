@@ -48,7 +48,6 @@ func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
 		return nil, fmt.Errorf("error getting VSS folder: %w", err)
 	}
 
-
 	snapshotPath := filepath.Join(vssFolder, driveLetter)
 	timeStarted := time.Now()
 
@@ -103,6 +102,7 @@ func reregisterVSSWriters() error {
 
 func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) error {
 	const retryInterval = time.Second
+	var lastError error
 
 	for attempts := 0; attempts < 2; attempts++ {
 		for {
@@ -152,4 +152,3 @@ func (s *WinVSSSnapshot) Close() {
 	_ = vss.Remove(s.Id)
 	_ = os.Remove(s.SnapshotPath)
 }
-
