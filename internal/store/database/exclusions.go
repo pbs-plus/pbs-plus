@@ -136,7 +136,7 @@ func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, 
 		}
 		seenPaths[path] = true
 
-		if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "!") {
+		if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "!") && !strings.HasPrefix(path, "**/") {
 			path = "**/" + path
 		}
 
@@ -175,7 +175,7 @@ func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
 		}
 		seenPaths[path] = true
 
-		if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "!") {
+		if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "!") && !strings.HasPrefix(path, "**/") {
 			path = "**/" + path
 		}
 
