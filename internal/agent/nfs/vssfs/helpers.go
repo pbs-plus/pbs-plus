@@ -6,26 +6,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var invalidAttributes = []uint32{
-	windows.FILE_ATTRIBUTE_TEMPORARY,
-	windows.FILE_ATTRIBUTE_RECALL_ON_OPEN,
-	windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
-	windows.FILE_ATTRIBUTE_VIRTUAL,
-	windows.FILE_ATTRIBUTE_OFFLINE,
-	windows.FILE_ATTRIBUTE_REPARSE_POINT,
-}
-
 func skipPathWithAttributes(attrs uint32) bool {
-	return hasInvalidAttributes(attrs)
-}
-
-func hasInvalidAttributes(attrs uint32) bool {
-	for _, attr := range invalidAttributes {
-		if attrs&attr != 0 {
-			return true
-		}
-	}
-	return false
+	return attrs&(windows.FILE_ATTRIBUTE_REPARSE_POINT|
+		windows.FILE_ATTRIBUTE_DEVICE|
+		windows.FILE_ATTRIBUTE_OFFLINE|
+		windows.FILE_ATTRIBUTE_VIRTUAL) != 0
 }
 
 func fastHash(s string) uint64 {

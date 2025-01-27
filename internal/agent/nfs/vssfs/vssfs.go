@@ -168,14 +168,11 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	windowsDir := filepath.FromSlash(dirname)
 	fullDirPath := filepath.Join(fs.root, windowsDir)
-
 	if dirname == "." || dirname == "" {
 		windowsDir = "."
 		fullDirPath = fs.root
 	}
-
 	searchPath := filepath.Join(fullDirPath, "*")
-
 	var findData windows.Win32finddata
 	handle, err := windows_utils.FindFirstFileEx(searchPath, &findData)
 	if err != nil {
@@ -186,32 +183,15 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	var entries []os.FileInfo
 	for {
 		name := windows.UTF16ToString(findData.FileName[:])
-
-		if name == "." || name == ".." {
-			if err := windows.FindNextFile(handle, &findData); err != nil {
-				if err == windows.ERROR_NO_MORE_FILES {
-					break
-				}
-				return nil, err
+		if name != "." && name != ".." {
+			winEntryPath := filepath.Join(windowsDir, name)
+			fullPath := filepath.Join(fs.root, winEntryPath)
+			if !skipPathWithAttributes(findData.FileAttributes) {
+				info := createFileInfoFromFindData(name, fullPath, winEntryPath, &findData, fs)
+				entries = append(entries, info)
 			}
-			continue
 		}
 
-		winEntryPath := filepath.Join(windowsDir, name)
-		fullPath := filepath.Join(fs.root, winEntryPath)
-
-		if skipPathWithAttributes(findData.FileAttributes) {
-			if err := windows.FindNextFile(handle, &findData); err != nil {
-				if err == windows.ERROR_NO_MORE_FILES {
-					break
-				}
-				return nil, err
-			}
-			continue
-		}
-
-		info := createFileInfoFromFindData(name, fullPath, winEntryPath, &findData, fs)
-		entries = append(entries, info)
 		if err := windows.FindNextFile(handle, &findData); err != nil {
 			if err == windows.ERROR_NO_MORE_FILES {
 				break
@@ -219,7 +199,6 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 			return nil, err
 		}
 	}
-
 	return entries, nil
 }
 
