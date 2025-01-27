@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/alexflint/go-filemutex"
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
@@ -165,4 +168,34 @@ func main() {
 	if err != nil {
 		syslog.L.Errorf("Service run failed: %v", err)
 	}
+}
+
+func (p *UpdaterService) readVersionFromFile() (string, error) {
+	ex, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	versionLockPath := filepath.Join(filepath.Dir(ex), "version.lock")
+	mutex, err := filemutex.New(versionLockPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to execute mutex: %w", err)
+	}
+
+	mutex.RLock()
+	defer mutex.RUnlock()
+
+	versionFile := filepath.Join(filepath.Dir(ex), "version.txt")
+	data, err := os.ReadFile(versionFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to read version file: %w", err)
+	}
+
+	version := strings.TrimSpace(string(data))
+	if version == "" {
+		syslog.L.Errorf("Version file is empty")
+		return "", fmt.Errorf("version file is empty")
+	}
+
+	return version, nil
 }

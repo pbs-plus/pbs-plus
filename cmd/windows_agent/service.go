@@ -12,9 +12,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/alexflint/go-filemutex"
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
@@ -157,6 +159,30 @@ func (p *agentService) initializeDrives() error {
 	}
 	defer resp.Close()
 	_, _ = io.Copy(io.Discard, resp)
+
+	return nil
+}
+
+func (p *agentService) writeVersionToFile() error {
+	ex, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	versionLockPath := filepath.Join(filepath.Dir(ex), "version.lock")
+	mutex, err := filemutex.New(versionLockPath)
+	if err != nil {
+		return fmt.Errorf("failed to execute mutex: %w", err)
+	}
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	versionFile := filepath.Join(filepath.Dir(ex), "version.txt")
+	err = os.WriteFile(versionFile, []byte(Version), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write version file: %w", err)
+	}
 
 	return nil
 }

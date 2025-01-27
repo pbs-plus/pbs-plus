@@ -40,18 +40,7 @@ func (p *UpdaterService) getMainBinaryPath() (string, error) {
 }
 
 func (p *UpdaterService) getMainServiceVersion() (string, error) {
-	mainBinary, err := p.getMainBinaryPath()
-	if err != nil {
-		return "", err
-	}
-
-	cmd := exec.Command(mainBinary, "version")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to get main service version: %w", err)
-	}
-
-	return strings.TrimSpace(string(output)), nil
+	return p.readVersionFromFile()
 }
 
 func (p *UpdaterService) ensureTempDir() (string, error) {

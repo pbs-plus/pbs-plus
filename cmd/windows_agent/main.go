@@ -116,6 +116,12 @@ func main() {
 		return
 	}
 
+	err = prg.writeVersionToFile()
+	if err != nil {
+		fmt.Printf("Error writing version to file: %v\n", err)
+		return
+	}
+
 	// Handle special commands (install, uninstall, etc.)
 	if len(os.Args) > 1 {
 		if err := handleServiceCommands(s, os.Args[1]); err != nil {
