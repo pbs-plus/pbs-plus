@@ -157,8 +157,26 @@ func (p *UpdaterService) verifyUpdate(tempFile string) error {
 }
 
 func (p *UpdaterService) stopMainService() error {
-	stopCmd := exec.Command("sc", "stop", mainServiceName)
-	return stopCmd.Run()
+	isStopped, err := p.isServiceStopped()
+	if err == nil && isStopped {
+		return nil
+	}
+
+	cmd := exec.Command("sc", "stop", mainServiceName)
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	// Poll until stopped
+	for i := 0; i < 10; i++ {
+		cmd := exec.Command("sc", "query", mainServiceName)
+		output, _ := cmd.CombinedOutput()
+		if strings.Contains(string(output), "STOPPED") {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timeout waiting for service to stop")
 }
 
 func (p *UpdaterService) startMainService() error {
@@ -179,29 +197,13 @@ func (p *UpdaterService) applyUpdate(tempFile string) error {
 		return fmt.Errorf("failed to stop service: %w", err)
 	}
 
-	// Wait for service to fully stop
-	time.Sleep(5 * time.Second)
-
 	// Create backup of current binary
-	if err := os.Link(mainBinary, backupPath); err != nil && !os.IsExist(err) {
+	if err := os.Rename(mainBinary, backupPath); err != nil && !os.IsExist(err) {
 		syslog.L.Errorf("Failed to create backup: %v", err)
 	}
 
-	// Copy new binary over the old one
-	srcFile, err := os.Open(tempFile)
-	if err != nil {
-		return fmt.Errorf("failed to open update file: %w", err)
-	}
-	defer srcFile.Close()
-
-	dstFile, err := os.OpenFile(mainBinary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
-	if err != nil {
-		return fmt.Errorf("failed to open destination file: %w", err)
-	}
-	defer dstFile.Close()
-
-	if _, err := io.Copy(dstFile, srcFile); err != nil {
-		// Attempt to restore backup on failure
+	// Do actual update
+	if err := os.Rename(tempFile, mainBinary); err != nil && !os.IsExist(err) {
 		if backupErr := os.Rename(backupPath, mainBinary); backupErr != nil {
 			syslog.L.Errorf("Failed to restore backup after failed update: %v", backupErr)
 		}
@@ -228,6 +230,19 @@ func (p *UpdaterService) applyUpdate(tempFile string) error {
 }
 
 func (p *UpdaterService) performUpdate() error {
+	var err error
+	for retry := 0; retry < maxUpdateRetries; retry++ {
+		if retry > 0 {
+			time.Sleep(updateRetryDelay)
+		}
+		if err = p.tryUpdate(); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+func (p *UpdaterService) tryUpdate() error {
 	tempFile, err := p.downloadUpdate()
 	if err != nil {
 		return err
@@ -271,5 +286,23 @@ func (p *UpdaterService) cleanupOldUpdates() error {
 		}
 	}
 
+	backupGlob := filepath.Join(tempDir, "*.backup")
+	backups, _ := filepath.Glob(backupGlob)
+	for _, backup := range backups {
+		info, _ := os.Stat(backup)
+		if time.Since(info.ModTime()) > 48*time.Hour {
+			os.Remove(backup)
+		}
+	}
+
 	return nil
+}
+
+func (p *UpdaterService) isServiceStopped() (bool, error) {
+	cmd := exec.Command("sc", "query", mainServiceName)
+	output, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(string(output), "STOPPED"), nil
 }
