@@ -71,6 +71,10 @@ func (fs *VSSFS) Create(filename string) (billy.File, error) {
 	return nil, fmt.Errorf("filesystem is read-only")
 }
 
+func (fs *VSSFS) Open(filename string) (billy.File, error) {
+	return fs.OpenFile(filename, os.O_RDONLY, 0)
+}
+
 func (fs *VSSFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
 	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		return nil, fmt.Errorf("filesystem is read-only")
@@ -159,7 +163,7 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 		name = "/"
 	}
 
-	info := createFileInfoFromFindData(name, fullPath, &findData, fs)
+	info := createFileInfoFromFindData(name, fullPath, windowsPath, &findData, fs)
 
 	return info, nil
 }
@@ -210,7 +214,7 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 			continue
 		}
 
-		info := createFileInfoFromFindData(name, fullPath, &findData, fs)
+		info := createFileInfoFromFindData(name, fullPath, winEntryPath, &findData, fs)
 		entries = append(entries, info)
 		if err := windows.FindNextFile(handle, &findData); err != nil {
 			if err == windows.ERROR_NO_MORE_FILES {

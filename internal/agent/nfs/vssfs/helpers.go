@@ -5,7 +5,6 @@ package vssfs
 import (
 	"strings"
 	"unicode"
-	"unicode/utf16"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
@@ -72,18 +71,32 @@ func hasInvalidAttributes(attrs uint32) bool {
 	return false
 }
 
+func fastHash(s string) uint64 {
+	// FNV-1a hash constants
+	const offset64 = uint64(14695981039346656037)
+	const prime64 = uint64(1099511628211)
+
+	// Initialize hash with offset
+	hash := offset64
+
+	// Iterate through string bytes
+	for i := 0; i < len(s); i++ {
+		hash ^= uint64(s[i])
+		hash *= prime64
+	}
+
+	return hash
+}
+
 // getFileIDWindows computes the hash without creating an intermediate uppercase string
-func getFileIDWindows(filename string, findData *windows.Win32finddata) uint64 {
+func getFileIDWindows(path string, findData *windows.Win32finddata) uint64 {
 	// Extract components from Win32finddata
 	fileSize := uint64(findData.FileSizeHigh)<<32 | uint64(findData.FileSizeLow)
 	creationTime := uint64(findData.CreationTime.HighDateTime)<<32 |
 		uint64(findData.CreationTime.LowDateTime)
 
-	// Get filename as UTF16
-	filenameUTF16 := utf16.Encode([]rune(filename))
-
 	// Generate filename component
-	nameComponent := uint64FromStr(filenameUTF16)
+	nameComponent := fastHash(path)
 
 	// Start with creation time (but reserve some bits)
 	id := creationTime & 0xFFFFFFFFFF000000
@@ -104,31 +117,4 @@ func getFileIDWindows(filename string, findData *windows.Win32finddata) uint64 {
 	id ^= (relevantAttrs << 40)
 
 	return id
-}
-
-func uint64FromStr(str []uint16) uint64 {
-	if len(str) == 0 {
-		return 0
-	}
-
-	// Take up to first 4 characters and last 4 characters
-	// This captures both prefix and suffix while being efficient
-	var mix uint64
-
-	// Mix in first chars (up to 4)
-	for i := 0; i < len(str) && i < 4; i++ {
-		mix = (mix << 8) | uint64(str[i]&0xFF)
-	}
-
-	// Mix in last chars (up to 4)
-	if len(str) > 4 {
-		for i := max(len(str)-4, 4); i < len(str); i++ {
-			mix = (mix << 4) | uint64(str[i]&0x0F)
-		}
-	}
-
-	// Mix in length for additional uniqueness
-	mix = (mix << 8) | uint64(len(str)&0xFF)
-
-	return mix
 }
