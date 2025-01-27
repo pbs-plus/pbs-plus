@@ -3,11 +3,6 @@
 package vssfs
 
 import (
-	"strings"
-	"unicode"
-
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
 )
 
@@ -20,46 +15,8 @@ var invalidAttributes = []uint32{
 	windows.FILE_ATTRIBUTE_REPARSE_POINT,
 }
 
-func skipPathWithAttributes(path string, attrs uint32, snapshot *snapshots.WinVSSSnapshot, exclusions []*pattern.GlobPattern) bool {
-	pathWithoutSnap := strings.TrimPrefix(path, snapshot.SnapshotPath)
-
-	// Manually trim leading backslash to avoid TrimPrefix overhead
-	if len(pathWithoutSnap) > 0 && pathWithoutSnap[0] == '\\' {
-		pathWithoutSnap = pathWithoutSnap[1:]
-	}
-
-	normalizedPath := normalizePath(pathWithoutSnap)
-
-	if strings.TrimSpace(normalizedPath) == "" {
-		return false
-	}
-
-	if exclusions != nil {
-		for _, excl := range exclusions {
-			if excl.Match(normalizedPath) {
-				return true
-			}
-		}
-	}
-
+func skipPathWithAttributes(attrs uint32) bool {
 	return hasInvalidAttributes(attrs)
-}
-
-// normalizePath processes the path in a single pass to:
-// 1. Replace backslashes with forward slashes
-// 2. Convert all characters to uppercase
-func normalizePath(s string) string {
-	var builder strings.Builder
-	builder.Grow(len(s)) // Pre-allocate to minimize reallocations
-
-	for _, c := range s {
-		if c == '\\' {
-			builder.WriteByte('/')
-		} else {
-			builder.WriteRune(unicode.ToUpper(c))
-		}
-	}
-	return builder.String()
 }
 
 func hasInvalidAttributes(attrs uint32) bool {

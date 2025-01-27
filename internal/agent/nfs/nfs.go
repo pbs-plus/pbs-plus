@@ -16,7 +16,6 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	nfs "github.com/willscott/go-nfs"
 )
 
@@ -33,7 +32,7 @@ type NFSSession struct {
 	statusMu    sync.RWMutex
 }
 
-func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string, excludedPaths []*pattern.GlobPattern) *NFSSession {
+func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driveLetter string) *NFSSession {
 	cancellableCtx, cancel := context.WithCancel(ctx)
 
 	urlStr, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
@@ -56,7 +55,6 @@ func NewNFSSession(ctx context.Context, snapshot *snapshots.WinVSSSnapshot, driv
 		FS: vssfs.NewVSSFS(
 			snapshot,
 			"/",
-			excludedPaths,
 		),
 	}
 }

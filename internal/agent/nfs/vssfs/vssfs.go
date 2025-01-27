@@ -16,16 +16,14 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs/windows_utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
 )
 
 // VSSFS extends osfs while enforcing read-only operations
 type VSSFS struct {
 	billy.Filesystem
-	snapshot      *snapshots.WinVSSSnapshot
-	ExcludedPaths []*pattern.GlobPattern
-	root          string
+	snapshot *snapshots.WinVSSSnapshot
+	root     string
 
 	PathToID *lru.Cache[string, uint64]
 	IDToPath *lru.Cache[uint64, string]
@@ -35,7 +33,7 @@ var CacheLimit = 131072
 
 var _ billy.Filesystem = (*VSSFS)(nil)
 
-func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths []*pattern.GlobPattern) billy.Filesystem {
+func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string) billy.Filesystem {
 	pathToId, err := lru.New[string, uint64](CacheLimit)
 	if err != nil {
 		syslog.L.Errorf("LRU cache initialization error: %v", err)
@@ -49,12 +47,11 @@ func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths 
 	}
 
 	fs := &VSSFS{
-		Filesystem:    osfs.New(filepath.Join(snapshot.SnapshotPath, baseDir), osfs.WithBoundOS()),
-		snapshot:      snapshot,
-		ExcludedPaths: excludedPaths,
-		root:          filepath.Join(snapshot.SnapshotPath, baseDir),
-		PathToID:      pathToId,
-		IDToPath:      idToPath,
+		Filesystem: osfs.New(filepath.Join(snapshot.SnapshotPath, baseDir), osfs.WithBoundOS()),
+		snapshot:   snapshot,
+		root:       filepath.Join(snapshot.SnapshotPath, baseDir),
+		PathToID:   pathToId,
+		IDToPath:   idToPath,
 	}
 
 	// Pre-cache root directory
@@ -204,7 +201,7 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 		winEntryPath := filepath.Join(windowsDir, name)
 		fullPath := filepath.Join(fs.root, winEntryPath)
 
-		if skipPathWithAttributes(fullPath, findData.FileAttributes, fs.snapshot, fs.ExcludedPaths) {
+		if skipPathWithAttributes(findData.FileAttributes) {
 			if err := windows.FindNextFile(handle, &findData); err != nil {
 				if err == windows.ERROR_NO_MORE_FILES {
 					break
