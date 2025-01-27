@@ -36,6 +36,12 @@ func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 	windowsPath := filepath.Join(path...)
 	fullWindowsPath := filepath.Join(vssFS.Root(), windowsPath)
 
+	if fullWindowsPath == vssFS.root {
+		handle := make([]byte, 8)
+		binary.BigEndian.PutUint64(handle, 0)
+		return handle
+	}
+
 	// Ensure path exists in cache
 	if _, err := vssFS.Stat(strings.Join(path, "/")); err != nil {
 		return nil
@@ -54,7 +60,12 @@ func (h *VSSIDHandler) FromHandle(handle []byte) (billy.Filesystem, []string, er
 	if len(handle) != 8 {
 		return nil, nil, fmt.Errorf("invalid handle")
 	}
+
 	stableID := binary.BigEndian.Uint64(handle)
+
+	if stableID == 0 {
+		return h.vssFS, []string{}, nil
+	}
 
 	if winPath, exists := h.vssFS.IDToPath.Get(stableID); exists {
 		// Convert Windows path back to NFS format
