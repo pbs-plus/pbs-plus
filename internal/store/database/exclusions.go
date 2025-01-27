@@ -136,10 +136,6 @@ func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, 
 		}
 		seenPaths[path] = true
 
-		if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "!") && !strings.HasPrefix(path, "**/") {
-			path = "**/" + path
-		}
-
 		exclusions = append(exclusions, types.Exclusion{
 			Path:    path,
 			Comment: section.Properties["comment"],
@@ -174,10 +170,6 @@ func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
 			continue // Skip duplicates
 		}
 		seenPaths[path] = true
-
-		if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "!") && !strings.HasPrefix(path, "**/") {
-			path = "**/" + path
-		}
 
 		exclusions = append(exclusions, types.Exclusion{
 			Path:    path,

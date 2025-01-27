@@ -76,7 +76,12 @@ func buildCommandArgs(storeInstance *store.Store, job *types.Job, srcPath string
 
 	// Add exclusions
 	for _, exclusion := range job.Exclusions {
-		cmdArgs = append(cmdArgs, "--exclude", exclusion.Path)
+		path := exclusion.Path
+		if !strings.HasPrefix(exclusion.Path, "/") && !strings.HasPrefix(exclusion.Path, "!") && !strings.HasPrefix(exclusion.Path, "**/") {
+			path = "**/" + path
+		}
+
+		cmdArgs = append(cmdArgs, "--exclude", path)
 	}
 
 	// Add namespace if specified
