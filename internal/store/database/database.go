@@ -15,12 +15,11 @@ import (
 )
 
 var defaultPaths = map[string]string{
-	"init":         "/etc/proxmox-backup/pbs-plus/.init",
-	"jobs":         "/etc/proxmox-backup/pbs-plus/jobs.d",
-	"targets":      "/etc/proxmox-backup/pbs-plus/targets.d",
-	"exclusions":   "/etc/proxmox-backup/pbs-plus/exclusions.d",
-	"partialfiles": "/etc/proxmox-backup/pbs-plus/partialfiles.d",
-	"tokens":       "/etc/proxmox-backup/pbs-plus/tokens.d",
+	"init":       "/etc/proxmox-backup/pbs-plus/.init",
+	"jobs":       "/etc/proxmox-backup/pbs-plus/jobs.d",
+	"targets":    "/etc/proxmox-backup/pbs-plus/targets.d",
+	"exclusions": "/etc/proxmox-backup/pbs-plus/exclusions.d",
+	"tokens":     "/etc/proxmox-backup/pbs-plus/tokens.d",
 }
 
 type Database struct {
@@ -68,7 +67,6 @@ func Initialize(paths map[string]string) (*Database, error) {
 
 	database.RegisterExclusionPlugin()
 	database.RegisterJobPlugin()
-	database.RegisterPartialFilePlugin()
 	database.RegisterTargetPlugin()
 	database.RegisterTokenPlugin()
 
