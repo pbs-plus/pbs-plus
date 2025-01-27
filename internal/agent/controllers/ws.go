@@ -6,7 +6,6 @@ import (
 	"context"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/cache"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -42,13 +41,7 @@ func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {
 			return
 		}
 
-		excludedPaths, err := cache.CompileExcludedPaths()
-		if err != nil {
-			syslog.L.Errorf("exclusion compilation error: %v", err)
-			return
-		}
-
-		nfsSession := nfs.NewNFSSession(context.Background(), snapshot, drive, excludedPaths)
+		nfsSession := nfs.NewNFSSession(context.Background(), snapshot, drive)
 		if nfsSession == nil {
 			syslog.L.Error("NFS session is nil.")
 			return
