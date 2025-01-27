@@ -31,7 +31,7 @@ type VSSFS struct {
 	IDToPath *lru.Cache[uint64, string]
 }
 
-var CacheLimit = 16384
+var CacheLimit = 131072
 
 var _ billy.Filesystem = (*VSSFS)(nil)
 
@@ -60,9 +60,8 @@ func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths 
 	// Pre-cache root directory
 	rootPath := filepath.Join(snapshot.SnapshotPath, baseDir)
 
-	rootID := getFileIDWindows(rootPath)
-	fs.PathToID.Add(rootPath, rootID)
-	fs.IDToPath.Add(rootID, rootPath)
+	fs.PathToID.Add(rootPath, 0)
+	fs.IDToPath.Add(0, rootPath)
 
 	return fs
 }

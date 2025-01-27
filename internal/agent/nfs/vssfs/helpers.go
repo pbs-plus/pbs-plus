@@ -5,9 +5,8 @@ package vssfs
 import (
 	"strings"
 	"unicode"
-	"unicode/utf8"
+	"unicode/utf16"
 
-	"github.com/cespare/xxhash/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
@@ -74,27 +73,62 @@ func hasInvalidAttributes(attrs uint32) bool {
 }
 
 // getFileIDWindows computes the hash without creating an intermediate uppercase string
-func getFileIDWindows(path string) uint64 {
-	h := xxhash.New()
-	buf := make([]byte, 1) // Reusable buffer for single-byte writes
-	for i := 0; i < len(path); {
-		c := path[i]
-		if c < utf8.RuneSelf { // ASCII optimization
-			// Convert to uppercase and write
-			if 'a' <= c && c <= 'z' {
-				c -= 'a' - 'A'
-			}
-			buf[0] = c
-			h.Write(buf)
-			i++
-		} else { // Unicode path
-			r, size := utf8.DecodeRuneInString(path[i:])
-			upper := unicode.ToUpper(r)
-			var runeBuf [utf8.UTFMax]byte
-			n := utf8.EncodeRune(runeBuf[:], upper)
-			h.Write(runeBuf[:n])
-			i += size
+func getFileIDWindows(filename string, findData *windows.Win32finddata) uint64 {
+	// Extract components from Win32finddata
+	fileSize := uint64(findData.FileSizeHigh)<<32 | uint64(findData.FileSizeLow)
+	creationTime := uint64(findData.CreationTime.HighDateTime)<<32 |
+		uint64(findData.CreationTime.LowDateTime)
+
+	// Get filename as UTF16
+	filenameUTF16 := utf16.Encode([]rune(filename))
+
+	// Generate filename component
+	nameComponent := uint64FromStr(filenameUTF16)
+
+	// Start with creation time (but reserve some bits)
+	id := creationTime & 0xFFFFFFFFFF000000
+
+	// Mix in filename component in a non-overlapping way
+	id |= (nameComponent & 0xFFFFFF)
+
+	// Mix in file size bits
+	id ^= (fileSize & 0xFFFF) << 24
+
+	// Mix in some file attributes
+	attrs := uint64(findData.FileAttributes)
+	relevantAttrs := attrs & (windows.FILE_ATTRIBUTE_DIRECTORY |
+		windows.FILE_ATTRIBUTE_COMPRESSED |
+		windows.FILE_ATTRIBUTE_ENCRYPTED |
+		windows.FILE_ATTRIBUTE_SPARSE_FILE)
+
+	id ^= (relevantAttrs << 40)
+
+	return id
+}
+
+func uint64FromStr(str []uint16) uint64 {
+	if len(str) == 0 {
+		return 0
+	}
+
+	// Take up to first 4 characters and last 4 characters
+	// This captures both prefix and suffix while being efficient
+	var mix uint64
+
+	// Mix in first chars (up to 4)
+	for i := 0; i < len(str) && i < 4; i++ {
+		mix = (mix << 8) | uint64(str[i]&0xFF)
+	}
+
+	// Mix in last chars (up to 4)
+	if len(str) > 4 {
+		for i := max(len(str)-4, 4); i < len(str); i++ {
+			mix = (mix << 4) | uint64(str[i]&0x0F)
 		}
 	}
-	return h.Sum64()
+
+	// Mix in length for additional uniqueness
+	mix = (mix << 8) | uint64(len(str)&0xFF)
+
+	return mix
 }

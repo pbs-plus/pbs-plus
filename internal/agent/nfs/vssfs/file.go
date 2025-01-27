@@ -60,15 +60,18 @@ func createFileInfoFromFindData(name string, path string, fd *windows.Win32findd
 	size := int64(fd.FileSizeHigh)<<32 + int64(fd.FileSizeLow)
 	modTime := time.Unix(0, fd.LastWriteTime.Nanoseconds())
 
-	stableID := getFileIDWindows(path)
-	vssfs.PathToID.Add(path, stableID)
-	vssfs.IDToPath.Add(stableID, path)
+	stableID, ok := vssfs.PathToID.Get(path)
+	if !ok {
+		stableID = getFileIDWindows(name, fd)
+		vssfs.PathToID.Add(path, stableID)
+		vssfs.IDToPath.Add(stableID, path)
+	}
 
 	return &VSSFileInfo{
 		name:     name,
 		size:     size,
 		mode:     mode,
 		modTime:  modTime,
-		stableID: getFileIDWindows(path),
+		stableID: stableID,
 	}
 }

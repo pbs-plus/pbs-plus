@@ -1,8 +1,6 @@
 module github.com/sonroyaalmerol/pbs-plus
 
-go 1.23.2
-
-toolchain go1.23.3
+go 1.23.5
 
 require (
 	github.com/alexflint/go-filemutex v1.3.0
