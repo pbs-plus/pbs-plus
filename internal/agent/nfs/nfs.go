@@ -95,7 +95,7 @@ func (s *NFSSession) Serve() error {
 
 	syslog.L.Infof("[NFS.Serve] Serving NFS on port %s", port)
 
-	vssHandler := vssfs.NewVSSIDCachingHandler(s.FS.(*vssfs.VSSFS), handler)
+	vssHandler := vssfs.NewVSSIDHandler(s.FS.(*vssfs.VSSFS), handler)
 
 	return nfs.Serve(listener, vssHandler)
 }

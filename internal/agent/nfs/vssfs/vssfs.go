@@ -8,13 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/osfs"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs/windows_utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
 	"golang.org/x/sys/windows"
 )
@@ -26,26 +27,42 @@ type VSSFS struct {
 	ExcludedPaths []*pattern.GlobPattern
 	root          string
 
-	PathToID sync.Map // map[string]uint64
-	IDToPath sync.Map // map[uint64]string
+	PathToID *lru.Cache[string, uint64]
+	IDToPath *lru.Cache[uint64, string]
 }
+
+var CacheLimit = 16384
 
 var _ billy.Filesystem = (*VSSFS)(nil)
 
 func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string, excludedPaths []*pattern.GlobPattern) billy.Filesystem {
+	pathToId, err := lru.New[string, uint64](CacheLimit)
+	if err != nil {
+		syslog.L.Errorf("LRU cache initialization error: %v", err)
+		return nil
+	}
+
+	idToPath, err := lru.New[uint64, string](CacheLimit)
+	if err != nil {
+		syslog.L.Errorf("LRU cache initialization error: %v", err)
+		return nil
+	}
+
 	fs := &VSSFS{
 		Filesystem:    osfs.New(filepath.Join(snapshot.SnapshotPath, baseDir), osfs.WithBoundOS()),
 		snapshot:      snapshot,
 		ExcludedPaths: excludedPaths,
 		root:          filepath.Join(snapshot.SnapshotPath, baseDir),
+		PathToID:      pathToId,
+		IDToPath:      idToPath,
 	}
 
 	// Pre-cache root directory
 	rootPath := filepath.Join(snapshot.SnapshotPath, baseDir)
 
 	rootID := getFileIDWindows(rootPath)
-	fs.PathToID.Store(rootPath, rootID)
-	fs.IDToPath.Store(rootID, rootPath)
+	fs.PathToID.Add(rootPath, rootID)
+	fs.IDToPath.Add(rootID, rootPath)
 
 	return fs
 }
