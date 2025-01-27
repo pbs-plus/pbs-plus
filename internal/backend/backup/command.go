@@ -29,7 +29,7 @@ func prepareBackupCommand(job *types.Job, storeInstance *store.Store, srcPath st
 		return nil, fmt.Errorf("RunBackup: invalid job store configuration")
 	}
 
-	cmdArgs := buildCommandArgs(storeInstance, job, srcPath, jobStore, backupId, isAgent)
+	cmdArgs := buildCommandArgs(storeInstance, job, srcPath, jobStore, backupId)
 	if len(cmdArgs) == 0 {
 		return nil, fmt.Errorf("RunBackup: failed to build command arguments")
 	}
@@ -58,7 +58,7 @@ func getBackupId(isAgent bool, targetName string) (string, error) {
 	return strings.TrimSpace(strings.Split(targetName, " - ")[0]), nil
 }
 
-func buildCommandArgs(storeInstance *store.Store, job *types.Job, srcPath string, jobStore string, backupId string, isAgent bool) []string {
+func buildCommandArgs(storeInstance *store.Store, job *types.Job, srcPath string, jobStore string, backupId string) []string {
 	if srcPath == "" || jobStore == "" || backupId == "" {
 		return nil
 	}
@@ -76,9 +76,6 @@ func buildCommandArgs(storeInstance *store.Store, job *types.Job, srcPath string
 
 	// Add exclusions
 	for _, exclusion := range job.Exclusions {
-		if isAgent && exclusion.JobID != job.ID {
-			continue
-		}
 		cmdArgs = append(cmdArgs, "--exclude", exclusion.Path)
 	}
 

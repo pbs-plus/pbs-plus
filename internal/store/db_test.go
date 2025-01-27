@@ -21,12 +21,11 @@ import (
 )
 
 var (
-	testBasePath         string
-	testJobsPath         string
-	testTargetsPath      string
-	testExclusionsPath   string
-	testPartialFilesPath string
-	testTokensPath       string
+	testBasePath       string
+	testJobsPath       string
+	testTargetsPath    string
+	testExclusionsPath string
+	testTokensPath     string
 )
 
 // TestMain handles setup and teardown for all tests
@@ -48,7 +47,6 @@ func TestMain(m *testing.M) {
 	testJobsPath = filepath.Join(testBasePath, "jobs.d")
 	testTargetsPath = filepath.Join(testBasePath, "targets.d")
 	testExclusionsPath = filepath.Join(testBasePath, "exclusions.d")
-	testPartialFilesPath = filepath.Join(testBasePath, "partialfiles.d")
 	testTokensPath = filepath.Join(testBasePath, "tokens.d")
 
 	// Run tests
@@ -64,11 +62,10 @@ func TestMain(m *testing.M) {
 func setupTestStore(t *testing.T) *Store {
 	// Create test directories
 	paths := map[string]string{
-		"jobs":         testJobsPath,
-		"targets":      testTargetsPath,
-		"exclusions":   testExclusionsPath,
-		"partialfiles": testPartialFilesPath,
-		"tokens":       testTokensPath,
+		"jobs":       testJobsPath,
+		"targets":    testTargetsPath,
+		"exclusions": testExclusionsPath,
+		"tokens":     testTokensPath,
 	}
 
 	for _, path := range paths {
