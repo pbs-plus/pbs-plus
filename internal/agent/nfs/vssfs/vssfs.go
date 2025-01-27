@@ -166,7 +166,6 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
-
 	windowsDir := filepath.FromSlash(dirname)
 	fullDirPath := filepath.Join(fs.root, windowsDir)
 

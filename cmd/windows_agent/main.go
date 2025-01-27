@@ -143,7 +143,8 @@ func restartService() error {
 func handleServiceCommands(s service.Service, cmd string) error {
 	switch cmd {
 	case "version":
-		fmt.Printf("%s", Version)
+		fmt.Print(Version)
+		os.Stdout.Sync()
 		os.Exit(0)
 	case "install", "uninstall":
 		// Clean up registry before install/uninstall
