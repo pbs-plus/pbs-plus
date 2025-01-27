@@ -121,7 +121,7 @@ func (a *AgentMount) Unmount() {
 
 	// If clean unmount fails, try force unmount
 	if err != nil {
-		forceUmount := exec.Command("umount", "-f", a.Path)
+		forceUmount := exec.Command("umount", "-lf", a.Path)
 		forceUmount.Env = os.Environ()
 		_ = forceUmount.Run()
 	}
