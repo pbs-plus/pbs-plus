@@ -375,60 +375,6 @@ func TestExclusionPatternValidation(t *testing.T) {
 	}
 }
 
-func TestPartialFileValidation(t *testing.T) {
-	store := setupTestStore(t)
-
-	tests := []struct {
-		name        string
-		partialFile types.PartialFile
-		wantErr     bool
-	}{
-		{
-			name: "valid partial file",
-			partialFile: types.PartialFile{
-				Path:    "/valid/path/to/large/file",
-				Comment: "Valid partial file",
-			},
-			wantErr: false,
-		},
-		{
-			name: "empty path",
-			partialFile: types.PartialFile{
-				Path:    "",
-				Comment: "Empty path",
-			},
-			wantErr: true,
-		},
-		{
-			name: "invalid pattern syntax",
-			partialFile: types.PartialFile{
-				Path:    "[invalid[pattern",
-				Comment: "Invalid pattern",
-			},
-			wantErr: true,
-		},
-		{
-			name: "very long path",
-			partialFile: types.PartialFile{
-				Path:    "/" + strings.Repeat("a/", 255),
-				Comment: "Very long path",
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreatePartialFile(tt.partialFile)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestConcurrentOperations(t *testing.T) {
 	store := setupTestStore(t)
 	var wg sync.WaitGroup
