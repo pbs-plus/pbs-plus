@@ -65,7 +65,7 @@ func TestStat(t *testing.T) {
 	_, snapshot, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
-	fs := NewVSSFS(snapshot, "testdata", nil).(*VSSFS)
+	fs := NewVSSFS(snapshot, "testdata").(*VSSFS)
 
 	t.Run("regular file", func(t *testing.T) {
 		info, err := fs.Stat("regular_file.txt")
@@ -99,7 +99,7 @@ func TestReadDir(t *testing.T) {
 	_, snapshot, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
-	fs := NewVSSFS(snapshot, "testdata", nil).(*VSSFS)
+	fs := NewVSSFS(snapshot, "testdata").(*VSSFS)
 
 	t.Run("root directory listing", func(t *testing.T) {
 		entries, err := fs.ReadDir("/")
@@ -117,7 +117,7 @@ func TestReadDir(t *testing.T) {
 func TestPathHandling(t *testing.T) {
 	_, snapshot, cleanup := setupTestEnvironment(t)
 	defer cleanup()
-	fs := NewVSSFS(snapshot, "testdata", nil).(*VSSFS)
+	fs := NewVSSFS(snapshot, "testdata").(*VSSFS)
 
 	t.Run("mixed slashes in path", func(t *testing.T) {
 		info, err := fs.Stat("subdir\\file_in_subdir.txt")
@@ -135,7 +135,7 @@ func TestPathHandling(t *testing.T) {
 func TestNFSMetadata(t *testing.T) {
 	_, snapshot, cleanup := setupTestEnvironment(t)
 	defer cleanup()
-	fs := NewVSSFS(snapshot, "testdata", nil).(*VSSFS)
+	fs := NewVSSFS(snapshot, "testdata").(*VSSFS)
 
 	t.Run("file metadata", func(t *testing.T) {
 		info, err := fs.Stat("regular_file.txt")
