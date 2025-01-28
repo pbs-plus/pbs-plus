@@ -149,3 +149,76 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 	}
 }
+
+func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+		}
+
+		var reqParsed BootstrapRequest
+		err := json.NewDecoder(r.Body).Decode(&reqParsed)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		existingTarget, err := storeInstance.Database.GetTarget(reqParsed.Hostname + " - C")
+		if err != nil || existingTarget == nil {
+			w.WriteHeader(http.StatusNotFound)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		decodedCSR, err := base64.StdEncoding.DecodeString(reqParsed.CSR)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		cert, err := storeInstance.CertGenerator.SignCSR(decodedCSR)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		encodedCert := base64.StdEncoding.EncodeToString(cert)
+		encodedCA := base64.StdEncoding.EncodeToString(storeInstance.CertGenerator.GetCAPEM())
+
+		clientIP := r.RemoteAddr
+
+		forwarded := r.Header.Get("X-FORWARDED-FOR")
+		if forwarded != "" {
+			clientIP = forwarded
+		}
+
+		clientIP = strings.Split(clientIP, ":")[0]
+
+		for _, drive := range reqParsed.Drives {
+			newTarget := types.Target{
+				Name:      fmt.Sprintf("%s - %s", reqParsed.Hostname, drive),
+				Path:      fmt.Sprintf("agent://%s/%s", clientIP, drive),
+				Auth:      encodedCert,
+				TokenUsed: existingTarget.TokenUsed,
+			}
+
+			err := storeInstance.Database.CreateTarget(newTarget)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w).Encode(map[string]string{"ca": encodedCA, "cert": encodedCert})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 )
 
 var httpClient *http.Client
@@ -40,6 +41,7 @@ func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) (io.Re
 
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("X-PBS-Agent", hostname)
+	req.Header.Add("X-PBS-Plus-Version", constants.Version)
 
 	tlsConfig, err := GetTLSConfig()
 	if err != nil {

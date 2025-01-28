@@ -3,11 +3,20 @@
 package agent
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"net/http"
+	"os"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
+	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 func GetTLSConfig() (*tls.Config, error) {
@@ -44,4 +53,117 @@ func GetTLSConfig() (*tls.Config, error) {
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      rootCAs,
 	}, nil
+}
+
+func CheckAndRenewCertificate() error {
+	const renewalWindow = 30 * 24 * time.Hour // Renew if certificate expires in less than 30 days
+
+	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
+	if err != nil {
+		return fmt.Errorf("CheckAndRenewCertificate: failed to retrieve certificate - %w", err)
+	}
+
+	block, _ := pem.Decode([]byte(certReg.Value))
+	if block == nil {
+		return fmt.Errorf("CheckAndRenewCertificate: failed to decode PEM block")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("CheckAndRenewCertificate: failed to parse certificate - %w", err)
+	}
+
+	now := time.Now()
+	timeUntilExpiry := cert.NotAfter.Sub(now)
+
+	switch {
+	case cert.NotAfter.Before(now):
+		_ = registry.DeleteEntry(registry.AUTH, "Cert")
+		_ = registry.DeleteEntry(registry.AUTH, "Priv")
+
+		return fmt.Errorf("Certificate has expired. This agent needs to be bootstrapped again.")
+	case timeUntilExpiry < renewalWindow:
+		fmt.Printf("Certificate expires in %v hours. Renewing...\n", timeUntilExpiry.Hours())
+		return renewCertificate()
+	default:
+		fmt.Printf("Certificate valid for %v days. No renewal needed.\n", timeUntilExpiry.Hours()/24)
+		return nil
+	}
+}
+
+func renewCertificate() error {
+	hostname, _ := os.Hostname()
+
+	csr, privKey, err := certificates.GenerateCSR(hostname, 2048)
+	if err != nil {
+		return fmt.Errorf("Bootstrap: generating csr failed -> %w", err)
+	}
+
+	encodedCSR := base64.StdEncoding.EncodeToString(csr)
+
+	reqBody, err := json.Marshal(&BootstrapRequest{
+		Hostname: hostname,
+		Drives:   utils.GetLocalDrives(),
+		CSR:      encodedCSR,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal bootstrap request: %w", err)
+	}
+
+	renewResp := &BootstrapResponse{}
+
+	_, err = ProxmoxHTTPRequest(http.MethodPost, "/plus/agent/renew", bytes.NewBuffer(reqBody), &renewResp)
+	if err != nil {
+		return fmt.Errorf("failed to fetch renewed certificate: %w", err)
+	}
+
+	decodedCA, err := base64.StdEncoding.DecodeString(renewResp.CA)
+	if err != nil {
+		return fmt.Errorf("Renew: error decoding ca content (%s) -> %w", string(renewResp.CA), err)
+	}
+
+	decodedCert, err := base64.StdEncoding.DecodeString(renewResp.Cert)
+	if err != nil {
+		return fmt.Errorf("Renew: error decoding cert content (%s) -> %w", string(renewResp.Cert), err)
+	}
+
+	privKeyPEM := certificates.EncodeKeyPEM(privKey)
+
+	caEntry := registry.RegistryEntry{
+		Key:      "ServerCA",
+		Value:    string(decodedCA),
+		Path:     registry.AUTH,
+		IsSecret: true,
+	}
+
+	certEntry := registry.RegistryEntry{
+		Key:      "Cert",
+		Value:    string(decodedCert),
+		Path:     registry.AUTH,
+		IsSecret: true,
+	}
+
+	privEntry := registry.RegistryEntry{
+		Key:      "Priv",
+		Value:    string(privKeyPEM),
+		Path:     registry.AUTH,
+		IsSecret: true,
+	}
+
+	err = registry.CreateEntry(&caEntry)
+	if err != nil {
+		return fmt.Errorf("Renew: error storing ca to registry -> %w", err)
+	}
+
+	err = registry.CreateEntry(&certEntry)
+	if err != nil {
+		return fmt.Errorf("Renew: error storing cert to registry -> %w", err)
+	}
+
+	err = registry.CreateEntry(&privEntry)
+	if err != nil {
+		return fmt.Errorf("Renew: error storing priv to registry -> %w", err)
+	}
+
+	return nil
 }

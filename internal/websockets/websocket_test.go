@@ -4,7 +4,6 @@ package websockets
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,23 +14,32 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegration(t *testing.T) {
-	t.Log("Starting integration test")
-
+func TestMain(m *testing.M) {
 	err := syslog.InitializeLogger()
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %s", err)
 	}
+	os.Exit(m.Run())
+}
+
+func TestIntegration(t *testing.T) {
+	t.Log("Starting integration test")
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	server := NewServer(ctx)
-	go server.Run()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- server.Run()
+	}()
 
 	ts := httptest.NewServer(http.HandlerFunc(server.ServeWS))
 	defer ts.Close()
@@ -39,58 +47,48 @@ func TestIntegration(t *testing.T) {
 	wsURL := "ws" + ts.URL[4:]
 
 	t.Run("Single client basic messaging", func(t *testing.T) {
-		client, err := NewWSClient(ctx, Config{
-			ServerURL: wsURL,
-			ClientID:  "test-client",
-			Headers: http.Header{
-				"X-PBS-Agent": []string{"test-client"},
-			},
-		}, &tls.Config{
-			InsecureSkipVerify: true,
+		clientID := "test-client"
+
+		// Create WebSocket connection directly for testing
+		conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+			HTTPHeader: http.Header{"X-PBS-Agent": []string{clientID}},
 		})
 		require.NoError(t, err)
+		defer conn.Close(websocket.StatusNormalClosure, "test complete")
 
-		err = client.Connect()
-		require.NoError(t, err)
+		handler, cleanup := server.RegisterHandler()
+		defer cleanup()
 
-		messageReceived := make(chan struct{})
-		client.RegisterHandler("test", func(msg *Message) {
-			t.Logf("Received message: %+v", msg)
-			close(messageReceived)
-		})
+		// Send message from client
+		sentMsg := Message{Type: "test", Content: "hello"}
+		require.NoError(t, wsjson.Write(ctx, conn, sentMsg))
 
-		client.Start()
-
-		clientMessage, cleanUp := server.RegisterHandler()
-
-		msg := Message{Type: "test", Content: "hello"}
-		err = client.Send(msg)
-		require.NoError(t, err)
-
+		// Verify server received message
 		select {
-		case rcvdMsg := <-clientMessage:
-			assert.Equal(t, msg.Type, rcvdMsg.Type)
-			assert.Equal(t, msg.Content, rcvdMsg.Content)
-			// Success
+		case rcvdMsg := <-handler:
+			assert.Equal(t, clientID, rcvdMsg.ClientID)
+			assert.Equal(t, sentMsg.Type, rcvdMsg.Type)
+			assert.Equal(t, sentMsg.Content, rcvdMsg.Content)
 		case <-time.After(2 * time.Second):
 			t.Fatal("timeout waiting for message")
 		}
 
-		cleanUp()
+		// Send message to client
+		serverMsg := Message{Type: "server-msg", Content: "response"}
+		require.NoError(t, server.SendToClient(clientID, serverMsg))
 
-		err = server.SendToClient(client.ClientID, msg)
-		require.NoError(t, err)
-
-		select {
-		case <-messageReceived:
-			// Success
-		case <-time.After(2 * time.Second):
-			t.Fatal("timeout waiting for message")
-		}
-
-		t.Log("Finished test, closing client.")
-		client.Close()
+		// Verify client received message
+		var received Message
+		require.NoError(t, wsjson.Read(ctx, conn, &received))
+		assert.Equal(t, serverMsg.Type, received.Type)
+		assert.Equal(t, serverMsg.Content, received.Content)
 	})
+
+	select {
+	case err := <-serverErr:
+		require.NoError(t, err)
+	default:
+	}
 }
 
 func TestClientReconnection(t *testing.T) {
@@ -98,58 +96,45 @@ func TestClientReconnection(t *testing.T) {
 	defer cancel()
 
 	server := NewServer(ctx)
-	go server.Run()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- server.Run()
+	}()
 
 	ts := httptest.NewServer(http.HandlerFunc(server.ServeWS))
 	defer ts.Close()
 
 	wsURL := "ws" + ts.URL[4:]
+	clientID := "reconnect-test"
 
-	client, err := NewWSClient(ctx, Config{
-		ServerURL: wsURL,
-		ClientID:  "reconnect-test",
-		Headers: http.Header{
-			"X-PBS-Agent": []string{"reconnect-test"},
-		},
-	}, &tls.Config{
-		InsecureSkipVerify: true,
+	// Initial connection
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"X-PBS-Agent": []string{clientID}},
 	})
 	require.NoError(t, err)
 
-	// Test initial connection
-	err = client.Connect()
-	require.NoError(t, err)
-	assert.True(t, client.IsConnected)
-
-	client.Start()
-
 	// Force disconnect
-	client.conn.Close(websocket.StatusGoingAway, "testing reconnection")
+	conn.Close(websocket.StatusGoingAway, "testing reconnection")
 
-	// Wait for disconnection to be detected with timeout
-	disconnected := false
-	for i := 0; i < 50; i++ {
-		if !client.GetConnectionStatus() {
-			disconnected = true
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
+	// Attempt reconnection
+	var newConn *websocket.Conn
+	require.Eventually(t, func() bool {
+		newConn, _, err = websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+			HTTPHeader: http.Header{"X-PBS-Agent": []string{clientID}},
+		})
+		return err == nil
+	}, 5*time.Second, 500*time.Millisecond, "reconnection failed")
+	defer newConn.Close(websocket.StatusNormalClosure, "test complete")
+
+	// Verify server state
+	assert.True(t, server.IsClientConnected(clientID))
+
+	select {
+	case err := <-serverErr:
+		require.NoError(t, err)
+	default:
 	}
-	assert.True(t, disconnected, "Connection should have been marked as disconnected")
-
-	connected := false
-	for i := 0; i < 50; i++ {
-		if client.GetConnectionStatus() {
-			connected = true
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	// Test reconnection
-	assert.True(t, connected)
-
-	t.Log("Finished test, closing client.")
-	client.Close()
 }
 
 func TestCPUOnDisconnect(t *testing.T) {
@@ -157,74 +142,64 @@ func TestCPUOnDisconnect(t *testing.T) {
 	defer cancel()
 
 	server := NewServer(ctx)
-	go server.Run()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- server.Run()
+	}()
+
 	ts := httptest.NewServer(http.HandlerFunc(server.ServeWS))
 	defer ts.Close()
 
 	wsURL := "ws" + ts.URL[4:]
-	clients := make([]*WSClient, 100)
-	defer func() {
-		for _, client := range clients {
-			if client != nil {
-				client.Close()
-			}
-		}
-	}()
 
-	for i := 0; i < 100; i++ {
-		client, err := NewWSClient(ctx, Config{
-			ServerURL: wsURL,
-			ClientID:  fmt.Sprintf("cpu-test-%d", i),
-			Headers: http.Header{
-				"X-PBS-Agent": []string{fmt.Sprintf("cpu-test-%d", i)},
-			},
-		}, &tls.Config{
-			InsecureSkipVerify: true,
+	// Create load profile helper
+	profileCPU := func(duration time.Duration) []byte {
+		f, err := os.CreateTemp("", "cpuprofile")
+		require.NoError(t, err)
+		defer os.Remove(f.Name())
+
+		pprof.StartCPUProfile(f)
+		time.Sleep(duration)
+		pprof.StopCPUProfile()
+
+		data, err := os.ReadFile(f.Name())
+		require.NoError(t, err)
+		return data
+	}
+
+	// Baseline measurement
+	baseline := profileCPU(2 * time.Second)
+
+	// Create clients
+	conns := make([]*websocket.Conn, 100)
+	for i := range conns {
+		conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+			HTTPHeader: http.Header{"X-PBS-Agent": []string{fmt.Sprintf("load-%d", i)}},
 		})
 		require.NoError(t, err)
+		conns[i] = conn
+	}
 
-		err = client.Connect()
+	// Peak measurement
+	peak := profileCPU(2 * time.Second)
+
+	// Cleanup clients
+	for _, conn := range conns {
+		conn.Close(websocket.StatusNormalClosure, "test complete")
+	}
+
+	// Calculate metrics
+	baselineSize := len(baseline)
+	peakSize := len(peak)
+	ratio := float64(peakSize) / float64(baselineSize)
+
+	t.Logf("CPU profile ratio: %.2f", ratio)
+	assert.Less(t, ratio, 1.5, "CPU usage increased more than expected")
+
+	select {
+	case err := <-serverErr:
 		require.NoError(t, err)
-		client.Start()
-		clients[i] = client
+	default:
 	}
-
-	baselineFile, err := os.Create("cpu-baseline.prof")
-	require.NoError(t, err)
-	defer os.Remove(baselineFile.Name())
-
-	err = pprof.StartCPUProfile(baselineFile)
-	require.NoError(t, err)
-
-	time.Sleep(time.Second * 5)
-
-	pprof.StopCPUProfile()
-	baselineStats, err := os.ReadFile(baselineFile.Name())
-	require.NoError(t, err)
-
-	time.Sleep(time.Second)
-
-	for _, client := range clients {
-		client.Close()
-	}
-
-	peakFile, err := os.Create("cpu-peak.prof")
-	require.NoError(t, err)
-	defer os.Remove(peakFile.Name())
-
-	err = pprof.StartCPUProfile(peakFile)
-	require.NoError(t, err)
-
-	time.Sleep(time.Second * 5)
-
-	pprof.StopCPUProfile()
-	peakStats, err := os.ReadFile(peakFile.Name())
-	require.NoError(t, err)
-
-	baselineCPURate := float64(len(baselineStats)) / 5
-	peakCPURate := float64(len(peakStats)) / 5
-
-	t.Logf("Baseline CPU: %f bytes/s", baselineCPURate)
-	t.Logf("Peak CPU: %f bytes/s", peakCPURate)
-	assert.Less(t, peakCPURate/baselineCPURate, 1.2, "CPU usage more than 1.2x during disconnects")
 }

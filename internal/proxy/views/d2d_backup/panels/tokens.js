@@ -15,7 +15,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
         },
       }).show();
     },
-    
+
     onCopy: async function () {
       let me = this;
       let view = me.getView();
@@ -24,38 +24,38 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
         return;
       }
 
-      let token = selection[0].data.token
-      Ext.create('Ext.window.Window', {
-		    modal: true,
-		    width: 600,
-		    title: gettext('Bootstrap Token'),
-		    layout: 'form',
-		    bodyPadding: '10 0',
-		    items: [
-		      {
-			      xtype: 'textfield',
-			      inputId: 'token',
-			      value: token,
-			      editable: false,
-		      },
-		    ],
-		    buttons: [
-		      {
-			      xtype: 'button',
-			      iconCls: 'fa fa-clipboard',
-			      handler: async function(b) {
-			        await navigator.clipboard.writeText(token);
-			      },
-	  		    text: gettext('Copy'),
-	  	    },
-	  	    {
-	  		    text: gettext('Ok'),
-	  		    handler: function() {
-	  		      this.up('window').close();
-			      },
-		      },
-		    ],
-	    }).show();
+      let token = selection[0].data.token;
+      Ext.create("Ext.window.Window", {
+        modal: true,
+        width: 600,
+        title: gettext("Bootstrap Token"),
+        layout: "form",
+        bodyPadding: "10 0",
+        items: [
+          {
+            xtype: "textfield",
+            inputId: "token",
+            value: token,
+            editable: false,
+          },
+        ],
+        buttons: [
+          {
+            xtype: "button",
+            iconCls: "fa fa-clipboard",
+            handler: async function (b) {
+              await navigator.clipboard.writeText(token);
+            },
+            text: gettext("Copy"),
+          },
+          {
+            text: gettext("Ok"),
+            handler: function () {
+              this.up("window").close();
+            },
+          },
+        ],
+      }).show();
     },
 
     reload: function () {
@@ -125,6 +125,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       disabled: true,
     },
     {
+      text: gettext("Revoke Token"),
       xtype: "proxmoxStdRemoveButton",
       baseurl: pbsPlusBaseUrl + "/api2/extjs/config/d2d-token",
       getUrl: (rec) =>

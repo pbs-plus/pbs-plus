@@ -61,7 +61,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 					if resp.Type == "response-backup_start" && resp.Content == "Acknowledged: "+agentDrive {
 						break respWait
 					}
-				case <-time.After(time.Second * 15):
+				case <-time.After(time.Second * 10):
 					http.Error(w, fmt.Sprintf("MountHandler: Failed to receive backup acknowledgement from target -> %v", err), http.StatusInternalServerError)
 					return
 				}

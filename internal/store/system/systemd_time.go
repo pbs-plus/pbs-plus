@@ -13,7 +13,6 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 func generateTimer(job *types.Job) error {
@@ -72,7 +71,7 @@ ExecStart=/usr/bin/pbs-plus -job="%s"`, job.ID, job.ID)
 	return nil
 }
 
-func DeleteSchedule(id string) {
+func DeleteSchedule(id string) error {
 	svcFilePath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(id, " ", "-"))
 	svcFullPath := filepath.Join(constants.TimerBasePath, svcFilePath)
 
@@ -81,14 +80,29 @@ func DeleteSchedule(id string) {
 
 	cmd := exec.Command("/usr/bin/systemctl", "stop", timerFilePath)
 	cmd.Env = os.Environ()
-	_ = cmd.Run()
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("DeleteSchedule: error stopping timer -> %w", err)
+	}
 
-	_ = os.Remove(svcFullPath)
-	_ = os.Remove(timerFullPath)
+	err = os.RemoveAll(svcFullPath)
+	if err != nil {
+		return fmt.Errorf("DeleteSchedule: error deleting service -> %w", err)
+	}
+
+	err = os.RemoveAll(timerFullPath)
+	if err != nil {
+		return fmt.Errorf("DeleteSchedule: error deleting timer -> %w", err)
+	}
 
 	cmd = exec.Command("/usr/bin/systemctl", "daemon-reload")
 	cmd.Env = os.Environ()
-	_ = cmd.Run()
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("DeleteSchedule: error reloading daemon -> %w", err)
+	}
+
+	return nil
 }
 
 type TimerInfo struct {
@@ -148,7 +162,7 @@ func GetNextSchedule(job *types.Job) (*time.Time, error) {
 	return nil, nil
 }
 
-func SetSchedule(job types.Job) {
+func SetSchedule(job types.Job) error {
 	svcPath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
 	fullSvcPath := filepath.Join(constants.TimerBasePath, svcPath)
 
@@ -158,21 +172,29 @@ func SetSchedule(job types.Job) {
 	if job.Schedule == "" {
 		cmd := exec.Command("/usr/bin/systemctl", "disable", "--now", timerPath)
 		cmd.Env = os.Environ()
-		_ = cmd.Run()
+		err := cmd.Run()
+		if err != nil {
+			return fmt.Errorf("SetSchedule: error disabling timer -> %w", err)
+		}
 
-		_ = os.Remove(fullSvcPath)
-		_ = os.Remove(fullTimerPath)
+		err = os.RemoveAll(fullSvcPath)
+		if err != nil {
+			return fmt.Errorf("SetSchedule: error deleting service -> %w", err)
+		}
+
+		err = os.RemoveAll(fullTimerPath)
+		if err != nil {
+			return fmt.Errorf("SetSchedule: error deleting timer -> %w", err)
+		}
 	} else {
 		err := generateService(&job)
 		if err != nil {
-			syslog.L.Errorf("SetSchedule: error generating service -> %v", err)
-			return
+			return fmt.Errorf("SetSchedule: error generating service -> %w", err)
 		}
 
 		err = generateTimer(&job)
 		if err != nil {
-			syslog.L.Errorf("SetSchedule: error generating timer -> %v", err)
-			return
+			return fmt.Errorf("SetSchedule: error generating timer -> %v", err)
 		}
 	}
 
@@ -180,21 +202,19 @@ func SetSchedule(job types.Job) {
 	cmd.Env = os.Environ()
 	err := cmd.Run()
 	if err != nil {
-		syslog.L.Errorf("SetSchedule: error running daemon reload -> %v", err)
-		return
+		return fmt.Errorf("SetSchedule: error running daemon reload -> %v", err)
 	}
 
 	if job.Schedule == "" {
-		return
+		return nil
 	}
 
 	cmd = exec.Command("/usr/bin/systemctl", "enable", "--now", timerPath)
 	cmd.Env = os.Environ()
 	err = cmd.Run()
 	if err != nil {
-		syslog.L.Errorf("SetSchedule: error running enable -> %v", err)
-		return
+		return fmt.Errorf("SetSchedule: error running enable -> %v", err)
 	}
 
-	return
+	return nil
 }

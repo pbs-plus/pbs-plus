@@ -61,6 +61,7 @@ const (
 
 type SectionConfig struct {
 	mu               sync.RWMutex
+	fileMutex        *FileMutexManager
 	plugins          map[string]*SectionPlugin
 	idSchema         *Schema
 	allowUnknown     bool
@@ -96,6 +97,7 @@ func NewSectionConfig(idSchema *Schema) *SectionConfig {
 		allowUnknown:     false,
 		parseSectionHead: defaultParseSectionHeader,
 		parseSectionLine: defaultParseSectionContent,
+		fileMutex:        NewFileMutexManager(),
 	}
 }
 
@@ -119,94 +121,101 @@ func (sc *SectionConfig) GetPlugin(typeName string) *SectionPlugin {
 
 // Parse reads and parses a configuration file
 func (sc *SectionConfig) Parse(filename string) (*ConfigData, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
+	var config *ConfigData
+	err := sc.fileMutex.WithReadLock(filename, func() error {
+		file, err := os.Open(filename)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
 
-	config := &ConfigData{
-		Sections: make(map[string]*Section),
-		Order:    make([]string, 0),
-		FilePath: filename,
-	}
-
-	reader := bufio.NewReader(file)
-	var currentSection *Section
-	lineNum := 0
-
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return nil, fmt.Errorf("error reading line %d: %w", lineNum, err)
+		config = &ConfigData{
+			Sections: make(map[string]*Section),
+			Order:    make([]string, 0),
+			FilePath: filename,
 		}
 
-		line = strings.TrimSpace(line)
-		lineNum++
+		reader := bufio.NewReader(file)
+		var currentSection *Section
+		lineNum := 0
 
-		if line == "" {
-			if currentSection != nil {
-				if err := sc.validateSection(currentSection); err != nil {
-					return nil, fmt.Errorf("validation error in section %s: %w", currentSection.ID, err)
-				}
-				config.Sections[currentSection.ID] = currentSection
-				config.Order = append(config.Order, currentSection.ID)
-				currentSection = nil
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil && err != io.EOF {
+				return fmt.Errorf("error reading line %d: %w", lineNum, err)
 			}
+
+			line = strings.TrimSpace(line)
+			lineNum++
+
+			if line == "" {
+				if currentSection != nil {
+					if err := sc.validateSection(currentSection); err != nil {
+						return fmt.Errorf("validation error in section %s: %w", currentSection.ID, err)
+					}
+					config.Sections[currentSection.ID] = currentSection
+					config.Order = append(config.Order, currentSection.ID)
+					currentSection = nil
+				}
+				if err == io.EOF {
+					break
+				}
+				continue
+			}
+
+			if currentSection == nil {
+				sectionType, sectionID, err := sc.parseSectionHead(line)
+				if err != nil {
+					return fmt.Errorf("error parsing section header at line %d: %w", lineNum, err)
+				}
+
+				if err := sc.validateSectionType(sectionType); err != nil {
+					return fmt.Errorf("invalid section type at line %d: %w", lineNum, err)
+				}
+
+				currentSection = &Section{
+					Type:       sectionType,
+					ID:         sectionID,
+					Properties: make(map[string]string),
+				}
+			} else {
+				key, value, err := sc.parseSectionLine(line)
+				if err != nil {
+					return fmt.Errorf("error parsing line %d: %w", lineNum, err)
+				}
+
+				if err := sc.validateProperty(currentSection.Type, key, value); err != nil {
+					return fmt.Errorf("invalid property at line %d: %w", lineNum, err)
+				}
+
+				currentSection.Properties[key] = value
+			}
+
 			if err == io.EOF {
 				break
 			}
-			continue
 		}
 
-		if currentSection == nil {
-			// Try to parse section header
-			sectionType, sectionID, err := sc.parseSectionHead(line)
-			if err != nil {
-				return nil, fmt.Errorf("error parsing section header at line %d: %w", lineNum, err)
+		if currentSection != nil {
+			if err := sc.validateSection(currentSection); err != nil {
+				return fmt.Errorf("validation error in section %s: %w", currentSection.ID, err)
 			}
-
-			if err := sc.validateSectionType(sectionType); err != nil {
-				return nil, fmt.Errorf("invalid section type at line %d: %w", lineNum, err)
-			}
-
-			currentSection = &Section{
-				Type:       sectionType,
-				ID:         sectionID,
-				Properties: make(map[string]string),
-			}
-		} else {
-			// Parse section content
-			key, value, err := sc.parseSectionLine(line)
-			if err != nil {
-				return nil, fmt.Errorf("error parsing line %d: %w", lineNum, err)
-			}
-
-			if err := sc.validateProperty(currentSection.Type, key, value); err != nil {
-				return nil, fmt.Errorf("invalid property at line %d: %w", lineNum, err)
-			}
-
-			currentSection.Properties[key] = value
+			config.Sections[currentSection.ID] = currentSection
+			config.Order = append(config.Order, currentSection.ID)
 		}
 
-		if err == io.EOF {
-			break
-		}
-	}
+		return nil
+	})
 
-	if currentSection != nil {
-		if err := sc.validateSection(currentSection); err != nil {
-			return nil, fmt.Errorf("validation error in section %s: %w", currentSection.ID, err)
-		}
-		config.Sections[currentSection.ID] = currentSection
-		config.Order = append(config.Order, currentSection.ID)
+	if err != nil {
+		return nil, err
 	}
 
 	return config, nil
 }
 
 func (sc *SectionConfig) Write(config *ConfigData) error {
-	// First validate all sections
+	// First validate all sections (this doesn't need file locking)
 	for sectionID, section := range config.Sections {
 		plugin, exists := sc.plugins[section.Type]
 		if !exists && !sc.allowUnknown {
@@ -214,14 +223,12 @@ func (sc *SectionConfig) Write(config *ConfigData) error {
 		}
 
 		if exists {
-			// Validate properties
 			for key, value := range section.Properties {
 				if err := sc.validateProperty(section.Type, key, value); err != nil {
 					return fmt.Errorf("section '%s', property '%s': %w", sectionID, key, err)
 				}
 			}
 
-			// Check required properties
 			for propName, propSchema := range plugin.Properties {
 				if propSchema.Required && section.Properties[propName] == "" {
 					return fmt.Errorf("section '%s': required property '%s' is missing", sectionID, propName)
@@ -230,8 +237,7 @@ func (sc *SectionConfig) Write(config *ConfigData) error {
 		}
 	}
 
-	// Then write the file once using the order
-	var output strings.Builder
+	// Write each section with appropriate file locking
 	for _, sectionID := range config.Order {
 		section := config.Sections[sectionID]
 		if section == nil {
@@ -245,18 +251,22 @@ func (sc *SectionConfig) Write(config *ConfigData) error {
 			filename = filepath.Join(plugin.FolderPath, utils.EncodePath(sectionID)+".cfg")
 		}
 
-		dir := filepath.Dir(filename)
-		if err := os.MkdirAll(dir, 0750); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
+		err := sc.fileMutex.WithWriteLock(filename, func() error {
+			dir := filepath.Dir(filename)
+			if err := os.MkdirAll(dir, 0750); err != nil {
+				return fmt.Errorf("failed to create directory: %w", err)
+			}
 
-		output.WriteString(fmt.Sprintf("%s: %s\n", section.Type, sectionID))
-		for key, value := range section.Properties {
-			output.WriteString(fmt.Sprintf("\t%s %s\n", key, value))
-		}
-		output.WriteString("\n")
+			var output strings.Builder
+			output.WriteString(fmt.Sprintf("%s: %s\n", section.Type, sectionID))
+			for key, value := range section.Properties {
+				output.WriteString(fmt.Sprintf("\t%s %s\n", key, value))
+			}
+			output.WriteString("\n")
 
-		err := os.WriteFile(filename, []byte(output.String()), 0644)
+			return os.WriteFile(filename, []byte(output.String()), 0644)
+		})
+
 		if err != nil {
 			return err
 		}

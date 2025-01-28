@@ -220,6 +220,7 @@ func main() {
 
 	// Agent auth routes
 	mux.HandleFunc("/plus/agent/bootstrap", mw.CORS(storeInstance, agents.AgentBootstrapHandler(storeInstance)))
+	mux.HandleFunc("/plus/agent/renew", mw.AgentOnly(storeInstance, mw.CORS(storeInstance, agents.AgentRenewHandler(storeInstance))))
 
 	server := &http.Server{
 		Addr:           serverConfig.Address,

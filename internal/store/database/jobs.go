@@ -70,9 +70,6 @@ func (database *Database) RegisterJobPlugin() {
 }
 
 func (database *Database) CreateJob(job types.Job) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
 		return fmt.Errorf("CreateJob: invalid namespace string -> %s", job.Namespace)
 	}
@@ -129,16 +126,14 @@ func (database *Database) CreateJob(job types.Job) error {
 		}
 	}
 
-	// Set up systemd schedule
-	system.SetSchedule(job)
+	if err := system.SetSchedule(job); err != nil {
+		syslog.L.Errorf("CreateJob: error setting schedule: %v", err)
+	}
 
 	return nil
 }
 
 func (database *Database) GetJob(id string) (*types.Job, error) {
-	database.mu.RLock()
-	defer database.mu.RUnlock()
-
 	plugin := database.config.GetPlugin("job")
 	jobPath := filepath.Join(plugin.FolderPath, utils.EncodePath(id)+".cfg")
 	configData, err := database.config.Parse(jobPath)
@@ -215,9 +210,6 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 }
 
 func (database *Database) UpdateJob(job types.Job) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
 		return fmt.Errorf("UpdateJob: invalid namespace string -> %s", job.Namespace)
 	}
@@ -284,15 +276,14 @@ func (database *Database) UpdateJob(job types.Job) error {
 		}
 	}
 
-	system.SetSchedule(job)
+	if err := system.SetSchedule(job); err != nil {
+		syslog.L.Errorf("UpdateJob: error setting schedule: %v", err)
+	}
 
 	return nil
 }
 
 func (database *Database) GetAllJobs() ([]types.Job, error) {
-	database.mu.RLock()
-	defer database.mu.RUnlock()
-
 	plugin := database.config.GetPlugin("job")
 	files, err := os.ReadDir(plugin.FolderPath)
 	if err != nil {
@@ -317,9 +308,6 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 }
 
 func (database *Database) DeleteJob(id string) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	plugin := database.config.GetPlugin("job")
 	jobPath := filepath.Join(plugin.FolderPath, utils.EncodePath(id)+".cfg")
 	if err := os.Remove(jobPath); err != nil {
@@ -328,6 +316,9 @@ func (database *Database) DeleteJob(id string) error {
 		}
 	}
 
-	system.DeleteSchedule(id)
+	if err := system.DeleteSchedule(id); err != nil {
+		syslog.L.Errorf("DeleteJob: error deleting schedule: %v", err)
+	}
+
 	return nil
 }

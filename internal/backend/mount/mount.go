@@ -106,6 +106,7 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 
 	// If all retries failed, clean up and return error
 	agentMount.Unmount()
+	agentMount.CloseMount()
 	return nil, fmt.Errorf("Mount: error mounting NFS share after %d attempts -> %w", maxRetries, lastErr)
 }
 
