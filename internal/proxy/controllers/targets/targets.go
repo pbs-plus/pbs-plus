@@ -82,58 +82,39 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		clientIP = strings.Split(clientIP, ":")[0]
 
-		existingOldTargets, err := storeInstance.Database.GetAllTargetsByIP(clientIP)
+		existingTargets, err := storeInstance.Database.GetAllTargetsByIP(clientIP)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
 			return
 		}
 
-		if len(existingOldTargets) == 0 {
+		if len(existingTargets) == 0 {
 			w.WriteHeader(http.StatusNotFound)
 			controllers.WriteErrorResponse(w, fmt.Errorf("No targets found."))
 			return
 		}
 
-		targetTemplate := existingOldTargets[0]
-
-		var existingTargets []types.Target
-		for _, oldTarget := range existingOldTargets {
-			if oldTarget.DriveType == "" {
-				if !strings.HasSuffix(oldTarget.Name, "- C") {
-					_ = storeInstance.Database.DeleteTarget(oldTarget.Name)
-				}
-			} else {
-				existingTargets = append(existingTargets, oldTarget)
-			}
-		}
+		targetTemplate := existingTargets[0]
 
 		hostname := r.Header.Get("X-PBS-Agent")
-
-		var existingDrives = make([]string, len(existingTargets))
-		for _, target := range existingTargets {
-			targetDrive := strings.Split(target.Path, "/")[3]
-			existingDrives = append(existingDrives, targetDrive)
-		}
 
 		var driveLetters = make([]string, len(reqParsed.Drives))
 		for i, parsedDrive := range reqParsed.Drives {
 			driveLetters[i] = parsedDrive.Letter
 
-			if !slices.Contains(existingDrives, parsedDrive.Letter) {
-				_ = storeInstance.Database.CreateTarget(types.Target{
-					Name:      hostname + " - " + parsedDrive.Letter,
-					Path:      "agent://" + clientIP + "/" + parsedDrive.Letter,
-					Auth:      targetTemplate.Auth,
-					TokenUsed: targetTemplate.TokenUsed,
-					DriveType: parsedDrive.Type,
-				})
-			}
+			_ = storeInstance.Database.CreateTarget(types.Target{
+				Name:      hostname + " - " + parsedDrive.Letter,
+				Path:      "agent://" + clientIP + "/" + parsedDrive.Letter,
+				Auth:      targetTemplate.Auth,
+				TokenUsed: targetTemplate.TokenUsed,
+				DriveType: parsedDrive.Type,
+			})
 		}
 
-		for i, drive := range existingDrives {
-			target := existingTargets[i]
-			if !slices.Contains(driveLetters, drive) {
+		for _, target := range existingTargets {
+			targetDrive := strings.Split(target.Path, "/")[3]
+			if !slices.Contains(driveLetters, targetDrive) {
 				_ = storeInstance.Database.DeleteTarget(target.Name)
 			}
 		}
