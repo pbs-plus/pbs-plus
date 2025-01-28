@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kardianos/service"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows/registry"
 )
@@ -86,6 +87,8 @@ func (w *watchdogService) Stop(s service.Service) error {
 }
 
 func main() {
+	constants.Version = Version
+
 	svcConfig := &service.Config{
 		Name:        "PBSPlusAgent",
 		DisplayName: "PBS Plus Agent",
