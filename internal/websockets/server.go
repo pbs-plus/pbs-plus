@@ -25,12 +25,13 @@ type Message struct {
 }
 
 type Client struct {
-	ID     string
-	conn   *websocket.Conn
-	server *Server
-	ctx    context.Context
-	cancel context.CancelFunc
-	once   sync.Once
+	ID           string
+	agentVersion string
+	conn         *websocket.Conn
+	server       *Server
+	ctx          context.Context
+	cancel       context.CancelFunc
+	once         sync.Once
 }
 
 type Server struct {
@@ -131,6 +132,8 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	clientVersion := r.Header.Get("X-PBS-Plus-Version")
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		Subprotocols: []string{"pbs"},
 	})
@@ -140,11 +143,12 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(s.ctx)
 	client := &Client{
-		ID:     clientID,
-		conn:   conn,
-		server: s,
-		ctx:    ctx,
-		cancel: cancel,
+		ID:           clientID,
+		conn:         conn,
+		server:       s,
+		ctx:          ctx,
+		cancel:       cancel,
+		agentVersion: clientVersion,
 	}
 
 	s.Register(client)
@@ -185,6 +189,18 @@ func (s *Server) IsClientConnected(clientID string) bool {
 	_, exists := s.clients[clientID]
 	s.clientsMux.RUnlock()
 	return exists
+}
+
+func (s *Server) GetClientVersion(clientID string) string {
+	s.clientsMux.RLock()
+	client, exists := s.clients[clientID]
+	s.clientsMux.RUnlock()
+
+	if exists {
+		return client.agentVersion
+	}
+
+	return ""
 }
 
 func (s *Server) Run() {
