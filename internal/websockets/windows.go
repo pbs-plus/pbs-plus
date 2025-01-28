@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 )
 
 func GetWindowsConfig() (Config, error) {
@@ -76,6 +77,7 @@ func getServerURLFromRegistry() (string, error) {
 func buildHeaders(clientID string) (http.Header, error) {
 	headers := http.Header{}
 	headers.Add("X-PBS-Agent", clientID)
+	headers.Add("X-PBS-Plus-Version", constants.Version)
 
 	return headers, nil
 }
