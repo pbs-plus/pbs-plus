@@ -16,6 +16,10 @@ import (
 )
 
 func generateTimer(job *types.Job) error {
+	if strings.Contains(job.ID, "/") || strings.Contains(job.ID, "\\") || strings.Contains(job.ID, "..") {
+		return fmt.Errorf("generateTimer: invalid job ID -> %s", job.ID)
+	}
+
 	content := fmt.Sprintf(`[Unit]
 Description=%s Backup Job Timer
 
