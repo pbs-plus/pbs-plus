@@ -5,7 +5,6 @@ package database
 import (
 	"fmt"
 	"os"
-	"sync"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/token"
 	configLib "github.com/sonroyaalmerol/pbs-plus/internal/config"
@@ -23,7 +22,6 @@ var defaultPaths = map[string]string{
 }
 
 type Database struct {
-	mu           sync.RWMutex
 	config       *configLib.SectionConfig
 	TokenManager *token.Manager
 	paths        map[string]string
@@ -34,17 +32,28 @@ func Initialize(paths map[string]string) (*Database, error) {
 		paths = defaultPaths
 	}
 
-	alreadyInitialized := false
+	// Check if paths map contains required keys
+	requiredPaths := []string{"init", "jobs", "targets", "exclusions", "tokens"}
+	for _, key := range requiredPaths {
+		if _, exists := paths[key]; !exists {
+			return nil, fmt.Errorf("Initialize: missing required path key: %s", key)
+		}
+	}
 
-	if _, err := os.Stat(paths["init"]); !os.IsNotExist(err) {
+	alreadyInitialized := false
+	if _, err := os.Stat(paths["init"]); err == nil {
 		alreadyInitialized = true
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("Initialize: error checking init file: %w", err)
 	}
 
 	for key, path := range paths {
 		if key == "cert" || key == "key" {
 			continue
 		}
-
+		if path == "" {
+			return nil, fmt.Errorf("Initialize: empty path for key: %s", key)
+		}
 		if err := os.MkdirAll(path, 0750); err != nil {
 			return nil, fmt.Errorf("Initialize: error creating directory %s: %w", path, err)
 		}
@@ -59,6 +68,9 @@ func Initialize(paths map[string]string) (*Database, error) {
 	}
 
 	config := configLib.NewSectionConfig(idSchema)
+	if config == nil {
+		return nil, fmt.Errorf("Initialize: failed to create section config")
+	}
 
 	database := &Database{
 		config: config,
@@ -72,13 +84,17 @@ func Initialize(paths map[string]string) (*Database, error) {
 
 	if !alreadyInitialized {
 		for _, exclusion := range constants.DefaultExclusions {
-			err := database.CreateExclusion(types.Exclusion{
+			if err := database.CreateExclusion(types.Exclusion{
 				Path:    exclusion,
 				Comment: "Generated exclusion from default list",
-			})
-			if err != nil {
+			}); err != nil {
 				syslog.L.Errorf("Initialize: error creating default exclusion: %v", err)
 			}
+		}
+
+		// Create init file to mark initialization
+		if err := os.WriteFile(paths["init"], []byte("initialized"), 0640); err != nil {
+			return nil, fmt.Errorf("Initialize: error creating init file: %w", err)
 		}
 	}
 

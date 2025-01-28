@@ -51,15 +51,17 @@ func (l *Logger) logToServer(level string, msg string) {
 		return
 	}
 
-	body, err := agent.ProxmoxHTTPRequest(
-		http.MethodPost,
-		"/api2/json/d2d/agent-log",
-		bytes.NewBuffer(reqBody),
-		nil,
-	)
-	if err == nil {
-		_, _ = io.Copy(io.Discard, body)
-		body.Close()
+	if level == "warn" || level == "error" {
+		body, err := agent.ProxmoxHTTPRequest(
+			http.MethodPost,
+			"/api2/json/d2d/agent-log",
+			bytes.NewBuffer(reqBody),
+			nil,
+		)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, body)
+			body.Close()
+		}
 	}
 }
 

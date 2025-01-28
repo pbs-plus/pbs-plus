@@ -48,9 +48,6 @@ func (database *Database) RegisterTokenPlugin() {
 }
 
 func (database *Database) CreateToken(comment string) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	token, err := database.TokenManager.GenerateToken()
 	if err != nil {
 		return fmt.Errorf("CreateToken: error generating token: %w", err)
@@ -80,9 +77,6 @@ func (database *Database) CreateToken(comment string) error {
 }
 
 func (database *Database) GetToken(token string) (*types.AgentToken, error) {
-	database.mu.RLock()
-	defer database.mu.RUnlock()
-
 	plugin := database.config.GetPlugin("token")
 	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(token)+".cfg")
 	configData, err := database.config.Parse(configPath)
@@ -146,9 +140,6 @@ func (database *Database) GetAllTokens() ([]types.AgentToken, error) {
 }
 
 func (database *Database) RevokeToken(token *types.AgentToken) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	if token.Revoked {
 		return nil
 	}

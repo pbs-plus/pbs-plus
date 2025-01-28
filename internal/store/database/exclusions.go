@@ -49,9 +49,6 @@ func (database *Database) RegisterExclusionPlugin() {
 }
 
 func (database *Database) CreateExclusion(exclusion types.Exclusion) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
 
 	if !pattern.IsValidPattern(exclusion.Path) {
@@ -111,8 +108,6 @@ func (database *Database) CreateExclusion(exclusion types.Exclusion) error {
 }
 
 func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, error) {
-	database.mu.RLock()
-	defer database.mu.RUnlock()
 	plugin := database.config.GetPlugin("exclusion")
 	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(jobId)+".cfg")
 	configData, err := database.config.Parse(configPath)
@@ -146,8 +141,6 @@ func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, 
 }
 
 func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
-	database.mu.RLock()
-	defer database.mu.RUnlock()
 	plugin := database.config.GetPlugin("exclusion")
 	configPath := filepath.Join(plugin.FolderPath, "global.cfg")
 	configData, err := database.config.Parse(configPath)
@@ -180,9 +173,6 @@ func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
 }
 
 func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
-	database.mu.RLock()
-	defer database.mu.RUnlock()
-
 	// Check global exclusions first
 	plugin := database.config.GetPlugin("exclusion")
 	globalPath := filepath.Join(plugin.FolderPath, "global.cfg")
@@ -226,9 +216,6 @@ func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
 }
 
 func (database *Database) UpdateExclusion(exclusion types.Exclusion) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
 	if !pattern.IsValidPattern(exclusion.Path) {
 		return fmt.Errorf("UpdateExclusion: invalid path pattern -> %s", exclusion.Path)
@@ -270,9 +257,6 @@ func (database *Database) UpdateExclusion(exclusion types.Exclusion) error {
 }
 
 func (database *Database) DeleteExclusion(path string) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	path = strings.ReplaceAll(path, "\\", "/")
 	plugin := database.config.GetPlugin("exclusion")
 	sectionID := fmt.Sprintf("excl-%s", path)

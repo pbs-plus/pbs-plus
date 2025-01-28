@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -14,386 +16,397 @@ import (
 )
 
 const (
-	maxSendBuffer     = 256
-	maxRetryAttempts  = 10
-	messageTimeout    = 5 * time.Second
-	operationTimeout  = 10 * time.Second
-	rateLimit         = 100 * time.Millisecond
-	rateBurst         = 10
-	maxMessageSize    = 1024 * 1024 // 1MB
-	handlerPoolSize   = 100         // Max concurrent message handlers
-	reconnectCooldown = 1 * time.Second
+	maxSendBuffer       = 256
+	messageTimeout      = 5 * time.Second
+	operationTimeout    = 10 * time.Second
+	rateLimit           = 100 * time.Millisecond
+	maxMessageSize      = 1024 * 1024 // 1MB
+	handlerPoolSize     = 100
+	initialBackoff      = 1 * time.Second
+	maxBackoff          = 30 * time.Second
+	healthCheckInterval = 15 * time.Second
+	writeDeadline       = 2 * time.Second
 )
 
 type (
 	MessageHandler func(msg *Message)
 
 	Config struct {
-		ServerURL string
-		ClientID  string
-		Headers   http.Header
+		ServerURL  string
+		ClientID   string
+		Headers    http.Header
+		MaxRetries int
 	}
 
 	WSClient struct {
-		ClientID  string
-		serverURL string
-		headers   http.Header
+		clientID   string
+		serverURL  string
+		headers    http.Header
+		tlsConfig  *tls.Config
+		maxRetries int
 
-		TLSConfig *tls.Config
-
-		ctx    context.Context
-		cancel context.CancelFunc
-		wg     sync.WaitGroup
-
-		conn        *websocket.Conn
-		connMu      sync.RWMutex
-		send        chan Message
-		IsConnected bool
-
-		handlers       map[string]MessageHandler
-		handlerMu      sync.RWMutex
-		handlerWorkers chan struct{}
-
-		reconnecting bool
-		reconnectMu  sync.Mutex
+		ctx        context.Context
+		cancel     context.CancelFunc
+		wg         sync.WaitGroup
+		conn       *websocket.Conn
+		connMu     sync.RWMutex
+		sendChan   chan Message
+		handlers   map[string]MessageHandler
+		handlerMu  sync.RWMutex
+		workerPool chan struct{}
+		status     atomic.Uint32 // 0=disconnected, 1=connecting, 2=connected
+		backoff    time.Duration
+		statusMu   sync.RWMutex
+		lastPong   atomic.Int64
 	}
 )
 
-func NewWSClient(ctx context.Context, config Config, tlsConfig *tls.Config) (*WSClient, error) {
+type ConnectionState int
+
+const (
+	StateDisconnected ConnectionState = iota
+	StateConnecting
+	StateConnected
+)
+
+func NewWSClient(ctx context.Context, config Config, tlsConfig *tls.Config) *WSClient {
 	ctx, cancel := context.WithCancel(ctx)
-
-	client := &WSClient{
-		ClientID:  config.ClientID,
-		serverURL: config.ServerURL,
-		headers:   config.Headers,
-		ctx:       ctx,
-		cancel:    cancel,
-		send:      make(chan Message, maxSendBuffer),
-		handlers:  make(map[string]MessageHandler),
-		TLSConfig: tlsConfig,
-
-		handlerWorkers: make(chan struct{}, handlerPoolSize),
+	if config.MaxRetries <= 0 {
+		config.MaxRetries = 10
 	}
 
-	syslog.L.Infof("[WSClient.New] Client %s: Initialized new WebSocket client for server %s",
-		client.ClientID, client.serverURL)
-
-	return client, nil
-}
-
-func (c *WSClient) Connect() error {
-	timeoutCtx, cancel := context.WithTimeout(c.ctx, operationTimeout)
-	defer cancel()
-
-	c.connMu.Lock()
-	defer c.connMu.Unlock()
-
-	if c.IsConnected {
-		return nil
-	}
-
-	syslog.L.Infof("[WSClient.Connect] Client %s: Attempting connection to %s",
-		c.ClientID, c.serverURL)
-
-	conn, _, err := websocket.Dial(timeoutCtx, c.serverURL, &websocket.DialOptions{
-		Subprotocols: []string{"pbs"},
-		HTTPHeader:   c.headers,
-		HTTPClient: &http.Client{
-			Transport: &http.Transport{
-				IdleConnTimeout: 90 * time.Second,
-				TLSClientConfig: c.TLSConfig,
-			},
-		},
-	})
-	if err != nil {
-		syslog.L.Errorf("[WSClient.Connect] Client %s: Connection failed - %v",
-			c.ClientID, err)
-		return fmt.Errorf("dial failed: %w", err)
-	}
-
-	c.conn = conn
-	c.IsConnected = true
-	syslog.L.Infof("[WSClient.Connect] Client %s: Connection established successfully",
-		c.ClientID)
-
-	return nil
-}
-
-func (c *WSClient) Close() error {
-	timeoutCtx, cancel := context.WithTimeout(c.ctx, operationTimeout)
-	defer cancel()
-
-	c.connMu.Lock()
-	defer c.connMu.Unlock()
-
-	if !c.IsConnected {
-		return nil
-	}
-
-	syslog.L.Infof("[WSClient.Close] Client %s: Initiating client shutdown", c.ClientID)
-	c.cancel()
-	c.IsConnected = false
-
-	if c.conn != nil {
-		done := make(chan error, 1)
-		go func() {
-			done <- c.conn.Close(websocket.StatusNormalClosure, "client closing")
-		}()
-
-		select {
-		case err := <-done:
-			if err != nil {
-				syslog.L.Errorf("[WSClient.Close] Client %s: Error closing connection - %v",
-					c.ClientID, err)
-				return err
-			}
-		case <-timeoutCtx.Done():
-			return fmt.Errorf("connection close timed out")
-		}
-
-		syslog.L.Infof("[WSClient.Close] Client %s: Connection closed successfully",
-			c.ClientID)
-	}
-	return nil
-}
-
-func (c *WSClient) handleConnectionLoss() {
-	c.reconnectMu.Lock()
-	defer c.reconnectMu.Unlock()
-
-	if c.reconnecting {
-		return
-	}
-	c.reconnecting = true
-	defer func() { c.reconnecting = false }()
-
-	syslog.L.Infof("[WSClient.ConnectionHandler] Client %s: Connection lost, initiating reconnection",
-		c.ClientID)
-
-	c.connMu.Lock()
-	c.IsConnected = false
-	c.connMu.Unlock()
-
-	for attempt := 0; attempt < maxRetryAttempts; attempt++ {
-		select {
-		case <-c.ctx.Done():
-			syslog.L.Infof("[WSClient.ConnectionHandler] Client %s: Shutdown requested, stopping reconnection",
-				c.ClientID)
-			return
-		case <-time.After(calculateBackoff(attempt)):
-			syslog.L.Infof("[WSClient.ConnectionHandler] Client %s: Reconnection attempt %d of %d",
-				c.ClientID, attempt+1, maxRetryAttempts)
-
-			if err := c.Connect(); err == nil {
-				syslog.L.Infof("[WSClient.ConnectionHandler] Client %s: Reconnection successful",
-					c.ClientID)
-				return
-			} else {
-				syslog.L.Errorf("[WSClient.ConnectionHandler] Client %s: Reconnection attempt %d failed - %v",
-					c.ClientID, attempt+1, err)
-			}
-		}
-	}
-
-	syslog.L.Errorf("[WSClient.ConnectionHandler] Client %s: Max reconnection attempts reached, giving up",
-		c.ClientID)
-}
-
-func (c *WSClient) Send(msg Message) error {
-	timeoutCtx, cancel := context.WithTimeout(c.ctx, operationTimeout)
-	defer cancel()
-
-	ticker := time.NewTicker(rateLimit)
-	defer ticker.Stop()
-
-	syslog.L.Infof("[WSClient.Send] Client %s: Queueing message type '%s'",
-		c.ClientID, msg.Type)
-
-	select {
-	case c.send <- msg:
-		syslog.L.Infof("[WSClient.Send] Client %s: Message type '%s' queued successfully",
-			c.ClientID, msg.Type)
-		return nil
-	case <-ticker.C:
-		err := fmt.Errorf("send rate limit exceeded")
-		syslog.L.Warnf("[WSClient.Send] Client %s: Rate limit exceeded for message type '%s'",
-			c.ClientID, msg.Type)
-		return err
-	case <-timeoutCtx.Done():
-		err := fmt.Errorf("send operation timed out")
-		syslog.L.Errorf("[WSClient.Send] Client %s: Failed to queue message type '%s' - %v",
-			c.ClientID, msg.Type, err)
-		return err
+	return &WSClient{
+		clientID:   config.ClientID,
+		serverURL:  config.ServerURL,
+		headers:    config.Headers,
+		tlsConfig:  tlsConfig,
+		maxRetries: config.MaxRetries,
+		ctx:        ctx,
+		cancel:     cancel,
+		sendChan:   make(chan Message, maxSendBuffer),
+		handlers:   make(map[string]MessageHandler),
+		workerPool: make(chan struct{}, handlerPoolSize),
+		backoff:    initialBackoff,
 	}
 }
 
 func (c *WSClient) Start() {
-	syslog.L.Infof("[WSClient.Start] Client %s: Starting client", c.ClientID)
-
-	if err := c.Connect(); err != nil {
-		syslog.L.Errorf("[WSClient.Start] Client %s: Initial connection failed - %v",
-			c.ClientID, err)
-		return
-	}
-
-	receiveCtx, receiveCancel := context.WithCancel(c.ctx)
-	sendCtx, sendCancel := context.WithCancel(c.ctx)
-
-	c.wg.Add(2)
-
-	go func() {
-		defer c.wg.Done()
-		defer receiveCancel()
-		c.receiveLoop(receiveCtx)
-	}()
-
-	go func() {
-		defer c.wg.Done()
-		defer sendCancel()
-		c.sendLoop(sendCtx)
-	}()
-
-	go c.superviseLoops(receiveCtx, receiveCancel, sendCtx, sendCancel)
-
-	syslog.L.Infof("[WSClient.Start] Client %s: Client started successfully", c.ClientID)
+	c.wg.Add(1)
+	go c.connectionManager()
 }
 
-func (c *WSClient) superviseLoops(receiveCtx context.Context, receiveCancel context.CancelFunc,
-	sendCtx context.Context, sendCancel context.CancelFunc) {
+func (c *WSClient) connectionManager() {
+	defer c.wg.Done()
 
 	for {
 		select {
 		case <-c.ctx.Done():
-			syslog.L.Infof("[WSClient.Supervisor] Client %s: Main context cancelled, shutting down",
-				c.ClientID)
-			c.connMu.Lock()
-			c.IsConnected = false
-			c.connMu.Unlock()
+			c.closeConnection()
 			return
-
-		case <-receiveCtx.Done():
-			if c.ctx.Err() != nil {
-				return
+		default:
+			if !c.tryConnect() {
+				time.Sleep(c.nextBackoff())
+				continue
 			}
-			time.Sleep(reconnectCooldown)
-			syslog.L.Infof("[WSClient.Supervisor] Client %s: Restarting receive loop", c.ClientID)
-			receiveCtx, receiveCancel = context.WithCancel(c.ctx)
-			c.wg.Add(1)
+
+			c.wg.Add(2)
+			connCtx, cancel := context.WithCancel(c.ctx)
+
+			var once sync.Once
+			closeHandler := func() {
+				once.Do(func() {
+					cancel()
+					c.closeConnection()
+					c.wg.Done()
+					c.wg.Done()
+				})
+			}
+
 			go func() {
-				defer c.wg.Done()
-				defer receiveCancel()
-				c.receiveLoop(receiveCtx)
+				defer closeHandler()
+				c.receiveLoop(connCtx)
 			}()
 
-		case <-sendCtx.Done():
-			if c.ctx.Err() != nil {
-				return
-			}
-			time.Sleep(reconnectCooldown)
-			syslog.L.Infof("[WSClient.Supervisor] Client %s: Restarting send loop", c.ClientID)
-			sendCtx, sendCancel = context.WithCancel(c.ctx)
-			c.wg.Add(1)
 			go func() {
-				defer c.wg.Done()
-				defer sendCancel()
-				c.sendLoop(sendCtx)
+				defer closeHandler()
+				c.sendLoop(connCtx)
 			}()
+
+			go c.monitorConnection(connCtx)
+			c.resetBackoff()
 		}
 	}
 }
 
+func (c *WSClient) tryConnect() bool {
+	c.statusMu.Lock()
+	c.status.Store(uint32(StateConnecting))
+	c.statusMu.Unlock()
+
+	defer func() {
+		c.statusMu.Lock()
+		c.status.Store(uint32(StateDisconnected))
+		c.statusMu.Unlock()
+	}()
+
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(c.ctx, operationTimeout)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, c.serverURL, &websocket.DialOptions{
+		Subprotocols: []string{"pbs"},
+		HTTPHeader:   c.headers,
+		HTTPClient: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: c.tlsConfig,
+				IdleConnTimeout: 90 * time.Second,
+			},
+		},
+	})
+
+	if err != nil {
+		syslog.L.Errorf("[WSClient.connect] Client %s: Connection failed - %v", c.clientID, err)
+		return false
+	}
+
+	conn.SetReadLimit(maxMessageSize)
+	c.conn = conn
+	c.statusMu.Lock()
+	c.status.Store(uint32(StateConnected))
+	c.statusMu.Unlock()
+	return true
+}
+
+func (c *WSClient) monitorConnection(ctx context.Context) {
+	ticker := time.NewTicker(healthCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if !c.ping() {
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (c *WSClient) ping() bool {
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
+
+	if c.conn == nil {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, messageTimeout)
+	defer cancel()
+
+	// Send ping and wait for pong
+	err := c.conn.Ping(ctx)
+	if err != nil {
+		syslog.L.Errorf("[WSClient.ping] Client %s: Ping failed - %v", c.clientID, err)
+		c.status.Store(uint32(StateDisconnected))
+		return false
+	}
+
+	// Update last pong time on successful ping
+	c.lastPong.Store(time.Now().Unix())
+	return true
+}
+
 func (c *WSClient) receiveLoop(ctx context.Context) {
-	syslog.L.Infof("[WSClient.ReceiveLoop] Client %s: Starting receive loop", c.ClientID)
+	syslog.L.Infof("[WSClient.receiveLoop] Client %s: Starting receiver", c.clientID)
+
+	defer func() {
+		if r := recover(); r != nil {
+			syslog.L.Errorf("[WSClient.receiveLoop] Client %s: Panic recovered - %v", c.clientID, r)
+		}
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
-			syslog.L.Infof("[WSClient.ReceiveLoop] Client %s: Receive loop context cancelled",
-				c.ClientID)
 			return
 		default:
-			var message Message
-			err := wsjson.Read(ctx, c.conn, &message)
+			var msg Message
+			err := c.readWithTimeout(ctx, &msg)
 			if err != nil {
-				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-					syslog.L.Errorf("[WSClient.ReceiveLoop] Client %s: Message read error - %v",
-						c.ClientID, err)
+				if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+					return
 				}
-				c.handleConnectionLoss()
+				syslog.L.Errorf("[WSClient.receiveLoop] Client %s: Read error - %v", c.clientID, err)
 				return
 			}
 
-			syslog.L.Infof("[WSClient.ReceiveLoop] Client %s: Received message type '%s'",
-				c.ClientID, message.Type)
-
-			c.handlerMu.RLock()
-			handler, exists := c.handlers[message.Type]
-			c.handlerMu.RUnlock()
-
-			if exists {
-				select {
-				case c.handlerWorkers <- struct{}{}:
-					go func() {
-						defer func() { <-c.handlerWorkers }()
-						handler(&message)
-					}()
-				default:
-					syslog.L.Warnf("[WSClient.ReceiveLoop] Client %s: Handler workers busy, dropping message type '%s'",
-						c.ClientID, message.Type)
-				}
-			} else {
-				syslog.L.Infof("[WSClient.ReceiveLoop] Client %s: No handler for message type '%s'",
-					c.ClientID, message.Type)
-			}
+			c.handleMessage(msg)
 		}
+	}
+}
+
+func (c *WSClient) readWithTimeout(ctx context.Context, msg *Message) error {
+	ctx, cancel := context.WithTimeout(ctx, healthCheckInterval)
+	defer cancel()
+	return wsjson.Read(ctx, c.conn, msg)
+}
+
+func (c *WSClient) handleMessage(msg Message) {
+	c.handlerMu.RLock()
+	handler, exists := c.handlers[msg.Type]
+	c.handlerMu.RUnlock()
+
+	if !exists {
+		syslog.L.Warnf("[WSClient.handleMessage] Client %s: No handler for type %s",
+			c.clientID, msg.Type)
+		return
+	}
+
+	select {
+	case c.workerPool <- struct{}{}:
+		go func() {
+			defer func() {
+				<-c.workerPool
+				if r := recover(); r != nil {
+					syslog.L.Errorf("[WSClient.handleMessage] Client %s: Handler panic - %v",
+						c.clientID, r)
+				}
+			}()
+			handler(&msg)
+		}()
+	default:
+		syslog.L.Warnf("[WSClient.handleMessage] Client %s: Worker pool full, message dropped",
+			c.clientID)
 	}
 }
 
 func (c *WSClient) sendLoop(ctx context.Context) {
-	syslog.L.Infof("[WSClient.SendLoop] Client %s: Starting send loop", c.ClientID)
+	syslog.L.Infof("[WSClient.sendLoop] Client %s: Starting sender", c.clientID)
+
+	defer func() {
+		if r := recover(); r != nil {
+			syslog.L.Errorf("[WSClient.sendLoop] Client %s: Panic recovered - %v", c.clientID, r)
+		}
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
-			syslog.L.Infof("[WSClient.SendLoop] Client %s: Send loop context cancelled",
-				c.ClientID)
+			c.drainSendQueue()
 			return
-
-		case msg := <-c.send:
-			syslog.L.Infof("[WSClient.SendLoop] Client %s: Processing message type '%s'",
-				c.ClientID, msg.Type)
-
-			messageCtx, cancel := context.WithTimeout(ctx, messageTimeout)
-			if err := c.writeMessage(messageCtx, msg); err != nil {
-				cancel()
-				syslog.L.Errorf("[WSClient.SendLoop] Client %s: Failed to send message type '%s' - %v",
-					c.ClientID, msg.Type, err)
-				c.handleConnectionLoss()
+		case msg := <-c.sendChan:
+			if err := c.sendWithRetry(msg); err != nil {
+				syslog.L.Errorf("[WSClient.sendLoop] Client %s: Permanent send failure - %v",
+					c.clientID, err)
 				return
 			}
-			cancel()
-
-			syslog.L.Infof("[WSClient.SendLoop] Client %s: Message type '%s' sent",
-				c.ClientID, msg.Type)
 		}
 	}
 }
 
-func (c *WSClient) writeMessage(ctx context.Context, msg Message) error {
-	return wsjson.Write(ctx, c.conn, &msg)
+func (c *WSClient) sendWithRetry(msg Message) error {
+	for attempt := 0; attempt < c.maxRetries; attempt++ {
+		err := c.writeMessage(msg)
+		if err == nil {
+			return nil
+		}
+
+		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+			return err
+		}
+
+		syslog.L.Warnf("[WSClient.sendWithRetry] Client %s: Send attempt %d failed - %v",
+			c.clientID, attempt+1, err)
+
+		time.Sleep(c.nextBackoff())
+	}
+	return fmt.Errorf("maximum send retries (%d) reached", c.maxRetries)
+}
+
+func (c *WSClient) writeMessage(msg Message) error {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+
+	if c.conn == nil {
+		return fmt.Errorf("no active connection")
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, messageTimeout)
+	defer cancel()
+
+	return wsjson.Write(ctx, c.conn, msg)
+}
+
+func (c *WSClient) drainSendQueue() {
+	close(c.sendChan)
+	for msg := range c.sendChan {
+		syslog.L.Warnf("[WSClient.drainSendQueue] Client %s: Discarding message %s",
+			c.clientID, msg.Type)
+	}
+}
+
+func (c *WSClient) nextBackoff() time.Duration {
+	c.backoff = min(maxBackoff, c.backoff*2)
+	jitter := time.Duration(rand.Int63n(int64(c.backoff / 2)))
+	return c.backoff + jitter
+}
+
+func (c *WSClient) resetBackoff() {
+	c.backoff = initialBackoff
+}
+
+func (c *WSClient) closeConnection() {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+
+	if c.conn != nil {
+		c.conn.Close(websocket.StatusNormalClosure, "normal closure")
+		c.conn = nil
+	}
+}
+
+func (c *WSClient) Send(msg Message) error {
+	if c.status.Load() != uint32(StateConnected) {
+		return fmt.Errorf("connection not ready")
+	}
+
+	select {
+	case c.sendChan <- msg:
+		return nil
+	case <-time.After(rateLimit):
+		return fmt.Errorf("send queue full")
+	case <-c.ctx.Done():
+		return fmt.Errorf("client shutdown")
+	}
 }
 
 func (c *WSClient) RegisterHandler(msgType string, handler MessageHandler) {
 	c.handlerMu.Lock()
+	defer c.handlerMu.Unlock()
 	c.handlers[msgType] = handler
-	c.handlerMu.Unlock()
-
-	syslog.L.Infof("[WSClient.RegisterHandler] Client %s: Handler registered for type '%s'",
-		c.ClientID, msgType)
 }
 
-func (c *WSClient) GetConnectionStatus() bool {
-	c.connMu.RLock()
-	defer c.connMu.RUnlock()
-	return c.IsConnected
+func (c *WSClient) Close() error {
+	c.cancel()
+	c.wg.Wait()
+	c.closeConnection()
+	return nil
+}
+
+func (c *WSClient) GetConnectionStatus() ConnectionState {
+	c.statusMu.RLock()
+	defer c.statusMu.RUnlock()
+
+	// Check if we've missed pong responses
+	if c.status.Load() == uint32(StateConnected) {
+		lastPongTime := time.Unix(c.lastPong.Load(), 0)
+		if time.Since(lastPongTime) > 2*healthCheckInterval {
+			return StateDisconnected
+		}
+	}
+
+	return ConnectionState(c.status.Load())
 }

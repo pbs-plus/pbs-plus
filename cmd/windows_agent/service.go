@@ -50,10 +50,24 @@ func (p *agentService) Start(s service.Service) error {
 	p.svc = s
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 
-	p.wg.Add(1)
+	p.wg.Add(2)
 	go func() {
 		defer p.wg.Done()
 		p.run()
+	}()
+	go func() {
+		defer p.wg.Done()
+		for {
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-time.After(time.Hour):
+				err := agent.CheckAndRenewCertificate()
+				if err != nil {
+					syslog.L.Errorf("Certificate renewal manager: %w", err)
+				}
+			}
+		}
 	}()
 
 	return nil
@@ -110,7 +124,7 @@ func (p *agentService) waitForServerURL() error {
 }
 
 func (p *agentService) waitForBootstrap() error {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -119,10 +133,16 @@ func (p *agentService) waitForBootstrap() error {
 		priv, _ := registry.GetEntry(registry.AUTH, "Priv", true)
 
 		if serverCA != nil && cert != nil && priv != nil {
-			return nil
+			err := agent.CheckAndRenewCertificate()
+			if err == nil {
+				return nil
+			}
+			syslog.L.Errorf("Renewal error: %v", err)
 		} else {
 			err := agent.Bootstrap()
-			syslog.L.Errorf("Bootstrap error: %v", err)
+			if err != nil {
+				syslog.L.Errorf("Bootstrap error: %v", err)
+			}
 		}
 
 		select {
@@ -201,27 +221,7 @@ func (p *agentService) connectWebSocket() error {
 			return err
 		}
 
-		client, err := websockets.NewWSClient(p.ctx, config, tlsConfig)
-		if err != nil {
-			syslog.L.Errorf("WS client init error: %s", err)
-			select {
-			case <-p.ctx.Done():
-				return fmt.Errorf("context cancelled while connecting to WebSocket")
-			case <-time.After(5 * time.Second):
-				continue
-			}
-		}
-
-		err = client.Connect()
-		if err != nil {
-			syslog.L.Errorf("WS client connect error: %s", err)
-			select {
-			case <-p.ctx.Done():
-				return fmt.Errorf("context cancelled while connecting to WebSocket")
-			case <-time.After(5 * time.Second):
-				continue
-			}
-		}
+		client := websockets.NewWSClient(p.ctx, config, tlsConfig)
 
 		client.RegisterHandler("backup_start", controllers.BackupStartHandler(client))
 		client.RegisterHandler("backup_close", controllers.BackupCloseHandler(client))

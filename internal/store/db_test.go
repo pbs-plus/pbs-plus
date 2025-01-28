@@ -21,6 +21,7 @@ import (
 )
 
 var (
+	testInitPath       string
 	testBasePath       string
 	testJobsPath       string
 	testTargetsPath    string
@@ -44,6 +45,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Override the constant paths for testing
+	testInitPath = filepath.Join(testBasePath, "init")
 	testJobsPath = filepath.Join(testBasePath, "jobs.d")
 	testTargetsPath = filepath.Join(testBasePath, "targets.d")
 	testExclusionsPath = filepath.Join(testBasePath, "exclusions.d")
@@ -62,6 +64,7 @@ func TestMain(m *testing.M) {
 func setupTestStore(t *testing.T) *Store {
 	// Create test directories
 	paths := map[string]string{
+		"init":       testInitPath,
 		"jobs":       testJobsPath,
 		"targets":    testTargetsPath,
 		"exclusions": testExclusionsPath,

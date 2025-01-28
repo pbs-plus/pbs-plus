@@ -41,9 +41,6 @@ func (database *Database) RegisterTargetPlugin() {
 }
 
 func (database *Database) CreateTarget(target types.Target) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	if target.Path == "" {
 		return fmt.Errorf("UpdateTarget: target path empty -> %s", target.Path)
 	}
@@ -78,9 +75,6 @@ func (database *Database) CreateTarget(target types.Target) error {
 }
 
 func (database *Database) GetTarget(name string) (*types.Target, error) {
-	database.mu.RLock()
-	defer database.mu.RUnlock()
-
 	plugin := database.config.GetPlugin("target")
 	targetPath := filepath.Join(plugin.FolderPath, utils.EncodePath(name)+".cfg")
 	configData, err := database.config.Parse(targetPath)
@@ -114,9 +108,6 @@ func (database *Database) GetTarget(name string) (*types.Target, error) {
 }
 
 func (database *Database) UpdateTarget(target types.Target) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	if target.Path == "" {
 		return fmt.Errorf("UpdateTarget: target path empty -> %s", target.Path)
 	}
@@ -148,9 +139,6 @@ func (database *Database) UpdateTarget(target types.Target) error {
 }
 
 func (database *Database) DeleteTarget(name string) error {
-	database.mu.Lock()
-	defer database.mu.Unlock()
-
 	plugin := database.config.GetPlugin("target")
 	targetPath := filepath.Join(plugin.FolderPath, utils.EncodePath(name)+".cfg")
 	if err := os.Remove(targetPath); err != nil {
