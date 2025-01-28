@@ -35,6 +35,13 @@ Ext.define("PBS.form.D2DTargetSelector", {
         flex: 3,
         renderer: Ext.String.htmlEncode,
       },
+      {
+        text: "Type",
+        dataIndex: "drive_type",
+        sortable: true,
+        flex: 3,
+        renderer: Ext.String.htmlEncode,
+      },
     ],
   },
 

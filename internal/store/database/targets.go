@@ -34,6 +34,11 @@ func (database *Database) RegisterTargetPlugin() {
 				Description: "Token used (only applicable to agents)",
 				Required:    false,
 			},
+			"drive_type": {
+				Type:        configLib.TypeString,
+				Description: "Drive type (only applicable to agents)",
+				Required:    false,
+			},
 		},
 	}
 
@@ -58,6 +63,7 @@ func (database *Database) CreateTarget(target types.Target) error {
 					"path":       target.Path,
 					"auth":       target.Auth,
 					"token_used": target.TokenUsed,
+					"drive_type": target.DriveType,
 				},
 			},
 		},
@@ -95,6 +101,7 @@ func (database *Database) GetTarget(name string) (*types.Target, error) {
 		Path:      section.Properties["path"],
 		Auth:      section.Properties["auth"],
 		TokenUsed: section.Properties["token_used"],
+		DriveType: section.Properties["drive_type"],
 	}
 
 	if strings.HasPrefix(target.Path, "agent://") {
@@ -125,6 +132,7 @@ func (database *Database) UpdateTarget(target types.Target) error {
 					"path":       target.Path,
 					"auth":       target.Auth,
 					"token_used": target.TokenUsed,
+					"drive_type": target.DriveType,
 				},
 			},
 		},

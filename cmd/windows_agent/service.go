@@ -35,8 +35,8 @@ type PingResp struct {
 }
 
 type AgentDrivesRequest struct {
-	Hostname     string   `json:"hostname"`
-	DriveLetters []string `json:"drive_letters"`
+	Hostname string            `json:"hostname"`
+	Drives   []utils.DriveInfo `json:"drives"`
 }
 
 type agentService struct {
@@ -160,9 +160,14 @@ func (p *agentService) initializeDrives() error {
 		return fmt.Errorf("failed to get hostname: %w", err)
 	}
 
+	drives, err := utils.GetLocalDrives()
+	if err != nil {
+		return fmt.Errorf("failed to get local drives list: %w", err)
+	}
+
 	reqBody, err := json.Marshal(&AgentDrivesRequest{
-		Hostname:     hostname,
-		DriveLetters: utils.GetLocalDrives(),
+		Hostname: hostname,
+		Drives:   drives,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal drive request: %w", err)
@@ -209,7 +214,7 @@ func (p *agentService) writeVersionToFile() error {
 
 func (p *agentService) connectWebSocket() error {
 	for {
-		config, err := websockets.GetWindowsConfig()
+		config, err := websockets.GetWindowsConfig(Version)
 		if err != nil {
 			syslog.L.Errorf("WS client windows config error: %s", err)
 			return err

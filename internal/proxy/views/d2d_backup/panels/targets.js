@@ -111,23 +111,28 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     {
       text: gettext("Name"),
       dataIndex: "name",
-      flex: 2,
+      flex: 1,
     },
     {
       text: gettext("Path"),
       dataIndex: "path",
-      flex: 3,
+      flex: 2,
+    },
+    {
+      text: gettext("Drive Type"),
+      dataIndex: "drive_type",
+      flex: 1,
     },
     {
       header: gettext("Status"),
       dataIndex: "connection_status",
       renderer: "render_status",
-      flex: 2,
+      flex: 1,
     },
     {
       text: gettext("Agent Version"),
       dataIndex: "agent_version",
-      flex: 2,
+      flex: 1,
     },
   ],
 });
