@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -24,7 +25,6 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
-	"k8s.io/apimachinery/pkg/util/rand"
 )
 
 type PingData struct {
