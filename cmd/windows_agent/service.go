@@ -221,7 +221,27 @@ func (p *agentService) connectWebSocket() error {
 			return err
 		}
 
-		client := websockets.NewWSClient(p.ctx, config, tlsConfig)
+		client, err := websockets.NewWSClient(p.ctx, config, tlsConfig)
+		if err != nil {
+			syslog.L.Errorf("WS client init error: %s", err)
+			select {
+			case <-p.ctx.Done():
+				return fmt.Errorf("context cancelled while connecting to WebSocket")
+			case <-time.After(5 * time.Second):
+				continue
+			}
+		}
+
+		err = client.Connect()
+		if err != nil {
+			syslog.L.Errorf("WS client connect error: %s", err)
+			select {
+			case <-p.ctx.Done():
+				return fmt.Errorf("context cancelled while connecting to WebSocket")
+			case <-time.After(5 * time.Second):
+				continue
+			}
+		}
 
 		client.RegisterHandler("backup_start", controllers.BackupStartHandler(client))
 		client.RegisterHandler("backup_close", controllers.BackupCloseHandler(client))
