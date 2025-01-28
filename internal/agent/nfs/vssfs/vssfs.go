@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/osfs"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -77,7 +78,30 @@ func (fs *VSSFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.Fi
 		return nil, fmt.Errorf("filesystem is read-only")
 	}
 
-	return fs.Filesystem.OpenFile(filename, flag, perm)
+	path, err := fs.abs(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	pathp, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+
+	handle, err := windows.CreateFile(
+		pathp,
+		windows.GENERIC_READ,
+		windows.FILE_SHARE_READ,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &vssfile{File: os.NewFile(uintptr(handle), path)}, nil
 }
 
 func (fs *VSSFS) Rename(oldpath, newpath string) error {
@@ -122,7 +146,10 @@ func (fs *VSSFS) Lstat(filename string) (os.FileInfo, error) {
 
 func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 	windowsPath := filepath.FromSlash(filename)
-	fullPath := filepath.Join(fs.root, windowsPath)
+	fullPath, err := fs.abs(filename)
+	if err != nil {
+		return nil, err
+	}
 
 	if filename == "." || filename == "" {
 		fullPath = fs.root
@@ -167,7 +194,11 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 
 func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	windowsDir := filepath.FromSlash(dirname)
-	fullDirPath := filepath.Join(fs.root, windowsDir)
+	fullDirPath, err := fs.abs(windowsDir)
+	if err != nil {
+		return nil, err
+	}
+
 	if dirname == "." || dirname == "" {
 		windowsDir = "."
 		fullDirPath = fs.root
@@ -217,4 +248,17 @@ func mapWinError(err error, path string) error {
 			Err:  err,
 		}
 	}
+}
+
+func (fs *VSSFS) abs(filename string) (string, error) {
+	if filename == fs.root {
+		filename = string(filepath.Separator)
+	}
+
+	path, err := securejoin.SecureJoin(fs.root, filename)
+	if err != nil {
+		return "", nil
+	}
+
+	return path, nil
 }
