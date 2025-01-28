@@ -31,7 +31,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		for i, target := range all {
 			if target.IsAgent {
 				all[i].ConnectionStatus = storeInstance.WSHub.AgentPing(&target)
-				all[i].AgentVersion = storeInstance.WSHub.GetClientVersion(target.Name)
+				all[i].AgentVersion = storeInstance.WSHub.AgentVersion(&target)
 			}
 		}
 
@@ -215,7 +215,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			if target.IsAgent {
 				target.ConnectionStatus = storeInstance.WSHub.AgentPing(target)
-				target.AgentVersion = storeInstance.WSHub.GetClientVersion(target.Name)
+				target.AgentVersion = storeInstance.WSHub.AgentVersion(target)
 			}
 
 			response.Status = http.StatusOK
