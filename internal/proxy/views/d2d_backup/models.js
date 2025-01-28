@@ -23,7 +23,7 @@ Ext.define("pbs-disk-backup-job-status", {
 
 Ext.define("pbs-model-targets", {
   extend: "Ext.data.Model",
-  fields: ["name", "path", "agent_version", "connection_status"],
+  fields: ["name", "path", "drive_type", "agent_version", "connection_status"],
   idProperty: "name",
 });
 

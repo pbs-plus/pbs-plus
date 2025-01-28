@@ -9,10 +9,9 @@ import (
 	"os"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 )
 
-func GetWindowsConfig() (Config, error) {
+func GetWindowsConfig(version string) (Config, error) {
 	serverURL, err := getServerURLFromRegistry()
 	if err != nil {
 		return Config{}, fmt.Errorf("failed to get server URL: %v", err)
@@ -23,7 +22,7 @@ func GetWindowsConfig() (Config, error) {
 		return Config{}, fmt.Errorf("failed to get hostname: %v", err)
 	}
 
-	headers, err := buildHeaders(clientID)
+	headers, err := buildHeaders(clientID, version)
 	if err != nil {
 		return Config{}, fmt.Errorf("failed to build headers: %v", err)
 	}
@@ -74,10 +73,10 @@ func getServerURLFromRegistry() (string, error) {
 	return parsedURL.String(), nil
 }
 
-func buildHeaders(clientID string) (http.Header, error) {
+func buildHeaders(clientID string, version string) (http.Header, error) {
 	headers := http.Header{}
 	headers.Add("X-PBS-Agent", clientID)
-	headers.Add("X-PBS-Plus-Version", constants.Version)
+	headers.Add("X-PBS-Plus-Version", version)
 
 	return headers, nil
 }

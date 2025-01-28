@@ -4,17 +4,12 @@ package main
 
 import (
 	"fmt"
-	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"runtime/debug"
 	"time"
 
-	_ "net/http/pprof"
-
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows/registry"
 )
@@ -91,11 +86,6 @@ func (w *watchdogService) Stop(s service.Service) error {
 }
 
 func main() {
-	constants.Version = Version
-
-	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
-	}()
 	svcConfig := &service.Config{
 		Name:        "PBSPlusAgent",
 		DisplayName: "PBS Plus Agent",

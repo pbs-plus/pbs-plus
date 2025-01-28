@@ -20,9 +20,9 @@ import (
 )
 
 type BootstrapRequest struct {
-	Hostname string   `json:"hostname"`
-	CSR      string   `json:"csr"`
-	Drives   []string `json:"drives"`
+	Hostname string            `json:"hostname"`
+	CSR      string            `json:"csr"`
+	Drives   []utils.DriveInfo `json:"drives"`
 }
 
 type BootstrapResponse struct {
@@ -50,9 +50,14 @@ func Bootstrap() error {
 
 	encodedCSR := base64.StdEncoding.EncodeToString(csr)
 
+	drives, err := utils.GetLocalDrives()
+	if err != nil {
+		return fmt.Errorf("Bootstrap: failed to get local drives list: %w", err)
+	}
+
 	reqBody, err := json.Marshal(&BootstrapRequest{
 		Hostname: hostname,
-		Drives:   utils.GetLocalDrives(),
+		Drives:   drives,
 		CSR:      encodedCSR,
 	})
 	if err != nil {

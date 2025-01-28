@@ -8,4 +8,5 @@ type Target struct {
 	ConnectionStatus bool   `json:"connection_status"`
 	Auth             string `json:"auth"`
 	TokenUsed        string `json:"token_used"`
+	DriveType        string `json:"drive_type"`
 }

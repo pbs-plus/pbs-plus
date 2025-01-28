@@ -13,6 +13,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 type LogRequest struct {
@@ -57,9 +58,9 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 }
 
 type BootstrapRequest struct {
-	Hostname string   `json:"hostname"`
-	CSR      string   `json:"csr"`
-	Drives   []string `json:"drives"`
+	Hostname string            `json:"hostname"`
+	CSR      string            `json:"csr"`
+	Drives   []utils.DriveInfo `json:"drives"`
 }
 
 func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -126,10 +127,11 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, drive := range reqParsed.Drives {
 			newTarget := types.Target{
-				Name:      fmt.Sprintf("%s - %s", reqParsed.Hostname, drive),
-				Path:      fmt.Sprintf("agent://%s/%s", clientIP, drive),
+				Name:      fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter),
+				Path:      fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter),
 				Auth:      encodedCert,
 				TokenUsed: tokenStr,
+				DriveType: drive.Type,
 			}
 
 			err := storeInstance.Database.CreateTarget(newTarget)
@@ -199,10 +201,11 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, drive := range reqParsed.Drives {
 			newTarget := types.Target{
-				Name:      fmt.Sprintf("%s - %s", reqParsed.Hostname, drive),
-				Path:      fmt.Sprintf("agent://%s/%s", clientIP, drive),
+				Name:      fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter),
+				Path:      fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter),
 				Auth:      encodedCert,
 				TokenUsed: existingTarget.TokenUsed,
+				DriveType: drive.Type,
 			}
 
 			err := storeInstance.Database.CreateTarget(newTarget)
