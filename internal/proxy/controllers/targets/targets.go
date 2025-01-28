@@ -100,7 +100,9 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		var existingTargets []types.Target
 		for _, oldTarget := range existingOldTargets {
 			if oldTarget.DriveType == "" {
-				_ = storeInstance.Database.DeleteTarget(oldTarget.Name)
+				if !strings.HasSuffix(oldTarget.Name, "- C") {
+					_ = storeInstance.Database.DeleteTarget(oldTarget.Name)
+				}
 			} else {
 				existingTargets = append(existingTargets, oldTarget)
 			}
