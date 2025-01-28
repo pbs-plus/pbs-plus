@@ -6,14 +6,22 @@ import (
 	"unicode"
 )
 
+const safeDir = "/home/user/"
+
 func IsValid(path string) bool {
-	// Check if path is not empty and is an absolute path
+	// Check if path is not empty
 	if path == "" {
 		return false
 	}
 
+	// Resolve the input path with respect to the safe directory
+	absPath, err := filepath.Abs(filepath.Join(safeDir, path))
+	if err != nil || !strings.HasPrefix(absPath, safeDir) {
+		return false
+	}
+
 	// Check if the path exists
-	_, err := os.Stat(path)
+	_, err = os.Stat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false
