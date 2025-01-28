@@ -163,6 +163,10 @@ func GetNextSchedule(job *types.Job) (*time.Time, error) {
 }
 
 func SetSchedule(job types.Job) error {
+	if strings.Contains(job.ID, "/") || strings.Contains(job.ID, "\\") || strings.Contains(job.ID, "..") {
+		return fmt.Errorf("SetSchedule: invalid job ID -> %s", job.ID)
+	}
+
 	svcPath := fmt.Sprintf("pbs-plus-job-%s.service", strings.ReplaceAll(job.ID, " ", "-"))
 	fullSvcPath := filepath.Join(constants.TimerBasePath, svcPath)
 
