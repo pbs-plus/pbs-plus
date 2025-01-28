@@ -285,12 +285,13 @@ func (c *WSClient) handleMessage(msg Message) {
 
 func (c *WSClient) sendLoop(ctx context.Context) {
 	syslog.L.Infof("[WSClient.sendLoop] Client %s: Starting sender", c.clientID)
-
 	defer func() {
 		if r := recover(); r != nil {
 			syslog.L.Errorf("[WSClient.sendLoop] Client %s: Panic recovered - %v", c.clientID, r)
 		}
 	}()
+
+	var backoff time.Duration
 
 	for {
 		select {
@@ -298,32 +299,35 @@ func (c *WSClient) sendLoop(ctx context.Context) {
 			c.drainSendQueue()
 			return
 		case msg := <-c.sendChan:
-			if err := c.sendWithRetry(msg); err != nil {
-				syslog.L.Errorf("[WSClient.sendLoop] Client %s: Permanent send failure - %v",
-					c.clientID, err)
-				return
+			// Attempt to send the message once
+			err := c.writeMessage(msg)
+			if err != nil {
+				syslog.L.Warnf("[WSClient.sendLoop] Client %s: Send failed - %v (backoff %v)", c.clientID, err, backoff)
+				// Calculate next backoff with jitter
+				backoff = min(maxBackoff, backoff*2+time.Duration(rand.Int63n(int64(initialBackoff))))
+				if backoff == 0 {
+					backoff = initialBackoff
+				}
+				// Requeue the message at the front to retry
+				select {
+				case c.sendChan <- msg: // Requeue the message
+				default: // If the buffer is full, discard the oldest message
+					<-c.sendChan
+					c.sendChan <- msg
+				}
+				// Wait for backoff before next attempt
+				select {
+				case <-time.After(backoff):
+				case <-ctx.Done():
+					c.drainSendQueue()
+					return
+				}
+			} else {
+				// Reset backoff on success
+				backoff = 0
 			}
 		}
 	}
-}
-
-func (c *WSClient) sendWithRetry(msg Message) error {
-	for attempt := 0; attempt < c.maxRetries; attempt++ {
-		err := c.writeMessage(msg)
-		if err == nil {
-			return nil
-		}
-
-		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
-			return err
-		}
-
-		syslog.L.Warnf("[WSClient.sendWithRetry] Client %s: Send attempt %d failed - %v",
-			c.clientID, attempt+1, err)
-
-		time.Sleep(c.nextBackoff())
-	}
-	return fmt.Errorf("maximum send retries (%d) reached", c.maxRetries)
 }
 
 func (c *WSClient) writeMessage(msg Message) error {
@@ -341,10 +345,13 @@ func (c *WSClient) writeMessage(msg Message) error {
 }
 
 func (c *WSClient) drainSendQueue() {
-	close(c.sendChan)
-	for msg := range c.sendChan {
-		syslog.L.Warnf("[WSClient.drainSendQueue] Client %s: Discarding message %s",
-			c.clientID, msg.Type)
+	for {
+		select {
+		case msg := <-c.sendChan:
+			syslog.L.Warnf("[WSClient.drainSendQueue] Client %s: Discarding message %s", c.clientID, msg.Type)
+		default:
+			return
+		}
 	}
 }
 
