@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -64,7 +65,7 @@ func (p *agentService) Start(s service.Service) error {
 			case <-time.After(time.Hour):
 				err := agent.CheckAndRenewCertificate()
 				if err != nil {
-					syslog.L.Errorf("Certificate renewal manager: %w", err)
+					syslog.L.Errorf("Certificate renewal manager: %v", err)
 				}
 			}
 		}
@@ -100,6 +101,18 @@ func (p *agentService) run() {
 		syslog.L.Errorf("WebSocket connection failed: %v", err)
 		return
 	}
+
+	go func() {
+		for {
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-time.After(time.Duration(rand.Intn(60*60+1)+4*60*60) * time.Second):
+				// executes every 4-5 hours
+				_ = p.initializeDrives()
+			}
+		}
+	}()
 
 	<-p.ctx.Done()
 }
