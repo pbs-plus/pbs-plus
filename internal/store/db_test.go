@@ -231,7 +231,7 @@ func TestJobValidation(t *testing.T) {
 				ID: "test-empty",
 			},
 			wantErr: true,
-			errMsg:  "missing",
+			errMsg:  "is empty",
 		},
 		{
 			name: "very long fields",

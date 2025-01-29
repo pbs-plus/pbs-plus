@@ -257,12 +257,18 @@ func unmarshalValue(str string, fieldType reflect.Type, tag ConfigTag) (reflect.
 	case TypeString:
 		return reflect.ValueOf(str), nil
 	case TypeInt:
+		if str == "" {
+			str = "-1"
+		}
 		val, err := strconv.ParseInt(str, 10, 64)
 		if err != nil {
 			return reflect.Value{}, fmt.Errorf("invalid integer: %w", err)
 		}
 		return reflect.ValueOf(val).Convert(fieldType), nil
 	case TypeBool:
+		if str == "" {
+			str = "false"
+		}
 		val, err := strconv.ParseBool(str)
 		if err != nil {
 			return reflect.Value{}, fmt.Errorf("invalid boolean: %w", err)
