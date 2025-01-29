@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/server"
@@ -187,6 +188,28 @@ func main() {
 	if err != nil {
 		return
 	}
+
+	caRenewalCtx, cancelRenewal := context.WithCancel(context.Background())
+	defer cancelRenewal()
+	go func() {
+		for {
+			select {
+			case <-caRenewalCtx.Done():
+				return
+			case <-time.After(time.Hour):
+				if err := generator.ValidateExistingCerts(); err != nil {
+					if err := generator.GenerateCA(); err != nil {
+						syslog.L.Errorf("Generating certificates failed: %v", err)
+					}
+
+					if err := generator.GenerateCert("server"); err != nil {
+						syslog.L.Errorf("Generating certificates failed: %v", err)
+					}
+				}
+
+			}
+		}
+	}()
 
 	// Initialize router with Go 1.22's new pattern syntax
 	mux := http.NewServeMux()
