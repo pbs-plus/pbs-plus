@@ -104,11 +104,19 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			driveLetters[i] = parsedDrive.Letter
 
 			_ = storeInstance.Database.CreateTarget(types.Target{
-				Name:      hostname + " - " + parsedDrive.Letter,
-				Path:      "agent://" + clientIP + "/" + parsedDrive.Letter,
-				Auth:      targetTemplate.Auth,
-				TokenUsed: targetTemplate.TokenUsed,
-				DriveType: parsedDrive.Type,
+				Name:            hostname + " - " + parsedDrive.Letter,
+				Path:            "agent://" + clientIP + "/" + parsedDrive.Letter,
+				Auth:            targetTemplate.Auth,
+				TokenUsed:       targetTemplate.TokenUsed,
+				DriveType:       parsedDrive.Type,
+				DriveName:       parsedDrive.VolumeName,
+				DriveFS:         parsedDrive.FileSystem,
+				DriveFreeBytes:  int(parsedDrive.FreeBytes),
+				DriveUsedBytes:  int(parsedDrive.UsedBytes),
+				DriveTotalBytes: int(parsedDrive.TotalBytes),
+				DriveFree:       parsedDrive.Free,
+				DriveUsed:       parsedDrive.Used,
+				DriveTotal:      parsedDrive.Total,
 			})
 		}
 
