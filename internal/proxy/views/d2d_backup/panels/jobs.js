@@ -205,7 +205,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       header: gettext("Status"),
       dataIndex: "last-run-state",
       renderer: PBS.Utils.render_task_status,
-      flex: 3,
+      flex: 1,
     },
     {
       header: gettext("Next Run"),
