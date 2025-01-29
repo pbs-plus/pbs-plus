@@ -304,7 +304,7 @@ func (sc *SectionConfig[T]) marshal(data T) (map[string]string, error) {
 		value := val.Field(i)
 
 		tag := field.Tag.Get("config")
-		if tag == "-" {
+		if tag == "-" || tag == "" {
 			continue
 		}
 
@@ -338,7 +338,7 @@ func (sc *SectionConfig[T]) unmarshal(data map[string]string) (T, error) {
 		field := typ.Field(i)
 
 		tag := field.Tag.Get("config")
-		if tag == "-" {
+		if tag == "-" || tag == "" {
 			continue
 		}
 
@@ -384,7 +384,7 @@ func (sc *SectionConfig[T]) validateSection(section *Section[T]) error {
 		value := val.Field(i)
 
 		tag := field.Tag.Get("config")
-		if tag == "-" {
+		if tag == "-" || tag == "" {
 			continue
 		}
 
