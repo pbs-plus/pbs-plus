@@ -25,7 +25,7 @@ type ArrayTestConfig struct {
 }
 
 type ValidationTestConfig struct {
-	Email string `config:"type=string,required,desc=Email address,pattern=^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"`
+	Email string `config:"type=string,required,desc=Email address,pattern=^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"`
 }
 
 type CompatTestConfig struct {

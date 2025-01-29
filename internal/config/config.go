@@ -318,7 +318,8 @@ func (sc *SectionConfig[T]) marshal(data T) (map[string]string, error) {
 			return nil, fmt.Errorf("error marshaling field %s: %w", field.Name, err)
 		}
 
-		result[field.Name] = str
+		key := strings.ToLower(field.Name)
+		result[key] = str
 	}
 
 	return result, nil
@@ -346,7 +347,8 @@ func (sc *SectionConfig[T]) unmarshal(data map[string]string) (T, error) {
 			return result, fmt.Errorf("invalid config tags for field %s: %w", field.Name, err)
 		}
 
-		str, ok := data[field.Name]
+		key := strings.ToLower(field.Name)
+		str, ok := data[key]
 		if !ok {
 			if configTag.Required {
 				return result, fmt.Errorf("required field %s is missing", field.Name)

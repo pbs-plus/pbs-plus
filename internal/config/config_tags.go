@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -119,21 +120,19 @@ func validateFieldWithTags(value interface{}, tags ConfigTag) error {
 		}
 
 	case TypeArray:
-		arr, ok := value.([]interface{})
-		if !ok {
+		val := reflect.ValueOf(value)
+		if val.Kind() != reflect.Slice {
 			return fmt.Errorf("expected array value")
 		}
-
-		if tags.Required && len(arr) == 0 {
+		length := val.Len()
+		if tags.Required && length == 0 {
 			return fmt.Errorf("required array is empty")
 		}
-
-		if tags.MinLength != nil && len(arr) < *tags.MinLength {
-			return fmt.Errorf("array length %d is less than minimum %d", len(arr), *tags.MinLength)
+		if tags.MinLength != nil && length < *tags.MinLength {
+			return fmt.Errorf("array length %d is less than minimum %d", length, *tags.MinLength)
 		}
-
-		if tags.MaxLength != nil && len(arr) > *tags.MaxLength {
-			return fmt.Errorf("array length %d is greater than maximum %d", len(arr), *tags.MaxLength)
+		if tags.MaxLength != nil && length > *tags.MaxLength {
+			return fmt.Errorf("array length %d is greater than maximum %d", length, *tags.MaxLength)
 		}
 	}
 
