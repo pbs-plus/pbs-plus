@@ -350,10 +350,7 @@ func (sc *SectionConfig[T]) unmarshal(data map[string]string) (T, error) {
 		key := strings.ToLower(field.Name)
 		str, ok := data[key]
 		if !ok {
-			if configTag.Required {
-				return result, fmt.Errorf("required field %s is missing", field.Name)
-			}
-			continue
+			return result, fmt.Errorf("required field %s is missing", field.Name)
 		}
 
 		val, err := unmarshalValue(str, field.Type, configTag)

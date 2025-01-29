@@ -70,7 +70,7 @@ func validateFieldWithTags(value interface{}, tags ConfigTag) error {
 	switch tags.Type {
 	case TypeString:
 		str, ok := value.(string)
-		if !ok {
+		if !ok && tags.Required {
 			return fmt.Errorf("expected string value")
 		}
 
@@ -87,18 +87,14 @@ func validateFieldWithTags(value interface{}, tags ConfigTag) error {
 		}
 
 	case TypeInt:
-		num, ok := value.(int)
-		if !ok {
+		_, ok := value.(int)
+		if !ok && tags.Required {
 			return fmt.Errorf("expected integer value")
-		}
-
-		if tags.Required && num == 0 {
-			return fmt.Errorf("required field is zero")
 		}
 
 	case TypeBool:
 		_, ok := value.(bool)
-		if !ok {
+		if !ok && tags.Required {
 			return fmt.Errorf("expected boolean value")
 		}
 
