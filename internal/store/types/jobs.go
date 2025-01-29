@@ -10,7 +10,7 @@ type Job struct {
 	NotificationMode string      `config:"type=string" json:"notification-mode"`
 	Namespace        string      `config:"type=string" json:"ns"`
 	NextRun          *int64      `json:"next-run"`
-	LastRunUpid      *string     `config:"type=string" json:"last-run-upid"`
+	LastRunUpid      string      `config:"type=string" json:"last-run-upid"`
 	LastRunState     *string     `json:"last-run-state"`
 	LastRunEndtime   *int64      `json:"last-run-endtime"`
 	Duration         *int64      `json:"duration"`

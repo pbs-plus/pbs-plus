@@ -44,11 +44,6 @@ func (database *Database) CreateJob(job types.Job) error {
 		return fmt.Errorf("CreateJob: invalid id string -> %s", job.ID)
 	}
 
-	lastRunUpid := ""
-	if job.LastRunUpid != nil {
-		lastRunUpid = *job.LastRunUpid
-	}
-
 	// Convert job to config format
 	configData := &configLib.ConfigData[types.Job]{
 		Sections: map[string]*configLib.Section[types.Job]{
@@ -63,7 +58,7 @@ func (database *Database) CreateJob(job types.Job) error {
 					Comment:          job.Comment,
 					NotificationMode: job.NotificationMode,
 					Namespace:        job.Namespace,
-					LastRunUpid:      &lastRunUpid,
+					LastRunUpid:      job.LastRunUpid,
 				},
 			},
 		},
@@ -128,8 +123,8 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 	}
 
 	// Update dynamic fields
-	if job.LastRunUpid != nil && *job.LastRunUpid != "" {
-		task, err := proxmox.Session.GetTaskByUPID(*job.LastRunUpid)
+	if job.LastRunUpid != "" {
+		task, err := proxmox.Session.GetTaskByUPID(job.LastRunUpid)
 		if err != nil {
 			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
 		} else {
@@ -159,13 +154,6 @@ func (database *Database) UpdateJob(job types.Job) error {
 	if !utils.IsValidID(job.ID) && job.ID != "" {
 		return fmt.Errorf("UpdateJob: invalid id string -> %s", job.ID)
 	}
-
-	lastRunUpid := ""
-	if job.LastRunUpid != nil {
-		lastRunUpid = *job.LastRunUpid
-	}
-
-	job.LastRunUpid = &lastRunUpid
 
 	// Convert job to config format
 	configData := &configLib.ConfigData[types.Job]{
