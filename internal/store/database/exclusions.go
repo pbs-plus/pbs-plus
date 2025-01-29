@@ -139,6 +139,9 @@ func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
 	// Check job-specific exclusions
 	files, err := os.ReadDir(database.paths["exclusions"])
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("GetExclusion: error reading directory: %w", err)
 	}
 

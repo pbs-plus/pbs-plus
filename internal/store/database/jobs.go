@@ -90,6 +90,9 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
 	configData, err := database.jobsConfig.Parse(jobPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("GetJob: error reading config: %w", err)
 	}
 
