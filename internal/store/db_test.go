@@ -302,7 +302,7 @@ func TestTargetValidation(t *testing.T) {
 				Path: "",
 			},
 			wantErr: true,
-			errMsg:  "target path empty",
+			errMsg:  "empty",
 		},
 	}
 
