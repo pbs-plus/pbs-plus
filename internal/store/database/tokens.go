@@ -63,15 +63,12 @@ func (database *Database) GetToken(token string) (*types.AgentToken, error) {
 	configPath := filepath.Join(database.paths["tokens"], utils.EncodePath(token)+".cfg")
 	configData, err := database.tokensConfig.Parse(configPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("GetToken: error reading config: %w", err)
 	}
 
 	section, exists := configData.Sections[token]
 	if !exists {
-		return nil, nil
+		return nil, fmt.Errorf("GetToken: section %s does not exist", token)
 	}
 
 	tokenProp := &section.Properties

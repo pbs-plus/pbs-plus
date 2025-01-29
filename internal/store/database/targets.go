@@ -58,15 +58,12 @@ func (database *Database) GetTarget(name string) (*types.Target, error) {
 	targetPath := filepath.Join(database.paths["targets"], utils.EncodePath(name)+".cfg")
 	configData, err := database.targetsConfig.Parse(targetPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("GetTarget: error reading config: %w", err)
 	}
 
 	section, exists := configData.Sections[name]
 	if !exists {
-		return nil, nil
+		return nil, fmt.Errorf("GetTarget: section %s does not exist", name)
 	}
 
 	target := &section.Properties
