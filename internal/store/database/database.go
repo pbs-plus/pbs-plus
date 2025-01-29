@@ -22,9 +22,12 @@ var defaultPaths = map[string]string{
 }
 
 type Database struct {
-	config       *configLib.SectionConfig
-	TokenManager *token.Manager
-	paths        map[string]string
+	jobsConfig       *configLib.SectionConfig[types.Job]
+	targetsConfig    *configLib.SectionConfig[types.Target]
+	exclusionsConfig *configLib.SectionConfig[types.Exclusion]
+	tokensConfig     *configLib.SectionConfig[types.AgentToken]
+	TokenManager     *token.Manager
+	paths            map[string]string
 }
 
 func Initialize(paths map[string]string) (*Database, error) {
@@ -59,22 +62,8 @@ func Initialize(paths map[string]string) (*Database, error) {
 		}
 	}
 
-	minLength := 3
-	idSchema := &configLib.Schema{
-		Type:        configLib.TypeString,
-		Description: "Section identifier",
-		Required:    true,
-		MinLength:   &minLength,
-	}
-
-	config := configLib.NewSectionConfig(idSchema)
-	if config == nil {
-		return nil, fmt.Errorf("Initialize: failed to create section config")
-	}
-
 	database := &Database{
-		config: config,
-		paths:  paths,
+		paths: paths,
 	}
 
 	database.RegisterExclusionPlugin()

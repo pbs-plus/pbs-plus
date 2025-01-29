@@ -73,7 +73,7 @@ func main() {
 			return
 		}
 
-		if jobTask.LastRunState == nil && jobTask.LastRunUpid != nil {
+		if jobTask.LastRunState == nil && jobTask.LastRunUpid != "" {
 			syslog.L.Info("A job is still running, skipping this schedule.")
 			return
 		}

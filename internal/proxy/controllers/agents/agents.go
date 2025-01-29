@@ -127,11 +127,18 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, drive := range reqParsed.Drives {
 			newTarget := types.Target{
-				Name:      fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter),
-				Path:      fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter),
-				Auth:      encodedCert,
-				TokenUsed: tokenStr,
-				DriveType: drive.Type,
+				Name:            fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter),
+				Path:            fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter),
+				Auth:            encodedCert,
+				TokenUsed:       tokenStr,
+				DriveType:       drive.Type,
+				DriveFS:         drive.FileSystem,
+				DriveFreeBytes:  int(drive.FreeBytes),
+				DriveUsedBytes:  int(drive.UsedBytes),
+				DriveTotalBytes: int(drive.TotalBytes),
+				DriveFree:       drive.Free,
+				DriveUsed:       drive.Used,
+				DriveTotal:      drive.Total,
 			}
 
 			err := storeInstance.Database.CreateTarget(newTarget)
@@ -201,11 +208,18 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, drive := range reqParsed.Drives {
 			newTarget := types.Target{
-				Name:      fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter),
-				Path:      fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter),
-				Auth:      encodedCert,
-				TokenUsed: existingTarget.TokenUsed,
-				DriveType: drive.Type,
+				Name:            fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter),
+				Path:            fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter),
+				Auth:            encodedCert,
+				TokenUsed:       existingTarget.TokenUsed,
+				DriveType:       drive.Type,
+				DriveFS:         drive.FileSystem,
+				DriveFreeBytes:  int(drive.FreeBytes),
+				DriveUsedBytes:  int(drive.UsedBytes),
+				DriveTotalBytes: int(drive.TotalBytes),
+				DriveFree:       drive.Free,
+				DriveUsed:       drive.Used,
+				DriveTotal:      drive.Total,
 			}
 
 			err := storeInstance.Database.CreateTarget(newTarget)

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,34 +16,18 @@ import (
 )
 
 func (database *Database) RegisterTokenPlugin() {
-	plugin := &configLib.SectionPlugin{
-		FolderPath: database.paths["tokens"],
+	plugin := &configLib.SectionPlugin[types.AgentToken]{
 		TypeName:   "token",
-		Properties: map[string]*configLib.Schema{
-			"token": {
-				Type:        configLib.TypeString,
-				Description: "JWT Token",
-				Required:    true,
-			},
-			"comment": {
-				Type:        configLib.TypeString,
-				Description: "Comment",
-				Required:    false,
-			},
-			"created_at": {
-				Type:        configLib.TypeString,
-				Description: "Date/time created",
-				Required:    true,
-			},
-			"revoked": {
-				Type:        configLib.TypeBool,
-				Description: "Token revoked",
-				Required:    false,
-			},
+		FolderPath: database.paths["tokens"],
+		Validate: func(config types.AgentToken) error {
+			if err := database.TokenManager.ValidateToken(config.Token); err != nil {
+				return fmt.Errorf("invalid token: %w", err)
+			}
+			return nil
 		},
 	}
 
-	database.config.RegisterPlugin(plugin)
+	database.tokensConfig = configLib.NewSectionConfig(plugin)
 }
 
 func (database *Database) CreateToken(comment string) error {
@@ -53,23 +36,23 @@ func (database *Database) CreateToken(comment string) error {
 		return fmt.Errorf("CreateToken: error generating token: %w", err)
 	}
 
-	configData := &configLib.ConfigData{
-		Sections: map[string]*configLib.Section{
+	configData := &configLib.ConfigData[types.AgentToken]{
+		Sections: map[string]*configLib.Section[types.AgentToken]{
 			token: {
 				Type: "token",
 				ID:   token,
-				Properties: map[string]string{
-					"token":      token,
-					"comment":    comment,
-					"created_at": strconv.FormatInt(time.Now().Unix(), 10),
-					"revoked":    "false",
+				Properties: types.AgentToken{
+					Token:     token,
+					Comment:   comment,
+					CreatedAt: time.Now().Unix(),
+					Revoked:   false,
 				},
 			},
 		},
 		Order: []string{token},
 	}
 
-	if err := database.config.Write(configData); err != nil {
+	if err := database.tokensConfig.Write(configData); err != nil {
 		return fmt.Errorf("CreateToken: error writing config: %w", err)
 	}
 
@@ -77,9 +60,8 @@ func (database *Database) CreateToken(comment string) error {
 }
 
 func (database *Database) GetToken(token string) (*types.AgentToken, error) {
-	plugin := database.config.GetPlugin("token")
-	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(token)+".cfg")
-	configData, err := database.config.Parse(configPath)
+	configPath := filepath.Join(database.paths["tokens"], utils.EncodePath(token)+".cfg")
+	configData, err := database.tokensConfig.Parse(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -89,34 +71,24 @@ func (database *Database) GetToken(token string) (*types.AgentToken, error) {
 
 	section, exists := configData.Sections[token]
 	if !exists {
-		return nil, nil
+		return nil, fmt.Errorf("GetToken: section %s does not exist", token)
 	}
 
-	createdAt, err := strconv.ParseInt(section.Properties["created_at"], 10, 64)
-	if err != nil {
-		createdAt = 0
-	}
+	tokenProp := &section.Properties
+	revoked := tokenProp.Revoked
 
-	revoked, err := strconv.ParseBool(section.Properties["revoked"])
-	if err != nil {
-		revoked = false
-	}
-
+	// Double-check token validity
 	if err := database.TokenManager.ValidateToken(token); err != nil {
 		revoked = true
 	}
 
-	return &types.AgentToken{
-		Token:     section.Properties["token"],
-		Comment:   section.Properties["comment"],
-		CreatedAt: createdAt,
-		Revoked:   revoked,
-	}, nil
+	tokenProp.Revoked = revoked
+
+	return tokenProp, nil
 }
 
 func (database *Database) GetAllTokens() ([]types.AgentToken, error) {
-	plugin := database.config.GetPlugin("token")
-	files, err := os.ReadDir(plugin.FolderPath)
+	files, err := os.ReadDir(database.paths["tokens"])
 	if err != nil {
 		return nil, fmt.Errorf("GetAllTokens: error reading directory: %w", err)
 	}
@@ -144,23 +116,20 @@ func (database *Database) RevokeToken(token *types.AgentToken) error {
 		return nil
 	}
 
-	configData := &configLib.ConfigData{
-		Sections: map[string]*configLib.Section{
+	token.Revoked = true
+
+	configData := &configLib.ConfigData[types.AgentToken]{
+		Sections: map[string]*configLib.Section[types.AgentToken]{
 			token.Token: {
-				Type: "token",
-				ID:   token.Token,
-				Properties: map[string]string{
-					"token":      token.Token,
-					"comment":    token.Comment,
-					"created_at": strconv.FormatInt(token.CreatedAt, 10),
-					"revoked":    "true",
-				},
+				Type:       "token",
+				ID:         token.Token,
+				Properties: *token,
 			},
 		},
 		Order: []string{token.Token},
 	}
 
-	if err := database.config.Write(configData); err != nil {
+	if err := database.tokensConfig.Write(configData); err != nil {
 		return fmt.Errorf("RevokeToken: error writing config: %w", err)
 	}
 

@@ -19,100 +19,53 @@ import (
 )
 
 func (database *Database) RegisterJobPlugin() {
-	plugin := &configLib.SectionPlugin{
-		FolderPath: database.paths["jobs"],
+	plugin := &configLib.SectionPlugin[types.Job]{
 		TypeName:   "job",
-		Properties: map[string]*configLib.Schema{
-			"store": {
-				Type:        configLib.TypeString,
-				Description: "Storage name",
-				Required:    true,
-			},
-			"target": {
-				Type:        configLib.TypeString,
-				Description: "Backup target",
-				Required:    true,
-			},
-			"subpath": {
-				Type:        configLib.TypeString,
-				Description: "Backup subpath",
-				Required:    false,
-			},
-			"schedule": {
-				Type:        configLib.TypeString,
-				Description: "Backup schedule",
-				Required:    false,
-			},
-			"comment": {
-				Type:        configLib.TypeString,
-				Description: "Comment",
-				Required:    false,
-			},
-			"notification_mode": {
-				Type:        configLib.TypeString,
-				Description: "Notification mode",
-				Required:    false,
-			},
-			"namespace": {
-				Type:        configLib.TypeString,
-				Description: "Namespace",
-				Required:    false,
-			},
-			"last_run_upid": {
-				Type:        configLib.TypeString,
-				Description: "UPID of last ran task",
-				Required:    false,
-			},
+		FolderPath: database.paths["jobs"],
+		Validate: func(config types.Job) error {
+			if !utils.IsValidNamespace(config.Namespace) && config.Namespace != "" {
+				return fmt.Errorf("invalid namespace string: %s", config.Namespace)
+			}
+			if err := utils.ValidateOnCalendar(config.Schedule); err != nil && config.Schedule != "" {
+				return fmt.Errorf("invalid schedule string: %s", config.Schedule)
+			}
+			if !utils.IsValidPathString(config.Subpath) {
+				return fmt.Errorf("invalid subpath string: %s", config.Subpath)
+			}
+			return nil
 		},
 	}
 
-	database.config.RegisterPlugin(plugin)
+	database.jobsConfig = configLib.NewSectionConfig(plugin)
 }
 
 func (database *Database) CreateJob(job types.Job) error {
-	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
-		return fmt.Errorf("CreateJob: invalid namespace string -> %s", job.Namespace)
-	}
-
 	if !utils.IsValidID(job.ID) && job.ID != "" {
-		return fmt.Errorf("CreateJob: invalid id string -> %s", job.Namespace)
-	}
-
-	if err := utils.ValidateOnCalendar(job.Schedule); err != nil && job.Schedule != "" {
-		return fmt.Errorf("CreateJob: invalid schedule string -> %s", job.Schedule)
-	}
-
-	if !utils.IsValidPathString(job.Subpath) {
-		return fmt.Errorf("CreateJob: invalid subpath string -> %s", job.Subpath)
-	}
-
-	lastRunUpid := ""
-	if job.LastRunUpid != nil {
-		lastRunUpid = *job.LastRunUpid
+		return fmt.Errorf("CreateJob: invalid id string -> %s", job.ID)
 	}
 
 	// Convert job to config format
-	configData := &configLib.ConfigData{
-		Sections: map[string]*configLib.Section{
+	configData := &configLib.ConfigData[types.Job]{
+		Sections: map[string]*configLib.Section[types.Job]{
 			job.ID: {
 				Type: "job",
 				ID:   job.ID,
-				Properties: map[string]string{
-					"store":             job.Store,
-					"target":            job.Target,
-					"subpath":           job.Subpath,
-					"schedule":          job.Schedule,
-					"comment":           job.Comment,
-					"notification_mode": job.NotificationMode,
-					"namespace":         job.Namespace,
-					"last_run_upid":     lastRunUpid,
+				Properties: types.Job{
+					Store:            job.Store,
+					Target:           job.Target,
+					Subpath:          job.Subpath,
+					Schedule:         job.Schedule,
+					Comment:          job.Comment,
+					NotificationMode: job.NotificationMode,
+					Namespace:        job.Namespace,
+					LastRunUpid:      job.LastRunUpid,
 				},
 			},
 		},
 		Order: []string{job.ID},
 	}
 
-	if err := database.config.Write(configData); err != nil {
+	if err := database.jobsConfig.Write(configData); err != nil {
 		return fmt.Errorf("CreateJob: error writing config: %w", err)
 	}
 
@@ -134,9 +87,8 @@ func (database *Database) CreateJob(job types.Job) error {
 }
 
 func (database *Database) GetJob(id string) (*types.Job, error) {
-	plugin := database.config.GetPlugin("job")
-	jobPath := filepath.Join(plugin.FolderPath, utils.EncodePath(id)+".cfg")
-	configData, err := database.config.Parse(jobPath)
+	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
+	configData, err := database.jobsConfig.Parse(jobPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -146,23 +98,15 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 
 	section, exists := configData.Sections[id]
 	if !exists {
-		return nil, nil
+		return nil, fmt.Errorf("GetJob: section %s does not exist", id)
 	}
 
-	lastRunUpid := section.Properties["last_run_upid"]
+	lastRunUpid := section.Properties.LastRunUpid
 
 	// Convert config to Job struct
-	job := &types.Job{
-		ID:               id,
-		Store:            section.Properties["store"],
-		Target:           section.Properties["target"],
-		Subpath:          section.Properties["subpath"],
-		Schedule:         section.Properties["schedule"],
-		Comment:          section.Properties["comment"],
-		NotificationMode: section.Properties["notification_mode"],
-		Namespace:        section.Properties["namespace"],
-		LastRunUpid:      &lastRunUpid,
-	}
+	job := &section.Properties
+	job.ID = id
+	job.LastRunUpid = lastRunUpid
 
 	// Get exclusions
 	exclusions, err := database.GetAllJobExclusions(id)
@@ -182,8 +126,8 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 	}
 
 	// Update dynamic fields
-	if job.LastRunUpid != nil && *job.LastRunUpid != "" {
-		task, err := proxmox.Session.GetTaskByUPID(*job.LastRunUpid)
+	if job.LastRunUpid != "" {
+		task, err := proxmox.Session.GetTaskByUPID(job.LastRunUpid)
 		if err != nil {
 			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
 		} else {
@@ -210,55 +154,28 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 }
 
 func (database *Database) UpdateJob(job types.Job) error {
-	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
-		return fmt.Errorf("UpdateJob: invalid namespace string -> %s", job.Namespace)
-	}
-
 	if !utils.IsValidID(job.ID) && job.ID != "" {
-		return fmt.Errorf("CreateJob: invalid id string -> %s", job.Namespace)
-	}
-
-	if err := utils.ValidateOnCalendar(job.Schedule); err != nil && job.Schedule != "" {
-		return fmt.Errorf("CreateJob: invalid schedule string -> %s", job.Schedule)
-	}
-
-	if !utils.IsValidPathString(job.Subpath) {
-		return fmt.Errorf("CreateJob: invalid subpath string -> %s", job.Subpath)
-	}
-
-	lastRunUpid := ""
-	if job.LastRunUpid != nil {
-		lastRunUpid = *job.LastRunUpid
+		return fmt.Errorf("UpdateJob: invalid id string -> %s", job.ID)
 	}
 
 	// Convert job to config format
-	configData := &configLib.ConfigData{
-		Sections: map[string]*configLib.Section{
+	configData := &configLib.ConfigData[types.Job]{
+		Sections: map[string]*configLib.Section[types.Job]{
 			job.ID: {
-				Type: "job",
-				ID:   job.ID,
-				Properties: map[string]string{
-					"store":             job.Store,
-					"target":            job.Target,
-					"subpath":           job.Subpath,
-					"schedule":          job.Schedule,
-					"comment":           job.Comment,
-					"notification_mode": job.NotificationMode,
-					"namespace":         job.Namespace,
-					"last_run_upid":     lastRunUpid,
-				},
+				Type:       "job",
+				ID:         job.ID,
+				Properties: job,
 			},
 		},
 		Order: []string{job.ID},
 	}
 
-	if err := database.config.Write(configData); err != nil {
+	if err := database.jobsConfig.Write(configData); err != nil {
 		return fmt.Errorf("UpdateJob: error writing config: %w", err)
 	}
 
 	// Update exclusions
-	plugin := database.config.GetPlugin("exclusion")
-	exclusionPath := filepath.Join(plugin.FolderPath, job.ID+".cfg")
+	exclusionPath := filepath.Join(database.paths["exclusions"], job.ID+".cfg")
 	if err := os.RemoveAll(exclusionPath); err != nil {
 		return fmt.Errorf("UpdateJob: error removing old exclusions: %w", err)
 	}
@@ -284,8 +201,7 @@ func (database *Database) UpdateJob(job types.Job) error {
 }
 
 func (database *Database) GetAllJobs() ([]types.Job, error) {
-	plugin := database.config.GetPlugin("job")
-	files, err := os.ReadDir(plugin.FolderPath)
+	files, err := os.ReadDir(database.paths["jobs"])
 	if err != nil {
 		return nil, fmt.Errorf("GetAllJobs: error reading jobs directory: %w", err)
 	}
@@ -308,8 +224,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 }
 
 func (database *Database) DeleteJob(id string) error {
-	plugin := database.config.GetPlugin("job")
-	jobPath := filepath.Join(plugin.FolderPath, utils.EncodePath(id)+".cfg")
+	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
 	if err := os.Remove(jobPath); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("DeleteJob: error deleting job file: %w", err)

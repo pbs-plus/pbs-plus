@@ -24,7 +24,7 @@ func updateJobStatus(job *types.Job, task *proxmox.Task, storeInstance *store.St
 		return err
 	}
 
-	latestJob.LastRunUpid = &taskFound.UPID
+	latestJob.LastRunUpid = taskFound.UPID
 	latestJob.LastRunState = &taskFound.Status
 	latestJob.LastRunEndtime = &taskFound.EndTime
 
