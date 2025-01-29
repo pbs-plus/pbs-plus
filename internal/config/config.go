@@ -225,16 +225,20 @@ func (sc *SectionConfig[T]) Write(config *ConfigData[T]) error {
 
 // marshalValue converts a reflected value to its string representation
 func marshalValue(value reflect.Value, tag ConfigTag) (string, error) {
-	if value.IsNil() {
-		return "", nil
-	}
-
 	switch tag.Type {
 	case TypeString:
 		return value.String(), nil
 	case TypeInt:
+		if value.IsNil() {
+			return "", nil
+		}
+
 		return strconv.FormatInt(value.Int(), 10), nil
 	case TypeBool:
+		if value.IsNil() {
+			return "", nil
+		}
+
 		return strconv.FormatBool(value.Bool()), nil
 	case TypeArray:
 		if value.Kind() != reflect.Slice {
