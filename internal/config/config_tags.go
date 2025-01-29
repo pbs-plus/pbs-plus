@@ -5,7 +5,6 @@ package config
 import (
 	"fmt"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -16,7 +15,6 @@ type ConfigTag struct {
 	Required  bool
 	MinLength *int
 	MaxLength *int
-	Pattern   *string
 	IsID      bool // New field to mark which field is the section ID
 }
 
@@ -59,11 +57,6 @@ func parseConfigTags(tag string) (ConfigTag, error) {
 				return result, fmt.Errorf("invalid max value: %w", err)
 			}
 			result.MaxLength = &val
-		case "pattern":
-			if len(parts) != 2 {
-				return result, fmt.Errorf("pattern tag requires a value")
-			}
-			result.Pattern = &parts[1]
 		case "id":
 			result.IsID = true
 		}
@@ -91,16 +84,6 @@ func validateFieldWithTags(value interface{}, tags ConfigTag) error {
 
 		if tags.MaxLength != nil && len(str) > *tags.MaxLength {
 			return fmt.Errorf("value length %d is greater than maximum %d", len(str), *tags.MaxLength)
-		}
-
-		if tags.Pattern != nil {
-			matched, err := regexp.MatchString(*tags.Pattern, str)
-			if err != nil {
-				return fmt.Errorf("invalid pattern: %w", err)
-			}
-			if !matched {
-				return fmt.Errorf("value doesn't match pattern %s", *tags.Pattern)
-			}
 		}
 
 	case TypeInt:

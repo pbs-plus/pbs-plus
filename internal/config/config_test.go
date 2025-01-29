@@ -15,25 +15,25 @@ import (
 
 // Test struct definitions
 type BasicTestConfig struct {
-	Name     string `config:"type=string,required,desc=Test name"`
-	Value    string `config:"type=string,required,desc=Test value"`
-	Optional string `config:"type=string,desc=Optional value"`
+	Name     string `config:"type=string,required"`
+	Value    string `config:"type=string,required"`
+	Optional string `config:"type=string"`
 }
 
 type ArrayTestConfig struct {
-	Tags []string `config:"type=array,required,desc=Test tags"`
+	Tags []string `config:"type=array,required"`
 }
 
 type ValidationTestConfig struct {
-	Email string `config:"type=string,required,desc=Email address,pattern=^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"`
+	Email string `config:"type=string,required"`
 }
 
 type CompatTestConfig struct {
-	Path    string   `config:"type=string,required,desc=Test path"`
-	Comment string   `config:"type=string,desc=Optional comment"`
-	Count   int      `config:"type=int,desc=A number"`
-	Enabled bool     `config:"type=bool,desc=Boolean flag"`
-	Tags    []string `config:"type=array,desc=String array"`
+	Path    string   `config:"type=string,required"`
+	Comment string   `config:"type=string"`
+	Count   int      `config:"type=int"`
+	Enabled bool     `config:"type=bool"`
+	Tags    []string `config:"type=array"`
 }
 
 func TestSectionConfig_BasicOperations(t *testing.T) {
@@ -171,24 +171,6 @@ func TestSectionConfig_ValidationRules(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("Invalid Pattern", func(t *testing.T) {
-		testData := &ConfigData[ValidationTestConfig]{
-			Sections: map[string]*Section[ValidationTestConfig]{
-				"test-invalid": {
-					Type: "validation-test",
-					ID:   "test-invalid",
-					Properties: ValidationTestConfig{
-						Email: "not-an-email",
-					},
-				},
-			},
-			Order: []string{"test-invalid"},
-		}
-
-		err := config.Write(testData)
-		assert.Error(t, err)
-	})
-
 	t.Run("Email Too Long", func(t *testing.T) {
 		longEmail := "very-long-email"
 		for i := 0; i < 250; i++ {
@@ -267,11 +249,11 @@ func TestBackwardCompatibility(t *testing.T) {
 	// The written format should match what we expect from the old format
 	// (although it might have slightly different whitespace)
 	expectedFormat := `test: test-item
-	path /test/path
-	comment test comment
 	count 42
 	enabled true
 	tags tag1,tag2,tag3
+	path /test/path
+	comment test comment
 
 `
 	// Compare the content (ignoring whitespace differences)

@@ -358,7 +358,11 @@ func (sc *SectionConfig[T]) unmarshal(data map[string]string) (T, error) {
 
 		val, err := unmarshalValue(str, field.Type, configTag)
 		if err != nil {
-			return result, fmt.Errorf("error unmarshaling field %s: %w", field.Name, err)
+			if configTag.Required {
+				return result, fmt.Errorf("error unmarshaling field %s: %w", field.Name, err)
+			}
+
+			continue
 		}
 
 		resultVal.Field(i).Set(val)
