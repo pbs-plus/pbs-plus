@@ -229,16 +229,8 @@ func marshalValue(value reflect.Value, tag ConfigTag) (string, error) {
 	case TypeString:
 		return value.String(), nil
 	case TypeInt:
-		if value.IsNil() {
-			return "", nil
-		}
-
 		return strconv.FormatInt(value.Int(), 10), nil
 	case TypeBool:
-		if value.IsNil() {
-			return "", nil
-		}
-
 		return strconv.FormatBool(value.Bool()), nil
 	case TypeArray:
 		if value.Kind() != reflect.Slice {
@@ -266,7 +258,7 @@ func unmarshalValue(str string, fieldType reflect.Type, tag ConfigTag) (reflect.
 		return reflect.ValueOf(str), nil
 	case TypeInt:
 		if str == "" {
-			str = "-1"
+			str = "0"
 		}
 		val, err := strconv.ParseInt(str, 10, 64)
 		if err != nil {

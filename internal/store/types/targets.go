@@ -11,9 +11,9 @@ type Target struct {
 	DriveType        string `config:"type=string" json:"drive_type"`
 	DriveName        string `config:"type=string" json:"drive_name"`
 	DriveFS          string `config:"type=string" json:"drive_fs"`
-	DriveTotalBytes  string `config:"type=int" json:"drive_total_bytes"`
-	DriveUsedBytes   string `config:"type=int" json:"drive_used_bytes"`
-	DriveFreeBytes   string `config:"type=int" json:"drive_free_bytes"`
+	DriveTotalBytes  int    `config:"type=int" json:"drive_total_bytes"`
+	DriveUsedBytes   int    `config:"type=int" json:"drive_used_bytes"`
+	DriveFreeBytes   int    `config:"type=int" json:"drive_free_bytes"`
 	DriveTotal       string `config:"type=string" json:"drive_total"`
 	DriveUsed        string `config:"type=string" json:"drive_used"`
 	DriveFree        string `config:"type=string" json:"drive_free"`
