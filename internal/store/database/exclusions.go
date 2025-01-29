@@ -15,37 +15,18 @@ import (
 )
 
 func (database *Database) RegisterExclusionPlugin() {
-	plugin := &configLib.SectionPlugin{
-		FolderPath: database.paths["exclusions"],
+	plugin := &configLib.SectionPlugin[types.Exclusion]{
 		TypeName:   "exclusion",
-		Properties: map[string]*configLib.Schema{
-			"path": {
-				Type:        configLib.TypeString,
-				Description: "Exclusion path pattern",
-				Required:    true,
-			},
-			"comment": {
-				Type:        configLib.TypeString,
-				Description: "Exclusion comment",
-				Required:    false,
-			},
-			"job_id": {
-				Type:        configLib.TypeString,
-				Description: "Associated job ID",
-				Required:    false,
-			},
-		},
-		Validations: []configLib.ValidationFunc{
-			func(data map[string]string) error {
-				if !pattern.IsValidPattern(data["path"]) {
-					return fmt.Errorf("invalid exclusion pattern: %s", data["path"])
-				}
-				return nil
-			},
+		FolderPath: database.paths["exclusions"],
+		Validate: func(config types.Exclusion) error {
+			if !pattern.IsValidPattern(config.Path) {
+				return fmt.Errorf("invalid exclusion pattern: %s", config.Path)
+			}
+			return nil
 		},
 	}
 
-	database.config.RegisterPlugin(plugin)
+	database.exclusionsConfig = configLib.NewSectionConfig(plugin)
 }
 
 func (database *Database) CreateExclusion(exclusion types.Exclusion) error {
@@ -55,28 +36,16 @@ func (database *Database) CreateExclusion(exclusion types.Exclusion) error {
 		return fmt.Errorf("CreateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
-	sectionType := "exclusion"
-	filename := utils.EncodePath(exclusion.JobID)
-	sectionProperties := map[string]string{
-		"path":    exclusion.Path,
-		"comment": exclusion.Comment,
-		"job_id":  exclusion.JobID,
-	}
-	plugin := database.config.GetPlugin("exclusion")
-
-	if exclusion.JobID == "" {
-		sectionProperties = map[string]string{
-			"path":    exclusion.Path,
-			"comment": exclusion.Comment,
-		}
-		filename = "global"
+	filename := "global"
+	if exclusion.JobID != "" {
+		filename = utils.EncodePath(exclusion.JobID)
 	}
 
-	configPath := filepath.Join(plugin.FolderPath, filename+".cfg")
+	configPath := filepath.Join(database.paths["exclusions"], filename+".cfg")
 
 	// Read existing exclusions
-	var configData *configLib.ConfigData
-	existing, err := database.config.Parse(configPath)
+	var configData *configLib.ConfigData[types.Exclusion]
+	existing, err := database.exclusionsConfig.Parse(configPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("CreateExclusion: error reading existing config: %w", err)
 	}
@@ -84,8 +53,8 @@ func (database *Database) CreateExclusion(exclusion types.Exclusion) error {
 	if existing != nil {
 		configData = existing
 	} else {
-		configData = &configLib.ConfigData{
-			Sections: make(map[string]*configLib.Section),
+		configData = &configLib.ConfigData[types.Exclusion]{
+			Sections: make(map[string]*configLib.Section[types.Exclusion]),
 			Order:    make([]string, 0),
 			FilePath: configPath,
 		}
@@ -93,14 +62,14 @@ func (database *Database) CreateExclusion(exclusion types.Exclusion) error {
 
 	// Add new exclusion
 	sectionID := fmt.Sprintf("excl-%s", exclusion.Path)
-	configData.Sections[sectionID] = &configLib.Section{
-		Type:       sectionType,
+	configData.Sections[sectionID] = &configLib.Section[types.Exclusion]{
+		Type:       "exclusion",
 		ID:         sectionID,
-		Properties: sectionProperties,
+		Properties: exclusion,
 	}
 	configData.Order = append(configData.Order, sectionID)
 
-	if err := database.config.Write(configData); err != nil {
+	if err := database.exclusionsConfig.Write(configData); err != nil {
 		return fmt.Errorf("CreateExclusion: error writing config: %w", err)
 	}
 
@@ -108,86 +77,67 @@ func (database *Database) CreateExclusion(exclusion types.Exclusion) error {
 }
 
 func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, error) {
-	plugin := database.config.GetPlugin("exclusion")
-	configPath := filepath.Join(plugin.FolderPath, utils.EncodePath(jobId)+".cfg")
-	configData, err := database.config.Parse(configPath)
+	configPath := filepath.Join(database.paths["exclusions"], utils.EncodePath(jobId)+".cfg")
+	configData, err := database.exclusionsConfig.Parse(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []types.Exclusion{}, nil
 		}
 		return nil, fmt.Errorf("GetAllJobExclusions: error reading config: %w", err)
 	}
+
 	var exclusions []types.Exclusion
 	seenPaths := make(map[string]bool)
 
 	for _, sectionID := range configData.Order {
-		section, exists := configData.Sections[sectionID]
-		if !exists || section.Type != "exclusion" {
-			continue
-		}
-		path := section.Properties["path"]
-		if seenPaths[path] {
+		section := configData.Sections[sectionID]
+		if seenPaths[section.Properties.Path] {
 			continue // Skip duplicates
 		}
-		seenPaths[path] = true
+		seenPaths[section.Properties.Path] = true
 
-		exclusions = append(exclusions, types.Exclusion{
-			Path:    path,
-			Comment: section.Properties["comment"],
-			JobID:   jobId,
-		})
+		exclusions = append(exclusions, section.Properties)
 	}
 	return exclusions, nil
 }
 
 func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
-	plugin := database.config.GetPlugin("exclusion")
-	configPath := filepath.Join(plugin.FolderPath, "global.cfg")
-	configData, err := database.config.Parse(configPath)
+	configPath := filepath.Join(database.paths["exclusions"], "global.cfg")
+	configData, err := database.exclusionsConfig.Parse(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []types.Exclusion{}, nil
 		}
 		return nil, fmt.Errorf("GetAllGlobalExclusions: error reading config: %w", err)
 	}
+
 	var exclusions []types.Exclusion
 	seenPaths := make(map[string]bool)
 
 	for _, sectionID := range configData.Order {
-		section, exists := configData.Sections[sectionID]
-		if !exists || section.Type != "exclusion" {
-			continue
-		}
-		path := section.Properties["path"]
-		if seenPaths[path] {
+		section := configData.Sections[sectionID]
+		if seenPaths[section.Properties.Path] {
 			continue // Skip duplicates
 		}
-		seenPaths[path] = true
+		seenPaths[section.Properties.Path] = true
 
-		exclusions = append(exclusions, types.Exclusion{
-			Path:    path,
-			Comment: section.Properties["comment"],
-		})
+		exclusions = append(exclusions, section.Properties)
 	}
 	return exclusions, nil
 }
 
 func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
 	// Check global exclusions first
-	plugin := database.config.GetPlugin("exclusion")
-	globalPath := filepath.Join(plugin.FolderPath, "global.cfg")
-	if configData, err := database.config.Parse(globalPath); err == nil {
+	globalPath := filepath.Join(database.paths["exclusions"], "global.cfg")
+	if configData, err := database.exclusionsConfig.Parse(globalPath); err == nil {
 		sectionID := fmt.Sprintf("excl-%s", path)
-		if section, exists := configData.Sections[sectionID]; exists && section.Type == "exclusion" {
-			return &types.Exclusion{
-				Path:    section.Properties["path"],
-				Comment: section.Properties["comment"],
-			}, nil
+		if section, exists := configData.Sections[sectionID]; exists {
+			return &section.Properties, nil
 		}
 	}
 
 	// Check job-specific exclusions
-	files, err := os.ReadDir(plugin.FolderPath)
+	files, err := os.ReadDir(database.paths["exclusions"])
 	if err != nil {
 		return nil, fmt.Errorf("GetExclusion: error reading directory: %w", err)
 	}
@@ -196,19 +146,15 @@ func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
 		if file.Name() == "global" {
 			continue
 		}
-		configPath := filepath.Join(plugin.FolderPath, file.Name())
-		configData, err := database.config.Parse(configPath)
+		configPath := filepath.Join(database.paths["exclusions"], file.Name())
+		configData, err := database.exclusionsConfig.Parse(configPath)
 		if err != nil {
 			continue
 		}
 
 		sectionID := fmt.Sprintf("excl-%s", path)
-		if section, exists := configData.Sections[sectionID]; exists && section.Type == "exclusion" {
-			return &types.Exclusion{
-				Path:    section.Properties["path"],
-				Comment: section.Properties["comment"],
-				JobID:   section.Properties["job_id"],
-			}, nil
+		if section, exists := configData.Sections[sectionID]; exists {
+			return &section.Properties, nil
 		}
 	}
 
@@ -221,48 +167,33 @@ func (database *Database) UpdateExclusion(exclusion types.Exclusion) error {
 		return fmt.Errorf("UpdateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
-	// Try to update in global exclusions first
-	plugin := database.config.GetPlugin("exclusion")
-	configPath := filepath.Join(plugin.FolderPath, "global.cfg")
+	configPath := filepath.Join(database.paths["exclusions"], "global.cfg")
 	if exclusion.JobID != "" {
-		configPath = filepath.Join(plugin.FolderPath, utils.EncodePath(exclusion.JobID)+".cfg")
+		configPath = filepath.Join(database.paths["exclusions"], utils.EncodePath(exclusion.JobID)+".cfg")
 	}
 
-	configData, err := database.config.Parse(configPath)
+	configData, err := database.exclusionsConfig.Parse(configPath)
 	if err != nil {
 		return fmt.Errorf("UpdateExclusion: error reading config: %w", err)
 	}
 
 	sectionID := fmt.Sprintf("excl-%s", exclusion.Path)
-	section, exists := configData.Sections[sectionID]
+	_, exists := configData.Sections[sectionID]
 	if !exists {
 		return fmt.Errorf("UpdateExclusion: exclusion not found for path: %s", exclusion.Path)
 	}
 
 	// Update properties
-	if exclusion.JobID == "" {
-		section.Properties = map[string]string{
-			"path":    exclusion.Path,
-			"comment": exclusion.Comment,
-		}
-	} else {
-		section.Properties = map[string]string{
-			"path":    exclusion.Path,
-			"comment": exclusion.Comment,
-			"job_id":  exclusion.JobID,
-		}
-	}
-
-	return database.config.Write(configData)
+	configData.Sections[sectionID].Properties = exclusion
+	return database.exclusionsConfig.Write(configData)
 }
 
 func (database *Database) DeleteExclusion(path string) error {
 	path = strings.ReplaceAll(path, "\\", "/")
-	plugin := database.config.GetPlugin("exclusion")
 	sectionID := fmt.Sprintf("excl-%s", path)
 
 	// Try job-specific exclusions first
-	files, err := os.ReadDir(plugin.FolderPath)
+	files, err := os.ReadDir(database.paths["exclusions"])
 	if err != nil {
 		return fmt.Errorf("DeleteExclusion: error reading directory: %w", err)
 	}
@@ -271,8 +202,8 @@ func (database *Database) DeleteExclusion(path string) error {
 		if file.Name() == "global" {
 			continue
 		}
-		configPath := filepath.Join(plugin.FolderPath, file.Name())
-		configData, err := database.config.Parse(configPath)
+		configPath := filepath.Join(database.paths["exclusions"], file.Name())
+		configData, err := database.exclusionsConfig.Parse(configPath)
 		if err != nil {
 			continue
 		}
@@ -296,7 +227,7 @@ func (database *Database) DeleteExclusion(path string) error {
 			}
 
 			// Otherwise write the updated config
-			if err := database.config.Write(configData); err != nil {
+			if err := database.exclusionsConfig.Write(configData); err != nil {
 				return fmt.Errorf("DeleteExclusion: error writing config: %w", err)
 			}
 			return nil
@@ -304,8 +235,8 @@ func (database *Database) DeleteExclusion(path string) error {
 	}
 
 	// Try global exclusion
-	globalPath := filepath.Join(plugin.FolderPath, "global.cfg")
-	if configData, err := database.config.Parse(globalPath); err == nil {
+	globalPath := filepath.Join(database.paths["exclusions"], "global.cfg")
+	if configData, err := database.exclusionsConfig.Parse(globalPath); err == nil {
 		if _, exists := configData.Sections[sectionID]; exists {
 			delete(configData.Sections, sectionID)
 			newOrder := make([]string, 0)
@@ -325,7 +256,7 @@ func (database *Database) DeleteExclusion(path string) error {
 			}
 
 			// Otherwise write the updated config
-			if err := database.config.Write(configData); err != nil {
+			if err := database.exclusionsConfig.Write(configData); err != nil {
 				return fmt.Errorf("DeleteExclusion: error writing global config: %w", err)
 			}
 			return nil

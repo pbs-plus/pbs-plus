@@ -1,8 +1,7 @@
 package types
 
 type Exclusion struct {
-	JobID   string `db:"job_id" json:"job_id"`
-	Path    string `db:"path" json:"path"`
-	Comment string `db:"comment" json:"comment"`
+	Path    string `config:"type=string,required" json:"path"`
+	Comment string `config:"type=string" json:"comment"`
+	JobID   string `config:"type=string" json:"job_id"`
 }
-

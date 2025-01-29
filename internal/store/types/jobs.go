@@ -1,16 +1,16 @@
 package types
 
 type Job struct {
-	ID               string      `db:"id" json:"id"`
-	Store            string      `db:"store" json:"store"`
-	Target           string      `db:"target" json:"target"`
-	Subpath          string      `db:"subpath" json:"subpath"`
-	Schedule         string      `db:"schedule" json:"schedule"`
-	Comment          string      `db:"comment" json:"comment"`
-	NotificationMode string      `db:"notification_mode" json:"notification-mode"`
-	Namespace        string      `db:"namespace" json:"ns"`
-	NextRun          *int64      `db:"next_run" json:"next-run"`
-	LastRunUpid      *string     `db:"last_run_upid" json:"last-run-upid"`
+	ID               string      `json:"id"`
+	Store            string      `config:"type=string,required" json:"store"`
+	Target           string      `config:"type=string,required" json:"target"`
+	Subpath          string      `config:"type=string" json:"subpath"`
+	Schedule         string      `config:"type=string" json:"schedule"`
+	Comment          string      `config:"type=string" json:"comment"`
+	NotificationMode string      `config:"type=string" json:"notification-mode"`
+	Namespace        string      `config:"type=string" json:"ns"`
+	NextRun          *int64      `json:"next-run"`
+	LastRunUpid      *string     `config:"type=string" json:"last-run-upid"`
 	LastRunState     *string     `json:"last-run-state"`
 	LastRunEndtime   *int64      `json:"last-run-endtime"`
 	Duration         *int64      `json:"duration"`
