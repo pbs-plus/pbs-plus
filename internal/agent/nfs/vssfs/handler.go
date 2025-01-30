@@ -106,3 +106,7 @@ func (h *VSSIDHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) erro
 	// No-op for read-only filesystem
 	return nil
 }
+
+func (h *VSSIDHandler) ClearHandles() {
+	h.activeHandles.Clear()
+}
