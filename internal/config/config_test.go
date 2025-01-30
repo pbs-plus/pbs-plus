@@ -238,8 +238,216 @@ func TestEdgeCaseCompatibility(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// Helper to normalize whitespace for comparison
-func normalizeWhitespace(s string) string {
-	// Could implement if needed for comparing file contents
-	return s
+func TestFormatCompatibility(t *testing.T) {
+	tempDir := t.TempDir()
+
+	tests := []struct {
+		name           string
+		oldConfig      string
+		expectedPath   string
+		expectedCount  int
+		expectedTags   []string
+		expectedOutput string
+	}{
+		{
+			name: "Tab Indentation",
+			oldConfig: `test: tab-indent
+	path /test/path
+	count 42
+	tags tag1,tag2
+
+`,
+			expectedPath:  "/test/path",
+			expectedCount: 42,
+			expectedTags:  []string{"tag1", "tag2"},
+			expectedOutput: `test: tab-indent
+	count 42
+	path /test/path
+	tags tag1,tag2
+
+`,
+		},
+		{
+			name: "Space Indentation",
+			oldConfig: `test: space-indent
+    path /test/path
+    count 42
+    tags tag1,tag2
+
+`,
+			expectedPath:  "/test/path",
+			expectedCount: 42,
+			expectedTags:  []string{"tag1", "tag2"},
+			expectedOutput: `test: space-indent
+	count 42
+	path /test/path
+	tags tag1,tag2
+
+`,
+		},
+		{
+			name: "Mixed Whitespace",
+			oldConfig: `test: mixed-ws
+  path    /test/path 
+	 count		42
+	 tags  tag1, tag2 
+
+`,
+			expectedPath:  "/test/path",
+			expectedCount: 42,
+			expectedTags:  []string{"tag1", "tag2"},
+			expectedOutput: `test: mixed-ws
+	count 42
+	path /test/path
+	tags tag1,tag2
+
+`,
+		},
+		{
+			name: "Multiple Sections",
+			oldConfig: `test: section1
+	path /path1
+	count 1
+
+test: section2
+	path /path2
+	count 2
+
+`,
+			expectedPath:  "/path1",
+			expectedCount: 1,
+			expectedTags:  nil,
+			expectedOutput: `test: section1
+	count 1
+	path /path1
+
+test: section2
+	count 2
+	path /path2
+
+`,
+		},
+		{
+			name: "Empty Values",
+			oldConfig: `test: empty-values
+	path /test/path
+	count 0
+	tags
+	enabled false
+
+`,
+			expectedPath:  "/test/path",
+			expectedCount: 0,
+			expectedTags:  nil,
+			expectedOutput: `test: empty-values
+	path /test/path
+	tags
+
+`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			plugin := &SectionPlugin[CompatTestConfig]{
+				TypeName:   "test",
+				FolderPath: tempDir,
+			}
+			config := NewSectionConfig(plugin)
+
+			configPath := filepath.Join(tempDir, fmt.Sprintf("%s.cfg", tc.name))
+			err := os.WriteFile(configPath, []byte(tc.oldConfig), 0644)
+			require.NoError(t, err)
+
+			configData, err := config.Parse(configPath)
+			require.NoError(t, err)
+
+			var firstSectionID string
+			for id := range configData.Sections {
+				firstSectionID = id
+				break
+			}
+			section := configData.Sections[firstSectionID]
+			require.NotNil(t, section)
+
+			assert.Equal(t, tc.expectedPath, section.Properties.Path)
+			assert.Equal(t, tc.expectedCount, section.Properties.Count)
+
+			if tc.expectedTags == nil {
+				assert.Empty(t, section.Properties.Tags)
+			} else {
+				assert.Equal(t, tc.expectedTags, section.Properties.Tags)
+			}
+
+			err = config.Write(configData)
+			require.NoError(t, err)
+
+			written, err := os.ReadFile(configPath)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectedOutput, string(written))
+
+			// Verify the written file can be parsed again
+			_, err = config.Parse(configPath)
+			require.NoError(t, err, "Written file should be parseable")
+		})
+	}
+}
+
+// TestCrossImplementationRoundTrip tests that configs can be written by old implementation
+// and read by new, and vice versa
+func TestCrossImplementationRoundTrip(t *testing.T) {
+	tempDir := t.TempDir()
+	err := os.MkdirAll(tempDir, 0750)
+	require.NoError(t, err)
+
+	configPath := filepath.Join(tempDir, "roundtrip.cfg")
+
+	testConfig := &ConfigData[CompatTestConfig]{
+		FilePath: configPath, // Set the filepath explicitly
+		Sections: map[string]*Section[CompatTestConfig]{
+			"test-section": {
+				Type: "test",
+				ID:   "test-section",
+				Properties: CompatTestConfig{
+					Path:    "/complex/path with spaces",
+					Comment: "Multi word\tcomment with\ttabs",
+					Count:   42,
+					Enabled: true,
+					Tags:    []string{"tag1", "tag with space"},
+				},
+			},
+		},
+		Order: []string{"test-section"},
+	}
+
+	plugin := &SectionPlugin[CompatTestConfig]{
+		TypeName:   "test",
+		FolderPath: tempDir,
+	}
+	config := NewSectionConfig(plugin)
+
+	// Write with new implementation
+	err = config.Write(testConfig)
+	require.NoError(t, err)
+
+	// Verify file exists
+	_, err = os.Stat(configPath)
+	require.NoError(t, err, "Config file should exist")
+
+	// Read the config back
+	readConfig, err := config.Parse(configPath)
+	require.NoError(t, err)
+
+	// Verify all fields match exactly
+	original := testConfig.Sections["test-section"].Properties
+	read := readConfig.Sections["test-section"].Properties
+
+	assert.Equal(t, original.Path, read.Path)
+	assert.Equal(t, original.Comment, read.Comment)
+	assert.Equal(t, original.Count, read.Count)
+	assert.Equal(t, original.Enabled, read.Enabled)
+	assert.Equal(t, original.Tags, read.Tags)
+
+	// Verify section order is preserved
+	assert.Equal(t, testConfig.Order, readConfig.Order)
 }
