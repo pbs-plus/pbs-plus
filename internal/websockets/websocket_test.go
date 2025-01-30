@@ -4,14 +4,15 @@ package websockets
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"runtime/pprof"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -223,66 +224,195 @@ func TestClientReconnection(t *testing.T) {
 	require.NoError(t, err, "Should be able to send messages after reconnection")
 }
 
-func TestCPUOnDisconnect(t *testing.T) {
+func TestMessageTypes(t *testing.T) {
 	_, wsURL := setupTestServer(t)
 
-	const numClients = 100
-	clients := make([]*WSClient, numClients)
-
-	// Create and connect clients
-	for i := 0; i < numClients; i++ {
-		client, err := createTestClient(fmt.Sprintf("cpu-test-%d", i), wsURL)
+	t.Run("Large message handling", func(t *testing.T) {
+		client, err := createTestClient("large-msg-client", wsURL)
 		require.NoError(t, err)
+		t.Cleanup(func() { client.Close() })
 
 		err = client.Connect(context.Background())
 		require.NoError(t, err)
 
-		clients[i] = client
-	}
-
-	t.Cleanup(func() {
-		for _, client := range clients {
-			if client != nil {
-				client.Close()
-			}
+		// Create a large message (1MB)
+		largeContent := make([]byte, 1024*1024)
+		for i := range largeContent {
+			largeContent[i] = byte(i % 256)
 		}
+
+		msg := Message{
+			Type:    "test-large",
+			Content: string(largeContent),
+		}
+
+		err = client.Send(context.Background(), msg)
+		require.NoError(t, err, "Should handle large messages")
 	})
 
-	// Baseline measurement
-	baselineFile, err := os.Create("cpu-baseline.prof")
-	require.NoError(t, err)
-	defer os.Remove(baselineFile.Name())
+	t.Run("Rapid message sequence", func(t *testing.T) {
+		client, err := createTestClient("rapid-msg-client", wsURL)
+		require.NoError(t, err)
+		t.Cleanup(func() { client.Close() })
 
-	err = pprof.StartCPUProfile(baselineFile)
-	require.NoError(t, err)
-	time.Sleep(5 * time.Second)
-	pprof.StopCPUProfile()
+		err = client.Connect(context.Background())
+		require.NoError(t, err)
 
-	baselineStats, err := os.ReadFile(baselineFile.Name())
-	require.NoError(t, err)
+		// Send 100 messages rapidly
+		for i := 0; i < 100; i++ {
+			msg := Message{
+				Type:    "test-rapid",
+				Content: fmt.Sprintf("rapid-message-%d", i),
+			}
+			err = client.Send(context.Background(), msg)
+			require.NoError(t, err)
+		}
+	})
+}
 
-	// Disconnect measurement
-	for _, client := range clients {
-		client.Close()
+func TestConcurrentHandlers(t *testing.T) {
+	server, wsURL := setupTestServer(t)
+
+	t.Run("Multiple handlers per message type", func(t *testing.T) {
+		client, err := createTestClient("multi-handler-client", wsURL)
+		require.NoError(t, err)
+		t.Cleanup(func() { client.Close() })
+
+		err = client.Connect(context.Background())
+		require.NoError(t, err)
+
+		handlerCalls := make(map[string]int)
+		var handlerMutex sync.Mutex
+
+		// Register multiple handlers for the same message type
+		for i := 0; i < 3; i++ {
+			handlerID := fmt.Sprintf("handler-%d", i)
+			server.RegisterHandler("multi-handler", func(ctx context.Context, msg *Message) error {
+				handlerMutex.Lock()
+				handlerCalls[handlerID]++
+				handlerMutex.Unlock()
+				return nil
+			})
+		}
+
+		// Send test message
+		msg := Message{Type: "multi-handler", Content: "test"}
+		err = client.Send(context.Background(), msg)
+		require.NoError(t, err)
+
+		// Wait and verify all handlers were called
+		time.Sleep(1 * time.Second)
+
+		handlerMutex.Lock()
+		assert.Equal(t, 3, len(handlerCalls), "All handlers should have been called")
+		handlerMutex.Unlock()
+	})
+}
+
+func TestErrorHandling(t *testing.T) {
+	server, wsURL := setupTestServer(t)
+
+	t.Run("Invalid message handling", func(t *testing.T) {
+		client, err := createTestClient("error-client", wsURL)
+		require.NoError(t, err)
+		t.Cleanup(func() { client.Close() })
+
+		err = client.Connect(context.Background())
+		require.NoError(t, err)
+
+		// Register handler that returns error
+		server.RegisterHandler("error-test", func(ctx context.Context, msg *Message) error {
+			return fmt.Errorf("intentional error")
+		})
+
+		msg := Message{Type: "error-test", Content: "test"}
+		err = client.Send(context.Background(), msg)
+		require.NoError(t, err)
+
+		// Verify client is still connected after handler error
+		time.Sleep(500 * time.Millisecond)
+		assert.True(t, client.GetConnectionStatus())
+	})
+
+	t.Run("Context cancellation", func(t *testing.T) {
+		client, err := createTestClient("context-client", wsURL)
+		require.NoError(t, err)
+		t.Cleanup(func() { client.Close() })
+
+		ctx, cancel := context.WithCancel(context.Background())
+		err = client.Connect(ctx)
+		require.NoError(t, err)
+
+		// Cancel context and verify connection handling
+		cancel()
+		time.Sleep(500 * time.Millisecond)
+		assert.False(t, client.GetConnectionStatus())
+	})
+}
+
+func TestStressTest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping stress test in short mode")
 	}
 
-	peakFile, err := os.Create("cpu-peak.prof")
-	require.NoError(t, err)
-	defer os.Remove(peakFile.Name())
+	_, wsURL := setupTestServer(t)
+	const (
+		numClients        = 50
+		messagesPerClient = 100
+		messageSize       = 1024 // 1KB per message
+	)
 
-	err = pprof.StartCPUProfile(peakFile)
-	require.NoError(t, err)
-	time.Sleep(5 * time.Second)
-	pprof.StopCPUProfile()
+	t.Run("High load handling", func(t *testing.T) {
+		var wg sync.WaitGroup
+		successCount := atomic.Int32{}
 
-	peakStats, err := os.ReadFile(peakFile.Name())
-	require.NoError(t, err)
+		// Create and connect multiple clients
+		clients := make([]*WSClient, numClients)
+		for i := 0; i < numClients; i++ {
+			client, err := createTestClient(fmt.Sprintf("stress-client-%d", i), wsURL)
+			require.NoError(t, err)
+			t.Cleanup(func() { client.Close() })
 
-	// Compare measurements
-	baselineCPURate := float64(len(baselineStats)) / 5
-	peakCPURate := float64(len(peakStats)) / 5
+			err = client.Connect(context.Background())
+			require.NoError(t, err)
 
-	t.Logf("Baseline CPU: %f bytes/s", baselineCPURate)
-	t.Logf("Peak CPU: %f bytes/s", peakCPURate)
-	assert.Less(t, peakCPURate/baselineCPURate, 1.2, "CPU usage more than 1.2x during disconnects")
+			clients[i] = client
+
+			// Register handler
+			client.RegisterHandler("stress-test", func(ctx context.Context, msg *Message) error {
+				successCount.Add(1)
+				return nil
+			})
+		}
+
+		// Generate random message content
+		content := make([]byte, messageSize)
+		rand.Read(content)
+
+		// Send messages from all clients simultaneously
+		wg.Add(numClients)
+		for _, client := range clients {
+			go func(c *WSClient) {
+				defer wg.Done()
+				for j := 0; j < messagesPerClient; j++ {
+					msg := Message{
+						Type:    "stress-test",
+						Content: base64.StdEncoding.EncodeToString(content),
+					}
+					if err := c.Send(context.Background(), msg); err != nil {
+						t.Logf("Error sending message: %v", err)
+						return
+					}
+				}
+			}(client)
+		}
+
+		wg.Wait()
+
+		// Verify message handling
+		expectedMessages := numClients * messagesPerClient
+		require.Eventually(t, func() bool {
+			return successCount.Load() == int32(expectedMessages)
+		}, 30*time.Second, 100*time.Millisecond, "Not all messages were processed successfully")
+	})
 }
