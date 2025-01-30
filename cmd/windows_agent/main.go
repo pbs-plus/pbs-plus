@@ -6,16 +6,24 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime/debug"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
 var Version = "v0.0.0"
+var (
+	mutex  sync.Mutex
+	handle windows.Handle
+)
 
 // watchdogService wraps the original service and adds resilience
 type watchdogService struct {
@@ -112,6 +120,12 @@ func main() {
 		return
 	}
 
+	if err := createMutex(); err != nil {
+		syslog.L.Errorf("Error: %v", err)
+		os.Exit(1)
+	}
+	defer releaseMutex()
+
 	err = prg.writeVersionToFile()
 	if err != nil {
 		fmt.Printf("Error writing version to file: %v\n", err)
@@ -178,4 +192,37 @@ func handleServiceCommands(s service.Service, cmd string) error {
 		}
 	}
 	return nil
+}
+
+func createMutex() error {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	// Create a unique mutex name based on the executable path
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %v", err)
+	}
+	mutexName := filepath.Base(execPath)
+
+	// Try to create/acquire the named mutex
+	h, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr(mutexName))
+	if err != nil {
+		return fmt.Errorf("failed to create mutex: %v", err)
+	}
+
+	// Check if the mutex already exists
+	if windows.GetLastError() == syscall.ERROR_ALREADY_EXISTS {
+		windows.CloseHandle(h)
+		return fmt.Errorf("another instance is already running")
+	}
+
+	handle = h
+	return nil
+}
+
+func releaseMutex() {
+	if handle != 0 {
+		windows.CloseHandle(handle)
+	}
 }

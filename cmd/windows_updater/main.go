@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/alexflint/go-filemutex"
@@ -17,6 +18,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"golang.org/x/sys/windows"
 )
 
 type UpdaterService struct {
@@ -28,6 +30,11 @@ type UpdaterService struct {
 
 const (
 	updateCheckInterval = 2 * time.Minute
+)
+
+var (
+	mutex  sync.Mutex
+	handle windows.Handle
 )
 
 func (u *UpdaterService) Start(s service.Service) error {
@@ -155,6 +162,12 @@ func main() {
 		return
 	}
 
+	if err := createMutex(); err != nil {
+		syslog.L.Errorf("Error: %v", err)
+		os.Exit(1)
+	}
+	defer releaseMutex()
+
 	if len(os.Args) > 1 {
 		err = service.Control(s, os.Args[1])
 		if err != nil {
@@ -198,4 +211,37 @@ func (p *UpdaterService) readVersionFromFile() (string, error) {
 	}
 
 	return version, nil
+}
+
+func createMutex() error {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	// Create a unique mutex name based on the executable path
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %v", err)
+	}
+	mutexName := filepath.Base(execPath)
+
+	// Try to create/acquire the named mutex
+	h, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr(mutexName))
+	if err != nil {
+		return fmt.Errorf("failed to create mutex: %v", err)
+	}
+
+	// Check if the mutex already exists
+	if windows.GetLastError() == syscall.ERROR_ALREADY_EXISTS {
+		windows.CloseHandle(h)
+		return fmt.Errorf("another instance is already running")
+	}
+
+	handle = h
+	return nil
+}
+
+func releaseMutex() {
+	if handle != 0 {
+		windows.CloseHandle(handle)
+	}
 }
