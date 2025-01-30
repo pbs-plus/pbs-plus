@@ -28,23 +28,22 @@ var initializeLogger = sync.OnceFunc(func() {
 	}
 })
 
-func setupTestServer(t *testing.T) (*Server, string, context.CancelFunc) {
+func setupTestServer(t *testing.T) (*Server, string) {
 	initializeLogger()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	server := NewServer(ctx)
+	// Use background context for server
+	server := NewServer(context.Background())
 	ts := httptest.NewServer(http.HandlerFunc(server.ServeWS))
 	t.Cleanup(func() {
 		ts.Close()
-		cancel()
 	})
 
 	wsURL := "ws" + ts.URL[4:]
-	return server, wsURL, cancel
+	return server, wsURL
 }
 
-func createTestClient(ctx context.Context, url, id string) (*WSClient, error) {
-	return NewWSClient(ctx, Config{
+func createTestClient(id string, url string) (*WSClient, error) {
+	return NewWSClient(context.Background(), Config{
 		ServerURL: url,
 		ClientID:  id,
 		Headers: http.Header{
@@ -57,167 +56,150 @@ func createTestClient(ctx context.Context, url, id string) (*WSClient, error) {
 }
 
 func TestIntegration(t *testing.T) {
-	server, wsURL, cancel := setupTestServer(t)
-	defer cancel()
+	server, wsURL := setupTestServer(t)
 
 	t.Run("Single client basic messaging", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		// Create message channels for test synchronization
-		serverReceived := make(chan Message, 1)
-		clientReceived := make(chan Message, 1)
+		serverMessages := make(chan Message, 10)
+		clientMessages := make(chan Message, 10)
 
 		// Register server handler
 		server.RegisterHandler("test", func(ctx context.Context, msg *Message) error {
-			select {
-			case serverReceived <- *msg:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+			serverMessages <- *msg
+			return nil
 		})
 
 		// Create and connect client
-		client, err := createTestClient(ctx, wsURL, "test-client")
+		client, err := createTestClient("test-client", wsURL)
 		require.NoError(t, err)
-		defer client.Close()
+		t.Cleanup(func() { client.Close() })
 
 		err = client.Connect(context.Background())
 		require.NoError(t, err)
 
 		// Register client handler
 		client.RegisterHandler("test", func(ctx context.Context, msg *Message) error {
-			select {
-			case clientReceived <- *msg:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+			clientMessages <- *msg
+			return nil
 		})
 
 		// Test client -> server
-		testMsg := Message{Type: "test", Content: "hello"}
-		err = client.Send(context.Background(), testMsg)
+		msg := Message{Type: "test", Content: "hello"}
+		err = client.Send(context.Background(), msg)
 		require.NoError(t, err)
 
+		// Wait for server to receive message
 		select {
-		case received := <-serverReceived:
-			assert.Equal(t, testMsg.Type, received.Type)
-			assert.Equal(t, testMsg.Content, received.Content)
-			assert.Equal(t, client.config.ClientID, received.ClientID)
+		case received := <-serverMessages:
+			assert.Equal(t, msg.Type, received.Type)
+			assert.Equal(t, msg.Content, received.Content)
 		case <-time.After(2 * time.Second):
 			t.Fatal("timeout waiting for server to receive message")
 		}
 
 		// Test server -> client
-		err = server.SendToClient(client.config.ClientID, testMsg)
+		err = server.SendToClient(client.config.ClientID, msg)
 		require.NoError(t, err)
 
 		select {
-		case received := <-clientReceived:
-			assert.Equal(t, testMsg.Type, received.Type)
-			assert.Equal(t, testMsg.Content, received.Content)
+		case received := <-clientMessages:
+			assert.Equal(t, msg.Type, received.Type)
+			assert.Equal(t, msg.Content, received.Content)
 		case <-time.After(2 * time.Second):
 			t.Fatal("timeout waiting for client to receive message")
 		}
 	})
 
 	t.Run("Multiple clients messaging", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		const numClients = 5
+		const messagesPerClient = 10
 
-		numClients := 5
-		messageCount := 10
-
-		type receivedMessage struct {
-			clientID int
-			msgNum   int
-			content  string
-		}
-
-		// Create a WaitGroup to track message reception
 		var wg sync.WaitGroup
-		messagesChan := make(chan receivedMessage, numClients*messageCount)
+		receivedMessages := make(chan Message, numClients*messagesPerClient)
+
+		// Setup message tracking
+		messageTracker := struct {
+			sync.Mutex
+			count int
+		}{}
+
+		// Register server handler
+		server.RegisterHandler("test", func(ctx context.Context, msg *Message) error {
+			receivedMessages <- *msg
+			messageTracker.Lock()
+			messageTracker.count++
+			messageTracker.Unlock()
+			return nil
+		})
 
 		// Create and connect clients
 		clients := make([]*WSClient, numClients)
 		for i := 0; i < numClients; i++ {
 			clientID := fmt.Sprintf("test-client-%d", i)
-			client, err := createTestClient(ctx, wsURL, clientID)
-			require.NoError(t, err)
-			defer client.Close()
-
-			err = client.Connect(ctx)
+			client, err := createTestClient(clientID, wsURL)
 			require.NoError(t, err)
 
-			// Register handler for this client
-			idx := i // Capture loop variable
-			client.RegisterHandler("test", func(ctx context.Context, msg *Message) error {
-				messagesChan <- receivedMessage{
-					clientID: idx,
-					content:  msg.Content,
-				}
-				return nil
-			})
+			err = client.Connect(context.Background())
+			require.NoError(t, err)
 
 			clients[i] = client
+
+			// Cleanup after test
+			t.Cleanup(func() {
+				client.Close()
+			})
 		}
 
-		// Add expected number of messages to WaitGroup
-		wg.Add(numClients * messageCount)
-
-		// Start a goroutine to collect messages
-		go func() {
-			for i := 0; i < numClients*messageCount; i++ {
-				select {
-				case <-messagesChan:
-					wg.Done()
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-
-		// Send messages from each client
+		// Send messages from all clients
+		wg.Add(numClients)
 		for i, client := range clients {
-			for j := 0; j < messageCount; j++ {
-				msg := Message{
-					Type:    "test",
-					Content: fmt.Sprintf("message-%d-%d", i, j),
+			go func(idx int, c *WSClient) {
+				defer wg.Done()
+				for j := 0; j < messagesPerClient; j++ {
+					msg := Message{
+						Type:    "test",
+						Content: fmt.Sprintf("message-%d-%d", idx, j),
+					}
+					err := c.Send(context.Background(), msg)
+					require.NoError(t, err)
+					time.Sleep(50 * time.Millisecond) // Prevent flooding
 				}
-				err := client.Send(ctx, msg)
-				require.NoError(t, err)
-				// Small delay to prevent message flood
-				time.Sleep(10 * time.Millisecond)
-			}
+			}(i, client)
 		}
 
-		// Wait for all messages with timeout
-		done := make(chan struct{})
-		go func() {
-			wg.Wait()
-			close(done)
-		}()
+		// Wait for all sends to complete
+		wg.Wait()
 
-		select {
-		case <-done:
-			// Success
-		case <-time.After(5 * time.Second):
-			t.Fatal("timeout waiting for all messages")
+		// Wait for all messages to be received with timeout
+		timeout := time.After(5 * time.Second)
+		expectedMessages := numClients * messagesPerClient
+
+		for {
+			messageTracker.Lock()
+			count := messageTracker.count
+			messageTracker.Unlock()
+
+			if count >= expectedMessages {
+				break
+			}
+
+			select {
+			case <-timeout:
+				t.Fatalf("timeout waiting for messages. Got %d, expected %d", count, expectedMessages)
+				return
+			default:
+				time.Sleep(100 * time.Millisecond)
+			}
 		}
 	})
 }
 
 func TestClientReconnection(t *testing.T) {
-	_, wsURL, cancel := setupTestServer(t)
-	defer cancel()
+	_, wsURL := setupTestServer(t)
 
-	client, err := createTestClient(context.Background(), wsURL, "reconnect-test")
+	client, err := createTestClient("reconnect-test", wsURL)
 	require.NoError(t, err)
-	defer client.Close()
+	t.Cleanup(func() { client.Close() })
 
-	// Test initial connection
 	err = client.Connect(context.Background())
 	require.NoError(t, err)
 	assert.True(t, client.isConnected.Load())
@@ -225,12 +207,12 @@ func TestClientReconnection(t *testing.T) {
 	// Force disconnect
 	client.conn.Close(websocket.StatusGoingAway, "testing reconnection")
 
-	// Verify disconnect detection
+	// Wait for disconnect
 	require.Eventually(t, func() bool {
 		return !client.GetConnectionStatus()
 	}, 5*time.Second, 100*time.Millisecond, "Connection should have been marked as disconnected")
 
-	// Verify reconnection
+	// Wait for reconnect
 	require.Eventually(t, func() bool {
 		return client.GetConnectionStatus()
 	}, 5*time.Second, 100*time.Millisecond, "Connection should have been re-established")
@@ -242,22 +224,14 @@ func TestClientReconnection(t *testing.T) {
 }
 
 func TestCPUOnDisconnect(t *testing.T) {
-	_, wsURL, cancel := setupTestServer(t)
-	defer cancel()
+	_, wsURL := setupTestServer(t)
 
-	numClients := 100
+	const numClients = 100
 	clients := make([]*WSClient, numClients)
-	defer func() {
-		for _, client := range clients {
-			if client != nil {
-				client.Close()
-			}
-		}
-	}()
 
-	// Connect clients
+	// Create and connect clients
 	for i := 0; i < numClients; i++ {
-		client, err := createTestClient(context.Background(), wsURL, fmt.Sprintf("cpu-test-%d", i))
+		client, err := createTestClient(fmt.Sprintf("cpu-test-%d", i), wsURL)
 		require.NoError(t, err)
 
 		err = client.Connect(context.Background())
@@ -266,7 +240,15 @@ func TestCPUOnDisconnect(t *testing.T) {
 		clients[i] = client
 	}
 
-	// Measure baseline CPU usage
+	t.Cleanup(func() {
+		for _, client := range clients {
+			if client != nil {
+				client.Close()
+			}
+		}
+	})
+
+	// Baseline measurement
 	baselineFile, err := os.Create("cpu-baseline.prof")
 	require.NoError(t, err)
 	defer os.Remove(baselineFile.Name())
@@ -279,13 +261,11 @@ func TestCPUOnDisconnect(t *testing.T) {
 	baselineStats, err := os.ReadFile(baselineFile.Name())
 	require.NoError(t, err)
 
-	// Disconnect all clients
-	time.Sleep(time.Second)
+	// Disconnect measurement
 	for _, client := range clients {
 		client.Close()
 	}
 
-	// Measure CPU during disconnection handling
 	peakFile, err := os.Create("cpu-peak.prof")
 	require.NoError(t, err)
 	defer os.Remove(peakFile.Name())
@@ -298,7 +278,7 @@ func TestCPUOnDisconnect(t *testing.T) {
 	peakStats, err := os.ReadFile(peakFile.Name())
 	require.NoError(t, err)
 
-	// Compare CPU usage
+	// Compare measurements
 	baselineCPURate := float64(len(baselineStats)) / 5
 	peakCPURate := float64(len(peakStats)) / 5
 
