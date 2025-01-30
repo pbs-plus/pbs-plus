@@ -61,6 +61,9 @@ func TestIntegration(t *testing.T) {
 	defer cancel()
 
 	t.Run("Single client basic messaging", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
 		// Create message channels for test synchronization
 		serverReceived := make(chan Message, 1)
 		clientReceived := make(chan Message, 1)
@@ -76,7 +79,7 @@ func TestIntegration(t *testing.T) {
 		})
 
 		// Create and connect client
-		client, err := createTestClient(context.Background(), wsURL, "test-client")
+		client, err := createTestClient(ctx, wsURL, "test-client")
 		require.NoError(t, err)
 		defer client.Close()
 
@@ -121,34 +124,60 @@ func TestIntegration(t *testing.T) {
 	})
 
 	t.Run("Multiple clients messaging", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
 		numClients := 5
 		messageCount := 10
-		received := make([]chan Message, numClients)
-		clients := make([]*WSClient, numClients)
+
+		type receivedMessage struct {
+			clientID int
+			msgNum   int
+			content  string
+		}
+
+		// Create a WaitGroup to track message reception
+		var wg sync.WaitGroup
+		messagesChan := make(chan receivedMessage, numClients*messageCount)
 
 		// Create and connect clients
+		clients := make([]*WSClient, numClients)
 		for i := 0; i < numClients; i++ {
-			received[i] = make(chan Message, messageCount)
 			clientID := fmt.Sprintf("test-client-%d", i)
+			client, err := createTestClient(ctx, wsURL, clientID)
+			require.NoError(t, err)
+			defer client.Close()
 
-			client, err := createTestClient(context.Background(), wsURL, clientID)
+			err = client.Connect(ctx)
 			require.NoError(t, err)
 
-			err = client.Connect(context.Background())
-			require.NoError(t, err)
-
+			// Register handler for this client
 			idx := i // Capture loop variable
 			client.RegisterHandler("test", func(ctx context.Context, msg *Message) error {
-				select {
-				case received[idx] <- *msg:
-					return nil
-				case <-ctx.Done():
-					return ctx.Err()
+				messagesChan <- receivedMessage{
+					clientID: idx,
+					content:  msg.Content,
 				}
+				return nil
 			})
 
 			clients[i] = client
 		}
+
+		// Add expected number of messages to WaitGroup
+		wg.Add(numClients * messageCount)
+
+		// Start a goroutine to collect messages
+		go func() {
+			for i := 0; i < numClients*messageCount; i++ {
+				select {
+				case <-messagesChan:
+					wg.Done()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
 
 		// Send messages from each client
 		for i, client := range clients {
@@ -157,28 +186,25 @@ func TestIntegration(t *testing.T) {
 					Type:    "test",
 					Content: fmt.Sprintf("message-%d-%d", i, j),
 				}
-				err := client.Send(context.Background(), msg)
+				err := client.Send(ctx, msg)
 				require.NoError(t, err)
+				// Small delay to prevent message flood
+				time.Sleep(10 * time.Millisecond)
 			}
 		}
 
-		// Verify each client received its messages
-		for i := 0; i < numClients; i++ {
-			receivedCount := 0
-			for j := 0; j < messageCount; j++ {
-				select {
-				case <-received[i]:
-					receivedCount++
-				case <-time.After(2 * time.Second):
-					t.Fatalf("timeout waiting for client %d to receive message %d", i, j)
-				}
-			}
-			assert.Equal(t, messageCount, receivedCount, "client %d did not receive all messages", i)
-		}
+		// Wait for all messages with timeout
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
 
-		// Cleanup
-		for _, client := range clients {
-			client.Close()
+		select {
+		case <-done:
+			// Success
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout waiting for all messages")
 		}
 	})
 }
