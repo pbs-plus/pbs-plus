@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -174,7 +175,7 @@ func (c *WSClient) handleMessage(msg *Message) {
 }
 
 func (c *WSClient) handleConnectionError(err error) {
-	if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+	if websocket.CloseStatus(err) == websocket.StatusNormalClosure || strings.Contains(err.Error(), "context canceled") {
 		return
 	}
 

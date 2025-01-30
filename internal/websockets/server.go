@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -162,7 +163,7 @@ func (s *Server) handleClientConnection(client *Client) {
 		default:
 			var msg Message
 			if err := wsjson.Read(client.ctx, client.conn, &msg); err != nil {
-				if websocket.CloseStatus(err) != websocket.StatusNormalClosure && syslog.L != nil {
+				if websocket.CloseStatus(err) != websocket.StatusNormalClosure && syslog.L != nil && !strings.Contains(err.Error(), "EOF") {
 					syslog.L.Errorf("Read error for client %s: %v", client.ID, err)
 				}
 				return
