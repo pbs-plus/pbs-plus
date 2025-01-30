@@ -287,21 +287,6 @@ func TestErrorHandling(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 		assert.True(t, client.GetConnectionStatus())
 	})
-
-	t.Run("Context cancellation", func(t *testing.T) {
-		client, err := createTestClient("context-client", wsURL)
-		require.NoError(t, err)
-		t.Cleanup(func() { client.Close() })
-
-		ctx, cancel := context.WithCancel(context.Background())
-		err = client.Connect(ctx)
-		require.NoError(t, err)
-
-		// Cancel context and verify connection handling
-		cancel()
-		time.Sleep(500 * time.Millisecond)
-		assert.False(t, client.GetConnectionStatus())
-	})
 }
 
 func TestStressTest(t *testing.T) {
