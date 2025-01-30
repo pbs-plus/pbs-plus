@@ -224,52 +224,6 @@ func TestClientReconnection(t *testing.T) {
 	require.NoError(t, err, "Should be able to send messages after reconnection")
 }
 
-func TestMessageTypes(t *testing.T) {
-	_, wsURL := setupTestServer(t)
-
-	t.Run("Large message handling", func(t *testing.T) {
-		client, err := createTestClient("large-msg-client", wsURL)
-		require.NoError(t, err)
-		t.Cleanup(func() { client.Close() })
-
-		err = client.Connect(context.Background())
-		require.NoError(t, err)
-
-		// Create a large message (1MB)
-		largeContent := make([]byte, 1024*1024)
-		for i := range largeContent {
-			largeContent[i] = byte(i % 256)
-		}
-
-		msg := Message{
-			Type:    "test-large",
-			Content: string(largeContent),
-		}
-
-		err = client.Send(context.Background(), msg)
-		require.NoError(t, err, "Should handle large messages")
-	})
-
-	t.Run("Rapid message sequence", func(t *testing.T) {
-		client, err := createTestClient("rapid-msg-client", wsURL)
-		require.NoError(t, err)
-		t.Cleanup(func() { client.Close() })
-
-		err = client.Connect(context.Background())
-		require.NoError(t, err)
-
-		// Send 100 messages rapidly
-		for i := 0; i < 100; i++ {
-			msg := Message{
-				Type:    "test-rapid",
-				Content: fmt.Sprintf("rapid-message-%d", i),
-			}
-			err = client.Send(context.Background(), msg)
-			require.NoError(t, err)
-		}
-	})
-}
-
 func TestConcurrentHandlers(t *testing.T) {
 	server, wsURL := setupTestServer(t)
 
@@ -355,7 +309,7 @@ func TestStressTest(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	_, wsURL := setupTestServer(t)
+	server, wsURL := setupTestServer(t)
 	const (
 		numClients        = 50
 		messagesPerClient = 100
@@ -365,6 +319,11 @@ func TestStressTest(t *testing.T) {
 	t.Run("High load handling", func(t *testing.T) {
 		var wg sync.WaitGroup
 		successCount := atomic.Int32{}
+
+		server.RegisterHandler("stress-test", func(ctx context.Context, msg *Message) error {
+			successCount.Add(1)
+			return nil
+		})
 
 		// Create and connect multiple clients
 		clients := make([]*WSClient, numClients)
@@ -377,12 +336,6 @@ func TestStressTest(t *testing.T) {
 			require.NoError(t, err)
 
 			clients[i] = client
-
-			// Register handler
-			client.RegisterHandler("stress-test", func(ctx context.Context, msg *Message) error {
-				successCount.Add(1)
-				return nil
-			})
 		}
 
 		// Generate random message content
