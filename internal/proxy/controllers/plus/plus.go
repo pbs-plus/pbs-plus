@@ -3,11 +3,13 @@
 package plus
 
 import (
+	"context"
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
@@ -52,19 +54,28 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			listener, closeListener := storeInstance.WSHub.RegisterHandler()
-			defer closeListener()
-		respWait:
-			for {
-				select {
-				case resp := <-listener:
-					if resp.Type == "response-backup_start" && resp.Content == "Acknowledged: "+agentDrive {
-						break respWait
-					}
-				case <-time.After(time.Second * 10):
-					http.Error(w, fmt.Sprintf("MountHandler: Failed to receive backup acknowledgement from target -> %v", err), http.StatusInternalServerError)
-					return
+			var resp *websockets.Message
+			var wg sync.WaitGroup
+			wg.Add(1)
+			storeInstance.WSHub.RegisterHandler("response-backup_start", func(ctx context.Context, msg *websockets.Message) error {
+				if msg.Content == "Acknowledged: "+agentDrive {
+					resp = msg
+					wg.Done()
 				}
+
+				return nil
+			})
+
+			go func() {
+				time.Sleep(time.Second * 10)
+				wg.Done()
+			}()
+
+			wg.Wait()
+
+			if resp == nil {
+				http.Error(w, fmt.Sprintf("MountHandler: Failed to receive backup acknowledgement from target -> %v", err), http.StatusInternalServerError)
+				return
 			}
 
 			w.Header().Set("Content-Type", "application/json")

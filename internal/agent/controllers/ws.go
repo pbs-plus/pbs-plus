@@ -18,7 +18,7 @@ func sendResponse(c *websockets.WSClient, msgType, content string) {
 		Content: "Acknowledged: " + content,
 	}
 
-	c.Send(response)
+	c.Send(context.Background(), response)
 }
 
 func BackupStartHandler(c *websockets.WSClient) func(msg *websockets.Message) {

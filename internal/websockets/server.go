@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,115 +13,107 @@ import (
 )
 
 const (
-	handlerBuffer = 256
+	workerPoolSize = 100
 )
 
-type Message struct {
-	ClientID string    `json:"client_id"`
-	Type     string    `json:"type"`
-	Content  string    `json:"content"`
-	Time     time.Time `json:"time"`
+type (
+	Message struct {
+		ClientID string    `json:"client_id"`
+		Type     string    `json:"type"`
+		Content  string    `json:"content"`
+		Time     time.Time `json:"time"`
+	}
+
+	Client struct {
+		ID           string
+		AgentVersion string
+		conn         *websocket.Conn
+		server       *Server
+		ctx          context.Context
+		cancel       context.CancelFunc
+		closeOnce    sync.Once
+	}
+
+	Server struct {
+		// Client management
+		clients   map[string]*Client
+		clientsMu sync.RWMutex
+
+		// Message handling
+		handlers  map[string][]MessageHandler
+		handlerMu sync.RWMutex
+		workers   *WorkerPool
+
+		// Context management
+		ctx    context.Context
+		cancel context.CancelFunc
+	}
+
+	ServerOption func(*Server)
+)
+
+func WithWorkerPoolSize(size int) ServerOption {
+	return func(s *Server) {
+		s.workers = NewWorkerPool(size)
+	}
 }
 
-type Client struct {
-	ID           string
-	agentVersion string
-	conn         *websocket.Conn
-	server       *Server
-	ctx          context.Context
-	cancel       context.CancelFunc
-	once         sync.Once
-}
-
-type Server struct {
-	clients     map[string]*Client
-	clientsMux  sync.RWMutex
-	handlers    map[chan Message]struct{}
-	handlersMux sync.RWMutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-}
-
-func NewServer(ctx context.Context) *Server {
+func NewServer(ctx context.Context, opts ...ServerOption) *Server {
 	ctx, cancel := context.WithCancel(ctx)
-	return &Server{
+
+	s := &Server{
 		clients:  make(map[string]*Client),
-		handlers: make(map[chan Message]struct{}),
+		handlers: make(map[string][]MessageHandler),
+		workers:  NewWorkerPool(workerPoolSize),
 		ctx:      ctx,
 		cancel:   cancel,
 	}
-}
 
-func (s *Server) RegisterHandler() (<-chan Message, func()) {
-	ch := make(chan Message, handlerBuffer)
-
-	s.handlersMux.Lock()
-	s.handlers[ch] = struct{}{}
-	s.handlersMux.Unlock()
-
-	cleanup := func() {
-		s.handlersMux.Lock()
-		if _, exists := s.handlers[ch]; exists {
-			delete(s.handlers, ch)
-			close(ch)
-		}
-		s.handlersMux.Unlock()
+	for _, opt := range opts {
+		opt(s)
 	}
 
-	return ch, cleanup
+	return s
 }
 
-func (s *Server) handleClientMessages(client *Client) {
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-client.ctx.Done():
-			return
-		default:
-			message := Message{}
-			err := wsjson.Read(client.ctx, client.conn, &message)
-			if err != nil {
-				if !strings.Contains(err.Error(), "failed to read frame header: EOF") {
-					if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-						syslog.L.Errorf("[WSServer.MessageHandler] Read error for client %s: %v", client.ID, err)
-					}
-				}
-				return
-			}
+func (s *Server) RegisterHandler(msgType string, handler MessageHandler) {
+	s.handlerMu.Lock()
+	s.handlers[msgType] = append(s.handlers[msgType], handler)
+	s.handlerMu.Unlock()
 
-			message.ClientID = client.ID
-			message.Time = time.Now()
-
-			s.handlersMux.RLock()
-			for ch := range s.handlers {
-				select {
-				case ch <- message:
-				default:
-					syslog.L.Warnf("[WSServer.MessageHandler] Handler channel full, dropping message from client %s", client.ID)
-				}
-			}
-			s.handlersMux.RUnlock()
-		}
+	if syslog.L != nil {
+		syslog.L.Infof("Registered new handler for message type: %s", msgType)
 	}
 }
 
-func (s *Server) Register(client *Client) {
-	s.clientsMux.Lock()
-	s.clients[client.ID] = client
-	s.clientsMux.Unlock()
-}
+func (s *Server) handleMessage(msg *Message) {
+	s.handlerMu.RLock()
+	handlers, exists := s.handlers[msg.Type]
+	s.handlerMu.RUnlock()
 
-func (s *Server) Unregister(client *Client) {
-	if client == nil {
+	if !exists {
+		if syslog.L != nil {
+			syslog.L.Infof("No handlers registered for message type: %s", msg.Type)
+		}
 		return
 	}
-	s.clientsMux.Lock()
-	if _, ok := s.clients[client.ID]; ok {
-		client.close()
-		delete(s.clients, client.ID)
+
+	for _, handler := range handlers {
+		handler := handler // Create new variable for closure
+		ctx, cancel := context.WithTimeout(s.ctx, messageTimeout)
+
+		err := s.workers.Submit(ctx, func() {
+			if err := handler(ctx, msg); err != nil && syslog.L != nil {
+				syslog.L.Errorf("Handler error for message type %s: %v", msg.Type, err)
+			}
+		})
+
+		if err != nil && syslog.L != nil {
+			syslog.L.Warnf("Failed to submit message to worker pool: %v", err)
+		}
+
+		cancel()
 	}
-	s.clientsMux.Unlock()
 }
 
 func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
@@ -138,37 +129,91 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 		Subprotocols: []string{"pbs"},
 	})
 	if err != nil {
+		if syslog.L != nil {
+			syslog.L.Errorf("Failed to accept websocket connection: %v", err)
+		}
 		return
 	}
 
 	ctx, cancel := context.WithCancel(s.ctx)
 	client := &Client{
 		ID:           clientID,
+		AgentVersion: clientVersion,
 		conn:         conn,
 		server:       s,
 		ctx:          ctx,
 		cancel:       cancel,
-		agentVersion: clientVersion,
 	}
 
-	s.Register(client)
-	go s.handleClientMessages(client)
+	s.registerClient(client)
+	go s.handleClientConnection(client)
 
 	<-client.ctx.Done()
-	s.Unregister(client)
+	s.unregisterClient(client)
+}
+
+func (s *Server) handleClientConnection(client *Client) {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-client.ctx.Done():
+			return
+		default:
+			var msg Message
+			if err := wsjson.Read(client.ctx, client.conn, &msg); err != nil {
+				if websocket.CloseStatus(err) != websocket.StatusNormalClosure && syslog.L != nil {
+					syslog.L.Errorf("Read error for client %s: %v", client.ID, err)
+				}
+				return
+			}
+
+			msg.ClientID = client.ID
+			msg.Time = time.Now()
+
+			s.handleMessage(&msg)
+		}
+	}
+}
+
+func (s *Server) registerClient(client *Client) {
+	s.clientsMu.Lock()
+	s.clients[client.ID] = client
+	s.clientsMu.Unlock()
+
+	if syslog.L != nil {
+		syslog.L.Infof("Client registered: %s", client.ID)
+	}
+}
+
+func (s *Server) unregisterClient(client *Client) {
+	if client == nil {
+		return
+	}
+
+	s.clientsMu.Lock()
+	if _, exists := s.clients[client.ID]; exists {
+		client.close()
+		delete(s.clients, client.ID)
+	}
+	s.clientsMu.Unlock()
+
+	if syslog.L != nil {
+		syslog.L.Infof("Client unregistered: %s", client.ID)
+	}
 }
 
 func (c *Client) close() {
-	c.once.Do(func() {
+	c.closeOnce.Do(func() {
 		c.cancel()
 		c.conn.Close(websocket.StatusNormalClosure, "client disconnecting")
 	})
 }
 
 func (s *Server) SendToClient(clientID string, msg Message) error {
-	s.clientsMux.RLock()
+	s.clientsMu.RLock()
 	client, exists := s.clients[clientID]
-	s.clientsMux.RUnlock()
+	s.clientsMu.RUnlock()
 
 	if !exists {
 		return fmt.Errorf("client %s not connected", clientID)
@@ -177,66 +222,51 @@ func (s *Server) SendToClient(clientID string, msg Message) error {
 	ctx, cancel := context.WithTimeout(client.ctx, messageTimeout)
 	defer cancel()
 
-	if err := wsjson.Write(ctx, client.conn, &msg); err != nil {
-		return fmt.Errorf("failed to send message: %w", err)
-	}
-
-	return nil
+	return wsjson.Write(ctx, client.conn, &msg)
 }
 
-func (s *Server) IsClientConnected(clientID string) bool {
-	s.clientsMux.RLock()
-	_, exists := s.clients[clientID]
-	s.clientsMux.RUnlock()
-	return exists
-}
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.cancel()
 
-func (s *Server) GetClientVersion(clientID string) string {
-	s.clientsMux.RLock()
-	client, exists := s.clients[clientID]
-	s.clientsMux.RUnlock()
-
-	if exists {
-		return client.agentVersion
-	}
-
-	return ""
-}
-
-func (s *Server) Run() {
-	defer func() {
-		s.clientsMux.Lock()
-		for _, client := range s.clients {
-			client.close()
-		}
-		clear(s.clients)
-		s.clientsMux.Unlock()
-
-		s.handlersMux.Lock()
-		for ch := range s.handlers {
-			close(ch)
-		}
-		clear(s.handlers)
-		s.handlersMux.Unlock()
-
-		s.cancel()
+	done := make(chan struct{})
+	go func() {
+		s.cleanup()
+		close(done)
 	}()
 
-	<-s.ctx.Done()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *Server) cleanup() {
-	s.clientsMux.Lock()
+	s.clientsMu.Lock()
 	for _, client := range s.clients {
 		client.close()
 	}
 	clear(s.clients)
-	s.clientsMux.Unlock()
+	s.clientsMu.Unlock()
 
-	s.handlersMux.Lock()
-	for ch := range s.handlers {
-		close(ch)
+	s.workers.Wait()
+}
+
+func (s *Server) IsClientConnected(clientID string) bool {
+	s.clientsMu.RLock()
+	_, exists := s.clients[clientID]
+	s.clientsMu.RUnlock()
+	return exists
+}
+
+func (s *Server) GetClientVersion(clientID string) string {
+	s.clientsMu.RLock()
+	client, exists := s.clients[clientID]
+	s.clientsMu.RUnlock()
+
+	if exists {
+		return client.AgentVersion
 	}
-	clear(s.handlers)
-	s.handlersMux.Unlock()
+	return ""
 }
