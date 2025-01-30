@@ -125,19 +125,15 @@ func (c *WSClient) Connect(ctx context.Context) error {
 	c.isConnected.Store(true)
 
 	// Start message handler in background
-	go c.handleMessages(ctx)
+	go c.handleMessages()
 
 	return nil
 }
 
-func (c *WSClient) handleMessages(ctx context.Context) {
+func (c *WSClient) handleMessages() {
 	for {
 		select {
 		case <-c.ctx.Done():
-			c.Close()
-			return
-		case <-ctx.Done():
-			c.Close()
 			return
 		default:
 			var message Message
