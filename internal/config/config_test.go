@@ -36,6 +36,14 @@ type CompatTestConfig struct {
 	Tags    []string `config:"type=array"`
 }
 
+type CustomKeyTestConfig struct {
+	ServerName  string   `config:"type=string,required,key=server_name"`
+	MaxConn     int      `config:"type=int,key=max_connections"`
+	EnableLogs  bool     `config:"type=bool,key=enable_logging"`
+	Categories  []string `config:"type=array,key=category_list"`
+	Description string   `config:"type=string"` // No custom key - should use field name lowercase
+}
+
 func TestSectionConfig_BasicOperations(t *testing.T) {
 	// Setup
 	tempDir := t.TempDir()
@@ -450,4 +458,121 @@ func TestCrossImplementationRoundTrip(t *testing.T) {
 
 	// Verify section order is preserved
 	assert.Equal(t, testConfig.Order, readConfig.Order)
+}
+
+func TestCustomKeyConfig(t *testing.T) {
+	tempDir := t.TempDir()
+
+	plugin := &SectionPlugin[CustomKeyTestConfig]{
+		TypeName:   "server",
+		FolderPath: tempDir,
+	}
+	config := NewSectionConfig(plugin)
+
+	t.Run("Write and Read Custom Keys", func(t *testing.T) {
+		testFile := filepath.Join(tempDir, utils.EncodePath("test-custom-keys")+".cfg")
+
+		// Create test data with all fields populated
+		testData := &ConfigData[CustomKeyTestConfig]{
+			FilePath: testFile,
+			Sections: map[string]*Section[CustomKeyTestConfig]{
+				"test-custom-keys": {
+					Type: "server",
+					ID:   "test-custom-keys",
+					Properties: CustomKeyTestConfig{
+						ServerName:  "TestServer",
+						MaxConn:     100,
+						EnableLogs:  true,
+						Categories:  []string{"web", "api", "backend"},
+						Description: "Test server configuration",
+					},
+				},
+			},
+			Order: []string{"test-custom-keys"},
+		}
+
+		// Write config
+		err := config.Write(testData)
+		require.NoError(t, err)
+
+		// Verify the written file contains custom keys
+		content, err := os.ReadFile(testFile)
+		require.NoError(t, err)
+
+		contentStr := string(content)
+		assert.Contains(t, contentStr, "server_name TestServer")
+		assert.Contains(t, contentStr, "max_connections 100")
+		assert.Contains(t, contentStr, "enable_logging true")
+		assert.Contains(t, contentStr, "category_list web,api,backend")
+		assert.Contains(t, contentStr, "description Test server configuration")
+
+		// Read config back
+		readData, err := config.Parse(testFile)
+		require.NoError(t, err)
+
+		// Verify all fields were correctly read back
+		readProps := readData.Sections["test-custom-keys"].Properties
+		assert.Equal(t, "TestServer", readProps.ServerName)
+		assert.Equal(t, 100, readProps.MaxConn)
+		assert.True(t, readProps.EnableLogs)
+		assert.Equal(t, []string{"web", "api", "backend"}, readProps.Categories)
+		assert.Equal(t, "Test server configuration", readProps.Description)
+	})
+
+	t.Run("Partial Fields", func(t *testing.T) {
+		testFile := filepath.Join(tempDir, utils.EncodePath("test-partial-keys")+".cfg")
+
+		// Create config with only required and some optional fields
+		testData := &ConfigData[CustomKeyTestConfig]{
+			FilePath: testFile,
+			Sections: map[string]*Section[CustomKeyTestConfig]{
+				"test-partial-keys": {
+					Type: "server",
+					ID:   "test-partial-keys",
+					Properties: CustomKeyTestConfig{
+						ServerName: "MinimalServer", // Required field
+						MaxConn:    50,              // Optional with custom key
+					},
+				},
+			},
+			Order: []string{"test-partial-keys"},
+		}
+
+		// Write config
+		err := config.Write(testData)
+		require.NoError(t, err)
+
+		// Read config back
+		readData, err := config.Parse(testFile)
+		require.NoError(t, err)
+
+		// Verify fields
+		readProps := readData.Sections["test-partial-keys"].Properties
+		assert.Equal(t, "MinimalServer", readProps.ServerName)
+		assert.Equal(t, 50, readProps.MaxConn)
+		assert.False(t, readProps.EnableLogs)
+		assert.Empty(t, readProps.Categories)
+		assert.Empty(t, readProps.Description)
+	})
+
+	t.Run("Missing Required Field", func(t *testing.T) {
+		testData := &ConfigData[CustomKeyTestConfig]{
+			Sections: map[string]*Section[CustomKeyTestConfig]{
+				"test-missing-required": {
+					Type: "server",
+					ID:   "test-missing-required",
+					Properties: CustomKeyTestConfig{
+						// Missing ServerName which is required
+						MaxConn: 100,
+					},
+				},
+			},
+			Order: []string{"test-missing-required"},
+		}
+
+		// Should fail validation
+		err := config.Write(testData)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "is empty")
+	})
 }

@@ -350,7 +350,12 @@ func (sc *SectionConfig[T]) marshal(data T) (map[string]string, error) {
 			continue
 		}
 
+		// Use custom key if specified, otherwise use lowercase field name
 		key := strings.ToLower(field.Name)
+		if configTag.Key != "" {
+			key = configTag.Key
+		}
+
 		if value.Kind() == reflect.Bool && !value.Bool() {
 			continue // Skip false boolean values
 		}
@@ -388,7 +393,12 @@ func (sc *SectionConfig[T]) unmarshal(data map[string]string) (T, error) {
 			return result, fmt.Errorf("invalid config tags for field %s: %w", field.Name, err)
 		}
 
+		// Use custom key if specified, otherwise use lowercase field name
 		key := strings.ToLower(field.Name)
+		if configTag.Key != "" {
+			key = configTag.Key
+		}
+
 		str, ok := data[key]
 		if !ok {
 			if !ok {
