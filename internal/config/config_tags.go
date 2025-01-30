@@ -12,6 +12,7 @@ import (
 // ConfigTag represents the parsed configuration tags from struct fields
 type ConfigTag struct {
 	Type      PropertyType
+	Key       string
 	Required  bool
 	MinLength *int
 	MaxLength *int
@@ -32,6 +33,11 @@ func parseConfigTags(tag string) (ConfigTag, error) {
 		key := parts[0]
 
 		switch key {
+		case "key":
+			if len(parts) != 2 {
+				return result, fmt.Errorf("type key requires a value")
+			}
+			result.Key = strings.TrimSpace(parts[1])
 		case "type":
 			if len(parts) != 2 {
 				return result, fmt.Errorf("type tag requires a value")

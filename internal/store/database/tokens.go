@@ -44,7 +44,7 @@ func (database *Database) CreateToken(comment string) error {
 				Properties: types.AgentToken{
 					Token:     token,
 					Comment:   comment,
-					CreatedAt: time.Now().Unix(),
+					CreatedAt: int(time.Now().Unix()),
 					Revoked:   false,
 				},
 			},
