@@ -47,7 +47,6 @@ func main() {
 
 	if *jobRun == "" {
 		wsHub = websockets.NewServer(context.Background())
-		go wsHub.Run()
 	}
 
 	storeInstance, err := store.Initialize(wsHub, nil)
