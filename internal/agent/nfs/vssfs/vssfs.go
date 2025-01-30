@@ -25,8 +25,6 @@ type VSSFS struct {
 	root     string
 }
 
-var CacheLimit = 131072
-
 var _ billy.Filesystem = (*VSSFS)(nil)
 
 func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string) billy.Filesystem {
