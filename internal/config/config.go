@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -182,45 +183,70 @@ func (sc *SectionConfig[T]) Write(config *ConfigData[T]) error {
 		}
 	}
 
-	// Write each section with appropriate file locking
+	// If no FilePath is provided, write each section to a separate file
+	if config.FilePath == "" && !sc.allowUnknown {
+		for _, sectionID := range config.Order {
+			section := config.Sections[sectionID]
+			if section == nil {
+				continue
+			}
+
+			filename := filepath.Join(sc.plugin.FolderPath, utils.EncodePath(sectionID)+".cfg")
+			singleConfig := &ConfigData[T]{
+				FilePath: filename,
+				Sections: map[string]*Section[T]{sectionID: section},
+				Order:    []string{sectionID},
+			}
+			if err := sc.Write(singleConfig); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	var output strings.Builder
+
 	for _, sectionID := range config.Order {
 		section := config.Sections[sectionID]
 		if section == nil {
 			continue
 		}
 
-		filename := config.FilePath
-		if !sc.allowUnknown && config.FilePath == "" {
-			filename = filepath.Join(sc.plugin.FolderPath, utils.EncodePath(sectionID)+".cfg")
-		}
-
-		err := sc.fileMutex.WithWriteLock(filename, func() error {
-			dir := filepath.Dir(filename)
-			if err := os.MkdirAll(dir, 0750); err != nil {
-				return fmt.Errorf("failed to create directory: %w", err)
-			}
-
-			props, err := sc.marshal(section.Properties)
-			if err != nil {
-				return fmt.Errorf("error marshaling properties: %w", err)
-			}
-
-			var output strings.Builder
-			output.WriteString(fmt.Sprintf("%s: %s\n", section.Type, sectionID))
-			for key, value := range props {
-				output.WriteString(fmt.Sprintf("\t%s %s\n", key, value))
-			}
-			output.WriteString("\n")
-
-			return os.WriteFile(filename, []byte(output.String()), 0644)
-		})
-
+		props, err := sc.marshal(section.Properties)
 		if err != nil {
-			return err
+			return fmt.Errorf("error marshaling properties for section %s: %w", sectionID, err)
 		}
+
+		output.WriteString(fmt.Sprintf("%s: %s\n", section.Type, sectionID))
+
+		// Sort keys for stable output order
+		keys := make([]string, 0, len(props))
+		for k := range props {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, key := range keys {
+			value := props[key]
+			if value != "" {
+				output.WriteString(fmt.Sprintf("\t%s %s\n", key, value))
+			} else if key == "tags" {
+				output.WriteString(fmt.Sprintf("\t%s\n", key))
+			}
+		}
+
+		output.WriteString("\n")
 	}
 
-	return nil
+	err := sc.fileMutex.WithWriteLock(config.FilePath, func() error {
+		dir := filepath.Dir(config.FilePath)
+		if err := os.MkdirAll(dir, 0750); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
+		}
+		return os.WriteFile(config.FilePath, []byte(output.String()), 0644)
+	})
+
+	return err
 }
 
 // marshalValue converts a reflected value to its string representation
@@ -257,8 +283,8 @@ func unmarshalValue(str string, fieldType reflect.Type, tag ConfigTag) (reflect.
 	case TypeString:
 		return reflect.ValueOf(str), nil
 	case TypeInt:
-		if str == "" {
-			str = "0"
+		if str == "" && !tag.Required {
+			return reflect.Zero(fieldType), nil
 		}
 		val, err := strconv.ParseInt(str, 10, 64)
 		if err != nil {
@@ -266,8 +292,8 @@ func unmarshalValue(str string, fieldType reflect.Type, tag ConfigTag) (reflect.
 		}
 		return reflect.ValueOf(val).Convert(fieldType), nil
 	case TypeBool:
-		if str == "" {
-			str = "false"
+		if str == "" && !tag.Required {
+			return reflect.Zero(fieldType), nil
 		}
 		val, err := strconv.ParseBool(str)
 		if err != nil {
@@ -319,12 +345,21 @@ func (sc *SectionConfig[T]) marshal(data T) (map[string]string, error) {
 			return nil, fmt.Errorf("invalid config tags for field %s: %w", field.Name, err)
 		}
 
+		// Skip zero values for non-required fields
+		if !configTag.Required && value.IsZero() {
+			continue
+		}
+
+		key := strings.ToLower(field.Name)
+		if value.Kind() == reflect.Bool && !value.Bool() {
+			continue // Skip false boolean values
+		}
+
 		str, err := marshalValue(value, configTag)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling field %s: %w", field.Name, err)
 		}
 
-		key := strings.ToLower(field.Name)
 		result[key] = str
 	}
 
@@ -356,7 +391,12 @@ func (sc *SectionConfig[T]) unmarshal(data map[string]string) (T, error) {
 		key := strings.ToLower(field.Name)
 		str, ok := data[key]
 		if !ok {
-			return result, fmt.Errorf("required field %s is missing", field.Name)
+			if !ok {
+				if configTag.Required { // Only error if the field is explicitly marked as required
+					return result, fmt.Errorf("required field %s is missing", field.Name)
+				}
+				continue // Skip optional fields that aren't present
+			}
 		}
 
 		val, err := unmarshalValue(str, field.Type, configTag)
@@ -433,15 +473,19 @@ func defaultParseSectionContent(line string) (string, string, error) {
 		return "", "", fmt.Errorf("empty line")
 	}
 
-	parts := strings.SplitN(line, " ", 2)
-	if len(parts) > 2 {
-		return "", "", fmt.Errorf("invalid property format")
+	// Split on first whitespace (space or tab)
+	var key, value string
+	parts := strings.Fields(line)
+
+	if len(parts) == 0 {
+		return "", "", fmt.Errorf("empty property key")
 	}
 
-	key := strings.TrimSpace(parts[0])
-	value := ""
-	if len(parts) == 2 {
-		value = strings.TrimSpace(parts[1])
+	key = parts[0]
+	if len(parts) > 1 {
+		// Reconstruct value by joining remaining parts to preserve original spacing
+		originalIndex := strings.Index(line, key) + len(key)
+		value = strings.TrimSpace(line[originalIndex:])
 	}
 
 	if key == "" {
