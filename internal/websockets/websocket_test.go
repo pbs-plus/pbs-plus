@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime/pprof"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,11 +21,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupTestServer(t *testing.T) (*Server, string, context.CancelFunc) {
+var initializeLogger = sync.OnceFunc(func() {
 	err := syslog.InitializeLogger()
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %s", err)
 	}
+})
+
+func setupTestServer(t *testing.T) (*Server, string, context.CancelFunc) {
+	initializeLogger()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	server := NewServer(ctx)
