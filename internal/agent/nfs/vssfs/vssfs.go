@@ -13,10 +13,8 @@ import (
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/osfs"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs/windows_utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
 
@@ -25,9 +23,6 @@ type VSSFS struct {
 	billy.Filesystem
 	snapshot *snapshots.WinVSSSnapshot
 	root     string
-
-	PathToID *lru.Cache[string, uint64]
-	IDToPath *lru.Cache[uint64, string]
 }
 
 var CacheLimit = 131072
@@ -35,31 +30,11 @@ var CacheLimit = 131072
 var _ billy.Filesystem = (*VSSFS)(nil)
 
 func NewVSSFS(snapshot *snapshots.WinVSSSnapshot, baseDir string) billy.Filesystem {
-	pathToId, err := lru.New[string, uint64](CacheLimit)
-	if err != nil {
-		syslog.L.Errorf("LRU cache initialization error: %v", err)
-		return nil
-	}
-
-	idToPath, err := lru.New[uint64, string](CacheLimit)
-	if err != nil {
-		syslog.L.Errorf("LRU cache initialization error: %v", err)
-		return nil
-	}
-
 	fs := &VSSFS{
 		Filesystem: osfs.New(filepath.Join(snapshot.SnapshotPath, baseDir), osfs.WithBoundOS()),
 		snapshot:   snapshot,
 		root:       filepath.Join(snapshot.SnapshotPath, baseDir),
-		PathToID:   pathToId,
-		IDToPath:   idToPath,
 	}
-
-	// Pre-cache root directory
-	rootPath := filepath.Join(snapshot.SnapshotPath, baseDir)
-
-	fs.PathToID.Add(rootPath, 0)
-	fs.IDToPath.Add(0, rootPath)
 
 	return fs
 }
@@ -187,7 +162,7 @@ func (fs *VSSFS) Stat(filename string) (os.FileInfo, error) {
 		name = "/"
 	}
 
-	info := createFileInfoFromFindData(name, fullPath, windowsPath, &findData, fs)
+	info := createFileInfoFromFindData(name, windowsPath, &findData)
 
 	return info, nil
 }
@@ -216,9 +191,8 @@ func (fs *VSSFS) ReadDir(dirname string) ([]os.FileInfo, error) {
 		name := windows.UTF16ToString(findData.FileName[:])
 		if name != "." && name != ".." {
 			winEntryPath := filepath.Join(windowsDir, name)
-			fullPath := filepath.Join(fs.root, winEntryPath)
 			if !skipPathWithAttributes(findData.FileAttributes) {
-				info := createFileInfoFromFindData(name, fullPath, winEntryPath, &findData, fs)
+				info := createFileInfoFromFindData(name, winEntryPath, &findData)
 				entries = append(entries, info)
 			}
 		}

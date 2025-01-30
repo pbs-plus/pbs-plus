@@ -5,25 +5,44 @@ package vssfs
 import (
 	"encoding/binary"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
 	"github.com/go-git/go-billy/v5"
+	lru "github.com/hashicorp/golang-lru/v2"
 	nfs "github.com/willscott/go-nfs"
 )
 
-// VSSIDHandler uses VSSFS's PathToID and IDToPath for handle management.
+const (
+	RootHandleID = uint64(0) // Reserved ID for root directory
+)
+
+// VSSIDHandler uses VSSFS's stable file IDs for handle management
 type VSSIDHandler struct {
 	nfs.Handler
-	vssFS *VSSFS
+	vssFS            *VSSFS
+	activeHandles    *lru.Cache[uint64, string]
+	activeVerfifiers *lru.Cache[uint64, []fs.FileInfo]
 }
 
-// NewVSSIDHandler initializes the handler with a reference to VSSFS.
-func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) *VSSIDHandler {
-	return &VSSIDHandler{
-		Handler: underlyingHandler,
-		vssFS:   vssFS,
+func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (*VSSIDHandler, error) {
+	cache, err := lru.New[uint64, string](CacheLimit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create handle cache: %w", err)
 	}
+
+	verifiers, err := lru.New[uint64, []fs.FileInfo](CacheLimit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create verifier cache: %w", err)
+	}
+
+	return &VSSIDHandler{
+		Handler:          underlyingHandler,
+		vssFS:            vssFS,
+		activeHandles:    cache,
+		activeVerfifiers: verifiers,
+	}, nil
 }
 
 func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
@@ -32,70 +51,94 @@ func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 		return nil
 	}
 
-	// Convert NFS path to Windows format for internal storage
-	windowsPath := filepath.Join(path...)
-	fullWindowsPath := filepath.Join(vssFS.Root(), windowsPath)
-
-	if fullWindowsPath == vssFS.root {
-		handle := make([]byte, 8)
-		binary.BigEndian.PutUint64(handle, 0)
-		return handle
+	// Handle root directory specially
+	if len(path) == 0 || (len(path) == 1 && path[0] == "") {
+		return h.createHandle(RootHandleID, vssFS.Root())
 	}
 
-	// Ensure path exists in cache
-	if _, err := vssFS.Stat(strings.Join(path, "/")); err != nil {
+	// Convert NFS path to Windows format
+	winPath := filepath.Join(path...)
+	fullPath := filepath.Join(vssFS.Root(), winPath)
+
+	// Get or create stable ID
+	info, err := vssFS.Stat(winPath)
+	if err != nil {
 		return nil
 	}
 
-	if id, exists := vssFS.PathToID.Get(fullWindowsPath); exists {
-		handle := make([]byte, 8)
-		binary.BigEndian.PutUint64(handle, id)
-		return handle
+	fileID := info.(*VSSFileInfo).stableID
+	return h.createHandle(fileID, fullPath)
+}
+
+func (h *VSSIDHandler) createHandle(fileID uint64, fullPath string) []byte {
+	// Add to cache if not exists
+	if _, exists := h.activeHandles.Get(fileID); !exists {
+		h.activeHandles.Add(fileID, fullPath)
 	}
 
-	return nil
+	// Convert ID to 8-byte handle
+	handle := make([]byte, 8)
+	binary.BigEndian.PutUint64(handle, fileID)
+	return handle
 }
 
 func (h *VSSIDHandler) FromHandle(handle []byte) (billy.Filesystem, []string, error) {
 	if len(handle) != 8 {
-		return nil, nil, fmt.Errorf("invalid handle")
+		return nil, nil, fmt.Errorf("invalid handle length")
 	}
 
-	stableID := binary.BigEndian.Uint64(handle)
-
-	if stableID == 0 {
+	fileID := binary.BigEndian.Uint64(handle)
+	if fileID == RootHandleID {
 		return h.vssFS, []string{}, nil
 	}
 
-	if winPath, exists := h.vssFS.IDToPath.Get(stableID); exists {
-		// Convert Windows path back to NFS format
-		relativePath := strings.TrimPrefix(
-			filepath.ToSlash(winPath),
-			filepath.ToSlash(h.vssFS.Root()),
-		)
-
-		// Clean and split path components
-		cleanPath := filepath.ToSlash(filepath.Clean(relativePath))
-		if cleanPath == "." {
-			return h.vssFS, []string{}, nil
-		}
-
-		var parts []string
-		if cleanPath != "" {
-			parts = strings.Split(strings.TrimPrefix(cleanPath, "/"), "/")
-		}
-		return h.vssFS, parts, nil
+	// Retrieve cached path
+	fullPath, exists := h.activeHandles.Get(fileID)
+	if !exists {
+		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
-	return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
+	// Convert Windows path to NFS components
+	relativePath := strings.TrimPrefix(
+		filepath.ToSlash(fullPath),
+		filepath.ToSlash(h.vssFS.Root())+"/",
+	)
+
+	var parts []string
+	if relativePath != "" {
+		parts = strings.Split(relativePath, "/")
+	}
+	return h.vssFS, parts, nil
 }
 
-// HandleLimit returns the number of precomputed handles.
 func (h *VSSIDHandler) HandleLimit() int {
 	return CacheLimit
 }
 
-// InvalidateHandle is a no-op as handles are immutable.
 func (h *VSSIDHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) error {
+	// No-op for read-only filesystem
+	return nil
+}
+
+// VerifierFor implements directory cookie verification using stable IDs
+func (h *VSSIDHandler) VerifierFor(path string, contents []fs.FileInfo) uint64 {
+	// Get stable ID for directory
+	handle := h.ToHandle(h.vssFS, strings.Split(path, "/"))
+	if handle == nil {
+		return 0
+	}
+
+	dirID := binary.BigEndian.Uint64(handle)
+
+	// Cache directory contents for DataForVerifier
+	h.activeVerfifiers.Add(dirID, contents)
+	return dirID
+}
+
+// DataForVerifier retrieves cached directory contents
+func (h *VSSIDHandler) DataForVerifier(path string, verifier uint64) []fs.FileInfo {
+	if contents, exists := h.activeVerfifiers.Get(verifier); exists {
+		return contents
+	}
 	return nil
 }
