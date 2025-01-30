@@ -21,15 +21,32 @@ const (
 // VSSIDHandler uses VSSFS's stable file IDs for handle management
 type VSSIDHandler struct {
 	nfs.Handler
-	vssFS         *VSSFS
-	activeHandles sync.Map // [uint64, string]
+	vssFS           *VSSFS
+	activeHandlesMu sync.RWMutex
+	activeHandles   map[uint64]string
 }
 
 func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (*VSSIDHandler, error) {
 	return &VSSIDHandler{
-		Handler: underlyingHandler,
-		vssFS:   vssFS,
+		Handler:       underlyingHandler,
+		vssFS:         vssFS,
+		activeHandles: make(map[uint64]string),
 	}, nil
+}
+
+func (h *VSSIDHandler) getHandle(key uint64) (string, bool) {
+	h.activeHandlesMu.RLock()
+	defer h.activeHandlesMu.RUnlock()
+
+	handle, ok := h.activeHandles[key]
+	return handle, ok
+}
+
+func (h *VSSIDHandler) storeHandle(key uint64, path string) {
+	h.activeHandlesMu.Lock()
+	defer h.activeHandlesMu.Unlock()
+
+	h.activeHandles[key] = path
 }
 
 func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
@@ -59,8 +76,8 @@ func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 
 func (h *VSSIDHandler) createHandle(fileID uint64, fullPath string) []byte {
 	// Add to cache if not exists
-	if _, exists := h.activeHandles.Load(fileID); !exists {
-		h.activeHandles.Store(fileID, fullPath)
+	if _, exists := h.getHandle(fileID); !exists {
+		h.storeHandle(fileID, fullPath)
 	}
 
 	// Convert ID to 8-byte handle
@@ -80,14 +97,14 @@ func (h *VSSIDHandler) FromHandle(handle []byte) (billy.Filesystem, []string, er
 	}
 
 	// Retrieve cached path
-	fullPath, exists := h.activeHandles.Load(fileID)
+	fullPath, exists := h.getHandle(fileID)
 	if !exists {
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
 	// Convert Windows path to NFS components
 	relativePath := strings.TrimPrefix(
-		filepath.ToSlash(fullPath.(string)),
+		filepath.ToSlash(fullPath),
 		filepath.ToSlash(h.vssFS.Root())+"/",
 	)
 
@@ -105,4 +122,11 @@ func (h *VSSIDHandler) HandleLimit() int {
 func (h *VSSIDHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) error {
 	// No-op for read-only filesystem
 	return nil
+}
+
+func (h *VSSIDHandler) ClearHandles() {
+	h.activeHandlesMu.Lock()
+	defer h.activeHandlesMu.Unlock()
+
+	h.activeHandles = make(map[uint64]string)
 }

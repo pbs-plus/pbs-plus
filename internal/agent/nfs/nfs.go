@@ -97,6 +97,7 @@ func (s *NFSSession) Serve() error {
 	if err != nil {
 		return fmt.Errorf("unable to handle nfs: %w", err)
 	}
+	defer vssHandler.ClearHandles()
 
 	return nfs.Serve(listener, vssHandler)
 }
