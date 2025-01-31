@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +55,7 @@ type (
 func WithWorkerPoolSize(size int) ServerOption {
 	return func(s *Server) {
 		s.workers = NewWorkerPool(size)
+		syslog.L.Infof("Worker pool size configured | size=%d", size)
 	}
 }
 
@@ -70,47 +70,59 @@ func NewServer(ctx context.Context, opts ...ServerOption) *Server {
 		cancel:   cancel,
 	}
 
+	syslog.L.Info("Initializing WebSocket server")
+
 	for _, opt := range opts {
 		opt(s)
 	}
 
+	syslog.L.Info("WebSocket server initialized successfully")
 	return s
 }
 
 func (s *Server) RegisterHandler(msgType string, handler MessageHandler) {
 	s.handlerMu.Lock()
+	currentCount := len(s.handlers[msgType])
 	s.handlers[msgType] = append(s.handlers[msgType], handler)
 	s.handlerMu.Unlock()
 
-	if syslog.L != nil {
-		syslog.L.Infof("Registered new handler for message type: %s", msgType)
-	}
+	syslog.L.Infof("Registered message handler | type=%s handler_count=%d",
+		msgType, currentCount+1)
 }
 
 func (s *Server) handleMessage(msg *Message) {
 	s.handlerMu.RLock()
 	handlers, exists := s.handlers[msg.Type]
+	handlerCount := len(handlers)
 	s.handlerMu.RUnlock()
 
 	if !exists {
-		if syslog.L != nil {
-			syslog.L.Infof("No handlers registered for message type: %s", msg.Type)
-		}
+		syslog.L.Warnf("No handlers registered | message_type=%s client_id=%s",
+			msg.Type, msg.ClientID)
 		return
 	}
 
-	for _, handler := range handlers {
+	syslog.L.Infof("Processing message | type=%s client_id=%s handler_count=%d",
+		msg.Type, msg.ClientID, handlerCount)
+
+	for i, handler := range handlers {
 		handler := handler // Create new variable for closure
 		ctx, cancel := context.WithTimeout(s.ctx, messageTimeout)
 
+		start := time.Now()
 		err := s.workers.Submit(ctx, func() {
-			if err := handler(ctx, msg); err != nil && syslog.L != nil {
-				syslog.L.Errorf("Handler error for message type %s: %v", msg.Type, err)
+			if err := handler(ctx, msg); err != nil {
+				syslog.L.Errorf("Handler error | type=%s client_id=%s handler_index=%d error=%v duration=%v",
+					msg.Type, msg.ClientID, i, err, time.Since(start))
+			} else {
+				syslog.L.Infof("Handler completed | type=%s client_id=%s handler_index=%d duration=%v",
+					msg.Type, msg.ClientID, i, time.Since(start))
 			}
 		})
 
-		if err != nil && syslog.L != nil {
-			syslog.L.Warnf("Failed to submit message to worker pool: %v", err)
+		if err != nil {
+			syslog.L.Errorf("Worker pool submission failed | type=%s client_id=%s handler_index=%d error=%v",
+				msg.Type, msg.ClientID, i, err)
 		}
 
 		cancel()
@@ -120,19 +132,21 @@ func (s *Server) handleMessage(msg *Message) {
 func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 	clientID := r.Header.Get("X-PBS-Agent")
 	if clientID == "" {
+		syslog.L.Warnf("Rejected WebSocket connection | reason=missing_client_id remote_addr=%s",
+			r.RemoteAddr)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	clientVersion := r.Header.Get("X-PBS-Plus-Version")
+	syslog.L.Infof("WebSocket connection request | client_id=%s version=%s remote_addr=%s",
+		clientID, clientVersion, r.RemoteAddr)
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		Subprotocols: []string{"pbs"},
 	})
 	if err != nil {
-		if syslog.L != nil {
-			syslog.L.Errorf("Failed to accept websocket connection: %v", err)
-		}
+		syslog.L.Errorf("WebSocket acceptance failed | client_id=%s error=%v", clientID, err)
 		return
 	}
 
@@ -154,6 +168,11 @@ func (s *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClientConnection(client *Client) {
+	syslog.L.Infof("Starting client connection handler | client_id=%s version=%s",
+		client.ID, client.AgentVersion)
+
+	defer syslog.L.Infof("Client connection handler stopped | client_id=%s", client.ID)
+
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -163,8 +182,12 @@ func (s *Server) handleClientConnection(client *Client) {
 		default:
 			var msg Message
 			if err := wsjson.Read(client.ctx, client.conn, &msg); err != nil {
-				if websocket.CloseStatus(err) != websocket.StatusNormalClosure && syslog.L != nil && !strings.Contains(err.Error(), "EOF") {
-					syslog.L.Errorf("Read error for client %s: %v", client.ID, err)
+				if !isNormalClosureError(err) {
+					syslog.L.Errorf("Message read error | client_id=%s error=%v",
+						client.ID, err)
+				} else {
+					syslog.L.Infof("Client connection closed normally | client_id=%s",
+						client.ID)
 				}
 				return
 			}
@@ -172,6 +195,7 @@ func (s *Server) handleClientConnection(client *Client) {
 			msg.ClientID = client.ID
 			msg.Time = time.Now()
 
+			syslog.L.Infof("Received message | type=%s client_id=%s", msg.Type, msg.ClientID)
 			s.handleMessage(&msg)
 		}
 	}
@@ -180,11 +204,11 @@ func (s *Server) handleClientConnection(client *Client) {
 func (s *Server) registerClient(client *Client) {
 	s.clientsMu.Lock()
 	s.clients[client.ID] = client
+	clientCount := len(s.clients)
 	s.clientsMu.Unlock()
 
-	if syslog.L != nil {
-		syslog.L.Infof("Client registered: %s", client.ID)
-	}
+	syslog.L.Infof("Client registered | id=%s version=%s total_clients=%d",
+		client.ID, client.AgentVersion, clientCount)
 }
 
 func (s *Server) unregisterClient(client *Client) {
@@ -196,18 +220,25 @@ func (s *Server) unregisterClient(client *Client) {
 	if _, exists := s.clients[client.ID]; exists {
 		client.close()
 		delete(s.clients, client.ID)
-	}
-	s.clientsMu.Unlock()
+		clientCount := len(s.clients)
+		s.clientsMu.Unlock()
 
-	if syslog.L != nil {
-		syslog.L.Infof("Client unregistered: %s", client.ID)
+		syslog.L.Infof("Client unregistered | id=%s total_clients=%d",
+			client.ID, clientCount)
+	} else {
+		s.clientsMu.Unlock()
+		syslog.L.Warnf("Attempted to unregister non-existent client | id=%s",
+			client.ID)
 	}
 }
 
 func (c *Client) close() {
 	c.closeOnce.Do(func() {
+		syslog.L.Infof("Closing client connection | id=%s", c.ID)
 		c.cancel()
-		c.conn.Close(websocket.StatusNormalClosure, "client disconnecting")
+		if err := c.conn.Close(websocket.StatusNormalClosure, "client disconnecting"); err != nil {
+			syslog.L.Errorf("Error closing client connection | id=%s error=%v", c.ID, err)
+		}
 	})
 }
 
@@ -223,10 +254,21 @@ func (s *Server) SendToClient(clientID string, msg Message) error {
 	ctx, cancel := context.WithTimeout(client.ctx, messageTimeout)
 	defer cancel()
 
-	return wsjson.Write(ctx, client.conn, &msg)
+	start := time.Now()
+	err := wsjson.Write(ctx, client.conn, &msg)
+	if err != nil {
+		syslog.L.Errorf("Failed to send message | client_id=%s type=%s error=%v duration=%v",
+			clientID, msg.Type, err, time.Since(start))
+		return err
+	}
+
+	syslog.L.Infof("Message sent successfully | client_id=%s type=%s duration=%v",
+		clientID, msg.Type, time.Since(start))
+	return nil
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	syslog.L.Info("Starting server shutdown")
 	s.cancel()
 
 	done := make(chan struct{})
@@ -237,14 +279,19 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	select {
 	case <-done:
+		syslog.L.Info("Server shutdown completed successfully")
 		return nil
 	case <-ctx.Done():
+		syslog.L.Errorf("Server shutdown timed out | error=%v", ctx.Err())
 		return ctx.Err()
 	}
 }
 
 func (s *Server) cleanup() {
+	start := time.Now()
+
 	s.clientsMu.Lock()
+	clientCount := len(s.clients)
 	for _, client := range s.clients {
 		client.close()
 	}
@@ -252,6 +299,9 @@ func (s *Server) cleanup() {
 	s.clientsMu.Unlock()
 
 	s.workers.Wait()
+
+	syslog.L.Infof("Cleanup completed | clients_closed=%d duration=%v",
+		clientCount, time.Since(start))
 }
 
 func (s *Server) IsClientConnected(clientID string) bool {
