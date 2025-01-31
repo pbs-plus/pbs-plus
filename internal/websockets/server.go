@@ -80,14 +80,44 @@ func NewServer(ctx context.Context, opts ...ServerOption) *Server {
 	return s
 }
 
-func (s *Server) RegisterHandler(msgType string, handler MessageHandler) {
+type UnregisterFunc func()
+
+func (s *Server) RegisterHandler(msgType string, handler MessageHandler) UnregisterFunc {
 	s.handlerMu.Lock()
-	currentCount := len(s.handlers[msgType])
-	s.handlers[msgType] = append(s.handlers[msgType], handler)
+	currentHandlers := s.handlers[msgType]
+	handlerIndex := len(currentHandlers)
+	s.handlers[msgType] = append(currentHandlers, handler)
 	s.handlerMu.Unlock()
 
 	syslog.L.Infof("Registered message handler | type=%s handler_count=%d",
-		msgType, currentCount+1)
+		msgType, handlerIndex+1)
+
+	return func() {
+		s.handlerMu.Lock()
+		defer s.handlerMu.Unlock()
+
+		handlers := s.handlers[msgType]
+		if handlerIndex >= len(handlers) {
+			syslog.L.Warnf("Handler already unregistered | type=%s handler_index=%d",
+				msgType, handlerIndex)
+			return
+		}
+
+		newHandlers := make([]MessageHandler, 0, len(handlers)-1)
+		newHandlers = append(newHandlers, handlers[:handlerIndex]...)
+		if handlerIndex+1 < len(handlers) {
+			newHandlers = append(newHandlers, handlers[handlerIndex+1:]...)
+		}
+
+		if len(newHandlers) == 0 {
+			delete(s.handlers, msgType)
+		} else {
+			s.handlers[msgType] = newHandlers
+		}
+
+		syslog.L.Infof("Unregistered message handler | type=%s remaining_handlers=%d",
+			msgType, len(newHandlers))
+	}
 }
 
 func (s *Server) handleMessage(msg *Message) {

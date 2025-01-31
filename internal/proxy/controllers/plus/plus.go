@@ -45,6 +45,11 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 		agentDrive := string(agentDriveBytes)
 
 		if r.Method == http.MethodPost {
+			// Create context with timeout
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			// Send initial message
 			err := storeInstance.WSHub.SendToClient(targetHostname, websockets.Message{
 				Type:    "backup_start",
 				Content: agentDrive,
@@ -54,34 +59,49 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
+			// Set up synchronization
+			var mu sync.Mutex
+			var cond = sync.NewCond(&mu)
 			var resp *websockets.Message
-			var wg sync.WaitGroup
-			wg.Add(1)
-			storeInstance.WSHub.RegisterHandler("response-backup_start", func(ctx context.Context, msg *websockets.Message) error {
-				if msg.Content == "Acknowledged: "+agentDrive {
-					resp = msg
-					wg.Done()
-				}
 
+			// Register handler and ensure cleanup
+			cleanup := storeInstance.WSHub.RegisterHandler("response-backup_start", func(handlerCtx context.Context, msg *websockets.Message) error {
+				if msg.Content == "Acknowledged: "+agentDrive {
+					mu.Lock()
+					resp = msg
+					cond.Signal()
+					mu.Unlock()
+				}
 				return nil
 			})
+			defer cleanup()
 
-			go func() {
-				time.Sleep(time.Second * 10)
-				wg.Done()
-			}()
+			// Wait for response or timeout
+			mu.Lock()
+			for resp == nil {
+				done := make(chan struct{})
+				go func() {
+					cond.Wait()
+					close(done)
+				}()
 
-			wg.Wait()
+				select {
+				case <-done:
+					// Response received
+				case <-ctx.Done():
+					mu.Unlock()
+					http.Error(w, "MountHandler: Timeout waiting for backup acknowledgement from target", http.StatusInternalServerError)
+					return
+				}
+			}
+			mu.Unlock()
 
-			if resp == nil {
-				http.Error(w, fmt.Sprintf("MountHandler: Failed to receive backup acknowledgement from target -> %v", err), http.StatusInternalServerError)
+			// Handle successful response
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(map[string]string{"status": "true"}); err != nil {
+				http.Error(w, fmt.Sprintf("MountHandler: Failed to encode response -> %v", err), http.StatusInternalServerError)
 				return
 			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"status": "true"})
-
-			return
 		}
 
 		if r.Method == http.MethodDelete {
