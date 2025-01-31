@@ -251,12 +251,27 @@ func (c *WSClient) Send(ctx context.Context, msg Message) error {
 	return nil
 }
 
-func (c *WSClient) RegisterHandler(msgType string, handler MessageHandler) {
+func (c *WSClient) RegisterHandler(msgType string, handler MessageHandler) UnregisterFunc {
 	c.handlerMu.Lock()
-	defer c.handlerMu.Unlock()
 	c.handlers[msgType] = handler
+	c.handlerMu.Unlock()
+
 	syslog.L.Infof("Registered message handler | type=%s client_id=%s",
 		msgType, c.config.ClientID)
+
+	return func() {
+		c.handlerMu.Lock()
+		defer c.handlerMu.Unlock()
+
+		if _, exists := c.handlers[msgType]; exists {
+			delete(c.handlers, msgType)
+			syslog.L.Infof("Unregistered message handler | type=%s client_id=%s",
+				msgType, c.config.ClientID)
+		} else {
+			syslog.L.Warnf("Attempted to unregister non-existent handler | type=%s client_id=%s",
+				msgType, c.config.ClientID)
+		}
+	}
 }
 
 func (c *WSClient) Close() error {
