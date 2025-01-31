@@ -116,16 +116,9 @@ func (a *AgentMount) Unmount() {
 	}
 
 	// First try a clean unmount
-	umount := exec.Command("umount", a.Path)
+	umount := exec.Command("umount", "-lf", a.Path)
 	umount.Env = os.Environ()
-	err := umount.Run()
-
-	// If clean unmount fails, try force unmount
-	if err != nil {
-		forceUmount := exec.Command("umount", "-lf", a.Path)
-		forceUmount.Env = os.Environ()
-		_ = forceUmount.Run()
-	}
+	_ = umount.Run()
 
 	// Kill any lingering mount process
 	if a.Cmd != nil && a.Cmd.Process != nil {
