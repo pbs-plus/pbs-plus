@@ -45,9 +45,10 @@ func main() {
 	var wsHub *websockets.Server
 	wsHub = nil
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	if *jobRun == "" {
-		wsHub = websockets.NewServer(context.Background())
-		go wsHub.Run()
+		wsHub = websockets.NewServer(ctx)
 	}
 
 	storeInstance, err := store.Initialize(wsHub, nil)
