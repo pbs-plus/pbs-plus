@@ -44,7 +44,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 		agentDrive := string(agentDriveBytes)
 
 		if r.Method == http.MethodPost {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 
 			// Create response channel and register handler

@@ -23,6 +23,9 @@ Ext.define("PBS.D2DManagement.BackupWindow", {
     delete values.id;
     return `${url}/${encodePathValue(id)}`;
   },
+  submitOptions: {
+    timeout: 120000,
+  },
 
   layout: "hbox",
   width: 400,
