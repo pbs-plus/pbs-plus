@@ -4,7 +4,6 @@ package plus
 
 import (
 	"context"
-	"encoding/base32"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,23 +24,8 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		// TODO: add check for security
 
-		targetHostnameEnc := utils.DecodePath(r.PathValue("target"))
-		agentDriveEnc := utils.DecodePath(r.PathValue("drive"))
-
-		targetHostnameBytes, err := base32.StdEncoding.DecodeString(targetHostnameEnc)
-		if err != nil {
-			http.Error(w, "invalid arguments", http.StatusBadRequest)
-			return
-		}
-
-		agentDriveBytes, err := base32.StdEncoding.DecodeString(agentDriveEnc)
-		if err != nil {
-			http.Error(w, "invalid arguments", http.StatusBadRequest)
-			return
-		}
-
-		targetHostname := string(targetHostnameBytes)
-		agentDrive := string(agentDriveBytes)
+		targetHostname := utils.DecodePath(r.PathValue("target"))
+		agentDrive := utils.DecodePath(r.PathValue("drive"))
 
 		if r.Method == http.MethodPost {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
