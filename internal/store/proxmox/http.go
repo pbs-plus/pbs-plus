@@ -73,7 +73,7 @@ func (proxmoxSess *ProxmoxSession) ProxmoxHTTPRequest(method, url string, body i
 
 	if proxmoxSess.HTTPClient == nil {
 		proxmoxSess.HTTPClient = &http.Client{
-			Timeout:   time.Second * 30,
+			Timeout:   time.Minute * 2,
 			Transport: utils.BaseTransport,
 		}
 	}

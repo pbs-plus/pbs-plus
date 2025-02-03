@@ -36,8 +36,8 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 	agentDrive := agentPathParts[1]
 
 	// Encode hostname and drive for API call
-	targetHostnameEnc := base32.StdEncoding.EncodeToString([]byte(targetHostname))
-	agentDriveEnc := base32.StdEncoding.EncodeToString([]byte(agentDrive))
+	targetHostnameEnc := utils.EncodePath(targetHostname)
+	agentDriveEnc := utils.EncodePath(agentDrive)
 
 	// Request mount from agent
 	err := proxmox.Session.ProxmoxHTTPRequest(
