@@ -5,24 +5,60 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-func collectLogs(stdout, stderr io.ReadCloser) []string {
-	logLines := []string{}
-	reader := bufio.NewScanner(io.MultiReader(stdout, stderr))
+func collectLogs(stdout, stderr io.ReadCloser) ([]string, error) {
+	defer stdout.Close()
+	defer stderr.Close()
 
-	for reader.Scan() {
-		line := reader.Text()
+	linesCh := make(chan string)
+	errCh := make(chan error, 2)
+	var wg sync.WaitGroup
 
-		log.Println(line)
+	scanner := func(r io.Reader) {
+		defer wg.Done()
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			line := scanner.Text()
+			log.Println(line) // Log to console
+			linesCh <- line
+		}
+		if err := scanner.Err(); err != nil {
+			errCh <- fmt.Errorf("error reading logs: %w", err)
+		}
+	}
+
+	wg.Add(2)
+	go scanner(stdout)
+	go scanner(stderr)
+
+	go func() {
+		wg.Wait()
+		close(linesCh)
+		close(errCh)
+	}()
+
+	var logLines []string
+	for line := range linesCh {
 		logLines = append(logLines, line)
 	}
 
-	return logLines
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("errors reading logs: %v", errs)
+	}
+
+	return logLines, nil
 }
 
 func writeLogsToFile(upid string, logLines []string) error {
@@ -30,10 +66,16 @@ func writeLogsToFile(upid string, logLines []string) error {
 		return fmt.Errorf("logLines is nil")
 	}
 
-	logFilePath := utils.GetTaskLogPath(upid)
-	logFile, err := utils.WaitForLogFile(logFilePath, 5*time.Second)
-	if err != nil {
+	if err := utils.WaitForLogFile(upid, 1*time.Minute); err != nil {
 		return fmt.Errorf("log file cannot be opened: %w", err)
+	}
+
+	time.Sleep(5 * time.Second)
+
+	logFilePath := utils.GetTaskLogPath(upid)
+	logFile, err := os.OpenFile(logFilePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open log file: %w", err)
 	}
 	defer logFile.Close()
 
@@ -54,20 +96,17 @@ func writeLogsToFile(upid string, logLines []string) error {
 			hasError = true
 			continue
 		}
-
 		if _, err := writer.WriteString(fmt.Sprintf("%s: %s\n", timestamp, logLine)); err != nil {
 			return fmt.Errorf("failed to write log line: %w", err)
 		}
 	}
 
-	// Write final status
+	finalStatus := fmt.Sprintf("%s: TASK OK\n", timestamp)
 	if hasError {
-		_, err = writer.WriteString(fmt.Sprintf("%s: %s", timestamp, errorString))
-	} else {
-		_, err = writer.WriteString(fmt.Sprintf("%s: TASK OK", timestamp))
+		finalStatus = fmt.Sprintf("%s: %s\n", timestamp, errorString)
 	}
 
-	if err != nil {
+	if _, err := writer.WriteString(finalStatus); err != nil {
 		return fmt.Errorf("failed to write final status: %w", err)
 	}
 
