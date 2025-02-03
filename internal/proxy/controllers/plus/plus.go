@@ -34,7 +34,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			// Create response channel and register handler
 			respChan := make(chan *websockets.Message, 1)
 			cleanup := storeInstance.WSHub.RegisterHandler("response-backup_start", func(handlerCtx context.Context, msg *websockets.Message) error {
-				if msg.Content == "Acknowledged: "+agentDrive {
+				if msg.Content == "Acknowledged: "+agentDrive && msg.ClientID == targetHostname {
 					respChan <- msg
 				}
 				return nil
