@@ -117,7 +117,7 @@ func RunBackup(job *types.Job, storeInstance *store.Store, skipCheck bool) (*Bac
 		logGlobalMu.Lock()
 		defer logGlobalMu.Unlock()
 
-		logLines = collectLogs(stdout, stderr)
+		logLines, _ = collectLogs(stdout, stderr)
 	}()
 
 	// Now start the backup process
