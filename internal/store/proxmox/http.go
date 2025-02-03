@@ -25,7 +25,7 @@ type ProxmoxSession struct {
 func InitializeProxmox() {
 	Session = &ProxmoxSession{
 		HTTPClient: &http.Client{
-			Timeout:   time.Second * 30,
+			Timeout:   time.Minute * 2,
 			Transport: utils.BaseTransport,
 		},
 	}
