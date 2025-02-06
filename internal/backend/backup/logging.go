@@ -66,10 +66,6 @@ func writeLogsToFile(upid string, logLines []string) error {
 		return fmt.Errorf("logLines is nil")
 	}
 
-	if err := utils.WaitForLogFile(upid, 1*time.Minute); err != nil {
-		return fmt.Errorf("log file cannot be opened: %w", err)
-	}
-
 	time.Sleep(2 * time.Second)
 
 	logFilePath := utils.GetTaskLogPath(upid)
