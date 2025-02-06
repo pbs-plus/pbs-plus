@@ -22,15 +22,20 @@ var BaseTransport = &http.Transport{
 }
 
 var MountTransport = &http.Transport{
-	MaxIdleConns:        200,             // Max idle connections across all hosts
-	MaxIdleConnsPerHost: 20,              // Max idle connections per host
-	IdleConnTimeout:     5 * time.Minute, // Timeout for idle connections
-	DisableKeepAlives:   false,
+	MaxIdleConns:       0,
+	DisableKeepAlives:  true,
+	DisableCompression: false,
+	IdleConnTimeout:    0,
 	DialContext: (&net.Dialer{
-		Timeout:   10 * time.Minute, // Connection timeout
-		KeepAlive: 5 * time.Minute,  // TCP keep-alive
+		Timeout:   5 * time.Minute,
+		KeepAlive: 0,
 	}).DialContext,
-	TLSHandshakeTimeout:   2 * time.Minute,
-	TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
-	ExpectContinueTimeout: 2 * time.Minute, // Timeout for expect-continue responses
+	TLSHandshakeTimeout: 2 * time.Minute,
+	TLSClientConfig: &tls.Config{
+		InsecureSkipVerify: true,
+	},
+	ExpectContinueTimeout: 1 * time.Minute,
+	WriteBufferSize:       0,
+	ReadBufferSize:        0,
+	ForceAttemptHTTP2:     false,
 }
