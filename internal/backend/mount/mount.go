@@ -35,24 +35,32 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 	agentHost := agentPathParts[0]
 	agentDrive := agentPathParts[1]
 
+	agentMount := &AgentMount{
+		Hostname: targetHostname,
+		Drive:    agentDrive,
+	}
+
 	// Encode hostname and drive for API call
 	targetHostnameEnc := utils.EncodePath(targetHostname)
 	agentDriveEnc := utils.EncodePath(agentDrive)
 
 	// Request mount from agent
-	err := proxmox.Session.ProxmoxHTTPRequest(
+	backupSession := &proxmox.ProxmoxSession{
+		HTTPClient: &http.Client{
+			Timeout:   time.Minute * 5,
+			Transport: utils.MountTransport,
+		},
+	}
+
+	err := backupSession.ProxmoxHTTPRequest(
 		http.MethodPost,
 		fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc),
 		nil,
 		nil,
 	)
 	if err != nil {
+		agentMount.CloseMount()
 		return nil, fmt.Errorf("Mount: Failed to send mount request to target '%s' -> %w", target.Name, err)
-	}
-
-	agentMount := &AgentMount{
-		Hostname: targetHostname,
-		Drive:    agentDrive,
 	}
 
 	// Get port for NFS connection
@@ -60,6 +68,7 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 	agentPort, err := utils.DriveLetterPort(agentDriveRune)
 	if err != nil {
 		agentMount.Unmount()
+		agentMount.CloseMount()
 		return nil, fmt.Errorf("Mount: error mapping \"%c\" to network port -> %w", agentDriveRune, err)
 	}
 
@@ -70,6 +79,7 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 	// Create mount directory if it doesn't exist
 	err = os.MkdirAll(agentMount.Path, 0700)
 	if err != nil {
+		agentMount.CloseMount()
 		return nil, fmt.Errorf("Mount: error creating directory \"%s\" -> %w", agentMount.Path, err)
 	}
 
