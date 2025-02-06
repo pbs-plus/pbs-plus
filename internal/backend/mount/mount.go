@@ -108,6 +108,33 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 	for i := 0; i < maxRetries; i++ {
 		err = mnt.Run()
 		if err == nil {
+			isAccessible := false
+			checkTimeout := time.After(10 * time.Second)
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+
+		checkLoop:
+			for {
+				select {
+				case <-checkTimeout:
+					break checkLoop
+				case <-ticker.C:
+					// Try to read directory contents
+					_, err := os.ReadDir(agentMount.Path)
+					if err == nil {
+						isAccessible = true
+						break checkLoop
+					}
+				}
+			}
+
+			if !isAccessible {
+				// Clean up if mount point isn't accessible
+				agentMount.Unmount()
+				agentMount.CloseMount()
+				return nil, fmt.Errorf("Mount: mounted directory not accessible after 10 seconds")
+			}
+
 			return agentMount, nil
 		}
 		lastErr = err
