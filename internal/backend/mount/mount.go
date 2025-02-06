@@ -46,6 +46,8 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 
 	// Request mount from agent
 	backupSession := &proxmox.ProxmoxSession{
+		LastToken: proxmox.Session.LastToken,
+		APIToken:  proxmox.Session.APIToken,
 		HTTPClient: &http.Client{
 			Timeout:   time.Minute * 5,
 			Transport: utils.MountTransport,
