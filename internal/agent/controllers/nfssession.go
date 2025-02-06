@@ -92,8 +92,6 @@ func (s *NFSSessionStore) save() error {
 
 func (s *NFSSessionStore) Store(drive string, session *nfs.NFSSession) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	sessionData := &NFSSessionData{
 		Drive:     drive,
 		StartTime: time.Now(),
@@ -101,6 +99,7 @@ func (s *NFSSessionStore) Store(drive string, session *nfs.NFSSession) error {
 
 	s.sessions[drive] = sessionData
 	nfsSessions.Store(drive, session)
+	s.mu.Unlock()
 
 	return s.save()
 }
@@ -115,10 +114,11 @@ func (s *NFSSessionStore) Load(drive string) (*NFSSessionData, bool) {
 
 func (s *NFSSessionStore) Delete(drive string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	delete(s.sessions, drive)
 	nfsSessions.Delete(drive)
+
+	s.mu.Unlock()
 
 	return s.save()
 }
