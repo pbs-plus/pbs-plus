@@ -14,7 +14,7 @@ func WaitForLogFile(taskUpid string, maxWait time.Duration) error {
 	// Path to the active tasks
 	logPath := "/var/log/proxmox-backup/tasks/active"
 
-	if _, found := checkForLine(logPath, taskUpid); found {
+	if _, found := checkForLine(logPath, taskUpid); !found {
 		return nil
 	}
 
@@ -35,7 +35,7 @@ func WaitForLogFile(taskUpid string, maxWait time.Duration) error {
 	timeout := time.After(maxWait)
 
 	// First check if the line already exists
-	if _, found := checkForLine(logPath, taskUpid); found {
+	if _, found := checkForLine(logPath, taskUpid); !found {
 		return nil
 	}
 
@@ -47,7 +47,7 @@ func WaitForLogFile(taskUpid string, maxWait time.Duration) error {
 			}
 
 			if event.Op&fsnotify.Write == fsnotify.Write {
-				if _, found := checkForLine(logPath, taskUpid); found {
+				if _, found := checkForLine(logPath, taskUpid); !found {
 					return nil
 				}
 			}
