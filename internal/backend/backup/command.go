@@ -70,8 +70,6 @@ func buildCommandArgs(storeInstance *store.Store, job *types.Job, srcPath string
 		"--change-detection-mode=metadata",
 		"--backup-id", backupId,
 		"--crypt-mode=none",
-		"--skip-e2big-xattr", "true",
-		"--skip-lost-and-found", "true",
 	}
 
 	// Add exclusions
@@ -100,7 +98,7 @@ func buildCommandEnv(storeInstance *store.Store) []string {
 
 	env := append(os.Environ(),
 		fmt.Sprintf("PBS_PASSWORD=%s", proxmox.Session.APIToken.Value))
-	// env = append(env, "PBS_LOG=debug")
+	env = append(env, "PBS_LOG=debug")
 
 	// Add fingerprint if available
 	if pbsStatus, err := proxmox.Session.GetPBSStatus(); err == nil {
