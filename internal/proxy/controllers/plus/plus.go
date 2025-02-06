@@ -60,6 +60,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			// Handle successful response
+			w.Header().Set("Content-Type", "application/json")
 			if err := json.NewEncoder(w).Encode(map[string]string{"status": "true"}); err != nil {
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to encode response -> %v", err), http.StatusInternalServerError)
 				return
@@ -72,6 +73,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				Content: agentDrive,
 			})
 
+			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"status": "true"})
 
 			return
