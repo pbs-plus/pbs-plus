@@ -13,7 +13,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-func collectLogs(stdout, stderr io.ReadCloser) ([]string, error) {
+func collectLogs(jobId string, stdout, stderr io.ReadCloser) ([]string, error) {
 	defer stdout.Close()
 	defer stderr.Close()
 
@@ -26,7 +26,7 @@ func collectLogs(stdout, stderr io.ReadCloser) ([]string, error) {
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
 			line := scanner.Text()
-			log.Println(line) // Log to console
+			log.Printf("[%s] %s\n", jobId, line) // Log to console
 			linesCh <- line
 		}
 		if err := scanner.Err(); err != nil {
