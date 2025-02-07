@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
@@ -59,6 +60,13 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		op, err := backup.RunBackup(job, storeInstance, false)
 		if err != nil {
+			if !strings.Contains(err.Error(), "A job is still running.") {
+				job.LastRunPlusError = err.Error()
+				job.LastRunPlusTime = int(time.Now().Unix())
+
+				_ = storeInstance.Database.UpdateJob(*job)
+			}
+
 			controllers.WriteErrorResponse(w, err)
 			return
 		}

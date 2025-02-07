@@ -59,6 +59,8 @@ func (database *Database) CreateJob(job types.Job) error {
 					NotificationMode: job.NotificationMode,
 					Namespace:        job.Namespace,
 					LastRunUpid:      job.LastRunUpid,
+					LastRunPlusError: job.LastRunPlusError,
+					LastRunPlusTime:  job.LastRunPlusTime,
 				},
 			},
 		},
@@ -101,12 +103,9 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 		return nil, fmt.Errorf("GetJob: section %s does not exist", id)
 	}
 
-	lastRunUpid := section.Properties.LastRunUpid
-
 	// Convert config to Job struct
 	job := &section.Properties
 	job.ID = id
-	job.LastRunUpid = lastRunUpid
 
 	// Get exclusions
 	exclusions, err := database.GetAllJobExclusions(id)
@@ -125,8 +124,13 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 		job.Exclusions = append(job.Exclusions, globalExclusions...)
 	}
 
-	// Update dynamic fields
-	if job.LastRunUpid != "" {
+	if job.LastRunPlusError != "" {
+		plusError := "Error: " + job.LastRunPlusError
+		job.LastRunState = &plusError
+		lastRunPlusTime := int64(job.LastRunPlusTime)
+		job.LastRunEndtime = &lastRunPlusTime
+		job.LastRunUpid = ""
+	} else if job.LastRunUpid != "" {
 		task, err := proxmox.Session.GetTaskByUPID(job.LastRunUpid)
 		if err != nil {
 			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
