@@ -257,6 +257,7 @@ func main() {
 		TLSConfig:      tlsConfig,
 		ReadTimeout:    serverConfig.ReadTimeout,
 		WriteTimeout:   serverConfig.WriteTimeout,
+		IdleTimeout:    serverConfig.IdleTimeout,
 		MaxHeaderBytes: serverConfig.MaxHeaderBytes,
 	}
 
