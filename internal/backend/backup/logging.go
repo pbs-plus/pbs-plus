@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -13,7 +14,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-func collectLogs(jobId string, stdout, stderr io.ReadCloser) ([]string, error) {
+func collectLogs(jobId string, cmd *exec.Cmd, stdout, stderr io.ReadCloser) ([]string, error) {
 	defer stdout.Close()
 	defer stderr.Close()
 
@@ -27,6 +28,9 @@ func collectLogs(jobId string, stdout, stderr io.ReadCloser) ([]string, error) {
 		for scanner.Scan() {
 			line := scanner.Text()
 			log.Printf("[%s] %s\n", jobId, line) // Log to console
+			if strings.Contains(line, "connection failed") {
+				_ = cmd.Process.Kill()
+			}
 			linesCh <- line
 		}
 		if err := scanner.Err(); err != nil {
@@ -83,6 +87,8 @@ func writeLogsToFile(upid string, logLines []string) error {
 	}
 
 	hasError := false
+	incomplete := true
+	disconnected := false
 	var errorString string
 	timestamp := time.Now().Format(time.RFC3339)
 
@@ -92,6 +98,15 @@ func writeLogsToFile(upid string, logLines []string) error {
 			hasError = true
 			continue
 		}
+
+		if strings.Contains(logLine, "connection failed") {
+			disconnected = true
+		}
+
+		if strings.Contains(logLine, "End Time:") {
+			incomplete = false
+		}
+
 		if _, err := writer.WriteString(fmt.Sprintf("%s: %s\n", timestamp, logLine)); err != nil {
 			return fmt.Errorf("failed to write log line: %w", err)
 		}
@@ -100,6 +115,8 @@ func writeLogsToFile(upid string, logLines []string) error {
 	finalStatus := fmt.Sprintf("%s: TASK OK\n", timestamp)
 	if hasError {
 		finalStatus = fmt.Sprintf("%s: %s\n", timestamp, errorString)
+	} else if incomplete && disconnected {
+		finalStatus = fmt.Sprintf("%s: Job cancelled\n", timestamp)
 	}
 
 	if _, err := writer.WriteString(finalStatus); err != nil {
