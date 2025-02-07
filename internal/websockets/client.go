@@ -199,11 +199,10 @@ func (c *WSClient) handleMessage(msg *Message) {
 func (c *WSClient) handleConnectionError(err error) {
 	if isNormalClosureError(err) {
 		syslog.L.Infof("WebSocket connection closed normally | client_id=%s", c.config.ClientID)
-		return
+	} else {
+		syslog.L.Errorf("WebSocket connection error | client_id=%s error=%v",
+			c.config.ClientID, err)
 	}
-
-	syslog.L.Errorf("WebSocket connection error | client_id=%s error=%v",
-		c.config.ClientID, err)
 	c.isConnected.Store(false)
 
 	// Attempt reconnection with backoff
