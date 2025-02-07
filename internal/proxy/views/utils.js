@@ -1,4 +1,4 @@
-Ext.define('PBSPlus.Utils', {
+Ext.define('PBS.PlusUtils', {
   singleton: true,
   render_task_status: function(value, metadata, record, rowIndex, colIndex, store) {
     var lastPlusError = record.data['last-plus-error'] || store.getById('last-plus-error')?.data.value
