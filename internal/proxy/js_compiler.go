@@ -54,7 +54,7 @@ const refreshPlusToken = () => {
 }
 
 refreshPlusToken();
-setInterval(refreshPlusToken, 2000);
+setInterval(refreshPlusToken, 10000);
 
 function encodePathValue(path) {
   const encoded = btoa(path)
