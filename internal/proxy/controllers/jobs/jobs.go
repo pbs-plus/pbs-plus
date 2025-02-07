@@ -12,6 +12,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
@@ -64,7 +65,10 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				job.LastRunPlusError = err.Error()
 				job.LastRunPlusTime = int(time.Now().Unix())
 
-				_ = storeInstance.Database.UpdateJob(*job)
+				uErr := storeInstance.Database.UpdateJob(*job)
+				if uErr != nil {
+					syslog.L.Errorf("LastRunPlusError update: %v", uErr)
+				}
 			}
 
 			controllers.WriteErrorResponse(w, err)
