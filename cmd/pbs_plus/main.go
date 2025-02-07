@@ -82,7 +82,10 @@ func main() {
 				jobTask.LastRunPlusError = err.Error()
 				jobTask.LastRunPlusTime = int(time.Now().Unix())
 
-				_ = storeInstance.Database.UpdateJob(*jobTask)
+				uErr := storeInstance.Database.UpdateJob(*jobTask)
+				if uErr != nil {
+					syslog.L.Errorf("LastRunPlusError update: %v", uErr)
+				}
 			}
 			syslog.L.Error(err)
 			return
