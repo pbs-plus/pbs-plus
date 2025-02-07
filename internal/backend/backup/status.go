@@ -27,6 +27,8 @@ func updateJobStatus(job *types.Job, task *proxmox.Task, storeInstance *store.St
 	latestJob.LastRunUpid = taskFound.UPID
 	latestJob.LastRunState = &taskFound.Status
 	latestJob.LastRunEndtime = &taskFound.EndTime
+	latestJob.LastRunPlusTime = 0
+	latestJob.LastRunPlusError = ""
 
 	if err := storeInstance.Database.UpdateJob(*latestJob); err != nil {
 		syslog.L.Errorf("Unable to update job: %v", err)

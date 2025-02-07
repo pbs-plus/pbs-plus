@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
@@ -75,13 +76,14 @@ func main() {
 			return
 		}
 
-		if jobTask.LastRunState == nil && jobTask.LastRunUpid != "" {
-			syslog.L.Info("A job is still running, skipping this schedule.")
-			return
-		}
-
 		op, err := backup.RunBackup(jobTask, storeInstance, true)
 		if err != nil {
+			if !strings.Contains(err.Error(), "A job is still running.") {
+				jobTask.LastRunPlusError = err.Error()
+				jobTask.LastRunPlusTime = int(time.Now().Unix())
+
+				_ = storeInstance.Database.UpdateJob(*jobTask)
+			}
 			syslog.L.Error(err)
 			return
 		}

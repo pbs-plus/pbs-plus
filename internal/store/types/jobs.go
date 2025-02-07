@@ -13,6 +13,8 @@ type Job struct {
 	LastRunUpid      string      `config:"key=last_run_upid,type=string" json:"last-run-upid"`
 	LastRunState     *string     `json:"last-run-state"`
 	LastRunEndtime   *int64      `json:"last-run-endtime"`
+	LastRunPlusError string      `config:"key=last_plus_error,type=string" json:"last-plus-error"`
+	LastRunPlusTime  int         `config:"key=last_plus_time,type=int" json:"last-plus-time"`
 	Duration         *int64      `json:"duration"`
 	Exclusions       []Exclusion `json:"exclusions"`
 	RawExclusions    string      `json:"rawexclusions"`
