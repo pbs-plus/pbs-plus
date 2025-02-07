@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
@@ -33,6 +34,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			// Create response channel and register handler
 			respChan := make(chan *websockets.Message, 1)
+			errChan := make(chan *websockets.Message, 1)
 			cleanup := storeInstance.WSHub.RegisterHandler("response-backup_start", func(handlerCtx context.Context, msg *websockets.Message) error {
 				if msg.Content == "Acknowledged: "+agentDrive && msg.ClientID == targetHostname {
 					respChan <- msg
@@ -40,6 +42,13 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return nil
 			})
 			defer cleanup()
+			cleanupErr := storeInstance.WSHub.RegisterHandler("error-backup_start", func(handlerCtx context.Context, msg *websockets.Message) error {
+				if strings.Contains(msg.Content, agentDrive+": ") && msg.ClientID == targetHostname {
+					errChan <- msg
+				}
+				return nil
+			})
+			defer cleanupErr()
 
 			// Send initial message
 			err := storeInstance.WSHub.SendToClient(targetHostname, websockets.Message{
@@ -54,6 +63,9 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			// Wait for either response or timeout
 			select {
 			case <-respChan:
+			case err := <-errChan:
+				http.Error(w, fmt.Sprintf("MountHandler: %s", err.Content), http.StatusInternalServerError)
+				return
 			case <-ctx.Done():
 				http.Error(w, "MountHandler: Timeout waiting for backup acknowledgement from target", http.StatusInternalServerError)
 				return
