@@ -125,8 +125,7 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 	}
 
 	if job.LastRunPlusError != "" {
-		plusError := "Error: " + job.LastRunPlusError
-		job.LastRunState = &plusError
+		job.LastRunState = &job.LastRunPlusError
 		lastRunPlusTime := int64(job.LastRunPlusTime)
 		job.LastRunEndtime = &lastRunPlusTime
 		job.LastRunUpid = ""
