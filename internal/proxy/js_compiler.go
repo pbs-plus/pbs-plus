@@ -43,13 +43,18 @@ if (Proxmox.CSRFPreventionToken) {
 	pbsPlusTokenHeaders["Csrfpreventiontoken"] = Proxmox.CSRFPreventionToken;
 }
 
-fetch(pbsPlusBaseUrl + "/plus/token", {
-	method: "POST",
-	body: JSON.stringify({
-		"pbs_auth_cookie": getCookie("PBSAuthCookie"),
-	}),
-	headers: pbsPlusTokenHeaders,
-})
+const refreshPlusToken = () => {
+	fetch(pbsPlusBaseUrl + "/plus/token", {
+		method: "POST",
+		body: JSON.stringify({
+			"pbs_auth_cookie": getCookie("PBSAuthCookie"),
+		}),
+		headers: pbsPlusTokenHeaders,
+	});
+}
+
+refreshPlusToken();
+setInterval(refreshPlusToken, 2000);
 
 function encodePathValue(path) {
   const encoded = btoa(path)
