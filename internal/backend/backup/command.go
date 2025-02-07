@@ -98,7 +98,6 @@ func buildCommandEnv(storeInstance *store.Store) []string {
 
 	env := append(os.Environ(),
 		fmt.Sprintf("PBS_PASSWORD=%s", proxmox.Session.APIToken.Value))
-	env = append(env, "PBS_LOG=debug")
 
 	// Add fingerprint if available
 	if pbsStatus, err := proxmox.Session.GetPBSStatus(); err == nil {
