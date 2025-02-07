@@ -116,7 +116,7 @@ func writeLogsToFile(upid string, logLines []string) error {
 	if hasError {
 		finalStatus = fmt.Sprintf("%s: %s\n", timestamp, errorString)
 	} else if incomplete && disconnected {
-		finalStatus = fmt.Sprintf("%s: Job cancelled\n", timestamp)
+		finalStatus = fmt.Sprintf("%s: TASK ERROR: Job cancelled\n", timestamp)
 	}
 
 	if _, err := writer.WriteString(finalStatus); err != nil {
