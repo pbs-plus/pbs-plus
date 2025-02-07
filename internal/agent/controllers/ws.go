@@ -22,6 +22,15 @@ func sendResponse(c *websockets.WSClient, msgType, content string) {
 	c.Send(context.Background(), response)
 }
 
+func sendError(c *websockets.WSClient, msgType, drive, content string) {
+	response := websockets.Message{
+		Type:    "error-" + msgType,
+		Content: drive + ": " + content,
+	}
+
+	c.Send(context.Background(), response)
+}
+
 func BackupStartHandler(c *websockets.WSClient) func(ctx context.Context, msg *websockets.Message) error {
 	return func(ctx context.Context, msg *websockets.Message) error {
 		drive := msg.Content
@@ -39,12 +48,14 @@ func BackupStartHandler(c *websockets.WSClient) func(ctx context.Context, msg *w
 		snapshot, err := snapshots.Snapshot(drive)
 		if err != nil {
 			syslog.L.Errorf("snapshot error: %v", err)
+			sendError(c, "backup_start", drive, err.Error())
 			return err
 		}
 
 		nfsSession := nfs.NewNFSSession(context.Background(), snapshot, drive)
 		if nfsSession == nil {
 			syslog.L.Error("NFS session is nil.")
+			sendError(c, "backup_start", drive, "NFS session is nil.")
 			return fmt.Errorf("NFS session is nil.")
 		}
 
@@ -78,6 +89,7 @@ func BackupCloseHandler(c *websockets.WSClient) func(ctx context.Context, msg *w
 		store := GetNFSSessionStore()
 		if err := store.Delete(drive); err != nil {
 			syslog.L.Errorf("Error cleaning up session store: %v", err)
+			sendError(c, "backup_close", drive, err.Error())
 			return err
 		}
 
