@@ -19,12 +19,6 @@ func (database *Database) RegisterTokenPlugin() {
 	plugin := &configLib.SectionPlugin[types.AgentToken]{
 		TypeName:   "token",
 		FolderPath: database.paths["tokens"],
-		Validate: func(config types.AgentToken) error {
-			if err := database.TokenManager.ValidateToken(config.Token); err != nil {
-				return fmt.Errorf("invalid token: %w", err)
-			}
-			return nil
-		},
 	}
 
 	database.tokensConfig = configLib.NewSectionConfig(plugin)
