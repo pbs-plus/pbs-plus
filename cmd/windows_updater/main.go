@@ -196,7 +196,7 @@ func (p *UpdaterService) readVersionFromFile() (string, error) {
 	}
 
 	mutex.RLock()
-	defer mutex.RUnlock()
+	defer mutex.Close()
 
 	versionFile := filepath.Join(filepath.Dir(ex), "version.txt")
 	data, err := os.ReadFile(versionFile)
