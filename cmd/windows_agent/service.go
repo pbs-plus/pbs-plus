@@ -214,7 +214,7 @@ func (p *agentService) writeVersionToFile() error {
 	}
 
 	mutex.Lock()
-	defer mutex.Unlock()
+	defer mutex.Close()
 
 	versionFile := filepath.Join(filepath.Dir(ex), "version.txt")
 	err = os.WriteFile(versionFile, []byte(Version), 0644)
