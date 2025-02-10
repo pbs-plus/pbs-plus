@@ -50,13 +50,13 @@ type APIToken struct {
 }
 
 func (proxmoxSess *ProxmoxSession) CreateAPIToken() (*APIToken, error) {
-	if proxmoxSess.LastToken == nil {
+	if proxmoxSess.HTTPToken == nil {
 		return nil, fmt.Errorf("CreateAPIToken: token required")
 	}
 
 	_ = proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodDelete,
-		fmt.Sprintf("/api2/json/access/users/%s/token/pbs-plus-auth", proxmoxSess.LastToken.Username),
+		fmt.Sprintf("/api2/json/access/users/%s/token/pbs-plus-auth", proxmoxSess.HTTPToken.Username),
 		nil,
 		nil,
 	)
@@ -71,7 +71,7 @@ func (proxmoxSess *ProxmoxSession) CreateAPIToken() (*APIToken, error) {
 	var tokenResp APITokenResponse
 	err = proxmoxSess.ProxmoxHTTPRequest(
 		http.MethodPost,
-		fmt.Sprintf("/api2/json/access/users/%s/token/pbs-plus-auth", proxmoxSess.LastToken.Username),
+		fmt.Sprintf("/api2/json/access/users/%s/token/pbs-plus-auth", proxmoxSess.HTTPToken.Username),
 		bytes.NewBuffer(reqBody),
 		&tokenResp,
 	)

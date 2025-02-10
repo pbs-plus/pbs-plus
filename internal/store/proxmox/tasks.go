@@ -201,7 +201,7 @@ func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (*Task, error) {
 }
 
 func (proxmoxSess *ProxmoxSession) GetTaskEndTime(task *Task) (int64, error) {
-	if proxmoxSess.LastToken == nil && proxmoxSess.APIToken == nil {
+	if proxmoxSess.APIToken == nil {
 		return -1, fmt.Errorf("GetTaskEndTime: token is required")
 	}
 

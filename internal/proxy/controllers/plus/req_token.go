@@ -45,7 +45,7 @@ func TokenHandler(storeInstance *store.Store) http.HandlerFunc {
 		token.Ticket = decodedAuthCookie
 		token.Username = cookieSplit[1]
 
-		proxmox.Session.LastToken = &token
+		proxmox.Session.HTTPToken = &token
 
 		if !utils.IsValid(filepath.Join(constants.DbBasePath, "pbs-plus-token.json")) {
 			apiToken, err := proxmox.Session.CreateAPIToken()

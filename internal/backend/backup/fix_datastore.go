@@ -204,8 +204,6 @@ func FixDatastore(job *types.Job, storeInstance *store.Store) error {
 	newOwner := ""
 	if proxmox.Session.APIToken != nil {
 		newOwner = proxmox.Session.APIToken.TokenId
-	} else {
-		newOwner = proxmox.Session.LastToken.Username
 	}
 
 	return SetDatastoreOwner(job, storeInstance, newOwner)
