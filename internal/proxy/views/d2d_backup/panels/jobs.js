@@ -50,7 +50,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       let upid = selection[0].data["last-run-upid"];
       if (!upid) return;
 
-      Ext.create("Proxmox.window.TaskViewer", {
+      Ext.create("PBS.plusWindow.TaskViewer", {
         upid,
       }).show();
     },
