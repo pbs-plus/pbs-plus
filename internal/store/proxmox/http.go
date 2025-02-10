@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	urllib "net/url"
+	"strings"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
@@ -17,9 +18,9 @@ import (
 var Session *ProxmoxSession
 
 type ProxmoxSession struct {
-	LastToken  *Token
 	APIToken   *APIToken
 	HTTPClient *http.Client
+	HTTPToken  *Token
 }
 
 func InitializeProxmox() {
@@ -68,19 +69,24 @@ func (proxmoxSess *ProxmoxSession) doRequest(method, url string, body io.Reader,
 	if err != nil {
 		return fmt.Errorf("ProxmoxHTTPRequest: error creating http request -> %w", err)
 	}
-	if proxmoxSess.LastToken == nil && proxmoxSess.APIToken == nil {
-		return fmt.Errorf("ProxmoxHTTPRequest: token is required")
-	}
-	if proxmoxSess.LastToken != nil {
-		req.Header.Set("Csrfpreventiontoken", proxmoxSess.LastToken.CSRFToken)
+
+	if strings.Contains(url, "/api2/json/access") {
+		if proxmoxSess.HTTPToken == nil {
+			return fmt.Errorf("ProxmoxHTTPRequest: token is required")
+		}
+		req.Header.Set("Csrfpreventiontoken", proxmoxSess.HTTPToken.CSRFToken)
 		req.AddCookie(&http.Cookie{
 			Name:  "PBSAuthCookie",
-			Value: proxmoxSess.LastToken.Ticket,
+			Value: proxmoxSess.HTTPToken.Ticket,
 			Path:  "/",
 		})
-	} else if proxmoxSess.APIToken != nil {
+	} else {
+		if proxmoxSess.APIToken == nil {
+			return fmt.Errorf("ProxmoxHTTPRequest: token is required")
+		}
 		req.Header.Set("Authorization", fmt.Sprintf("PBSAPIToken=%s:%s", proxmoxSess.APIToken.TokenId, proxmoxSess.APIToken.Value))
 	}
+
 	req.Header.Add("Content-Type", "application/json")
 	if proxmoxSess.HTTPClient == nil {
 		proxmoxSess.HTTPClient = &http.Client{
