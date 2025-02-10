@@ -70,7 +70,7 @@ func writeLogsToFile(upid string, logLines []string) error {
 		return fmt.Errorf("logLines is nil")
 	}
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	logFilePath := utils.GetTaskLogPath(upid)
 	logFile, err := os.OpenFile(logFilePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
