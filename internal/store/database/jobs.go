@@ -18,6 +18,32 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
+const maxAttempts = 100
+
+func (database *Database) generateUniqueJobID(job *types.Job) error {
+	baseID := utils.Slugify(job.Target)
+	if baseID == "" {
+		return fmt.Errorf("invalid target: slugified value is empty")
+	}
+
+	for idx := 0; idx < maxAttempts; idx++ {
+		var newID string
+		if idx == 0 {
+			newID = baseID
+		} else {
+			newID = fmt.Sprintf("%s-%d", baseID, idx)
+		}
+
+		existing, _ := database.GetJob(newID)
+		if existing == nil {
+			// Unique id found; assign and exit.
+			job.ID = newID
+			return nil
+		}
+	}
+	return fmt.Errorf("failed to generate a unique job ID after %d attempts", maxAttempts)
+}
+
 func (database *Database) RegisterJobPlugin() {
 	plugin := &configLib.SectionPlugin[types.Job]{
 		TypeName:   "job",
@@ -40,6 +66,13 @@ func (database *Database) RegisterJobPlugin() {
 }
 
 func (database *Database) CreateJob(job types.Job) error {
+	if job.ID == "" {
+		err := database.generateUniqueJobID(&job)
+		if err != nil {
+			return fmt.Errorf("CreateJob: failed to generate unique id -> %w", err)
+		}
+	}
+
 	if !utils.IsValidID(job.ID) && job.ID != "" {
 		return fmt.Errorf("CreateJob: invalid id string -> %s", job.ID)
 	}

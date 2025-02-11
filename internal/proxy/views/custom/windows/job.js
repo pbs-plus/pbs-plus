@@ -62,7 +62,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             name: "id",
             fieldLabel: gettext("Job ID"),
             renderer: Ext.htmlEncode,
-            allowBlank: false,
+            allowBlank: true,
             cbind: {
               editable: "{isCreate}",
             },
@@ -101,6 +101,12 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
               deleteEmpty: "{!isCreate}",
               value: "{scheduleValue}",
             },
+          },
+          {
+            xtype: "proxmoxtextfield",
+            fieldLabel: gettext("Number of retries"),
+            emptyText: gettext("0"),
+            name: "retry",
           },
         ],
 

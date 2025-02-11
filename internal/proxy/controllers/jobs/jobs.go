@@ -5,6 +5,7 @@ package jobs
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +108,16 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		retry, err := strconv.Atoi(r.FormValue("retry"))
+		if err != nil {
+			if r.FormValue("retry") == "" {
+				retry = 0
+			} else {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+		}
+
 		newJob := types.Job{
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
@@ -116,6 +127,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			Comment:          r.FormValue("comment"),
 			Namespace:        r.FormValue("ns"),
 			NotificationMode: r.FormValue("notification-mode"),
+			Retry:            retry,
 			Exclusions:       []types.Exclusion{},
 		}
 
@@ -169,6 +181,15 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
+			if r.FormValue("retry") != "" {
+				retry, err := strconv.Atoi(r.FormValue("retry"))
+				if err != nil {
+					controllers.WriteErrorResponse(w, err)
+					return
+				}
+
+				job.Retry = retry
+			}
 			if r.FormValue("store") != "" {
 				job.Store = r.FormValue("store")
 			}
@@ -225,6 +246,8 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						job.Comment = ""
 					case "ns":
 						job.Namespace = ""
+					case "retry":
+						job.Retry = 0
 					case "notification-mode":
 						job.NotificationMode = ""
 					case "rawexclusions":
