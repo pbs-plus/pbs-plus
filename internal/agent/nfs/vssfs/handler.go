@@ -18,15 +18,21 @@ const (
 	RootHandleID = uint64(0) // Reserved ID for root directory
 )
 
-// VSSIDHandler uses VSSFS's stable file IDs for handle management
+// VSSIDHandler uses VSSFS's stable file IDs for handle management.
+// It caches relative paths (from the filesystem root) and recreates the full
+// path (by joining vssFS.Root()) when needed.
 type VSSIDHandler struct {
 	nfs.Handler
-	vssFS           *VSSFS
+	vssFS *VSSFS
+
 	activeHandlesMu sync.RWMutex
-	activeHandles   map[uint64]string
+	// Maps fileID to the file's relative path.
+	activeHandles map[uint64]string
 }
 
-func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (*VSSIDHandler, error) {
+func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
+	*VSSIDHandler, error,
+) {
 	return &VSSIDHandler{
 		Handler:       underlyingHandler,
 		vssFS:         vssFS,
@@ -38,8 +44,8 @@ func (h *VSSIDHandler) getHandle(key uint64) (string, bool) {
 	h.activeHandlesMu.RLock()
 	defer h.activeHandlesMu.RUnlock()
 
-	handle, ok := h.activeHandles[key]
-	return handle, ok
+	path, ok := h.activeHandles[key]
+	return path, ok
 }
 
 func (h *VSSIDHandler) storeHandle(key uint64, relativePath string) {
@@ -55,32 +61,33 @@ func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 		return nil
 	}
 
-	// Handle root directory specially.
-	// For the root, we store an empty relative path.
+	// Special-case the root directory: store an empty relative path.
 	if len(path) == 0 || (len(path) == 1 && path[0] == "") {
 		return h.createHandle(RootHandleID, "")
 	}
 
-	// Compute the relative path from the filesystem's root.
+	// Compute the relative path from the provided NFS path components.
 	relativePath := filepath.Join(path...)
+	// Build the full path by joining the filesystem root with the relative path.
+	fullPath := filepath.Join(vssFS.Root(), relativePath)
 
-	// Get the stable file ID using the relative path.
-	info, err := vssFS.Stat(relativePath)
+	// vssFS methods require the full path.
+	info, err := vssFS.Stat(fullPath)
 	if err != nil {
 		return nil
 	}
 
 	fileID := info.(*VSSFileInfo).stableID
+	// Only store the relative path in the cache.
 	return h.createHandle(fileID, relativePath)
 }
 
 func (h *VSSIDHandler) createHandle(fileID uint64, relativePath string) []byte {
-	// Add to cache if not already present.
 	if _, exists := h.getHandle(fileID); !exists {
 		h.storeHandle(fileID, relativePath)
 	}
 
-	// Convert fileID to an 8-byte handle.
+	// Convert the 64-bit fileID to an 8-byte handle.
 	handle := make([]byte, 8)
 	binary.BigEndian.PutUint64(handle, fileID)
 	return handle
@@ -96,16 +103,23 @@ func (h *VSSIDHandler) FromHandle(handle []byte) (billy.Filesystem, []string, er
 		return h.vssFS, []string{}, nil
 	}
 
-	// Retrieve the stored relative path.
 	relativePath, exists := h.getHandle(fileID)
 	if !exists {
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
+	// Recreate the full path when needed.
+	fullPath := filepath.Join(h.vssFS.Root(), relativePath)
+
+	// Strip the filesystem root from the full path to get the NFS components.
+	nfsRelative := strings.TrimPrefix(
+		filepath.ToSlash(fullPath),
+		filepath.ToSlash(h.vssFS.Root())+"/",
+	)
+
 	var parts []string
-	if relativePath != "" {
-		// Convert to slash format and split into components.
-		parts = strings.Split(filepath.ToSlash(relativePath), "/")
+	if nfsRelative != "" {
+		parts = strings.Split(nfsRelative, "/")
 	}
 	return h.vssFS, parts, nil
 }
