@@ -42,11 +42,11 @@ func (h *VSSIDHandler) getHandle(key uint64) (string, bool) {
 	return handle, ok
 }
 
-func (h *VSSIDHandler) storeHandle(key uint64, path string) {
+func (h *VSSIDHandler) storeHandle(key uint64, relativePath string) {
 	h.activeHandlesMu.Lock()
 	defer h.activeHandlesMu.Unlock()
 
-	h.activeHandles[key] = path
+	h.activeHandles[key] = relativePath
 }
 
 func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
@@ -55,32 +55,32 @@ func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 		return nil
 	}
 
-	// Handle root directory specially
+	// Handle root directory specially.
+	// For the root, we store an empty relative path.
 	if len(path) == 0 || (len(path) == 1 && path[0] == "") {
-		return h.createHandle(RootHandleID, vssFS.Root())
+		return h.createHandle(RootHandleID, "")
 	}
 
-	// Convert NFS path to Windows format
-	winPath := filepath.Join(path...)
-	fullPath := filepath.Join(vssFS.Root(), winPath)
+	// Compute the relative path from the filesystem's root.
+	relativePath := filepath.Join(path...)
 
-	// Get or create stable ID
-	info, err := vssFS.Stat(winPath)
+	// Get the stable file ID using the relative path.
+	info, err := vssFS.Stat(relativePath)
 	if err != nil {
 		return nil
 	}
 
 	fileID := info.(*VSSFileInfo).stableID
-	return h.createHandle(fileID, fullPath)
+	return h.createHandle(fileID, relativePath)
 }
 
-func (h *VSSIDHandler) createHandle(fileID uint64, fullPath string) []byte {
-	// Add to cache if not exists
+func (h *VSSIDHandler) createHandle(fileID uint64, relativePath string) []byte {
+	// Add to cache if not already present.
 	if _, exists := h.getHandle(fileID); !exists {
-		h.storeHandle(fileID, fullPath)
+		h.storeHandle(fileID, relativePath)
 	}
 
-	// Convert ID to 8-byte handle
+	// Convert fileID to an 8-byte handle.
 	handle := make([]byte, 8)
 	binary.BigEndian.PutUint64(handle, fileID)
 	return handle
@@ -96,21 +96,16 @@ func (h *VSSIDHandler) FromHandle(handle []byte) (billy.Filesystem, []string, er
 		return h.vssFS, []string{}, nil
 	}
 
-	// Retrieve cached path
-	fullPath, exists := h.getHandle(fileID)
+	// Retrieve the stored relative path.
+	relativePath, exists := h.getHandle(fileID)
 	if !exists {
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
-	// Convert Windows path to NFS components
-	relativePath := strings.TrimPrefix(
-		filepath.ToSlash(fullPath),
-		filepath.ToSlash(h.vssFS.Root())+"/",
-	)
-
 	var parts []string
 	if relativePath != "" {
-		parts = strings.Split(relativePath, "/")
+		// Convert to slash format and split into components.
+		parts = strings.Split(filepath.ToSlash(relativePath), "/")
 	}
 	return h.vssFS, parts, nil
 }
@@ -120,7 +115,7 @@ func (h *VSSIDHandler) HandleLimit() int {
 }
 
 func (h *VSSIDHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) error {
-	// No-op for read-only filesystem
+	// No-op for read-only filesystem.
 	return nil
 }
 
