@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
@@ -34,6 +36,9 @@ import (
 var Version = "v0.0.0"
 
 func main() {
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop() // Stop forwarding signals when the context is canceled.
+
 	err := syslog.InitializeLogger()
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %s", err)
@@ -46,7 +51,7 @@ func main() {
 	var wsHub *websockets.Server
 	wsHub = nil
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(sigCtx)
 	defer cancel()
 	if *jobRun == "" {
 		wsHub = websockets.NewServer(ctx)
@@ -76,43 +81,47 @@ func main() {
 			return
 		}
 
-		op, err := backup.RunBackup(jobTask, storeInstance, true)
-		if err != nil {
-			if !strings.Contains(err.Error(), "A job is still running.") {
-				jobTask.LastRunPlusError = err.Error()
-				jobTask.LastRunPlusTime = int(time.Now().Unix())
-
-				uErr := storeInstance.Database.UpdateJob(*jobTask)
-				if uErr != nil {
-					syslog.L.Errorf("LastRunPlusError update: %v", uErr)
+		attempts := 0
+		for attempts <= jobTask.Retry {
+			op, err := backup.RunBackup(jobTask, storeInstance, true)
+			if err != nil {
+				if !strings.Contains(err.Error(), "A job is still running.") {
+					jobTask.LastRunPlusError = err.Error()
+					jobTask.LastRunPlusTime = int(time.Now().Unix())
+					if uErr := storeInstance.Database.UpdateJob(*jobTask); uErr != nil {
+						syslog.L.Errorf("LastRunPlusError update: %v", uErr)
+					}
 				}
+				syslog.L.Error(err)
+				attempts++
+				continue
 			}
-			syslog.L.Error(err)
+
+			if waitErr := op.Wait(); waitErr != nil {
+				syslog.L.Error(waitErr)
+				attempts++
+				continue
+			}
+
 			return
 		}
-
-		op.Wait()
-		return
 	}
 
 	pbsJsLocation := "/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js"
-	err = proxy.MountCompiledJS(pbsJsLocation)
+	unmountJs, err := proxy.MountCompiledJS(pbsJsLocation)
 	if err != nil {
 		syslog.L.Errorf("Modified JS mounting failed: %v", err)
 		return
 	}
+	defer unmountJs()
 
 	proxmoxLibLocation := "/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js"
-	err = proxy.MountModdedProxmoxLib(proxmoxLibLocation)
+	unmountLib, err := proxy.MountModdedProxmoxLib(proxmoxLibLocation)
 	if err != nil {
 		syslog.L.Errorf("Modified JS mounting failed: %v", err)
 		return
 	}
-
-	defer func() {
-		_ = proxy.UnmountModdedFile(pbsJsLocation)
-		_ = proxy.UnmountModdedFile(proxmoxLibLocation)
-	}()
+	defer unmountLib()
 
 	certOpts := certificates.DefaultOptions()
 	generator, err := certificates.NewGenerator(certOpts)

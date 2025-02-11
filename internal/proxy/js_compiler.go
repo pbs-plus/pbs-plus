@@ -3,190 +3,123 @@
 package proxy
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-//go:embed all:views
+//go:embed all:views/custom
 var customJsFS embed.FS
 
-func compileCustomJS() []byte {
-	result := []byte(`
-const pbsFullUrl = window.location.href;
-const pbsUrl = new URL(pbsFullUrl);
-const pbsPlusBaseUrl = ` + "`${pbsUrl.protocol}//${pbsUrl.hostname}:8008`" + `;
+//go:embed all:views/pre
+var preJsFS embed.FS
 
-function getCookie(cName) {
-	const name = cName + "=";
-  const cDecoded = decodeURIComponent(document.cookie);
-  const cArr = cDecoded.split('; ');
-  let res;
-  cArr.forEach(val => {
-    if (val.indexOf(name) === 0) res = val.substring(name.length);
-  })
-  return res
-}
+const backupDirName = "pbs-plus-backups"
 
-var pbsPlusTokenHeaders = {
-	"Content-Type": "application/json",
-};
+var jsReplacer = strings.NewReplacer(
+	"Proxmox.window.TaskViewer", "PBS.plusWindow.TaskViewer",
+	"Proxmox.panel.LogView", "PBS.plusPanel.LogView",
+)
 
-if (Proxmox.CSRFPreventionToken) {
-	pbsPlusTokenHeaders["Csrfpreventiontoken"] = Proxmox.CSRFPreventionToken;
-}
+// sortedWalk performs a breadth-first traversal of the given FS starting at rootPath,
+// listing files grouped by directory depth and sorting entries alphabetically.
+func sortedWalk(embedded fs.FS, rootPath string) ([][]byte, error) {
+	var results [][]byte
 
-const refreshPlusToken = async () => {
-  // Function to check if cookie exists
-  const checkReady = () => {
-		const cookie = getCookie("PBSAuthCookie");
-		const csrfToken = pbsPlusTokenHeaders?.["Csrfpreventiontoken"];
-		return cookie && csrfToken;
-  };
-
-  // Wait until cookie is available
-  while (!checkReady()) {
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-
-  // Make request once cookie exists
-  return fetch(pbsPlusBaseUrl + "/plus/token", {
-    method: "POST",
-    body: JSON.stringify({
-      "pbs_auth_cookie": getCookie("PBSAuthCookie"),
-    }),
-    headers: pbsPlusTokenHeaders,
-  });
-}
-
-refreshPlusToken();
-
-function encodePathValue(path) {
-  const encoded = btoa(path)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-  return encoded;
-}
-
-Ext.define('PBS.PlusUtils', {
-  singleton: true,
-  render_task_status: function(value, metadata, record, rowIndex, colIndex, store) {
-    var lastPlusError = record.data['last-plus-error'] || store.getById('last-plus-error')?.data.value
-    if (lastPlusError && (record.data['last-run-endtime'] || store.getById('last-run-endtime')?.data.value)) {
-      return ` + "`<i class=\"fa fa-times critical\"></i> ${lastPlusError}`" + `;
-    }
-
-	  if (
-	    !record.data['last-run-upid'] &&
-	    !store.getById('last-run-upid')?.data.value &&
-	    !record.data.upid &&
-	    !store.getById('upid')?.data.value
-	  ) {
-	    return '-';
-	  }
-
-	  if (!record.data['last-run-endtime'] && !store.getById('last-run-endtime')?.data.value) {
-	    metadata.tdCls = 'x-grid-row-loading';
-	    return '';
-	  }
-
-	  let parsed = Proxmox.Utils.parse_task_status(value);
-	  let text = value;
-	  let icon = '';
-	  switch (parsed) {
-	    case 'unknown':
-	      icon = 'question faded';
-	      text = Proxmox.Utils.unknownText;
-	      break;
-	    case 'error':
-	      icon = 'times critical';
-	      text = Proxmox.Utils.errorText + ': ' + value;
-	      break;
-	    case 'warning':
-	      icon = 'exclamation warning';
-	      break;
-	    case 'ok':
-	      icon = 'check good';
-	      text = gettext("OK");
-	  }
-
-    return ` + "`<i class=\"fa fa-${icon}\"></i> ${text}`" + `;
-  },
-});
-`)
-
-	err := fs.WalkDir(customJsFS, ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		content, err := customJsFS.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		result = append(result, content...)
-		result = append(result, []byte("\n")...)
-		return nil
-	})
-	if err != nil {
-		log.Println(err)
+	// Queue holds directories to explore.
+	type entry struct {
+		path string
 	}
-	return result
+	queue := []entry{{path: rootPath}}
+
+	// While queue is not empty.
+	for len(queue) > 0 {
+		// Pop the first directory.
+		cur := queue[0]
+		queue = queue[1:]
+
+		// Read and sort directory entries.
+		entries, err := fs.ReadDir(embedded, cur.path)
+		if err != nil {
+			return nil, err
+		}
+
+		// Sort entries by Name.
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].Name() < entries[j].Name()
+		})
+
+		// Process files first then add directories to the queue.
+		for _, e := range entries {
+			// Build the complete path.
+			entryPath := filepath.Join(cur.path, e.Name())
+			if e.IsDir() {
+				queue = append(queue, entry{path: entryPath})
+			} else {
+				data, err := fs.ReadFile(embedded, entryPath)
+				if err != nil {
+					return nil, err
+				}
+				results = append(results, data)
+			}
+		}
+	}
+
+	return results, nil
 }
 
-// MountCompiledJS creates a backup of the target file and mounts the compiled JS over it
-func MountCompiledJS(targetPath string) error {
-	// Check if something is already mounted at the target path
+// compileJS walks the embedded FS in breadth-first, alphanumerical order (shallow files
+// first) and concatenates all files with newline separators.
+func compileJS(embedded *embed.FS) []byte {
+	parts, err := sortedWalk(embedded, ".")
+	if err != nil {
+		log.Println("failed to walk embed FS:", err)
+		return nil
+	}
+	return bytes.Join(parts, []byte("\n"))
+}
+
+// mountWithBackup performs a backup of the original file and then bind mounts the new
+// content over the target. It writes a temporary file in the backup directory.
+func mountWithBackup(targetPath string, newContent, original []byte) error {
+	// Unmount if something is already mounted.
 	if utils.IsMounted(targetPath) {
 		if err := syscall.Unmount(targetPath, 0); err != nil {
 			return fmt.Errorf("failed to unmount existing file: %w", err)
 		}
 	}
 
-	// Create backup directory if it doesn't exist
-	backupDir := filepath.Join(os.TempDir(), "pbs-plus-backups")
+	// Create backup directory.
+	backupDir := filepath.Join(os.TempDir(), backupDirName)
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
 
-	// Create backup filename with timestamp
-	backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.backup", filepath.Base(targetPath)))
+	// Create backup file name (could add timestamp for uniqueness if desired).
+	backupPath := filepath.Join(backupDir,
+		fmt.Sprintf("%s.backup", filepath.Base(targetPath)))
 
-	// Read existing file
-	original, err := os.ReadFile(targetPath)
-	if err != nil {
-		return fmt.Errorf("failed to read original file: %w", err)
-	}
-
-	// Create backup
+	// Backup the original file.
 	if err := os.WriteFile(backupPath, original, 0644); err != nil {
 		return fmt.Errorf("failed to create backup: %w", err)
 	}
 
-	// Create new file with compiled JS
-	compiledJS := compileCustomJS()
-
-	newContent := make([]byte, len(original)+1+len(compiledJS))
-	copy(newContent, original)
-	newContent[len(original)] = '\n' // Add newline
-	copy(newContent[len(original)+1:], compiledJS)
-
+	// Write the new content to a temporary file (this is the file we bind mount).
 	tempFile := filepath.Join(backupDir, filepath.Base(targetPath))
 	if err := os.WriteFile(tempFile, newContent, 0644); err != nil {
 		return fmt.Errorf("failed to write new content: %w", err)
 	}
 
-	// Perform bind mount
+	// Bind mount the temporary file over the target.
 	if err := syscall.Mount(tempFile, targetPath, "", syscall.MS_BIND, ""); err != nil {
 		return fmt.Errorf("failed to mount file: %w", err)
 	}
@@ -194,78 +127,63 @@ func MountCompiledJS(targetPath string) error {
 	return nil
 }
 
-func MountModdedProxmoxLib(targetPath string) error {
-	// Check if something is already mounted at the target path
-	if utils.IsMounted(targetPath) {
-		if err := syscall.Unmount(targetPath, 0); err != nil {
-			return fmt.Errorf("failed to unmount existing file: %w", err)
-		}
-	}
-
-	// Create backup directory if it doesn't exist
-	backupDir := filepath.Join(os.TempDir(), "pbs-plus-backups")
-	if err := os.MkdirAll(backupDir, 0755); err != nil {
-		return fmt.Errorf("failed to create backup directory: %w", err)
-	}
-
-	// Create backup filename with timestamp
-	backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.backup", filepath.Base(targetPath)))
-
-	// Read existing file
+// MountCompiledJS reads the original file, applies custom mappings, concatenates pre,
+// modified original, and custom JS, then bind mounts the new file.
+func MountCompiledJS(targetPath string) (func(), error) {
+	// Read the original file.
 	original, err := os.ReadFile(targetPath)
 	if err != nil {
-		return fmt.Errorf("failed to read original file: %w", err)
+		return nil, fmt.Errorf("failed to read original file: %w", err)
 	}
 
-	// Create backup
-	if err := os.WriteFile(backupPath, original, 0644); err != nil {
-		return fmt.Errorf("failed to create backup: %w", err)
+	// Apply the custom mapping in one pass using strings.Replacer.
+	modified := []byte(jsReplacer.Replace(string(original)))
+
+	preJS := compileJS(&preJsFS)
+	compiledJS := compileJS(&customJsFS)
+
+	// Concatenate preJS, modified original, and compiledJS with newlines.
+	newContent := bytes.Join([][]byte{preJS, modified, compiledJS}, []byte("\n"))
+
+	return func() {
+		unmountModdedFile(targetPath)
+	}, mountWithBackup(targetPath, newContent, original)
+}
+
+// MountModdedProxmoxLib makes a simple text replacement (without custom mapping) in the
+// original file and then bind mounts the modified file.
+func MountModdedProxmoxLib(targetPath string) (func(), error) {
+	original, err := os.ReadFile(targetPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read original file: %w", err)
 	}
 
 	oldString := `if (!newopts.url.match(/^\/api2/))`
 	newString := `if (!newopts.url.match(/^\/api2/) && !newopts.url.match(/^[a-z][a-z\d+\-.]*:/i))`
-
-	// Perform the replacement
 	newContent := strings.Replace(string(original), oldString, newString, 1)
 
-	tempFile := filepath.Join(backupDir, filepath.Base(targetPath))
-	if err := os.WriteFile(tempFile, []byte(newContent), 0644); err != nil {
-		return fmt.Errorf("failed to write new content: %w", err)
-	}
-
-	// Perform bind mount
-	if err := syscall.Mount(tempFile, targetPath, "", syscall.MS_BIND, ""); err != nil {
-		return fmt.Errorf("failed to mount file: %w", err)
-	}
-
-	return nil
+	return func() {
+		unmountModdedFile(targetPath)
+	}, mountWithBackup(targetPath, []byte(newContent), original)
 }
 
-// UnmountCompiledJS unmounts the file and restores the original
-func UnmountModdedFile(targetPath string) error {
-	// Unmount the file
+// UnmountModdedFile unmounts the file and, if a backup exists, restores the original.
+func unmountModdedFile(targetPath string) {
 	if err := syscall.Unmount(targetPath, 0); err != nil {
-		return fmt.Errorf("failed to unmount file: %w", err)
+		log.Printf("failed to unmount file: %v", err)
+		return
 	}
 
-	// Path to backup file
-	backupDir := filepath.Join(os.TempDir(), "pbs-plus-backups")
-	backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.backup", filepath.Base(targetPath)))
+	backupDir := filepath.Join(os.TempDir(), backupDirName)
+	backupPath := filepath.Join(backupDir,
+		fmt.Sprintf("%s.backup", filepath.Base(targetPath)))
 
-	// Restore from backup if it exists
-	if _, err := os.Stat(backupPath); err == nil {
-		backup, err := os.ReadFile(backupPath)
-		if err != nil {
-			return fmt.Errorf("failed to read backup: %w", err)
-		}
-
+	if backup, err := os.ReadFile(backupPath); err == nil {
 		if err := os.WriteFile(targetPath, backup, 0644); err != nil {
-			return fmt.Errorf("failed to restore backup: %w", err)
+			log.Printf("failed to restore backup: %v", err)
+			return
 		}
-
-		// Clean up backup files
+		// Clean up the backup directory.
 		os.RemoveAll(backupDir)
 	}
-
-	return nil
 }

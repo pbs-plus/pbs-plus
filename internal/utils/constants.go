@@ -30,7 +30,7 @@ var MountTransport = &http.Transport{
 		Timeout:   5 * time.Minute,
 		KeepAlive: 0,
 	}).DialContext,
-	TLSHandshakeTimeout: 2 * time.Minute,
+	TLSHandshakeTimeout: 5 * time.Minute,
 	TLSClientConfig: &tls.Config{
 		InsecureSkipVerify: true,
 	},

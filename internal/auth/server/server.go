@@ -39,8 +39,8 @@ func DefaultConfig() *Config {
 	return &Config{
 		Address:        ":8008",
 		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   2 * time.Minute,
-		IdleTimeout:    2 * time.Minute,
+		WriteTimeout:   5 * time.Minute,
+		IdleTimeout:    5 * time.Minute,
 		MaxHeaderBytes: 1 << 20, // 1MB
 
 		TokenExpiration: 24 * time.Hour,
