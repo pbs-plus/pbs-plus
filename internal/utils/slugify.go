@@ -14,7 +14,7 @@ func Slugify(input string) string {
 		} else if r == ' ' {
 			hasSpace = true
 		}
-		// Break early if both are found
+		// Break early if both are found.
 		if hasHyphen && hasSpace {
 			break
 		}
@@ -36,7 +36,7 @@ func Slugify(input string) string {
 	}
 
 	// In case the string contains both spaces and hyphens,
-	// preserve any space that is adjacent to a hyphen.
+	// remove any space that is adjacent to a hyphen.
 	var builder strings.Builder
 	builder.Grow(len(runes)) // Optional: allocate enough capacity
 
@@ -45,9 +45,10 @@ func Slugify(input string) string {
 			prevIsHyphen := i > 0 && runes[i-1] == '-'
 			nextIsHyphen := i < len(runes)-1 && runes[i+1] == '-'
 			if prevIsHyphen || nextIsHyphen {
-				builder.WriteRune(r) // Preserve the space
+				// Instead of preserving the space, skip it.
+				continue
 			} else {
-				builder.WriteRune('-') // Replace space with hyphen
+				builder.WriteRune('-')
 			}
 		} else {
 			builder.WriteRune(r)
