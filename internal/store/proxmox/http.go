@@ -26,7 +26,7 @@ type ProxmoxSession struct {
 func InitializeProxmox() {
 	Session = &ProxmoxSession{
 		HTTPClient: &http.Client{
-			Timeout:   time.Minute * 2,
+			Timeout:   time.Minute * 5,
 			Transport: utils.BaseTransport,
 		},
 	}
@@ -90,7 +90,7 @@ func (proxmoxSess *ProxmoxSession) doRequest(method, url string, body io.Reader,
 	req.Header.Add("Content-Type", "application/json")
 	if proxmoxSess.HTTPClient == nil {
 		proxmoxSess.HTTPClient = &http.Client{
-			Timeout:   time.Minute * 2,
+			Timeout:   time.Minute * 5,
 			Transport: utils.BaseTransport,
 		}
 	}

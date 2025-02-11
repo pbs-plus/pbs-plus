@@ -61,6 +61,7 @@ func (database *Database) CreateJob(job types.Job) error {
 					LastRunUpid:      job.LastRunUpid,
 					LastRunPlusError: job.LastRunPlusError,
 					LastRunPlusTime:  job.LastRunPlusTime,
+					Retry:            job.Retry,
 				},
 			},
 		},
