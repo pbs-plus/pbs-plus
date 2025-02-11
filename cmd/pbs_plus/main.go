@@ -9,10 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
@@ -36,9 +34,6 @@ import (
 var Version = "v0.0.0"
 
 func main() {
-	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop() // Stop forwarding signals when the context is canceled.
-
 	err := syslog.InitializeLogger()
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %s", err)
@@ -51,7 +46,7 @@ func main() {
 	var wsHub *websockets.Server
 	wsHub = nil
 
-	ctx, cancel := context.WithCancel(sigCtx)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if *jobRun == "" {
 		wsHub = websockets.NewServer(ctx)
