@@ -18,21 +18,15 @@ const (
 	RootHandleID = uint64(0) // Reserved ID for root directory
 )
 
-// VSSIDHandler uses VSSFS's stable file IDs for handle management.
-// It caches relative paths (from the filesystem root) and recreates the full
-// path (by joining vssFS.Root()) when needed.
+// VSSIDHandler uses VSSFS's stable file IDs for handle management
 type VSSIDHandler struct {
 	nfs.Handler
-	vssFS *VSSFS
-
+	vssFS           *VSSFS
 	activeHandlesMu sync.RWMutex
-	// Maps fileID to the file's relative path.
-	activeHandles map[uint64]string
+	activeHandles   map[uint64]string
 }
 
-func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
-	*VSSIDHandler, error,
-) {
+func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (*VSSIDHandler, error) {
 	return &VSSIDHandler{
 		Handler:       underlyingHandler,
 		vssFS:         vssFS,
@@ -44,15 +38,15 @@ func (h *VSSIDHandler) getHandle(key uint64) (string, bool) {
 	h.activeHandlesMu.RLock()
 	defer h.activeHandlesMu.RUnlock()
 
-	path, ok := h.activeHandles[key]
-	return path, ok
+	handle, ok := h.activeHandles[key]
+	return handle, ok
 }
 
-func (h *VSSIDHandler) storeHandle(key uint64, relativePath string) {
+func (h *VSSIDHandler) storeHandle(key uint64, path string) {
 	h.activeHandlesMu.Lock()
 	defer h.activeHandlesMu.Unlock()
 
-	h.activeHandles[key] = relativePath
+	h.activeHandles[key] = path
 }
 
 func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
@@ -61,33 +55,32 @@ func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 		return nil
 	}
 
-	// Special-case the root directory: store an empty relative path.
+	// Handle root directory specially
 	if len(path) == 0 || (len(path) == 1 && path[0] == "") {
-		return h.createHandle(RootHandleID, "")
+		return h.createHandle(RootHandleID, vssFS.Root())
 	}
 
-	// Compute the relative path from the provided NFS path components.
-	relativePath := filepath.Join(path...)
-	// Build the full path by joining the filesystem root with the relative path.
-	fullPath := filepath.Join(vssFS.Root(), relativePath)
+	// Convert NFS path to Windows format
+	winPath := filepath.Join(path...)
+	fullPath := filepath.Join(vssFS.Root(), winPath)
 
-	// vssFS methods require the full path.
-	info, err := vssFS.Stat(fullPath)
+	// Get or create stable ID
+	info, err := vssFS.Stat(winPath)
 	if err != nil {
 		return nil
 	}
 
 	fileID := info.(*VSSFileInfo).stableID
-	// Only store the relative path in the cache.
-	return h.createHandle(fileID, relativePath)
+	return h.createHandle(fileID, fullPath)
 }
 
-func (h *VSSIDHandler) createHandle(fileID uint64, relativePath string) []byte {
+func (h *VSSIDHandler) createHandle(fileID uint64, fullPath string) []byte {
+	// Add to cache if not exists
 	if _, exists := h.getHandle(fileID); !exists {
-		h.storeHandle(fileID, relativePath)
+		h.storeHandle(fileID, fullPath)
 	}
 
-	// Convert the 64-bit fileID to an 8-byte handle.
+	// Convert ID to 8-byte handle
 	handle := make([]byte, 8)
 	binary.BigEndian.PutUint64(handle, fileID)
 	return handle
@@ -103,23 +96,21 @@ func (h *VSSIDHandler) FromHandle(handle []byte) (billy.Filesystem, []string, er
 		return h.vssFS, []string{}, nil
 	}
 
-	relativePath, exists := h.getHandle(fileID)
+	// Retrieve cached path
+	fullPath, exists := h.getHandle(fileID)
 	if !exists {
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
-	// Recreate the full path when needed.
-	fullPath := filepath.Join(h.vssFS.Root(), relativePath)
-
-	// Strip the filesystem root from the full path to get the NFS components.
-	nfsRelative := strings.TrimPrefix(
+	// Convert Windows path to NFS components
+	relativePath := strings.TrimPrefix(
 		filepath.ToSlash(fullPath),
 		filepath.ToSlash(h.vssFS.Root())+"/",
 	)
 
 	var parts []string
-	if nfsRelative != "" {
-		parts = strings.Split(nfsRelative, "/")
+	if relativePath != "" {
+		parts = strings.Split(relativePath, "/")
 	}
 	return h.vssFS, parts, nil
 }
@@ -129,7 +120,7 @@ func (h *VSSIDHandler) HandleLimit() int {
 }
 
 func (h *VSSIDHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) error {
-	// No-op for read-only filesystem.
+	// No-op for read-only filesystem
 	return nil
 }
 
