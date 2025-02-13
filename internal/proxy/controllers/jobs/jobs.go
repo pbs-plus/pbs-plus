@@ -3,11 +3,11 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
@@ -60,35 +60,20 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		attempts := 0
-		for attempts <= job.Retry {
-			op, err := backup.RunBackup(job, storeInstance, false)
-			if err != nil {
-				if !strings.Contains(err.Error(), "A job is still running.") {
-					job.LastRunPlusError = err.Error()
-					job.LastRunPlusTime = int(time.Now().Unix())
-					if uErr := storeInstance.Database.UpdateJob(*job); uErr != nil {
-						syslog.L.Errorf("LastRunPlusError update: %v", uErr)
-					}
-				}
-				attempts++
-				if attempts > job.Retry {
-					controllers.WriteErrorResponse(w, err)
-					return
-				}
-				continue
-			}
-			task := op.Task
-
-			w.Header().Set("Content-Type", "application/json")
-
-			response.Data = task.UPID
-			response.Status = http.StatusOK
-			response.Success = true
-			json.NewEncoder(w).Encode(response)
-
-			return // Success
+		op := backup.RunBackup(context.Background(), job, storeInstance, false)
+		if waitErr := op.WaitForStart(); waitErr != nil {
+			syslog.L.Error(waitErr)
+			controllers.WriteErrorResponse(w, err)
+			return
 		}
+		task := op.Task
+
+		w.Header().Set("Content-Type", "application/json")
+
+		response.Data = task.UPID
+		response.Status = http.StatusOK
+		response.Success = true
+		json.NewEncoder(w).Encode(response)
 	}
 }
 

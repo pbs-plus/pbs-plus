@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
@@ -76,30 +75,15 @@ func main() {
 			return
 		}
 
-		attempts := 0
-		for attempts <= jobTask.Retry {
-			op, err := backup.RunBackup(jobTask, storeInstance, true)
-			if err != nil {
-				if !strings.Contains(err.Error(), "A job is still running.") {
-					jobTask.LastRunPlusError = err.Error()
-					jobTask.LastRunPlusTime = int(time.Now().Unix())
-					if uErr := storeInstance.Database.UpdateJob(*jobTask); uErr != nil {
-						syslog.L.Errorf("LastRunPlusError update: %v", uErr)
-					}
-				}
-				syslog.L.Error(err)
-				attempts++
-				continue
-			}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-			if waitErr := op.Wait(); waitErr != nil {
-				syslog.L.Error(waitErr)
-				attempts++
-				continue
-			}
-
-			return
+		op := backup.RunBackup(ctx, jobTask, storeInstance, true)
+		if waitErr := op.Wait(); waitErr != nil {
+			syslog.L.Error(waitErr)
 		}
+
+		return
 	}
 
 	pbsJsLocation := "/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js"

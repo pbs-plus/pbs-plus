@@ -3,6 +3,7 @@
 package backup
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +15,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func prepareBackupCommand(job *types.Job, storeInstance *store.Store, srcPath string, isAgent bool) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, job *types.Job, storeInstance *store.Store, srcPath string, isAgent bool) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
@@ -34,7 +35,7 @@ func prepareBackupCommand(job *types.Job, storeInstance *store.Store, srcPath st
 		return nil, fmt.Errorf("RunBackup: failed to build command arguments")
 	}
 
-	cmd := exec.Command("/usr/bin/proxmox-backup-client", cmdArgs...)
+	cmd := exec.CommandContext(ctx, "/usr/bin/proxmox-backup-client", cmdArgs...)
 	cmd.Env = buildCommandEnv(storeInstance)
 
 	return cmd, nil
