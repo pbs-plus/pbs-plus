@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	maxRetryAttempts = 10
+	maxRetryAttempts = 100
 	messageTimeout   = 5 * time.Second
 	operationTimeout = 10 * time.Second
 	maxMessageSize   = 1024 * 1024 // 1MB
@@ -151,10 +151,7 @@ func (c *WSClient) handleMessages() {
 			var message Message
 			err := wsjson.Read(c.ctx, c.conn, &message)
 			if err != nil {
-				// Filter out EOF errors and normal closure
-				if !isNormalClosureError(err) {
-					c.handleConnectionError(err)
-				}
+				c.handleConnectionError(err)
 				return
 			}
 
