@@ -353,6 +353,7 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 				}
 
 				// Signal that the cmd.Wait goroutine has started.
+				autoOp.Task = op.Task
 				close(autoOp.started)
 
 				// Wait for the asynchronous backup process to finish.
@@ -363,7 +364,6 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 					continue
 				}
 				// A backup attempt succeeded.
-				autoOp.Task = op.Task
 				autoOp.err = nil
 				autoOp.BackupOp = op
 				close(autoOp.done)
