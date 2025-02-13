@@ -63,7 +63,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		op := backup.RunBackup(context.Background(), job, storeInstance, false)
 		if waitErr := op.WaitForStart(); waitErr != nil {
 			syslog.L.Error(waitErr)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponse(w, waitErr)
 			return
 		}
 		task := op.Task
@@ -74,6 +74,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		json.NewEncoder(w).Encode(response)
+		return
 	}
 }
 
