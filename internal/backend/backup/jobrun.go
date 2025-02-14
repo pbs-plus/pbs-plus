@@ -281,19 +281,19 @@ type AutoBackupOperation struct {
 // Wait blocks until the entire auto-retry process has finished,
 // and returns the final outcome (nil if a backup succeeded).
 func (a *AutoBackupOperation) Wait() error {
-	hasStarted := false
-	for {
+	select {
+	case <-a.done:
+		hasNotStarted := true
 		select {
-		case <-a.done:
-			if a.err != nil && !hasStarted {
-				a.updatePlusError()
-			}
-			return a.err
-		case <-a.started:
-			hasStarted = true
-		case <-a.ctx.Done():
-			return errors.New("RunBackup: context cancelled")
+		case _, hasNotStarted = <-a.started:
+		default:
 		}
+		if a.err != nil && hasNotStarted {
+			a.updatePlusError()
+		}
+		return a.err
+	case <-a.ctx.Done():
+		return errors.New("RunBackup: context cancelled")
 	}
 }
 
@@ -314,7 +314,7 @@ func (a *AutoBackupOperation) WaitForStart() error {
 }
 
 func (a *AutoBackupOperation) updatePlusError() {
-	if !strings.Contains(a.err.Error(), "A job is still running.") {
+	if !strings.Contains(a.err.Error(), "job is still running") {
 		a.job.LastRunPlusError = a.err.Error()
 		a.job.LastRunPlusTime = int(time.Now().Unix())
 		if uErr := a.storeInstance.Database.UpdateJob(*a.job); uErr != nil {
