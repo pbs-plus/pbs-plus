@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
@@ -80,10 +81,49 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			_ = storeInstance.WSHub.SendToClient(targetHostname, websockets.Message{
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			// Create response channel and register handler
+			respChan := make(chan *websockets.Message, 1)
+			errChan := make(chan *websockets.Message, 1)
+			cleanup := storeInstance.WSHub.RegisterHandler("response-backup_close", func(handlerCtx context.Context, msg *websockets.Message) error {
+				if msg.Content == "Acknowledged: "+agentDrive && msg.ClientID == targetHostname {
+					respChan <- msg
+				}
+				return nil
+			})
+			defer cleanup()
+			cleanupErr := storeInstance.WSHub.RegisterHandler("error-backup_close", func(handlerCtx context.Context, msg *websockets.Message) error {
+				if strings.Contains(msg.Content, agentDrive+": ") && msg.ClientID == targetHostname {
+					errChan <- msg
+				}
+				return nil
+			})
+			defer cleanupErr()
+
+			err := storeInstance.WSHub.SendToClient(targetHostname, websockets.Message{
 				Type:    "backup_close",
 				Content: agentDrive,
 			})
+			if err != nil {
+				syslog.L.Errorf("MountHandler: Failed to send backup request to target -> %v", err)
+				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			// Wait for either response or timeout
+			select {
+			case <-respChan:
+			case err := <-errChan:
+				syslog.L.Errorf("MountHandler: %s", err.Content)
+				http.Error(w, fmt.Sprintf("MountHandler: %s", err.Content), http.StatusInternalServerError)
+				return
+			case <-ctx.Done():
+				syslog.L.Error("MountHandler: Timeout waiting for backup acknowledgement from target")
+				http.Error(w, "MountHandler: Timeout waiting for backup acknowledgement from target", http.StatusInternalServerError)
+				return
+			}
 
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"status": "true"})
