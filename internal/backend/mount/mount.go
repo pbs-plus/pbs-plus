@@ -75,14 +75,14 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 
 	// Setup mount path
 	agentMount.Path = filepath.Join(constants.AgentMountBasePath, strings.ReplaceAll(target.Name, " ", "-"))
-	agentMount.Unmount() // Ensure clean mount point
-
 	// Create mount directory if it doesn't exist
 	err = os.MkdirAll(agentMount.Path, 0700)
 	if err != nil {
 		agentMount.CloseMount()
 		return nil, fmt.Errorf("Mount: error creating directory \"%s\" -> %w", agentMount.Path, err)
 	}
+
+	agentMount.Unmount() // Ensure clean mount point
 
 	// Mount using NFS
 	mountArgs := []string{
@@ -156,7 +156,10 @@ func (a *AgentMount) Unmount() {
 	// First try a clean unmount
 	umount := exec.Command("umount", "-lf", a.Path)
 	umount.Env = os.Environ()
-	_ = umount.Run()
+	err := umount.Run()
+	if err == nil {
+		_ = os.RemoveAll(a.Path)
+	}
 
 	// Kill any lingering mount process
 	if a.Cmd != nil && a.Cmd.Process != nil {
