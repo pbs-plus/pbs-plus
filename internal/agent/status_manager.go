@@ -22,7 +22,7 @@ type BackupStore struct {
 	fileLock *filemutex.FileMutex
 }
 
-func NewBackupStore() *BackupStore {
+func NewBackupStore() (*BackupStore, error) {
 	execPath, err := os.Executable()
 	if err != nil {
 		panic(err)
@@ -33,13 +33,13 @@ func NewBackupStore() *BackupStore {
 
 	fl, err := filemutex.New(lockPath)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	return &BackupStore{
 		filePath: filePath,
 		fileLock: fl,
-	}
+	}, nil
 }
 
 func (bs *BackupStore) updateSessions(fn func(map[string]*BackupSessionData)) error {

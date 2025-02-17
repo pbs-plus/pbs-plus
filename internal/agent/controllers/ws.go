@@ -43,7 +43,12 @@ func BackupStartHandler(c *websockets.WSClient) func(ctx context.Context, msg *w
 		drive := msg.Content
 		syslog.L.Infof("Received backup request for drive %s.", drive)
 
-		store := agent.NewBackupStore()
+		store, err := agent.NewBackupStore()
+		if err != nil {
+			syslog.L.Errorf("backup store error: %v", err)
+			sendError(c, "backup_start", drive, err.Error())
+			return err
+		}
 
 		if hasActive, err := store.HasActiveBackupForDrive(drive); hasActive || err != nil {
 			if err != nil {
@@ -73,7 +78,7 @@ func BackupStartHandler(c *websockets.WSClient) func(ctx context.Context, msg *w
 
 		activeBackupsMu.Unlock()
 
-		err := store.StartBackup(drive)
+		err = store.StartBackup(drive)
 		if err != nil {
 			syslog.L.Errorf("backup store error: %v", err)
 			sendError(c, "backup_start", drive, err.Error())

@@ -114,7 +114,10 @@ func (u *UpdaterService) runUpdateCheck() {
 }
 
 func (u *UpdaterService) checkForActiveBackups() (bool, error) {
-	store := agent.NewBackupStore()
+	store, err := agent.NewBackupStore()
+	if err != nil {
+		return true, err
+	}
 	return store.HasActiveBackups()
 }
 
