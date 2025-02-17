@@ -299,7 +299,7 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 				if err != nil {
 					lastErr = err
 					log.Printf("Backup attempt %d setup failed: %v", attempt, err)
-					time.Sleep(1 * time.Second)
+					time.Sleep(10 * time.Second)
 					continue
 				}
 
@@ -309,7 +309,7 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 				if err := op.Wait(); err != nil {
 					lastErr = err
 					log.Printf("Backup attempt %d execution failed: %v", attempt, err)
-					time.Sleep(1 * time.Second)
+					time.Sleep(10 * time.Second)
 					autoOp.started = make(chan struct{})
 					continue
 				}
