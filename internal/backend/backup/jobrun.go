@@ -21,21 +21,12 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
-// BackupOperation represents one backup attempt.
-// Its Wait() method waits for the asynchronous logging/cleanup to complete
-// and returns an error if the backup command (or its post-processing)
-// eventually fails.
-//
-// The additional 'started' channel is closed as soon as the goroutine
-// that waits on cmd.Wait() has been launched.
 type BackupOperation struct {
 	Task      *proxmox.Task
 	waitGroup *sync.WaitGroup
 	err       error
 }
 
-// Wait blocks until the asynchronous operations (e.g., cmd.Wait logging)
-// are complete, and then returns the error encountered (if any).
 func (b *BackupOperation) Wait() error {
 	if b.waitGroup != nil {
 		b.waitGroup.Wait()
@@ -43,20 +34,13 @@ func (b *BackupOperation) Wait() error {
 	return b.err
 }
 
-// runBackupAttempt performs one complete backup attempt. It returns an error
-// immediately if any failure occurs during setup (locks, mounts, etc.). Otherwise,
-// it starts the backup command and launches background goroutines for monitoring,
-// logging, and waiting on the command. Any error occurring later is stored in the
-// returned BackupOperation, to be retrievable via Wait().
 func runBackupAttempt(
 	ctx context.Context,
 	job *types.Job,
 	storeInstance *store.Store,
 	skipCheck bool,
 ) (*BackupOperation, error) {
-	// Create a mutex to ensure that only one instance of this job is running.
-	jobInstanceMutex, err :=
-		filemutex.New(fmt.Sprintf("/tmp/pbs-plus-mutex-job-%s", job.ID))
+	jobInstanceMutex, err := filemutex.New(fmt.Sprintf("/tmp/pbs-plus-mutex-job-%s", job.ID))
 	if err != nil {
 		return nil, fmt.Errorf("runBackupAttempt: failed to create job mutex: %w", err)
 	}
@@ -67,7 +51,6 @@ func runBackupAttempt(
 	var agentMount *mount.AgentMount
 	var stdout, stderr io.ReadCloser
 
-	// Local clean-up helper.
 	errCleanUp := func() {
 		_ = jobInstanceMutex.Close()
 		if agentMount != nil {
@@ -82,7 +65,6 @@ func runBackupAttempt(
 		}
 	}
 
-	// Acquire a global backup lock.
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
 	if err != nil {
 		errCleanUp()
@@ -94,15 +76,12 @@ func runBackupAttempt(
 		errCleanUp()
 		return nil, fmt.Errorf("runBackupAttempt: failed to lock backup mutex: %w", err)
 	}
-	defer backupMutex.Unlock()
 
-	// Ensure required API token is set.
 	if proxmox.Session.APIToken == nil {
 		errCleanUp()
 		return nil, errors.New("runBackupAttempt: API token is required")
 	}
 
-	// Validate and setup the target.
 	target, err := storeInstance.Database.GetTarget(job.Target)
 	if err != nil {
 		errCleanUp()
@@ -130,7 +109,6 @@ func runBackupAttempt(
 	}
 	srcPath = filepath.Join(srcPath, job.Subpath)
 
-	// Prepare the backup command.
 	cmd, err := prepareBackupCommand(ctx, job, storeInstance, srcPath, isAgent)
 	if err != nil {
 		errCleanUp()
@@ -142,9 +120,7 @@ func runBackupAttempt(
 		return nil, err
 	}
 
-	// Start monitoring for the backup task.
-	monitorCtx, monitorCancel :=
-		context.WithTimeout(ctx, 20*time.Second)
+	monitorCtx, monitorCancel := context.WithTimeout(ctx, 20*time.Second)
 	defer monitorCancel()
 
 	var task *proxmox.Task
@@ -155,39 +131,36 @@ func runBackupAttempt(
 		task, monitorErr = proxmox.Session.GetJobTask(monitorCtx, readyChan, job, target)
 	}()
 
-	// Wait for either the task to be created or a timeout.
 	select {
 	case <-readyChan:
 	case <-monitorCtx.Done():
 		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: task monitoring crashed: %w",
-			monitorErr)
+		return nil, fmt.Errorf("runBackupAttempt: task monitoring crashed: %w", monitorErr)
 	}
 
 	currOwner, _ := GetCurrentOwner(job, storeInstance)
 	_ = FixDatastore(job, storeInstance)
 
-	// Launch a goroutine to collect command logs concurrently.
-	var logLines []string
-	var logGlobalMu sync.Mutex
-	logDone := make(chan struct{})
-	go func() {
-		logLines, _ = collectLogs(job.ID, cmd, stdout, stderr)
-		close(logDone)
-	}()
-
-	// Start the backup process.
 	if err := cmd.Start(); err != nil {
 		monitorCancel()
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
 		}
 		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: proxmox-backup-client start error (%s): %w",
-			cmd.String(), err)
+		return nil, fmt.Errorf("runBackupAttempt: proxmox-backup-client start error (%s): %w", cmd.String(), err)
 	}
 
-	// Ensure that a task was created.
+	var logLines []string
+	var logGlobalMu sync.Mutex
+	logDone := make(chan struct{})
+	go func() {
+		lines, _ := collectLogs(job.ID, cmd, stdout, stderr)
+		logGlobalMu.Lock()
+		logLines = lines
+		logGlobalMu.Unlock()
+		close(logDone)
+	}()
+
 	select {
 	case <-monitorCtx.Done():
 		if task == nil {
@@ -208,7 +181,6 @@ func runBackupAttempt(
 		return nil, fmt.Errorf("runBackupAttempt: failed to update job status: %w", err)
 	}
 
-	// Prepare an operation that will capture any error from cmd.Wait.
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	operation := &BackupOperation{
@@ -216,14 +188,10 @@ func runBackupAttempt(
 		waitGroup: wg,
 	}
 
-	// Spawn a goroutine that waits on the backup command and completes logging/cleanup.
 	go func() {
-		defer stdout.Close()
-		defer stderr.Close()
 		defer wg.Done()
 		defer jobInstanceMutex.Close()
 
-		// Wait for the backup command to finish.
 		if err := cmd.Wait(); err != nil {
 			operation.err = err
 		}
@@ -249,21 +217,13 @@ func runBackupAttempt(
 			agentMount.Unmount()
 			agentMount.CloseMount()
 		}
+		stdout.Close()
+		stderr.Close()
 	}()
 
-	// Return the backup operation.
 	return operation, nil
 }
 
-/*
-   AUTO–RETRY BACKGROUND OPERATION
-
-   This wraps a backup attempt that auto–retries until a backup
-   succeeds or the maximum number of attempts is reached.
-   Even if a caller never waits on it, the auto-retry loop continues.
-*/
-
-// AutoBackupOperation wraps a backup attempt that auto-retries.
 type AutoBackupOperation struct {
 	Task          *proxmox.Task
 	err           error
@@ -273,23 +233,19 @@ type AutoBackupOperation struct {
 
 	ctx context.Context
 
-	// Allow access to the underlying BackupOperation if needed.
 	BackupOp *BackupOperation
 	started  chan struct{}
 }
 
-// Wait blocks until the entire auto-retry process has finished,
-// and returns the final outcome (nil if a backup succeeded).
 func (a *AutoBackupOperation) Wait() error {
 	select {
 	case <-a.done:
-		hasNotStarted := true
 		select {
-		case _, hasNotStarted = <-a.started:
+		case <-a.started:
 		default:
-		}
-		if a.err != nil && hasNotStarted {
-			a.updatePlusError()
+			if a.err != nil {
+				a.updatePlusError()
+			}
 		}
 		return a.err
 	case <-a.ctx.Done():
@@ -297,7 +253,6 @@ func (a *AutoBackupOperation) Wait() error {
 	}
 }
 
-// WaitForStart blocks until the backup command's wait goroutine has been started.
 func (a *AutoBackupOperation) WaitForStart() error {
 	select {
 	case <-a.done:
@@ -309,7 +264,6 @@ func (a *AutoBackupOperation) WaitForStart() error {
 	case <-a.ctx.Done():
 		return errors.New("context cancelled")
 	}
-
 	return nil
 }
 
@@ -323,9 +277,6 @@ func (a *AutoBackupOperation) updatePlusError() {
 	}
 }
 
-// RunBackup launches the backup process in the background and automatically
-// retries up to job.Retry+1 attempts. It returns immediately; even if no caller
-// waits on it, the auto-retry loop will keep it alive.
 func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, skipCheck bool) *AutoBackupOperation {
 	autoOp := &AutoBackupOperation{
 		done:          make(chan struct{}),
@@ -337,11 +288,11 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 
 	go func() {
 		var lastErr error
-		// Retry up to job.Retry+1 times.
 		for attempt := 0; attempt <= job.Retry; attempt++ {
 			select {
 			case <-autoOp.ctx.Done():
 				autoOp.err = errors.New("context cancelled")
+				close(autoOp.done)
 				return
 			default:
 				op, err := runBackupAttempt(ctx, job, storeInstance, skipCheck)
@@ -352,20 +303,17 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 					continue
 				}
 
-				// Signal that the cmd.Wait goroutine has started.
 				autoOp.Task = op.Task
 				close(autoOp.started)
 
-				// Wait for the asynchronous backup process to finish.
 				if err := op.Wait(); err != nil {
 					lastErr = err
 					log.Printf("Backup attempt %d execution failed: %v", attempt, err)
 					time.Sleep(1 * time.Second)
-
 					autoOp.started = make(chan struct{})
 					continue
 				}
-				// A backup attempt succeeded.
+
 				autoOp.err = nil
 				autoOp.BackupOp = op
 				close(autoOp.done)
@@ -373,9 +321,7 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 			}
 		}
 
-		// If all attempts are exhausted, report the final error.
-		autoOp.err = fmt.Errorf("backup failed after %d attempts, last error: %w",
-			job.Retry+1, lastErr)
+		autoOp.err = fmt.Errorf("backup failed after %d attempts, last error: %w", job.Retry+1, lastErr)
 		close(autoOp.done)
 	}()
 	return autoOp
