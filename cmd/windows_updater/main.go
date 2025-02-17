@@ -16,7 +16,6 @@ import (
 	"github.com/alexflint/go-filemutex"
 	"github.com/kardianos/service"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
@@ -115,8 +114,8 @@ func (u *UpdaterService) runUpdateCheck() {
 }
 
 func (u *UpdaterService) checkForActiveBackups() (bool, error) {
-	store := controllers.GetNFSSessionStore()
-	return store.HasSessions(), nil
+	store := agent.NewBackupStore()
+	return store.HasActiveBackups()
 }
 
 func (u *UpdaterService) checkForNewVersion() (string, error) {
