@@ -3,7 +3,6 @@
 package mount
 
 import (
-	"encoding/base32"
 	"fmt"
 	"net/http"
 	"os"
@@ -166,8 +165,8 @@ func (a *AgentMount) Unmount() {
 }
 
 func (a *AgentMount) CloseMount() {
-	targetHostnameEnc := base32.StdEncoding.EncodeToString([]byte(a.Hostname))
-	agentDriveEnc := base32.StdEncoding.EncodeToString([]byte(a.Drive))
+	targetHostnameEnc := utils.EncodePath(a.Hostname)
+	agentDriveEnc := utils.EncodePath(a.Drive)
 
 	syslog.L.Infof("CloseMount: Sending request for %s/%s", a.Hostname, a.Drive)
 	err := proxmox.Session.ProxmoxHTTPRequest(
