@@ -15,17 +15,43 @@ import (
 )
 
 var (
-	activeBackupsCtx       map[string]context.Context
-	activeBackupsCtxCancel map[string]context.CancelFunc
-	activeBackupsMu        sync.Mutex
+	activeSessions   map[string]*backupSession
+	activeSessionsMu sync.Mutex
 )
+
+type backupSession struct {
+	drive      string
+	ctx        context.Context
+	cancel     context.CancelFunc
+	store      *agent.BackupStore
+	snapshot   *snapshots.WinVSSSnapshot
+	nfsSession *nfs.NFSSession
+	once       sync.Once
+}
+
+func (s *backupSession) Close() {
+	s.once.Do(func() {
+		if s.nfsSession != nil {
+			s.nfsSession.Close()
+		}
+		if s.snapshot != nil {
+			s.snapshot.Close()
+		}
+		if s.store != nil {
+			_ = s.store.EndBackup(s.drive)
+		}
+		activeSessionsMu.Lock()
+		delete(activeSessions, s.drive)
+		activeSessionsMu.Unlock()
+		s.cancel()
+	})
+}
 
 func sendResponse(c *websockets.WSClient, msgType, content string) {
 	response := websockets.Message{
 		Type:    "response-" + msgType,
 		Content: "Acknowledged: " + content,
 	}
-
 	c.Send(context.Background(), response)
 }
 
@@ -34,7 +60,6 @@ func sendError(c *websockets.WSClient, msgType, drive, content string) {
 		Type:    "error-" + msgType,
 		Content: drive + ": " + content,
 	}
-
 	c.Send(context.Background(), response)
 }
 
@@ -45,79 +70,61 @@ func BackupStartHandler(c *websockets.WSClient) func(ctx context.Context, msg *w
 
 		store, err := agent.NewBackupStore()
 		if err != nil {
-			syslog.L.Errorf("backup store error: %v", err)
 			sendError(c, "backup_start", drive, err.Error())
 			return err
 		}
 
+		activeSessionsMu.Lock()
+		if activeSessions == nil {
+			activeSessions = make(map[string]*backupSession)
+		}
+		if existingSession, ok := activeSessions[drive]; ok {
+			existingSession.Close()
+		}
+		sessionCtx, cancel := context.WithCancel(context.Background())
+		session := &backupSession{
+			drive:  drive,
+			ctx:    sessionCtx,
+			cancel: cancel,
+			store:  store,
+		}
+		activeSessions[drive] = session
+		activeSessionsMu.Unlock()
+
 		if hasActive, err := store.HasActiveBackupForDrive(drive); hasActive || err != nil {
 			if err != nil {
-				syslog.L.Errorf("backup store error: %v", err)
 				sendError(c, "backup_start", drive, err.Error())
 				return err
 			}
-
-			syslog.L.Errorf("an attempt to backup drive %s was cancelled due to existing session", drive)
-			sendError(c, "backup_start", drive, "An existing backup for requested drive is currently running. Only one instance is allowed at a time.")
+			sendError(c, "backup_start", drive, "existing backup")
+			return fmt.Errorf("existing backup")
 		}
 
-		activeBackupsMu.Lock()
-
-		if activeBackupsCtx == nil {
-			activeBackupsCtx = make(map[string]context.Context)
-		}
-		if activeBackupsCtxCancel == nil {
-			activeBackupsCtxCancel = make(map[string]context.CancelFunc)
-		}
-
-		if cancel, ok := activeBackupsCtxCancel[drive]; ok {
-			cancel()
-		}
-
-		activeBackupsCtx[drive], activeBackupsCtxCancel[drive] = context.WithCancel(context.Background())
-
-		activeBackupsMu.Unlock()
-
-		err = store.StartBackup(drive)
-		if err != nil {
-			syslog.L.Errorf("backup store error: %v", err)
+		if err := store.StartBackup(drive); err != nil {
+			session.Close()
 			sendError(c, "backup_start", drive, err.Error())
 			return err
 		}
 
 		snapshot, err := snapshots.Snapshot(drive)
 		if err != nil {
-			syslog.L.Errorf("snapshot error: %v", err)
+			session.Close()
 			sendError(c, "backup_start", drive, err.Error())
-			_ = store.EndBackup(drive)
 			return err
 		}
+		session.snapshot = snapshot
 
-		activeBackupsMu.Lock()
-		currentCtx := activeBackupsCtx[drive]
-		currentCtxCancel := activeBackupsCtxCancel[drive]
-		activeBackupsMu.Unlock()
-
-		go func() {
-			<-currentCtx.Done()
-			_ = store.EndBackup(drive)
-			snapshot.Close()
-		}()
-
-		nfsSession := nfs.NewNFSSession(currentCtx, snapshot, drive)
+		nfsSession := nfs.NewNFSSession(session.ctx, snapshot, drive)
 		if nfsSession == nil {
-			syslog.L.Error("NFS session is nil.")
-			sendError(c, "backup_start", drive, "NFS session is nil.")
-			_ = store.EndBackup(drive)
-			snapshot.Close()
-			return fmt.Errorf("NFS session is nil.")
+			session.Close()
+			sendError(c, "backup_start", drive, "NFS session failed")
+			return fmt.Errorf("NFS session failed")
 		}
+		session.nfsSession = nfsSession
 
-		err = store.StartNFS(drive)
-		if err != nil {
-			syslog.L.Errorf("backup store error: %v", err)
+		if err := store.StartNFS(drive); err != nil {
+			session.Close()
 			sendError(c, "backup_start", drive, err.Error())
-			snapshot.Close()
 			return err
 		}
 
@@ -126,9 +133,7 @@ func BackupStartHandler(c *websockets.WSClient) func(ctx context.Context, msg *w
 				if r := recover(); r != nil {
 					syslog.L.Errorf("Panic in NFS session for drive %s: %v", drive, r)
 				}
-				_ = store.EndBackup(drive)
-				snapshot.Close()
-				currentCtxCancel()
+				session.Close()
 			}()
 			nfsSession.Serve()
 		}()
@@ -143,16 +148,17 @@ func BackupCloseHandler(c *websockets.WSClient) func(ctx context.Context, msg *w
 		drive := msg.Content
 		syslog.L.Infof("Received closure request for drive %s.", drive)
 
-		activeBackupsMu.Lock()
-		defer activeBackupsMu.Unlock()
+		activeSessionsMu.Lock()
+		session, ok := activeSessions[drive]
+		activeSessionsMu.Unlock()
 
-		if cancel, ok := activeBackupsCtxCancel[drive]; ok {
-			cancel()
-			sendResponse(c, "backup_close", drive)
-			return nil
-		} else {
-			sendError(c, "backup_close", drive, "No ongoing backup for drive")
-			return fmt.Errorf("No ongoing backup for drive %s", drive)
+		if !ok {
+			sendError(c, "backup_close", drive, "no ongoing backup")
+			return fmt.Errorf("no ongoing backup")
 		}
+
+		session.Close()
+		sendResponse(c, "backup_close", drive)
+		return nil
 	}
 }
