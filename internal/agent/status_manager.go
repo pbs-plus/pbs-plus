@@ -132,3 +132,11 @@ func (bs *BackupStore) HasActiveBackupForDrive(drive string) (bool, error) {
 	_, exists := sessions[drive]
 	return exists, nil
 }
+
+func (bs *BackupStore) ClearAll() error {
+	return bs.updateSessions(func(sessions map[string]*BackupSessionData) {
+		for drive := range sessions {
+			delete(sessions, drive)
+		}
+	})
+}

@@ -71,6 +71,16 @@ func (p *agentService) Start(s service.Service) error {
 		}
 	}()
 
+	store, err := agent.NewBackupStore()
+	if err != nil {
+		syslog.L.Errorf("Error initializing backup store: %v", err)
+	} else {
+		err = store.ClearAll()
+		if err != nil {
+			syslog.L.Errorf("Error clearing backup store: %v", err)
+		}
+	}
+
 	return nil
 }
 
