@@ -16,6 +16,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
@@ -168,10 +169,14 @@ func (a *AgentMount) CloseMount() {
 	targetHostnameEnc := base32.StdEncoding.EncodeToString([]byte(a.Hostname))
 	agentDriveEnc := base32.StdEncoding.EncodeToString([]byte(a.Drive))
 
-	_ = proxmox.Session.ProxmoxHTTPRequest(
+	syslog.L.Infof("CloseMount: Sending request for %s/%s", a.Hostname, a.Drive)
+	err := proxmox.Session.ProxmoxHTTPRequest(
 		http.MethodDelete,
 		fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc),
 		nil,
 		nil,
 	)
+	if err != nil {
+		syslog.L.Errorf("CloseMount: error sending unmount request -> %v", err)
+	}
 }
