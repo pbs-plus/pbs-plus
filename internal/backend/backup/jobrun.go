@@ -21,6 +21,8 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
+var ErrOneInstance = errors.New("a job is still running; only one instance allowed")
+
 type BackupOperation struct {
 	Task      *proxmox.Task
 	waitGroup *sync.WaitGroup
@@ -45,7 +47,7 @@ func runBackupAttempt(
 		return nil, fmt.Errorf("runBackupAttempt: failed to create job mutex: %w", err)
 	}
 	if err := jobInstanceMutex.TryLock(); err != nil {
-		return nil, errors.New("a job is still running; only one instance allowed")
+		return nil, ErrOneInstance
 	}
 
 	var agentMount *mount.AgentMount
@@ -298,6 +300,11 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 				op, err := runBackupAttempt(ctx, job, storeInstance, skipCheck)
 				if err != nil {
 					lastErr = err
+					if err == ErrOneInstance {
+						autoOp.err = err
+						close(autoOp.done)
+						return
+					}
 					log.Printf("Backup attempt %d setup failed: %v", attempt, err)
 					time.Sleep(10 * time.Second)
 					continue
