@@ -65,7 +65,14 @@ func (u *UpdaterService) runUpdateCheck() {
 			syslog.L.Errorf("Failed to check backup status: %v", err)
 			return
 		}
-		if hasActiveBackups {
+
+		agentStopped, err := u.isServiceStopped()
+		if err != nil {
+			syslog.L.Errorf("Failed to check service status: %v", err)
+			agentStopped = false
+		}
+
+		if hasActiveBackups && !agentStopped {
 			syslog.L.Info("Skipping version check - backup in progress")
 			return
 		}

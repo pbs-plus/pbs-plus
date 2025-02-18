@@ -33,20 +33,11 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				targetSplit := strings.Split(target.Name, " - ")
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
-					pingResp, err := arpcSess.CallContext(r.Context(), "ping", nil)
-					if pingResp.Status == 200 && err == nil {
+					var respBody map[string]string
+					err := arpcSess.CallJSON(r.Context(), "ping", nil, &respBody)
+					if err == nil {
 						all[i].ConnectionStatus = true
-						pingBody, ok := pingResp.Data.(map[string]interface{})
-						if ok {
-							for k, v := range pingBody {
-								if strVal, ok := v.(string); ok {
-									if k == "version" {
-										all[i].AgentVersion = strVal
-										break
-									}
-								}
-							}
-						}
+						all[i].AgentVersion = respBody["version"]
 					}
 				}
 			}
@@ -265,20 +256,11 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				targetSplit := strings.Split(target.Name, " - ")
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
-					pingResp, err := arpcSess.CallContext(r.Context(), "ping", nil)
-					if pingResp.Status == 200 && err != nil {
+					var respBody map[string]string
+					err := arpcSess.CallJSON(r.Context(), "ping", nil, &respBody)
+					if err == nil {
 						target.ConnectionStatus = true
-						pingBody, ok := pingResp.Data.(map[string]interface{})
-						if ok {
-							for k, v := range pingBody {
-								if strVal, ok := v.(string); ok {
-									if k == "version" {
-										target.AgentVersion = strVal
-										break
-									}
-								}
-							}
-						}
+						target.AgentVersion = respBody["version"]
 					}
 				}
 			}
