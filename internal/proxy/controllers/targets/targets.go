@@ -36,9 +36,16 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 					pingResp, err := arpcSess.CallContext(r.Context(), "ping", nil)
 					if pingResp.Status == 200 && err == nil {
 						all[i].ConnectionStatus = true
-						pingBody, ok := pingResp.Data.(map[string]string)
+						pingBody, ok := pingResp.Data.(map[string]interface{})
 						if ok {
-							all[i].AgentVersion = pingBody["version"]
+							for k, v := range pingBody {
+								if strVal, ok := v.(string); ok {
+									if k == "version" {
+										all[i].AgentVersion = strVal
+										break
+									}
+								}
+							}
 						}
 					}
 				}
@@ -261,9 +268,16 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					pingResp, err := arpcSess.CallContext(r.Context(), "ping", nil)
 					if pingResp.Status == 200 && err != nil {
 						target.ConnectionStatus = true
-						pingBody, ok := pingResp.Data.(map[string]string)
+						pingBody, ok := pingResp.Data.(map[string]interface{})
 						if ok {
-							target.AgentVersion = pingBody["version"]
+							for k, v := range pingBody {
+								if strVal, ok := v.(string); ok {
+									if k == "version" {
+										target.AgentVersion = strVal
+										break
+									}
+								}
+							}
 						}
 					}
 				}
