@@ -6,12 +6,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -22,9 +26,9 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
+	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
-	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
 type PingData struct {
@@ -107,8 +111,8 @@ func (p *agentService) run() {
 		return
 	}
 
-	if err := p.connectWebSocket(); err != nil {
-		syslog.L.Errorf("WebSocket connection failed: %v", err)
+	if err := p.connectARPC(); err != nil {
+		syslog.L.Errorf("ARPC connection failed: %v", err)
 		return
 	}
 
@@ -235,48 +239,74 @@ func (p *agentService) writeVersionToFile() error {
 	return nil
 }
 
-func (p *agentService) connectWebSocket() error {
-	for {
-		config, err := websockets.GetWindowsConfig(Version)
-		if err != nil {
-			syslog.L.Errorf("WS client windows config error: %s", err)
-			return err
-		}
+func (p *agentService) connectARPC() error {
+	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
+	if err != nil {
+		return fmt.Errorf("invalid server URL: %v", err)
+	}
+	uri, err := url.Parse(serverUrl.Value)
+	if err != nil {
+		return fmt.Errorf("invalid server URL: %v", err)
+	}
 
-		tlsConfig, err := agent.GetTLSConfig()
-		if err != nil {
-			syslog.L.Errorf("WS client tls config error: %s", err)
-			return err
-		}
+	tlsConfig, err := agent.GetTLSConfig()
+	if err != nil {
+		syslog.L.Errorf("ARPC client tls config error: %s", err)
+		return err
+	}
 
-		config.TLSConfig = tlsConfig
+	clientId, err := os.Hostname()
+	if err != nil {
+		syslog.L.Errorf("hostname retrieval error: %s", err)
+		return err
+	}
 
-		client, err := websockets.NewWSClient(p.ctx, config)
-		if err != nil {
-			syslog.L.Errorf("WS client init error: %s", err)
-			select {
-			case <-p.ctx.Done():
-				return fmt.Errorf("context cancelled while connecting to WebSocket")
-			case <-time.After(5 * time.Second):
-				continue
-			}
-		}
+	headers := http.Header{}
+	headers.Add("X-PBS-Agent", clientId)
+	headers.Add("X-PBS-Plus-Version", Version)
 
-		client.RegisterHandler("backup_start", controllers.BackupStartHandler(client))
-		client.RegisterHandler("backup_close", controllers.BackupCloseHandler(client))
+	// Upgrade the HTTP connection (perform the handshake).
+	session, err := arpc.DialWithBackoff(
+		p.ctx,
+		func() (net.Conn, error) {
+			return tls.Dial("tcp", uri.Host, tlsConfig)
+		},
+		func(conn net.Conn) (*arpc.Session, error) {
+			return arpc.UpgradeHTTPClient(conn, "/plus/arpc", uri.Host, headers, nil)
+		},
+		100*time.Millisecond, 5*time.Second,
+	)
+	if err != nil {
+		log.Fatalf("failed to connect: %v", err)
+	}
+	defer session.Close()
 
-		err = client.Connect(p.ctx)
-		if err != nil {
-			syslog.L.Errorf("WS client connect error: %s", err)
-			select {
-			case <-p.ctx.Done():
-				return fmt.Errorf("context cancelled while connecting to WebSocket")
-			case <-time.After(5 * time.Second):
-				continue
-			}
-		}
+	reconnectCtx, cancel := context.WithCancel(p.ctx)
+	defer cancel()
 
-		break
+	rc := &arpc.ReconnectConfig{
+		AutoReconnect: true,
+		DialFunc: func() (net.Conn, error) {
+			return tls.Dial("tcp", uri.Host, tlsConfig)
+		},
+		UpgradeFunc: func(conn net.Conn) (*arpc.Session, error) {
+			return arpc.UpgradeHTTPClient(conn, "/plus/arpc", uri.Host, headers, nil)
+		},
+		InitialBackoff: 100 * time.Millisecond,
+		MaxBackoff:     5 * time.Second,
+		ReconnectCtx:   reconnectCtx,
+	}
+	session.EnableAutoReconnect(rc)
+
+	router := arpc.NewRouter()
+	router.Handle("ping", func(req arpc.Request) (arpc.Response, error) {
+		return arpc.Response{Status: 200, Data: map[string]string{"version": Version, "hostname": clientId}}, nil
+	})
+	router.Handle("backup", controllers.BackupStartHandler)
+	router.Handle("cleanup", controllers.BackupCloseHandler)
+
+	if err := session.Serve(router); err != nil {
+		syslog.L.Errorf("session closed: %v", err)
 	}
 
 	return nil

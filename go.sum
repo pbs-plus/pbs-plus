@@ -103,6 +103,8 @@ github.com/willscott/go-nfs v0.0.3 h1:Z5fHVxMsppgEucdkKBN26Vou19MtEM875NmRwj156R
 github.com/willscott/go-nfs v0.0.3/go.mod h1:VhNccO67Oug787VNXcyx9JDI3ZoSpqoKMT/lWMhUIDg=
 github.com/willscott/go-nfs-client v0.0.0-20240104095149-b44639837b00 h1:U0DnHRZFzoIV1oFEZczg5XyPut9yxk9jjtax/9Bxr/o=
 github.com/willscott/go-nfs-client v0.0.0-20240104095149-b44639837b00/go.mod h1:Tq++Lr/FgiS3X48q5FETemXiSLGuYMQT2sPjYNPJSwA=
+github.com/xtaci/smux v1.5.34 h1:OUA9JaDFHJDT8ZT3ebwLWPAgEfE6sWo2LaTy3anXqwg=
+github.com/xtaci/smux v1.5.34/go.mod h1:OMlQbT5vcgl2gb49mFkYo6SMf+zP3rcjcwQz7ZU7IGY=
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
 github.com/zeebo/assert v1.3.0 h1:g7C04CbJuIDKNPFHmsk4hwZDO5O+kntRxzaUoNXj+IQ=
 github.com/zeebo/assert v1.3.0/go.mod h1:Pq9JiuJQpG8JLJdtkwrJESF0Foym2/D9XMU5ciN/wJ0=

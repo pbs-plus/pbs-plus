@@ -30,8 +30,18 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for i, target := range all {
 			if target.IsAgent {
-				all[i].ConnectionStatus = storeInstance.WSHub.AgentPing(&target)
-				all[i].AgentVersion = storeInstance.WSHub.AgentVersion(&target)
+				targetSplit := strings.Split(target.Name, " - ")
+				arpcSess := storeInstance.GetARPC(targetSplit[0])
+				if arpcSess != nil {
+					pingResp, err := arpcSess.CallContext(r.Context(), "ping", nil)
+					if pingResp.Status == 200 && err != nil {
+						all[i].ConnectionStatus = true
+						pingBody, ok := pingResp.Data.(map[string]string)
+						if ok {
+							all[i].AgentVersion = pingBody["version"]
+						}
+					}
+				}
 			}
 		}
 
@@ -245,8 +255,18 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			if target.IsAgent {
-				target.ConnectionStatus = storeInstance.WSHub.AgentPing(target)
-				target.AgentVersion = storeInstance.WSHub.AgentVersion(target)
+				targetSplit := strings.Split(target.Name, " - ")
+				arpcSess := storeInstance.GetARPC(targetSplit[0])
+				if arpcSess != nil {
+					pingResp, err := arpcSess.CallContext(r.Context(), "ping", nil)
+					if pingResp.Status == 200 && err != nil {
+						target.ConnectionStatus = true
+						pingBody, ok := pingResp.Data.(map[string]string)
+						if ok {
+							target.AgentVersion = pingBody["version"]
+						}
+					}
+				}
 			}
 
 			response.Status = http.StatusOK

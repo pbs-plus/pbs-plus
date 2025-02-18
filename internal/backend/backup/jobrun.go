@@ -94,9 +94,16 @@ func runBackupAttempt(
 		return nil, fmt.Errorf("runBackupAttempt: target '%s' does not exist", job.Target)
 	}
 
-	if !skipCheck && !storeInstance.WSHub.AgentPing(target) {
-		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: target '%s' is unreachable", job.Target)
+	if !skipCheck {
+		targetSplit := strings.Split(target.Name, " - ")
+		arpcSess := storeInstance.GetARPC(targetSplit[0])
+		if arpcSess != nil {
+			pingResp, err := arpcSess.CallContext(ctx, "ping", nil)
+			if pingResp.Status != 200 || err == nil {
+				errCleanUp()
+				return nil, fmt.Errorf("runBackupAttempt: target '%s' is unreachable", job.Target)
+			}
+		}
 	}
 
 	srcPath := target.Path
