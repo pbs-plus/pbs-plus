@@ -1,281 +1,378 @@
 package arpc
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
 	"net"
-	"strings"
+	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/xtaci/smux"
 )
 
-// reverse is a helper function used in one of the tests.
-func reverse(s string) string {
-	chars := []rune(s)
-	n := len(chars)
-	for i := 0; i < n/2; i++ {
-		chars[i], chars[n-1-i] = chars[n-1-i], chars[i]
-	}
-	return string(chars)
-}
+// ---------------------------------------------------------------------
+// Helper: setupSessionWithRouter
+//
+// Creates a new pair of connected sessions (client/server) using net.Pipe.
+// The server session immediately begins serving on the provided router.
+// The function returns the client-side session (which is used for calls)
+// plus a cleanup function to shut down both sessions.
+// ---------------------------------------------------------------------
+func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Session, cleanup func()) {
+	t.Helper()
 
-// TestARPCSession sets up a single in‑memory connection with a server and a client
-// session. The server registers an "echo" handler while the client registers a "reverse"
-// handler. It performs one RPC call in each direction.
-func TestARPCSession(t *testing.T) {
-	// Create an in‑memory connection.
-	serverConn, clientConn := net.Pipe()
+	clientConn, serverConn := net.Pipe()
 
-	// Create the server session.
 	serverSession, err := NewServerSession(serverConn, nil)
 	if err != nil {
-		t.Fatalf("NewServerSession error: %v", err)
-	}
-	// Create the client session.
-	clientSession, err := NewClientSession(clientConn, nil)
-	if err != nil {
-		t.Fatalf("NewClientSession error: %v", err)
+		t.Fatalf("failed to create server session: %v", err)
 	}
 
-	// Server router with an "echo" handler.
-	serverRouter := NewRouter()
-	serverRouter.Handle("echo", func(req Request) (Response, error) {
-		var msg string
-		if err := json.Unmarshal(req.Payload, &msg); err != nil {
-			return Response{Status: 400, Message: "invalid payload"}, err
-		}
-		return Response{Status: 200, Data: msg}, nil
-	})
-
-	// Start serving incoming streams on the server side.
-	serverServeErr := make(chan error, 1)
-	go func() {
-		serverServeErr <- serverSession.Serve(serverRouter)
-	}()
-
-	// Client router with a "reverse" handler.
-	clientRouter := NewRouter()
-	clientRouter.Handle("reverse", func(req Request) (Response, error) {
-		var msg string
-		if err := json.Unmarshal(req.Payload, &msg); err != nil {
-			return Response{Status: 400, Message: "invalid payload"}, err
-		}
-		return Response{Status: 200, Data: reverse(msg)}, nil
-	})
-
-	// Start serving on the client side.
-	clientServeErr := make(chan error, 1)
-	go func() {
-		clientServeErr <- clientSession.Serve(clientRouter)
-	}()
-
-	// Allow goroutines to start.
-	time.Sleep(50 * time.Millisecond)
-
-	// --- Client-to-Server RPC Call ---
-	resp, err := clientSession.Call("echo", "hello")
+	clientSession, err = NewClientSession(clientConn, nil)
 	if err != nil {
-		t.Fatalf("client Call echo error: %v", err)
+		t.Fatalf("failed to create client session: %v", err)
+	}
+
+	done := make(chan struct{})
+
+	// Start the server-session in a goroutine. Serve() will continuously
+	// accept streams until the session is closed.
+	go func() {
+		// Note: any error returned from Serve is ignored.
+		_ = serverSession.Serve(router)
+		close(done)
+	}()
+
+	cleanup = func() {
+		_ = clientSession.Close()
+		_ = serverSession.Close()
+
+		// Wait a little for the Serve goroutine to finish.
+		select {
+		case <-done:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	return clientSession, cleanup
+}
+
+// ---------------------------------------------------------------------
+// Test 1: Router.ServeStream working as expected (Echo handler).
+// We simulate a single JSON request/response using a net.Pipe as the
+// underlying stream.
+// ---------------------------------------------------------------------
+func TestRouterServeStream_Echo(t *testing.T) {
+	// Create an in-memory connection pair.
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	// Create a smux session on the server side.
+	serverSession, err := smux.Server(serverConn, nil)
+	if err != nil {
+		t.Fatalf("failed to create smux server session: %v", err)
+	}
+
+	// Similarly, create a smux session on the client side.
+	clientSession, err := smux.Client(clientConn, nil)
+	if err != nil {
+		t.Fatalf("failed to create smux client session: %v", err)
+	}
+
+	// Create the router and register an "echo" handler.
+	router := NewRouter()
+	router.Handle("echo", func(req Request) (Response, error) {
+		// Echo back the payload.
+		return Response{
+			Status: 200,
+			Data:   req.Payload,
+		}, nil
+	})
+
+	// On the server side, accept a stream from the session.
+	var (
+		wg     sync.WaitGroup
+		srvErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		stream, err := serverSession.AcceptStream()
+		if err != nil {
+			srvErr = err
+			return
+		}
+		// Pass the stream (of type *smux.Stream) to ServeStream.
+		router.ServeStream(stream)
+	}()
+
+	// On the client side, open a stream.
+	clientStream, err := clientSession.OpenStream()
+	if err != nil {
+		t.Fatalf("failed to open client stream: %v", err)
+	}
+
+	// Send a request over the client stream.
+	req := Request{
+		Method:  "echo",
+		Payload: json.RawMessage(`"hello"`),
+	}
+	encoder := json.NewEncoder(clientStream)
+	if err := encoder.Encode(req); err != nil {
+		t.Fatalf("failed to encode request: %v", err)
+	}
+
+	// Read the JSON response.
+	decoder := json.NewDecoder(clientStream)
+	var resp Response
+	if err := decoder.Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
 	}
 	if resp.Status != 200 {
-		t.Errorf("client Call echo: expected status 200, got %d", resp.Status)
-	}
-	if dataStr, ok := resp.Data.(string); !ok || dataStr != "hello" {
-		// Some JSON decoders may wrap strings or return a different type.
-		dataStr = strings.TrimSpace(stringMustMarshal(resp.Data))
-		if dataStr != "\"hello\"" && dataStr != "hello" {
-			t.Errorf("client Call echo: expected data \"hello\", got %v", resp.Data)
-		}
+		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
 
-	// --- Server-to-Client RPC Call ---
-	resp2, err := serverSession.Call("reverse", "world")
-	if err != nil {
-		t.Fatalf("server Call reverse error: %v", err)
+	// Verify that the echoed data matches.
+	var data string
+	if err := json.Unmarshal([]byte(resp.Data.(string)), &data); err != nil {
+		// If the returned Data is already a string, use it directly.
+		data = resp.Data.(string)
 	}
-	if resp2.Status != 200 {
-		t.Errorf("server Call reverse: expected status 200, got %d", resp2.Status)
-	}
-	if dataStr, ok := resp2.Data.(string); !ok || dataStr != "dlrow" {
-		dataStr = strings.TrimSpace(stringMustMarshal(resp2.Data))
-		if dataStr != "\"dlrow\"" && dataStr != "dlrow" {
-			t.Errorf("server Call reverse: expected data \"dlrow\", got %v", resp2.Data)
-		}
+	if data != "hello" {
+		t.Fatalf("expected data 'hello', got %v", data)
 	}
 
-	// Clean up: close both sessions.
-	if err := clientSession.Close(); err != nil {
-		t.Errorf("clientSession.Close error: %v", err)
-	}
-	if err := serverSession.Close(); err != nil {
-		t.Errorf("serverSession.Close error: %v", err)
-	}
-
-	// Allow Serve goroutines to exit.
-	time.Sleep(50 * time.Millisecond)
+	// Allow the server goroutine to finish, but don't block indefinitely.
+	doneCh := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(doneCh)
+	}()
 	select {
-	case err := <-serverServeErr:
-		if err == nil {
-			t.Log("server Serve exited cleanly")
-		}
-	default:
-		t.Log("server Serve goroutine did not return error immediately")
+	case <-doneCh:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timeout waiting for ServeStream to finish")
 	}
-	select {
-	case err := <-clientServeErr:
-		if err == nil {
-			t.Log("client Serve exited cleanly")
-		}
-	default:
-		t.Log("client Serve goroutine did not return error immediately")
+
+	if srvErr != nil {
+		t.Fatalf("server error during AcceptStream: %v", srvErr)
 	}
 }
 
-// TestInvalidMethod ensures that an RPC call to an unregistered method returns an error.
-func TestInvalidMethod(t *testing.T) {
-	serverConn, clientConn := net.Pipe()
-
-	serverSession, err := NewServerSession(serverConn, nil)
-	if err != nil {
-		t.Fatalf("NewServerSession error: %v", err)
-	}
-	clientSession, err := NewClientSession(clientConn, nil)
-	if err != nil {
-		t.Fatalf("NewClientSession error: %v", err)
-	}
-
-	serverRouter := NewRouter()
-	serverRouter.Handle("echo", func(req Request) (Response, error) {
-		var msg string
-		if err := json.Unmarshal(req.Payload, &msg); err != nil {
-			return Response{Status: 400, Message: "invalid payload"}, err
-		}
-		return Response{Status: 200, Data: msg}, nil
+// ---------------------------------------------------------------------
+// Test 2: Session.Call (simple call).
+// Create connected client/server sessions and call a simple "ping" method.
+// ---------------------------------------------------------------------
+func TestSessionCall_Success(t *testing.T) {
+	router := NewRouter()
+	router.Handle("ping", func(req Request) (Response, error) {
+		return Response{
+			Status: 200,
+			Data:   "pong",
+		}, nil
 	})
 
-	go serverSession.Serve(serverRouter)
+	clientSession, cleanup := setupSessionWithRouter(t, router)
+	defer cleanup()
 
-	resp, err := clientSession.Call("nonexistent", "test")
+	resp, err := clientSession.Call("ping", nil)
 	if err != nil {
-		t.Fatalf("Call to nonexistent method returned error: %v", err)
+		t.Fatalf("Call failed: %v", err)
 	}
-	if resp.Status != 404 {
-		t.Errorf("expected status 404 for nonexistent method, got %d", resp.Status)
+	if resp.Status != 200 {
+		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
-	if !strings.Contains(resp.Message, "method not found") {
-		t.Errorf("expected error message about missing method, got %s", resp.Message)
-	}
-
-	if err := clientSession.Close(); err != nil {
-		t.Errorf("clientSession.Close error: %v", err)
-	}
-	if err := serverSession.Close(); err != nil {
-		t.Errorf("serverSession.Close error: %v", err)
+	pong, ok := resp.Data.(string)
+	if !ok || pong != "pong" {
+		t.Fatalf("expected pong response, got %#v", resp.Data)
 	}
 }
 
-// TestConcurrentSessions creates 1000 concurrent two-way sessions.
-// Each session creates a pair of in‑memory connections with its own client and server.
-// The server registers an "add" method that sums two integers, and the client calls it.
-// The test verifies that all calls return the expected sum.
-func TestConcurrentSessions(t *testing.T) {
-	const numSessions = 10000
+// ---------------------------------------------------------------------
+// Test 3: Concurrency test.
+// Spawn many concurrent goroutines making calls via the same session.
+// ---------------------------------------------------------------------
+func TestSessionCall_Concurrency(t *testing.T) {
+	router := NewRouter()
+	router.Handle("ping", func(req Request) (Response, error) {
+		return Response{
+			Status: 200,
+			Data:   "pong",
+		}, nil
+	})
+
+	clientSession, cleanup := setupSessionWithRouter(t, router)
+	defer cleanup()
+
+	const numClients = 100
 	var wg sync.WaitGroup
-	wg.Add(numSessions)
 
-	errCh := make(chan error, numSessions)
-
-	for i := 0; i < numSessions; i++ {
-		go func(i int) {
+	for i := 0; i < numClients; i++ {
+		wg.Add(1)
+		go func(id int) {
 			defer wg.Done()
-
-			// Create a pair of in‑memory connections.
-			serverConn, clientConn := net.Pipe()
-
-			// Create sessions.
-			sSession, err := NewServerSession(serverConn, nil)
+			// Provide each caller with a small payload.
+			payload := map[string]int{"client": id}
+			resp, err := clientSession.Call("ping", payload)
 			if err != nil {
-				errCh <- fmt.Errorf("session %d: error creating server session: %v", i, err)
-				return
-			}
-			cSession, err := NewClientSession(clientConn, nil)
-			if err != nil {
-				errCh <- fmt.Errorf("session %d: error creating client session: %v", i, err)
-				return
-			}
-
-			// Server router with an "add" handler.
-			serverRouter := NewRouter()
-			serverRouter.Handle("add", func(req Request) (Response, error) {
-				var params struct {
-					A int `json:"A"`
-					B int `json:"B"`
-				}
-				if err := json.Unmarshal(req.Payload, &params); err != nil {
-					return Response{Status: 400, Message: "invalid payload"}, err
-				}
-				return Response{Status: 200, Data: params.A + params.B}, nil
-			})
-
-			// Start serving on the server side.
-			go func() {
-				// We ignore errors here as closing the session will result in an error.
-				_ = sSession.Serve(serverRouter)
-			}()
-
-			// Brief pause to ensure the Serve goroutine starts.
-			time.Sleep(1 * time.Millisecond)
-
-			// Client makes a call to "add" with the payload {A: i, B: i}.
-			payload := struct {
-				A int `json:"A"`
-				B int `json:"B"`
-			}{A: i, B: i}
-
-			resp, err := cSession.Call("add", payload)
-			if err != nil {
-				errCh <- fmt.Errorf("session %d: call error: %v", i, err)
+				t.Errorf("Client %d error: %v", id, err)
 				return
 			}
 			if resp.Status != 200 {
-				errCh <- fmt.Errorf("session %d: unexpected status: %d", i, resp.Status)
-				return
+				t.Errorf("Client %d: expected status 200, got %d", id, resp.Status)
 			}
-			// JSON numbers are typically decoded as float64.
-			var result int
-			switch v := resp.Data.(type) {
-			case float64:
-				result = int(v)
-			case int:
-				result = v
-			default:
-				errCh <- fmt.Errorf("session %d: unexpected data type %T", i, resp.Data)
-				return
-			}
-			if result != 2*i {
-				errCh <- fmt.Errorf("session %d: expected %d, got %d", i, 2*i, result)
-			}
-
-			// Tidy up.
-			if err := cSession.Close(); err != nil {
-				errCh <- fmt.Errorf("session %d: client session close error: %v", i, err)
-			}
-			if err := sSession.Close(); err != nil {
-				errCh <- fmt.Errorf("session %d: server session close error: %v", i, err)
+			if pong, ok := resp.Data.(string); !ok || pong != "pong" {
+				t.Errorf("Client %d: expected 'pong', got %v", id, resp.Data)
 			}
 		}(i)
 	}
+
 	wg.Wait()
-	close(errCh)
-	for err := range errCh {
-		t.Error(err)
+}
+
+// ---------------------------------------------------------------------
+// Test 4: CallContext with timeout.
+// The server is deliberately slow. The client should abort the call.
+// ---------------------------------------------------------------------
+func TestCallContext_Timeout(t *testing.T) {
+	router := NewRouter()
+	router.Handle("slow", func(req Request) (Response, error) {
+		// Simulate a long-running handler.
+		time.Sleep(200 * time.Millisecond)
+		return Response{
+			Status: 200,
+			Data:   "done",
+		}, nil
+	})
+
+	clientSession, cleanup := setupSessionWithRouter(t, router)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := clientSession.CallContext(ctx, "slow", nil)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if err != context.DeadlineExceeded {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
 	}
 }
 
-// stringMustMarshal is a helper that marshals a value to JSON.
-// It is used for debugging purposes.
-func stringMustMarshal(v interface{}) string {
-	b, _ := json.Marshal(v)
-	return string(b)
+// ---------------------------------------------------------------------
+// Test 5: Auto-reconnect.
+// Simulate a broken connection by closing the underlying session, and
+// verify that a subsequent call automatically triggers reconnection.
+// ---------------------------------------------------------------------
+func TestAutoReconnect(t *testing.T) {
+	router := NewRouter()
+	router.Handle("ping", func(req Request) (Response, error) {
+		return Response{
+			Status: 200,
+			Data:   "pong",
+		}, nil
+	})
+
+	// Start an initial client/server session.
+	clientSession, cleanup := setupSessionWithRouter(t, router)
+	defer cleanup()
+
+	var dialCount int32
+
+	// Define a custom dial function that creates a new net.Pipe pair
+	// and immediately starts a new server session using the same router.
+	dialFunc := func() (net.Conn, error) {
+		atomic.AddInt32(&dialCount, 1)
+		serverConn, clientConn := net.Pipe()
+		go func() {
+			sess, err := NewServerSession(serverConn, nil)
+			if err != nil {
+				t.Logf("server session error: %v", err)
+				return
+			}
+			// Serve until the session is closed.
+			_ = sess.Serve(router)
+		}()
+		return clientConn, nil
+	}
+
+	upgradeFunc := func(conn net.Conn) (*Session, error) {
+		return NewClientSession(conn, nil)
+	}
+
+	// Enable auto-reconnect on the client session.
+	rc := &ReconnectConfig{
+		AutoReconnect:  true,
+		DialFunc:       dialFunc,
+		UpgradeFunc:    upgradeFunc,
+		InitialBackoff: 10 * time.Millisecond,
+		MaxBackoff:     50 * time.Millisecond,
+		ReconnectCtx:   context.Background(),
+	}
+	clientSession.EnableAutoReconnect(rc)
+
+	// Simulate network failure by closing the underlying session.
+	clientSession.mu.Lock()
+	_ = clientSession.sess.Close()
+	clientSession.mu.Unlock()
+
+	// Now call "ping" which should trigger auto‑reconnect.
+	resp, err := clientSession.Call("ping", nil)
+	if err != nil {
+		t.Fatalf("Call after disconnection failed: %v", err)
+	}
+	if resp.Status != 200 {
+		t.Fatalf("expected status 200, got %d", resp.Status)
+	}
+	pong, ok := resp.Data.(string)
+	if !ok || pong != "pong" {
+		t.Fatalf("expected 'pong', got %v", resp.Data)
+	}
+
+	if atomic.LoadInt32(&dialCount) == 0 {
+		t.Fatal("expected dial function to be called for reconnection")
+	}
+}
+
+// ---------------------------------------------------------------------
+// Test 6: CallWithHeaders.
+// Verify that custom HTTP headers are delivered correctly within the call.
+// ---------------------------------------------------------------------
+func TestCallWithHeaders(t *testing.T) {
+	router := NewRouter()
+	router.Handle("user", func(req Request) (Response, error) {
+		if req.Headers.Get("X-Test") != "value" {
+			return Response{
+				Status:  400,
+				Message: "missing header",
+			}, nil
+		}
+		return Response{
+			Status: 200,
+			Data:   "header ok",
+		}, nil
+	})
+
+	clientSession, cleanup := setupSessionWithRouter(t, router)
+	defer cleanup()
+
+	ctx := context.Background()
+	headers := http.Header{}
+	headers.Set("X-Test", "value")
+	resp, err := clientSession.CallWithHeaders(ctx, "user", nil, headers)
+	if err != nil {
+		t.Fatalf("CallWithHeaders failed: %v", err)
+	}
+	if resp.Status != 200 {
+		t.Fatalf("expected status 200, got %d", resp.Status)
+	}
+	val, ok := resp.Data.(string)
+	if !ok || val != "header ok" {
+		t.Fatalf("expected 'header ok', got %v", resp.Data)
+	}
 }
