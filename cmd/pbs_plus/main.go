@@ -18,6 +18,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/agents"
+	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/exclusions"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/jobs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/plus"
@@ -27,7 +28,6 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 )
 
 var Version = "v0.0.0"
@@ -42,16 +42,7 @@ func main() {
 	jobRun := flag.String("job", "", "Job ID to execute")
 	flag.Parse()
 
-	var wsHub *websockets.Server
-	wsHub = nil
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if *jobRun == "" {
-		wsHub = websockets.NewServer(ctx)
-	}
-
-	storeInstance, err := store.Initialize(wsHub, nil)
+	storeInstance, err := store.Initialize(nil)
 	if err != nil {
 		syslog.L.Errorf("Failed to initialize store: %v", err)
 		return
@@ -232,7 +223,7 @@ func main() {
 	mux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance))))
 
 	// WebSocket-related routes
-	mux.HandleFunc("/plus/ws", mw.AgentOnly(storeInstance, plus.WSHandler(storeInstance)))
+	mux.HandleFunc("/plus/arpc", mw.AgentOnly(storeInstance, arpc.ARPCHandler(storeInstance)))
 	mux.HandleFunc("/plus/mount/{target}/{drive}", mw.ServerOnly(storeInstance, plus.MountHandler(storeInstance)))
 
 	// Agent auth routes

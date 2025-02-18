@@ -5,7 +5,6 @@ go 1.24
 require (
 	github.com/alexflint/go-filemutex v1.3.0
 	github.com/billgraziano/dpapi v0.5.0
-	github.com/coder/websocket v1.8.12
 	github.com/cyphar/filepath-securejoin v0.4.1
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/getlantern/systray v1.2.2
@@ -16,6 +15,7 @@ require (
 	github.com/mxk/go-vss v1.2.0
 	github.com/stretchr/testify v1.10.0
 	github.com/willscott/go-nfs v0.0.3
+	github.com/xtaci/smux v1.5.34
 	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/crypto v0.33.0
 	golang.org/x/sys v0.30.0

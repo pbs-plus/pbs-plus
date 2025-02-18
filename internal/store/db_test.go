@@ -15,7 +15,6 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/websockets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,8 +85,7 @@ func setupTestStore(t *testing.T) *Store {
 	}
 
 	// Create store with temporary paths
-	wsHub := &websockets.Server{}
-	store, err := Initialize(wsHub, paths)
+	store, err := Initialize(paths)
 	require.NoError(t, err)
 
 	return store

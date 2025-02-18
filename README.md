@@ -195,7 +195,7 @@ PBS Plus currently consists of two main components: the server and the agent. Th
 ### Agent
 - Currently, only Windows agents are supported.
 - The agent registers with the server on initialization, exchanging public keys for communication.
-- The agent acts as a service, using Websockets with mTLS and NFS to communicate with the server. For backups, the server opens an NFS connection to the agent, mounts the volume to PBS, and runs `proxmox-backup-client` on the server side to perform the actual backup.
+- The agent acts as a service, using a custom RPC (`aRPC`/Agent RPC) using [smux](https://github.com/xtaci/smux) with mTLS and NFS to communicate with the server. For backups, the server opens an NFS connection to the agent, mounts the volume to PBS, and runs `proxmox-backup-client` on the server side to perform the actual backup.
 
 ## Contributing
 Contributions are welcome! Please fork the repository and create a pull request with your changes. Ensure code style consistency and include tests for any new features or bug fixes.
