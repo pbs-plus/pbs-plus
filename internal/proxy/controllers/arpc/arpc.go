@@ -21,6 +21,9 @@ func ARPCHandler(store *store.Store) http.HandlerFunc {
 
 		agentHostname := r.Header.Get("X-PBS-Agent")
 
+		syslog.L.Infof("Agent successfully connected: %s", agentHostname)
+		defer syslog.L.Infof("Agent disconnected: %s", agentHostname)
+
 		store.AddARPC(agentHostname, session)
 		defer store.RemoveARPC(agentHostname)
 
