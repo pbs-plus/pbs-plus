@@ -34,7 +34,7 @@ func ARPCHandler(store *store.Store) http.HandlerFunc {
 		})
 
 		if err := session.Serve(router); err != nil {
-			syslog.L.Errorf("session closed:", err)
+			syslog.L.Errorf("session closed: %v", err)
 		}
 	}
 }
