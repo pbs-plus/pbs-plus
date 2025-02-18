@@ -264,18 +264,20 @@ func (p *agentService) connectARPC() error {
 	headers := http.Header{}
 	headers.Add("X-PBS-Agent", clientId)
 	headers.Add("X-PBS-Plus-Version", Version)
+	syslog.L.Infof("Setting connection headers: %s, %s", clientId, Version)
+
+	dialFunc := func() (net.Conn, error) {
+		syslog.L.Infof("Dialing aRPC endpoint: %s", uri.Host)
+		return tls.Dial("tcp", uri.Host, tlsConfig)
+	}
+
+	upgradeFunc := func(conn net.Conn) (*arpc.Session, error) {
+		syslog.L.Infof("Upgrading from HTTP to aRPC: %s", uri.Host)
+		return arpc.UpgradeHTTPClient(conn, "/plus/arpc", uri.Host, headers, nil)
+	}
 
 	// Upgrade the HTTP connection (perform the handshake).
-	session, err := arpc.DialWithBackoff(
-		p.ctx,
-		func() (net.Conn, error) {
-			return tls.Dial("tcp", uri.Host, tlsConfig)
-		},
-		func(conn net.Conn) (*arpc.Session, error) {
-			return arpc.UpgradeHTTPClient(conn, "/plus/arpc", uri.Host, headers, nil)
-		},
-		100*time.Millisecond, 5*time.Second,
-	)
+	session, err := arpc.DialWithBackoff(p.ctx, dialFunc, upgradeFunc, 100*time.Millisecond, 5*time.Second)
 	if err != nil {
 		log.Fatalf("failed to connect: %v", err)
 	}
@@ -285,13 +287,9 @@ func (p *agentService) connectARPC() error {
 	defer cancel()
 
 	rc := &arpc.ReconnectConfig{
-		AutoReconnect: true,
-		DialFunc: func() (net.Conn, error) {
-			return tls.Dial("tcp", uri.Host, tlsConfig)
-		},
-		UpgradeFunc: func(conn net.Conn) (*arpc.Session, error) {
-			return arpc.UpgradeHTTPClient(conn, "/plus/arpc", uri.Host, headers, nil)
-		},
+		AutoReconnect:  true,
+		DialFunc:       dialFunc,
+		UpgradeFunc:    upgradeFunc,
 		InitialBackoff: 100 * time.Millisecond,
 		MaxBackoff:     5 * time.Second,
 		ReconnectCtx:   reconnectCtx,
@@ -305,9 +303,12 @@ func (p *agentService) connectARPC() error {
 	router.Handle("backup", controllers.BackupStartHandler)
 	router.Handle("cleanup", controllers.BackupCloseHandler)
 
-	if err := session.Serve(router); err != nil {
-		syslog.L.Errorf("session closed: %v", err)
-	}
+	go func() {
+		syslog.L.Info("Connecting aRPC endpoint from /plus/arpc")
+		if err := session.Serve(router); err != nil {
+			syslog.L.Errorf("session closed: %v", err)
+		}
+	}()
 
 	return nil
 }
