@@ -34,7 +34,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
 					pingResp, err := arpcSess.CallContext(r.Context(), "ping", nil)
-					if pingResp.Status == 200 && err != nil {
+					if pingResp.Status == 200 && err == nil {
 						all[i].ConnectionStatus = true
 						pingBody, ok := pingResp.Data.(map[string]string)
 						if ok {

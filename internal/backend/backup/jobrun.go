@@ -99,7 +99,7 @@ func runBackupAttempt(
 		arpcSess := storeInstance.GetARPC(targetSplit[0])
 		if arpcSess != nil {
 			pingResp, err := arpcSess.CallContext(ctx, "ping", nil)
-			if pingResp.Status != 200 || err == nil {
+			if pingResp.Status != 200 || err != nil {
 				errCleanUp()
 				return nil, fmt.Errorf("runBackupAttempt: target '%s' is unreachable", job.Target)
 			}
