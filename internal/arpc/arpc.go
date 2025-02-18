@@ -260,6 +260,26 @@ func (s *Session) CallContext(ctx context.Context, method string, payload interf
 	}
 }
 
+// CallJSON performs the RPC call and decodes the JSON data into v.
+// It is similar in spirit to http.Get followed by json.NewDecoder(resp.Body).Decode(&v).
+func (s *Session) CallJSON(ctx context.Context, method string, payload interface{}, v interface{}) error {
+
+	resp, err := s.CallContext(ctx, method, payload)
+	if err != nil {
+		return err
+	}
+	if resp.Status != http.StatusOK && resp.Status != 200 {
+		return fmt.Errorf("server error: %s", resp.Message)
+	}
+	// Since resp.Data is an interface{},
+	// we re-marshal it to JSON and then unmarshal into v.
+	dataBytes, err := json.Marshal(resp.Data)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(dataBytes, v)
+}
+
 // CallWithHeaders is similar to CallContext but allows passing custom http.Header with
 // the request. The headers will be embedded in the Request.Headers field.
 func (s *Session) CallWithHeaders(ctx context.Context, method string, payload interface{}, headers http.Header) (*Response, error) {
