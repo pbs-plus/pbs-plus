@@ -73,6 +73,123 @@ Ext.define("PBS.config.DiskBackupJobView", {
       }).show();
     },
 
+    exportCSV: async function () {
+      const view = this.getView();
+      const store = view.getStore();
+      const records = store.getData().items.map((item) => item.data);
+
+      if (!records || records.length === 0) {
+        Ext.Msg.alert(gettext("Info"), gettext("No records to export."));
+        return;
+      }
+
+      // Helper: fetch snapshot data for one job.
+      async function fetchSnapshotData(job) {
+        // Build URL using job.store and job.ns. Adjust URL/params as needed.
+        const url =
+          "/api2/json/admin/datastore/" +
+          encodeURIComponent(job.store) +
+          "/snapshots?ns=" +
+          encodeURIComponent(job.ns);
+
+        try {
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error("HTTP error " + response.status);
+          }
+          const resData = await response.json();
+          const snapshots = resData.data || [];
+          let totalSize = 0;
+          // aggregatedAttributes will hold arrays for each attribute.
+          const aggregatedAttributes = {};
+
+          snapshots.forEach((snap) => {
+            totalSize += snap.size || 0;
+            Object.keys(snap).forEach((attr) => {
+              if (!aggregatedAttributes[attr]) {
+                aggregatedAttributes[attr] = [];
+              }
+              aggregatedAttributes[attr].push(snap[attr]);
+            });
+          });
+
+          return {
+            snapshotCount: snapshots.length,
+            snapshotTotalSize: totalSize,
+            snapshotAttributes: aggregatedAttributes,
+          };
+        } catch (error) {
+          console.error("Error fetching snapshots for job:", job.id, error);
+          return {
+            snapshotCount: "error",
+            snapshotTotalSize: "error",
+            snapshotAttributes: {},
+          };
+        }
+      }
+
+      // Fetch snapshot data for all jobs in parallel.
+      const extraDataArray = await Promise.all(
+        records.map((job) => fetchSnapshotData(job))
+      );
+
+      // Merge each job's data with the corresponding snapshot data.
+      const mergedRecords = records.map((job, idx) => {
+        const extra = extraDataArray[idx];
+        const snapshotExtra = {};
+
+        // For each snapshot attribute, create a new key with "snapshot_"
+        // prefix. The value will be the JSON stringified array.
+        Object.keys(extra.snapshotAttributes).forEach((attr) => {
+          snapshotExtra["snapshot_" + attr] = JSON.stringify(
+            extra.snapshotAttributes[attr]
+          );
+        });
+
+        return {
+          ...job,
+          snapshotCount: extra.snapshotCount,
+          snapshotTotalSize: extra.snapshotTotalSize,
+          ...snapshotExtra,
+        };
+      });
+
+      // Collect the union of all keys across merged records to serve as CSV
+      // headers.
+      const headerSet = new Set();
+      mergedRecords.forEach((record) => {
+        Object.keys(record).forEach((key) => headerSet.add(key));
+      });
+      const headers = Array.from(headerSet);
+
+      // Build CSV rows.
+      const csvRows = [];
+      csvRows.push(headers.join(","));
+
+      mergedRecords.forEach((row) => {
+        const values = headers.map((header) => {
+          let val = row[header] != null ? row[header] : "";
+          // Escape double quotes.
+          val = String(val).replace(/"/g, '""');
+          return `"${val}"`;
+        });
+        csvRows.push(values.join(","));
+      });
+
+      const csvText = csvRows.join("\n");
+
+      // Create a Blob and trigger the download.
+      const blob = new Blob([csvText], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "disk-backup-jobs.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
+
     startStore: function () {
       this.getView().getStore().rstore.startUpdate();
     },
@@ -150,6 +267,12 @@ Ext.define("PBS.config.DiskBackupJobView", {
       reference: "d2dBackupRun",
       disabled: true,
     },
+    "-",
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Export CSV"),
+      handler: "exportCSV",
+    },
   ],
 
   columns: [
@@ -177,6 +300,12 @@ Ext.define("PBS.config.DiskBackupJobView", {
     {
       header: gettext("Datastore"),
       dataIndex: "store",
+      width: 120,
+      sortable: true,
+    },
+    {
+      header: gettext("Namespace"),
+      dataIndex: "ns",
       width: 120,
       sortable: true,
     },

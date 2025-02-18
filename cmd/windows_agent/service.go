@@ -281,10 +281,6 @@ func (p *agentService) connectARPC() error {
 	if err != nil {
 		log.Fatalf("failed to connect: %v", err)
 	}
-	defer session.Close()
-
-	reconnectCtx, cancel := context.WithCancel(p.ctx)
-	defer cancel()
 
 	rc := &arpc.ReconnectConfig{
 		AutoReconnect:  true,
@@ -292,7 +288,7 @@ func (p *agentService) connectARPC() error {
 		UpgradeFunc:    upgradeFunc,
 		InitialBackoff: 100 * time.Millisecond,
 		MaxBackoff:     5 * time.Second,
-		ReconnectCtx:   reconnectCtx,
+		ReconnectCtx:   p.ctx,
 	}
 	session.EnableAutoReconnect(rc)
 

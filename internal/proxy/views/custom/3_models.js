@@ -5,6 +5,7 @@ Ext.define("pbs-disk-backup-job-status", {
     "store",
     "target",
     "subpath",
+    "ns",
     "schedule",
     "comment",
     "duration",
