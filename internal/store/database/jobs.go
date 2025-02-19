@@ -91,6 +91,7 @@ func (database *Database) CreateJob(job types.Job) error {
 					Comment:          job.Comment,
 					NotificationMode: job.NotificationMode,
 					Namespace:        job.Namespace,
+					CurrentPID:       job.CurrentPID,
 					LastRunUpid:      job.LastRunUpid,
 					LastRunPlusError: job.LastRunPlusError,
 					LastRunPlusTime:  job.LastRunPlusTime,
@@ -177,6 +178,14 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 				tmpDuration := time.Now().Unix() - task.StartTime
 				job.Duration = &tmpDuration
 			}
+		}
+	}
+
+	if job.CurrentPID != 0 {
+		readBytes, writeBytes, err := utils.GetProcIO(job.CurrentPID)
+		if err == nil {
+			job.CurrentReadSpeed = utils.HumanReadableBytes(readBytes)
+			job.CurrentWriteSpeed = utils.HumanReadableBytes(writeBytes)
 		}
 	}
 

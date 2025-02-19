@@ -318,17 +318,39 @@ Ext.define("PBS.config.DiskBackupJobView", {
       sortable: true,
     },
     {
-      header: gettext("Last Backup"),
+      header: gettext("Last Backup Attempt"),
       dataIndex: "last-run-endtime",
       renderer: PBS.Utils.render_optional_timestamp,
-      width: 150,
+      width: 140,
       sortable: true,
     },
     {
       text: gettext("Duration"),
       dataIndex: "duration",
       renderer: Proxmox.Utils.render_duration,
-      width: 80,
+      width: 60,
+    },
+    {
+      text: gettext("Read"),
+      dataIndex: "current_read_speed",
+      renderer: function(value) {
+	      if (value === "") {
+	        return '-';
+	      }
+	      return value;
+      },
+      width: 60,
+    },
+    {
+      text: gettext("Write"),
+      dataIndex: "current_write_speed",
+      renderer: function(value) {
+	      if (value === "") {
+	        return '-';
+	      }
+	      return value;
+      },
+      width: 60,
     },
     {
       header: gettext("Status"),
