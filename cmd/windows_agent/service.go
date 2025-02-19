@@ -130,8 +130,8 @@ func (p *agentService) run() {
 			select {
 			case <-p.ctx.Done():
 				return
-			case <-time.After(time.Duration(rand.Intn(60*60+1)+4*60*60) * time.Second):
-				// executes every 4-5 hours
+			case <-time.After(time.Duration(rand.Intn(300+1)+300) * time.Second):
+				// executes every 5-10 minutes
 				_ = p.initializeDrives()
 			}
 		}
