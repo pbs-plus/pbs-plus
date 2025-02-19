@@ -83,14 +83,11 @@ Ext.define("PBS.config.DiskBackupJobView", {
         return;
       }
 
-      // Helper: fetch snapshot data for one job.
       async function fetchSnapshotData(job) {
-        // Build URL using job.store and job.ns. Adjust URL/params as needed.
-        const url =
-          "/api2/json/admin/datastore/" +
-          encodeURIComponent(job.store) +
-          "/snapshots?ns=" +
-          encodeURIComponent(job.ns);
+        // Build URL using job.store and job.ns.
+        const url = `/api2/json/admin/datastore/${encodeURIComponent(
+          job.store
+        )}/snapshots?ns=${encodeURIComponent(job.ns)}`;
 
         try {
           const response = await fetch(url);
@@ -100,23 +97,26 @@ Ext.define("PBS.config.DiskBackupJobView", {
           const resData = await response.json();
           const snapshots = resData.data || [];
           let totalSize = 0;
-          // aggregatedAttributes will hold arrays for each attribute.
-          const aggregatedAttributes = {};
+
+          const backupTimes = [];
 
           snapshots.forEach((snap) => {
             totalSize += snap.size || 0;
-            Object.keys(snap).forEach((attr) => {
-              if (!aggregatedAttributes[attr]) {
-                aggregatedAttributes[attr] = [];
+            if (Object.prototype.hasOwnProperty.call(snap, "backup-time")) {
+              let t = snap["backup-time"];
+              if (typeof t !== "number") {
+                t = parseInt(t, 10);
               }
-              aggregatedAttributes[attr].push(snap[attr]);
-            });
+              if (Number.isInteger(t)) {
+                backupTimes.push(t);
+              }
+            }
           });
 
           return {
             snapshotCount: snapshots.length,
             snapshotTotalSize: totalSize,
-            snapshotAttributes: aggregatedAttributes,
+            snapshotAttributes: { "backup-time": backupTimes },
           };
         } catch (error) {
           console.error("Error fetching snapshots for job:", job.id, error);
@@ -128,46 +128,52 @@ Ext.define("PBS.config.DiskBackupJobView", {
         }
       }
 
-      // Fetch snapshot data for all jobs in parallel.
-      const extraDataArray = await Promise.all(
-        records.map((job) => fetchSnapshotData(job))
-      );
+      async function processRecords(records) {
+        // Fetch snapshot data for all jobs in parallel.
+        const extraDataArray = await Promise.all(
+          records.map((job) => fetchSnapshotData(job))
+        );
 
-      // Merge each job's data with the corresponding snapshot data.
-      const mergedRecords = records.map((job, idx) => {
-        const extra = extraDataArray[idx];
-        const snapshotExtra = {};
+        // Merge each job's data with the corresponding snapshot data.
+        const mergedRecords = records.map((job, idx) => {
+          const extra = extraDataArray[idx];
 
-        // For each snapshot attribute, create a new key with "snapshot_"
-        // prefix. The value will be the JSON stringified array.
-        Object.keys(extra.snapshotAttributes).forEach((attr) => {
-          if (attr === "backup-time") {
-            snapshotExtra["snapshot_" + attr] = JSON.stringify(
-              extra.snapshotAttributes[attr].map((timestamp) => {
-                const date = new Date(timestamp * 1000);
-                return date.toString()
-              })
-            );
-          }
+          // Process only the "backup-time" attribute.
+          const backupTimes = extra.snapshotAttributes["backup-time"] || [];
+          const snapshotBackupTime = JSON.stringify(
+            backupTimes.map((timestamp) => new Date(timestamp * 1000).toString())
+          );
+
+          // Remove unwanted job properties.
+          delete job.exclusions;
+          delete job["last-plus-error"];
+
+          return {
+            ...job,
+            snapshotCount: extra.snapshotCount,
+            snapshotTotalSize: extra.snapshotTotalSize,
+            snapshot_backup_time: snapshotBackupTime,
+          };
         });
 
-        delete job["exclusions"];
-        delete job["last-plus-error"];
-
-        return {
-          ...job,
-          snapshotCount: extra.snapshotCount,
-          snapshotTotalSize: extra.snapshotTotalSize,
-          ...snapshotExtra,
-        };
-      });
+        return mergedRecords;
+      }
 
       // Collect the union of all keys across merged records to serve as CSV
       // headers.
+      var mergedRecords = []
+      try {
+        mergedRecords = await processRecords(records);
+        console.log("Merged Records:", mergedRecords);
+      } catch (error) {
+        console.error("Error processing records:", error);
+      }
+
       const headerSet = new Set();
       mergedRecords.forEach((record) => {
         Object.keys(record).forEach((key) => headerSet.add(key));
       });
+
       const headers = Array.from(headerSet);
 
       // Build CSV rows.
