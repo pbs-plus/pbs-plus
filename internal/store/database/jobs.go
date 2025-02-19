@@ -182,10 +182,12 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 	}
 
 	if job.CurrentPID != 0 {
-		readBytes, writeBytes, err := utils.GetProcIO(job.CurrentPID)
+		readTotal, writeTotal, readSpeed, writeSpeed, err := utils.GetProcIO(job.CurrentPID)
 		if err == nil {
-			job.CurrentReadSpeed = utils.HumanReadableBytes(readBytes)
-			job.CurrentWriteSpeed = utils.HumanReadableBytes(writeBytes)
+			job.CurrentReadTotal = utils.HumanReadableBytes(readTotal)
+			job.CurrentWriteTotal = utils.HumanReadableBytes(writeTotal)
+			job.CurrentReadSpeed = utils.HumanReadableSpeed(readSpeed)
+			job.CurrentWriteSpeed = utils.HumanReadableSpeed(writeSpeed)
 		}
 	}
 

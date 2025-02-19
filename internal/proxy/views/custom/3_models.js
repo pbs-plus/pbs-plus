@@ -9,6 +9,8 @@ Ext.define("pbs-disk-backup-job-status", {
     "schedule",
     "comment",
     "duration",
+    "current_read_total",
+    "current_write_total",
     "current_read_speed",
     "current_write_speed",
     "next-run",

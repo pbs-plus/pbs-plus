@@ -12,7 +12,9 @@ type Job struct {
 	NextRun           *int64      `json:"next-run"`
 	Retry             int         `config:"type=int" json:"retry"`
 	CurrentWriteSpeed string      `json:"current_write_speed"`
+	CurrentWriteTotal string      `json:"current_write_total"`
 	CurrentReadSpeed  string      `json:"current_read_speed"`
+	CurrentReadTotal  string      `json:"current_read_total"`
 	CurrentPID        int         `config:"key=current_pid,type=int" json:"current_pid"`
 	LastRunUpid       string      `config:"key=last_run_upid,type=string" json:"last-run-upid"`
 	LastRunState      *string     `json:"last-run-state"`
