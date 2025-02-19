@@ -36,7 +36,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			backupResp, err := arpcSess.CallContext(ctx, "backup", agentDrive)
-			if backupResp.Status != 200 || err != nil {
+			if err != nil || backupResp.Status != 200 {
 				if err != nil {
 					err = errors.New(backupResp.Message)
 				}
@@ -63,7 +63,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", agentDrive)
-			if cleanupResp.Status != 200 || err != nil {
+			if err != nil || cleanupResp.Status != 200 {
 				if err != nil {
 					err = errors.New(cleanupResp.Message)
 				}
