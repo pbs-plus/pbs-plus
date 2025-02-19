@@ -141,10 +141,18 @@ Ext.define("PBS.config.DiskBackupJobView", {
         // For each snapshot attribute, create a new key with "snapshot_"
         // prefix. The value will be the JSON stringified array.
         Object.keys(extra.snapshotAttributes).forEach((attr) => {
-          snapshotExtra["snapshot_" + attr] = JSON.stringify(
-            extra.snapshotAttributes[attr]
-          );
+          if (attr === "backup-time") {
+            snapshotExtra["snapshot_" + attr] = JSON.stringify(
+              extra.snapshotAttributes[attr].map((timestamp) => {
+                const date = new Date(timestamp * 1000);
+                return date.toString()
+              })
+            );
+          }
         });
+
+        delete job["exclusions"];
+        delete job["last-plus-error"];
 
         return {
           ...job,
