@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -126,13 +125,14 @@ func (p *agentService) run() {
 	}
 
 	go func() {
+		delay := utils.ComputeDelay()
 		for {
 			select {
 			case <-p.ctx.Done():
 				return
-			case <-time.After(time.Duration(rand.Intn(300+1)+300) * time.Second):
-				// executes every 5-10 minutes
+			case <-time.After(delay):
 				_ = p.initializeDrives()
+				delay = utils.ComputeDelay()
 			}
 		}
 	}()
