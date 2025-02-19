@@ -60,17 +60,17 @@ func GetProcIO(pid int) (read, write int64, readSpeed, writeSpeed float64, err e
 
 	initialRead, ok := previousRead.Get(pidString)
 	if !ok {
-		initialRead = 0
+		initialRead = int64(0)
 	}
 
 	initialWrite, ok := previousWrite.Get(pidString)
 	if !ok {
-		initialWrite = 0
+		initialWrite = int64(0)
 	}
 
 	timeSince := time.Since(lastTime.(time.Time)).Seconds()
 	if timeSince == 0 {
-		timeSince = 1
+		timeSince = float64(1)
 	}
 
 	rateFactor := 1.0 / timeSince
