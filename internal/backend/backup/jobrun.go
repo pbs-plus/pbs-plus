@@ -20,6 +20,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 var ErrOneInstance = errors.New("a job is still running; only one instance allowed")
@@ -55,6 +56,7 @@ func runBackupAttempt(
 	var stdout, stderr io.ReadCloser
 
 	errCleanUp := func() {
+		utils.ClearIOStats(job.CurrentPID)
 		job.CurrentPID = 0
 
 		_ = jobInstanceMutex.Close()
@@ -257,6 +259,7 @@ func runBackupAttempt(
 			operation.err = err
 		}
 
+		utils.ClearIOStats(job.CurrentPID)
 		job.CurrentPID = 0
 
 		<-logDone

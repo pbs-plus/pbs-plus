@@ -6,12 +6,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-var previousRead = NewLRUCache(256)
-var previousWrite = NewLRUCache(256)
-var previousTime = NewLRUCache(256)
+var previousRead = make(map[int]int64)
+var previousWrite = make(map[int]int64)
+var previousTime = make(map[int]time.Time)
+var previousMu = make(map[int]*sync.Mutex)
 
 func GetProcIO(pid int) (read, write int64, readSpeed, writeSpeed float64, err error) {
 	filePath := fmt.Sprintf("/proc/%d/io", pid)
@@ -51,37 +53,56 @@ func GetProcIO(pid int) (read, write int64, readSpeed, writeSpeed float64, err e
 		return 0, 0, 0, 0, err
 	}
 
-	pidString := fmt.Sprintf("%d", pid)
+	if _, ok := previousMu[pid]; !ok {
+		previousMu[pid] = &sync.Mutex{}
+	}
 
-	lastTime, ok := previousTime.Get(pidString)
+	previousMu[pid].Lock()
+	defer previousMu[pid].Unlock()
+
+	lastTime, ok := previousTime[pid]
 	if !ok {
 		lastTime = time.Now()
 	}
 
-	initialRead, ok := previousRead.Get(pidString)
+	initialRead, ok := previousRead[pid]
 	if !ok {
 		initialRead = int64(0)
 	}
 
-	initialWrite, ok := previousWrite.Get(pidString)
+	initialWrite, ok := previousWrite[pid]
 	if !ok {
 		initialWrite = int64(0)
 	}
 
-	timeSince := time.Since(lastTime.(time.Time)).Seconds()
+	timeSince := time.Since(lastTime).Seconds()
 	if timeSince == 0 {
 		timeSince = float64(1)
 	}
 
 	rateFactor := 1.0 / timeSince
-	readRate := float64(read-initialRead.(int64)) * rateFactor
-	writeRate := float64(write-initialWrite.(int64)) * rateFactor
+	readRate := float64(read-initialRead) * rateFactor
+	writeRate := float64(write-initialWrite) * rateFactor
 
-	previousRead.Set(pidString, read)
-	previousWrite.Set(pidString, write)
-	previousTime.Set(pidString, time.Now())
+	previousRead[pid] = read
+	previousWrite[pid] = write
+	previousTime[pid] = time.Now()
 
 	return read, write, readRate, writeRate, nil
+}
+
+func ClearIOStats(pid int) {
+	if _, ok := previousMu[pid]; !ok {
+		previousMu[pid] = &sync.Mutex{}
+	}
+
+	previousMu[pid].Lock()
+	delete(previousRead, pid)
+	delete(previousWrite, pid)
+	delete(previousTime, pid)
+	previousMu[pid].Unlock()
+
+	delete(previousMu, pid)
 }
 
 // humanReadableBytes formats the given number of bytes into a human-readable string.
