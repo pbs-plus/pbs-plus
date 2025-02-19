@@ -286,6 +286,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Export CSV"),
       handler: "exportCSV",
+      selModel: false,
     },
   ],
 
