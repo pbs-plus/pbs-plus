@@ -29,6 +29,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"golang.org/x/sys/windows"
 )
 
 type PingData struct {
@@ -52,6 +53,14 @@ type agentService struct {
 }
 
 func (p *agentService) Start(s service.Service) error {
+	handle := windows.CurrentProcess()
+
+	const IDLE_PRIORITY_CLASS = 0x00000040
+	err := windows.SetPriorityClass(handle, uint32(IDLE_PRIORITY_CLASS))
+	if err != nil {
+		syslog.L.Errorf("failed to set process priority: %v", err)
+	}
+
 	p.svc = s
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 
