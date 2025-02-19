@@ -387,6 +387,11 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 				if err := op.Wait(); err != nil {
 					lastErr = err
 					log.Printf("Backup attempt %d execution failed: %v", attempt, err)
+					if err.Error() == "signal: killed" {
+						autoOp.err = err
+						close(autoOp.done)
+						return
+					}
 					time.Sleep(10 * time.Second)
 					autoOp.started = make(chan struct{})
 					continue
