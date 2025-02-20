@@ -11,42 +11,45 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/go-git/go-billy/v5"
 	nfs "github.com/willscott/go-nfs"
-	bolt "go.etcd.io/bbolt"
 )
 
 const (
 	RootHandleID = uint64(0) // Reserved ID for root directory
 )
 
-var handlesBucket = []byte("handles")
-
 type VSSIDHandler struct {
 	nfs.Handler
 	vssFS         *VSSFS
-	handlesDb     *bolt.DB
+	handlesDb     *badger.DB
 	handlesDbPath string
 }
 
 func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
 	*VSSIDHandler, error,
 ) {
-	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("/pbs-vssfs/handlers-%s-%d.db", vssFS.snapshot.DriveLetter, time.Now().Unix()))
-	err := os.MkdirAll(filepath.Dir(dbPath), 0755)
+	// Construct a directory path for the database
+	dbPath := filepath.Join(os.TempDir(),
+		fmt.Sprintf("/pbs-vssfs/handlers-%s-%d",
+			vssFS.snapshot.DriveLetter, time.Now().Unix()))
+	err := os.MkdirAll(dbPath, 0755)
 	if err != nil {
 		return nil, err
 	}
 
-	db, err := bolt.Open(dbPath, 0600, nil)
-	if err != nil {
-		return nil, err
-	}
+	opts := badger.DefaultOptions(dbPath).
+		WithLogger(nil)
 
-	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists(handlesBucket)
-		return err
-	})
+	opts.NumMemtables = 1
+	opts.NumLevelZeroTables = 1
+	opts.NumLevelZeroTablesStall = 2
+	opts.NumCompactors = 1
+	opts.BaseTableSize = 2 << 20     // 2 MB.
+	opts.ValueLogFileSize = 16 << 20 // 16 MB.
+
+	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -60,34 +63,37 @@ func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
 }
 
 func (h *VSSIDHandler) getHandle(key uint64) (string, bool) {
+	// Serialize key as 8-byte big-endian.
 	k := make([]byte, 8)
 	binary.BigEndian.PutUint64(k, key)
 
-	var path []byte
-	err := h.handlesDb.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(handlesBucket)
-		if bucket == nil {
-			return fmt.Errorf("bucket %s not found", handlesBucket)
+	var result string
+	err := h.handlesDb.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(k)
+		if err != nil {
+			return err
 		}
-		path = bucket.Get(k)
-		return nil
+		return item.Value(func(val []byte) error {
+			result = string(val)
+			return nil
+		})
 	})
-	if err != nil || path == nil {
+	// If key is not found or an error occurs, return false.
+	if err == badger.ErrKeyNotFound || result == "" {
+		return "", false
+	} else if err != nil {
 		return "", false
 	}
-	return string(path), true
+	return result, true
 }
 
 func (h *VSSIDHandler) storeHandle(key uint64, path string) error {
+	// Serialize key as 8-byte big-endian.
 	k := make([]byte, 8)
 	binary.BigEndian.PutUint64(k, key)
 
-	return h.handlesDb.Update(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(handlesBucket)
-		if bucket == nil {
-			return fmt.Errorf("bucket %s not found", handlesBucket)
-		}
-		return bucket.Put(k, []byte(path))
+	return h.handlesDb.Update(func(txn *badger.Txn) error {
+		return txn.Set(k, []byte(path))
 	})
 }
 
@@ -97,6 +103,7 @@ func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 		return nil
 	}
 
+	// Special-case for the root directory.
 	if len(path) == 0 || (len(path) == 1 && path[0] == "") {
 		return h.createHandle(RootHandleID, vssFS.Root())
 	}
@@ -114,10 +121,12 @@ func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 }
 
 func (h *VSSIDHandler) createHandle(fileID uint64, fullPath string) []byte {
+	// If the handle mapping doesn’t exist, store it.
 	if _, exists := h.getHandle(fileID); !exists {
 		_ = h.storeHandle(fileID, fullPath)
 	}
 
+	// Return the fileID as an 8-byte handle.
 	handle := make([]byte, 8)
 	binary.BigEndian.PutUint64(handle, fileID)
 	return handle
@@ -160,17 +169,19 @@ func (h *VSSIDHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) erro
 	return nil
 }
 
+// ClearHandles closes the current BadgerDB instance and then
+// completely deletes the underlying database directory.
 func (h *VSSIDHandler) ClearHandles() error {
 	if err := h.handlesDb.Close(); err != nil {
 		return err
 	}
 
-	if err := os.Remove(h.handlesDbPath); err != nil {
+	// RemoveAll deletes the directory and any contents.
+	if err := os.RemoveAll(h.handlesDbPath); err != nil {
 		return err
 	}
 
 	h.handlesDb = nil
 	h.handlesDbPath = ""
-
 	return nil
 }
