@@ -117,7 +117,10 @@ func BackupStartHandler(req arpc.Request) (arpc.Response, error) {
 			}
 			session.Close()
 		}()
-		nfsSession.Serve()
+		err = nfsSession.Serve()
+		if err != nil {
+			syslog.L.Errorf("Error encountered while trying to serve NFS: %v", err)
+		}
 	}()
 
 	return arpc.Response{Status: 200, Message: "success"}, nil

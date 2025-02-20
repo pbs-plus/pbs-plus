@@ -31,6 +31,11 @@ func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
 	*VSSIDHandler, error,
 ) {
 	dbPath := filepath.Join(os.TempDir(), "/pbs-vssfs/handlers.db")
+	err := os.MkdirAll(filepath.Dir(dbPath), 0755)
+	if err != nil {
+		return nil, err
+	}
+
 	db, err := bolt.Open(dbPath, 0600, nil)
 	if err != nil {
 		return nil, err
