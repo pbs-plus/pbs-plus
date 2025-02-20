@@ -24,8 +24,9 @@ var handlesBucket = []byte("handles")
 
 type VSSIDHandler struct {
 	nfs.Handler
-	vssFS     *VSSFS
-	handlesDb *bolt.DB
+	vssFS         *VSSFS
+	handlesDb     *bolt.DB
+	handlesDbPath string
 }
 
 func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
@@ -51,9 +52,10 @@ func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
 	}
 
 	return &VSSIDHandler{
-		Handler:   underlyingHandler,
-		vssFS:     vssFS,
-		handlesDb: db,
+		Handler:       underlyingHandler,
+		vssFS:         vssFS,
+		handlesDb:     db,
+		handlesDbPath: dbPath,
 	}, nil
 }
 
@@ -158,10 +160,17 @@ func (h *VSSIDHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) erro
 	return nil
 }
 
-func (h *VSSIDHandler) ClearHandles() {
-	_ = h.handlesDb.Update(func(tx *bolt.Tx) error {
-		_ = tx.DeleteBucket(handlesBucket)
-		_, err := tx.CreateBucket(handlesBucket)
+func (h *VSSIDHandler) ClearHandles() error {
+	if err := h.handlesDb.Close(); err != nil {
 		return err
-	})
+	}
+
+	if err := os.Remove(h.handlesDbPath); err != nil {
+		return err
+	}
+
+	h.handlesDb = nil
+	h.handlesDbPath = ""
+
+	return nil
 }
