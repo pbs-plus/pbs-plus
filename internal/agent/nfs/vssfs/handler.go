@@ -45,7 +45,7 @@ func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
 	opts.NumMemtables = 1
 	opts.NumLevelZeroTables = 1
 	opts.NumLevelZeroTablesStall = 2
-	opts.NumCompactors = 1
+	opts.NumCompactors = 2
 	opts.BaseTableSize = 2 << 20     // 2 MB.
 	opts.ValueLogFileSize = 16 << 20 // 16 MB.
 
