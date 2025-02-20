@@ -36,7 +36,17 @@ func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (*VSSIDHandler
 	}
 
 	opts := &pebble.Options{
-		Logger: nil,
+		Logger:                      nil,
+		MemTableSize:                2 << 20,
+		MemTableStopWritesThreshold: 2,
+		Cache:                       pebble.NewCache(4 << 20),
+		L0CompactionFileThreshold:   4,
+		L0CompactionThreshold:       2,
+		DisableWAL:                  false,
+		WALBytesPerSync:             1 << 20,
+		WALMinSyncInterval:          func() time.Duration { return 0 },
+		DisableAutomaticCompactions: false,
+		MaxOpenFiles:                500,
 	}
 
 	db, err := pebble.Open(dbPath, opts)
