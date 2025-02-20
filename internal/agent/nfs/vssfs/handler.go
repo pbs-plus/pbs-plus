@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-git/go-billy/v5"
 	nfs "github.com/willscott/go-nfs"
@@ -23,14 +24,20 @@ var handlesBucket = []byte("handles")
 
 type VSSIDHandler struct {
 	nfs.Handler
-	vssFS     *VSSFS
-	handlesDb *bolt.DB
+	vssFS         *VSSFS
+	handlesDb     *bolt.DB
+	handlesDbPath string
 }
 
 func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
 	*VSSIDHandler, error,
 ) {
-	dbPath := filepath.Join(os.TempDir(), "/pbs-vssfs/handlers.db")
+	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("/pbs-vssfs/handlers-%s-%d.db", vssFS.snapshot.DriveLetter, time.Now().Unix()))
+	err := os.MkdirAll(filepath.Dir(dbPath), 0755)
+	if err != nil {
+		return nil, err
+	}
+
 	db, err := bolt.Open(dbPath, 0600, nil)
 	if err != nil {
 		return nil, err
@@ -45,9 +52,10 @@ func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
 	}
 
 	return &VSSIDHandler{
-		Handler:   underlyingHandler,
-		vssFS:     vssFS,
-		handlesDb: db,
+		Handler:       underlyingHandler,
+		vssFS:         vssFS,
+		handlesDb:     db,
+		handlesDbPath: dbPath,
 	}, nil
 }
 
@@ -152,10 +160,17 @@ func (h *VSSIDHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) erro
 	return nil
 }
 
-func (h *VSSIDHandler) ClearHandles() {
-	_ = h.handlesDb.Update(func(tx *bolt.Tx) error {
-		_ = tx.DeleteBucket(handlesBucket)
-		_, err := tx.CreateBucket(handlesBucket)
+func (h *VSSIDHandler) ClearHandles() error {
+	if err := h.handlesDb.Close(); err != nil {
 		return err
-	})
+	}
+
+	if err := os.Remove(h.handlesDbPath); err != nil {
+		return err
+	}
+
+	h.handlesDb = nil
+	h.handlesDbPath = ""
+
+	return nil
 }
