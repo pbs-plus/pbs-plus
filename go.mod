@@ -17,6 +17,7 @@ require (
 	github.com/willscott/go-nfs v0.0.3
 	github.com/xtaci/smux v1.5.34
 	github.com/zeebo/xxh3 v1.0.2
+	go.etcd.io/bbolt v1.4.0
 	golang.org/x/crypto v0.33.0
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	golang.org/x/sys v0.30.0

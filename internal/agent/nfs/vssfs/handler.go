@@ -6,47 +6,81 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/go-git/go-billy/v5"
 	nfs "github.com/willscott/go-nfs"
+	bolt "go.etcd.io/bbolt"
 )
 
 const (
 	RootHandleID = uint64(0) // Reserved ID for root directory
 )
 
-// VSSIDHandler uses VSSFS's stable file IDs for handle management
+var handlesBucket = []byte("handles")
+
 type VSSIDHandler struct {
 	nfs.Handler
-	vssFS           *VSSFS
-	activeHandlesMu sync.RWMutex
-	activeHandles   map[uint64]string
+	vssFS     *VSSFS
+	handlesDb *bolt.DB
 }
 
-func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (*VSSIDHandler, error) {
+func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
+	*VSSIDHandler, error,
+) {
+	dbPath := filepath.Join(os.TempDir(), "/pbs-vssfs/handlers.db")
+	db, err := bolt.Open(dbPath, 0600, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists(handlesBucket)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &VSSIDHandler{
-		Handler:       underlyingHandler,
-		vssFS:         vssFS,
-		activeHandles: make(map[uint64]string),
+		Handler:   underlyingHandler,
+		vssFS:     vssFS,
+		handlesDb: db,
 	}, nil
 }
 
 func (h *VSSIDHandler) getHandle(key uint64) (string, bool) {
-	h.activeHandlesMu.RLock()
-	defer h.activeHandlesMu.RUnlock()
+	k := make([]byte, 8)
+	binary.BigEndian.PutUint64(k, key)
 
-	handle, ok := h.activeHandles[key]
-	return handle, ok
+	var path []byte
+	err := h.handlesDb.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(handlesBucket)
+		if bucket == nil {
+			return fmt.Errorf("bucket %s not found", handlesBucket)
+		}
+		path = bucket.Get(k)
+		return nil
+	})
+	if err != nil || path == nil {
+		return "", false
+	}
+	return string(path), true
 }
 
-func (h *VSSIDHandler) storeHandle(key uint64, path string) {
-	h.activeHandlesMu.Lock()
-	defer h.activeHandlesMu.Unlock()
+func (h *VSSIDHandler) storeHandle(key uint64, path string) error {
+	k := make([]byte, 8)
+	binary.BigEndian.PutUint64(k, key)
 
-	h.activeHandles[key] = path
+	return h.handlesDb.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(handlesBucket)
+		if bucket == nil {
+			return fmt.Errorf("bucket %s not found", handlesBucket)
+		}
+		return bucket.Put(k, []byte(path))
+	})
 }
 
 func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
@@ -55,16 +89,13 @@ func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 		return nil
 	}
 
-	// Handle root directory specially
 	if len(path) == 0 || (len(path) == 1 && path[0] == "") {
 		return h.createHandle(RootHandleID, vssFS.Root())
 	}
 
-	// Convert NFS path to Windows format
 	winPath := filepath.Join(path...)
 	fullPath := filepath.Join(vssFS.Root(), winPath)
 
-	// Get or create stable ID
 	info, err := vssFS.Stat(winPath)
 	if err != nil {
 		return nil
@@ -75,18 +106,18 @@ func (h *VSSIDHandler) ToHandle(f billy.Filesystem, path []string) []byte {
 }
 
 func (h *VSSIDHandler) createHandle(fileID uint64, fullPath string) []byte {
-	// Add to cache if not exists
 	if _, exists := h.getHandle(fileID); !exists {
-		h.storeHandle(fileID, fullPath)
+		_ = h.storeHandle(fileID, fullPath)
 	}
 
-	// Convert ID to 8-byte handle
 	handle := make([]byte, 8)
 	binary.BigEndian.PutUint64(handle, fileID)
 	return handle
 }
 
-func (h *VSSIDHandler) FromHandle(handle []byte) (billy.Filesystem, []string, error) {
+func (h *VSSIDHandler) FromHandle(handle []byte) (
+	billy.Filesystem, []string, error,
+) {
 	if len(handle) != 8 {
 		return nil, nil, fmt.Errorf("invalid handle length")
 	}
@@ -96,13 +127,11 @@ func (h *VSSIDHandler) FromHandle(handle []byte) (billy.Filesystem, []string, er
 		return h.vssFS, []string{}, nil
 	}
 
-	// Retrieve cached path
 	fullPath, exists := h.getHandle(fileID)
 	if !exists {
 		return nil, nil, &nfs.NFSStatusError{NFSStatus: nfs.NFSStatusStale}
 	}
 
-	// Convert Windows path to NFS components
 	relativePath := strings.TrimPrefix(
 		filepath.ToSlash(fullPath),
 		filepath.ToSlash(h.vssFS.Root())+"/",
@@ -120,13 +149,13 @@ func (h *VSSIDHandler) HandleLimit() int {
 }
 
 func (h *VSSIDHandler) InvalidateHandle(fs billy.Filesystem, handle []byte) error {
-	// No-op for read-only filesystem
 	return nil
 }
 
 func (h *VSSIDHandler) ClearHandles() {
-	h.activeHandlesMu.Lock()
-	defer h.activeHandlesMu.Unlock()
-
-	h.activeHandles = make(map[uint64]string)
+	_ = h.handlesDb.Update(func(tx *bolt.Tx) error {
+		_ = tx.DeleteBucket(handlesBucket)
+		_, err := tx.CreateBucket(handlesBucket)
+		return err
+	})
 }
