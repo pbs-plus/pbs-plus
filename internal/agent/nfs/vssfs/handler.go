@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-git/go-billy/v5"
 	nfs "github.com/willscott/go-nfs"
@@ -30,7 +31,7 @@ type VSSIDHandler struct {
 func NewVSSIDHandler(vssFS *VSSFS, underlyingHandler nfs.Handler) (
 	*VSSIDHandler, error,
 ) {
-	dbPath := filepath.Join(os.TempDir(), "/pbs-vssfs/handlers.db")
+	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("/pbs-vssfs/handlers-%s-%d.db", vssFS.snapshot.DriveLetter, time.Now().Unix()))
 	err := os.MkdirAll(filepath.Dir(dbPath), 0755)
 	if err != nil {
 		return nil, err
