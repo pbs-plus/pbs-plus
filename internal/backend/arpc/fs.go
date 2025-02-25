@@ -9,26 +9,61 @@ import (
 	"path/filepath"
 	"time"
 
-	"bazil.org/fuse/fs"
 	"github.com/go-git/go-billy/v5"
+	"github.com/hanwen/go-fuse/v2/fs"
+	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 var _ billy.Filesystem = (*ARPCFS)(nil)
 
 // NewARPCFS creates a new filesystem backed by aRPC calls
-func NewARPCFS(ctx context.Context, session *arpc.Session, drive string) *ARPCFS {
+func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, drive string) *ARPCFS {
 	return &ARPCFS{
-		ctx:     ctx,
-		session: session,
-		drive:   drive,
+		ctx:      ctx,
+		session:  session,
+		drive:    drive,
+		hostname: hostname,
 	}
 }
 
-func (fs *ARPCFS) GetFUSE() fs.FS {
-	return fuse.New(fs, nil)
+func (f *ARPCFS) Mount(mountpoint string) error {
+	timeout := 5 * time.Second
+
+	options := &fs.Options{
+		MountOptions: gofuse.MountOptions{
+			Debug:      false,
+			FsName:     utils.Slugify(f.hostname) + "/" + f.drive,
+			Name:       "pbsagent",
+			AllowOther: true,
+		},
+		// Use sensible cache timeouts
+		EntryTimeout:    &timeout,
+		AttrTimeout:     &timeout,
+		NegativeTimeout: &timeout,
+	}
+
+	root := fuse.New(f, nil)
+
+	server, err := fs.Mount(mountpoint, root, options)
+	if err != nil {
+		return err
+	}
+
+	f.mount = server
+	f.mount.Serve()
+
+	f.mount.WaitMount()
+	return nil
+}
+
+func (f *ARPCFS) Unmount() {
+	if f.mount != nil {
+		_ = f.mount.Unmount()
+	}
 }
 
 var _ billy.File = (*ARPCFile)(nil)
@@ -169,7 +204,7 @@ func (fs *ARPCFS) Join(elem ...string) string {
 }
 
 func (fs *ARPCFS) Chroot(path string) (billy.Filesystem, error) {
-	return NewARPCFS(fs.ctx, fs.session, path), nil
+	return NewARPCFS(fs.ctx, fs.session, fs.hostname, fs.drive), nil
 }
 
 func (fs *ARPCFS) Root() string {

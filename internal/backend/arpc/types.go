@@ -4,14 +4,17 @@ import (
 	"context"
 	"os"
 
+	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 )
 
 // ARPCFS implements billy.Filesystem using aRPC calls
 type ARPCFS struct {
-	ctx     context.Context
-	session *arpc.Session
-	drive   string
+	ctx      context.Context
+	session  *arpc.Session
+	drive    string
+	hostname string
+	mount    *gofuse.Server
 }
 
 // ARPCFile implements billy.File for remote files
