@@ -19,8 +19,7 @@ import (
 // CallHook is the callback called before every FUSE operation
 type CallHook func(ctx context.Context) error
 
-// New creates a FUSE filesystem that passes all calls through to the given billy filesystem.
-func New(underlying billy.Basic, callHook CallHook) fs.InodeEmbedder {
+func newRoot(underlying billy.Basic, callHook CallHook) fs.InodeEmbedder {
 	if callHook == nil {
 		callHook = func(ctx context.Context) error {
 			return nil
@@ -34,15 +33,16 @@ func New(underlying billy.Basic, callHook CallHook) fs.InodeEmbedder {
 
 // Mount mounts the billy filesystem at the specified mountpoint
 func Mount(mountpoint string, fsName string, underlying billy.Basic, callHook CallHook) (*fuse.Server, error) {
-	root := New(underlying, callHook)
+	root := newRoot(underlying, callHook)
 
-	timeout := time.Second
+	timeout := 3 * time.Second
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
-			Debug:  false,
-			FsName: fsName,
-			Name:   "pbsagent",
+			Debug:      false,
+			FsName:     fsName,
+			Name:       "pbsagent",
+			AllowOther: true,
 		},
 		// Use sensible cache timeouts
 		EntryTimeout:    &timeout,
