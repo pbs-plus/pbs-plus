@@ -3,7 +3,6 @@ package arpcfs
 import (
 	"context"
 	"os"
-	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 )
@@ -27,11 +26,11 @@ type ARPCFile struct {
 
 // FileInfoResponse represents server's file info response
 type FileInfoResponse struct {
-	Name    string      `json:"name"`
-	Size    int64       `json:"size"`
-	Mode    os.FileMode `json:"mode"`
-	ModTime time.Time   `json:"modTime"`
-	IsDir   bool        `json:"isDir"`
+	Name        string      `json:"name"`
+	Size        int64       `json:"size"`
+	Mode        os.FileMode `json:"mode"`
+	ModTimeUnix int64       `json:"modTime"`
+	IsDir       bool        `json:"isDir"`
 }
 
 // ReadDirResponse represents server's directory listing
