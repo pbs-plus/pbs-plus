@@ -98,7 +98,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 		Perm: int(perm),
 	}, &resp)
 	if err != nil {
-		syslog.L.Errorf("OpenFile RPC failed: %v", err)
+		syslog.L.Errorf("OpenFile RPC failed (%s): %v", filename, err)
 		return nil, fmt.Errorf("OpenFile RPC failed: %w", err)
 	}
 
@@ -126,7 +126,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		Path: filename,
 	}, &fi)
 	if err != nil {
-		syslog.L.Errorf("Stat RPC failed: %v", err)
+		syslog.L.Errorf("Stat RPC failed (%s): %v", filename, err)
 		return nil, fmt.Errorf("Stat RPC failed: %w", err)
 	}
 
