@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/go-git/go-billy/v5"
-	"github.com/hanwen/go-fuse/v2/fs"
-	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -31,24 +29,8 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, driv
 }
 
 func (f *ARPCFS) Mount(mountpoint string) error {
-	timeout := 5 * time.Second
-
-	options := &fs.Options{
-		MountOptions: gofuse.MountOptions{
-			Debug:      false,
-			FsName:     utils.Slugify(f.hostname) + "/" + f.drive,
-			Name:       "pbsagent",
-			AllowOther: true,
-		},
-		// Use sensible cache timeouts
-		EntryTimeout:    &timeout,
-		AttrTimeout:     &timeout,
-		NegativeTimeout: &timeout,
-	}
-
-	root := fuse.New(f, nil)
-
-	server, err := fs.Mount(mountpoint, root, options)
+	fsName := utils.Slugify(f.hostname) + "/" + f.drive
+	server, err := fuse.Mount(mountpoint, fsName, f, nil)
 	if err != nil {
 		return err
 	}
