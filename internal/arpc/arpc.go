@@ -33,7 +33,8 @@ type HandlerFunc func(req Request) (Response, error)
 
 // Router holds a mapping of method names to handlers.
 type Router struct {
-	handlers map[string]HandlerFunc
+	handlers   map[string]HandlerFunc
+	handlersMu sync.RWMutex
 }
 
 // NewRouter creates and returns a new Router.
@@ -43,7 +44,17 @@ func NewRouter() *Router {
 
 // Handle registers a new handler for the given method.
 func (r *Router) Handle(method string, handler HandlerFunc) {
+	r.handlersMu.Lock()
+	defer r.handlersMu.Unlock()
+
 	r.handlers[method] = handler
+}
+
+func (r *Router) CloseHandle(method string) {
+	r.handlersMu.Lock()
+	defer r.handlersMu.Unlock()
+
+	delete(r.handlers, method)
 }
 
 // ServeStream reads one JSON-encoded Request from the given stream,
@@ -63,7 +74,9 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		return
 	}
 
+	r.handlersMu.RLock()
 	handler, ok := r.handlers[req.Method]
+	r.handlersMu.RUnlock()
 	if !ok {
 		encoder.Encode(Response{
 			Status:  404,
