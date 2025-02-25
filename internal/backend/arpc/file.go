@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 // File implementation
@@ -21,6 +23,7 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 
 	var resp ReadResponse
 	if f.fs.session == nil {
+		syslog.L.Error("RPC failed: aRPC session is nil")
 		return 0, fmt.Errorf("RPC failed: aRPC session is nil")
 	}
 
@@ -32,6 +35,7 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 		Length:   len(p),
 	}, &resp)
 	if err != nil {
+		syslog.L.Errorf("Read RPC failed: %v", err)
 		return 0, fmt.Errorf("Read RPC failed: %w", err)
 	}
 
@@ -54,6 +58,7 @@ func (f *ARPCFile) Close() error {
 	}
 
 	if f.fs.session == nil {
+		syslog.L.Error("RPC failed: aRPC session is nil")
 		return fmt.Errorf("RPC failed: aRPC session is nil")
 	}
 
@@ -88,6 +93,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		Length:   len(p),
 	}, &resp)
 	if err != nil {
+		syslog.L.Errorf("ReadAt RPC failed: %v", err)
 		return 0, fmt.Errorf("ReadAt RPC failed: %w", err)
 	}
 
@@ -112,6 +118,7 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekEnd:
 		var fi FileInfoResponse
 		if f.fs.session == nil {
+			syslog.L.Error("RPC failed: aRPC session is nil")
 			return 0, fmt.Errorf("RPC failed: aRPC session is nil")
 		}
 
@@ -124,6 +131,7 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 			HandleID: f.handleID,
 		}, &fi)
 		if err != nil {
+			syslog.L.Errorf("Fstat RPC failed: %v", err)
 			return 0, fmt.Errorf("Fstat RPC failed: %w", err)
 		}
 		f.offset = fi.Size + offset

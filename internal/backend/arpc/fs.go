@@ -13,6 +13,7 @@ import (
 	"github.com/go-git/go-billy/v5"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/fuse"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 var _ billy.Filesystem = (*ARPCFS)(nil)
@@ -50,6 +51,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	}
 
 	if fs.session == nil {
+		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, fmt.Errorf("RPC failed: aRPC session is nil")
 	}
 
@@ -62,6 +64,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 		Perm: int(perm),
 	}, &resp)
 	if err != nil {
+		syslog.L.Errorf("OpenFile RPC failed: %v", err)
 		return nil, fmt.Errorf("OpenFile RPC failed: %w", err)
 	}
 
@@ -76,6 +79,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	var fi FileInfoResponse
 	if fs.session == nil {
+		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, fmt.Errorf("RPC failed: aRPC session is nil")
 	}
 
@@ -88,6 +92,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		Path: filename,
 	}, &fi)
 	if err != nil {
+		syslog.L.Errorf("Stat RPC failed: %v", err)
 		return nil, fmt.Errorf("Stat RPC failed: %w", err)
 	}
 
@@ -103,6 +108,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	var resp ReadDirResponse
 	if fs.session == nil {
+		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, fmt.Errorf("RPC failed: aRPC session is nil")
 	}
 
@@ -115,6 +121,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 		Path: path,
 	}, &resp)
 	if err != nil {
+		syslog.L.Errorf("ReadDir RPC failed: %v", err)
 		return nil, fmt.Errorf("ReadDir RPC failed: %w", err)
 	}
 
