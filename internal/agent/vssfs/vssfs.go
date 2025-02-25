@@ -11,6 +11,7 @@ import (
 
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows"
 )
@@ -78,6 +79,7 @@ func (s *VSSFSServer) handleFsStat(_ arpc.Request) (arpc.Response, error) {
 		nil,
 	)
 	if err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 500, Message: err.Error()}, nil
 	}
 
@@ -100,6 +102,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		Perm int    `json:"perm"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 400, Message: "invalid request"}, nil
 	}
 
@@ -110,10 +113,12 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 
 	fullPath, err := securejoin.SecureJoin(s.rootDir, filepath.Clean(params.Path))
 	if err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 500, Message: err.Error()}, nil
 	}
 	pathPtr, err := windows.UTF16PtrFromString(fullPath)
 	if err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 500, Message: err.Error()}, nil
 	}
 
@@ -164,22 +169,26 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 400, Message: "invalid request"}, nil
 	}
 
 	fullPath, err := securejoin.SecureJoin(s.rootDir, filepath.Clean(params.Path))
 	if err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 500, Message: err.Error()}, nil
 	}
 
 	pathPtr, err := windows.UTF16PtrFromString(fullPath)
 	if err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 500, Message: err.Error()}, nil
 	}
 
 	var fileInfo windows.Win32FileAttributeData
 	err = windows.GetFileAttributesEx(pathPtr, windows.GetFileExInfoStandard, (*byte)(unsafe.Pointer(&fileInfo)))
 	if err != nil {
+		syslog.L.Error(err.Error())
 		return s.mapWindowsErrorToResponse(err), nil
 	}
 
@@ -194,11 +203,13 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 400, Message: "invalid request"}, nil
 	}
 
 	fullPath, err := securejoin.SecureJoin(s.rootDir, filepath.Clean(params.Path))
 	if err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 500, Message: err.Error()}, nil
 	}
 
@@ -206,12 +217,14 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 
 	patternPtr, err := windows.UTF16PtrFromString(pattern)
 	if err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 500, Message: err.Error()}, nil
 	}
 
 	var findData windows.Win32finddata
 	handle, err := windows.FindFirstFile(patternPtr, &findData)
 	if err != nil {
+		syslog.L.Error(err.Error())
 		return s.mapWindowsErrorToResponse(err), nil
 	}
 	defer windows.FindClose(handle)
@@ -231,6 +244,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 			if err == windows.ERROR_NO_MORE_FILES {
 				break // No more files
 			}
+			syslog.L.Error(err.Error())
 			return s.mapWindowsErrorToResponse(err), nil
 		}
 	}
@@ -247,6 +261,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		Length   int    `json:"length"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 400, Message: "invalid request"}, nil
 	}
 
@@ -270,6 +285,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 
 	if err != nil {
 		if err != windows.ERROR_HANDLE_EOF {
+			syslog.L.Error(err.Error())
 			return arpc.Response{Status: 500, Message: err.Error()}, nil
 		}
 		isEOF = true
@@ -291,6 +307,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		Length   int    `json:"length"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 400, Message: "invalid request"}, nil
 	}
 
@@ -318,6 +335,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 
 	if err != nil {
 		if err != windows.ERROR_HANDLE_EOF {
+			syslog.L.Error(err.Error())
 			return arpc.Response{Status: 500, Message: err.Error()}, nil
 		}
 		isEOF = true
@@ -337,6 +355,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 		HandleID uint64 `json:"handleID"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 400, Message: "invalid request"}, nil
 	}
 
@@ -364,6 +383,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 		HandleID uint64 `json:"handleID"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
+		syslog.L.Error(err.Error())
 		return arpc.Response{Status: 400, Message: "invalid request"}, nil
 	}
 
@@ -377,6 +397,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 
 	var fileInfo windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle.handle, &fileInfo); err != nil {
+		syslog.L.Error(err.Error())
 		return s.mapWindowsErrorToResponse(err), nil
 	}
 
