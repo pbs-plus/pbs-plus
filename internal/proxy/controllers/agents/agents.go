@@ -73,7 +73,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		authHeaderSplit := strings.Split(authHeader, " ")
 		if len(authHeaderSplit) != 2 || authHeaderSplit[0] != "Bearer" {
 			w.WriteHeader(http.StatusUnauthorized)
-			controllers.WriteErrorResponse(w, fmt.Errorf("unauthorized bearer access: %s", authHeader))
+			controllers.WriteErrorResponse(w, fmt.Errorf("[%s]: unauthorized bearer access: %s", r.RemoteAddr, authHeader))
 			return
 		}
 
@@ -81,13 +81,13 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		token, err := storeInstance.Database.GetToken(tokenStr)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
-			controllers.WriteErrorResponse(w, fmt.Errorf("token not found"))
+			controllers.WriteErrorResponse(w, fmt.Errorf("[%s]: token not found", r.RemoteAddr))
 			return
 		}
 
 		if token.Revoked {
 			w.WriteHeader(http.StatusUnauthorized)
-			controllers.WriteErrorResponse(w, fmt.Errorf("token already revoked"))
+			controllers.WriteErrorResponse(w, fmt.Errorf("[%s]: token already revoked", r.RemoteAddr))
 			return
 		}
 
