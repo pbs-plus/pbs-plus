@@ -71,11 +71,20 @@ func (s *VSSFSServer) Close() {
 }
 
 func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Response {
-	syslog.L.Errorf("%s (%s): %v", method, drive, err)
+	if syslog.L != nil {
+		syslog.L.Errorf("%s (%s): %v", method, drive, err)
+	}
 	return arpc.Response{Status: 500, Message: fmt.Sprintf("%s (%s): %v", method, drive, err)}
 }
 
-func (s *VSSFSServer) handleFsStat(_ arpc.Request) (arpc.Response, error) {
+func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Response {
+	if syslog.L != nil {
+		syslog.L.Errorf("%s (%s): %v", method, drive, err)
+	}
+	return arpc.Response{Status: 400, Message: "invalid request"}
+}
+
+func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
 	var totalBytes uint64
 	err := windows.GetDiskFreeSpaceEx(
 		windows.StringToUTF16Ptr(s.rootDir),
@@ -84,8 +93,7 @@ func (s *VSSFSServer) handleFsStat(_ arpc.Request) (arpc.Response, error) {
 		nil,
 	)
 	if err != nil {
-		syslog.L.Error(err.Error())
-		return arpc.Response{Status: 500, Message: err.Error()}, nil
+		return s.respondError(req.Method, s.drive, err), nil
 	}
 
 	fsStat := &utils.FSStat{
@@ -107,8 +115,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		Perm int    `json:"perm"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		syslog.L.Error(err.Error())
-		return arpc.Response{Status: 400, Message: "invalid request"}, nil
+		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
 
 	// Verify read-only access
@@ -169,8 +176,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		syslog.L.Error(err.Error())
-		return arpc.Response{Status: 400, Message: "invalid request"}, nil
+		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
 
 	fullPath := filepath.Join(s.rootDir, filepath.Clean(params.Path))
@@ -197,8 +203,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		syslog.L.Error(err.Error())
-		return arpc.Response{Status: 400, Message: "invalid request"}, nil
+		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
 
 	fullPath := filepath.Join(s.rootDir, filepath.Clean(params.Path))
@@ -248,8 +253,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		Length   int    `json:"length"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		syslog.L.Error(err.Error())
-		return arpc.Response{Status: 400, Message: "invalid request"}, nil
+		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
 
 	s.mu.RLock()
@@ -293,8 +297,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		Length   int    `json:"length"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		syslog.L.Error(err.Error())
-		return arpc.Response{Status: 400, Message: "invalid request"}, nil
+		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
 
 	s.mu.RLock()
@@ -340,8 +343,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 		HandleID uint64 `json:"handleID"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		syslog.L.Error(err.Error())
-		return arpc.Response{Status: 400, Message: "invalid request"}, nil
+		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
 
 	s.mu.Lock()
@@ -368,8 +370,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 		HandleID uint64 `json:"handleID"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		syslog.L.Error(err.Error())
-		return arpc.Response{Status: 400, Message: "invalid request"}, nil
+		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
 
 	s.mu.RLock()
