@@ -47,6 +47,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				if err != nil {
 					err = errors.New(backupResp.Message)
 				}
+				syslog.L.Errorf("MountHandler: Failed to send backup request to target -> %v", err)
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> %v", err), http.StatusInternalServerError)
 				return
 			}
@@ -60,7 +61,9 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			fuseConn, err := fuse.Mount(mntPath, fuse.ReadOnly(), fuse.AsyncRead(), fuse.FSName(targetName), fuse.AllowOther())
 			if err != nil {
+				syslog.L.Errorf("MountHandler: Failed to create fuse connection for target -> %v", err)
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to create fuse connection for target -> %v", err), http.StatusInternalServerError)
+				return
 			}
 
 			go func() {
