@@ -7,206 +7,376 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path"
-	"sync"
+	"path/filepath"
 	"syscall"
+	"time"
 
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
 	"github.com/go-git/go-billy/v5"
+	"github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
-// CallHook is the callback you can get before every call from FUSE, before it's passed to Billy.
-type CallHook func(ctx context.Context, req fuse.Request) error
+// CallHook is the callback called before every FUSE operation
+type CallHook func(ctx context.Context) error
 
-// New creates a fuse/fs.FS that passes all calls through to the given filesystem.
-// callHook is called before every call from FUSE, and can be nil.
-func New(underlying billy.Basic, callHook CallHook) fs.FS {
+// New creates a FUSE filesystem that passes all calls through to the given billy filesystem.
+func New(underlying billy.Basic, callHook CallHook) fs.InodeEmbedder {
 	if callHook == nil {
-		callHook = func(ctx context.Context, req fuse.Request) error {
+		callHook = func(ctx context.Context) error {
 			return nil
 		}
 	}
-	return &root{
+	return &BillyRoot{
 		underlying: underlying,
 		callHook:   callHook,
 	}
 }
 
-type root struct {
+// Mount mounts the billy filesystem at the specified mountpoint
+func Mount(mountpoint string, fsName string, underlying billy.Basic, callHook CallHook) (*fuse.Server, error) {
+	root := New(underlying, callHook)
+
+	timeout := time.Second
+
+	options := &fs.Options{
+		MountOptions: fuse.MountOptions{
+			Debug:  false,
+			FsName: fsName,
+			Name:   "pbsagent",
+		},
+		// Use sensible cache timeouts
+		EntryTimeout:    &timeout,
+		AttrTimeout:     &timeout,
+		NegativeTimeout: &timeout,
+	}
+
+	server, err := fs.Mount(mountpoint, root, options)
+	if err != nil {
+		return nil, err
+	}
+	return server, nil
+}
+
+// BillyRoot is the root node of the filesystem
+type BillyRoot struct {
+	fs.Inode
 	underlying billy.Basic
 	callHook   CallHook
 }
 
-func (r *root) Root() (fs.Node, error) {
-	return &node{r, ""}, nil
-}
+var _ = (fs.NodeGetattrer)((*BillyRoot)(nil))
+var _ = (fs.NodeLookuper)((*BillyRoot)(nil))
+var _ = (fs.NodeReaddirer)((*BillyRoot)(nil))
+var _ = (fs.NodeOpener)((*BillyRoot)(nil))
 
-type node struct {
-	root *root
-	path string
-}
-
-var _ fs.Node = &node{}
-var _ fs.NodeCreater = &node{}
-var _ fs.NodeMkdirer = &node{}
-var _ fs.NodeOpener = &node{}
-var _ fs.NodeReadlinker = &node{}
-var _ fs.NodeRemover = &node{}
-var _ fs.NodeRenamer = &node{}
-var _ fs.NodeRequestLookuper = &node{}
-var _ fs.NodeSymlinker = &node{}
-
-func (n *node) Attr(ctx context.Context, attr *fuse.Attr) error {
-	fi, err := n.root.underlying.Stat(n.path)
-	if err != nil {
-		return convertError(err)
+// Getattr implements NodeGetattrer
+func (r *BillyRoot) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	if err := r.callHook(ctx); err != nil {
+		return fs.ToErrno(err)
 	}
-	fileInfoToAttr(fi, attr)
-	return nil
-}
 
-func fileInfoToAttr(fi os.FileInfo, out *fuse.Attr) {
-	out.Mode = fi.Mode()
+	fi, err := r.underlying.Stat("")
+	if err != nil {
+		return fs.ToErrno(err)
+	}
+
+	out.Mode = uint32(fi.Mode()) | syscall.S_IFDIR
 	out.Size = uint64(fi.Size())
-	out.Mtime = fi.ModTime()
+	mtime := fi.ModTime()
+	out.SetTimes(nil, &mtime, nil)
+
+	return 0
 }
 
-func (n *node) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
-	if err := n.root.callHook(ctx, req); err != nil {
-		return nil, convertError(err)
+// Lookup implements NodeLookuper
+func (r *BillyRoot) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if err := r.callHook(ctx); err != nil {
+		return nil, fs.ToErrno(err)
 	}
-	return &node{n.root, path.Join(n.path, req.Name)}, nil
-}
 
-func (n *node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
-	return nil, syscall.EROFS
-}
-
-// Unlink removes a file.
-func (n *node) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
-	return syscall.EROFS
-}
-
-// Symlink creates a symbolic link.
-func (n *node) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node, error) {
-	return nil, syscall.EROFS
-}
-
-// Readlink reads the target of a symbolic link.
-func (n *node) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (string, error) {
-	if err := n.root.callHook(ctx, req); err != nil {
-		return "", convertError(err)
-	}
-	if sfs, ok := n.root.underlying.(billy.Symlink); ok {
-		fn, err := sfs.Readlink(n.path)
-		if err != nil {
-			return "", convertError(err)
-		}
-		return fn, nil
-	}
-	return "", syscall.ENOSYS
-}
-
-// Rename renames a file.
-func (n *node) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
-	return syscall.EROFS
-}
-
-func (n *node) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
-	return syscall.EROFS
-}
-
-func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
-	return nil, nil, syscall.EROFS
-}
-
-func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
-	if err := n.root.callHook(ctx, req); err != nil {
-		return nil, convertError(err)
-	}
-	if req.Dir {
-		return &dirHandle{root: n.root, path: n.path}, nil
-	}
-	fh, err := n.root.underlying.OpenFile(n.path, int(req.Flags), 0777)
+	childPath := name
+	fi, err := r.underlying.Stat(childPath)
 	if err != nil {
-		return nil, convertError(err)
+		return nil, fs.ToErrno(err)
 	}
-	return &handle{root: n.root, fh: fh}, nil
-}
 
-type handle struct {
-	root      *root
-	fh        billy.File
-	writeLock sync.Mutex
-}
-
-var _ fs.HandleReader = &handle{}
-var _ fs.HandleReleaser = &handle{}
-var _ fs.HandleWriter = &handle{}
-
-func (h *handle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	if err := h.root.callHook(ctx, req); err != nil {
-		return convertError(err)
+	node := &BillyNode{
+		root: r,
+		path: childPath,
 	}
-	resp.Data = make([]byte, req.Size)
-	n, err := h.fh.ReadAt(resp.Data, req.Offset)
-	if err == io.EOF {
-		err = nil
+
+	mode := uint32(fi.Mode().Perm())
+	if fi.IsDir() {
+		mode |= syscall.S_IFDIR
+	} else if fi.Mode()&os.ModeSymlink != 0 {
+		mode |= syscall.S_IFLNK
+	} else {
+		mode |= syscall.S_IFREG
 	}
-	resp.Data = resp.Data[:n]
-	return convertError(err)
-}
 
-func (h *handle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
-	return syscall.EROFS
-}
-
-func (h *handle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	if err := h.root.callHook(ctx, req); err != nil {
-		return convertError(err)
+	stable := fs.StableAttr{
+		Mode: mode,
 	}
-	return convertError(h.fh.Close())
+
+	child := r.NewInode(ctx, node, stable)
+
+	out.Mode = mode
+	out.Size = uint64(fi.Size())
+	mtime := fi.ModTime()
+	out.SetTimes(nil, &mtime, nil)
+
+	return child, 0
 }
 
-type dirHandle struct {
-	root *root
-	path string
-}
+// Readdir implements NodeReaddirer
+func (r *BillyRoot) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	if err := r.callHook(ctx); err != nil {
+		return nil, fs.ToErrno(err)
+	}
 
-var _ fs.HandleReadDirAller = &dirHandle{}
-
-func (h *dirHandle) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	if dfs, ok := h.root.underlying.(billy.Dir); ok {
-		entries, err := dfs.ReadDir(h.path)
+	if dfs, ok := r.underlying.(billy.Dir); ok {
+		entries, err := dfs.ReadDir("")
 		if err != nil {
-			return nil, convertError(err)
+			return nil, fs.ToErrno(err)
 		}
-		ret := make([]fuse.Dirent, len(entries))
-		for i, e := range entries {
-			t := fuse.DT_File
+
+		result := make([]fuse.DirEntry, 0, len(entries))
+		for _, e := range entries {
+			entryType := uint32(0) // DT_Unknown
 			if e.IsDir() {
-				t = fuse.DT_Dir
-			} else if e.Mode()&os.ModeSymlink > 0 {
-				t = fuse.DT_Link
+				entryType = syscall.DT_DIR
+			} else if e.Mode()&os.ModeSymlink != 0 {
+				entryType = syscall.DT_LNK
+			} else {
+				entryType = syscall.DT_REG
 			}
-			ret[i] = fuse.Dirent{
+
+			result = append(result, fuse.DirEntry{
 				Name: e.Name(),
-				Type: t,
-			}
+				Mode: entryType << 12, // Convert to type bits
+			})
 		}
-		return ret, nil
+
+		return fs.NewListDirStream(result), 0
 	}
+
 	return nil, syscall.ENOSYS
 }
 
-func convertError(err error) error {
+// Open implements NodeOpener
+func (r *BillyRoot) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	if err := r.callHook(ctx); err != nil {
+		return nil, 0, fs.ToErrno(err)
+	}
+
+	return &BillyDirHandle{
+		root: r,
+		path: "",
+	}, 0, 0
+}
+
+// BillyNode represents a file or directory in the filesystem
+type BillyNode struct {
+	fs.Inode
+	root *BillyRoot
+	path string
+}
+
+var _ = (fs.NodeGetattrer)((*BillyNode)(nil))
+var _ = (fs.NodeLookuper)((*BillyNode)(nil))
+var _ = (fs.NodeReaddirer)((*BillyNode)(nil))
+var _ = (fs.NodeOpener)((*BillyNode)(nil))
+var _ = (fs.NodeReadlinker)((*BillyNode)(nil))
+
+// Getattr implements NodeGetattrer
+func (n *BillyNode) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	if err := n.root.callHook(ctx); err != nil {
+		return fs.ToErrno(err)
+	}
+
+	fi, err := n.root.underlying.Stat(n.path)
+	if err != nil {
+		return fs.ToErrno(err)
+	}
+
+	mode := uint32(fi.Mode().Perm())
+	if fi.IsDir() {
+		mode |= syscall.S_IFDIR
+	} else if fi.Mode()&os.ModeSymlink != 0 {
+		mode |= syscall.S_IFLNK
+	} else {
+		mode |= syscall.S_IFREG
+	}
+
+	out.Mode = mode
+	out.Size = uint64(fi.Size())
+	mtime := fi.ModTime()
+	out.SetTimes(nil, &mtime, nil)
+
+	return 0
+}
+
+// Lookup implements NodeLookuper
+func (n *BillyNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if err := n.root.callHook(ctx); err != nil {
+		return nil, fs.ToErrno(err)
+	}
+
+	childPath := filepath.Join(n.path, name)
+	fi, err := n.root.underlying.Stat(childPath)
+	if err != nil {
+		return nil, fs.ToErrno(err)
+	}
+
+	childNode := &BillyNode{
+		root: n.root,
+		path: childPath,
+	}
+
+	mode := uint32(fi.Mode().Perm())
+	if fi.IsDir() {
+		mode |= syscall.S_IFDIR
+	} else if fi.Mode()&os.ModeSymlink != 0 {
+		mode |= syscall.S_IFLNK
+	} else {
+		mode |= syscall.S_IFREG
+	}
+
+	stable := fs.StableAttr{
+		Mode: mode,
+	}
+
+	child := n.NewInode(ctx, childNode, stable)
+
+	out.Mode = mode
+	out.Size = uint64(fi.Size())
+	mtime := fi.ModTime()
+	out.SetTimes(nil, &mtime, nil)
+
+	return child, 0
+}
+
+// Readdir implements NodeReaddirer
+func (n *BillyNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	if err := n.root.callHook(ctx); err != nil {
+		return nil, fs.ToErrno(err)
+	}
+
+	if dfs, ok := n.root.underlying.(billy.Dir); ok {
+		entries, err := dfs.ReadDir(n.path)
+		if err != nil {
+			return nil, fs.ToErrno(err)
+		}
+
+		result := make([]fuse.DirEntry, 0, len(entries))
+		for _, e := range entries {
+			entryType := uint32(0) // DT_Unknown
+			if e.IsDir() {
+				entryType = syscall.DT_DIR
+			} else if e.Mode()&os.ModeSymlink != 0 {
+				entryType = syscall.DT_LNK
+			} else {
+				entryType = syscall.DT_REG
+			}
+
+			result = append(result, fuse.DirEntry{
+				Name: e.Name(),
+				Mode: entryType << 12, // Convert to type bits
+			})
+		}
+
+		return fs.NewListDirStream(result), 0
+	}
+
+	return nil, syscall.ENOSYS
+}
+
+// Open implements NodeOpener
+func (n *BillyNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	if err := n.root.callHook(ctx); err != nil {
+		return nil, 0, fs.ToErrno(err)
+	}
+
+	if n.IsDir() {
+		return &BillyDirHandle{
+			root: n.root,
+			path: n.path,
+		}, 0, 0
+	}
+
+	file, err := n.root.underlying.OpenFile(n.path, int(flags), 0)
+	if err != nil {
+		return nil, 0, fs.ToErrno(err)
+	}
+
+	return &BillyFileHandle{
+		root: n.root,
+		file: file,
+	}, 0, 0
+}
+
+// Readlink implements NodeReadlinker
+func (n *BillyNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	if err := n.root.callHook(ctx); err != nil {
+		return nil, fs.ToErrno(err)
+	}
+
+	if sfs, ok := n.root.underlying.(billy.Symlink); ok {
+		target, err := sfs.Readlink(n.path)
+		if err != nil {
+			return nil, fs.ToErrno(err)
+		}
+		return []byte(target), 0
+	}
+
+	return nil, syscall.ENOSYS
+}
+
+// BillyFileHandle handles file operations
+type BillyFileHandle struct {
+	root *BillyRoot
+	file billy.File
+}
+
+var _ = (fs.FileReader)((*BillyFileHandle)(nil))
+var _ = (fs.FileReleaser)((*BillyFileHandle)(nil))
+
+// Read implements FileReader
+func (fh *BillyFileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
+	if err := fh.root.callHook(ctx); err != nil {
+		return nil, fs.ToErrno(err)
+	}
+
+	n, err := fh.file.ReadAt(dest, offset)
+	if err != nil && err != io.EOF {
+		return nil, fs.ToErrno(err)
+	}
+
+	return fuse.ReadResultData(dest[:n]), 0
+}
+
+// Release implements FileReleaser
+func (fh *BillyFileHandle) Release(ctx context.Context) syscall.Errno {
+	if err := fh.root.callHook(ctx); err != nil {
+		return fs.ToErrno(err)
+	}
+
+	err := fh.file.Close()
+	return fs.ToErrno(err)
+}
+
+// BillyDirHandle handles directory operations
+type BillyDirHandle struct {
+	root *BillyRoot
+	path string
+}
+
+// Helper function to convert errors to syscall.Errno
+func convertError(err error) syscall.Errno {
 	if err == nil {
-		return nil
+		return 0
 	}
-	if _, ok := err.(fuse.ErrorNumber); ok {
-		return err
-	}
+
 	if os.IsExist(err) {
 		return syscall.EEXIST
 	}
@@ -222,5 +392,6 @@ func convertError(err error) error {
 	if errors.Is(err, billy.ErrNotSupported) {
 		return syscall.ENOTSUP
 	}
+
 	return syscall.EIO
 }

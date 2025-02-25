@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
@@ -54,25 +52,16 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			targetName := targetHostname + " - " + agentDrive
 
-			arpcFS := arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), agentDrive)
-			arpcFuse := arpcFS.GetFUSE()
+			arpcFS := arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), targetHostname, agentDrive)
 
 			mntPath := filepath.Join(constants.AgentMountBasePath, strings.ReplaceAll(targetName, " ", "-"))
 
-			fuseConn, err := fuse.Mount(mntPath, fuse.ReadOnly(), fuse.AsyncRead(), fuse.FSName(targetName), fuse.AllowOther())
+			err = arpcFS.Mount(mntPath)
 			if err != nil {
 				syslog.L.Errorf("MountHandler: Failed to create fuse connection for target -> %v", err)
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to create fuse connection for target -> %v", err), http.StatusInternalServerError)
 				return
 			}
-
-			go func() {
-				defer fuseConn.Close()
-				err = fs.Serve(fuseConn, arpcFuse)
-				if err != nil {
-					syslog.L.Errorf("MountHandler: Failed to mount backup fs -> %v", err)
-				}
-			}()
 
 			// Handle successful response
 			w.Header().Set("Content-Type", "application/json")

@@ -3,7 +3,6 @@ module github.com/sonroyaalmerol/pbs-plus
 go 1.24
 
 require (
-	bazil.org/fuse v0.0.0-20200524192727-fb710f7dfd05
 	github.com/alexflint/go-filemutex v1.3.0
 	github.com/billgraziano/dpapi v0.5.0
 	github.com/cyphar/filepath-securejoin v0.4.1
@@ -12,6 +11,7 @@ require (
 	github.com/go-git/go-billy/v5 v5.6.2
 	github.com/gobwas/glob v0.2.3
 	github.com/golang-jwt/jwt v3.2.2+incompatible
+	github.com/hanwen/go-fuse/v2 v2.7.2
 	github.com/kardianos/service v1.2.2
 	github.com/mxk/go-vss v1.2.0
 	github.com/stretchr/testify v1.10.0
