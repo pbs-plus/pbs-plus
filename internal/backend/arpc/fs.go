@@ -96,11 +96,12 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		return nil, fmt.Errorf("Stat RPC failed: %w", err)
 	}
 
+	modTime := time.Unix(fi.ModTimeUnix, 0)
 	return &fileInfo{
 		name:    filepath.Base(filename),
 		size:    fi.Size,
 		mode:    fi.Mode,
-		modTime: fi.ModTime,
+		modTime: modTime,
 		isDir:   fi.IsDir,
 	}, nil
 }
@@ -127,11 +128,12 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 
 	entries := make([]os.FileInfo, len(resp.Entries))
 	for i, e := range resp.Entries {
+		modTime := time.Unix(e.ModTimeUnix, 0)
 		entries[i] = &fileInfo{
 			name:    e.Name,
 			size:    e.Size,
 			mode:    e.Mode,
-			modTime: e.ModTime,
+			modTime: modTime,
 			isDir:   e.IsDir,
 		}
 	}
