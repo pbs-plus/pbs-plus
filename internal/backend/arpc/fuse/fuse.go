@@ -35,7 +35,7 @@ func newRoot(underlying billy.Basic, callHook CallHook) fs.InodeEmbedder {
 func Mount(mountpoint string, fsName string, underlying billy.Basic, callHook CallHook) (*fuse.Server, error) {
 	root := newRoot(underlying, callHook)
 
-	timeout := time.Second
+	timeout := 3 * time.Second
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
