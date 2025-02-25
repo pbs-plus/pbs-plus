@@ -35,7 +35,7 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 		Length:   len(p),
 	}, &resp)
 	if err != nil {
-		syslog.L.Errorf("Read RPC failed: %v", err)
+		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
 		return 0, fmt.Errorf("Read RPC failed: %w", err)
 	}
 
@@ -93,7 +93,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		Length:   len(p),
 	}, &resp)
 	if err != nil {
-		syslog.L.Errorf("ReadAt RPC failed: %v", err)
+		syslog.L.Errorf("ReadAt RPC failed (%s): %v", f.name, err)
 		return 0, fmt.Errorf("ReadAt RPC failed: %w", err)
 	}
 
@@ -131,7 +131,7 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 			HandleID: f.handleID,
 		}, &fi)
 		if err != nil {
-			syslog.L.Errorf("Fstat RPC failed: %v", err)
+			syslog.L.Errorf("Fstat RPC failed (%s): %v", f.name, err)
 			return 0, fmt.Errorf("Fstat RPC failed: %w", err)
 		}
 		f.offset = fi.Size + offset

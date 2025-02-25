@@ -55,14 +55,14 @@ func (s *VSSFSServer) findDataToMap(info *windows.Win32finddata) map[string]inte
 }
 
 // mapWindowsErrorToResponse maps Windows error codes to HTTP-like responses
-func (s *VSSFSServer) mapWindowsErrorToResponse(err error) arpc.Response {
+func (s *VSSFSServer) mapWindowsErrorToResponse(req *arpc.Request, err error) arpc.Response {
 	switch err {
 	case windows.ERROR_FILE_NOT_FOUND, windows.ERROR_PATH_NOT_FOUND:
 		return arpc.Response{Status: 404, Message: "file not found"}
 	case windows.ERROR_ACCESS_DENIED:
 		return arpc.Response{Status: 403, Message: "permission denied"}
 	default:
-		return arpc.Response{Status: 500, Message: err.Error()}
+		return s.respondError(req.Method, s.drive, err)
 	}
 }
 
