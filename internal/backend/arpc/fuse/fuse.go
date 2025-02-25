@@ -14,7 +14,13 @@ import (
 	"github.com/go-git/go-billy/v5"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
+
+type StatFSer interface {
+	StatFS() (types.StatFS, error)
+}
 
 // CallHook is the callback called before every FUSE operation
 type CallHook func(ctx context.Context) error
@@ -175,6 +181,42 @@ func (r *BillyRoot) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint
 	}, 0, 0
 }
 
+func (r *BillyRoot) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
+	if err := r.callHook(ctx); err != nil {
+		return fs.ToErrno(err)
+	}
+
+	// Try to use StatFSer interface if available
+	if statfser, ok := r.underlying.(StatFSer); ok {
+		stats, err := statfser.StatFS()
+		if err == nil {
+			out.Blocks = stats.Blocks
+			out.Bfree = stats.Bfree
+			out.Bavail = stats.Bavail
+			out.Files = stats.Files
+			out.Ffree = stats.Ffree
+			out.Bsize = uint32(stats.Bsize)
+			out.NameLen = uint32(stats.NameLen)
+			out.Frsize = uint32(stats.Bsize)
+			return 0
+		}
+		// Fall through to defaults if error occurs
+		syslog.L.Warnf("Failed to get StatFS info: %v", err)
+	}
+
+	// Fallback to reasonable defaults for a read-only filesystem
+	out.Blocks = 1000000 // Just a reasonable number
+	out.Bfree = 0        // No free blocks (read-only)
+	out.Bavail = 0       // No available blocks (read-only)
+	out.Files = 1000     // Reasonable number of inodes
+	out.Ffree = 0        // No free inodes (read-only)
+	out.Bsize = 4096     // Standard block size
+	out.NameLen = 255    // Standard name length
+	out.Frsize = 4096    // Fragment size
+
+	return 0
+}
+
 // BillyNode represents a file or directory in the filesystem
 type BillyNode struct {
 	fs.Inode
@@ -187,6 +229,8 @@ var _ = (fs.NodeLookuper)((*BillyNode)(nil))
 var _ = (fs.NodeReaddirer)((*BillyNode)(nil))
 var _ = (fs.NodeOpener)((*BillyNode)(nil))
 var _ = (fs.NodeReadlinker)((*BillyNode)(nil))
+var _ = (fs.NodeStatfser)((*BillyRoot)(nil))
+var _ = (fs.NodeStatfser)((*BillyNode)(nil))
 
 // Getattr implements NodeGetattrer
 func (n *BillyNode) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
@@ -330,6 +374,10 @@ func (n *BillyNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 	}
 
 	return nil, syscall.ENOSYS
+}
+
+func (n *BillyNode) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
+	return n.root.Statfs(ctx, out)
 }
 
 // BillyFileHandle handles file operations

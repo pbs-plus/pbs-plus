@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-billy/v5"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/fuse"
+	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
@@ -119,6 +120,34 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		mode:    fi.Mode,
 		modTime: modTime,
 		isDir:   fi.IsDir,
+	}, nil
+}
+
+func (fs *ARPCFS) StatFS() (types.StatFS, error) {
+	if fs.session == nil {
+		syslog.L.Error("RPC failed: aRPC session is nil")
+		return types.StatFS{}, fmt.Errorf("RPC failed: aRPC session is nil")
+	}
+
+	var fsStat utils.FSStat
+
+	ctx, cancel := TimeoutCtx()
+	defer cancel()
+
+	err := fs.session.CallJSON(ctx, fs.drive+"/FSstat", struct{}{}, &fsStat)
+	if err != nil {
+		syslog.L.Errorf("StatFS RPC failed: %v", err)
+		return types.StatFS{}, fmt.Errorf("StatFS RPC failed: %w", err)
+	}
+
+	return types.StatFS{
+		Bsize:   uint64(4096), // Standard block size
+		Blocks:  uint64(fsStat.TotalSize / 4096),
+		Bfree:   uint64(fsStat.FreeSize / 4096),
+		Bavail:  uint64(fsStat.AvailableSize / 4096),
+		Files:   uint64(fsStat.TotalFiles),
+		Ffree:   uint64(fsStat.FreeFiles),
+		NameLen: 255, // Windows typically supports long filenames
 	}, nil
 }
 
