@@ -305,7 +305,9 @@ func (p *agentService) connectARPC() error {
 	router.Handle("ping", func(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{Status: 200, Data: map[string]string{"version": Version, "hostname": clientId}}, nil
 	})
-	router.Handle("backup", controllers.BackupStartHandler)
+	router.Handle("backup", func(req arpc.Request) (arpc.Response, error) {
+		return controllers.BackupStartHandler(req, router)
+	})
 	router.Handle("cleanup", controllers.BackupCloseHandler)
 
 	go func() {

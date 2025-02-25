@@ -9,8 +9,8 @@ import (
 	"sync"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/nfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
@@ -21,19 +21,19 @@ var (
 )
 
 type backupSession struct {
-	drive      string
-	ctx        context.Context
-	cancel     context.CancelFunc
-	store      *agent.BackupStore
-	snapshot   *snapshots.WinVSSSnapshot
-	nfsSession *nfs.NFSSession
-	once       sync.Once
+	drive    string
+	ctx      context.Context
+	cancel   context.CancelFunc
+	store    *agent.BackupStore
+	snapshot *snapshots.WinVSSSnapshot
+	fs       *vssfs.VSSFSServer
+	once     sync.Once
 }
 
 func (s *backupSession) Close() {
 	s.once.Do(func() {
-		if s.nfsSession != nil {
-			s.nfsSession.Close()
+		if s.fs != nil {
+			s.fs.Close()
 		}
 		if s.snapshot != nil {
 			s.snapshot.Close()
@@ -48,7 +48,7 @@ func (s *backupSession) Close() {
 	})
 }
 
-func BackupStartHandler(req arpc.Request) (arpc.Response, error) {
+func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, error) {
 	var drive string
 	if err := json.Unmarshal(req.Payload, &drive); err != nil {
 		return arpc.Response{Status: 400, Message: "invalid payload"}, err
@@ -97,31 +97,9 @@ func BackupStartHandler(req arpc.Request) (arpc.Response, error) {
 	}
 	session.snapshot = snapshot
 
-	nfsSession := nfs.NewNFSSession(session.ctx, snapshot, drive)
-	if nfsSession == nil {
-		session.Close()
-		err = fmt.Errorf("NFS session failed")
-		return arpc.Response{Status: 500, Message: err.Error()}, err
-	}
-	session.nfsSession = nfsSession
-
-	if err := store.StartNFS(drive); err != nil {
-		session.Close()
-		return arpc.Response{Status: 500, Message: err.Error()}, err
-	}
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				syslog.L.Errorf("Panic in NFS session for drive %s: %v", drive, r)
-			}
-			session.Close()
-		}()
-		err = nfsSession.Serve()
-		if err != nil {
-			syslog.L.Errorf("Error encountered while trying to serve NFS: %v", err)
-		}
-	}()
+	fs := vssfs.NewVSSFSServer(drive, snapshot.SnapshotPath)
+	fs.RegisterHandlers(router)
+	session.fs = fs
 
 	return arpc.Response{Status: 200, Message: "success"}, nil
 }
