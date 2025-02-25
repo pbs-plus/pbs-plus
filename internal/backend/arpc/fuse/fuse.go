@@ -39,7 +39,7 @@ func Mount(mountpoint string, fsName string, underlying billy.Basic, callHook Ca
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
-			Debug:      false,
+			Debug:      true,
 			FsName:     fsName,
 			Name:       "pbsagent",
 			AllowOther: true,
