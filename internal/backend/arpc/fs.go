@@ -54,7 +54,6 @@ func (f *ARPCFS) Mount(mountpoint string) error {
 	}
 
 	f.mount = server
-	f.mount.Serve()
 
 	f.mount.WaitMount()
 	return nil
