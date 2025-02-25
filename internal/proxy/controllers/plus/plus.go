@@ -81,6 +81,9 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
+			arpcFS := arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), targetHostname, agentDrive)
+			arpcFS.Unmount()
+
 			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", agentDrive)
 			if err != nil || cleanupResp.Status != 200 {
 				if err != nil {
