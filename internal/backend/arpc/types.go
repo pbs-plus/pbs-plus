@@ -22,7 +22,7 @@ type ARPCFile struct {
 	fs       *ARPCFS
 	name     string
 	offset   int64
-	handleID string
+	handleID uint64
 	isClosed bool
 	drive    string
 }
@@ -50,7 +50,7 @@ type OpenRequest struct {
 
 // ReadRequest represents Read request payload
 type ReadRequest struct {
-	HandleID string `json:"handleID"`
+	HandleID uint64 `json:"handleID"`
 	Offset   int64  `json:"offset"`
 	Length   int    `json:"length"`
 }
