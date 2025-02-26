@@ -19,7 +19,7 @@ import (
 
 var _ billy.Filesystem = (*ARPCFS)(nil)
 
-func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, drive string) *ARPCFS {
+func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string) *ARPCFS {
 	statC, err := lru.New[string, statCacheEntry](4096)
 	if err != nil {
 		panic(err)
@@ -38,7 +38,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, driv
 	fs := &ARPCFS{
 		ctx:                  ctx,
 		session:              session,
-		Drive:                drive,
+		JobId:                jobId,
 		Hostname:             hostname,
 		statCache:            statC,
 		readDirCache:         readDirC,
@@ -172,7 +172,7 @@ func (fs *ARPCFS) statWithoutCache(filename string) (os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.Drive+"/Stat",
+	err := fs.session.CallJSON(ctx, fs.JobId+"/Stat",
 		struct {
 			Path string `json:"path"`
 		}{Path: filename}, &fi)
@@ -202,7 +202,7 @@ func (fs *ARPCFS) readDirWithoutCache(path string) ([]os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.Drive+"/ReadDir", struct {
+	err := fs.session.CallJSON(ctx, fs.JobId+"/ReadDir", struct {
 		Path string `json:"path"`
 	}{Path: path}, &resp)
 	if err != nil {
@@ -262,7 +262,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int,
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.Drive+"/OpenFile", OpenRequest{
+	err := fs.session.CallJSON(ctx, fs.JobId+"/OpenFile", OpenRequest{
 		Path: filename,
 		Flag: flag,
 		Perm: int(perm),
@@ -275,7 +275,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int,
 		fs:       fs,
 		name:     filename,
 		handleID: resp.HandleID,
-		drive:    fs.Drive,
+		jobId:    fs.JobId,
 	}, nil
 }
 
@@ -301,7 +301,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.Drive+"/Stat",
+	err := fs.session.CallJSON(ctx, fs.JobId+"/Stat",
 		struct {
 			Path string `json:"path"`
 		}{Path: filename}, &fi)
@@ -360,7 +360,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.Drive+"/FSstat", struct{}{}, &fsStat)
+	err := fs.session.CallJSON(ctx, fs.JobId+"/FSstat", struct{}{}, &fsStat)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
 		return types.StatFS{}, err
@@ -404,7 +404,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.Drive+"/ReadDir", struct {
+	err := fs.session.CallJSON(ctx, fs.JobId+"/ReadDir", struct {
 		Path string `json:"path"`
 	}{Path: path}, &resp)
 	if err != nil {
@@ -485,7 +485,7 @@ func (fs *ARPCFS) Join(elem ...string) string {
 }
 
 func (fs *ARPCFS) Chroot(path string) (billy.Filesystem, error) {
-	return NewARPCFS(fs.ctx, fs.session, fs.Hostname, fs.Drive), nil
+	return NewARPCFS(fs.ctx, fs.session, fs.Hostname, fs.JobId), nil
 }
 
 func (fs *ARPCFS) Root() string {

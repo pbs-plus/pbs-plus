@@ -26,7 +26,7 @@ type FileHandle struct {
 }
 
 type VSSFSServer struct {
-	drive      string
+	jobId      string
 	rootDir    string
 	handles    map[uint64]*FileHandle
 	nextHandle uint64
@@ -42,36 +42,36 @@ func (d *DirectBufferWrite) Error() string {
 	return "direct buffer write requested"
 }
 
-func NewVSSFSServer(drive string, root string) *VSSFSServer {
+func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	return &VSSFSServer{
 		rootDir: root,
-		drive:   drive,
+		jobId:   jobId,
 		handles: make(map[uint64]*FileHandle),
 	}
 }
 
 func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
-	r.Handle(s.drive+"/OpenFile", s.handleOpenFile)
-	r.Handle(s.drive+"/Stat", s.handleStat)
-	r.Handle(s.drive+"/ReadDir", s.handleReadDir)
-	r.Handle(s.drive+"/Read", s.handleRead)
-	r.Handle(s.drive+"/ReadAt", s.handleReadAt)
-	r.Handle(s.drive+"/Close", s.handleClose)
-	r.Handle(s.drive+"/Fstat", s.handleFstat)
-	r.Handle(s.drive+"/FSstat", s.handleFsStat)
+	r.Handle(s.jobId+"/OpenFile", s.handleOpenFile)
+	r.Handle(s.jobId+"/Stat", s.handleStat)
+	r.Handle(s.jobId+"/ReadDir", s.handleReadDir)
+	r.Handle(s.jobId+"/Read", s.handleRead)
+	r.Handle(s.jobId+"/ReadAt", s.handleReadAt)
+	r.Handle(s.jobId+"/Close", s.handleClose)
+	r.Handle(s.jobId+"/Fstat", s.handleFstat)
+	r.Handle(s.jobId+"/FSstat", s.handleFsStat)
 
 	s.arpcRouter = r
 }
 
 func (s *VSSFSServer) Close() {
-	s.arpcRouter.CloseHandle(s.drive + "/OpenFile")
-	s.arpcRouter.CloseHandle(s.drive + "/Stat")
-	s.arpcRouter.CloseHandle(s.drive + "/ReadDir")
-	s.arpcRouter.CloseHandle(s.drive + "/Read")
-	s.arpcRouter.CloseHandle(s.drive + "/ReadAt")
-	s.arpcRouter.CloseHandle(s.drive + "/Close")
-	s.arpcRouter.CloseHandle(s.drive + "/Fstat")
-	s.arpcRouter.CloseHandle(s.drive + "/FSstat")
+	s.arpcRouter.CloseHandle(s.jobId + "/OpenFile")
+	s.arpcRouter.CloseHandle(s.jobId + "/Stat")
+	s.arpcRouter.CloseHandle(s.jobId + "/ReadDir")
+	s.arpcRouter.CloseHandle(s.jobId + "/Read")
+	s.arpcRouter.CloseHandle(s.jobId + "/ReadAt")
+	s.arpcRouter.CloseHandle(s.jobId + "/Close")
+	s.arpcRouter.CloseHandle(s.jobId + "/Fstat")
+	s.arpcRouter.CloseHandle(s.jobId + "/FSstat")
 
 	for k := range s.handles {
 		delete(s.handles, k)
@@ -105,7 +105,7 @@ func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
 		nil,
 	)
 	if err != nil {
-		return s.respondError(req.Method, s.drive, err), nil
+		return s.respondError(req.Method, s.jobId, err), nil
 	}
 
 	fsStat := &utils.FSStat{
@@ -127,7 +127,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		Perm int    `json:"perm"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		return s.invalidRequest(req.Method, s.drive, err), nil
+		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	if params.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
@@ -136,12 +136,12 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 
 	path, err := s.abs(params.Path)
 	if err != nil {
-		return s.respondError(req.Method, s.drive, err), nil
+		return s.respondError(req.Method, s.jobId, err), nil
 	}
 
 	pathp, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return s.respondError(req.Method, s.drive, err), nil
+		return s.respondError(req.Method, s.jobId, err), nil
 	}
 
 	handle, err := windows.CreateFile(
@@ -181,12 +181,12 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		return s.invalidRequest(req.Method, s.drive, err), nil
+		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	fullPath, err := s.abs(params.Path)
 	if err != nil {
-		return s.respondError(req.Method, s.drive, err), nil
+		return s.respondError(req.Method, s.jobId, err), nil
 	}
 
 	if params.Path == "." || params.Path == "" {
@@ -195,13 +195,13 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 
 	pathPtr, err := windows.UTF16PtrFromString(fullPath)
 	if err != nil {
-		return s.respondError(req.Method, s.drive, err), nil
+		return s.respondError(req.Method, s.jobId, err), nil
 	}
 
 	var findData windows.Win32finddata
 	handle, err := windows.FindFirstFile(pathPtr, &findData)
 	if err != nil {
-		return s.respondError(req.Method, s.drive, mapWinError(err, params.Path)), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, params.Path)), nil
 	}
 	defer windows.FindClose(handle)
 
@@ -212,7 +212,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	}
 
 	if !strings.EqualFold(foundName, expectedName) {
-		return s.respondError(req.Method, s.drive, os.ErrNotExist), nil
+		return s.respondError(req.Method, s.jobId, os.ErrNotExist), nil
 	}
 
 	// Use foundName as the file name for FileInfo
@@ -237,12 +237,12 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		return s.invalidRequest(req.Method, s.drive, err), nil
+		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 	windowsDir := filepath.FromSlash(params.Path)
 	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
-		return s.respondError(req.Method, s.drive, err), nil
+		return s.respondError(req.Method, s.jobId, err), nil
 	}
 
 	if params.Path == "." || params.Path == "" {
@@ -253,7 +253,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	var findData windows.Win32finddata
 	handle, err := FindFirstFileEx(searchPath, &findData)
 	if err != nil {
-		return s.respondError(req.Method, s.drive, mapWinError(err, params.Path)), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, params.Path)), nil
 	}
 	defer windows.FindClose(handle)
 
@@ -271,7 +271,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 			if err == windows.ERROR_NO_MORE_FILES {
 				break
 			}
-			return s.respondError(req.Method, s.drive, mapWinError(err, params.Path)), nil
+			return s.respondError(req.Method, s.jobId, mapWinError(err, params.Path)), nil
 		}
 	}
 
@@ -287,7 +287,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		Length   int    `json:"length"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		return s.invalidRequest(req.Method, s.drive, err), nil
+		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.RLock()
@@ -316,7 +316,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 
 	if err != nil {
 		if err != windows.ERROR_HANDLE_EOF {
-			return s.respondError(req.Method, s.drive, err), nil
+			return s.respondError(req.Method, s.jobId, err), nil
 		}
 		isEOF = true
 	}
@@ -353,7 +353,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		Length   int    `json:"length"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		return s.invalidRequest(req.Method, s.drive, err), nil
+		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.RLock()
@@ -380,7 +380,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 
 	if err != nil {
 		if err != windows.ERROR_HANDLE_EOF {
-			return s.respondError(req.Method, s.drive, err), nil
+			return s.respondError(req.Method, s.jobId, err), nil
 		}
 		isEOF = true
 	}
@@ -399,7 +399,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 		HandleID uint64 `json:"handleID"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		return s.invalidRequest(req.Method, s.drive, err), nil
+		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.Lock()
@@ -426,7 +426,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 		HandleID uint64 `json:"handleID"`
 	}
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
-		return s.invalidRequest(req.Method, s.drive, err), nil
+		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.RLock()

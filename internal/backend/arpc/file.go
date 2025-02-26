@@ -29,7 +29,7 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 	defer cancel()
 
 	// Use the new direct buffer method
-	bytesRead, isEOF, err := f.fs.session.CallJSONWithBuffer(ctx, f.drive+"/Read", ReadRequest{
+	bytesRead, isEOF, err := f.fs.session.CallJSONWithBuffer(ctx, f.jobId+"/Read", ReadRequest{
 		HandleID: f.handleID,
 		Length:   len(p),
 	}, p)
@@ -65,7 +65,7 @@ func (f *ARPCFile) Close() error {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	_, err := f.fs.session.CallContext(ctx, f.drive+"/Close", struct {
+	_, err := f.fs.session.CallContext(ctx, f.jobId+"/Close", struct {
 		HandleID uint64 `json:"handleID"`
 	}{
 		HandleID: f.handleID,
@@ -92,7 +92,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := f.fs.session.CallJSON(ctx, f.drive+"/ReadAt", ReadRequest{
+	err := f.fs.session.CallJSON(ctx, f.jobId+"/ReadAt", ReadRequest{
 		HandleID: f.handleID,
 		Offset:   off,
 		Length:   len(p),
@@ -130,7 +130,7 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 		ctx, cancel := TimeoutCtx()
 		defer cancel()
 
-		err := f.fs.session.CallJSON(ctx, f.drive+"/Fstat", struct {
+		err := f.fs.session.CallJSON(ctx, f.jobId+"/Fstat", struct {
 			HandleID uint64 `json:"handleID"`
 		}{
 			HandleID: f.handleID,

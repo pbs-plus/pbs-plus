@@ -28,7 +28,7 @@ type statFSCacheEntry struct {
 type ARPCFS struct {
 	ctx      context.Context
 	session  *arpc.Session
-	Drive    string
+	JobId    string
 	Hostname string
 	Mount    *gofuse.Server
 
@@ -63,7 +63,7 @@ type ARPCFile struct {
 	offset   int64
 	handleID uint64
 	isClosed bool
-	drive    string
+	jobId    string
 }
 
 // FileInfoResponse represents server's file info response

@@ -12,9 +12,8 @@ import (
 )
 
 type BackupSessionData struct {
-	Drive        string    `json:"drive"`
-	StartTime    time.Time `json:"start_time"`
-	NFSStartTime time.Time `json:"nfs_start_time"`
+	JobId     string    `json:"job_id"`
+	StartTime time.Time `json:"start_time"`
 }
 
 type BackupStore struct {
@@ -68,26 +67,18 @@ func (bs *BackupStore) updateSessions(fn func(map[string]*BackupSessionData)) er
 	return os.WriteFile(bs.filePath, newData, 0644)
 }
 
-func (bs *BackupStore) StartBackup(drive string) error {
+func (bs *BackupStore) StartBackup(jobId string) error {
 	return bs.updateSessions(func(sessions map[string]*BackupSessionData) {
-		sessions[drive] = &BackupSessionData{
-			Drive:     drive,
+		sessions[jobId] = &BackupSessionData{
+			JobId:     jobId,
 			StartTime: time.Now(),
 		}
 	})
 }
 
-func (bs *BackupStore) StartNFS(drive string) error {
+func (bs *BackupStore) EndBackup(jobId string) error {
 	return bs.updateSessions(func(sessions map[string]*BackupSessionData) {
-		if session, ok := sessions[drive]; ok {
-			session.NFSStartTime = time.Now()
-		}
-	})
-}
-
-func (bs *BackupStore) EndBackup(drive string) error {
-	return bs.updateSessions(func(sessions map[string]*BackupSessionData) {
-		delete(sessions, drive)
+		delete(sessions, jobId)
 	})
 }
 
@@ -111,7 +102,7 @@ func (bs *BackupStore) HasActiveBackups() (bool, error) {
 	return len(sessions) > 0, nil
 }
 
-func (bs *BackupStore) HasActiveBackupForDrive(drive string) (bool, error) {
+func (bs *BackupStore) HasActiveBackupForJob(job string) (bool, error) {
 	if err := bs.fileLock.Lock(); err != nil {
 		return false, err
 	}
@@ -129,14 +120,14 @@ func (bs *BackupStore) HasActiveBackupForDrive(drive string) (bool, error) {
 		return false, err
 	}
 
-	_, exists := sessions[drive]
+	_, exists := sessions[job]
 	return exists, nil
 }
 
 func (bs *BackupStore) ClearAll() error {
 	return bs.updateSessions(func(sessions map[string]*BackupSessionData) {
-		for drive := range sessions {
-			delete(sessions, drive)
+		for job := range sessions {
+			delete(sessions, job)
 		}
 	})
 }

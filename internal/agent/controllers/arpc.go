@@ -21,7 +21,7 @@ var (
 )
 
 type backupSession struct {
-	drive    string
+	jobId    string
 	ctx      context.Context
 	cancel   context.CancelFunc
 	store    *agent.BackupStore
@@ -39,22 +39,27 @@ func (s *backupSession) Close() {
 			s.snapshot.Close()
 		}
 		if s.store != nil {
-			_ = s.store.EndBackup(s.drive)
+			_ = s.store.EndBackup(s.jobId)
 		}
 		activeSessionsMu.Lock()
-		delete(activeSessions, s.drive)
+		delete(activeSessions, s.jobId)
 		activeSessionsMu.Unlock()
 		s.cancel()
 	})
 }
 
+type BackupReq struct {
+	JobId string `json:"job_id"`
+	Drive string `json:"drive"`
+}
+
 func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, error) {
-	var drive string
-	if err := json.Unmarshal(req.Payload, &drive); err != nil {
+	var reqData BackupReq
+	if err := json.Unmarshal(req.Payload, &reqData); err != nil {
 		return arpc.Response{Status: 400, Message: "invalid payload"}, err
 	}
 
-	syslog.L.Infof("Received backup request for drive %s.", drive)
+	syslog.L.Infof("Received backup request for job: %s.", reqData.JobId)
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
@@ -64,20 +69,20 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, e
 	if activeSessions == nil {
 		activeSessions = make(map[string]*backupSession)
 	}
-	if existingSession, ok := activeSessions[drive]; ok {
+	if existingSession, ok := activeSessions[reqData.JobId]; ok {
 		existingSession.Close()
 	}
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	session := &backupSession{
-		drive:  drive,
+		jobId:  reqData.JobId,
 		ctx:    sessionCtx,
 		cancel: cancel,
 		store:  store,
 	}
-	activeSessions[drive] = session
+	activeSessions[reqData.JobId] = session
 	activeSessionsMu.Unlock()
 
-	if hasActive, err := store.HasActiveBackupForDrive(drive); hasActive || err != nil {
+	if hasActive, err := store.HasActiveBackupForJob(reqData.JobId); hasActive || err != nil {
 		if err != nil {
 			return arpc.Response{Status: 500, Message: err.Error()}, err
 		}
@@ -85,19 +90,19 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, e
 		return arpc.Response{Status: 500, Message: err.Error()}, err
 	}
 
-	if err := store.StartBackup(drive); err != nil {
+	if err := store.StartBackup(reqData.JobId); err != nil {
 		session.Close()
 		return arpc.Response{Status: 500, Message: err.Error()}, err
 	}
 
-	snapshot, err := snapshots.Snapshot(drive)
+	snapshot, err := snapshots.Snapshot(reqData.JobId, reqData.Drive)
 	if err != nil {
 		session.Close()
 		return arpc.Response{Status: 500, Message: err.Error()}, err
 	}
 	session.snapshot = snapshot
 
-	fs := vssfs.NewVSSFSServer(drive, snapshot.SnapshotPath)
+	fs := vssfs.NewVSSFSServer(reqData.JobId, snapshot.SnapshotPath)
 	fs.RegisterHandlers(router)
 	session.fs = fs
 
@@ -105,15 +110,15 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, e
 }
 
 func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
-	var drive string
-	if err := json.Unmarshal(req.Payload, &drive); err != nil {
+	var reqData BackupReq
+	if err := json.Unmarshal(req.Payload, &reqData); err != nil {
 		return arpc.Response{Status: 400, Message: "invalid payload"}, err
 	}
 
-	syslog.L.Infof("Received closure request for drive %s.", drive)
+	syslog.L.Infof("Received closure request for job %s.", reqData.JobId)
 
 	activeSessionsMu.Lock()
-	session, ok := activeSessions[drive]
+	session, ok := activeSessions[reqData.JobId]
 	activeSessionsMu.Unlock()
 
 	if !ok {
