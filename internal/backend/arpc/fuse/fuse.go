@@ -87,12 +87,7 @@ func (n *BillyNode) Access(ctx context.Context, mask uint32) syscall.Errno {
 }
 
 func (n *BillyNode) Opendir(ctx context.Context) syscall.Errno {
-	info, err := n.fs.Stat(n.path)
-	if err != nil {
-		return fs.ToErrno(err)
-	}
-
-	if !info.IsDir() {
+	if !n.IsDir() {
 		return syscall.ENOTDIR
 	}
 
