@@ -73,7 +73,7 @@ function Download-FileWithRetry {
                 Start-Sleep -Seconds $RetryDelay
             }
             else {
-                Write-Host "Failed to download $Url after $MaxRetries attempts: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "Failed to download $Url after $MaxRetries attempts" -ForegroundColor Red
                 return $false
             }
         }
@@ -124,7 +124,7 @@ function Uninstall-ExistingService {
             return $false # No service to uninstall
         }
     } catch {
-        Write-Host "Error checking service $ServiceName: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Error checking service ${ServiceName}" -ForegroundColor Red
         return $false
     }
 }
@@ -202,7 +202,7 @@ try {
     Write-Host "Files copied successfully" -ForegroundColor Green
 }
 catch {
-    Write-Host "Failed to copy files: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Failed to copy files" -ForegroundColor Red
     Read-Host -Prompt "Press Enter to exit"
     exit 1
 }
@@ -284,7 +284,7 @@ try {
     Write-Host "Registry settings created successfully" -ForegroundColor Green
 }
 catch {
-    Write-Host "Failed to create registry settings: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Failed to create registry settings" -ForegroundColor Red
     Read-Host -Prompt "Press Enter to exit"
     exit 1
 }
@@ -305,7 +305,7 @@ if ($agentService -and -not $agentUninstalled) {
         Start-Service -Name "PBSPlusAgent"
         Write-Host "PBS Plus Agent service started" -ForegroundColor Green
     } catch {
-        Write-Host "Failed to start PBS Plus Agent service: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Failed to start PBS Plus Agent service" -ForegroundColor Red
         Write-Host "Reinstalling the service..." -ForegroundColor Yellow
         Start-Process -FilePath $agentPath -ArgumentList "install" -Wait -NoNewWindow
         Start-Sleep -Seconds 2
@@ -331,7 +331,7 @@ if ($updaterService -and -not $updaterUninstalled) {
         Start-Service -Name "PBSPlusUpdater"
         Write-Host "PBS Plus Updater service started" -ForegroundColor Green
     } catch {
-        Write-Host "Failed to start PBS Plus Updater service: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Failed to start PBS Plus Updater service" -ForegroundColor Red
         Write-Host "Reinstalling the service..." -ForegroundColor Yellow
         Start-Process -FilePath $updaterPath -ArgumentList "install" -Wait -NoNewWindow
         Start-Sleep -Seconds 2
