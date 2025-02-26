@@ -357,17 +357,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
       width: 60,
     },
     {
-      text: gettext("Write Speed"),
-      dataIndex: "current_write_speed",
-      renderer: function(value) {
-	      if (value === "") {
-	        return '-';
-	      }
-	      return value;
-      },
-      width: 60,
-    },
-    {
       text: gettext("Read Total"),
       dataIndex: "current_read_total",
       renderer: function(value) {
@@ -379,8 +368,19 @@ Ext.define("PBS.config.DiskBackupJobView", {
       width: 60,
     },
     {
-      text: gettext("Write Total"),
-      dataIndex: "current_write_total",
+      text: gettext("Files Processed"),
+      dataIndex: "current_file_count",
+      renderer: function(value) {
+	      if (value === "") {
+	        return '-';
+	      }
+	      return value;
+      },
+      width: 60,
+    },
+    {
+      text: gettext("Folders Processed"),
+      dataIndex: "current_folder_count",
       renderer: function(value) {
 	      if (value === "") {
 	        return '-';

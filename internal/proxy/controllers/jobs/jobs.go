@@ -15,6 +15,9 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 )
 
 func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -28,6 +31,18 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
+		}
+
+		p := message.NewPrinter(language.English)
+		for _, job := range allJobs {
+			arpcfs := storeInstance.GetARPCFS(job.Target)
+			if arpcfs == nil {
+				continue
+			}
+
+			stats := arpcfs.GetAccessStats()
+			job.CurrentFileCount = p.Sprintf("%d", stats.FilesAccessed)
+			job.CurrentFolderCount = p.Sprintf("%d", stats.FoldersAccessed)
 		}
 
 		digest, err := utils.CalculateDigest(allJobs)
