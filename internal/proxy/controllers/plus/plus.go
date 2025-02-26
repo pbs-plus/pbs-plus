@@ -30,6 +30,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		targetHostname := utils.DecodePath(r.PathValue("target"))
 		agentDrive := utils.DecodePath(r.PathValue("drive"))
+		targetName := targetHostname + " - " + agentDrive
 
 		if r.Method == http.MethodPost {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -51,9 +52,10 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			targetName := targetHostname + " - " + agentDrive
-
-			arpcFS := arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), targetHostname, agentDrive)
+			arpcFS := storeInstance.GetARPCFS(targetName)
+			if arpcFS == nil {
+				arpcFS = arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), targetHostname, agentDrive)
+			}
 
 			mntPath := filepath.Join(constants.AgentMountBasePath, strings.ReplaceAll(targetName, " ", "-"))
 
@@ -63,6 +65,8 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to create fuse connection for target -> %v", err), http.StatusInternalServerError)
 				return
 			}
+
+			storeInstance.AddARPCFS(targetName, arpcFS)
 
 			// Handle successful response
 			w.Header().Set("Content-Type", "application/json")
@@ -82,8 +86,13 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			arpcFS := arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), targetHostname, agentDrive)
-			arpcFS.Unmount()
+			arpcFS := storeInstance.GetARPCFS(targetName)
+			if arpcFS == nil {
+				arpcFS = arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), targetHostname, agentDrive)
+				arpcFS.Unmount()
+			} else {
+				storeInstance.RemoveARPCFS(targetName)
+			}
 
 			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", agentDrive)
 			if err != nil || cleanupResp.Status != 200 {

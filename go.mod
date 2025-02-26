@@ -5,6 +5,7 @@ go 1.24
 require (
 	github.com/alexflint/go-filemutex v1.3.0
 	github.com/billgraziano/dpapi v0.5.0
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/cyphar/filepath-securejoin v0.4.1
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/getlantern/systray v1.2.2
@@ -22,6 +23,7 @@ require (
 	golang.org/x/crypto v0.33.0
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	golang.org/x/sys v0.30.0
+	golang.org/x/text v0.22.0
 	golang.org/x/time v0.10.0
 )
 

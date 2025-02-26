@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/go-git/go-billy/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -35,20 +36,22 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, driv
 	prefetchCtx, prefetchCancel := context.WithCancel(ctx)
 
 	fs := &ARPCFS{
-		ctx:                 ctx,
-		session:             session,
-		Drive:               drive,
-		Hostname:            hostname,
-		statCache:           statC,
-		readDirCache:        readDirC,
-		statFSCache:         statFSC,
-		statCacheMu:         NewShardedRWMutex(16),
-		readDirCacheMu:      NewShardedRWMutex(16),
-		statFSCacheMu:       NewShardedRWMutex(4),
-		prefetchQueue:       make(chan string, 100),
-		prefetchWorkerCount: 4, // Adjust based on performance needs
-		prefetchCtx:         prefetchCtx,
-		prefetchCancel:      prefetchCancel,
+		ctx:                  ctx,
+		session:              session,
+		Drive:                drive,
+		Hostname:             hostname,
+		statCache:            statC,
+		readDirCache:         readDirC,
+		statFSCache:          statFSC,
+		statCacheMu:          NewShardedRWMutex(16),
+		readDirCacheMu:       NewShardedRWMutex(16),
+		statFSCacheMu:        NewShardedRWMutex(4),
+		prefetchQueue:        make(chan string, 100),
+		prefetchWorkerCount:  4, // Adjust based on performance needs
+		prefetchCtx:          prefetchCtx,
+		prefetchCancel:       prefetchCancel,
+		accessedFileHashes:   make(map[uint64]struct{}),
+		accessedFolderHashes: make(map[uint64]struct{}),
 	}
 
 	for i := 0; i < fs.prefetchWorkerCount; i++ {
@@ -56,6 +59,38 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, driv
 	}
 
 	return fs
+}
+
+func hashPath(path string) uint64 {
+	return xxhash.Sum64String(path)
+}
+
+// trackAccess records that a path has been accessed using its xxHash
+func (fs *ARPCFS) trackAccess(path string, isDir bool) {
+	pathHash := hashPath(path)
+
+	fs.accessStatsMu.Lock()
+	defer fs.accessStatsMu.Unlock()
+
+	if isDir {
+		fs.accessedFolderHashes[pathHash] = struct{}{}
+	} else {
+		fs.accessedFileHashes[pathHash] = struct{}{}
+	}
+}
+
+// GetAccessStats returns statistics about filesystem accesses
+func (fs *ARPCFS) GetAccessStats() AccessStats {
+	fs.accessStatsMu.RLock()
+	defer fs.accessStatsMu.RUnlock()
+
+	stats := AccessStats{
+		FilesAccessed:   len(fs.accessedFileHashes),
+		FoldersAccessed: len(fs.accessedFolderHashes),
+	}
+	stats.TotalAccessed = stats.FilesAccessed + stats.FoldersAccessed
+
+	return stats
 }
 
 func (fs *ARPCFS) prefetchWorker() {
@@ -250,6 +285,8 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	fs.statCacheMu.RLock(filename)
 	if entry, ok := fs.statCache.Get(filename); ok {
 		fs.statCacheMu.RUnlock(filename)
+
+		fs.trackAccess(filename, entry.info.IsDir())
 		return entry.info, nil
 	}
 	fs.statCacheMu.RUnlock(filename)
@@ -296,6 +333,8 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 			// Queue full, skip
 		}
 	}()
+
+	fs.trackAccess(filename, info.IsDir())
 
 	return info, nil
 }
@@ -351,6 +390,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	fs.readDirCacheMu.RLock(path)
 	if entry, ok := fs.readDirCache.Get(path); ok {
 		fs.readDirCacheMu.RUnlock(path)
+		fs.trackAccess(path, true)
 		return entry.entries, nil
 	}
 	fs.readDirCacheMu.RUnlock(path)
@@ -388,7 +428,10 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 			info: entries[i],
 		})
 		fs.statCacheMu.Unlock(childPath)
+		fs.trackAccess(childPath, e.IsDir)
 	}
+
+	fs.trackAccess(path, true)
 
 	// Cache the directory listing itself.
 	fs.readDirCacheMu.Lock(path)
