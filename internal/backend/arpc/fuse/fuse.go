@@ -30,10 +30,16 @@ func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, 
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
-			Debug:      true,
-			FsName:     fsName,
-			Name:       "pbsagent",
-			AllowOther: true,
+			Debug:              true,
+			FsName:             fsName,
+			Name:               "pbsagent",
+			AllowOther:         true,
+			DisableXAttrs:      true,
+			DisableReadDirPlus: true,
+			Options: []string{
+				"ro",
+				"allow_other",
+			},
 		},
 		// Use sensible cache timeouts
 		EntryTimeout: &timeout,
