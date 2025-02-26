@@ -102,15 +102,11 @@ func (fs *ARPCFS) OpenFile(filename string, flag int,
 
 // Stat first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
-	now := time.Now()
-
 	// Attempt to fetch from the LRU cache.
 	fs.statCacheMu.Lock()
 	if entry, ok := fs.statCache.Get(filename); ok {
-		if now.Before(entry.expiry) {
-			fs.statCacheMu.Unlock()
-			return entry.info, nil
-		}
+		fs.statCacheMu.Unlock()
+		return entry.info, nil
 	}
 	fs.statCacheMu.Unlock()
 
@@ -160,16 +156,13 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 
 // StatFS tries the LRU cache before making the RPC call.
 func (fs *ARPCFS) StatFS() (types.StatFS, error) {
-	now := time.Now()
 	const statFSKey = "statFS"
 
 	fs.statFSCacheMu.Lock()
 	if entry, ok := fs.statFSCache.Get(statFSKey); ok {
-		if now.Before(entry.expiry) {
-			stat := entry.stat
-			fs.statFSCacheMu.Unlock()
-			return stat, nil
-		}
+		stat := entry.stat
+		fs.statFSCacheMu.Unlock()
+		return stat, nil
 	}
 	fs.statFSCacheMu.Unlock()
 
@@ -209,14 +202,10 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 
 // ReadDir first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
-	now := time.Now()
-
 	fs.readDirCacheMu.Lock()
 	if entry, ok := fs.readDirCache.Get(path); ok {
-		if now.Before(entry.expiry) {
-			fs.readDirCacheMu.Unlock()
-			return entry.entries, nil
-		}
+		fs.readDirCacheMu.Unlock()
+		return entry.entries, nil
 	}
 	fs.readDirCacheMu.Unlock()
 
