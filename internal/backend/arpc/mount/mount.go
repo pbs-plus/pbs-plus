@@ -12,7 +12,7 @@ import (
 )
 
 func Mount(f *arpcfs.ARPCFS, mountpoint string) error {
-	fsName := "agent://" + utils.Slugify(f.Hostname) + "/" + f.Drive
+	fsName := "agent://" + utils.Slugify(f.Hostname) + "/" + f.JobId
 
 	umount := exec.Command("umount", "-lf", mountpoint)
 	umount.Env = os.Environ()

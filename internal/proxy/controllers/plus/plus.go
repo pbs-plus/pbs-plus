@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"text/template"
 	"time"
 
@@ -23,6 +22,11 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
+type BackupReq struct {
+	JobId string `json:"job_id"`
+	Drive string `json:"drive"`
+}
+
 func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
@@ -32,7 +36,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		targetHostname := utils.DecodePath(r.PathValue("target"))
 		agentDrive := utils.DecodePath(r.PathValue("drive"))
-		targetName := targetHostname + " - " + agentDrive
+		jobId := utils.DecodePath(r.PathValue("jobid"))
 
 		if r.Method == http.MethodPost {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -44,7 +48,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			backupResp, err := arpcSess.CallContext(ctx, "backup", agentDrive)
+			backupResp, err := arpcSess.CallContext(ctx, "backup", BackupReq{Drive: agentDrive, JobId: jobId})
 			if err != nil || backupResp.Status != 200 {
 				if err != nil {
 					err = errors.New(backupResp.Message)
@@ -54,12 +58,12 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			arpcFS := storeInstance.GetARPCFS(targetName)
+			arpcFS := storeInstance.GetARPCFS(jobId)
 			if arpcFS == nil {
 				arpcFS = arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), targetHostname, agentDrive)
 			}
 
-			mntPath := filepath.Join(constants.AgentMountBasePath, strings.ReplaceAll(targetName, " ", "-"))
+			mntPath := filepath.Join(constants.AgentMountBasePath, jobId)
 
 			err = mount.Mount(arpcFS, mntPath)
 			if err != nil {
@@ -68,7 +72,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			storeInstance.AddARPCFS(targetName, arpcFS)
+			storeInstance.AddARPCFS(jobId, arpcFS)
 
 			// Handle successful response
 			w.Header().Set("Content-Type", "application/json")
@@ -88,15 +92,15 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			arpcFS := storeInstance.GetARPCFS(targetName)
+			arpcFS := storeInstance.GetARPCFS(jobId)
 			if arpcFS == nil {
 				arpcFS = arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), targetHostname, agentDrive)
 				arpcFS.Unmount()
 			} else {
-				storeInstance.RemoveARPCFS(targetName)
+				storeInstance.RemoveARPCFS(jobId)
 			}
 
-			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", agentDrive)
+			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", BackupReq{Drive: agentDrive, JobId: jobId})
 			if err != nil || cleanupResp.Status != 200 {
 				if err != nil {
 					err = errors.New(cleanupResp.Message)

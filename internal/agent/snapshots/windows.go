@@ -41,7 +41,7 @@ func getVSSFolder() (string, error) {
 }
 
 // Snapshot creates a new VSS snapshot for the specified drive
-func Snapshot(driveLetter string) (*WinVSSSnapshot, error) {
+func Snapshot(jobId string, driveLetter string) (*WinVSSSnapshot, error) {
 	volName := filepath.VolumeName(fmt.Sprintf("%s:", driveLetter))
 	vssFolder, err := getVSSFolder()
 	if err != nil {

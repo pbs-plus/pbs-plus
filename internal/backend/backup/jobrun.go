@@ -113,7 +113,7 @@ func runBackupAttempt(
 	srcPath := target.Path
 	isAgent := strings.HasPrefix(target.Path, "agent://")
 	if isAgent {
-		agentMount, err = mount.Mount(storeInstance, target)
+		agentMount, err = mount.Mount(storeInstance, job, target)
 		if err != nil {
 			errCleanUp()
 			return nil, fmt.Errorf("runBackupAttempt: mount initialization error: %w", err)

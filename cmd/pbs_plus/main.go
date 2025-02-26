@@ -225,7 +225,7 @@ func main() {
 
 	// WebSocket-related routes
 	mux.HandleFunc("/plus/arpc", mw.AgentOnly(storeInstance, arpc.ARPCHandler(storeInstance)))
-	mux.HandleFunc("/plus/mount/{target}/{drive}", mw.ServerOnly(storeInstance, plus.MountHandler(storeInstance)))
+	mux.HandleFunc("/plus/mount/{jobid}/{target}/{drive}", mw.ServerOnly(storeInstance, plus.MountHandler(storeInstance)))
 
 	// Agent auth routes
 	mux.HandleFunc("/plus/agent/bootstrap", mw.CORS(storeInstance, agents.AgentBootstrapHandler(storeInstance)))

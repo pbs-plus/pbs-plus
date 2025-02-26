@@ -20,12 +20,13 @@ import (
 )
 
 type AgentMount struct {
+	JobId    string
 	Hostname string
 	Drive    string
 	Path     string
 }
 
-func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error) {
+func Mount(storeInstance *store.Store, job *types.Job, target *types.Target) (*AgentMount, error) {
 	// Parse target information
 	splittedTargetName := strings.Split(target.Name, " - ")
 	targetHostname := splittedTargetName[0]
@@ -34,6 +35,7 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 	agentDrive := agentPathParts[1]
 
 	agentMount := &AgentMount{
+		JobId:    job.ID,
 		Hostname: targetHostname,
 		Drive:    agentDrive,
 	}
@@ -41,6 +43,7 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 	// Encode hostname and drive for API call
 	targetHostnameEnc := utils.EncodePath(targetHostname)
 	agentDriveEnc := utils.EncodePath(agentDrive)
+	jobIdEnc := utils.EncodePath(job.ID)
 
 	// Request mount from agent
 	backupSession := &proxmox.ProxmoxSession{
@@ -52,7 +55,7 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 	}
 
 	// Setup mount path
-	agentMount.Path = filepath.Join(constants.AgentMountBasePath, strings.ReplaceAll(target.Name, " ", "-"))
+	agentMount.Path = filepath.Join(constants.AgentMountBasePath, job.ID)
 	// Create mount directory if it doesn't exist
 	err := os.MkdirAll(agentMount.Path, 0700)
 	if err != nil {
@@ -75,7 +78,7 @@ func Mount(storeInstance *store.Store, target *types.Target) (*AgentMount, error
 	for i := 0; i < maxRetries; i++ {
 		err = backupSession.ProxmoxHTTPRequest(
 			http.MethodPost,
-			fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc),
+			fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s/%s", jobIdEnc, targetHostnameEnc, agentDriveEnc),
 			nil,
 			nil,
 		)
@@ -138,11 +141,12 @@ func (a *AgentMount) Unmount() {
 func (a *AgentMount) CloseMount() {
 	targetHostnameEnc := utils.EncodePath(a.Hostname)
 	agentDriveEnc := utils.EncodePath(a.Drive)
+	jobIdEnc := utils.EncodePath(a.JobId)
 
 	syslog.L.Infof("CloseMount: Sending request for %s/%s", a.Hostname, a.Drive)
 	err := proxmox.Session.ProxmoxHTTPRequest(
 		http.MethodDelete,
-		fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s", targetHostnameEnc, agentDriveEnc),
+		fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s/%s", jobIdEnc, targetHostnameEnc, agentDriveEnc),
 		nil,
 		nil,
 	)

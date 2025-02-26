@@ -46,7 +46,7 @@ func (s *VSSFSServer) mapWindowsErrorToResponse(req *arpc.Request, err error) ar
 	case windows.ERROR_ACCESS_DENIED:
 		return arpc.Response{Status: 403, Message: "permission denied"}
 	default:
-		return s.respondError(req.Method, s.drive, err)
+		return s.respondError(req.Method, s.jobId, err)
 	}
 }
 
