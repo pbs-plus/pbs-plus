@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -84,11 +83,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int,
 		Perm: int(perm),
 	}, &resp)
 	if err != nil {
-		syslog.L.Errorf("OpenFile RPC failed (%s): %v", filename, err)
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not exist") {
-			return nil, os.ErrNotExist
-		}
-		return nil, os.ErrInvalid
+		return nil, err
 	}
 
 	return &ARPCFile{
@@ -124,11 +119,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 			Path string `json:"path"`
 		}{Path: filename}, &fi)
 	if err != nil {
-		syslog.L.Errorf("Stat RPC failed (%s): %v", filename, err)
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not exist") {
-			return nil, os.ErrNotExist
-		}
-		return nil, os.ErrInvalid
+		return nil, err
 	}
 
 	modTime := time.Unix(fi.ModTimeUnix, 0)
@@ -174,7 +165,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	err := fs.session.CallJSON(ctx, fs.Drive+"/FSstat", struct{}{}, &fsStat)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
-		return types.StatFS{}, os.ErrInvalid
+		return types.StatFS{}, err
 	}
 
 	stat := types.StatFS{
@@ -218,11 +209,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 		Path string `json:"path"`
 	}{Path: path}, &resp)
 	if err != nil {
-		syslog.L.Errorf("ReadDir RPC failed: %v", err)
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not exist") {
-			return nil, os.ErrNotExist
-		}
-		return nil, os.ErrInvalid
+		return nil, err
 	}
 
 	entries := make([]os.FileInfo, len(resp.Entries))

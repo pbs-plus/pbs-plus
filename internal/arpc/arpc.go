@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -282,7 +283,7 @@ func (s *Session) CallJSON(ctx context.Context, method string, payload interface
 		return err
 	}
 	if resp.Status != http.StatusOK && resp.Status != 200 {
-		return fmt.Errorf("server error: %s", resp.Message)
+		return errors.New(resp.Message)
 	}
 	// Since resp.Data is an interface{},
 	// we re-marshal it to JSON and then unmarshal into v.

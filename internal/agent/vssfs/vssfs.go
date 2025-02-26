@@ -4,7 +4,6 @@ package vssfs
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,9 +73,11 @@ func (s *VSSFSServer) Close() {
 
 func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Response {
 	if syslog.L != nil {
-		syslog.L.Errorf("%s (%s): %v", method, drive, err)
+		if err != os.ErrNotExist {
+			syslog.L.Errorf("%s (%s): %v", method, drive, err)
+		}
 	}
-	return arpc.Response{Status: 500, Message: fmt.Sprintf("%s (%s): %v", method, drive, err)}
+	return arpc.Response{Status: 500, Message: err.Error()}
 }
 
 func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Response {
