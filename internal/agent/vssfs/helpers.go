@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/zeebo/xxh3"
 	"golang.org/x/sys/windows"
 )
 
@@ -51,7 +50,7 @@ func (s *VSSFSServer) mapWindowsErrorToResponse(req *arpc.Request, err error) ar
 	}
 }
 
-func createFileInfoFromFindData(name string, relativePath string, fd *windows.Win32finddata) *VSSFileInfo {
+func createFileInfoFromFindData(name string, fd *windows.Win32finddata) *VSSFileInfo {
 	var mode fs.FileMode
 	var isDir bool
 
@@ -73,15 +72,12 @@ func createFileInfoFromFindData(name string, relativePath string, fd *windows.Wi
 	size := int64(fd.FileSizeHigh)<<32 + int64(fd.FileSizeLow)
 	modTime := time.Unix(0, fd.LastWriteTime.Nanoseconds())
 
-	stableID := generateFullPathID(relativePath)
-
 	return &VSSFileInfo{
-		Name:     name,
-		Size:     size,
-		Mode:     mode,
-		ModTime:  modTime.Unix(),
-		StableID: stableID,
-		IsDir:    isDir,
+		Name:    name,
+		Size:    size,
+		Mode:    mode,
+		ModTime: modTime.Unix(),
+		IsDir:   isDir,
 	}
 }
 
@@ -107,18 +103,11 @@ func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformati
 	size := int64(fd.FileSizeHigh)<<32 + int64(fd.FileSizeLow)
 	modTime := time.Unix(0, fd.LastWriteTime.Nanoseconds())
 
-	stableID := generateFullPathID(path)
-
 	return &VSSFileInfo{
-		Name:     filepath.Base(path),
-		Size:     size,
-		Mode:     mode,
-		ModTime:  modTime.Unix(),
-		StableID: stableID,
-		IsDir:    isDir,
+		Name:    filepath.Base(path),
+		Size:    size,
+		Mode:    mode,
+		ModTime: modTime.Unix(),
+		IsDir:   isDir,
 	}
-}
-
-func generateFullPathID(path string) uint64 {
-	return xxh3.HashString(path)
 }
