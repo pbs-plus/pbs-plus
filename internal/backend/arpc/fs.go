@@ -85,7 +85,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int,
 	}, &resp)
 	if err != nil {
 		syslog.L.Errorf("OpenFile RPC failed (%s): %v", filename, err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not exist") {
 			return nil, os.ErrNotExist
 		}
 		return nil, os.ErrInvalid
@@ -125,7 +125,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		}{Path: filename}, &fi)
 	if err != nil {
 		syslog.L.Errorf("Stat RPC failed (%s): %v", filename, err)
-		if strings.Contains(err.Error(), "file not found") {
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not exist") {
 			return nil, os.ErrNotExist
 		}
 		return nil, os.ErrInvalid
@@ -219,7 +219,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	}{Path: path}, &resp)
 	if err != nil {
 		syslog.L.Errorf("ReadDir RPC failed: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not exist") {
 			return nil, os.ErrNotExist
 		}
 		return nil, os.ErrInvalid
