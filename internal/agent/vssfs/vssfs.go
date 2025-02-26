@@ -422,8 +422,8 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *VSSFSServer) abs(filename string) (string, error) {
-	if filename == s.rootDir {
-		filename = string(filepath.Separator)
+	if filename == "" || filename == "." {
+		return s.rootDir, nil
 	}
 
 	path, err := securejoin.SecureJoin(s.rootDir, filename)
