@@ -12,9 +12,9 @@ import (
 type ARPCFS struct {
 	ctx      context.Context
 	session  *arpc.Session
-	drive    string
-	hostname string
-	mount    *gofuse.Server
+	Drive    string
+	Hostname string
+	Mount    *gofuse.Server
 }
 
 // ARPCFile implements billy.File for remote files
