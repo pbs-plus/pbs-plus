@@ -128,7 +128,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		if strings.Contains(err.Error(), "file not found") {
 			return nil, os.ErrNotExist
 		}
-		return nil, err
+		return nil, os.ErrInvalid
 	}
 
 	modTime := time.Unix(fi.ModTimeUnix, 0)
