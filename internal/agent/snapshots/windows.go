@@ -48,7 +48,7 @@ func Snapshot(jobId string, driveLetter string) (*WinVSSSnapshot, error) {
 		return nil, fmt.Errorf("error getting VSS folder: %w", err)
 	}
 
-	snapshotPath := filepath.Join(vssFolder, driveLetter)
+	snapshotPath := filepath.Join(vssFolder, jobId)
 	timeStarted := time.Now()
 
 	cleanupExistingSnapshot(snapshotPath)
