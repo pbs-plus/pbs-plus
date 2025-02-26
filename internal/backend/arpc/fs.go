@@ -51,7 +51,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	}
 
 	var resp struct {
-		HandleID string `json:"handleID"`
+		HandleID uint64 `json:"handleID"`
 	}
 
 	if fs.session == nil {

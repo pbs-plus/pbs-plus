@@ -65,7 +65,7 @@ func (f *ARPCFile) Close() error {
 	defer cancel()
 
 	_, err := f.fs.session.CallContext(ctx, f.drive+"/Close", struct {
-		HandleID string `json:"handleID"`
+		HandleID uint64 `json:"handleID"`
 	}{
 		HandleID: f.handleID,
 	})
@@ -130,7 +130,7 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 		defer cancel()
 
 		err := f.fs.session.CallJSON(ctx, f.drive+"/Fstat", struct {
-			HandleID string `json:"handleID"`
+			HandleID uint64 `json:"handleID"`
 		}{
 			HandleID: f.handleID,
 		}, &fi)
