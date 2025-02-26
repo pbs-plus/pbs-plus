@@ -3,7 +3,6 @@ package arpc
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -12,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	json "github.com/goccy/go-json"
+	"github.com/valyala/fastjson"
 	"github.com/xtaci/smux"
 )
 
@@ -63,43 +64,121 @@ func (r *Router) CloseHandle(method string) {
 func (r *Router) ServeStream(stream *smux.Stream) {
 	defer stream.Close()
 
-	decoder := json.NewDecoder(stream)
-	encoder := json.NewEncoder(stream)
-
+	var parser fastjson.Parser
 	var req Request
-	if err := decoder.Decode(&req); err != nil {
-		encoder.Encode(Response{
-			Status:  400,
-			Message: "invalid request: " + err.Error(),
-		})
+
+	// Read the entire JSON data from the stream
+	buffer := make([]byte, 4096)
+	var dataBytes []byte
+	for {
+		n, err := stream.Read(buffer)
+		if err != nil {
+			writeErrorResponse(stream, 400, "failed to read request: "+err.Error())
+			return
+		}
+		dataBytes = append(dataBytes, buffer[:n]...)
+		if n < len(buffer) {
+			break
+		}
+	}
+
+	// Parse the request using fastjson
+	v, err := parser.Parse(string(dataBytes))
+	if err != nil {
+		writeErrorResponse(stream, 400, "invalid request JSON: "+err.Error())
 		return
+	}
+
+	req.Method = string(v.GetStringBytes("method"))
+	if req.Method == "" {
+		writeErrorResponse(stream, 400, "missing method field")
+		return
+	}
+
+	// Get payload as raw JSON
+	if payload := v.Get("payload"); payload != nil {
+		req.Payload = json.RawMessage(payload.MarshalTo(nil))
+	}
+
+	// Parse headers if present
+	if headersVal := v.Get("headers"); headersVal != nil && headersVal.Type() == fastjson.TypeObject {
+		req.Headers = make(http.Header)
+		// Iterate over the object keys/values
+		o, err := headersVal.Object()
+		if err == nil {
+			o.Visit(func(key []byte, v *fastjson.Value) {
+				keyStr := string(key)
+				if v.Type() == fastjson.TypeArray {
+					a, err := v.Array()
+					if err != nil {
+						return
+					}
+					for i := 0; i < len(a); i++ {
+						headerVal := string(a[i].GetStringBytes())
+						req.Headers.Add(keyStr, headerVal)
+					}
+				} else if v.Type() == fastjson.TypeString {
+					headerVal := string(v.GetStringBytes())
+					req.Headers.Add(keyStr, headerVal)
+				}
+			})
+		}
 	}
 
 	r.handlersMu.RLock()
 	handler, ok := r.handlers[req.Method]
 	r.handlersMu.RUnlock()
 	if !ok {
-		encoder.Encode(Response{
-			Status:  404,
-			Message: "method not found: " + req.Method,
-		})
+		writeErrorResponse(stream, 404, "method not found: "+req.Method)
 		return
 	}
 
 	resp, err := handler(req)
 	if err != nil {
-		encoder.Encode(Response{
-			Status:  500,
-			Message: err.Error(),
-		})
+		writeErrorResponse(stream, 500, err.Error())
 		return
 	}
-	encoder.Encode(resp)
+
+	// Marshal the response using fastjson
+	arena := fastjson.Arena{}
+	respObj := arena.NewObject()
+	respObj.Set("status", arena.NewNumberInt(resp.Status))
+
+	if resp.Message != "" {
+		respObj.Set("message", arena.NewString(resp.Message))
+	}
+
+	if resp.Data != nil {
+		// Convert resp.Data to JSON
+		dataBytes, err := json.Marshal(resp.Data)
+		if err != nil {
+			writeErrorResponse(stream, 500, "failed to marshal response data: "+err.Error())
+			return
+		}
+
+		var p fastjson.Parser
+		dataVal, err := p.ParseBytes(dataBytes)
+		if err != nil {
+			writeErrorResponse(stream, 500, "failed to parse response data: "+err.Error())
+			return
+		}
+
+		respObj.Set("data", dataVal)
+	}
+
+	respBytes := respObj.MarshalTo(nil)
+	stream.Write(respBytes)
 }
 
-//
-// Reconnection Support
-//
+// Helper function to write error responses
+func writeErrorResponse(stream *smux.Stream, status int, message string) {
+	arena := fastjson.Arena{}
+	respObj := arena.NewObject()
+	respObj.Set("status", arena.NewNumberInt(status))
+	respObj.Set("message", arena.NewString(message))
+	respBytes := respObj.MarshalTo(nil)
+	stream.Write(respBytes)
+}
 
 // ReconnectConfig holds parameters for automatic reconnection.
 type ReconnectConfig struct {
@@ -122,10 +201,6 @@ type ReconnectConfig struct {
 	// ReconnectCtx is the context used during reconnection; if cancelled, reconnection aborts.
 	ReconnectCtx context.Context
 }
-
-//
-// Session and Auto-Reconnect Implementation
-//
 
 // Session wraps an underlying smux.Session.
 // It now also holds an optional reconnect configuration and a mutex for protecting
@@ -186,10 +261,6 @@ func (s *Session) attemptReconnect() error {
 	return nil
 }
 
-//
-// Request/Response Calls with Auto-Reconnect and Timeout Support
-//
-
 // Call is a helper method for initiating a request/response conversation
 // on a new stream. It marshals the provided payload, sends the request, and
 // waits for the JSON response.
@@ -239,29 +310,73 @@ func (s *Session) CallContext(ctx context.Context, method string, payload interf
 	go func() {
 		defer stream.Close()
 
+		// Use fastjson to create the request
+		arena := fastjson.Arena{}
+		reqObj := arena.NewObject()
+		reqObj.Set("method", arena.NewString(method))
+
+		// Marshal the payload
 		payloadBytes, err := json.Marshal(payload)
 		if err != nil {
 			resCh <- result{nil, err}
 			return
 		}
 
-		req := Request{
-			Method:  method,
-			Payload: json.RawMessage(payloadBytes),
+		// Parse the marshaled payload back to create a fastjson value
+		var p fastjson.Parser
+		payloadVal, err := p.ParseBytes(payloadBytes)
+		if err != nil {
+			resCh <- result{nil, err}
+			return
 		}
+		reqObj.Set("payload", payloadVal)
 
-		encoder := json.NewEncoder(stream)
-		if err := encoder.Encode(req); err != nil {
+		// Write the request to the stream
+		if _, err := stream.Write(reqObj.MarshalTo(nil)); err != nil {
 			resCh <- result{nil, err}
 			return
 		}
 
-		decoder := json.NewDecoder(stream)
+		// Read the response
+		buffer := make([]byte, 4096)
+		var respBytes []byte
+		for {
+			n, err := stream.Read(buffer)
+			if err != nil {
+				resCh <- result{nil, err}
+				return
+			}
+			respBytes = append(respBytes, buffer[:n]...)
+			if n < len(buffer) {
+				break
+			}
+		}
+
+		// Parse the response using fastjson
+		var parser fastjson.Parser
+		v, err := parser.Parse(string(respBytes))
+		if err != nil {
+			resCh <- result{nil, err}
+			return
+		}
+
 		var resp Response
-		if err := decoder.Decode(&resp); err != nil {
-			resCh <- result{nil, err}
-			return
+		resp.Status = v.GetInt("status")
+		if msg := v.Get("message"); msg != nil {
+			resp.Message = string(msg.GetStringBytes())
 		}
+
+		if data := v.Get("data"); data != nil {
+			// Convert fastjson data to JSON bytes then to interface{}
+			dataBytes := data.MarshalTo(nil)
+			var dataInterface interface{}
+			if err := json.Unmarshal(dataBytes, &dataInterface); err != nil {
+				resCh <- result{nil, err}
+				return
+			}
+			resp.Data = dataInterface
+		}
+
 		resCh <- result{&resp, nil}
 	}()
 
@@ -282,19 +397,15 @@ func (s *Session) CallJSON(ctx context.Context, method string, payload interface
 		return err
 	}
 
-	var dataBytes []byte
-	if resp.Data != nil {
-		// Since resp.Data is an interface{},
-		// we re-marshal it to JSON and then unmarshal into v.
-		var err error
-		dataBytes, err = json.Marshal(resp.Data)
-		if err != nil {
-			return err
-		}
-	}
-
+	// Check for error status codes
 	if resp.Status != http.StatusOK && resp.Status != 200 {
 		if resp.Data != nil {
+			// For error cases, we need to handle SerializableError
+			dataBytes, err := json.Marshal(resp.Data)
+			if err != nil {
+				return errors.New(resp.Message)
+			}
+
 			var deserializedErr SerializableError
 			if err := json.Unmarshal(dataBytes, &deserializedErr); err != nil {
 				return errors.New(resp.Message)
@@ -304,7 +415,20 @@ func (s *Session) CallJSON(ctx context.Context, method string, payload interface
 		}
 		return errors.New(resp.Message)
 	}
-	return json.Unmarshal(dataBytes, v)
+
+	// Handle the success case and unmarshal data into v
+	if resp.Data != nil {
+		// Marshal the resp.Data to bytes using fastjson
+		dataBytes, err := json.Marshal(resp.Data)
+		if err != nil {
+			return err
+		}
+
+		// Unmarshal into the target value
+		return json.Unmarshal(dataBytes, v)
+	}
+
+	return nil
 }
 
 // CallWithHeaders is similar to CallContext but allows passing custom http.Header with
@@ -343,30 +467,87 @@ func (s *Session) CallWithHeaders(ctx context.Context, method string, payload in
 	go func() {
 		defer stream.Close()
 
+		arena := fastjson.Arena{}
+		reqObj := arena.NewObject()
+		reqObj.Set("method", arena.NewString(method))
+
+		// Marshal the payload
 		payloadBytes, err := json.Marshal(payload)
 		if err != nil {
 			resCh <- result{nil, err}
 			return
 		}
 
-		req := Request{
-			Method:  method,
-			Payload: json.RawMessage(payloadBytes),
-			Headers: headers,
+		// Parse the marshaled payload
+		var p fastjson.Parser
+		payloadVal, err := p.ParseBytes(payloadBytes)
+		if err != nil {
+			resCh <- result{nil, err}
+			return
+		}
+		reqObj.Set("payload", payloadVal)
+
+		// Add headers if any
+		if len(headers) > 0 {
+			headersObj := arena.NewObject()
+			for key, values := range headers {
+				if len(values) > 1 {
+					valArray := arena.NewArray()
+					for i, val := range values {
+						valArray.SetArrayItem(i, arena.NewString(val))
+					}
+					headersObj.Set(key, valArray)
+				} else if len(values) == 1 {
+					headersObj.Set(key, arena.NewString(values[0]))
+				}
+			}
+			reqObj.Set("headers", headersObj)
 		}
 
-		encoder := json.NewEncoder(stream)
-		if err := encoder.Encode(req); err != nil {
+		// Write the request to the stream
+		if _, err := stream.Write(reqObj.MarshalTo(nil)); err != nil {
 			resCh <- result{nil, err}
 			return
 		}
 
-		decoder := json.NewDecoder(stream)
+		// Read and parse the response
+		buffer := make([]byte, 4096)
+		var respBytes []byte
+		for {
+			n, err := stream.Read(buffer)
+			if err != nil {
+				resCh <- result{nil, err}
+				return
+			}
+			respBytes = append(respBytes, buffer[:n]...)
+			if n < len(buffer) {
+				break
+			}
+		}
+
+		var parser fastjson.Parser
+		v, err := parser.Parse(string(respBytes))
+		if err != nil {
+			resCh <- result{nil, err}
+			return
+		}
+
 		var resp Response
-		if err := decoder.Decode(&resp); err != nil {
-			resCh <- result{nil, err}
-			return
+		resp.Status = v.GetInt("status")
+		if msg := v.Get("message"); msg != nil {
+			resp.Message = string(msg.GetStringBytes())
 		}
+
+		if data := v.Get("data"); data != nil {
+			dataBytes := data.MarshalTo(nil)
+			var dataInterface interface{}
+			if err := json.Unmarshal(dataBytes, &dataInterface); err != nil {
+				resCh <- result{nil, err}
+				return
+			}
+			resp.Data = dataInterface
+		}
+
 		resCh <- result{&resp, nil}
 	}()
 
@@ -378,10 +559,6 @@ func (s *Session) CallWithHeaders(ctx context.Context, method string, payload in
 		return res.resp, res.err
 	}
 }
-
-//
-// Serve (Accepting Streams) with Auto-Reconnect Support
-//
 
 // Serve continuously accepts incoming streams on the session.
 // Each incoming stream is dispatched to the provided router.
@@ -413,20 +590,12 @@ func (s *Session) Serve(router *Router) error {
 	}
 }
 
-//
-// Close
-//
-
 // Close shuts down the underlying smux session.
 func (s *Session) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sess.Close()
 }
-
-//
-// Reconnection Helper: DialWithBackoff
-//
 
 // DialWithBackoff repeatedly attempts to establish a connection by calling dialFunc
 // and then upgrade it using upgradeFn. It uses exponential backoff between attempts,
@@ -460,10 +629,6 @@ func DialWithBackoff(
 		}
 	}
 }
-
-//
-// HTTP Upgrade Helpers
-//
 
 // HijackUpgradeHTTP is a helper for server-side HTTP hijacking.
 // It attempts to hijack the HTTP connection from the ResponseWriter,
