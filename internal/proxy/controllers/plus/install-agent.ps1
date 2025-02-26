@@ -81,6 +81,54 @@ function Download-FileWithRetry {
     return $success
 }
 
+# Function to check and uninstall existing services
+function Uninstall-ExistingService {
+    param(
+        [string]$ServiceName,
+        [string]$TargetPath
+    )
+
+    try {
+        $service = Get-WmiObject -Class Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
+        
+        if ($service) {
+            $currentPath = $service.PathName -replace '^"|"$', '' # Remove surrounding quotes if present
+            
+            # Check if executable path matches target installation path
+            if ($currentPath -ne $TargetPath -and $currentPath -notlike "*$TargetPath*") {
+                Write-Host "$ServiceName is currently installed at: $currentPath" -ForegroundColor Yellow
+                Write-Host "This differs from the target path: $TargetPath" -ForegroundColor Yellow
+                Write-Host "Uninstalling existing service to reinstall at the correct location..." -ForegroundColor Cyan
+                
+                # Stop service first
+                Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+                
+                # Uninstall using SC command
+                $result = & sc.exe delete $ServiceName
+                
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "$ServiceName service successfully uninstalled" -ForegroundColor Green
+                    return $true
+                } else {
+                    Write-Host "Failed to uninstall $ServiceName service" -ForegroundColor Red
+                    Write-Host "Result: $result" -ForegroundColor Red
+                    return $false
+                }
+            } else {
+                Write-Host "$ServiceName is already installed at the correct path" -ForegroundColor Green
+                return $false # No need to reinstall
+            }
+        } else {
+            Write-Host "$ServiceName service not found, will install new" -ForegroundColor Cyan
+            return $false # No service to uninstall
+        }
+    } catch {
+        Write-Host "Error checking service $ServiceName: $_" -ForegroundColor Red
+        return $false
+    }
+}
+
 # Download files
 $agentTempPath = Join-Path -Path $tempDir -ChildPath "pbs-plus-agent.exe"
 $updaterTempPath = Join-Path -Path $tempDir -ChildPath "pbs-plus-updater.exe"
@@ -134,6 +182,12 @@ Get-Process | Where-Object { $_.Path -like "$installDir*" } | ForEach-Object {
     Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
 }
 
+# Method 5: Find and kill any PBS Plus processes regardless of install location
+Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -match "pbs-plus" } | ForEach-Object {
+    Write-Host "Killing process from any location: $($_.Name) (PID: $($_.ProcessId))" -ForegroundColor Cyan
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+}
+
 # Give processes time to fully terminate
 Start-Sleep -Seconds 2
 
@@ -180,6 +234,31 @@ if (Test-Path -Path $nfsJsonPath) {
     Remove-Item -Path $nfsJsonPath -Force
 }
 
+# Check for global nfssessions files (could be in other install locations)
+$potentialLocations = @(
+    "C:\Program Files\PBS Plus Agent",
+    "C:\Program Files (x86)\PBS Plus Agent",
+    "C:\PBS Plus Agent",
+    "C:\PBS Plus"
+)
+
+foreach ($location in $potentialLocations) {
+    if (Test-Path -Path $location) {
+        $nfsLock = Join-Path -Path $location -ChildPath "nfssessions.lock"
+        $nfsJson = Join-Path -Path $location -ChildPath "nfssessions.json"
+        
+        if (Test-Path -Path $nfsLock) {
+            Write-Host "Removing nfssessions.lock from $location" -ForegroundColor Cyan
+            Remove-Item -Path $nfsLock -Force -ErrorAction SilentlyContinue
+        }
+        
+        if (Test-Path -Path $nfsJson) {
+            Write-Host "Removing nfssessions.json from $location" -ForegroundColor Cyan
+            Remove-Item -Path $nfsJson -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # Delete registry keys
 Write-Host "Deleting registry keys..." -ForegroundColor Cyan
 Remove-Item -Path "HKLM:\SOFTWARE\PBSPlus\Auth" -Force -ErrorAction SilentlyContinue
@@ -210,44 +289,83 @@ catch {
     exit 1
 }
 
-# Check and install services
+# Check and uninstall services if they're installed in different locations
+$agentServicePath = "`"$agentPath`""
+$updaterServicePath = "`"$updaterPath`""
+
+$agentUninstalled = Uninstall-ExistingService -ServiceName "PBSPlusAgent" -TargetPath $agentServicePath
+$updaterUninstalled = Uninstall-ExistingService -ServiceName "PBSPlusUpdater" -TargetPath $updaterServicePath
+
+# Install or start services
 Write-Host "Checking PBS Plus Agent service..." -ForegroundColor Cyan
 $agentService = Get-Service -Name "PBSPlusAgent" -ErrorAction SilentlyContinue
-if ($agentService) {
-    Write-Host "PBS Plus Agent service is already installed" -ForegroundColor Green
-}
-else {
+if ($agentService -and -not $agentUninstalled) {
+    Write-Host "PBS Plus Agent service already installed, starting it..." -ForegroundColor Green
+    try {
+        Start-Service -Name "PBSPlusAgent"
+        Write-Host "PBS Plus Agent service started" -ForegroundColor Green
+    } catch {
+        Write-Host "Failed to start PBS Plus Agent service: $_" -ForegroundColor Red
+        Write-Host "Reinstalling the service..." -ForegroundColor Yellow
+        Start-Process -FilePath $agentPath -ArgumentList "install" -Wait -NoNewWindow
+        Start-Sleep -Seconds 2
+        Start-Service -Name "PBSPlusAgent" -ErrorAction SilentlyContinue
+    }
+} else {
     Write-Host "Installing PBS Plus Agent service..." -ForegroundColor Cyan
-    Start-Process -FilePath $agentPath -ArgumentList "install" -NoNewWindow
+    Start-Process -FilePath $agentPath -ArgumentList "install" -Wait -NoNewWindow
+    Start-Sleep -Seconds 2
+    try {
+        Start-Service -Name "PBSPlusAgent"
+        Write-Host "PBS Plus Agent service installed and started" -ForegroundColor Green
+    } catch {
+        Write-Host "Failed to start PBS Plus Agent service, may need to start manually" -ForegroundColor Red
+    }
 }
 
 Write-Host "Checking PBS Plus Updater service..." -ForegroundColor Cyan
 $updaterService = Get-Service -Name "PBSPlusUpdater" -ErrorAction SilentlyContinue
-if ($updaterService) {
-    Write-Host "PBS Plus Updater service is already installed" -ForegroundColor Green
-}
-else {
+if ($updaterService -and -not $updaterUninstalled) {
+    Write-Host "PBS Plus Updater service already installed, starting it..." -ForegroundColor Green
+    try {
+        Start-Service -Name "PBSPlusUpdater"
+        Write-Host "PBS Plus Updater service started" -ForegroundColor Green
+    } catch {
+        Write-Host "Failed to start PBS Plus Updater service: $_" -ForegroundColor Red
+        Write-Host "Reinstalling the service..." -ForegroundColor Yellow
+        Start-Process -FilePath $updaterPath -ArgumentList "install" -Wait -NoNewWindow
+        Start-Sleep -Seconds 2
+        Start-Service -Name "PBSPlusUpdater" -ErrorAction SilentlyContinue
+    }
+} else {
     Write-Host "Installing PBS Plus Updater service..." -ForegroundColor Cyan
-    Start-Process -FilePath $updaterPath -ArgumentList "install" -NoNewWindow
+    Start-Process -FilePath $updaterPath -ArgumentList "install" -Wait -NoNewWindow
+    Start-Sleep -Seconds 2
+    try {
+        Start-Service -Name "PBSPlusUpdater"
+        Write-Host "PBS Plus Updater service installed and started" -ForegroundColor Green
+    } catch {
+        Write-Host "Failed to start PBS Plus Updater service, may need to start manually" -ForegroundColor Red
+    }
 }
 
-# Start services
-Write-Host "Starting PBS Plus Agent service..." -ForegroundColor Cyan
-try {
-    Start-Service -Name "PBSPlusAgent"
-    Write-Host "PBS Plus Agent service started" -ForegroundColor Green
-}
-catch {
-    Write-Host "Failed to start PBS Plus Agent service, start it manually." -ForegroundColor Red
+# Verify services are running
+Write-Host "Verifying services are running..." -ForegroundColor Cyan
+$agentRunning = Get-Service -Name "PBSPlusAgent" -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq "Running" }
+$updaterRunning = Get-Service -Name "PBSPlusUpdater" -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq "Running" }
+
+if ($agentRunning) {
+    Write-Host "PBS Plus Agent service is running" -ForegroundColor Green
+} else {
+    Write-Host "PBS Plus Agent service is not running, attempting to start..." -ForegroundColor Yellow
+    Start-Service -Name "PBSPlusAgent" -ErrorAction SilentlyContinue
 }
 
-Write-Host "Starting PBS Plus Updater service..." -ForegroundColor Cyan
-try {
-    Start-Service -Name "PBSPlusUpdater"
-    Write-Host "PBS Plus Updater service started" -ForegroundColor Green
-}
-catch {
-    Write-Host "Failed to start PBS Plus Updater service, start it manually." -ForegroundColor Red
+if ($updaterRunning) {
+    Write-Host "PBS Plus Updater service is running" -ForegroundColor Green
+} else {
+    Write-Host "PBS Plus Updater service is not running, attempting to start..." -ForegroundColor Yellow
+    Start-Service -Name "PBSPlusUpdater" -ErrorAction SilentlyContinue
 }
 
 # Clean up temporary files
