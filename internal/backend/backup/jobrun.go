@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -197,53 +196,6 @@ func runBackupAttempt(
 		return nil, fmt.Errorf("runBackupAttempt: failed to update job status: %w", err)
 	}
 
-	mountMonitorErr := make(chan error, 1)
-	mountMonitorCtx, mountMonitorCancel := context.WithCancel(ctx)
-	go func() {
-		disconnected := 0
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		var lastErr error
-		connected := true
-
-	checkLoop:
-		for {
-			select {
-			case <-mountMonitorCtx.Done():
-				return
-			case <-ticker.C:
-			}
-			_, err := os.ReadDir(srcPath)
-			if err != nil {
-				connected = false
-				disconnected++
-			} else {
-				connected = true
-				disconnected = 0
-			}
-
-			if disconnected > 3 {
-				mountMonitorErr <- lastErr
-				break checkLoop
-			}
-
-			if isAgent && !connected {
-				agentMount, err = mount.Mount(storeInstance, target)
-				if err != nil {
-					lastErr = err
-				}
-			} else {
-				lastErr = fmt.Errorf("source path is inaccessible: %s", srcPath)
-			}
-		}
-
-		errCleanUp()
-		if currOwner != "" {
-			_ = SetDatastoreOwner(job, storeInstance, currOwner)
-		}
-		_ = cmd.Process.Kill()
-	}()
-
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	operation := &BackupOperation{
@@ -263,16 +215,6 @@ func runBackupAttempt(
 		job.CurrentPID = 0
 
 		<-logDone
-
-		select {
-		case mountErr := <-mountMonitorErr:
-			if mountErr != nil {
-				operation.err = mountErr
-			}
-		default:
-		}
-
-		mountMonitorCancel()
 
 		logGlobalMu.Lock()
 		defer logGlobalMu.Unlock()
