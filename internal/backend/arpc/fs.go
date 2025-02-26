@@ -19,11 +19,11 @@ import (
 var _ billy.Filesystem = (*ARPCFS)(nil)
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, drive string) *ARPCFS {
-	statC, err := lru.New[string, statCacheEntry](1024)
+	statC, err := lru.New[string, statCacheEntry](4096)
 	if err != nil {
 		panic(err)
 	}
-	readDirC, err := lru.New[string, readDirCacheEntry](1024)
+	readDirC, err := lru.New[string, readDirCacheEntry](4096)
 	if err != nil {
 		panic(err)
 	}
@@ -32,18 +32,168 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, driv
 		panic(err)
 	}
 
-	return &ARPCFS{
-		ctx:          ctx,
-		session:      session,
-		Drive:        drive,
-		Hostname:     hostname,
-		statCache:    statC,
-		readDirCache: readDirC,
-		statFSCache:  statFSC,
+	prefetchCtx, prefetchCancel := context.WithCancel(ctx)
+
+	fs := &ARPCFS{
+		ctx:                 ctx,
+		session:             session,
+		Drive:               drive,
+		Hostname:            hostname,
+		statCache:           statC,
+		readDirCache:        readDirC,
+		statFSCache:         statFSC,
+		statCacheMu:         NewShardedRWMutex(16),
+		readDirCacheMu:      NewShardedRWMutex(16),
+		statFSCacheMu:       NewShardedRWMutex(4),
+		prefetchQueue:       make(chan string, 100),
+		prefetchWorkerCount: 4, // Adjust based on performance needs
+		prefetchCtx:         prefetchCtx,
+		prefetchCancel:      prefetchCancel,
+	}
+
+	for i := 0; i < fs.prefetchWorkerCount; i++ {
+		go fs.prefetchWorker()
+	}
+
+	return fs
+}
+
+func (fs *ARPCFS) prefetchWorker() {
+	for {
+		select {
+		case <-fs.prefetchCtx.Done():
+			return
+		case path := <-fs.prefetchQueue:
+			fs.prefetchStats(path)
+		}
 	}
 }
 
+func (fs *ARPCFS) prefetchStats(path string) {
+	// Check if already in cache to avoid unnecessary work
+	fs.statCacheMu.RLock(path)
+	_, exists := fs.statCache.Get(path)
+	fs.statCacheMu.RUnlock(path)
+
+	if exists {
+		return
+	}
+
+	// Do stat in background
+	info, err := fs.statWithoutCache(path)
+	if err != nil {
+		// Just log and continue, don't fail the prefetch
+		syslog.L.Errorf("Prefetch stat failed for %s: %v", path, err)
+		return
+	}
+
+	// Cache result
+	fs.statCacheMu.Lock(path)
+	fs.statCache.Add(path, statCacheEntry{info: info})
+	fs.statCacheMu.Unlock(path)
+
+	// If it's a directory, queue a ReadDir prefetch
+	if info.IsDir() {
+		go fs.prefetchDir(path)
+	}
+}
+
+func (fs *ARPCFS) prefetchDir(path string) {
+	// Check if already in cache
+	fs.readDirCacheMu.RLock(path)
+	_, exists := fs.readDirCache.Get(path)
+	fs.readDirCacheMu.RUnlock(path)
+
+	if exists {
+		return
+	}
+
+	// Fetch directory contents
+	entries, err := fs.readDirWithoutCache(path)
+	if err != nil {
+		syslog.L.Errorf("Prefetch ReadDir failed for %s: %v", path, err)
+		return
+	}
+
+	// For each entry, queue up stat prefetch
+	for _, entry := range entries {
+		childPath := filepath.Join(path, entry.Name())
+		// Don't block - if queue is full, we skip prefetching this item
+		select {
+		case fs.prefetchQueue <- childPath:
+		default:
+			// Queue is full, skip
+		}
+	}
+}
+
+func (fs *ARPCFS) statWithoutCache(filename string) (os.FileInfo, error) {
+	var fi FileInfoResponse
+	if fs.session == nil {
+		syslog.L.Error("RPC failed: aRPC session is nil")
+		return nil, os.ErrInvalid
+	}
+
+	ctx, cancel := TimeoutCtx()
+	defer cancel()
+
+	err := fs.session.CallJSON(ctx, fs.Drive+"/Stat",
+		struct {
+			Path string `json:"path"`
+		}{Path: filename}, &fi)
+	if err != nil {
+		return nil, err
+	}
+
+	modTime := time.Unix(fi.ModTimeUnix, 0)
+	info := &fileInfo{
+		name:    filepath.Base(filename),
+		size:    fi.Size,
+		mode:    fi.Mode,
+		modTime: modTime,
+		isDir:   fi.IsDir,
+	}
+
+	return info, nil
+}
+
+func (fs *ARPCFS) readDirWithoutCache(path string) ([]os.FileInfo, error) {
+	if fs.session == nil {
+		syslog.L.Error("RPC failed: aRPC session is nil")
+		return nil, os.ErrInvalid
+	}
+
+	var resp ReadDirResponse
+	ctx, cancel := TimeoutCtx()
+	defer cancel()
+
+	err := fs.session.CallJSON(ctx, fs.Drive+"/ReadDir", struct {
+		Path string `json:"path"`
+	}{Path: path}, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]os.FileInfo, len(resp.Entries))
+	for i, e := range resp.Entries {
+		modTime := time.Unix(e.ModTimeUnix, 0)
+		entries[i] = &fileInfo{
+			name:    e.Name,
+			size:    e.Size,
+			mode:    e.Mode,
+			modTime: modTime,
+			isDir:   e.IsDir,
+		}
+	}
+
+	return entries, nil
+}
+
 func (f *ARPCFS) Unmount() {
+	if f.prefetchCancel != nil {
+		f.prefetchCancel()
+	}
+
 	if f.Mount != nil {
 		_ = f.Mount.Unmount()
 	}
@@ -97,12 +247,12 @@ func (fs *ARPCFS) OpenFile(filename string, flag int,
 // Stat first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	// Attempt to fetch from the LRU cache.
-	fs.statCacheMu.Lock()
+	fs.statCacheMu.RLock(filename)
 	if entry, ok := fs.statCache.Get(filename); ok {
-		fs.statCacheMu.Unlock()
+		fs.statCacheMu.RUnlock(filename)
 		return entry.info, nil
 	}
-	fs.statCacheMu.Unlock()
+	fs.statCacheMu.RUnlock(filename)
 
 	// Cache miss or expired; perform RPC.
 	var fi FileInfoResponse
@@ -132,11 +282,20 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	}
 
 	// Update the LRU cache.
-	fs.statCacheMu.Lock()
+	fs.statCacheMu.Lock(filename)
 	fs.statCache.Add(filename, statCacheEntry{
 		info: info,
 	})
-	fs.statCacheMu.Unlock()
+	fs.statCacheMu.Unlock(filename)
+
+	go func() {
+		dirPath := filepath.Dir(filename)
+		select {
+		case fs.prefetchQueue <- dirPath:
+		default:
+			// Queue full, skip
+		}
+	}()
 
 	return info, nil
 }
@@ -145,13 +304,13 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	const statFSKey = "statFS"
 
-	fs.statFSCacheMu.Lock()
+	fs.statFSCacheMu.RLock(statFSKey)
 	if entry, ok := fs.statFSCache.Get(statFSKey); ok {
 		stat := entry.stat
-		fs.statFSCacheMu.Unlock()
+		fs.statFSCacheMu.RUnlock(statFSKey)
 		return stat, nil
 	}
-	fs.statFSCacheMu.Unlock()
+	fs.statFSCacheMu.RUnlock(statFSKey)
 
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
@@ -178,23 +337,23 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 		NameLen: 255, // Typically supports long filenames.
 	}
 
-	fs.statFSCacheMu.Lock()
+	fs.statFSCacheMu.Lock(statFSKey)
 	fs.statFSCache.Add(statFSKey, statFSCacheEntry{
 		stat: stat,
 	})
-	fs.statFSCacheMu.Unlock()
+	fs.statFSCacheMu.Unlock(statFSKey)
 
 	return stat, nil
 }
 
 // ReadDir first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
-	fs.readDirCacheMu.Lock()
+	fs.readDirCacheMu.RLock(path)
 	if entry, ok := fs.readDirCache.Get(path); ok {
-		fs.readDirCacheMu.Unlock()
+		fs.readDirCacheMu.RUnlock(path)
 		return entry.entries, nil
 	}
-	fs.readDirCacheMu.Unlock()
+	fs.readDirCacheMu.RUnlock(path)
 
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
@@ -223,20 +382,33 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 			isDir:   e.IsDir,
 		}
 
-		fs.statCacheMu.Lock()
 		childPath := filepath.Join(path, e.Name)
+		fs.statCacheMu.Lock(childPath)
 		fs.statCache.Add(childPath, statCacheEntry{
 			info: entries[i],
 		})
-		fs.statCacheMu.Unlock()
+		fs.statCacheMu.Unlock(childPath)
 	}
 
 	// Cache the directory listing itself.
-	fs.readDirCacheMu.Lock()
+	fs.readDirCacheMu.Lock(path)
 	fs.readDirCache.Add(path, readDirCacheEntry{
 		entries: entries,
 	})
-	fs.readDirCacheMu.Unlock()
+	fs.readDirCacheMu.Unlock(path)
+
+	go func() {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				childPath := filepath.Join(path, entry.Name())
+				select {
+				case fs.prefetchQueue <- childPath:
+				default:
+					// Queue full, skip
+				}
+			}
+		}
+	}()
 
 	return entries, nil
 }

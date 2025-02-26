@@ -20,7 +20,6 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 		return 0, os.ErrInvalid
 	}
 
-	var resp ReadResponse
 	if f.fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return 0, os.ErrInvalid
@@ -29,22 +28,24 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := f.fs.session.CallJSON(ctx, f.drive+"/Read", ReadRequest{
+	// Use the new direct buffer method
+	bytesRead, isEOF, err := f.fs.session.CallJSONWithBuffer(ctx, f.drive+"/Read", ReadRequest{
 		HandleID: f.handleID,
 		Length:   len(p),
-	}, &resp)
+	}, p)
+
 	if err != nil {
 		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
 		return 0, os.ErrInvalid
 	}
 
-	copy(p, resp.Data)
-	f.offset += int64(len(resp.Data))
+	f.offset += int64(bytesRead)
 
-	if resp.EOF {
-		return len(resp.Data), io.EOF
+	if isEOF {
+		return bytesRead, io.EOF
 	}
-	return len(resp.Data), nil
+
+	return bytesRead, nil
 }
 
 func (f *ARPCFile) Write(p []byte) (n int, err error) {
