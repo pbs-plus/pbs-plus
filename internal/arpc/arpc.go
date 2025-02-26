@@ -2,9 +2,10 @@ package arpc
 
 import (
 	"bufio"
+	"bytes"
 	"context"
-	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -15,6 +16,12 @@ import (
 	"github.com/valyala/fastjson"
 	"github.com/xtaci/smux"
 )
+
+var arenaPool = sync.Pool{
+	New: func() interface{} {
+		return &fastjson.Arena{}
+	},
+}
 
 // Request defines the JSON request format sent over a stream.
 type Request struct {
@@ -28,14 +35,6 @@ type Response struct {
 	Status  int         `json:"status"`
 	Message string      `json:"message,omitempty"`
 	Data    interface{} `json:"data,omitempty"`
-}
-
-type DirectBufferWrite struct {
-	Data []byte
-}
-
-func (d *DirectBufferWrite) Error() string {
-	return "direct buffer write requested"
 }
 
 // HandlerFunc is the type of function that can handle a Request.
@@ -70,154 +69,108 @@ func (r *Router) CloseHandle(method string) {
 // ServeStream reads one JSON-encoded Request from the given stream,
 // dispatches it to the appropriate handler, and writes back a JSON response.
 func (r *Router) ServeStream(stream *smux.Stream) {
-	defer stream.Close()
+	defer func() {
+		if err := stream.Close(); err != nil {
+		}
+	}()
+
+	reader := bufio.NewReader(stream)
+	// Read until a newline; since json.Encoder.Encode always appends '\n'
+	dataBytes, err := reader.ReadBytes('\n')
+	if err != nil && err != io.EOF {
+		writeErrorResponse(stream, http.StatusBadRequest, "failed to read request: "+err.Error())
+		return
+	}
+	// Trim any trailing newline or whitespace.
+	dataBytes = bytes.TrimSpace(dataBytes)
+
+	// Obtain a fastjson arena from the pool for parsing.
+	arena := arenaPool.Get().(*fastjson.Arena)
+	defer func() {
+		arena.Reset()
+		arenaPool.Put(arena)
+	}()
 
 	var parser fastjson.Parser
-	var req Request
-
-	// Read the entire JSON data from the stream
-	buffer := make([]byte, 4096)
-	var dataBytes []byte
-	for {
-		n, err := stream.Read(buffer)
-		if err != nil {
-			writeErrorResponse(stream, 400, "failed to read request: "+err.Error())
-			return
-		}
-		dataBytes = append(dataBytes, buffer[:n]...)
-		if n < len(buffer) {
-			break
-		}
-	}
-
-	// Parse the request using fastjson
-	v, err := parser.Parse(string(dataBytes))
+	v, err := parser.ParseBytes(dataBytes)
 	if err != nil {
-		writeErrorResponse(stream, 400, "invalid request JSON: "+err.Error())
+		writeErrorResponse(stream, http.StatusBadRequest, "invalid request JSON: "+err.Error())
 		return
 	}
 
-	req.Method = string(v.GetStringBytes("method"))
-	if req.Method == "" {
-		writeErrorResponse(stream, 400, "missing method field")
+	// Build the Request.
+	reqMethod := string(v.GetStringBytes("method"))
+	if reqMethod == "" {
+		writeErrorResponse(stream, http.StatusBadRequest, "missing method field")
 		return
 	}
 
-	// Get payload as raw JSON
+	req := Request{
+		Method: reqMethod,
+	}
 	if payload := v.Get("payload"); payload != nil {
-		req.Payload = json.RawMessage(payload.MarshalTo(nil))
-	}
-
-	// Parse headers if present
-	if headersVal := v.Get("headers"); headersVal != nil && headersVal.Type() == fastjson.TypeObject {
-		req.Headers = make(http.Header)
-		// Iterate over the object keys/values
-		o, err := headersVal.Object()
-		if err == nil {
-			o.Visit(func(key []byte, v *fastjson.Value) {
-				keyStr := string(key)
-				if v.Type() == fastjson.TypeArray {
-					a, err := v.Array()
-					if err != nil {
-						return
-					}
-					for i := 0; i < len(a); i++ {
-						headerVal := string(a[i].GetStringBytes())
-						req.Headers.Add(keyStr, headerVal)
-					}
-				} else if v.Type() == fastjson.TypeString {
-					headerVal := string(v.GetStringBytes())
-					req.Headers.Add(keyStr, headerVal)
-				}
-			})
-		}
+		req.Payload = payload.MarshalTo(nil)
 	}
 
 	r.handlersMu.RLock()
 	handler, ok := r.handlers[req.Method]
 	r.handlersMu.RUnlock()
 	if !ok {
-		writeErrorResponse(stream, 404, "method not found: "+req.Method)
+		writeErrorResponse(stream, http.StatusNotFound, "method not found: "+req.Method)
 		return
 	}
 
 	resp, err := handler(req)
-
-	// Check for DirectBufferWrite signal
 	if err != nil {
-		if dbw, ok := err.(*DirectBufferWrite); ok {
-			// First send the normal response (which contains metadata)
-			arena := fastjson.Arena{}
-			respObj := arena.NewObject()
-			respObj.Set("status", arena.NewNumberInt(resp.Status))
-
-			if resp.Message != "" {
-				respObj.Set("message", arena.NewString(resp.Message))
-			}
-
-			if resp.Data != nil {
-				dataBytes, err := json.Marshal(resp.Data)
-				if err == nil {
-					var p fastjson.Parser
-					dataVal, err := p.ParseBytes(dataBytes)
-					if err == nil {
-						respObj.Set("data", dataVal)
-					}
-				}
-			}
-
-			// Send metadata response
-			stream.Write(respObj.MarshalTo(nil))
-
-			// Then directly write binary data
-			stream.Write(dbw.Data)
-			return
-		}
-
-		// Handle regular errors
-		writeErrorResponse(stream, 500, err.Error())
+		writeErrorResponse(stream, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Marshal the response using fastjson
-	arena := fastjson.Arena{}
-	respObj := arena.NewObject()
-	respObj.Set("status", arena.NewNumberInt(resp.Status))
+	// Prepare the response using another arena from the pool.
+	respArena := arenaPool.Get().(*fastjson.Arena)
+	defer func() {
+		respArena.Reset()
+		arenaPool.Put(respArena)
+	}()
 
+	respObj := respArena.NewObject()
+	respObj.Set("status", respArena.NewNumberInt(resp.Status))
 	if resp.Message != "" {
-		respObj.Set("message", arena.NewString(resp.Message))
+		respObj.Set("message", respArena.NewString(resp.Message))
 	}
-
 	if resp.Data != nil {
-		// Convert resp.Data to JSON
 		dataBytes, err := json.Marshal(resp.Data)
 		if err != nil {
-			writeErrorResponse(stream, 500, "failed to marshal response data: "+err.Error())
+			writeErrorResponse(stream, http.StatusInternalServerError, "failed to marshal response data: "+err.Error())
 			return
 		}
-
 		var p fastjson.Parser
 		dataVal, err := p.ParseBytes(dataBytes)
 		if err != nil {
-			writeErrorResponse(stream, 500, "failed to parse response data: "+err.Error())
+			writeErrorResponse(stream, http.StatusInternalServerError, "failed to parse response data: "+err.Error())
 			return
 		}
-
 		respObj.Set("data", dataVal)
 	}
 
 	respBytes := respObj.MarshalTo(nil)
-	stream.Write(respBytes)
+	if _, err := stream.Write(respBytes); err != nil {
+	}
 }
 
 // Helper function to write error responses
 func writeErrorResponse(stream *smux.Stream, status int, message string) {
-	arena := fastjson.Arena{}
-	respObj := arena.NewObject()
-	respObj.Set("status", arena.NewNumberInt(status))
-	respObj.Set("message", arena.NewString(message))
-	respBytes := respObj.MarshalTo(nil)
-	stream.Write(respBytes)
+	arena := arenaPool.Get().(*fastjson.Arena)
+	defer func() {
+		arena.Reset()
+		arenaPool.Put(arena)
+	}()
+	obj := arena.NewObject()
+	obj.Set("status", arena.NewNumberInt(status))
+	obj.Set("message", arena.NewString(message))
+	respBytes := obj.MarshalTo(nil)
+	if _, err := stream.Write(respBytes); err != nil {
+	}
 }
 
 // ReconnectConfig holds parameters for automatic reconnection.
@@ -246,9 +199,11 @@ type ReconnectConfig struct {
 // It now also holds an optional reconnect configuration and a mutex for protecting
 // the underlying session pointer.
 type Session struct {
-	mu              sync.RWMutex
-	sess            *smux.Session
-	reconnectConfig *ReconnectConfig
+	mu                  sync.RWMutex
+	reconnectMu         sync.Mutex
+	sess                *smux.Session
+	reconnectConfig     *ReconnectConfig
+	reconnectInProgress bool
 }
 
 // NewServerSession creates a new multiplexer session for the server side.
@@ -282,9 +237,18 @@ func (s *Session) EnableAutoReconnect(rc *ReconnectConfig) {
 // internal helper. attemptReconnect uses DialWithBackoff to re-establish the underlying session.
 // It is expected to be called with s.mu locked.
 func (s *Session) attemptReconnect() error {
+	s.reconnectMu.Lock()
+	defer s.reconnectMu.Unlock()
+
+	// Double-check condition in case another goroutine already reconnected.
+	if s.sess != nil && s.sess.IsClosed() == false {
+		return nil
+	}
+
 	if s.reconnectConfig == nil || !s.reconnectConfig.AutoReconnect {
 		return fmt.Errorf("auto reconnect not configured")
 	}
+
 	newSess, err := DialWithBackoff(
 		s.reconnectConfig.ReconnectCtx,
 		s.reconnectConfig.DialFunc,
@@ -295,9 +259,11 @@ func (s *Session) attemptReconnect() error {
 	if err != nil {
 		return err
 	}
-	// Preserve the reconnect configuration.
+
 	newSess.reconnectConfig = s.reconnectConfig
+	s.mu.Lock()
 	s.sess = newSess.sess
+	s.mu.Unlock()
 	return nil
 }
 
@@ -308,428 +274,256 @@ func (s *Session) Call(method string, payload interface{}) (*Response, error) {
 	return s.CallContext(context.Background(), method, payload)
 }
 
-// CallContext is similar to Call but allows passing a context with a deadline or timeout.
-// If the call does not complete before ctx is done, it aborts with the context's error.
-// In case of an error that appears to be from a disconnected session,
-// it will try to reconnect (if enabled) and then retry opening a stream.
-func (s *Session) CallContext(ctx context.Context, method string, payload interface{}) (*Response, error) {
-	// Attempt to open a stream.
+// CallContext performs an RPC call over a new stream using a JSON request.
+// It builds the request using fastjson (with a pooled Arena), writes it using a buffered writer,
+// applies any context deadline, reads the complete response using a buffered reader, and finally
+// parses the response JSON using fastjson. If a stream cannot be opened and auto‑reconnect is enabled,
+// this method will try to reconnect.
+func (s *Session) CallContext(
+	ctx context.Context,
+	method string,
+	payload interface{},
+) (*Response, error) {
+	// Obtain the current session and reconnect configuration.
 	s.mu.RLock()
 	curSession := s.sess
 	rc := s.reconnectConfig
 	s.mu.RUnlock()
 
+	// Try to open a new stream.
 	stream, err := curSession.OpenStream()
-	if err != nil && rc != nil && rc.AutoReconnect {
-		// Try to reconnect.
-		s.mu.Lock()
-		err2 := s.attemptReconnect()
-		s.mu.Unlock()
-		if err2 != nil {
-			return nil, err2
-		}
-		// Retry with new session.
-		s.mu.RLock()
-		curSession = s.sess
-		s.mu.RUnlock()
-		stream, err = curSession.OpenStream()
-		if err != nil {
+	if err != nil {
+		if rc != nil && rc.AutoReconnect {
+			if err2 := s.attemptReconnect(); err2 != nil {
+				return nil, err2
+			}
+			s.mu.RLock()
+			curSession = s.sess
+			s.mu.RUnlock()
+			stream, err = curSession.OpenStream()
+			if err != nil {
+				return nil, err
+			}
+		} else {
 			return nil, err
 		}
-	} else if err != nil {
+	}
+	// Ensure stream closure.
+	defer func() {
+		if cerr := stream.Close(); cerr != nil {
+		}
+	}()
+
+	// Apply context timeouts to I/O if a deadline is set.
+	if deadline, ok := ctx.Deadline(); ok {
+		stream.SetWriteDeadline(deadline)
+		stream.SetReadDeadline(deadline)
+	}
+
+	// Wrap the stream in buffered I/O objects.
+	writer := bufio.NewWriter(stream)
+	reader := bufio.NewReader(stream)
+
+	// --- Build the JSON Request ---
+	reqBytes, err := buildRequestJSON(method, payload, nil)
+	if err != nil {
 		return nil, err
 	}
 
-	// Use a channel to signal the result.
-	type result struct {
-		resp *Response
-		err  error
+	// Write the request (which already appends a newline)
+	if _, err := writer.Write(reqBytes); err != nil {
+		return nil, err
 	}
-	resCh := make(chan result, 1)
-
-	go func() {
-		defer stream.Close()
-
-		// Use fastjson to create the request
-		arena := fastjson.Arena{}
-		reqObj := arena.NewObject()
-		reqObj.Set("method", arena.NewString(method))
-
-		// Marshal the payload
-		payloadBytes, err := json.Marshal(payload)
-		if err != nil {
-			resCh <- result{nil, err}
-			return
-		}
-
-		// Parse the marshaled payload back to create a fastjson value
-		var p fastjson.Parser
-		payloadVal, err := p.ParseBytes(payloadBytes)
-		if err != nil {
-			resCh <- result{nil, err}
-			return
-		}
-		reqObj.Set("payload", payloadVal)
-
-		// Write the request to the stream
-		if _, err := stream.Write(reqObj.MarshalTo(nil)); err != nil {
-			resCh <- result{nil, err}
-			return
-		}
-
-		// Read the response
-		buffer := make([]byte, 4096)
-		var respBytes []byte
-		for {
-			n, err := stream.Read(buffer)
-			if err != nil {
-				resCh <- result{nil, err}
-				return
-			}
-			respBytes = append(respBytes, buffer[:n]...)
-			if n < len(buffer) {
-				break
-			}
-		}
-
-		// Parse the response using fastjson
-		var parser fastjson.Parser
-		v, err := parser.Parse(string(respBytes))
-		if err != nil {
-			resCh <- result{nil, err}
-			return
-		}
-
-		var resp Response
-		resp.Status = v.GetInt("status")
-		if msg := v.Get("message"); msg != nil {
-			resp.Message = string(msg.GetStringBytes())
-		}
-
-		if data := v.Get("data"); data != nil {
-			// Convert fastjson data to JSON bytes then to interface{}
-			dataBytes := data.MarshalTo(nil)
-			var dataInterface interface{}
-			if err := json.Unmarshal(dataBytes, &dataInterface); err != nil {
-				resCh <- result{nil, err}
-				return
-			}
-			resp.Data = dataInterface
-		}
-
-		resCh <- result{&resp, nil}
-	}()
-
-	select {
-	case <-ctx.Done():
-		stream.Close() // ensure the stream is closed on timeout
-		return nil, ctx.Err()
-	case res := <-resCh:
-		return res.resp, res.err
+	if err := writer.Flush(); err != nil {
+		return nil, err
 	}
+
+	// --- Read the Response ---
+	respBytes, err := reader.ReadBytes('\n')
+	// Consider EOF acceptable if we received some bytes.
+	if err != nil && err != io.EOF {
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			return nil, context.DeadlineExceeded
+		}
+		return nil, err
+	}
+	respBytes = bytes.TrimSpace(respBytes)
+	if len(respBytes) == 0 {
+		return nil, fmt.Errorf("empty response")
+	}
+
+	// Parse the response JSON using fastjson.
+	var respParser fastjson.Parser
+	v, err := respParser.ParseBytes(respBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build and return the Response struct.
+	var resp Response
+	resp.Status = v.GetInt("status")
+	if msg := v.Get("message"); msg != nil {
+		resp.Message = string(msg.GetStringBytes())
+	}
+	if data := v.Get("data"); data != nil {
+		dataBytes := data.MarshalTo(nil)
+		if err := json.Unmarshal(dataBytes, &resp.Data); err != nil {
+			return nil, err
+		}
+	}
+
+	return &resp, nil
 }
 
-// CallJSON performs the RPC call and decodes the JSON data into v.
-// It is similar in spirit to http.Get followed by json.NewDecoder(resp.Body).Decode(&v).
-func (s *Session) CallJSON(ctx context.Context, method string, payload interface{}, v interface{}) error {
+// CallJSON is a helper that performs an RPC call (via CallContext) and then unmarshals
+// the returned response data directly into the provided interface v. It returns an error
+// if the RPC call fails or if the response indicates an error.
+func (s *Session) CallJSON(
+	ctx context.Context,
+	method string,
+	payload interface{},
+	v interface{},
+) error {
 	resp, err := s.CallContext(ctx, method, payload)
 	if err != nil {
 		return err
 	}
 
-	// Check for error status codes
+	// Check for error status.
 	if resp.Status != http.StatusOK && resp.Status != 200 {
-		if resp.Data != nil {
-			// For error cases, we need to handle SerializableError
-			dataBytes, err := json.Marshal(resp.Data)
-			if err != nil {
-				return errors.New(resp.Message)
-			}
-
-			var deserializedErr SerializableError
-			if err := json.Unmarshal(dataBytes, &deserializedErr); err != nil {
-				return errors.New(resp.Message)
-			}
-
-			return UnwrapError(&deserializedErr)
-		}
-		return errors.New(resp.Message)
+		return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
 	}
 
-	// Handle the success case and unmarshal data into v
+	// If there is data, marshal it back to JSON and unmarshal into v.
 	if resp.Data != nil {
-		// Marshal the resp.Data to bytes using fastjson
 		dataBytes, err := json.Marshal(resp.Data)
 		if err != nil {
 			return err
 		}
-
-		// Unmarshal into the target value
-		return json.Unmarshal(dataBytes, v)
+		if err := json.Unmarshal(dataBytes, v); err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
 
-// CallWithHeaders is similar to CallContext but allows passing custom http.Header with
-// the request. The headers will be embedded in the Request.Headers field.
-func (s *Session) CallWithHeaders(ctx context.Context, method string, payload interface{}, headers http.Header) (*Response, error) {
+// CallJSONWithBuffer performs an RPC call where the response data is written
+// directly into the provided buffer. It writes a request with a direct-buffer header,
+// reads a metadata response (which includes the available byte length and an EOF flag),
+// and then reads the binary data from the stream into the buffer using buffered I/O.
+func (s *Session) CallJSONWithBuffer(
+	ctx context.Context,
+	method string,
+	payload interface{},
+	buffer []byte,
+) (int, bool, error) {
+
+	// Retrieve current smux session and its reconnection configuration.
 	s.mu.RLock()
 	curSession := s.sess
 	rc := s.reconnectConfig
 	s.mu.RUnlock()
 
+	// Open a new stream.
 	stream, err := curSession.OpenStream()
-	if err != nil && rc != nil && rc.AutoReconnect {
-		s.mu.Lock()
-		err2 := s.attemptReconnect()
-		s.mu.Unlock()
-		if err2 != nil {
-			return nil, err2
-		}
-		s.mu.RLock()
-		curSession = s.sess
-		s.mu.RUnlock()
-		stream, err = curSession.OpenStream()
-		if err != nil {
-			return nil, err
-		}
-	} else if err != nil {
-		return nil, err
-	}
-
-	type result struct {
-		resp *Response
-		err  error
-	}
-	resCh := make(chan result, 1)
-
-	go func() {
-		defer stream.Close()
-
-		arena := fastjson.Arena{}
-		reqObj := arena.NewObject()
-		reqObj.Set("method", arena.NewString(method))
-
-		// Marshal the payload
-		payloadBytes, err := json.Marshal(payload)
-		if err != nil {
-			resCh <- result{nil, err}
-			return
-		}
-
-		// Parse the marshaled payload
-		var p fastjson.Parser
-		payloadVal, err := p.ParseBytes(payloadBytes)
-		if err != nil {
-			resCh <- result{nil, err}
-			return
-		}
-		reqObj.Set("payload", payloadVal)
-
-		// Add headers if any
-		if len(headers) > 0 {
-			headersObj := arena.NewObject()
-			for key, values := range headers {
-				if len(values) > 1 {
-					valArray := arena.NewArray()
-					for i, val := range values {
-						valArray.SetArrayItem(i, arena.NewString(val))
-					}
-					headersObj.Set(key, valArray)
-				} else if len(values) == 1 {
-					headersObj.Set(key, arena.NewString(values[0]))
-				}
+	if err != nil {
+		if rc != nil && rc.AutoReconnect {
+			err2 := s.attemptReconnect()
+			if err2 != nil {
+				return 0, false, err2
 			}
-			reqObj.Set("headers", headersObj)
-		}
-
-		// Write the request to the stream
-		if _, err := stream.Write(reqObj.MarshalTo(nil)); err != nil {
-			resCh <- result{nil, err}
-			return
-		}
-
-		// Read and parse the response
-		buffer := make([]byte, 4096)
-		var respBytes []byte
-		for {
-			n, err := stream.Read(buffer)
+			s.mu.RLock()
+			curSession = s.sess
+			s.mu.RUnlock()
+			stream, err = curSession.OpenStream()
 			if err != nil {
-				resCh <- result{nil, err}
-				return
+				return 0, false, err
 			}
-			respBytes = append(respBytes, buffer[:n]...)
-			if n < len(buffer) {
-				break
-			}
-		}
-
-		var parser fastjson.Parser
-		v, err := parser.Parse(string(respBytes))
-		if err != nil {
-			resCh <- result{nil, err}
-			return
-		}
-
-		var resp Response
-		resp.Status = v.GetInt("status")
-		if msg := v.Get("message"); msg != nil {
-			resp.Message = string(msg.GetStringBytes())
-		}
-
-		if data := v.Get("data"); data != nil {
-			dataBytes := data.MarshalTo(nil)
-			var dataInterface interface{}
-			if err := json.Unmarshal(dataBytes, &dataInterface); err != nil {
-				resCh <- result{nil, err}
-				return
-			}
-			resp.Data = dataInterface
-		}
-
-		resCh <- result{&resp, nil}
-	}()
-
-	select {
-	case <-ctx.Done():
-		stream.Close() // ensure the stream is closed on timeout
-		return nil, ctx.Err()
-	case res := <-resCh:
-		return res.resp, res.err
-	}
-}
-
-// CallJSONWithBuffer performs an RPC call where the response data will be written
-// directly into the provided buffer, avoiding an extra copy operation.
-// Returns the number of bytes read and any error that occurred.
-func (s *Session) CallJSONWithBuffer(ctx context.Context, method string, payload interface{}, buffer []byte) (int, bool, error) {
-	s.mu.RLock()
-	curSession := s.sess
-	rc := s.reconnectConfig
-	s.mu.RUnlock()
-
-	stream, err := curSession.OpenStream()
-	if err != nil && rc != nil && rc.AutoReconnect {
-		s.mu.Lock()
-		err2 := s.attemptReconnect()
-		s.mu.Unlock()
-		if err2 != nil {
-			return 0, false, err2
-		}
-		s.mu.RLock()
-		curSession = s.sess
-		s.mu.RUnlock()
-		stream, err = curSession.OpenStream()
-		if err != nil {
+		} else {
 			return 0, false, err
 		}
-	} else if err != nil {
+	}
+	// Ensure the stream is closed.
+	defer func() {
+		if cerr := stream.Close(); cerr != nil {
+		}
+	}()
+
+	// If the context has a deadline, set it on the connection.
+	if deadline, ok := ctx.Deadline(); ok {
+		stream.SetWriteDeadline(deadline)
+		stream.SetReadDeadline(deadline)
+	}
+
+	// Wrap stream with buffered I/O wrappers.
+	writer := bufio.NewWriter(stream)
+	reader := bufio.NewReader(stream)
+
+	// --- Build the RPC Request using a pooled fastjson.Arena ---
+	reqBytes, err := buildRequestJSON(method, payload, map[string]string{"X-Direct-Buffer": "true"})
+	if err != nil {
+		return 0, false, err
+	}
+	if _, err := writer.Write(reqBytes); err != nil {
+		return 0, false, err
+	}
+	if err := writer.Flush(); err != nil {
 		return 0, false, err
 	}
 
-	type result struct {
-		bytesRead int
-		eof       bool
-		err       error
+	// --- Read the metadata response ---
+	metaData, err := reader.ReadBytes('\n')
+	if err != nil && err != io.EOF {
+		return 0, false, err
 	}
-	resCh := make(chan result, 1)
+	metaData = bytes.TrimSpace(metaData)
+	if len(metaData) == 0 {
+		return 0, false, fmt.Errorf("no metadata received")
+	}
 
-	go func() {
-		defer stream.Close()
-
-		// Create request with direct buffer flag
-		arena := fastjson.Arena{}
-		reqObj := arena.NewObject()
-		reqObj.Set("method", arena.NewString(method))
-
-		// Marshal payload
-		payloadBytes, err := json.Marshal(payload)
-		if err != nil {
-			resCh <- result{0, false, err}
-			return
-		}
-
-		var p fastjson.Parser
-		payloadVal, err := p.ParseBytes(payloadBytes)
-		if err != nil {
-			resCh <- result{0, false, err}
-			return
-		}
-		reqObj.Set("payload", payloadVal)
-
-		// Add direct buffer header
-		headersObj := arena.NewObject()
-		headersObj.Set("X-Direct-Buffer", arena.NewString("true"))
-		reqObj.Set("headers", headersObj)
-
-		// Send request
-		if _, err := stream.Write(reqObj.MarshalTo(nil)); err != nil {
-			resCh <- result{0, false, err}
-			return
-		}
-
-		// First read the metadata response (small JSON with status, etc.)
-		metaBuffer := make([]byte, 512)
-		n, err := stream.Read(metaBuffer)
-		if err != nil {
-			resCh <- result{0, false, err}
-			return
-		}
-
-		// Parse metadata response
-		v, err := p.Parse(string(metaBuffer[:n]))
-		if err != nil {
-			resCh <- result{0, false, err}
-			return
-		}
-
-		// Check for error status
-		status := v.GetInt("status")
-		if status != http.StatusOK {
-			message := string(v.GetStringBytes("message"))
-			resCh <- result{0, false, fmt.Errorf("RPC error: %s (status %d)", message, status)}
-			return
-		}
-
-		// Get content length and EOF flag from metadata
-		contentLength := 0
-		isEOF := false
-
-		if dataObj := v.Get("data"); dataObj != nil {
-			contentLength = dataObj.GetInt("bytes_available")
-			isEOF = dataObj.GetBool("eof")
-		}
-
-		if contentLength <= 0 {
-			resCh <- result{0, isEOF, nil}
-			return
-		}
-
-		// Now read binary data directly into the provided buffer
-		bytesRead := 0
-		for bytesRead < contentLength && bytesRead < len(buffer) {
-			n, err := stream.Read(buffer[bytesRead:])
-			if err != nil {
-				resCh <- result{bytesRead, isEOF, err}
-				return
-			}
-			if n == 0 {
-				break
-			}
-			bytesRead += n
-		}
-
-		resCh <- result{bytesRead, isEOF, nil}
+	// Parse the metadata response with another pooled arena.
+	metaArena := arenaPool.Get().(*fastjson.Arena)
+	defer func() {
+		metaArena.Reset()
+		arenaPool.Put(metaArena)
 	}()
-
-	select {
-	case <-ctx.Done():
-		stream.Close()
-		return 0, false, ctx.Err()
-	case res := <-resCh:
-		return res.bytesRead, res.eof, res.err
+	var metaParser fastjson.Parser
+	metaVal, err := metaParser.ParseBytes(metaData)
+	if err != nil {
+		return 0, false, err
 	}
+	status := metaVal.GetInt("status")
+	if status != http.StatusOK {
+		message := string(metaVal.GetStringBytes("message"))
+		return 0, false, fmt.Errorf("RPC error: %s (status %d)", message, status)
+	}
+
+	// Retrieve available binary data length and the EOF flag from metadata.
+	dataObj := metaVal.Get("data")
+	contentLength := 0
+	isEOF := false
+	if dataObj != nil {
+		contentLength = dataObj.GetInt("bytes_available")
+		isEOF = dataObj.GetBool("eof")
+	}
+	if contentLength <= 0 {
+		return 0, isEOF, nil
+	}
+
+	// --- Read the binary data into the provided buffer ---
+	bytesRead := 0
+	for bytesRead < contentLength && bytesRead < len(buffer) {
+		n, err := reader.Read(buffer[bytesRead:])
+		if err != nil {
+			return bytesRead, isEOF, err
+		}
+		if n == 0 {
+			break
+		}
+		bytesRead += n
+	}
+
+	return bytesRead, isEOF, nil
 }
 
 // Serve continuously accepts incoming streams on the session.
