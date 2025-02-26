@@ -10,12 +10,14 @@ require (
 	github.com/getlantern/systray v1.2.2
 	github.com/go-git/go-billy/v5 v5.6.2
 	github.com/gobwas/glob v0.2.3
+	github.com/goccy/go-json v0.10.5
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/hanwen/go-fuse/v2 v2.7.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kardianos/service v1.2.2
 	github.com/mxk/go-vss v1.2.0
 	github.com/stretchr/testify v1.10.0
+	github.com/valyala/fastjson v1.6.4
 	github.com/xtaci/smux v1.5.34
 	golang.org/x/crypto v0.33.0
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
