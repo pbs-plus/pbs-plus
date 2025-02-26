@@ -34,15 +34,15 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		p := message.NewPrinter(language.English)
-		for _, job := range allJobs {
+		for i, job := range allJobs {
 			arpcfs := storeInstance.GetARPCFS(job.Target)
 			if arpcfs == nil {
 				continue
 			}
 
 			stats := arpcfs.GetAccessStats()
-			job.CurrentFileCount = p.Sprintf("%d", stats.FilesAccessed)
-			job.CurrentFolderCount = p.Sprintf("%d", stats.FoldersAccessed)
+			allJobs[i].CurrentFileCount = p.Sprintf("%d", stats.FilesAccessed)
+			allJobs[i].CurrentFolderCount = p.Sprintf("%d", stats.FoldersAccessed)
 		}
 
 		digest, err := utils.CalculateDigest(allJobs)
