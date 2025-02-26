@@ -5,11 +5,13 @@ package vssfs
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
-	"unsafe"
 
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -118,44 +120,37 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
 
-	// Verify read-only access
-	if params.Flag&(0x1|0x2|0x400|0x40|0x200) != 0 { // O_WRONLY|O_RDWR|O_APPEND|O_CREATE|O_TRUNC
+	if params.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		return arpc.Response{Status: 403, Message: "write operations not allowed"}, nil
 	}
 
-	fullPath := filepath.Join(s.rootDir, filepath.Clean(params.Path))
-	pathPtr, err := windows.UTF16PtrFromString(fullPath)
+	path, err := s.abs(params.Path)
 	if err != nil {
 		return s.respondError(req.Method, s.drive, err), nil
 	}
 
-	// Open with direct Windows API
+	pathp, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return s.respondError(req.Method, s.drive, err), nil
+	}
+
 	handle, err := windows.CreateFile(
-		pathPtr,
+		pathp,
 		windows.GENERIC_READ,
 		windows.FILE_SHARE_READ,
 		nil,
 		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN,
 		0,
 	)
 	if err != nil {
 		return s.mapWindowsErrorToResponse(&req, err), nil
 	}
 
-	// Get file information to check if it's a directory
-	var fileInfo windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(handle, &fileInfo); err != nil {
-		windows.CloseHandle(handle)
-		return s.mapWindowsErrorToResponse(&req, err), nil
-	}
-
-	isDir := fileInfo.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
-
 	fileHandle := &FileHandle{
 		handle: handle,
-		path:   fullPath,
-		isDir:  isDir,
+		path:   path,
+		isDir:  false,
 	}
 
 	// Create a new handle ID
@@ -179,22 +174,53 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
 
-	fullPath := filepath.Join(s.rootDir, filepath.Clean(params.Path))
+	windowsPath := filepath.FromSlash(params.Path)
+	fullPath, err := s.abs(params.Path)
+	if err != nil {
+		return s.respondError(req.Method, s.drive, err), nil
+	}
+
+	if params.Path == "." || params.Path == "" {
+		fullPath = s.rootDir
+		windowsPath = "."
+	}
 
 	pathPtr, err := windows.UTF16PtrFromString(fullPath)
 	if err != nil {
 		return s.respondError(req.Method, s.drive, err), nil
 	}
 
-	var fileInfo windows.Win32FileAttributeData
-	err = windows.GetFileAttributesEx(pathPtr, windows.GetFileExInfoStandard, (*byte)(unsafe.Pointer(&fileInfo)))
+	var findData windows.Win32finddata
+	handle, err := windows.FindFirstFile(pathPtr, &findData)
 	if err != nil {
-		return s.mapWindowsErrorToResponse(&req, err), nil
+		return s.respondError(req.Method, s.drive, mapWinError(err, params.Path)), nil
 	}
+	defer windows.FindClose(handle)
+
+	foundName := windows.UTF16ToString(findData.FileName[:])
+	expectedName := filepath.Base(fullPath)
+	if params.Path == "." {
+		expectedName = foundName
+	}
+
+	if !strings.EqualFold(foundName, expectedName) {
+		return s.respondError(req.Method, s.drive, os.ErrNotExist), nil
+	}
+
+	// Use foundName as the file name for FileInfo
+	name := foundName
+	if params.Path == "." {
+		name = "."
+	}
+	if params.Path == "/" {
+		name = "/"
+	}
+
+	info := createFileInfoFromFindData(name, windowsPath, &findData)
 
 	return arpc.Response{
 		Status: 200,
-		Data:   s.fileAttributesToMap(fileInfo, fullPath),
+		Data:   info,
 	}, nil
 }
 
@@ -205,45 +231,46 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	if err := json.Unmarshal(req.Payload, &params); err != nil {
 		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
-
-	fullPath := filepath.Join(s.rootDir, filepath.Clean(params.Path))
-
-	pattern := filepath.Join(fullPath, "*")
-
-	patternPtr, err := windows.UTF16PtrFromString(pattern)
+	windowsDir := filepath.FromSlash(params.Path)
+	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
 		return s.respondError(req.Method, s.drive, err), nil
 	}
 
+	if params.Path == "." || params.Path == "" {
+		windowsDir = "."
+		fullDirPath = s.rootDir
+	}
+	searchPath := filepath.Join(fullDirPath, "*")
 	var findData windows.Win32finddata
-	handle, err := windows.FindFirstFile(patternPtr, &findData)
+	handle, err := FindFirstFileEx(searchPath, &findData)
 	if err != nil {
-		return s.mapWindowsErrorToResponse(&req, err), nil
+		return s.respondError(req.Method, s.drive, mapWinError(err, params.Path)), nil
 	}
 	defer windows.FindClose(handle)
 
-	results := make([]map[string]interface{}, 0)
-
+	var entries []*VSSFileInfo
 	for {
-		fileName := windows.UTF16ToString(findData.FileName[:])
-		if fileName != "." && fileName != ".." {
+		name := windows.UTF16ToString(findData.FileName[:])
+		if name != "." && name != ".." {
+			winEntryPath := filepath.Join(windowsDir, name)
 			if !skipPathWithAttributes(findData.FileAttributes) {
-				info := s.findDataToMap(&findData)
-				results = append(results, info)
+				info := createFileInfoFromFindData(name, winEntryPath, &findData)
+				entries = append(entries, info)
 			}
 		}
 
 		if err := windows.FindNextFile(handle, &findData); err != nil {
 			if err == windows.ERROR_NO_MORE_FILES {
-				break // No more files
+				break
 			}
-			return s.mapWindowsErrorToResponse(&req, err), nil
+			return s.respondError(req.Method, s.drive, mapWinError(err, params.Path)), nil
 		}
 	}
 
 	return arpc.Response{
 		Status: 200,
-		Data:   map[string]interface{}{"entries": results},
+		Data:   map[string][]*VSSFileInfo{"entries": entries},
 	}, nil
 }
 
@@ -386,8 +413,23 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 		return s.mapWindowsErrorToResponse(&req, err), nil
 	}
 
+	info := createFileInfoFromHandleInfo(handle.path, &fileInfo)
+
 	return arpc.Response{
 		Status: 200,
-		Data:   s.byHandleFileInfoToMap(&fileInfo, handle.path),
+		Data:   info,
 	}, nil
+}
+
+func (s *VSSFSServer) abs(filename string) (string, error) {
+	if filename == s.rootDir {
+		filename = string(filepath.Separator)
+	}
+
+	path, err := securejoin.SecureJoin(s.rootDir, filename)
+	if err != nil {
+		return "", nil
+	}
+
+	return path, nil
 }

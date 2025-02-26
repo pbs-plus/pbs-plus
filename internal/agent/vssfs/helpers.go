@@ -6,12 +6,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/zeebo/xxh3"
 	"golang.org/x/sys/windows"
 )
-
-const windowsToUnixEpochOffset = 11644473600
 
 func skipPathWithAttributes(attrs uint32) bool {
 	return attrs&(windows.FILE_ATTRIBUTE_REPARSE_POINT|
@@ -22,70 +22,20 @@ func skipPathWithAttributes(attrs uint32) bool {
 		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) != 0
 }
 
-func (s *VSSFSServer) fileAttributesToMap(info windows.Win32FileAttributeData, path string) map[string]interface{} {
-	fileSize := int64(info.FileSizeHigh)<<32 | int64(info.FileSizeLow)
-	isDir := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
-
-	var mode fs.FileMode
-
-	// Set base permissions
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
-		mode = 0444 // Read-only for everyone
-	} else {
-		mode = 0666 // Read-write for everyone
-	}
-
-	// Add directory flag and execute permissions
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		mode |= os.ModeDir | 0111 // Add execute bits for traversal
-		// Set directory-specific permissions
-		mode = (mode & 0666) | 0111 | os.ModeDir // Final mode: drwxr-xr-x
-	}
-
-	// Convert Windows FILETIME to Unix timestamp
-	nsec := int64(info.LastWriteTime.HighDateTime)<<32 | int64(info.LastWriteTime.LowDateTime)
-	secs := nsec/10000000 - windowsToUnixEpochOffset
-
-	return map[string]interface{}{
-		"name":    filepath.Base(path),
-		"size":    fileSize,
-		"modTime": secs,
-		"isDir":   isDir,
-		"mode":    mode,
-	}
-}
-
-func (s *VSSFSServer) findDataToMap(info *windows.Win32finddata) map[string]interface{} {
-	name := windows.UTF16ToString(info.FileName[:])
-	fileSize := int64(info.FileSizeHigh)<<32 | int64(info.FileSizeLow)
-	isDir := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
-
-	var mode fs.FileMode
-
-	// Set base permissions
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
-		mode = 0444 // Read-only for everyone
-	} else {
-		mode = 0666 // Read-write for everyone
-	}
-
-	// Add directory flag and execute permissions
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		mode |= os.ModeDir | 0111 // Add execute bits for traversal
-		// Set directory-specific permissions
-		mode = (mode & 0666) | 0111 | os.ModeDir // Final mode: drwxr-xr-x
-	}
-
-	// Convert Windows FILETIME to Unix timestamp
-	nsec := int64(info.LastWriteTime.HighDateTime)<<32 | int64(info.LastWriteTime.LowDateTime)
-	secs := nsec/10000000 - windowsToUnixEpochOffset
-
-	return map[string]interface{}{
-		"name":    name,
-		"size":    fileSize,
-		"modTime": secs,
-		"isDir":   isDir,
-		"mode":    mode,
+func mapWinError(err error, path string) error {
+	switch err {
+	case windows.ERROR_FILE_NOT_FOUND:
+		return os.ErrNotExist
+	case windows.ERROR_PATH_NOT_FOUND:
+		return os.ErrNotExist
+	case windows.ERROR_ACCESS_DENIED:
+		return os.ErrPermission
+	default:
+		return &os.PathError{
+			Op:   "access",
+			Path: path,
+			Err:  err,
+		}
 	}
 }
 
@@ -101,35 +51,74 @@ func (s *VSSFSServer) mapWindowsErrorToResponse(req *arpc.Request, err error) ar
 	}
 }
 
-// byHandleFileInfoToMap converts ByHandleFileInformation to a map
-func (s *VSSFSServer) byHandleFileInfoToMap(info *windows.ByHandleFileInformation, path string) map[string]interface{} {
-	fileSize := int64(info.FileSizeHigh)<<32 | int64(info.FileSizeLow)
-	isDir := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
-
+func createFileInfoFromFindData(name string, relativePath string, fd *windows.Win32finddata) *VSSFileInfo {
 	var mode fs.FileMode
+	var isDir bool
 
 	// Set base permissions
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
+	if fd.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
 		mode = 0444 // Read-only for everyone
 	} else {
 		mode = 0666 // Read-write for everyone
 	}
 
 	// Add directory flag and execute permissions
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+	if fd.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
 		mode |= os.ModeDir | 0111 // Add execute bits for traversal
+		isDir = true
 		// Set directory-specific permissions
 		mode = (mode & 0666) | 0111 | os.ModeDir // Final mode: drwxr-xr-x
 	}
 
-	nsec := int64(info.LastWriteTime.HighDateTime)<<32 | int64(info.LastWriteTime.LowDateTime)
-	secs := nsec/10000000 - windowsToUnixEpochOffset
+	size := int64(fd.FileSizeHigh)<<32 + int64(fd.FileSizeLow)
+	modTime := time.Unix(0, fd.LastWriteTime.Nanoseconds())
 
-	return map[string]interface{}{
-		"name":    filepath.Base(path),
-		"size":    fileSize,
-		"modTime": secs,
-		"isDir":   isDir,
-		"mode":    mode,
+	stableID := generateFullPathID(relativePath)
+
+	return &VSSFileInfo{
+		Name:     name,
+		Size:     size,
+		Mode:     mode,
+		ModTime:  modTime.Unix(),
+		StableID: stableID,
+		IsDir:    isDir,
 	}
+}
+
+func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformation) *VSSFileInfo {
+	var mode fs.FileMode
+	var isDir bool
+
+	// Set base permissions
+	if fd.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
+		mode = 0444 // Read-only for everyone
+	} else {
+		mode = 0666 // Read-write for everyone
+	}
+
+	// Add directory flag and execute permissions
+	if fd.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		mode |= os.ModeDir | 0111 // Add execute bits for traversal
+		isDir = true
+		// Set directory-specific permissions
+		mode = (mode & 0666) | 0111 | os.ModeDir // Final mode: drwxr-xr-x
+	}
+
+	size := int64(fd.FileSizeHigh)<<32 + int64(fd.FileSizeLow)
+	modTime := time.Unix(0, fd.LastWriteTime.Nanoseconds())
+
+	stableID := generateFullPathID(path)
+
+	return &VSSFileInfo{
+		Name:     filepath.Base(path),
+		Size:     size,
+		Mode:     mode,
+		ModTime:  modTime.Unix(),
+		StableID: stableID,
+		IsDir:    isDir,
+	}
+}
+
+func generateFullPathID(path string) uint64 {
+	return xxh3.HashString(path)
 }
