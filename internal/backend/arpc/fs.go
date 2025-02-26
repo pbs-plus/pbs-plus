@@ -232,8 +232,6 @@ func (f *ARPCFS) Unmount() {
 	if f.Mount != nil {
 		_ = f.Mount.Unmount()
 	}
-
-	f.prefetchCtx, f.prefetchCancel = context.WithCancel(f.ctx)
 }
 
 var _ billy.File = (*ARPCFile)(nil)
