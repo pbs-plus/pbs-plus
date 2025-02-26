@@ -4,7 +4,6 @@ package fuse
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
