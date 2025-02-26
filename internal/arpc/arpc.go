@@ -277,19 +277,32 @@ func (s *Session) CallContext(ctx context.Context, method string, payload interf
 // CallJSON performs the RPC call and decodes the JSON data into v.
 // It is similar in spirit to http.Get followed by json.NewDecoder(resp.Body).Decode(&v).
 func (s *Session) CallJSON(ctx context.Context, method string, payload interface{}, v interface{}) error {
-
 	resp, err := s.CallContext(ctx, method, payload)
 	if err != nil {
 		return err
 	}
-	if resp.Status != http.StatusOK && resp.Status != 200 {
-		return errors.New(resp.Message)
+
+	var dataBytes []byte
+	if resp.Data != nil {
+		// Since resp.Data is an interface{},
+		// we re-marshal it to JSON and then unmarshal into v.
+		var err error
+		dataBytes, err = json.Marshal(resp.Data)
+		if err != nil {
+			return err
+		}
 	}
-	// Since resp.Data is an interface{},
-	// we re-marshal it to JSON and then unmarshal into v.
-	dataBytes, err := json.Marshal(resp.Data)
-	if err != nil {
-		return err
+
+	if resp.Status != http.StatusOK && resp.Status != 200 {
+		if resp.Data != nil {
+			var deserializedErr SerializableError
+			if err := json.Unmarshal(dataBytes, &deserializedErr); err != nil {
+				return errors.New(resp.Message)
+			}
+
+			return UnwrapError(&deserializedErr)
+		}
+		return errors.New(resp.Message)
 	}
 	return json.Unmarshal(dataBytes, v)
 }
