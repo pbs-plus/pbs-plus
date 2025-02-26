@@ -3,7 +3,6 @@ package arpcfs
 import (
 	"context"
 	"os"
-	"sync"
 	"time"
 
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
@@ -36,12 +35,21 @@ type ARPCFS struct {
 	Hostname string
 	Mount    *gofuse.Server
 
-	statCache      *lru.Cache[string, statCacheEntry]
-	statCacheMu    sync.Mutex
-	readDirCache   *lru.Cache[string, readDirCacheEntry]
-	readDirCacheMu sync.Mutex
-	statFSCache    *lru.Cache[string, statFSCacheEntry]
-	statFSCacheMu  sync.Mutex
+	filesProcessed   uint64
+	foldersProcessed uint64
+
+	statCache    *lru.Cache[string, statCacheEntry]
+	readDirCache *lru.Cache[string, readDirCacheEntry]
+	statFSCache  *lru.Cache[string, statFSCacheEntry]
+
+	statCacheMu    *ShardedRWMutex
+	readDirCacheMu *ShardedRWMutex
+	statFSCacheMu  *ShardedRWMutex
+
+	prefetchQueue       chan string
+	prefetchWorkerCount int
+	prefetchCtx         context.Context
+	prefetchCancel      context.CancelFunc
 }
 
 // ARPCFile implements billy.File for remote files

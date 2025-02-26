@@ -34,6 +34,14 @@ type VSSFSServer struct {
 	arpcRouter *arpc.Router
 }
 
+type DirectBufferWrite struct {
+	Data []byte
+}
+
+func (d *DirectBufferWrite) Error() string {
+	return "direct buffer write requested"
+}
+
 func NewVSSFSServer(drive string, root string) *VSSFSServer {
 	return &VSSFSServer{
 		rootDir: root,
@@ -294,7 +302,13 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{Status: 400, Message: "cannot read from directory"}, nil
 	}
 
-	// Simple file read with windows API
+	// Check if client requested direct buffer mode
+	isDirectBuffer := false
+	if req.Headers != nil && req.Headers.Get("X-Direct-Buffer") == "true" {
+		isDirectBuffer = true
+	}
+
+	// Read data from file
 	buf := make([]byte, params.Length)
 	var bytesRead uint32
 	err := windows.ReadFile(handle.handle, buf, &bytesRead, nil)
@@ -307,6 +321,22 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		isEOF = true
 	}
 
+	// For direct buffer mode, return metadata first, then signal to write raw bytes
+	if isDirectBuffer {
+		// Return metadata response
+		metaResp := arpc.Response{
+			Status: 200,
+			Data: map[string]interface{}{
+				"bytes_available": int(bytesRead),
+				"eof":             isEOF,
+			},
+		}
+
+		// Return special DirectBufferWrite object that will be handled by router
+		return metaResp, &DirectBufferWrite{Data: buf[:bytesRead]}
+	}
+
+	// Standard response mode with JSON data
 	return arpc.Response{
 		Status: 200,
 		Data: map[string]interface{}{

@@ -30,6 +30,14 @@ type Response struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
+type DirectBufferWrite struct {
+	Data []byte
+}
+
+func (d *DirectBufferWrite) Error() string {
+	return "direct buffer write requested"
+}
+
 // HandlerFunc is the type of function that can handle a Request.
 type HandlerFunc func(req Request) (Response, error)
 
@@ -134,7 +142,39 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 	}
 
 	resp, err := handler(req)
+
+	// Check for DirectBufferWrite signal
 	if err != nil {
+		if dbw, ok := err.(*DirectBufferWrite); ok {
+			// First send the normal response (which contains metadata)
+			arena := fastjson.Arena{}
+			respObj := arena.NewObject()
+			respObj.Set("status", arena.NewNumberInt(resp.Status))
+
+			if resp.Message != "" {
+				respObj.Set("message", arena.NewString(resp.Message))
+			}
+
+			if resp.Data != nil {
+				dataBytes, err := json.Marshal(resp.Data)
+				if err == nil {
+					var p fastjson.Parser
+					dataVal, err := p.ParseBytes(dataBytes)
+					if err == nil {
+						respObj.Set("data", dataVal)
+					}
+				}
+			}
+
+			// Send metadata response
+			stream.Write(respObj.MarshalTo(nil))
+
+			// Then directly write binary data
+			stream.Write(dbw.Data)
+			return
+		}
+
+		// Handle regular errors
 		writeErrorResponse(stream, 500, err.Error())
 		return
 	}
@@ -557,6 +597,138 @@ func (s *Session) CallWithHeaders(ctx context.Context, method string, payload in
 		return nil, ctx.Err()
 	case res := <-resCh:
 		return res.resp, res.err
+	}
+}
+
+// CallJSONWithBuffer performs an RPC call where the response data will be written
+// directly into the provided buffer, avoiding an extra copy operation.
+// Returns the number of bytes read and any error that occurred.
+func (s *Session) CallJSONWithBuffer(ctx context.Context, method string, payload interface{}, buffer []byte) (int, bool, error) {
+	s.mu.RLock()
+	curSession := s.sess
+	rc := s.reconnectConfig
+	s.mu.RUnlock()
+
+	stream, err := curSession.OpenStream()
+	if err != nil && rc != nil && rc.AutoReconnect {
+		s.mu.Lock()
+		err2 := s.attemptReconnect()
+		s.mu.Unlock()
+		if err2 != nil {
+			return 0, false, err2
+		}
+		s.mu.RLock()
+		curSession = s.sess
+		s.mu.RUnlock()
+		stream, err = curSession.OpenStream()
+		if err != nil {
+			return 0, false, err
+		}
+	} else if err != nil {
+		return 0, false, err
+	}
+
+	type result struct {
+		bytesRead int
+		eof       bool
+		err       error
+	}
+	resCh := make(chan result, 1)
+
+	go func() {
+		defer stream.Close()
+
+		// Create request with direct buffer flag
+		arena := fastjson.Arena{}
+		reqObj := arena.NewObject()
+		reqObj.Set("method", arena.NewString(method))
+
+		// Marshal payload
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			resCh <- result{0, false, err}
+			return
+		}
+
+		var p fastjson.Parser
+		payloadVal, err := p.ParseBytes(payloadBytes)
+		if err != nil {
+			resCh <- result{0, false, err}
+			return
+		}
+		reqObj.Set("payload", payloadVal)
+
+		// Add direct buffer header
+		headersObj := arena.NewObject()
+		headersObj.Set("X-Direct-Buffer", arena.NewString("true"))
+		reqObj.Set("headers", headersObj)
+
+		// Send request
+		if _, err := stream.Write(reqObj.MarshalTo(nil)); err != nil {
+			resCh <- result{0, false, err}
+			return
+		}
+
+		// First read the metadata response (small JSON with status, etc.)
+		metaBuffer := make([]byte, 512)
+		n, err := stream.Read(metaBuffer)
+		if err != nil {
+			resCh <- result{0, false, err}
+			return
+		}
+
+		// Parse metadata response
+		v, err := p.Parse(string(metaBuffer[:n]))
+		if err != nil {
+			resCh <- result{0, false, err}
+			return
+		}
+
+		// Check for error status
+		status := v.GetInt("status")
+		if status != http.StatusOK {
+			message := string(v.GetStringBytes("message"))
+			resCh <- result{0, false, fmt.Errorf("RPC error: %s (status %d)", message, status)}
+			return
+		}
+
+		// Get content length and EOF flag from metadata
+		contentLength := 0
+		isEOF := false
+
+		if dataObj := v.Get("data"); dataObj != nil {
+			contentLength = dataObj.GetInt("bytes_available")
+			isEOF = dataObj.GetBool("eof")
+		}
+
+		if contentLength <= 0 {
+			resCh <- result{0, isEOF, nil}
+			return
+		}
+
+		// Now read binary data directly into the provided buffer
+		bytesRead := 0
+		for bytesRead < contentLength && bytesRead < len(buffer) {
+			n, err := stream.Read(buffer[bytesRead:])
+			if err != nil {
+				resCh <- result{bytesRead, isEOF, err}
+				return
+			}
+			if n == 0 {
+				break
+			}
+			bytesRead += n
+		}
+
+		resCh <- result{bytesRead, isEOF, nil}
+	}()
+
+	select {
+	case <-ctx.Done():
+		stream.Close()
+		return 0, false, ctx.Err()
+	case res := <-resCh:
+		return res.bytesRead, res.eof, res.err
 	}
 }
 
