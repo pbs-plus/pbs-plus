@@ -32,6 +32,7 @@ func Initialize(paths map[string]string) (*Store, error) {
 	store := &Store{
 		Database: database,
 		aRPCs:    make(map[string]*arpc.Session),
+		arpcFS:   make(map[string]*arpcfs.ARPCFS),
 	}
 
 	return store, nil
