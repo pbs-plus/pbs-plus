@@ -77,14 +77,14 @@ func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Respons
 			syslog.L.Errorf("%s (%s): %v", method, drive, err)
 		}
 	}
-	return arpc.Response{Status: 500, Message: err.Error()}
+	return arpc.Response{Status: 500, Data: arpc.WrapError(err)}
 }
 
 func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Response {
 	if syslog.L != nil {
 		syslog.L.Errorf("%s (%s): %v", method, drive, err)
 	}
-	return arpc.Response{Status: 400, Message: "invalid request"}
+	return arpc.Response{Status: 400, Data: arpc.WrapError(os.ErrInvalid)}
 }
 
 func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
