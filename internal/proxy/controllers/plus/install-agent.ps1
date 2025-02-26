@@ -81,6 +81,20 @@ function Download-FileWithRetry {
     return $success
 }
 
+# Helper function to normalize paths for comparison
+function Get-NormalizedPath {
+    param(
+        [string]$Path
+    )
+
+    # Remove quotes and normalize path
+    $normalizedPath = $Path -replace '^"|"$', ''  # Remove surrounding quotes
+    $normalizedPath = $normalizedPath -replace '"', ''  # Remove any remaining quotes
+    $normalizedPath = $normalizedPath.Trim()  # Remove whitespace
+    $normalizedPath = $normalizedPath.ToLower()  # Convert to lowercase for case-insensitive comparison
+    return $normalizedPath
+}
+
 # Function to check and uninstall existing services
 function Uninstall-ExistingService {
     param(
@@ -92,12 +106,20 @@ function Uninstall-ExistingService {
         $service = Get-WmiObject -Class Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
         
         if ($service) {
-            $currentPath = $service.PathName -replace '^"|"$', '' # Remove surrounding quotes if present
+            # Normalize service path and target path for comparison
+            $currentPath = Get-NormalizedPath -Path $service.PathName
+            $normalizedTargetPath = Get-NormalizedPath -Path $TargetPath
+            
+            # Extract just the file paths (exclude parameters)
+            $currentExePath = ($currentPath -split ' ')[0]
+            $targetExePath = ($normalizedTargetPath -split ' ')[0]
+            
+            Write-Host "Current service path: $currentExePath" -ForegroundColor Cyan
+            Write-Host "Target path: $targetExePath" -ForegroundColor Cyan
             
             # Check if executable path matches target installation path
-            if ($currentPath -ne $TargetPath -and $currentPath -notlike "*$TargetPath*") {
-                Write-Host "$ServiceName is currently installed at: $currentPath" -ForegroundColor Yellow
-                Write-Host "This differs from the target path: $TargetPath" -ForegroundColor Yellow
+            if ($currentExePath -ne $targetExePath) {
+                Write-Host "$ServiceName is currently installed at a different location" -ForegroundColor Yellow
                 Write-Host "Uninstalling existing service to reinstall at the correct location..." -ForegroundColor Cyan
                 
                 # Stop service first
@@ -290,8 +312,8 @@ catch {
 }
 
 # Check and uninstall services if they're installed in different locations
-$agentServicePath = "`"$agentPath`""
-$updaterServicePath = "`"$updaterPath`""
+$agentServicePath = "$agentPath"  # No quotes - will normalize in the function
+$updaterServicePath = "$updaterPath"  # No quotes - will normalize in the function
 
 $agentUninstalled = Uninstall-ExistingService -ServiceName "PBSPlusAgent" -TargetPath $agentServicePath
 $updaterUninstalled = Uninstall-ExistingService -ServiceName "PBSPlusUpdater" -TargetPath $updaterServicePath
