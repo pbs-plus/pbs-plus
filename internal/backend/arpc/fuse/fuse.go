@@ -40,7 +40,7 @@ func newRoot(underlying billy.Basic, callHook CallHook) fs.InodeEmbedder {
 func Mount(mountpoint string, fsName string, underlying billy.Basic, callHook CallHook) (*fuse.Server, error) {
 	root := newRoot(underlying, callHook)
 
-	timeout := 3 * time.Second
+	timeout := time.Second
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
@@ -50,9 +50,8 @@ func Mount(mountpoint string, fsName string, underlying billy.Basic, callHook Ca
 			AllowOther: true,
 		},
 		// Use sensible cache timeouts
-		EntryTimeout:    &timeout,
-		AttrTimeout:     &timeout,
-		NegativeTimeout: &timeout,
+		EntryTimeout: &timeout,
+		AttrTimeout:  &timeout,
 	}
 
 	server, err := fs.Mount(mountpoint, root, options)
