@@ -138,6 +138,7 @@ func main() {
 			syslog.L.Errorf("Command handling failed: %v", err)
 			return
 		}
+		return
 	}
 
 	// Run the service
@@ -168,12 +169,6 @@ func handleServiceCommands(s service.Service, cmd string) error {
 		err := service.Control(s, cmd)
 		if err != nil {
 			return fmt.Errorf("failed to %s service: %v", cmd, err)
-		}
-		if cmd == "install" {
-			go func() {
-				<-time.After(10 * time.Second)
-				_ = s.Start()
-			}()
 		}
 	// case "--set-server-url":
 	// 	if !isAdmin() {
