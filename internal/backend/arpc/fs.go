@@ -4,6 +4,7 @@ package arpcfs
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,6 +119,9 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		}
 	}
 
+	encJson, _ := json.Marshal(fi)
+	syslog.L.Infof("Entry - %s: %v", filename, string(encJson))
+
 	modTime := time.Unix(fi.ModTimeUnix, 0)
 	return &fileInfo{
 		name:    filepath.Base(filename),
@@ -188,6 +192,8 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 			modTime: modTime,
 			isDir:   e.IsDir,
 		}
+		encJson, _ := json.Marshal(e)
+		syslog.L.Infof("Entry - %s: %v", path, string(encJson))
 	}
 	return entries, nil
 }
