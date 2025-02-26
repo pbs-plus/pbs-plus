@@ -3,7 +3,6 @@
 package arpcfs
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"time"
@@ -18,13 +17,13 @@ func (f *ARPCFile) Name() string {
 
 func (f *ARPCFile) Read(p []byte) (int, error) {
 	if f.isClosed {
-		return 0, os.ErrClosed
+		return 0, os.ErrInvalid
 	}
 
 	var resp ReadResponse
 	if f.fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
-		return 0, fmt.Errorf("RPC failed: aRPC session is nil")
+		return 0, os.ErrInvalid
 	}
 
 	ctx, cancel := TimeoutCtx()
@@ -36,7 +35,7 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 	}, &resp)
 	if err != nil {
 		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
-		return 0, fmt.Errorf("Read RPC failed: %w", err)
+		return 0, os.ErrInvalid
 	}
 
 	copy(p, resp.Data)
@@ -49,7 +48,7 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 }
 
 func (f *ARPCFile) Write(p []byte) (n int, err error) {
-	return 0, fmt.Errorf("read-only filesystem")
+	return 0, os.ErrInvalid
 }
 
 func (f *ARPCFile) Close() error {
@@ -59,7 +58,7 @@ func (f *ARPCFile) Close() error {
 
 	if f.fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
-		return fmt.Errorf("RPC failed: aRPC session is nil")
+		return os.ErrInvalid
 	}
 
 	ctx, cancel := TimeoutCtx()
@@ -71,17 +70,22 @@ func (f *ARPCFile) Close() error {
 		HandleID: f.handleID,
 	})
 	f.isClosed = true
-	return err
+	if err != nil {
+		syslog.L.Errorf("Write RPC failed (%s): %v", f.name, err)
+		return os.ErrInvalid
+	}
+
+	return nil
 }
 
 func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 	if f.isClosed {
-		return 0, os.ErrClosed
+		return 0, os.ErrInvalid
 	}
 
 	var resp ReadResponse
 	if f.fs.session == nil {
-		return 0, fmt.Errorf("RPC failed: aRPC session is nil")
+		return 0, os.ErrInvalid
 	}
 
 	ctx, cancel := TimeoutCtx()
@@ -94,7 +98,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 	}, &resp)
 	if err != nil {
 		syslog.L.Errorf("ReadAt RPC failed (%s): %v", f.name, err)
-		return 0, fmt.Errorf("ReadAt RPC failed: %w", err)
+		return 0, os.ErrInvalid
 	}
 
 	copy(p, resp.Data)
@@ -107,7 +111,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 
 func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 	if f.isClosed {
-		return 0, os.ErrClosed
+		return 0, os.ErrInvalid
 	}
 
 	switch whence {
@@ -119,7 +123,7 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 		var fi FileInfoResponse
 		if f.fs.session == nil {
 			syslog.L.Error("RPC failed: aRPC session is nil")
-			return 0, fmt.Errorf("RPC failed: aRPC session is nil")
+			return 0, os.ErrInvalid
 		}
 
 		ctx, cancel := TimeoutCtx()
@@ -132,25 +136,25 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 		}, &fi)
 		if err != nil {
 			syslog.L.Errorf("Fstat RPC failed (%s): %v", f.name, err)
-			return 0, fmt.Errorf("Fstat RPC failed: %w", err)
+			return 0, os.ErrInvalid
 		}
 		f.offset = fi.Size + offset
 	default:
-		return 0, fmt.Errorf("invalid whence")
+		return 0, os.ErrInvalid
 	}
 	return f.offset, nil
 }
 
 func (f *ARPCFile) Lock() error {
-	return fmt.Errorf("locking not supported")
+	return os.ErrInvalid
 }
 
 func (f *ARPCFile) Unlock() error {
-	return fmt.Errorf("locking not supported")
+	return os.ErrInvalid
 }
 
 func (f *ARPCFile) Truncate(size int64) error {
-	return fmt.Errorf("read-only filesystem")
+	return os.ErrInvalid
 }
 
 // fileInfo implements os.FileInfo

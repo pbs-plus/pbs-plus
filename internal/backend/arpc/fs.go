@@ -4,9 +4,9 @@ package arpcfs
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -51,7 +51,7 @@ func (f *ARPCFS) Unmount() {
 var _ billy.File = (*ARPCFile)(nil)
 
 func (fs *ARPCFS) Create(filename string) (billy.File, error) {
-	return nil, fmt.Errorf("read-only filesystem")
+	return nil, os.ErrInvalid
 }
 
 func (fs *ARPCFS) Open(filename string) (billy.File, error) {
@@ -60,7 +60,7 @@ func (fs *ARPCFS) Open(filename string) (billy.File, error) {
 
 func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
 	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
-		return nil, fmt.Errorf("read-only filesystem")
+		return nil, os.ErrInvalid
 	}
 
 	var resp struct {
@@ -69,7 +69,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
-		return nil, fmt.Errorf("RPC failed: aRPC session is nil")
+		return nil, os.ErrInvalid
 	}
 
 	ctx, cancel := TimeoutCtx()
@@ -82,7 +82,10 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	}, &resp)
 	if err != nil {
 		syslog.L.Errorf("OpenFile RPC failed (%s): %v", filename, err)
-		return nil, fmt.Errorf("OpenFile RPC failed: %w", err)
+		if strings.Contains(err.Error(), "not found") {
+			return nil, os.ErrNotExist
+		}
+		return nil, os.ErrInvalid
 	}
 
 	return &ARPCFile{
@@ -97,7 +100,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	var fi FileInfoResponse
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
-		return nil, fmt.Errorf("RPC failed: aRPC session is nil")
+		return nil, os.ErrInvalid
 	}
 
 	ctx, cancel := TimeoutCtx()
@@ -110,7 +113,9 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	}, &fi)
 	if err != nil {
 		syslog.L.Errorf("Stat RPC failed (%s): %v", filename, err)
-		return nil, fmt.Errorf("Stat RPC failed: %w", err)
+		if strings.Contains(err.Error(), "file not found") {
+			return nil, os.ErrNotExist
+		}
 	}
 
 	modTime := time.Unix(fi.ModTimeUnix, 0)
@@ -126,7 +131,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
-		return types.StatFS{}, fmt.Errorf("RPC failed: aRPC session is nil")
+		return types.StatFS{}, os.ErrInvalid
 	}
 
 	var fsStat utils.FSStat
@@ -137,7 +142,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	err := fs.session.CallJSON(ctx, fs.drive+"/FSstat", struct{}{}, &fsStat)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
-		return types.StatFS{}, fmt.Errorf("StatFS RPC failed: %w", err)
+		return types.StatFS{}, os.ErrInvalid
 	}
 
 	return types.StatFS{
@@ -155,7 +160,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	var resp ReadDirResponse
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
-		return nil, fmt.Errorf("RPC failed: aRPC session is nil")
+		return nil, os.ErrInvalid
 	}
 
 	ctx, cancel := TimeoutCtx()
@@ -168,7 +173,9 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	}, &resp)
 	if err != nil {
 		syslog.L.Errorf("ReadDir RPC failed: %v", err)
-		return nil, fmt.Errorf("ReadDir RPC failed: %w", err)
+		if strings.Contains(err.Error(), "not found") {
+			return nil, os.ErrNotExist
+		}
 	}
 
 	entries := make([]os.FileInfo, len(resp.Entries))
@@ -186,27 +193,27 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 }
 
 func (fs *ARPCFS) Rename(oldpath, newpath string) error {
-	return fmt.Errorf("read-only filesystem")
+	return os.ErrInvalid
 }
 
 func (fs *ARPCFS) Remove(filename string) error {
-	return fmt.Errorf("read-only filesystem")
+	return os.ErrInvalid
 }
 
 func (fs *ARPCFS) MkdirAll(path string, perm os.FileMode) error {
-	return fmt.Errorf("read-only filesystem")
+	return os.ErrInvalid
 }
 
 func (fs *ARPCFS) Symlink(target, link string) error {
-	return fmt.Errorf("read-only filesystem")
+	return os.ErrInvalid
 }
 
 func (fs *ARPCFS) Readlink(link string) (string, error) {
-	return "", fmt.Errorf("read link unsupported")
+	return "", os.ErrInvalid
 }
 
 func (fs *ARPCFS) TempFile(dir, prefix string) (billy.File, error) {
-	return nil, fmt.Errorf("read-only filesystem")
+	return nil, os.ErrInvalid
 }
 
 func (fs *ARPCFS) Join(elem ...string) string {
@@ -226,17 +233,17 @@ func (fs *ARPCFS) Lstat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *ARPCFS) Chmod(name string, mode os.FileMode) error {
-	return fmt.Errorf("read-only filesystem")
+	return os.ErrInvalid
 }
 
 func (fs *ARPCFS) Lchown(name string, uid, gid int) error {
-	return fmt.Errorf("read-only filesystem")
+	return os.ErrInvalid
 }
 
 func (fs *ARPCFS) Chown(name string, uid, gid int) error {
-	return fmt.Errorf("read-only filesystem")
+	return os.ErrInvalid
 }
 
 func (fs *ARPCFS) Chtimes(name string, atime time.Time, mtime time.Time) error {
-	return fmt.Errorf("read-only filesystem")
+	return os.ErrInvalid
 }
