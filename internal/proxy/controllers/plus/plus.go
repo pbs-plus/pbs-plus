@@ -14,6 +14,7 @@ import (
 	"time"
 
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -56,7 +57,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			mntPath := filepath.Join(constants.AgentMountBasePath, strings.ReplaceAll(targetName, " ", "-"))
 
-			err = arpcFS.Mount(mntPath)
+			err = mount.Mount(arpcFS, mntPath)
 			if err != nil {
 				syslog.L.Errorf("MountHandler: Failed to create fuse connection for target -> %v", err)
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to create fuse connection for target -> %v", err), http.StatusInternalServerError)
