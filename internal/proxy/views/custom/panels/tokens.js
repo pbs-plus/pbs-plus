@@ -58,6 +58,53 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       }).show();
     },
 
+    onDeploy: async function () {
+      let me = this;
+      let view = me.getView();
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
+
+      let token = selection[0].data.token;
+
+      const hostname = window.location.hostname;
+      const powershellCommand = `irm "https://${hostname}:8008/plus/agent/install/win?t=${token}" | iex`;
+
+      Ext.create("Ext.window.Window", {
+        modal: true,
+        width: 600,
+        title: gettext("Deployment Scripts"),
+        layout: "form",
+        bodyPadding: "10 0",
+        items: [
+          {
+            text: gettext("Windows (Powershell)"),
+            xtype: "textfield",
+            inputId: "ps1-command",
+            value: powershellCommand,
+            editable: false,
+          },
+        ],
+        buttons: [
+          {
+            xtype: "button",
+            iconCls: "fa fa-clipboard",
+            handler: async function (b) {
+              await navigator.clipboard.writeText(powershellCommand);
+            },
+            text: gettext("Copy"),
+          },
+          {
+            text: gettext("Ok"),
+            handler: function () {
+              this.up("window").close();
+            },
+          },
+        ],
+      }).show();
+    },
+
     reload: function () {
       this.getView().getStore().rstore.load();
     },
@@ -122,6 +169,12 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       text: gettext("Copy Token"),
       xtype: "proxmoxButton",
       handler: "onCopy",
+      disabled: true,
+    },
+    {
+      text: gettext("Deploy with Token"),
+      xtype: "proxmoxButton",
+      handler: "onDeploy",
       disabled: true,
     },
     {
