@@ -222,7 +222,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 		if strings.Contains(err.Error(), "not found") {
 			return nil, os.ErrNotExist
 		}
-		return nil, err
+		return nil, os.ErrInvalid
 	}
 
 	entries := make([]os.FileInfo, len(resp.Entries))
