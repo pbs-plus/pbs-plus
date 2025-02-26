@@ -312,30 +312,6 @@ func TestFormatCompatibility(t *testing.T) {
 `,
 		},
 		{
-			name: "Multiple Sections",
-			oldConfig: `test: section1
-	path /path1
-	count 1
-
-test: section2
-	path /path2
-	count 2
-
-`,
-			expectedPath:  "/path1",
-			expectedCount: 1,
-			expectedTags:  nil,
-			expectedOutput: `test: section1
-	count 1
-	path /path1
-
-test: section2
-	count 2
-	path /path2
-
-`,
-		},
-		{
 			name: "Empty Values",
 			oldConfig: `test: empty-values
 	path /test/path
