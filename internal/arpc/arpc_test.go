@@ -1,15 +1,16 @@
 package arpc
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"net"
-	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/valyala/fastjson"
 	"github.com/xtaci/smux"
 )
 
@@ -339,40 +340,110 @@ func TestAutoReconnect(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------
-// Test 6: CallWithHeaders.
-// Verify that custom HTTP headers are delivered correctly within the call.
-// ---------------------------------------------------------------------
-func TestCallWithHeaders(t *testing.T) {
-	router := NewRouter()
-	router.Handle("user", func(req Request) (Response, error) {
-		if req.Headers.Get("X-Test") != "value" {
-			return Response{
-				Status:  400,
-				Message: "missing header",
-			}, nil
-		}
-		return Response{
-			Status: 200,
-			Data:   "header ok",
-		}, nil
-	})
+// TestCallJSONWithBuffer_Success verifies that CallJSONWithBuffer correctly
+// reads the metadata and then the binary payload written by a custom server.
+func TestCallJSONWithBuffer_Success(t *testing.T) {
+	// Create an in-memory connection pair.
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
-	clientSession, cleanup := setupSessionWithRouter(t, router)
-	defer cleanup()
-
-	ctx := context.Background()
-	headers := http.Header{}
-	headers.Set("X-Test", "value")
-	resp, err := clientSession.CallWithHeaders(ctx, "user", nil, headers)
+	// Create server and client smux sessions wrapped in our Session type.
+	serverSess, err := NewServerSession(serverConn, nil)
 	if err != nil {
-		t.Fatalf("CallWithHeaders failed: %v", err)
+		t.Fatalf("failed to create server session: %v", err)
 	}
-	if resp.Status != 200 {
-		t.Fatalf("expected status 200, got %d", resp.Status)
+	clientSess, err := NewClientSession(clientConn, nil)
+	if err != nil {
+		t.Fatalf("failed to create client session: %v", err)
 	}
-	val, ok := resp.Data.(string)
-	if !ok || val != "header ok" {
-		t.Fatalf("expected 'header ok', got %v", resp.Data)
+
+	// Launch a goroutine to simulate a buffered-call handler on the server side.
+	// Instead of routing via ServeStream (which always writes a JSON reply),
+	// this goroutine will accept a stream, read the request (discarding its
+	// contents), then write a metadata JSON (with bytes_available and eof)
+	// followed (after a slight delay) by the binary payload.
+	go func() {
+		// Accept a stream from the underlying smux session.
+		stream, err := serverSess.sess.AcceptStream()
+		if err != nil {
+			t.Errorf("server: AcceptStream error: %v", err)
+			return
+		}
+		defer stream.Close()
+
+		reader := bufio.NewReader(stream)
+		writer := bufio.NewWriter(stream)
+
+		// Read and discard the complete request (which contains the method,
+		// payload, and direct-buffer header).
+		_, err = reader.ReadBytes('\n')
+		if err != nil {
+			t.Errorf("server: error reading request: %v", err)
+			return
+		}
+
+		// Prepare the binary payload.
+		binaryData := []byte("hello world")
+		dataLen := len(binaryData)
+
+		// Build metadata JSON using a pooled fastjson.Arena.
+		arena := arenaPool.Get().(*fastjson.Arena)
+		metaObj := arena.NewObject()
+		metaObj.Set("status", arena.NewNumberInt(200))
+		dataMeta := arena.NewObject()
+		dataMeta.Set("bytes_available", arena.NewNumberInt(dataLen))
+		// Use fastjson.MustParse to create a boolean value.
+		dataMeta.Set("eof", fastjson.MustParse("true"))
+		metaObj.Set("data", dataMeta)
+		metaBytes := metaObj.MarshalTo(nil)
+		metaBytes = append(metaBytes, '\n')
+		arena.Reset()
+		arenaPool.Put(arena)
+
+		// Write the metadata first.
+		if _, err := writer.Write(metaBytes); err != nil {
+			t.Errorf("server: error writing metadata: %v", err)
+			return
+		}
+		if err := writer.Flush(); err != nil {
+			t.Errorf("server: error flushing metadata: %v", err)
+			return
+		}
+
+		// Sleep briefly to help ensure the client’s first read retrieves just
+		// the metadata and not some of the binary payload.
+		time.Sleep(50 * time.Millisecond)
+
+		// Write the binary payload.
+		if _, err := writer.Write(binaryData); err != nil {
+			t.Errorf("server: error writing binary data: %v", err)
+			return
+		}
+		if err := writer.Flush(); err != nil {
+			t.Errorf("server: error flushing binary data: %v", err)
+			return
+		}
+	}()
+
+	// On the client side, use CallJSONWithBuffer to send a request.
+	// (The server ignores the request payload; it will respond using our custom
+	// protocol above.)
+	buffer := make([]byte, 64)
+	n, eof, err := clientSess.CallJSONWithBuffer(context.Background(), "buffer", nil, buffer)
+	if err != nil {
+		t.Fatalf("client: CallJSONWithBuffer error: %v", err)
+	}
+
+	// Verify that we received the expected binary payload.
+	expected := "hello world"
+	if n != len(expected) {
+		t.Fatalf("expected %d bytes, got %d", len(expected), n)
+	}
+	if got := string(buffer[:n]); got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+	if !eof {
+		t.Fatal("expected eof to be true")
 	}
 }
