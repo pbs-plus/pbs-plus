@@ -30,7 +30,7 @@ func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, 
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
-			Debug:              true,
+			Debug:              false,
 			FsName:             fsName,
 			Name:               "pbsagent",
 			AllowOther:         true,

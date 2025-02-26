@@ -11,21 +11,44 @@ import (
 	"time"
 
 	"github.com/go-git/go-billy/v5"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
+// Cache TTL durations.
+const (
+	statCacheTTL    = 5 * time.Second
+	readDirCacheTTL = 5 * time.Second
+	statFSTTL       = 10 * time.Second
+)
+
 var _ billy.Filesystem = (*ARPCFS)(nil)
 
-// NewARPCFS creates a new filesystem backed by aRPC calls
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, drive string) *ARPCFS {
+	statC, err := lru.New[string, statCacheEntry](1024)
+	if err != nil {
+		panic(err)
+	}
+	readDirC, err := lru.New[string, readDirCacheEntry](1024)
+	if err != nil {
+		panic(err)
+	}
+	statFSC, err := lru.New[string, statFSCacheEntry](1)
+	if err != nil {
+		panic(err)
+	}
+
 	return &ARPCFS{
-		ctx:      ctx,
-		session:  session,
-		Drive:    drive,
-		Hostname: hostname,
+		ctx:          ctx,
+		session:      session,
+		Drive:        drive,
+		Hostname:     hostname,
+		statCache:    statC,
+		readDirCache: readDirC,
+		statFSCache:  statFSC,
 	}
 }
 
@@ -45,7 +68,8 @@ func (fs *ARPCFS) Open(filename string) (billy.File, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
-func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
+func (fs *ARPCFS) OpenFile(filename string, flag int,
+	perm os.FileMode) (billy.File, error) {
 	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		return nil, os.ErrInvalid
 	}
@@ -83,7 +107,21 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	}, nil
 }
 
+// Stat first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
+	now := time.Now()
+
+	// Attempt to fetch from the LRU cache.
+	fs.statCacheMu.Lock()
+	if entry, ok := fs.statCache.Get(filename); ok {
+		if now.Before(entry.expiry) {
+			fs.statCacheMu.Unlock()
+			return entry.info, nil
+		}
+	}
+	fs.statCacheMu.Unlock()
+
+	// Cache miss or expired; perform RPC.
 	var fi FileInfoResponse
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
@@ -93,39 +131,62 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.Drive+"/Stat", struct {
-		Path string `json:"path"`
-	}{
-		Path: filename,
-	}, &fi)
+	err := fs.session.CallJSON(ctx, fs.Drive+"/Stat",
+		struct {
+			Path string `json:"path"`
+		}{Path: filename}, &fi)
 	if err != nil {
 		syslog.L.Errorf("Stat RPC failed (%s): %v", filename, err)
 		if strings.Contains(err.Error(), "file not found") {
 			return nil, os.ErrNotExist
 		}
+		return nil, err
 	}
 
 	encJson, _ := json.Marshal(fi)
 	syslog.L.Infof("Entry - %s: %v", filename, string(encJson))
 
 	modTime := time.Unix(fi.ModTimeUnix, 0)
-	return &fileInfo{
+	info := &fileInfo{
 		name:    filepath.Base(filename),
 		size:    fi.Size,
 		mode:    fi.Mode,
 		modTime: modTime,
 		isDir:   fi.IsDir,
-	}, nil
+	}
+
+	// Update the LRU cache.
+	fs.statCacheMu.Lock()
+	fs.statCache.Add(filename, statCacheEntry{
+		info:   info,
+		expiry: now.Add(statCacheTTL),
+	})
+	fs.statCacheMu.Unlock()
+
+	return info, nil
 }
 
+// StatFS tries the LRU cache before making the RPC call.
 func (fs *ARPCFS) StatFS() (types.StatFS, error) {
+	now := time.Now()
+	const statFSKey = "statFS"
+
+	fs.statFSCacheMu.Lock()
+	if entry, ok := fs.statFSCache.Get(statFSKey); ok {
+		if now.Before(entry.expiry) {
+			stat := entry.stat
+			fs.statFSCacheMu.Unlock()
+			return stat, nil
+		}
+	}
+	fs.statFSCacheMu.Unlock()
+
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return types.StatFS{}, os.ErrInvalid
 	}
 
 	var fsStat utils.FSStat
-
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
@@ -135,37 +196,57 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 		return types.StatFS{}, os.ErrInvalid
 	}
 
-	return types.StatFS{
-		Bsize:   uint64(4096), // Standard block size
+	stat := types.StatFS{
+		Bsize:   uint64(4096), // Standard block size.
 		Blocks:  uint64(fsStat.TotalSize / 4096),
 		Bfree:   uint64(fsStat.FreeSize / 4096),
 		Bavail:  uint64(fsStat.AvailableSize / 4096),
 		Files:   uint64(fsStat.TotalFiles),
 		Ffree:   uint64(fsStat.FreeFiles),
-		NameLen: 255, // Windows typically supports long filenames
-	}, nil
+		NameLen: 255, // Typically supports long filenames.
+	}
+
+	fs.statFSCacheMu.Lock()
+	fs.statFSCache.Add(statFSKey, statFSCacheEntry{
+		stat:   stat,
+		expiry: now.Add(statFSTTL),
+	})
+	fs.statFSCacheMu.Unlock()
+
+	return stat, nil
 }
 
+// ReadDir first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
-	var resp ReadDirResponse
+	now := time.Now()
+
+	fs.readDirCacheMu.Lock()
+	if entry, ok := fs.readDirCache.Get(path); ok {
+		if now.Before(entry.expiry) {
+			fs.readDirCacheMu.Unlock()
+			return entry.entries, nil
+		}
+	}
+	fs.readDirCacheMu.Unlock()
+
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
 	}
 
+	var resp ReadDirResponse
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
 	err := fs.session.CallJSON(ctx, fs.Drive+"/ReadDir", struct {
 		Path string `json:"path"`
-	}{
-		Path: path,
-	}, &resp)
+	}{Path: path}, &resp)
 	if err != nil {
 		syslog.L.Errorf("ReadDir RPC failed: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			return nil, os.ErrNotExist
 		}
+		return nil, err
 	}
 
 	entries := make([]os.FileInfo, len(resp.Entries))
@@ -178,9 +259,24 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 			modTime: modTime,
 			isDir:   e.IsDir,
 		}
-		encJson, _ := json.Marshal(e)
-		syslog.L.Infof("Entry - %s: %v", path, string(encJson))
+
+		fs.statCacheMu.Lock()
+		childPath := filepath.Join(path, e.Name)
+		fs.statCache.Add(childPath, statCacheEntry{
+			info:   entries[i],
+			expiry: now.Add(statCacheTTL),
+		})
+		fs.statCacheMu.Unlock()
 	}
+
+	// Cache the directory listing itself.
+	fs.readDirCacheMu.Lock()
+	fs.readDirCache.Add(path, readDirCacheEntry{
+		entries: entries,
+		expiry:  now.Add(readDirCacheTTL),
+	})
+	fs.readDirCacheMu.Unlock()
+
 	return entries, nil
 }
 

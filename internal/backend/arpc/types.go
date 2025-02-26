@@ -3,10 +3,30 @@ package arpcfs
 import (
 	"context"
 	"os"
+	"sync"
+	"time"
 
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
 )
+
+// Cache entry types.
+type statCacheEntry struct {
+	info   os.FileInfo
+	expiry time.Time
+}
+
+type readDirCacheEntry struct {
+	entries []os.FileInfo
+	expiry  time.Time
+}
+
+type statFSCacheEntry struct {
+	stat   types.StatFS
+	expiry time.Time
+}
 
 // ARPCFS implements billy.Filesystem using aRPC calls
 type ARPCFS struct {
@@ -15,6 +35,13 @@ type ARPCFS struct {
 	Drive    string
 	Hostname string
 	Mount    *gofuse.Server
+
+	statCache      *lru.Cache[string, statCacheEntry]
+	statCacheMu    sync.Mutex
+	readDirCache   *lru.Cache[string, readDirCacheEntry]
+	readDirCacheMu sync.Mutex
+	statFSCache    *lru.Cache[string, statFSCacheEntry]
+	statFSCacheMu  sync.Mutex
 }
 
 // ARPCFile implements billy.File for remote files

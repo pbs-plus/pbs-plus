@@ -174,7 +174,6 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		return s.invalidRequest(req.Method, s.drive, err), nil
 	}
 
-	windowsPath := filepath.FromSlash(params.Path)
 	fullPath, err := s.abs(params.Path)
 	if err != nil {
 		return s.respondError(req.Method, s.drive, err), nil
@@ -182,7 +181,6 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 
 	if params.Path == "." || params.Path == "" {
 		fullPath = s.rootDir
-		windowsPath = "."
 	}
 
 	pathPtr, err := windows.UTF16PtrFromString(fullPath)
@@ -216,7 +214,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		name = "/"
 	}
 
-	info := createFileInfoFromFindData(name, windowsPath, &findData)
+	info := createFileInfoFromFindData(name, &findData)
 
 	return arpc.Response{
 		Status: 200,
@@ -253,9 +251,8 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	for {
 		name := windows.UTF16ToString(findData.FileName[:])
 		if name != "." && name != ".." {
-			winEntryPath := filepath.Join(windowsDir, name)
 			if !skipPathWithAttributes(findData.FileAttributes) {
-				info := createFileInfoFromFindData(name, winEntryPath, &findData)
+				info := createFileInfoFromFindData(name, &findData)
 				entries = append(entries, info)
 			}
 		}
