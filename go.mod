@@ -16,6 +16,7 @@ require (
 	github.com/mxk/go-vss v1.2.0
 	github.com/stretchr/testify v1.10.0
 	github.com/xtaci/smux v1.5.34
+	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/crypto v0.33.0
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	golang.org/x/sys v0.30.0
@@ -34,6 +35,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
+	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect

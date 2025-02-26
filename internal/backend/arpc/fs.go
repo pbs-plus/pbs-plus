@@ -30,7 +30,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, driv
 }
 
 func (f *ARPCFS) Mount(mountpoint string) error {
-	fsName := utils.Slugify(f.hostname) + "/" + f.drive
+	fsName := "agent://" + utils.Slugify(f.hostname) + "/" + f.drive
 	server, err := fuse.Mount(mountpoint, fsName, f, nil)
 	if err != nil {
 		return err
