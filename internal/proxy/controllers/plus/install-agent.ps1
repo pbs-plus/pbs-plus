@@ -30,6 +30,12 @@ if (-not (Test-Path -Path $installDir)) {
     New-Item -Path $installDir -ItemType Directory -Force | Out-Null
     Write-Host "Installation directory created: $installDir" -ForegroundColor Green
 }
+#
+# Configure SSL certificate validation bypass
+Write-Host "Configuring SSL certificate validation bypass..." -ForegroundColor Cyan
+# For .NET Framework - this works for PowerShell 5.1 and earlier
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
 
 # Function to download file with retry
 function Download-FileWithRetry {
@@ -46,7 +52,15 @@ function Download-FileWithRetry {
     while (-not $success -and $retryCount -lt $MaxRetries) {
         try {
             Write-Host "Downloading $Url to $Destination" -ForegroundColor Cyan
-            Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+              # Check PowerShell version to use appropriate method to ignore SSL validation
+            if ($PSVersionTable.PSVersion.Major -ge 6) {
+                # PowerShell Core (6+) has the SkipCertificateCheck parameter
+                Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -SkipCertificateCheck
+            } else {
+                # PowerShell 5.1 and earlier - we already set ServicePointManager globally above
+                Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+            }
+            
             if (Test-Path -Path $Destination) {
                 $success = $true
                 Write-Host "Downloaded successfully: $Destination" -ForegroundColor Green
