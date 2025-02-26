@@ -18,13 +18,6 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-// Cache TTL durations.
-const (
-	statCacheTTL    = 5 * time.Second
-	readDirCacheTTL = 5 * time.Second
-	statFSTTL       = 10 * time.Second
-)
-
 var _ billy.Filesystem = (*ARPCFS)(nil)
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, drive string) *ARPCFS {
@@ -158,8 +151,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	// Update the LRU cache.
 	fs.statCacheMu.Lock()
 	fs.statCache.Add(filename, statCacheEntry{
-		info:   info,
-		expiry: now.Add(statCacheTTL),
+		info: info,
 	})
 	fs.statCacheMu.Unlock()
 
@@ -208,8 +200,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 
 	fs.statFSCacheMu.Lock()
 	fs.statFSCache.Add(statFSKey, statFSCacheEntry{
-		stat:   stat,
-		expiry: now.Add(statFSTTL),
+		stat: stat,
 	})
 	fs.statFSCacheMu.Unlock()
 
@@ -263,8 +254,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 		fs.statCacheMu.Lock()
 		childPath := filepath.Join(path, e.Name)
 		fs.statCache.Add(childPath, statCacheEntry{
-			info:   entries[i],
-			expiry: now.Add(statCacheTTL),
+			info: entries[i],
 		})
 		fs.statCacheMu.Unlock()
 	}
@@ -273,7 +263,6 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	fs.readDirCacheMu.Lock()
 	fs.readDirCache.Add(path, readDirCacheEntry{
 		entries: entries,
-		expiry:  now.Add(readDirCacheTTL),
 	})
 	fs.readDirCacheMu.Unlock()
 
