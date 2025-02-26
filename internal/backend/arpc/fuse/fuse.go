@@ -74,6 +74,71 @@ var _ = (fs.NodeGetattrer)((*BillyRoot)(nil))
 var _ = (fs.NodeLookuper)((*BillyRoot)(nil))
 var _ = (fs.NodeReaddirer)((*BillyRoot)(nil))
 var _ = (fs.NodeOpener)((*BillyRoot)(nil))
+var _ = (fs.NodeStatfser)((*BillyRoot)(nil))
+var _ = (fs.NodeAccesser)((*BillyRoot)(nil))
+var _ = (fs.NodeOpendirHandler)((*BillyRoot)(nil))
+var _ = (fs.NodeStatxer)((*BillyRoot)(nil))
+
+func (r *BillyRoot) Access(ctx context.Context, mask uint32) syscall.Errno {
+	if err := r.callHook(ctx); err != nil {
+		return fs.ToErrno(err)
+	}
+
+	// For read-only filesystem, deny write access (bit 1)
+	if mask&2 != 0 { // 2 = write bit (traditional W_OK)
+		return syscall.EROFS
+	}
+
+	return 0
+}
+
+func (r *BillyRoot) OpendirHandle(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	if err := r.callHook(ctx); err != nil {
+		return nil, 0, fs.ToErrno(err)
+	}
+
+	return &BillyDirHandle{
+		root: r,
+		path: "",
+	}, fuse.FOPEN_CACHE_DIR, 0
+}
+
+func (r *BillyRoot) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask uint32, out *fuse.StatxOut) syscall.Errno {
+	if err := r.callHook(ctx); err != nil {
+		return fs.ToErrno(err)
+	}
+
+	// Get file stats the regular way, then populate StatxOut
+	var attrOut fuse.AttrOut
+	errno := r.Getattr(ctx, f, &attrOut)
+	if errno != 0 {
+		return errno
+	}
+
+	// Use actual STATX mask values
+	const (
+		STATX_TYPE  = 0x00000001 // Want stx_mode & S_IFMT
+		STATX_MODE  = 0x00000002 // Want stx_mode & ~S_IFMT
+		STATX_NLINK = 0x00000004 // Want stx_nlink
+		STATX_SIZE  = 0x00000200 // Want stx_size
+		STATX_MTIME = 0x00000020 // Want stx_mtime
+	)
+
+	// Set basic attributes
+	out.Mask = STATX_TYPE | STATX_MODE | STATX_NLINK | STATX_SIZE
+	out.Mode = uint16(attrOut.Mode)
+	out.Size = attrOut.Size
+	out.Nlink = attrOut.Nlink
+
+	// Add timestamps if requested
+	if mask&STATX_MTIME != 0 {
+		out.Mask |= STATX_MTIME
+		out.Mtime.Sec = attrOut.Mtime
+		out.Mtime.Nsec = attrOut.Mtimensec
+	}
+
+	return 0
+}
 
 // Getattr implements NodeGetattrer
 func (r *BillyRoot) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
@@ -229,8 +294,92 @@ var _ = (fs.NodeLookuper)((*BillyNode)(nil))
 var _ = (fs.NodeReaddirer)((*BillyNode)(nil))
 var _ = (fs.NodeOpener)((*BillyNode)(nil))
 var _ = (fs.NodeReadlinker)((*BillyNode)(nil))
-var _ = (fs.NodeStatfser)((*BillyRoot)(nil))
 var _ = (fs.NodeStatfser)((*BillyNode)(nil))
+var _ = (fs.NodeAccesser)((*BillyNode)(nil))
+var _ = (fs.NodeOpendirHandler)((*BillyNode)(nil))
+var _ = (fs.NodeReleaser)((*BillyNode)(nil))
+var _ = (fs.NodeStatxer)((*BillyNode)(nil))
+
+func (n *BillyNode) Access(ctx context.Context, mask uint32) syscall.Errno {
+	if err := n.root.callHook(ctx); err != nil {
+		return fs.ToErrno(err)
+	}
+
+	// For read-only filesystem, deny write access (bit 1)
+	if mask&2 != 0 { // 2 = write bit (traditional W_OK)
+		return syscall.EROFS
+	}
+
+	// Check if the file exists (that's sufficient for read-only fs)
+	_, err := n.root.underlying.Stat(n.path)
+	if err != nil {
+		return fs.ToErrno(err)
+	}
+
+	return 0
+}
+
+func (n *BillyNode) OpendirHandle(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	if err := n.root.callHook(ctx); err != nil {
+		return nil, 0, fs.ToErrno(err)
+	}
+
+	// Return the directory handle with potential caching hint
+	return &BillyDirHandle{
+		root: n.root,
+		path: n.path,
+	}, fuse.FOPEN_CACHE_DIR, 0 // Enable directory caching for better performance
+}
+
+func (n *BillyNode) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
+	if err := n.root.callHook(ctx); err != nil {
+		return fs.ToErrno(err)
+	}
+
+	if fh, ok := f.(fs.FileReleaser); ok {
+		return fh.Release(ctx)
+	}
+
+	return 0
+}
+
+func (n *BillyNode) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask uint32, out *fuse.StatxOut) syscall.Errno {
+	if err := n.root.callHook(ctx); err != nil {
+		return fs.ToErrno(err)
+	}
+
+	// Get file stats the regular way, then populate StatxOut
+	var attrOut fuse.AttrOut
+	errno := n.Getattr(ctx, f, &attrOut)
+	if errno != 0 {
+		return errno
+	}
+
+	// Use actual STATX mask values
+	// These values come from Linux's statx flags in <linux/stat.h>
+	const (
+		STATX_TYPE  = 0x00000001 // Want stx_mode & S_IFMT
+		STATX_MODE  = 0x00000002 // Want stx_mode & ~S_IFMT
+		STATX_NLINK = 0x00000004 // Want stx_nlink
+		STATX_SIZE  = 0x00000200 // Want stx_size
+		STATX_MTIME = 0x00000020 // Want stx_mtime
+	)
+
+	// Set basic attributes
+	out.Mask = STATX_TYPE | STATX_MODE | STATX_NLINK | STATX_SIZE
+	out.Mode = uint16(attrOut.Mode)
+	out.Size = attrOut.Size
+	out.Nlink = attrOut.Nlink
+
+	// Add timestamps if requested
+	if mask&STATX_MTIME != 0 {
+		out.Mask |= STATX_MTIME
+		out.Mtime.Sec = attrOut.Mtime
+		out.Mtime.Nsec = attrOut.Mtimensec
+	}
+
+	return 0
+}
 
 // Getattr implements NodeGetattrer
 func (n *BillyNode) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
@@ -417,29 +566,4 @@ func (fh *BillyFileHandle) Release(ctx context.Context) syscall.Errno {
 type BillyDirHandle struct {
 	root *BillyRoot
 	path string
-}
-
-// Helper function to convert errors to syscall.Errno
-func convertError(err error) syscall.Errno {
-	if err == nil {
-		return 0
-	}
-
-	if os.IsExist(err) {
-		return syscall.EEXIST
-	}
-	if os.IsNotExist(err) {
-		return syscall.ENOENT
-	}
-	if os.IsPermission(err) {
-		return syscall.EPERM
-	}
-	if errors.Is(err, os.ErrInvalid) || errors.Is(err, os.ErrClosed) || errors.Is(err, billy.ErrCrossedBoundary) {
-		return syscall.EINVAL
-	}
-	if errors.Is(err, billy.ErrNotSupported) {
-		return syscall.ENOTSUP
-	}
-
-	return syscall.EIO
 }
