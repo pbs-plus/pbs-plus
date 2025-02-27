@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sync"
+	"time"
 
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -35,6 +36,15 @@ type ARPCFS struct {
 	accessedFileHashes   map[uint64]struct{} // Set of unique file path hashes
 	accessedFolderHashes map[uint64]struct{} // Set of unique folder path hashes
 	accessStatsMu        sync.RWMutex        // Mutex to protect the hash maps and stats
+	lastAccessTime       time.Time
+	lastAccessStats      AccessStats
+	fileSpeed            float64
+
+	totalBytes     uint64
+	totalBytesMu   sync.RWMutex
+	lastTotalBytes uint64
+	lastBytesTime  time.Time
+	byteSpeed      float64
 
 	statCache    *lru.Cache[string, statCacheEntry]
 	readDirCache *lru.Cache[string, readDirCacheEntry]
