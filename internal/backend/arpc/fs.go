@@ -152,7 +152,9 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
 	}
-	var handleID uint64
+	var resp struct {
+		HandleID uint64 `msgpack:"handleID"`
+	}
 
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
@@ -162,7 +164,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 		Path: filename,
 		Flag: flag,
 		Perm: int(perm),
-	}, &handleID)
+	}, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +172,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	return &ARPCFile{
 		fs:       fs,
 		name:     filename,
-		handleID: handleID,
+		handleID: resp.HandleID,
 		jobId:    fs.JobId,
 	}, nil
 }
