@@ -34,6 +34,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 	}
 
 	fs := &ARPCFS{
+		basePath:             "/",
 		ctx:                  ctx,
 		session:              session,
 		JobId:                jobId,
@@ -140,10 +141,13 @@ func (fs *ARPCFS) Create(filename string) (billy.File, error) {
 }
 
 func (fs *ARPCFS) Open(filename string) (billy.File, error) {
+	filename = filepath.Join(fs.basePath, filename)
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
 func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
+	filename = filepath.Join(fs.basePath, filename)
+
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
@@ -173,6 +177,8 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 
 // Stat first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
+	filename = filepath.Join(fs.basePath, filename)
+
 	// Attempt to fetch from the LRU cache.
 	fs.statCacheMu.RLock(filename)
 	if entry, ok := fs.statCache.Get(filename); ok {
@@ -273,6 +279,8 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 
 // ReadDir first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
+	path = filepath.Join(fs.basePath, path)
+
 	fs.readDirCacheMu.RLock(path)
 	if entry, ok := fs.readDirCache.Get(path); ok {
 		fs.readDirCacheMu.RUnlock(path)
@@ -358,11 +366,14 @@ func (fs *ARPCFS) Join(elem ...string) string {
 }
 
 func (fs *ARPCFS) Chroot(path string) (billy.Filesystem, error) {
-	return NewARPCFS(fs.ctx, fs.session, fs.Hostname, fs.JobId), nil
+	arpcfs := NewARPCFS(fs.ctx, fs.session, fs.Hostname, fs.JobId)
+	arpcfs.basePath = filepath.Join(fs.basePath, path)
+
+	return arpcfs, nil
 }
 
 func (fs *ARPCFS) Root() string {
-	return "/"
+	return fs.basePath
 }
 
 func (fs *ARPCFS) Lstat(filename string) (os.FileInfo, error) {
