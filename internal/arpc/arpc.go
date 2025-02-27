@@ -18,6 +18,14 @@ import (
 	"github.com/xtaci/smux"
 )
 
+type DirectBufferWrite struct {
+	Data []byte
+}
+
+func (d *DirectBufferWrite) Error() string {
+	return "direct buffer write requested"
+}
+
 // --------------------------------------------------------
 // Buffer pooling and a PooledMsg type for zero‑copy reads.
 // --------------------------------------------------------
@@ -200,6 +208,24 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 
 	resp, err := handler(req)
 	if err != nil {
+		// Check if the error is a direct-buffer write signal.
+		if dbw, ok := err.(*DirectBufferWrite); ok {
+			// Marshal and write the metadata first.
+			respBytes, err := msgpack.Marshal(resp)
+			if err != nil {
+				writeErrorResponse(stream, http.StatusInternalServerError, err)
+				return
+			}
+			if err := writeMsgpackMsg(stream, respBytes); err != nil {
+				return
+			}
+			// Then write out the direct buffer.
+			if _, err := stream.Write(dbw.Data); err != nil {
+				// You might want to log or handle a write error here.
+			}
+			return
+		}
+		// Otherwise, handle as a normal error.
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
