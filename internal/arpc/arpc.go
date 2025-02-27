@@ -498,24 +498,29 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 	}
 
 	// Unmarshal the metadata.
-	var meta BufferMetadataResp
-	if err := msgpack.Unmarshal(metaBytes, &meta); err != nil {
+	var resp Response
+	if err := msgpack.Unmarshal(metaBytes, &resp); err != nil {
 		return 0, false, err
 	}
 
-	if meta.Status != http.StatusOK {
+	var meta *BufferMetadata
+	if err := msgpack.Unmarshal(resp.Data, &meta); err != nil {
+		return 0, false, err
+	}
+
+	if resp.Status != http.StatusOK {
 		var serErr SerializableError
 		if err := msgpack.Unmarshal(metaBytes, &serErr); err == nil {
 			return 0, false, UnwrapError(&serErr)
 		}
-		return 0, false, fmt.Errorf("RPC error: status %d", meta.Status)
+		return 0, false, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
 	contentLength := 0
 	isEOF := false
-	if meta.Data != nil {
-		contentLength = meta.Data.BytesAvailable
-		isEOF = meta.Data.EOF
+	if meta != nil {
+		contentLength = meta.BytesAvailable
+		isEOF = meta.EOF
 	}
 	if contentLength <= 0 {
 		return 0, isEOF, nil
