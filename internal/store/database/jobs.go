@@ -181,14 +181,6 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 		}
 	}
 
-	if job.CurrentPID != 0 {
-		readTotal, _, readSpeed, _, err := utils.GetProcIO(job.CurrentPID)
-		if err == nil {
-			job.CurrentReadTotal = utils.HumanReadableBytes(readTotal)
-			job.CurrentReadSpeed = utils.HumanReadableSpeed(readSpeed)
-		}
-	}
-
 	// Get next schedule
 	nextSchedule, err := system.GetNextSchedule(job)
 	if err == nil && nextSchedule != nil {

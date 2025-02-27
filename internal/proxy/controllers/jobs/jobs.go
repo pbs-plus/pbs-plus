@@ -5,6 +5,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -41,8 +42,14 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			stats := arpcfs.GetAccessStats()
+			totalBytes := arpcfs.GetTotalBytesRead()
+			byteSpeed, fileSpeed := arpcfs.GetSpeedStats()
+
 			allJobs[i].CurrentFileCount = p.Sprintf("%d", stats.FilesAccessed)
 			allJobs[i].CurrentFolderCount = p.Sprintf("%d", stats.FoldersAccessed)
+			allJobs[i].CurrentBytesTotal = utils.HumanReadableBytes(int64(totalBytes))
+			allJobs[i].CurrentBytesSpeed = utils.HumanReadableSpeed(byteSpeed)
+			allJobs[i].CurrentFilesSpeed = fmt.Sprintf("%.2f files/s", fileSpeed)
 		}
 
 		digest, err := utils.CalculateDigest(allJobs)

@@ -86,7 +86,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       async function fetchSnapshotData(job) {
         // Build URL using job.store and job.ns.
         const url = `/api2/json/admin/datastore/${encodeURIComponent(
-          job.store
+          job.store,
         )}/snapshots?ns=${encodeURIComponent(job.ns)}`;
 
         try {
@@ -131,7 +131,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       async function processRecords(records) {
         // Fetch snapshot data for all jobs in parallel.
         const extraDataArray = await Promise.all(
-          records.map((job) => fetchSnapshotData(job))
+          records.map((job) => fetchSnapshotData(job)),
         );
 
         // Merge each job's data with the corresponding snapshot data.
@@ -141,7 +141,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
           // Process only the "backup-time" attribute.
           const backupTimes = extra.snapshotAttributes["backup-time"] || [];
           const snapshotBackupTime = JSON.stringify(
-            backupTimes.map((timestamp) => new Date(timestamp * 1000).toString())
+            backupTimes.map((timestamp) =>
+              new Date(timestamp * 1000).toString(),
+            ),
           );
 
           // Remove unwanted job properties.
@@ -161,7 +163,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
       // Collect the union of all keys across merged records to serve as CSV
       // headers.
-      var mergedRecords = []
+      var mergedRecords = [];
       try {
         mergedRecords = await processRecords(records);
         console.log("Merged Records:", mergedRecords);
@@ -347,45 +349,56 @@ Ext.define("PBS.config.DiskBackupJobView", {
     },
     {
       text: gettext("Read Speed"),
-      dataIndex: "current_read_speed",
-      renderer: function(value) {
-	      if (value === "") {
-	        return '-';
-	      }
-	      return value;
+      dataIndex: "current_bytes_speed",
+      renderer: function (value) {
+        if (value === "") {
+          return "-";
+        }
+        return value;
       },
       width: 60,
     },
     {
       text: gettext("Read Total"),
-      dataIndex: "current_read_total",
-      renderer: function(value) {
-	      if (value === "") {
-	        return '-';
-	      }
-	      return value;
+      dataIndex: "current_bytes_total",
+      renderer: function (value) {
+        if (value === "") {
+          return "-";
+        }
+        return value;
+      },
+      width: 60,
+    },
+    {
+      text: gettext("Processing Speed"),
+      dataIndex: "current_files_speed",
+      renderer: function (value) {
+        if (value === "") {
+          return "-";
+        }
+        return value;
       },
       width: 60,
     },
     {
       text: gettext("Files Processed"),
       dataIndex: "current_file_count",
-      renderer: function(value) {
-	      if (value === "") {
-	        return '-';
-	      }
-	      return value;
+      renderer: function (value) {
+        if (value === "") {
+          return "-";
+        }
+        return value;
       },
       width: 60,
     },
     {
       text: gettext("Folders Processed"),
       dataIndex: "current_folder_count",
-      renderer: function(value) {
-	      if (value === "") {
-	        return '-';
-	      }
-	      return value;
+      renderer: function (value) {
+        if (value === "") {
+          return "-";
+        }
+        return value;
       },
       width: 60,
     },

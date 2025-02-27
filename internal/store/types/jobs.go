@@ -13,8 +13,9 @@ type Job struct {
 	Retry              int         `config:"type=int" json:"retry"`
 	CurrentFileCount   string      `json:"current_file_count"`
 	CurrentFolderCount string      `json:"current_folder_count"`
-	CurrentReadSpeed   string      `json:"current_read_speed"`
-	CurrentReadTotal   string      `json:"current_read_total"`
+	CurrentFilesSpeed  string      `json:"current_files_speed"`
+	CurrentBytesSpeed  string      `json:"current_bytes_speed"`
+	CurrentBytesTotal  string      `json:"current_bytes_total"`
 	CurrentPID         int         `config:"key=current_pid,type=int" json:"current_pid"`
 	LastRunUpid        string      `config:"key=last_run_upid,type=string" json:"last-run-upid"`
 	LastRunState       *string     `json:"last-run-state"`

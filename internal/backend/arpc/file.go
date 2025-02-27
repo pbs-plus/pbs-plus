@@ -41,6 +41,10 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 
 	f.offset += int64(bytesRead)
 
+	f.fs.totalBytesMu.Lock()
+	f.fs.totalBytes += uint64(bytesRead)
+	f.fs.totalBytesMu.Unlock()
+
 	if isEOF {
 		return bytesRead, io.EOF
 	}

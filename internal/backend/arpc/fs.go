@@ -81,8 +81,8 @@ func (fs *ARPCFS) trackAccess(path string, isDir bool) {
 
 // GetAccessStats returns statistics about filesystem accesses
 func (fs *ARPCFS) GetAccessStats() AccessStats {
-	fs.accessStatsMu.RLock()
-	defer fs.accessStatsMu.RUnlock()
+	fs.accessStatsMu.Lock()
+	defer fs.accessStatsMu.Unlock()
 
 	stats := AccessStats{
 		FilesAccessed:   len(fs.accessedFileHashes),
@@ -90,7 +90,51 @@ func (fs *ARPCFS) GetAccessStats() AccessStats {
 	}
 	stats.TotalAccessed = stats.FilesAccessed + stats.FoldersAccessed
 
+	now := time.Now()
+	if !fs.lastAccessTime.IsZero() {
+		filesDiff := stats.FilesAccessed - fs.lastAccessStats.FilesAccessed
+		secondsDiff := now.Sub(fs.lastAccessTime).Seconds()
+
+		fs.fileSpeed = float64(filesDiff) / secondsDiff
+	}
+
+	fs.lastAccessTime = now
+	fs.lastAccessStats = stats
+
 	return stats
+}
+
+func (fs *ARPCFS) GetTotalBytesRead() uint64 {
+	fs.totalBytesMu.Lock()
+	defer fs.totalBytesMu.Unlock()
+
+	now := time.Now()
+	if !fs.lastAccessTime.IsZero() {
+		bytesDiff := fs.totalBytes - fs.lastTotalBytes
+		secondsDiff := now.Sub(fs.lastBytesTime).Seconds()
+
+		fs.byteSpeed = float64(bytesDiff) / secondsDiff
+	}
+
+	fs.lastBytesTime = now
+	fs.lastTotalBytes = fs.totalBytes
+
+	return fs.totalBytes
+}
+
+func (fs *ARPCFS) GetSpeedStats() (float64, float64) {
+	var byteSpeed float64
+	var fileSpeed float64
+
+	fs.totalBytesMu.RLock()
+	byteSpeed = fs.byteSpeed
+	fs.totalBytesMu.RUnlock()
+
+	fs.accessStatsMu.RLock()
+	fileSpeed = fs.fileSpeed
+	fs.accessStatsMu.RUnlock()
+
+	return byteSpeed, fileSpeed
 }
 
 func (fs *ARPCFS) prefetchWorker() {
