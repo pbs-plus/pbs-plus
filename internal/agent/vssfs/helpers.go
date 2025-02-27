@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/valyala/fastjson"
 	"golang.org/x/sys/windows"
 )
 
@@ -112,7 +112,7 @@ func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Respons
 	// Wrap error and encode it using our new JSON encoder.
 	return arpc.Response{
 		Status: 500,
-		Data:   arpc.EncodeValue(arpc.WrapError(err)),
+		Data:   encodeValue(arpc.WrapError(err)),
 	}
 }
 
@@ -122,26 +122,55 @@ func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Respo
 	}
 	return arpc.Response{
 		Status: 400,
-		Data:   arpc.EncodeValue(arpc.WrapError(os.ErrInvalid)),
+		Data:   encodeValue(arpc.WrapError(os.ErrInvalid)),
 	}
 }
 
 // --- Helper: fastjson decoding for request payloads ---
 
-// getStringField safely extracts a string field from req.Payload.
-func getStringField(v *fastjson.Value, field string) (string, error) {
-	f := v.Get(field)
-	if f == nil {
-		return "", fmt.Errorf("field %s missing", field)
+func encodeValue(v interface{}) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		b, _ = json.Marshal(map[string]string{
+			"error": fmt.Sprintf("failed to marshal value: %v", err),
+		})
 	}
-	return string(f.GetStringBytes()), nil
+	return b
 }
 
-// getIntField extracts an integer field from req.Payload.
-func getIntField(v *fastjson.Value, field string) (int, error) {
-	f := v.Get(field)
-	if f == nil {
-		return 0, fmt.Errorf("field %s missing", field)
+func getStringField(payload map[string]interface{}, field string) (string, error) {
+	val, ok := payload[field]
+	if !ok {
+		return "", fmt.Errorf("missing field: %s", field)
 	}
-	return f.GetInt(), nil
+	s, ok := val.(string)
+	if !ok {
+		return "", fmt.Errorf("field %s is not a string", field)
+	}
+	return s, nil
+}
+
+func getIntField(payload map[string]interface{}, field string) (int, error) {
+	val, ok := payload[field]
+	if !ok {
+		return 0, fmt.Errorf("missing field: %s", field)
+	}
+	// JSON numbers are float64.
+	f, ok := val.(float64)
+	if !ok {
+		return 0, fmt.Errorf("field %s is not a number", field)
+	}
+	return int(f), nil
+}
+
+func getInt64Field(payload map[string]interface{}, field string) (int64, error) {
+	val, ok := payload[field]
+	if !ok {
+		return 0, fmt.Errorf("missing field: %s", field)
+	}
+	f, ok := val.(float64)
+	if !ok {
+		return 0, fmt.Errorf("field %s is not a number", field)
+	}
+	return int64(f), nil
 }

@@ -18,7 +18,6 @@ require (
 	github.com/kardianos/service v1.2.2
 	github.com/mxk/go-vss v1.2.0
 	github.com/stretchr/testify v1.10.0
-	github.com/valyala/fastjson v1.6.4
 	github.com/xtaci/smux v1.5.34
 	golang.org/x/crypto v0.33.0
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56

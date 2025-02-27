@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valyala/fastjson"
+	"github.com/goccy/go-json"
 	"github.com/xtaci/smux"
 )
 
@@ -19,7 +19,7 @@ import (
 //
 // Creates a new pair of connected sessions (client/server) using net.Pipe.
 // The server session immediately begins serving on the provided router.
-// The function returns the client-side session (which is used for calls)
+// The function returns the client‑side session (which is used for calls)
 // plus a cleanup function to shut down both sessions.
 // ---------------------------------------------------------------------
 func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Session, cleanup func()) {
@@ -39,7 +39,7 @@ func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Sessio
 
 	done := make(chan struct{})
 
-	// Start the server-session in a goroutine. Serve() continuously accepts streams.
+	// Start the server session in a goroutine. Serve() continuously accepts streams.
 	go func() {
 		_ = serverSession.Serve(router)
 		close(done)
@@ -119,10 +119,9 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		t.Fatalf("failed to write request: %v", err)
 	}
 
-	// Read and parse the JSON response using fastjson.
+	// Read and parse the JSON response.
 	respReader := bufio.NewReader(clientStream)
 	line, err := respReader.ReadBytes('\n')
-	// Allow EOF error as long as we got some bytes.
 	if err != nil && err != io.EOF {
 		t.Fatalf("failed to read response: %v", err)
 	}
@@ -130,20 +129,22 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		t.Fatalf("no response received")
 	}
 
-	var parser fastjson.Parser
-	v, err := parser.ParseBytes(line)
-	if err != nil {
-		t.Fatalf("failed to parse response JSON: %v", err)
+	var resp Response
+	if err := json.Unmarshal(line, &resp); err != nil {
+		t.Fatalf("failed to unmarshal response JSON: %v", err)
 	}
 
-	if v.GetInt("status") != 200 {
-		t.Fatalf("expected status 200, got %d", v.GetInt("status"))
+	if resp.Status != 200 {
+		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
 
-	// Extract the echoed data.
-	data := string(v.Get("data").GetStringBytes())
-	if data != "hello" {
-		t.Fatalf("expected data 'hello', got %q", data)
+	// Extract the echoed payload.
+	var echoed string
+	if err := json.Unmarshal(resp.Data, &echoed); err != nil {
+		t.Fatalf("failed to unmarshal echoed data: %v", err)
+	}
+	if echoed != "hello" {
+		t.Fatalf("expected data 'hello', got %q", echoed)
 	}
 
 	// Wait for the server goroutine to finish.
@@ -170,10 +171,9 @@ func TestRouterServeStream_Echo(t *testing.T) {
 func TestSessionCall_Success(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
-		// Return a fastjson value for "pong".
 		return Response{
 			Status: 200,
-			Data:   fastjson.MustParse(`"pong"`),
+			Data:   json.RawMessage(`"pong"`),
 		}, nil
 	})
 
@@ -187,7 +187,10 @@ func TestSessionCall_Success(t *testing.T) {
 	if resp.Status != 200 {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
-	pong := string(resp.Data.GetStringBytes())
+	var pong string
+	if err := json.Unmarshal(resp.Data, &pong); err != nil {
+		t.Fatalf("failed to unmarshal pong: %v", err)
+	}
 	if pong != "pong" {
 		t.Fatalf("expected pong response, got %q", pong)
 	}
@@ -202,7 +205,7 @@ func TestSessionCall_Concurrency(t *testing.T) {
 	router.Handle("ping", func(req Request) (Response, error) {
 		return Response{
 			Status: 200,
-			Data:   fastjson.MustParse(`"pong"`),
+			Data:   json.RawMessage(`"pong"`),
 		}, nil
 	})
 
@@ -216,7 +219,6 @@ func TestSessionCall_Concurrency(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			// Use map[string]interface{} to ensure the payload type is supported.
 			payload := map[string]interface{}{"client": id}
 			resp, err := clientSession.Call("ping", payload)
 			if err != nil {
@@ -226,7 +228,11 @@ func TestSessionCall_Concurrency(t *testing.T) {
 			if resp.Status != 200 {
 				t.Errorf("Client %d: expected status 200, got %d", id, resp.Status)
 			}
-			pong := string(resp.Data.GetStringBytes())
+			var pong string
+			if err := json.Unmarshal(resp.Data, &pong); err != nil {
+				t.Errorf("Client %d: failed to unmarshal: %v", id, err)
+				return
+			}
 			if pong != "pong" {
 				t.Errorf("Client %d: expected 'pong', got %q", id, pong)
 			}
@@ -243,11 +249,10 @@ func TestSessionCall_Concurrency(t *testing.T) {
 func TestCallContext_Timeout(t *testing.T) {
 	router := NewRouter()
 	router.Handle("slow", func(req Request) (Response, error) {
-		// Simulate a long-running handler.
 		time.Sleep(200 * time.Millisecond)
 		return Response{
 			Status: 200,
-			Data:   fastjson.MustParse(`"done"`),
+			Data:   json.RawMessage(`"done"`),
 		}, nil
 	})
 
@@ -276,7 +281,7 @@ func TestAutoReconnect(t *testing.T) {
 	router.Handle("ping", func(req Request) (Response, error) {
 		return Response{
 			Status: 200,
-			Data:   fastjson.MustParse(`"pong"`),
+			Data:   json.RawMessage(`"pong"`),
 		}, nil
 	})
 
@@ -330,7 +335,10 @@ func TestAutoReconnect(t *testing.T) {
 	if resp.Status != 200 {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
-	pong := string(resp.Data.GetStringBytes())
+	var pong string
+	if err := json.Unmarshal(resp.Data, &pong); err != nil {
+		t.Fatalf("failed to unmarshal pong: %v", err)
+	}
 	if pong != "pong" {
 		t.Fatalf("expected 'pong', got %q", pong)
 	}
@@ -352,7 +360,7 @@ func TestCallJSONWithBuffer_Success(t *testing.T) {
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	// Create server and client smux sessions wrapped in our Session type.
+	// Create server and client sessions.
 	serverSess, err := NewServerSession(serverConn, nil)
 	if err != nil {
 		t.Fatalf("failed to create server session: %v", err)
@@ -385,17 +393,21 @@ func TestCallJSONWithBuffer_Success(t *testing.T) {
 		binaryData := []byte("hello world")
 		dataLen := len(binaryData)
 
-		arena := arenaPool.Get().(*fastjson.Arena)
-		metaObj := arena.NewObject()
-		metaObj.Set("status", arena.NewNumberInt(200))
-		dataMeta := arena.NewObject()
-		dataMeta.Set("bytes_available", arena.NewNumberInt(dataLen))
-		dataMeta.Set("eof", fastjson.MustParse("true"))
-		metaObj.Set("data", dataMeta)
-		metaBytes := metaObj.MarshalTo(nil)
+		// Build metadata as a simple map.
+		metaMap := map[string]interface{}{
+			"status": 200,
+			"data": map[string]interface{}{
+				"bytes_available": dataLen,
+				"eof":             true,
+			},
+		}
+		metaBytes, err := json.Marshal(metaMap)
+		if err != nil {
+			t.Errorf("server: error marshaling metadata: %v", err)
+			return
+		}
+		// Append newline as the delimiter.
 		metaBytes = append(metaBytes, '\n')
-		arena.Reset()
-		arenaPool.Put(arena)
 
 		// Write the metadata.
 		if _, err := writer.Write(metaBytes); err != nil {

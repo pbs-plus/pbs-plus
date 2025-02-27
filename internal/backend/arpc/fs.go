@@ -4,19 +4,18 @@ package arpcfs
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/go-git/go-billy/v5"
+	"github.com/goccy/go-json"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
-	"github.com/valyala/fastjson"
 )
 
 var _ billy.Filesystem = (*ARPCFS)(nil)
@@ -260,7 +259,7 @@ func (fs *ARPCFS) statWithoutCache(filename string) (os.FileInfo, error) {
 		struct {
 			Path string `json:"path"`
 		}{Path: filename},
-		func(v *fastjson.Value) error {
+		func(v json.RawMessage) error {
 			return decodeFileInfoResponse(v, &fi)
 		})
 	if err != nil {
@@ -290,7 +289,7 @@ func (fs *ARPCFS) readDirWithoutCache(path string) ([]os.FileInfo, error) {
 
 	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/ReadDir", struct {
 		Path string `json:"path"`
-	}{Path: path}, func(v *fastjson.Value) error {
+	}{Path: path}, func(v json.RawMessage) error {
 		return decodeReadDirResponse(v, &resp)
 	})
 	if err != nil {
@@ -347,14 +346,8 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 		Path: filename,
 		Flag: flag,
 		Perm: int(perm),
-	}, func(v *fastjson.Value) error {
-		hv := v.Get("handleID")
-		if hv == nil {
-			return fmt.Errorf("missing handleID in response")
-		}
-		// Directly extract the handleID from the fastjson.Value.
-		handleID = hv.GetUint64()
-		return nil
+	}, func(v json.RawMessage) error {
+		return json.Unmarshal(v, &handleID)
 	})
 	if err != nil {
 		return nil, err
@@ -395,7 +388,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		struct {
 			Path string `json:"path"`
 		}{Path: filename},
-		func(v *fastjson.Value) error {
+		func(v json.RawMessage) error {
 			return decodeFileInfoResponse(v, &fi)
 		})
 	if err != nil {
@@ -499,7 +492,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 
 	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/ReadDir", struct {
 		Path string `json:"path"`
-	}{Path: path}, func(v *fastjson.Value) error {
+	}{Path: path}, func(v json.RawMessage) error {
 		return decodeReadDirResponse(v, &resp)
 	})
 	if err != nil {

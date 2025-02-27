@@ -10,11 +10,10 @@ import (
 	"sync"
 	"time"
 
-	// Note: We now use fastjson as our JSON engine.
 	securejoin "github.com/cyphar/filepath-securejoin"
+	"github.com/goccy/go-json"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
-	"github.com/valyala/fastjson"
 	"golang.org/x/sys/windows"
 )
 
@@ -93,6 +92,7 @@ func (s *VSSFSServer) Close() {
 // --- Handlers ---
 
 func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
+	// No payload expected.
 	var totalBytes uint64
 	err := windows.GetDiskFreeSpaceEx(
 		windows.StringToUTF16Ptr(s.rootDir),
@@ -115,30 +115,35 @@ func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
 	}
 	return arpc.Response{
 		Status: 200,
-		Data:   arpc.EncodeValue(fsStat),
+		Data:   encodeValue(fsStat),
 	}, nil
 }
 
 func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
-	// Decode parameters using fastjson getters.
-	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+	// Unmarshal payload into a map.
+	var payload map[string]interface{}
+	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	path, err := getStringField(req.Payload, "path")
+	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
+	}
+
+	path, err := getStringField(payload, "path")
 	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
-	flag, err := getIntField(req.Payload, "flag")
+	flag, err := getIntField(payload, "flag")
 	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
-	// perm, _ := getIntField(req.Payload, "perm") // optional
+	// perm is optional
 
 	// Disallow write operations.
 	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		return arpc.Response{
 			Status: 403,
-			Data:   arpc.EncodeValue("write operations not allowed"),
+			Data:   encodeValue("write operations not allowed"),
 		}, nil
 	}
 
@@ -180,16 +185,19 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	// Return result by encoding a simple map.
 	return arpc.Response{
 		Status: 200,
-		Data:   arpc.EncodeValue(map[string]uint64{"handleID": handleID}),
+		Data:   encodeValue(map[string]uint64{"handleID": handleID}),
 	}, nil
 }
 
 func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
-	// Decode request.
-	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+	var payload map[string]interface{}
+	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	path, err := getStringField(req.Payload, "path")
+	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
+	}
+	path, err := getStringField(payload, "path")
 	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
@@ -236,16 +244,19 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 
 	return arpc.Response{
 		Status: 200,
-		Data:   arpc.EncodeValue(info),
+		Data:   encodeValue(info),
 	}, nil
 }
 
 func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
-	// Decode request.
-	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+	var payload map[string]interface{}
+	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	path, err := getStringField(req.Payload, "path")
+	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
+	}
+	path, err := getStringField(payload, "path")
 	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
@@ -283,23 +294,25 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		}
 	}
 
-	// Return entries by encoding in a map.
 	return arpc.Response{
 		Status: 200,
-		Data:   arpc.EncodeValue(map[string]interface{}{"entries": entries}),
+		Data:   encodeValue(map[string]interface{}{"entries": entries}),
 	}, nil
 }
 
 func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
-	// Decode parameters.
-	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+	var payload map[string]interface{}
+	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	handleID, err := getIntField(req.Payload, "handleID")
+	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
+	}
+	handleID, err := getIntField(payload, "handleID")
 	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
-	length, err := getIntField(req.Payload, "length")
+	length, err := getIntField(payload, "length")
 	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
@@ -308,19 +321,17 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 	handle, exists := s.handles[uint64(handleID)]
 	s.mu.RUnlock()
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Data: arpc.EncodeValue("invalid handle")}, nil
+		return arpc.Response{Status: 404, Data: encodeValue("invalid handle")}, nil
 	}
 	if handle.isDir {
-		return arpc.Response{Status: 400, Data: arpc.EncodeValue("cannot read from directory")}, nil
+		return arpc.Response{Status: 400, Data: encodeValue("cannot read from directory")}, nil
 	}
 
-	// Determine if direct buffer mode was requested.
 	isDirectBuffer := false
 	if req.Headers != nil && req.Headers.Get("X-Direct-Buffer") == "true" {
 		isDirectBuffer = true
 	}
 
-	// Read file into buffer.
 	buf := make([]byte, length)
 	var bytesRead uint32
 	err = windows.ReadFile(handle.handle, buf, &bytesRead, nil)
@@ -332,7 +343,6 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		isEOF = true
 	}
 
-	// In direct buffer mode, return metadata first and then signal raw bytes.
 	if isDirectBuffer {
 		meta := map[string]interface{}{
 			"bytes_available": int(bytesRead),
@@ -340,36 +350,37 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		}
 		return arpc.Response{
 			Status: 200,
-			Data:   arpc.EncodeValue(meta),
+			Data:   encodeValue(meta),
 		}, &DirectBufferWrite{Data: buf[:bytesRead]}
 	}
 
-	// Standard mode: return response data.
 	data := map[string]interface{}{
 		"data": buf[:bytesRead],
 		"eof":  isEOF,
 	}
 	return arpc.Response{
 		Status: 200,
-		Data:   arpc.EncodeValue(data),
+		Data:   encodeValue(data),
 	}, nil
 }
 
 func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
-	// Decode parameters.
-	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+	var payload map[string]interface{}
+	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	handleID, err := getIntField(req.Payload, "handleID")
+	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
+	}
+	handleID, err := getIntField(payload, "handleID")
 	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
-	offsetVal := req.Payload.Get("offset")
-	if offsetVal == nil {
-		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("missing offset")), nil
+	offset, err := getInt64Field(payload, "offset")
+	if err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
-	offset := offsetVal.GetInt64()
-	length, err := getIntField(req.Payload, "length")
+	length, err := getIntField(payload, "length")
 	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
@@ -378,10 +389,10 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	handle, exists := s.handles[uint64(handleID)]
 	s.mu.RUnlock()
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Data: arpc.EncodeValue("invalid handle")}, nil
+		return arpc.Response{Status: 404, Data: encodeValue("invalid handle")}, nil
 	}
 	if handle.isDir {
-		return arpc.Response{Status: 400, Data: arpc.EncodeValue("cannot read from directory")}, nil
+		return arpc.Response{Status: 400, Data: encodeValue("cannot read from directory")}, nil
 	}
 
 	buf := make([]byte, length)
@@ -405,16 +416,19 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 	return arpc.Response{
 		Status: 200,
-		Data:   arpc.EncodeValue(data),
+		Data:   encodeValue(data),
 	}, nil
 }
 
 func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
-	// Decode parameters.
-	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+	var payload map[string]interface{}
+	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	handleID, err := getIntField(req.Payload, "handleID")
+	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
+	}
+	handleID, err := getIntField(payload, "handleID")
 	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
@@ -427,21 +441,24 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	s.mu.Unlock()
 
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Data: arpc.EncodeValue("invalid handle")}, nil
+		return arpc.Response{Status: 404, Data: encodeValue("invalid handle")}, nil
 	}
 
 	windows.CloseHandle(handle.handle)
 	handle.isClosed = true
 
-	return arpc.Response{Status: 200, Data: arpc.EncodeValue("closed")}, nil
+	return arpc.Response{Status: 200, Data: encodeValue("closed")}, nil
 }
 
 func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
-	// Decode parameters.
-	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+	var payload map[string]interface{}
+	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	handleID, err := getIntField(req.Payload, "handleID")
+	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
+	}
+	handleID, err := getIntField(payload, "handleID")
 	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
@@ -450,7 +467,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 	handle, exists := s.handles[uint64(handleID)]
 	s.mu.RUnlock()
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Data: arpc.EncodeValue("invalid handle")}, nil
+		return arpc.Response{Status: 404, Data: encodeValue("invalid handle")}, nil
 	}
 
 	var fileInfo windows.ByHandleFileInformation
@@ -461,7 +478,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 	info := createFileInfoFromHandleInfo(handle.path, &fileInfo)
 	return arpc.Response{
 		Status: 200,
-		Data:   arpc.EncodeValue(info),
+		Data:   encodeValue(info),
 	}, nil
 }
 
