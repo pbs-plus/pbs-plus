@@ -4,6 +4,7 @@ package arpcfs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/valyala/fastjson"
 )
 
 var _ billy.Filesystem = (*ARPCFS)(nil)
@@ -137,14 +139,52 @@ func (fs *ARPCFS) GetSpeedStats() (float64, float64) {
 	return byteSpeed, fileSpeed
 }
 
+// prefetchWorker now gathers multiple prefetch tasks before processing them.
 func (fs *ARPCFS) prefetchWorker() {
 	for {
 		select {
 		case <-fs.prefetchCtx.Done():
 			return
-		case path := <-fs.prefetchQueue:
-			fs.prefetchStats(path)
+		default:
+			fs.batchProcessPrefetchQueue()
 		}
+	}
+}
+
+func (fs *ARPCFS) batchProcessPrefetchQueue() {
+	const batchSize = 10
+	const batchTimeout = 10 * time.Millisecond
+
+	var batch []string
+
+	// Block to get the first item. If the context is canceled,
+	// we immediately return.
+	select {
+	case path := <-fs.prefetchQueue:
+		batch = append(batch, path)
+	case <-fs.prefetchCtx.Done():
+		return
+	}
+
+	// Start a timer to limit how long we wait for additional items.
+	timeout := time.NewTimer(batchTimeout)
+	defer timeout.Stop()
+
+collectLoop:
+	for len(batch) < batchSize {
+		select {
+		case path := <-fs.prefetchQueue:
+			batch = append(batch, path)
+		case <-timeout.C:
+			break collectLoop
+		case <-fs.prefetchCtx.Done():
+			return
+		}
+	}
+
+	// Process each path in the batch (each will perform a stat RPC if needed).
+	for _, path := range batch {
+		fs.prefetchStats(path)
 	}
 }
 
@@ -212,14 +252,17 @@ func (fs *ARPCFS) statWithoutCache(filename string) (os.FileInfo, error) {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
 	}
-
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.JobId+"/Stat",
+	// Use the new CallJSONDirect helper:
+	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/Stat",
 		struct {
 			Path string `json:"path"`
-		}{Path: filename}, &fi)
+		}{Path: filename},
+		func(v *fastjson.Value) error {
+			return decodeFileInfoResponse(v, &fi)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -228,11 +271,10 @@ func (fs *ARPCFS) statWithoutCache(filename string) (os.FileInfo, error) {
 	info := &fileInfo{
 		name:    filepath.Base(filename),
 		size:    fi.Size,
-		mode:    fi.Mode,
+		mode:    os.FileMode(fi.Mode),
 		modTime: modTime,
 		isDir:   fi.IsDir,
 	}
-
 	return info, nil
 }
 
@@ -246,9 +288,11 @@ func (fs *ARPCFS) readDirWithoutCache(path string) ([]os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.JobId+"/ReadDir", struct {
+	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/ReadDir", struct {
 		Path string `json:"path"`
-	}{Path: path}, &resp)
+	}{Path: path}, func(v *fastjson.Value) error {
+		return decodeReadDirResponse(v, &resp)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +303,7 @@ func (fs *ARPCFS) readDirWithoutCache(path string) ([]os.FileInfo, error) {
 		entries[i] = &fileInfo{
 			name:    e.Name,
 			size:    e.Size,
-			mode:    e.Mode,
+			mode:    os.FileMode(e.Mode),
 			modTime: modTime,
 			isDir:   e.IsDir,
 		}
@@ -288,29 +332,30 @@ func (fs *ARPCFS) Open(filename string) (billy.File, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
-func (fs *ARPCFS) OpenFile(filename string, flag int,
-	perm os.FileMode) (billy.File, error) {
-	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
-		return nil, os.ErrInvalid
-	}
-
-	var resp struct {
-		HandleID uint64 `json:"handleID"`
-	}
-
+func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
 	}
+	var handleID uint64
 
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.JobId+"/OpenFile", OpenRequest{
+	// Use the CPU efficient CallJSONDirect helper.
+	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/OpenFile", OpenRequest{
 		Path: filename,
 		Flag: flag,
 		Perm: int(perm),
-	}, &resp)
+	}, func(v *fastjson.Value) error {
+		hv := v.Get("handleID")
+		if hv == nil {
+			return fmt.Errorf("missing handleID in response")
+		}
+		// Directly extract the handleID from the fastjson.Value.
+		handleID = hv.GetUint64()
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +363,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int,
 	return &ARPCFile{
 		fs:       fs,
 		name:     filename,
-		handleID: resp.HandleID,
+		handleID: handleID,
 		jobId:    fs.JobId,
 	}, nil
 }
@@ -345,10 +390,14 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.JobId+"/Stat",
+	// Use the new CallJSONDirect helper:
+	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/Stat",
 		struct {
 			Path string `json:"path"`
-		}{Path: filename}, &fi)
+		}{Path: filename},
+		func(v *fastjson.Value) error {
+			return decodeFileInfoResponse(v, &fi)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -448,9 +497,11 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.JobId+"/ReadDir", struct {
+	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/ReadDir", struct {
 		Path string `json:"path"`
-	}{Path: path}, &resp)
+	}{Path: path}, func(v *fastjson.Value) error {
+		return decodeReadDirResponse(v, &resp)
+	})
 	if err != nil {
 		return nil, err
 	}
