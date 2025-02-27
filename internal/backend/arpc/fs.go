@@ -21,11 +21,11 @@ import (
 var _ billy.Filesystem = (*ARPCFS)(nil)
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string) *ARPCFS {
-	statC, err := lru.New[string, statCacheEntry](4096)
+	statC, err := lru.New[string, statCacheEntry](1024)
 	if err != nil {
 		panic(err)
 	}
-	readDirC, err := lru.New[string, readDirCacheEntry](4096)
+	readDirC, err := lru.New[string, readDirCacheEntry](1024)
 	if err != nil {
 		panic(err)
 	}
