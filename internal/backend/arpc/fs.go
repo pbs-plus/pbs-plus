@@ -21,11 +21,11 @@ import (
 var _ billy.Filesystem = (*ARPCFS)(nil)
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string) *ARPCFS {
-	statC, err := lru.New[string, statCacheEntry](1024)
+	statC, err := lru.New[string, statCacheEntry](2048)
 	if err != nil {
 		panic(err)
 	}
-	readDirC, err := lru.New[string, readDirCacheEntry](1024)
+	readDirC, err := lru.New[string, readDirCacheEntry](2048)
 	if err != nil {
 		panic(err)
 	}
@@ -125,13 +125,10 @@ func (fs *ARPCFS) Create(filename string) (billy.File, error) {
 }
 
 func (fs *ARPCFS) Open(filename string) (billy.File, error) {
-	filename = filepath.Join(fs.basePath, filename)
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
 func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
-	filename = filepath.Join(fs.basePath, filename)
-
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
@@ -165,8 +162,6 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 
 // Stat first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
-	filename = filepath.Join(fs.basePath, filename)
-
 	// Attempt to fetch from the LRU cache.
 	fs.statCacheMu.RLock(filename)
 	if entry, ok := fs.statCache.Get(filename); ok {
@@ -195,12 +190,11 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		return nil, err
 	}
 
-	modTime := time.Unix(fi.ModTimeUnix, 0)
 	info := &fileInfo{
 		name:    filepath.Base(filename),
 		size:    fi.Size,
 		mode:    fi.Mode,
-		modTime: modTime,
+		modTime: fi.ModTime,
 		isDir:   fi.IsDir,
 	}
 
@@ -264,8 +258,6 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 
 // ReadDir first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
-	path = filepath.Join(fs.basePath, path)
-
 	fs.readDirCacheMu.RLock(path)
 	if entry, ok := fs.readDirCache.Get(path); ok {
 		fs.readDirCacheMu.RUnlock(path)
@@ -291,12 +283,11 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 
 	entries := make([]os.FileInfo, len(resp.Entries))
 	for i, e := range resp.Entries {
-		modTime := time.Unix(e.ModTimeUnix, 0)
 		entries[i] = &fileInfo{
 			name:    e.Name,
 			size:    e.Size,
 			mode:    e.Mode,
-			modTime: modTime,
+			modTime: e.ModTime,
 			isDir:   e.IsDir,
 		}
 

@@ -35,6 +35,7 @@ type ARPCFS struct {
 	basePath string
 
 	accessedPaths sync.Map
+	readdirOnce   sync.Map
 
 	// Atomic counters for the number of unique file and folder accesses.
 	fileCount   int64
@@ -83,11 +84,11 @@ type ARPCFile struct {
 
 // FileInfoResponse represents server's file info response
 type FileInfoResponse struct {
-	Name        string      `msgpack:"name"`
-	Size        int64       `msgpack:"size"`
-	Mode        os.FileMode `msgpack:"mode"`
-	ModTimeUnix int64       `msgpack:"modTime"`
-	IsDir       bool        `msgpack:"isDir"`
+	Name    string      `msgpack:"name"`
+	Size    int64       `msgpack:"size"`
+	Mode    os.FileMode `msgpack:"mode"`
+	ModTime time.Time   `msgpack:"modTime"`
+	IsDir   bool        `msgpack:"isDir"`
 }
 
 // ReadDirResponse represents server's directory listing
