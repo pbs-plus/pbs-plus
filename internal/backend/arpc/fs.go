@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
@@ -34,19 +35,17 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 	}
 
 	fs := &ARPCFS{
-		basePath:             "/",
-		ctx:                  ctx,
-		session:              session,
-		JobId:                jobId,
-		Hostname:             hostname,
-		statCache:            statC,
-		readDirCache:         readDirC,
-		statFSCache:          statFSC,
-		statCacheMu:          NewShardedRWMutex(16),
-		readDirCacheMu:       NewShardedRWMutex(16),
-		statFSCacheMu:        NewShardedRWMutex(4),
-		accessedFileHashes:   make(map[uint64]struct{}),
-		accessedFolderHashes: make(map[uint64]struct{}),
+		basePath:       "/",
+		ctx:            ctx,
+		session:        session,
+		JobId:          jobId,
+		Hostname:       hostname,
+		statCache:      statC,
+		readDirCache:   readDirC,
+		statFSCache:    statFSC,
+		statCacheMu:    NewShardedRWMutex(16),
+		readDirCacheMu: NewShardedRWMutex(16),
+		statFSCacheMu:  NewShardedRWMutex(4),
 	}
 
 	return fs
@@ -58,74 +57,59 @@ func hashPath(path string) uint64 {
 
 // trackAccess records that a path has been accessed using its xxHash
 func (fs *ARPCFS) trackAccess(path string, isDir bool) {
-	pathHash := hashPath(path)
-
-	fs.accessStatsMu.Lock()
-	defer fs.accessStatsMu.Unlock()
-
-	if isDir {
-		fs.accessedFolderHashes[pathHash] = struct{}{}
-	} else {
-		fs.accessedFileHashes[pathHash] = struct{}{}
+	h := hashPath(path)
+	if _, loaded := fs.accessedPaths.LoadOrStore(h, isDir); !loaded {
+		if isDir {
+			atomic.AddInt64(&fs.folderCount, 1)
+		} else {
+			atomic.AddInt64(&fs.fileCount, 1)
+		}
 	}
 }
 
-// GetAccessStats returns statistics about filesystem accesses
-func (fs *ARPCFS) GetAccessStats() AccessStats {
-	fs.accessStatsMu.Lock()
-	defer fs.accessStatsMu.Unlock()
+// GetStats returns a unified snapshot of all access and byte-read stats.
+func (fs *ARPCFS) GetStats() Stats {
+	currentTime := time.Now()
 
-	stats := AccessStats{
-		FilesAccessed:   len(fs.accessedFileHashes),
-		FoldersAccessed: len(fs.accessedFolderHashes),
+	// Obtain the current unique counts atomically.
+	currentFileCount := atomic.LoadInt64(&fs.fileCount)
+	currentFolderCount := atomic.LoadInt64(&fs.folderCount)
+	totalAccessed := currentFileCount + currentFolderCount
+
+	// Calculate access speed (unique accesses per second).
+	var accessSpeed float64
+	fs.lastAccessMu.Lock()
+	elapsed := currentTime.Sub(fs.lastAccessTime).Seconds()
+	if elapsed > 0 {
+		accessSpeed = float64((currentFileCount+currentFolderCount)-
+			(fs.lastFileCount+fs.lastFolderCount)) / elapsed
 	}
-	stats.TotalAccessed = stats.FilesAccessed + stats.FoldersAccessed
+	// Update last state for subsequent speed calculation.
+	fs.lastAccessTime = currentTime
+	fs.lastFileCount = currentFileCount
+	fs.lastFolderCount = currentFolderCount
+	fs.lastAccessMu.Unlock()
 
-	now := time.Now()
-	if !fs.lastAccessTime.IsZero() {
-		filesDiff := stats.FilesAccessed - fs.lastAccessStats.FilesAccessed
-		secondsDiff := now.Sub(fs.lastAccessTime).Seconds()
-
-		fs.fileSpeed = float64(filesDiff) / secondsDiff
-	}
-
-	fs.lastAccessTime = now
-	fs.lastAccessStats = stats
-
-	return stats
-}
-
-func (fs *ARPCFS) GetTotalBytesRead() uint64 {
+	// Calculate byte read speed.
+	var bytesSpeed float64
 	fs.totalBytesMu.Lock()
-	defer fs.totalBytesMu.Unlock()
-
-	now := time.Now()
-	if !fs.lastAccessTime.IsZero() {
-		bytesDiff := fs.totalBytes - fs.lastTotalBytes
-		secondsDiff := now.Sub(fs.lastBytesTime).Seconds()
-
-		fs.byteSpeed = float64(bytesDiff) / secondsDiff
+	bytesDiff := fs.totalBytes - fs.lastTotalBytes
+	secDiff := currentTime.Sub(fs.lastBytesTime).Seconds()
+	if secDiff > 0 {
+		bytesSpeed = float64(bytesDiff) / secDiff
 	}
-
-	fs.lastBytesTime = now
 	fs.lastTotalBytes = fs.totalBytes
+	fs.lastBytesTime = currentTime
+	fs.totalBytesMu.Unlock()
 
-	return fs.totalBytes
-}
-
-func (fs *ARPCFS) GetSpeedStats() (float64, float64) {
-	var byteSpeed float64
-	var fileSpeed float64
-
-	fs.totalBytesMu.RLock()
-	byteSpeed = fs.byteSpeed
-	fs.totalBytesMu.RUnlock()
-
-	fs.accessStatsMu.RLock()
-	fileSpeed = fs.fileSpeed
-	fs.accessStatsMu.RUnlock()
-
-	return byteSpeed, fileSpeed
+	return Stats{
+		FilesAccessed:   currentFileCount,
+		FoldersAccessed: currentFolderCount,
+		TotalAccessed:   totalAccessed,
+		FileAccessSpeed: accessSpeed,
+		TotalBytes:      fs.totalBytes,
+		ByteReadSpeed:   bytesSpeed,
+	}
 }
 
 func (f *ARPCFS) Unmount() {
@@ -159,12 +143,14 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	// Use the CPU efficient CallMsgDirect helper.
-	err := fs.session.CallMsg(ctx, fs.JobId+"/OpenFile", OpenRequest{
+	req := OpenRequest{
 		Path: filename,
 		Flag: flag,
 		Perm: int(perm),
-	}, &resp)
+	}
+
+	// Use the CPU efficient CallMsgDirect helper.
+	err := fs.session.CallMsg(ctx, fs.JobId+"/OpenFile", req, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -201,13 +187,10 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
+	req := StatRequest{Path: filename}
+
 	// Use the new CallMsgDirect helper:
-	err := fs.session.CallMsg(ctx, fs.JobId+"/Stat",
-		struct {
-			Path string `json:"path"`
-		}{Path: filename},
-		&fi,
-	)
+	err := fs.session.CallMsg(ctx, fs.JobId+"/Stat", req, &fi)
 	if err != nil {
 		return nil, err
 	}
@@ -300,9 +283,8 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallMsg(ctx, fs.JobId+"/ReadDir", struct {
-		Path string `json:"path"`
-	}{Path: path}, &resp)
+	req := ReadDirRequest{Path: path}
+	err := fs.session.CallMsg(ctx, fs.JobId+"/ReadDir", req, &resp)
 	if err != nil {
 		return nil, err
 	}

@@ -36,20 +36,18 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		p := message.NewPrinter(language.English)
 		for i, job := range allJobs {
-			arpcfs := storeInstance.GetARPCFS(job.Target)
+			arpcfs := storeInstance.GetARPCFS(job.ID)
 			if arpcfs == nil {
 				continue
 			}
 
-			stats := arpcfs.GetAccessStats()
-			totalBytes := arpcfs.GetTotalBytesRead()
-			byteSpeed, fileSpeed := arpcfs.GetSpeedStats()
+			stats := arpcfs.GetStats()
 
 			allJobs[i].CurrentFileCount = p.Sprintf("%d", stats.FilesAccessed)
 			allJobs[i].CurrentFolderCount = p.Sprintf("%d", stats.FoldersAccessed)
-			allJobs[i].CurrentBytesTotal = utils.HumanReadableBytes(int64(totalBytes))
-			allJobs[i].CurrentBytesSpeed = utils.HumanReadableSpeed(byteSpeed)
-			allJobs[i].CurrentFilesSpeed = fmt.Sprintf("%.2f files/s", fileSpeed)
+			allJobs[i].CurrentBytesTotal = utils.HumanReadableBytes(int64(stats.TotalBytes))
+			allJobs[i].CurrentBytesSpeed = utils.HumanReadableSpeed(stats.ByteReadSpeed)
+			allJobs[i].CurrentFilesSpeed = fmt.Sprintf("%.2f files/s", stats.FileAccessSpeed)
 		}
 
 		digest, err := utils.CalculateDigest(allJobs)
