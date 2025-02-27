@@ -37,14 +37,6 @@ type VSSFSServer struct {
 	fsCache    *FileCache
 }
 
-type DirectBufferWrite struct {
-	Data []byte
-}
-
-func (d *DirectBufferWrite) Error() string {
-	return "direct buffer write requested"
-}
-
 func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &VSSFSServer{
@@ -336,7 +328,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{
 			Status: 200,
 			Data:   encodeValue(meta),
-		}, &DirectBufferWrite{Data: buf[:bytesRead]}
+		}, &arpc.DirectBufferWrite{Data: buf[:bytesRead]}
 	}
 
 	data := map[string]interface{}{
@@ -393,7 +385,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{
 			Status: 200,
 			Data:   encodeValue(meta),
-		}, &DirectBufferWrite{Data: buf[:bytesRead]}
+		}, &arpc.DirectBufferWrite{Data: buf[:bytesRead]}
 	}
 
 	data := map[string]interface{}{
