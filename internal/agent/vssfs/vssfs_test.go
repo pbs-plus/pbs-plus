@@ -92,7 +92,7 @@ func TestVSSFSServer(t *testing.T) {
 	t.Run("ReadDir", func(t *testing.T) {
 		payload := map[string]string{"path": "/"}
 		var result struct {
-			Entries []map[string]interface{} `json:"entries"`
+			Entries []map[string]interface{} `msgpack:"entries"`
 		}
 		err = clientSession.CallMsg(ctx, "vss/ReadDir", payload, &result)
 		assert.NoError(t, err)
@@ -124,7 +124,7 @@ func TestVSSFSServer(t *testing.T) {
 			"perm": 0644,
 		}
 		var openResult struct {
-			HandleID uint64 `json:"handleID"`
+			HandleID uint64 `msgpack:"handleID"`
 		}
 		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
 		assert.NoError(t, err)
@@ -136,8 +136,8 @@ func TestVSSFSServer(t *testing.T) {
 			"length":   100, // More than enough for our test
 		}
 		var readResult struct {
-			Data []byte `json:"data"`
-			EOF  bool   `json:"eof"`
+			Data []byte `msgpack:"data"`
+			EOF  bool   `msgpack:"eof"`
 		}
 		err = clientSession.CallMsg(ctx, "vss/Read", readPayload, &readResult)
 		assert.NoError(t, err)
@@ -168,7 +168,7 @@ func TestVSSFSServer(t *testing.T) {
 			"perm": 0644,
 		}
 		var openResult struct {
-			HandleID uint64 `json:"handleID"`
+			HandleID uint64 `msgpack:"handleID"`
 		}
 		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
 		assert.NoError(t, err)
@@ -180,8 +180,8 @@ func TestVSSFSServer(t *testing.T) {
 			"length":   100,
 		}
 		var readResult struct {
-			Data []byte `json:"data"`
-			EOF  bool   `json:"eof"`
+			Data []byte `msgpack:"data"`
+			EOF  bool   `msgpack:"eof"`
 		}
 		err = clientSession.CallMsg(ctx, "vss/ReadAt", readAtPayload, &readResult)
 		assert.NoError(t, err)
@@ -204,7 +204,7 @@ func TestVSSFSServer(t *testing.T) {
 			"perm": 0644,
 		}
 		var openResult struct {
-			HandleID uint64 `json:"handleID"`
+			HandleID uint64 `msgpack:"handleID"`
 		}
 		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
 		assert.NoError(t, err)
@@ -235,7 +235,7 @@ func TestVSSFSServer(t *testing.T) {
 			"perm": 0644,
 		}
 		var openResult struct {
-			HandleID uint64 `json:"handleID"`
+			HandleID uint64 `msgpack:"handleID"`
 		}
 		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
 		assert.NoError(t, err)
