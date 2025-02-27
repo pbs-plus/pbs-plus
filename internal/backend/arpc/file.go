@@ -88,7 +88,6 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, os.ErrInvalid
 	}
 
-	var resp ReadResponse
 	if f.fs.session == nil {
 		return 0, os.ErrInvalid
 	}
@@ -102,18 +101,22 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		Length:   len(p),
 	}
 
-	err := f.fs.session.CallMsg(ctx, f.jobId+"/ReadAt", req, &resp)
+	bytesRead, isEOF, err := f.fs.session.CallMsgWithBuffer(ctx, f.jobId+"/ReadAt", req, p)
+
 	if err != nil {
-		syslog.L.Errorf("ReadAt RPC failed (%s): %v", f.name, err)
+		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
 		return 0, os.ErrInvalid
 	}
 
-	copy(p, resp.Data)
+	f.fs.totalBytesMu.Lock()
+	f.fs.totalBytes += uint64(bytesRead)
+	f.fs.totalBytesMu.Unlock()
 
-	if resp.EOF {
-		return len(resp.Data), io.EOF
+	if isEOF {
+		return bytesRead, io.EOF
 	}
-	return len(resp.Data), nil
+
+	return bytesRead, nil
 }
 
 func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {

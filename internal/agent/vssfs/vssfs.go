@@ -365,6 +365,11 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{Status: 400, Data: encodeValue("cannot read from directory")}, nil
 	}
 
+	isDirectBuffer := false
+	if req.Headers != nil && req.Headers.Get("X-Direct-Buffer") == "true" {
+		isDirectBuffer = true
+	}
+
 	buf := make([]byte, payload.Length)
 	var bytesRead uint32
 	var overlapped windows.Overlapped
@@ -378,6 +383,17 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 	if err == windows.ERROR_HANDLE_EOF {
 		isEOF = true
+	}
+
+	if isDirectBuffer {
+		meta := map[string]interface{}{
+			"bytes_available": int(bytesRead),
+			"eof":             isEOF,
+		}
+		return arpc.Response{
+			Status: 200,
+			Data:   encodeValue(meta),
+		}, &DirectBufferWrite{Data: buf[:bytesRead]}
 	}
 
 	data := map[string]interface{}{
