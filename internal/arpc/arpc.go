@@ -168,19 +168,17 @@ func (r *Router) CloseHandle(method string) {
 func (r *Router) ServeStream(stream *smux.Stream) {
 	defer stream.Close()
 
-	dataBytes, err := readMsgpackMsgPooled(stream)
+	dataBytes, err := readMsgpackMsg(stream)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
 
 	var req Request
-	if err := msgpack.Unmarshal(dataBytes.Data, &req); err != nil {
+	if err := msgpack.Unmarshal(dataBytes, &req); err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
-
-	dataBytes.Release()
 
 	if req.Method == "" {
 		writeErrorResponse(stream, http.StatusBadRequest,

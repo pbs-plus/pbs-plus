@@ -32,6 +32,7 @@ type ARPCFS struct {
 	JobId    string
 	Hostname string
 	Mount    *gofuse.Server
+	basePath string
 
 	accessedFileHashes   map[uint64]struct{} // Set of unique file path hashes
 	accessedFolderHashes map[uint64]struct{} // Set of unique folder path hashes
