@@ -106,11 +106,10 @@ func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformati
 
 // encodeJsonValue builds a JSON value using only the fastjson API.
 func encodeJsonValue(v interface{}) *fastjson.Value {
-	// Create a new Arena for the conversion.
+	// Create a new Arena for constructing the JSON value.
 	arena := new(fastjson.Arena)
 	switch val := v.(type) {
 	case string:
-		// Create a JSON string.
 		return arena.NewString(val)
 	case int:
 		return arena.NewNumberInt(val)
@@ -119,21 +118,31 @@ func encodeJsonValue(v interface{}) *fastjson.Value {
 	case bool:
 		if val {
 			return arena.NewTrue()
-		} else {
-			return arena.NewFalse()
 		}
+		return arena.NewFalse()
 	case uint64:
-		// fastjson does not provide a dedicated uint constructor,
-		// so we convert to float64.
+		// Use a float64 representation for uint64.
 		return arena.NewNumberFloat64(float64(val))
 	case map[string]interface{}:
-		// Create a JSON object.
 		obj := arena.NewObject()
 		for key, value := range val {
 			obj.Set(key, encodeJsonValue(value))
 		}
 		return obj
+	case map[string]string:
+		obj := arena.NewObject()
+		for key, value := range val {
+			obj.Set(key, arena.NewString(value))
+		}
+		return obj
+	case map[string]uint64:
+		obj := arena.NewObject()
+		for key, value := range val {
+			obj.Set(key, arena.NewNumberFloat64(float64(value)))
+		}
+		return obj
 	case *utils.FSStat:
+		// Encode FSStat using its JSON tag field names.
 		obj := arena.NewObject()
 		obj.Set("total_size", arena.NewNumberInt(int(val.TotalSize)))
 		obj.Set("free_size", arena.NewNumberInt(int(val.FreeSize)))
@@ -141,8 +150,8 @@ func encodeJsonValue(v interface{}) *fastjson.Value {
 		obj.Set("total_files", arena.NewNumberInt(val.TotalFiles))
 		obj.Set("free_files", arena.NewNumberInt(val.FreeFiles))
 		obj.Set("available_files", arena.NewNumberInt(val.AvailableFiles))
-		// Represent CacheHint as a string (e.g., "1m0s")
-		obj.Set("cache_hint", arena.NewString(val.CacheHint.String()))
+		// Represent CacheHint as a number (nanoseconds), as the standard marshaller does.
+		obj.Set("cache_hint", arena.NewNumberInt(int(val.CacheHint)))
 		return obj
 	case *arpc.SerializableError:
 		obj := arena.NewObject()
@@ -159,7 +168,7 @@ func encodeJsonValue(v interface{}) *fastjson.Value {
 		obj := arena.NewObject()
 		obj.Set("name", arena.NewString(val.Name))
 		obj.Set("size", arena.NewNumberInt(int(val.Size)))
-		// fs.FileMode is a uint32 underneath; we convert it to an int.
+		// Convert fs.FileMode (underlying uint32) to int.
 		obj.Set("mode", arena.NewNumberInt(int(val.Mode)))
 		obj.Set("modTime", arena.NewNumberInt(int(val.ModTime)))
 		if val.IsDir {
@@ -182,7 +191,7 @@ func encodeJsonValue(v interface{}) *fastjson.Value {
 		return obj
 	default:
 		// Fallback: represent the value using fmt.Sprintf.
-		return arena.NewString(fmt.Sprintf("%v", v))
+		return arena.NewString(fmt.Sprintf("%v", val))
 	}
 }
 
