@@ -3,20 +3,22 @@
 package vssfs
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	json "github.com/goccy/go-json"
-
+	// Note: We now use fastjson as our JSON engine.
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/valyala/fastjson"
 	"golang.org/x/sys/windows"
 )
+
+// --- Types ---
 
 type FileHandle struct {
 	handle   windows.Handle
@@ -50,6 +52,8 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	}
 }
 
+// --- Registration & Cleanup ---
+
 func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
 	r.Handle(s.jobId+"/OpenFile", s.handleOpenFile)
 	r.Handle(s.jobId+"/Stat", s.handleStat)
@@ -64,15 +68,21 @@ func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
 }
 
 func (s *VSSFSServer) Close() {
-	s.arpcRouter.CloseHandle(s.jobId + "/OpenFile")
-	s.arpcRouter.CloseHandle(s.jobId + "/Stat")
-	s.arpcRouter.CloseHandle(s.jobId + "/ReadDir")
-	s.arpcRouter.CloseHandle(s.jobId + "/Read")
-	s.arpcRouter.CloseHandle(s.jobId + "/ReadAt")
-	s.arpcRouter.CloseHandle(s.jobId + "/Close")
-	s.arpcRouter.CloseHandle(s.jobId + "/Fstat")
-	s.arpcRouter.CloseHandle(s.jobId + "/FSstat")
+	r := s.arpcRouter
+	if r == nil {
+		return
+	}
+	r.CloseHandle(s.jobId + "/OpenFile")
+	r.CloseHandle(s.jobId + "/Stat")
+	r.CloseHandle(s.jobId + "/ReadDir")
+	r.CloseHandle(s.jobId + "/Read")
+	r.CloseHandle(s.jobId + "/ReadAt")
+	r.CloseHandle(s.jobId + "/Close")
+	r.CloseHandle(s.jobId + "/Fstat")
+	r.CloseHandle(s.jobId + "/FSstat")
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for k := range s.handles {
 		delete(s.handles, k)
 	}
@@ -80,21 +90,7 @@ func (s *VSSFSServer) Close() {
 	s.arpcRouter = nil
 }
 
-func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Response {
-	if syslog.L != nil {
-		if err != os.ErrNotExist {
-			syslog.L.Errorf("%s (%s): %v", method, drive, err)
-		}
-	}
-	return arpc.Response{Status: 500, Data: arpc.WrapError(err)}
-}
-
-func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Response {
-	if syslog.L != nil {
-		syslog.L.Errorf("%s (%s): %v", method, drive, err)
-	}
-	return arpc.Response{Status: 400, Data: arpc.WrapError(os.ErrInvalid)}
-}
+// --- Handlers ---
 
 func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
 	var totalBytes uint64
@@ -117,31 +113,43 @@ func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
 		AvailableFiles: 0,
 		CacheHint:      time.Minute,
 	}
-	return arpc.Response{Status: 200, Data: fsStat}, nil
+	return arpc.Response{
+		Status: 200,
+		Data:   encodeJsonValue(fsStat),
+	}, nil
 }
 
 func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
-	var params struct {
-		Path string `json:"path"`
-		Flag int    `json:"flag"`
-		Perm int    `json:"perm"`
+	// Decode parameters using fastjson getters.
+	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &params); err != nil {
+	path, err := getStringField(req.Payload, "path")
+	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
+	flag, err := getIntField(req.Payload, "flag")
+	if err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
+	}
+	// perm, _ := getIntField(req.Payload, "perm") // optional
 
-	if params.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
-		return arpc.Response{Status: 403, Message: "write operations not allowed"}, nil
+	// Disallow write operations.
+	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
+		return arpc.Response{
+			Status: 403,
+			Data:   encodeJsonValue("write operations not allowed"),
+		}, nil
 	}
 
-	path, err := s.abs(params.Path)
+	path, err = s.abs(path)
 	if err != nil {
 		return s.respondError(req.Method, s.jobId, err), nil
 	}
 
 	pathp, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, path)), nil
 	}
 
 	handle, err := windows.CreateFile(
@@ -154,7 +162,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		0,
 	)
 	if err != nil {
-		return s.mapWindowsErrorToResponse(&req, err), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, path)), nil
 	}
 
 	fileHandle := &FileHandle{
@@ -163,51 +171,53 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		isDir:  false,
 	}
 
-	// Create a new handle ID
 	s.mu.Lock()
 	s.nextHandle++
 	handleID := s.nextHandle
 	s.handles[handleID] = fileHandle
 	s.mu.Unlock()
 
+	// Return result by encoding a simple map.
 	return arpc.Response{
 		Status: 200,
-		Data:   map[string]uint64{"handleID": handleID},
+		Data:   encodeJsonValue(map[string]uint64{"handleID": handleID}),
 	}, nil
 }
 
 func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
-	var params struct {
-		Path string `json:"path"`
+	// Decode request.
+	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &params); err != nil {
+	path, err := getStringField(req.Payload, "path")
+	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
-	fullPath, err := s.abs(params.Path)
+	fullPath, err := s.abs(path)
 	if err != nil {
 		return s.respondError(req.Method, s.jobId, err), nil
 	}
 
-	if params.Path == "." || params.Path == "" {
+	if path == "." || path == "" {
 		fullPath = s.rootDir
 	}
 
 	pathPtr, err := windows.UTF16PtrFromString(fullPath)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, path)), nil
 	}
 
 	var findData windows.Win32finddata
 	handle, err := windows.FindFirstFile(pathPtr, &findData)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, params.Path)), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, path)), nil
 	}
 	defer windows.FindClose(handle)
 
 	foundName := windows.UTF16ToString(findData.FileName[:])
 	expectedName := filepath.Base(fullPath)
-	if params.Path == "." {
+	if path == "." {
 		expectedName = foundName
 	}
 
@@ -215,37 +225,36 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		return s.respondError(req.Method, s.jobId, os.ErrNotExist), nil
 	}
 
-	// Use foundName as the file name for FileInfo
+	// Create file info from findData.
 	name := foundName
-	if params.Path == "." {
+	if path == "." {
 		name = "."
-	}
-	if params.Path == "/" {
+	} else if path == "/" {
 		name = "/"
 	}
-
 	info := createFileInfoFromFindData(name, &findData)
 
 	return arpc.Response{
 		Status: 200,
-		Data:   info,
+		Data:   encodeJsonValue(info),
 	}, nil
 }
 
 func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
-	var params struct {
-		Path string `json:"path"`
+	// Decode request.
+	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &params); err != nil {
+	path, err := getStringField(req.Payload, "path")
+	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
-	windowsDir := filepath.FromSlash(params.Path)
+	windowsDir := filepath.FromSlash(path)
 	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
 		return s.respondError(req.Method, s.jobId, err), nil
 	}
-
-	if params.Path == "." || params.Path == "" {
+	if path == "." || path == "" {
 		windowsDir = "."
 		fullDirPath = s.rootDir
 	}
@@ -253,7 +262,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	var findData windows.Win32finddata
 	handle, err := FindFirstFileEx(searchPath, &findData)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, params.Path)), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, path)), nil
 	}
 	defer windows.FindClose(handle)
 
@@ -266,187 +275,193 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 				entries = append(entries, info)
 			}
 		}
-
 		if err := windows.FindNextFile(handle, &findData); err != nil {
 			if err == windows.ERROR_NO_MORE_FILES {
 				break
 			}
-			return s.respondError(req.Method, s.jobId, mapWinError(err, params.Path)), nil
+			return s.respondError(req.Method, s.jobId, err), nil
 		}
 	}
 
+	// Return entries by encoding in a map.
 	return arpc.Response{
 		Status: 200,
-		Data:   map[string][]*VSSFileInfo{"entries": entries},
+		Data:   encodeJsonValue(map[string]interface{}{"entries": entries}),
 	}, nil
 }
 
 func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
-	var params struct {
-		HandleID uint64 `json:"handleID"`
-		Length   int    `json:"length"`
+	// Decode parameters.
+	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &params); err != nil {
+	handleID, err := getIntField(req.Payload, "handleID")
+	if err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
+	}
+	length, err := getIntField(req.Payload, "length")
+	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.RLock()
-	handle, exists := s.handles[params.HandleID]
+	handle, exists := s.handles[uint64(handleID)]
 	s.mu.RUnlock()
-
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Message: "invalid handle"}, nil
+		return arpc.Response{Status: 404, Data: encodeJsonValue("invalid handle")}, nil
 	}
-
 	if handle.isDir {
-		return arpc.Response{Status: 400, Message: "cannot read from directory"}, nil
+		return arpc.Response{Status: 400, Data: encodeJsonValue("cannot read from directory")}, nil
 	}
 
-	// Check if client requested direct buffer mode
+	// Determine if direct buffer mode was requested.
 	isDirectBuffer := false
 	if req.Headers != nil && req.Headers.Get("X-Direct-Buffer") == "true" {
 		isDirectBuffer = true
 	}
 
-	// Read data from file
-	buf := make([]byte, params.Length)
+	// Read file into buffer.
+	buf := make([]byte, length)
 	var bytesRead uint32
-	err := windows.ReadFile(handle.handle, buf, &bytesRead, nil)
+	err = windows.ReadFile(handle.handle, buf, &bytesRead, nil)
 	isEOF := false
-
-	if err != nil {
-		if err != windows.ERROR_HANDLE_EOF {
-			return s.respondError(req.Method, s.jobId, err), nil
-		}
+	if err != nil && err != windows.ERROR_HANDLE_EOF {
+		return s.respondError(req.Method, s.jobId, mapWinError(err, handle.path)), nil
+	}
+	if err == windows.ERROR_HANDLE_EOF {
 		isEOF = true
 	}
 
-	// For direct buffer mode, return metadata first, then signal to write raw bytes
+	// In direct buffer mode, return metadata first and then signal raw bytes.
 	if isDirectBuffer {
-		// Return metadata response
-		metaResp := arpc.Response{
-			Status: 200,
-			Data: map[string]interface{}{
-				"bytes_available": int(bytesRead),
-				"eof":             isEOF,
-			},
+		meta := map[string]interface{}{
+			"bytes_available": int(bytesRead),
+			"eof":             isEOF,
 		}
-
-		// Return special DirectBufferWrite object that will be handled by router
-		return metaResp, &DirectBufferWrite{Data: buf[:bytesRead]}
+		return arpc.Response{
+			Status: 200,
+			Data:   encodeJsonValue(meta),
+		}, &DirectBufferWrite{Data: buf[:bytesRead]}
 	}
 
-	// Standard response mode with JSON data
+	// Standard mode: return response data.
+	data := map[string]interface{}{
+		"data": buf[:bytesRead],
+		"eof":  isEOF,
+	}
 	return arpc.Response{
 		Status: 200,
-		Data: map[string]interface{}{
-			"data": buf[:bytesRead],
-			"eof":  isEOF,
-		},
+		Data:   encodeJsonValue(data),
 	}, nil
 }
 
 func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
-	var params struct {
-		HandleID uint64 `json:"handleID"`
-		Offset   int64  `json:"offset"`
-		Length   int    `json:"length"`
+	// Decode parameters.
+	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &params); err != nil {
+	handleID, err := getIntField(req.Payload, "handleID")
+	if err != nil {
+		return s.invalidRequest(req.Method, s.jobId, err), nil
+	}
+	offsetVal := req.Payload.Get("offset")
+	if offsetVal == nil {
+		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("missing offset")), nil
+	}
+	offset := offsetVal.GetInt64()
+	length, err := getIntField(req.Payload, "length")
+	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.RLock()
-	handle, exists := s.handles[params.HandleID]
+	handle, exists := s.handles[uint64(handleID)]
 	s.mu.RUnlock()
-
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Message: "invalid handle"}, nil
+		return arpc.Response{Status: 404, Data: encodeJsonValue("invalid handle")}, nil
 	}
-
 	if handle.isDir {
-		return arpc.Response{Status: 400, Message: "cannot read from directory"}, nil
+		return arpc.Response{Status: 400, Data: encodeJsonValue("cannot read from directory")}, nil
 	}
 
-	// Read from file at specific offset
-	buf := make([]byte, params.Length)
+	buf := make([]byte, length)
 	var bytesRead uint32
 	var overlapped windows.Overlapped
-	overlapped.Offset = uint32(params.Offset & 0xFFFFFFFF)
-	overlapped.OffsetHigh = uint32(params.Offset >> 32)
+	overlapped.Offset = uint32(offset & 0xFFFFFFFF)
+	overlapped.OffsetHigh = uint32(offset >> 32)
 
-	err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
+	err = windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
 	isEOF := false
-
-	if err != nil {
-		if err != windows.ERROR_HANDLE_EOF {
-			return s.respondError(req.Method, s.jobId, err), nil
-		}
+	if err != nil && err != windows.ERROR_HANDLE_EOF {
+		return s.respondError(req.Method, s.jobId, mapWinError(err, handle.path)), nil
+	}
+	if err == windows.ERROR_HANDLE_EOF {
 		isEOF = true
 	}
 
+	data := map[string]interface{}{
+		"data": buf[:bytesRead],
+		"eof":  isEOF,
+	}
 	return arpc.Response{
 		Status: 200,
-		Data: map[string]interface{}{
-			"data": buf[:bytesRead],
-			"eof":  isEOF,
-		},
+		Data:   encodeJsonValue(data),
 	}, nil
 }
 
 func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
-	var params struct {
-		HandleID uint64 `json:"handleID"`
+	// Decode parameters.
+	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &params); err != nil {
+	handleID, err := getIntField(req.Payload, "handleID")
+	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.Lock()
-	handle, exists := s.handles[params.HandleID]
+	handle, exists := s.handles[uint64(handleID)]
 	if exists {
-		delete(s.handles, params.HandleID)
+		delete(s.handles, uint64(handleID))
 	}
 	s.mu.Unlock()
 
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Message: "invalid handle"}, nil
+		return arpc.Response{Status: 404, Data: encodeJsonValue("invalid handle")}, nil
 	}
 
-	// Close file handle
 	windows.CloseHandle(handle.handle)
 	handle.isClosed = true
 
-	return arpc.Response{Status: 200}, nil
+	return arpc.Response{Status: 200, Data: encodeJsonValue("closed")}, nil
 }
 
-// handleFstat gets information about an open file
 func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
-	var params struct {
-		HandleID uint64 `json:"handleID"`
+	// Decode parameters.
+	if req.Payload == nil || req.Payload.Type() != fastjson.TypeObject {
+		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &params); err != nil {
+	handleID, err := getIntField(req.Payload, "handleID")
+	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.RLock()
-	handle, exists := s.handles[params.HandleID]
+	handle, exists := s.handles[uint64(handleID)]
 	s.mu.RUnlock()
-
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Message: "invalid handle"}, nil
+		return arpc.Response{Status: 404, Data: encodeJsonValue("invalid handle")}, nil
 	}
 
 	var fileInfo windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle.handle, &fileInfo); err != nil {
-		return s.mapWindowsErrorToResponse(&req, err), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, handle.path)), nil
 	}
 
 	info := createFileInfoFromHandleInfo(handle.path, &fileInfo)
-
 	return arpc.Response{
 		Status: 200,
-		Data:   info,
+		Data:   encodeJsonValue(info),
 	}, nil
 }
 
@@ -454,11 +469,9 @@ func (s *VSSFSServer) abs(filename string) (string, error) {
 	if filename == "" || filename == "." {
 		return s.rootDir, nil
 	}
-
 	path, err := securejoin.SecureJoin(s.rootDir, filename)
 	if err != nil {
-		return "", nil
+		return "", err
 	}
-
 	return path, nil
 }

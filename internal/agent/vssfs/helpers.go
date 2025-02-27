@@ -3,12 +3,16 @@
 package vssfs
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/valyala/fastjson"
 	"golang.org/x/sys/windows"
 )
 
@@ -35,18 +39,6 @@ func mapWinError(err error, path string) error {
 			Path: path,
 			Err:  err,
 		}
-	}
-}
-
-// mapWindowsErrorToResponse maps Windows error codes to HTTP-like responses
-func (s *VSSFSServer) mapWindowsErrorToResponse(req *arpc.Request, err error) arpc.Response {
-	switch err {
-	case windows.ERROR_FILE_NOT_FOUND, windows.ERROR_PATH_NOT_FOUND:
-		return arpc.Response{Status: 404, Message: "file not found"}
-	case windows.ERROR_ACCESS_DENIED:
-		return arpc.Response{Status: 403, Message: "permission denied"}
-	default:
-		return s.respondError(req.Method, s.jobId, err)
 	}
 }
 
@@ -110,4 +102,129 @@ func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformati
 		ModTime: modTime.Unix(),
 		IsDir:   isDir,
 	}
+}
+
+// encodeJsonValue builds a JSON value using only the fastjson API.
+func encodeJsonValue(v interface{}) *fastjson.Value {
+	// Create a new Arena for the conversion.
+	arena := new(fastjson.Arena)
+	switch val := v.(type) {
+	case string:
+		// Create a JSON string.
+		return arena.NewString(val)
+	case int:
+		return arena.NewNumberInt(val)
+	case int64:
+		return arena.NewNumberInt(int(val))
+	case bool:
+		if val {
+			return arena.NewTrue()
+		} else {
+			return arena.NewFalse()
+		}
+	case uint64:
+		// fastjson does not provide a dedicated uint constructor,
+		// so we convert to float64.
+		return arena.NewNumberFloat64(float64(val))
+	case map[string]interface{}:
+		// Create a JSON object.
+		obj := arena.NewObject()
+		for key, value := range val {
+			obj.Set(key, encodeJsonValue(value))
+		}
+		return obj
+	case *utils.FSStat:
+		obj := arena.NewObject()
+		obj.Set("total_size", arena.NewNumberInt(int(val.TotalSize)))
+		obj.Set("free_size", arena.NewNumberInt(int(val.FreeSize)))
+		obj.Set("available_size", arena.NewNumberInt(int(val.AvailableSize)))
+		obj.Set("total_files", arena.NewNumberInt(val.TotalFiles))
+		obj.Set("free_files", arena.NewNumberInt(val.FreeFiles))
+		obj.Set("available_files", arena.NewNumberInt(val.AvailableFiles))
+		// Represent CacheHint as a string (e.g., "1m0s")
+		obj.Set("cache_hint", arena.NewString(val.CacheHint.String()))
+		return obj
+	case *arpc.SerializableError:
+		obj := arena.NewObject()
+		obj.Set("error_type", arena.NewString(val.ErrorType))
+		obj.Set("message", arena.NewString(val.Message))
+		if val.Op != "" {
+			obj.Set("op", arena.NewString(val.Op))
+		}
+		if val.Path != "" {
+			obj.Set("path", arena.NewString(val.Path))
+		}
+		return obj
+	case VSSFileInfo:
+		obj := arena.NewObject()
+		obj.Set("name", arena.NewString(val.Name))
+		obj.Set("size", arena.NewNumberInt(int(val.Size)))
+		// fs.FileMode is a uint32 underneath; we convert it to an int.
+		obj.Set("mode", arena.NewNumberInt(int(val.Mode)))
+		obj.Set("modTime", arena.NewNumberInt(int(val.ModTime)))
+		if val.IsDir {
+			obj.Set("isDir", arena.NewTrue())
+		} else {
+			obj.Set("isDir", arena.NewFalse())
+		}
+		return obj
+	case *VSSFileInfo:
+		obj := arena.NewObject()
+		obj.Set("name", arena.NewString(val.Name))
+		obj.Set("size", arena.NewNumberInt(int(val.Size)))
+		obj.Set("mode", arena.NewNumberInt(int(val.Mode)))
+		obj.Set("modTime", arena.NewNumberInt(int(val.ModTime)))
+		if val.IsDir {
+			obj.Set("isDir", arena.NewTrue())
+		} else {
+			obj.Set("isDir", arena.NewFalse())
+		}
+		return obj
+	default:
+		// Fallback: represent the value using fmt.Sprintf.
+		return arena.NewString(fmt.Sprintf("%v", v))
+	}
+}
+
+// --- Error Response Helpers ---
+
+func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Response {
+	if syslog.L != nil && err != os.ErrNotExist {
+		syslog.L.Errorf("%s (%s): %v", method, drive, err)
+	}
+	// Wrap error and encode it
+	return arpc.Response{
+		Status: 500,
+		Data:   encodeJsonValue(arpc.WrapError(err)),
+	}
+}
+
+func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Response {
+	if syslog.L != nil {
+		syslog.L.Errorf("%s (%s): %v", method, drive, err)
+	}
+	return arpc.Response{
+		Status: 400,
+		Data:   encodeJsonValue(arpc.WrapError(os.ErrInvalid)),
+	}
+}
+
+// --- Helper: fastjson decoding for request payloads ---
+
+// getStringField safely extracts a string field from req.Payload.
+func getStringField(v *fastjson.Value, field string) (string, error) {
+	f := v.Get(field)
+	if f == nil {
+		return "", fmt.Errorf("field %s missing", field)
+	}
+	return string(f.GetStringBytes()), nil
+}
+
+// getIntField extracts an integer field from req.Payload.
+func getIntField(v *fastjson.Value, field string) (int, error) {
+	f := v.Get(field)
+	if f == nil {
+		return 0, fmt.Errorf("field %s missing", field)
+	}
+	return f.GetInt(), nil
 }
