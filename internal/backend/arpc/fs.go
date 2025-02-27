@@ -10,7 +10,6 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/go-git/go-billy/v5"
-	"github.com/goccy/go-json"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
@@ -154,14 +153,12 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	// Use the CPU efficient CallJSONDirect helper.
-	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/OpenFile", OpenRequest{
+	// Use the CPU efficient CallMsgDirect helper.
+	err := fs.session.CallMsg(ctx, fs.JobId+"/OpenFile", OpenRequest{
 		Path: filename,
 		Flag: flag,
 		Perm: int(perm),
-	}, func(v json.RawMessage) error {
-		return json.Unmarshal(v, &handleID)
-	})
+	}, &handleID)
 	if err != nil {
 		return nil, err
 	}
@@ -196,14 +193,13 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	// Use the new CallJSONDirect helper:
-	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/Stat",
+	// Use the new CallMsgDirect helper:
+	err := fs.session.CallMsg(ctx, fs.JobId+"/Stat",
 		struct {
 			Path string `json:"path"`
 		}{Path: filename},
-		func(v json.RawMessage) error {
-			return decodeFileInfoResponse(v, &fi)
-		})
+		&fi,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +246,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.JobId+"/FSstat", struct{}{}, &fsStat)
+	err := fs.session.CallMsg(ctx, fs.JobId+"/FSstat", struct{}{}, &fsStat)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
 		return types.StatFS{}, err
@@ -294,11 +290,9 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/ReadDir", struct {
+	err := fs.session.CallMsg(ctx, fs.JobId+"/ReadDir", struct {
 		Path string `json:"path"`
-	}{Path: path}, func(v json.RawMessage) error {
-		return decodeReadDirResponse(v, &resp)
-	})
+	}{Path: path}, &resp)
 	if err != nil {
 		return nil, err
 	}

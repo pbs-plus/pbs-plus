@@ -11,9 +11,9 @@ import (
 	"time"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
-	"github.com/goccy/go-json"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/vmihailenco/msgpack/v5"
 	"golang.org/x/sys/windows"
 )
 
@@ -125,7 +125,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
@@ -194,7 +194,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 	path, err := getStringField(payload, "path")
@@ -253,7 +253,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 	path, err := getStringField(payload, "path")
@@ -305,7 +305,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 	handleID, err := getIntField(payload, "handleID")
@@ -369,7 +369,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 	handleID, err := getIntField(payload, "handleID")
@@ -425,7 +425,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 	handleID, err := getIntField(payload, "handleID")
@@ -455,7 +455,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 	if len(req.Payload) == 0 {
 		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
 	}
-	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 	handleID, err := getIntField(payload, "handleID")

@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/goccy/go-json"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/vmihailenco/msgpack/v5"
 	"golang.org/x/sys/windows"
 )
 
@@ -109,7 +109,7 @@ func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Respons
 	if syslog.L != nil && err != os.ErrNotExist {
 		syslog.L.Errorf("%s (%s): %v", method, drive, err)
 	}
-	// Wrap error and encode it using our new JSON encoder.
+	// Wrap error and encode it using our new msgpack encoder.
 	return arpc.Response{
 		Status: 500,
 		Data:   encodeValue(arpc.WrapError(err)),
@@ -126,12 +126,12 @@ func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Respo
 	}
 }
 
-// --- Helper: fastjson decoding for request payloads ---
+// --- Helper: fastmsgpack decoding for request payloads ---
 
-func encodeValue(v interface{}) json.RawMessage {
-	b, err := json.Marshal(v)
+func encodeValue(v interface{}) msgpack.RawMessage {
+	b, err := msgpack.Marshal(v)
 	if err != nil {
-		b, _ = json.Marshal(map[string]string{
+		b, _ = msgpack.Marshal(map[string]string{
 			"error": fmt.Sprintf("failed to marshal value: %v", err),
 		})
 	}
@@ -155,7 +155,7 @@ func getIntField(payload map[string]interface{}, field string) (int, error) {
 	if !ok {
 		return 0, fmt.Errorf("missing field: %s", field)
 	}
-	// JSON numbers are float64.
+	// msgpack numbers are float64.
 	f, ok := val.(float64)
 	if !ok {
 		return 0, fmt.Errorf("field %s is not a number", field)

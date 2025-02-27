@@ -73,7 +73,7 @@ func TestVSSFSServer(t *testing.T) {
 	t.Run("FSstat", func(t *testing.T) {
 		// Fix: Use the exact FSStat struct that matches the server response
 		var result utils.FSStat
-		err = clientSession.CallJSON(ctx, "vss/FSstat", nil, &result)
+		err = clientSession.CallMsg(ctx, "vss/FSstat", nil, &result)
 		assert.NoError(t, err)
 		// The test originally expected TotalSize to be > 0, but it might not be
 		// on some systems. We'll just assert it's not an error.
@@ -83,7 +83,7 @@ func TestVSSFSServer(t *testing.T) {
 	t.Run("Stat", func(t *testing.T) {
 		payload := map[string]string{"path": "test1.txt"}
 		var result map[string]interface{}
-		err = clientSession.CallJSON(ctx, "vss/Stat", payload, &result)
+		err = clientSession.CallMsg(ctx, "vss/Stat", payload, &result)
 		assert.NoError(t, err)
 		assert.NotNil(t, result["size"])
 		assert.Equal(t, float64(19), result["size"]) // "test file 1 content" is 19 bytes
@@ -94,7 +94,7 @@ func TestVSSFSServer(t *testing.T) {
 		var result struct {
 			Entries []map[string]interface{} `json:"entries"`
 		}
-		err = clientSession.CallJSON(ctx, "vss/ReadDir", payload, &result)
+		err = clientSession.CallMsg(ctx, "vss/ReadDir", payload, &result)
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(result.Entries), 3) // Should have at least test1.txt, test2.txt, and subdir
 
@@ -126,7 +126,7 @@ func TestVSSFSServer(t *testing.T) {
 		var openResult struct {
 			HandleID uint64 `json:"handleID"`
 		}
-		err = clientSession.CallJSON(ctx, "vss/OpenFile", payload, &openResult)
+		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
 		assert.NoError(t, err)
 		assert.NotZero(t, openResult.HandleID)
 
@@ -139,7 +139,7 @@ func TestVSSFSServer(t *testing.T) {
 			Data []byte `json:"data"`
 			EOF  bool   `json:"eof"`
 		}
-		err = clientSession.CallJSON(ctx, "vss/Read", readPayload, &readResult)
+		err = clientSession.CallMsg(ctx, "vss/Read", readPayload, &readResult)
 		assert.NoError(t, err)
 		assert.Equal(t, "test file 1 content", string(readResult.Data))
 		// Fix: EOF behavior in Windows might be inconsistent, so we'll just check the content
@@ -170,7 +170,7 @@ func TestVSSFSServer(t *testing.T) {
 		var openResult struct {
 			HandleID uint64 `json:"handleID"`
 		}
-		err = clientSession.CallJSON(ctx, "vss/OpenFile", payload, &openResult)
+		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
 		assert.NoError(t, err)
 
 		// Read at offset
@@ -183,7 +183,7 @@ func TestVSSFSServer(t *testing.T) {
 			Data []byte `json:"data"`
 			EOF  bool   `json:"eof"`
 		}
-		err = clientSession.CallJSON(ctx, "vss/ReadAt", readAtPayload, &readResult)
+		err = clientSession.CallMsg(ctx, "vss/ReadAt", readAtPayload, &readResult)
 		assert.NoError(t, err)
 		assert.Equal(t, "2 content with more data", string(readResult.Data))
 
@@ -206,7 +206,7 @@ func TestVSSFSServer(t *testing.T) {
 		var openResult struct {
 			HandleID uint64 `json:"handleID"`
 		}
-		err = clientSession.CallJSON(ctx, "vss/OpenFile", payload, &openResult)
+		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
 		assert.NoError(t, err)
 
 		// Get file info
@@ -214,7 +214,7 @@ func TestVSSFSServer(t *testing.T) {
 			"handleID": openResult.HandleID,
 		}
 		var statResult map[string]interface{}
-		err = clientSession.CallJSON(ctx, "vss/Fstat", fstatPayload, &statResult)
+		err = clientSession.CallMsg(ctx, "vss/Fstat", fstatPayload, &statResult)
 		assert.NoError(t, err)
 		assert.Equal(t, float64(19), statResult["size"]) // "test file 1 content" is 19 bytes
 
@@ -237,7 +237,7 @@ func TestVSSFSServer(t *testing.T) {
 		var openResult struct {
 			HandleID uint64 `json:"handleID"`
 		}
-		err = clientSession.CallJSON(ctx, "vss/OpenFile", payload, &openResult)
+		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
 		assert.NoError(t, err)
 
 		// Try to read from directory (should fail)

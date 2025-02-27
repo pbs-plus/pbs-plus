@@ -12,6 +12,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 var (
@@ -53,7 +54,8 @@ type BackupReq struct {
 }
 
 func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, error) {
-	reqData, err := decodeBackupReq(req.Payload)
+	var reqData BackupReq
+	err := msgpack.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{Status: 400, Message: "invalid payload"}, err
 	}
@@ -109,7 +111,8 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, e
 }
 
 func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
-	reqData, err := decodeBackupReq(req.Payload)
+	var reqData BackupReq
+	err := msgpack.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{Status: 400, Message: "invalid payload"}, err
 	}

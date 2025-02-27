@@ -3,32 +3,24 @@ package arpc
 import (
 	"net/http"
 
-	"github.com/goccy/go-json"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
-// --- JSON Encoding Helpers ---
-//
+// buildRequestMsgpack builds a MessagePack‑encoded RPC request.
+// It sets the method name, marshals the payload (using msgpack)
+// and any extra headers provided.
+func buildRequestMsgpack(method string, payload interface{},
+	extraHeaders map[string]string) ([]byte, error) {
 
-// buildRequestJSON builds a JSON‑encoded RPC request. It sets the method name,
-// marshals the payload (using go‑json) and any extra headers, and appends a newline
-// as the message delimiter.
-func buildRequestJSON(method string, payload interface{}, extraHeaders map[string]string) (
-	[]byte, error,
-) {
-	var rawPayload json.RawMessage
-	if p, ok := payload.(json.RawMessage); ok {
-		rawPayload = p
-	} else {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return nil, err
-		}
-		rawPayload = b
+	// Marshal the payload first so that it is stored as raw bytes.
+	p, err := msgpack.Marshal(payload)
+	if err != nil {
+		return nil, err
 	}
 
 	req := Request{
 		Method:  method,
-		Payload: rawPayload,
+		Payload: p,
 	}
 	if extraHeaders != nil && len(extraHeaders) > 0 {
 		headers := http.Header{}
@@ -38,10 +30,5 @@ func buildRequestJSON(method string, payload interface{}, extraHeaders map[strin
 		req.Headers = headers
 	}
 
-	b, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	// Append newline as delimiter.
-	return append(b, '\n'), nil
+	return msgpack.Marshal(req)
 }

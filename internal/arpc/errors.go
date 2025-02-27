@@ -5,18 +5,18 @@ import (
 	"os"
 )
 
-// SerializableError represents an error that can be marshaled to JSON
+// SerializableError represents an error that can be marshaled to msgpack
 type SerializableError struct {
 	// ErrorType identifies what kind of error it is
-	ErrorType string `json:"error_type"`
+	ErrorType string `msgpack:"error_type"`
 	// Message is the error message
-	Message string `json:"message"`
+	Message string `msgpack:"message"`
 	// Op for operation (used in PathError)
-	Op string `json:"op,omitempty"`
+	Op string `msgpack:"op,omitempty"`
 	// Path for file system errors
-	Path string `json:"path,omitempty"`
+	Path string `msgpack:"path,omitempty"`
 	// OriginalError is used internally, not serialized
-	OriginalError error `json:"-"`
+	OriginalError error `msgpack:"-"`
 }
 
 // Error implements the error interface

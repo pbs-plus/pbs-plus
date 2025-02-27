@@ -73,34 +73,34 @@ type ARPCFile struct {
 
 // FileInfoResponse represents server's file info response
 type FileInfoResponse struct {
-	Name        string      `json:"name"`
-	Size        int64       `json:"size"`
-	Mode        os.FileMode `json:"mode"`
-	ModTimeUnix int64       `json:"modTime"`
-	IsDir       bool        `json:"isDir"`
+	Name        string      `msgpack:"name"`
+	Size        int64       `msgpack:"size"`
+	Mode        os.FileMode `msgpack:"mode"`
+	ModTimeUnix int64       `msgpack:"modTime"`
+	IsDir       bool        `msgpack:"isDir"`
 }
 
 // ReadDirResponse represents server's directory listing
 type ReadDirResponse struct {
-	Entries []FileInfoResponse `json:"entries"`
+	Entries []FileInfoResponse `msgpack:"entries"`
 }
 
 // OpenRequest represents OpenFile request payload
 type OpenRequest struct {
-	Path string `json:"path"`
-	Flag int    `json:"flag"`
-	Perm int    `json:"perm"`
+	Path string `msgpack:"path"`
+	Flag int    `msgpack:"flag"`
+	Perm int    `msgpack:"perm"`
 }
 
 // ReadRequest represents Read request payload
 type ReadRequest struct {
-	HandleID uint64 `json:"handleID"`
-	Offset   int64  `json:"offset"`
-	Length   int    `json:"length"`
+	HandleID uint64 `msgpack:"handleID"`
+	Offset   int64  `msgpack:"offset"`
+	Length   int    `msgpack:"length"`
 }
 
 // ReadResponse represents Read response
 type ReadResponse struct {
-	Data []byte `json:"data"`
-	EOF  bool   `json:"eof"`
+	Data []byte `msgpack:"data"`
+	EOF  bool   `msgpack:"eof"`
 }

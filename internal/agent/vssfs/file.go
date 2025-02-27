@@ -7,9 +7,9 @@ import (
 )
 
 type VSSFileInfo struct {
-	Name    string      `json:"name"`
-	Size    int64       `json:"size"`
-	Mode    fs.FileMode `json:"mode"`
-	ModTime int64       `json:"modTime"`
-	IsDir   bool        `json:"isDir"`
+	Name    string      `msgpack:"name"`
+	Size    int64       `msgpack:"size"`
+	Mode    fs.FileMode `msgpack:"mode"`
+	ModTime int64       `msgpack:"modTime"`
+	IsDir   bool        `msgpack:"isDir"`
 }

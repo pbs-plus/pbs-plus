@@ -1,7 +1,6 @@
 package arpc
 
 import (
-	"bufio"
 	"context"
 	"io"
 	"net"
@@ -10,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/vmihailenco/msgpack/v5"
 	"github.com/xtaci/smux"
 )
 
@@ -59,8 +58,8 @@ func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Sessio
 
 // ---------------------------------------------------------------------
 // Test 1: Router.ServeStream working as expected (Echo handler).
-// We simulate a single JSON request/response using a net.Pipe as the
-// underlying stream.
+// We simulate a single MessagePack‑encoded request/response using a net.Pipe
+// as the underlying stream.
 // ---------------------------------------------------------------------
 func TestRouterServeStream_Echo(t *testing.T) {
 	// Create an in‑memory connection pair.
@@ -110,28 +109,28 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		t.Fatalf("failed to open client stream: %v", err)
 	}
 
-	// Build and send a request using the helper.
-	reqBytes, err := buildRequestJSON("echo", "hello", nil)
+	// Build and send a request using our MessagePack helper.
+	reqBytes, err := buildRequestMsgpack("echo", "hello", nil)
 	if err != nil {
-		t.Fatalf("failed to build request JSON: %v", err)
+		t.Fatalf("failed to build request msgpack: %v", err)
 	}
-	if _, err := clientStream.Write(reqBytes); err != nil {
+	// Wrap the request using our framing (a 4‑byte length header).
+	if err := writeMsgpackMsg(clientStream, reqBytes); err != nil {
 		t.Fatalf("failed to write request: %v", err)
 	}
 
-	// Read and parse the JSON response.
-	respReader := bufio.NewReader(clientStream)
-	line, err := respReader.ReadBytes('\n')
+	// Read and parse the MessagePack response.
+	respBytes, err := readMsgpackMsg(clientStream)
 	if err != nil && err != io.EOF {
 		t.Fatalf("failed to read response: %v", err)
 	}
-	if len(line) == 0 {
+	if len(respBytes) == 0 {
 		t.Fatalf("no response received")
 	}
 
 	var resp Response
-	if err := json.Unmarshal(line, &resp); err != nil {
-		t.Fatalf("failed to unmarshal response JSON: %v", err)
+	if err := msgpack.Unmarshal(respBytes, &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
 	if resp.Status != 200 {
@@ -140,7 +139,7 @@ func TestRouterServeStream_Echo(t *testing.T) {
 
 	// Extract the echoed payload.
 	var echoed string
-	if err := json.Unmarshal(resp.Data, &echoed); err != nil {
+	if err := msgpack.Unmarshal(resp.Data, &echoed); err != nil {
 		t.Fatalf("failed to unmarshal echoed data: %v", err)
 	}
 	if echoed != "hello" {
@@ -171,9 +170,11 @@ func TestRouterServeStream_Echo(t *testing.T) {
 func TestSessionCall_Success(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
+		// Marshal "pong" using MessagePack.
+		p, _ := msgpack.Marshal("pong")
 		return Response{
 			Status: 200,
-			Data:   json.RawMessage(`"pong"`),
+			Data:   p,
 		}, nil
 	})
 
@@ -188,7 +189,7 @@ func TestSessionCall_Success(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
 	var pong string
-	if err := json.Unmarshal(resp.Data, &pong); err != nil {
+	if err := msgpack.Unmarshal(resp.Data, &pong); err != nil {
 		t.Fatalf("failed to unmarshal pong: %v", err)
 	}
 	if pong != "pong" {
@@ -203,9 +204,10 @@ func TestSessionCall_Success(t *testing.T) {
 func TestSessionCall_Concurrency(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
+		p, _ := msgpack.Marshal("pong")
 		return Response{
 			Status: 200,
-			Data:   json.RawMessage(`"pong"`),
+			Data:   p,
 		}, nil
 	})
 
@@ -229,7 +231,7 @@ func TestSessionCall_Concurrency(t *testing.T) {
 				t.Errorf("Client %d: expected status 200, got %d", id, resp.Status)
 			}
 			var pong string
-			if err := json.Unmarshal(resp.Data, &pong); err != nil {
+			if err := msgpack.Unmarshal(resp.Data, &pong); err != nil {
 				t.Errorf("Client %d: failed to unmarshal: %v", id, err)
 				return
 			}
@@ -250,9 +252,10 @@ func TestCallContext_Timeout(t *testing.T) {
 	router := NewRouter()
 	router.Handle("slow", func(req Request) (Response, error) {
 		time.Sleep(200 * time.Millisecond)
+		p, _ := msgpack.Marshal("done")
 		return Response{
 			Status: 200,
-			Data:   json.RawMessage(`"done"`),
+			Data:   p,
 		}, nil
 	})
 
@@ -279,9 +282,10 @@ func TestCallContext_Timeout(t *testing.T) {
 func TestAutoReconnect(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
+		p, _ := msgpack.Marshal("pong")
 		return Response{
 			Status: 200,
-			Data:   json.RawMessage(`"pong"`),
+			Data:   p,
 		}, nil
 	})
 
@@ -336,7 +340,7 @@ func TestAutoReconnect(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
 	var pong string
-	if err := json.Unmarshal(resp.Data, &pong); err != nil {
+	if err := msgpack.Unmarshal(resp.Data, &pong); err != nil {
 		t.Fatalf("failed to unmarshal pong: %v", err)
 	}
 	if pong != "pong" {
@@ -349,12 +353,12 @@ func TestAutoReconnect(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------
-// Test 6: CallJSONWithBuffer_Success
+// Test 6: CallMsgWithBuffer_Success
 //
-// Verifies that CallJSONWithBuffer correctly reads the metadata and then the
+// Verifies that CallMsgWithBuffer correctly reads the metadata and then the
 // binary payload written by a custom server.
 // ---------------------------------------------------------------------
-func TestCallJSONWithBuffer_Success(t *testing.T) {
+func TestCallMsgWithBuffer_Success(t *testing.T) {
 	// Create an in‑memory connection pair.
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
@@ -379,12 +383,8 @@ func TestCallJSONWithBuffer_Success(t *testing.T) {
 		}
 		defer stream.Close()
 
-		reader := bufio.NewReader(stream)
-		writer := bufio.NewWriter(stream)
-
 		// Read and discard the complete request.
-		_, err = reader.ReadBytes('\n')
-		if err != nil {
+		if _, err := readMsgpackMsg(stream); err != nil {
 			t.Errorf("server: error reading request: %v", err)
 			return
 		}
@@ -401,43 +401,32 @@ func TestCallJSONWithBuffer_Success(t *testing.T) {
 				"eof":             true,
 			},
 		}
-		metaBytes, err := json.Marshal(metaMap)
+		metaBytes, err := msgpack.Marshal(metaMap)
 		if err != nil {
 			t.Errorf("server: error marshaling metadata: %v", err)
 			return
 		}
-		// Append newline as the delimiter.
-		metaBytes = append(metaBytes, '\n')
-
-		// Write the metadata.
-		if _, err := writer.Write(metaBytes); err != nil {
+		// Write the metadata using MessagePack framing.
+		if err := writeMsgpackMsg(stream, metaBytes); err != nil {
 			t.Errorf("server: error writing metadata: %v", err)
-			return
-		}
-		if err := writer.Flush(); err != nil {
-			t.Errorf("server: error flushing metadata: %v", err)
 			return
 		}
 
 		// Wait briefly to ensure the client reads only metadata first.
 		time.Sleep(50 * time.Millisecond)
 
-		// Write the binary payload.
-		if _, err := writer.Write(binaryData); err != nil {
+		// Write the binary payload (sent raw, without framing).
+		if _, err := stream.Write(binaryData); err != nil {
 			t.Errorf("server: error writing binary data: %v", err)
-			return
-		}
-		if err := writer.Flush(); err != nil {
-			t.Errorf("server: error flushing binary data: %v", err)
 			return
 		}
 	}()
 
-	// On the client side, use CallJSONWithBuffer to send a request.
+	// On the client side, use CallMsgWithBuffer to send a request.
 	buffer := make([]byte, 64)
-	n, eof, err := clientSess.CallJSONWithBuffer(context.Background(), "buffer", nil, buffer)
+	n, eof, err := clientSess.CallMsgWithBuffer(context.Background(), "buffer", nil, buffer)
 	if err != nil {
-		t.Fatalf("client: CallJSONWithBuffer error: %v", err)
+		t.Fatalf("client: CallMsgWithBuffer error: %v", err)
 	}
 
 	expected := "hello world"
