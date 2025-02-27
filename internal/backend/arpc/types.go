@@ -34,19 +34,25 @@ type ARPCFS struct {
 	Mount    *gofuse.Server
 	basePath string
 
-	accessedFileHashes   map[uint64]struct{} // Set of unique file path hashes
-	accessedFolderHashes map[uint64]struct{} // Set of unique folder path hashes
-	accessStatsMu        sync.RWMutex        // Mutex to protect the hash maps and stats
-	lastAccessTime       time.Time
-	lastAccessStats      AccessStats
-	fileSpeed            float64
+	accessedPaths sync.Map
 
+	// Atomic counters for the number of unique file and folder accesses.
+	fileCount   int64
+	folderCount int64
+
+	// For speed calculations we store the last seen state.
+	lastAccessMu    sync.Mutex
+	lastAccessTime  time.Time
+	lastFileCount   int64
+	lastFolderCount int64
+
+	// Total bytes read and its speed metric.
 	totalBytes     uint64
-	totalBytesMu   sync.RWMutex
+	totalBytesMu   sync.Mutex
 	lastTotalBytes uint64
 	lastBytesTime  time.Time
-	byteSpeed      float64
 
+	// (Retain the caches below as-is, if needed.)
 	statCache    *lru.Cache[string, statCacheEntry]
 	readDirCache *lru.Cache[string, readDirCacheEntry]
 	statFSCache  *lru.Cache[string, statFSCacheEntry]
@@ -56,10 +62,13 @@ type ARPCFS struct {
 	statFSCacheMu  *ShardedRWMutex
 }
 
-type AccessStats struct {
-	FilesAccessed   int // Number of unique files accessed
-	FoldersAccessed int // Number of unique folders accessed
-	TotalAccessed   int // Total number of unique paths accessed
+type Stats struct {
+	FilesAccessed   int64   // Unique file count
+	FoldersAccessed int64   // Unique folder count
+	TotalAccessed   int64   // Sum of unique file and folder counts
+	FileAccessSpeed float64 // (Unique accesses per second)
+	TotalBytes      uint64  // Total bytes read
+	ByteReadSpeed   float64 // (Bytes read per second)
 }
 
 // ARPCFile implements billy.File for remote files
@@ -104,4 +113,20 @@ type ReadRequest struct {
 type ReadResponse struct {
 	Data []byte `msgpack:"data"`
 	EOF  bool   `msgpack:"eof"`
+}
+
+type ReadDirRequest struct {
+	Path string `msgpack:"path"`
+}
+
+type StatRequest struct {
+	Path string `msgpack:"path"`
+}
+
+type CloseRequest struct {
+	HandleID uint64 `msgpack:"handleID"`
+}
+
+type SeekRequest struct {
+	HandleID uint64 `msgpack:"handleID"`
 }
