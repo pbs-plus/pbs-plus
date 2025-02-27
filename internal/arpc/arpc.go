@@ -360,30 +360,6 @@ func (s *Session) CallMsg(ctx context.Context, method string,
 	return msgpack.Unmarshal(resp.Data, v)
 }
 
-// CallMsgDirect performs an RPC call using CallContext and then processes
-// the returned binary data with a user‑provided decoder function.
-// If the response status is not OK, it decodes a SerializableError.
-func (s *Session) CallMsgDirect(ctx context.Context, method string, payload interface{}, decoder func(data []byte) error) error {
-	resp, err := s.CallContext(ctx, method, payload)
-	if err != nil {
-		return err
-	}
-	if resp.Status != http.StatusOK {
-		var serErr SerializableError
-		if resp.Data != nil {
-			if err := msgpack.Unmarshal(resp.Data, &serErr); err == nil {
-				return UnwrapError(&serErr)
-			}
-		}
-		return fmt.Errorf("RPC error: %s (status %d)",
-			resp.Message, resp.Status)
-	}
-	if resp.Data == nil {
-		return nil
-	}
-	return decoder(resp.Data)
-}
-
 // CallMsgWithBuffer performs an RPC call in which the server first sends a
 // metadata response (using MessagePack) that contains the available binary data length
 // and an EOF flag, and then the binary payload is sent over the stream.

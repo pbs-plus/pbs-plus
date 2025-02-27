@@ -3,7 +3,6 @@
 package vssfs
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +88,41 @@ func (s *VSSFSServer) Close() {
 	s.arpcRouter = nil
 }
 
+// --- Request Structs ---
+
+type openFileReq struct {
+	Path string `msgpack:"path"`
+	Flag int    `msgpack:"flag"`
+	Perm int    `msgpack:"perm"`
+}
+
+type statReq struct {
+	Path string `msgpack:"path"`
+}
+
+type readDirReq struct {
+	Path string `msgpack:"path"`
+}
+
+type readReq struct {
+	HandleID int `msgpack:"handleID"`
+	Length   int `msgpack:"length"`
+}
+
+type readAtReq struct {
+	HandleID int   `msgpack:"handleID"`
+	Offset   int64 `msgpack:"offset"`
+	Length   int   `msgpack:"length"`
+}
+
+type closeReq struct {
+	HandleID int `msgpack:"handleID"`
+}
+
+type fstatReq struct {
+	HandleID int `msgpack:"handleID"`
+}
+
 // --- Handlers ---
 
 func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
@@ -120,34 +154,20 @@ func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
-	// Unmarshal payload into a map.
-	var payload map[string]interface{}
-	if len(req.Payload) == 0 {
-		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
-	}
+	var payload openFileReq
 	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
-	path, err := getStringField(payload, "path")
-	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-	flag, err := getIntField(payload, "flag")
-	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-	// perm is optional
-
 	// Disallow write operations.
-	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
+	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		return arpc.Response{
 			Status: 403,
 			Data:   encodeValue("write operations not allowed"),
 		}, nil
 	}
 
-	path, err = s.abs(path)
+	path, err := s.abs(payload.Path)
 	if err != nil {
 		return s.respondError(req.Method, s.jobId, err), nil
 	}
@@ -163,7 +183,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		windows.FILE_SHARE_READ,
 		nil,
 		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN,
+		windows.FILE_FLAG_SEQUENTIAL_SCAN|windows.FILE_FLAG_BACKUP_SEMANTICS,
 		0,
 	)
 	if err != nil {
@@ -173,7 +193,6 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	fileHandle := &FileHandle{
 		handle: handle,
 		path:   path,
-		isDir:  false,
 	}
 
 	s.mu.Lock()
@@ -182,7 +201,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	s.handles[handleID] = fileHandle
 	s.mu.Unlock()
 
-	// Return result by encoding a simple map.
+	// Return the handle ID.
 	return arpc.Response{
 		Status: 200,
 		Data:   encodeValue(map[string]uint64{"handleID": handleID}),
@@ -190,42 +209,33 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
-	var payload map[string]interface{}
-	if len(req.Payload) == 0 {
-		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
-	}
+	var payload statReq
 	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
-	path, err := getStringField(payload, "path")
-	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-
-	fullPath, err := s.abs(path)
+	fullPath, err := s.abs(payload.Path)
 	if err != nil {
 		return s.respondError(req.Method, s.jobId, err), nil
 	}
-
-	if path == "." || path == "" {
+	if payload.Path == "." || payload.Path == "" {
 		fullPath = s.rootDir
 	}
 
 	pathPtr, err := windows.UTF16PtrFromString(fullPath)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, path)), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, payload.Path)), nil
 	}
 
 	var findData windows.Win32finddata
 	handle, err := windows.FindFirstFile(pathPtr, &findData)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, path)), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, payload.Path)), nil
 	}
 	defer windows.FindClose(handle)
 
 	foundName := windows.UTF16ToString(findData.FileName[:])
 	expectedName := filepath.Base(fullPath)
-	if path == "." {
+	if payload.Path == "." {
 		expectedName = foundName
 	}
 
@@ -235,9 +245,9 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 
 	// Create file info from findData.
 	name := foundName
-	if path == "." {
+	if payload.Path == "." {
 		name = "."
-	} else if path == "/" {
+	} else if payload.Path == "/" {
 		name = "/"
 	}
 	info := createFileInfoFromFindData(name, &findData)
@@ -249,23 +259,16 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
-	var payload map[string]interface{}
-	if len(req.Payload) == 0 {
-		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
-	}
+	var payload readDirReq
 	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
-	path, err := getStringField(payload, "path")
-	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-	windowsDir := filepath.FromSlash(path)
+	windowsDir := filepath.FromSlash(payload.Path)
 	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
 		return s.respondError(req.Method, s.jobId, err), nil
 	}
-	if path == "." || path == "" {
+	if payload.Path == "." || payload.Path == "" {
 		windowsDir = "."
 		fullDirPath = s.rootDir
 	}
@@ -273,7 +276,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	var findData windows.Win32finddata
 	handle, err := FindFirstFileEx(searchPath, &findData)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, path)), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, payload.Path)), nil
 	}
 	defer windows.FindClose(handle)
 
@@ -301,24 +304,13 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
-	var payload map[string]interface{}
-	if len(req.Payload) == 0 {
-		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
-	}
+	var payload readReq
 	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-	handleID, err := getIntField(payload, "handleID")
-	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-	length, err := getIntField(payload, "length")
-	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.RLock()
-	handle, exists := s.handles[uint64(handleID)]
+	handle, exists := s.handles[uint64(payload.HandleID)]
 	s.mu.RUnlock()
 	if !exists || handle.isClosed {
 		return arpc.Response{Status: 404, Data: encodeValue("invalid handle")}, nil
@@ -332,9 +324,9 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		isDirectBuffer = true
 	}
 
-	buf := make([]byte, length)
+	buf := make([]byte, payload.Length)
 	var bytesRead uint32
-	err = windows.ReadFile(handle.handle, buf, &bytesRead, nil)
+	err := windows.ReadFile(handle.handle, buf, &bytesRead, nil)
 	isEOF := false
 	if err != nil && err != windows.ERROR_HANDLE_EOF {
 		return s.respondError(req.Method, s.jobId, mapWinError(err, handle.path)), nil
@@ -365,28 +357,13 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
-	var payload map[string]interface{}
-	if len(req.Payload) == 0 {
-		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
-	}
+	var payload readAtReq
 	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-	handleID, err := getIntField(payload, "handleID")
-	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-	offset, err := getInt64Field(payload, "offset")
-	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-	length, err := getIntField(payload, "length")
-	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.RLock()
-	handle, exists := s.handles[uint64(handleID)]
+	handle, exists := s.handles[uint64(payload.HandleID)]
 	s.mu.RUnlock()
 	if !exists || handle.isClosed {
 		return arpc.Response{Status: 404, Data: encodeValue("invalid handle")}, nil
@@ -395,13 +372,13 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{Status: 400, Data: encodeValue("cannot read from directory")}, nil
 	}
 
-	buf := make([]byte, length)
+	buf := make([]byte, payload.Length)
 	var bytesRead uint32
 	var overlapped windows.Overlapped
-	overlapped.Offset = uint32(offset & 0xFFFFFFFF)
-	overlapped.OffsetHigh = uint32(offset >> 32)
+	overlapped.Offset = uint32(payload.Offset & 0xFFFFFFFF)
+	overlapped.OffsetHigh = uint32(payload.Offset >> 32)
 
-	err = windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
+	err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
 	isEOF := false
 	if err != nil && err != windows.ERROR_HANDLE_EOF {
 		return s.respondError(req.Method, s.jobId, mapWinError(err, handle.path)), nil
@@ -421,22 +398,15 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
-	var payload map[string]interface{}
-	if len(req.Payload) == 0 {
-		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
-	}
+	var payload closeReq
 	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-	handleID, err := getIntField(payload, "handleID")
-	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.Lock()
-	handle, exists := s.handles[uint64(handleID)]
+	handle, exists := s.handles[uint64(payload.HandleID)]
 	if exists {
-		delete(s.handles, uint64(handleID))
+		delete(s.handles, uint64(payload.HandleID))
 	}
 	s.mu.Unlock()
 
@@ -451,20 +421,13 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
-	var payload map[string]interface{}
-	if len(req.Payload) == 0 {
-		return s.invalidRequest(req.Method, s.jobId, fmt.Errorf("invalid payload")), nil
-	}
+	var payload fstatReq
 	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
-	}
-	handleID, err := getIntField(payload, "handleID")
-	if err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
 
 	s.mu.RLock()
-	handle, exists := s.handles[uint64(handleID)]
+	handle, exists := s.handles[uint64(payload.HandleID)]
 	s.mu.RUnlock()
 	if !exists || handle.isClosed {
 		return arpc.Response{Status: 404, Data: encodeValue("invalid handle")}, nil
