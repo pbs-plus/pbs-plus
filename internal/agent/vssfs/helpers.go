@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/goccy/go-json"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/valyala/fastjson"
@@ -104,36 +103,6 @@ func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformati
 	}
 }
 
-func encodeJsonValue(v interface{}) *fastjson.Value {
-	// If the value is already a *fastjson.Value, return it.
-	if fval, ok := v.(*fastjson.Value); ok {
-		return fval
-	}
-
-	// Handle nil values by returning a JSON null.
-	if v == nil {
-		var n fastjson.Value
-		return &n
-	}
-
-	// Marshal the value to JSON bytes.
-	b, err := json.Marshal(v)
-	if err != nil {
-		// If marshaling fails, return a JSON object with an error message.
-		errMsg := fmt.Sprintf(`{"error": "failed to marshal value: %v"}`, err)
-		b = []byte(errMsg)
-	}
-
-	var p fastjson.Parser
-	val, err := p.ParseBytes(b)
-	if err != nil {
-		// If parsing fails, return a JSON object indicating the failure.
-		errStr := fmt.Sprintf(`{"error": "failed to parse json: %v"}`, err)
-		val, _ = p.Parse(errStr)
-	}
-	return val
-}
-
 // --- Error Response Helpers ---
 
 func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Response {
@@ -143,7 +112,7 @@ func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Respons
 	// Wrap error and encode it using our new JSON encoder.
 	return arpc.Response{
 		Status: 500,
-		Data:   encodeJsonValue(arpc.WrapError(err)),
+		Data:   arpc.EncodeValue(arpc.WrapError(err)),
 	}
 }
 
@@ -153,7 +122,7 @@ func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Respo
 	}
 	return arpc.Response{
 		Status: 400,
-		Data:   encodeJsonValue(arpc.WrapError(os.ErrInvalid)),
+		Data:   arpc.EncodeValue(arpc.WrapError(os.ErrInvalid)),
 	}
 }
 

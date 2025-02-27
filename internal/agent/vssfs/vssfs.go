@@ -115,7 +115,7 @@ func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
 	}
 	return arpc.Response{
 		Status: 200,
-		Data:   encodeJsonValue(fsStat),
+		Data:   arpc.EncodeValue(fsStat),
 	}, nil
 }
 
@@ -138,7 +138,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		return arpc.Response{
 			Status: 403,
-			Data:   encodeJsonValue("write operations not allowed"),
+			Data:   arpc.EncodeValue("write operations not allowed"),
 		}, nil
 	}
 
@@ -180,7 +180,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	// Return result by encoding a simple map.
 	return arpc.Response{
 		Status: 200,
-		Data:   encodeJsonValue(map[string]uint64{"handleID": handleID}),
+		Data:   arpc.EncodeValue(map[string]uint64{"handleID": handleID}),
 	}, nil
 }
 
@@ -236,7 +236,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 
 	return arpc.Response{
 		Status: 200,
-		Data:   encodeJsonValue(info),
+		Data:   arpc.EncodeValue(info),
 	}, nil
 }
 
@@ -286,7 +286,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	// Return entries by encoding in a map.
 	return arpc.Response{
 		Status: 200,
-		Data:   encodeJsonValue(map[string]interface{}{"entries": entries}),
+		Data:   arpc.EncodeValue(map[string]interface{}{"entries": entries}),
 	}, nil
 }
 
@@ -308,10 +308,10 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 	handle, exists := s.handles[uint64(handleID)]
 	s.mu.RUnlock()
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Data: encodeJsonValue("invalid handle")}, nil
+		return arpc.Response{Status: 404, Data: arpc.EncodeValue("invalid handle")}, nil
 	}
 	if handle.isDir {
-		return arpc.Response{Status: 400, Data: encodeJsonValue("cannot read from directory")}, nil
+		return arpc.Response{Status: 400, Data: arpc.EncodeValue("cannot read from directory")}, nil
 	}
 
 	// Determine if direct buffer mode was requested.
@@ -340,7 +340,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		}
 		return arpc.Response{
 			Status: 200,
-			Data:   encodeJsonValue(meta),
+			Data:   arpc.EncodeValue(meta),
 		}, &DirectBufferWrite{Data: buf[:bytesRead]}
 	}
 
@@ -351,7 +351,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 	}
 	return arpc.Response{
 		Status: 200,
-		Data:   encodeJsonValue(data),
+		Data:   arpc.EncodeValue(data),
 	}, nil
 }
 
@@ -378,10 +378,10 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	handle, exists := s.handles[uint64(handleID)]
 	s.mu.RUnlock()
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Data: encodeJsonValue("invalid handle")}, nil
+		return arpc.Response{Status: 404, Data: arpc.EncodeValue("invalid handle")}, nil
 	}
 	if handle.isDir {
-		return arpc.Response{Status: 400, Data: encodeJsonValue("cannot read from directory")}, nil
+		return arpc.Response{Status: 400, Data: arpc.EncodeValue("cannot read from directory")}, nil
 	}
 
 	buf := make([]byte, length)
@@ -405,7 +405,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 	return arpc.Response{
 		Status: 200,
-		Data:   encodeJsonValue(data),
+		Data:   arpc.EncodeValue(data),
 	}, nil
 }
 
@@ -427,13 +427,13 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	s.mu.Unlock()
 
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Data: encodeJsonValue("invalid handle")}, nil
+		return arpc.Response{Status: 404, Data: arpc.EncodeValue("invalid handle")}, nil
 	}
 
 	windows.CloseHandle(handle.handle)
 	handle.isClosed = true
 
-	return arpc.Response{Status: 200, Data: encodeJsonValue("closed")}, nil
+	return arpc.Response{Status: 200, Data: arpc.EncodeValue("closed")}, nil
 }
 
 func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
@@ -450,7 +450,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 	handle, exists := s.handles[uint64(handleID)]
 	s.mu.RUnlock()
 	if !exists || handle.isClosed {
-		return arpc.Response{Status: 404, Data: encodeJsonValue("invalid handle")}, nil
+		return arpc.Response{Status: 404, Data: arpc.EncodeValue("invalid handle")}, nil
 	}
 
 	var fileInfo windows.ByHandleFileInformation
@@ -461,7 +461,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 	info := createFileInfoFromHandleInfo(handle.path, &fileInfo)
 	return arpc.Response{
 		Status: 200,
-		Data:   encodeJsonValue(info),
+		Data:   arpc.EncodeValue(info),
 	}, nil
 }
 

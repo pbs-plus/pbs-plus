@@ -151,15 +151,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 	if resp.Data != nil {
 		// Use encodeValue so that if resp.Data is a Go type rather than a
 		// *fastjson.Value, it gets encoded correctly.
-		dataVal, err := encodeValue(respArena, resp.Data)
-		if err != nil {
-			writeErrorResponse(
-				stream,
-				http.StatusInternalServerError,
-				err,
-			)
-			return
-		}
+		dataVal := EncodeValue(resp.Data)
 		respObj.Set("data", dataVal)
 	}
 	respBytes := respObj.MarshalTo(nil)

@@ -1,9 +1,9 @@
 package arpc
 
 import (
-	"bytes"
 	"fmt"
 
+	"github.com/goccy/go-json"
 	"github.com/valyala/fastjson"
 )
 
@@ -15,87 +15,34 @@ import (
 // encoded *fastjson.Value) into a fastjson.Value using the supplied arena.
 // This avoids doing a two‑step marshal/parse roundtrip.
 // (If your payload type isn’t supported, you’ll have to encode it externally.)
-func encodeValue(arena *fastjson.Arena, v interface{}) (*fastjson.Value, error) {
-	if v == nil {
-		return arena.NewNull(), nil
+func EncodeValue(v interface{}) *fastjson.Value {
+	// If the value is already a *fastjson.Value, return it.
+	if fval, ok := v.(*fastjson.Value); ok {
+		return fval
 	}
-	if fv, ok := v.(*fastjson.Value); ok {
-		return fv, nil
-	}
-	switch val := v.(type) {
-	case []byte:
-		var p fastjson.Parser
-		fv, err := p.ParseBytes(val)
-		return fv, err
-	case string:
-		return arena.NewString(val), nil
-	case bool:
-		if val {
-			return arena.NewTrue(), nil
-		} else {
-			return arena.NewFalse(), nil
-		}
-	case int:
-		return arena.NewNumberInt(val), nil
-	case int8:
-		return arena.NewNumberInt(int(val)), nil
-	case int16:
-		return arena.NewNumberInt(int(val)), nil
-	case int32:
-		return arena.NewNumberInt(int(val)), nil
-	case int64:
-		return arena.NewNumberInt(int(val)), nil
-	case uint:
-		return arena.NewNumberInt(int(val)), nil
-	case uint8:
-		return arena.NewNumberInt(int(val)), nil
-	case uint16:
-		return arena.NewNumberInt(int(val)), nil
-	case uint32:
-		return arena.NewNumberInt(int(val)), nil
-	case uint64:
-		return arena.NewNumberInt(int(val)), nil
-	case float32:
-		return arena.NewNumberFloat64(float64(val)), nil
-	case float64:
-		return arena.NewNumberFloat64(float64(val)), nil
-	case map[string]interface{}:
-		obj := arena.NewObject()
-		for k, v2 := range val {
-			encoded, err := encodeValue(arena, v2)
-			if err != nil {
-				return nil, err
-			}
-			obj.Set(k, encoded)
-		}
-		return obj, nil
-	case []interface{}:
-		return encodeArray(arena, val)
-	default:
-		return nil, fmt.Errorf("unsupported type for JSON encoding: %T", v)
-	}
-}
 
-// encodeArray creates a JSON array from a []interface{} by encoding each element.
-// Because fastjson does not have an efficient programmatic API for arrays, we
-// build the JSON string and then re‑parse it.
-func encodeArray(arena *fastjson.Arena, arr []interface{}) (*fastjson.Value, error) {
-	var buf bytes.Buffer
-	buf.WriteByte('[')
-	for i, item := range arr {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		elementVal, err := encodeValue(arena, item)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(elementVal.MarshalTo(nil))
+	// Handle nil values by returning a JSON null.
+	if v == nil {
+		var n fastjson.Value
+		return &n
 	}
-	buf.WriteByte(']')
+
+	// Marshal the value to JSON bytes.
+	b, err := json.Marshal(v)
+	if err != nil {
+		// If marshaling fails, return a JSON object with an error message.
+		errMsg := fmt.Sprintf(`{"error": "failed to marshal value: %v"}`, err)
+		b = []byte(errMsg)
+	}
+
 	var p fastjson.Parser
-	fv, err := p.ParseBytes(buf.Bytes())
-	return fv, err
+	val, err := p.ParseBytes(b)
+	if err != nil {
+		// If parsing fails, return a JSON object indicating the failure.
+		errStr := fmt.Sprintf(`{"error": "failed to parse json: %v"}`, err)
+		val, _ = p.Parse(errStr)
+	}
+	return val
 }
 
 // buildRequestJSON builds a JSON‑encoded RPC request using fastjson.
@@ -112,10 +59,7 @@ func buildRequestJSON(method string, payload interface{}, extraHeaders map[strin
 	reqObj := arena.NewObject()
 	reqObj.Set("method", arena.NewString(method))
 
-	payloadVal, err := encodeValue(arena, payload)
-	if err != nil {
-		return nil, err
-	}
+	payloadVal := EncodeValue(payload)
 	reqObj.Set("payload", payloadVal)
 
 	if extraHeaders != nil && len(extraHeaders) > 0 {
