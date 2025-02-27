@@ -3,10 +3,12 @@
 package vssfs
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -106,43 +108,43 @@ func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformati
 
 // encodeJsonValue builds a JSON value using only the fastjson API.
 func encodeJsonValue(v interface{}) *fastjson.Value {
-	// Create a new Arena for constructing the JSON value.
 	arena := new(fastjson.Arena)
+	var value *fastjson.Value
+
 	switch val := v.(type) {
 	case string:
-		return arena.NewString(val)
+		value = arena.NewString(val)
 	case int:
-		return arena.NewNumberInt(val)
+		value = arena.NewNumberInt(val)
 	case int64:
-		return arena.NewNumberInt(int(val))
+		value = arena.NewNumberInt(int(val))
 	case bool:
 		if val {
-			return arena.NewTrue()
+			value = arena.NewTrue()
+		} else {
+			value = arena.NewFalse()
 		}
-		return arena.NewFalse()
 	case uint64:
-		// Use a float64 representation for uint64.
-		return arena.NewNumberFloat64(float64(val))
+		value = arena.NewNumberFloat64(float64(val))
 	case map[string]interface{}:
 		obj := arena.NewObject()
-		for key, value := range val {
-			obj.Set(key, encodeJsonValue(value))
+		for key, v2 := range val {
+			obj.Set(key, encodeJsonValue(v2))
 		}
-		return obj
+		value = obj
 	case map[string]string:
 		obj := arena.NewObject()
-		for key, value := range val {
-			obj.Set(key, arena.NewString(value))
+		for key, v2 := range val {
+			obj.Set(key, arena.NewString(v2))
 		}
-		return obj
+		value = obj
 	case map[string]uint64:
 		obj := arena.NewObject()
-		for key, value := range val {
-			obj.Set(key, arena.NewNumberFloat64(float64(value)))
+		for key, v2 := range val {
+			obj.Set(key, arena.NewNumberFloat64(float64(v2)))
 		}
-		return obj
+		value = obj
 	case *utils.FSStat:
-		// Encode FSStat using its JSON tag field names.
 		obj := arena.NewObject()
 		obj.Set("total_size", arena.NewNumberInt(int(val.TotalSize)))
 		obj.Set("free_size", arena.NewNumberInt(int(val.FreeSize)))
@@ -150,9 +152,9 @@ func encodeJsonValue(v interface{}) *fastjson.Value {
 		obj.Set("total_files", arena.NewNumberInt(val.TotalFiles))
 		obj.Set("free_files", arena.NewNumberInt(val.FreeFiles))
 		obj.Set("available_files", arena.NewNumberInt(val.AvailableFiles))
-		// Represent CacheHint as a number (nanoseconds), as the standard marshaller does.
+		// Represent CacheHint as a number (nanoseconds)
 		obj.Set("cache_hint", arena.NewNumberInt(int(val.CacheHint)))
-		return obj
+		value = obj
 	case *arpc.SerializableError:
 		obj := arena.NewObject()
 		obj.Set("error_type", arena.NewString(val.ErrorType))
@@ -163,12 +165,12 @@ func encodeJsonValue(v interface{}) *fastjson.Value {
 		if val.Path != "" {
 			obj.Set("path", arena.NewString(val.Path))
 		}
-		return obj
+		value = obj
 	case VSSFileInfo:
 		obj := arena.NewObject()
 		obj.Set("name", arena.NewString(val.Name))
 		obj.Set("size", arena.NewNumberInt(int(val.Size)))
-		// Convert fs.FileMode (underlying uint32) to int.
+		// Convert fs.FileMode to int
 		obj.Set("mode", arena.NewNumberInt(int(val.Mode)))
 		obj.Set("modTime", arena.NewNumberInt(int(val.ModTime)))
 		if val.IsDir {
@@ -176,7 +178,7 @@ func encodeJsonValue(v interface{}) *fastjson.Value {
 		} else {
 			obj.Set("isDir", arena.NewFalse())
 		}
-		return obj
+		value = obj
 	case *VSSFileInfo:
 		obj := arena.NewObject()
 		obj.Set("name", arena.NewString(val.Name))
@@ -188,11 +190,27 @@ func encodeJsonValue(v interface{}) *fastjson.Value {
 		} else {
 			obj.Set("isDir", arena.NewFalse())
 		}
-		return obj
+		value = obj
+	case []byte:
+		// Encode the []byte as a base64 string so that clients unmarshaling
+		// into a []byte field correctly decode it.
+		encoded := base64.StdEncoding.EncodeToString(val)
+		value = arena.NewString(encoded)
 	default:
-		// Fallback: represent the value using fmt.Sprintf.
-		return arena.NewString(fmt.Sprintf("%v", val))
+		// Handle slice types (e.g. []*VSSFileInfo) via reflection.
+		rv := reflect.ValueOf(v)
+		if rv.Kind() == reflect.Slice {
+			arr := arena.NewArray()
+			for i := 0; i < rv.Len(); i++ {
+				arr.SetArrayItem(i, encodeJsonValue(rv.Index(i).Interface()))
+			}
+			value = arr
+		} else {
+			value = arena.NewString(fmt.Sprintf("%v", v))
+		}
 	}
+
+	return value
 }
 
 // --- Error Response Helpers ---
@@ -201,7 +219,7 @@ func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Respons
 	if syslog.L != nil && err != os.ErrNotExist {
 		syslog.L.Errorf("%s (%s): %v", method, drive, err)
 	}
-	// Wrap error and encode it
+	// Wrap error and encode it using our new JSON encoder.
 	return arpc.Response{
 		Status: 500,
 		Data:   encodeJsonValue(arpc.WrapError(err)),
