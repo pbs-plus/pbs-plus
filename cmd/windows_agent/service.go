@@ -28,6 +28,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/vmihailenco/msgpack"
 	"golang.org/x/sys/windows"
 )
 
@@ -303,7 +304,14 @@ func (p *agentService) connectARPC() error {
 
 	router := arpc.NewRouter()
 	router.Handle("ping", func(req arpc.Request) (arpc.Response, error) {
-		return arpc.Response{Status: 200, Data: map[string]string{"version": Version, "hostname": clientId}}, nil
+		b, err := msgpack.Marshal(map[string]string{"version": Version, "hostname": clientId})
+		if err != nil {
+			b, _ = msgpack.Marshal(map[string]string{
+				"error": fmt.Sprintf("failed to marshal value: %v", err),
+			})
+			return arpc.Response{Status: 500, Data: b}, nil
+		}
+		return arpc.Response{Status: 200, Data: b}, nil
 	})
 	router.Handle("backup", func(req arpc.Request) (arpc.Response, error) {
 		return controllers.BackupStartHandler(req, router)
