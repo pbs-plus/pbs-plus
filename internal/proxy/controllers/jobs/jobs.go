@@ -49,7 +49,7 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			allJobs[i].CurrentFolderCount = p.Sprintf("%d", stats.FoldersAccessed)
 			allJobs[i].CurrentBytesTotal = utils.HumanReadableBytes(int64(totalBytes))
 			allJobs[i].CurrentBytesSpeed = utils.HumanReadableSpeed(byteSpeed)
-			allJobs[i].CurrentFilesSpeed = fmt.Sprintf("%.2f file/s", fileSpeed)
+			allJobs[i].CurrentFilesSpeed = fmt.Sprintf("%.2f files/s", fileSpeed)
 		}
 
 		digest, err := utils.CalculateDigest(allJobs)
