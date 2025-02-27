@@ -86,7 +86,7 @@ func TestVSSFSServer(t *testing.T) {
 		err = clientSession.CallMsg(ctx, "vss/Stat", payload, &result)
 		assert.NoError(t, err)
 		assert.NotNil(t, result["size"])
-		assert.Equal(t, float64(19), result["size"]) // "test file 1 content" is 19 bytes
+		assert.EqualValues(t, 19, result["size"])
 	})
 
 	t.Run("ReadDir", func(t *testing.T) {
@@ -216,7 +216,7 @@ func TestVSSFSServer(t *testing.T) {
 		var statResult map[string]interface{}
 		err = clientSession.CallMsg(ctx, "vss/Fstat", fstatPayload, &statResult)
 		assert.NoError(t, err)
-		assert.Equal(t, float64(19), statResult["size"]) // "test file 1 content" is 19 bytes
+		assert.EqualValues(t, 19, statResult["size"])
 
 		// Close file
 		closePayload := map[string]interface{}{
