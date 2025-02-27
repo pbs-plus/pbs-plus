@@ -33,7 +33,7 @@ func ARPCHandler(store *store.Store) http.HandlerFunc {
 			if err := json.Unmarshal(req.Payload, &msg); err != nil {
 				return arpc.Response{Status: 400, Message: "invalid payload"}, err
 			}
-			return arpc.Response{Status: 200, Data: msg}, nil
+			return arpc.Response{Status: 200, Data: json.RawMessage(`"` + msg + `"`)}, nil
 		})
 
 		if err := session.Serve(router); err != nil {

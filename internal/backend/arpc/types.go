@@ -53,11 +53,6 @@ type ARPCFS struct {
 	statCacheMu    *ShardedRWMutex
 	readDirCacheMu *ShardedRWMutex
 	statFSCacheMu  *ShardedRWMutex
-
-	prefetchQueue       chan string
-	prefetchWorkerCount int
-	prefetchCtx         context.Context
-	prefetchCancel      context.CancelFunc
 }
 
 type AccessStats struct {

@@ -3,14 +3,14 @@ package arpc
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/valyala/fastjson"
+	"github.com/goccy/go-json"
 	"github.com/xtaci/smux"
 )
 
@@ -19,7 +19,7 @@ import (
 //
 // Creates a new pair of connected sessions (client/server) using net.Pipe.
 // The server session immediately begins serving on the provided router.
-// The function returns the client-side session (which is used for calls)
+// The function returns the client‑side session (which is used for calls)
 // plus a cleanup function to shut down both sessions.
 // ---------------------------------------------------------------------
 func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Session, cleanup func()) {
@@ -39,10 +39,8 @@ func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Sessio
 
 	done := make(chan struct{})
 
-	// Start the server-session in a goroutine. Serve() will continuously
-	// accept streams until the session is closed.
+	// Start the server session in a goroutine. Serve() continuously accepts streams.
 	go func() {
-		// Note: any error returned from Serve is ignored.
 		_ = serverSession.Serve(router)
 		close(done)
 	}()
@@ -50,8 +48,6 @@ func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Sessio
 	cleanup = func() {
 		_ = clientSession.Close()
 		_ = serverSession.Close()
-
-		// Wait a little for the Serve goroutine to finish.
 		select {
 		case <-done:
 		case <-time.After(100 * time.Millisecond):
@@ -67,18 +63,16 @@ func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Sessio
 // underlying stream.
 // ---------------------------------------------------------------------
 func TestRouterServeStream_Echo(t *testing.T) {
-	// Create an in-memory connection pair.
+	// Create an in‑memory connection pair.
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	// Create a smux session on the server side.
+	// Create smux sessions for server and client.
 	serverSession, err := smux.Server(serverConn, nil)
 	if err != nil {
 		t.Fatalf("failed to create smux server session: %v", err)
 	}
-
-	// Similarly, create a smux session on the client side.
 	clientSession, err := smux.Client(clientConn, nil)
 	if err != nil {
 		t.Fatalf("failed to create smux client session: %v", err)
@@ -94,7 +88,7 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		}, nil
 	})
 
-	// On the server side, accept a stream from the session.
+	// On the server side, accept a stream.
 	var (
 		wg     sync.WaitGroup
 		srvErr error
@@ -107,7 +101,6 @@ func TestRouterServeStream_Echo(t *testing.T) {
 			srvErr = err
 			return
 		}
-		// Pass the stream (of type *smux.Stream) to ServeStream.
 		router.ServeStream(stream)
 	}()
 
@@ -117,37 +110,44 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		t.Fatalf("failed to open client stream: %v", err)
 	}
 
-	// Send a request over the client stream.
-	req := Request{
-		Method:  "echo",
-		Payload: json.RawMessage(`"hello"`),
+	// Build and send a request using the helper.
+	reqBytes, err := buildRequestJSON("echo", "hello", nil)
+	if err != nil {
+		t.Fatalf("failed to build request JSON: %v", err)
 	}
-	encoder := json.NewEncoder(clientStream)
-	if err := encoder.Encode(req); err != nil {
-		t.Fatalf("failed to encode request: %v", err)
+	if _, err := clientStream.Write(reqBytes); err != nil {
+		t.Fatalf("failed to write request: %v", err)
 	}
 
-	// Read the JSON response.
-	decoder := json.NewDecoder(clientStream)
-	var resp Response
-	if err := decoder.Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
+	// Read and parse the JSON response.
+	respReader := bufio.NewReader(clientStream)
+	line, err := respReader.ReadBytes('\n')
+	if err != nil && err != io.EOF {
+		t.Fatalf("failed to read response: %v", err)
 	}
+	if len(line) == 0 {
+		t.Fatalf("no response received")
+	}
+
+	var resp Response
+	if err := json.Unmarshal(line, &resp); err != nil {
+		t.Fatalf("failed to unmarshal response JSON: %v", err)
+	}
+
 	if resp.Status != 200 {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
 
-	// Verify that the echoed data matches.
-	var data string
-	if err := json.Unmarshal([]byte(resp.Data.(string)), &data); err != nil {
-		// If the returned Data is already a string, use it directly.
-		data = resp.Data.(string)
+	// Extract the echoed payload.
+	var echoed string
+	if err := json.Unmarshal(resp.Data, &echoed); err != nil {
+		t.Fatalf("failed to unmarshal echoed data: %v", err)
 	}
-	if data != "hello" {
-		t.Fatalf("expected data 'hello', got %v", data)
+	if echoed != "hello" {
+		t.Fatalf("expected data 'hello', got %q", echoed)
 	}
 
-	// Allow the server goroutine to finish, but don't block indefinitely.
+	// Wait for the server goroutine to finish.
 	doneCh := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -173,7 +173,7 @@ func TestSessionCall_Success(t *testing.T) {
 	router.Handle("ping", func(req Request) (Response, error) {
 		return Response{
 			Status: 200,
-			Data:   "pong",
+			Data:   json.RawMessage(`"pong"`),
 		}, nil
 	})
 
@@ -187,9 +187,12 @@ func TestSessionCall_Success(t *testing.T) {
 	if resp.Status != 200 {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
-	pong, ok := resp.Data.(string)
-	if !ok || pong != "pong" {
-		t.Fatalf("expected pong response, got %#v", resp.Data)
+	var pong string
+	if err := json.Unmarshal(resp.Data, &pong); err != nil {
+		t.Fatalf("failed to unmarshal pong: %v", err)
+	}
+	if pong != "pong" {
+		t.Fatalf("expected pong response, got %q", pong)
 	}
 }
 
@@ -202,7 +205,7 @@ func TestSessionCall_Concurrency(t *testing.T) {
 	router.Handle("ping", func(req Request) (Response, error) {
 		return Response{
 			Status: 200,
-			Data:   "pong",
+			Data:   json.RawMessage(`"pong"`),
 		}, nil
 	})
 
@@ -216,8 +219,7 @@ func TestSessionCall_Concurrency(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			// Provide each caller with a small payload.
-			payload := map[string]int{"client": id}
+			payload := map[string]interface{}{"client": id}
 			resp, err := clientSession.Call("ping", payload)
 			if err != nil {
 				t.Errorf("Client %d error: %v", id, err)
@@ -226,8 +228,13 @@ func TestSessionCall_Concurrency(t *testing.T) {
 			if resp.Status != 200 {
 				t.Errorf("Client %d: expected status 200, got %d", id, resp.Status)
 			}
-			if pong, ok := resp.Data.(string); !ok || pong != "pong" {
-				t.Errorf("Client %d: expected 'pong', got %v", id, resp.Data)
+			var pong string
+			if err := json.Unmarshal(resp.Data, &pong); err != nil {
+				t.Errorf("Client %d: failed to unmarshal: %v", id, err)
+				return
+			}
+			if pong != "pong" {
+				t.Errorf("Client %d: expected 'pong', got %q", id, pong)
 			}
 		}(i)
 	}
@@ -242,11 +249,10 @@ func TestSessionCall_Concurrency(t *testing.T) {
 func TestCallContext_Timeout(t *testing.T) {
 	router := NewRouter()
 	router.Handle("slow", func(req Request) (Response, error) {
-		// Simulate a long-running handler.
 		time.Sleep(200 * time.Millisecond)
 		return Response{
 			Status: 200,
-			Data:   "done",
+			Data:   json.RawMessage(`"done"`),
 		}, nil
 	})
 
@@ -275,7 +281,7 @@ func TestAutoReconnect(t *testing.T) {
 	router.Handle("ping", func(req Request) (Response, error) {
 		return Response{
 			Status: 200,
-			Data:   "pong",
+			Data:   json.RawMessage(`"pong"`),
 		}, nil
 	})
 
@@ -285,8 +291,8 @@ func TestAutoReconnect(t *testing.T) {
 
 	var dialCount int32
 
-	// Define a custom dial function that creates a new net.Pipe pair
-	// and immediately starts a new server session using the same router.
+	// Create a custom dial function that creates a new net.Pipe pair and
+	// immediately starts a new server session using the same router.
 	dialFunc := func() (net.Conn, error) {
 		atomic.AddInt32(&dialCount, 1)
 		serverConn, clientConn := net.Pipe()
@@ -296,7 +302,6 @@ func TestAutoReconnect(t *testing.T) {
 				t.Logf("server session error: %v", err)
 				return
 			}
-			// Serve until the session is closed.
 			_ = sess.Serve(router)
 		}()
 		return clientConn, nil
@@ -306,7 +311,7 @@ func TestAutoReconnect(t *testing.T) {
 		return NewClientSession(conn, nil)
 	}
 
-	// Enable auto-reconnect on the client session.
+	// Enable auto‑reconnect on the client session.
 	rc := &ReconnectConfig{
 		AutoReconnect:  true,
 		DialFunc:       dialFunc,
@@ -330,9 +335,12 @@ func TestAutoReconnect(t *testing.T) {
 	if resp.Status != 200 {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
-	pong, ok := resp.Data.(string)
-	if !ok || pong != "pong" {
-		t.Fatalf("expected 'pong', got %v", resp.Data)
+	var pong string
+	if err := json.Unmarshal(resp.Data, &pong); err != nil {
+		t.Fatalf("failed to unmarshal pong: %v", err)
+	}
+	if pong != "pong" {
+		t.Fatalf("expected 'pong', got %q", pong)
 	}
 
 	if atomic.LoadInt32(&dialCount) == 0 {
@@ -340,15 +348,19 @@ func TestAutoReconnect(t *testing.T) {
 	}
 }
 
-// TestCallJSONWithBuffer_Success verifies that CallJSONWithBuffer correctly
-// reads the metadata and then the binary payload written by a custom server.
+// ---------------------------------------------------------------------
+// Test 6: CallJSONWithBuffer_Success
+//
+// Verifies that CallJSONWithBuffer correctly reads the metadata and then the
+// binary payload written by a custom server.
+// ---------------------------------------------------------------------
 func TestCallJSONWithBuffer_Success(t *testing.T) {
-	// Create an in-memory connection pair.
+	// Create an in‑memory connection pair.
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	// Create server and client smux sessions wrapped in our Session type.
+	// Create server and client sessions.
 	serverSess, err := NewServerSession(serverConn, nil)
 	if err != nil {
 		t.Fatalf("failed to create server session: %v", err)
@@ -358,13 +370,8 @@ func TestCallJSONWithBuffer_Success(t *testing.T) {
 		t.Fatalf("failed to create client session: %v", err)
 	}
 
-	// Launch a goroutine to simulate a buffered-call handler on the server side.
-	// Instead of routing via ServeStream (which always writes a JSON reply),
-	// this goroutine will accept a stream, read the request (discarding its
-	// contents), then write a metadata JSON (with bytes_available and eof)
-	// followed (after a slight delay) by the binary payload.
+	// Launch a goroutine to simulate a buffered‑call handler on the server side.
 	go func() {
-		// Accept a stream from the underlying smux session.
 		stream, err := serverSess.sess.AcceptStream()
 		if err != nil {
 			t.Errorf("server: AcceptStream error: %v", err)
@@ -375,8 +382,7 @@ func TestCallJSONWithBuffer_Success(t *testing.T) {
 		reader := bufio.NewReader(stream)
 		writer := bufio.NewWriter(stream)
 
-		// Read and discard the complete request (which contains the method,
-		// payload, and direct-buffer header).
+		// Read and discard the complete request.
 		_, err = reader.ReadBytes('\n')
 		if err != nil {
 			t.Errorf("server: error reading request: %v", err)
@@ -387,21 +393,23 @@ func TestCallJSONWithBuffer_Success(t *testing.T) {
 		binaryData := []byte("hello world")
 		dataLen := len(binaryData)
 
-		// Build metadata JSON using a pooled fastjson.Arena.
-		arena := arenaPool.Get().(*fastjson.Arena)
-		metaObj := arena.NewObject()
-		metaObj.Set("status", arena.NewNumberInt(200))
-		dataMeta := arena.NewObject()
-		dataMeta.Set("bytes_available", arena.NewNumberInt(dataLen))
-		// Use fastjson.MustParse to create a boolean value.
-		dataMeta.Set("eof", fastjson.MustParse("true"))
-		metaObj.Set("data", dataMeta)
-		metaBytes := metaObj.MarshalTo(nil)
+		// Build metadata as a simple map.
+		metaMap := map[string]interface{}{
+			"status": 200,
+			"data": map[string]interface{}{
+				"bytes_available": dataLen,
+				"eof":             true,
+			},
+		}
+		metaBytes, err := json.Marshal(metaMap)
+		if err != nil {
+			t.Errorf("server: error marshaling metadata: %v", err)
+			return
+		}
+		// Append newline as the delimiter.
 		metaBytes = append(metaBytes, '\n')
-		arena.Reset()
-		arenaPool.Put(arena)
 
-		// Write the metadata first.
+		// Write the metadata.
 		if _, err := writer.Write(metaBytes); err != nil {
 			t.Errorf("server: error writing metadata: %v", err)
 			return
@@ -411,8 +419,7 @@ func TestCallJSONWithBuffer_Success(t *testing.T) {
 			return
 		}
 
-		// Sleep briefly to help ensure the client’s first read retrieves just
-		// the metadata and not some of the binary payload.
+		// Wait briefly to ensure the client reads only metadata first.
 		time.Sleep(50 * time.Millisecond)
 
 		// Write the binary payload.
@@ -427,20 +434,18 @@ func TestCallJSONWithBuffer_Success(t *testing.T) {
 	}()
 
 	// On the client side, use CallJSONWithBuffer to send a request.
-	// (The server ignores the request payload; it will respond using our custom
-	// protocol above.)
 	buffer := make([]byte, 64)
 	n, eof, err := clientSess.CallJSONWithBuffer(context.Background(), "buffer", nil, buffer)
 	if err != nil {
 		t.Fatalf("client: CallJSONWithBuffer error: %v", err)
 	}
 
-	// Verify that we received the expected binary payload.
 	expected := "hello world"
 	if n != len(expected) {
 		t.Fatalf("expected %d bytes, got %d", len(expected), n)
 	}
-	if got := string(buffer[:n]); got != expected {
+	got := string(buffer[:n])
+	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}
 	if !eof {

@@ -3,12 +3,15 @@
 package vssfs
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
 
@@ -35,18 +38,6 @@ func mapWinError(err error, path string) error {
 			Path: path,
 			Err:  err,
 		}
-	}
-}
-
-// mapWindowsErrorToResponse maps Windows error codes to HTTP-like responses
-func (s *VSSFSServer) mapWindowsErrorToResponse(req *arpc.Request, err error) arpc.Response {
-	switch err {
-	case windows.ERROR_FILE_NOT_FOUND, windows.ERROR_PATH_NOT_FOUND:
-		return arpc.Response{Status: 404, Message: "file not found"}
-	case windows.ERROR_ACCESS_DENIED:
-		return arpc.Response{Status: 403, Message: "permission denied"}
-	default:
-		return s.respondError(req.Method, s.jobId, err)
 	}
 }
 
@@ -110,4 +101,76 @@ func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformati
 		ModTime: modTime.Unix(),
 		IsDir:   isDir,
 	}
+}
+
+// --- Error Response Helpers ---
+
+func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Response {
+	if syslog.L != nil && err != os.ErrNotExist {
+		syslog.L.Errorf("%s (%s): %v", method, drive, err)
+	}
+	// Wrap error and encode it using our new JSON encoder.
+	return arpc.Response{
+		Status: 500,
+		Data:   encodeValue(arpc.WrapError(err)),
+	}
+}
+
+func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Response {
+	if syslog.L != nil {
+		syslog.L.Errorf("%s (%s): %v", method, drive, err)
+	}
+	return arpc.Response{
+		Status: 400,
+		Data:   encodeValue(arpc.WrapError(os.ErrInvalid)),
+	}
+}
+
+// --- Helper: fastjson decoding for request payloads ---
+
+func encodeValue(v interface{}) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		b, _ = json.Marshal(map[string]string{
+			"error": fmt.Sprintf("failed to marshal value: %v", err),
+		})
+	}
+	return b
+}
+
+func getStringField(payload map[string]interface{}, field string) (string, error) {
+	val, ok := payload[field]
+	if !ok {
+		return "", fmt.Errorf("missing field: %s", field)
+	}
+	s, ok := val.(string)
+	if !ok {
+		return "", fmt.Errorf("field %s is not a string", field)
+	}
+	return s, nil
+}
+
+func getIntField(payload map[string]interface{}, field string) (int, error) {
+	val, ok := payload[field]
+	if !ok {
+		return 0, fmt.Errorf("missing field: %s", field)
+	}
+	// JSON numbers are float64.
+	f, ok := val.(float64)
+	if !ok {
+		return 0, fmt.Errorf("field %s is not a number", field)
+	}
+	return int(f), nil
+}
+
+func getInt64Field(payload map[string]interface{}, field string) (int64, error) {
+	val, ok := payload[field]
+	if !ok {
+		return 0, fmt.Errorf("missing field: %s", field)
+	}
+	f, ok := val.(float64)
+	if !ok {
+		return 0, fmt.Errorf("field %s is not a number", field)
+	}
+	return int64(f), nil
 }

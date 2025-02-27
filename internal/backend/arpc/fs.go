@@ -10,6 +10,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/go-git/go-billy/v5"
+	"github.com/goccy/go-json"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
@@ -20,11 +21,11 @@ import (
 var _ billy.Filesystem = (*ARPCFS)(nil)
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string) *ARPCFS {
-	statC, err := lru.New[string, statCacheEntry](4096)
+	statC, err := lru.New[string, statCacheEntry](1024)
 	if err != nil {
 		panic(err)
 	}
-	readDirC, err := lru.New[string, readDirCacheEntry](4096)
+	readDirC, err := lru.New[string, readDirCacheEntry](1024)
 	if err != nil {
 		panic(err)
 	}
@@ -32,8 +33,6 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 	if err != nil {
 		panic(err)
 	}
-
-	prefetchCtx, prefetchCancel := context.WithCancel(ctx)
 
 	fs := &ARPCFS{
 		ctx:                  ctx,
@@ -46,16 +45,8 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 		statCacheMu:          NewShardedRWMutex(16),
 		readDirCacheMu:       NewShardedRWMutex(16),
 		statFSCacheMu:        NewShardedRWMutex(4),
-		prefetchQueue:        make(chan string, 100),
-		prefetchWorkerCount:  4, // Adjust based on performance needs
-		prefetchCtx:          prefetchCtx,
-		prefetchCancel:       prefetchCancel,
 		accessedFileHashes:   make(map[uint64]struct{}),
 		accessedFolderHashes: make(map[uint64]struct{}),
-	}
-
-	for i := 0; i < fs.prefetchWorkerCount; i++ {
-		go fs.prefetchWorker()
 	}
 
 	return fs
@@ -137,142 +128,7 @@ func (fs *ARPCFS) GetSpeedStats() (float64, float64) {
 	return byteSpeed, fileSpeed
 }
 
-func (fs *ARPCFS) prefetchWorker() {
-	for {
-		select {
-		case <-fs.prefetchCtx.Done():
-			return
-		case path := <-fs.prefetchQueue:
-			fs.prefetchStats(path)
-		}
-	}
-}
-
-func (fs *ARPCFS) prefetchStats(path string) {
-	// Check if already in cache to avoid unnecessary work
-	fs.statCacheMu.RLock(path)
-	_, exists := fs.statCache.Get(path)
-	fs.statCacheMu.RUnlock(path)
-
-	if exists {
-		return
-	}
-
-	// Do stat in background
-	info, err := fs.statWithoutCache(path)
-	if err != nil {
-		// Just log and continue, don't fail the prefetch
-		syslog.L.Errorf("Prefetch stat failed for %s: %v", path, err)
-		return
-	}
-
-	// Cache result
-	fs.statCacheMu.Lock(path)
-	fs.statCache.Add(path, statCacheEntry{info: info})
-	fs.statCacheMu.Unlock(path)
-
-	// If it's a directory, queue a ReadDir prefetch
-	if info.IsDir() {
-		go fs.prefetchDir(path)
-	}
-}
-
-func (fs *ARPCFS) prefetchDir(path string) {
-	// Check if already in cache
-	fs.readDirCacheMu.RLock(path)
-	_, exists := fs.readDirCache.Get(path)
-	fs.readDirCacheMu.RUnlock(path)
-
-	if exists {
-		return
-	}
-
-	// Fetch directory contents
-	entries, err := fs.readDirWithoutCache(path)
-	if err != nil {
-		syslog.L.Errorf("Prefetch ReadDir failed for %s: %v", path, err)
-		return
-	}
-
-	// For each entry, queue up stat prefetch
-	for _, entry := range entries {
-		childPath := filepath.Join(path, entry.Name())
-		// Don't block - if queue is full, we skip prefetching this item
-		select {
-		case fs.prefetchQueue <- childPath:
-		default:
-			// Queue is full, skip
-		}
-	}
-}
-
-func (fs *ARPCFS) statWithoutCache(filename string) (os.FileInfo, error) {
-	var fi FileInfoResponse
-	if fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
-		return nil, os.ErrInvalid
-	}
-
-	ctx, cancel := TimeoutCtx()
-	defer cancel()
-
-	err := fs.session.CallJSON(ctx, fs.JobId+"/Stat",
-		struct {
-			Path string `json:"path"`
-		}{Path: filename}, &fi)
-	if err != nil {
-		return nil, err
-	}
-
-	modTime := time.Unix(fi.ModTimeUnix, 0)
-	info := &fileInfo{
-		name:    filepath.Base(filename),
-		size:    fi.Size,
-		mode:    fi.Mode,
-		modTime: modTime,
-		isDir:   fi.IsDir,
-	}
-
-	return info, nil
-}
-
-func (fs *ARPCFS) readDirWithoutCache(path string) ([]os.FileInfo, error) {
-	if fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
-		return nil, os.ErrInvalid
-	}
-
-	var resp ReadDirResponse
-	ctx, cancel := TimeoutCtx()
-	defer cancel()
-
-	err := fs.session.CallJSON(ctx, fs.JobId+"/ReadDir", struct {
-		Path string `json:"path"`
-	}{Path: path}, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	entries := make([]os.FileInfo, len(resp.Entries))
-	for i, e := range resp.Entries {
-		modTime := time.Unix(e.ModTimeUnix, 0)
-		entries[i] = &fileInfo{
-			name:    e.Name,
-			size:    e.Size,
-			mode:    e.Mode,
-			modTime: modTime,
-			isDir:   e.IsDir,
-		}
-	}
-
-	return entries, nil
-}
-
 func (f *ARPCFS) Unmount() {
-	if f.prefetchCancel != nil {
-		f.prefetchCancel()
-	}
-
 	if f.Mount != nil {
 		_ = f.Mount.Unmount()
 	}
@@ -288,29 +144,24 @@ func (fs *ARPCFS) Open(filename string) (billy.File, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
-func (fs *ARPCFS) OpenFile(filename string, flag int,
-	perm os.FileMode) (billy.File, error) {
-	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
-		return nil, os.ErrInvalid
-	}
-
-	var resp struct {
-		HandleID uint64 `json:"handleID"`
-	}
-
+func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
 	}
+	var handleID uint64
 
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.JobId+"/OpenFile", OpenRequest{
+	// Use the CPU efficient CallJSONDirect helper.
+	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/OpenFile", OpenRequest{
 		Path: filename,
 		Flag: flag,
 		Perm: int(perm),
-	}, &resp)
+	}, func(v json.RawMessage) error {
+		return json.Unmarshal(v, &handleID)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +169,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int,
 	return &ARPCFile{
 		fs:       fs,
 		name:     filename,
-		handleID: resp.HandleID,
+		handleID: handleID,
 		jobId:    fs.JobId,
 	}, nil
 }
@@ -345,10 +196,14 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.JobId+"/Stat",
+	// Use the new CallJSONDirect helper:
+	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/Stat",
 		struct {
 			Path string `json:"path"`
-		}{Path: filename}, &fi)
+		}{Path: filename},
+		func(v json.RawMessage) error {
+			return decodeFileInfoResponse(v, &fi)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -368,15 +223,6 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		info: info,
 	})
 	fs.statCacheMu.Unlock(filename)
-
-	go func() {
-		dirPath := filepath.Dir(filename)
-		select {
-		case fs.prefetchQueue <- dirPath:
-		default:
-			// Queue full, skip
-		}
-	}()
 
 	fs.trackAccess(filename, info.IsDir())
 
@@ -448,9 +294,11 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallJSON(ctx, fs.JobId+"/ReadDir", struct {
+	err := fs.session.CallJSONDirect(ctx, fs.JobId+"/ReadDir", struct {
 		Path string `json:"path"`
-	}{Path: path}, &resp)
+	}{Path: path}, func(v json.RawMessage) error {
+		return decodeReadDirResponse(v, &resp)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -483,19 +331,6 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 		entries: entries,
 	})
 	fs.readDirCacheMu.Unlock(path)
-
-	go func() {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				childPath := filepath.Join(path, entry.Name())
-				select {
-				case fs.prefetchQueue <- childPath:
-				default:
-					// Queue full, skip
-				}
-			}
-		}
-	}()
 
 	return entries, nil
 }

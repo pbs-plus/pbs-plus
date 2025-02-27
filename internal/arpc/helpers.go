@@ -1,44 +1,47 @@
 package arpc
 
 import (
-	json "github.com/goccy/go-json"
-	"github.com/valyala/fastjson"
+	"net/http"
+
+	"github.com/goccy/go-json"
 )
 
+// --- JSON Encoding Helpers ---
+//
+
+// buildRequestJSON builds a JSON‑encoded RPC request. It sets the method name,
+// marshals the payload (using go‑json) and any extra headers, and appends a newline
+// as the message delimiter.
 func buildRequestJSON(method string, payload interface{}, extraHeaders map[string]string) (
 	[]byte, error,
 ) {
-	arena := arenaPool.Get().(*fastjson.Arena)
-	defer func() {
-		arena.Reset()
-		arenaPool.Put(arena)
-	}()
-	reqObj := arena.NewObject()
-	reqObj.Set("method", arena.NewString(method))
-
-	// Marshal payload using standard JSON.
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var parser fastjson.Parser
-	payloadVal, err := parser.ParseBytes(payloadBytes)
-	if err != nil {
-		return nil, err
-	}
-	reqObj.Set("payload", payloadVal)
-
-	// Set any extra headers.
-	if extraHeaders != nil && len(extraHeaders) > 0 {
-		headersObj := arena.NewObject()
-		for key, value := range extraHeaders {
-			headersObj.Set(key, arena.NewString(value))
+	var rawPayload json.RawMessage
+	if p, ok := payload.(json.RawMessage); ok {
+		rawPayload = p
+	} else {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
 		}
-		reqObj.Set("headers", headersObj)
+		rawPayload = b
 	}
 
-	reqBytes := reqObj.MarshalTo(nil)
+	req := Request{
+		Method:  method,
+		Payload: rawPayload,
+	}
+	if extraHeaders != nil && len(extraHeaders) > 0 {
+		headers := http.Header{}
+		for key, value := range extraHeaders {
+			headers.Set(key, value)
+		}
+		req.Headers = headers
+	}
+
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
 	// Append newline as delimiter.
-	return append(reqBytes, '\n'), nil
+	return append(b, '\n'), nil
 }
