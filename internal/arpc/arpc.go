@@ -26,6 +26,16 @@ func (d *DirectBufferWrite) Error() string {
 	return "direct buffer write requested"
 }
 
+type BufferMetadataResp struct {
+	Status int             `msgpack:"status"`
+	Data   *BufferMetadata `msgpack:"data"`
+}
+
+type BufferMetadata struct {
+	BytesAvailable int  `msgpack:"bytes_available"`
+	EOF            bool `msgpack:"eof"`
+}
+
 // --------------------------------------------------------
 // Buffer pooling and a PooledMsg type for zero‑copy reads.
 // --------------------------------------------------------
@@ -473,8 +483,7 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 	}
 
 	// Build the request with an extra header requesting direct buffer transfer.
-	reqBytes, err := buildRequestMsgpack(method, payload,
-		map[string]string{"X-Direct-Buffer": "true"})
+	reqBytes, err := buildRequestMsgpack(method, payload, map[string]string{"X-Direct-Buffer": "true"})
 	if err != nil {
 		return 0, false, err
 	}
@@ -489,14 +498,7 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 	}
 
 	// Unmarshal the metadata.
-	var meta struct {
-		Status  int    `msgpack:"status"`
-		Message string `msgpack:"message,omitempty"`
-		Data    *struct {
-			BytesAvailable int  `msgpack:"bytes_available"`
-			EOF            bool `msgpack:"eof"`
-		} `msgpack:"data"`
-	}
+	var meta BufferMetadataResp
 	if err := msgpack.Unmarshal(metaBytes, &meta); err != nil {
 		return 0, false, err
 	}

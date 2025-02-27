@@ -321,10 +321,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 	}
 
 	if isDirectBuffer {
-		meta := map[string]interface{}{
-			"bytes_available": int(bytesRead),
-			"eof":             isEOF,
-		}
+		meta := arpc.BufferMetadata{BytesAvailable: int(bytesRead), EOF: isEOF}
 		return arpc.Response{
 			Status: 200,
 			Data:   encodeValue(meta),
@@ -378,10 +375,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 
 	if isDirectBuffer {
-		meta := map[string]interface{}{
-			"bytes_available": int(bytesRead),
-			"eof":             isEOF,
-		}
+		meta := arpc.BufferMetadata{BytesAvailable: int(bytesRead), EOF: isEOF}
 		return arpc.Response{
 			Status: 200,
 			Data:   encodeValue(meta),
