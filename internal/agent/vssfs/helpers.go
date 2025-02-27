@@ -67,7 +67,7 @@ func createFileInfoFromFindData(name string, fd *windows.Win32finddata) *VSSFile
 		Name:    name,
 		Size:    size,
 		Mode:    mode,
-		ModTime: modTime.Unix(),
+		ModTime: modTime,
 		IsDir:   isDir,
 	}
 }
@@ -98,7 +98,7 @@ func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformati
 		Name:    filepath.Base(path),
 		Size:    size,
 		Mode:    mode,
-		ModTime: modTime.Unix(),
+		ModTime: modTime,
 		IsDir:   isDir,
 	}
 }

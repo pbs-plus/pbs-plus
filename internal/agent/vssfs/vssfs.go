@@ -3,9 +3,9 @@
 package vssfs
 
 import (
+	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -26,12 +26,15 @@ type FileHandle struct {
 }
 
 type VSSFSServer struct {
+	ctx        context.Context
+	ctxCancel  context.CancelFunc
 	jobId      string
 	rootDir    string
 	handles    map[uint64]*FileHandle
 	nextHandle uint64
 	mu         sync.RWMutex
 	arpcRouter *arpc.Router
+	fsCache    *FileCache
 }
 
 type DirectBufferWrite struct {
@@ -43,14 +46,17 @@ func (d *DirectBufferWrite) Error() string {
 }
 
 func NewVSSFSServer(jobId string, root string) *VSSFSServer {
-	return &VSSFSServer{
-		rootDir: root,
-		jobId:   jobId,
-		handles: make(map[uint64]*FileHandle),
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &VSSFSServer{
+		rootDir:   root,
+		jobId:     jobId,
+		handles:   make(map[uint64]*FileHandle),
+		fsCache:   NewFileCache(ctx, root, 2),
+		ctx:       ctx,
+		ctxCancel: cancel,
 	}
+	return s
 }
-
-// --- Registration & Cleanup ---
 
 func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
 	r.Handle(s.jobId+"/OpenFile", s.handleOpenFile)
@@ -65,27 +71,33 @@ func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
 	s.arpcRouter = r
 }
 
+// Update the Close method so that the cache is stopped:
 func (s *VSSFSServer) Close() {
-	r := s.arpcRouter
-	if r == nil {
-		return
+	if s.arpcRouter != nil {
+		r := s.arpcRouter
+		r.CloseHandle(s.jobId + "/OpenFile")
+		r.CloseHandle(s.jobId + "/Stat")
+		r.CloseHandle(s.jobId + "/ReadDir")
+		r.CloseHandle(s.jobId + "/Read")
+		r.CloseHandle(s.jobId + "/ReadAt")
+		r.CloseHandle(s.jobId + "/Close")
+		r.CloseHandle(s.jobId + "/Fstat")
+		r.CloseHandle(s.jobId + "/FSstat")
 	}
-	r.CloseHandle(s.jobId + "/OpenFile")
-	r.CloseHandle(s.jobId + "/Stat")
-	r.CloseHandle(s.jobId + "/ReadDir")
-	r.CloseHandle(s.jobId + "/Read")
-	r.CloseHandle(s.jobId + "/ReadAt")
-	r.CloseHandle(s.jobId + "/Close")
-	r.CloseHandle(s.jobId + "/Fstat")
-	r.CloseHandle(s.jobId + "/FSstat")
-
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for k := range s.handles {
 		delete(s.handles, k)
 	}
 	s.nextHandle = 0
-	s.arpcRouter = nil
+	s.mu.Unlock()
+
+	s.ctxCancel()
+
+	// Stop the file cache.
+	if s.fsCache != nil {
+		s.fsCache.Cancel()
+		s.fsCache = nil
+	}
 }
 
 // --- Request Structs ---
@@ -208,11 +220,15 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
+// handleStat first checks the cache. If an entry is available it pops (removes)
+// the CachedEntry and returns the stat info. Otherwise, it falls back to the
+// Windows API‐based lookup.
 func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	var payload statReq
 	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
 		return s.invalidRequest(req.Method, s.jobId, err), nil
 	}
+
 	fullPath, err := s.abs(payload.Path)
 	if err != nil {
 		return s.respondError(req.Method, s.jobId, err), nil
@@ -221,36 +237,20 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		fullPath = s.rootDir
 	}
 
-	pathPtr, err := windows.UTF16PtrFromString(fullPath)
+	// Try to get the cached result (which includes stat).
+	if s.fsCache != nil {
+		if entry, ok := s.fsCache.Pop(fullPath); ok {
+			return arpc.Response{
+				Status: 200,
+				Data:   encodeValue(entry.Stat),
+			}, nil
+		}
+	}
+
+	info, err := stat(payload.Path)
 	if err != nil {
 		return s.respondError(req.Method, s.jobId, mapWinError(err, payload.Path)), nil
 	}
-
-	var findData windows.Win32finddata
-	handle, err := windows.FindFirstFile(pathPtr, &findData)
-	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, payload.Path)), nil
-	}
-	defer windows.FindClose(handle)
-
-	foundName := windows.UTF16ToString(findData.FileName[:])
-	expectedName := filepath.Base(fullPath)
-	if payload.Path == "." {
-		expectedName = foundName
-	}
-
-	if !strings.EqualFold(foundName, expectedName) {
-		return s.respondError(req.Method, s.jobId, os.ErrNotExist), nil
-	}
-
-	// Create file info from findData.
-	name := foundName
-	if payload.Path == "." {
-		name = "."
-	} else if payload.Path == "/" {
-		name = "/"
-	}
-	info := createFileInfoFromFindData(name, &findData)
 
 	return arpc.Response{
 		Status: 200,
@@ -258,6 +258,8 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
+// handleReadDir first attempts to serve the directory listing from the cache.
+// It returns the cached DirEntries for that directory.
 func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	var payload readDirReq
 	if err := msgpack.Unmarshal(req.Payload, &payload); err != nil {
@@ -272,29 +274,20 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		windowsDir = "."
 		fullDirPath = s.rootDir
 	}
-	searchPath := filepath.Join(fullDirPath, "*")
-	var findData windows.Win32finddata
-	handle, err := FindFirstFileEx(searchPath, &findData)
+
+	// Check the cache for this directory.
+	if s.fsCache != nil {
+		if entry, ok := s.fsCache.Pop(fullDirPath); ok {
+			return arpc.Response{
+				Status: 200,
+				Data:   encodeValue(map[string]interface{}{"entries": entry.DirEntries}),
+			}, nil
+		}
+	}
+
+	entries, err := readDir(payload.Path)
 	if err != nil {
 		return s.respondError(req.Method, s.jobId, mapWinError(err, payload.Path)), nil
-	}
-	defer windows.FindClose(handle)
-
-	var entries []*VSSFileInfo
-	for {
-		name := windows.UTF16ToString(findData.FileName[:])
-		if name != "." && name != ".." {
-			if !skipPathWithAttributes(findData.FileAttributes) {
-				info := createFileInfoFromFindData(name, &findData)
-				entries = append(entries, info)
-			}
-		}
-		if err := windows.FindNextFile(handle, &findData); err != nil {
-			if err == windows.ERROR_NO_MORE_FILES {
-				break
-			}
-			return s.respondError(req.Method, s.jobId, err), nil
-		}
 	}
 
 	return arpc.Response{
