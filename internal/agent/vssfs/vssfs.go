@@ -239,10 +239,10 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 
 	// Try to get the cached result (which includes stat).
 	if s.fsCache != nil {
-		if entry, ok := s.fsCache.Pop(fullPath); ok {
+		if entry, ok := s.fsCache.PopStat(fullPath); ok {
 			return arpc.Response{
 				Status: 200,
-				Data:   encodeValue(entry.Stat),
+				Data:   encodeValue(entry),
 			}, nil
 		}
 	}
@@ -277,17 +277,17 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 
 	// Check the cache for this directory.
 	if s.fsCache != nil {
-		if entry, ok := s.fsCache.Pop(fullDirPath); ok {
+		if entry, ok := s.fsCache.PopReaddir(fullDirPath); ok {
 			return arpc.Response{
 				Status: 200,
-				Data:   encodeValue(map[string]interface{}{"entries": entry.DirEntries}),
+				Data:   encodeValue(map[string]interface{}{"entries": entry}),
 			}, nil
 		}
 	}
 
-	entries, err := readDir(payload.Path)
+	entries, err := readDir(fullDirPath)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, payload.Path)), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, fullDirPath)), nil
 	}
 
 	return arpc.Response{
