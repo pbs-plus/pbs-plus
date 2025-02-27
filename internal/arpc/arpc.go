@@ -2,8 +2,8 @@ package arpc
 
 import (
 	"bufio"
-	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -13,23 +13,60 @@ import (
 	"sync"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/vmihailenco/msgpack/v5"
 	"github.com/xtaci/smux"
 )
 
-// Request defines the JSON request format sent over a stream.
-type Request struct {
-	Method  string          `json:"method"`
-	Payload json.RawMessage `json:"payload"`
-	Headers http.Header     `json:"headers,omitempty"`
+// ----------
+// MessagePack framing helper functions
+// ----------
+
+// readMsgpackMsg reads a framed MessagePack message from r.
+// The protocol here is: a 4‑byte big‑endian length header followed by that many data bytes.
+func readMsgpackMsg(r io.Reader) ([]byte, error) {
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
+		return nil, err
+	}
+	msgLen := binary.BigEndian.Uint32(lenBuf[:])
+	msg := make([]byte, msgLen)
+	_, err := io.ReadFull(r, msg)
+	return msg, err
 }
 
-// Response defines the JSON response format.
-type Response struct {
-	Status  int             `json:"status"`
-	Message string          `json:"message,omitempty"`
-	Data    json.RawMessage `json:"data,omitempty"`
+// writeMsgpackMsg writes msg to w using a 4‑byte length header.
+func writeMsgpackMsg(w io.Writer, msg []byte) error {
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(msg)))
+	if _, err := w.Write(lenBuf[:]); err != nil {
+		return err
+	}
+	_, err := w.Write(msg)
+	return err
 }
+
+// ----------
+// Data structures
+// ----------
+
+// Request defines the MessagePack‑encoded request format sent over a stream.
+type Request struct {
+	Method string `msgpack:"method"`
+	// We use a raw []byte for the payload.
+	Payload []byte      `msgpack:"payload"`
+	Headers http.Header `msgpack:"headers,omitempty"`
+}
+
+// Response defines the MessagePack‑encoded response format.
+type Response struct {
+	Status  int    `msgpack:"status"`
+	Message string `msgpack:"message,omitempty"`
+	Data    []byte `msgpack:"data,omitempty"`
+}
+
+// ----------
+// Router and stream handling
+// ----------
 
 // HandlerFunc is the type of function that can handle a Request.
 type HandlerFunc func(req Request) (Response, error)
@@ -49,7 +86,6 @@ func NewRouter() *Router {
 func (r *Router) Handle(method string, handler HandlerFunc) {
 	r.handlersMu.Lock()
 	defer r.handlersMu.Unlock()
-
 	r.handlers[method] = handler
 }
 
@@ -57,44 +93,31 @@ func (r *Router) Handle(method string, handler HandlerFunc) {
 func (r *Router) CloseHandle(method string) {
 	r.handlersMu.Lock()
 	defer r.handlersMu.Unlock()
-
 	delete(r.handlers, method)
 }
 
-// ServeStream reads one JSON‑encoded Request from the given stream,
-// dispatches it to the appropriate handler, and writes back a JSON response.
+// ServeStream reads one MessagePack‑encoded Request from the stream,
+// dispatches it to the appropriate handler, and writes back a MessagePack‑encoded response.
+// On error an error response is sent back.
 func (r *Router) ServeStream(stream *smux.Stream) {
 	defer stream.Close()
 
-	reader := bufio.NewReader(stream)
-	// Read until the newline (Encode always appends '\n')
-	dataBytes, err := reader.ReadBytes('\n')
-	if err != nil && err != io.EOF {
-		writeErrorResponse(
-			stream,
-			http.StatusBadRequest,
-			err,
-		)
+	// Read a full MessagePack‑encoded message.
+	dataBytes, err := readMsgpackMsg(stream)
+	if err != nil {
+		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
-	dataBytes = bytes.TrimSpace(dataBytes)
 
 	var req Request
-	if err := json.Unmarshal(dataBytes, &req); err != nil {
-		writeErrorResponse(
-			stream,
-			http.StatusBadRequest,
-			err,
-		)
+	if err := msgpack.Unmarshal(dataBytes, &req); err != nil {
+		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
 
 	if req.Method == "" {
-		writeErrorResponse(
-			stream,
-			http.StatusBadRequest,
-			errors.New("missing method field"),
-		)
+		writeErrorResponse(stream, http.StatusBadRequest,
+			errors.New("missing method field"))
 		return
 	}
 
@@ -109,33 +132,25 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		)
 		return
 	}
+
 	resp, err := handler(req)
 	if err != nil {
-		writeErrorResponse(
-			stream,
-			http.StatusInternalServerError,
-			err,
-		)
+		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
 
-	respBytes, err := json.Marshal(resp)
+	respBytes, err := msgpack.Marshal(resp)
 	if err != nil {
-		// Should not happen, but in case of error use a fallback error response.
-		writeErrorResponse(
-			stream,
-			http.StatusInternalServerError,
-			err,
-		)
+		// Should not happen; use a fallback error response.
+		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
-	// Append a newline as the message delimiter.
-	respBytes = append(respBytes, '\n')
-	_, _ = stream.Write(respBytes)
+
+	_ = writeMsgpackMsg(stream, respBytes)
 }
 
 // writeErrorResponse writes an error response to the provided stream.
-// It encodes the given error into a standardized SerializableError (via WrapError)
+// It wraps the error (assumed to be converted to a SerializableError by WrapError)
 // and writes it as the Data field of a Response.
 func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	serErr := WrapError(err) // Assume WrapError produces a SerializableError.
@@ -152,24 +167,25 @@ func writeErrorResponse(stream *smux.Stream, status int, err error) {
 
 	resp := Response{
 		Status: status,
-		Data:   mustMarshalJSON(errorData),
+		Data:   mustMarshalMsgpack(errorData),
 	}
-	respBytes, _ := json.Marshal(resp)
-	respBytes = append(respBytes, '\n')
-	_, _ = stream.Write(respBytes)
+	respBytes, _ := msgpack.Marshal(resp)
+	_ = writeMsgpackMsg(stream, respBytes)
 }
 
-// mustMarshalJSON is a helper that wraps json.Marshal and returns a json.RawMessage.
-// On error it returns an empty JSON object.
-func mustMarshalJSON(v interface{}) json.RawMessage {
-	b, err := json.Marshal(v)
+// mustMarshalMsgpack is a helper that marshals v using msgpack.
+// On error it returns an empty object.
+func mustMarshalMsgpack(v interface{}) []byte {
+	b, err := msgpack.Marshal(v)
 	if err != nil {
 		return []byte("{}")
 	}
 	return b
 }
 
-// --- Session and RPC Call Helpers ---
+// ----------
+// Session and RPC Call Helpers
+// ----------
 
 // ReconnectConfig holds parameters for automatic reconnection.
 type ReconnectConfig struct {
@@ -250,15 +266,13 @@ func (s *Session) Call(method string, payload interface{}) (*Response, error) {
 	return s.CallContext(context.Background(), method, payload)
 }
 
-// CallContext performs an RPC call over a new stream. It builds the request
-// using go-json, writes it to the stream, reads the complete response (terminated by a newline)
-// and unmarshals it into a Response struct.
-// If a stream cannot be opened and auto‑reconnect is enabled, it will try to reconnect.
-func (s *Session) CallContext(
-	ctx context.Context,
-	method string,
-	payload interface{},
-) (*Response, error) {
+// CallContext performs an RPC call over a new stream.
+// It builds the request with MessagePack, writes it to the stream using our framing protocol,
+// reads the complete framed response, and unmarshals it into a Response struct.
+// If a stream cannot be opened and auto‑reconnect is enabled, it reconnects.
+func (s *Session) CallContext(ctx context.Context, method string,
+	payload interface{}) (*Response, error) {
+
 	s.mu.RLock()
 	curSession := s.sess
 	rc := s.reconnectConfig
@@ -290,50 +304,39 @@ func (s *Session) CallContext(
 		stream.SetReadDeadline(deadline)
 	}
 
-	writer := bufio.NewWriter(stream)
-	reader := bufio.NewReader(stream)
-
-	reqBytes, err := buildRequestJSON(method, payload, nil)
+	// Build the MessagePack‑encoded request.
+	reqBytes, err := buildRequestMsgpack(method, payload, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := writer.Write(reqBytes); err != nil {
-		return nil, err
-	}
-	if err := writer.Flush(); err != nil {
+	if err := writeMsgpackMsg(stream, reqBytes); err != nil {
 		return nil, err
 	}
 
-	respBytes, err := reader.ReadBytes('\n')
-	if err != nil && err != io.EOF {
+	respBytes, err := readMsgpackMsg(stream)
+	if err != nil {
 		if ne, ok := err.(net.Error); ok && ne.Timeout() {
 			return nil, context.DeadlineExceeded
 		}
 		return nil, err
 	}
-	respBytes = bytes.TrimSpace(respBytes)
 	if len(respBytes) == 0 {
 		return nil, fmt.Errorf("empty response")
 	}
 
 	var resp Response
-	if err := json.Unmarshal(respBytes, &resp); err != nil {
+	if err := msgpack.Unmarshal(respBytes, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-// CallJSON performs an RPC call using CallContext. If the response
-// status is OK, it unmarshals the returned Data into v. Otherwise,
-// it assumes that the error has been encoded as a SerializableError in the Data field
-// and reconstructs the error via UnwrapError.
-func (s *Session) CallJSON(
-	ctx context.Context,
-	method string,
-	payload interface{},
-	v interface{},
-) error {
+// CallMsg performs an RPC call using CallContext.
+// If the response status is OK, it unmarshals the returned Data into v.
+// Otherwise, it decodes the SerializableError from Data.
+func (s *Session) CallMsg(ctx context.Context, method string,
+	payload interface{}, v interface{}) error {
 	resp, err := s.CallContext(ctx, method, payload)
 	if err != nil {
 		return err
@@ -341,61 +344,29 @@ func (s *Session) CallJSON(
 	if resp.Status != http.StatusOK {
 		if resp.Data != nil {
 			var serErr SerializableError
-			if err := json.Unmarshal(resp.Data, &serErr); err != nil {
-				return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+			if err := msgpack.Unmarshal(resp.Data, &serErr); err != nil {
+				return fmt.Errorf("RPC error: %s (status %d)",
+					resp.Message, resp.Status)
 			}
 			return UnwrapError(&serErr)
 		}
-		return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+		return fmt.Errorf("RPC error: %s (status %d)",
+			resp.Message, resp.Status)
 	}
 
 	if resp.Data == nil {
 		return nil
 	}
-	return json.Unmarshal(resp.Data, v)
+	return msgpack.Unmarshal(resp.Data, v)
 }
 
-// CallJSONDirect performs an RPC call using CallContext and then processes the
-// returned JSON data with a user‑provided decoder function.
-// If the response status is not OK, it attempts to decode a SerializableError
-// from the Data field and returns the unwrapped error.
-// This approach avoids extra re‑serialization and reflection overhead.
-func (s *Session) CallJSONDirect(
-	ctx context.Context,
-	method string,
-	payload interface{},
-	decoder func(data json.RawMessage) error,
-) error {
-	resp, err := s.CallContext(ctx, method, payload)
-	if err != nil {
-		return err
-	}
-	if resp.Status != http.StatusOK {
-		var serErr SerializableError
-		if resp.Data != nil {
-			if err := json.Unmarshal(resp.Data, &serErr); err == nil {
-				return UnwrapError(&serErr)
-			}
-		}
-		return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
-	}
-	if resp.Data == nil {
-		return nil
-	}
-	return decoder(resp.Data)
-}
-
-// CallJSONWithBuffer performs an RPC call in which the server first sends
-// a metadata response (as JSON) that contains the available binary data length
+// CallMsgWithBuffer performs an RPC call in which the server first sends a
+// metadata response (using MessagePack) that contains the available binary data length
 // and an EOF flag, and then the binary payload is sent over the stream.
-// It avoids extra serialization overhead by using JSON directly.
-// If the metadata indicates an error (status != http.StatusOK), it decodes and returns a SerializableError.
-func (s *Session) CallJSONWithBuffer(
-	ctx context.Context,
-	method string,
-	payload interface{},
-	buffer []byte,
-) (int, bool, error) {
+// It avoids extra re‑serialization overhead.
+// If the metadata indicates an error (status != http.StatusOK), it decodes a SerializableError.
+func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
+	payload interface{}, buffer []byte) (int, bool, error) {
 	s.mu.RLock()
 	curSession := s.sess
 	rc := s.reconnectConfig
@@ -425,46 +396,38 @@ func (s *Session) CallJSONWithBuffer(
 		stream.SetReadDeadline(deadline)
 	}
 
-	writer := bufio.NewWriter(stream)
-	reader := bufio.NewReader(stream)
-
-	reqBytes, err := buildRequestJSON(method, payload, map[string]string{"X-Direct-Buffer": "true"})
+	// Build and send the request with an extra header indicating direct-buffer transfer.
+	reqBytes, err := buildRequestMsgpack(method, payload,
+		map[string]string{"X-Direct-Buffer": "true"})
 	if err != nil {
 		return 0, false, err
 	}
-	if _, err := writer.Write(reqBytes); err != nil {
-		return 0, false, err
-	}
-	if err := writer.Flush(); err != nil {
+	if err := writeMsgpackMsg(stream, reqBytes); err != nil {
 		return 0, false, err
 	}
 
 	// --- Read metadata response ---
-	metaBytes, err := reader.ReadBytes('\n')
-	if err != nil && err != io.EOF {
+	metaBytes, err := readMsgpackMsg(stream)
+	if err != nil {
 		return 0, false, err
-	}
-	metaBytes = bytes.TrimSpace(metaBytes)
-	if len(metaBytes) == 0 {
-		return 0, false, fmt.Errorf("no metadata received")
 	}
 
 	// Unmarshal metadata response.
 	var meta struct {
-		Status  int    `json:"status"`
-		Message string `json:"message,omitempty"`
+		Status  int    `msgpack:"status"`
+		Message string `msgpack:"message,omitempty"`
 		Data    *struct {
-			BytesAvailable int  `json:"bytes_available"`
-			EOF            bool `json:"eof"`
-		} `json:"data"`
+			BytesAvailable int  `msgpack:"bytes_available"`
+			EOF            bool `msgpack:"eof"`
+		} `msgpack:"data"`
 	}
-	if err := json.Unmarshal(metaBytes, &meta); err != nil {
+	if err := msgpack.Unmarshal(metaBytes, &meta); err != nil {
 		return 0, false, err
 	}
 
 	if meta.Status != http.StatusOK {
 		var serErr SerializableError
-		if err := json.Unmarshal(metaBytes, &serErr); err == nil {
+		if err := msgpack.Unmarshal(metaBytes, &serErr); err == nil {
 			return 0, false, UnwrapError(&serErr)
 		}
 		return 0, false, fmt.Errorf("RPC error: status %d", meta.Status)
@@ -481,6 +444,7 @@ func (s *Session) CallJSONWithBuffer(
 	}
 
 	bytesRead := 0
+	reader := bufio.NewReader(stream)
 	// Read until we've read contentLength bytes or filled the buffer.
 	for bytesRead < contentLength && bytesRead < len(buffer) {
 		n, err := reader.Read(buffer[bytesRead:])
@@ -532,12 +496,8 @@ func (s *Session) Close() error {
 }
 
 // DialWithBackoff repeatedly attempts to establish a connection by dialing and then upgrading it.
-func DialWithBackoff(
-	ctx context.Context,
-	dialFunc func() (net.Conn, error),
-	upgradeFn func(conn net.Conn) (*Session, error),
-	initial, max time.Duration,
-) (*Session, error) {
+func DialWithBackoff(ctx context.Context, dialFunc func() (net.Conn, error),
+	upgradeFn func(conn net.Conn) (*Session, error), initial, max time.Duration) (*Session, error) {
 	delay := initial
 	for {
 		conn, err := dialFunc()
@@ -562,7 +522,8 @@ func DialWithBackoff(
 }
 
 // HijackUpgradeHTTP is a helper for server-side HTTP hijacking.
-func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, config *smux.Config) (*Session, error) {
+func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request,
+	config *smux.Config) (*Session, error) {
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		return nil, fmt.Errorf("response writer does not support hijacking")
@@ -587,8 +548,8 @@ func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, config *smux.Conf
 }
 
 // UpgradeHTTPClient is a helper for client-side HTTP upgrade.
-func UpgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Header,
-	config *smux.Config) (*Session, error) {
+func UpgradeHTTPClient(conn net.Conn, requestPath, host string,
+	headers http.Header, config *smux.Config) (*Session, error) {
 
 	reqLines := []string{
 		fmt.Sprintf("GET %s HTTP/1.1", requestPath),

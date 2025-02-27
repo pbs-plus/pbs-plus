@@ -34,7 +34,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
 					var respBody map[string]string
-					err := arpcSess.CallJSON(r.Context(), "ping", nil, &respBody)
+					err := arpcSess.CallMsg(r.Context(), "ping", nil, &respBody)
 					if err == nil {
 						all[i].ConnectionStatus = true
 						all[i].AgentVersion = respBody["version"]
@@ -257,7 +257,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
 					var respBody map[string]string
-					err := arpcSess.CallJSON(r.Context(), "ping", nil, &respBody)
+					err := arpcSess.CallMsg(r.Context(), "ping", nil, &respBody)
 					if err == nil {
 						target.ConnectionStatus = true
 						target.AgentVersion = respBody["version"]

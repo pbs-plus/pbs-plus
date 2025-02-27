@@ -16,11 +16,11 @@ type DriveInfo struct {
 }
 
 type FSStat struct {
-	TotalSize      int64         `json:"total_size"`
-	FreeSize       int64         `json:"free_size"`
-	AvailableSize  int64         `json:"available_size"`
-	TotalFiles     int           `json:"total_files"`
-	FreeFiles      int           `json:"free_files"`
-	AvailableFiles int           `json:"available_files"`
-	CacheHint      time.Duration `json:"cache_hint"`
+	TotalSize      int64         `msgpack:"total_size"`
+	FreeSize       int64         `msgpack:"free_size"`
+	AvailableSize  int64         `msgpack:"available_size"`
+	TotalFiles     int           `msgpack:"total_files"`
+	FreeFiles      int           `msgpack:"free_files"`
+	AvailableFiles int           `msgpack:"available_files"`
+	CacheHint      time.Duration `msgpack:"cache_hint"`
 }
