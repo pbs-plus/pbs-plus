@@ -247,9 +247,9 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		}
 	}
 
-	info, err := stat(payload.Path)
+	info, err := stat(fullPath)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, payload.Path)), nil
+		return s.respondError(req.Method, s.jobId, mapWinError(err, fullPath)), nil
 	}
 
 	return arpc.Response{

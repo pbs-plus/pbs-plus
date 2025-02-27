@@ -11,26 +11,25 @@ func stat(path string) (*VSSFileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var findData windows.Win32finddata
 	handle, err := windows.FindFirstFile(pathPtr, &findData)
 	if err != nil {
 		return nil, err
 	}
 	defer windows.FindClose(handle)
+
 	name := windows.UTF16ToString(findData.FileName[:])
+
 	info := createFileInfoFromFindData(name, &findData)
+
 	return info, nil
 }
 
 func readDir(dir string) ([]*VSSFileInfo, error) {
 	searchPath := filepath.Join(dir, "*")
-	searchPathPtr, err := windows.UTF16PtrFromString(searchPath)
-	if err != nil {
-		return nil, err
-	}
 	var findData windows.Win32finddata
-	// You may substitute FindFirstFileEx here if that is your normal method.
-	handle, err := windows.FindFirstFile(searchPathPtr, &findData)
+	handle, err := FindFirstFileEx(searchPath, &findData)
 	if err != nil {
 		return nil, err
 	}
@@ -41,12 +40,11 @@ func readDir(dir string) ([]*VSSFileInfo, error) {
 		name := windows.UTF16ToString(findData.FileName[:])
 		if name != "." && name != ".." {
 			if !skipPathWithAttributes(findData.FileAttributes) {
-				entry := createFileInfoFromFindData(name, &findData)
-				entries = append(entries, entry)
+				info := createFileInfoFromFindData(name, &findData)
+				entries = append(entries, info)
 			}
 		}
-		err = windows.FindNextFile(handle, &findData)
-		if err != nil {
+		if err := windows.FindNextFile(handle, &findData); err != nil {
 			if err == windows.ERROR_NO_MORE_FILES {
 				break
 			}
