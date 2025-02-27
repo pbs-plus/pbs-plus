@@ -11,48 +11,115 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/xtaci/smux"
 )
 
-// ----------
-// MessagePack framing helper functions
-// ----------
+// --------------------------------------------------------
+// Buffer pooling and a PooledMsg type for zero‑copy reads.
+// --------------------------------------------------------
 
-// readMsgpackMsg reads a framed MessagePack message from r.
-// The protocol here is: a 4‑byte big‑endian length header followed by that many data bytes.
-func readMsgpackMsg(r io.Reader) ([]byte, error) {
+// We use a sync.Pool to return buffers for small MessagePack messages.
+var msgpackBufferPool = sync.Pool{
+	New: func() interface{} {
+		// Start with a reasonable size for most requests.
+		return make([]byte, 4096)
+	},
+}
+
+// PooledMsg wraps a []byte that may come from the pool. If
+// Pooled is true then the caller must call Release() once done.
+type PooledMsg struct {
+	Data   []byte
+	pooled bool
+}
+
+// Release returns the underlying buffer to the pool if it was pooled.
+func (pm *PooledMsg) Release() {
+	if pm.pooled {
+		// Reset length to full capacity
+		msgpackBufferPool.Put(pm.Data[:cap(pm.Data)])
+		pm.pooled = false
+	}
+}
+
+// --------------------------------------------------------
+// MessagePack framing helper functions
+// --------------------------------------------------------
+
+// readMsgpackMsgPooled reads a MessagePack‑encoded message from r using our framing protocol.
+// It uses a 4‑byte big‑endian length header followed by that many bytes. For messages up to
+// 4096 bytes it attempts to use a pooled buffer (avoiding an extra copy in hot paths).
+// The caller is responsible for calling Release() on the returned *PooledMsg if pm.pooled is true.
+func readMsgpackMsgPooled(r io.Reader) (*PooledMsg, error) {
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return nil, err
 	}
 	msgLen := binary.BigEndian.Uint32(lenBuf[:])
+
+	// Size limit to avoid abuse.
+	const maxMessageSize = 10 * 1024 * 1024 // 10 MB
+	if msgLen > maxMessageSize {
+		return nil, fmt.Errorf("message too large: %d bytes", msgLen)
+	}
+
+	if msgLen <= 4096 {
+		buf := msgpackBufferPool.Get().([]byte)
+		// Ensure we have a buffer that is large enough.
+		if cap(buf) < int(msgLen) {
+			buf = make([]byte, msgLen)
+		}
+		// Use just the first msgLen bytes.
+		msg := buf[:msgLen]
+		if _, err := io.ReadFull(r, msg); err != nil {
+			msgpackBufferPool.Put(buf)
+			return nil, err
+		}
+		return &PooledMsg{Data: msg, pooled: true}, nil
+	}
+
+	// For larger messages we simply allocate the needed amount.
 	msg := make([]byte, msgLen)
 	_, err := io.ReadFull(r, msg)
-	return msg, err
+	return &PooledMsg{Data: msg, pooled: false}, err
 }
 
-// writeMsgpackMsg writes msg to w using a 4‑byte length header.
+// For non–critical paths we still expose the simpler API that returns a []byte copy.
+func readMsgpackMsg(r io.Reader) ([]byte, error) {
+	pm, err := readMsgpackMsgPooled(r)
+	if err != nil {
+		return nil, err
+	}
+	// In the non‐pooled API we immediately copy the payload so that we can release the pooled buffer.
+	data := make([]byte, len(pm.Data))
+	copy(data, pm.Data)
+	if pm.pooled {
+		pm.Release()
+	}
+	return data, nil
+}
+
+// writeMsgpackMsg writes msg to w with a 4‑byte length header. We combine the header and msg
+// into one write using net.Buffers so that we only incur one syscall when possible.
 func writeMsgpackMsg(w io.Writer, msg []byte) error {
 	var lenBuf [4]byte
 	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(msg)))
-	if _, err := w.Write(lenBuf[:]); err != nil {
-		return err
-	}
-	_, err := w.Write(msg)
+	nb := net.Buffers{lenBuf[:], msg}
+	_, err := nb.WriteTo(w)
 	return err
 }
 
-// ----------
-// Data structures
-// ----------
+// --------------------------------------------------------
+// Data structures for the RPC protocol
+// --------------------------------------------------------
 
-// Request defines the MessagePack‑encoded request format sent over a stream.
+// Request defines the MessagePack‑encoded request format.
 type Request struct {
-	Method string `msgpack:"method"`
-	// We use a raw []byte for the payload.
+	Method  string      `msgpack:"method"`
 	Payload []byte      `msgpack:"payload"`
 	Headers http.Header `msgpack:"headers,omitempty"`
 }
@@ -64,56 +131,56 @@ type Response struct {
 	Data    []byte `msgpack:"data,omitempty"`
 }
 
-// ----------
+// --------------------------------------------------------
 // Router and stream handling
-// ----------
+// --------------------------------------------------------
 
-// HandlerFunc is the type of function that can handle a Request.
+// HandlerFunc handles an RPC Request and returns a Response.
 type HandlerFunc func(req Request) (Response, error)
 
-// Router holds a mapping of method names to handlers.
+// Router holds a map from method names to handler functions.
 type Router struct {
 	handlers   map[string]HandlerFunc
 	handlersMu sync.RWMutex
 }
 
-// NewRouter creates and returns a new Router.
+// NewRouter creates a new Router instance.
 func NewRouter() *Router {
 	return &Router{handlers: make(map[string]HandlerFunc)}
 }
 
-// Handle registers a new handler for the given method.
+// Handle registers a handler for a given method name.
 func (r *Router) Handle(method string, handler HandlerFunc) {
 	r.handlersMu.Lock()
 	defer r.handlersMu.Unlock()
 	r.handlers[method] = handler
 }
 
-// CloseHandle removes the handler for the given method.
+// CloseHandle removes a handler.
 func (r *Router) CloseHandle(method string) {
 	r.handlersMu.Lock()
 	defer r.handlersMu.Unlock()
 	delete(r.handlers, method)
 }
 
-// ServeStream reads one MessagePack‑encoded Request from the stream,
-// dispatches it to the appropriate handler, and writes back a MessagePack‑encoded response.
-// On error an error response is sent back.
+// ServeStream reads a single RPC request from the stream, routes it to the correct handler,
+// and writes back the Response. In case of errors an error response is sent.
 func (r *Router) ServeStream(stream *smux.Stream) {
 	defer stream.Close()
 
-	// Read a full MessagePack‑encoded message.
-	dataBytes, err := readMsgpackMsg(stream)
+	dataBytes, err := readMsgpackMsgPooled(stream)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
 
 	var req Request
-	if err := msgpack.Unmarshal(dataBytes, &req); err != nil {
+	if err := msgpack.Unmarshal(dataBytes.Data, &req); err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
+
+	dataBytes.Release()
 
 	if req.Method == "" {
 		writeErrorResponse(stream, http.StatusBadRequest,
@@ -128,7 +195,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		writeErrorResponse(
 			stream,
 			http.StatusNotFound,
-			errors.New("method not found: "+req.Method),
+			fmt.Errorf("method not found: %s", req.Method),
 		)
 		return
 	}
@@ -141,7 +208,6 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 
 	respBytes, err := msgpack.Marshal(resp)
 	if err != nil {
-		// Should not happen; use a fallback error response.
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
@@ -149,11 +215,9 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 	_ = writeMsgpackMsg(stream, respBytes)
 }
 
-// writeErrorResponse writes an error response to the provided stream.
-// It wraps the error (assumed to be converted to a SerializableError by WrapError)
-// and writes it as the Data field of a Response.
+// writeErrorResponse sends an error response over the stream.
 func writeErrorResponse(stream *smux.Stream, status int, err error) {
-	serErr := WrapError(err) // Assume WrapError produces a SerializableError.
+	serErr := WrapError(err)
 	errorData := map[string]string{
 		"error_type": serErr.ErrorType,
 		"message":    serErr.Message,
@@ -173,8 +237,6 @@ func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	_ = writeMsgpackMsg(stream, respBytes)
 }
 
-// mustMarshalMsgpack is a helper that marshals v using msgpack.
-// On error it returns an empty object.
 func mustMarshalMsgpack(v interface{}) []byte {
 	b, err := msgpack.Marshal(v)
 	if err != nil {
@@ -183,11 +245,11 @@ func mustMarshalMsgpack(v interface{}) []byte {
 	return b
 }
 
-// ----------
-// Session and RPC Call Helpers
-// ----------
+// --------------------------------------------------------
+// Session and RPC Call Helpers (using atomic session pointer)
+// --------------------------------------------------------
 
-// ReconnectConfig holds parameters for automatic reconnection.
+// ReconnectConfig holds the parameters for automatic reconnection.
 type ReconnectConfig struct {
 	AutoReconnect  bool
 	DialFunc       func() (net.Conn, error)
@@ -197,46 +259,52 @@ type ReconnectConfig struct {
 	ReconnectCtx   context.Context
 }
 
-// Session wraps an underlying smux.Session.
+// Session wraps an underlying smux.Session. In order to avoid lock contention,
+// // we store the current *smux.Session in an atomic.Value.
 type Session struct {
-	mu                  sync.RWMutex
-	reconnectMu         sync.Mutex
-	sess                *smux.Session
-	reconnectConfig     *ReconnectConfig
-	reconnectInProgress bool
+	// muxSess holds a *smux.Session.
+	muxSess atomic.Value
+
+	// (Reconnect configuration is set rarely.)
+	reconnectConfig *ReconnectConfig
+	reconnectMu     sync.Mutex
 }
 
-// NewServerSession creates a new multiplexer session for the server side.
+// NewServerSession creates a new Session for a server connection.
 func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	s, err := smux.Server(conn, config)
 	if err != nil {
 		return nil, err
 	}
-	return &Session{sess: s}, nil
+	session := &Session{reconnectConfig: nil}
+	session.muxSess.Store(s)
+	return session, nil
 }
 
-// NewClientSession creates a new multiplexer session for the client side.
+// NewClientSession creates a new Session for a client connection.
 func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	s, err := smux.Client(conn, config)
 	if err != nil {
 		return nil, err
 	}
-	return &Session{sess: s}, nil
+	session := &Session{reconnectConfig: nil}
+	session.muxSess.Store(s)
+	return session, nil
 }
 
-// EnableAutoReconnect enables automatic reconnection for this session.
+// EnableAutoReconnect sets up the reconnection parameters.
 func (s *Session) EnableAutoReconnect(rc *ReconnectConfig) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.reconnectConfig = rc
 }
 
-// attemptReconnect connects the session using backoff (call with s.mu locked).
+// attemptReconnect tries to reconnect and update the underlying session.
+// This method uses its own mutex so that only one reconnect is attempted at a time.
 func (s *Session) attemptReconnect() error {
 	s.reconnectMu.Lock()
 	defer s.reconnectMu.Unlock()
 
-	if s.sess != nil && !s.sess.IsClosed() {
+	curSess := s.muxSess.Load().(*smux.Session)
+	if curSess != nil && !curSess.IsClosed() {
 		return nil
 	}
 
@@ -255,9 +323,7 @@ func (s *Session) attemptReconnect() error {
 		return err
 	}
 	newSess.reconnectConfig = s.reconnectConfig
-	s.mu.Lock()
-	s.sess = newSess.sess
-	s.mu.Unlock()
+	s.muxSess.Store(newSess.muxSess.Load())
 	return nil
 }
 
@@ -267,16 +333,13 @@ func (s *Session) Call(method string, payload interface{}) (*Response, error) {
 }
 
 // CallContext performs an RPC call over a new stream.
-// It builds the request with MessagePack, writes it to the stream using our framing protocol,
-// reads the complete framed response, and unmarshals it into a Response struct.
-// If a stream cannot be opened and auto‑reconnect is enabled, it reconnects.
+// It applies any context deadlines to the smux stream.
 func (s *Session) CallContext(ctx context.Context, method string,
 	payload interface{}) (*Response, error) {
 
-	s.mu.RLock()
-	curSession := s.sess
+	// Use the atomic pointer to avoid holding a lock while reading.
+	curSession := s.muxSess.Load().(*smux.Session)
 	rc := s.reconnectConfig
-	s.mu.RUnlock()
 
 	// Open a new stream.
 	stream, err := curSession.OpenStream()
@@ -285,9 +348,7 @@ func (s *Session) CallContext(ctx context.Context, method string,
 			if err2 := s.attemptReconnect(); err2 != nil {
 				return nil, err2
 			}
-			s.mu.RLock()
-			curSession = s.sess
-			s.mu.RUnlock()
+			curSession = s.muxSess.Load().(*smux.Session)
 			stream, err = curSession.OpenStream()
 			if err != nil {
 				return nil, err
@@ -298,18 +359,17 @@ func (s *Session) CallContext(ctx context.Context, method string,
 	}
 	defer stream.Close()
 
-	// Apply context deadlines if set.
+	// Propagate context deadlines to the stream.
 	if deadline, ok := ctx.Deadline(); ok {
 		stream.SetWriteDeadline(deadline)
 		stream.SetReadDeadline(deadline)
 	}
 
-	// Build the MessagePack‑encoded request.
+	// Build and send the RPC request.
 	reqBytes, err := buildRequestMsgpack(method, payload, nil)
 	if err != nil {
 		return nil, err
 	}
-
 	if err := writeMsgpackMsg(stream, reqBytes); err != nil {
 		return nil, err
 	}
@@ -332,9 +392,8 @@ func (s *Session) CallContext(ctx context.Context, method string,
 	return &resp, nil
 }
 
-// CallMsg performs an RPC call using CallContext.
-// If the response status is OK, it unmarshals the returned Data into v.
-// Otherwise, it decodes the SerializableError from Data.
+// CallMsg performs an RPC call and unmarshals its Data into v on success,
+// or decodes the error from Data if status != http.StatusOK.
 func (s *Session) CallMsg(ctx context.Context, method string,
 	payload interface{}, v interface{}) error {
 	resp, err := s.CallContext(ctx, method, payload)
@@ -360,17 +419,12 @@ func (s *Session) CallMsg(ctx context.Context, method string,
 	return msgpack.Unmarshal(resp.Data, v)
 }
 
-// CallMsgWithBuffer performs an RPC call in which the server first sends a
-// metadata response (using MessagePack) that contains the available binary data length
-// and an EOF flag, and then the binary payload is sent over the stream.
-// It avoids extra re‑serialization overhead.
-// If the metadata indicates an error (status != http.StatusOK), it decodes a SerializableError.
+// CallMsgWithBuffer performs an RPC call for file I/O-style operations in which the server
+// first sends metadata about a binary transfer and then writes the payload directly.
 func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 	payload interface{}, buffer []byte) (int, bool, error) {
-	s.mu.RLock()
-	curSession := s.sess
+	curSession := s.muxSess.Load().(*smux.Session)
 	rc := s.reconnectConfig
-	s.mu.RUnlock()
 
 	stream, err := curSession.OpenStream()
 	if err != nil {
@@ -378,9 +432,7 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 			if err2 := s.attemptReconnect(); err2 != nil {
 				return 0, false, err2
 			}
-			s.mu.RLock()
-			curSession = s.sess
-			s.mu.RUnlock()
+			curSession = s.muxSess.Load().(*smux.Session)
 			stream, err = curSession.OpenStream()
 			if err != nil {
 				return 0, false, err
@@ -396,7 +448,7 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 		stream.SetReadDeadline(deadline)
 	}
 
-	// Build and send the request with an extra header indicating direct-buffer transfer.
+	// Build the request with an extra header requesting direct buffer transfer.
 	reqBytes, err := buildRequestMsgpack(method, payload,
 		map[string]string{"X-Direct-Buffer": "true"})
 	if err != nil {
@@ -406,13 +458,13 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 		return 0, false, err
 	}
 
-	// --- Read metadata response ---
+	// Read the metadata response.
 	metaBytes, err := readMsgpackMsg(stream)
 	if err != nil {
 		return 0, false, err
 	}
 
-	// Unmarshal metadata response.
+	// Unmarshal the metadata.
 	var meta struct {
 		Status  int    `msgpack:"status"`
 		Message string `msgpack:"message,omitempty"`
@@ -445,7 +497,6 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 
 	bytesRead := 0
 	reader := bufio.NewReader(stream)
-	// Read until we've read contentLength bytes or filled the buffer.
 	for bytesRead < contentLength && bytesRead < len(buffer) {
 		n, err := reader.Read(buffer[bytesRead:])
 		if err != nil {
@@ -460,23 +511,17 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 	return bytesRead, isEOF, nil
 }
 
-// Serve continuously accepts incoming streams on the session and dispatches them
-// to the provided router. On error, if auto‑reconnect is enabled it will try to
-// reconnect and continue.
+// Serve continuously accepts streams on the session and dispatches them via router.
+// If a stream accept fails and auto‑reconnect is enabled, we attempt reconnect.
 func (s *Session) Serve(router *Router) error {
 	for {
-		s.mu.RLock()
-		curSession := s.sess
+		curSession := s.muxSess.Load().(*smux.Session)
 		rc := s.reconnectConfig
-		s.mu.RUnlock()
 
 		stream, err := curSession.AcceptStream()
 		if err != nil {
 			if rc != nil && rc.AutoReconnect {
-				s.mu.Lock()
-				err2 := s.attemptReconnect()
-				s.mu.Unlock()
-				if err2 != nil {
+				if err2 := s.attemptReconnect(); err2 != nil {
 					return err2
 				}
 				continue
@@ -490,12 +535,11 @@ func (s *Session) Serve(router *Router) error {
 
 // Close shuts down the underlying smux session.
 func (s *Session) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.sess.Close()
+	curSession := s.muxSess.Load().(*smux.Session)
+	return curSession.Close()
 }
 
-// DialWithBackoff repeatedly attempts to establish a connection by dialing and then upgrading it.
+// DialWithBackoff repeatedly attempts to establish a connection.
 func DialWithBackoff(ctx context.Context, dialFunc func() (net.Conn, error),
 	upgradeFn func(conn net.Conn) (*Session, error), initial, max time.Duration) (*Session, error) {
 	delay := initial
@@ -521,7 +565,7 @@ func DialWithBackoff(ctx context.Context, dialFunc func() (net.Conn, error),
 	}
 }
 
-// HijackUpgradeHTTP is a helper for server-side HTTP hijacking.
+// HijackUpgradeHTTP helps a server upgrade an HTTP connection.
 func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request,
 	config *smux.Config) (*Session, error) {
 	hijacker, ok := w.(http.Hijacker)
@@ -547,7 +591,7 @@ func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request,
 	return NewServerSession(conn, config)
 }
 
-// UpgradeHTTPClient is a helper for client-side HTTP upgrade.
+// UpgradeHTTPClient helps a client upgrade an HTTP connection.
 func UpgradeHTTPClient(conn net.Conn, requestPath, host string,
 	headers http.Header, config *smux.Config) (*Session, error) {
 
@@ -565,8 +609,7 @@ func UpgradeHTTPClient(conn net.Conn, requestPath, host string,
 	reqLines = append(reqLines,
 		"Upgrade: tcp",
 		"Connection: Upgrade",
-		"",
-		"",
+		"", "",
 	)
 	reqStr := strings.Join(reqLines, "\r\n")
 	if _, err := conn.Write([]byte(reqStr)); err != nil {
