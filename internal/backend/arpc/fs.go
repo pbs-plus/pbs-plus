@@ -117,6 +117,7 @@ func (fs *ARPCFS) GetTotalBytesRead() uint64 {
 	}
 
 	fs.lastBytesTime = now
+	fs.lastTotalBytes = fs.totalBytes
 
 	return fs.totalBytes
 }
