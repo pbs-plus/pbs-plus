@@ -8,11 +8,10 @@ import (
 
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/fuse"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 func Mount(f *arpcfs.ARPCFS, mountpoint string) error {
-	fsName := "agent://" + utils.Slugify(f.Hostname) + "/" + f.JobId
+	fsName := "pbs-plus://" + f.JobId
 
 	umount := exec.Command("umount", "-lf", mountpoint)
 	umount.Env = os.Environ()
