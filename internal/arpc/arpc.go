@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -84,7 +85,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		writeErrorResponse(
 			stream,
 			http.StatusBadRequest,
-			"failed to read request: "+err.Error(),
+			err,
 		)
 		return
 	}
@@ -95,7 +96,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		writeErrorResponse(
 			stream,
 			http.StatusBadRequest,
-			"invalid request JSON: "+err.Error(),
+			err,
 		)
 		return
 	}
@@ -106,14 +107,13 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		writeErrorResponse(
 			stream,
 			http.StatusBadRequest,
-			"missing method field",
+			errors.New("missing method field"),
 		)
 		return
 	}
 	req := Request{
 		Method:  reqMethod,
 		Payload: root.Get("payload"),
-		// (You can also extract headers, if desired.)
 	}
 
 	r.handlersMu.RLock()
@@ -123,7 +123,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		writeErrorResponse(
 			stream,
 			http.StatusNotFound,
-			"method not found: "+req.Method,
+			errors.New("method not found: "+req.Method),
 		)
 		return
 	}
@@ -132,7 +132,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		writeErrorResponse(
 			stream,
 			http.StatusInternalServerError,
-			err.Error(),
+			err,
 		)
 		return
 	}
@@ -156,7 +156,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 			writeErrorResponse(
 				stream,
 				http.StatusInternalServerError,
-				"failed to encode response data: "+err.Error(),
+				err,
 			)
 			return
 		}
@@ -166,17 +166,32 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 	_, _ = stream.Write(respBytes)
 }
 
-// writeErrorResponse writes a JSON error response using fastjson.
-func writeErrorResponse(stream *smux.Stream, status int, message string) {
+// writeErrorResponse writes an error response to the provided stream.
+// Instead of populating a simple "message" field, it serializes the error
+// into a SerializableError and writes that JSON object into the "data" field.
+func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	arena := arenaPool.Get().(*fastjson.Arena)
 	defer func() {
 		arena.Reset()
 		arenaPool.Put(arena)
 	}()
-	obj := arena.NewObject()
-	obj.Set("status", arena.NewNumberInt(status))
-	obj.Set("message", arena.NewString(message))
-	respBytes := obj.MarshalTo(nil)
+
+	respObj := arena.NewObject()
+	respObj.Set("status", arena.NewNumberInt(status))
+	// Build error info in an object.
+	serErr := WrapError(err)
+	errObj := arena.NewObject()
+	errObj.Set("error_type", arena.NewString(serErr.ErrorType))
+	errObj.Set("message", arena.NewString(serErr.Message))
+	if serErr.Op != "" {
+		errObj.Set("op", arena.NewString(serErr.Op))
+	}
+	if serErr.Path != "" {
+		errObj.Set("path", arena.NewString(serErr.Path))
+	}
+	respObj.Set("data", errObj)
+
+	respBytes := respObj.MarshalTo(nil)
 	_, _ = stream.Write(respBytes)
 }
 
@@ -344,37 +359,43 @@ func (s *Session) CallContext(
 	return &resp, nil
 }
 
-// CallJSON performs an RPC call using CallContext,
-// then unmarshals the returned response data into v.
-// It returns an error if the call fails or if the response indicates an error.
+// CallJSON performs an RPC call using CallContext. If the response
+// status is OK, it unmarshals the returned data into v. Otherwise,
+// it assumes that the error has been encoded as a SerializableError in the
+// Data field. It then reconstructs the error via UnwrapError.
 func (s *Session) CallJSON(ctx context.Context, method string, payload interface{}, v interface{}) error {
 	resp, err := s.CallContext(ctx, method, payload)
 	if err != nil {
 		return err
 	}
-
-	// Check that the response status is OK.
 	if resp.Status != http.StatusOK {
+		// Attempt to decode error details from the Data field.
+		if resp.Data != nil {
+			var serErr SerializableError
+			// Use fastjson’s MarshalTo and then standard library unmarshal.
+			dataBytes := resp.Data.MarshalTo(nil)
+			if err := json.Unmarshal(dataBytes, &serErr); err != nil {
+				return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+			}
+			return UnwrapError(&serErr)
+		}
 		return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
 	}
 
-	// If no data is returned, nothing to unmarshal.
 	if resp.Data == nil {
 		return nil
 	}
-
-	// Convert the fastjson.Value to raw JSON bytes.
+	// For successful responses, decode resp.Data into v.
 	dataBytes := resp.Data.MarshalTo(nil)
-	// Unmarshal the bytes into v using your JSON library.
-	if err := json.Unmarshal(dataBytes, v); err != nil {
-		return err
-	}
-	return nil
+	return json.Unmarshal(dataBytes, v)
 }
 
-// CallJSONDirect performs an RPC call using CallContext and then passes the
-// response’s fastjson.Value to the provided decoder callback. If the
-// response status is not OK, it returns an error.
+// CallJSONDirect performs an RPC call using CallContext and then processes the
+// returned fastjson tree with a user‑provided decoder function.
+// If the response status is not OK, it attempts to decode a SerializableError
+// from the Data field and returns the unwrapped error.
+// This approach is CPU‑efficient because it avoids re‑serializing and using
+// reflection-based unmarshaling.
 func (s *Session) CallJSONDirect(
 	ctx context.Context,
 	method string,
@@ -386,6 +407,13 @@ func (s *Session) CallJSONDirect(
 		return err
 	}
 	if resp.Status != http.StatusOK {
+		if resp.Data != nil {
+			var serErr SerializableError
+			dataBytes := resp.Data.MarshalTo(nil)
+			if err := json.Unmarshal(dataBytes, &serErr); err == nil {
+				return UnwrapError(&serErr)
+			}
+		}
 		return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
 	}
 	if resp.Data == nil {
@@ -394,19 +422,24 @@ func (s *Session) CallJSONDirect(
 	return decoder(resp.Data)
 }
 
-// CallJSONWithBuffer performs an RPC call whose response data is directly written
-// into the provided buffer.
+// CallJSONWithBuffer performs an RPC call in which the server first sends a metadata response
+// (as JSON) that contains the available binary data length and an EOF flag, and then the binary
+// payload is sent over the stream. It avoids re‑serialization and reflection overhead by using
+// fastjson directly. If the metadata indicates an error (status != http.StatusOK), it attempts to
+// decode and return a SerializableError.
 func (s *Session) CallJSONWithBuffer(
 	ctx context.Context,
 	method string,
 	payload interface{},
 	buffer []byte,
 ) (int, bool, error) {
+	// Obtain current session and reconnection configuration.
 	s.mu.RLock()
 	curSession := s.sess
 	rc := s.reconnectConfig
 	s.mu.RUnlock()
 
+	// Open a new stream.
 	stream, err := curSession.OpenStream()
 	if err != nil {
 		if rc != nil && rc.AutoReconnect {
@@ -426,6 +459,7 @@ func (s *Session) CallJSONWithBuffer(
 	}
 	defer stream.Close()
 
+	// Apply context deadlines.
 	if deadline, ok := ctx.Deadline(); ok {
 		stream.SetWriteDeadline(deadline)
 		stream.SetReadDeadline(deadline)
@@ -434,11 +468,8 @@ func (s *Session) CallJSONWithBuffer(
 	writer := bufio.NewWriter(stream)
 	reader := bufio.NewReader(stream)
 
-	reqBytes, err := buildRequestJSON(
-		method,
-		payload,
-		map[string]string{"X-Direct-Buffer": "true"},
-	)
+	// Build request JSON with the direct-buffer header.
+	reqBytes, err := buildRequestJSON(method, payload, map[string]string{"X-Direct-Buffer": "true"})
 	if err != nil {
 		return 0, false, err
 	}
@@ -449,32 +480,38 @@ func (s *Session) CallJSONWithBuffer(
 		return 0, false, err
 	}
 
-	metaData, err := reader.ReadBytes('\n')
+	// --- Read metadata response ---
+	metaBytes, err := reader.ReadBytes('\n')
+	// Allow io.EOF provided we got some bytes.
 	if err != nil && err != io.EOF {
 		return 0, false, err
 	}
-	metaData = bytes.TrimSpace(metaData)
-	if len(metaData) == 0 {
+	metaBytes = bytes.TrimSpace(metaBytes)
+	if len(metaBytes) == 0 {
 		return 0, false, fmt.Errorf("no metadata received")
 	}
 
-	metaArena := arenaPool.Get().(*fastjson.Arena)
-	defer func() {
-		metaArena.Reset()
-		arenaPool.Put(metaArena)
-	}()
 	var metaParser fastjson.Parser
-	metaRoot, err := metaParser.ParseBytes(metaData)
+	metaVal, err := metaParser.ParseBytes(metaBytes)
 	if err != nil {
 		return 0, false, err
 	}
-	status := metaRoot.GetInt("status")
+
+	// Check status.
+	status := metaVal.GetInt("status")
 	if status != http.StatusOK {
-		message := string(metaRoot.GetStringBytes("message"))
-		return 0, false, fmt.Errorf("RPC error: %s (status %d)", message, status)
+		// If non-OK, try to read a serialized error from Data.
+		if dataVal := metaVal.Get("data"); dataVal != nil {
+			var serErr SerializableError
+			if err := json.Unmarshal(dataVal.MarshalTo(nil), &serErr); err == nil {
+				return 0, false, UnwrapError(&serErr)
+			}
+		}
+		return 0, false, fmt.Errorf("RPC error: status %d", status)
 	}
 
-	dataObj := metaRoot.Get("data")
+	// Extract binary payload information.
+	dataObj := metaVal.Get("data")
 	contentLength := 0
 	isEOF := false
 	if dataObj != nil {
@@ -485,7 +522,9 @@ func (s *Session) CallJSONWithBuffer(
 		return 0, isEOF, nil
 	}
 
+	// --- Read binary data ---
 	bytesRead := 0
+	// Read until we've read contentLength bytes or filled the buffer.
 	for bytesRead < contentLength && bytesRead < len(buffer) {
 		n, err := reader.Read(buffer[bytesRead:])
 		if err != nil {
@@ -496,6 +535,7 @@ func (s *Session) CallJSONWithBuffer(
 		}
 		bytesRead += n
 	}
+
 	return bytesRead, isEOF, nil
 }
 
