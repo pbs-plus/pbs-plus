@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tinylib/msgp/msgp"
 	"github.com/xtaci/smux"
 )
 
@@ -53,34 +54,48 @@ func (pm *PooledMsg) Release() {
 	}
 }
 
+// Optimized serialization using msgp codegen
+func marshalWithPool(v msgp.Marshaler) (*PooledMsg, error) {
+	// Get a buffer from the pool.
+	buf := msgpackBufferPool.Get().([]byte)
+	// MarshalMsg appends to the provided slice.
+	b, err := v.MarshalMsg(buf[:0])
+	if err != nil {
+		// Return the buffer to the pool on error.
+		msgpackBufferPool.Put(buf)
+		return nil, err
+	}
+	return &PooledMsg{
+		Data:   b,
+		pooled: true,
+	}, nil
+}
+
 // --------------------------------------------------------
 // MessagePack framing helper functions
 // --------------------------------------------------------
 
-// readMsgpackMsgPooled reads a MessagePack‑encoded message from r using our framing protocol.
+// readMsgpMsgPooled reads a MessagePack‑encoded message from r using our framing protocol.
 // It uses a 4‑byte big‑endian length header followed by that many bytes. For messages up to
 // 4096 bytes it attempts to use a pooled buffer (avoiding an extra copy in hot paths).
 // The caller is responsible for calling Release() on the returned *PooledMsg if pm.pooled is true.
-func readMsgpackMsgPooled(r io.Reader) (*PooledMsg, error) {
+func readMsgpMsgPooled(r io.Reader) (*PooledMsg, error) {
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return nil, err
 	}
 	msgLen := binary.BigEndian.Uint32(lenBuf[:])
 
-	// Size limit to avoid abuse.
-	const maxMessageSize = 10 * 1024 * 1024 // 10 MB
+	const maxMessageSize = 10 * 1024 * 1024
 	if msgLen > maxMessageSize {
 		return nil, fmt.Errorf("message too large: %d bytes", msgLen)
 	}
 
 	if msgLen <= 4096 {
 		buf := msgpackBufferPool.Get().([]byte)
-		// Ensure we have a buffer that is large enough.
 		if cap(buf) < int(msgLen) {
 			buf = make([]byte, msgLen)
 		}
-		// Use just the first msgLen bytes.
 		msg := buf[:msgLen]
 		if _, err := io.ReadFull(r, msg); err != nil {
 			msgpackBufferPool.Put(buf)
@@ -89,15 +104,14 @@ func readMsgpackMsgPooled(r io.Reader) (*PooledMsg, error) {
 		return &PooledMsg{Data: msg, pooled: true}, nil
 	}
 
-	// For larger messages we simply allocate the needed amount.
 	msg := make([]byte, msgLen)
 	_, err := io.ReadFull(r, msg)
 	return &PooledMsg{Data: msg, pooled: false}, err
 }
 
 // For non–critical paths we still expose the simpler API that returns a []byte copy.
-func readMsgpackMsg(r io.Reader) ([]byte, error) {
-	pm, err := readMsgpackMsgPooled(r)
+func readMsgpMsg(r io.Reader) ([]byte, error) {
+	pm, err := readMsgpMsgPooled(r)
 	if err != nil {
 		return nil, err
 	}
@@ -110,11 +124,22 @@ func readMsgpackMsg(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-// writeMsgpackMsg writes msg to w with a 4‑byte length header. We combine the header and msg
+// writeMsgpMsg writes msg to w with a 4‑byte length header. We combine the header and msg
 // into one write using net.Buffers so that we only incur one syscall when possible.
-func writeMsgpackMsg(w io.Writer, msg []byte) error {
+func writeMsgpMsg(w io.Writer, msg []byte) error {
 	var lenBuf [4]byte
 	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(msg)))
+	if bw, ok := w.(*bufio.Writer); ok {
+		_, err := bw.Write(lenBuf[:])
+		if err != nil {
+			return err
+		}
+		_, err = bw.Write(msg)
+		if err != nil {
+			return err
+		}
+		return bw.Flush()
+	}
 	nb := net.Buffers{lenBuf[:], msg}
 	_, err := nb.WriteTo(w)
 	return err
@@ -157,14 +182,15 @@ func (r *Router) CloseHandle(method string) {
 func (r *Router) ServeStream(stream *smux.Stream) {
 	defer stream.Close()
 
-	dataBytes, err := readMsgpackMsg(stream)
+	pm, err := readMsgpMsgPooled(stream)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
+	defer pm.Release()
 
 	var req Request
-	if _, err := req.UnmarshalMsg(dataBytes); err != nil {
+	if _, err := req.UnmarshalMsg(pm.Data); err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
@@ -192,12 +218,13 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		// Check if the error is a direct-buffer write signal.
 		if dbw, ok := err.(*DirectBufferWrite); ok {
 			// Marshal and write the metadata first.
-			respBytes, err := resp.MarshalMsg(nil)
+			respBytes, err := marshalWithPool(&resp)
 			if err != nil {
 				writeErrorResponse(stream, http.StatusInternalServerError, err)
 				return
 			}
-			if err := writeMsgpackMsg(stream, respBytes); err != nil {
+			defer respBytes.Release()
+			if err := writeMsgpMsg(stream, respBytes.Data); err != nil {
 				return
 			}
 			// Then write out the direct buffer.
@@ -211,25 +238,38 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		return
 	}
 
-	respBytes, err := resp.MarshalMsg(nil)
+	respBytes, err := marshalWithPool(&resp)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
+	defer respBytes.Release()
 
-	_ = writeMsgpackMsg(stream, respBytes)
+	_ = writeMsgpMsg(stream, respBytes.Data)
 }
 
 // writeErrorResponse sends an error response over the stream.
 func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	serErr := WrapError(err)
-	errBytes, _ := serErr.MarshalMsg(nil)
+	errBytes, _ := marshalWithPool(serErr)
+
+	var respData []byte
+	if errBytes != nil {
+		respData = errBytes.Data
+		defer errBytes.Release()
+	}
+
 	resp := Response{
 		Status: status,
-		Data:   errBytes,
+		Data:   respData,
 	}
-	respBytes, _ := resp.MarshalMsg(nil)
-	_ = writeMsgpackMsg(stream, respBytes)
+	respBytes, _ := marshalWithPool(&resp)
+	var respBytesData []byte
+	if errBytes != nil {
+		respBytesData = respBytes.Data
+		defer respBytes.Release()
+	}
+	_ = writeMsgpMsg(stream, respBytesData)
 }
 
 // --------------------------------------------------------
@@ -356,11 +396,12 @@ func (s *Session) CallContext(ctx context.Context, method string, payload []byte
 	if err != nil {
 		return nil, err
 	}
-	if err := writeMsgpackMsg(stream, reqBytes); err != nil {
+	defer reqBytes.Release()
+	if err := writeMsgpMsg(stream, reqBytes.Data); err != nil {
 		return nil, err
 	}
 
-	respBytes, err := readMsgpackMsg(stream)
+	respBytes, err := readMsgpMsg(stream)
 	if err != nil {
 		if ne, ok := err.(net.Error); ok && ne.Timeout() {
 			return nil, context.DeadlineExceeded
@@ -435,12 +476,13 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	if err != nil {
 		return 0, false, err
 	}
-	if err := writeMsgpackMsg(stream, reqBytes); err != nil {
+	defer reqBytes.Release()
+	if err := writeMsgpMsg(stream, reqBytes.Data); err != nil {
 		return 0, false, err
 	}
 
 	// Read the metadata response.
-	metaBytes, err := readMsgpackMsg(stream)
+	metaBytes, err := readMsgpMsg(stream)
 	if err != nil {
 		return 0, false, err
 	}
@@ -516,8 +558,7 @@ func (s *Session) Close() error {
 }
 
 // DialWithBackoff repeatedly attempts to establish a connection.
-func DialWithBackoff(ctx context.Context, dialFunc func() (net.Conn, error),
-	upgradeFn func(conn net.Conn) (*Session, error), initial, max time.Duration) (*Session, error) {
+func DialWithBackoff(ctx context.Context, dialFunc func() (net.Conn, error), upgradeFn func(conn net.Conn) (*Session, error), initial, max time.Duration) (*Session, error) {
 	delay := initial
 	for {
 		conn, err := dialFunc()
@@ -542,8 +583,7 @@ func DialWithBackoff(ctx context.Context, dialFunc func() (net.Conn, error),
 }
 
 // HijackUpgradeHTTP helps a server upgrade an HTTP connection.
-func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request,
-	config *smux.Config) (*Session, error) {
+func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, config *smux.Config) (*Session, error) {
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		return nil, fmt.Errorf("response writer does not support hijacking")
@@ -568,9 +608,7 @@ func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request,
 }
 
 // UpgradeHTTPClient helps a client upgrade an HTTP connection.
-func UpgradeHTTPClient(conn net.Conn, requestPath, host string,
-	headers http.Header, config *smux.Config) (*Session, error) {
-
+func UpgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Header, config *smux.Config) (*Session, error) {
 	reqLines := []string{
 		fmt.Sprintf("GET %s HTTP/1.1", requestPath),
 		fmt.Sprintf("Host: %s", host),

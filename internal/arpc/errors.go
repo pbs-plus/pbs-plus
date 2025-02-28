@@ -54,9 +54,13 @@ func WrapError(err error) *SerializableError {
 	return serErr
 }
 
-func WrapErrorBytes(err error) []byte {
+func WrapErrorBytes(err error) *PooledMsg {
 	errWrapped := WrapError(err)
-	errBytes, _ := errWrapped.MarshalMsg(nil)
+	errBytes, _ := marshalWithPool(errWrapped)
+	if errBytes == nil {
+		return nil
+	}
+
 	return errBytes
 }
 
