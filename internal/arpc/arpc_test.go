@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vmihailenco/msgpack/v5"
 	"github.com/xtaci/smux"
 )
 
@@ -108,9 +107,14 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open client stream: %v", err)
 	}
+	payload := StringMsg("hello")
+	payloadBytes, err := payload.MarshalMsg(nil)
+	if err != nil {
+		t.Fatalf("failed to build request msgpack: %v", err)
+	}
 
 	// Build and send a request using our MessagePack helper.
-	reqBytes, err := buildRequestMsgpack("echo", "hello", nil)
+	reqBytes, err := buildRequestMsgpack("echo", payloadBytes, nil)
 	if err != nil {
 		t.Fatalf("failed to build request msgpack: %v", err)
 	}
@@ -129,7 +133,7 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	}
 
 	var resp Response
-	if err := msgpack.Unmarshal(respBytes, &resp); err != nil {
+	if _, err := resp.UnmarshalMsg(respBytes); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
@@ -138,8 +142,8 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	}
 
 	// Extract the echoed payload.
-	var echoed string
-	if err := msgpack.Unmarshal(resp.Data, &echoed); err != nil {
+	var echoed StringMsg
+	if _, err := echoed.UnmarshalMsg(resp.Data); err != nil {
 		t.Fatalf("failed to unmarshal echoed data: %v", err)
 	}
 	if echoed != "hello" {
@@ -171,7 +175,9 @@ func TestSessionCall_Success(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
 		// Marshal "pong" using MessagePack.
-		p, _ := msgpack.Marshal("pong")
+		var pong StringMsg
+		pong = "pong"
+		p, _ := pong.MarshalMsg(nil)
 		return Response{
 			Status: 200,
 			Data:   p,
@@ -188,8 +194,8 @@ func TestSessionCall_Success(t *testing.T) {
 	if resp.Status != 200 {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
-	var pong string
-	if err := msgpack.Unmarshal(resp.Data, &pong); err != nil {
+	var pong StringMsg
+	if _, err := pong.UnmarshalMsg(resp.Data); err != nil {
 		t.Fatalf("failed to unmarshal pong: %v", err)
 	}
 	if pong != "pong" {
@@ -204,7 +210,9 @@ func TestSessionCall_Success(t *testing.T) {
 func TestSessionCall_Concurrency(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
-		p, _ := msgpack.Marshal("pong")
+		var pong StringMsg
+		pong = "pong"
+		p, _ := pong.MarshalMsg(nil)
 		return Response{
 			Status: 200,
 			Data:   p,
@@ -221,8 +229,13 @@ func TestSessionCall_Concurrency(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			payload := map[string]interface{}{"client": id}
-			resp, err := clientSession.Call("ping", payload)
+			payload := MapStringIntMsg{"client": id}
+			payloadBytes, err := payload.MarshalMsg(nil)
+			if err != nil {
+				t.Errorf("Client %d error: %v", id, err)
+				return
+			}
+			resp, err := clientSession.Call("ping", payloadBytes)
 			if err != nil {
 				t.Errorf("Client %d error: %v", id, err)
 				return
@@ -230,8 +243,8 @@ func TestSessionCall_Concurrency(t *testing.T) {
 			if resp.Status != 200 {
 				t.Errorf("Client %d: expected status 200, got %d", id, resp.Status)
 			}
-			var pong string
-			if err := msgpack.Unmarshal(resp.Data, &pong); err != nil {
+			var pong StringMsg
+			if _, err := pong.UnmarshalMsg(resp.Data); err != nil {
 				t.Errorf("Client %d: failed to unmarshal: %v", id, err)
 				return
 			}
@@ -252,7 +265,9 @@ func TestCallContext_Timeout(t *testing.T) {
 	router := NewRouter()
 	router.Handle("slow", func(req Request) (Response, error) {
 		time.Sleep(200 * time.Millisecond)
-		p, _ := msgpack.Marshal("done")
+		var done StringMsg
+		done = "done"
+		p, _ := done.MarshalMsg(nil)
 		return Response{
 			Status: 200,
 			Data:   p,
@@ -282,7 +297,9 @@ func TestCallContext_Timeout(t *testing.T) {
 func TestAutoReconnect(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
-		p, _ := msgpack.Marshal("pong")
+		var pong StringMsg
+		pong = "pong"
+		p, _ := pong.MarshalMsg(nil)
 		return Response{
 			Status: 200,
 			Data:   p,
@@ -337,8 +354,8 @@ func TestAutoReconnect(t *testing.T) {
 	if resp.Status != 200 {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
-	var pong string
-	if err := msgpack.Unmarshal(resp.Data, &pong); err != nil {
+	var pong StringMsg
+	if _, err := pong.UnmarshalMsg(resp.Data); err != nil {
 		t.Fatalf("failed to unmarshal pong: %v", err)
 	}
 	if pong != "pong" {
@@ -393,14 +410,18 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 		dataLen := len(binaryData)
 
 		// Build metadata as a simple map.
-		metaMap := map[string]interface{}{
-			"status": 200,
-			"data": map[string]interface{}{
-				"bytes_available": dataLen,
-				"eof":             true,
-			},
+		metaData := BufferMetadata{
+			BytesAvailable: dataLen,
+			EOF:            true,
 		}
-		metaBytes, err := msgpack.Marshal(metaMap)
+		metaDataBytes, err := metaData.MarshalMsg(nil)
+		if err != nil {
+			t.Errorf("server: error marshaling metadata: %v", err)
+			return
+		}
+
+		metaMap := Response{Status: 200, Data: metaDataBytes}
+		metaBytes, err := metaMap.MarshalMsg(nil)
 		if err != nil {
 			t.Errorf("server: error marshaling metadata: %v", err)
 			return

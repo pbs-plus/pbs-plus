@@ -5,20 +5,6 @@ import (
 	"os"
 )
 
-// SerializableError represents an error that can be marshaled to msgpack
-type SerializableError struct {
-	// ErrorType identifies what kind of error it is
-	ErrorType string `msgpack:"error_type"`
-	// Message is the error message
-	Message string `msgpack:"message"`
-	// Op for operation (used in PathError)
-	Op string `msgpack:"op,omitempty"`
-	// Path for file system errors
-	Path string `msgpack:"path,omitempty"`
-	// OriginalError is used internally, not serialized
-	OriginalError error `msgpack:"-"`
-}
-
 // Error implements the error interface
 func (se *SerializableError) Error() string {
 	return se.Message
@@ -66,6 +52,12 @@ func WrapError(err error) *SerializableError {
 	// Add more error types as needed
 
 	return serErr
+}
+
+func WrapErrorBytes(err error) []byte {
+	errWrapped := WrapError(err)
+	errBytes, _ := errWrapped.MarshalMsg(nil)
+	return errBytes
 }
 
 // UnwrapError reconstructs the original error type from the serialized data

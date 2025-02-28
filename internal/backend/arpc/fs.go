@@ -12,10 +12,10 @@ import (
 	"github.com/cespare/xxhash/v2"
 	"github.com/go-git/go-billy/v5"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 var _ billy.Filesystem = (*ARPCFS)(nil)
@@ -133,9 +133,8 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
 	}
-	var resp struct {
-		HandleID uint64 `msgpack:"handleID"`
-	}
+
+	var resp vssfs.FileHandleId
 
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
@@ -145,9 +144,18 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 		Flag: flag,
 		Perm: int(perm),
 	}
+	reqBytes, err := req.MarshalMsg(nil)
+	if err != nil {
+		return nil, err
+	}
 
 	// Use the CPU efficient CallMsgDirect helper.
-	err := fs.session.CallMsg(ctx, fs.JobId+"/OpenFile", req, &resp)
+	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/OpenFile", reqBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = resp.UnmarshalMsg(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +163,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	return &ARPCFile{
 		fs:       fs,
 		name:     filename,
-		handleID: resp.HandleID,
+		handleID: int(resp),
 		jobId:    fs.JobId,
 	}, nil
 }
@@ -183,9 +191,18 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	defer cancel()
 
 	req := StatRequest{Path: filename}
+	reqBytes, err := req.MarshalMsg(nil)
+	if err != nil {
+		return nil, err
+	}
 
 	// Use the new CallMsgDirect helper:
-	err := fs.session.CallMsg(ctx, fs.JobId+"/Stat", req, &fi)
+	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/Stat", reqBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = fi.UnmarshalMsg(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +210,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	info := &fileInfo{
 		name:    filepath.Base(filename),
 		size:    fi.Size,
-		mode:    fi.Mode,
+		mode:    os.FileMode(fi.Mode),
 		modTime: fi.ModTime,
 		isDir:   fi.IsDir,
 	}
@@ -227,11 +244,17 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 		return types.StatFS{}, os.ErrInvalid
 	}
 
-	var fsStat utils.FSStat
+	var fsStat vssfs.FSStat
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	err := fs.session.CallMsg(ctx, fs.JobId+"/FSstat", struct{}{}, &fsStat)
+	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/FSstat", nil)
+	if err != nil {
+		syslog.L.Errorf("StatFS RPC failed: %v", err)
+		return types.StatFS{}, err
+	}
+
+	_, err = fsStat.UnmarshalMsg(raw)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
 		return types.StatFS{}, err
@@ -276,7 +299,17 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	defer cancel()
 
 	req := ReadDirRequest{Path: path}
-	err := fs.session.CallMsg(ctx, fs.JobId+"/ReadDir", req, &resp)
+	reqBytes, err := req.MarshalMsg(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/ReadDir", reqBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = resp.UnmarshalMsg(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +319,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 		entries[i] = &fileInfo{
 			name:    e.Name,
 			size:    e.Size,
-			mode:    e.Mode,
+			mode:    os.FileMode(e.Mode),
 			modTime: e.ModTime,
 			isDir:   e.IsDir,
 		}
