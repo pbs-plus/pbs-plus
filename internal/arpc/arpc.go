@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -379,23 +380,11 @@ func (s *Session) CallContext(ctx context.Context, method string, payload []byte
 
 	// Use the atomic pointer to avoid holding a lock while reading.
 	curSession := s.muxSess.Load().(*smux.Session)
-	rc := s.reconnectConfig
 
 	// Open a new stream.
-	stream, err := curSession.OpenStream()
+	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
-		if rc != nil && rc.AutoReconnect {
-			if err2 := s.attemptReconnect(); err2 != nil {
-				return nil, err2
-			}
-			curSession = s.muxSess.Load().(*smux.Session)
-			stream, err = curSession.OpenStream()
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
 	defer stream.Close()
 
@@ -461,52 +450,43 @@ func (s *Session) CallMsg(ctx context.Context, method string, payload []byte) ([
 // first sends metadata about a binary transfer and then writes the payload directly.
 func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload []byte, buffer []byte) (int, bool, error) {
 	curSession := s.muxSess.Load().(*smux.Session)
-	rc := s.reconnectConfig
 
-	stream, err := curSession.OpenStream()
+	// Single stream opening attempt with potential reconnect
+	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
-		if rc != nil && rc.AutoReconnect {
-			if err2 := s.attemptReconnect(); err2 != nil {
-				return 0, false, err2
-			}
-			curSession = s.muxSess.Load().(*smux.Session)
-			stream, err = curSession.OpenStream()
-			if err != nil {
-				return 0, false, err
-			}
-		} else {
-			return 0, false, err
-		}
+		return 0, false, err
 	}
 	defer stream.Close()
 
+	// Set deadlines if provided in context
 	if deadline, ok := ctx.Deadline(); ok {
-		stream.SetWriteDeadline(deadline)
-		stream.SetReadDeadline(deadline)
+		// Apply both deadlines with a single syscall where possible
+		_ = stream.SetDeadline(deadline)
 	}
 
-	// Build the request with an extra header requesting direct buffer transfer.
+	// Build the request with direct buffer header
 	reqBytes, err := buildRequestMsgpack(method, payload, map[string]string{"X-Direct-Buffer": "true"})
 	if err != nil {
 		return 0, false, err
 	}
 	defer reqBytes.Release()
+
+	// Write request
 	if err := writeMsgpMsg(stream, reqBytes.Data); err != nil {
 		return 0, false, err
 	}
 
-	// Read the metadata response.
+	// Read metadata response
 	metaBytes, err := readMsgpMsg(stream)
 	if err != nil {
 		return 0, false, err
 	}
 
-	// Unmarshal the metadata.
+	// Handle non-OK status quickly
 	var resp Response
 	if _, err := resp.UnmarshalMsg(metaBytes); err != nil {
 		return 0, false, err
 	}
-
 	if resp.Status != http.StatusOK {
 		var serErr SerializableError
 		if _, err := serErr.UnmarshalMsg(metaBytes); err == nil {
@@ -515,37 +495,89 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 		return 0, false, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
-	contentLength := 0
-	isEOF := false
+	// Parse buffer metadata
 	var meta BufferMetadata
-	if _, err := meta.UnmarshalMsg(resp.Data); err == nil {
-		contentLength = meta.BytesAvailable
-		isEOF = meta.EOF
+	if _, err := meta.UnmarshalMsg(resp.Data); err != nil {
+		return 0, false, err
 	}
 
-	if contentLength <= 0 {
-		return 0, isEOF, nil
+	// Early return for empty content
+	if meta.BytesAvailable <= 0 {
+		return 0, meta.EOF, nil
 	}
 
-	bytesRead := 0
-	reader := bufio.NewReader(stream)
-	for bytesRead < contentLength && bytesRead < len(buffer) {
-		n, err := reader.Read(buffer[bytesRead:])
-		if err != nil {
-			return bytesRead, isEOF, err
-		}
-		if n == 0 {
-			break
-		}
-		bytesRead += n
+	// Calculate how much we can actually read
+	toRead := meta.BytesAvailable
+	toRead = min(toRead, len(buffer))
+
+	// Direct read instead of using a buffered reader
+	bytesRead, err := io.ReadFull(stream, buffer[:toRead])
+	if err == io.ErrUnexpectedEOF {
+		// Partial read is still valid
+		return bytesRead, meta.EOF, nil
+	} else if err != nil {
+		return bytesRead, meta.EOF, err
 	}
 
-	return bytesRead, isEOF, nil
+	return bytesRead, meta.EOF, nil
+}
+
+// Helper function to open stream with reconnect logic
+func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream, error) {
+	stream, err := curSession.OpenStream()
+	if err == nil {
+		return stream, nil
+	}
+
+	// Only attempt reconnect if configured
+	rc := s.reconnectConfig
+	if rc == nil || !rc.AutoReconnect {
+		return nil, err
+	}
+
+	// Try reconnection
+	if err := s.attemptReconnect(); err != nil {
+		return nil, err
+	}
+
+	// Get fresh session after reconnect
+	curSession = s.muxSess.Load().(*smux.Session)
+	return curSession.OpenStream()
+}
+
+// Create a worker pool
+type WorkerPool struct {
+	tasks chan func()
+	size  int
+}
+
+func NewWorkerPool(size int) *WorkerPool {
+	pool := &WorkerPool{
+		tasks: make(chan func(), 1000),
+		size:  size,
+	}
+
+	for range size {
+		go func() {
+			for task := range pool.tasks {
+				task()
+			}
+		}()
+	}
+
+	return pool
 }
 
 // Serve continuously accepts streams on the session and dispatches them via router.
 // If a stream accept fails and auto‑reconnect is enabled, we attempt reconnect.
 func (s *Session) Serve(router *Router) error {
+	cpu := runtime.NumCPU()
+
+	if cpu > 1 {
+		cpu = cpu / 2
+	}
+
+	pool := NewWorkerPool(cpu)
 	for {
 		curSession := s.muxSess.Load().(*smux.Session)
 		rc := s.reconnectConfig
@@ -561,7 +593,10 @@ func (s *Session) Serve(router *Router) error {
 				return err
 			}
 		}
-		go router.ServeStream(stream)
+		// Then in Serve method:
+		pool.tasks <- func() {
+			router.ServeStream(stream)
+		}
 	}
 }
 
