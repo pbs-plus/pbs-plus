@@ -3,11 +3,13 @@
 package targets
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
@@ -35,7 +37,9 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
 					var respBody arpc.MapStringStringMsg
-					raw, err := arpcSess.CallMsg(r.Context(), "ping", nil)
+					timeout, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+					defer cancel()
+					raw, err := arpcSess.CallMsg(timeout, "ping", nil)
 					if err != nil {
 						continue
 					}
@@ -262,7 +266,9 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
 					var respBody arpc.MapStringStringMsg
-					raw, err := arpcSess.CallMsg(r.Context(), "ping", nil)
+					timeout, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+					defer cancel()
+					raw, err := arpcSess.CallMsg(timeout, "ping", nil)
 					if err == nil {
 						_, err = respBody.UnmarshalMsg(raw)
 						if err == nil {
