@@ -146,7 +146,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	}
 	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
-		return nil, err
+		return nil, os.ErrInvalid
 	}
 
 	// Use the CPU efficient CallMsgDirect helper.
@@ -157,7 +157,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 
 	_, err = resp.UnmarshalMsg(raw)
 	if err != nil {
-		return nil, err
+		return nil, os.ErrInvalid
 	}
 
 	return &ARPCFile{
@@ -193,7 +193,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	req := vssfs.StatReq{Path: filename}
 	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
-		return nil, err
+		return nil, os.ErrInvalid
 	}
 
 	// Use the new CallMsgDirect helper:
@@ -204,7 +204,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 
 	_, err = fi.UnmarshalMsg(raw)
 	if err != nil {
-		return nil, err
+		return nil, os.ErrInvalid
 	}
 
 	info := &fileInfo{
@@ -257,7 +257,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	_, err = fsStat.UnmarshalMsg(raw)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
-		return types.StatFS{}, err
+		return types.StatFS{}, os.ErrInvalid
 	}
 
 	stat := types.StatFS{
@@ -301,7 +301,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	req := vssfs.ReadDirReq{Path: path}
 	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
-		return nil, err
+		return nil, os.ErrInvalid
 	}
 
 	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/ReadDir", reqBytes)
@@ -311,7 +311,7 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 
 	_, err = resp.UnmarshalMsg(raw)
 	if err != nil {
-		return nil, err
+		return nil, os.ErrInvalid
 	}
 
 	entries := make([]os.FileInfo, len(resp))

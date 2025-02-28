@@ -11,13 +11,13 @@ import (
 func stat(path string) (*VSSFileInfo, error) {
 	pathPtr, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return nil, err
+		return nil, mapWinError(err, path)
 	}
 
 	var findData windows.Win32finddata
 	handle, err := windows.FindFirstFile(pathPtr, &findData)
 	if err != nil {
-		return nil, err
+		return nil, mapWinError(err, path)
 	}
 	defer windows.FindClose(handle)
 
@@ -33,7 +33,7 @@ func readDir(dir string) (ReadDirEntries, error) {
 	var findData windows.Win32finddata
 	handle, err := FindFirstFileEx(searchPath, &findData)
 	if err != nil {
-		return nil, err
+		return nil, mapWinError(err, dir)
 	}
 	defer windows.FindClose(handle)
 
@@ -50,7 +50,7 @@ func readDir(dir string) (ReadDirEntries, error) {
 			if err == windows.ERROR_NO_MORE_FILES {
 				break
 			}
-			return nil, err
+			return nil, mapWinError(err, dir)
 		}
 	}
 	return entries, nil
