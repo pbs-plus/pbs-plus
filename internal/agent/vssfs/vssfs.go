@@ -215,7 +215,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrInvalid
 	}
 
-	info, err := s.fsCache.stat(fullPath)
+	info, err := s.fsCache.Stat(fullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +252,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrInvalid
 	}
 
-	entries, err := s.fsCache.readDir(fullDirPath)
+	entries, err := s.fsCache.ReadDir(fullDirPath)
 	if err != nil {
 		return nil, err
 	}
