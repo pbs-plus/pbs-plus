@@ -39,6 +39,11 @@ type FstatReq struct {
 	HandleID int `msg:"handleID"`
 }
 
+type BackupReq struct {
+	JobId string `msg:"job_id"`
+	Drive string `msg:"drive"`
+}
+
 type VSSFileInfo struct {
 	Name    string    `msg:"name"`
 	Size    int64     `msg:"size"`

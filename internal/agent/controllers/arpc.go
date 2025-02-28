@@ -48,7 +48,7 @@ func (s *backupSession) Close() {
 }
 
 func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, error) {
-	var reqData BackupReq
+	var reqData vssfs.BackupReq
 	_, err := reqData.UnmarshalMsg(req.Payload)
 	if err != nil {
 		return arpc.Response{Status: 400, Message: "invalid payload"}, err
@@ -105,7 +105,7 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, e
 }
 
 func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
-	var reqData BackupReq
+	var reqData vssfs.BackupReq
 	_, err := reqData.UnmarshalMsg(req.Payload)
 	if err != nil {
 		return arpc.Response{Status: 400, Message: "invalid payload"}, err
