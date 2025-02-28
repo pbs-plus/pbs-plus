@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/tinylib/msgp/msgp"
 	"github.com/xtaci/smux"
 )
@@ -150,7 +151,7 @@ func writeMsgpMsg(w io.Writer, msg []byte) error {
 // --------------------------------------------------------
 
 // HandlerFunc handles an RPC Request and returns a Response.
-type HandlerFunc func(req Request) (Response, error)
+type HandlerFunc func(req Request) (*Response, error)
 
 // Router holds a map from method names to handler functions.
 type Router struct {
@@ -218,7 +219,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		// Check if the error is a direct-buffer write signal.
 		if dbw, ok := err.(*DirectBufferWrite); ok {
 			// Marshal and write the metadata first.
-			respBytes, err := marshalWithPool(&resp)
+			respBytes, err := marshalWithPool(resp)
 			if err != nil {
 				writeErrorResponse(stream, http.StatusInternalServerError, err)
 				return
@@ -238,7 +239,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		return
 	}
 
-	respBytes, err := marshalWithPool(&resp)
+	respBytes, err := marshalWithPool(resp)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
@@ -251,7 +252,10 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 // writeErrorResponse sends an error response over the stream.
 func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	serErr := WrapError(err)
-	errBytes, _ := marshalWithPool(serErr)
+	errBytes, mErr := marshalWithPool(serErr)
+	if mErr != nil && syslog.L != nil {
+		syslog.L.Errorf("[writeErrorResponse] %s", mErr.Error())
+	}
 
 	var respData []byte
 	if errBytes != nil {
@@ -266,13 +270,20 @@ func writeErrorResponse(stream *smux.Stream, status int, err error) {
 		Message: serErr.Message,
 		Data:    respData,
 	}
-	respBytes, _ := marshalWithPool(&resp)
+
+	respBytes, mErr := marshalWithPool(&resp)
+	if mErr != nil && syslog.L != nil {
+		syslog.L.Errorf("[writeErrorResponse] %s", mErr.Error())
+	}
 	var respBytesData []byte
 	if respBytes != nil {
 		respBytesData = respBytes.Data
 		defer respBytes.Release()
 	}
-	_ = writeMsgpMsg(stream, respBytesData)
+	wErr := writeMsgpMsg(stream, respBytesData)
+	if wErr != nil && syslog.L != nil {
+		syslog.L.Errorf("[writeErrorResponse] %s", wErr.Error())
+	}
 }
 
 // --------------------------------------------------------

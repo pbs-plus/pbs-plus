@@ -27,16 +27,16 @@ func ARPCHandler(store *store.Store) http.HandlerFunc {
 		defer store.RemoveARPC(agentHostname)
 
 		router := arpc.NewRouter()
-		router.Handle("echo", func(req arpc.Request) (arpc.Response, error) {
+		router.Handle("echo", func(req arpc.Request) (*arpc.Response, error) {
 			var msg arpc.StringMsg
 			if _, err := msg.UnmarshalMsg(req.Payload); err != nil {
-				return arpc.Response{Status: 400, Message: "invalid payload"}, err
+				return nil, err
 			}
 			data, err := msg.MarshalMsg(nil)
 			if err != nil {
-				return arpc.Response{Status: 400, Message: "invalid payload"}, err
+				return nil, err
 			}
-			return arpc.Response{Status: 200, Data: data}, nil
+			return &arpc.Response{Status: 200, Data: data}, nil
 		})
 
 		if err := session.Serve(router); err != nil {

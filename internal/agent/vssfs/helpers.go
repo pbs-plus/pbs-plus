@@ -100,35 +100,3 @@ func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformati
 		IsDir:   isDir,
 	}
 }
-
-// --- Error Response Helpers ---
-
-func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Response {
-	if syslog.L != nil && err != os.ErrNotExist {
-		syslog.L.Errorf("%s (%s): %v", method, drive, err)
-	}
-	// Wrap error and encode it using our new msgpack encoder.
-	errorWrap := arpc.WrapErrorBytes(err)
-	if errorWrap != nil {
-		defer errorWrap.Release()
-	}
-	return arpc.Response{
-		Status: 500,
-		Data:   errorWrap.Data,
-	}
-}
-
-func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Response {
-	if syslog.L != nil {
-		syslog.L.Errorf("%s (%s): %v", method, drive, err)
-	}
-
-	errorWrap := arpc.WrapErrorBytes(os.ErrInvalid)
-	if errorWrap != nil {
-		defer errorWrap.Release()
-	}
-	return arpc.Response{
-		Status: 400,
-		Data:   errorWrap.Data,
-	}
-}

@@ -47,18 +47,18 @@ func (s *backupSession) Close() {
 	})
 }
 
-func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, error) {
+func BackupStartHandler(req arpc.Request, router *arpc.Router) (*arpc.Response, error) {
 	var reqData vssfs.BackupReq
 	_, err := reqData.UnmarshalMsg(req.Payload)
 	if err != nil {
-		return arpc.Response{Status: 400, Message: "invalid payload"}, err
+		return nil, err
 	}
 
 	syslog.L.Infof("Received backup request for job: %s.", reqData.JobId)
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
-		return arpc.Response{Status: 500, Message: err.Error()}, err
+		return nil, err
 	}
 	activeSessionsMu.Lock()
 	if activeSessions == nil {
@@ -79,21 +79,21 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, e
 
 	if hasActive, err := store.HasActiveBackupForJob(reqData.JobId); hasActive || err != nil {
 		if err != nil {
-			return arpc.Response{Status: 500, Message: err.Error()}, err
+			return nil, err
 		}
 		err = fmt.Errorf("existing backup")
-		return arpc.Response{Status: 500, Message: err.Error()}, err
+		return nil, err
 	}
 
 	if err := store.StartBackup(reqData.JobId); err != nil {
 		session.Close()
-		return arpc.Response{Status: 500, Message: err.Error()}, err
+		return nil, err
 	}
 
 	snapshot, err := snapshots.Snapshot(reqData.JobId, reqData.Drive)
 	if err != nil {
 		session.Close()
-		return arpc.Response{Status: 500, Message: err.Error()}, err
+		return nil, err
 	}
 	session.snapshot = snapshot
 
@@ -101,14 +101,14 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (arpc.Response, e
 	fs.RegisterHandlers(router)
 	session.fs = fs
 
-	return arpc.Response{Status: 200, Message: "success"}, nil
+	return &arpc.Response{Status: 200, Message: "success"}, nil
 }
 
-func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
+func BackupCloseHandler(req arpc.Request) (*arpc.Response, error) {
 	var reqData vssfs.BackupReq
 	_, err := reqData.UnmarshalMsg(req.Payload)
 	if err != nil {
-		return arpc.Response{Status: 400, Message: "invalid payload"}, err
+		return nil, err
 	}
 
 	syslog.L.Infof("Received closure request for job %s.", reqData.JobId)
@@ -119,9 +119,9 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 
 	if !ok {
 		err := fmt.Errorf("no ongoing backup")
-		return arpc.Response{Status: 500, Message: err.Error()}, err
+		return nil, err
 	}
 
 	session.Close()
-	return arpc.Response{Status: 200, Message: "success"}, nil
+	return &arpc.Response{Status: 200, Message: "success"}, nil
 }

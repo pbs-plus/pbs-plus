@@ -95,7 +95,7 @@ func (s *VSSFSServer) Close() {
 
 // --- Handlers ---
 
-func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
+func (s *VSSFSServer) handleFsStat(req arpc.Request) (*arpc.Response, error) {
 	// No payload expected.
 	var totalBytes uint64
 	err := windows.GetDiskFreeSpaceEx(
@@ -105,7 +105,7 @@ func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
 		nil,
 	)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	fsStat := &FSStat{
@@ -120,19 +120,19 @@ func (s *VSSFSServer) handleFsStat(req arpc.Request) (arpc.Response, error) {
 
 	fsStatBytes, err := fsStat.MarshalMsg(nil)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
-	return arpc.Response{
+	return &arpc.Response{
 		Status: 200,
 		Data:   fsStatBytes,
 	}, nil
 }
 
-func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
+func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 	var payload OpenFileReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	// Disallow write operations.
@@ -140,10 +140,10 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		errStr := arpc.StringMsg("write operations not allowed")
 		errBytes, err := errStr.MarshalMsg(nil)
 		if err != nil {
-			return s.respondError(req.Method, s.jobId, err), nil
+			return nil, err
 		}
 
-		return arpc.Response{
+		return &arpc.Response{
 			Status: 403,
 			Data:   errBytes,
 		}, nil
@@ -151,12 +151,12 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 
 	path, err := s.abs(payload.Path)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	pathp, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, path)), nil
+		return nil, err
 	}
 
 	handle, err := windows.CreateFile(
@@ -169,7 +169,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		0,
 	)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, path)), nil
+		return nil, err
 	}
 
 	fileHandle := &FileHandle{
@@ -186,11 +186,11 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	data := FileHandleId(handleID)
 	dataBytes, err := data.MarshalMsg(nil)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	// Return the handle ID.
-	return arpc.Response{
+	return &arpc.Response{
 		Status: 200,
 		Data:   dataBytes,
 	}, nil
@@ -199,15 +199,15 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 // handleStat first checks the cache. If an entry is available it pops (removes)
 // the CachedEntry and returns the stat info. Otherwise, it falls back to the
 // Windows API‐based lookup.
-func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
+func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 	var payload StatReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	fullPath, err := s.abs(payload.Path)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 	if payload.Path == "." || payload.Path == "" {
 		fullPath = s.rootDir
@@ -218,10 +218,10 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		if entry, ok := s.fsCache.PopStat(fullPath); ok {
 			data, err := entry.MarshalMsg(nil)
 			if err != nil {
-				return s.respondError(req.Method, s.jobId, err), nil
+				return nil, err
 			}
 
-			return arpc.Response{
+			return &arpc.Response{
 				Status: 200,
 				Data:   data,
 			}, nil
@@ -230,15 +230,15 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 
 	info, err := stat(fullPath)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	data, err := info.MarshalMsg(nil)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
-	return arpc.Response{
+	return &arpc.Response{
 		Status: 200,
 		Data:   data,
 	}, nil
@@ -246,15 +246,15 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 
 // handleReadDir first attempts to serve the directory listing from the cache.
 // It returns the cached DirEntries for that directory.
-func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
+func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 	var payload ReadDirReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 	windowsDir := filepath.FromSlash(payload.Path)
 	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 	if payload.Path == "." || payload.Path == "" {
 		windowsDir = "."
@@ -266,9 +266,9 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		if entry, ok := s.fsCache.PopReaddir(fullDirPath); ok {
 			entryBytes, err := entry.MarshalMsg(nil)
 			if err != nil {
-				return s.respondError(req.Method, s.jobId, err), nil
+				return nil, err
 			}
-			return arpc.Response{
+			return &arpc.Response{
 				Status: 200,
 				Data:   entryBytes,
 			}, nil
@@ -277,24 +277,24 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 
 	entries, err := readDir(fullDirPath)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	entryBytes, err := entries.MarshalMsg(nil)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
-	return arpc.Response{
+	return &arpc.Response{
 		Status: 200,
 		Data:   entryBytes,
 	}, nil
 }
 
-func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
+func (s *VSSFSServer) handleRead(req arpc.Request) (*arpc.Response, error) {
 	var payload ReadReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	s.mu.RLock()
@@ -303,16 +303,16 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 	if !exists || handle.isClosed {
 		invalidBytes, err := InvalidHandleError.MarshalMsg(nil)
 		if err != nil {
-			return s.invalidRequest(req.Method, s.jobId, err), nil
+			return nil, err
 		}
-		return arpc.Response{Status: 404, Data: invalidBytes}, nil
+		return &arpc.Response{Status: 404, Data: invalidBytes}, nil
 	}
 	if handle.isDir {
 		invalidDir, err := CannotReadDirError.MarshalMsg(nil)
 		if err != nil {
-			return s.invalidRequest(req.Method, s.jobId, err), nil
+			return nil, err
 		}
-		return arpc.Response{Status: 400, Data: invalidDir}, nil
+		return &arpc.Response{Status: 400, Data: invalidDir}, nil
 	}
 
 	isDirectBuffer := false
@@ -325,7 +325,7 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 	err := windows.ReadFile(handle.handle, buf, &bytesRead, nil)
 	isEOF := false
 	if err != nil && err != windows.ERROR_HANDLE_EOF {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, handle.path)), nil
+		return nil, err
 	}
 	if err == windows.ERROR_HANDLE_EOF {
 		isEOF = true
@@ -335,9 +335,9 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 		meta := arpc.BufferMetadata{BytesAvailable: int(bytesRead), EOF: isEOF}
 		data, err := meta.MarshalMsg(nil)
 		if err != nil {
-			return s.invalidRequest(req.Method, s.jobId, err), nil
+			return nil, err
 		}
-		return arpc.Response{
+		return &arpc.Response{
 			Status: 200,
 			Data:   data,
 		}, &arpc.DirectBufferWrite{Data: buf[:bytesRead]}
@@ -349,19 +349,19 @@ func (s *VSSFSServer) handleRead(req arpc.Request) (arpc.Response, error) {
 	}
 	data, err := dataStruct.MarshalMsg(nil)
 	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
-	return arpc.Response{
+	return &arpc.Response{
 		Status: 200,
 		Data:   data,
 	}, nil
 }
 
-func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
+func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	var payload ReadAtReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	s.mu.RLock()
@@ -370,16 +370,16 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	if !exists || handle.isClosed {
 		invalidBytes, err := InvalidHandleError.MarshalMsg(nil)
 		if err != nil {
-			return s.invalidRequest(req.Method, s.jobId, err), nil
+			return nil, err
 		}
-		return arpc.Response{Status: 404, Data: invalidBytes}, nil
+		return &arpc.Response{Status: 404, Data: invalidBytes}, nil
 	}
 	if handle.isDir {
 		invalidDir, err := CannotReadDirError.MarshalMsg(nil)
 		if err != nil {
-			return s.invalidRequest(req.Method, s.jobId, err), nil
+			return nil, err
 		}
-		return arpc.Response{Status: 400, Data: invalidDir}, nil
+		return &arpc.Response{Status: 400, Data: invalidDir}, nil
 	}
 
 	isDirectBuffer := false
@@ -396,7 +396,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
 	isEOF := false
 	if err != nil && err != windows.ERROR_HANDLE_EOF {
-		return s.respondError(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 	if err == windows.ERROR_HANDLE_EOF {
 		isEOF = true
@@ -406,9 +406,9 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		meta := arpc.BufferMetadata{BytesAvailable: int(bytesRead), EOF: isEOF}
 		data, err := meta.MarshalMsg(nil)
 		if err != nil {
-			return s.invalidRequest(req.Method, s.jobId, err), nil
+			return nil, err
 		}
-		return arpc.Response{
+		return &arpc.Response{
 			Status: 200,
 			Data:   data,
 		}, &arpc.DirectBufferWrite{Data: buf[:bytesRead]}
@@ -420,19 +420,19 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 	data, err := dataStruct.MarshalMsg(nil)
 	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
-	return arpc.Response{
+	return &arpc.Response{
 		Status: 200,
 		Data:   data,
 	}, nil
 }
 
-func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
+func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 	var payload CloseReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	s.mu.Lock()
@@ -445,9 +445,9 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	if !exists || handle.isClosed {
 		invalidBytes, err := InvalidHandleError.MarshalMsg(nil)
 		if err != nil {
-			return s.invalidRequest(req.Method, s.jobId, err), nil
+			return nil, err
 		}
-		return arpc.Response{Status: 404, Data: invalidBytes}, nil
+		return &arpc.Response{Status: 404, Data: invalidBytes}, nil
 	}
 
 	windows.CloseHandle(handle.handle)
@@ -456,16 +456,16 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	closed := arpc.StringMsg("closed")
 	data, err := closed.MarshalMsg(nil)
 	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
-	return arpc.Response{Status: 200, Data: data}, nil
+	return &arpc.Response{Status: 200, Data: data}, nil
 }
 
-func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
+func (s *VSSFSServer) handleFstat(req arpc.Request) (*arpc.Response, error) {
 	var payload FstatReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
 
 	s.mu.RLock()
@@ -474,22 +474,22 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (arpc.Response, error) {
 	if !exists || handle.isClosed {
 		invalidBytes, err := InvalidHandleError.MarshalMsg(nil)
 		if err != nil {
-			return s.invalidRequest(req.Method, s.jobId, err), nil
+			return nil, err
 		}
-		return arpc.Response{Status: 404, Data: invalidBytes}, nil
+		return &arpc.Response{Status: 404, Data: invalidBytes}, nil
 	}
 
 	var fileInfo windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle.handle, &fileInfo); err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, handle.path)), nil
+		return nil, err
 	}
 
 	info := createFileInfoFromHandleInfo(handle.path, &fileInfo)
 	data, err := info.MarshalMsg(nil)
 	if err != nil {
-		return s.invalidRequest(req.Method, s.jobId, err), nil
+		return nil, err
 	}
-	return arpc.Response{
+	return &arpc.Response{
 		Status: 200,
 		Data:   data,
 	}, nil
