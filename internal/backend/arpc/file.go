@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
@@ -34,14 +33,13 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 		HandleID: f.handleID,
 		Length:   len(p),
 	}
-	reqBytes, err := arpc.MarshalWithPool(req)
+	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
 		return 0, os.ErrInvalid
 	}
-	defer reqBytes.Release()
 
 	// Use the new direct buffer method
-	bytesRead, isEOF, err := f.fs.session.CallMsgWithBuffer(ctx, f.jobId+"/Read", reqBytes.Data, p)
+	bytesRead, isEOF, err := f.fs.session.CallMsgWithBuffer(ctx, f.jobId+"/Read", reqBytes, p)
 	if err != nil {
 		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
 		return 0, err
@@ -78,13 +76,12 @@ func (f *ARPCFile) Close() error {
 	defer cancel()
 
 	req := vssfs.CloseReq{HandleID: f.handleID}
-	reqBytes, err := arpc.MarshalWithPool(req)
+	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
 		return os.ErrInvalid
 	}
-	defer reqBytes.Release()
 
-	_, err = f.fs.session.CallMsg(ctx, f.jobId+"/Close", reqBytes.Data)
+	_, err = f.fs.session.CallMsg(ctx, f.jobId+"/Close", reqBytes)
 	f.isClosed = true
 	if err != nil {
 		syslog.L.Errorf("Write RPC failed (%s): %v", f.name, err)
@@ -111,13 +108,12 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		Offset:   off,
 		Length:   len(p),
 	}
-	reqBytes, err := arpc.MarshalWithPool(req)
+	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
 		return 0, os.ErrInvalid
 	}
-	defer reqBytes.Release()
 
-	bytesRead, isEOF, err := f.fs.session.CallMsgWithBuffer(ctx, f.jobId+"/ReadAt", reqBytes.Data, p)
+	bytesRead, isEOF, err := f.fs.session.CallMsgWithBuffer(ctx, f.jobId+"/ReadAt", reqBytes, p)
 	if err != nil {
 		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
 		return 0, err
@@ -155,13 +151,12 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 		defer cancel()
 
 		req := vssfs.FstatReq{HandleID: f.handleID}
-		reqBytes, err := arpc.MarshalWithPool(req)
+		reqBytes, err := req.MarshalMsg(nil)
 		if err != nil {
 			return 0, os.ErrInvalid
 		}
-		defer reqBytes.Release()
 
-		raw, err := f.fs.session.CallMsg(ctx, f.jobId+"/Fstat", reqBytes.Data)
+		raw, err := f.fs.session.CallMsg(ctx, f.jobId+"/Fstat", reqBytes)
 		if err != nil {
 			syslog.L.Errorf("Fstat RPC failed (%s): %v", f.name, err)
 			return 0, err

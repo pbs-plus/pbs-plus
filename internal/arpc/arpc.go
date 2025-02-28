@@ -56,7 +56,7 @@ func (pm *PooledMsg) Release() {
 }
 
 // Optimized serialization using msgp codegen
-func MarshalWithPool(v msgp.Marshaler) (*PooledMsg, error) {
+func marshalWithPool(v msgp.Marshaler) (*PooledMsg, error) {
 	// Get a buffer from the pool.
 	buf := msgpackBufferPool.Get().([]byte)
 	// MarshalMsg appends to the provided slice.
@@ -219,7 +219,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		// Check if the error is a direct-buffer write signal.
 		if dbw, ok := err.(*DirectBufferWrite); ok {
 			// Marshal and write the metadata first.
-			respBytes, err := MarshalWithPool(resp)
+			respBytes, err := marshalWithPool(resp)
 			if err != nil {
 				writeErrorResponse(stream, http.StatusInternalServerError, err)
 				return
@@ -239,7 +239,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		return
 	}
 
-	respBytes, err := MarshalWithPool(resp)
+	respBytes, err := marshalWithPool(resp)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
@@ -252,7 +252,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 // writeErrorResponse sends an error response over the stream.
 func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	serErr := WrapError(err)
-	errBytes, mErr := MarshalWithPool(serErr)
+	errBytes, mErr := marshalWithPool(serErr)
 	if mErr != nil && syslog.L != nil {
 		syslog.L.Errorf("[writeErrorResponse] %s", mErr.Error())
 	}
@@ -271,7 +271,7 @@ func writeErrorResponse(stream *smux.Stream, status int, err error) {
 		Data:    respData,
 	}
 
-	respBytes, mErr := MarshalWithPool(&resp)
+	respBytes, mErr := marshalWithPool(&resp)
 	if mErr != nil && syslog.L != nil {
 		syslog.L.Errorf("[writeErrorResponse] %s", mErr.Error())
 	}

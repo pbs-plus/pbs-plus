@@ -124,14 +124,13 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 		Flag: flag,
 		Perm: int(perm),
 	}
-	reqBytes, err := arpc.MarshalWithPool(req)
+	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
 		return nil, os.ErrInvalid
 	}
-	defer reqBytes.Release()
 
 	// Use the CPU efficient CallMsgDirect helper.
-	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/OpenFile", reqBytes.Data)
+	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/OpenFile", reqBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -161,14 +160,13 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	defer cancel()
 
 	req := vssfs.StatReq{Path: filename}
-	reqBytes, err := arpc.MarshalWithPool(req)
+	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
 		return nil, os.ErrInvalid
 	}
-	defer reqBytes.Release()
 
 	// Use the new CallMsgDirect helper:
-	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/Stat", reqBytes.Data)
+	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/Stat", reqBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -241,13 +239,12 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 	defer cancel()
 
 	req := vssfs.ReadDirReq{Path: path}
-	reqBytes, err := arpc.MarshalWithPool(req)
+	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
 		return nil, os.ErrInvalid
 	}
-	defer reqBytes.Release()
 
-	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/ReadDir", reqBytes.Data)
+	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/ReadDir", reqBytes)
 	if err != nil {
 		return nil, err
 	}
