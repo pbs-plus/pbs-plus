@@ -42,7 +42,7 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 		rootDir:    root,
 		jobId:      jobId,
 		handles:    make(map[uint64]*FileHandle),
-		fsCache:    NewFSCache(ctx, root, 2),
+		fsCache:    NewFSCache(ctx, root, 8192),
 		ctx:        ctx,
 		ctxCancel:  cancel,
 		bufferPool: NewBufferPool(),
@@ -225,8 +225,6 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	go s.fsCache.invalidatePath(fullPath)
-
 	return &arpc.Response{
 		Status: 200,
 		Data:   data,
@@ -263,8 +261,6 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	go s.fsCache.invalidatePath(fullDirPath)
 
 	return &arpc.Response{
 		Status: 200,

@@ -10,12 +10,6 @@ import (
 
 // Optimized stat with invalidation on first access
 func (fc *FSCache) stat(path string) (*VSSFileInfo, error) {
-	// Check cache first
-	if entry, cached := fc.getStatCache(path); entry != nil && cached {
-		return entry, nil
-	}
-
-	// Not in cache, perform actual stat operation
 	pathPtr, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, mapWinError(err, path)
@@ -31,19 +25,11 @@ func (fc *FSCache) stat(path string) (*VSSFileInfo, error) {
 	name := windows.UTF16ToString(findData.FileName[:])
 	info := createFileInfoFromFindData(name, &findData)
 
-	// Cache the new entry
-	fc.addStatEntry(path, info)
-
 	return info, nil
 }
 
 // Process a directory and cache its contents
 func (fc *FSCache) readDir(dirPath string) (ReadDirEntries, error) {
-	// Check cache first
-	if entry, cached := fc.getDirCache(dirPath); entry != nil && cached {
-		return entry, nil
-	}
-
 	// Read directory
 	searchPath := filepath.Join(dirPath, "*")
 	var findData windows.Win32finddata
@@ -64,7 +50,6 @@ func (fc *FSCache) readDir(dirPath string) (ReadDirEntries, error) {
 				fullPath := filepath.Join(dirPath, name)
 				info := createFileInfoFromFindData(name, &findData)
 
-				fc.addStatEntry(fullPath, info)
 				paths = append(paths, fullPath)
 				toReturn = append(toReturn, info)
 			}
@@ -77,12 +62,6 @@ func (fc *FSCache) readDir(dirPath string) (ReadDirEntries, error) {
 			return nil, mapWinError(err, dirPath)
 		}
 	}
-
-	// Store in directory cache
-	dirEntry := &dirCacheEntry{
-		paths: paths,
-	}
-	fc.dirCache.Store(dirPath, dirEntry)
 
 	return toReturn, nil
 }
