@@ -8,7 +8,6 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 func ARPCHandler(store *store.Store) http.HandlerFunc {
@@ -29,11 +28,15 @@ func ARPCHandler(store *store.Store) http.HandlerFunc {
 
 		router := arpc.NewRouter()
 		router.Handle("echo", func(req arpc.Request) (arpc.Response, error) {
-			var msg string
-			if err := msgpack.Unmarshal(req.Payload, &msg); err != nil {
+			var msg arpc.StringMsg
+			if _, err := msg.UnmarshalMsg(req.Payload); err != nil {
 				return arpc.Response{Status: 400, Message: "invalid payload"}, err
 			}
-			return arpc.Response{Status: 200, Data: msgpack.RawMessage(`"` + msg + `"`)}, nil
+			data, err := msg.MarshalMsg(nil)
+			if err != nil {
+				return arpc.Response{Status: 400, Message: "invalid payload"}, err
+			}
+			return arpc.Response{Status: 200, Data: data}, nil
 		})
 
 		if err := session.Serve(router); err != nil {

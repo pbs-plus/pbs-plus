@@ -3,7 +3,6 @@
 package vssfs
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/vmihailenco/msgpack/v5"
 	"golang.org/x/sys/windows"
 )
 
@@ -66,7 +64,7 @@ func createFileInfoFromFindData(name string, fd *windows.Win32finddata) *VSSFile
 	return &VSSFileInfo{
 		Name:    name,
 		Size:    size,
-		Mode:    mode,
+		Mode:    uint32(mode),
 		ModTime: modTime,
 		IsDir:   isDir,
 	}
@@ -97,7 +95,7 @@ func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformati
 	return &VSSFileInfo{
 		Name:    filepath.Base(path),
 		Size:    size,
-		Mode:    mode,
+		Mode:    uint32(mode),
 		ModTime: modTime,
 		IsDir:   isDir,
 	}
@@ -112,7 +110,7 @@ func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Respons
 	// Wrap error and encode it using our new msgpack encoder.
 	return arpc.Response{
 		Status: 500,
-		Data:   encodeValue(arpc.WrapError(err)),
+		Data:   arpc.WrapErrorBytes(err),
 	}
 }
 
@@ -120,20 +118,9 @@ func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Respo
 	if syslog.L != nil {
 		syslog.L.Errorf("%s (%s): %v", method, drive, err)
 	}
+
 	return arpc.Response{
 		Status: 400,
-		Data:   encodeValue(arpc.WrapError(os.ErrInvalid)),
+		Data:   arpc.WrapErrorBytes(os.ErrInvalid),
 	}
-}
-
-// --- Helper: fastmsgpack decoding for request payloads ---
-
-func encodeValue(v interface{}) msgpack.RawMessage {
-	b, err := msgpack.Marshal(v)
-	if err != nil {
-		b, _ = msgpack.Marshal(map[string]string{
-			"error": fmt.Sprintf("failed to marshal value: %v", err),
-		})
-	}
-	return b
 }

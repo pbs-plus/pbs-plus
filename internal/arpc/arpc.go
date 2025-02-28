@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/vmihailenco/msgpack/v5"
 	"github.com/xtaci/smux"
 )
 
@@ -24,16 +23,6 @@ type DirectBufferWrite struct {
 
 func (d *DirectBufferWrite) Error() string {
 	return "direct buffer write requested"
-}
-
-type BufferMetadataResp struct {
-	Status int             `msgpack:"status"`
-	Data   *BufferMetadata `msgpack:"data"`
-}
-
-type BufferMetadata struct {
-	BytesAvailable int  `msgpack:"bytes_available"`
-	EOF            bool `msgpack:"eof"`
 }
 
 // --------------------------------------------------------
@@ -132,24 +121,6 @@ func writeMsgpackMsg(w io.Writer, msg []byte) error {
 }
 
 // --------------------------------------------------------
-// Data structures for the RPC protocol
-// --------------------------------------------------------
-
-// Request defines the MessagePack‑encoded request format.
-type Request struct {
-	Method  string      `msgpack:"method"`
-	Payload []byte      `msgpack:"payload"`
-	Headers http.Header `msgpack:"headers,omitempty"`
-}
-
-// Response defines the MessagePack‑encoded response format.
-type Response struct {
-	Status  int    `msgpack:"status"`
-	Message string `msgpack:"message,omitempty"`
-	Data    []byte `msgpack:"data,omitempty"`
-}
-
-// --------------------------------------------------------
 // Router and stream handling
 // --------------------------------------------------------
 
@@ -193,7 +164,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 	}
 
 	var req Request
-	if err := msgpack.Unmarshal(dataBytes, &req); err != nil {
+	if _, err := req.UnmarshalMsg(dataBytes); err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
@@ -221,7 +192,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		// Check if the error is a direct-buffer write signal.
 		if dbw, ok := err.(*DirectBufferWrite); ok {
 			// Marshal and write the metadata first.
-			respBytes, err := msgpack.Marshal(resp)
+			respBytes, err := resp.MarshalMsg(nil)
 			if err != nil {
 				writeErrorResponse(stream, http.StatusInternalServerError, err)
 				return
@@ -240,7 +211,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		return
 	}
 
-	respBytes, err := msgpack.Marshal(resp)
+	respBytes, err := resp.MarshalMsg(nil)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
@@ -252,31 +223,13 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 // writeErrorResponse sends an error response over the stream.
 func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	serErr := WrapError(err)
-	errorData := map[string]string{
-		"error_type": serErr.ErrorType,
-		"message":    serErr.Message,
-	}
-	if serErr.Op != "" {
-		errorData["op"] = serErr.Op
-	}
-	if serErr.Path != "" {
-		errorData["path"] = serErr.Path
-	}
-
+	errBytes, _ := serErr.MarshalMsg(nil)
 	resp := Response{
 		Status: status,
-		Data:   mustMarshalMsgpack(errorData),
+		Data:   errBytes,
 	}
-	respBytes, _ := msgpack.Marshal(resp)
+	respBytes, _ := resp.MarshalMsg(nil)
 	_ = writeMsgpackMsg(stream, respBytes)
-}
-
-func mustMarshalMsgpack(v interface{}) []byte {
-	b, err := msgpack.Marshal(v)
-	if err != nil {
-		return []byte("{}")
-	}
-	return b
 }
 
 // --------------------------------------------------------
@@ -362,14 +315,13 @@ func (s *Session) attemptReconnect() error {
 }
 
 // Call initiates a request/response conversation on a new stream.
-func (s *Session) Call(method string, payload interface{}) (*Response, error) {
+func (s *Session) Call(method string, payload []byte) (*Response, error) {
 	return s.CallContext(context.Background(), method, payload)
 }
 
 // CallContext performs an RPC call over a new stream.
 // It applies any context deadlines to the smux stream.
-func (s *Session) CallContext(ctx context.Context, method string,
-	payload interface{}) (*Response, error) {
+func (s *Session) CallContext(ctx context.Context, method string, payload []byte) (*Response, error) {
 
 	// Use the atomic pointer to avoid holding a lock while reading.
 	curSession := s.muxSess.Load().(*smux.Session)
@@ -420,7 +372,7 @@ func (s *Session) CallContext(ctx context.Context, method string,
 	}
 
 	var resp Response
-	if err := msgpack.Unmarshal(respBytes, &resp); err != nil {
+	if _, err := resp.UnmarshalMsg(respBytes); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -428,35 +380,31 @@ func (s *Session) CallContext(ctx context.Context, method string,
 
 // CallMsg performs an RPC call and unmarshals its Data into v on success,
 // or decodes the error from Data if status != http.StatusOK.
-func (s *Session) CallMsg(ctx context.Context, method string,
-	payload interface{}, v interface{}) error {
+func (s *Session) CallMsg(ctx context.Context, method string, payload []byte) ([]byte, error) {
 	resp, err := s.CallContext(ctx, method, payload)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.Status != http.StatusOK {
 		if resp.Data != nil {
 			var serErr SerializableError
-			if err := msgpack.Unmarshal(resp.Data, &serErr); err != nil {
-				return fmt.Errorf("RPC error: %s (status %d)",
-					resp.Message, resp.Status)
+			if _, err := serErr.UnmarshalMsg(resp.Data); err != nil {
+				return nil, fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
 			}
-			return UnwrapError(&serErr)
+			return nil, UnwrapError(&serErr)
 		}
-		return fmt.Errorf("RPC error: %s (status %d)",
-			resp.Message, resp.Status)
+		return nil, fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
 	}
 
 	if resp.Data == nil {
-		return nil
+		return nil, nil
 	}
-	return msgpack.Unmarshal(resp.Data, v)
+	return resp.Data, nil
 }
 
 // CallMsgWithBuffer performs an RPC call for file I/O-style operations in which the server
 // first sends metadata about a binary transfer and then writes the payload directly.
-func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
-	payload interface{}, buffer []byte) (int, bool, error) {
+func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload []byte, buffer []byte) (int, bool, error) {
 	curSession := s.muxSess.Load().(*smux.Session)
 	rc := s.reconnectConfig
 
@@ -499,18 +447,13 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 
 	// Unmarshal the metadata.
 	var resp Response
-	if err := msgpack.Unmarshal(metaBytes, &resp); err != nil {
-		return 0, false, err
-	}
-
-	var meta *BufferMetadata
-	if err := msgpack.Unmarshal(resp.Data, &meta); err != nil {
+	if _, err := resp.UnmarshalMsg(metaBytes); err != nil {
 		return 0, false, err
 	}
 
 	if resp.Status != http.StatusOK {
 		var serErr SerializableError
-		if err := msgpack.Unmarshal(metaBytes, &serErr); err == nil {
+		if _, err := serErr.UnmarshalMsg(metaBytes); err == nil {
 			return 0, false, UnwrapError(&serErr)
 		}
 		return 0, false, fmt.Errorf("RPC error: status %d", resp.Status)
@@ -518,10 +461,12 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string,
 
 	contentLength := 0
 	isEOF := false
-	if meta != nil {
+	var meta BufferMetadata
+	if _, err := meta.UnmarshalMsg(resp.Data); err == nil {
 		contentLength = meta.BytesAvailable
 		isEOF = meta.EOF
 	}
+
 	if contentLength <= 0 {
 		return 0, isEOF, nil
 	}

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,8 +71,11 @@ func TestVSSFSServer(t *testing.T) {
 	// Run tests
 	t.Run("FSstat", func(t *testing.T) {
 		// Fix: Use the exact FSStat struct that matches the server response
-		var result utils.FSStat
-		err = clientSession.CallMsg(ctx, "vss/FSstat", nil, &result)
+		var result FSStat
+		raw, err := clientSession.CallMsg(ctx, "vss/FSstat", nil)
+		assert.NoError(t, err)
+
+		_, err = result.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 		// The test originally expected TotalSize to be > 0, but it might not be
 		// on some systems. We'll just assert it's not an error.
@@ -81,35 +83,35 @@ func TestVSSFSServer(t *testing.T) {
 	})
 
 	t.Run("Stat", func(t *testing.T) {
-		payload := map[string]string{"path": "test1.txt"}
-		var result map[string]interface{}
-		err = clientSession.CallMsg(ctx, "vss/Stat", payload, &result)
+		payload := StatReq{Path: "test1.txt"}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		var result VSSFileInfo
+		raw, err := clientSession.CallMsg(ctx, "vss/Stat", payloadBytes)
+		result.UnmarshalMsg(raw)
 		assert.NoError(t, err)
-		assert.NotNil(t, result["size"])
-		assert.EqualValues(t, 19, result["size"])
+		assert.NotNil(t, result.Size)
+		assert.EqualValues(t, 19, result.Size)
 	})
 
 	t.Run("ReadDir", func(t *testing.T) {
-		payload := map[string]string{"path": "/"}
-		var result struct {
-			Entries []map[string]interface{} `msgpack:"entries"`
-		}
-		err = clientSession.CallMsg(ctx, "vss/ReadDir", payload, &result)
+		payload := ReadDirReq{Path: "/"}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		var result ReadDirEntries
+		raw, err := clientSession.CallMsg(ctx, "vss/ReadDir", payloadBytes)
+		result.UnmarshalMsg(raw)
 		assert.NoError(t, err)
-		assert.GreaterOrEqual(t, len(result.Entries), 3) // Should have at least test1.txt, test2.txt, and subdir
+		assert.GreaterOrEqual(t, len(result), 3) // Should have at least test1.txt, test2.txt, and subdir
 
 		// Verify we can find our test files
 		foundTest1 := false
 		foundSubdir := false
-		for _, entry := range result.Entries {
-			name, ok := entry["name"].(string)
-			if ok {
-				if name == "test1.txt" {
-					foundTest1 = true
-				} else if name == "subdir" {
-					foundSubdir = true
-					assert.True(t, entry["isDir"].(bool), "subdir should be identified as a directory")
-				}
+		for _, entry := range result {
+			name := entry.Name
+			if name == "test1.txt" {
+				foundTest1 = true
+			} else if name == "subdir" {
+				foundSubdir = true
+				assert.True(t, entry.IsDir, "subdir should be identified as a directory")
 			}
 		}
 		assert.True(t, foundTest1, "test1.txt should be found in directory listing")
@@ -118,162 +120,134 @@ func TestVSSFSServer(t *testing.T) {
 
 	t.Run("OpenFile_Read_Close", func(t *testing.T) {
 		// Open file
-		payload := map[string]interface{}{
-			"path": "test1.txt",
-			"flag": 0, // O_RDONLY
-			"perm": 0644,
-		}
-		var openResult struct {
-			HandleID uint64 `msgpack:"handleID"`
-		}
-		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
+		payload := OpenFileReq{Path: "test1.txt", Flag: 0, Perm: 0644}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		var openResult FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		openResult.UnmarshalMsg(raw)
 		assert.NoError(t, err)
-		assert.NotZero(t, openResult.HandleID)
+		assert.NotZero(t, openResult)
 
 		// Read file
-		readPayload := map[string]interface{}{
-			"handleID": openResult.HandleID,
-			"length":   100, // More than enough for our test
-		}
-		var readResult struct {
-			Data []byte `msgpack:"data"`
-			EOF  bool   `msgpack:"eof"`
-		}
-		err = clientSession.CallMsg(ctx, "vss/Read", readPayload, &readResult)
+		readPayload := ReadReq{HandleID: int(openResult), Length: 100}
+		readPayloadBytes, _ := readPayload.MarshalMsg(nil)
+		var readResult DataResponse
+		raw, err = clientSession.CallMsg(ctx, "vss/Read", readPayloadBytes)
+		readResult.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 		assert.Equal(t, "test file 1 content", string(readResult.Data))
 		// Fix: EOF behavior in Windows might be inconsistent, so we'll just check the content
 		// assert.True(t, readResult.EOF)
 
 		// Close file
-		closePayload := map[string]interface{}{
-			"handleID": openResult.HandleID,
-		}
-		resp, err := clientSession.Call("vss/Close", closePayload)
+		closePayload := CloseReq{HandleID: int(openResult)}
+		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
+		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
 		assert.NoError(t, err)
 		assert.Equal(t, 200, resp.Status)
 
 		// Verify we can't use the handle after closing
 		// Fix: Instead of expecting an error, check if we get a specific status code
-		resp, err = clientSession.Call("vss/Read", readPayload)
+		resp, err = clientSession.Call("vss/Read", readPayloadBytes)
 		assert.NoError(t, err)            // The call itself may succeed
 		assert.Equal(t, 404, resp.Status) // But we should get a "not found" status code
 	})
 
 	t.Run("OpenFile_ReadAt_Close", func(t *testing.T) {
 		// Open file
-		payload := map[string]interface{}{
-			"path": "test2.txt",
-			"flag": 0, // O_RDONLY
-			"perm": 0644,
-		}
-		var openResult struct {
-			HandleID uint64 `msgpack:"handleID"`
-		}
-		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
+		payload := OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		var openResult FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		openResult.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 
 		// Read at offset
-		readAtPayload := map[string]interface{}{
-			"handleID": openResult.HandleID,
-			"offset":   10, // Skip "test file " (10 chars)
-			"length":   100,
+		readAtPayload := ReadAtReq{
+			HandleID: int(openResult),
+			Offset:   10,
+			Length:   100,
 		}
-		var readResult struct {
-			Data []byte `msgpack:"data"`
-			EOF  bool   `msgpack:"eof"`
-		}
-		err = clientSession.CallMsg(ctx, "vss/ReadAt", readAtPayload, &readResult)
+		readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
+		var readResult DataResponse
+		raw, err = clientSession.CallMsg(ctx, "vss/ReadAt", readAtPayloadBytes)
 		assert.NoError(t, err)
+		readResult.UnmarshalMsg(raw)
 		assert.Equal(t, "2 content with more data", string(readResult.Data))
 
 		// Close file
-		closePayload := map[string]interface{}{
-			"handleID": openResult.HandleID,
-		}
-		resp, err := clientSession.Call("vss/Close", closePayload)
+		closePayload := CloseReq{HandleID: int(openResult)}
+		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
+		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
 		assert.NoError(t, err)
 		assert.Equal(t, 200, resp.Status)
 	})
 
 	t.Run("Fstat", func(t *testing.T) {
 		// Open file
-		payload := map[string]interface{}{
-			"path": "test1.txt",
-			"flag": 0, // O_RDONLY
-			"perm": 0644,
-		}
-		var openResult struct {
-			HandleID uint64 `msgpack:"handleID"`
-		}
-		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
+		payload := OpenFileReq{Path: "test1.txt", Flag: 0, Perm: 0644}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		var openResult FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		openResult.UnmarshalMsg(raw)
 		assert.NoError(t, err)
+		assert.NotZero(t, openResult)
 
 		// Get file info
-		fstatPayload := map[string]interface{}{
-			"handleID": openResult.HandleID,
-		}
-		var statResult map[string]interface{}
-		err = clientSession.CallMsg(ctx, "vss/Fstat", fstatPayload, &statResult)
+		fstatPayload := FstatReq{HandleID: int(openResult)}
+		fstatPayloadBytes, _ := fstatPayload.MarshalMsg(nil)
+		var statResult VSSFileInfo
+		raw, err = clientSession.CallMsg(ctx, "vss/Fstat", fstatPayloadBytes)
 		assert.NoError(t, err)
-		assert.EqualValues(t, 19, statResult["size"])
+		statResult.UnmarshalMsg(raw)
+		assert.EqualValues(t, 19, statResult.Size)
 
 		// Close file
-		closePayload := map[string]interface{}{
-			"handleID": openResult.HandleID,
-		}
-		resp, err := clientSession.Call("vss/Close", closePayload)
+		closePayload := CloseReq{HandleID: int(openResult)}
+		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
+		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
 		assert.NoError(t, err)
 		assert.Equal(t, 200, resp.Status)
 	})
 
 	t.Run("OpenDirectory", func(t *testing.T) {
 		// Open directory
-		payload := map[string]interface{}{
-			"path": "subdir",
-			"flag": 0, // O_RDONLY
-			"perm": 0644,
-		}
-		var openResult struct {
-			HandleID uint64 `msgpack:"handleID"`
-		}
-		err = clientSession.CallMsg(ctx, "vss/OpenFile", payload, &openResult)
+		payload := OpenFileReq{Path: "subdir", Flag: 0, Perm: 0644}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		var openResult FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		openResult.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 
 		// Try to read from directory (should fail)
-		readPayload := map[string]interface{}{
-			"handleID": openResult.HandleID,
-			"length":   100,
-		}
-		resp, err := clientSession.Call("vss/Read", readPayload)
+		readPayload := ReadReq{HandleID: int(openResult), Length: 100}
+		readPayloadBytes, _ := readPayload.MarshalMsg(nil)
+		resp, err := clientSession.Call("vss/Read", readPayloadBytes)
 		assert.NoError(t, err)
 		assert.Equal(t, 500, resp.Status) // Bad request, can't read from directory
 
 		// Close handle
-		closePayload := map[string]interface{}{
-			"handleID": openResult.HandleID,
-		}
-		resp, err = clientSession.Call("vss/Close", closePayload)
+		closePayload := CloseReq{HandleID: int(openResult)}
+		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
+		resp, err = clientSession.Call("vss/Close", closePayloadBytes)
 		assert.NoError(t, err)
 		assert.Equal(t, 200, resp.Status)
 	})
 
 	t.Run("WriteOperationsNotAllowed", func(t *testing.T) {
 		// Try to open for writing (should fail)
-		payload := map[string]interface{}{
-			"path": "test1.txt",
-			"flag": 1, // O_WRONLY
-			"perm": 0644,
-		}
-		resp, err := clientSession.Call("vss/OpenFile", payload)
+		payload := OpenFileReq{Path: "test1.txt", Flag: 1, Perm: 0644}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		resp, err := clientSession.Call("vss/OpenFile", payloadBytes)
 		assert.NoError(t, err)
 		assert.Equal(t, 403, resp.Status) // Forbidden, write not allowed
 	})
 
 	t.Run("InvalidPath", func(t *testing.T) {
 		// Try to access non-existent file
-		payload := map[string]string{"path": "nonexistent.txt"}
-		resp, err := clientSession.Call("vss/Stat", payload)
+		payload := OpenFileReq{Path: "nonexistent.txt"}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		resp, err := clientSession.Call("vss/Stat", payloadBytes)
 		assert.NoError(t, err)
 		assert.NotEqual(t, 200, resp.Status) // Should not be OK
 	})

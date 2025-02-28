@@ -1,7 +1,5 @@
 package utils
 
-import "time"
-
 type DriveInfo struct {
 	Letter     string `json:"letter"`
 	Type       string `json:"type"`
@@ -15,12 +13,3 @@ type DriveInfo struct {
 	Free       string `json:"free"`
 }
 
-type FSStat struct {
-	TotalSize      int64         `msgpack:"total_size"`
-	FreeSize       int64         `msgpack:"free_size"`
-	AvailableSize  int64         `msgpack:"available_size"`
-	TotalFiles     int           `msgpack:"total_files"`
-	FreeFiles      int           `msgpack:"free_files"`
-	AvailableFiles int           `msgpack:"available_files"`
-	CacheHint      time.Duration `msgpack:"cache_hint"`
-}

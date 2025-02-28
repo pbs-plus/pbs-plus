@@ -28,7 +28,6 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
-	"github.com/vmihailenco/msgpack/v5"
 	"golang.org/x/sys/windows"
 )
 
@@ -304,11 +303,11 @@ func (p *agentService) connectARPC() error {
 
 	router := arpc.NewRouter()
 	router.Handle("ping", func(req arpc.Request) (arpc.Response, error) {
-		b, err := msgpack.Marshal(map[string]string{"version": Version, "hostname": clientId})
+		resp := arpc.MapStringStringMsg{"version": Version, "hostname": clientId}
+		b, err := resp.MarshalMsg(nil)
 		if err != nil {
-			b, _ = msgpack.Marshal(map[string]string{
-				"error": fmt.Sprintf("failed to marshal value: %v", err),
-			})
+			errResp := arpc.MapStringStringMsg{"error": fmt.Sprintf("failed to marshal value: %v", err)}
+			b, _ = errResp.MarshalMsg(nil)
 			return arpc.Response{Status: 500, Data: b}, nil
 		}
 		return arpc.Response{Status: 200, Data: b}, nil

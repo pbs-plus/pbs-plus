@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
@@ -33,8 +34,12 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				targetSplit := strings.Split(target.Name, " - ")
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
-					var respBody map[string]string
-					err := arpcSess.CallMsg(r.Context(), "ping", nil, &respBody)
+					var respBody arpc.MapStringStringMsg
+					raw, err := arpcSess.CallMsg(r.Context(), "ping", nil)
+					if err != nil {
+						continue
+					}
+					_, err = respBody.UnmarshalMsg(raw)
 					if err == nil {
 						all[i].ConnectionStatus = true
 						all[i].AgentVersion = respBody["version"]
@@ -256,11 +261,14 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				targetSplit := strings.Split(target.Name, " - ")
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
-					var respBody map[string]string
-					err := arpcSess.CallMsg(r.Context(), "ping", nil, &respBody)
+					var respBody arpc.MapStringStringMsg
+					raw, err := arpcSess.CallMsg(r.Context(), "ping", nil)
 					if err == nil {
-						target.ConnectionStatus = true
-						target.AgentVersion = respBody["version"]
+						_, err = respBody.UnmarshalMsg(raw)
+						if err == nil {
+							target.ConnectionStatus = true
+							target.AgentVersion = respBody["version"]
+						}
 					}
 				}
 			}

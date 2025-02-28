@@ -28,7 +28,7 @@ func stat(path string) (*VSSFileInfo, error) {
 	return info, nil
 }
 
-func readDir(dir string) ([]*VSSFileInfo, error) {
+func readDir(dir string) (ReadDirEntries, error) {
 	searchPath := filepath.Join(dir, "*")
 	var findData windows.Win32finddata
 	handle, err := FindFirstFileEx(searchPath, &findData)

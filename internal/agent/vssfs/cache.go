@@ -151,7 +151,7 @@ func (fc *FileCache) PopStat(path string) (*VSSFileInfo, bool) {
 
 // PopReaddir pops (retrieves and invalidates) only the directory listing
 // (readdir result) for path. (The stat part, if still available, is preserved.)
-func (fc *FileCache) PopReaddir(path string) ([]*VSSFileInfo, bool) {
+func (fc *FileCache) PopReaddir(path string) (ReadDirEntries, bool) {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 	entry, ok := fc.entries[path]
