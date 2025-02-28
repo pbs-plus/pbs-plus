@@ -118,13 +118,14 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to build request msgpack: %v", err)
 	}
+	defer reqBytes.Release()
 	// Wrap the request using our framing (a 4‑byte length header).
-	if err := writeMsgpackMsg(clientStream, reqBytes); err != nil {
+	if err := writeMsgpMsg(clientStream, reqBytes.Data); err != nil {
 		t.Fatalf("failed to write request: %v", err)
 	}
 
 	// Read and parse the MessagePack response.
-	respBytes, err := readMsgpackMsg(clientStream)
+	respBytes, err := readMsgpMsg(clientStream)
 	if err != nil && err != io.EOF {
 		t.Fatalf("failed to read response: %v", err)
 	}
@@ -400,7 +401,7 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 		defer stream.Close()
 
 		// Read and discard the complete request.
-		if _, err := readMsgpackMsg(stream); err != nil {
+		if _, err := readMsgpMsg(stream); err != nil {
 			t.Errorf("server: error reading request: %v", err)
 			return
 		}
@@ -427,7 +428,7 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 			return
 		}
 		// Write the metadata using MessagePack framing.
-		if err := writeMsgpackMsg(stream, metaBytes); err != nil {
+		if err := writeMsgpMsg(stream, metaBytes); err != nil {
 			t.Errorf("server: error writing metadata: %v", err)
 			return
 		}

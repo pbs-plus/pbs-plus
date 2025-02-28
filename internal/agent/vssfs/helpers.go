@@ -108,9 +108,13 @@ func (s *VSSFSServer) respondError(method, drive string, err error) arpc.Respons
 		syslog.L.Errorf("%s (%s): %v", method, drive, err)
 	}
 	// Wrap error and encode it using our new msgpack encoder.
+	errorWrap := arpc.WrapErrorBytes(err)
+	if errorWrap != nil {
+		defer errorWrap.Release()
+	}
 	return arpc.Response{
 		Status: 500,
-		Data:   arpc.WrapErrorBytes(err),
+		Data:   errorWrap.Data,
 	}
 }
 
@@ -119,8 +123,12 @@ func (s *VSSFSServer) invalidRequest(method, drive string, err error) arpc.Respo
 		syslog.L.Errorf("%s (%s): %v", method, drive, err)
 	}
 
+	errorWrap := arpc.WrapErrorBytes(os.ErrInvalid)
+	if errorWrap != nil {
+		defer errorWrap.Release()
+	}
 	return arpc.Response{
 		Status: 400,
-		Data:   arpc.WrapErrorBytes(os.ErrInvalid),
+		Data:   errorWrap.Data,
 	}
 }
