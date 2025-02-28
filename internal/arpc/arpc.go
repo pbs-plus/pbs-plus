@@ -292,16 +292,18 @@ func writeErrorResponse(stream *smux.Stream, status int, err error) {
 
 // ReconnectConfig holds the parameters for automatic reconnection.
 type ReconnectConfig struct {
-	AutoReconnect  bool
-	DialFunc       func() (net.Conn, error)
-	UpgradeFunc    func(net.Conn) (*Session, error)
-	InitialBackoff time.Duration
-	MaxBackoff     time.Duration
-	ReconnectCtx   context.Context
+	AutoReconnect     bool
+	DialFunc          func() (net.Conn, error)
+	UpgradeFunc       func(net.Conn) (*Session, error)
+	InitialBackoff    time.Duration
+	MaxBackoff        time.Duration
+	MaxRetries        int // Added max retries field
+	ReconnectCtx      context.Context
+	reconnectAttempts int32 // Track current attempts
 }
 
 // Session wraps an underlying smux.Session. In order to avoid lock contention,
-// // we store the current *smux.Session in an atomic.Value.
+// we store the current *smux.Session in an atomic.Value.
 type Session struct {
 	// muxSess holds a *smux.Session.
 	muxSess atomic.Value
@@ -309,6 +311,9 @@ type Session struct {
 	// (Reconnect configuration is set rarely.)
 	reconnectConfig *ReconnectConfig
 	reconnectMu     sync.Mutex
+
+	// Add a flag to track if reconnection is in progress
+	reconnecting int32
 }
 
 // NewServerSession creates a new Session for a server connection.
@@ -335,12 +340,41 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 
 // EnableAutoReconnect sets up the reconnection parameters.
 func (s *Session) EnableAutoReconnect(rc *ReconnectConfig) {
+	// Set default values if not provided
+	if rc.MaxRetries <= 0 {
+		rc.MaxRetries = 10 // Default to 10 max retries
+	}
+	if rc.InitialBackoff <= 0 {
+		rc.InitialBackoff = 100 * time.Millisecond
+	}
+	if rc.MaxBackoff <= 0 {
+		rc.MaxBackoff = 30 * time.Second
+	}
 	s.reconnectConfig = rc
 }
 
 // attemptReconnect tries to reconnect and update the underlying session.
 // This method uses its own mutex so that only one reconnect is attempted at a time.
 func (s *Session) attemptReconnect() error {
+	// Use CAS to ensure only one goroutine attempts reconnection at a time
+	if !atomic.CompareAndSwapInt32(&s.reconnecting, 0, 1) {
+		// Another goroutine is already trying to reconnect
+		// Wait for it to finish and check if we have a valid session now
+		for atomic.LoadInt32(&s.reconnecting) == 1 {
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		// Check if reconnection was successful
+		curSess := s.muxSess.Load().(*smux.Session)
+		if curSess != nil && !curSess.IsClosed() {
+			return nil
+		}
+		return errors.New("reconnection already attempted and failed")
+	}
+
+	// Make sure to reset the reconnecting flag when done
+	defer atomic.StoreInt32(&s.reconnecting, 0)
+
 	s.reconnectMu.Lock()
 	defer s.reconnectMu.Unlock()
 
@@ -363,6 +397,10 @@ func (s *Session) attemptReconnect() error {
 	if err != nil {
 		return err
 	}
+
+	// Reset the attempt counter on success
+	atomic.StoreInt32(&s.reconnectConfig.reconnectAttempts, 0)
+
 	newSess.reconnectConfig = s.reconnectConfig
 	s.muxSess.Store(newSess.muxSess.Load())
 	return nil

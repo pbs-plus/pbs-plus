@@ -71,7 +71,7 @@ func TestVSSFSServer(t *testing.T) {
 	// Run tests
 	t.Run("FSstat", func(t *testing.T) {
 		// Fix: Use the exact FSStat struct that matches the server response
-		var result FSStat
+		var result StatFS
 		raw, err := clientSession.CallMsg(ctx, "vss/FSstat", nil)
 		assert.NoError(t, err)
 
@@ -116,41 +116,6 @@ func TestVSSFSServer(t *testing.T) {
 		}
 		assert.True(t, foundTest1, "test1.txt should be found in directory listing")
 		assert.True(t, foundSubdir, "subdir should be found in directory listing")
-	})
-
-	t.Run("OpenFile_Read_Close", func(t *testing.T) {
-		// Open file
-		payload := OpenFileReq{Path: "test1.txt", Flag: 0, Perm: 0644}
-		payloadBytes, _ := payload.MarshalMsg(nil)
-		var openResult FileHandleId
-		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
-		openResult.UnmarshalMsg(raw)
-		assert.NoError(t, err)
-		assert.NotZero(t, openResult)
-
-		// Read file
-		readPayload := ReadReq{HandleID: int(openResult), Length: 100}
-		readPayloadBytes, _ := readPayload.MarshalMsg(nil)
-		var readResult DataResponse
-		raw, err = clientSession.CallMsg(ctx, "vss/Read", readPayloadBytes)
-		readResult.UnmarshalMsg(raw)
-		assert.NoError(t, err)
-		assert.Equal(t, "test file 1 content", string(readResult.Data))
-		// Fix: EOF behavior in Windows might be inconsistent, so we'll just check the content
-		// assert.True(t, readResult.EOF)
-
-		// Close file
-		closePayload := CloseReq{HandleID: int(openResult)}
-		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
-		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
-		assert.NoError(t, err)
-		assert.Equal(t, 200, resp.Status)
-
-		// Verify we can't use the handle after closing
-		// Fix: Instead of expecting an error, check if we get a specific status code
-		resp, err = clientSession.Call("vss/Read", readPayloadBytes)
-		assert.NoError(t, err)            // The call itself may succeed
-		assert.Equal(t, 404, resp.Status) // But we should get a "not found" status code
 	})
 
 	t.Run("OpenFile_ReadAt_Close", func(t *testing.T) {
@@ -220,9 +185,9 @@ func TestVSSFSServer(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Try to read from directory (should fail)
-		readPayload := ReadReq{HandleID: int(openResult), Length: 100}
+		readPayload := ReadAtReq{HandleID: int(openResult), Length: 100}
 		readPayloadBytes, _ := readPayload.MarshalMsg(nil)
-		resp, err := clientSession.Call("vss/Read", readPayloadBytes)
+		resp, err := clientSession.Call("vss/ReadAt", readPayloadBytes)
 		assert.NoError(t, err)
 		assert.Equal(t, 500, resp.Status) // Bad request, can't read from directory
 

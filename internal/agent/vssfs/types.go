@@ -60,12 +60,12 @@ type DataResponse struct {
 	EOF  bool   `msg:"eof"`
 }
 
-type FSStat struct {
-	TotalSize      int64         `msg:"total_size"`
-	FreeSize       int64         `msg:"free_size"`
-	AvailableSize  int64         `msg:"available_size"`
-	TotalFiles     int           `msg:"total_files"`
-	FreeFiles      int           `msg:"free_files"`
-	AvailableFiles int           `msg:"available_files"`
-	CacheHint      time.Duration `msg:"cache_hint"`
+type StatFS struct {
+	Bsize   uint64 // Block size
+	Blocks  uint64 // Total blocks
+	Bfree   uint64 // Free blocks
+	Bavail  uint64 // Available blocks
+	Files   uint64 // Total files/inodes
+	Ffree   uint64 // Free files/inodes
+	NameLen uint64 // Maximum name length
 }
