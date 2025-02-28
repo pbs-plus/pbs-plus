@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
@@ -28,7 +29,7 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	req := ReadRequest{
+	req := vssfs.ReadReq{
 		HandleID: f.handleID,
 		Length:   len(p),
 	}
@@ -75,7 +76,7 @@ func (f *ARPCFile) Close() error {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	req := CloseRequest{HandleID: f.handleID}
+	req := vssfs.CloseReq{HandleID: f.handleID}
 	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
 		return os.ErrInvalid
@@ -103,7 +104,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	req := ReadRequest{
+	req := vssfs.ReadAtReq{
 		HandleID: f.handleID,
 		Offset:   off,
 		Length:   len(p),
@@ -142,7 +143,7 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		f.offset += offset
 	case io.SeekEnd:
-		var fi FileInfoResponse
+		var fi vssfs.VSSFileInfo
 		if f.fs.session == nil {
 			syslog.L.Error("RPC failed: aRPC session is nil")
 			return 0, os.ErrInvalid
@@ -151,7 +152,7 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 		ctx, cancel := TimeoutCtx()
 		defer cancel()
 
-		req := SeekRequest{HandleID: f.handleID}
+		req := vssfs.FstatReq{HandleID: f.handleID}
 		reqBytes, err := req.MarshalMsg(nil)
 		if err != nil {
 			return 0, os.ErrInvalid
