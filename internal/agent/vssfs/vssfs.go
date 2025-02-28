@@ -54,7 +54,6 @@ func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
 	r.Handle(s.jobId+"/OpenFile", s.handleOpenFile)
 	r.Handle(s.jobId+"/Stat", s.handleStat)
 	r.Handle(s.jobId+"/ReadDir", s.handleReadDir)
-	r.Handle(s.jobId+"/Read", s.handleRead)
 	r.Handle(s.jobId+"/ReadAt", s.handleReadAt)
 	r.Handle(s.jobId+"/Close", s.handleClose)
 	r.Handle(s.jobId+"/Fstat", s.handleFstat)
@@ -70,7 +69,6 @@ func (s *VSSFSServer) Close() {
 		r.CloseHandle(s.jobId + "/OpenFile")
 		r.CloseHandle(s.jobId + "/Stat")
 		r.CloseHandle(s.jobId + "/ReadDir")
-		r.CloseHandle(s.jobId + "/Read")
 		r.CloseHandle(s.jobId + "/ReadAt")
 		r.CloseHandle(s.jobId + "/Close")
 		r.CloseHandle(s.jobId + "/Fstat")
@@ -270,73 +268,6 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 	return &arpc.Response{
 		Status: 200,
 		Data:   entryBytes,
-	}, nil
-}
-
-func (s *VSSFSServer) handleRead(req arpc.Request) (*arpc.Response, error) {
-	var payload ReadReq
-	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return nil, err
-	}
-
-	s.mu.RLock()
-	handle, exists := s.handles[uint64(payload.HandleID)]
-	s.mu.RUnlock()
-	if !exists || handle.isClosed {
-		invalidBytes, err := InvalidHandleError.MarshalMsg(nil)
-		if err != nil {
-			return nil, err
-		}
-		return &arpc.Response{Status: 404, Data: invalidBytes}, nil
-	}
-	if handle.isDir {
-		invalidDir, err := CannotReadDirError.MarshalMsg(nil)
-		if err != nil {
-			return nil, err
-		}
-		return &arpc.Response{Status: 400, Data: invalidDir}, nil
-	}
-
-	isDirectBuffer := false
-	if req.Headers != nil && req.Headers["X-Direct-Buffer"] == "true" {
-		isDirectBuffer = true
-	}
-
-	buf := make([]byte, payload.Length)
-	var bytesRead uint32
-	err := windows.ReadFile(handle.handle, buf, &bytesRead, nil)
-	isEOF := false
-	if err != nil && err != windows.ERROR_HANDLE_EOF {
-		return nil, err
-	}
-	if err == windows.ERROR_HANDLE_EOF {
-		isEOF = true
-	}
-
-	if isDirectBuffer {
-		meta := arpc.BufferMetadata{BytesAvailable: int(bytesRead), EOF: isEOF}
-		data, err := meta.MarshalMsg(nil)
-		if err != nil {
-			return nil, err
-		}
-		return &arpc.Response{
-			Status: 200,
-			Data:   data,
-		}, &arpc.DirectBufferWrite{Data: buf[:bytesRead]}
-	}
-
-	dataStruct := DataResponse{
-		Data: buf[:bytesRead],
-		EOF:  isEOF,
-	}
-	data, err := dataStruct.MarshalMsg(nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return &arpc.Response{
-		Status: 200,
-		Data:   data,
 	}, nil
 }
 
