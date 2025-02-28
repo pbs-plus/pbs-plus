@@ -297,6 +297,9 @@ type Session struct {
 
 // NewServerSession creates a new Session for a server connection.
 func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
+	if config == nil {
+		config = &smux.Config{}
+	}
 	config.Version = 2
 	config.KeepAliveInterval = 30 * time.Second
 	config.KeepAliveTimeout = 90 * time.Second
@@ -315,6 +318,9 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 
 // NewClientSession creates a new Session for a client connection.
 func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
+	if config == nil {
+		config = &smux.Config{}
+	}
 	config.Version = 2
 	config.KeepAliveInterval = 30 * time.Second
 	config.KeepAliveTimeout = 90 * time.Second
