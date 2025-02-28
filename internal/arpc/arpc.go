@@ -85,7 +85,9 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 
 // defaultSmuxConfig returns a default smux configuration
 func defaultSmuxConfig() *smux.Config {
-	return smux.DefaultConfig()
+	defaults := smux.DefaultConfig()
+	defaults.Version = 2
+	return defaults
 }
 
 // If a stream accept fails and auto‑reconnect is enabled, it attempts to reconnect.
