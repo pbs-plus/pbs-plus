@@ -116,7 +116,12 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	}
 
 	// Build and send a request using our MessagePack helper.
-	reqBytes, err := buildRequestMsgpack("echo", payloadBytes, nil)
+	req := Request{
+		Method:  "echo",
+		Payload: payloadBytes,
+	}
+
+	reqBytes, err := marshalWithPool(&req)
 	if err != nil {
 		t.Fatalf("failed to build request msgpack: %v", err)
 	}
@@ -347,7 +352,8 @@ func TestAutoReconnect(t *testing.T) {
 	clientSession.EnableAutoReconnect(rc)
 
 	// Simulate network failure by closing the underlying session.
-	_ = clientSession.Close()
+	curMux := clientSession.muxSess.Load().(*smux.Session)
+	curMux.Close()
 
 	// Now call "ping" which should trigger auto‑reconnect.
 	resp, err := clientSession.Call("ping", nil)

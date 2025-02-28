@@ -6,13 +6,11 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -275,31 +273,10 @@ func (p *agentService) connectARPC() error {
 	headers.Add("X-PBS-Plus-Version", Version)
 	syslog.L.Infof("Setting connection headers: %s, %s", clientId, Version)
 
-	dialFunc := func() (net.Conn, error) {
-		syslog.L.Infof("Dialing aRPC endpoint: %s", uri.Host)
-		return tls.Dial("tcp", uri.Host, tlsConfig)
-	}
-
-	upgradeFunc := func(conn net.Conn) (*arpc.Session, error) {
-		syslog.L.Infof("Upgrading from HTTP to aRPC: %s", uri.Host)
-		return arpc.UpgradeHTTPClient(conn, "/plus/arpc", uri.Host, headers, nil)
-	}
-
-	// Upgrade the HTTP connection (perform the handshake).
-	session, err := arpc.DialWithBackoff(p.ctx, dialFunc, upgradeFunc, 100*time.Millisecond, 5*time.Second)
+	session, err := arpc.ConnectToServer(p.ctx, uri.Host, headers, tlsConfig)
 	if err != nil {
 		log.Fatalf("failed to connect: %v", err)
 	}
-
-	rc := &arpc.ReconnectConfig{
-		AutoReconnect:  true,
-		DialFunc:       dialFunc,
-		UpgradeFunc:    upgradeFunc,
-		InitialBackoff: 100 * time.Millisecond,
-		MaxBackoff:     5 * time.Second,
-		ReconnectCtx:   p.ctx,
-	}
-	session.EnableAutoReconnect(rc)
 
 	router := arpc.NewRouter()
 	router.Handle("ping", func(req arpc.Request) (*arpc.Response, error) {

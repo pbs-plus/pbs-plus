@@ -1,14 +1,80 @@
 package arpc
 
-// buildRequestMsgpack builds a MessagePack‑encoded RPC request.
-// It sets the method name, marshals the payload (using msgpack)
-// and any extra headers provided.
-func buildRequestMsgpack(method string, payload []byte, extraHeaders map[string]string) (*PooledMsg, error) {
-	req := Request{
-		Method:  method,
-		Payload: payload,
-		Headers: extraHeaders,
+import (
+	"bufio"
+	"fmt"
+	"net"
+	"net/http"
+	"strings"
+
+	"github.com/xtaci/smux"
+)
+
+// HijackUpgradeHTTP helps a server upgrade an HTTP connection.
+func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, config *smux.Config) (*Session, error) {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		return nil, fmt.Errorf("response writer does not support hijacking")
 	}
 
-	return marshalWithPool(&req)
+	conn, rw, err := hijacker.Hijack()
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\n\r\n")
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err = rw.Flush(); err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	return NewServerSession(conn, config)
+}
+
+// UpgradeHTTPClient helps a client upgrade an HTTP connection.
+func UpgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Header, config *smux.Config) (*Session, error) {
+	reqLines := []string{
+		fmt.Sprintf("GET %s HTTP/1.1", requestPath),
+		fmt.Sprintf("Host: %s", host),
+	}
+	if headers != nil {
+		for key, values := range headers {
+			for _, value := range values {
+				reqLines = append(reqLines, fmt.Sprintf("%s: %s", key, value))
+			}
+		}
+	}
+	reqLines = append(reqLines,
+		"Upgrade: tcp",
+		"Connection: Upgrade",
+		"", "",
+	)
+	reqStr := strings.Join(reqLines, "\r\n")
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		return nil, err
+	}
+
+	reader := bufio.NewReader(conn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(statusLine, "101") {
+		return nil, fmt.Errorf("expected status 101, got: %s", statusLine)
+	}
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(line) == "" {
+			break
+		}
+	}
+	return NewClientSession(conn, config)
 }

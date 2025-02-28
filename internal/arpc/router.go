@@ -1,0 +1,96 @@
+package arpc
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"sync"
+
+	"github.com/xtaci/smux"
+)
+
+// HandlerFunc handles an RPC Request and returns a Response.
+type HandlerFunc func(req Request) (*Response, error)
+
+// Router holds a map from method names to handler functions.
+type Router struct {
+	handlers   map[string]HandlerFunc
+	handlersMu sync.RWMutex
+}
+
+// NewRouter creates a new Router instance.
+func NewRouter() *Router {
+	return &Router{handlers: make(map[string]HandlerFunc)}
+}
+
+// Handle registers a handler for a given method name.
+func (r *Router) Handle(method string, handler HandlerFunc) {
+	r.handlersMu.Lock()
+	defer r.handlersMu.Unlock()
+	r.handlers[method] = handler
+}
+
+// CloseHandle removes a handler.
+func (r *Router) CloseHandle(method string) {
+	r.handlersMu.Lock()
+	defer r.handlersMu.Unlock()
+	delete(r.handlers, method)
+}
+
+// ServeStream reads a single RPC request from the stream, routes it to the correct handler,
+// and writes back the Response. In case of errors an error response is sent.
+func (r *Router) ServeStream(stream *smux.Stream) {
+	defer stream.Close()
+
+	pm, err := readMsgpMsgPooled(stream)
+	if err != nil {
+		writeErrorResponse(stream, http.StatusBadRequest, err)
+		return
+	}
+	defer pm.Release()
+
+	var req Request
+	if _, err := req.UnmarshalMsg(pm.Data); err != nil {
+		writeErrorResponse(stream, http.StatusBadRequest, err)
+		return
+	}
+
+	if req.Method == "" {
+		writeErrorResponse(stream, http.StatusBadRequest,
+			errors.New("missing method field"))
+		return
+	}
+
+	r.handlersMu.RLock()
+	handler, ok := r.handlers[req.Method]
+	r.handlersMu.RUnlock()
+	if !ok {
+		writeErrorResponse(
+			stream,
+			http.StatusNotFound,
+			fmt.Errorf("method not found: %s", req.Method),
+		)
+		return
+	}
+
+	resp, err := handler(req)
+	if err != nil {
+		writeErrorResponse(stream, http.StatusInternalServerError, err)
+		return
+	}
+
+	respBytes, err := marshalWithPool(resp)
+	if err != nil {
+		writeErrorResponse(stream, http.StatusInternalServerError, err)
+		return
+	}
+	defer respBytes.Release()
+
+	_ = writeMsgpMsg(stream, respBytes.Data)
+
+	// Handle raw binary streaming if requested (status 213)
+	if resp.Status == 213 && resp.RawStream != nil {
+		// Call the raw stream handler
+		resp.RawStream(stream)
+	}
+}
