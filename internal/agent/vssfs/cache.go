@@ -69,7 +69,7 @@ func (fc *FSCache) getDirCache(dir string) (ReadDirEntries, bool) {
 // Build cache in background with parallel workers
 func (fc *FSCache) buildBackground(options BuildOptions) {
 	if options.NumWorkers <= 0 {
-		options.NumWorkers = 4 // Default to 4 workers
+		options.NumWorkers = 2
 	}
 
 	// Create work queues

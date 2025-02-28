@@ -2,6 +2,8 @@
 
 package arpc
 
+import "github.com/xtaci/smux"
+
 type BufferMetadata struct {
 	BytesAvailable int  `msg:"bytes_available"`
 	EOF            bool `msg:"eof"`
@@ -16,9 +18,10 @@ type Request struct {
 
 // Response defines the MessagePack‑encoded response format.
 type Response struct {
-	Status  int    `msg:"status"`
-	Message string `msg:"message,omitempty"`
-	Data    []byte `msg:"data,allownil,omitempty"`
+	Status    int                `msg:"status"`
+	Message   string             `msg:"message,omitempty"`
+	Data      []byte             `msg:"data,allownil,omitempty"`
+	RawStream func(*smux.Stream) `msg:"-"`
 }
 
 type SerializableError struct {

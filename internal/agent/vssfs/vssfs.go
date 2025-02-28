@@ -10,6 +10,7 @@ import (
 
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
 )
 
@@ -32,21 +33,21 @@ type VSSFSServer struct {
 	mu         sync.RWMutex
 	arpcRouter *arpc.Router
 	fsCache    *FSCache
+	bufferPool *BufferPool
 }
-
-const InvalidHandleError = arpc.StringMsg("invalid handle")
-const CannotReadDirError = arpc.StringMsg("cannot read from directory")
 
 func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &VSSFSServer{
-		rootDir:   root,
-		jobId:     jobId,
-		handles:   make(map[uint64]*FileHandle),
-		fsCache:   NewFSCache(ctx, root, 2),
-		ctx:       ctx,
-		ctxCancel: cancel,
+		rootDir:    root,
+		jobId:      jobId,
+		handles:    make(map[uint64]*FileHandle),
+		fsCache:    NewFSCache(ctx, root, 2),
+		ctx:        ctx,
+		ctxCancel:  cancel,
+		bufferPool: NewBufferPool(),
 	}
+
 	return s
 }
 
@@ -277,70 +278,56 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
+	// Fast path for handle lookup with read lock
 	s.mu.RLock()
 	handle, exists := s.handles[uint64(payload.HandleID)]
 	s.mu.RUnlock()
+
 	if !exists || handle.isClosed {
-		invalidBytes, err := InvalidHandleError.MarshalMsg(nil)
-		if err != nil {
-			return nil, err
-		}
-		return &arpc.Response{Status: 404, Data: invalidBytes}, nil
+		return nil, os.ErrNotExist
 	}
 	if handle.isDir {
-		invalidDir, err := CannotReadDirError.MarshalMsg(nil)
-		if err != nil {
-			return nil, err
-		}
-		return &arpc.Response{Status: 400, Data: invalidDir}, nil
+		return nil, os.ErrNotExist
 	}
 
-	isDirectBuffer := false
-	if req.Headers != nil && req.Headers["X-Direct-Buffer"] == "true" {
-		isDirectBuffer = true
+	isDirectBuffer := req.Headers != nil && req.Headers["X-Direct-Buffer"] == "true"
+	if !isDirectBuffer {
+		return nil, os.ErrInvalid
 	}
 
-	buf := make([]byte, payload.Length)
+	buf := s.bufferPool.Get(payload.Length)
 	var bytesRead uint32
 	var overlapped windows.Overlapped
 	overlapped.Offset = uint32(payload.Offset & 0xFFFFFFFF)
 	overlapped.OffsetHigh = uint32(payload.Offset >> 32)
 
+	// Perform the actual file read
 	err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
-	isEOF := false
-	if err != nil && err != windows.ERROR_HANDLE_EOF {
+	isEOF := err == windows.ERROR_HANDLE_EOF
+	if err != nil && !isEOF {
 		return nil, err
 	}
-	if err == windows.ERROR_HANDLE_EOF {
-		isEOF = true
-	}
 
-	if isDirectBuffer {
-		meta := arpc.BufferMetadata{BytesAvailable: int(bytesRead), EOF: isEOF}
-		data, err := meta.MarshalMsg(nil)
-		if err != nil {
-			return nil, err
-		}
-		return &arpc.Response{
-			Status: 200,
-			Data:   data,
-		}, &arpc.DirectBufferWrite{Data: buf[:bytesRead]}
-	}
-
-	dataStruct := DataResponse{
-		Data: buf[:bytesRead],
-		EOF:  isEOF,
-	}
-	data, err := dataStruct.MarshalMsg(nil)
+	meta := arpc.BufferMetadata{BytesAvailable: int(bytesRead), EOF: isEOF}
+	data, err := meta.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
 	}
 
-	go s.fsCache.invalidatePath(handle.path)
+	streamRaw := func(stream *smux.Stream) {
+		defer func() {
+			s.bufferPool.Put(buf)
+		}()
+
+		if _, err := stream.Write(buf[:bytesRead]); err != nil {
+			return
+		}
+	}
 
 	return &arpc.Response{
-		Status: 200,
-		Data:   data,
+		Status:    213,
+		Data:      data,
+		RawStream: streamRaw,
 	}, nil
 }
 
@@ -358,11 +345,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 	s.mu.Unlock()
 
 	if !exists || handle.isClosed {
-		invalidBytes, err := InvalidHandleError.MarshalMsg(nil)
-		if err != nil {
-			return nil, err
-		}
-		return &arpc.Response{Status: 404, Data: invalidBytes}, nil
+		return nil, os.ErrNotExist
 	}
 
 	windows.CloseHandle(handle.handle)
@@ -387,11 +370,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (*arpc.Response, error) {
 	handle, exists := s.handles[uint64(payload.HandleID)]
 	s.mu.RUnlock()
 	if !exists || handle.isClosed {
-		invalidBytes, err := InvalidHandleError.MarshalMsg(nil)
-		if err != nil {
-			return nil, err
-		}
-		return &arpc.Response{Status: 404, Data: invalidBytes}, nil
+		return nil, os.ErrNotExist
 	}
 
 	var fileInfo windows.ByHandleFileInformation
