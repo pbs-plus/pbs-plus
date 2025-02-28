@@ -17,7 +17,7 @@ import (
 )
 
 func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
-	return &BillyNode{
+	return &Node{
 		fs: fs,
 	}
 }
@@ -26,7 +26,7 @@ func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
 func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, error) {
 	root := newRoot(afs)
 
-	timeout := time.Second
+	timeout := time.Hour * 24 * 365
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
@@ -41,9 +41,9 @@ func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, 
 				"allow_other",
 			},
 		},
-		// Use sensible cache timeouts
-		EntryTimeout: &timeout,
-		AttrTimeout:  &timeout,
+		EntryTimeout:    &timeout,
+		AttrTimeout:     &timeout,
+		NegativeTimeout: &timeout,
 	}
 
 	server, err := fs.Mount(mountpoint, root, options)
@@ -53,40 +53,34 @@ func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, 
 	return server, nil
 }
 
-// BillyNode represents a file or directory in the filesystem
-type BillyNode struct {
+// Node represents a file or directory in the filesystem
+type Node struct {
 	fs.Inode
 	fs   *arpcfs.ARPCFS
 	path string
 }
 
-var _ = (fs.NodeGetattrer)((*BillyNode)(nil))
-var _ = (fs.NodeLookuper)((*BillyNode)(nil))
-var _ = (fs.NodeReaddirer)((*BillyNode)(nil))
-var _ = (fs.NodeOpener)((*BillyNode)(nil))
-var _ = (fs.NodeReadlinker)((*BillyNode)(nil))
-var _ = (fs.NodeStatfser)((*BillyNode)(nil))
-var _ = (fs.NodeAccesser)((*BillyNode)(nil))
-var _ = (fs.NodeOpendirer)((*BillyNode)(nil))
-var _ = (fs.NodeReleaser)((*BillyNode)(nil))
-var _ = (fs.NodeStatxer)((*BillyNode)(nil))
+var _ = (fs.NodeGetattrer)((*Node)(nil))
+var _ = (fs.NodeLookuper)((*Node)(nil))
+var _ = (fs.NodeReaddirer)((*Node)(nil))
+var _ = (fs.NodeOpener)((*Node)(nil))
+var _ = (fs.NodeReadlinker)((*Node)(nil))
+var _ = (fs.NodeStatfser)((*Node)(nil))
+var _ = (fs.NodeAccesser)((*Node)(nil))
+var _ = (fs.NodeOpendirer)((*Node)(nil))
+var _ = (fs.NodeReleaser)((*Node)(nil))
+var _ = (fs.NodeStatxer)((*Node)(nil))
 
-func (n *BillyNode) Access(ctx context.Context, mask uint32) syscall.Errno {
+func (n *Node) Access(ctx context.Context, mask uint32) syscall.Errno {
 	// For read-only filesystem, deny write access (bit 1)
 	if mask&2 != 0 { // 2 = write bit (traditional W_OK)
 		return syscall.EROFS
 	}
 
-	// Check if the file exists (that's sufficient for read-only fs)
-	_, err := n.fs.Stat(n.path)
-	if err != nil {
-		return fs.ToErrno(err)
-	}
-
 	return 0
 }
 
-func (n *BillyNode) Opendir(ctx context.Context) syscall.Errno {
+func (n *Node) Opendir(ctx context.Context) syscall.Errno {
 	if !n.IsDir() {
 		return syscall.ENOTDIR
 	}
@@ -94,7 +88,7 @@ func (n *BillyNode) Opendir(ctx context.Context) syscall.Errno {
 	return 0
 }
 
-func (n *BillyNode) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
+func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 	if fh, ok := f.(fs.FileReleaser); ok {
 		return fh.Release(ctx)
 	}
@@ -102,7 +96,7 @@ func (n *BillyNode) Release(ctx context.Context, f fs.FileHandle) syscall.Errno 
 	return 0
 }
 
-func (n *BillyNode) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask uint32, out *fuse.StatxOut) syscall.Errno {
+func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask uint32, out *fuse.StatxOut) syscall.Errno {
 	// Get file stats the regular way, then populate StatxOut
 	var attrOut fuse.AttrOut
 	errno := n.Getattr(ctx, f, &attrOut)
@@ -137,7 +131,7 @@ func (n *BillyNode) Statx(ctx context.Context, f fs.FileHandle, flags uint32, ma
 }
 
 // Getattr implements NodeGetattrer
-func (n *BillyNode) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	fi, err := n.fs.Stat(n.path)
 	if err != nil {
 		return fs.ToErrno(err)
@@ -161,14 +155,14 @@ func (n *BillyNode) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.Att
 }
 
 // Lookup implements NodeLookuper
-func (n *BillyNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	childPath := filepath.Join(n.path, name)
 	fi, err := n.fs.Stat(childPath)
 	if err != nil {
 		return nil, fs.ToErrno(err)
 	}
 
-	childNode := &BillyNode{
+	childNode := &Node{
 		fs:   n.fs,
 		path: childPath,
 	}
@@ -197,7 +191,7 @@ func (n *BillyNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut)
 }
 
 // Readdir implements NodeReaddirer
-func (n *BillyNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(n.path)
 	if err != nil {
 		return nil, fs.ToErrno(err)
@@ -224,20 +218,20 @@ func (n *BillyNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 }
 
 // Open implements NodeOpener
-func (n *BillyNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	file, err := n.fs.OpenFile(n.path, int(flags), 0)
 	if err != nil {
 		return nil, 0, fs.ToErrno(err)
 	}
 
-	return &BillyFileHandle{
+	return &FileHandle{
 		fs:   n.fs,
 		file: file,
 	}, 0, 0
 }
 
 // Readlink implements NodeReadlinker
-func (n *BillyNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+func (n *Node) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 	target, err := n.fs.Readlink(n.path)
 	if err != nil {
 		return nil, fs.ToErrno(err)
@@ -245,7 +239,7 @@ func (n *BillyNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 	return []byte(target), 0
 }
 
-func (n *BillyNode) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
+func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 	stat, err := n.fs.StatFS()
 	if err != nil {
 		return fs.ToErrno(err)
@@ -263,17 +257,17 @@ func (n *BillyNode) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Err
 	return 0
 }
 
-// BillyFileHandle handles file operations
-type BillyFileHandle struct {
+// FileHandle handles file operations
+type FileHandle struct {
 	fs   *arpcfs.ARPCFS
 	file billy.File
 }
 
-var _ = (fs.FileReader)((*BillyFileHandle)(nil))
-var _ = (fs.FileReleaser)((*BillyFileHandle)(nil))
+var _ = (fs.FileReader)((*FileHandle)(nil))
+var _ = (fs.FileReleaser)((*FileHandle)(nil))
 
 // Read implements FileReader
-func (fh *BillyFileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
+func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
 	n, err := fh.file.ReadAt(dest, offset)
 	if err != nil && err != io.EOF {
 		return nil, fs.ToErrno(err)
@@ -283,7 +277,7 @@ func (fh *BillyFileHandle) Read(ctx context.Context, dest []byte, offset int64) 
 }
 
 // Release implements FileReleaser
-func (fh *BillyFileHandle) Release(ctx context.Context) syscall.Errno {
+func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
 	err := fh.file.Close()
 	return fs.ToErrno(err)
 }

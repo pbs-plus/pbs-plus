@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,7 +56,7 @@ func (pm *PooledMsg) Release() {
 }
 
 // Optimized serialization using msgp codegen
-func marshalWithPool(v msgp.Marshaler) (*PooledMsg, error) {
+func MarshalWithPool(v msgp.Marshaler) (*PooledMsg, error) {
 	// Get a buffer from the pool.
 	buf := msgpackBufferPool.Get().([]byte)
 	// MarshalMsg appends to the provided slice.
@@ -220,7 +219,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		// Check if the error is a direct-buffer write signal.
 		if dbw, ok := err.(*DirectBufferWrite); ok {
 			// Marshal and write the metadata first.
-			respBytes, err := marshalWithPool(resp)
+			respBytes, err := MarshalWithPool(resp)
 			if err != nil {
 				writeErrorResponse(stream, http.StatusInternalServerError, err)
 				return
@@ -240,7 +239,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		return
 	}
 
-	respBytes, err := marshalWithPool(resp)
+	respBytes, err := MarshalWithPool(resp)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
@@ -253,7 +252,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 // writeErrorResponse sends an error response over the stream.
 func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	serErr := WrapError(err)
-	errBytes, mErr := marshalWithPool(serErr)
+	errBytes, mErr := MarshalWithPool(serErr)
 	if mErr != nil && syslog.L != nil {
 		syslog.L.Errorf("[writeErrorResponse] %s", mErr.Error())
 	}
@@ -272,7 +271,7 @@ func writeErrorResponse(stream *smux.Stream, status int, err error) {
 		Data:    respData,
 	}
 
-	respBytes, mErr := marshalWithPool(&resp)
+	respBytes, mErr := MarshalWithPool(&resp)
 	if mErr != nil && syslog.L != nil {
 		syslog.L.Errorf("[writeErrorResponse] %s", mErr.Error())
 	}
@@ -545,39 +544,9 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 	return curSession.OpenStream()
 }
 
-// Create a worker pool
-type WorkerPool struct {
-	tasks chan func()
-	size  int
-}
-
-func NewWorkerPool(size int) *WorkerPool {
-	pool := &WorkerPool{
-		tasks: make(chan func(), 1000),
-		size:  size,
-	}
-
-	for range size {
-		go func() {
-			for task := range pool.tasks {
-				task()
-			}
-		}()
-	}
-
-	return pool
-}
-
 // Serve continuously accepts streams on the session and dispatches them via router.
 // If a stream accept fails and auto‑reconnect is enabled, we attempt reconnect.
 func (s *Session) Serve(router *Router) error {
-	cpu := runtime.NumCPU()
-
-	if cpu > 1 {
-		cpu = cpu / 2
-	}
-
-	pool := NewWorkerPool(cpu)
 	for {
 		curSession := s.muxSess.Load().(*smux.Session)
 		rc := s.reconnectConfig
@@ -593,10 +562,7 @@ func (s *Session) Serve(router *Router) error {
 				return err
 			}
 		}
-		// Then in Serve method:
-		pool.tasks <- func() {
-			router.ServeStream(stream)
-		}
+		go router.ServeStream(stream)
 	}
 }
 
