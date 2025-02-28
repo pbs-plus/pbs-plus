@@ -230,7 +230,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 
 	info, err := stat(fullPath)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, fullPath)), nil
+		return s.respondError(req.Method, s.jobId, err), nil
 	}
 
 	data, err := info.MarshalMsg(nil)
@@ -277,7 +277,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 
 	entries, err := readDir(fullDirPath)
 	if err != nil {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, fullDirPath)), nil
+		return s.respondError(req.Method, s.jobId, err), nil
 	}
 
 	entryBytes, err := entries.MarshalMsg(nil)
@@ -396,7 +396,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
 	isEOF := false
 	if err != nil && err != windows.ERROR_HANDLE_EOF {
-		return s.respondError(req.Method, s.jobId, mapWinError(err, handle.path)), nil
+		return s.respondError(req.Method, s.jobId, err), nil
 	}
 	if err == windows.ERROR_HANDLE_EOF {
 		isEOF = true

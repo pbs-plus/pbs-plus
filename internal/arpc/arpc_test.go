@@ -2,8 +2,10 @@ package arpc
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -281,7 +283,7 @@ func TestCallContext_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err := clientSession.CallContext(ctx, "slow", nil)
+	_, err := clientSession.CallMsg(ctx, "slow", nil)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -460,5 +462,67 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 	}
 	if !eof {
 		t.Fatal("expected eof to be true")
+	}
+}
+
+// ---------------------------------------------------------------------
+// TestCallMsg_ErrorResponse verifies that when the server handler returns
+// an error, the client can correctly parse the error response from CallMsg.
+// ---------------------------------------------------------------------
+func TestCallMsg_ErrorResponse(t *testing.T) {
+	router := NewRouter()
+	// Register a handler that deliberately returns an error.
+	router.Handle("error", func(req Request) (Response, error) {
+		// Returning an error here will trigger writeErrorResponse,
+		// which wraps the error inside a Response with non‑200 status.
+		return Response{}, errors.New("test error")
+	})
+
+	clientSession, cleanup := setupSessionWithRouter(t, router)
+	defer cleanup()
+
+	// CallMsg should return an error since the handler produced one.
+	data, err := clientSession.CallMsg(context.Background(), "error", nil)
+	if err == nil {
+		t.Fatal("expected error response from CallMsg, got nil")
+	}
+	if !strings.Contains(err.Error(), "test error") {
+		t.Fatalf("expected error to contain 'test error', got: %v", err)
+	}
+	if data != nil {
+		t.Fatalf("expected no returned data on error response, got: %v", data)
+	}
+}
+
+// ---------------------------------------------------------------------
+// TestCallMsgWithBuffer_ErrorResponse verifies that when the server handler
+// returns an error during a buffered call, the client returns the expected error.
+// ---------------------------------------------------------------------
+func TestCallMsgWithBuffer_ErrorResponse(t *testing.T) {
+	router := NewRouter()
+	// Register a handler that simulates an error response.
+	router.Handle("buffer_error", func(req Request) (Response, error) {
+		// Trigger an error response; writeErrorResponse is used internally.
+		return Response{}, errors.New("buffer error occurred")
+	})
+
+	clientSession, cleanup := setupSessionWithRouter(t, router)
+	defer cleanup()
+
+	// Prepare a buffer for the expected binary payload.
+	buffer := make([]byte, 64)
+	n, eof, err := clientSession.CallMsgWithBuffer(context.Background(), "buffer_error", nil, buffer)
+	if err == nil {
+		t.Fatal("expected error response from CallMsgWithBuffer, got nil")
+	}
+	if !strings.Contains(err.Error(), "buffer error occurred") {
+		t.Fatalf("expected error message to contain 'buffer error occurred', got: %v", err)
+	}
+	// When an error response is returned, no binary data is expected.
+	if n != 0 {
+		t.Fatalf("expected 0 bytes read on error response, got %d", n)
+	}
+	if eof {
+		t.Fatal("expected eof to be false for error response")
 	}
 }

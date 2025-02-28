@@ -40,10 +40,9 @@ func (f *ARPCFile) Read(p []byte) (int, error) {
 
 	// Use the new direct buffer method
 	bytesRead, isEOF, err := f.fs.session.CallMsgWithBuffer(ctx, f.jobId+"/Read", reqBytes, p)
-
 	if err != nil {
 		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
-		return 0, os.ErrInvalid
+		return 0, err
 	}
 
 	f.offset += int64(bytesRead)
@@ -82,11 +81,11 @@ func (f *ARPCFile) Close() error {
 		return os.ErrInvalid
 	}
 
-	_, err = f.fs.session.CallContext(ctx, f.jobId+"/Close", reqBytes)
+	_, err = f.fs.session.CallMsg(ctx, f.jobId+"/Close", reqBytes)
 	f.isClosed = true
 	if err != nil {
 		syslog.L.Errorf("Write RPC failed (%s): %v", f.name, err)
-		return os.ErrInvalid
+		return err
 	}
 
 	return nil
@@ -115,10 +114,9 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 	}
 
 	bytesRead, isEOF, err := f.fs.session.CallMsgWithBuffer(ctx, f.jobId+"/ReadAt", reqBytes, p)
-
 	if err != nil {
 		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
-		return 0, os.ErrInvalid
+		return 0, err
 	}
 
 	f.fs.totalBytesMu.Lock()
@@ -161,7 +159,7 @@ func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
 		raw, err := f.fs.session.CallMsg(ctx, f.jobId+"/Fstat", reqBytes)
 		if err != nil {
 			syslog.L.Errorf("Fstat RPC failed (%s): %v", f.name, err)
-			return 0, os.ErrInvalid
+			return 0, err
 		}
 
 		_, err = fi.UnmarshalMsg(raw)
