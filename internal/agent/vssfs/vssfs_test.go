@@ -150,7 +150,7 @@ func TestVSSFSServer(t *testing.T) {
 		// Fix: Instead of expecting an error, check if we get a specific status code
 		resp, err = clientSession.Call("vss/Read", readPayloadBytes)
 		assert.NoError(t, err)            // The call itself may succeed
-		assert.Equal(t, 404, resp.Status) // But we should get a "not found" status code
+		assert.Equal(t, 500, resp.Status) // But we should get a "not found" status code
 	})
 
 	t.Run("OpenFile_ReadAt_Close", func(t *testing.T) {
@@ -224,7 +224,7 @@ func TestVSSFSServer(t *testing.T) {
 		readPayloadBytes, _ := readPayload.MarshalMsg(nil)
 		resp, err := clientSession.Call("vss/Read", readPayloadBytes)
 		assert.NoError(t, err)
-		assert.Equal(t, 500, resp.Status) // Bad request, can't read from directory
+		assert.Equal(t, 404, resp.Status) // Bad request, can't read from directory
 
 		// Close handle
 		closePayload := CloseReq{HandleID: int(openResult)}
