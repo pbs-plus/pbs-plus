@@ -19,14 +19,6 @@ import (
 	"github.com/xtaci/smux"
 )
 
-type DirectBufferWrite struct {
-	Data []byte
-}
-
-func (d *DirectBufferWrite) Error() string {
-	return "direct buffer write requested"
-}
-
 // --------------------------------------------------------
 // Buffer pooling and a PooledMsg type for zero‑copy reads.
 // --------------------------------------------------------
@@ -216,25 +208,6 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 
 	resp, err := handler(req)
 	if err != nil {
-		// Check if the error is a direct-buffer write signal.
-		if dbw, ok := err.(*DirectBufferWrite); ok {
-			// Marshal and write the metadata first.
-			respBytes, err := marshalWithPool(resp)
-			if err != nil {
-				writeErrorResponse(stream, http.StatusInternalServerError, err)
-				return
-			}
-			defer respBytes.Release()
-			if err := writeMsgpMsg(stream, respBytes.Data); err != nil {
-				return
-			}
-			// Then write out the direct buffer.
-			if _, err := stream.Write(dbw.Data); err != nil {
-				// You might want to log or handle a write error here.
-			}
-			return
-		}
-		// Otherwise, handle as a normal error.
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
@@ -247,6 +220,12 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 	defer respBytes.Release()
 
 	_ = writeMsgpMsg(stream, respBytes.Data)
+
+	// Handle raw binary streaming if requested (status 213)
+	if resp.Status == 213 && resp.RawStream != nil {
+		// Call the raw stream handler
+		resp.RawStream(stream)
+	}
 }
 
 // writeErrorResponse sends an error response over the stream.
@@ -524,7 +503,7 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	if _, err := resp.UnmarshalMsg(metaBytes); err != nil {
 		return 0, false, err
 	}
-	if resp.Status != http.StatusOK {
+	if resp.Status != 213 {
 		var serErr SerializableError
 		if _, err := serErr.UnmarshalMsg(metaBytes); err == nil {
 			return 0, false, UnwrapError(&serErr)
@@ -543,17 +522,19 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 		return 0, meta.EOF, nil
 	}
 
-	// Calculate how much we can actually read
-	toRead := meta.BytesAvailable
-	toRead = min(toRead, len(buffer))
+	// Calculate how much we can read into the provided buffer
+	bytesToRead := min(meta.BytesAvailable, len(buffer))
 
-	// Direct read instead of using a buffered reader
-	bytesRead, err := io.ReadFull(stream, buffer[:toRead])
+	// Read directly into the provided buffer
+	bytesRead, err := io.ReadFull(stream, buffer[:bytesToRead])
 	if err == io.ErrUnexpectedEOF {
-		// Partial read is still valid
+		// Partial read is still valid data
 		return bytesRead, meta.EOF, nil
 	} else if err != nil {
-		return bytesRead, meta.EOF, err
+		if ctx.Err() != nil {
+			return bytesRead, false, ctx.Err() // Context timeout/cancellation takes precedence
+		}
+		return bytesRead, false, err
 	}
 
 	return bytesRead, meta.EOF, nil

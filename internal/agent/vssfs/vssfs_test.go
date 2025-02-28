@@ -134,11 +134,11 @@ func TestVSSFSServer(t *testing.T) {
 			Length:   100,
 		}
 		readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
-		var readResult DataResponse
-		raw, err = clientSession.CallMsg(ctx, "vss/ReadAt", readAtPayloadBytes)
+
+		p := make([]byte, 100)
+		bytesRead, _, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, p)
 		assert.NoError(t, err)
-		readResult.UnmarshalMsg(raw)
-		assert.Equal(t, "2 content with more data", string(readResult.Data))
+		assert.Equal(t, "2 content with more data", string(p[:bytesRead]))
 
 		// Close file
 		closePayload := CloseReq{HandleID: int(openResult)}

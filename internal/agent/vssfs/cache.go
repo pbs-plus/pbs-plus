@@ -5,179 +5,488 @@ package vssfs
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
-// Light-weight stat cache entry with atomic reference counting
+// FSCache provides a memory-efficient filesystem cache optimized for
+// depth-first traversal with single-access patterns
+type FSCache struct {
+	ctx        context.Context
+	ctxCancel  context.CancelFunc
+	statCache  sync.Map // map[string]*statCacheEntry
+	dirCache   sync.Map // map[string]*dirCacheEntry
+	maxEntries int      // Maximum number of entries to keep in cache
+	closed     int32    // Whether the cache has been closed
+	cleanupWg  sync.WaitGroup
+
+	// For entry limiting and pause/continue mechanism
+	entryCount int32         // Current number of entries (atomic)
+	entrySem   chan struct{} // Semaphore for controlling entry additions
+	entrySemMu sync.Mutex    // Mutex for entrySem operations
+}
+
+// statCacheEntry with single-access optimization
 type statCacheEntry struct {
 	info     *VSSFileInfo
-	refCount int32 // Reference counter using atomic operations
+	accessed int32 // 0=never, 1=accessed (atomic)
 }
 
-// Directory cache entry that only stores paths and refers to stat entries
+// dirCacheEntry optimized for depth-first traversal
 type dirCacheEntry struct {
-	paths []string // Just store paths, not full file info
+	paths    []string
+	accessed int32      // 0=never, 1=accessed (atomic)
+	mutex    sync.Mutex // Protects the entry during lazy loading
+	isLoaded bool
 }
 
-type FSCache struct {
-	ctx       context.Context
-	ctxCancel context.CancelFunc
-	statCache sync.Map // map[string]*statCacheEntry
-	dirCache  sync.Map // map[string]*dirCacheEntry
-}
-
-// Background filesystem traversal with multiple workers
+// BuildOptions controls the depth-first traversal
 type BuildOptions struct {
 	RootDir    string
 	NumWorkers int
 }
 
-// NewFSCache creates a new FSCache rooted at rootDir. It starts a background
-// DFS scan using numWorkers workers. The scanning is context aware.
-func NewFSCache(ctx context.Context, rootDir string, numWorkers int) *FSCache {
+// NewFSCache creates a cache optimized for depth-first traversal
+// where each stat is only expected to be accessed once
+func NewFSCache(ctx context.Context, rootDir string, maxEntries int) *FSCache {
 	childCtx, cancel := context.WithCancel(ctx)
-	fc := &FSCache{
-		ctx:       childCtx,
-		ctxCancel: cancel,
+
+	// Use reasonable default if not specified
+	if maxEntries <= 0 {
+		maxEntries = 100000
 	}
-	go fc.buildBackground(BuildOptions{RootDir: rootDir, NumWorkers: numWorkers})
+
+	fc := &FSCache{
+		ctx:        childCtx,
+		ctxCancel:  cancel,
+		maxEntries: maxEntries,
+		entrySem:   make(chan struct{}, maxEntries), // Buffer to maxEntries
+	}
+
+	// Start the background DFS if rootDir is provided
+	if rootDir != "" {
+		numWorkers := runtime.NumCPU()
+		if numWorkers > 1 {
+			numWorkers = numWorkers / 2
+		}
+		fc.cleanupWg.Add(1)
+		go func() {
+			defer fc.cleanupWg.Done()
+			fc.buildDepthFirst(BuildOptions{
+				RootDir:    rootDir,
+				NumWorkers: numWorkers,
+			})
+		}()
+	}
+
 	return fc
 }
 
-// Retrieve a stat entry from cache
-func (fc *FSCache) getStatCache(path string) (*VSSFileInfo, bool) {
-	if val, ok := fc.statCache.Load(path); ok {
+// Close shuts down the cache and releases resources
+func (fc *FSCache) Close() {
+	if !atomic.CompareAndSwapInt32(&fc.closed, 0, 1) {
+		return // Already closed
+	}
+
+	fc.ctxCancel()
+	fc.cleanupWg.Wait()
+	fc.clearCache()
+	close(fc.entrySem) // Close semaphore channel
+}
+
+// acquireEntry attempts to acquire a slot for a new cache entry
+// It pauses if at capacity and continues when space is available
+func (fc *FSCache) acquireEntry() bool {
+	if atomic.LoadInt32(&fc.closed) == 1 {
+		return false
+	}
+
+	// Fast path - if we're under limit, just increment and proceed
+	current := atomic.LoadInt32(&fc.entryCount)
+	if current < int32(fc.maxEntries) {
+		if atomic.CompareAndSwapInt32(&fc.entryCount, current, current+1) {
+			return true
+		}
+	}
+
+	// Slow path - we're at or near capacity, need to use semaphore
+	select {
+	case fc.entrySem <- struct{}{}:
+		atomic.AddInt32(&fc.entryCount, 1)
+		return true
+	case <-fc.ctx.Done():
+		return false
+	}
+}
+
+// releaseEntry releases a slot after a cache entry is removed
+func (fc *FSCache) releaseEntry() {
+	atomic.AddInt32(&fc.entryCount, -1)
+
+	// Try to remove an item from semaphore to free a slot
+	select {
+	case <-fc.entrySem:
+		// Successfully removed one item
+	default:
+		// Semaphore was empty, which is fine
+	}
+}
+
+// Stat retrieves file info and prunes it immediately after access
+func (fc *FSCache) Stat(path string) (*VSSFileInfo, error) {
+	if atomic.LoadInt32(&fc.closed) == 1 {
+		return nil, ErrCacheClosed
+	}
+
+	normalizedPath := filepath.Clean(path)
+
+	// Try to get from cache
+	val, ok := fc.statCache.Load(normalizedPath)
+	if ok {
 		entry := val.(*statCacheEntry)
-		return entry.info, true
+
+		// Mark as accessed - if it was already accessed, consider pruning
+		if atomic.CompareAndSwapInt32(&entry.accessed, 0, 1) {
+			// First access - defer pruning until we return the info
+			defer fc.pruneStatEntry(normalizedPath)
+		}
+
+		return entry.info, nil
 	}
-	return nil, false
+
+	// Not in cache, do the real stat
+	info, err := fc.stat(normalizedPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache it for potential future use, but mark as accessed immediately
+	entry := &statCacheEntry{
+		info:     info,
+		accessed: 1, // Mark as accessed immediately
+	}
+
+	// Try to acquire an entry slot - will pause if at capacity
+	if fc.acquireEntry() {
+		fc.statCache.Store(normalizedPath, entry)
+		// Schedule pruning after a brief delay to allow for any potential
+		// quick follow-up access (though in this case we don't expect any)
+		go fc.pruneStatEntry(normalizedPath)
+	}
+
+	return info, nil
 }
 
-// Retrieve directory contents from cache
-func (fc *FSCache) getDirCache(dir string) (ReadDirEntries, bool) {
-	if val, ok := fc.dirCache.Load(dir); ok {
-		dirEntry := val.(*dirCacheEntry)
-
-		// Directory entry is valid, build the file info array
-		return fc.buildFileInfoArray(dirEntry.paths), true
+// ReadDir reads a directory, optimized for depth-first traversal
+func (fc *FSCache) ReadDir(dirPath string) (ReadDirEntries, error) {
+	if atomic.LoadInt32(&fc.closed) == 1 {
+		return nil, ErrCacheClosed
 	}
-	return nil, false
+
+	normalizedPath := filepath.Clean(dirPath)
+
+	// Try to get from cache first
+	val, ok := fc.dirCache.Load(normalizedPath)
+	if !ok {
+		// Not in cache, create new entry
+		// Only proceed if we can acquire an entry slot
+		if !fc.acquireEntry() {
+			// We can't cache, but we can still return data
+			entries, err := fc.readDir(normalizedPath)
+			if err != nil {
+				return nil, err
+			}
+			return entries, nil
+		}
+
+		entry := &dirCacheEntry{
+			isLoaded: false,
+		}
+
+		actual, loaded := fc.dirCache.LoadOrStore(normalizedPath, entry)
+		if loaded {
+			// Someone else stored it while we were waiting
+			// Release our token since we don't need it
+			fc.releaseEntry()
+			entry = actual.(*dirCacheEntry)
+		}
+
+		// If not loaded yet, we need to load it
+		if !entry.isLoaded {
+			entry.mutex.Lock()
+			// Check again after acquiring lock
+			if !entry.isLoaded {
+				// Do the real directory read
+				entries, err := fc.readDir(normalizedPath)
+				if err != nil {
+					entry.mutex.Unlock()
+					fc.dirCache.Delete(normalizedPath)
+					fc.releaseEntry()
+					return nil, err
+				}
+
+				// Store paths for efficient memory usage
+				paths := make([]string, 0, len(entries))
+				for _, info := range entries {
+					entryPath := filepath.Join(normalizedPath, info.Name)
+					paths = append(paths, entryPath)
+
+					// Pre-populate stat cache
+					fc.preloadStatEntry(entryPath, info)
+				}
+
+				entry.paths = paths
+				entry.isLoaded = true
+			}
+			entry.mutex.Unlock()
+		}
+
+		val = actual
+	}
+
+	entry := val.(*dirCacheEntry)
+
+	// Mark as accessed - if it was already accessed, consider pruning
+	if atomic.CompareAndSwapInt32(&entry.accessed, 0, 1) {
+		// First access - defer pruning until we return the results
+		defer fc.pruneDirEntry(normalizedPath)
+	}
+
+	// Build and return the results
+	return fc.buildFileInfoArray(entry.paths)
 }
 
-// Build cache in background with parallel workers
-func (fc *FSCache) buildBackground(options BuildOptions) {
+// Preload a stat entry for later access (used during directory reads)
+func (fc *FSCache) preloadStatEntry(path string, info *VSSFileInfo) {
+	// Only add if we don't have it already
+	if _, ok := fc.statCache.Load(path); !ok {
+		// Try to acquire an entry slot - will pause if at capacity
+		if fc.acquireEntry() {
+			entry := &statCacheEntry{
+				info:     info,
+				accessed: 0,
+			}
+			fc.statCache.Store(path, entry)
+		}
+	}
+}
+
+// Prune a stat entry immediately after it's been accessed
+func (fc *FSCache) pruneStatEntry(path string) {
+	if _, ok := fc.statCache.LoadAndDelete(path); ok {
+		fc.releaseEntry()
+	}
+}
+
+// Prune a directory entry after it's been accessed
+func (fc *FSCache) pruneDirEntry(path string) {
+	val, ok := fc.dirCache.Load(path)
+	if !ok {
+		return
+	}
+
+	entry := val.(*dirCacheEntry)
+
+	for _, childPath := range entry.paths {
+		if val, ok := fc.statCache.Load(childPath); ok {
+			entry := val.(*statCacheEntry)
+			if atomic.LoadInt32(&entry.accessed) == 1 {
+				fc.pruneStatEntry(childPath)
+			}
+		}
+	}
+
+	if _, ok := fc.dirCache.LoadAndDelete(path); ok {
+		fc.releaseEntry()
+	}
+}
+
+// buildDepthFirst performs true depth-first traversal using a worker pool
+func (fc *FSCache) buildDepthFirst(options BuildOptions) {
 	if options.NumWorkers <= 0 {
-		options.NumWorkers = 4 // Default to 4 workers
+		options.NumWorkers = runtime.NumCPU()
 	}
 
-	// Create work queues
-	workQueue := make(chan string, options.NumWorkers*100)
-	var wg sync.WaitGroup
+	// Use a stack (LIFO) instead of a queue for depth-first semantics
+	// We'll implement this with a channel but process the deepest paths first
+	dirStack := make(chan string, options.NumWorkers*100)
+	seenDirs := sync.Map{}
+	var stackMutex sync.Mutex
+	var pathsInStack int32
 
-	// Start worker goroutines
+	// Helper to push to our stack-like structure
+	pushToStack := func(path string) {
+		if _, alreadySeen := seenDirs.LoadOrStore(path, true); !alreadySeen {
+			stackMutex.Lock()
+			select {
+			case dirStack <- path:
+				atomic.AddInt32(&pathsInStack, 1)
+			default:
+				// Stack is full, will be picked up in next sweep
+			}
+			stackMutex.Unlock()
+		}
+	}
+
+	// Helper to pop from our stack-like structure
+	popFromStack := func() (string, bool) {
+		stackMutex.Lock()
+		defer stackMutex.Unlock()
+
+		select {
+		case path := <-dirStack:
+			atomic.AddInt32(&pathsInStack, -1)
+			return path, true
+		default:
+			return "", false
+		}
+	}
+
+	// Start with the root directory
+	pushToStack(options.RootDir)
+
+	// Use a wait group to track active workers
+	var wg sync.WaitGroup
 	for i := 0; i < options.NumWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
-			for dirPath := range workQueue {
+			pathsToProcess := make([]string, 0, 100) // Local stack per worker
+
+			for {
+				// Check if we should exit
 				select {
 				case <-fc.ctx.Done():
 					return
 				default:
-					// Process directory
-					entries, err := fc.readDir(dirPath)
-					if err != nil {
+				}
+
+				// First try to use our local stack (deeper paths)
+				var currentPath string
+				if len(pathsToProcess) > 0 {
+					// Pop from the end for true DFS
+					currentPath = pathsToProcess[len(pathsToProcess)-1]
+					pathsToProcess = pathsToProcess[:len(pathsToProcess)-1]
+				} else {
+					// Get a path from the shared stack
+					var ok bool
+					currentPath, ok = popFromStack()
+					if !ok {
+						// Nothing to process, check if we're done
+						if atomic.LoadInt32(&pathsInStack) == 0 {
+							// Double check with a small delay
+							select {
+							case <-fc.ctx.Done():
+								return
+							case <-time.After(10 * time.Millisecond):
+								// Recheck to handle race conditions
+								if atomic.LoadInt32(&pathsInStack) == 0 {
+									p, ok := popFromStack()
+									if !ok {
+										return // No more work
+									}
+									currentPath = p
+								}
+							}
+						}
+						// Brief yield to prevent CPU spinning
+						runtime.Gosched()
 						continue
 					}
+				}
 
-					for _, entryPath := range entries {
-						// Check if this is a directory
-						if entryPath.IsDir {
-							workQueue <- filepath.Join(dirPath, entryPath.Name)
+				// Process this directory
+				entries, err := fc.ReadDir(currentPath)
+				if err != nil {
+					continue
+				}
+
+				// Add child directories to our local stack for true DFS
+				for i := len(entries) - 1; i >= 0; i-- {
+					entry := entries[i]
+					if entry.IsDir {
+						childPath := filepath.Join(currentPath, entry.Name)
+						// Add to local stack for immediate depth-first processing
+						if _, seen := seenDirs.LoadOrStore(childPath, true); !seen {
+							pathsToProcess = append(pathsToProcess, childPath)
 						}
 					}
+				}
+
+				// If our local stack gets too big, move some to the shared stack
+				if len(pathsToProcess) > 100 {
+					// Move half to the shared stack
+					midpoint := len(pathsToProcess) / 2
+					for _, p := range pathsToProcess[:midpoint] {
+						pushToStack(p)
+					}
+					pathsToProcess = pathsToProcess[midpoint:]
 				}
 			}
 		}()
 	}
 
-	// Start with the root directory
-	workQueue <- options.RootDir
-
-	// Close queue when all directories have been processed
-	go func() {
-		wg.Wait()
-		close(workQueue)
-	}()
+	// Wait for all workers to finish
+	wg.Wait()
+	close(dirStack)
 }
 
-// Add a new stat entry to the cache
-func (fc *FSCache) addStatEntry(path string, info *VSSFileInfo) {
-	if val, ok := fc.statCache.Load(path); ok {
-		entry := val.(*statCacheEntry)
-		atomic.AddInt32(&entry.refCount, 1)
-		return
-	}
-	entry := &statCacheEntry{
-		info:     info,
-		refCount: 0,
-	}
-
-	fc.statCache.Store(path, entry)
-}
-
-// Build a file info array from paths by looking up stat cache
-func (fc *FSCache) buildFileInfoArray(paths []string) ReadDirEntries {
+// buildFileInfoArray builds file info array from paths for directory listing
+func (fc *FSCache) buildFileInfoArray(paths []string) (ReadDirEntries, error) {
 	result := make([]*VSSFileInfo, 0, len(paths))
 
 	for _, path := range paths {
-		if info, err := fc.stat(path); err == nil {
+		// Check in cache first
+		val, ok := fc.statCache.Load(path)
+		if ok {
+			entry := val.(*statCacheEntry)
+			// Mark as accessed if not already
+			atomic.CompareAndSwapInt32(&entry.accessed, 0, 1)
+
+			// Make a copy with just the base name for the result
+			info := *entry.info // Copy the struct
+			info.Name = filepath.Base(path)
+			result = append(result, &info)
+
+			// Schedule pruning
+			go fc.pruneStatEntry(path)
+		} else {
+			// Not in cache, do a real stat
+			info, err := fc.stat(path)
+			if err != nil {
+				// Skip this entry but continue with others
+				continue
+			}
+			// Set just the basename
+			info.Name = filepath.Base(path)
 			result = append(result, info)
 		}
 	}
 
-	return result
-}
-
-// Invalidate a specific path in the cache with reference counting
-func (fc *FSCache) invalidatePath(path string) {
-	if val, ok := fc.statCache.Load(path); ok {
-		entry := val.(*statCacheEntry)
-
-		// Only remove immediately if no references
-		if atomic.LoadInt32(&entry.refCount) == 0 {
-			fc.statCache.Delete(path)
-		}
-	}
-
-	// If it's a directory entry, invalidate it
-	if val, ok := fc.dirCache.Load(path); ok {
-		dirEntry := val.(*dirCacheEntry)
-		fc.dirCache.Delete(path)
-		for _, entry := range dirEntry.paths {
-			if val2, ok2 := fc.statCache.Load(entry); ok2 {
-				entry := val2.(*statCacheEntry)
-				atomic.AddInt32(&entry.refCount, -1)
-				if atomic.LoadInt32(&entry.refCount) == 0 {
-					fc.statCache.Delete(path)
-				}
-			}
-		}
-	}
+	return result, nil
 }
 
 // Clear the entire cache
 func (fc *FSCache) clearCache() {
-	fc.dirCache.Range(func(key, value interface{}) bool {
+	fc.dirCache.Range(func(key, _ interface{}) bool {
 		fc.dirCache.Delete(key)
+		fc.releaseEntry() // Release each entry we delete
 		return true
 	})
 
-	fc.statCache.Range(func(key, value interface{}) bool {
+	fc.statCache.Range(func(key, _ interface{}) bool {
 		fc.statCache.Delete(key)
+		fc.releaseEntry() // Release each entry we delete
 		return true
 	})
 }
+
+// Errors
+var (
+	ErrCacheClosed = errors.New("cache has been closed")
+)
