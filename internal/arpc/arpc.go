@@ -303,7 +303,7 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	config.Version = 2
 	config.KeepAliveInterval = 30 * time.Second
 	config.KeepAliveTimeout = 90 * time.Second
-	config.MaxFrameSize = 262144
+	config.MaxFrameSize = 65535
 	config.MaxReceiveBuffer = 8388608
 	config.MaxStreamBuffer = 1048576
 
@@ -324,7 +324,7 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	config.Version = 2
 	config.KeepAliveInterval = 30 * time.Second
 	config.KeepAliveTimeout = 90 * time.Second
-	config.MaxFrameSize = 262144
+	config.MaxFrameSize = 65535
 	config.MaxReceiveBuffer = 8388608
 	config.MaxStreamBuffer = 1048576
 
