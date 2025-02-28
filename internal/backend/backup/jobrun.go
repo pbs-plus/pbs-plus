@@ -105,7 +105,7 @@ func runBackupAttempt(
 			timeout, timeoutCancel := context.WithTimeout(ctx, 3*time.Second)
 			defer timeoutCancel()
 			pingResp, err := arpcSess.CallContext(timeout, "ping", nil)
-			if pingResp.Status != 200 || err != nil {
+			if err != nil || pingResp.Status != 200 {
 				errCleanUp()
 				return nil, fmt.Errorf("runBackupAttempt: target '%s' is unreachable", job.Target)
 			}
