@@ -297,6 +297,13 @@ type Session struct {
 
 // NewServerSession creates a new Session for a server connection.
 func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
+	config.Version = 2
+	config.KeepAliveInterval = 30 * time.Second
+	config.KeepAliveTimeout = 90 * time.Second
+	config.MaxFrameSize = 262144
+	config.MaxReceiveBuffer = 8388608
+	config.MaxStreamBuffer = 1048576
+
 	s, err := smux.Server(conn, config)
 	if err != nil {
 		return nil, err
@@ -308,6 +315,13 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 
 // NewClientSession creates a new Session for a client connection.
 func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
+	config.Version = 2
+	config.KeepAliveInterval = 30 * time.Second
+	config.KeepAliveTimeout = 90 * time.Second
+	config.MaxFrameSize = 262144
+	config.MaxReceiveBuffer = 8388608
+	config.MaxStreamBuffer = 1048576
+
 	s, err := smux.Client(conn, config)
 	if err != nil {
 		return nil, err
