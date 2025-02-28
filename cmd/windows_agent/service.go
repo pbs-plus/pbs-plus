@@ -302,17 +302,15 @@ func (p *agentService) connectARPC() error {
 	session.EnableAutoReconnect(rc)
 
 	router := arpc.NewRouter()
-	router.Handle("ping", func(req arpc.Request) (arpc.Response, error) {
+	router.Handle("ping", func(req arpc.Request) (*arpc.Response, error) {
 		resp := arpc.MapStringStringMsg{"version": Version, "hostname": clientId}
 		b, err := resp.MarshalMsg(nil)
 		if err != nil {
-			errResp := arpc.MapStringStringMsg{"error": fmt.Sprintf("failed to marshal value: %v", err)}
-			b, _ = errResp.MarshalMsg(nil)
-			return arpc.Response{Status: 500, Data: b}, nil
+			return nil, err
 		}
-		return arpc.Response{Status: 200, Data: b}, nil
+		return &arpc.Response{Status: 200, Data: b}, nil
 	})
-	router.Handle("backup", func(req arpc.Request) (arpc.Response, error) {
+	router.Handle("backup", func(req arpc.Request) (*arpc.Response, error) {
 		return controllers.BackupStartHandler(req, router)
 	})
 	router.Handle("cleanup", controllers.BackupCloseHandler)
