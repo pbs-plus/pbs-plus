@@ -11,7 +11,6 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/go-git/go-billy/v5"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
@@ -21,31 +20,12 @@ import (
 var _ billy.Filesystem = (*ARPCFS)(nil)
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string) *ARPCFS {
-	statC, err := lru.New[string, statCacheEntry](2048)
-	if err != nil {
-		panic(err)
-	}
-	readDirC, err := lru.New[string, readDirCacheEntry](2048)
-	if err != nil {
-		panic(err)
-	}
-	statFSC, err := lru.New[string, statFSCacheEntry](1)
-	if err != nil {
-		panic(err)
-	}
-
 	fs := &ARPCFS{
-		basePath:       "/",
-		ctx:            ctx,
-		session:        session,
-		JobId:          jobId,
-		Hostname:       hostname,
-		statCache:      statC,
-		readDirCache:   readDirC,
-		statFSCache:    statFSC,
-		statCacheMu:    NewShardedRWMutex(16),
-		readDirCacheMu: NewShardedRWMutex(16),
-		statFSCacheMu:  NewShardedRWMutex(4),
+		basePath: "/",
+		ctx:      ctx,
+		session:  session,
+		JobId:    jobId,
+		Hostname: hostname,
 	}
 
 	return fs
@@ -170,17 +150,6 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 
 // Stat first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
-	// Attempt to fetch from the LRU cache.
-	fs.statCacheMu.RLock(filename)
-	if entry, ok := fs.statCache.Get(filename); ok {
-		fs.statCacheMu.RUnlock(filename)
-
-		fs.trackAccess(filename, entry.info.IsDir())
-		return entry.info, nil
-	}
-	fs.statCacheMu.RUnlock(filename)
-
-	// Cache miss or expired; perform RPC.
 	var fi vssfs.VSSFileInfo
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
@@ -215,13 +184,6 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		isDir:   fi.IsDir,
 	}
 
-	// Update the LRU cache.
-	fs.statCacheMu.Lock(filename)
-	fs.statCache.Add(filename, statCacheEntry{
-		info: info,
-	})
-	fs.statCacheMu.Unlock(filename)
-
 	fs.trackAccess(filename, info.IsDir())
 
 	return info, nil
@@ -230,14 +192,6 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 // StatFS tries the LRU cache before making the RPC call.
 func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	const statFSKey = "statFS"
-
-	fs.statFSCacheMu.RLock(statFSKey)
-	if entry, ok := fs.statFSCache.Get(statFSKey); ok {
-		stat := entry.stat
-		fs.statFSCacheMu.RUnlock(statFSKey)
-		return stat, nil
-	}
-	fs.statFSCacheMu.RUnlock(statFSKey)
 
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
@@ -270,25 +224,11 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 		NameLen: 255, // Typically supports long filenames.
 	}
 
-	fs.statFSCacheMu.Lock(statFSKey)
-	fs.statFSCache.Add(statFSKey, statFSCacheEntry{
-		stat: stat,
-	})
-	fs.statFSCacheMu.Unlock(statFSKey)
-
 	return stat, nil
 }
 
 // ReadDir first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
-	fs.readDirCacheMu.RLock(path)
-	if entry, ok := fs.readDirCache.Get(path); ok {
-		fs.readDirCacheMu.RUnlock(path)
-		fs.trackAccess(path, true)
-		return entry.entries, nil
-	}
-	fs.readDirCacheMu.RUnlock(path)
-
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
@@ -325,22 +265,10 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 		}
 
 		childPath := filepath.Join(path, e.Name)
-		fs.statCacheMu.Lock(childPath)
-		fs.statCache.Add(childPath, statCacheEntry{
-			info: entries[i],
-		})
-		fs.statCacheMu.Unlock(childPath)
 		fs.trackAccess(childPath, e.IsDir)
 	}
 
 	fs.trackAccess(path, true)
-
-	// Cache the directory listing itself.
-	fs.readDirCacheMu.Lock(path)
-	fs.readDirCache.Add(path, readDirCacheEntry{
-		entries: entries,
-	})
-	fs.readDirCacheMu.Unlock(path)
 
 	return entries, nil
 }

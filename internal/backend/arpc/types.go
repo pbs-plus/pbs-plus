@@ -2,28 +2,12 @@ package arpcfs
 
 import (
 	"context"
-	"os"
 	"sync"
 	"time"
 
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
 )
-
-// Cache entry types.
-type statCacheEntry struct {
-	info os.FileInfo
-}
-
-type readDirCacheEntry struct {
-	entries []os.FileInfo
-}
-
-type statFSCacheEntry struct {
-	stat types.StatFS
-}
 
 // ARPCFS implements billy.Filesystem using aRPC calls
 type ARPCFS struct {
@@ -52,15 +36,6 @@ type ARPCFS struct {
 	totalBytesMu   sync.Mutex
 	lastTotalBytes uint64
 	lastBytesTime  time.Time
-
-	// (Retain the caches below as-is, if needed.)
-	statCache    *lru.Cache[string, statCacheEntry]
-	readDirCache *lru.Cache[string, readDirCacheEntry]
-	statFSCache  *lru.Cache[string, statFSCacheEntry]
-
-	statCacheMu    *ShardedRWMutex
-	readDirCacheMu *ShardedRWMutex
-	statFSCacheMu  *ShardedRWMutex
 }
 
 type Stats struct {
@@ -81,4 +56,3 @@ type ARPCFile struct {
 	isClosed bool
 	jobId    string
 }
-
