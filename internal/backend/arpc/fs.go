@@ -10,14 +10,10 @@ import (
 	"time"
 
 	"github.com/cespare/xxhash/v2"
-	"github.com/go-git/go-billy/v5"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
-
-var _ billy.Filesystem = (*ARPCFS)(nil)
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string) *ARPCFS {
 	fs := &ARPCFS{
@@ -98,17 +94,11 @@ func (f *ARPCFS) Unmount() {
 	}
 }
 
-var _ billy.File = (*ARPCFile)(nil)
-
-func (fs *ARPCFS) Create(filename string) (billy.File, error) {
-	return nil, os.ErrInvalid
-}
-
-func (fs *ARPCFS) Open(filename string) (billy.File, error) {
+func (fs *ARPCFS) Open(filename string) (*ARPCFile, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
-func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
+func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (*ARPCFile, error) {
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
@@ -149,7 +139,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 }
 
 // Stat first tries the LRU cache before performing an RPC call.
-func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
+func (fs *ARPCFS) Stat(filename string) (*vssfs.VSSFileInfo, error) {
 	var fi vssfs.VSSFileInfo
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
@@ -176,59 +166,43 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 		return nil, os.ErrInvalid
 	}
 
-	info := &fileInfo{
-		name:    filepath.Base(filename),
-		size:    fi.Size,
-		mode:    os.FileMode(fi.Mode),
-		modTime: fi.ModTime,
-		isDir:   fi.IsDir,
-	}
+	fi.Name = filepath.Base(fi.Name)
 
-	fs.trackAccess(filename, info.IsDir())
+	fs.trackAccess(filename, fi.IsDir)
 
-	return info, nil
+	return &fi, nil
 }
 
 // StatFS tries the LRU cache before making the RPC call.
-func (fs *ARPCFS) StatFS() (types.StatFS, error) {
+func (fs *ARPCFS) StatFS() (*vssfs.StatFS, error) {
 	const statFSKey = "statFS"
 
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
-		return types.StatFS{}, os.ErrInvalid
+		return nil, os.ErrInvalid
 	}
 
-	var fsStat vssfs.FSStat
+	var fsStat vssfs.StatFS
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
 	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/FSstat", nil)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
-		return types.StatFS{}, err
+		return nil, err
 	}
 
 	_, err = fsStat.UnmarshalMsg(raw)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
-		return types.StatFS{}, os.ErrInvalid
+		return nil, os.ErrInvalid
 	}
 
-	stat := types.StatFS{
-		Bsize:   uint64(4096), // Standard block size.
-		Blocks:  uint64(fsStat.TotalSize / 4096),
-		Bfree:   uint64(fsStat.FreeSize / 4096),
-		Bavail:  uint64(fsStat.AvailableSize / 4096),
-		Files:   uint64(fsStat.TotalFiles),
-		Ffree:   uint64(fsStat.FreeFiles),
-		NameLen: 255, // Typically supports long filenames.
-	}
-
-	return stat, nil
+	return &fsStat, nil
 }
 
 // ReadDir first tries the LRU cache before performing an RPC call.
-func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
+func (fs *ARPCFS) ReadDir(path string) (*vssfs.ReadDirEntries, error) {
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
@@ -254,54 +228,16 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 		return nil, os.ErrInvalid
 	}
 
-	entries := make([]os.FileInfo, len(resp))
-	for i, e := range resp {
-		entries[i] = &fileInfo{
-			name:    e.Name,
-			size:    e.Size,
-			mode:    os.FileMode(e.Mode),
-			modTime: e.ModTime,
-			isDir:   e.IsDir,
-		}
-
-		childPath := filepath.Join(path, e.Name)
-		fs.trackAccess(childPath, e.IsDir)
-	}
-
 	fs.trackAccess(path, true)
 
-	return entries, nil
-}
-
-func (fs *ARPCFS) Rename(oldpath, newpath string) error {
-	return os.ErrInvalid
-}
-
-func (fs *ARPCFS) Remove(filename string) error {
-	return os.ErrInvalid
-}
-
-func (fs *ARPCFS) MkdirAll(path string, perm os.FileMode) error {
-	return os.ErrInvalid
-}
-
-func (fs *ARPCFS) Symlink(target, link string) error {
-	return os.ErrInvalid
-}
-
-func (fs *ARPCFS) Readlink(link string) (string, error) {
-	return "", os.ErrInvalid
-}
-
-func (fs *ARPCFS) TempFile(dir, prefix string) (billy.File, error) {
-	return nil, os.ErrInvalid
+	return &resp, nil
 }
 
 func (fs *ARPCFS) Join(elem ...string) string {
 	return filepath.Join(elem...)
 }
 
-func (fs *ARPCFS) Chroot(path string) (billy.Filesystem, error) {
+func (fs *ARPCFS) Chroot(path string) (*ARPCFS, error) {
 	arpcfs := NewARPCFS(fs.ctx, fs.session, fs.Hostname, fs.JobId)
 	arpcfs.basePath = filepath.Join(fs.basePath, path)
 
@@ -310,24 +246,4 @@ func (fs *ARPCFS) Chroot(path string) (billy.Filesystem, error) {
 
 func (fs *ARPCFS) Root() string {
 	return fs.basePath
-}
-
-func (fs *ARPCFS) Lstat(filename string) (os.FileInfo, error) {
-	return fs.Stat(filename)
-}
-
-func (fs *ARPCFS) Chmod(name string, mode os.FileMode) error {
-	return os.ErrInvalid
-}
-
-func (fs *ARPCFS) Lchown(name string, uid, gid int) error {
-	return os.ErrInvalid
-}
-
-func (fs *ARPCFS) Chown(name string, uid, gid int) error {
-	return os.ErrInvalid
-}
-
-func (fs *ARPCFS) Chtimes(name string, atime time.Time, mtime time.Time) error {
-	return os.ErrInvalid
 }

@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-git/go-billy/v5"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
@@ -64,7 +63,6 @@ var _ = (fs.NodeGetattrer)((*Node)(nil))
 var _ = (fs.NodeLookuper)((*Node)(nil))
 var _ = (fs.NodeReaddirer)((*Node)(nil))
 var _ = (fs.NodeOpener)((*Node)(nil))
-var _ = (fs.NodeReadlinker)((*Node)(nil))
 var _ = (fs.NodeStatfser)((*Node)(nil))
 var _ = (fs.NodeAccesser)((*Node)(nil))
 var _ = (fs.NodeOpendirer)((*Node)(nil))
@@ -137,18 +135,18 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 		return fs.ToErrno(err)
 	}
 
-	mode := uint32(fi.Mode().Perm())
-	if fi.IsDir() {
+	mode := fi.Mode
+	if fi.IsDir {
 		mode |= syscall.S_IFDIR
-	} else if fi.Mode()&os.ModeSymlink != 0 {
+	} else if os.FileMode(fi.Mode)&os.ModeSymlink != 0 {
 		mode |= syscall.S_IFLNK
 	} else {
 		mode |= syscall.S_IFREG
 	}
 
 	out.Mode = mode
-	out.Size = uint64(fi.Size())
-	mtime := fi.ModTime()
+	out.Size = uint64(fi.Size)
+	mtime := fi.ModTime
 	out.SetTimes(nil, &mtime, nil)
 
 	return 0
@@ -167,10 +165,10 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 		path: childPath,
 	}
 
-	mode := uint32(fi.Mode().Perm())
-	if fi.IsDir() {
+	mode := fi.Mode
+	if fi.IsDir {
 		mode |= syscall.S_IFDIR
-	} else if fi.Mode()&os.ModeSymlink != 0 {
+	} else if os.FileMode(fi.Mode)&os.ModeSymlink != 0 {
 		mode |= syscall.S_IFLNK
 	} else {
 		mode |= syscall.S_IFREG
@@ -183,8 +181,8 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 	child := n.NewInode(ctx, childNode, stable)
 
 	out.Mode = mode
-	out.Size = uint64(fi.Size())
-	mtime := fi.ModTime()
+	out.Size = uint64(fi.Size)
+	mtime := fi.ModTime
 	out.SetTimes(nil, &mtime, nil)
 
 	return child, 0
@@ -193,23 +191,23 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 // Readdir implements NodeReaddirer
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(n.path)
-	if err != nil {
+	if err != nil || entries == nil {
 		return nil, fs.ToErrno(err)
 	}
 
-	result := make([]fuse.DirEntry, 0, len(entries))
-	for _, e := range entries {
+	result := make([]fuse.DirEntry, 0, len(*entries))
+	for _, e := range *entries {
 		entryType := uint32(0) // DT_Unknown
-		if e.IsDir() {
+		if e.IsDir {
 			entryType = syscall.DT_DIR
-		} else if e.Mode()&os.ModeSymlink != 0 {
+		} else if os.FileMode(e.Mode)&os.ModeSymlink != 0 {
 			entryType = syscall.DT_LNK
 		} else {
 			entryType = syscall.DT_REG
 		}
 
 		result = append(result, fuse.DirEntry{
-			Name: e.Name(),
+			Name: e.Name,
 			Mode: entryType << 12, // Convert to type bits
 		})
 	}
@@ -228,15 +226,6 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 		fs:   n.fs,
 		file: file,
 	}, 0, 0
-}
-
-// Readlink implements NodeReadlinker
-func (n *Node) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
-	target, err := n.fs.Readlink(n.path)
-	if err != nil {
-		return nil, fs.ToErrno(err)
-	}
-	return []byte(target), 0
 }
 
 func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
@@ -260,7 +249,7 @@ func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 // FileHandle handles file operations
 type FileHandle struct {
 	fs   *arpcfs.ARPCFS
-	file billy.File
+	file *arpcfs.ARPCFile
 }
 
 var _ = (fs.FileReader)((*FileHandle)(nil))

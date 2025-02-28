@@ -5,7 +5,6 @@ package arpcfs
 import (
 	"io"
 	"os"
-	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -129,75 +128,3 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 
 	return bytesRead, nil
 }
-
-func (f *ARPCFile) Seek(offset int64, whence int) (int64, error) {
-	if f.isClosed {
-		return 0, os.ErrInvalid
-	}
-
-	switch whence {
-	case io.SeekStart:
-		f.offset = offset
-	case io.SeekCurrent:
-		f.offset += offset
-	case io.SeekEnd:
-		var fi vssfs.VSSFileInfo
-		if f.fs.session == nil {
-			syslog.L.Error("RPC failed: aRPC session is nil")
-			return 0, os.ErrInvalid
-		}
-
-		ctx, cancel := TimeoutCtx()
-		defer cancel()
-
-		req := vssfs.FstatReq{HandleID: f.handleID}
-		reqBytes, err := req.MarshalMsg(nil)
-		if err != nil {
-			return 0, os.ErrInvalid
-		}
-
-		raw, err := f.fs.session.CallMsg(ctx, f.jobId+"/Fstat", reqBytes)
-		if err != nil {
-			syslog.L.Errorf("Fstat RPC failed (%s): %v", f.name, err)
-			return 0, err
-		}
-
-		_, err = fi.UnmarshalMsg(raw)
-		if err != nil {
-			return 0, os.ErrInvalid
-		}
-
-		f.offset = fi.Size + offset
-	default:
-		return 0, os.ErrInvalid
-	}
-	return f.offset, nil
-}
-
-func (f *ARPCFile) Lock() error {
-	return os.ErrInvalid
-}
-
-func (f *ARPCFile) Unlock() error {
-	return os.ErrInvalid
-}
-
-func (f *ARPCFile) Truncate(size int64) error {
-	return os.ErrInvalid
-}
-
-// fileInfo implements os.FileInfo
-type fileInfo struct {
-	name    string
-	size    int64
-	mode    os.FileMode
-	modTime time.Time
-	isDir   bool
-}
-
-func (fi *fileInfo) Name() string       { return fi.name }
-func (fi *fileInfo) Size() int64        { return fi.size }
-func (fi *fileInfo) Mode() os.FileMode  { return fi.mode }
-func (fi *fileInfo) ModTime() time.Time { return fi.modTime }
-func (fi *fileInfo) IsDir() bool        { return fi.isDir }
-func (fi *fileInfo) Sys() interface{}   { return nil }

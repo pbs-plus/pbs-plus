@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -32,7 +31,7 @@ type VSSFSServer struct {
 	nextHandle uint64
 	mu         sync.RWMutex
 	arpcRouter *arpc.Router
-	fsCache    *FileCache
+	fsCache    *FSCache
 }
 
 const InvalidHandleError = arpc.StringMsg("invalid handle")
@@ -44,7 +43,7 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 		rootDir:   root,
 		jobId:     jobId,
 		handles:   make(map[uint64]*FileHandle),
-		fsCache:   NewFileCache(ctx, root, 2),
+		fsCache:   NewFSCache(ctx, root, 2),
 		ctx:       ctx,
 		ctxCancel: cancel,
 	}
@@ -88,7 +87,7 @@ func (s *VSSFSServer) Close() {
 
 	// Stop the file cache.
 	if s.fsCache != nil {
-		s.fsCache.Cancel()
+		s.fsCache.clearCache()
 		s.fsCache = nil
 	}
 }
@@ -108,17 +107,17 @@ func (s *VSSFSServer) handleFsStat(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	fsStat := &FSStat{
-		TotalSize:      int64(totalBytes),
-		FreeSize:       0,
-		AvailableSize:  0,
-		TotalFiles:     1 << 20,
-		FreeFiles:      0,
-		AvailableFiles: 0,
-		CacheHint:      time.Minute,
+	statFs := &StatFS{
+		Bsize:   uint64(4096), // Standard block size.
+		Blocks:  uint64(totalBytes / 4096),
+		Bfree:   0,
+		Bavail:  0,
+		Files:   uint64(1 << 20),
+		Ffree:   0,
+		NameLen: 255, // Typically supports long filenames.
 	}
 
-	fsStatBytes, err := fsStat.MarshalMsg(nil)
+	fsStatBytes, err := statFs.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -213,22 +212,11 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 		fullPath = s.rootDir
 	}
 
-	// Try to get the cached result (which includes stat).
-	if s.fsCache != nil {
-		if entry, ok := s.fsCache.PopStat(fullPath); ok {
-			data, err := entry.MarshalMsg(nil)
-			if err != nil {
-				return nil, err
-			}
-
-			return &arpc.Response{
-				Status: 200,
-				Data:   data,
-			}, nil
-		}
+	if s.fsCache == nil {
+		return nil, os.ErrInvalid
 	}
 
-	info, err := stat(fullPath)
+	info, err := s.fsCache.stat(fullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -237,6 +225,8 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	go s.fsCache.invalidatePath(fullPath)
 
 	return &arpc.Response{
 		Status: 200,
@@ -261,21 +251,11 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 		fullDirPath = s.rootDir
 	}
 
-	// Check the cache for this directory.
-	if s.fsCache != nil {
-		if entry, ok := s.fsCache.PopReaddir(fullDirPath); ok {
-			entryBytes, err := entry.MarshalMsg(nil)
-			if err != nil {
-				return nil, err
-			}
-			return &arpc.Response{
-				Status: 200,
-				Data:   entryBytes,
-			}, nil
-		}
+	if s.fsCache == nil {
+		return nil, os.ErrInvalid
 	}
 
-	entries, err := readDir(fullDirPath)
+	entries, err := s.fsCache.readDir(fullDirPath)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +264,8 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	go s.fsCache.invalidatePath(fullDirPath)
 
 	return &arpc.Response{
 		Status: 200,
@@ -422,6 +404,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	go s.fsCache.invalidatePath(handle.path)
 
 	return &arpc.Response{
 		Status: 200,

@@ -71,7 +71,7 @@ func TestVSSFSServer(t *testing.T) {
 	// Run tests
 	t.Run("FSstat", func(t *testing.T) {
 		// Fix: Use the exact FSStat struct that matches the server response
-		var result FSStat
+		var result StatFS
 		raw, err := clientSession.CallMsg(ctx, "vss/FSstat", nil)
 		assert.NoError(t, err)
 

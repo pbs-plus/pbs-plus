@@ -7,170 +7,177 @@ import (
 	"context"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 )
 
-// CachedEntry holds the cached metadata for both a file/directory (its stat)
-// and, if the entry is a directory, the result from readdir.
-type CachedEntry struct {
-	Stat       *VSSFileInfo   // file or directory metadata
-	DirEntries []*VSSFileInfo // cached directory listing; nil if not applicable or pop'd.
+// Light-weight stat cache entry with atomic reference counting
+type statCacheEntry struct {
+	info     *VSSFileInfo
+	refCount int32 // Reference counter using atomic operations
 }
 
-// FileCache implements a one‑time background cache of file system metadata.
-// It builds a DFS over the file system (using a configurable number of workers)
-// and, for each directory, caches both its stat and readdir result in one entry.
-// Later, two separate “pop” methods allow a caller to retrieve and invalidate the
-// stat or the readdir result independently.
-type FileCache struct {
-	mu      sync.RWMutex
-	entries map[string]*CachedEntry
-	rootDir string
-
-	ctx    context.Context
-	cancel context.CancelFunc
+// Directory cache entry that only stores paths and refers to stat entries
+type dirCacheEntry struct {
+	paths []string // Just store paths, not full file info
 }
 
-// NewFileCache creates a new FileCache rooted at rootDir. It starts a background
+type FSCache struct {
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	statCache sync.Map // map[string]*statCacheEntry
+	dirCache  sync.Map // map[string]*dirCacheEntry
+}
+
+// Background filesystem traversal with multiple workers
+type BuildOptions struct {
+	RootDir    string
+	NumWorkers int
+}
+
+// NewFSCache creates a new FSCache rooted at rootDir. It starts a background
 // DFS scan using numWorkers workers. The scanning is context aware.
-func NewFileCache(ctx context.Context, rootDir string, numWorkers int) *FileCache {
+func NewFSCache(ctx context.Context, rootDir string, numWorkers int) *FSCache {
 	childCtx, cancel := context.WithCancel(ctx)
-	fc := &FileCache{
-		rootDir: rootDir,
-		entries: make(map[string]*CachedEntry),
-		ctx:     childCtx,
-		cancel:  cancel,
+	fc := &FSCache{
+		ctx:       childCtx,
+		ctxCancel: cancel,
 	}
-	go fc.buildBackground(numWorkers)
+	go fc.buildBackground(BuildOptions{RootDir: rootDir, NumWorkers: numWorkers})
 	return fc
 }
 
-// buildBackground performs a DFS-like traversal of the file system.
-// For each directory it calls cacheEntryForDir() to obtain both its stat and
-// cached readdir result. For each child it schedules further scanning if it is a
-// directory. The work is distributed over numWorkers workers and respects fc.ctx.
-func (fc *FileCache) buildBackground(numWorkers int) {
-	jobs := make(chan string, 1000)
-	var dirWg sync.WaitGroup
+// Retrieve a stat entry from cache
+func (fc *FSCache) getStatCache(path string) (*VSSFileInfo, bool) {
+	if val, ok := fc.statCache.Load(path); ok {
+		entry := val.(*statCacheEntry)
+		return entry.info, true
+	}
+	return nil, false
+}
 
-	worker := func() {
-		for {
-			select {
-			case <-fc.ctx.Done():
-				return
-			case dir, ok := <-jobs:
-				if !ok {
+// Retrieve directory contents from cache
+func (fc *FSCache) getDirCache(dir string) (ReadDirEntries, bool) {
+	if val, ok := fc.dirCache.Load(dir); ok {
+		dirEntry := val.(*dirCacheEntry)
+
+		// Directory entry is valid, build the file info array
+		return fc.buildFileInfoArray(dirEntry.paths), true
+	}
+	return nil, false
+}
+
+// Build cache in background with parallel workers
+func (fc *FSCache) buildBackground(options BuildOptions) {
+	if options.NumWorkers <= 0 {
+		options.NumWorkers = 4 // Default to 4 workers
+	}
+
+	// Create work queues
+	workQueue := make(chan string, options.NumWorkers*100)
+	var wg sync.WaitGroup
+
+	// Start worker goroutines
+	for i := 0; i < options.NumWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			for dirPath := range workQueue {
+				select {
+				case <-fc.ctx.Done():
 					return
-				}
-				// Process this directory.
-				entry, err := fc.cacheEntryForDir(dir)
-				if err == nil {
-					fc.mu.Lock()
-					fc.entries[dir] = entry
-					fc.mu.Unlock()
+				default:
+					// Process directory
+					entries, err := fc.readDir(dirPath)
+					if err != nil {
+						continue
+					}
 
-					// For each child entry found via readdir:
-					for _, child := range entry.DirEntries {
-						childPath := filepath.Join(dir, child.Name)
-						// Cache the child's stat info if not already present.
-						fc.mu.Lock()
-						if e, exists := fc.entries[childPath]; !exists {
-							fc.entries[childPath] = &CachedEntry{Stat: child}
-						} else if e.Stat == nil {
-							e.Stat = child
-						}
-						fc.mu.Unlock()
-						// If the child is a directory, schedule it for scanning.
-						if child.IsDir {
-							dirWg.Add(1)
-							select {
-							case jobs <- childPath:
-							case <-fc.ctx.Done():
-							}
+					for _, entryPath := range entries {
+						// Check if this is a directory
+						if entryPath.IsDir {
+							workQueue <- filepath.Join(dirPath, entryPath.Name)
 						}
 					}
 				}
-				dirWg.Done()
 			}
-		}
+		}()
 	}
 
-	// Spawn a worker pool.
-	for i := 0; i < numWorkers; i++ {
-		go worker()
-	}
+	// Start with the root directory
+	workQueue <- options.RootDir
 
-	// Seed with the root directory.
-	dirWg.Add(1)
-	select {
-	case jobs <- fc.rootDir:
-	case <-fc.ctx.Done():
-	}
-
-	// Close the jobs channel when processing is finished.
+	// Close queue when all directories have been processed
 	go func() {
-		dirWg.Wait()
-		close(jobs)
+		wg.Wait()
+		close(workQueue)
 	}()
 }
 
-// cacheEntryForDir uses the helper functions cachedStat and cachedReadDir
-// to build a CachedEntry for directory dir.
-func (fc *FileCache) cacheEntryForDir(dir string) (*CachedEntry, error) {
-	stat, err := stat(dir)
-	if err != nil {
-		return nil, err
+// Add a new stat entry to the cache
+func (fc *FSCache) addStatEntry(path string, info *VSSFileInfo) {
+	if val, ok := fc.statCache.Load(path); ok {
+		entry := val.(*statCacheEntry)
+		atomic.AddInt32(&entry.refCount, 1)
+		return
 	}
-	children, err := readDir(dir)
-	// Even if readdir fails, we still return stat.
-	if err != nil {
-		children = nil
+	entry := &statCacheEntry{
+		info:     info,
+		refCount: 0,
 	}
-	return &CachedEntry{Stat: stat, DirEntries: children}, nil
+
+	fc.statCache.Store(path, entry)
 }
 
-// PopStat pops (retrieves and invalidates) only the stat part of the cached
-// entry for path. (If DirEntries remain, they are preserved in the cache.)
-func (fc *FileCache) PopStat(path string) (*VSSFileInfo, bool) {
-	fc.mu.Lock()
-	defer fc.mu.Unlock()
-	entry, ok := fc.entries[path]
-	if !ok {
-		return nil, false
+// Build a file info array from paths by looking up stat cache
+func (fc *FSCache) buildFileInfoArray(paths []string) ReadDirEntries {
+	result := make([]*VSSFileInfo, 0, len(paths))
+
+	for _, path := range paths {
+		if info, err := fc.stat(path); err == nil {
+			result = append(result, info)
+		}
 	}
-	if entry.Stat == nil {
-		return nil, false
-	}
-	stat := entry.Stat
-	entry.Stat = nil
-	// Optionally, remove the entire entry if both parts are now nil.
-	if entry.DirEntries == nil || len(entry.DirEntries) == 0 {
-		delete(fc.entries, path)
-	}
-	return stat, true
+
+	return result
 }
 
-// PopReaddir pops (retrieves and invalidates) only the directory listing
-// (readdir result) for path. (The stat part, if still available, is preserved.)
-func (fc *FileCache) PopReaddir(path string) (ReadDirEntries, bool) {
-	fc.mu.Lock()
-	defer fc.mu.Unlock()
-	entry, ok := fc.entries[path]
-	if !ok {
-		return nil, false
+// Invalidate a specific path in the cache with reference counting
+func (fc *FSCache) invalidatePath(path string) {
+	if val, ok := fc.statCache.Load(path); ok {
+		entry := val.(*statCacheEntry)
+
+		// Only remove immediately if no references
+		if atomic.LoadInt32(&entry.refCount) == 0 {
+			fc.statCache.Delete(path)
+		}
 	}
-	if entry.DirEntries == nil {
-		return nil, false
+
+	// If it's a directory entry, invalidate it
+	if val, ok := fc.dirCache.Load(path); ok {
+		dirEntry := val.(*dirCacheEntry)
+		fc.dirCache.Delete(path)
+		for _, entry := range dirEntry.paths {
+			if val2, ok2 := fc.statCache.Load(entry); ok2 {
+				entry := val2.(*statCacheEntry)
+				atomic.AddInt32(&entry.refCount, -1)
+				if atomic.LoadInt32(&entry.refCount) == 0 {
+					fc.statCache.Delete(path)
+				}
+			}
+		}
 	}
-	entries := entry.DirEntries
-	entry.DirEntries = nil
-	// Optionally remove the entry entirely if stat is already nil.
-	if entry.Stat == nil {
-		delete(fc.entries, path)
-	}
-	return entries, true
 }
 
-// Cancel stops the background scanning.
-func (fc *FileCache) Cancel() {
-	fc.cancel()
+// Clear the entire cache
+func (fc *FSCache) clearCache() {
+	fc.dirCache.Range(func(key, value interface{}) bool {
+		fc.dirCache.Delete(key)
+		return true
+	})
+
+	fc.statCache.Range(func(key, value interface{}) bool {
+		fc.statCache.Delete(key)
+		return true
+	})
 }
