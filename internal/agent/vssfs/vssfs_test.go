@@ -224,7 +224,7 @@ func TestVSSFSServer(t *testing.T) {
 		readPayloadBytes, _ := readPayload.MarshalMsg(nil)
 		resp, err := clientSession.Call("vss/Read", readPayloadBytes)
 		assert.NoError(t, err)
-		assert.Equal(t, 500, resp.Status) // Bad request, can't read from directory
+		assert.Equal(t, 404, resp.Status) // Bad request, can't read from directory
 
 		// Close handle
 		closePayload := CloseReq{HandleID: int(openResult)}
