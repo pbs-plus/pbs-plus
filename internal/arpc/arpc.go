@@ -359,12 +359,12 @@ func (s *Session) attemptReconnect() error {
 
 // Call initiates a request/response conversation on a new stream.
 func (s *Session) Call(method string, payload []byte) (*Response, error) {
-	return s.callContext(context.Background(), method, payload)
+	return s.CallContext(context.Background(), method, payload)
 }
 
 // CallContext performs an RPC call over a new stream.
 // It applies any context deadlines to the smux stream.
-func (s *Session) callContext(ctx context.Context, method string, payload []byte) (*Response, error) {
+func (s *Session) CallContext(ctx context.Context, method string, payload []byte) (*Response, error) {
 
 	// Use the atomic pointer to avoid holding a lock while reading.
 	curSession := s.muxSess.Load().(*smux.Session)
@@ -425,7 +425,7 @@ func (s *Session) callContext(ctx context.Context, method string, payload []byte
 // CallMsg performs an RPC call and unmarshals its Data into v on success,
 // or decodes the error from Data if status != http.StatusOK.
 func (s *Session) CallMsg(ctx context.Context, method string, payload []byte) ([]byte, error) {
-	resp, err := s.callContext(ctx, method, payload)
+	resp, err := s.CallContext(ctx, method, payload)
 	if err != nil {
 		return nil, err
 	}
