@@ -56,7 +56,7 @@ func WrapError(err error) *SerializableError {
 
 func WrapErrorBytes(err error) *PooledMsg {
 	errWrapped := WrapError(err)
-	errBytes, _ := marshalWithPool(errWrapped)
+	errBytes, _ := MarshalWithPool(errWrapped)
 	if errBytes == nil {
 		return nil
 	}

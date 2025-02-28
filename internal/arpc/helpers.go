@@ -10,5 +10,5 @@ func buildRequestMsgpack(method string, payload []byte, extraHeaders map[string]
 		Headers: extraHeaders,
 	}
 
-	return marshalWithPool(&req)
+	return MarshalWithPool(&req)
 }
