@@ -38,6 +38,7 @@ func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, 
 			Options: []string{
 				"ro",
 				"allow_other",
+				"noatime",
 			},
 		},
 		EntryTimeout:    &timeout,
