@@ -423,20 +423,18 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 			return
 		}
 
-		metaMap := &Response{Status: 200, Data: metaDataBytes}
+		metaMap := &Response{Status: 213, Data: metaDataBytes}
 		metaBytes, err := metaMap.MarshalMsg(nil)
 		if err != nil {
 			t.Errorf("server: error marshaling metadata: %v", err)
 			return
 		}
+
 		// Write the metadata using MessagePack framing.
 		if err := writeMsgpMsg(stream, metaBytes); err != nil {
 			t.Errorf("server: error writing metadata: %v", err)
 			return
 		}
-
-		// Wait briefly to ensure the client reads only metadata first.
-		time.Sleep(50 * time.Millisecond)
 
 		// Write the binary payload (sent raw, without framing).
 		if _, err := stream.Write(binaryData); err != nil {
