@@ -14,6 +14,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
@@ -42,7 +43,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> unable to reach target"), http.StatusInternalServerError)
 				return
 			}
-			req := BackupReq{Drive: agentDrive, JobId: jobId}
+			req := vssfs.BackupReq{Drive: agentDrive, JobId: jobId}
 			reqBytes, err := req.MarshalMsg(nil)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -101,7 +102,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				storeInstance.RemoveARPCFS(jobId)
 			}
 
-			req := BackupReq{Drive: agentDrive, JobId: jobId}
+			req := vssfs.BackupReq{Drive: agentDrive, JobId: jobId}
 			reqBytes, err := req.MarshalMsg(nil)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)

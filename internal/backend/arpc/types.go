@@ -1,6 +1,3 @@
-//go:generate msgp
-//msgp:ignore ARPCFS Stats ARPCFile
-
 package arpcfs
 
 import (
@@ -85,51 +82,3 @@ type ARPCFile struct {
 	jobId    string
 }
 
-type FileInfoResponse struct {
-	Name    string    `msg:"name"`
-	Size    int64     `msg:"size"`
-	Mode    uint32    `msg:"mode"`
-	ModTime time.Time `msg:"modTime"`
-	IsDir   bool      `msg:"isDir"`
-}
-
-// ReadDirResponse represents server's directory listing
-type ReadDirResponse struct {
-	Entries []FileInfoResponse `msg:"entries"`
-}
-
-// OpenRequest represents OpenFile request payload
-type OpenRequest struct {
-	Path string `msg:"path"`
-	Flag int    `msg:"flag"`
-	Perm int    `msg:"perm"`
-}
-
-// ReadRequest represents Read request payload
-type ReadRequest struct {
-	HandleID int   `msg:"handleID"`
-	Offset   int64 `msg:"offset"`
-	Length   int   `msg:"length"`
-}
-
-// ReadResponse represents Read response
-type ReadResponse struct {
-	Data []byte `msg:"data"`
-	EOF  bool   `msg:"eof"`
-}
-
-type ReadDirRequest struct {
-	Path string `msg:"path"`
-}
-
-type StatRequest struct {
-	Path string `msg:"path"`
-}
-
-type CloseRequest struct {
-	HandleID int `msg:"handleID"`
-}
-
-type SeekRequest struct {
-	HandleID int `msg:"handleID"`
-}

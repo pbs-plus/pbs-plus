@@ -139,7 +139,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (billy.F
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	req := OpenRequest{
+	req := vssfs.OpenFileReq{
 		Path: filename,
 		Flag: flag,
 		Perm: int(perm),
@@ -181,7 +181,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	fs.statCacheMu.RUnlock(filename)
 
 	// Cache miss or expired; perform RPC.
-	var fi FileInfoResponse
+	var fi vssfs.VSSFileInfo
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
@@ -190,7 +190,7 @@ func (fs *ARPCFS) Stat(filename string) (os.FileInfo, error) {
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	req := StatRequest{Path: filename}
+	req := vssfs.StatReq{Path: filename}
 	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
@@ -294,11 +294,11 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 		return nil, os.ErrInvalid
 	}
 
-	var resp ReadDirResponse
+	var resp vssfs.ReadDirEntries
 	ctx, cancel := TimeoutCtx()
 	defer cancel()
 
-	req := ReadDirRequest{Path: path}
+	req := vssfs.ReadDirReq{Path: path}
 	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
@@ -314,8 +314,8 @@ func (fs *ARPCFS) ReadDir(path string) ([]os.FileInfo, error) {
 		return nil, err
 	}
 
-	entries := make([]os.FileInfo, len(resp.Entries))
-	for i, e := range resp.Entries {
+	entries := make([]os.FileInfo, len(resp))
+	for i, e := range resp {
 		entries[i] = &fileInfo{
 			name:    e.Name,
 			size:    e.Size,
