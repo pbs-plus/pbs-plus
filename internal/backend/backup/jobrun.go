@@ -133,27 +133,48 @@ func runBackupAttempt(
 		return nil, err
 	}
 
+	// Create channels for task handling
+	readyChan := make(chan struct{})
+	taskResultChan := make(chan *proxmox.Task, 1)
+	taskErrorChan := make(chan error, 1)
+
+	// Setup monitoring context
 	monitorCtx, monitorCancel := context.WithTimeout(ctx, 20*time.Second)
 	defer monitorCancel()
 
-	var task *proxmox.Task
-	var monitorErr error
-	readyChan := make(chan struct{})
+	// Launch the task monitoring goroutine
 	go func() {
-		defer monitorCancel()
-		task, monitorErr = proxmox.Session.GetJobTask(monitorCtx, readyChan, job, target)
+		task, err := proxmox.Session.GetJobTask(monitorCtx, readyChan, job, target)
+		if err != nil {
+			select {
+			case taskErrorChan <- err:
+			case <-monitorCtx.Done():
+			}
+			return
+		}
+		select {
+		case taskResultChan <- task:
+		case <-monitorCtx.Done():
+		}
 	}()
 
+	// Wait for monitor initialization
 	select {
 	case <-readyChan:
+		// Watcher is ready
+	case err := <-taskErrorChan:
+		monitorCancel()
+		errCleanUp()
+		return nil, fmt.Errorf("runBackupAttempt: task monitoring initialization failed: %w", err)
 	case <-monitorCtx.Done():
 		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: task monitoring crashed: %w", monitorErr)
+		return nil, fmt.Errorf("runBackupAttempt: task monitoring initialization timed out: %w", monitorCtx.Err())
 	}
 
 	currOwner, _ := GetCurrentOwner(job, storeInstance)
 	_ = FixDatastore(job, storeInstance)
 
+	// Start the command now that watcher is ready
 	if err := cmd.Start(); err != nil {
 		monitorCancel()
 		if currOwner != "" {
@@ -163,8 +184,11 @@ func runBackupAttempt(
 		return nil, fmt.Errorf("runBackupAttempt: proxmox-backup-client start error (%s): %w", cmd.String(), err)
 	}
 
-	job.CurrentPID = cmd.Process.Pid
+	if cmd.Process != nil {
+		job.CurrentPID = cmd.Process.Pid
+	}
 
+	// Setup log collection
 	var logLines []string
 	var logGlobalMu sync.Mutex
 	logDone := make(chan struct{})
@@ -176,18 +200,43 @@ func runBackupAttempt(
 		close(logDone)
 	}()
 
+	// Wait for task to be detected
+	var task *proxmox.Task
 	select {
-	case <-monitorCtx.Done():
+	case task = <-taskResultChan:
 		if task == nil {
+			monitorCancel()
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
 			errCleanUp()
 			if currOwner != "" {
 				_ = SetDatastoreOwner(job, storeInstance, currOwner)
 			}
-			_ = cmd.Process.Kill()
-			return nil, fmt.Errorf("runBackupAttempt: no task created")
+			return nil, errors.New("runBackupAttempt: received nil task")
 		}
+	case err := <-taskErrorChan:
+		monitorCancel()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		errCleanUp()
+		if currOwner != "" {
+			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+		}
+		return nil, fmt.Errorf("runBackupAttempt: task detection failed: %w", err)
+	case <-monitorCtx.Done():
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		errCleanUp()
+		if currOwner != "" {
+			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+		}
+		return nil, fmt.Errorf("runBackupAttempt: task detection timed out: %w", monitorCtx.Err())
 	}
 
+	// Task is guaranteed to be non-nil at this point
 	if err := updateJobStatus(job, task, storeInstance); err != nil {
 		errCleanUp()
 		if currOwner != "" {
@@ -196,6 +245,7 @@ func runBackupAttempt(
 		return nil, fmt.Errorf("runBackupAttempt: failed to update job status: %w", err)
 	}
 
+	// Create operation with proper waitgroup
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	operation := &BackupOperation{
@@ -286,6 +336,10 @@ func (a *AutoBackupOperation) WaitForStart() error {
 }
 
 func (a *AutoBackupOperation) updatePlusError() {
+	if a.err == nil {
+		return
+	}
+
 	if !strings.Contains(a.err.Error(), "job is still running") {
 		a.job.LastRunPlusError = a.err.Error()
 		a.job.LastRunPlusTime = int(time.Now().Unix())
