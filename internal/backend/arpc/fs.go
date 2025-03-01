@@ -22,7 +22,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 		session:       session,
 		JobId:         jobId,
 		Hostname:      hostname,
-		accessedPaths: hashmap.New[string, bool](),
+		accessedPaths: hashmap.New[bool](),
 	}
 
 	return fs

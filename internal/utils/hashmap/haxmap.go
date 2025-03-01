@@ -1,28 +1,27 @@
 package hashmap
 
 import (
-	"unsafe"
+	"encoding/binary"
 
 	"github.com/alphadose/haxmap"
 	"github.com/zeebo/xxh3"
-	"golang.org/x/exp/constraints"
 )
 
-type (
-	hashable interface {
-		constraints.Integer | constraints.Float | constraints.Complex | ~string | uintptr | ~unsafe.Pointer
-	}
-)
+func New[V any]() *haxmap.Map[string, V] {
+	m := haxmap.New[string, V]()
+	m.SetHasher(func(k string) uintptr {
+		return uintptr(xxh3.HashString(k))
+	})
 
-func New[K hashable, V any]() *haxmap.Map[K, V] {
-	m := haxmap.New[K, V]()
-	m.SetHasher(func(k K) uintptr {
-		// Get the number of bytes used by k.
-		size := unsafe.Sizeof(k)
-		// Convert the address of k to a *byte pointer and use unsafe.Slice to get
-		// a byte slice representing its memory.
-		data := unsafe.Slice((*byte)(unsafe.Pointer(&k)), size)
-		return uintptr(xxh3.Hash(data))
+	return m
+}
+
+func NewUint64[V any]() *haxmap.Map[uint64, V] {
+	m := haxmap.New[uint64, V]()
+	m.SetHasher(func(k uint64) uintptr {
+		b := make([]byte, 8)
+		binary.LittleEndian.PutUint64(b, k)
+		return uintptr(xxh3.Hash(b))
 	})
 
 	return m

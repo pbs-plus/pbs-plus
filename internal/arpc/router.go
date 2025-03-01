@@ -20,7 +20,7 @@ type Router struct {
 
 // NewRouter creates a new Router instance.
 func NewRouter() *Router {
-	return &Router{handlers: hashmap.New[string, HandlerFunc]()}
+	return &Router{handlers: hashmap.New[HandlerFunc]()}
 }
 
 // Handle registers a handler for a given method name.

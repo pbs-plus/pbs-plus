@@ -21,7 +21,7 @@ var (
 )
 
 func init() {
-	activeSessions = hashmap.New[string, *backupSession]()
+	activeSessions = hashmap.New[*backupSession]()
 }
 
 type backupSession struct {

@@ -68,8 +68,8 @@ func NewFSCache(ctx context.Context, rootDir string, maxEntries int) *FSCache {
 		ctxCancel:  cancel,
 		maxEntries: maxEntries,
 		entrySem:   make(chan struct{}, maxEntries), // Buffer to maxEntries
-		statCache:  hashmap.New[string, *statCacheEntry](),
-		dirCache:   hashmap.New[string, *dirCacheEntry](),
+		statCache:  hashmap.New[*statCacheEntry](),
+		dirCache:   hashmap.New[*dirCacheEntry](),
 	}
 
 	// Start the background DFS if rootDir is provided

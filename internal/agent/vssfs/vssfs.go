@@ -42,7 +42,7 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	s := &VSSFSServer{
 		rootDir:    root,
 		jobId:      jobId,
-		handles:    hashmap.New[uint64, *FileHandle](),
+		handles:    hashmap.NewUint64[*FileHandle](),
 		fsCache:    NewFSCache(ctx, root, 8192),
 		ctx:        ctx,
 		ctxCancel:  cancel,

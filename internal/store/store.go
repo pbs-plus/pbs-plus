@@ -11,6 +11,7 @@ import (
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/database"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 )
 
 // Store holds the configuration system.
@@ -29,6 +30,8 @@ func Initialize(paths map[string]string) (*Store, error) {
 
 	store := &Store{
 		Database: db,
+		aRPCs:    hashmap.New[*arpc.Session](),
+		arpcFS:   hashmap.New[*arpcfs.ARPCFS](),
 	}
 
 	return store, nil
