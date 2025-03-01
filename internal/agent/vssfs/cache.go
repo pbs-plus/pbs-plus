@@ -76,6 +76,7 @@ func (cache *DFSCache) invalidateForPath(activePath string) {
 // to see if the file is present.
 func (cache *DFSCache) Lookup(activePath, fullFilePath string) (*VSSFileInfo, bool) {
 	// Update the current DFS branch based on activePath.
+	activePath = filepath.Clean(activePath)
 	cache.invalidateForPath(activePath)
 
 	// Clean up fullFilePath for consistency.
