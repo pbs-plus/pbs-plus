@@ -4,6 +4,7 @@ package vssfs
 
 import (
 	"context"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,6 +15,43 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// createLargeTestFile creates a test file of the specified size with deterministic content
+func createLargeTestFile(t *testing.T, path string, size int) {
+	t.Helper()
+
+	file, err := os.Create(path)
+	require.NoError(t, err)
+	defer file.Close()
+
+	// Create a buffer with some pattern data
+	const bufferSize = 64 * 1024 // 64KB buffer for writing
+	buffer := make([]byte, bufferSize)
+
+	// Fill buffer with deterministic pattern
+	// We'll use a simple pattern that includes the position to make verification easier
+	for i := 0; i < bufferSize; i++ {
+		buffer[i] = byte(i % 251) // Use prime number to create a longer repeating pattern
+	}
+
+	// Write the buffer repeatedly until we reach the desired size
+	bytesWritten := 0
+	for bytesWritten < size {
+		writeSize := bufferSize
+		if bytesWritten+writeSize > size {
+			writeSize = size - bytesWritten
+		}
+
+		n, err := file.Write(buffer[:writeSize])
+		require.NoError(t, err)
+		require.Equal(t, writeSize, n)
+
+		bytesWritten += writeSize
+	}
+
+	// Ensure all data is flushed to disk
+	require.NoError(t, file.Sync())
+}
 
 func TestVSSFSServer(t *testing.T) {
 	// Setup test directory structure
@@ -29,6 +67,14 @@ func TestVSSFSServer(t *testing.T) {
 	testFile2Path := filepath.Join(testDir, "test2.txt")
 	err = os.WriteFile(testFile2Path, []byte("test file 2 content with more data"), 0644)
 	require.NoError(t, err)
+
+	// Create a large file to test memory mapping
+	largePath := filepath.Join(testDir, "large_file.bin")
+	createLargeTestFile(t, largePath, 1024*1024) // 1MB file
+
+	// Create a medium file just below the mmap threshold
+	mediumPath := filepath.Join(testDir, "medium_file.bin")
+	createLargeTestFile(t, mediumPath, 100*1024) // 100KB file (below 128KB threshold)
 
 	// Create subdirectory with files
 	subDir := filepath.Join(testDir, "subdir")
@@ -139,6 +185,133 @@ func TestVSSFSServer(t *testing.T) {
 		bytesRead, _, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, p)
 		assert.NoError(t, err)
 		assert.Equal(t, "2 content with more data", string(p[:bytesRead]))
+
+		// Close file
+		closePayload := CloseReq{HandleID: int(openResult)}
+		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
+		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.Status)
+	})
+
+	// Test specifically for memory-mapped file reading
+	t.Run("LargeFile_MemoryMapped_Read", func(t *testing.T) {
+		// Open large file
+		payload := OpenFileReq{Path: "large_file.bin", Flag: 0, Perm: 0644}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		var openResult FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		openResult.UnmarshalMsg(raw)
+		assert.NoError(t, err)
+
+		// Read a large chunk that should trigger memory mapping
+		// (assuming threshold is 128KB)
+		readSize := 256 * 1024 // 256KB - well above threshold
+		readAtPayload := ReadAtReq{
+			HandleID: int(openResult),
+			Offset:   1024, // Start at 1KB offset
+			Length:   readSize,
+		}
+		readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
+
+		buffer := make([]byte, readSize)
+		bytesRead, _, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, buffer)
+		assert.NoError(t, err)
+		assert.Equal(t, readSize, bytesRead, "Should read the full requested size")
+
+		// Verify the data matches what we expect
+		// We'll check the first few bytes against the original file
+		originalFile, err := os.Open(largePath)
+		require.NoError(t, err)
+		defer originalFile.Close()
+
+		_, err = originalFile.Seek(1024, 0) // Same offset as in the test
+		require.NoError(t, err)
+
+		compareBuffer := make([]byte, 1024) // Check first 1KB of the read
+		_, err = io.ReadFull(originalFile, compareBuffer)
+		require.NoError(t, err)
+
+		assert.Equal(t, compareBuffer, buffer[:1024], "First 1KB of read data should match original file")
+
+		// Close file
+		closePayload := CloseReq{HandleID: int(openResult)}
+		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
+		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.Status)
+	})
+
+	// Test for a file just below the mmap threshold
+	t.Run("MediumFile_Regular_Read", func(t *testing.T) {
+		// Open medium file
+		payload := OpenFileReq{Path: "medium_file.bin", Flag: 0, Perm: 0644}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		var openResult FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		openResult.UnmarshalMsg(raw)
+		assert.NoError(t, err)
+
+		// Read a chunk that should NOT trigger memory mapping
+		readSize := 100 * 1024 // 100KB - below threshold
+		readAtPayload := ReadAtReq{
+			HandleID: int(openResult),
+			Offset:   0,
+			Length:   readSize,
+		}
+		readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
+
+		buffer := make([]byte, readSize)
+		bytesRead, _, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, buffer)
+		assert.NoError(t, err)
+		assert.Equal(t, readSize, bytesRead, "Should read the full requested size")
+
+		// Verify the data matches what we expect
+		originalFile, err := os.Open(mediumPath)
+		require.NoError(t, err)
+		defer originalFile.Close()
+
+		compareBuffer := make([]byte, 1024) // Check first 1KB
+		_, err = io.ReadFull(originalFile, compareBuffer)
+		require.NoError(t, err)
+
+		assert.Equal(t, compareBuffer, buffer[:1024], "First 1KB of read data should match original file")
+
+		// Close file
+		closePayload := CloseReq{HandleID: int(openResult)}
+		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
+		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.Status)
+	})
+
+	// Test partial reads with memory mapping
+	t.Run("LargeFile_PartialRead_EOF", func(t *testing.T) {
+		// Open large file
+		payload := OpenFileReq{Path: "large_file.bin", Flag: 0, Perm: 0644}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		var openResult FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		openResult.UnmarshalMsg(raw)
+		assert.NoError(t, err)
+
+		// Read near the end of the file to test EOF handling
+		fileSize := int64(1024 * 1024)   // 1MB
+		readOffset := fileSize - 50*1024 // 50KB from the end
+		readSize := 100 * 1024           // Try to read 100KB (more than available)
+
+		readAtPayload := ReadAtReq{
+			HandleID: int(openResult),
+			Offset:   readOffset,
+			Length:   readSize,
+		}
+		readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
+
+		buffer := make([]byte, readSize)
+		bytesRead, isEOF, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, buffer)
+		assert.NoError(t, err)
+		assert.Equal(t, 50*1024, bytesRead, "Should read only the available bytes")
+		assert.True(t, isEOF, "Should indicate EOF was reached")
 
 		// Close file
 		closePayload := CloseReq{HandleID: int(openResult)}

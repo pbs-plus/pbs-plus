@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
@@ -26,27 +27,29 @@ type FileHandle struct {
 }
 
 type VSSFSServer struct {
-	ctx        context.Context
-	ctxCancel  context.CancelFunc
-	jobId      string
-	rootDir    string
-	handles    *haxmap.Map[uint64, *FileHandle]
-	nextHandle uint64
-	arpcRouter *arpc.Router
-	fsCache    *FSCache
-	bufferPool *BufferPool
+	ctx             context.Context
+	ctxCancel       context.CancelFunc
+	jobId           string
+	rootDir         string
+	handles         *haxmap.Map[uint64, *FileHandle]
+	readAtStatCache *haxmap.Map[uint64, *windows.ByHandleFileInformation]
+	nextHandle      uint64
+	arpcRouter      *arpc.Router
+	fsCache         *FSCache
+	bufferPool      *BufferPool
 }
 
 func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &VSSFSServer{
-		rootDir:    root,
-		jobId:      jobId,
-		handles:    hashmap.NewUint64[*FileHandle](),
-		fsCache:    NewFSCache(ctx, root, 8192),
-		ctx:        ctx,
-		ctxCancel:  cancel,
-		bufferPool: NewBufferPool(),
+		rootDir:         root,
+		jobId:           jobId,
+		handles:         hashmap.NewUint64[*FileHandle](),
+		readAtStatCache: hashmap.NewUint64[*windows.ByHandleFileInformation](),
+		fsCache:         NewFSCache(ctx, root, 8192),
+		ctx:             ctx,
+		ctxCancel:       cancel,
+		bufferPool:      NewBufferPool(),
 	}
 
 	return s
@@ -284,28 +287,119 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrInvalid
 	}
 
-	buf := s.bufferPool.Get(payload.Length)
-	var bytesRead uint32
-	var overlapped windows.Overlapped
-	overlapped.Offset = uint32(payload.Offset & 0xFFFFFFFF)
-	overlapped.OffsetHigh = uint32(payload.Offset >> 32)
+	// Get file size to properly detect EOF
+	fileInfo, _ := s.readAtStatCache.GetOrCompute(uint64(payload.HandleID), func() *windows.ByHandleFileInformation {
+		var tmpFileInfo windows.ByHandleFileInformation
+		if err := windows.GetFileInformationByHandle(handle.handle, &tmpFileInfo); err != nil {
+			return nil
+		}
 
-	// Perform the actual file read
-	err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
-	isEOF := err == windows.ERROR_HANDLE_EOF
-	if err != nil && !isEOF {
-		return nil, err
+		return &tmpFileInfo
+	})
+
+	fileSize := int64(fileInfo.FileSizeHigh)<<32 | int64(fileInfo.FileSizeLow)
+
+	// Check if the read starts beyond EOF
+	if (fileSize) <= payload.Offset {
+		// Return empty read with EOF flag
+		meta := arpc.BufferMetadata{BytesAvailable: 0, EOF: true}
+		data, err := meta.MarshalMsg(nil)
+		if err != nil {
+			return nil, err
+		}
+
+		return &arpc.Response{
+			Status:    213,
+			Data:      data,
+			RawStream: func(stream *smux.Stream) {},
+		}, nil
+	}
+
+	// Calculate how many bytes are actually available to read
+	bytesAvailable := fileSize - payload.Offset
+	bytesAvailable = min(bytesAvailable, int64(payload.Length))
+
+	// Determine if this read will reach EOF
+	isEOF := (payload.Offset + bytesAvailable) >= int64(fileSize)
+
+	// Determine if this read would benefit from memory mapping
+	const mmapThreshold = 64 * 1024 // 64KB
+	useMmap := int(payload.Length) >= mmapThreshold && fileSize >= mmapThreshold
+
+	var bytesRead uint32
+	var mappedView uintptr
+	var mapHandle windows.Handle
+	var buf []byte
+
+	if useMmap {
+		// Try memory mapping for larger reads
+		var err error
+		mapHandle, err = windows.CreateFileMapping(handle.handle, nil, windows.PAGE_READONLY, 0, 0, nil)
+		if err != nil {
+			useMmap = false
+		} else {
+			// Map view of file at the requested offset
+			viewSize := uint32(bytesAvailable)
+			mappedView, err = windows.MapViewOfFile(mapHandle, windows.FILE_MAP_READ,
+				uint32(payload.Offset>>32), uint32(payload.Offset&0xFFFFFFFF), uintptr(viewSize))
+
+			if err != nil {
+				windows.CloseHandle(mapHandle)
+				useMmap = false
+			} else {
+				// Create slice from mapped memory - no copy needed
+				mappedData := (*[1 << 30]byte)(unsafe.Pointer(mappedView))[:bytesAvailable:bytesAvailable]
+
+				// We'll use the mapped memory directly - no need for buffer pool
+				buf = mappedData
+				bytesRead = uint32(bytesAvailable)
+			}
+		}
+	}
+
+	// Fall back to regular ReadFile if not using mmap or if mmap failed
+	if !useMmap {
+		// Get buffer from pool only if we're not using mmap
+		buf = s.bufferPool.Get(payload.Length)
+
+		var overlapped windows.Overlapped
+		overlapped.Offset = uint32(payload.Offset & 0xFFFFFFFF)
+		overlapped.OffsetHigh = uint32(payload.Offset >> 32)
+
+		// Perform the actual file read
+		err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
+		if err != nil && err != windows.ERROR_HANDLE_EOF {
+			s.bufferPool.Put(buf)
+			return nil, err
+		}
+
+		// Check if we've reached EOF based on bytes read vs requested
+		if uint32(bytesAvailable) != bytesRead {
+			// If we read fewer bytes than available, it's definitely EOF
+			isEOF = true
+		}
 	}
 
 	meta := arpc.BufferMetadata{BytesAvailable: int(bytesRead), EOF: isEOF}
 	data, err := meta.MarshalMsg(nil)
 	if err != nil {
+		if useMmap {
+			windows.UnmapViewOfFile(mappedView)
+			windows.CloseHandle(mapHandle)
+		} else {
+			s.bufferPool.Put(buf)
+		}
 		return nil, err
 	}
 
 	streamRaw := func(stream *smux.Stream) {
 		defer func() {
-			s.bufferPool.Put(buf)
+			if useMmap {
+				windows.UnmapViewOfFile(mappedView)
+				windows.CloseHandle(mapHandle)
+			} else {
+				s.bufferPool.Put(buf)
+			}
 		}()
 
 		if _, err := stream.Write(buf[:bytesRead]); err != nil {
@@ -333,6 +427,8 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 
 	windows.CloseHandle(handle.handle)
 	handle.isClosed = true
+
+	s.readAtStatCache.Del(uint64(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")
 	data, err := closed.MarshalMsg(nil)
