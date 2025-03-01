@@ -27,27 +27,29 @@ type FileHandle struct {
 }
 
 type VSSFSServer struct {
-	ctx        context.Context
-	ctxCancel  context.CancelFunc
-	jobId      string
-	rootDir    string
-	handles    *haxmap.Map[uint64, *FileHandle]
-	nextHandle uint64
-	arpcRouter *arpc.Router
-	fsCache    *FSCache
-	bufferPool *BufferPool
+	ctx             context.Context
+	ctxCancel       context.CancelFunc
+	jobId           string
+	rootDir         string
+	handles         *haxmap.Map[uint64, *FileHandle]
+	readAtStatCache *haxmap.Map[uint64, *windows.ByHandleFileInformation]
+	nextHandle      uint64
+	arpcRouter      *arpc.Router
+	fsCache         *FSCache
+	bufferPool      *BufferPool
 }
 
 func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &VSSFSServer{
-		rootDir:    root,
-		jobId:      jobId,
-		handles:    hashmap.NewUint64[*FileHandle](),
-		fsCache:    NewFSCache(ctx, root, 8192),
-		ctx:        ctx,
-		ctxCancel:  cancel,
-		bufferPool: NewBufferPool(),
+		rootDir:         root,
+		jobId:           jobId,
+		handles:         hashmap.NewUint64[*FileHandle](),
+		readAtStatCache: hashmap.NewUint64[*windows.ByHandleFileInformation](),
+		fsCache:         NewFSCache(ctx, root, 8192),
+		ctx:             ctx,
+		ctxCancel:       cancel,
+		bufferPool:      NewBufferPool(),
 	}
 
 	return s
@@ -286,10 +288,15 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	}
 
 	// Get file size to properly detect EOF
-	var fileInfo windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(handle.handle, &fileInfo); err != nil {
-		return nil, err
-	}
+	fileInfo, _ := s.readAtStatCache.GetOrCompute(uint64(payload.HandleID), func() *windows.ByHandleFileInformation {
+		var tmpFileInfo windows.ByHandleFileInformation
+		if err := windows.GetFileInformationByHandle(handle.handle, &tmpFileInfo); err != nil {
+			return nil
+		}
+
+		return &tmpFileInfo
+	})
+
 	fileSize := int64(fileInfo.FileSizeHigh)<<32 | int64(fileInfo.FileSizeLow)
 
 	// Check if the read starts beyond EOF
@@ -420,6 +427,8 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 
 	windows.CloseHandle(handle.handle)
 	handle.isClosed = true
+
+	s.readAtStatCache.Del(uint64(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")
 	data, err := closed.MarshalMsg(nil)
