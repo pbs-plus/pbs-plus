@@ -27,6 +27,7 @@ func NewDFSCache() *DFSCache {
 
 func (cache *DFSCache) PushDir(entry dirCacheEntry) error {
 	cache.mu.Lock()
+	entry.dirPath = filepath.Clean(filepath.FromSlash(entry.dirPath))
 	cache.stack = append(cache.stack, entry)
 	cache.mu.Unlock()
 
