@@ -132,16 +132,18 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	}
 
 	// Read and parse the MessagePack response.
-	respBytes, err := readMsgpMsg(clientStream)
+	respBytes, err := readMsgpMsgPooled(clientStream)
 	if err != nil && err != io.EOF {
 		t.Fatalf("failed to read response: %v", err)
 	}
-	if len(respBytes) == 0 {
+	defer respBytes.Release()
+
+	if len(respBytes.Data) == 0 {
 		t.Fatalf("no response received")
 	}
 
 	var resp Response
-	if _, err := resp.UnmarshalMsg(respBytes); err != nil {
+	if _, err := resp.UnmarshalMsg(respBytes.Data); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
@@ -409,10 +411,12 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 		defer stream.Close()
 
 		// Read and discard the complete request.
-		if _, err := readMsgpMsg(stream); err != nil {
+		resp, err := readMsgpMsgPooled(stream)
+		if err != nil {
 			t.Errorf("server: error reading request: %v", err)
 			return
 		}
+		defer resp.Release()
 
 		// Prepare the binary payload.
 		binaryData := []byte("hello world")

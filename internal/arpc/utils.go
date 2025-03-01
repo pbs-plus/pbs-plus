@@ -67,21 +67,6 @@ func readMsgpMsgPooled(r io.Reader) (*PooledMsg, error) {
 	return &PooledMsg{Data: msg, pooled: false}, err
 }
 
-// For non–critical paths we still expose the simpler API that returns a []byte copy.
-func readMsgpMsg(r io.Reader) ([]byte, error) {
-	pm, err := readMsgpMsgPooled(r)
-	if err != nil {
-		return nil, err
-	}
-	// In the non‐pooled API we immediately copy the payload so that we can release the pooled buffer.
-	data := make([]byte, len(pm.Data))
-	copy(data, pm.Data)
-	if pm.pooled {
-		pm.Release()
-	}
-	return data, nil
-}
-
 // writeMsgpMsg writes msg to w with a 4‑byte length header. We combine the header and msg
 // into one write using net.Buffers so that we only incur one syscall when possible.
 func writeMsgpMsg(w io.Writer, msg []byte) error {

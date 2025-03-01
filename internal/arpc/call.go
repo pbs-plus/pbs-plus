@@ -59,19 +59,21 @@ func (s *Session) CallContext(ctx context.Context, method string, payload []byte
 		return nil, err
 	}
 
-	respBytes, err := readMsgpMsg(stream)
+	respBytes, err := readMsgpMsgPooled(stream)
 	if err != nil {
 		if ne, ok := err.(net.Error); ok && ne.Timeout() {
 			return nil, context.DeadlineExceeded
 		}
 		return nil, err
 	}
-	if len(respBytes) == 0 {
+	defer respBytes.Release()
+
+	if len(respBytes.Data) == 0 {
 		return nil, fmt.Errorf("empty response")
 	}
 
 	var resp Response
-	if _, err := resp.UnmarshalMsg(respBytes); err != nil {
+	if _, err := resp.UnmarshalMsg(respBytes.Data); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -143,19 +145,20 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	}
 
 	// Read metadata response
-	metaBytes, err := readMsgpMsg(stream)
+	metaBytes, err := readMsgpMsgPooled(stream)
 	if err != nil {
 		return 0, false, err
 	}
+	defer metaBytes.Release()
 
 	// Handle non-OK status quickly
 	var resp Response
-	if _, err := resp.UnmarshalMsg(metaBytes); err != nil {
+	if _, err := resp.UnmarshalMsg(metaBytes.Data); err != nil {
 		return 0, false, err
 	}
 	if resp.Status != 213 {
 		var serErr SerializableError
-		if _, err := serErr.UnmarshalMsg(metaBytes); err == nil {
+		if _, err := serErr.UnmarshalMsg(metaBytes.Data); err == nil {
 			return 0, false, UnwrapError(&serErr)
 		}
 		return 0, false, fmt.Errorf("RPC error: status %d", resp.Status)
