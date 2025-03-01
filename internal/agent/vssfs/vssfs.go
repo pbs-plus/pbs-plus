@@ -333,6 +333,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	if bytesAvailable > int64(payload.Length) {
 		bytesAvailable = int64(payload.Length)
 	}
+
 	isEOF := (payload.Offset + bytesAvailable) >= fileSize
 
 	// Decide whether to use memory mapping.
@@ -370,6 +371,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 				region = mmapRegion
 				buf = region // region is already a []byte
 				bytesRead = uint32(len(buf))
+				isEOF = (payload.Offset + int64(len(region))) >= fileSize
 			}
 		}
 	}
@@ -381,12 +383,31 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		overlapped.Offset = uint32(payload.Offset & 0xFFFFFFFF)
 		overlapped.OffsetHigh = uint32(payload.Offset >> 32)
 		err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
-		if err != nil && err != windows.ERROR_HANDLE_EOF {
-			s.bufferPool.Put(buf)
-			return nil, err
+		if err != nil {
+			if err == windows.ERROR_HANDLE_EOF {
+				// Explicit EOF detection
+				isEOF = true
+				if bytesRead > uint32(bytesAvailable) {
+					bytesRead = uint32(bytesAvailable)
+				}
+			} else {
+				s.bufferPool.Put(buf)
+				return nil, err
+			}
+		} else {
+			// Validate against file size even when no error
+			isEOF = (payload.Offset + int64(bytesRead)) >= fileSize
 		}
-		if uint32(bytesAvailable) != bytesRead {
+
+		// Final safety clamp
+		if bytesRead > uint32(bytesAvailable) {
+			bytesRead = uint32(bytesAvailable)
 			isEOF = true
+		}
+
+		// Log unexpected partial reads
+		if !isEOF && int64(bytesRead) < bytesAvailable {
+			syslog.L.Warnf("Partial read: %d/%d bytes (offset %d, size %d)", bytesRead, bytesAvailable, payload.Offset, fileSize)
 		}
 	}
 
@@ -413,6 +434,11 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 				s.bufferPool.Put(buf)
 			}
 		}()
+
+		if stream == nil {
+			return
+		}
+
 		if _, err := stream.Write(buf[:bytesRead]); err != nil {
 			syslog.L.Errorf("stream.Write error: %v", err)
 			return
