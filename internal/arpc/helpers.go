@@ -35,8 +35,8 @@ func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, config *smux.Conf
 	return NewServerSession(conn, config)
 }
 
-// UpgradeHTTPClient helps a client upgrade an HTTP connection.
-func UpgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Header, config *smux.Config) (*Session, error) {
+// upgradeHTTPClient helps a client upgrade an HTTP connection.
+func upgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Header, config *smux.Config) (*Session, error) {
 	reqLines := []string{
 		fmt.Sprintf("GET %s HTTP/1.1", requestPath),
 		fmt.Sprintf("Host: %s", host),

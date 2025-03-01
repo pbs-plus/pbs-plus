@@ -26,6 +26,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/tokens"
 	mw "github.com/sonroyaalmerol/pbs-plus/internal/proxy/middlewares"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
@@ -196,7 +197,19 @@ func main() {
 		}
 	}()
 
-	// Initialize router with Go 1.22's new pattern syntax
+	// Unmount and remove all stale mount points
+	umount := exec.Command("umount", "-lf", filepath.Join(constants.AgentMountBasePath, "*"))
+	umount.Env = os.Environ()
+	_ = umount.Run()
+
+	if err := os.RemoveAll(constants.AgentMountBasePath); err != nil {
+		syslog.L.Errorf("failed to remove directory: %v", err)
+	}
+
+	if err := os.Mkdir(constants.AgentMountBasePath, 0700); err != nil {
+		syslog.L.Errorf("failed to recreate directory: %v", err)
+	}
+
 	mux := http.NewServeMux()
 
 	// API routes

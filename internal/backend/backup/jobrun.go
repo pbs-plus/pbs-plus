@@ -52,6 +52,8 @@ func runBackupAttempt(
 		return nil, ErrOneInstance
 	}
 
+	ErrUnreachable := fmt.Errorf("runBackupAttempt: target '%s' is unreachable", job.Target)
+
 	var agentMount *mount.AgentMount
 	var stdout, stderr io.ReadCloser
 
@@ -100,16 +102,19 @@ func runBackupAttempt(
 	}
 
 	if !skipCheck {
+		pinged := false
 		targetSplit := strings.Split(target.Name, " - ")
 		arpcSess := storeInstance.GetARPC(targetSplit[0])
 		if arpcSess != nil {
-			timeout, timeoutCancel := context.WithTimeout(ctx, 3*time.Second)
-			defer timeoutCancel()
-			pingResp, err := arpcSess.CallContext(timeout, "ping", nil)
-			if err != nil || pingResp.Status != 200 {
-				errCleanUp()
-				return nil, fmt.Errorf("runBackupAttempt: target '%s' is unreachable", job.Target)
+			pingResp, err := arpcSess.CallWithTimeout(3*time.Second, "ping", nil)
+			if err == nil && pingResp.Status == 200 {
+				pinged = true
 			}
+		}
+
+		if !pinged {
+			errCleanUp()
+			return nil, ErrUnreachable
 		}
 	}
 
@@ -356,6 +361,8 @@ func (a *AutoBackupOperation) updatePlusError() {
 }
 
 func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, skipCheck bool) *AutoBackupOperation {
+	ErrUnreachable := fmt.Errorf("runBackupAttempt: target '%s' is unreachable", job.Target)
+
 	autoOp := &AutoBackupOperation{
 		done:          make(chan struct{}),
 		started:       make(chan struct{}),
@@ -376,7 +383,7 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 				op, err := runBackupAttempt(ctx, job, storeInstance, skipCheck)
 				if err != nil {
 					lastErr = err
-					if err == ErrOneInstance {
+					if err == ErrOneInstance || err == ErrUnreachable {
 						autoOp.err = err
 						close(autoOp.done)
 						return

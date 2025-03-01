@@ -13,9 +13,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
+	"github.com/alphadose/haxmap"
 	"github.com/fsnotify/fsnotify"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 )
 
 // PropertyType represents the type of a configuration property
@@ -51,6 +55,8 @@ type ConfigData[T any] struct {
 	Order    []string
 }
 
+// SectionConfig now has an in-memory cache layer that is updated
+// only when the underlying file (or value) is mutated.
 type SectionConfig[T any] struct {
 	mu               sync.RWMutex
 	fileMutex        *FileMutexManager
@@ -61,6 +67,9 @@ type SectionConfig[T any] struct {
 	onConfigChange   func(*ConfigData[T])
 	parseSectionHead func(string) (string, string, error)
 	parseSectionLine func(string) (string, string, error)
+
+	cache       *haxmap.Map[string, *ConfigData[T]]
+	lastModTime atomic.Int64
 }
 
 func NewSectionConfig[T any](plugin *SectionPlugin[T]) *SectionConfig[T] {
@@ -70,13 +79,28 @@ func NewSectionConfig[T any](plugin *SectionPlugin[T]) *SectionConfig[T] {
 		parseSectionHead: defaultParseSectionHeader,
 		parseSectionLine: defaultParseSectionContent,
 		fileMutex:        NewFileMutexManager(),
+		cache:            hashmap.New[*ConfigData[T]](),
 	}
 }
 
 // Parse reads and parses a configuration file
+// It first checks whether a valid cache exists (by stat-ing the file) and returns
+// that if nothing has changed. Otherwise, it parses the file and updates the cache.
 func (sc *SectionConfig[T]) Parse(filename string) (*ConfigData[T], error) {
+	// Check if a cached copy exists and the file has not been mutated.
+	stat, err := os.Stat(filename)
+	if err == nil {
+		currentModTime := stat.ModTime().Unix()
+		lastMod := sc.lastModTime.Load()
+		if cached, exists := sc.cache.Get(filename); exists && lastMod == currentModTime {
+			// The file has not changed so return the cached config.
+			return cached, nil
+		}
+	}
+
+	// Otherwise, read and parse the config file.
 	var config *ConfigData[T]
-	err := sc.fileMutex.WithReadLock(filename, func() error {
+	err = sc.fileMutex.WithReadLock(filename, func() error {
 		file, err := os.Open(filename)
 		if err != nil {
 			return err
@@ -131,7 +155,6 @@ func (sc *SectionConfig[T]) Parse(filename string) (*ConfigData[T], error) {
 				if err != nil {
 					return fmt.Errorf("error parsing section header at line %d: %w", lineNum, err)
 				}
-
 				currentSection = &Section[T]{
 					Type: sectionType,
 					ID:   sectionID,
@@ -171,6 +194,18 @@ func (sc *SectionConfig[T]) Parse(filename string) (*ConfigData[T], error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Update the cache with the freshly parsed value and current mod time.
+	stat, err = os.Stat(filename)
+	var currentModTime time.Time
+	if err == nil {
+		currentModTime = stat.ModTime()
+	} else {
+		// if unable to stat, use current time as fallback
+		currentModTime = time.Now()
+	}
+	sc.cache.Set(filename, config)
+	sc.lastModTime.Store(currentModTime.Unix())
 
 	return config, nil
 }
@@ -245,8 +280,22 @@ func (sc *SectionConfig[T]) Write(config *ConfigData[T]) error {
 		}
 		return os.WriteFile(config.FilePath, []byte(output.String()), 0644)
 	})
+	if err != nil {
+		return err
+	}
 
-	return err
+	// After writing, update the cache with the new config and mod time.
+	stat, statErr := os.Stat(config.FilePath)
+	var currentModTime time.Time
+	if statErr == nil {
+		currentModTime = stat.ModTime()
+	} else {
+		currentModTime = time.Now()
+	}
+	sc.cache.Set(config.FilePath, config)
+	sc.lastModTime.Store(currentModTime.Unix())
+
+	return nil
 }
 
 // marshalValue converts a reflected value to its string representation
@@ -401,12 +450,10 @@ func (sc *SectionConfig[T]) unmarshal(data map[string]string) (T, error) {
 
 		str, ok := data[key]
 		if !ok {
-			if !ok {
-				if configTag.Required { // Only error if the field is explicitly marked as required
-					return result, fmt.Errorf("required field %s is missing", field.Name)
-				}
-				continue // Skip optional fields that aren't present
+			if configTag.Required {
+				return result, fmt.Errorf("required field %s is missing", field.Name)
 			}
+			continue // Skip optional fields that aren't present
 		}
 
 		val, err := unmarshalValue(str, field.Type, configTag)
@@ -414,7 +461,6 @@ func (sc *SectionConfig[T]) unmarshal(data map[string]string) (T, error) {
 			if configTag.Required {
 				return result, fmt.Errorf("error unmarshaling field %s: %w", field.Name, err)
 			}
-
 			continue
 		}
 
