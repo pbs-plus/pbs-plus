@@ -9,7 +9,7 @@ import (
 )
 
 // Optimized stat with invalidation on first access
-func (fc *FSCache) stat(path string) (*VSSFileInfo, error) {
+func stat(path string) (*VSSFileInfo, error) {
 	pathPtr, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, mapWinError(err, path)
@@ -29,7 +29,7 @@ func (fc *FSCache) stat(path string) (*VSSFileInfo, error) {
 }
 
 // Process a directory and cache its contents
-func (fc *FSCache) readDir(dirPath string) (ReadDirEntries, error) {
+func readDir(dirPath string) (ReadDirEntries, error) {
 	// Read directory
 	searchPath := filepath.Join(dirPath, "*")
 	var findData windows.Win32finddata
