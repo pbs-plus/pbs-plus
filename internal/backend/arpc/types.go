@@ -2,9 +2,8 @@ package arpcfs
 
 import (
 	"context"
-	"sync"
-	"time"
 
+	"github.com/alphadose/haxmap"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 )
@@ -18,24 +17,19 @@ type ARPCFS struct {
 	Mount    *gofuse.Server
 	basePath string
 
-	accessedPaths sync.Map
-	readdirOnce   sync.Map
+	accessedPaths *haxmap.Map[string, bool]
 
 	// Atomic counters for the number of unique file and folder accesses.
 	fileCount   int64
 	folderCount int64
+	totalBytes  int64
 
-	// For speed calculations we store the last seen state.
-	lastAccessMu    sync.Mutex
-	lastAccessTime  time.Time
+	lastAccessTime  int64 // UnixNano timestamp
 	lastFileCount   int64
 	lastFolderCount int64
 
-	// Total bytes read and its speed metric.
-	totalBytes     uint64
-	totalBytesMu   sync.Mutex
-	lastTotalBytes uint64
-	lastBytesTime  time.Time
+	lastBytesTime  int64 // UnixNano timestamp
+	lastTotalBytes int64
 }
 
 type Stats struct {

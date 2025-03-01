@@ -11,6 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/alphadose/haxmap"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 )
 
 // FSCache provides a memory-efficient filesystem cache optimized for
@@ -18,10 +21,10 @@ import (
 type FSCache struct {
 	ctx        context.Context
 	ctxCancel  context.CancelFunc
-	statCache  sync.Map // map[string]*statCacheEntry
-	dirCache   sync.Map // map[string]*dirCacheEntry
-	maxEntries int      // Maximum number of entries to keep in cache
-	closed     int32    // Whether the cache has been closed
+	statCache  *haxmap.Map[string, *statCacheEntry]
+	dirCache   *haxmap.Map[string, *dirCacheEntry]
+	maxEntries int   // Maximum number of entries to keep in cache
+	closed     int32 // Whether the cache has been closed
 	cleanupWg  sync.WaitGroup
 
 	// For entry limiting and pause/continue mechanism
@@ -65,6 +68,8 @@ func NewFSCache(ctx context.Context, rootDir string, maxEntries int) *FSCache {
 		ctxCancel:  cancel,
 		maxEntries: maxEntries,
 		entrySem:   make(chan struct{}, maxEntries), // Buffer to maxEntries
+		statCache:  hashmap.New[string, *statCacheEntry](),
+		dirCache:   hashmap.New[string, *dirCacheEntry](),
 	}
 
 	// Start the background DFS if rootDir is provided
@@ -145,17 +150,15 @@ func (fc *FSCache) Stat(path string) (*VSSFileInfo, error) {
 	normalizedPath := filepath.Clean(path)
 
 	// Try to get from cache
-	val, ok := fc.statCache.Load(normalizedPath)
+	val, ok := fc.statCache.Get(normalizedPath)
 	if ok {
-		entry := val.(*statCacheEntry)
-
 		// Mark as accessed - if it was already accessed, consider pruning
-		if atomic.CompareAndSwapInt32(&entry.accessed, 0, 1) {
+		if atomic.CompareAndSwapInt32(&val.accessed, 0, 1) {
 			// First access - defer pruning until we return the info
 			defer fc.pruneStatEntry(normalizedPath)
 		}
 
-		return entry.info, nil
+		return val.info, nil
 	}
 
 	// Not in cache, do the real stat
@@ -172,7 +175,7 @@ func (fc *FSCache) Stat(path string) (*VSSFileInfo, error) {
 
 	// Try to acquire an entry slot - will pause if at capacity
 	if fc.acquireEntry() {
-		fc.statCache.Store(normalizedPath, entry)
+		fc.statCache.Set(normalizedPath, entry)
 		// Schedule pruning after a brief delay to allow for any potential
 		// quick follow-up access (though in this case we don't expect any)
 		go fc.pruneStatEntry(normalizedPath)
@@ -190,7 +193,7 @@ func (fc *FSCache) ReadDir(dirPath string) (ReadDirEntries, error) {
 	normalizedPath := filepath.Clean(dirPath)
 
 	// Try to get from cache first
-	val, ok := fc.dirCache.Load(normalizedPath)
+	val, ok := fc.dirCache.Get(normalizedPath)
 	if !ok {
 		// Not in cache, create new entry
 		// Only proceed if we can acquire an entry slot
@@ -207,12 +210,12 @@ func (fc *FSCache) ReadDir(dirPath string) (ReadDirEntries, error) {
 			isLoaded: false,
 		}
 
-		actual, loaded := fc.dirCache.LoadOrStore(normalizedPath, entry)
+		actual, loaded := fc.dirCache.GetOrSet(normalizedPath, entry)
 		if loaded {
 			// Someone else stored it while we were waiting
 			// Release our token since we don't need it
 			fc.releaseEntry()
-			entry = actual.(*dirCacheEntry)
+			entry = actual
 		}
 
 		// If not loaded yet, we need to load it
@@ -224,7 +227,7 @@ func (fc *FSCache) ReadDir(dirPath string) (ReadDirEntries, error) {
 				entries, err := fc.readDir(normalizedPath)
 				if err != nil {
 					entry.mutex.Unlock()
-					fc.dirCache.Delete(normalizedPath)
+					fc.dirCache.Get(normalizedPath)
 					fc.releaseEntry()
 					return nil, err
 				}
@@ -248,59 +251,54 @@ func (fc *FSCache) ReadDir(dirPath string) (ReadDirEntries, error) {
 		val = actual
 	}
 
-	entry := val.(*dirCacheEntry)
-
 	// Mark as accessed - if it was already accessed, consider pruning
-	if atomic.CompareAndSwapInt32(&entry.accessed, 0, 1) {
+	if atomic.CompareAndSwapInt32(&val.accessed, 0, 1) {
 		// First access - defer pruning until we return the results
 		defer fc.pruneDirEntry(normalizedPath)
 	}
 
 	// Build and return the results
-	return fc.buildFileInfoArray(entry.paths)
+	return fc.buildFileInfoArray(val.paths)
 }
 
 // Preload a stat entry for later access (used during directory reads)
 func (fc *FSCache) preloadStatEntry(path string, info *VSSFileInfo) {
 	// Only add if we don't have it already
-	if _, ok := fc.statCache.Load(path); !ok {
+	if _, ok := fc.statCache.Get(path); !ok {
 		// Try to acquire an entry slot - will pause if at capacity
 		if fc.acquireEntry() {
 			entry := &statCacheEntry{
 				info:     info,
 				accessed: 0,
 			}
-			fc.statCache.Store(path, entry)
+			fc.statCache.Set(path, entry)
 		}
 	}
 }
 
 // Prune a stat entry immediately after it's been accessed
 func (fc *FSCache) pruneStatEntry(path string) {
-	if _, ok := fc.statCache.LoadAndDelete(path); ok {
+	if _, ok := fc.statCache.GetAndDel(path); ok {
 		fc.releaseEntry()
 	}
 }
 
 // Prune a directory entry after it's been accessed
 func (fc *FSCache) pruneDirEntry(path string) {
-	val, ok := fc.dirCache.Load(path)
+	val, ok := fc.dirCache.Get(path)
 	if !ok {
 		return
 	}
 
-	entry := val.(*dirCacheEntry)
-
-	for _, childPath := range entry.paths {
-		if val, ok := fc.statCache.Load(childPath); ok {
-			entry := val.(*statCacheEntry)
+	for _, childPath := range val.paths {
+		if entry, ok := fc.statCache.Get(childPath); ok {
 			if atomic.LoadInt32(&entry.accessed) == 1 {
 				fc.pruneStatEntry(childPath)
 			}
 		}
 	}
 
-	if _, ok := fc.dirCache.LoadAndDelete(path); ok {
+	if _, ok := fc.dirCache.GetAndDel(path); ok {
 		fc.releaseEntry()
 	}
 }
@@ -442,9 +440,8 @@ func (fc *FSCache) buildFileInfoArray(paths []string) (ReadDirEntries, error) {
 
 	for _, path := range paths {
 		// Check in cache first
-		val, ok := fc.statCache.Load(path)
+		entry, ok := fc.statCache.Get(path)
 		if ok {
-			entry := val.(*statCacheEntry)
 			// Mark as accessed if not already
 			atomic.CompareAndSwapInt32(&entry.accessed, 0, 1)
 
@@ -473,15 +470,15 @@ func (fc *FSCache) buildFileInfoArray(paths []string) (ReadDirEntries, error) {
 
 // Clear the entire cache
 func (fc *FSCache) clearCache() {
-	fc.dirCache.Range(func(key, _ interface{}) bool {
-		fc.dirCache.Delete(key)
-		fc.releaseEntry() // Release each entry we delete
+	fc.dirCache.ForEach(func(s string, dce *dirCacheEntry) bool {
+		fc.dirCache.Del(s)
+		fc.releaseEntry()
 		return true
 	})
 
-	fc.statCache.Range(func(key, _ interface{}) bool {
-		fc.statCache.Delete(key)
-		fc.releaseEntry() // Release each entry we delete
+	fc.statCache.ForEach(func(s string, sce *statCacheEntry) bool {
+		fc.statCache.Del(s)
+		fc.releaseEntry()
 		return true
 	})
 }

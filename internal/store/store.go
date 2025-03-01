@@ -4,8 +4,8 @@ package store
 
 import (
 	"fmt"
-	"sync"
 
+	"github.com/alphadose/haxmap"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
@@ -13,90 +13,64 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
-// Store holds the configuration system
+// Store holds the configuration system.
 type Store struct {
 	CertGenerator *certificates.Generator
 	Database      *database.Database
-	aRPCs         map[string]*arpc.Session
-	arpcsMux      sync.RWMutex
-	arpcFS        map[string]*arpcfs.ARPCFS
-	arpcFSMux     sync.RWMutex
+	aRPCs         *haxmap.Map[string, *arpc.Session]
+	arpcFS        *haxmap.Map[string, *arpcfs.ARPCFS]
 }
 
 func Initialize(paths map[string]string) (*Store, error) {
-	database, err := database.Initialize(paths)
+	db, err := database.Initialize(paths)
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error initializing database -> %w", err)
 	}
 
 	store := &Store{
-		Database: database,
-		aRPCs:    make(map[string]*arpc.Session),
-		arpcFS:   make(map[string]*arpcfs.ARPCFS),
+		Database: db,
 	}
 
 	return store, nil
 }
 
-func (s *Store) AddARPC(client string, arpc *arpc.Session) {
-	s.arpcsMux.Lock()
-	defer s.arpcsMux.Unlock()
-
+func (s *Store) AddARPC(client string, session *arpc.Session) {
+	s.aRPCs.Set(client, session)
 	syslog.L.Infof("Client %s added via aRPC", client)
 
-	s.aRPCs[client] = arpc
-
-	syslog.L.Infof("Total aRPC clients: %d", len(s.aRPCs))
+	count := s.aRPCs.Len()
+	syslog.L.Infof("Total aRPC clients: %d", count)
 }
 
 func (s *Store) GetARPC(client string) *arpc.Session {
-	s.arpcsMux.RLock()
-	defer s.arpcsMux.RUnlock()
-
-	arpc, ok := s.aRPCs[client]
-	if !ok {
-		return nil
+	if session, ok := s.aRPCs.Get(client); ok {
+		return session
 	}
-
-	return arpc
+	return nil
 }
 
 func (s *Store) RemoveARPC(client string) {
-	s.arpcsMux.Lock()
-	defer s.arpcsMux.Unlock()
-
-	if clientA, ok := s.aRPCs[client]; ok {
-		_ = clientA.Close()
+	if session, ok := s.aRPCs.Get(client); ok {
+		_ = session.Close()
+		s.aRPCs.Del(client)
 		syslog.L.Infof("Client %s removed via aRPC", client)
-		delete(s.aRPCs, client)
 	}
 }
 
-func (s *Store) AddARPCFS(client string, arpc *arpcfs.ARPCFS) {
-	s.arpcFSMux.Lock()
-	defer s.arpcFSMux.Unlock()
-
-	s.arpcFS[client] = arpc
+func (s *Store) AddARPCFS(client string, fs *arpcfs.ARPCFS) {
+	s.arpcFS.Set(client, fs)
 }
 
 func (s *Store) GetARPCFS(client string) *arpcfs.ARPCFS {
-	s.arpcFSMux.RLock()
-	defer s.arpcFSMux.RUnlock()
-
-	arpc, ok := s.arpcFS[client]
-	if !ok {
-		return nil
+	if fs, ok := s.arpcFS.Get(client); ok {
+		return fs
 	}
-
-	return arpc
+	return nil
 }
 
 func (s *Store) RemoveARPCFS(client string) {
-	s.arpcFSMux.Lock()
-	defer s.arpcFSMux.Unlock()
-
-	if clientA, ok := s.arpcFS[client]; ok {
-		clientA.Unmount()
-		delete(s.arpcFS, client)
+	if fs, ok := s.arpcFS.Get(client); ok {
+		fs.Unmount()
+		s.arpcFS.Del(client)
 	}
 }

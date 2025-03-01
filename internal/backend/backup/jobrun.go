@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/alexflint/go-filemutex"
@@ -191,14 +192,12 @@ func runBackupAttempt(
 	}
 
 	// Setup log collection
-	var logLines []string
-	var logGlobalMu sync.Mutex
+	var logLines atomic.Value
 	logDone := make(chan struct{})
 	go func() {
 		lines, _ := collectLogs(job.ID, cmd, stdout, stderr)
-		logGlobalMu.Lock()
-		logLines = lines
-		logGlobalMu.Unlock()
+		// Atomically store the slice of log lines.
+		logLines.Store(lines)
 		close(logDone)
 	}()
 
@@ -268,11 +267,16 @@ func runBackupAttempt(
 
 		<-logDone
 
-		logGlobalMu.Lock()
-		defer logGlobalMu.Unlock()
-
-		if err := writeLogsToFile(task.UPID, logLines); err != nil {
-			log.Printf("Failed to write logs: %v", err)
+		if val := logLines.Load(); val != nil {
+			if lines, ok := val.([]string); ok {
+				if err := writeLogsToFile(task.UPID, lines); err != nil {
+					log.Printf("Failed to write logs: %v", err)
+				}
+			} else {
+				log.Print("Failed to write logs: log lines stored differently")
+			}
+		} else {
+			log.Print("Failed to write logs: log lines are missing")
 		}
 
 		if err := updateJobStatus(job, task, storeInstance); err != nil {

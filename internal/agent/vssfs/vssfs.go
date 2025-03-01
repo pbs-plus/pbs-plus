@@ -6,10 +6,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
+	"sync/atomic"
 
+	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
 )
@@ -28,9 +30,8 @@ type VSSFSServer struct {
 	ctxCancel  context.CancelFunc
 	jobId      string
 	rootDir    string
-	handles    map[uint64]*FileHandle
+	handles    *haxmap.Map[uint64, *FileHandle]
 	nextHandle uint64
-	mu         sync.RWMutex
 	arpcRouter *arpc.Router
 	fsCache    *FSCache
 	bufferPool *BufferPool
@@ -41,7 +42,7 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	s := &VSSFSServer{
 		rootDir:    root,
 		jobId:      jobId,
-		handles:    make(map[uint64]*FileHandle),
+		handles:    hashmap.New[uint64, *FileHandle](),
 		fsCache:    NewFSCache(ctx, root, 8192),
 		ctx:        ctx,
 		ctxCancel:  cancel,
@@ -75,12 +76,9 @@ func (s *VSSFSServer) Close() {
 		r.CloseHandle(s.jobId + "/Fstat")
 		r.CloseHandle(s.jobId + "/FSstat")
 	}
-	s.mu.Lock()
-	for k := range s.handles {
-		delete(s.handles, k)
-	}
-	s.nextHandle = 0
-	s.mu.Unlock()
+
+	s.handles.Clear()
+	atomic.StoreUint64(&s.nextHandle, 0)
 
 	s.ctxCancel()
 
@@ -175,13 +173,11 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		path:   path,
 	}
 
-	s.mu.Lock()
-	s.nextHandle++
-	handleID := s.nextHandle
-	s.handles[handleID] = fileHandle
-	s.mu.Unlock()
+	handleID := atomic.AddUint64(&s.nextHandle, 1)
 
+	s.handles.Set(handleID, fileHandle)
 	data := FileHandleId(handleID)
+
 	dataBytes, err := data.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
@@ -275,10 +271,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	}
 
 	// Fast path for handle lookup with read lock
-	s.mu.RLock()
-	handle, exists := s.handles[uint64(payload.HandleID)]
-	s.mu.RUnlock()
-
+	handle, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists || handle.isClosed {
 		return nil, os.ErrNotExist
 	}
@@ -333,13 +326,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	s.mu.Lock()
-	handle, exists := s.handles[uint64(payload.HandleID)]
-	if exists {
-		delete(s.handles, uint64(payload.HandleID))
-	}
-	s.mu.Unlock()
-
+	handle, exists := s.handles.GetAndDel(uint64(payload.HandleID))
 	if !exists || handle.isClosed {
 		return nil, os.ErrNotExist
 	}
@@ -362,9 +349,7 @@ func (s *VSSFSServer) handleFstat(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	s.mu.RLock()
-	handle, exists := s.handles[uint64(payload.HandleID)]
-	s.mu.RUnlock()
+	handle, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists || handle.isClosed {
 		return nil, os.ErrNotExist
 	}

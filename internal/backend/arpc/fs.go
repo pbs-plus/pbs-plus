@@ -9,32 +9,28 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cespare/xxhash/v2"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 )
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string) *ARPCFS {
 	fs := &ARPCFS{
-		basePath: "/",
-		ctx:      ctx,
-		session:  session,
-		JobId:    jobId,
-		Hostname: hostname,
+		basePath:      "/",
+		ctx:           ctx,
+		session:       session,
+		JobId:         jobId,
+		Hostname:      hostname,
+		accessedPaths: hashmap.New[string, bool](),
 	}
 
 	return fs
 }
 
-func hashPath(path string) uint64 {
-	return xxhash.Sum64String(path)
-}
-
 // trackAccess records that a path has been accessed using its xxHash
 func (fs *ARPCFS) trackAccess(path string, isDir bool) {
-	h := hashPath(path)
-	if _, loaded := fs.accessedPaths.LoadOrStore(h, isDir); !loaded {
+	if _, loaded := fs.accessedPaths.GetOrSet(path, isDir); !loaded {
 		if isDir {
 			atomic.AddInt64(&fs.folderCount, 1)
 		} else {
@@ -45,45 +41,47 @@ func (fs *ARPCFS) trackAccess(path string, isDir bool) {
 
 // GetStats returns a unified snapshot of all access and byte-read stats.
 func (fs *ARPCFS) GetStats() Stats {
-	currentTime := time.Now()
+	// Get the current time as UnixNano.
+	currentTime := time.Now().UnixNano()
 
-	// Obtain the current unique counts atomically.
+	// Get the current counts atomically.
 	currentFileCount := atomic.LoadInt64(&fs.fileCount)
 	currentFolderCount := atomic.LoadInt64(&fs.folderCount)
 	totalAccessed := currentFileCount + currentFolderCount
 
-	// Calculate access speed (unique accesses per second).
-	var accessSpeed float64
-	fs.lastAccessMu.Lock()
-	elapsed := currentTime.Sub(fs.lastAccessTime).Seconds()
-	if elapsed > 0 {
-		accessSpeed = float64((currentFileCount+currentFolderCount)-
-			(fs.lastFileCount+fs.lastFolderCount)) / elapsed
-	}
-	// Update last state for subsequent speed calculation.
-	fs.lastAccessTime = currentTime
-	fs.lastFileCount = currentFileCount
-	fs.lastFolderCount = currentFolderCount
-	fs.lastAccessMu.Unlock()
+	// Atomically swap out the previous access state.
+	// SwapInt64 returns the previous value.
+	lastATime := atomic.SwapInt64(&fs.lastAccessTime, currentTime)
+	lastFileCount := atomic.SwapInt64(&fs.lastFileCount, currentFileCount)
+	lastFolderCount := atomic.SwapInt64(&fs.lastFolderCount, currentFolderCount)
 
-	// Calculate byte read speed.
-	var bytesSpeed float64
-	fs.totalBytesMu.Lock()
-	bytesDiff := fs.totalBytes - fs.lastTotalBytes
-	secDiff := currentTime.Sub(fs.lastBytesTime).Seconds()
-	if secDiff > 0 {
-		bytesSpeed = float64(bytesDiff) / secDiff
+	// Calculate elapsed time in seconds.
+	elapsed := float64(currentTime-lastATime) / 1e9
+	var accessSpeed float64
+	if elapsed > 0 {
+		accessDelta := (currentFileCount + currentFolderCount) -
+			(lastFileCount + lastFolderCount)
+		accessSpeed = float64(accessDelta) / elapsed
 	}
-	fs.lastTotalBytes = fs.totalBytes
-	fs.lastBytesTime = currentTime
-	fs.totalBytesMu.Unlock()
+
+	// Get the totalBytes count (if updated atomically elsewhere).
+	currentTotalBytes := atomic.LoadInt64(&fs.totalBytes)
+	// Atomically swap the previous byte state.
+	lastBTime := atomic.SwapInt64(&fs.lastBytesTime, currentTime)
+	lastTotalBytes := atomic.SwapInt64(&fs.lastTotalBytes, currentTotalBytes)
+
+	secDiff := float64(currentTime-lastBTime) / 1e9
+	var bytesSpeed float64
+	if secDiff > 0 {
+		bytesSpeed = float64(currentTotalBytes-lastTotalBytes) / secDiff
+	}
 
 	return Stats{
 		FilesAccessed:   currentFileCount,
 		FoldersAccessed: currentFolderCount,
 		TotalAccessed:   totalAccessed,
 		FileAccessSpeed: accessSpeed,
-		TotalBytes:      fs.totalBytes,
+		TotalBytes:      uint64(currentTotalBytes),
 		ByteReadSpeed:   bytesSpeed,
 	}
 }
