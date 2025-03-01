@@ -4,8 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sync"
 
+	"github.com/alphadose/haxmap"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 	"github.com/xtaci/smux"
 )
 
@@ -14,27 +15,22 @@ type HandlerFunc func(req Request) (*Response, error)
 
 // Router holds a map from method names to handler functions.
 type Router struct {
-	handlers   map[string]HandlerFunc
-	handlersMu sync.RWMutex
+	handlers *haxmap.Map[string, HandlerFunc]
 }
 
 // NewRouter creates a new Router instance.
 func NewRouter() *Router {
-	return &Router{handlers: make(map[string]HandlerFunc)}
+	return &Router{handlers: hashmap.New[HandlerFunc]()}
 }
 
 // Handle registers a handler for a given method name.
 func (r *Router) Handle(method string, handler HandlerFunc) {
-	r.handlersMu.Lock()
-	defer r.handlersMu.Unlock()
-	r.handlers[method] = handler
+	r.handlers.Set(method, handler)
 }
 
 // CloseHandle removes a handler.
 func (r *Router) CloseHandle(method string) {
-	r.handlersMu.Lock()
-	defer r.handlersMu.Unlock()
-	delete(r.handlers, method)
+	r.handlers.Del(method)
 }
 
 // ServeStream reads a single RPC request from the stream, routes it to the correct handler,
@@ -61,9 +57,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		return
 	}
 
-	r.handlersMu.RLock()
-	handler, ok := r.handlers[req.Method]
-	r.handlersMu.RUnlock()
+	handler, ok := r.handlers.Get(req.Method)
 	if !ok {
 		writeErrorResponse(
 			stream,

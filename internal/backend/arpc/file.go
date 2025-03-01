@@ -5,6 +5,7 @@ package arpcfs
 import (
 	"io"
 	"os"
+	"sync/atomic"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -67,11 +68,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, err
 	}
 
-	go func() {
-		f.fs.totalBytesMu.Lock()
-		f.fs.totalBytes += uint64(bytesRead)
-		f.fs.totalBytesMu.Unlock()
-	}()
+	go atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
 
 	if isEOF {
 		return bytesRead, io.EOF

@@ -7,17 +7,22 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/alphadose/haxmap"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 )
 
 var (
-	activeSessions   map[string]*backupSession
-	activeSessionsMu sync.Mutex
+	activeSessions *haxmap.Map[string, *backupSession]
 )
+
+func init() {
+	activeSessions = hashmap.New[*backupSession]()
+}
 
 type backupSession struct {
 	jobId    string
@@ -40,9 +45,7 @@ func (s *backupSession) Close() {
 		if s.store != nil {
 			_ = s.store.EndBackup(s.jobId)
 		}
-		activeSessionsMu.Lock()
-		delete(activeSessions, s.jobId)
-		activeSessionsMu.Unlock()
+		activeSessions.Del(s.jobId)
 		s.cancel()
 	})
 }
@@ -60,11 +63,7 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (*arpc.Response, 
 	if err != nil {
 		return nil, err
 	}
-	activeSessionsMu.Lock()
-	if activeSessions == nil {
-		activeSessions = make(map[string]*backupSession)
-	}
-	if existingSession, ok := activeSessions[reqData.JobId]; ok {
+	if existingSession, ok := activeSessions.Get(reqData.JobId); ok {
 		existingSession.Close()
 	}
 	sessionCtx, cancel := context.WithCancel(context.Background())
@@ -74,8 +73,7 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (*arpc.Response, 
 		cancel: cancel,
 		store:  store,
 	}
-	activeSessions[reqData.JobId] = session
-	activeSessionsMu.Unlock()
+	activeSessions.Set(reqData.JobId, session)
 
 	if hasActive, err := store.HasActiveBackupForJob(reqData.JobId); hasActive || err != nil {
 		if err != nil {
@@ -113,10 +111,7 @@ func BackupCloseHandler(req arpc.Request) (*arpc.Response, error) {
 
 	syslog.L.Infof("Received closure request for job %s.", reqData.JobId)
 
-	activeSessionsMu.Lock()
-	session, ok := activeSessions[reqData.JobId]
-	activeSessionsMu.Unlock()
-
+	session, ok := activeSessions.Get(reqData.JobId)
 	if !ok {
 		err := fmt.Errorf("no ongoing backup")
 		return nil, err
