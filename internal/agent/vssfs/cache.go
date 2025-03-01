@@ -36,8 +36,8 @@ func (cache *DFSCache) PushDir(entry dirCacheEntry) error {
 // isPrefix checks whether p is either equal to or a parent directory of child.
 // It uses filepath.Clean so that extraneous separators are removed.
 func isPrefix(p, child string) bool {
-	p = filepath.Clean(p)
-	child = filepath.Clean(child)
+	p = filepath.Clean(filepath.FromSlash(p))
+	child = filepath.Clean(filepath.FromSlash(child))
 	if p == child {
 		return true
 	}
@@ -54,7 +54,7 @@ func (cache *DFSCache) invalidateForPath(activePath string) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 
-	activePath = filepath.Clean(activePath)
+	activePath = filepath.Clean(filepath.FromSlash(activePath))
 
 	// While there is something on the stack and the deepest (last) directory
 	// is not a prefix of activePath, pop it.
@@ -76,11 +76,11 @@ func (cache *DFSCache) invalidateForPath(activePath string) {
 // to see if the file is present.
 func (cache *DFSCache) Lookup(activePath, fullFilePath string) (*VSSFileInfo, bool) {
 	// Update the current DFS branch based on activePath.
-	activePath = filepath.Clean(activePath)
+	activePath = filepath.Clean(filepath.FromSlash(activePath))
 	cache.invalidateForPath(activePath)
 
 	// Clean up fullFilePath for consistency.
-	fullFilePath = filepath.Clean(fullFilePath)
+	fullFilePath = filepath.Clean(filepath.FromSlash(fullFilePath))
 
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -112,7 +112,7 @@ func (cache *DFSCache) GetDirEntries(dirPath string) (ReadDirEntries, bool) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 
-	dirPath = filepath.Clean(dirPath)
+	dirPath = filepath.Clean(filepath.FromSlash(dirPath))
 	for _, entry := range cache.stack {
 		if entry.dirPath == dirPath {
 			return entry.entries, true
