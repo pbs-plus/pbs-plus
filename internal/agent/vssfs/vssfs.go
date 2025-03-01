@@ -285,12 +285,41 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrInvalid
 	}
 
+	// Get file size to properly detect EOF
+	var fileInfo windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle.handle, &fileInfo); err != nil {
+		return nil, err
+	}
+	fileSize := int64(fileInfo.FileSizeHigh)<<32 | int64(fileInfo.FileSizeLow)
+
+	// Check if the read starts beyond EOF
+	if (fileSize) <= payload.Offset {
+		// Return empty read with EOF flag
+		meta := arpc.BufferMetadata{BytesAvailable: 0, EOF: true}
+		data, err := meta.MarshalMsg(nil)
+		if err != nil {
+			return nil, err
+		}
+
+		return &arpc.Response{
+			Status:    213,
+			Data:      data,
+			RawStream: func(stream *smux.Stream) {},
+		}, nil
+	}
+
+	// Calculate how many bytes are actually available to read
+	bytesAvailable := fileSize - payload.Offset
+	bytesAvailable = min(bytesAvailable, int64(payload.Length))
+
+	// Determine if this read will reach EOF
+	isEOF := (payload.Offset + bytesAvailable) >= int64(fileSize)
+
 	// Determine if this read would benefit from memory mapping
-	const mmapThreshold = 128 * 1024 // 128KB threshold
-	useMmap := int(payload.Length) >= mmapThreshold
+	const mmapThreshold = 64 * 1024 // 64KB
+	useMmap := int(payload.Length) >= mmapThreshold && fileSize >= mmapThreshold
 
 	var bytesRead uint32
-	var isEOF bool
 	var mappedView uintptr
 	var mapHandle windows.Handle
 	var buf []byte
@@ -303,7 +332,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 			useMmap = false
 		} else {
 			// Map view of file at the requested offset
-			viewSize := uint32(payload.Length)
+			viewSize := uint32(bytesAvailable)
 			mappedView, err = windows.MapViewOfFile(mapHandle, windows.FILE_MAP_READ,
 				uint32(payload.Offset>>32), uint32(payload.Offset&0xFFFFFFFF), uintptr(viewSize))
 
@@ -312,13 +341,11 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 				useMmap = false
 			} else {
 				// Create slice from mapped memory - no copy needed
-				mappedData := (*[1 << 30]byte)(unsafe.Pointer(mappedView))[:payload.Length:payload.Length]
-
-				// Determine actual bytes available (might be less if near EOF)
-				bytesRead = uint32(payload.Length)
+				mappedData := (*[1 << 30]byte)(unsafe.Pointer(mappedView))[:bytesAvailable:bytesAvailable]
 
 				// We'll use the mapped memory directly - no need for buffer pool
 				buf = mappedData
+				bytesRead = uint32(bytesAvailable)
 			}
 		}
 	}
@@ -334,10 +361,15 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 
 		// Perform the actual file read
 		err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
-		isEOF = err == windows.ERROR_HANDLE_EOF
-		if err != nil && !isEOF {
+		if err != nil && err != windows.ERROR_HANDLE_EOF {
 			s.bufferPool.Put(buf)
 			return nil, err
+		}
+
+		// Check if we've reached EOF based on bytes read vs requested
+		if uint32(bytesAvailable) != bytesRead {
+			// If we read fewer bytes than available, it's definitely EOF
+			isEOF = true
 		}
 	}
 
