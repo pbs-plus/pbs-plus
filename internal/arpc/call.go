@@ -198,17 +198,15 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 		bytesRead += n
 
 		if err != nil {
-			// If it's a timeout, it could be due to either inactivity or an overall
-			// context deadline. In either case, check the context.
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				if ctx.Err() != nil { // overall context cancelled or deadline exceeded
+				if ctx.Err() != nil {
 					return bytesRead, false, ctx.Err()
 				}
-				return bytesRead, false,
-					fmt.Errorf("idle timeout after %v waiting for data", idleTimeout)
+				return bytesRead, false, fmt.Errorf("idle timeout after %v (read %d/%d)", idleTimeout, bytesRead, bytesToRead)
 			}
 			if err == io.EOF {
-				return bytesRead, meta.EOF, nil
+				finalEOF := meta.EOF && (bytesRead == bytesToRead)
+				return bytesRead, finalEOF, nil
 			}
 			return bytesRead, false, err
 		}
