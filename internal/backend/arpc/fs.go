@@ -104,9 +104,6 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (*ARPCFi
 
 	var resp vssfs.FileHandleId
 
-	ctx, cancel := TimeoutCtx()
-	defer cancel()
-
 	req := vssfs.OpenFileReq{
 		Path: filename,
 		Flag: flag,
@@ -118,7 +115,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (*ARPCFi
 	}
 
 	// Use the CPU efficient CallMsgDirect helper.
-	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/OpenFile", reqBytes)
+	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/OpenFile", reqBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -144,9 +141,6 @@ func (fs *ARPCFS) Stat(filename string) (*vssfs.VSSFileInfo, error) {
 		return nil, os.ErrInvalid
 	}
 
-	ctx, cancel := TimeoutCtx()
-	defer cancel()
-
 	req := vssfs.StatReq{Path: filename}
 	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
@@ -154,7 +148,7 @@ func (fs *ARPCFS) Stat(filename string) (*vssfs.VSSFileInfo, error) {
 	}
 
 	// Use the new CallMsgDirect helper:
-	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/Stat", reqBytes)
+	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Stat", reqBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -181,10 +175,7 @@ func (fs *ARPCFS) StatFS() (*vssfs.StatFS, error) {
 	}
 
 	var fsStat vssfs.StatFS
-	ctx, cancel := TimeoutCtx()
-	defer cancel()
-
-	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/FSstat", nil)
+	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/FSstat", nil)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
 		return nil, err
@@ -207,16 +198,13 @@ func (fs *ARPCFS) ReadDir(path string) (*vssfs.ReadDirEntries, error) {
 	}
 
 	var resp vssfs.ReadDirEntries
-	ctx, cancel := TimeoutCtx()
-	defer cancel()
-
 	req := vssfs.ReadDirReq{Path: path}
 	reqBytes, err := req.MarshalMsg(nil)
 	if err != nil {
 		return nil, os.ErrInvalid
 	}
 
-	raw, err := fs.session.CallMsg(ctx, fs.JobId+"/ReadDir", reqBytes)
+	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/ReadDir", reqBytes)
 	if err != nil {
 		return nil, err
 	}

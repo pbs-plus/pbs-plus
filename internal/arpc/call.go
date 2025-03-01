@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/xtaci/smux"
 )
@@ -14,6 +15,13 @@ import (
 // Call initiates a request/response conversation on a new stream.
 func (s *Session) Call(method string, payload []byte) (*Response, error) {
 	return s.CallContext(context.Background(), method, payload)
+}
+
+func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload []byte) (*Response, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	return s.CallContext(ctx, method, payload)
 }
 
 // CallContext performs an RPC call over a new stream.
@@ -93,6 +101,13 @@ func (s *Session) CallMsg(ctx context.Context, method string, payload []byte) ([
 	return resp.Data, nil
 }
 
+func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, payload []byte) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	return s.CallMsg(ctx, method, payload)
+}
+
 // CallMsgWithBuffer performs an RPC call for file I/O-style operations in which the server
 // first sends metadata about a binary transfer and then writes the payload directly.
 func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload []byte, buffer []byte) (int, bool, error) {
@@ -105,9 +120,7 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	}
 	defer stream.Close()
 
-	// Set deadlines if provided in context
 	if deadline, ok := ctx.Deadline(); ok {
-		// Apply both deadlines with a single syscall where possible
 		_ = stream.SetDeadline(deadline)
 	}
 
@@ -166,19 +179,36 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	bytesRead := 0
 	remaining := bytesToRead
 
+	// Define your idle timeout (for inactivity).
+	idleTimeout := 10 * time.Second
+
 	// Create a buffered reader to improve efficiency
 	bufReader := bufio.NewReaderSize(stream, 8192)
 
 	for bytesRead < bytesToRead {
+		effectiveDeadline := time.Now().Add(idleTimeout)
+		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(effectiveDeadline) {
+			effectiveDeadline = ctxDeadline
+		}
+		if err := stream.SetReadDeadline(effectiveDeadline); err != nil {
+			return bytesRead, false, err
+		}
+
 		n, err := bufReader.Read(buffer[bytesRead:bytesToRead])
 		bytesRead += n
 
-		if err == io.EOF {
-			// End of stream reached
-			return bytesRead, meta.EOF, nil
-		} else if err != nil {
-			if ctx.Err() != nil {
-				return bytesRead, false, ctx.Err() // Context timeout/cancellation takes precedence
+		if err != nil {
+			// If it's a timeout, it could be due to either inactivity or an overall
+			// context deadline. In either case, check the context.
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				if ctx.Err() != nil { // overall context cancelled or deadline exceeded
+					return bytesRead, false, ctx.Err()
+				}
+				return bytesRead, false,
+					fmt.Errorf("idle timeout after %v waiting for data", idleTimeout)
+			}
+			if err == io.EOF {
+				return bytesRead, meta.EOF, nil
 			}
 			return bytesRead, false, err
 		}

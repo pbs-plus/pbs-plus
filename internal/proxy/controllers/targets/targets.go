@@ -3,7 +3,6 @@
 package targets
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -37,9 +36,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
 					var respBody arpc.MapStringStringMsg
-					timeout, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-					defer cancel()
-					raw, err := arpcSess.CallMsg(timeout, "ping", nil)
+					raw, err := arpcSess.CallMsgWithTimeout(3*time.Second, "ping", nil)
 					if err != nil {
 						continue
 					}
@@ -266,9 +263,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
 					var respBody arpc.MapStringStringMsg
-					timeout, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-					defer cancel()
-					raw, err := arpcSess.CallMsg(timeout, "ping", nil)
+					raw, err := arpcSess.CallMsgWithTimeout(3*time.Second, "ping", nil)
 					if err == nil {
 						_, err = respBody.UnmarshalMsg(raw)
 						if err == nil {

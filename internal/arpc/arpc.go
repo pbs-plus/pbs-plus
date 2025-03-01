@@ -97,6 +97,7 @@ func (s *Session) Serve(router *Router) error {
 
 		stream, err := curSession.AcceptStream()
 		if err != nil {
+			s.state.Store(int32(StateDisconnected))
 			if rc != nil && rc.AutoReconnect {
 				if err2 := s.attemptReconnect(); err2 != nil {
 					return err2
@@ -115,7 +116,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 	}
 
 	upgradeFunc := func(conn net.Conn) (*Session, error) {
-		return UpgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
+		return upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
 	}
 
 	// Use DialWithBackoff for the initial connection
@@ -157,4 +158,3 @@ func (s *Session) Close() error {
 	}
 	return nil
 }
-

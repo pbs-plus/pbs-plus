@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
 	"text/template"
@@ -209,6 +208,8 @@ func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc
 	}
 }
 
+const PBS_DOWNLOAD_BASE = "https://github.com/sonroyaalmerol/pbs-plus/releases/download/"
+
 func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -216,38 +217,14 @@ func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc
 			return
 		}
 
+		if version == "v0.0.0" {
+			version = "dev"
+		}
+
 		// Construct the passthrough URL
-		baseURL := "https://github.com/sonroyaalmerol/pbs-plus/releases/download/"
-		targetURL := fmt.Sprintf("%s%s/pbs-plus-agent-%s-windows-amd64.exe", baseURL, version, version)
+		targetURL := fmt.Sprintf("%s%s/pbs-plus-agent-%s-windows-amd64.exe", PBS_DOWNLOAD_BASE, version, version)
 
-		// Proxy the request
-		req, err := http.NewRequest(http.MethodGet, targetURL, nil)
-		if err != nil {
-			http.Error(w, "failed to create proxy request", http.StatusInternalServerError)
-			return
-		}
-
-		// Copy headers from the original request to the proxy request
-		copyHeaders(r.Header, req.Header)
-
-		// Perform the request
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			http.Error(w, "failed to fetch binary", http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-
-		// Copy headers from the upstream response to the client response
-		copyHeaders(resp.Header, w.Header())
-
-		// Set the status code and copy the body
-		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			http.Error(w, "failed to write response body", http.StatusInternalServerError)
-			return
-		}
+		proxyUrl(targetURL, w, r)
 	}
 }
 
@@ -258,38 +235,14 @@ func DownloadUpdater(storeInstance *store.Store, version string) http.HandlerFun
 			return
 		}
 
+		if version == "v0.0.0" {
+			version = "dev"
+		}
+
 		// Construct the passthrough URL
-		baseURL := "https://github.com/sonroyaalmerol/pbs-plus/releases/download/"
-		targetURL := fmt.Sprintf("%s%s/pbs-plus-updater-%s-windows-amd64.exe", baseURL, version, version)
+		targetURL := fmt.Sprintf("%s%s/pbs-plus-updater-%s-windows-amd64.exe", PBS_DOWNLOAD_BASE, version, version)
 
-		// Proxy the request
-		req, err := http.NewRequest(http.MethodGet, targetURL, nil)
-		if err != nil {
-			http.Error(w, "failed to create proxy request", http.StatusInternalServerError)
-			return
-		}
-
-		// Copy headers from the original request to the proxy request
-		copyHeaders(r.Header, req.Header)
-
-		// Perform the request
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			http.Error(w, "failed to fetch binary", http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-
-		// Copy headers from the upstream response to the client response
-		copyHeaders(resp.Header, w.Header())
-
-		// Set the status code and copy the body
-		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			http.Error(w, "failed to write response body", http.StatusInternalServerError)
-			return
-		}
+		proxyUrl(targetURL, w, r)
 	}
 }
 
@@ -300,38 +253,14 @@ func DownloadChecksum(storeInstance *store.Store, version string) http.HandlerFu
 			return
 		}
 
+		if version == "v0.0.0" {
+			version = "dev"
+		}
+
 		// Construct the passthrough URL
-		baseURL := "https://github.com/sonroyaalmerol/pbs-plus/releases/download/"
-		targetURL := fmt.Sprintf("%s%s/pbs-plus-agent-%s-windows-amd64.exe.md5", baseURL, version, version)
+		targetURL := fmt.Sprintf("%s%s/pbs-plus-agent-%s-windows-amd64.exe.md5", PBS_DOWNLOAD_BASE, version, version)
 
-		// Proxy the request
-		req, err := http.NewRequest(http.MethodGet, targetURL, nil)
-		if err != nil {
-			http.Error(w, "failed to create proxy request", http.StatusInternalServerError)
-			return
-		}
-
-		// Copy headers from the original request to the proxy request
-		copyHeaders(r.Header, req.Header)
-
-		// Perform the request
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			http.Error(w, "failed to fetch checksum", http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-
-		// Copy headers from the upstream response to the client response
-		copyHeaders(resp.Header, w.Header())
-
-		// Set the status code and copy the body
-		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			http.Error(w, "failed to write response body", http.StatusInternalServerError)
-			return
-		}
+		proxyUrl(targetURL, w, r)
 	}
 }
 
