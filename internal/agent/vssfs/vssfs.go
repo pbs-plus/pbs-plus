@@ -35,8 +35,8 @@ type VSSFSServer struct {
 	readAtStatCache *haxmap.Map[uint64, *windows.ByHandleFileInformation]
 	nextHandle      uint64
 	arpcRouter      *arpc.Router
-	fsCache         *FSCache
 	bufferPool      *BufferPool
+	dfsCache        *DFSCache
 }
 
 func NewVSSFSServer(jobId string, root string) *VSSFSServer {
@@ -46,10 +46,10 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 		jobId:           jobId,
 		handles:         hashmap.NewUint64[*FileHandle](),
 		readAtStatCache: hashmap.NewUint64[*windows.ByHandleFileInformation](),
-		fsCache:         NewFSCache(ctx, root, 8192),
 		ctx:             ctx,
 		ctxCancel:       cancel,
 		bufferPool:      NewBufferPool(),
+		dfsCache:        NewDFSCache(),
 	}
 
 	return s
@@ -84,12 +84,6 @@ func (s *VSSFSServer) Close() {
 	atomic.StoreUint64(&s.nextHandle, 0)
 
 	s.ctxCancel()
-
-	// Stop the file cache.
-	if s.fsCache != nil {
-		s.fsCache.clearCache()
-		s.fsCache = nil
-	}
 }
 
 // --- Handlers ---
@@ -206,15 +200,26 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	if payload.Path == "." || payload.Path == "" {
-		fullPath = s.rootDir
+
+	activeDir := filepath.Dir(fullPath)
+	filename := filepath.Base(fullPath)
+
+	if filename != ".pxarexclude" {
+		// Try to look up from the DFSCache.
+		if info, found := s.dfsCache.Lookup(activeDir, fullPath); found {
+			// Return cached metadata.
+			data, err := info.MarshalMsg(nil)
+			if err != nil {
+				return nil, err
+			}
+			return &arpc.Response{
+				Status: 200,
+				Data:   data,
+			}, nil
+		}
 	}
 
-	if s.fsCache == nil {
-		return nil, os.ErrInvalid
-	}
-
-	info, err := s.fsCache.Stat(fullPath)
+	info, err := stat(fullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +228,6 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return &arpc.Response{
 		Status: 200,
 		Data:   data,
@@ -237,25 +241,34 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
 		return nil, err
 	}
+
+	// Convert the provided path to Windows style and compute the full path.
 	windowsDir := filepath.FromSlash(payload.Path)
 	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
 		return nil, err
 	}
+	// If the payload is empty (or "."), use the root.
 	if payload.Path == "." || payload.Path == "" {
-		windowsDir = "."
 		fullDirPath = s.rootDir
 	}
 
-	if s.fsCache == nil {
-		return nil, os.ErrInvalid
+	// Try to get a cached directory listing.
+	entries, found := s.dfsCache.GetDirEntries(fullDirPath)
+	if !found {
+		// If not cached, perform the readdir (which is a Windows syscall).
+		entries, err = readDir(fullDirPath)
+		if err != nil {
+			return nil, err
+		}
+		// Cache this result.
+		s.dfsCache.PushDir(dirCacheEntry{
+			dirPath: filepath.Clean(fullDirPath),
+			entries: entries,
+		})
 	}
 
-	entries, err := s.fsCache.ReadDir(fullDirPath)
-	if err != nil {
-		return nil, err
-	}
-
+	// Marshal entries into bytes for the FUSE response.
 	entryBytes, err := entries.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
