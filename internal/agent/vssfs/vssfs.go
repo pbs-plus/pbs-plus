@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
@@ -284,22 +285,74 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrInvalid
 	}
 
-	buf := s.bufferPool.Get(payload.Length)
-	var bytesRead uint32
-	var overlapped windows.Overlapped
-	overlapped.Offset = uint32(payload.Offset & 0xFFFFFFFF)
-	overlapped.OffsetHigh = uint32(payload.Offset >> 32)
+	// Determine if this read would benefit from memory mapping based solely on request size
+	// No additional syscall to get file size
+	const mmapThreshold = 128 * 1024 // 128KB threshold
+	useMmap := int(payload.Length) >= mmapThreshold
 
-	// Perform the actual file read
-	err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
-	isEOF := err == windows.ERROR_HANDLE_EOF
-	if err != nil && !isEOF {
-		return nil, err
+	var buf []byte
+	var bytesRead uint32
+	var isEOF bool
+
+	// Get buffer from pool
+	buf = s.bufferPool.Get(payload.Length)
+
+	if useMmap {
+		// Try memory mapping for larger reads
+		mapHandle, err := windows.CreateFileMapping(handle.handle, nil, windows.PAGE_READONLY, 0, 0, nil)
+		if err != nil {
+			// Fall back to regular read if mapping fails
+			useMmap = false
+		} else {
+			defer windows.CloseHandle(mapHandle)
+
+			// Map view of file at the requested offset
+			viewSize := uint32(payload.Length)
+			addr, err := windows.MapViewOfFile(mapHandle, windows.FILE_MAP_READ,
+				uint32(payload.Offset>>32), uint32(payload.Offset&0xFFFFFFFF), uintptr(viewSize))
+
+			if err != nil {
+				// Fall back to regular read if mapping fails
+				useMmap = false
+			} else {
+				defer windows.UnmapViewOfFile(addr)
+
+				// Create slice from mapped memory
+				data := (*[1 << 30]byte)(unsafe.Pointer(addr))
+
+				// Copy from mapped view to buffer (up to viewSize)
+				// The actual bytes available might be less if we're near EOF
+				actualBytes := viewSize
+				copy(buf, data[:actualBytes])
+				bytesRead = actualBytes
+
+				// Check if we hit EOF (if we got fewer bytes than requested)
+				if bytesRead < uint32(payload.Length) {
+					isEOF = true
+				}
+			}
+		}
+	}
+
+	// Fall back to regular ReadFile if not using mmap or if mmap failed
+	if !useMmap {
+		var overlapped windows.Overlapped
+		overlapped.Offset = uint32(payload.Offset & 0xFFFFFFFF)
+		overlapped.OffsetHigh = uint32(payload.Offset >> 32)
+
+		// Perform the actual file read
+		err := windows.ReadFile(handle.handle, buf, &bytesRead, &overlapped)
+		isEOF = err == windows.ERROR_HANDLE_EOF
+		if err != nil && !isEOF {
+			s.bufferPool.Put(buf)
+			return nil, err
+		}
 	}
 
 	meta := arpc.BufferMetadata{BytesAvailable: int(bytesRead), EOF: isEOF}
 	data, err := meta.MarshalMsg(nil)
 	if err != nil {
+		s.bufferPool.Put(buf)
 		return nil, err
 	}
 

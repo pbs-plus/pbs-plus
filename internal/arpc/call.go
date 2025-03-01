@@ -1,6 +1,7 @@
 package arpc
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -162,15 +163,33 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	bytesToRead := min(meta.BytesAvailable, len(buffer))
 
 	// Read directly into the provided buffer
-	bytesRead, err := io.ReadFull(stream, buffer[:bytesToRead])
-	if err == io.ErrUnexpectedEOF {
-		// Partial read is still valid data
-		return bytesRead, meta.EOF, nil
-	} else if err != nil {
-		if ctx.Err() != nil {
-			return bytesRead, false, ctx.Err() // Context timeout/cancellation takes precedence
+	bytesRead := 0
+	remaining := bytesToRead
+
+	// Create a buffered reader to improve efficiency
+	bufReader := bufio.NewReaderSize(stream, 8192)
+
+	for bytesRead < bytesToRead {
+		n, err := bufReader.Read(buffer[bytesRead:bytesToRead])
+		bytesRead += n
+
+		if err == io.EOF {
+			// End of stream reached
+			return bytesRead, meta.EOF, nil
+		} else if err != nil {
+			if ctx.Err() != nil {
+				return bytesRead, false, ctx.Err() // Context timeout/cancellation takes precedence
+			}
+			return bytesRead, false, err
 		}
-		return bytesRead, false, err
+
+		// If we got some data but not all, that's fine
+		if n > 0 {
+			remaining -= n
+			if remaining == 0 {
+				break
+			}
+		}
 	}
 
 	return bytesRead, meta.EOF, nil
