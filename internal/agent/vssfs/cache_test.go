@@ -39,7 +39,7 @@ func TestIsPrefix(t *testing.T) {
 func TestDFSCacheBasicLookup(t *testing.T) {
 	cache := NewDFSCache()
 
-	entryA := &dirCacheEntry{
+	entryA := dirCacheEntry{
 		dirPath: filepath.Clean("/a"),
 		entries: ReadDirEntries{
 			&VSSFileInfo{Name: "file1.txt"},
@@ -68,19 +68,19 @@ func TestDFSCacheInvalidation(t *testing.T) {
 	//   /a      -> fileA.txt
 	//   /a/b    -> fileB.txt
 	//   /a/b/c  -> fileC.txt
-	entryA := &dirCacheEntry{
+	entryA := dirCacheEntry{
 		dirPath: filepath.Clean("/a"),
 		entries: ReadDirEntries{
 			&VSSFileInfo{Name: "fileA.txt"},
 		},
 	}
-	entryB := &dirCacheEntry{
+	entryB := dirCacheEntry{
 		dirPath: filepath.Clean("/a/b"),
 		entries: ReadDirEntries{
 			&VSSFileInfo{Name: "fileB.txt"},
 		},
 	}
-	entryC := &dirCacheEntry{
+	entryC := dirCacheEntry{
 		dirPath: filepath.Clean("/a/b/c"),
 		entries: ReadDirEntries{
 			&VSSFileInfo{Name: "fileC.txt"},
@@ -130,13 +130,13 @@ func TestDFSCacheInvalidation(t *testing.T) {
 func TestDFSCacheFullInvalidation(t *testing.T) {
 	cache := NewDFSCache()
 
-	entryA := &dirCacheEntry{
+	entryA := dirCacheEntry{
 		dirPath: filepath.Clean("/a"),
 		entries: ReadDirEntries{
 			&VSSFileInfo{Name: "fileA.txt"},
 		},
 	}
-	entryB := &dirCacheEntry{
+	entryB := dirCacheEntry{
 		dirPath: filepath.Clean("/a/b"),
 		entries: ReadDirEntries{
 			&VSSFileInfo{Name: "fileB.txt"},
@@ -163,7 +163,7 @@ func TestDFSCacheFullInvalidation(t *testing.T) {
 func TestDFSCacheNoInvalidation(t *testing.T) {
 	cache := NewDFSCache()
 
-	entryA := &dirCacheEntry{
+	entryA := dirCacheEntry{
 		dirPath: filepath.Clean("/a"),
 		entries: ReadDirEntries{
 			&VSSFileInfo{Name: "fileA.txt"},
@@ -197,7 +197,7 @@ func TestDFSCacheDeepTraversal(t *testing.T) {
 	// Build a deep branch.
 	paths := []string{"/a", "/a/b", "/a/b/c", "/a/b/c/d", "/a/b/c/d/e"}
 	for _, p := range paths {
-		entry := &dirCacheEntry{
+		entry := dirCacheEntry{
 			dirPath: filepath.Clean(p),
 			entries: ReadDirEntries{
 				&VSSFileInfo{Name: "file" + strings.ToLower(filepath.Base(p)) + ".txt"},
@@ -247,13 +247,13 @@ func TestDFSCacheMixedBranches(t *testing.T) {
 	cache := NewDFSCache()
 
 	// Create two sibling entries under "/a":
-	entryB := &dirCacheEntry{
+	entryB := dirCacheEntry{
 		dirPath: filepath.Clean("/a/b"),
 		entries: ReadDirEntries{
 			&VSSFileInfo{Name: "fileb.txt"},
 		},
 	}
-	entryC := &dirCacheEntry{
+	entryC := dirCacheEntry{
 		dirPath: filepath.Clean("/a/c"),
 		entries: ReadDirEntries{
 			&VSSFileInfo{Name: "filec.txt"},
@@ -279,7 +279,7 @@ func TestDFSCacheMixedBranches(t *testing.T) {
 func TestDFSCacheRelativePaths(t *testing.T) {
 	cache := NewDFSCache()
 
-	entryA := &dirCacheEntry{
+	entryA := dirCacheEntry{
 		dirPath: "/a", // no trailing slash.
 		entries: ReadDirEntries{
 			&VSSFileInfo{Name: "file.txt"},

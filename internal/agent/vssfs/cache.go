@@ -11,7 +11,7 @@ import (
 // have been entered but not yet exited.
 type DFSCache struct {
 	mu    sync.Mutex
-	stack []*dirCacheEntry
+	stack []dirCacheEntry
 }
 
 // Each dirCacheEntry holds the path and the cached directory listing.
@@ -25,7 +25,7 @@ func NewDFSCache() *DFSCache {
 	return &DFSCache{}
 }
 
-func (cache *DFSCache) PushDir(entry *dirCacheEntry) error {
+func (cache *DFSCache) PushDir(entry dirCacheEntry) error {
 	cache.mu.Lock()
 	cache.stack = append(cache.stack, entry)
 	cache.mu.Unlock()
@@ -59,13 +59,14 @@ func (cache *DFSCache) invalidateForPath(activePath string) {
 	// While there is something on the stack and the deepest (last) directory
 	// is not a prefix of activePath, pop it.
 	for len(cache.stack) > 0 {
-		top := cache.stack[len(cache.stack)-1]
+		n := len(cache.stack) - 1
+		top := cache.stack[n]
 		if isPrefix(top.dirPath, activePath) {
-			// The top directory is still in the current active branch.
 			break
 		}
-		// Otherwise, invalidate (pop) the stale entry.
-		cache.stack = cache.stack[:len(cache.stack)-1]
+		// Overwrite the popped entry with its zero value.
+		cache.stack[n] = dirCacheEntry{}
+		cache.stack = cache.stack[:n]
 	}
 }
 

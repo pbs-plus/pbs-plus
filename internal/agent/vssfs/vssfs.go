@@ -262,7 +262,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 			return nil, err
 		}
 		// Cache this result.
-		s.dfsCache.PushDir(&dirCacheEntry{
+		s.dfsCache.PushDir(dirCacheEntry{
 			dirPath: filepath.Clean(fullDirPath),
 			entries: entries,
 		})
