@@ -199,9 +199,10 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	result := make([]fuse.DirEntry, 0, len(*entries))
 	for _, e := range *entries {
 		entryType := uint32(0) // DT_Unknown
-		if e.IsDir {
+		mode := os.FileMode(e.Mode)
+		if mode.IsDir() {
 			entryType = syscall.DT_DIR
-		} else if os.FileMode(e.Mode)&os.ModeSymlink != 0 {
+		} else if mode&os.ModeSymlink != 0 {
 			entryType = syscall.DT_LNK
 		} else {
 			entryType = syscall.DT_REG
@@ -209,7 +210,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 
 		result = append(result, fuse.DirEntry{
 			Name: e.Name,
-			Mode: entryType << 12, // Convert to type bits
+			Mode: entryType << 12,
 		})
 	}
 

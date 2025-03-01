@@ -52,7 +52,12 @@ type VSSFileInfo struct {
 	IsDir   bool      `msg:"isDir"`
 }
 
-type ReadDirEntries []*VSSFileInfo
+type VSSDirEntry struct {
+	Name string `msg:"name"`
+	Mode uint32 `msg:"mode"`
+}
+
+type ReadDirEntries []*VSSDirEntry
 type FileHandleId int
 
 type DataResponse struct {

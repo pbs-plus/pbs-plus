@@ -157,7 +157,7 @@ func TestVSSFSServer(t *testing.T) {
 				foundTest1 = true
 			} else if name == "subdir" {
 				foundSubdir = true
-				assert.True(t, entry.IsDir, "subdir should be identified as a directory")
+				assert.True(t, os.FileMode(entry.Mode).IsDir(), "subdir should be identified as a directory")
 			}
 		}
 		assert.True(t, foundTest1, "test1.txt should be found in directory listing")
