@@ -341,26 +341,36 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 
 	var bytesRead uint32
 	var buf []byte
-
-	// Prepare a variable to hold a memory-mapped region.
 	var region mmap.MMap
 
 	if useMmap {
-		// Use mmap-go, which returns a byte slice directly without exposing unsafe.
-		// Since mmap-go works on *os.File, we wrap the underlying handle.
-		f := os.NewFile(uintptr(handle.handle), handle.path)
-		// Note: MapRegion will internally handle page–alignment issues.
-		// We simply request a mapping from payload.Offset for bytesAvailable bytes.
-		mmapRegion, err := mmap.MapRegion(f, int(bytesAvailable), mmap.RDONLY, 0, payload.Offset)
-		// It's safe to close the os.File after mapping is established.
-		_ = f.Close()
-
+		// Duplicate the file handle so we do not close the stored (original)
+		// handle when closing the duplicated one.
+		var dup windows.Handle
+		err := windows.DuplicateHandle(
+			windows.CurrentProcess(),
+			handle.handle,
+			windows.CurrentProcess(),
+			&dup,
+			0,
+			false,
+			windows.DUPLICATE_SAME_ACCESS,
+		)
 		if err != nil {
 			useMmap = false
 		} else {
-			region = mmapRegion
-			buf = region // region is already a byte slice of the requested region.
-			bytesRead = uint32(len(buf))
+			// Wrap the duplicate handle.
+			f := os.NewFile(uintptr(dup), handle.path)
+			mmapRegion, err := mmap.MapRegion(f, int(bytesAvailable), mmap.RDONLY, 0, payload.Offset)
+			// It is now safe to close f, as it only wraps the duplicate.
+			f.Close()
+			if err != nil {
+				useMmap = false
+			} else {
+				region = mmapRegion
+				buf = region // region is already a []byte
+				bytesRead = uint32(len(buf))
+			}
 		}
 	}
 
@@ -393,7 +403,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 
 	// Define the raw stream callback that writes the file content.
 	streamRaw := func(stream *smux.Stream) {
-		// Ensure that resources are released once streaming is complete.
+		// Ensure resources are released once streaming is complete.
 		defer func() {
 			if useMmap {
 				if err := region.Unmap(); err != nil {
