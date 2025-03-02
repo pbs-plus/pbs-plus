@@ -103,7 +103,6 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (*ARPCFi
 	}
 
 	var resp vssfs.FileHandleId
-
 	req := vssfs.OpenFileReq{
 		Path: filename,
 		Flag: flag,
@@ -128,7 +127,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (*ARPCFi
 	return &ARPCFile{
 		fs:       fs,
 		name:     filename,
-		handleID: string(resp),
+		handleID: resp,
 		jobId:    fs.JobId,
 	}, nil
 }

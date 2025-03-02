@@ -5,6 +5,7 @@ import (
 
 	"github.com/alphadose/haxmap"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 )
 
@@ -46,7 +47,7 @@ type ARPCFile struct {
 	fs       *ARPCFS
 	name     string
 	offset   int64
-	handleID string
+	handleID vssfs.FileHandleId
 	isClosed bool
 	jobId    string
 }

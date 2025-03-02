@@ -21,18 +21,18 @@ type ReadDirReq struct {
 }
 
 type ReadReq struct {
-	HandleID string `msg:"handleID"`
-	Length   int    `msg:"length"`
+	HandleID FileHandleId `msg:"handleID"`
+	Length   int          `msg:"length"`
 }
 
 type ReadAtReq struct {
-	HandleID string `msg:"handleID"`
-	Offset   int64  `msg:"offset"`
-	Length   int    `msg:"length"`
+	HandleID FileHandleId `msg:"handleID"`
+	Offset   int64        `msg:"offset"`
+	Length   int          `msg:"length"`
 }
 
 type CloseReq struct {
-	HandleID string `msg:"handleID"`
+	HandleID FileHandleId `msg:"handleID"`
 }
 
 type BackupReq struct {
