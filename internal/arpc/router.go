@@ -73,6 +73,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		return
 	}
 
+	// Write response status first
 	respBytes, err := marshalWithPool(resp)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
@@ -80,9 +81,12 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 	}
 	defer respBytes.Release()
 
+	if err := writeMsgpMsg(stream, respBytes.Data); err != nil {
+		return
+	}
+
+	// If this is a streaming response, execute the callback
 	if resp.Status == 213 && resp.RawStream != nil {
 		resp.RawStream(stream)
-	} else {
-		_ = writeMsgpMsg(stream, respBytes.Data)
 	}
 }

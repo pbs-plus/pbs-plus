@@ -2,6 +2,7 @@ package arpc
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -385,7 +386,7 @@ func TestAutoReconnect(t *testing.T) {
 // binary payload written by a custom server.
 // ---------------------------------------------------------------------
 func TestCallMsgWithBuffer_Success(t *testing.T) {
-	// Create an in‑memory connection pair.
+	// Create an in-memory connection pair.
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
 	defer serverConn.Close()
@@ -400,7 +401,7 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 		t.Fatalf("failed to create client session: %v", err)
 	}
 
-	// Launch a goroutine to simulate a buffered‑call handler on the server side.
+	// Launch a goroutine to simulate a buffered-call handler on the server side.
 	go func() {
 		curSession := serverSess.muxSess.Load().(*smux.Session)
 		stream, err := curSession.AcceptStream()
@@ -418,35 +419,31 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 		}
 		defer resp.Release()
 
-		// Prepare the binary payload.
+		// Prepare the binary payload
 		binaryData := []byte("hello world")
-		dataLen := len(binaryData)
 
-		// Build metadata as a simple map.
-		metaData := BufferMetadata{
-			BytesAvailable: dataLen,
-			EOF:            true,
-		}
-		metaDataBytes, err := metaData.MarshalMsg(nil)
+		// Send the response status
+		response := &Response{Status: 213}
+		respBytes, err := response.MarshalMsg(nil)
 		if err != nil {
-			t.Errorf("server: error marshaling metadata: %v", err)
+			t.Errorf("server: error marshaling response: %v", err)
 			return
 		}
 
-		metaMap := &Response{Status: 213, Data: metaDataBytes}
-		metaBytes, err := metaMap.MarshalMsg(nil)
-		if err != nil {
-			t.Errorf("server: error marshaling metadata: %v", err)
+		// Write the response using MessagePack framing
+		if err := writeMsgpMsg(stream, respBytes); err != nil {
+			t.Errorf("server: error writing response: %v", err)
 			return
 		}
 
-		// Write the metadata using MessagePack framing.
-		if err := writeMsgpMsg(stream, metaBytes); err != nil {
-			t.Errorf("server: error writing metadata: %v", err)
+		// Write the length prefix
+		dataLen := uint32(len(binaryData))
+		if err := binary.Write(stream, binary.LittleEndian, dataLen); err != nil {
+			t.Errorf("server: error writing length prefix: %v", err)
 			return
 		}
 
-		// Write the binary payload (sent raw, without framing).
+		// Write the binary payload
 		if _, err := stream.Write(binaryData); err != nil {
 			t.Errorf("server: error writing binary data: %v", err)
 			return

@@ -1,4 +1,4 @@
-package vssfs
+package utils
 
 import "sync"
 

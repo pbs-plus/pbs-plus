@@ -1,8 +1,8 @@
 package arpc
 
 import (
-	"bufio"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -114,11 +114,9 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 // first sends metadata about a binary transfer and then writes the payload directly.
 func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload []byte, buffer []byte) (int, error) {
 	curSession := s.muxSess.Load().(*smux.Session)
-
-	// Single stream opening attempt with potential reconnect
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to open stream: %w", err)
 	}
 	defer stream.Close()
 
@@ -126,7 +124,7 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 		_ = stream.SetDeadline(deadline)
 	}
 
-	// Build the request with direct buffer header
+	// Send request
 	req := Request{
 		Method:  method,
 		Payload: payload,
@@ -134,77 +132,58 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 
 	reqBytes, err := marshalWithPool(&req)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	defer reqBytes.Release()
 
-	// Write request
 	if err := writeMsgpMsg(stream, reqBytes.Data); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to write request: %w", err)
 	}
 
-	// Read metadata response
-	metaBytes, err := readMsgpMsgPooled(stream)
+	// Read response status
+	respBytes, err := readMsgpMsgPooled(stream)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to read response: %w", err)
 	}
-	defer metaBytes.Release()
+	defer respBytes.Release()
 
-	// Handle non-OK status quickly
 	var resp Response
-	if _, err := resp.UnmarshalMsg(metaBytes.Data); err != nil {
-		return 0, err
+	if _, err := resp.UnmarshalMsg(respBytes.Data); err != nil {
+		return 0, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
+
 	if resp.Status != 213 {
 		var serErr SerializableError
-		if _, err := serErr.UnmarshalMsg(metaBytes.Data); err == nil {
+		if _, err := serErr.UnmarshalMsg(respBytes.Data); err == nil {
 			return 0, UnwrapError(&serErr)
 		}
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
-	// Create a buffered reader to improve efficiency
-	bufReader := bufio.NewReaderSize(stream, 8192)
+	// Read the length prefix
+	var length uint32
+	if err := binary.Read(stream, binary.LittleEndian, &length); err != nil {
+		return 0, fmt.Errorf("failed to read length prefix: %w", err)
+	}
 
-	// Read directly into the provided buffer
-	bytesRead := 0
-	maxBytesToRead := len(buffer)
+	// Ensure we don't exceed buffer capacity
+	bytesToRead := min(int(length), len(buffer))
 
-	// Define your idle timeout (for inactivity).
-	idleTimeout := 10 * time.Second
-
-	for bytesRead < maxBytesToRead {
-		effectiveDeadline := time.Now().Add(idleTimeout)
-		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(effectiveDeadline) {
-			effectiveDeadline = ctxDeadline
+	// Read the data
+	totalRead := 0
+	for totalRead < bytesToRead {
+		n, err := stream.Read(buffer[totalRead:bytesToRead])
+		if n > 0 {
+			totalRead += n
 		}
-		if err := stream.SetReadDeadline(effectiveDeadline); err != nil {
-			return bytesRead, err
-		}
-
-		n, err := bufReader.Read(buffer[bytesRead:maxBytesToRead])
-		bytesRead += n
-
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				if ctx.Err() != nil {
-					return bytesRead, ctx.Err()
-				}
-				return bytesRead, fmt.Errorf("idle timeout after %v (read %d bytes)", idleTimeout, bytesRead)
+			if err == io.EOF && totalRead == bytesToRead {
+				return totalRead, nil
 			}
-			if err == io.EOF {
-				// We've reached the end of the stream
-				return bytesRead, nil
-			}
-			return bytesRead, err
-		}
-
-		// If we got some data but not all, continue reading
-		if n == 0 {
-			// No progress made in this iteration, might be stuck
-			break
+			return totalRead, fmt.Errorf("read error after %d/%d bytes: %w",
+				totalRead, bytesToRead, err)
 		}
 	}
 
-	return bytesRead, nil
+	return totalRead, nil
 }

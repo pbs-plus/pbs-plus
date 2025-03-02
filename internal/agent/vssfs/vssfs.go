@@ -3,8 +3,8 @@
 package vssfs
 
 import (
-	"bufio"
 	"context"
+	"encoding/binary"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +13,7 @@ import (
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/rekby/fastuuid"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
@@ -33,7 +34,7 @@ type VSSFSServer struct {
 	handles         *haxmap.Map[string, *FileHandle]
 	readAtStatCache *haxmap.Map[string, *windows.ByHandleFileInformation]
 	arpcRouter      *arpc.Router
-	bufferPool      *BufferPool
+	bufferPool      *utils.BufferPool
 }
 
 func NewVSSFSServer(jobId string, root string) *VSSFSServer {
@@ -46,7 +47,7 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 		readAtStatCache: hashmap.New[*windows.ByHandleFileInformation](),
 		ctx:             ctx,
 		ctxCancel:       cancel,
-		bufferPool:      NewBufferPool(),
+		bufferPool:      utils.NewBufferPool(),
 	}
 
 	return s
@@ -274,39 +275,46 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrInvalid
 	}
 
-	// Seek to the position
+	buf := s.bufferPool.Get(payload.Length)
+
+	// Perform synchronous read - first seek to the position
 	distanceToMove := int64(payload.Offset)
 	moveMethod := uint32(windows.FILE_BEGIN)
 
-	// Use windows.SetFilePointer for seeking
 	newPos, err := windows.Seek(fh.handle, distanceToMove, int(moveMethod))
 	if err != nil {
+		s.bufferPool.Put(buf)
 		return nil, mapWinError(err)
 	}
 	if newPos != payload.Offset {
+		s.bufferPool.Put(buf)
 		return nil, os.ErrInvalid
 	}
 
+	var bytesRead uint32
+	err = windows.ReadFile(fh.handle, buf, &bytesRead, nil)
+	if err != nil {
+		s.bufferPool.Put(buf)
+		return nil, mapWinError(err)
+	}
+
+	buf = buf[:bytesRead]
+
 	streamCallback := func(stream *smux.Stream) {
+		defer s.bufferPool.Put(buf)
+
 		if stream == nil {
 			return
 		}
 
-		handleReader := &WinHandleReader{
-			handle: fh.handle,
-		}
-
-		limitedReader := io.LimitReader(handleReader, int64(payload.Length))
-
-		bw := bufio.NewWriterSize(stream, 64*1024)
-		defer bw.Flush()
-
-		_, err := io.Copy(bw, limitedReader)
-		if err != nil && err != io.EOF {
-			// Handle error
-			stream.Close()
+		// Write length prefix
+		length := uint32(len(buf))
+		if err := binary.Write(stream, binary.LittleEndian, length); err != nil {
 			return
 		}
+
+		// Write data
+		stream.Write(buf)
 	}
 
 	return &arpc.Response{
