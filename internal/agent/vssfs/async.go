@@ -90,33 +90,20 @@ func (iocp *IOCP) Loop(ctx context.Context) {
 }
 
 // determineTimeout calculates a suitable timeout based on file characteristics
-func determineTimeout(fileSize int64, offset int64, readLength uint32) time.Duration {
+func determineTimeout(readLength uint32) time.Duration {
 	// Base timeout of 5 seconds
 	baseTimeout := 5 * time.Second
 
-	// Adjust timeout based on file size
-	var sizeMultiplier float64 = 1.0
-	if fileSize > 1*1024*1024*1024 { // 1GB
-		sizeMultiplier = 5.0
-	} else if fileSize > 100*1024*1024 { // 100MB
-		sizeMultiplier = 3.0
-	} else if fileSize > 10*1024*1024 { // 10MB
-		sizeMultiplier = 1.5
-	}
-
-	// Adjust based on read length - larger reads need more time
-	var readMultiplier float64 = 1.0
-	if readLength > 10*1024*1024 { // 10MB read
-		readMultiplier = 2.0
-	} else if readLength > 1*1024*1024 { // 1MB read
-		readMultiplier = 1.5
+	readTimeoutFactor := time.Duration(readLength) / (1024 * 1024) * time.Second
+	if readTimeoutFactor < 5*time.Second {
+		readTimeoutFactor = 5 * time.Second // Minimum 5 seconds
 	}
 
 	// Calculate final timeout
-	timeout := time.Duration(float64(baseTimeout) * sizeMultiplier * readMultiplier)
+	timeout := time.Duration(float64(baseTimeout)) * readTimeoutFactor
 
 	// Set a reasonable cap to prevent extreme timeouts
-	maxTimeout := 2 * time.Minute
+	maxTimeout := 5 * time.Minute
 	if timeout > maxTimeout {
 		timeout = maxTimeout
 	}
@@ -125,15 +112,8 @@ func determineTimeout(fileSize int64, offset int64, readLength uint32) time.Dura
 }
 
 func asyncReadFile(handle windows.Handle, buf []byte, offset int64, iocp *IOCP) (uint32, error) {
-	var fileInfo windows.ByHandleFileInformation
-	err := windows.GetFileInformationByHandle(handle, &fileInfo)
-
-	timeout := 15 * time.Second
-
-	if err == nil {
-		fileSize := int64(fileInfo.FileSizeHigh)<<32 | int64(fileInfo.FileSizeLow)
-		timeout = determineTimeout(fileSize, offset, uint32(len(buf)))
-	}
+	timeout := time.Minute
+	timeout = determineTimeout(uint32(len(buf)))
 
 	ov := getOverlapped()
 	// Set the offset in the OVERLAPPED structure.
@@ -142,7 +122,7 @@ func asyncReadFile(handle windows.Handle, buf []byte, offset int64, iocp *IOCP) 
 
 	// We assume the handle has already been associated with IOCP.
 	var bytesRead uint32
-	err = windows.ReadFile(handle, buf, &bytesRead, ov)
+	err := windows.ReadFile(handle, buf, &bytesRead, ov)
 	if err != nil && err != windows.ERROR_IO_PENDING {
 		putOverlapped(ov)
 		return 0, mapWinError(err)
