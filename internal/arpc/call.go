@@ -114,20 +114,21 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 // CallMsgWithBuffer performs an RPC call for file I/O-style operations in which the server
 // first sends metadata about a binary transfer and then writes the payload directly.
 func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload []byte, buffer []byte) (int, error) {
-	curSession := s.muxSess.Load().(*smux.Session)
+	log.Printf("Starting CallMsgWithBuffer for method: %s", method)
 
-	// Single stream opening attempt with potential reconnect
+	curSession := s.muxSess.Load().(*smux.Session)
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to open stream: %w", err)
 	}
 	defer stream.Close()
 
 	if deadline, ok := ctx.Deadline(); ok {
+		log.Print("Setting stream deadline")
 		_ = stream.SetDeadline(deadline)
 	}
 
-	// Build the request with direct buffer header
+	// Send request
 	req := Request{
 		Method:  method,
 		Payload: payload,
@@ -135,62 +136,66 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 
 	reqBytes, err := marshalWithPool(&req)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	defer reqBytes.Release()
 
-	// Write request
+	log.Print("Writing request to stream")
 	if err := writeMsgpMsg(stream, reqBytes.Data); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to write request: %w", err)
 	}
 
-	// Read metadata response
-	metaBytes, err := readMsgpMsgPooled(stream)
+	log.Print("Reading response status")
+	// Read response status
+	respBytes, err := readMsgpMsgPooled(stream)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to read response: %w", err)
 	}
-	defer metaBytes.Release()
+	defer respBytes.Release()
 
-	// Handle non-OK status quickly
 	var resp Response
-	if _, err := resp.UnmarshalMsg(metaBytes.Data); err != nil {
-		return 0, err
+	if _, err := resp.UnmarshalMsg(respBytes.Data); err != nil {
+		return 0, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
+	log.Printf("Got response status: %d", resp.Status)
+
 	if resp.Status != 213 {
 		var serErr SerializableError
-		if _, err := serErr.UnmarshalMsg(metaBytes.Data); err == nil {
+		if _, err := serErr.UnmarshalMsg(respBytes.Data); err == nil {
 			return 0, UnwrapError(&serErr)
 		}
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
+	log.Print("Reading length prefix")
+	// Read the length prefix
 	var length uint32
 	if err := binary.Read(stream, binary.LittleEndian, &length); err != nil {
 		return 0, fmt.Errorf("failed to read length prefix: %w", err)
 	}
-	log.Printf("Client CallMsgWithBuffer: expecting %d bytes", length)
+	log.Printf("Got length prefix: %d", length)
 
-	// Read actual data
+	// Ensure we don't exceed buffer capacity
 	bytesToRead := min(int(length), len(buffer))
-	bytesRead := 0
 
-	for bytesRead < bytesToRead {
-		n, err := stream.Read(buffer[bytesRead:bytesToRead])
+	// Read the data
+	totalRead := 0
+	for totalRead < bytesToRead {
+		n, err := stream.Read(buffer[totalRead:bytesToRead])
 		if n > 0 {
-			bytesRead += n
-			log.Printf("Client CallMsgWithBuffer: read %d bytes (total: %d/%d)",
-				n, bytesRead, bytesToRead)
+			totalRead += n
+			log.Printf("Read %d bytes (total: %d/%d)", n, totalRead, bytesToRead)
 		}
 		if err != nil {
-			if err == io.EOF && bytesRead == bytesToRead {
-				log.Print("Client CallMsgWithBuffer: reached EOF after reading all data")
-				return bytesRead, nil
+			if err == io.EOF && totalRead == bytesToRead {
+				log.Print("Reached EOF after reading all data")
+				return totalRead, nil
 			}
-			return bytesRead, fmt.Errorf("read error after %d/%d bytes: %w",
-				bytesRead, bytesToRead, err)
+			return totalRead, fmt.Errorf("read error after %d/%d bytes: %w",
+				totalRead, bytesToRead, err)
 		}
 	}
 
-	log.Printf("Client CallMsgWithBuffer: completed successfully, read %d bytes", bytesRead)
-	return bytesRead, nil
+	log.Printf("Successfully read all %d bytes", totalRead)
+	return totalRead, nil
 }

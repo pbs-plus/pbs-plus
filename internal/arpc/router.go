@@ -3,6 +3,7 @@ package arpc
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/alphadose/haxmap"
@@ -37,9 +38,11 @@ func (r *Router) CloseHandle(method string) {
 // and writes back the Response. In case of errors an error response is sent.
 func (r *Router) ServeStream(stream *smux.Stream) {
 	defer stream.Close()
+	log.Print("Starting ServeStream")
 
 	pm, err := readMsgpMsgPooled(stream)
 	if err != nil {
+		log.Printf("Failed to read request: %v", err)
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
@@ -47,11 +50,13 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 
 	var req Request
 	if _, err := req.UnmarshalMsg(pm.Data); err != nil {
+		log.Printf("Failed to unmarshal request: %v", err)
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
 
 	if req.Method == "" {
+		log.Print("Missing method field")
 		writeErrorResponse(stream, http.StatusBadRequest,
 			errors.New("missing method field"))
 		return
@@ -59,6 +64,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 
 	handler, ok := r.handlers.Get(req.Method)
 	if !ok {
+		log.Printf("Method not found: %s", req.Method)
 		writeErrorResponse(
 			stream,
 			http.StatusNotFound,
@@ -69,20 +75,31 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 
 	resp, err := handler(req)
 	if err != nil {
+		log.Printf("Handler error: %v", err)
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
 
+	// Write response status first
 	respBytes, err := marshalWithPool(resp)
 	if err != nil {
+		log.Printf("Failed to marshal response: %v", err)
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
 	defer respBytes.Release()
 
-	if resp.Status == 213 && resp.RawStream != nil {
-		resp.RawStream(stream)
-	} else {
-		_ = writeMsgpMsg(stream, respBytes.Data)
+	log.Print("Writing response status")
+	if err := writeMsgpMsg(stream, respBytes.Data); err != nil {
+		log.Printf("Failed to write response: %v", err)
+		return
 	}
+
+	// If this is a streaming response, execute the callback
+	if resp.Status == 213 && resp.RawStream != nil {
+		log.Print("Executing RawStream callback")
+		resp.RawStream(stream)
+	}
+
+	log.Print("ServeStream completed")
 }
