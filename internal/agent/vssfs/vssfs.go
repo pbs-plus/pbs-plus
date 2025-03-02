@@ -38,10 +38,17 @@ type VSSFSServer struct {
 	readAtStatCache *haxmap.Map[string, *windows.ByHandleFileInformation]
 	arpcRouter      *arpc.Router
 	bufferPool      *BufferPool
+	iocp            *IOCP
 }
 
 func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	iocp, err := NewIOCP()
+	if err != nil {
+		return nil
+	}
+
 	s := &VSSFSServer{
 		rootDir:         root,
 		jobId:           jobId,
@@ -50,7 +57,10 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 		ctx:             ctx,
 		ctxCancel:       cancel,
 		bufferPool:      NewBufferPool(),
+		iocp:            iocp,
 	}
+
+	s.iocp.Loop(ctx)
 
 	return s
 }
@@ -280,29 +290,21 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// Retrieve the FileHandle; it must be open and not a directory.
 	fh, exists := s.handles.Get(payload.HandleID)
 	if !exists || fh.isClosed || fh.isDir {
 		return nil, os.ErrNotExist
 	}
 
-	// Allocate a buffer for the read.
 	buf := make([]byte, payload.Length)
 
-	// Call our asynchronous read helper.
-	bytesRead, err := readFileAsync(fh.handle, buf, payload.Offset, 5*time.Second)
+	bytesRead, err := asyncReadFile(fh.handle, buf, payload.Offset, s.iocp, 5*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("async read error: %w", err)
 	}
 
-	// If the read did not fill the requested length, we assume EOF.
-	eof := false
-	if int(bytesRead) < payload.Length {
-		eof = true
-		buf = buf[:bytesRead]
-	}
+	eof := bytesRead < uint32(payload.Length)
+	buf = buf[:bytesRead]
 
-	// Prepare the metadata message.
 	meta := arpc.BufferMetadata{
 		BytesAvailable: int(bytesRead),
 		EOF:            eof,
@@ -312,15 +314,11 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// Use a stream callback to write the bytes read to the client.
 	streamCallback := func(stream *smux.Stream) {
 		if stream == nil {
 			return
 		}
-		// It is safe to ignore errors from stream.Write here.
 		if _, err := stream.Write(buf); err != nil {
-			// Log the error if needed.
-			fmt.Printf("stream.Write error: %v\n", err)
 		}
 	}
 
