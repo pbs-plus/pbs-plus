@@ -146,18 +146,27 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// Use go-winio's OpenForBackup to open the file.
-	// This function opens the file with proper backup flags (including FILE_FLAG_BACKUP_SEMANTICS).
-	f, err := winio.OpenForBackup(path, windows.GENERIC_READ, windows.FILE_SHARE_READ, windows.OPEN_EXISTING)
 	if err != nil {
 		return nil, fmt.Errorf("OpenForBackup failed: %w", err)
 	}
 
-	// Wrap the returned *os.File into a winio file which implements asynchronous I/O.
+	handle, err := windows.CreateFile(
+		windows.StringToUTF16Ptr(path),
+		windows.GENERIC_READ,
+		windows.FILE_SHARE_READ,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OVERLAPPED|windows.FILE_FLAG_SEQUENTIAL_SCAN,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(handle), path)
 	fileIO, err := winio.NewOpenFile(windows.Handle(f.Fd()))
 	if err != nil {
 		f.Close()
-		return nil, fmt.Errorf("NewOpenFile failed: %w", err)
+		return nil, err
 	}
 
 	// Create and store our FileHandle.
