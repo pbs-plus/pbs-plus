@@ -11,9 +11,8 @@ type BufferMetadata struct {
 
 // Request defines the MessagePack‑encoded request format.
 type Request struct {
-	Method  string            `msg:"method"`
-	Payload []byte            `msg:"payload,allownil"`
-	Headers map[string]string `msg:"headers,allownil,omitempty"`
+	Method  string `msg:"method"`
+	Payload []byte `msg:"payload,allownil"`
 }
 
 // Response defines the MessagePack‑encoded response format.

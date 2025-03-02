@@ -5,10 +5,12 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"time"
 
@@ -42,6 +44,51 @@ func main() {
 
 	jobRun := flag.String("job", "", "Job ID to execute")
 	flag.Parse()
+
+	argsWithoutProg := os.Args[1:]
+
+	if len(argsWithoutProg) > 0 && argsWithoutProg[0] == "clean-task-logs" {
+		fmt.Println("WARNING: You are about to remove all junk logs recursively from:")
+		fmt.Println("         /var/log/proxmox-backup/tasks")
+		fmt.Println()
+		fmt.Println("All log entries with the following substrings will be removed if found in any log file:")
+		for _, substr := range backup.JunkSubstrings {
+			fmt.Printf(" - %s\n", substr)
+		}
+		fmt.Println()
+		fmt.Println("If this is not what you intend, press Ctrl+C within the next 10 seconds to cancel.")
+		fmt.Println()
+
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt)
+
+		cancelChan := make(chan struct{})
+		go func() {
+			<-sigChan
+			fmt.Println("\nOperation cancelled by user.")
+			close(cancelChan)
+		}()
+
+		for i := 10; i > 0; i-- {
+			select {
+			case <-cancelChan:
+				// User cancelled the operation.
+				return
+			default:
+				fmt.Printf("Proceeding in %d seconds...\n", i)
+				time.Sleep(1 * time.Second)
+			}
+		}
+
+		fmt.Println("Proceeding with log cleanup...")
+
+		removed, err := backup.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("Successfully removed %d of junk lines from all task logs files.\n", removed)
+		return
+	}
 
 	storeInstance, err := store.Initialize(nil)
 	if err != nil {

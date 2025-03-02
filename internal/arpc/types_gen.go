@@ -530,45 +530,6 @@ func (z *Request) DecodeMsg(dc *msgp.Reader) (err error) {
 					z.Payload = make([]byte, 0)
 				}
 			}
-		case "headers":
-			if dc.IsNil() {
-				err = dc.ReadNil()
-				if err != nil {
-					err = msgp.WrapError(err, "Headers")
-					return
-				}
-				z.Headers = nil
-			} else {
-				var zb0002 uint32
-				zb0002, err = dc.ReadMapHeader()
-				if err != nil {
-					err = msgp.WrapError(err, "Headers")
-					return
-				}
-				if z.Headers == nil {
-					z.Headers = make(map[string]string, zb0002)
-				} else if len(z.Headers) > 0 {
-					for key := range z.Headers {
-						delete(z.Headers, key)
-					}
-				}
-				for zb0002 > 0 {
-					zb0002--
-					var za0001 string
-					var za0002 string
-					za0001, err = dc.ReadString()
-					if err != nil {
-						err = msgp.WrapError(err, "Headers")
-						return
-					}
-					za0002, err = dc.ReadString()
-					if err != nil {
-						err = msgp.WrapError(err, "Headers", za0001)
-						return
-					}
-					z.Headers[za0001] = za0002
-				}
-			}
 		default:
 			err = dc.Skip()
 			if err != nil {
@@ -582,72 +543,32 @@ func (z *Request) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *Request) EncodeMsg(en *msgp.Writer) (err error) {
-	// check for omitted fields
-	zb0001Len := uint32(3)
-	var zb0001Mask uint8 /* 3 bits */
-	_ = zb0001Mask
-	if z.Headers == nil {
-		zb0001Len--
-		zb0001Mask |= 0x4
-	}
-	// variable map header, size zb0001Len
-	err = en.Append(0x80 | uint8(zb0001Len))
+	// map header, size 2
+	// write "method"
+	err = en.Append(0x82, 0xa6, 0x6d, 0x65, 0x74, 0x68, 0x6f, 0x64)
 	if err != nil {
 		return
 	}
-
-	// skip if no fields are to be emitted
-	if zb0001Len != 0 {
-		// write "method"
-		err = en.Append(0xa6, 0x6d, 0x65, 0x74, 0x68, 0x6f, 0x64)
+	err = en.WriteString(z.Method)
+	if err != nil {
+		err = msgp.WrapError(err, "Method")
+		return
+	}
+	// write "payload"
+	err = en.Append(0xa7, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64)
+	if err != nil {
+		return
+	}
+	if z.Payload == nil { // allownil: if nil
+		err = en.WriteNil()
 		if err != nil {
 			return
 		}
-		err = en.WriteString(z.Method)
+	} else {
+		err = en.WriteBytes(z.Payload)
 		if err != nil {
-			err = msgp.WrapError(err, "Method")
+			err = msgp.WrapError(err, "Payload")
 			return
-		}
-		// write "payload"
-		err = en.Append(0xa7, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64)
-		if err != nil {
-			return
-		}
-		if z.Payload == nil { // allownil: if nil
-			err = en.WriteNil()
-			if err != nil {
-				return
-			}
-		} else {
-			err = en.WriteBytes(z.Payload)
-			if err != nil {
-				err = msgp.WrapError(err, "Payload")
-				return
-			}
-		}
-		if (zb0001Mask & 0x4) == 0 { // if not omitted
-			// write "headers"
-			err = en.Append(0xa7, 0x68, 0x65, 0x61, 0x64, 0x65, 0x72, 0x73)
-			if err != nil {
-				return
-			}
-			err = en.WriteMapHeader(uint32(len(z.Headers)))
-			if err != nil {
-				err = msgp.WrapError(err, "Headers")
-				return
-			}
-			for za0001, za0002 := range z.Headers {
-				err = en.WriteString(za0001)
-				if err != nil {
-					err = msgp.WrapError(err, "Headers")
-					return
-				}
-				err = en.WriteString(za0002)
-				if err != nil {
-					err = msgp.WrapError(err, "Headers", za0001)
-					return
-				}
-			}
 		}
 	}
 	return
@@ -656,38 +577,16 @@ func (z *Request) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Request) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// check for omitted fields
-	zb0001Len := uint32(3)
-	var zb0001Mask uint8 /* 3 bits */
-	_ = zb0001Mask
-	if z.Headers == nil {
-		zb0001Len--
-		zb0001Mask |= 0x4
-	}
-	// variable map header, size zb0001Len
-	o = append(o, 0x80|uint8(zb0001Len))
-
-	// skip if no fields are to be emitted
-	if zb0001Len != 0 {
-		// string "method"
-		o = append(o, 0xa6, 0x6d, 0x65, 0x74, 0x68, 0x6f, 0x64)
-		o = msgp.AppendString(o, z.Method)
-		// string "payload"
-		o = append(o, 0xa7, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64)
-		if z.Payload == nil { // allownil: if nil
-			o = msgp.AppendNil(o)
-		} else {
-			o = msgp.AppendBytes(o, z.Payload)
-		}
-		if (zb0001Mask & 0x4) == 0 { // if not omitted
-			// string "headers"
-			o = append(o, 0xa7, 0x68, 0x65, 0x61, 0x64, 0x65, 0x72, 0x73)
-			o = msgp.AppendMapHeader(o, uint32(len(z.Headers)))
-			for za0001, za0002 := range z.Headers {
-				o = msgp.AppendString(o, za0001)
-				o = msgp.AppendString(o, za0002)
-			}
-		}
+	// map header, size 2
+	// string "method"
+	o = append(o, 0x82, 0xa6, 0x6d, 0x65, 0x74, 0x68, 0x6f, 0x64)
+	o = msgp.AppendString(o, z.Method)
+	// string "payload"
+	o = append(o, 0xa7, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64)
+	if z.Payload == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBytes(o, z.Payload)
 	}
 	return
 }
@@ -730,41 +629,6 @@ func (z *Request) UnmarshalMsg(bts []byte) (o []byte, err error) {
 					z.Payload = make([]byte, 0)
 				}
 			}
-		case "headers":
-			if msgp.IsNil(bts) {
-				bts = bts[1:]
-				z.Headers = nil
-			} else {
-				var zb0002 uint32
-				zb0002, bts, err = msgp.ReadMapHeaderBytes(bts)
-				if err != nil {
-					err = msgp.WrapError(err, "Headers")
-					return
-				}
-				if z.Headers == nil {
-					z.Headers = make(map[string]string, zb0002)
-				} else if len(z.Headers) > 0 {
-					for key := range z.Headers {
-						delete(z.Headers, key)
-					}
-				}
-				for zb0002 > 0 {
-					var za0001 string
-					var za0002 string
-					zb0002--
-					za0001, bts, err = msgp.ReadStringBytes(bts)
-					if err != nil {
-						err = msgp.WrapError(err, "Headers")
-						return
-					}
-					za0002, bts, err = msgp.ReadStringBytes(bts)
-					if err != nil {
-						err = msgp.WrapError(err, "Headers", za0001)
-						return
-					}
-					z.Headers[za0001] = za0002
-				}
-			}
 		default:
 			bts, err = msgp.Skip(bts)
 			if err != nil {
@@ -779,13 +643,7 @@ func (z *Request) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Request) Msgsize() (s int) {
-	s = 1 + 7 + msgp.StringPrefixSize + len(z.Method) + 8 + msgp.BytesPrefixSize + len(z.Payload) + 8 + msgp.MapHeaderSize
-	if z.Headers != nil {
-		for za0001, za0002 := range z.Headers {
-			_ = za0002
-			s += msgp.StringPrefixSize + len(za0001) + msgp.StringPrefixSize + len(za0002)
-		}
-	}
+	s = 1 + 7 + msgp.StringPrefixSize + len(z.Method) + 8 + msgp.BytesPrefixSize + len(z.Payload)
 	return
 }
 
