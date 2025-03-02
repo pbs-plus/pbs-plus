@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
@@ -292,8 +291,50 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 
 	buf := s.bufferPool.Get(payload.Length)
 
-	bytesRead, err := asyncReadFile(fh.handle, buf, payload.Offset, s.iocp, 5*time.Second)
-	if err != nil {
+	bytesRead, err := asyncReadFile(fh.handle, buf, payload.Offset, s.iocp)
+	// If it times out, fall back to synchronous read
+	if err == os.ErrDeadlineExceeded {
+		// Create a new file handle for synchronous operations without overlapped flag
+		syncHandle, err := windows.CreateFile(
+			windows.StringToUTF16Ptr(fh.path),
+			windows.GENERIC_READ,
+			windows.FILE_SHARE_READ,
+			nil,
+			windows.OPEN_EXISTING,
+			windows.FILE_FLAG_BACKUP_SEMANTICS, // No OVERLAPPED flag
+			0,
+		)
+		if err != nil {
+			s.bufferPool.Put(buf)
+			return nil, mapWinError(err)
+		}
+		defer windows.CloseHandle(syncHandle)
+
+		// Perform synchronous read - first seek to the position
+		distanceToMove := int64(payload.Offset)
+		moveMethod := uint32(windows.FILE_BEGIN)
+
+		// Use windows.SetFilePointer for seeking
+		newPos, err := windows.Seek(syncHandle, distanceToMove, int(moveMethod))
+		if err != nil {
+			s.bufferPool.Put(buf)
+			return nil, mapWinError(err)
+		}
+		if newPos != payload.Offset {
+			s.bufferPool.Put(buf)
+			return nil, os.ErrInvalid
+		}
+
+		// Then read from that position
+		var bytesReadSync uint32
+		err = windows.ReadFile(syncHandle, buf, &bytesReadSync, nil)
+		if err != nil {
+			s.bufferPool.Put(buf)
+			return nil, mapWinError(err)
+		}
+
+		bytesRead = bytesReadSync
+	} else if err != nil {
 		s.bufferPool.Put(buf)
 		return nil, err
 	}
