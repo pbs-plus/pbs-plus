@@ -130,7 +130,6 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	req := Request{
 		Method:  method,
 		Payload: payload,
-		Headers: map[string]string{"X-Direct-Buffer": "true"},
 	}
 
 	reqBytes, err := marshalWithPool(&req)

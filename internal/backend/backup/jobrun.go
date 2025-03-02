@@ -7,11 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/alexflint/go-filemutex"
@@ -54,8 +53,16 @@ func runBackupAttempt(
 
 	ErrUnreachable := fmt.Errorf("runBackupAttempt: target '%s' is unreachable", job.Target)
 
+	// Create temporary files for stdout and stderr
+	clientLogFile, err := os.CreateTemp("", fmt.Sprintf("backup-%s-stdout-*", job.ID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdout temp file: %w", err)
+	}
+	clientLogPath := clientLogFile.Name()
+
+	errorMonitorDone := make(chan struct{})
+
 	var agentMount *mount.AgentMount
-	var stdout, stderr io.ReadCloser
 
 	errCleanUp := func() {
 		utils.ClearIOStats(job.CurrentPID)
@@ -66,12 +73,11 @@ func runBackupAttempt(
 			agentMount.Unmount()
 			agentMount.CloseMount()
 		}
-		if stdout != nil {
-			_ = stdout.Close()
+		if clientLogFile != nil {
+			clientLogFile.Close()
+			os.Remove(clientLogPath)
 		}
-		if stderr != nil {
-			_ = stderr.Close()
-		}
+		close(errorMonitorDone)
 	}
 
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
@@ -135,11 +141,6 @@ func runBackupAttempt(
 		errCleanUp()
 		return nil, err
 	}
-	stdout, stderr, err = setupCommandPipes(cmd)
-	if err != nil {
-		errCleanUp()
-		return nil, err
-	}
 
 	// Create channels for task handling
 	readyChan := make(chan struct{})
@@ -182,7 +183,13 @@ func runBackupAttempt(
 	currOwner, _ := GetCurrentOwner(job, storeInstance)
 	_ = FixDatastore(job, storeInstance)
 
-	// Start the command now that watcher is ready
+	// Create multi-writers that write to both file and standard output/error
+	stdoutWriter := io.MultiWriter(clientLogFile, os.Stdout)
+
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stdoutWriter
+
+	// Start the command
 	if err := cmd.Start(); err != nil {
 		monitorCancel()
 		if currOwner != "" {
@@ -196,15 +203,8 @@ func runBackupAttempt(
 		job.CurrentPID = cmd.Process.Pid
 	}
 
-	// Setup log collection
-	var logLines atomic.Value
-	logDone := make(chan struct{})
-	go func() {
-		lines, _ := collectLogs(job.ID, cmd, stdout, stderr)
-		// Atomically store the slice of log lines.
-		logLines.Store(lines)
-		close(logDone)
-	}()
+	// Start a low-overhead monitor for critical errors
+	go monitorPBSClientLogs(clientLogPath, cmd, errorMonitorDone)
 
 	// Wait for task to be detected
 	var task *proxmox.Task
@@ -270,22 +270,23 @@ func runBackupAttempt(
 		utils.ClearIOStats(job.CurrentPID)
 		job.CurrentPID = 0
 
-		<-logDone
+		// Signal monitor to stop and wait for it
+		close(errorMonitorDone)
 
-		if val := logLines.Load(); val != nil {
-			if lines, ok := val.([]string); ok {
-				if err := writeLogsToFile(task.UPID, lines); err != nil {
-					log.Printf("Failed to write logs: %v", err)
-				}
-			} else {
-				log.Print("Failed to write logs: log lines stored differently")
-			}
-		} else {
-			log.Print("Failed to write logs: log lines are missing")
+		// Close the files
+		clientLogFile.Close()
+
+		// Read log files after process completes
+		err := processPBSProxyLogs(task.UPID, clientLogPath)
+		if err != nil {
+			syslog.L.Errorf("Failed to process logs: %v", err)
 		}
 
+		// Clean up temp files
+		os.Remove(clientLogPath)
+
 		if err := updateJobStatus(job, task, storeInstance); err != nil {
-			log.Printf("runBackupAttempt: failed to update job status (post cmd.Wait): %v", err)
+			syslog.L.Errorf("runBackupAttempt: failed to update job status (post cmd.Wait): %v", err)
 		}
 
 		if currOwner != "" {
@@ -296,8 +297,6 @@ func runBackupAttempt(
 			agentMount.Unmount()
 			agentMount.CloseMount()
 		}
-		stdout.Close()
-		stderr.Close()
 	}()
 
 	return operation, nil
@@ -388,7 +387,7 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 						close(autoOp.done)
 						return
 					}
-					log.Printf("Backup attempt %d setup failed: %v", attempt, err)
+					syslog.L.Errorf("Backup attempt %d setup failed: %v", attempt, err)
 					time.Sleep(10 * time.Second)
 					continue
 				}
@@ -398,7 +397,7 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 
 				if err := op.Wait(); err != nil {
 					lastErr = err
-					log.Printf("Backup attempt %d execution failed: %v", attempt, err)
+					syslog.L.Errorf("Backup attempt %d execution failed: %v", attempt, err)
 					if err.Error() == "signal: killed" {
 						autoOp.err = err
 						close(autoOp.done)
