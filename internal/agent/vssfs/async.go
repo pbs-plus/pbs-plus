@@ -4,7 +4,7 @@ package vssfs
 
 import (
 	"context"
-	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -47,7 +47,7 @@ type IOCP struct {
 func NewIOCP() (*IOCP, error) {
 	port, err := windows.CreateIoCompletionPort(windows.InvalidHandle, 0, 0, 0)
 	if err != nil {
-		return nil, fmt.Errorf("CreateIoCompletionPort error: %w", err)
+		return nil, mapWinError(err)
 	}
 	return &IOCP{
 		Port:        port,
@@ -60,7 +60,7 @@ func (iocp *IOCP) AssociateHandle(handle windows.Handle, key uintptr) error {
 	// Passing our IOCP port ensures that all completions are queued to our port.
 	_, err := windows.CreateIoCompletionPort(handle, iocp.Port, key, 0)
 	if err != nil {
-		return fmt.Errorf("AssociateHandle error: %w", err)
+		return mapWinError(err)
 	}
 	return nil
 }
@@ -100,7 +100,7 @@ func asyncReadFile(handle windows.Handle, buf []byte, offset int64, iocp *IOCP, 
 	err := windows.ReadFile(handle, buf, &bytesRead, ov)
 	if err != nil && err != windows.ERROR_IO_PENDING {
 		putOverlapped(ov)
-		return 0, fmt.Errorf("ReadFile error: %w", err)
+		return 0, mapWinError(err)
 	}
 
 	timeoutCh := time.After(timeout)
@@ -112,7 +112,7 @@ func asyncReadFile(handle windows.Handle, buf []byte, offset int64, iocp *IOCP, 
 				putOverlapped(ov)
 				// If the I/O was canceled, ERROR_OPERATION_ABORTED may be returned.
 				if comp.Err != nil && comp.Err != windows.ERROR_OPERATION_ABORTED {
-					return 0, fmt.Errorf("IOCP completed with error: %w", comp.Err)
+					return 0, mapWinError(comp.Err)
 				}
 				return comp.BytesTransferred, nil
 			}
@@ -124,7 +124,7 @@ func asyncReadFile(handle windows.Handle, buf []byte, offset int64, iocp *IOCP, 
 				// Optionally log cancellation error.
 			}
 			putOverlapped(ov)
-			return 0, fmt.Errorf("async read timed out")
+			return 0, os.ErrInvalid
 		}
 	}
 }

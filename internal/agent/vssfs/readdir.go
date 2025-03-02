@@ -3,7 +3,6 @@
 package vssfs
 
 import (
-	"fmt"
 	"syscall"
 	"unsafe"
 
@@ -40,11 +39,11 @@ func skipPathWithAttributes(attrs uint32) bool {
 }
 
 // using GetFileInformationByHandleEx, returning only each file’s name and mode.
-func (s *VSSFSServer) readDirBulk(dirPath string) ([]VSSDirEntry, error) {
+func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 	// Open the directory with FILE_FLAG_BACKUP_SEMANTICS.
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
-		return nil, fmt.Errorf("UTF16PtrFromString: %w", err)
+		return nil, mapWinError(err)
 	}
 	handle, err := windows.CreateFile(
 		pDir,
@@ -56,7 +55,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]VSSDirEntry, error) {
 		0,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("CreateFile: %w", err)
+		return nil, mapWinError(err)
 	}
 	defer windows.CloseHandle(handle)
 
@@ -65,7 +64,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]VSSDirEntry, error) {
 	buf := s.bufferPool.Get(bufSize)
 	defer s.bufferPool.Put(buf)
 
-	var entries []VSSDirEntry
+	var entries []*VSSDirEntry
 
 	// The standard library chooses which information class to use based on
 	// file system capabilities. For simplicity, we start with the Restart version,
@@ -90,7 +89,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]VSSDirEntry, error) {
 				if err == syscall.ERROR_NO_MORE_FILES {
 					break
 				}
-				return nil, fmt.Errorf("GetFileInformationByHandleEx: %w", err)
+				return nil, mapWinError(err)
 			}
 			// On the first call, switch to the non‑restart version.
 			if infoClass == windows.FileIdBothDirectoryRestartInfo {
@@ -125,7 +124,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]VSSDirEntry, error) {
 
 			// Skip the special entries "." and "..".
 			if name != "." && name != ".." && !skipPathWithAttributes(entry.FileAttributes) {
-				entries = append(entries, VSSDirEntry{
+				entries = append(entries, &VSSDirEntry{
 					Name: name,
 					Mode: entry.FileAttributes,
 				})

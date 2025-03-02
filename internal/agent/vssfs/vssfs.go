@@ -4,7 +4,6 @@ package vssfs
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -263,13 +262,9 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 		fullDirPath = s.rootDir
 	}
 
-	var entries ReadDirEntries
-	dirEntries, err := s.readDirBulk(fullDirPath)
-	for _, t := range dirEntries {
-		entries = append(entries, &VSSDirEntry{
-			Name: t.Name,
-			Mode: t.Mode,
-		})
+	entries, err := s.readDirBulk(fullDirPath)
+	if err != nil {
+		return nil, err
 	}
 
 	// Marshal entries into bytes for the FUSE response.
@@ -305,7 +300,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	bytesRead, err := asyncReadFile(fh.handle, buf, payload.Offset, s.iocp, 5*time.Second)
 	if err != nil {
 		s.bufferPool.Put(buf)
-		return nil, fmt.Errorf("async read error: %w", err)
+		return nil, err
 	}
 
 	eof := bytesRead < uint32(payload.Length)
