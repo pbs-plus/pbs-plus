@@ -4,6 +4,7 @@ package vssfs
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"os"
 	"path/filepath"
@@ -308,7 +309,16 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		if stream == nil {
 			return
 		}
+
+		// Write the length prefix
+		length := uint32(len(buf))
+		if err := binary.Write(stream, binary.LittleEndian, length); err != nil {
+			return
+		}
+
+		// Write the actual data
 		if _, err := stream.Write(buf); err != nil {
+			return
 		}
 	}
 

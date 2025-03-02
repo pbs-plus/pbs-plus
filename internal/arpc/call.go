@@ -3,6 +3,7 @@ package arpc
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -166,43 +167,25 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	// Create a buffered reader to improve efficiency
 	bufReader := bufio.NewReaderSize(stream, 8192)
 
-	// Read directly into the provided buffer
+	// Read the length first
+	var length uint32
+	if err := binary.Read(bufReader, binary.LittleEndian, &length); err != nil {
+		return 0, fmt.Errorf("failed to read length: %w", err)
+	}
+
+	// Now we know how much to read
+	bytesToRead := min(int(length), len(buffer))
 	bytesRead := 0
-	maxBytesToRead := len(buffer)
 
-	// Define your idle timeout (for inactivity).
-	idleTimeout := 10 * time.Second
-
-	for bytesRead < maxBytesToRead {
-		effectiveDeadline := time.Now().Add(idleTimeout)
-		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(effectiveDeadline) {
-			effectiveDeadline = ctxDeadline
-		}
-		if err := stream.SetReadDeadline(effectiveDeadline); err != nil {
-			return bytesRead, err
-		}
-
-		n, err := bufReader.Read(buffer[bytesRead:maxBytesToRead])
+	for bytesRead < bytesToRead {
+		n, err := bufReader.Read(buffer[bytesRead:bytesToRead])
 		bytesRead += n
 
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				if ctx.Err() != nil {
-					return bytesRead, ctx.Err()
-				}
-				return bytesRead, fmt.Errorf("idle timeout after %v (read %d bytes)", idleTimeout, bytesRead)
-			}
-			if err == io.EOF {
-				// We've reached the end of the stream
+			if err == io.EOF && bytesRead == bytesToRead {
 				return bytesRead, nil
 			}
 			return bytesRead, err
-		}
-
-		// If we got some data but not all, continue reading
-		if n == 0 {
-			// No progress made in this iteration, might be stuck
-			break
 		}
 	}
 
