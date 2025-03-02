@@ -60,7 +60,7 @@ func skipPathWithAttributes(attrs uint32) bool {
 // information class. If that fails with ERROR_INVALID_PARAMETER, it falls
 // back to the full-directory information class. The entries are filtered via
 // skipPathWithAttributes.
-func (s *VSSFSServer) readDirBulk(dirPath string) ([]VSSDirEntry, error) {
+func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 	// Open the directory using FILE_FLAG_BACKUP_SEMANTICS.
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
@@ -127,7 +127,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]VSSDirEntry, error) {
 		infoClass = windows.FileIdBothDirectoryInfo
 	}
 
-	var entries []VSSDirEntry
+	var entries ReadDirEntries
 	bufp := 0
 
 	for {
@@ -163,7 +163,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]VSSDirEntry, error) {
 				name := syscall.UTF16ToString(nameSlice)
 
 				if name != "." && name != ".." && !skipPathWithAttributes(fldi.FileAttributes) {
-					entries = append(entries, VSSDirEntry{
+					entries = append(entries, &VSSDirEntry{
 						Name: name,
 						Mode: fldi.FileAttributes,
 					})
@@ -188,7 +188,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]VSSDirEntry, error) {
 				name := syscall.UTF16ToString(nameSlice)
 
 				if name != "." && name != ".." && !skipPathWithAttributes(fid.FileAttributes) {
-					entries = append(entries, VSSDirEntry{
+					entries = append(entries, &VSSDirEntry{
 						Name: name,
 						Mode: fid.FileAttributes,
 					})
