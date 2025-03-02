@@ -4,10 +4,13 @@ package vssfs
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 
+	"github.com/Microsoft/go-winio"
 	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -21,6 +24,7 @@ import (
 
 type FileHandle struct {
 	handle   windows.Handle
+	file     io.ReadWriteCloser
 	path     string
 	isDir    bool
 	isClosed bool
@@ -59,7 +63,6 @@ func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
 	r.Handle(s.jobId+"/ReadDir", s.handleReadDir)
 	r.Handle(s.jobId+"/ReadAt", s.handleReadAt)
 	r.Handle(s.jobId+"/Close", s.handleClose)
-	r.Handle(s.jobId+"/Fstat", s.handleFstat)
 	r.Handle(s.jobId+"/FSstat", s.handleFsStat)
 
 	s.arpcRouter = r
@@ -74,7 +77,6 @@ func (s *VSSFSServer) Close() {
 		r.CloseHandle(s.jobId + "/ReadDir")
 		r.CloseHandle(s.jobId + "/ReadAt")
 		r.CloseHandle(s.jobId + "/Close")
-		r.CloseHandle(s.jobId + "/Fstat")
 		r.CloseHandle(s.jobId + "/FSstat")
 	}
 
@@ -133,7 +135,6 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-
 		return &arpc.Response{
 			Status: 403,
 			Data:   errBytes,
@@ -145,40 +146,35 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	pathp, err := windows.UTF16PtrFromString(path)
+	// Use go-winio's OpenForBackup to open the file.
+	// This function opens the file with proper backup flags (including FILE_FLAG_BACKUP_SEMANTICS).
+	f, err := winio.OpenForBackup(path, windows.GENERIC_READ, windows.FILE_SHARE_READ, windows.OPEN_EXISTING)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("OpenForBackup failed: %w", err)
 	}
 
-	handle, err := windows.CreateFile(
-		pathp,
-		windows.GENERIC_READ,
-		windows.FILE_SHARE_READ,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_SEQUENTIAL_SCAN|windows.FILE_FLAG_BACKUP_SEMANTICS,
-		0,
-	)
+	// Wrap the returned *os.File into a winio file which implements asynchronous I/O.
+	fileIO, err := winio.NewOpenFile(windows.Handle(f.Fd()))
 	if err != nil {
-		return nil, err
+		f.Close()
+		return nil, fmt.Errorf("NewOpenFile failed: %w", err)
 	}
 
-	fileHandle := &FileHandle{
-		handle: handle,
-		path:   path,
+	// Create and store our FileHandle.
+	fh := &FileHandle{
+		file: fileIO,
+		path: path,
 	}
-
 	handleID := atomic.AddUint64(&s.nextHandle, 1)
+	s.handles.Set(handleID, fh)
 
-	s.handles.Set(handleID, fileHandle)
-	data := FileHandleId(handleID)
-
-	dataBytes, err := data.MarshalMsg(nil)
+	// Return the handle ID to the client.
+	respHandle := FileHandleId(handleID)
+	dataBytes, err := respHandle.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Return the handle ID.
 	return &arpc.Response{
 		Status: 200,
 		Data:   dataBytes,
@@ -271,50 +267,44 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// Retrieve the stored file handle.
+	// Lookup the previously opened file handle.
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists || fh.isClosed || fh.isDir {
 		return nil, os.ErrNotExist
 	}
 
-	// Duplicate the file handle so we can start a fresh backup read session.
-	var dup windows.Handle
-	err := windows.DuplicateHandle(
-		windows.CurrentProcess(),
-		fh.handle,
-		windows.CurrentProcess(),
-		&dup,
-		0,
-		false,
-		windows.DUPLICATE_SAME_ACCESS,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer windows.CloseHandle(dup)
-
-	data, eof, totalSize, err := readFileBackupOptimized(dup, uint64(payload.Offset), int(payload.Length))
-	if err != nil {
-		return nil, err
+	// Allocate a buffer with the desired length.
+	buf := make([]byte, payload.Length)
+	n, err := fh.file.Read(buf)
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("read error: %w", err)
 	}
 
-	meta := arpc.BufferMetadata{BytesAvailable: len(data), EOF: eof}
+	eof := false
+	if err == io.EOF || n < payload.Length {
+		eof = true
+		buf = buf[:n]
+	}
+
+	meta := arpc.BufferMetadata{
+		BytesAvailable: n,
+		EOF:            eof,
+	}
 	metaBytes, err := meta.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
 	}
 
+	// In this example, we use a raw stream callback that writes the read bytes.
 	streamCallback := func(stream *smux.Stream) {
 		if stream == nil {
 			return
 		}
-		if _, err := stream.Write(data); err != nil {
+		if _, err := stream.Write(buf); err != nil {
 			syslog.L.Errorf("stream.Write error: %v", err)
 		}
 	}
 
-	syslog.L.Infof("Optimized ReadAt: offset %d, read %d/%d bytes",
-		payload.Offset, len(data), totalSize)
 	return &arpc.Response{
 		Status:    213,
 		Data:      metaBytes,
@@ -345,33 +335,6 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 	}
 
 	return &arpc.Response{Status: 200, Data: data}, nil
-}
-
-func (s *VSSFSServer) handleFstat(req arpc.Request) (*arpc.Response, error) {
-	var payload FstatReq
-	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return nil, err
-	}
-
-	handle, exists := s.handles.Get(uint64(payload.HandleID))
-	if !exists || handle.isClosed {
-		return nil, os.ErrNotExist
-	}
-
-	var fileInfo windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(handle.handle, &fileInfo); err != nil {
-		return nil, err
-	}
-
-	info := createFileInfoFromHandleInfo(handle.path, &fileInfo)
-	data, err := info.MarshalMsg(nil)
-	if err != nil {
-		return nil, err
-	}
-	return &arpc.Response{
-		Status: 200,
-		Data:   data,
-	}, nil
 }
 
 func (s *VSSFSServer) abs(filename string) (string, error) {

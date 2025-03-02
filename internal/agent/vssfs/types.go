@@ -35,10 +35,6 @@ type CloseReq struct {
 	HandleID int `msg:"handleID"`
 }
 
-type FstatReq struct {
-	HandleID int `msg:"handleID"`
-}
-
 type BackupReq struct {
 	JobId string `msg:"job_id"`
 	Drive string `msg:"drive"`

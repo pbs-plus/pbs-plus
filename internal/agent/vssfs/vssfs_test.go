@@ -321,33 +321,6 @@ func TestVSSFSServer(t *testing.T) {
 		assert.Equal(t, 200, resp.Status)
 	})
 
-	t.Run("Fstat", func(t *testing.T) {
-		// Open file
-		payload := OpenFileReq{Path: "test1.txt", Flag: 0, Perm: 0644}
-		payloadBytes, _ := payload.MarshalMsg(nil)
-		var openResult FileHandleId
-		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
-		openResult.UnmarshalMsg(raw)
-		assert.NoError(t, err)
-		assert.NotZero(t, openResult)
-
-		// Get file info
-		fstatPayload := FstatReq{HandleID: int(openResult)}
-		fstatPayloadBytes, _ := fstatPayload.MarshalMsg(nil)
-		var statResult VSSFileInfo
-		raw, err = clientSession.CallMsg(ctx, "vss/Fstat", fstatPayloadBytes)
-		assert.NoError(t, err)
-		statResult.UnmarshalMsg(raw)
-		assert.EqualValues(t, 19, statResult.Size)
-
-		// Close file
-		closePayload := CloseReq{HandleID: int(openResult)}
-		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
-		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
-		assert.NoError(t, err)
-		assert.Equal(t, 200, resp.Status)
-	})
-
 	t.Run("OpenDirectory", func(t *testing.T) {
 		// Open directory
 		payload := OpenFileReq{Path: "subdir", Flag: 0, Perm: 0644}
