@@ -125,17 +125,28 @@ func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 		offset := 0
 		for {
 			if usingFull {
-				// Make sure we have enough space for at least the fixed part of FILE_FULL_DIR_INFO
+				// Make sure we have enough space for at least the fixed part
 				if offset+int(unsafe.Sizeof(FILE_FULL_DIR_INFO{})) > len(buf) {
 					break
 				}
 
 				info := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 
-				// Extract the filename
+				// Extract the filename safely using unsafe.Slice
 				nameLen := int(info.FileNameLength) / 2 // Convert bytes to UTF-16 characters
-				namePtr := (*[0xffff]uint16)(unsafe.Pointer(&info.FileName[0]))
-				name := syscall.UTF16ToString(namePtr[:nameLen])
+				if nameLen <= 0 {
+					// Skip entries with empty names
+					if info.NextEntryOffset == 0 {
+						break
+					}
+					offset += int(info.NextEntryOffset)
+					continue
+				}
+
+				// Use unsafe.Slice to create a properly bounded slice
+				filenamePtr := (*uint16)(unsafe.Pointer(&info.FileName[0]))
+				nameSlice := unsafe.Slice(filenamePtr, nameLen)
+				name := syscall.UTF16ToString(nameSlice)
 
 				// Add entry if it's not "." or ".." and doesn't match the skip attributes
 				if name != "." && name != ".." && !skipPathWithAttributes(info.FileAttributes) {
@@ -151,17 +162,28 @@ func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 				}
 				offset += int(info.NextEntryOffset)
 			} else {
-				// Make sure we have enough space for at least the fixed part of FILE_ID_BOTH_DIR_INFO
+				// Make sure we have enough space for at least the fixed part
 				if offset+int(unsafe.Sizeof(FILE_ID_BOTH_DIR_INFO{})) > len(buf) {
 					break
 				}
 
 				info := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 
-				// Extract the filename
+				// Extract the filename safely using unsafe.Slice
 				nameLen := int(info.FileNameLength) / 2 // Convert bytes to UTF-16 characters
-				namePtr := (*[0xffff]uint16)(unsafe.Pointer(&info.FileName[0]))
-				name := syscall.UTF16ToString(namePtr[:nameLen])
+				if nameLen <= 0 {
+					// Skip entries with empty names
+					if info.NextEntryOffset == 0 {
+						break
+					}
+					offset += int(info.NextEntryOffset)
+					continue
+				}
+
+				// Use unsafe.Slice to create a properly bounded slice
+				filenamePtr := (*uint16)(unsafe.Pointer(&info.FileName[0]))
+				nameSlice := unsafe.Slice(filenamePtr, nameLen)
+				name := syscall.UTF16ToString(nameSlice)
 
 				// Add entry if it's not "." or ".." and doesn't match the skip attributes
 				if name != "." && name != ".." && !skipPathWithAttributes(info.FileAttributes) {
