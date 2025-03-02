@@ -57,18 +57,29 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, os.ErrInvalid
 	}
 
-	bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", reqBytes, p)
-	if err != nil {
-		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
-		return 0, err
+	totalBytesRead := 0
+	for totalBytesRead < len(p) {
+		bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", reqBytes, p[totalBytesRead:])
+		totalBytesRead += bytesRead
+
+		go atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
+		if err != nil {
+			if err == io.EOF && totalBytesRead > 0 {
+				// Partial read, return bytesRead without EOF
+				return totalBytesRead, nil
+			}
+			return totalBytesRead, err
+		}
+
+		if bytesRead == 0 {
+			break
+		}
 	}
 
-	go atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
-
 	// Return EOF only if we're at the end of the file
-	if bytesRead == 0 {
+	if totalBytesRead == 0 {
 		return 0, io.EOF
 	}
 
-	return bytesRead, nil
+	return totalBytesRead, nil
 }

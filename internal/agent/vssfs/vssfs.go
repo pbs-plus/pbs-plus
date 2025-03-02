@@ -301,12 +301,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		bw := bufio.NewWriterSize(stream, 64*1024)
 		defer bw.Flush()
 
-		_, err := io.Copy(bw, limitedReader)
-		if err != nil && err != io.EOF {
-			// Handle error
-			stream.Close()
-			return
-		}
+		io.Copy(bw, limitedReader)
 	}
 
 	return &arpc.Response{
