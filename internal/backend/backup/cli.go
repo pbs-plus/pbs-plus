@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 )
 
 func processFile(path string, removedCount *int64) error {
@@ -17,6 +18,21 @@ func processFile(path string, removedCount *int64) error {
 		return fmt.Errorf("opening file %s: %w", path, err)
 	}
 	defer inputFile.Close()
+
+	// Get original file info to preserve permissions and ownership.
+	info, err := inputFile.Stat()
+	if err != nil {
+		return fmt.Errorf("getting stat of file %s: %w", path, err)
+	}
+	origMode := info.Mode()
+
+	// Retrieve UID and GID from the underlying stat.
+	statT, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("failed to retrieve underlying stat from file %s", path)
+	}
+	origUid := int(statT.Uid)
+	origGid := int(statT.Gid)
 
 	dir := filepath.Dir(path)
 	tmpFile, err := os.CreateTemp(dir, "clean_")
@@ -30,12 +46,11 @@ func processFile(path string, removedCount *int64) error {
 	scanner := bufio.NewScanner(inputFile)
 	writer := bufio.NewWriter(tmpFile)
 
-	// local accumulator for this file
 	var removedInFile int64
 	for scanner.Scan() {
 		line := scanner.Text()
 		if isJunkLog(line) {
-			// count the removed junk log line and skip writing it
+			// Count the removed junk log line and skip writing it.
 			removedInFile++
 		} else {
 			if _, err := writer.WriteString(line + "\n"); err != nil {
@@ -48,6 +63,16 @@ func processFile(path string, removedCount *int64) error {
 	}
 	if err := writer.Flush(); err != nil {
 		return fmt.Errorf("flushing writer for %s: %w", path, err)
+	}
+
+	// Ensure the temp file has the same permissions as the original.
+	if err := os.Chmod(tmpName, origMode); err != nil {
+		return fmt.Errorf("setting permissions on temp file for %s: %w", path, err)
+	}
+
+	// Preserve the owner and group of the original file.
+	if err := os.Chown(tmpName, origUid, origGid); err != nil {
+		return fmt.Errorf("setting ownership on temp file for %s: %w", path, err)
 	}
 
 	if err := os.Rename(tmpName, path); err != nil {
@@ -67,7 +92,7 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 	var errOnce sync.Once
 	var finalErr error
 
-	// global atomic counter for removed lines
+	// Global atomic counter for removed lines.
 	var totalRemoved int64
 
 	worker := func() {
@@ -83,27 +108,46 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 		}
 	}
 
+	// Start worker goroutines.
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go worker()
 	}
 
-	err := filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	// List the entries in the root directory.
+	entries, err := os.ReadDir(rootDir)
+	if err != nil {
+		return 0, err
+	}
+
+	// Process only the subdirectories of rootDir.
+	for _, entry := range entries {
+		if entry.IsDir() {
+			subDir := filepath.Join(rootDir, entry.Name())
+			err := filepath.WalkDir(subDir, func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.Type().IsRegular() {
+					fileCh <- path
+				}
+				return nil
+			})
+			if err != nil {
+				errOnce.Do(func() {
+					finalErr = err
+				})
+				log.Printf("Error walking directory %s: %v", subDir, err)
+			}
 		}
-		if d.Type().IsRegular() {
-			fileCh <- path
-		}
-		return nil
-	})
+	}
 
 	close(fileCh)
 	wg.Wait()
 
-	if err != nil {
-		return totalRemoved, err
+	if finalErr != nil {
+		return totalRemoved, finalErr
 	}
 
-	return totalRemoved, finalErr
+	return totalRemoved, nil
 }
