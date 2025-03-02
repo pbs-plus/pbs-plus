@@ -5,7 +5,6 @@ package vssfs
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
