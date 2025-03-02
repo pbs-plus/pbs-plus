@@ -84,28 +84,34 @@ func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 	buf := s.bufferPool.Get(bufSize)
 	defer s.bufferPool.Put(buf)
 
-	var usingFull bool // false: using file-ID info; true: using full info.
-	var infoClass uint32 = windows.FileIdBothDirectoryRestartInfo
+	var entries ReadDirEntries
+	var usingFull bool
 
+	// First try with FileIdBothDirectoryInfo
+	infoClass := windows.FileIdBothDirectoryInfo
 	err = windows.GetFileInformationByHandleEx(
 		handle,
-		infoClass,
+		uint32(infoClass),
 		&buf[0],
 		uint32(len(buf)),
 	)
+
+	// If it fails with ERROR_INVALID_PARAMETER, try with FileFullDirectoryInfo
 	if err != nil {
 		var errno syscall.Errno
 		if errors.As(err, &errno) && errno == windows.ERROR_INVALID_PARAMETER {
-			infoClass = windows.FileFullDirectoryRestartInfo
+			infoClass = windows.FileFullDirectoryInfo
 			usingFull = true
 			err = windows.GetFileInformationByHandleEx(
 				handle,
-				infoClass,
+				uint32(infoClass),
 				&buf[0],
 				uint32(len(buf)),
 			)
 		}
 	}
+
+	// Check if we have an error (but ERROR_NO_MORE_FILES is not an error here)
 	if err != nil {
 		var errno syscall.Errno
 		if errors.As(err, &errno) && errno == windows.ERROR_NO_MORE_FILES {
@@ -114,84 +120,80 @@ func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 		return nil, mapWinError(err)
 	}
 
-	if usingFull {
-		infoClass = windows.FileFullDirectoryInfo
-	} else {
-		infoClass = windows.FileIdBothDirectoryInfo
-	}
-
-	var entries ReadDirEntries
-	bufp := 0
-
 	for {
-		// If we've consumed our current buffer, refill it.
-		if bufp == 0 {
-			err = windows.GetFileInformationByHandleEx(
-				handle,
-				infoClass,
-				&buf[0],
-				uint32(len(buf)),
-			)
-			if err != nil {
-				var errno syscall.Errno
-				if errors.As(err, &errno) && errno == windows.ERROR_NO_MORE_FILES {
+		// Process the buffer
+		offset := 0
+		for {
+			if usingFull {
+				// Make sure we have enough space for at least the fixed part of FILE_FULL_DIR_INFO
+				if offset+int(unsafe.Sizeof(FILE_FULL_DIR_INFO{})) > len(buf) {
 					break
 				}
-				return nil, mapWinError(err)
+
+				info := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
+
+				// Extract the filename
+				nameLen := int(info.FileNameLength) / 2 // Convert bytes to UTF-16 characters
+				namePtr := (*[0xffff]uint16)(unsafe.Pointer(&info.FileName[0]))
+				name := syscall.UTF16ToString(namePtr[:nameLen])
+
+				// Add entry if it's not "." or ".." and doesn't match the skip attributes
+				if name != "." && name != ".." && !skipPathWithAttributes(info.FileAttributes) {
+					entries = append(entries, &VSSDirEntry{
+						Name: name,
+						Mode: info.FileAttributes,
+					})
+				}
+
+				// Move to the next entry or exit this buffer
+				if info.NextEntryOffset == 0 {
+					break
+				}
+				offset += int(info.NextEntryOffset)
+			} else {
+				// Make sure we have enough space for at least the fixed part of FILE_ID_BOTH_DIR_INFO
+				if offset+int(unsafe.Sizeof(FILE_ID_BOTH_DIR_INFO{})) > len(buf) {
+					break
+				}
+
+				info := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
+
+				// Extract the filename
+				nameLen := int(info.FileNameLength) / 2 // Convert bytes to UTF-16 characters
+				namePtr := (*[0xffff]uint16)(unsafe.Pointer(&info.FileName[0]))
+				name := syscall.UTF16ToString(namePtr[:nameLen])
+
+				// Add entry if it's not "." or ".." and doesn't match the skip attributes
+				if name != "." && name != ".." && !skipPathWithAttributes(info.FileAttributes) {
+					entries = append(entries, &VSSDirEntry{
+						Name: name,
+						Mode: info.FileAttributes,
+					})
+				}
+
+				// Move to the next entry or exit this buffer
+				if info.NextEntryOffset == 0 {
+					break
+				}
+				offset += int(info.NextEntryOffset)
 			}
 		}
 
-		offset := bufp
-		for {
-			if usingFull {
-				fixedSize := int(unsafe.Sizeof(FILE_FULL_DIR_INFO{}))
-				if offset > len(buf)-fixedSize {
-					break
-				}
-				fldi := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
-				nameLen := int(fldi.FileNameLength) / 2
-				namePtr := (*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(fldi)) + uintptr(fixedSize)))
-				nameSlice := unsafe.Slice(namePtr, nameLen)
-				name := syscall.UTF16ToString(nameSlice)
+		// Try to get the next batch of entries
+		err = windows.GetFileInformationByHandleEx(
+			handle,
+			uint32(infoClass),
+			&buf[0],
+			uint32(len(buf)),
+		)
 
-				if name != "." && name != ".." && !skipPathWithAttributes(fldi.FileAttributes) {
-					entries = append(entries, &VSSDirEntry{
-						Name: name,
-						Mode: fldi.FileAttributes,
-					})
-				}
-
-				if fldi.NextEntryOffset == 0 {
-					bufp = 0
-					break
-				}
-				offset += int(fldi.NextEntryOffset)
-				bufp = offset
-			} else {
-				fixedSize := int(unsafe.Sizeof(FILE_ID_BOTH_DIR_INFO{}))
-				if offset > len(buf)-fixedSize {
-					break
-				}
-				fid := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
-				nameLen := int(fid.FileNameLength) / 2
-				namePtr := (*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(fid)) + uintptr(fixedSize)))
-				nameSlice := unsafe.Slice(namePtr, nameLen)
-				name := syscall.UTF16ToString(nameSlice)
-
-				if name != "." && name != ".." && !skipPathWithAttributes(fid.FileAttributes) {
-					entries = append(entries, &VSSDirEntry{
-						Name: name,
-						Mode: fid.FileAttributes,
-					})
-				}
-
-				if fid.NextEntryOffset == 0 {
-					bufp = 0
-					break
-				}
-				offset += int(fid.NextEntryOffset)
-				bufp = offset
+		// If no more files, we're done
+		if err != nil {
+			var errno syscall.Errno
+			if errors.As(err, &errno) && errno == windows.ERROR_NO_MORE_FILES {
+				break
 			}
+			return nil, mapWinError(err)
 		}
 	}
 
