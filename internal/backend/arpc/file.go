@@ -47,31 +47,37 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, os.ErrInvalid
 	}
 
-	req := vssfs.ReadAtReq{
-		HandleID: f.handleID,
-		Offset:   int64(off),
-		Length:   len(p),
-	}
-	reqBytes, err := req.MarshalMsg(nil)
-	if err != nil {
-		return 0, os.ErrInvalid
-	}
-
 	totalBytesRead := 0
-	for totalBytesRead < len(p) {
+	remaining := len(p)
+
+	for remaining > 0 {
+		req := vssfs.ReadAtReq{
+			HandleID: f.handleID,
+			Offset:   off + int64(totalBytesRead), // Adjust offset for subsequent reads
+			Length:   remaining,                   // Request only the remaining bytes
+		}
+		reqBytes, err := req.MarshalMsg(nil)
+		if err != nil {
+			return totalBytesRead, os.ErrInvalid
+		}
+
+		// Read into the correct portion of the buffer
 		bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", reqBytes, p[totalBytesRead:])
 		totalBytesRead += bytesRead
+		remaining -= bytesRead
 
 		go atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
+
 		if err != nil {
 			if err == io.EOF && totalBytesRead > 0 {
-				// Partial read, return bytesRead without EOF
+				// Partial read, return the bytes read without propagating EOF
 				return totalBytesRead, nil
 			}
 			return totalBytesRead, err
 		}
 
 		if bytesRead == 0 {
+			// No progress made, likely EOF
 			break
 		}
 	}
