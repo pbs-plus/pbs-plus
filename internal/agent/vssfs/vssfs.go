@@ -250,7 +250,6 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// Convert the provided path to Windows style and compute the full path.
 	windowsDir := filepath.FromSlash(payload.Path)
 	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
@@ -267,7 +266,6 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// Marshal entries into bytes for the FUSE response.
 	entryBytes, err := entries.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
