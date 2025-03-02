@@ -295,10 +295,11 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrNotExist
 	}
 
-	buf := make([]byte, payload.Length)
+	buf := s.bufferPool.Get(payload.Length)
 
 	bytesRead, err := asyncReadFile(fh.handle, buf, payload.Offset, s.iocp, 5*time.Second)
 	if err != nil {
+		s.bufferPool.Put(buf)
 		return nil, fmt.Errorf("async read error: %w", err)
 	}
 
@@ -311,10 +312,15 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	}
 	metaBytes, err := meta.MarshalMsg(nil)
 	if err != nil {
+		s.bufferPool.Put(buf)
 		return nil, err
 	}
 
 	streamCallback := func(stream *smux.Stream) {
+		defer func() {
+			s.bufferPool.Put(buf)
+		}()
+
 		if stream == nil {
 			return
 		}
