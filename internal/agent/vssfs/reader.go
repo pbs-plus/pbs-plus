@@ -26,6 +26,9 @@ func (r *WinHandleReader) Read(p []byte) (n int, err error) {
 	var bytesRead uint32
 	err = windows.ReadFile(r.handle, p, &bytesRead, nil)
 	if err != nil {
+		if err == windows.ERROR_HANDLE_EOF {
+			return 0, io.EOF
+		}
 		return 0, err
 	}
 
