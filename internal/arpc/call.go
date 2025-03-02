@@ -1,11 +1,11 @@
 package arpc
 
 import (
-	"bufio"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -164,30 +164,33 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
-	// Create a buffered reader to improve efficiency
-	bufReader := bufio.NewReaderSize(stream, 8192)
-
-	// Read the length first
 	var length uint32
-	if err := binary.Read(bufReader, binary.LittleEndian, &length); err != nil {
-		return 0, fmt.Errorf("failed to read length: %w", err)
+	if err := binary.Read(stream, binary.LittleEndian, &length); err != nil {
+		return 0, fmt.Errorf("failed to read length prefix: %w", err)
 	}
+	log.Printf("Client CallMsgWithBuffer: expecting %d bytes", length)
 
-	// Now we know how much to read
+	// Read actual data
 	bytesToRead := min(int(length), len(buffer))
 	bytesRead := 0
 
 	for bytesRead < bytesToRead {
-		n, err := bufReader.Read(buffer[bytesRead:bytesToRead])
-		bytesRead += n
-
+		n, err := stream.Read(buffer[bytesRead:bytesToRead])
+		if n > 0 {
+			bytesRead += n
+			log.Printf("Client CallMsgWithBuffer: read %d bytes (total: %d/%d)",
+				n, bytesRead, bytesToRead)
+		}
 		if err != nil {
 			if err == io.EOF && bytesRead == bytesToRead {
+				log.Print("Client CallMsgWithBuffer: reached EOF after reading all data")
 				return bytesRead, nil
 			}
-			return bytesRead, err
+			return bytesRead, fmt.Errorf("read error after %d/%d bytes: %w",
+				bytesRead, bytesToRead, err)
 		}
 	}
 
+	log.Printf("Client CallMsgWithBuffer: completed successfully, read %d bytes", bytesRead)
 	return bytesRead, nil
 }

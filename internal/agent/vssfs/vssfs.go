@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -266,8 +267,12 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
+	log.Printf("Server handleReadAt: received request for handle %s, offset %d, length %d",
+		string(payload.HandleID), payload.Offset, payload.Length)
+
 	fh, exists := s.handles.Get(string(payload.HandleID))
 	if !exists {
+		log.Printf("Server handleReadAt: handle %s not found", string(payload.HandleID))
 		return nil, os.ErrNotExist
 	}
 	if fh.isDir {
@@ -280,10 +285,10 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	distanceToMove := int64(payload.Offset)
 	moveMethod := uint32(windows.FILE_BEGIN)
 
-	// Use windows.SetFilePointer for seeking
 	newPos, err := windows.Seek(fh.handle, distanceToMove, int(moveMethod))
 	if err != nil {
 		s.bufferPool.Put(buf)
+		log.Printf("Server handleReadAt: seek error: %v", err)
 		return nil, mapWinError(err)
 	}
 	if newPos != payload.Offset {
@@ -291,35 +296,40 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrInvalid
 	}
 
-	// Then read from that position
 	var bytesRead uint32
 	err = windows.ReadFile(fh.handle, buf, &bytesRead, nil)
 	if err != nil {
 		s.bufferPool.Put(buf)
+		log.Printf("Server handleReadAt: read error: %v", err)
 		return nil, mapWinError(err)
 	}
 
 	buf = buf[:bytesRead]
+	log.Printf("Server handleReadAt: read %d bytes successfully", bytesRead)
 
 	streamCallback := func(stream *smux.Stream) {
-		defer func() {
-			s.bufferPool.Put(buf)
-		}()
+		defer s.bufferPool.Put(buf)
 
 		if stream == nil {
+			log.Print("Server streamCallback: stream is nil")
 			return
 		}
 
-		// Write the length prefix
+		// Write length prefix
 		length := uint32(len(buf))
 		if err := binary.Write(stream, binary.LittleEndian, length); err != nil {
+			log.Printf("Server streamCallback: failed to write length: %v", err)
 			return
 		}
+		log.Printf("Server streamCallback: wrote length prefix: %d", length)
 
-		// Write the actual data
-		if _, err := stream.Write(buf); err != nil {
+		// Write data
+		n, err := stream.Write(buf)
+		if err != nil {
+			log.Printf("Server streamCallback: failed to write data: %v", err)
 			return
 		}
+		log.Printf("Server streamCallback: wrote %d bytes of data", n)
 	}
 
 	return &arpc.Response{
