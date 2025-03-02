@@ -10,47 +10,37 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// fileIDBothDirInfo mirrors the Windows FILE_ID_BOTH_DIR_INFO structure.
-// (See https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_id_both_dir_info)
-// Note: This structure includes a short name field that we ignore.
-type fileIDBothDirInfo struct {
+type FILE_ID_BOTH_DIR_INFO struct {
 	NextEntryOffset uint32
 	FileIndex       uint32
-	// Note: The Windows type is LARGE_INTEGER (a 64-bit value) for each time.
-	CreationTime    int64
-	LastAccessTime  int64
-	LastWriteTime   int64
-	ChangeTime      int64
-	EndOfFile       int64
-	AllocationSize  int64
+	CreationTime    syscall.Filetime
+	LastAccessTime  syscall.Filetime
+	LastWriteTime   syscall.Filetime
+	ChangeTime      syscall.Filetime
+	EndOfFile       uint64
+	AllocationSize  uint64
 	FileAttributes  uint32
-	FileNameLength  uint32 // in bytes
+	FileNameLength  uint32
 	EaSize          uint32
-	ShortNameLength byte
-	_               [3]byte    // padding
-	ShortName       [12]uint16 // fixed-length array
-	FileId          [16]byte
-	// Followed by: FileName [1]uint16 (variable-length)
+	ShortNameLength uint32
+	ShortName       [12]uint16
+	FileID          uint64
+	FileName        [1]uint16
 }
 
-// fileFullDirInfo mirrors the Windows FILE_FULL_DIR_INFO structure.
-// (See https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_full_dir_info)
-type fileFullDirInfo struct {
+type FILE_FULL_DIR_INFO struct {
 	NextEntryOffset uint32
 	FileIndex       uint32
-	CreationTime    int64
-	LastAccessTime  int64
-	LastWriteTime   int64
-	ChangeTime      int64
-	EndOfFile       int64
-	AllocationSize  int64
+	CreationTime    syscall.Filetime
+	LastAccessTime  syscall.Filetime
+	LastWriteTime   syscall.Filetime
+	ChangeTime      syscall.Filetime
+	EndOfFile       uint64
+	AllocationSize  uint64
 	FileAttributes  uint32
-	FileNameLength  uint32 // in bytes
+	FileNameLength  uint32
 	EaSize          uint32
-	ShortNameLength byte
-	_               [3]byte // padding
-	ShortName       [12]uint16
-	// Followed by: FileName [1]uint16 (variable-length)
+	FileName        [1]uint16
 }
 
 // skipPathWithAttributes returns true if the file attributes indicate that
@@ -154,11 +144,11 @@ func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 		offset := bufp
 		for {
 			if usingFull {
-				fixedSize := int(unsafe.Sizeof(fileFullDirInfo{}))
+				fixedSize := int(unsafe.Sizeof(FILE_FULL_DIR_INFO{}))
 				if offset > len(buf)-fixedSize {
 					break
 				}
-				fldi := (*fileFullDirInfo)(unsafe.Pointer(&buf[offset]))
+				fldi := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 				nameLen := int(fldi.FileNameLength) / 2
 				namePtr := (*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(fldi)) + uintptr(fixedSize)))
 				nameSlice := unsafe.Slice(namePtr, nameLen)
@@ -178,11 +168,11 @@ func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 				offset += int(fldi.NextEntryOffset)
 				bufp = offset
 			} else {
-				fixedSize := int(unsafe.Sizeof(fileIDBothDirInfo{}))
+				fixedSize := int(unsafe.Sizeof(FILE_ID_BOTH_DIR_INFO{}))
 				if offset > len(buf)-fixedSize {
 					break
 				}
-				fid := (*fileIDBothDirInfo)(unsafe.Pointer(&buf[offset]))
+				fid := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 				nameLen := int(fid.FileNameLength) / 2
 				namePtr := (*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(fid)) + uintptr(fixedSize)))
 				nameSlice := unsafe.Slice(namePtr, nameLen)
