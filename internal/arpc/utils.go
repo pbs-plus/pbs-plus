@@ -3,7 +3,6 @@ package arpc
 import (
 	"bufio"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"math/rand"
 	"net"
@@ -43,11 +42,6 @@ func readMsgpMsgPooled(r io.Reader) (*PooledMsg, error) {
 		return nil, err
 	}
 	msgLen := binary.BigEndian.Uint32(lenBuf[:])
-
-	const maxMessageSize = 10 * 1024 * 1024
-	if msgLen > maxMessageSize {
-		return nil, fmt.Errorf("message too large: %d bytes", msgLen)
-	}
 
 	if msgLen <= 4096 {
 		buf := msgpackBufferPool.Get().([]byte)
