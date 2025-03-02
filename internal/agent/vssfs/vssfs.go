@@ -8,12 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/Microsoft/go-winio"
 	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
@@ -280,36 +280,31 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// Lookup the previously opened file handle.
+	// Retrieve the FileHandle; it must be open and not a directory.
 	fh, exists := s.handles.Get(payload.HandleID)
 	if !exists || fh.isClosed || fh.isDir {
 		return nil, os.ErrNotExist
 	}
 
-	// Seek to the requested offset.
-	if seeker, ok := fh.file.(io.Seeker); ok {
-		if _, err := seeker.Seek(payload.Offset, io.SeekStart); err != nil {
-			return nil, fmt.Errorf("seek error: %w", err)
-		}
-	} else {
-		return nil, fmt.Errorf("file does not support seeking")
-	}
-
-	// Allocate a buffer with the desired length.
+	// Allocate a buffer for the read.
 	buf := make([]byte, payload.Length)
-	n, err := fh.file.Read(buf)
-	if err != nil && err != io.EOF {
-		return nil, fmt.Errorf("read error: %w", err)
+
+	// Call our asynchronous read helper.
+	bytesRead, err := readFileAsync(fh.handle, buf, payload.Offset, 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("async read error: %w", err)
 	}
 
+	// If the read did not fill the requested length, we assume EOF.
 	eof := false
-	if err == io.EOF || n < payload.Length {
+	if int(bytesRead) < payload.Length {
 		eof = true
-		buf = buf[:n]
+		buf = buf[:bytesRead]
 	}
 
+	// Prepare the metadata message.
 	meta := arpc.BufferMetadata{
-		BytesAvailable: n,
+		BytesAvailable: int(bytesRead),
 		EOF:            eof,
 	}
 	metaBytes, err := meta.MarshalMsg(nil)
@@ -317,13 +312,15 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// We're using a raw stream callback that writes the read bytes.
+	// Use a stream callback to write the bytes read to the client.
 	streamCallback := func(stream *smux.Stream) {
 		if stream == nil {
 			return
 		}
+		// It is safe to ignore errors from stream.Write here.
 		if _, err := stream.Write(buf); err != nil {
-			syslog.L.Errorf("stream.Write error: %v", err)
+			// Log the error if needed.
+			fmt.Printf("stream.Write error: %v\n", err)
 		}
 	}
 
