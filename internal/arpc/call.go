@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"time"
@@ -114,8 +113,6 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 // CallMsgWithBuffer performs an RPC call for file I/O-style operations in which the server
 // first sends metadata about a binary transfer and then writes the payload directly.
 func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload []byte, buffer []byte) (int, error) {
-	log.Printf("Starting CallMsgWithBuffer for method: %s", method)
-
 	curSession := s.muxSess.Load().(*smux.Session)
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
@@ -124,7 +121,6 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	defer stream.Close()
 
 	if deadline, ok := ctx.Deadline(); ok {
-		log.Print("Setting stream deadline")
 		_ = stream.SetDeadline(deadline)
 	}
 
@@ -140,12 +136,10 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	}
 	defer reqBytes.Release()
 
-	log.Print("Writing request to stream")
 	if err := writeMsgpMsg(stream, reqBytes.Data); err != nil {
 		return 0, fmt.Errorf("failed to write request: %w", err)
 	}
 
-	log.Print("Reading response status")
 	// Read response status
 	respBytes, err := readMsgpMsgPooled(stream)
 	if err != nil {
@@ -157,7 +151,6 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	if _, err := resp.UnmarshalMsg(respBytes.Data); err != nil {
 		return 0, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-	log.Printf("Got response status: %d", resp.Status)
 
 	if resp.Status != 213 {
 		var serErr SerializableError
@@ -167,13 +160,11 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
-	log.Print("Reading length prefix")
 	// Read the length prefix
 	var length uint32
 	if err := binary.Read(stream, binary.LittleEndian, &length); err != nil {
 		return 0, fmt.Errorf("failed to read length prefix: %w", err)
 	}
-	log.Printf("Got length prefix: %d", length)
 
 	// Ensure we don't exceed buffer capacity
 	bytesToRead := min(int(length), len(buffer))
@@ -184,11 +175,9 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 		n, err := stream.Read(buffer[totalRead:bytesToRead])
 		if n > 0 {
 			totalRead += n
-			log.Printf("Read %d bytes (total: %d/%d)", n, totalRead, bytesToRead)
 		}
 		if err != nil {
 			if err == io.EOF && totalRead == bytesToRead {
-				log.Print("Reached EOF after reading all data")
 				return totalRead, nil
 			}
 			return totalRead, fmt.Errorf("read error after %d/%d bytes: %w",
@@ -196,6 +185,5 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 		}
 	}
 
-	log.Printf("Successfully read all %d bytes", totalRead)
 	return totalRead, nil
 }
