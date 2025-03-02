@@ -1,3 +1,5 @@
+//go:build linux
+
 package backup
 
 import (
@@ -41,18 +43,20 @@ func processPBSProxyLogs(upid, clientLogPath string) error {
 	}
 	defer inFile.Close()
 
-	// Retrieve original file's metadata (permissions and ownership)
+	// Retrieve original file's metadata (permissions, ownership, and timestamps)
 	info, err := inFile.Stat()
 	if err != nil {
 		return fmt.Errorf("getting stat of file %s: %w", logFilePath, err)
 	}
 	origMode := info.Mode()
+	origModTime := info.ModTime()
 	statT, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return fmt.Errorf("failed to retrieve underlying stat for file %s", logFilePath)
 	}
 	origUid := int(statT.Uid)
 	origGid := int(statT.Gid)
+	origAccessTime := time.Unix(statT.Atim.Sec, statT.Atim.Nsec)
 
 	// Create a temporary file in the same directory
 	dir := filepath.Dir(logFilePath)
@@ -173,12 +177,15 @@ func processPBSProxyLogs(upid, clientLogPath string) error {
 	}
 	tmpFile = nil // Prevent cleanup in deferred function
 
-	// Ensure the temporary file has the same permissions and ownership as the original.
+	// Ensure the temporary file has the same permissions, ownership, and timestamps
 	if err := os.Chmod(tmpName, origMode); err != nil {
 		return fmt.Errorf("setting permissions on temporary file: %w", err)
 	}
 	if err := os.Chown(tmpName, origUid, origGid); err != nil {
 		return fmt.Errorf("setting ownership on temporary file: %w", err)
+	}
+	if err := os.Chtimes(tmpName, origAccessTime, origModTime); err != nil {
+		return fmt.Errorf("setting timestamps on temporary file: %w", err)
 	}
 
 	// Replace the original log file with the processed temporary file.
