@@ -264,11 +264,11 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 	}
 
 	var entries ReadDirEntries
-	dirEntries, err := os.ReadDir(fullDirPath)
+	dirEntries, err := s.readDirBulk(fullDirPath)
 	for _, t := range dirEntries {
 		entries = append(entries, &VSSDirEntry{
-			Name: t.Name(),
-			Mode: uint32(t.Type()),
+			Name: t.Name,
+			Mode: t.Mode,
 		})
 	}
 
