@@ -4,7 +4,7 @@ package vssfs
 
 import (
 	"context"
-	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -47,7 +47,7 @@ type IOCP struct {
 func NewIOCP() (*IOCP, error) {
 	port, err := windows.CreateIoCompletionPort(windows.InvalidHandle, 0, 0, 0)
 	if err != nil {
-		return nil, fmt.Errorf("CreateIoCompletionPort error: %w", err)
+		return nil, mapWinError(err)
 	}
 	return &IOCP{
 		Port:        port,
@@ -60,7 +60,7 @@ func (iocp *IOCP) AssociateHandle(handle windows.Handle, key uintptr) error {
 	// Passing our IOCP port ensures that all completions are queued to our port.
 	_, err := windows.CreateIoCompletionPort(handle, iocp.Port, key, 0)
 	if err != nil {
-		return fmt.Errorf("AssociateHandle error: %w", err)
+		return mapWinError(err)
 	}
 	return nil
 }
@@ -95,39 +95,36 @@ func asyncReadFile(handle windows.Handle, buf []byte, offset int64, iocp *IOCP, 
 	ov.Offset = uint32(offset)
 	ov.OffsetHigh = uint32(offset >> 32)
 
-	// Associate this operation with a key (you could use a pointer to a context object)
-	const key uintptr = 1
-	if err := iocp.AssociateHandle(handle, key); err != nil {
-		putOverlapped(ov)
-		return 0, err
-	}
-
+	// We assume the handle has already been associated with IOCP.
 	var bytesRead uint32
 	err := windows.ReadFile(handle, buf, &bytesRead, ov)
 	if err != nil && err != windows.ERROR_IO_PENDING {
 		putOverlapped(ov)
-		return 0, fmt.Errorf("ReadFile error: %w", err)
+		return 0, mapWinError(err)
 	}
 
-	// Wait for completion to be delivered via IOCP.
 	timeoutCh := time.After(timeout)
 	for {
 		select {
 		case comp := <-iocp.Completions:
-			// Check if the completion matches our key and overlapped pointer.
-			if comp.Key == key && comp.Overlapped == ov {
+			// Match the overlapped pointer.
+			if comp.Overlapped == ov {
 				putOverlapped(ov)
-				if comp.Err != nil {
-					return 0, fmt.Errorf("IOCP completed with error: %w", comp.Err)
+				// If the I/O was canceled, ERROR_OPERATION_ABORTED may be returned.
+				if comp.Err != nil && comp.Err != windows.ERROR_OPERATION_ABORTED {
+					return 0, mapWinError(comp.Err)
 				}
 				return comp.BytesTransferred, nil
-			} else {
-				// Handle completion for another operation (or push it back to a central queue)
-				// For this simple func, ignore.
 			}
+			// If the completion is not for this operation, ignore or re-dispatch.
 		case <-timeoutCh:
+			// Cancel the pending I/O operation.
+			cancelErr := windows.CancelIoEx(handle, ov)
+			if cancelErr != nil {
+				// Optionally log cancellation error.
+			}
 			putOverlapped(ov)
-			return 0, fmt.Errorf("async read timed out")
+			return 0, os.ErrInvalid
 		}
 	}
 }

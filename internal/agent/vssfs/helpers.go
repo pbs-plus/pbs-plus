@@ -10,16 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func skipPathWithAttributes(attrs uint32) bool {
-	return attrs&(windows.FILE_ATTRIBUTE_REPARSE_POINT|
-		windows.FILE_ATTRIBUTE_DEVICE|
-		windows.FILE_ATTRIBUTE_OFFLINE|
-		windows.FILE_ATTRIBUTE_VIRTUAL|
-		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN|
-		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) != 0
-}
-
-func mapWinError(err error, path string) error {
+func mapWinError(err error) error {
 	switch err {
 	case windows.ERROR_FILE_NOT_FOUND:
 		return os.ErrNotExist
@@ -30,7 +21,7 @@ func mapWinError(err error, path string) error {
 	default:
 		return &os.PathError{
 			Op:   "access",
-			Path: path,
+			Path: "",
 			Err:  err,
 		}
 	}

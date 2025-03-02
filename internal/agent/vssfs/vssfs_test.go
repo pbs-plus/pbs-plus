@@ -177,7 +177,7 @@ func TestVSSFSServer(t *testing.T) {
 
 		// Read at offset
 		readAtPayload := ReadAtReq{
-			HandleID: string(openResult),
+			HandleID: openResult,
 			Offset:   10,
 			Length:   100,
 		}
@@ -189,7 +189,7 @@ func TestVSSFSServer(t *testing.T) {
 		assert.Equal(t, "2 content with more data", string(p[:bytesRead]))
 
 		// Close file
-		closePayload := CloseReq{HandleID: string(openResult)}
+		closePayload := CloseReq{HandleID: openResult}
 		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
 		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
 		assert.NoError(t, err)
@@ -210,7 +210,7 @@ func TestVSSFSServer(t *testing.T) {
 		// (assuming threshold is 128KB)
 		readSize := 256 * 1024 // 256KB - well above threshold
 		readAtPayload := ReadAtReq{
-			HandleID: string(openResult),
+			HandleID: openResult,
 			Offset:   1024, // Start at 1KB offset
 			Length:   readSize,
 		}
@@ -237,7 +237,7 @@ func TestVSSFSServer(t *testing.T) {
 		assert.Equal(t, compareBuffer, buffer[:1024], "First 1KB of read data should match original file")
 
 		// Close file
-		closePayload := CloseReq{HandleID: string(openResult)}
+		closePayload := CloseReq{HandleID: openResult}
 		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
 		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
 		assert.NoError(t, err)
@@ -257,7 +257,7 @@ func TestVSSFSServer(t *testing.T) {
 		// Read a chunk that should NOT trigger memory mapping
 		readSize := 100 * 1024 // 100KB - below threshold
 		readAtPayload := ReadAtReq{
-			HandleID: string(openResult),
+			HandleID: openResult,
 			Offset:   0,
 			Length:   readSize,
 		}
@@ -280,7 +280,7 @@ func TestVSSFSServer(t *testing.T) {
 		assert.Equal(t, compareBuffer, buffer[:1024], "First 1KB of read data should match original file")
 
 		// Close file
-		closePayload := CloseReq{HandleID: string(openResult)}
+		closePayload := CloseReq{HandleID: openResult}
 		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
 		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
 		assert.NoError(t, err)
@@ -303,7 +303,7 @@ func TestVSSFSServer(t *testing.T) {
 		readSize := 100 * 1024           // Try to read 100KB (more than available)
 
 		readAtPayload := ReadAtReq{
-			HandleID: string(openResult),
+			HandleID: openResult,
 			Offset:   readOffset,
 			Length:   readSize,
 		}
@@ -316,7 +316,7 @@ func TestVSSFSServer(t *testing.T) {
 		assert.True(t, isEOF, "Should indicate EOF was reached")
 
 		// Close file
-		closePayload := CloseReq{HandleID: string(openResult)}
+		closePayload := CloseReq{HandleID: openResult}
 		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
 		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
 		assert.NoError(t, err)
@@ -333,14 +333,14 @@ func TestVSSFSServer(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Try to read from directory (should fail)
-		readPayload := ReadAtReq{HandleID: string(openResult), Length: 100}
+		readPayload := ReadAtReq{HandleID: openResult, Length: 100}
 		readPayloadBytes, _ := readPayload.MarshalMsg(nil)
 		resp, err := clientSession.Call("vss/ReadAt", readPayloadBytes)
 		assert.NoError(t, err)
 		assert.Equal(t, 500, resp.Status) // Bad request, can't read from directory
 
 		// Close handle
-		closePayload := CloseReq{HandleID: string(openResult)}
+		closePayload := CloseReq{HandleID: openResult}
 		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
 		resp, err = clientSession.Call("vss/Close", closePayloadBytes)
 		assert.NoError(t, err)

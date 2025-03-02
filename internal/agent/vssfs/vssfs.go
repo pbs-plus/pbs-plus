@@ -4,7 +4,6 @@ package vssfs
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,14 +18,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// --- Types ---
-
 type FileHandle struct {
-	handle   windows.Handle
-	file     io.ReadWriteCloser
-	path     string
-	isDir    bool
-	isClosed bool
+	handle windows.Handle
+	file   io.ReadWriteCloser
+	path   string
+	isDir  bool
 }
 
 type VSSFSServer struct {
@@ -93,8 +89,6 @@ func (s *VSSFSServer) Close() {
 
 	s.ctxCancel()
 }
-
-// --- Handlers ---
 
 func (s *VSSFSServer) handleFsStat(req arpc.Request) (*arpc.Response, error) {
 	// No payload expected.
@@ -175,6 +169,13 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 
 	f := os.NewFile(uintptr(handle), path)
 
+	// Associate the file handle with the IOCP exactly once.
+	const key uintptr = 1
+	if err := s.iocp.AssociateHandle(handle, key); err != nil {
+		f.Close()
+		return nil, err
+	}
+
 	fileIDInfo, err := winio.GetFileID(f)
 	if err != nil {
 		f.Close()
@@ -249,7 +250,6 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// Convert the provided path to Windows style and compute the full path.
 	windowsDir := filepath.FromSlash(payload.Path)
 	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
@@ -261,16 +261,11 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 		fullDirPath = s.rootDir
 	}
 
-	var entries ReadDirEntries
-	dirEntries, err := os.ReadDir(fullDirPath)
-	for _, t := range dirEntries {
-		entries = append(entries, &VSSDirEntry{
-			Name: t.Name(),
-			Mode: uint32(t.Type()),
-		})
+	entries, err := s.readDirBulk(fullDirPath)
+	if err != nil {
+		return nil, err
 	}
 
-	// Marshal entries into bytes for the FUSE response.
 	entryBytes, err := entries.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
@@ -290,9 +285,12 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	fh, exists := s.handles.Get(payload.HandleID)
-	if !exists || fh.isClosed || fh.isDir {
+	fh, exists := s.handles.Get(string(payload.HandleID))
+	if !exists {
 		return nil, os.ErrNotExist
+	}
+	if fh.isDir {
+		return nil, os.ErrInvalid
 	}
 
 	buf := s.bufferPool.Get(payload.Length)
@@ -300,7 +298,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	bytesRead, err := asyncReadFile(fh.handle, buf, payload.Offset, s.iocp, 5*time.Second)
 	if err != nil {
 		s.bufferPool.Put(buf)
-		return nil, fmt.Errorf("async read error: %w", err)
+		return nil, err
 	}
 
 	eof := bytesRead < uint32(payload.Length)
@@ -341,18 +339,16 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	handle, exists := s.handles.GetAndDel(payload.HandleID)
-	if !exists || handle.isClosed {
+	handle, exists := s.handles.Get(string(payload.HandleID))
+	if !exists {
 		return nil, os.ErrNotExist
 	}
 
 	// Close the underlying file.
-	if err := handle.file.Close(); err != nil {
-		return nil, err
-	}
-	handle.isClosed = true
+	handle.file.Close()
 
-	s.readAtStatCache.Del(payload.HandleID)
+	s.handles.Del(string(payload.HandleID))
+	s.readAtStatCache.Del(string(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")
 	data, err := closed.MarshalMsg(nil)
