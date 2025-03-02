@@ -171,7 +171,7 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	maxBytesToRead := len(buffer)
 
 	// Define your idle timeout (for inactivity).
-	idleTimeout := 30 * time.Second
+	idleTimeout := 10 * time.Second
 
 	for bytesRead < maxBytesToRead {
 		effectiveDeadline := time.Now().Add(idleTimeout)

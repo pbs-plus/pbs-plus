@@ -5,6 +5,7 @@ package arpcfs
 import (
 	"io"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
@@ -64,6 +65,8 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", reqBytes, p[totalBytesRead:])
 		totalBytesRead += bytesRead
 		remaining -= bytesRead
+
+		go atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
 
 		if err != nil {
 			if err == io.EOF && totalBytesRead > 0 {
