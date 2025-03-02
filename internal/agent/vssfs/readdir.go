@@ -4,6 +4,7 @@ package vssfs
 
 import (
 	"errors"
+	"os"
 	"syscall"
 	"unsafe"
 
@@ -52,6 +53,37 @@ func skipPathWithAttributes(attrs uint32) bool {
 		windows.FILE_ATTRIBUTE_VIRTUAL|
 		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN|
 		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) != 0
+}
+
+// windowsAttributesToFileMode converts Windows file attributes to Go's os.FileMode
+func windowsAttributesToFileMode(attrs uint32) uint32 {
+	var mode os.FileMode = 0
+
+	// Check for directory
+	if attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		mode |= os.ModeDir
+	}
+
+	// Check for symlink (reparse point)
+	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		mode |= os.ModeSymlink
+	}
+
+	// Check for device file
+	if attrs&windows.FILE_ATTRIBUTE_DEVICE != 0 {
+		mode |= os.ModeDevice
+	}
+
+	// Set regular file permissions (approximation on Windows)
+	if mode == 0 {
+		// It's a regular file
+		mode |= 0644 // Default permission for files
+	} else if mode&os.ModeDir != 0 {
+		// It's a directory
+		mode |= 0755 // Default permission for directories
+	}
+
+	return uint32(mode)
 }
 
 // readDirBulk opens the directory at dirPath and enumerates its entries using
@@ -150,9 +182,12 @@ func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 
 				// Add entry if it's not "." or ".." and doesn't match the skip attributes
 				if name != "." && name != ".." && !skipPathWithAttributes(info.FileAttributes) {
+					// Convert Windows attributes to os.FileMode
+					mode := windowsAttributesToFileMode(info.FileAttributes)
+
 					entries = append(entries, &VSSDirEntry{
 						Name: name,
-						Mode: info.FileAttributes,
+						Mode: mode,
 					})
 				}
 
@@ -187,9 +222,12 @@ func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 
 				// Add entry if it's not "." or ".." and doesn't match the skip attributes
 				if name != "." && name != ".." && !skipPathWithAttributes(info.FileAttributes) {
+					// Convert Windows attributes to os.FileMode
+					mode := windowsAttributesToFileMode(info.FileAttributes)
+
 					entries = append(entries, &VSSDirEntry{
 						Name: name,
-						Mode: info.FileAttributes,
+						Mode: mode,
 					})
 				}
 
