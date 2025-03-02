@@ -4,11 +4,9 @@ package vssfs
 
 import (
 	"errors"
-	"path/filepath"
 	"syscall"
 	"unsafe"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"golang.org/x/sys/windows"
 )
 
