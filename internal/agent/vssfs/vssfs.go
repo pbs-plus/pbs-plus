@@ -3,6 +3,7 @@
 package vssfs
 
 import (
+	"bufio"
 	"context"
 	"io"
 	"os"
@@ -273,59 +274,40 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrInvalid
 	}
 
-	buf := s.bufferPool.Get(payload.Length)
-
-	// Perform synchronous read - first seek to the position
+	// Seek to the position
 	distanceToMove := int64(payload.Offset)
 	moveMethod := uint32(windows.FILE_BEGIN)
 
 	// Use windows.SetFilePointer for seeking
 	newPos, err := windows.Seek(fh.handle, distanceToMove, int(moveMethod))
 	if err != nil {
-		s.bufferPool.Put(buf)
 		return nil, mapWinError(err)
 	}
 	if newPos != payload.Offset {
-		s.bufferPool.Put(buf)
 		return nil, os.ErrInvalid
 	}
 
-	// Then read from that position
-	var bytesRead uint32
-	err = windows.ReadFile(fh.handle, buf, &bytesRead, nil)
-	if err != nil {
-		s.bufferPool.Put(buf)
-		return nil, mapWinError(err)
-	}
-
-	eof := bytesRead < uint32(payload.Length)
-	buf = buf[:bytesRead]
-
-	meta := arpc.BufferMetadata{
-		BytesAvailable: int(bytesRead),
-		EOF:            eof,
-	}
-	metaBytes, err := meta.MarshalMsg(nil)
-	if err != nil {
-		s.bufferPool.Put(buf)
-		return nil, err
-	}
-
 	streamCallback := func(stream *smux.Stream) {
-		defer func() {
-			s.bufferPool.Put(buf)
-		}()
-
 		if stream == nil {
 			return
 		}
-		if _, err := stream.Write(buf); err != nil {
+
+		handleReader := &WinHandleReader{
+			handle: fh.handle,
 		}
+
+		limitedReader := io.LimitReader(handleReader, int64(payload.Length))
+
+		bw := bufio.NewWriterSize(stream, 64*1024)
+		defer bw.Flush()
+
+		// Copy data directly from the limited reader to the stream writer
+		// No need to allocate a buffer for the entire content
+		io.Copy(bw, limitedReader)
 	}
 
 	return &arpc.Response{
 		Status:    213,
-		Data:      metaBytes,
 		RawStream: streamCallback,
 	}, nil
 }

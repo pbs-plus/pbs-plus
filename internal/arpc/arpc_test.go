@@ -455,7 +455,7 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 
 	// On the client side, use CallMsgWithBuffer to send a request.
 	buffer := make([]byte, 64)
-	n, eof, err := clientSess.CallMsgWithBuffer(context.Background(), "buffer", nil, buffer)
+	n, err := clientSess.CallMsgWithBuffer(context.Background(), "buffer", nil, buffer)
 	if err != nil {
 		t.Fatalf("client: CallMsgWithBuffer error: %v", err)
 	}
@@ -467,9 +467,6 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 	got := string(buffer[:n])
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
-	}
-	if !eof {
-		t.Fatal("expected eof to be true")
 	}
 }
 
@@ -519,7 +516,7 @@ func TestCallMsgWithBuffer_ErrorResponse(t *testing.T) {
 
 	// Prepare a buffer for the expected binary payload.
 	buffer := make([]byte, 64)
-	n, eof, err := clientSession.CallMsgWithBuffer(context.Background(), "buffer_error", nil, buffer)
+	n, err := clientSession.CallMsgWithBuffer(context.Background(), "buffer_error", nil, buffer)
 	if err == nil {
 		t.Fatal("expected error response from CallMsgWithBuffer, got nil")
 	}
@@ -529,8 +526,5 @@ func TestCallMsgWithBuffer_ErrorResponse(t *testing.T) {
 	// When an error response is returned, no binary data is expected.
 	if n != 0 {
 		t.Fatalf("expected 0 bytes read on error response, got %d", n)
-	}
-	if eof {
-		t.Fatal("expected eof to be false for error response")
 	}
 }

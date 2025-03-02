@@ -123,7 +123,7 @@ func TestVSSFSServer(t *testing.T) {
 	go func() {
 		err := serverSession.Serve(serverRouter)
 		// Ignore "closed pipe" errors during shutdown.
-		if err != nil && ctx.Err() == nil && !strings.Contains(err.Error(), "closed pipe") {
+		if err != nil && ctx.Err() == nil && err != io.EOF && !strings.Contains(err.Error(), "closed pipe") {
 			t.Errorf("Server error: %v", err)
 		}
 	}()
@@ -224,7 +224,7 @@ func TestVSSFSServer(t *testing.T) {
 		t.Log(dumpHandleMap(vssServer))
 
 		p := make([]byte, 100)
-		bytesRead, _, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, p)
+		bytesRead, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, p)
 		if err != nil {
 			t.Logf("ReadAt error: %v - Current handle map: %s", err, dumpHandleMap(vssServer))
 			t.FailNow()
@@ -288,7 +288,7 @@ func TestVSSFSServer(t *testing.T) {
 			readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
 
 			p := make([]byte, 10)
-			_, _, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, p)
+			_, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, p)
 			if err != nil {
 				t.Logf("ReadAt error for handle %s: %v - Current handle map: %s",
 					string(handle), err, dumpHandleMap(vssServer))
@@ -339,7 +339,7 @@ func TestVSSFSServer(t *testing.T) {
 		readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
 
 		buffer := make([]byte, readSize)
-		bytesRead, _, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, buffer)
+		bytesRead, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, buffer)
 		if err != nil {
 			t.Logf("Large file ReadAt error: %v - Current handle map: %s", err, dumpHandleMap(vssServer))
 			t.FailNow()
