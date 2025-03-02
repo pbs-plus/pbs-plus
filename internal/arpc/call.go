@@ -112,13 +112,13 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 
 // CallMsgWithBuffer performs an RPC call for file I/O-style operations in which the server
 // first sends metadata about a binary transfer and then writes the payload directly.
-func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload []byte, buffer []byte) (int, bool, error) {
+func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload []byte, buffer []byte) (int, error) {
 	curSession := s.muxSess.Load().(*smux.Session)
 
 	// Single stream opening attempt with potential reconnect
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
-		return 0, false, err
+		return 0, err
 	}
 	defer stream.Close()
 
@@ -135,93 +135,77 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 
 	reqBytes, err := marshalWithPool(&req)
 	if err != nil {
-		return 0, false, err
+		return 0, err
 	}
 	defer reqBytes.Release()
 
 	// Write request
 	if err := writeMsgpMsg(stream, reqBytes.Data); err != nil {
-		return 0, false, err
+		return 0, err
 	}
 
 	// Read metadata response
 	metaBytes, err := readMsgpMsgPooled(stream)
 	if err != nil {
-		return 0, false, err
+		return 0, err
 	}
 	defer metaBytes.Release()
 
 	// Handle non-OK status quickly
 	var resp Response
 	if _, err := resp.UnmarshalMsg(metaBytes.Data); err != nil {
-		return 0, false, err
+		return 0, err
 	}
 	if resp.Status != 213 {
 		var serErr SerializableError
 		if _, err := serErr.UnmarshalMsg(metaBytes.Data); err == nil {
-			return 0, false, UnwrapError(&serErr)
+			return 0, UnwrapError(&serErr)
 		}
-		return 0, false, fmt.Errorf("RPC error: status %d", resp.Status)
+		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
-
-	// Parse buffer metadata
-	var meta BufferMetadata
-	if _, err := meta.UnmarshalMsg(resp.Data); err != nil {
-		return 0, false, err
-	}
-
-	// Early return for empty content
-	if meta.BytesAvailable <= 0 {
-		return 0, meta.EOF, nil
-	}
-
-	// Calculate how much we can read into the provided buffer
-	bytesToRead := min(meta.BytesAvailable, len(buffer))
-
-	// Read directly into the provided buffer
-	bytesRead := 0
-	remaining := bytesToRead
-
-	// Define your idle timeout (for inactivity).
-	idleTimeout := 10 * time.Second
 
 	// Create a buffered reader to improve efficiency
 	bufReader := bufio.NewReaderSize(stream, 8192)
 
-	for bytesRead < bytesToRead {
+	// Read directly into the provided buffer
+	bytesRead := 0
+	maxBytesToRead := len(buffer)
+
+	// Define your idle timeout (for inactivity).
+	idleTimeout := 10 * time.Second
+
+	for bytesRead < maxBytesToRead {
 		effectiveDeadline := time.Now().Add(idleTimeout)
 		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(effectiveDeadline) {
 			effectiveDeadline = ctxDeadline
 		}
 		if err := stream.SetReadDeadline(effectiveDeadline); err != nil {
-			return bytesRead, false, err
+			return bytesRead, err
 		}
 
-		n, err := bufReader.Read(buffer[bytesRead:bytesToRead])
+		n, err := bufReader.Read(buffer[bytesRead:maxBytesToRead])
 		bytesRead += n
 
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				if ctx.Err() != nil {
-					return bytesRead, false, ctx.Err()
+					return bytesRead, ctx.Err()
 				}
-				return bytesRead, false, fmt.Errorf("idle timeout after %v (read %d/%d)", idleTimeout, bytesRead, bytesToRead)
+				return bytesRead, fmt.Errorf("idle timeout after %v (read %d bytes)", idleTimeout, bytesRead)
 			}
 			if err == io.EOF {
-				finalEOF := meta.EOF && (bytesRead == bytesToRead)
-				return bytesRead, finalEOF, nil
+				// We've reached the end of the stream
+				return bytesRead, nil
 			}
-			return bytesRead, false, err
+			return bytesRead, err
 		}
 
-		// If we got some data but not all, that's fine
-		if n > 0 {
-			remaining -= n
-			if remaining == 0 {
-				break
-			}
+		// If we got some data but not all, continue reading
+		if n == 0 {
+			// No progress made in this iteration, might be stuck
+			break
 		}
 	}
 
-	return bytesRead, meta.EOF, nil
+	return bytesRead, nil
 }

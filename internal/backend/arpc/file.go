@@ -49,7 +49,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 
 	req := vssfs.ReadAtReq{
 		HandleID: f.handleID,
-		Offset:   off,
+		Offset:   int64(off),
 		Length:   len(p),
 	}
 	reqBytes, err := req.MarshalMsg(nil)
@@ -57,7 +57,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, os.ErrInvalid
 	}
 
-	bytesRead, isEOF, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", reqBytes, p)
+	bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", reqBytes, p)
 	if err != nil {
 		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
 		return 0, err
@@ -65,7 +65,8 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 
 	go atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
 
-	if isEOF {
+	// Return EOF when fewer bytes are read than requested
+	if bytesRead < len(p) {
 		return bytesRead, io.EOF
 	}
 
