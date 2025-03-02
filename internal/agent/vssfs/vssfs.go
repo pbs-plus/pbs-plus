@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Microsoft/go-winio"
 	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -176,13 +175,10 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	fileIDInfo, err := winio.GetFileID(f)
+	handleId, err := generateGUID()
 	if err != nil {
-		f.Close()
-		return nil, err
+		return nil, os.ErrInvalid
 	}
-
-	handleId := fileIDToKey(fileIDInfo)
 
 	fh := &FileHandle{
 		handle: handle,
