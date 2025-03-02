@@ -10,40 +10,51 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// fileIDBothDirInfo mirrors the fixed portion of the native
-// FILE_ID_BOTH_DIR_INFO structure. The file name follows the fixed part.
+// fileIDBothDirInfo mirrors the Windows FILE_ID_BOTH_DIR_INFO structure.
+// (See https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_id_both_dir_info)
+// Note: This structure includes a short name field that we ignore.
 type fileIDBothDirInfo struct {
 	NextEntryOffset uint32
 	FileIndex       uint32
-	CreationTime    syscall.Filetime
-	LastAccessTime  syscall.Filetime
-	LastWriteTime   syscall.Filetime
-	ChangeTime      syscall.Filetime
+	// Note: The Windows type is LARGE_INTEGER (a 64-bit value) for each time.
+	CreationTime    int64
+	LastAccessTime  int64
+	LastWriteTime   int64
+	ChangeTime      int64
 	EndOfFile       int64
 	AllocationSize  int64
 	FileAttributes  uint32
-	FileNameLength  uint32 // length in bytes
+	FileNameLength  uint32 // in bytes
 	EaSize          uint32
+	ShortNameLength byte
+	_               [3]byte    // padding
+	ShortName       [12]uint16 // fixed-length array
 	FileId          [16]byte
-	// Followed by FileName (variable length UTF-16 array)
+	// Followed by: FileName [1]uint16 (variable-length)
 }
 
-// fileFullDirInfo mirrors FILE_FULL_DIR_INFO.
-// Its fixed part size is determined by unsafe.Sizeof.
+// fileFullDirInfo mirrors the Windows FILE_FULL_DIR_INFO structure.
+// (See https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_full_dir_info)
 type fileFullDirInfo struct {
 	NextEntryOffset uint32
 	FileIndex       uint32
-	CreationTime    syscall.Filetime
-	LastAccessTime  syscall.Filetime
-	LastWriteTime   syscall.Filetime
-	ChangeTime      syscall.Filetime
+	CreationTime    int64
+	LastAccessTime  int64
+	LastWriteTime   int64
+	ChangeTime      int64
 	EndOfFile       int64
 	AllocationSize  int64
 	FileAttributes  uint32
-	FileNameLength  uint32 // length in bytes
-	// Followed by FileName (UTF-16, variable length)
+	FileNameLength  uint32 // in bytes
+	EaSize          uint32
+	ShortNameLength byte
+	_               [3]byte // padding
+	ShortName       [12]uint16
+	// Followed by: FileName [1]uint16 (variable-length)
 }
 
+// skipPathWithAttributes returns true if the file attributes indicate that
+// the file should be skipped.
 func skipPathWithAttributes(attrs uint32) bool {
 	return attrs&(windows.FILE_ATTRIBUTE_REPARSE_POINT|
 		windows.FILE_ATTRIBUTE_DEVICE|
@@ -54,22 +65,23 @@ func skipPathWithAttributes(attrs uint32) bool {
 }
 
 // readDirBulk opens the directory at dirPath and enumerates its entries using
-// GetFileInformationByHandleEx. It first attempts to use the file‑ID information class;
-// if that fails with ERROR_INVALID_PARAMETER, it falls back to the full-directory information class.
-// The returned entries are filtered via skipPathWithAttributes.
+// GetFileInformationByHandleEx. It first attempts to use the file-ID based
+// information class; if that fails (with ERROR_INVALID_PARAMETER), it falls
+// back to the full-directory information class. The entries that match skipPathWithAttributes
+// (and the "." and ".." names) are omitted.
 func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
-	// Open the directory with FILE_FLAG_BACKUP_SEMANTICS.
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
 		return nil, mapWinError(err)
 	}
+
 	handle, err := windows.CreateFile(
 		pDir,
 		windows.GENERIC_READ,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS,
+		windows.FILE_FLAG_BACKUP_SEMANTICS, // needed for directories
 		0,
 	)
 	if err != nil {
@@ -82,7 +94,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 	buf := s.bufferPool.Get(bufSize)
 	defer s.bufferPool.Put(buf)
 
-	var usingFull bool // false: using file-ID based info; true: full info.
+	var usingFull bool // false: using file-ID info; true: using full info.
 	var infoClass uint32 = windows.FileIdBothDirectoryRestartInfo
 
 	err = windows.GetFileInformationByHandleEx(
@@ -122,6 +134,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) (ReadDirEntries, error) {
 	bufp := 0
 
 	for {
+		// If we've consumed our current buffer, refill it.
 		if bufp == 0 {
 			err = windows.GetFileInformationByHandleEx(
 				handle,
