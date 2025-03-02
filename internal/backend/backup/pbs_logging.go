@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -40,12 +41,26 @@ func processPBSProxyLogs(upid, clientLogPath string) error {
 	}
 	defer inFile.Close()
 
+	// Retrieve original file's metadata (permissions and ownership)
+	info, err := inFile.Stat()
+	if err != nil {
+		return fmt.Errorf("getting stat of file %s: %w", logFilePath, err)
+	}
+	origMode := info.Mode()
+	statT, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("failed to retrieve underlying stat for file %s", logFilePath)
+	}
+	origUid := int(statT.Uid)
+	origGid := int(statT.Gid)
+
 	// Create a temporary file in the same directory
 	dir := filepath.Dir(logFilePath)
 	tmpFile, err := os.CreateTemp(dir, "processed_*.tmp")
 	if err != nil {
 		return fmt.Errorf("creating temporary file: %w", err)
 	}
+	tmpName := tmpFile.Name()
 	defer func() {
 		if tmpFile != nil {
 			tmpFile.Close()
@@ -75,7 +90,9 @@ func processPBSProxyLogs(upid, clientLogPath string) error {
 	}
 
 	// Write header for proxmox backup client logs
-	if _, err := tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n"); err != nil {
+	if _, err := tmpWriter.WriteString(
+		"--- proxmox-backup-client log starts here ---\n",
+	); err != nil {
 		return fmt.Errorf("failed to write log header: %w", err)
 	}
 
@@ -156,8 +173,16 @@ func processPBSProxyLogs(upid, clientLogPath string) error {
 	}
 	tmpFile = nil // Prevent cleanup in deferred function
 
-	// Replace the original log file with the filtered temporary file
-	if err := os.Rename(tmpFile.Name(), logFilePath); err != nil {
+	// Ensure the temporary file has the same permissions and ownership as the original.
+	if err := os.Chmod(tmpName, origMode); err != nil {
+		return fmt.Errorf("setting permissions on temporary file: %w", err)
+	}
+	if err := os.Chown(tmpName, origUid, origGid); err != nil {
+		return fmt.Errorf("setting ownership on temporary file: %w", err)
+	}
+
+	// Replace the original log file with the processed temporary file.
+	if err := os.Rename(tmpName, logFilePath); err != nil {
 		return fmt.Errorf("replacing original file: %w", err)
 	}
 

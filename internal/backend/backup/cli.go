@@ -92,7 +92,7 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 	var errOnce sync.Once
 	var finalErr error
 
-	// global atomic counter for removed lines
+	// Global atomic counter for removed lines.
 	var totalRemoved int64
 
 	worker := func() {
@@ -108,27 +108,46 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 		}
 	}
 
+	// Start worker goroutines.
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go worker()
 	}
 
-	err := filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	// List the entries in the root directory.
+	entries, err := os.ReadDir(rootDir)
+	if err != nil {
+		return 0, err
+	}
+
+	// Process only the subdirectories of rootDir.
+	for _, entry := range entries {
+		if entry.IsDir() {
+			subDir := filepath.Join(rootDir, entry.Name())
+			err := filepath.WalkDir(subDir, func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.Type().IsRegular() {
+					fileCh <- path
+				}
+				return nil
+			})
+			if err != nil {
+				errOnce.Do(func() {
+					finalErr = err
+				})
+				log.Printf("Error walking directory %s: %v", subDir, err)
+			}
 		}
-		if d.Type().IsRegular() {
-			fileCh <- path
-		}
-		return nil
-	})
+	}
 
 	close(fileCh)
 	wg.Wait()
 
-	if err != nil {
-		return totalRemoved, err
+	if finalErr != nil {
+		return totalRemoved, finalErr
 	}
 
-	return totalRemoved, finalErr
+	return totalRemoved, nil
 }
