@@ -84,7 +84,7 @@ func main() {
 
 		removed, err := backup.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
 		if err != nil {
-			log.Fatalf(err.Error())
+			log.Fatal(err)
 		}
 		fmt.Printf("Successfully removed %d of junk lines from all task logs files.\n", removed)
 		return
