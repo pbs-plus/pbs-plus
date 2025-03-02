@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 
 	"github.com/Microsoft/go-winio"
 	"github.com/alphadose/haxmap"
@@ -35,9 +34,8 @@ type VSSFSServer struct {
 	ctxCancel       context.CancelFunc
 	jobId           string
 	rootDir         string
-	handles         *haxmap.Map[uint64, *FileHandle]
-	readAtStatCache *haxmap.Map[uint64, *windows.ByHandleFileInformation]
-	nextHandle      uint64
+	handles         *haxmap.Map[string, *FileHandle]
+	readAtStatCache *haxmap.Map[string, *windows.ByHandleFileInformation]
 	arpcRouter      *arpc.Router
 	bufferPool      *BufferPool
 }
@@ -47,8 +45,8 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	s := &VSSFSServer{
 		rootDir:         root,
 		jobId:           jobId,
-		handles:         hashmap.NewUint64[*FileHandle](),
-		readAtStatCache: hashmap.NewUint64[*windows.ByHandleFileInformation](),
+		handles:         hashmap.New[*FileHandle](),
+		readAtStatCache: hashmap.New[*windows.ByHandleFileInformation](),
 		ctx:             ctx,
 		ctxCancel:       cancel,
 		bufferPool:      NewBufferPool(),
@@ -81,7 +79,7 @@ func (s *VSSFSServer) Close() {
 	}
 
 	s.handles.Clear()
-	atomic.StoreUint64(&s.nextHandle, 0)
+	s.readAtStatCache.Clear()
 
 	s.ctxCancel()
 }
@@ -146,8 +144,10 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
+	// Check file status so we can mark directories.
+	stat, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("OpenForBackup failed: %w", err)
+		return nil, err
 	}
 
 	handle, err := windows.CreateFile(
@@ -169,16 +169,26 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
+	// Use GetFileID from go-winio to get the file's unique ID.
+	fileIDInfo, err := winio.GetFileID(f)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
+	handleId := fileIDToKey(fileIDInfo)
+
 	// Create and store our FileHandle.
 	fh := &FileHandle{
-		file: fileIO,
-		path: path,
+		handle: handle, // save the Windows handle so we can close it properly
+		file:   fileIO,
+		path:   path,
+		isDir:  stat.IsDir(), // mark directories so read operations can be rejected
 	}
-	handleID := atomic.AddUint64(&s.nextHandle, 1)
-	s.handles.Set(handleID, fh)
+	s.handles.Set(handleId, fh)
 
 	// Return the handle ID to the client.
-	respHandle := FileHandleId(handleID)
+	respHandle := FileHandleId(handleId)
 	dataBytes, err := respHandle.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
@@ -277,9 +287,18 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	}
 
 	// Lookup the previously opened file handle.
-	fh, exists := s.handles.Get(uint64(payload.HandleID))
+	fh, exists := s.handles.Get(payload.HandleID)
 	if !exists || fh.isClosed || fh.isDir {
 		return nil, os.ErrNotExist
+	}
+
+	// Seek to the requested offset.
+	if seeker, ok := fh.file.(io.Seeker); ok {
+		if _, err := seeker.Seek(payload.Offset, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("seek error: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("file does not support seeking")
 	}
 
 	// Allocate a buffer with the desired length.
@@ -304,7 +323,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// In this example, we use a raw stream callback that writes the read bytes.
+	// We're using a raw stream callback that writes the read bytes.
 	streamCallback := func(stream *smux.Stream) {
 		if stream == nil {
 			return
@@ -327,7 +346,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	handle, exists := s.handles.GetAndDel(uint64(payload.HandleID))
+	handle, exists := s.handles.GetAndDel(payload.HandleID)
 	if !exists || handle.isClosed {
 		return nil, os.ErrNotExist
 	}
@@ -335,7 +354,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 	windows.CloseHandle(handle.handle)
 	handle.isClosed = true
 
-	s.readAtStatCache.Del(uint64(payload.HandleID))
+	s.readAtStatCache.Del(payload.HandleID)
 
 	closed := arpc.StringMsg("closed")
 	data, err := closed.MarshalMsg(nil)

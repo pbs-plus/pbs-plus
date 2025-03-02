@@ -3,8 +3,10 @@
 package vssfs
 
 import (
+	"fmt"
 	"os"
 
+	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 )
 
@@ -32,4 +34,8 @@ func mapWinError(err error, path string) error {
 			Err:  err,
 		}
 	}
+}
+
+func fileIDToKey(info *winio.FileIDInfo) string {
+	return fmt.Sprintf("%d_%x", info.VolumeSerialNumber, info.FileID)
 }

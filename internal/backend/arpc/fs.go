@@ -128,7 +128,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (*ARPCFi
 	return &ARPCFile{
 		fs:       fs,
 		name:     filename,
-		handleID: int(resp),
+		handleID: string(resp),
 		jobId:    fs.JobId,
 	}, nil
 }
