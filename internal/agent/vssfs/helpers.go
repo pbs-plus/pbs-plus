@@ -3,11 +3,10 @@
 package vssfs
 
 import (
-	"io/fs"
+	"fmt"
 	"os"
-	"path/filepath"
-	"time"
 
+	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 )
 
@@ -37,64 +36,6 @@ func mapWinError(err error, path string) error {
 	}
 }
 
-func createFileInfoFromFindData(name string, fd *windows.Win32finddata) *VSSFileInfo {
-	var mode fs.FileMode
-	var isDir bool
-
-	// Set base permissions
-	if fd.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
-		mode = 0444 // Read-only for everyone
-	} else {
-		mode = 0666 // Read-write for everyone
-	}
-
-	// Add directory flag and execute permissions
-	if fd.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		mode |= os.ModeDir | 0111 // Add execute bits for traversal
-		isDir = true
-		// Set directory-specific permissions
-		mode = (mode & 0666) | 0111 | os.ModeDir // Final mode: drwxr-xr-x
-	}
-
-	size := int64(fd.FileSizeHigh)<<32 + int64(fd.FileSizeLow)
-	modTime := time.Unix(0, fd.LastWriteTime.Nanoseconds())
-
-	return &VSSFileInfo{
-		Name:    name,
-		Size:    size,
-		Mode:    uint32(mode),
-		ModTime: modTime,
-		IsDir:   isDir,
-	}
-}
-
-func createFileInfoFromHandleInfo(path string, fd *windows.ByHandleFileInformation) *VSSFileInfo {
-	var mode fs.FileMode
-	var isDir bool
-
-	// Set base permissions
-	if fd.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
-		mode = 0444 // Read-only for everyone
-	} else {
-		mode = 0666 // Read-write for everyone
-	}
-
-	// Add directory flag and execute permissions
-	if fd.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		mode |= os.ModeDir | 0111 // Add execute bits for traversal
-		isDir = true
-		// Set directory-specific permissions
-		mode = (mode & 0666) | 0111 | os.ModeDir // Final mode: drwxr-xr-x
-	}
-
-	size := int64(fd.FileSizeHigh)<<32 + int64(fd.FileSizeLow)
-	modTime := time.Unix(0, fd.LastWriteTime.Nanoseconds())
-
-	return &VSSFileInfo{
-		Name:    filepath.Base(path),
-		Size:    size,
-		Mode:    uint32(mode),
-		ModTime: modTime,
-		IsDir:   isDir,
-	}
+func fileIDToKey(info *winio.FileIDInfo) string {
+	return fmt.Sprintf("%d_%x", info.VolumeSerialNumber, info.FileID)
 }

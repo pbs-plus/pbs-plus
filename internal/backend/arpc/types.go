@@ -46,7 +46,7 @@ type ARPCFile struct {
 	fs       *ARPCFS
 	name     string
 	offset   int64
-	handleID int
+	handleID string
 	isClosed bool
 	jobId    string
 }

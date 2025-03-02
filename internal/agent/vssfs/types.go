@@ -21,22 +21,18 @@ type ReadDirReq struct {
 }
 
 type ReadReq struct {
-	HandleID int `msg:"handleID"`
-	Length   int `msg:"length"`
+	HandleID string `msg:"handleID"`
+	Length   int    `msg:"length"`
 }
 
 type ReadAtReq struct {
-	HandleID int   `msg:"handleID"`
-	Offset   int64 `msg:"offset"`
-	Length   int   `msg:"length"`
+	HandleID string `msg:"handleID"`
+	Offset   int64  `msg:"offset"`
+	Length   int    `msg:"length"`
 }
 
 type CloseReq struct {
-	HandleID int `msg:"handleID"`
-}
-
-type FstatReq struct {
-	HandleID int `msg:"handleID"`
+	HandleID string `msg:"handleID"`
 }
 
 type BackupReq struct {
@@ -52,8 +48,13 @@ type VSSFileInfo struct {
 	IsDir   bool      `msg:"isDir"`
 }
 
-type ReadDirEntries []*VSSFileInfo
-type FileHandleId int
+type VSSDirEntry struct {
+	Name string `msg:"name"`
+	Mode uint32 `msg:"mode"`
+}
+
+type ReadDirEntries []*VSSDirEntry
+type FileHandleId string
 
 type DataResponse struct {
 	Data []byte `msg:"data"`
