@@ -13,6 +13,7 @@ import (
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/rekby/fastuuid"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
@@ -33,7 +34,7 @@ type VSSFSServer struct {
 	handles         *haxmap.Map[string, *FileHandle]
 	readAtStatCache *haxmap.Map[string, *windows.ByHandleFileInformation]
 	arpcRouter      *arpc.Router
-	bufferPool      *BufferPool
+	bufferPool      *utils.BufferPool
 }
 
 func NewVSSFSServer(jobId string, root string) *VSSFSServer {
@@ -46,7 +47,7 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 		readAtStatCache: hashmap.New[*windows.ByHandleFileInformation](),
 		ctx:             ctx,
 		ctxCancel:       cancel,
-		bufferPool:      NewBufferPool(),
+		bufferPool:      utils.NewBufferPool(),
 	}
 
 	return s

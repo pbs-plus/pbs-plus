@@ -12,6 +12,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 )
 
@@ -23,6 +24,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 		JobId:         jobId,
 		Hostname:      hostname,
 		accessedPaths: hashmap.New[bool](),
+		bufferPool:    utils.NewBufferPool(),
 	}
 
 	return fs
