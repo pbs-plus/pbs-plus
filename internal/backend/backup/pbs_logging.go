@@ -5,17 +5,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-const PBS_JUNK_LOGS = `^\d{4}-\d{2}-\d{2}T[0-9:\-+]+: (successfully added chunk [0-9a-f]+|` +
-	`PUT /dynamic_index|dynamic_append \d+ chunks|POST /dynamic_chunk|upload_chunk done:)`
+var JunkSubstrings = []string{
+	"upload_chunk done:",
+	"POST /dynamic_chunk",
+	"POST /dynamic_index",
+	"PUT /dynamic_index",
+	"dynamic_append",
+	"successfully added chunk",
+	"created new dynamic index",
+	"GET /previous",
+	"from previous backup.",
+}
 
-var removePattern = regexp.MustCompile(PBS_JUNK_LOGS)
+func isJunkLog(line string) bool {
+	for _, junk := range JunkSubstrings {
+		if strings.Contains(line, junk) {
+			return true
+		}
+	}
+	return false
+}
 
 func processPBSProxyLogs(upid, clientLogPath string) error {
 	logFilePath := utils.GetTaskLogPath(upid)
@@ -48,7 +63,7 @@ func processPBSProxyLogs(upid, clientLogPath string) error {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if removePattern.MatchString(line) {
+		if isJunkLog(line) {
 			continue // Skip junk lines
 		}
 		if _, err := tmpWriter.WriteString(line + "\n"); err != nil {
