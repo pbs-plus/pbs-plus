@@ -3,7 +3,6 @@
 package vssfs
 
 import (
-	"bufio"
 	"context"
 	"io"
 	"os"
@@ -13,6 +12,7 @@ import (
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/rekby/fastuuid"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
@@ -278,7 +278,6 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	distanceToMove := int64(payload.Offset)
 	moveMethod := uint32(windows.FILE_BEGIN)
 
-	// Use windows.SetFilePointer for seeking
 	newPos, err := windows.Seek(fh.handle, distanceToMove, int(moveMethod))
 	if err != nil {
 		return nil, mapWinError(err)
@@ -287,21 +286,49 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrInvalid
 	}
 
+	// Stream the data directly to the client
 	streamCallback := func(stream *smux.Stream) {
 		if stream == nil {
 			return
 		}
 
-		handleReader := &WinHandleReader{
-			handle: fh.handle,
+		buf := s.bufferPool.Get(64 * 1024)
+		defer s.bufferPool.Put(buf)
+
+		totalBytesToRead := int64(payload.Length)
+		bytesRemaining := totalBytesToRead
+
+		for bytesRemaining > 0 {
+			chunkSize := int64(len(buf))
+			if bytesRemaining < chunkSize {
+				chunkSize = bytesRemaining
+			}
+
+			var bytesRead uint32
+			err := windows.ReadFile(fh.handle, buf[:chunkSize], &bytesRead, nil)
+			if err != nil {
+				if err == windows.ERROR_HANDLE_EOF {
+					// EOF reached, stop streaming
+					break
+				}
+				syslog.L.Errorf("handleReadAt: ReadFile error: %v", err)
+				return
+			}
+
+			if bytesRead == 0 {
+				// No more data to read, likely EOF
+				break
+			}
+
+			// Write the data to the stream
+			_, err = stream.Write(buf[:bytesRead])
+			if err != nil {
+				syslog.L.Errorf("handleReadAt: Stream write error: %v", err)
+				return
+			}
+
+			bytesRemaining -= int64(bytesRead)
 		}
-
-		limitedReader := io.LimitReader(handleReader, int64(payload.Length))
-
-		bw := bufio.NewWriterSize(stream, 64*1024)
-		defer bw.Flush()
-
-		io.Copy(bw, limitedReader)
 	}
 
 	return &arpc.Response{

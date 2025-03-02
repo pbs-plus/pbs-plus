@@ -5,7 +5,6 @@ package arpcfs
 import (
 	"io"
 	"os"
-	"sync/atomic"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
@@ -66,8 +65,6 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		totalBytesRead += bytesRead
 		remaining -= bytesRead
 
-		go atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
-
 		if err != nil {
 			if err == io.EOF && totalBytesRead > 0 {
 				// Partial read, return the bytes read without propagating EOF
@@ -80,11 +77,6 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 			// No progress made, likely EOF
 			break
 		}
-	}
-
-	// Return EOF only if we're at the end of the file
-	if totalBytesRead == 0 {
-		return 0, io.EOF
 	}
 
 	return totalBytesRead, nil
