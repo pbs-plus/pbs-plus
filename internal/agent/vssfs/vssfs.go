@@ -33,16 +33,10 @@ type VSSFSServer struct {
 	readAtStatCache *haxmap.Map[string, *windows.ByHandleFileInformation]
 	arpcRouter      *arpc.Router
 	bufferPool      *BufferPool
-	iocp            *IOCP
 }
 
 func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
-
-	iocp, err := NewIOCP()
-	if err != nil {
-		return nil
-	}
 
 	s := &VSSFSServer{
 		rootDir:         root,
@@ -52,10 +46,7 @@ func NewVSSFSServer(jobId string, root string) *VSSFSServer {
 		ctx:             ctx,
 		ctxCancel:       cancel,
 		bufferPool:      NewBufferPool(),
-		iocp:            iocp,
 	}
-
-	s.iocp.Loop(ctx)
 
 	return s
 }
@@ -159,7 +150,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		windows.FILE_SHARE_READ,
 		nil,
 		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OVERLAPPED|windows.FILE_FLAG_SEQUENTIAL_SCAN,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN,
 		0,
 	)
 	if err != nil {
@@ -167,13 +158,6 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 	}
 
 	f := os.NewFile(uintptr(handle), path)
-
-	// Associate the file handle with the IOCP exactly once.
-	const key uintptr = 1
-	if err := s.iocp.AssociateHandle(handle, key); err != nil {
-		f.Close()
-		return nil, err
-	}
 
 	handleId, err := fastuuid.UUIDv4String()
 	if err != nil {
@@ -291,52 +275,27 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 
 	buf := s.bufferPool.Get(payload.Length)
 
-	bytesRead, err := asyncReadFile(fh.handle, buf, payload.Offset, s.iocp)
-	// If it times out, fall back to synchronous read
-	if err == os.ErrDeadlineExceeded {
-		// Create a new file handle for synchronous operations without overlapped flag
-		syncHandle, err := windows.CreateFile(
-			windows.StringToUTF16Ptr(fh.path),
-			windows.GENERIC_READ,
-			windows.FILE_SHARE_READ,
-			nil,
-			windows.OPEN_EXISTING,
-			windows.FILE_FLAG_BACKUP_SEMANTICS, // No OVERLAPPED flag
-			0,
-		)
-		if err != nil {
-			s.bufferPool.Put(buf)
-			return nil, mapWinError(err)
-		}
-		defer windows.CloseHandle(syncHandle)
+	// Perform synchronous read - first seek to the position
+	distanceToMove := int64(payload.Offset)
+	moveMethod := uint32(windows.FILE_BEGIN)
 
-		// Perform synchronous read - first seek to the position
-		distanceToMove := int64(payload.Offset)
-		moveMethod := uint32(windows.FILE_BEGIN)
-
-		// Use windows.SetFilePointer for seeking
-		newPos, err := windows.Seek(syncHandle, distanceToMove, int(moveMethod))
-		if err != nil {
-			s.bufferPool.Put(buf)
-			return nil, mapWinError(err)
-		}
-		if newPos != payload.Offset {
-			s.bufferPool.Put(buf)
-			return nil, os.ErrInvalid
-		}
-
-		// Then read from that position
-		var bytesReadSync uint32
-		err = windows.ReadFile(syncHandle, buf, &bytesReadSync, nil)
-		if err != nil {
-			s.bufferPool.Put(buf)
-			return nil, mapWinError(err)
-		}
-
-		bytesRead = bytesReadSync
-	} else if err != nil {
+	// Use windows.SetFilePointer for seeking
+	newPos, err := windows.Seek(fh.handle, distanceToMove, int(moveMethod))
+	if err != nil {
 		s.bufferPool.Put(buf)
-		return nil, err
+		return nil, mapWinError(err)
+	}
+	if newPos != payload.Offset {
+		s.bufferPool.Put(buf)
+		return nil, os.ErrInvalid
+	}
+
+	// Then read from that position
+	var bytesRead uint32
+	err = windows.ReadFile(fh.handle, buf, &bytesRead, nil)
+	if err != nil {
+		s.bufferPool.Put(buf)
+		return nil, mapWinError(err)
 	}
 
 	eof := bytesRead < uint32(payload.Length)
