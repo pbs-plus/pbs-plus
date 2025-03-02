@@ -144,7 +144,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	// Check file status so we can mark directories.
+	// Check file status to mark directories.
 	stat, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -162,14 +162,9 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := os.NewFile(uintptr(handle), path)
-	fileIO, err := winio.NewOpenFile(windows.Handle(f.Fd()))
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
 
-	// Use GetFileID from go-winio to get the file's unique ID.
+	f := os.NewFile(uintptr(handle), path)
+
 	fileIDInfo, err := winio.GetFileID(f)
 	if err != nil {
 		f.Close()
@@ -178,12 +173,11 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 
 	handleId := fileIDToKey(fileIDInfo)
 
-	// Create and store our FileHandle.
 	fh := &FileHandle{
-		handle: handle, // save the Windows handle so we can close it properly
-		file:   fileIO,
+		handle: handle,
+		file:   f,
 		path:   path,
-		isDir:  stat.IsDir(), // mark directories so read operations can be rejected
+		isDir:  stat.IsDir(),
 	}
 	s.handles.Set(handleId, fh)
 
@@ -351,7 +345,10 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrNotExist
 	}
 
-	windows.CloseHandle(handle.handle)
+	// Close the underlying file.
+	if err := handle.file.Close(); err != nil {
+		return nil, err
+	}
 	handle.isClosed = true
 
 	s.readAtStatCache.Del(payload.HandleID)

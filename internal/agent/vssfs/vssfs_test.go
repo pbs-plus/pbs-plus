@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,7 +104,8 @@ func TestVSSFSServer(t *testing.T) {
 	// Start server in a goroutine
 	go func() {
 		err := serverSession.Serve(serverRouter)
-		if err != nil && ctx.Err() == nil {
+		// Ignore "closed pipe" errors during shutdown.
+		if err != nil && ctx.Err() == nil && !strings.Contains(err.Error(), "closed pipe") {
 			t.Errorf("Server error: %v", err)
 		}
 	}()
