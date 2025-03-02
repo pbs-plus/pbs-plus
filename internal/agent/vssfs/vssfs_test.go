@@ -123,7 +123,7 @@ func TestVSSFSServer(t *testing.T) {
 	go func() {
 		err := serverSession.Serve(serverRouter)
 		// Ignore "closed pipe" errors during shutdown.
-		if err != nil && ctx.Err() == nil && !strings.Contains(err.Error(), "closed pipe") {
+		if err != nil && ctx.Err() == nil && err != io.EOF && !strings.Contains(err.Error(), "closed pipe") {
 			t.Errorf("Server error: %v", err)
 		}
 	}()
