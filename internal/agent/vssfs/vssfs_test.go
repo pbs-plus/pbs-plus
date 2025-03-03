@@ -418,6 +418,165 @@ func TestVSSFSServer(t *testing.T) {
 	})
 }
 
+func getFilesystemType(path string) (string, error) {
+	var volumeName [windows.MAX_PATH]uint16
+	var fsName [windows.MAX_PATH]uint16
+	var fsFlags uint32
+
+	err := windows.GetVolumeInformation(
+		windows.StringToUTF16Ptr(path[:3]), // Drive letter (e.g., "C:\")
+		&volumeName[0],
+		uint32(len(volumeName)),
+		nil,
+		nil,
+		&fsFlags,
+		&fsName[0],
+		uint32(len(fsName)),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	return windows.UTF16ToString(fsName[:]), nil
+}
+
+func TestFilesystemType(t *testing.T) {
+	fsType, err := getFilesystemType("C:\\") // Replace with your test directory
+	require.NoError(t, err)
+	t.Logf("Filesystem type: %s", fsType)
+}
+
+func TestSparseFileSupport(t *testing.T) {
+	var fsFlags uint32
+	err := windows.GetVolumeInformation(
+		windows.StringToUTF16Ptr("C:\\"), // Replace with your test directory
+		nil,
+		0,
+		nil,
+		nil,
+		&fsFlags,
+		nil,
+		0,
+	)
+	require.NoError(t, err)
+	t.Logf("Filesystem flags: 0x%x", fsFlags)
+
+	if fsFlags&windows.FILE_SUPPORTS_SPARSE_FILES != 0 {
+		t.Log("Sparse file support is enabled")
+	} else {
+		t.Fatal("Sparse file support is not enabled on this filesystem")
+	}
+}
+
+func TestHandleLseekWithZeroWrites(t *testing.T) {
+	// Setup test directory structure
+	testDir, err := os.MkdirTemp("", "vssfs-lseek-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(testDir)
+
+	// Create file with proper Windows API
+	sparseFilePath := filepath.Join(testDir, "sparse.bin")
+	pathPtr, err := windows.UTF16PtrFromString(sparseFilePath)
+	require.NoError(t, err)
+
+	handle, err := windows.CreateFile(
+		pathPtr,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		windows.CREATE_ALWAYS,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	require.NoError(t, err)
+	defer windows.CloseHandle(handle)
+
+	// Set sparse file attribute
+	var bytesReturned uint32
+	err = windows.DeviceIoControl(
+		handle,
+		windows.FSCTL_SET_SPARSE,
+		nil,
+		0,
+		nil,
+		0,
+		&bytesReturned,
+		nil,
+	)
+	require.NoError(t, err, "Failed to set sparse attribute")
+
+	// Set file size to 20KB
+	size := int64(20480)
+	sizeHigh := int32(size >> 32)
+	sizeLow := int32(size & 0xFFFFFFFF)
+	_, err = windows.SetFilePointer(handle, sizeLow, &sizeHigh, windows.FILE_BEGIN)
+	require.NoError(t, err)
+	err = windows.SetEndOfFile(handle)
+	require.NoError(t, err)
+
+	// Create test pattern
+	data := make([]byte, 4096)
+	for i := range data {
+		data[i] = byte(i % 251)
+	}
+
+	// Write data blocks at specific positions
+	writePositions := []int64{0, 8192, 16384}
+	for _, pos := range writePositions {
+		// Set file pointer
+		posHigh := int32(pos >> 32)
+		posLow := int32(pos & 0xFFFFFFFF)
+		_, err = windows.SetFilePointer(handle, posLow, &posHigh, windows.FILE_BEGIN)
+		require.NoError(t, err)
+
+		// Write data
+		var written uint32
+		err = windows.WriteFile(
+			handle,
+			data,
+			&written,
+			nil,
+		)
+		require.NoError(t, err)
+		require.Equal(t, uint32(len(data)), written)
+	}
+
+	// Write zeros to the holes
+	zeroData := make([]byte, 4096)
+	holePositions := []int64{4096, 12288}
+	for _, pos := range holePositions {
+		posHigh := int32(pos >> 32)
+		posLow := int32(pos & 0xFFFFFFFF)
+		_, err = windows.SetFilePointer(handle, posLow, &posHigh, windows.FILE_BEGIN)
+		require.NoError(t, err)
+
+		var written uint32
+		err = windows.WriteFile(
+			handle,
+			zeroData,
+			&written,
+			nil,
+		)
+		require.NoError(t, err)
+		require.Equal(t, uint32(len(zeroData)), written)
+	}
+
+	// Force flush to disk
+	err = windows.FlushFileBuffers(handle)
+	require.NoError(t, err)
+
+	// Query and verify ranges
+	ranges, err := queryAllocatedRanges(handle, size)
+	require.NoError(t, err)
+	t.Log("Initial allocated ranges:")
+	for i, r := range ranges {
+		t.Logf("Range %d: offset=%d, length=%d", i, r.FileOffset, r.Length)
+	}
+
+	// Verify ranges
+	require.Equal(t, 3, len(ranges), "File should have exactly three allocated ranges")
+}
+
 func TestHandleLseek(t *testing.T) {
 	// Setup test directory structure
 	testDir, err := os.MkdirTemp("", "vssfs-lseek-test")
