@@ -17,6 +17,7 @@ import (
 type Session struct {
 	// muxSess holds a *smux.Session.
 	muxSess atomic.Pointer[smux.Session]
+	router  atomic.Pointer[Router]
 
 	// Connection state management
 	reconnectConfig *ReconnectConfig
@@ -33,6 +34,14 @@ type Session struct {
 	// Context for coordinating shutdown
 	ctx        context.Context
 	cancelFunc context.CancelFunc
+}
+
+func (s *Session) SetRouter(router *Router) {
+	s.router.Store(router)
+}
+
+func (s *Session) GetRouter() *Router {
+	return s.router.Load()
 }
 
 // NewServerSession creates a new Session for a server connection.
@@ -90,7 +99,7 @@ func defaultSmuxConfig() *smux.Config {
 }
 
 // If a stream accept fails and auto‑reconnect is enabled, it attempts to reconnect.
-func (s *Session) Serve(router *Router) error {
+func (s *Session) Serve() error {
 	for {
 		curSession := s.muxSess.Load()
 		rc := s.reconnectConfig
@@ -106,7 +115,10 @@ func (s *Session) Serve(router *Router) error {
 			}
 			return err
 		}
-		go router.ServeStream(stream)
+		router := s.GetRouter()
+		if router != nil {
+			go router.ServeStream(stream)
+		}
 	}
 }
 

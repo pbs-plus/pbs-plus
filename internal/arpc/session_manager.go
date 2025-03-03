@@ -30,8 +30,26 @@ func (sm *SessionManager) GetOrCreateSession(clientID string, conn net.Conn) (*S
 		return nil, err
 	}
 
+	router := NewRouter()
+	router.Handle("echo", func(req Request) (*Response, error) {
+		var msg StringMsg
+		if _, err := msg.UnmarshalMsg(req.Payload); err != nil {
+			return nil, err
+		}
+		data, err := msg.MarshalMsg(nil)
+		if err != nil {
+			return nil, err
+		}
+		return &Response{Status: 200, Data: data}, nil
+	})
+	session.SetRouter(router)
+
 	sm.sessions.Set(clientID, session)
 	return session, nil
+}
+
+func (sm *SessionManager) GetSession(clientID string) (*Session, bool) {
+	return sm.sessions.Get(clientID)
 }
 
 // CloseSession closes and removes a Session for a client.

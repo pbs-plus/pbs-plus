@@ -23,23 +23,7 @@ func ARPCHandler(store *store.Store) http.HandlerFunc {
 		syslog.L.Infof("Agent successfully connected: %s", agentHostname)
 		defer syslog.L.Infof("Agent disconnected: %s", agentHostname)
 
-		store.AddARPC(agentHostname, session)
-		defer store.RemoveARPC(agentHostname)
-
-		router := arpc.NewRouter()
-		router.Handle("echo", func(req arpc.Request) (*arpc.Response, error) {
-			var msg arpc.StringMsg
-			if _, err := msg.UnmarshalMsg(req.Payload); err != nil {
-				return nil, err
-			}
-			data, err := msg.MarshalMsg(nil)
-			if err != nil {
-				return nil, err
-			}
-			return &arpc.Response{Status: 200, Data: data}, nil
-		})
-
-		if err := session.Serve(router); err != nil {
+		if err := session.Serve(); err != nil {
 			syslog.L.Errorf("session closed: %v", err)
 		}
 	}

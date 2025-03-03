@@ -38,11 +38,13 @@ func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Sessio
 		t.Fatalf("failed to create client session: %v", err)
 	}
 
+	serverSession.SetRouter(router)
+
 	done := make(chan struct{})
 
 	// Start the server session in a goroutine. Serve() continuously accepts streams.
 	go func() {
-		_ = serverSession.Serve(router)
+		_ = serverSession.Serve()
 		close(done)
 	}()
 
@@ -334,7 +336,8 @@ func TestAutoReconnect(t *testing.T) {
 				t.Logf("server session error: %v", err)
 				return
 			}
-			_ = sess.Serve(router)
+			sess.SetRouter(router)
+			_ = sess.Serve()
 		}()
 		return clientConn, nil
 	}

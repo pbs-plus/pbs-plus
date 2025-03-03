@@ -18,7 +18,6 @@ type Store struct {
 	CertGenerator      *certificates.Generator
 	Database           *database.Database
 	ARPCSessionManager *arpc.SessionManager
-	aRPCs              *haxmap.Map[string, *arpc.Session]
 	arpcFS             *haxmap.Map[string, *arpcfs.ARPCFS]
 }
 
@@ -30,7 +29,6 @@ func Initialize(paths map[string]string) (*Store, error) {
 
 	store := &Store{
 		Database:           db,
-		aRPCs:              hashmap.New[*arpc.Session](),
 		arpcFS:             hashmap.New[*arpcfs.ARPCFS](),
 		ARPCSessionManager: arpc.NewSessionManager(),
 	}

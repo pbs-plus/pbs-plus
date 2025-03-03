@@ -104,8 +104,8 @@ func processTargets(all []types.Target, storeInstance *store.Store, workerCount 
 					}
 
 					// If not in cache, make the ARPC call
-					arpcSess := storeInstance.GetARPC(cacheKey)
-					if arpcSess != nil {
+					arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(cacheKey)
+					if ok {
 						var respBody arpc.MapStringStringMsg
 						raw, err := arpcSess.CallMsgWithTimeout(500*time.Millisecond, "ping", nil)
 						if err != nil {
