@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
@@ -359,7 +360,14 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	whence := mapWhence(payload.Whence)
+	// Validate whence
+	if payload.Whence != io.SeekStart &&
+		payload.Whence != io.SeekCurrent &&
+		payload.Whence != io.SeekEnd &&
+		payload.Whence != SeekData &&
+		payload.Whence != SeekHole {
+		return nil, os.ErrInvalid
+	}
 
 	// Retrieve the file handle
 	fh, exists := s.handles.Get(string(payload.HandleID))
@@ -376,17 +384,97 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	var ranges []FileAllocatedRangeBuffer
-	// Only query allocated ranges for SEEK_DATA and SEEK_HOLE
-	if whence == 3 || whence == 4 {
-		ranges, err = queryAllocatedRanges(fh.handle, fileSize)
+	var newOffset int64
+
+	// Handle standard seek operations first
+	switch payload.Whence {
+	case io.SeekStart:
+		if payload.Offset < 0 {
+			return nil, os.ErrInvalid
+		}
+		newOffset = payload.Offset
+
+	case io.SeekCurrent:
+		// Get current position
+		currentPos, err := windows.SetFilePointer(fh.handle, 0, nil, windows.FILE_CURRENT)
 		if err != nil {
 			return nil, err
 		}
+		newOffset = int64(currentPos) + payload.Offset
+		if newOffset < 0 {
+			return nil, os.ErrInvalid
+		}
+
+	case io.SeekEnd:
+		newOffset = fileSize + payload.Offset
+		if newOffset < 0 {
+			return nil, os.ErrInvalid
+		}
+
+	case SeekData, SeekHole:
+		// Query allocated ranges only for sparse operations
+		ranges, err := queryAllocatedRanges(fh.handle, fileSize)
+		if err != nil {
+			return nil, err
+		}
+
+		if payload.Offset >= fileSize {
+			return nil, syscall.ENXIO
+		}
+
+		if payload.Whence == SeekData {
+			// Find next data region
+			found := false
+			for _, r := range ranges {
+				if payload.Offset >= r.FileOffset && payload.Offset < r.FileOffset+r.Length {
+					// Already in data
+					newOffset = payload.Offset
+					found = true
+					break
+				}
+				if payload.Offset < r.FileOffset {
+					// Found next data
+					newOffset = r.FileOffset
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, syscall.ENXIO
+			}
+		} else { // SeekHole
+			// Find next hole
+			found := false
+			for i, r := range ranges {
+				if payload.Offset >= r.FileOffset && payload.Offset < r.FileOffset+r.Length {
+					// In data, seek to end of region
+					newOffset = r.FileOffset + r.Length
+					found = true
+					break
+				}
+				if payload.Offset < r.FileOffset {
+					// Already in a hole
+					newOffset = payload.Offset
+					found = true
+					break
+				}
+				// Check if this is the last range
+				if i == len(ranges)-1 && payload.Offset >= r.FileOffset+r.Length {
+					// After last data region, everything to EOF is a hole
+					newOffset = payload.Offset
+					found = true
+					break
+				}
+			}
+			if !found {
+				// If no ranges, everything is a hole
+				newOffset = payload.Offset
+			}
+		}
 	}
 
-	// Determine the new offset
-	newOffset, err := calculateLseekOffset(fh.handle, payload.Offset, whence, ranges, fileSize)
+	// Set the new position
+	_, err = windows.SetFilePointer(fh.handle, int32(newOffset), nil, windows.FILE_BEGIN)
 	if err != nil {
 		return nil, err
 	}

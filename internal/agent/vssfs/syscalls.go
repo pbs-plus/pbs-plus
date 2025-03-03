@@ -4,8 +4,6 @@ package vssfs
 
 import (
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -185,106 +183,6 @@ func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocate
 
 	// Should never reach here as we would have returned an error earlier
 	return nil, fmt.Errorf("file too fragmented, exceeded maximum buffer size")
-}
-
-func mapWhence(whence int) uint32 {
-	switch whence {
-	case io.SeekStart:
-		return windows.FILE_BEGIN
-	case io.SeekCurrent:
-		return windows.FILE_CURRENT
-	case io.SeekEnd:
-		return windows.FILE_END
-	case SeekData: // SEEK_DATA
-		return SeekData
-	case SeekHole: // SEEK_HOLE
-		return SeekHole
-	default:
-		return 0
-	}
-}
-
-func calculateLseekOffset(handle windows.Handle, offset int64, whence uint32, ranges []FileAllocatedRangeBuffer, fileSize int64) (int64, error) {
-	// Handle standard seek operations first
-	switch whence {
-	case windows.FILE_BEGIN: // SEEK_SET
-		if offset < 0 {
-			return 0, os.ErrInvalid
-		}
-		return offset, nil
-
-	case windows.FILE_CURRENT: // SEEK_CUR
-		// Get current file pointer position
-		currentPos, err := windows.SetFilePointer(handle, 0, nil, windows.FILE_CURRENT)
-		if err != nil {
-			return 0, err
-		}
-		newPos := int64(currentPos) + offset
-		if newPos < 0 {
-			return 0, os.ErrInvalid
-		}
-		return newPos, nil
-
-	case windows.FILE_END: // SEEK_END
-		newPos := fileSize + offset
-		if newPos < 0 {
-			return 0, os.ErrInvalid
-		}
-		return newPos, nil
-
-	case 3: // SEEK_DATA
-		// For empty ranges or completely sparse file
-		if len(ranges) == 0 {
-			if offset >= fileSize {
-				// If offset is beyond EOF, return -ENXIO
-				return 0, syscall.ENXIO
-			}
-			// For a completely sparse file, there is no data, so we return EOF
-			return fileSize, nil
-		}
-
-		// Normal SEEK_DATA logic
-		for _, r := range ranges {
-			if offset >= r.FileOffset && offset < r.FileOffset+r.Length {
-				// Offset is already in a data region
-				return offset, nil
-			}
-			if offset < r.FileOffset {
-				// Move to the next data region
-				return r.FileOffset, nil
-			}
-		}
-		// No more data regions after the offset
-		return 0, syscall.ENXIO
-
-	case 4: // SEEK_HOLE
-		// For empty ranges (completely sparse file or non-sparse filesystem)
-		if len(ranges) == 0 {
-			if offset >= fileSize {
-				// If offset is beyond EOF, return -ENXIO
-				return 0, syscall.ENXIO
-			}
-			// The entire file is considered a hole
-			return offset, nil
-		}
-
-		// Normal SEEK_HOLE logic
-		for _, r := range ranges {
-			if offset >= r.FileOffset && offset < r.FileOffset+r.Length {
-				// Offset is in a data region, move to the end of the region (next hole)
-				return r.FileOffset + r.Length, nil
-			}
-			if offset < r.FileOffset {
-				// Offset is already in a hole
-				return offset, nil
-			}
-		}
-		// After the last allocated range, everything is a hole up to EOF
-		return offset, nil
-
-	default:
-		return 0, os.ErrInvalid
-	}
 }
 
 func getFileSize(handle windows.Handle) (int64, error) {
