@@ -8,7 +8,6 @@ import (
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 // ARPCFS implements billy.Filesystem using aRPC calls
@@ -33,8 +32,6 @@ type ARPCFS struct {
 
 	lastBytesTime  int64 // UnixNano timestamp
 	lastTotalBytes int64
-
-	bufferPool *utils.BufferPool
 }
 
 type Stats struct {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 )
 
@@ -36,29 +37,24 @@ func getJitteredBackoff(d time.Duration, jitterFactor float64) time.Duration {
 // It uses a 4‑byte big‑endian length header followed by that many bytes. For messages up to
 // 4096 bytes it attempts to use a pooled buffer (avoiding an extra copy in hot paths).
 // The caller is responsible for calling Release() on the returned *PooledMsg if pm.pooled is true.
-func readMsgpMsgPooled(r io.Reader) (*PooledMsg, error) {
+func readMsgpMsgPooled(r io.Reader) (*bytebufferpool.ByteBuffer, error) {
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return nil, err
 	}
 	msgLen := binary.BigEndian.Uint32(lenBuf[:])
 
-	if msgLen <= 4096 {
-		buf := msgpackBufferPool.Get().([]byte)
-		if cap(buf) < int(msgLen) {
-			buf = make([]byte, msgLen)
-		}
-		msg := buf[:msgLen]
-		if _, err := io.ReadFull(r, msg); err != nil {
-			msgpackBufferPool.Put(buf)
-			return nil, err
-		}
-		return &PooledMsg{Data: msg, pooled: true}, nil
+	buf := bytebufferpool.Get()
+	if cap(buf.B) < int(msgLen) {
+		buf.B = make([]byte, msgLen)
+	} else {
+		buf.B = buf.B[:msgLen]
 	}
-
-	msg := make([]byte, msgLen)
-	_, err := io.ReadFull(r, msg)
-	return &PooledMsg{Data: msg, pooled: false}, err
+	if _, err := io.ReadFull(r, buf.B); err != nil {
+		bytebufferpool.Put(buf)
+		return nil, err
+	}
+	return buf, nil
 }
 
 // writeMsgpMsg writes msg to w with a 4‑byte length header. We combine the header and msg
@@ -92,8 +88,8 @@ func writeErrorResponse(stream *smux.Stream, status int, err error) {
 
 	var respData []byte
 	if errBytes != nil {
-		respData = errBytes.Data
-		defer errBytes.Release()
+		respData = errBytes.B
+		defer bytebufferpool.Put(errBytes)
 	}
 
 	// Set the error message so that the client can fall back to it,
@@ -110,8 +106,8 @@ func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	}
 	var respBytesData []byte
 	if respBytes != nil {
-		respBytesData = respBytes.Data
-		defer respBytes.Release()
+		respBytesData = respBytes.B
+		defer bytebufferpool.Put(respBytes)
 	}
 	wErr := writeMsgpMsg(stream, respBytesData)
 	if wErr != nil && syslog.L != nil {

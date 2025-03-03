@@ -67,11 +67,6 @@ type VSSDirEntry struct {
 type ReadDirEntries []*VSSDirEntry
 type FileHandleId string
 
-type DataResponse struct {
-	Data []byte `msg:"data"`
-	EOF  bool   `msg:"eof"`
-}
-
 type StatFS struct {
 	Bsize   uint64 // Block size
 	Blocks  uint64 // Total blocks

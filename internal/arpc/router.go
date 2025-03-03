@@ -7,6 +7,7 @@ import (
 
 	"github.com/alphadose/haxmap"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
+	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 )
 
@@ -43,10 +44,10 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
-	defer pm.Release()
+	defer bytebufferpool.Put(pm)
 
 	var req Request
-	if _, err := req.UnmarshalMsg(pm.Data); err != nil {
+	if _, err := req.UnmarshalMsg(pm.B); err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
@@ -79,9 +80,9 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
-	defer respBytes.Release()
+	defer bytebufferpool.Put(respBytes)
 
-	if err := writeMsgpMsg(stream, respBytes.Data); err != nil {
+	if err := writeMsgpMsg(stream, respBytes.B); err != nil {
 		return
 	}
 

@@ -5,20 +5,12 @@ package arpcfs
 import (
 	"io"
 	"os"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
-
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		// Default size - adjust based on your needs
-		return make([]byte, 32*1024) // 32KB default buffer
-	},
-}
 
 func (f *ARPCFile) Close() error {
 	if f.isClosed.Load() {
@@ -86,12 +78,8 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		Offset:   off,
 		Length:   len(p),
 	}
-	reqBytes, err := req.MarshalMsg(nil)
-	if err != nil {
-		return 0, os.ErrInvalid
-	}
 
-	bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", reqBytes, p)
+	bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", req, p)
 	if err != nil {
 		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
 		return 0, err

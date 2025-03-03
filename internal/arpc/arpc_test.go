@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 )
 
@@ -128,9 +129,9 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to build request msgpack: %v", err)
 	}
-	defer reqBytes.Release()
+	defer bytebufferpool.Put(reqBytes)
 	// Wrap the request using our framing (a 4‑byte length header).
-	if err := writeMsgpMsg(clientStream, reqBytes.Data); err != nil {
+	if err := writeMsgpMsg(clientStream, reqBytes.B); err != nil {
 		t.Fatalf("failed to write request: %v", err)
 	}
 
@@ -139,14 +140,14 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	if err != nil && err != io.EOF {
 		t.Fatalf("failed to read response: %v", err)
 	}
-	defer respBytes.Release()
+	defer bytebufferpool.Put(respBytes)
 
-	if len(respBytes.Data) == 0 {
+	if len(respBytes.B) == 0 {
 		t.Fatalf("no response received")
 	}
 
 	var resp Response
-	if _, err := resp.UnmarshalMsg(respBytes.Data); err != nil {
+	if _, err := resp.UnmarshalMsg(respBytes.B); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
@@ -420,7 +421,7 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 			t.Errorf("server: error reading request: %v", err)
 			return
 		}
-		defer resp.Release()
+		defer bytebufferpool.Put(resp)
 
 		// Prepare the binary payload
 		binaryData := []byte("hello world")
