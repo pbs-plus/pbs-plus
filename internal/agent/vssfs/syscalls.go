@@ -120,14 +120,17 @@ func init() {
 }
 
 func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocatedRangeBuffer, error) {
+	// Define the input range for the query
 	var inputRange FileAllocatedRangeBuffer
 	inputRange.FileOffset = 0
 	inputRange.Length = fileSize
 
-	// Try with a reasonably large initial buffer
-	outputBuffer := make([]FileAllocatedRangeBuffer, 64)
+	// Allocate an initial buffer for the output ranges
+	const initialBufferSize = 64 // Number of ranges to allocate initially
+	outputBuffer := make([]FileAllocatedRangeBuffer, initialBufferSize)
 	var bytesReturned uint32
 
+	// Call FSCTL_QUERY_ALLOCATED_RANGES
 	err := windows.DeviceIoControl(
 		handle,
 		windows.FSCTL_QUERY_ALLOCATED_RANGES,
@@ -141,21 +144,55 @@ func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocate
 
 	if err != nil {
 		if err == windows.ERROR_INVALID_FUNCTION {
-			// Filesystem doesn't support FSCTL_QUERY_ALLOCATED_RANGES
+			// Filesystem does not support FSCTL_QUERY_ALLOCATED_RANGES
 			// Return a single range covering the whole file
 			result := make([]FileAllocatedRangeBuffer, 1)
 			result[0] = FileAllocatedRangeBuffer{FileOffset: 0, Length: fileSize}
 			return result, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("DeviceIoControl failed: %w", err)
 	}
 
-	// Calculate how many entries were returned
-	count := int(bytesReturned) / int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
+	// Calculate how many ranges were returned
+	rangeSize := int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
+	count := int(bytesReturned) / rangeSize
 
-	// Create result slice with exact size
+	// Debugging: Log the number of ranges returned
+	fmt.Printf("FSCTL_QUERY_ALLOCATED_RANGES returned %d ranges\n", count)
+
+	if count == 0 {
+		// No allocated ranges were returned
+		return nil, fmt.Errorf("No allocated ranges found")
+	}
+
+	// If the buffer was too small, retry with a larger buffer
+	if count == len(outputBuffer) {
+		// Double the buffer size and retry
+		outputBuffer = make([]FileAllocatedRangeBuffer, len(outputBuffer)*2)
+		err = windows.DeviceIoControl(
+			handle,
+			windows.FSCTL_QUERY_ALLOCATED_RANGES,
+			(*byte)(unsafe.Pointer(&inputRange)),
+			uint32(unsafe.Sizeof(inputRange)),
+			(*byte)(unsafe.Pointer(&outputBuffer[0])),
+			uint32(len(outputBuffer)*int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))),
+			&bytesReturned,
+			nil,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("DeviceIoControl failed on retry: %w", err)
+		}
+		count = int(bytesReturned) / rangeSize
+	}
+
+	// Create a result slice with the exact number of ranges
 	result := make([]FileAllocatedRangeBuffer, count)
 	copy(result, outputBuffer[:count])
+
+	// Debugging: Log the ranges
+	for i, r := range result {
+		fmt.Printf("Range %d: offset=%d, length=%d\n", i, r.FileOffset, r.Length)
+	}
 
 	return result, nil
 }
