@@ -120,69 +120,102 @@ func init() {
 }
 
 func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocatedRangeBuffer, error) {
+	// First, verify the file is actually sparse
+	var fileInfo windows.ByHandleFileInformation
+	err := windows.GetFileInformationByHandle(handle, &fileInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if the file is marked as sparse
+	if fileInfo.FileAttributes&windows.FILE_ATTRIBUTE_SPARSE_FILE == 0 {
+		// File is not sparse, return single range
+		result := make([]FileAllocatedRangeBuffer, 1)
+		result[0] = FileAllocatedRangeBuffer{FileOffset: 0, Length: fileSize}
+		return result, nil
+	}
+
 	var inputRange FileAllocatedRangeBuffer
 	inputRange.FileOffset = 0
 	inputRange.Length = fileSize
 
-	for i, bufferSize := range bufferSizes {
-		bufferObj := rangeBufferPools[i].Get()
-		outputRanges := bufferObj.([]FileAllocatedRangeBuffer)
+	// Try with a reasonably large initial buffer
+	outputBuffer := make([]FileAllocatedRangeBuffer, 64)
+	var bytesReturned uint32
 
-		var bytesReturned uint32
-		err := windows.DeviceIoControl(
-			handle,
-			windows.FSCTL_QUERY_ALLOCATED_RANGES,
-			(*byte)(unsafe.Pointer(&inputRange)),
-			uint32(unsafe.Sizeof(inputRange)),
-			(*byte)(unsafe.Pointer(&outputRanges[0])),
-			uint32(bufferSize*int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))),
-			&bytesReturned,
-			nil,
-		)
+	err = windows.DeviceIoControl(
+		handle,
+		windows.FSCTL_QUERY_ALLOCATED_RANGES,
+		(*byte)(unsafe.Pointer(&inputRange)),
+		uint32(unsafe.Sizeof(inputRange)),
+		(*byte)(unsafe.Pointer(&outputBuffer[0])),
+		uint32(len(outputBuffer)*int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))),
+		&bytesReturned,
+		nil,
+	)
 
+	if err != nil {
+		if err == windows.ERROR_INVALID_FUNCTION {
+			// Filesystem doesn't support FSCTL_QUERY_ALLOCATED_RANGES
+			// but file is marked sparse - try alternative method
+			return queryAllocatedRangesAlternative(handle, fileSize)
+		}
+		return nil, err
+	}
+
+	// Calculate how many entries were returned
+	count := int(bytesReturned) / int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
+
+	// Create result slice with exact size
+	result := make([]FileAllocatedRangeBuffer, count)
+	copy(result, outputBuffer[:count])
+
+	return result, nil
+}
+
+func queryAllocatedRangesAlternative(handle windows.Handle, fileSize int64) ([]FileAllocatedRangeBuffer, error) {
+	// Alternative method: read the file in chunks and look for non-zero regions
+	const chunkSize = 64 * 1024 // 64KB chunks
+	buffer := make([]byte, chunkSize)
+	var ranges []FileAllocatedRangeBuffer
+	var currentRange *FileAllocatedRangeBuffer
+
+	for offset := int64(0); offset < fileSize; offset += chunkSize {
+		// Read chunk
+		var bytesRead uint32
+		err := windows.ReadFile(handle, buffer, &bytesRead, nil)
 		if err != nil {
-			// Return buffer to the pool before handling errors
-			rangeBufferPools[i].Put(bufferObj)
-
-			// If the file system doesn't support sparse files
-			if err == windows.ERROR_INVALID_FUNCTION {
-				// Return a single range covering the whole file
-				result := make([]FileAllocatedRangeBuffer, 1)
-				result[0] = FileAllocatedRangeBuffer{FileOffset: 0, Length: fileSize}
-				return result, nil
-			}
-
-			// If buffer too small, try the next size
-			if err == windows.ERROR_MORE_DATA && i < len(bufferSizes)-1 {
-				continue
-			}
-
-			// Other errors or we've exhausted all buffer sizes
 			return nil, err
 		}
 
-		// Calculate how many entries were returned
-		rangeSize := int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
-		count := int(bytesReturned) / rangeSize
-
-		// If the buffer was exactly filled and we have larger sizes available, try a bigger one
-		if count == bufferSize && i < len(bufferSizes)-1 {
-			rangeBufferPools[i].Put(bufferObj)
-			continue
+		// Check if chunk contains non-zero data
+		hasData := false
+		for i := uint32(0); i < bytesRead; i++ {
+			if buffer[i] != 0 {
+				hasData = true
+				break
+			}
 		}
 
-		// Create a new slice with just the results (we can't return the pooled slice)
-		result := make([]FileAllocatedRangeBuffer, count)
-		copy(result, outputRanges[:count])
-
-		// Return the buffer to the pool
-		rangeBufferPools[i].Put(bufferObj)
-
-		return result, nil
+		if hasData {
+			if currentRange == nil {
+				// Start new range
+				currentRange = &FileAllocatedRangeBuffer{
+					FileOffset: offset,
+					Length:     int64(bytesRead),
+				}
+				ranges = append(ranges, *currentRange)
+			} else {
+				// Extend current range
+				currentRange.Length += int64(bytesRead)
+			}
+		} else if currentRange != nil {
+			// End current range
+			currentRange = nil
+		}
 	}
 
-	// Should never reach here as we would have returned an error earlier
-	return nil, fmt.Errorf("file too fragmented, exceeded maximum buffer size")
+	return ranges, nil
 }
 
 func getFileSize(handle windows.Handle) (int64, error) {
