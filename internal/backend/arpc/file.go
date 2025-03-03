@@ -5,20 +5,12 @@ package arpcfs
 import (
 	"io"
 	"os"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
-
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		// Default size - adjust based on your needs
-		return make([]byte, 32*1024) // 32KB default buffer
-	},
-}
 
 func (f *ARPCFile) Close() error {
 	if f.isClosed.Load() {
