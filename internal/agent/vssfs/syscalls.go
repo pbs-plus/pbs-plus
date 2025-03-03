@@ -159,9 +159,6 @@ func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocate
 	rangeSize := int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
 	count := int(bytesReturned) / rangeSize
 
-	// Debugging: Log the number of ranges returned
-	fmt.Printf("FSCTL_QUERY_ALLOCATED_RANGES returned %d ranges\n", count)
-
 	if count == 0 {
 		// No allocated ranges were returned
 		return nil, fmt.Errorf("No allocated ranges found")
@@ -190,11 +187,6 @@ func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocate
 	// Create a result slice with the exact number of ranges
 	result := make([]FileAllocatedRangeBuffer, count)
 	copy(result, outputBuffer[:count])
-
-	// Debugging: Log the ranges
-	for i, r := range result {
-		fmt.Printf("Range %d: offset=%d, length=%d\n", i, r.FileOffset, r.Length)
-	}
 
 	return result, nil
 }
