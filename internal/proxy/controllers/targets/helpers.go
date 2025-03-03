@@ -55,11 +55,35 @@ func (c *Cache) Set(key string, value string) {
 	})
 }
 
+// Global variables to manage the single instance of processTargets
+var (
+	processTargetsMutex sync.Mutex
+	processTargetsCond  = sync.NewCond(&processTargetsMutex)
+	isProcessing        bool
+	cache               = NewCache(10 * time.Second)
+)
+
+// processTargets ensures only one instance is running globally
 func processTargets(all []types.Target, storeInstance *store.Store, workerCount int) {
+	processTargetsMutex.Lock()
+	for isProcessing {
+		// Wait for the current processTargets instance to finish
+		processTargetsCond.Wait()
+	}
+	// Mark as processing
+	isProcessing = true
+	processTargetsMutex.Unlock()
+
+	defer func() {
+		// Mark as not processing and signal waiting goroutines
+		processTargetsMutex.Lock()
+		isProcessing = false
+		processTargetsCond.Broadcast()
+		processTargetsMutex.Unlock()
+	}()
+
 	var wg sync.WaitGroup
 	tasks := make(chan int, len(all)) // Channel to distribute tasks to workers
-
-	cache := NewCache(10 * time.Second)
 
 	// Start worker goroutines
 	for w := 0; w < workerCount; w++ {
