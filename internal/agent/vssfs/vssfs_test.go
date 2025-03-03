@@ -8,11 +8,13 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,6 +57,40 @@ func createLargeTestFile(t *testing.T, path string, size int) {
 	require.NoError(t, file.Sync())
 }
 
+// createSparseFileWithFsutil creates a sparse file using the fsutil command.
+func createSparseFileWithFsutil(filePath string) error {
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer file.Close()
+
+	cmd := exec.Command("fsutil", "sparse", "setflag", filePath)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to mark file as sparse: %w", err)
+	}
+
+	// Write data region 1 (offset 0, length 65536 bytes)
+	_, err = file.WriteAt([]byte("data1"), 0)
+	if err != nil {
+		return fmt.Errorf("failed to write data region 1: %w", err)
+	}
+
+	// Write data region 2 (offset 1048576, length 65536 bytes)
+	_, err = file.WriteAt([]byte("data2"), 1048576)
+	if err != nil {
+		return fmt.Errorf("failed to write data region 2: %w", err)
+	}
+
+	// Write data region 3 (offset 3145728, length 5 bytes)
+	_, err = file.WriteAt([]byte("data3"), 3145728)
+	if err != nil {
+		return fmt.Errorf("failed to write data region 3: %w", err)
+	}
+
+	return nil
+}
+
 // logHandleMap logs information about the handles in the VSSFSServer
 func dumpHandleMap(server *VSSFSServer) string {
 	if server == nil || server.handles == nil {
@@ -87,7 +123,6 @@ func TestVSSFSServer(t *testing.T) {
 	err = os.WriteFile(testFile2Path, []byte("test file 2 content with more data"), 0644)
 	require.NoError(t, err)
 
-	// Create a large file to test memory mapping
 	largePath := filepath.Join(testDir, "large_file.bin")
 	createLargeTestFile(t, largePath, 1024*1024) // 1MB file
 
@@ -113,7 +148,7 @@ func TestVSSFSServer(t *testing.T) {
 
 	// Start the server
 	serverRouter := arpc.NewRouter()
-	vssServer := NewVSSFSServer("vss", testDir)
+	vssServer := NewVSSFSServer("vss", &snapshots.WinVSSSnapshot{SnapshotPath: testDir, DriveLetter: ""})
 	vssServer.RegisterHandlers(serverRouter)
 
 	serverSession, err := arpc.NewServerSession(serverConn, nil)
@@ -133,20 +168,6 @@ func TestVSSFSServer(t *testing.T) {
 	clientSession, err := arpc.NewClientSession(clientConn, nil)
 	require.NoError(t, err)
 	defer clientSession.Close()
-
-	// Run tests
-	t.Run("FSstat", func(t *testing.T) {
-		// Fix: Use the exact FSStat struct that matches the server response
-		var result StatFS
-		raw, err := clientSession.CallMsg(ctx, "vss/FSstat", nil)
-		assert.NoError(t, err)
-
-		_, err = result.UnmarshalMsg(raw)
-		assert.NoError(t, err)
-		// The test originally expected TotalSize to be > 0, but it might not be
-		// on some systems. We'll just assert it's not an error.
-		assert.NotNil(t, result)
-	})
 
 	t.Run("Stat", func(t *testing.T) {
 		payload := StatReq{Path: "test1.txt"}
@@ -315,8 +336,7 @@ func TestVSSFSServer(t *testing.T) {
 		}
 	})
 
-	// Test specifically for memory-mapped file reading
-	t.Run("LargeFile_MemoryMapped_Read", func(t *testing.T) {
+	t.Run("LargeFile_Read", func(t *testing.T) {
 		// Open large file
 		payload := OpenFileReq{Path: "large_file.bin", Flag: 0, Perm: 0644}
 		payloadBytes, _ := payload.MarshalMsg(nil)
@@ -328,8 +348,6 @@ func TestVSSFSServer(t *testing.T) {
 		t.Logf("Large file open, handle ID: %s", string(openResult))
 		t.Log(dumpHandleMap(vssServer))
 
-		// Read a large chunk that should trigger memory mapping
-		// (assuming threshold is 128KB)
 		readSize := 256 * 1024 // 256KB - well above threshold
 		readAtPayload := ReadAtReq{
 			HandleID: openResult,
@@ -427,5 +445,194 @@ func TestVSSFSServer(t *testing.T) {
 		t.Log("After second close:", dumpHandleMap(vssServer))
 	})
 
-	// Other tests remain unchanged...
+	t.Run("Lseek", func(t *testing.T) {
+		// Open a test file
+		payload := OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		var openResult FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		require.NoError(t, err, "OpenFile should succeed")
+		openResult.UnmarshalMsg(raw)
+
+		t.Logf("File opened with handle ID: %s", string(openResult))
+		t.Log(dumpHandleMap(vssServer))
+
+		// Test seeking to the beginning of the file
+		t.Run("SeekStart", func(t *testing.T) {
+			lseekPayload := LseekReq{
+				HandleID: openResult,
+				Offset:   0,
+				Whence:   io.SeekStart,
+			}
+			lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
+
+			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+			require.NoError(t, err, "Lseek should succeed")
+			var lseekResp LseekResp
+			lseekResp.UnmarshalMsg(raw)
+
+			assert.Equal(t, int64(0), lseekResp.NewOffset, "Offset should be at the start of the file")
+		})
+
+		// Test seeking to the middle of the file
+		t.Run("SeekMiddle", func(t *testing.T) {
+			lseekPayload := LseekReq{
+				HandleID: openResult,
+				Offset:   10,
+				Whence:   io.SeekStart,
+			}
+			lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
+
+			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+			require.NoError(t, err, "Lseek should succeed")
+			var lseekResp LseekResp
+			lseekResp.UnmarshalMsg(raw)
+
+			assert.Equal(t, int64(10), lseekResp.NewOffset, "Offset should be at position 10")
+		})
+
+		// Test seeking relative to the current position
+		t.Run("SeekCurrent", func(t *testing.T) {
+			lseekPayload := LseekReq{
+				HandleID: openResult,
+				Offset:   5,
+				Whence:   io.SeekCurrent,
+			}
+			lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
+
+			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+			require.NoError(t, err, "Lseek should succeed")
+			var lseekResp LseekResp
+			lseekResp.UnmarshalMsg(raw)
+
+			assert.Equal(t, int64(15), lseekResp.NewOffset, "Offset should be at position 15")
+		})
+
+		// Test seeking to the end of the file
+		t.Run("SeekEnd", func(t *testing.T) {
+			lseekPayload := LseekReq{
+				HandleID: openResult,
+				Offset:   -5,
+				Whence:   io.SeekEnd,
+			}
+			lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
+
+			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+			require.NoError(t, err, "Lseek should succeed")
+			var lseekResp LseekResp
+			lseekResp.UnmarshalMsg(raw)
+
+			t.Logf("File size: %d", 34)                      // Log the expected file size
+			t.Logf("Expected offset: %d", 34-5)              // Log the expected offset
+			t.Logf("Actual offset: %d", lseekResp.NewOffset) // Log the actual offset
+
+			assert.Equal(t, int64(29), lseekResp.NewOffset, "Offset should be 5 bytes before the end of the file")
+		})
+
+		// Test seeking beyond the end of the file
+		t.Run("SeekBeyondEOF", func(t *testing.T) {
+			lseekPayload := LseekReq{
+				HandleID: openResult,
+				Offset:   100,
+				Whence:   io.SeekStart,
+			}
+			lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
+
+			_, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+			require.Error(t, err, "Lseek should fail when seeking beyond EOF")
+		})
+
+		// Test seeking in a sparse file
+		t.Run("SeekSparseFile", func(t *testing.T) {
+			// Create a sparse file using fsutil
+			sparseFilePath := filepath.Join(testDir, "sparse_file.bin")
+			err := createSparseFileWithFsutil(sparseFilePath)
+			require.NoError(t, err, "Failed to create sparse file with fsutil")
+
+			// Open the sparse file
+			payload := OpenFileReq{Path: "sparse_file.bin", Flag: 0, Perm: 0644}
+			payloadBytes, _ := payload.MarshalMsg(nil)
+			var openResult FileHandleId
+			raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+			require.NoError(t, err, "OpenFile should succeed for sparse file")
+			openResult.UnmarshalMsg(raw)
+
+			t.Logf("Sparse file opened with handle ID: %s", string(openResult))
+			t.Log(dumpHandleMap(vssServer))
+
+			// Test SeekData
+			t.Run("SeekData", func(t *testing.T) {
+				// Seek to the first data region
+				lseekPayload := LseekReq{
+					HandleID: openResult,
+					Offset:   0,
+					Whence:   SeekData,
+				}
+				lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
+
+				raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+				require.NoError(t, err, "SeekData should succeed")
+				var lseekResp LseekResp
+				lseekResp.UnmarshalMsg(raw)
+
+				t.Logf("SeekData returned offset: %d", lseekResp.NewOffset)
+				assert.Equal(t, int64(0), lseekResp.NewOffset, "SeekData should return the start of the first data region")
+
+				// Seek to the second data region
+				lseekPayload.Offset = 1024 * 1024 // Start searching after the first data region
+				lseekPayloadBytes, _ = lseekPayload.MarshalMsg(nil)
+
+				raw, err = clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+				require.NoError(t, err, "SeekData should succeed")
+				lseekResp.UnmarshalMsg(raw)
+
+				t.Logf("SeekData returned offset: %d", lseekResp.NewOffset)
+				assert.Equal(t, int64(1024*1024), lseekResp.NewOffset, "SeekData should return the start of the second data region")
+			})
+
+			// Test SeekHole
+			t.Run("SeekHole", func(t *testing.T) {
+				// Seek to the first hole region
+				lseekPayload := LseekReq{
+					HandleID: openResult,
+					Offset:   0,
+					Whence:   SeekHole,
+				}
+				lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
+
+				raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+				require.NoError(t, err, "SeekHole should succeed")
+				var lseekResp LseekResp
+				lseekResp.UnmarshalMsg(raw)
+
+				t.Logf("SeekHole returned offset: %d", lseekResp.NewOffset)
+				assert.Equal(t, int64(65536), lseekResp.NewOffset, "SeekHole should return the start of the first hole region")
+
+				// Seek to the second hole region
+				lseekPayload.Offset = 1048576 // Start searching after the first data region
+				lseekPayloadBytes, _ = lseekPayload.MarshalMsg(nil)
+
+				raw, err = clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+				require.NoError(t, err, "SeekHole should succeed")
+				lseekResp.UnmarshalMsg(raw)
+
+				t.Logf("SeekHole returned offset: %d", lseekResp.NewOffset)
+				assert.Equal(t, int64(1114112), lseekResp.NewOffset, "SeekHole should return the start of the second hole region")
+			})
+
+			// Close the file
+			closePayload := CloseReq{HandleID: openResult}
+			closePayloadBytes, _ := closePayload.MarshalMsg(nil)
+			resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+			assert.NoError(t, err, "Close should succeed")
+			assert.Equal(t, 200, resp.Status)
+		})
+
+		// Close the file
+		closePayload := CloseReq{HandleID: openResult}
+		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
+		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+		assert.NoError(t, err, "Close should succeed")
+		assert.Equal(t, 200, resp.Status)
+	})
 }

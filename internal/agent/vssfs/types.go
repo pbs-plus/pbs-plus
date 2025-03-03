@@ -40,12 +40,23 @@ type BackupReq struct {
 	Drive string `msg:"drive"`
 }
 
+type LseekReq struct {
+	HandleID FileHandleId `msg:"handle_id"` // File handle ID
+	Offset   int64        `msg:"offset"`    // Current offset
+	Whence   int          `msg:"whence"`    // SEEK_HOLE or SEEK_DATA
+}
+
+type LseekResp struct {
+	NewOffset int64 `msg:"new_offset"` // New offset after seeking
+}
+
 type VSSFileInfo struct {
 	Name    string    `msg:"name"`
 	Size    int64     `msg:"size"`
 	Mode    uint32    `msg:"mode"`
 	ModTime time.Time `msg:"modTime"`
 	IsDir   bool      `msg:"isDir"`
+	Blocks  uint64    `msg:"blocks"`
 }
 
 type VSSDirEntry struct {

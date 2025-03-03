@@ -176,7 +176,7 @@ func (fs *ARPCFS) StatFS() (*vssfs.StatFS, error) {
 	}
 
 	var fsStat vssfs.StatFS
-	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/FSstat", nil)
+	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/StatFS", nil)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
 		return nil, err

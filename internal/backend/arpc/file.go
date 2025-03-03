@@ -46,6 +46,32 @@ func (f *ARPCFile) Close() error {
 	return nil
 }
 
+func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
+	req := vssfs.LseekReq{
+		HandleID: f.handleID,
+		Offset:   int64(off),
+		Whence:   whence,
+	}
+	reqBytes, err := req.MarshalMsg(nil)
+	if err != nil {
+		return 0, os.ErrInvalid
+	}
+
+	// Send the request to the server
+	respBytes, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Lseek", reqBytes)
+	if err != nil {
+		return 0, os.ErrInvalid
+	}
+
+	// Parse the response
+	var resp vssfs.LseekResp
+	if _, err := resp.UnmarshalMsg(respBytes); err != nil {
+		return 0, os.ErrInvalid
+	}
+
+	return uint64(resp.NewOffset), nil
+}
+
 func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 	if f.isClosed.Load() {
 		return 0, os.ErrInvalid
