@@ -10,9 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,7 +115,7 @@ func TestVSSFSServer(t *testing.T) {
 
 	// Start the server
 	serverRouter := arpc.NewRouter()
-	vssServer := NewVSSFSServer("vss", testDir)
+	vssServer := NewVSSFSServer("vss", &snapshots.WinVSSSnapshot{SnapshotPath: testDir, DriveLetter: ""})
 	vssServer.RegisterHandlers(serverRouter)
 
 	serverSession, err := arpc.NewServerSession(serverConn, nil)
@@ -133,20 +135,6 @@ func TestVSSFSServer(t *testing.T) {
 	clientSession, err := arpc.NewClientSession(clientConn, nil)
 	require.NoError(t, err)
 	defer clientSession.Close()
-
-	// Run tests
-	t.Run("FSstat", func(t *testing.T) {
-		// Fix: Use the exact FSStat struct that matches the server response
-		var result StatFS
-		raw, err := clientSession.CallMsg(ctx, "vss/FSstat", nil)
-		assert.NoError(t, err)
-
-		_, err = result.UnmarshalMsg(raw)
-		assert.NoError(t, err)
-		// The test originally expected TotalSize to be > 0, but it might not be
-		// on some systems. We'll just assert it's not an error.
-		assert.NotNil(t, result)
-	})
 
 	t.Run("Stat", func(t *testing.T) {
 		payload := StatReq{Path: "test1.txt"}
@@ -426,6 +414,172 @@ func TestVSSFSServer(t *testing.T) {
 
 		t.Log("After second close:", dumpHandleMap(vssServer))
 	})
+}
 
-	// Other tests remain unchanged...
+func TestHandleLseek(t *testing.T) {
+	// Setup test directory structure
+	testDir, err := os.MkdirTemp("", "vssfs-lseek-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(testDir)
+
+	// Create a sparse file
+	sparseFilePath := filepath.Join(testDir, "sparse.bin")
+	f, err := os.Create(sparseFilePath)
+	require.NoError(t, err)
+
+	// Write some data with holes to create a sparse file
+	// Layout: [data:0-4k][hole:4k-8k][data:8k-12k][hole:12k-16k][data:16k-20k]
+	dataSize := 4096
+	data := make([]byte, dataSize)
+	for i := range data {
+		data[i] = byte(i % 251)
+	}
+
+	// Write first block
+	_, err = f.WriteAt(data, 0)
+	require.NoError(t, err)
+
+	// Write second block after a hole
+	_, err = f.WriteAt(data, 8192)
+	require.NoError(t, err)
+
+	// Write third block after another hole
+	_, err = f.WriteAt(data, 16384)
+	require.NoError(t, err)
+
+	// Set file size to 20k
+	require.NoError(t, f.Truncate(20480))
+	require.NoError(t, f.Close())
+
+	// Setup arpc server and client
+	serverConn, clientConn := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Start the server
+	serverRouter := arpc.NewRouter()
+	vssServer := NewVSSFSServer("vss", &snapshots.WinVSSSnapshot{SnapshotPath: testDir, DriveLetter: ""})
+	vssServer.RegisterHandlers(serverRouter)
+
+	serverSession, err := arpc.NewServerSession(serverConn, nil)
+	require.NoError(t, err)
+
+	go func() {
+		err := serverSession.Serve(serverRouter)
+		if err != nil && ctx.Err() == nil && !strings.Contains(err.Error(), "closed pipe") {
+			t.Errorf("Server error: %v", err)
+		}
+	}()
+	defer serverSession.Close()
+
+	// Setup client
+	clientSession, err := arpc.NewClientSession(clientConn, nil)
+	require.NoError(t, err)
+	defer clientSession.Close()
+
+	// Helper function to perform Lseek
+	doLseek := func(handleID FileHandleId, offset int64, whence int) (int64, error) {
+		payload := LseekReq{
+			HandleID: handleID,
+			Offset:   offset,
+			Whence:   whence,
+		}
+		payloadBytes, _ := payload.MarshalMsg(nil)
+		raw, err := clientSession.CallMsg(ctx, "vss/Lseek", payloadBytes)
+		if err != nil {
+			return 0, err
+		}
+		var result LseekResp
+		_, err = result.UnmarshalMsg(raw)
+		if err != nil {
+			return 0, err
+		}
+		return result.NewOffset, nil
+	}
+
+	// Open the sparse file
+	openPayload := OpenFileReq{Path: "sparse.bin", Flag: 0, Perm: 0644}
+	payloadBytes, _ := openPayload.MarshalMsg(nil)
+	var openResult FileHandleId
+	raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+	require.NoError(t, err)
+	openResult.UnmarshalMsg(raw)
+
+	t.Run("StandardSeek", func(t *testing.T) {
+		tests := []struct {
+			name        string
+			offset      int64
+			whence      int
+			expectedPos int64
+			expectError bool
+		}{
+			{"SeekStart", 1000, io.SeekStart, 1000, false},
+			{"SeekCurrent", 500, io.SeekCurrent, 1500, false},
+			{"SeekEnd", -1000, io.SeekEnd, 19480, false}, // 20480 - 1000
+			{"SeekNegative", -30000, io.SeekStart, 0, true},
+			{"SeekPastEnd", 30000, io.SeekStart, 30000, false},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				pos, err := doLseek(openResult, tt.offset, tt.whence)
+				if tt.expectError {
+					assert.Error(t, err)
+				} else {
+					assert.NoError(t, err)
+					assert.Equal(t, tt.expectedPos, pos)
+				}
+			})
+		}
+	})
+
+	t.Run("SparseSeek", func(t *testing.T) {
+		tests := []struct {
+			name        string
+			offset      int64
+			whence      int
+			expectedPos int64
+			expectError bool
+		}{
+			{"SeekDataStart", 0, SeekData, 0, false},        // First data block
+			{"SeekDataInHole", 5000, SeekData, 8192, false}, // Should find second data block
+			{"SeekDataEnd", 17000, SeekData, 0, true},       // Past last data block, should return ENXIO
+			{"SeekHoleStart", 0, SeekHole, 4096, false},     // First hole
+			{"SeekHoleInData", 2000, SeekHole, 4096, false}, // Should find next hole
+			{"SeekHolePastEnd", 21000, SeekHole, 0, true},   // Past EOF, should return ENXIO
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				pos, err := doLseek(openResult, tt.offset, tt.whence)
+				if tt.expectError {
+					assert.Error(t, err)
+					// Check if it's ENXIO when expected
+					if strings.Contains(tt.name, "End") {
+						assert.Equal(t, syscall.ENXIO, err)
+					}
+				} else {
+					assert.NoError(t, err)
+					assert.Equal(t, tt.expectedPos, pos)
+				}
+			})
+		}
+	})
+
+	t.Run("InvalidHandle", func(t *testing.T) {
+		_, err := doLseek(FileHandleId("invalid"), 0, io.SeekStart)
+		assert.Error(t, err)
+	})
+
+	t.Run("InvalidWhence", func(t *testing.T) {
+		_, err := doLseek(openResult, 0, 999)
+		assert.Error(t, err)
+	})
+
+	// Close the file
+	closePayload := CloseReq{HandleID: openResult}
+	closePayloadBytes, _ := closePayload.MarshalMsg(nil)
+	resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.Status)
 }

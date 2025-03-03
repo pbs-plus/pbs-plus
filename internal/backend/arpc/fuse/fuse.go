@@ -149,6 +149,7 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 	out.Size = uint64(fi.Size)
 	mtime := fi.ModTime
 	out.SetTimes(nil, &mtime, nil)
+	out.Blocks = fi.Blocks
 
 	return 0
 }
@@ -256,6 +257,7 @@ type FileHandle struct {
 
 var _ = (fs.FileReader)((*FileHandle)(nil))
 var _ = (fs.FileReleaser)((*FileHandle)(nil))
+var _ = (fs.FileLseeker)((*FileHandle)(nil))
 
 // Read implements FileReader
 func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
@@ -267,7 +269,15 @@ func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse
 	return fuse.ReadResultData(dest[:n]), 0
 }
 
-// Release implements FileReleaser
+func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uint64, syscall.Errno) {
+	n, err := fh.file.Lseek(int64(off), int(whence))
+	if err != nil && err != io.EOF {
+		return 0, fs.ToErrno(err)
+	}
+
+	return n, 0
+}
+
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
 	err := fh.file.Close()
 	return fs.ToErrno(err)

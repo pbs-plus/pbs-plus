@@ -95,7 +95,7 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (*arpc.Response, 
 	}
 	session.snapshot = snapshot
 
-	fs := vssfs.NewVSSFSServer(reqData.JobId, snapshot.SnapshotPath)
+	fs := vssfs.NewVSSFSServer(reqData.JobId, snapshot)
 	if fs == nil {
 		session.Close()
 		return nil, fmt.Errorf("fs is nil")

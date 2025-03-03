@@ -12,7 +12,9 @@ import (
 	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/rekby/fastuuid"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 	"github.com/xtaci/smux"
@@ -30,24 +32,30 @@ type VSSFSServer struct {
 	ctx             context.Context
 	ctxCancel       context.CancelFunc
 	jobId           string
-	rootDir         string
+	snapshot        *snapshots.WinVSSSnapshot
 	handles         *haxmap.Map[string, *FileHandle]
 	readAtStatCache *haxmap.Map[string, *windows.ByHandleFileInformation]
 	arpcRouter      *arpc.Router
 	bufferPool      *utils.BufferPool
+	statFs          *StatFS
+	statFsBytes     []byte
 }
 
-func NewVSSFSServer(jobId string, root string) *VSSFSServer {
+func NewVSSFSServer(jobId string, snapshot *snapshots.WinVSSSnapshot) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &VSSFSServer{
-		rootDir:         root,
+		snapshot:        snapshot,
 		jobId:           jobId,
 		handles:         hashmap.New[*FileHandle](),
 		readAtStatCache: hashmap.New[*windows.ByHandleFileInformation](),
 		ctx:             ctx,
 		ctxCancel:       cancel,
 		bufferPool:      utils.NewBufferPool(),
+	}
+
+	if err := s.initializeStatFS(); err != nil && syslog.L != nil {
+		syslog.L.Errorf("initializeStatFS error: %s", err)
 	}
 
 	return s
@@ -58,8 +66,9 @@ func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
 	r.Handle(s.jobId+"/Stat", s.handleStat)
 	r.Handle(s.jobId+"/ReadDir", s.handleReadDir)
 	r.Handle(s.jobId+"/ReadAt", s.handleReadAt)
+	r.Handle(s.jobId+"/Lseek", s.handleLseek)
 	r.Handle(s.jobId+"/Close", s.handleClose)
-	r.Handle(s.jobId+"/FSstat", s.handleFsStat)
+	r.Handle(s.jobId+"/StatFS", s.handleStatFS)
 
 	s.arpcRouter = r
 }
@@ -72,6 +81,7 @@ func (s *VSSFSServer) Close() {
 		r.CloseHandle(s.jobId + "/Stat")
 		r.CloseHandle(s.jobId + "/ReadDir")
 		r.CloseHandle(s.jobId + "/ReadAt")
+		r.CloseHandle(s.jobId + "/Lseek")
 		r.CloseHandle(s.jobId + "/Close")
 		r.CloseHandle(s.jobId + "/FSstat")
 	}
@@ -82,37 +92,25 @@ func (s *VSSFSServer) Close() {
 	s.ctxCancel()
 }
 
-func (s *VSSFSServer) handleFsStat(req arpc.Request) (*arpc.Response, error) {
-	// No payload expected.
-	var totalBytes uint64
-	err := windows.GetDiskFreeSpaceEx(
-		windows.StringToUTF16Ptr(s.rootDir),
-		nil,
-		&totalBytes,
-		nil,
-	)
+func (s *VSSFSServer) initializeStatFS() error {
+	var err error
+	s.statFs, err = getStatFS(s.snapshot.DriveLetter)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	statFs := &StatFS{
-		Bsize:   uint64(4096), // Standard block size.
-		Blocks:  uint64(totalBytes / 4096),
-		Bfree:   0,
-		Bavail:  0,
-		Files:   uint64(1 << 20),
-		Ffree:   0,
-		NameLen: 255, // Typically supports long filenames.
-	}
-
-	fsStatBytes, err := statFs.MarshalMsg(nil)
+	s.statFsBytes, err = s.statFs.MarshalMsg(nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
+	return nil
+}
+
+func (s *VSSFSServer) handleStatFS(req arpc.Request) (*arpc.Response, error) {
 	return &arpc.Response{
 		Status: 200,
-		Data:   fsStatBytes,
+		Data:   s.statFsBytes,
 	}, nil
 }
 
@@ -214,6 +212,34 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 		IsDir:   rawInfo.IsDir(),
 	}
 
+	// Only check for sparse file attributes and block allocation if it's a regular file
+	if !rawInfo.IsDir() {
+		handle, err := windows.CreateFile(
+			windows.StringToUTF16Ptr(fullPath),
+			windows.GENERIC_READ,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+			nil,
+			windows.OPEN_EXISTING,
+			windows.FILE_ATTRIBUTE_NORMAL,
+			0,
+		)
+		if err == nil {
+			defer windows.CloseHandle(handle)
+
+			blockSize := s.statFs.Bsize
+			if blockSize == 0 {
+				blockSize = 4096 // Default to 4KB block size
+			}
+
+			standardInfo, err := getFileStandardInfo(handle)
+			if err == nil {
+				info.Blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
+			}
+		}
+	} else {
+		info.Blocks = 0
+	}
+
 	data, err := info.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
@@ -240,7 +266,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 
 	// If the payload is empty (or "."), use the root.
 	if payload.Path == "." || payload.Path == "" {
-		fullDirPath = s.rootDir
+		fullDirPath = s.snapshot.SnapshotPath
 	}
 
 	entries, err := s.readDirBulk(fullDirPath)
@@ -323,6 +349,59 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 	}, nil
 }
 
+func (s *VSSFSServer) handleLseek(req arpc.Request) (*arpc.Response, error) {
+	var payload LseekReq
+	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
+		return nil, err
+	}
+
+	whence := mapWhence(payload.Whence)
+
+	// Retrieve the file handle
+	fh, exists := s.handles.Get(string(payload.HandleID))
+	if !exists {
+		return nil, os.ErrNotExist
+	}
+	if fh.isDir {
+		return nil, os.ErrInvalid
+	}
+
+	// Query the file size
+	fileSize, err := getFileSize(fh.handle)
+	if err != nil {
+		return nil, err
+	}
+
+	var ranges []FileAllocatedRangeBuffer
+	// Only query allocated ranges for SEEK_DATA and SEEK_HOLE
+	if whence == 3 || whence == 4 {
+		ranges, err = queryAllocatedRanges(fh.handle, fileSize)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Determine the new offset
+	newOffset, err := calculateLseekOffset(fh.handle, payload.Offset, whence, ranges, fileSize)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prepare the response
+	resp := LseekResp{
+		NewOffset: newOffset,
+	}
+	respBytes, err := resp.MarshalMsg(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &arpc.Response{
+		Status: 200,
+		Data:   respBytes,
+	}, nil
+}
+
 func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 	var payload CloseReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
@@ -351,9 +430,9 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 
 func (s *VSSFSServer) abs(filename string) (string, error) {
 	if filename == "" || filename == "." {
-		return s.rootDir, nil
+		return s.snapshot.SnapshotPath, nil
 	}
-	path, err := securejoin.SecureJoin(s.rootDir, filename)
+	path, err := securejoin.SecureJoin(s.snapshot.SnapshotPath, filename)
 	if err != nil {
 		return "", err
 	}
