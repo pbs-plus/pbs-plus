@@ -245,9 +245,22 @@ func main() {
 	}()
 
 	// Unmount and remove all stale mount points
-	umount := exec.Command("umount", "-lf", filepath.Join(constants.AgentMountBasePath, "*"))
-	umount.Env = os.Environ()
-	_ = umount.Run()
+	// Get all mount points under the base path
+	mountPoints, err := filepath.Glob(filepath.Join(constants.AgentMountBasePath, "*"))
+	if err != nil {
+		// Handle error
+		syslog.L.Errorf("Error finding mount points: %v", err)
+	}
+
+	// Unmount each one
+	for _, mountPoint := range mountPoints {
+		umount := exec.Command("umount", "-lf", mountPoint)
+		umount.Env = os.Environ()
+		if err := umount.Run(); err != nil {
+			// Optionally handle individual unmount errors
+			syslog.L.Errorf("Failed to unmount %s: %v", mountPoint, err)
+		}
+	}
 
 	if err := os.RemoveAll(constants.AgentMountBasePath); err != nil {
 		syslog.L.Errorf("failed to remove directory: %v", err)
