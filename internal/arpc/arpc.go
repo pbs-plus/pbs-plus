@@ -139,7 +139,6 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		UpgradeFunc:      upgradeFunc,
 		InitialBackoff:   100 * time.Millisecond,
 		MaxBackoff:       30 * time.Second,
-		MaxRetries:       10,
 		BackoffJitter:    0.2,
 		CircuitBreakTime: 60 * time.Second,
 		ReconnectCtx:     ctx,

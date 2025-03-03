@@ -22,16 +22,14 @@ const (
 
 // ReconnectConfig holds the parameters for automatic reconnection.
 type ReconnectConfig struct {
-	AutoReconnect  bool
-	DialFunc       func() (net.Conn, error)
-	UpgradeFunc    func(net.Conn) (*Session, error)
-	InitialBackoff time.Duration
-	MaxBackoff     time.Duration
-	// MaxRetries is ignored when unlimited retry is desired.
-	MaxRetries       int
+	AutoReconnect    bool
+	DialFunc         func() (net.Conn, error)
+	UpgradeFunc      func(net.Conn) (*Session, error)
+	InitialBackoff   time.Duration
+	MaxBackoff       time.Duration
 	ReconnectCtx     context.Context
-	BackoffJitter    float64       // Jitter factor (0.0-1.0)
-	CircuitBreakTime time.Duration // Wait after max retries before trying again
+	BackoffJitter    float64
+	CircuitBreakTime time.Duration
 }
 
 // dialResult is used by dialWithProbe to deliver dialing results.
@@ -40,19 +38,21 @@ type dialResult struct {
 	err  error
 }
 
-// dialWithProbe wraps the DialFunc into a context‑aware call.
-func dialWithProbe(ctx context.Context,
-	dialFunc func() (net.Conn, error)) (net.Conn, error) {
+// dialWithProbe wraps the DialFunc into a context-aware call.
+func dialWithProbe(ctx context.Context, dialFunc func() (net.Conn, error)) (net.Conn, error) {
 	resultCh := make(chan dialResult, 1)
 	go func() {
 		conn, err := dialFunc()
-		// Non‑blocking send so that if the context is canceled,
-		// the goroutine does not block forever.
 		select {
 		case resultCh <- dialResult{conn, err}:
-		case <-ctx.Done():
+		default:
+			if conn != nil {
+				_ = conn.Close()
+			}
 		}
+		close(resultCh)
 	}()
+
 	select {
 	case res := <-resultCh:
 		return res.conn, res.err
@@ -61,7 +61,7 @@ func dialWithProbe(ctx context.Context,
 	}
 }
 
-// dialWithBackoff attempts to establish a connection indefinitely with exponential backoff and jitter.
+// dialWithBackoff attempts to establish a connection with exponential backoff and jitter.
 func dialWithBackoff(
 	ctx context.Context,
 	dialFunc func() (net.Conn, error),
@@ -69,7 +69,6 @@ func dialWithBackoff(
 	initialBackoff time.Duration,
 	maxBackoff time.Duration,
 ) (*Session, error) {
-	// Set default backoffs if needed.
 	if initialBackoff <= 0 {
 		initialBackoff = 100 * time.Millisecond
 	}
@@ -79,29 +78,28 @@ func dialWithBackoff(
 
 	jitterFactor := 0.2
 	backoff := initialBackoff
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 
-	// Retry indefinitely until context is canceled.
 	var attempt int
 	for {
-		// Quickly check if the context is canceled.
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
 
-		// Wait between attempts (skip wait on first try).
 		if attempt > 0 {
 			jitteredBackoff := getJitteredBackoff(backoff, jitterFactor)
+			timer.Reset(jitteredBackoff)
 			select {
-			case <-time.After(jitteredBackoff):
+			case <-timer.C:
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
 		}
 		attempt++
 
-		// Attempt to establish a new connection.
 		conn, err := dialFunc()
 		if err != nil {
 			backoff = min(backoff*2, maxBackoff)
@@ -114,15 +112,13 @@ func dialWithBackoff(
 			backoff = min(backoff*2, maxBackoff)
 			continue
 		}
-		// Successfully connected.
+
 		return session, nil
 	}
 }
 
 // openStreamWithReconnect opens a stream with reconnection support.
-func openStreamWithReconnect(s *Session,
-	curSession *smux.Session) (*smux.Stream, error) {
-	// Try opening a stream on the current session.
+func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream, error) {
 	stream, err := curSession.OpenStream()
 	if err == nil {
 		return stream, nil
@@ -132,12 +128,10 @@ func openStreamWithReconnect(s *Session,
 		return nil, err
 	}
 
-	// Update state if required.
 	if ConnectionState(s.state.Load()) == StateConnected {
 		s.state.Store(int32(StateDisconnected))
 	}
 
-	// Check the circuit breaker.
 	if s.circuitOpen.Load() {
 		resetTime := s.circuitResetAt.Load()
 		if resetTime > 0 && time.Now().Unix() < resetTime {
@@ -146,9 +140,7 @@ func openStreamWithReconnect(s *Session,
 		s.circuitOpen.Store(false)
 	}
 
-	// Quickly probe connectivity before full reconnection.
-	probeCtx, cancel := context.WithTimeout(context.Background(),
-		500*time.Millisecond)
+	probeCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	conn, probeErr := dialWithProbe(probeCtx, s.reconnectConfig.DialFunc)
 	if probeErr != nil {
@@ -158,7 +150,6 @@ func openStreamWithReconnect(s *Session,
 	}
 	_ = conn.Close()
 
-	// Wait for any existing reconnection attempt.
 	timeout := getJitteredBackoff(5*time.Second, 0.3)
 	if ConnectionState(s.state.Load()) == StateReconnecting {
 		select {
@@ -169,7 +160,6 @@ func openStreamWithReconnect(s *Session,
 			return nil, s.ctx.Err()
 		}
 	} else {
-		// Trigger a reconnection attempt.
 		go s.attemptReconnect()
 		select {
 		case <-s.reconnectChan:
@@ -188,9 +178,8 @@ func openStreamWithReconnect(s *Session,
 	return newSession.OpenStream()
 }
 
-// EnableAutoReconnect configures auto‑reconnection and starts the connection monitor.
+// EnableAutoReconnect configures auto-reconnection and starts the connection monitor.
 func (s *Session) EnableAutoReconnect(rc *ReconnectConfig) {
-	// Provide defaults.
 	if rc.InitialBackoff <= 0 {
 		rc.InitialBackoff = 100 * time.Millisecond
 	}
@@ -217,8 +206,7 @@ func (s *Session) connectionMonitor() {
 		return
 	}
 
-	initialDelay := getJitteredBackoff(5*time.Second, 0.5)
-	timer := time.NewTimer(initialDelay)
+	timer := time.NewTimer(getJitteredBackoff(5*time.Second, 0.5))
 	defer timer.Stop()
 	const checkInterval = 5 * time.Second
 
@@ -234,13 +222,11 @@ func (s *Session) connectionMonitor() {
 					if !s.circuitOpen.Load() {
 						go s.attemptReconnect()
 					} else {
-						// Check whether circuit breaker timeout has expired.
 						resetTime := s.circuitResetAt.Load()
 						if resetTime > 0 && time.Now().Unix() > resetTime {
 							s.circuitOpen.Store(false)
 							go func() {
-								probeCtx, cancel := context.WithTimeout(
-									context.Background(), 1*time.Second)
+								probeCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 								defer cancel()
 								conn, err := dialWithProbe(probeCtx, s.reconnectConfig.DialFunc)
 								if err == nil && conn != nil {
@@ -252,16 +238,13 @@ func (s *Session) connectionMonitor() {
 					}
 				}
 			}
-			nextCheck := getJitteredBackoff(checkInterval, 0.2)
-			timer.Reset(nextCheck)
+			timer.Reset(getJitteredBackoff(checkInterval, 0.2))
 		}
 	}
 }
 
 // attemptReconnect tries to reconnect using exponential backoff with jitter.
-// Only one reconnection attempt is allowed at any given moment.
 func (s *Session) attemptReconnect() error {
-	// Ensure only one reconnection attempt is active.
 	if !s.state.CompareAndSwap(int32(StateDisconnected), int32(StateReconnecting)) {
 		currentState := ConnectionState(s.state.Load())
 		if currentState == StateConnected {
@@ -278,7 +261,6 @@ func (s *Session) attemptReconnect() error {
 		}
 	}
 	defer func() {
-		// Notify any waiting goroutines.
 		select {
 		case s.reconnectChan <- struct{}{}:
 		default:
@@ -290,9 +272,7 @@ func (s *Session) attemptReconnect() error {
 		return fmt.Errorf("auto reconnect not configured")
 	}
 
-	// Quick probe before a full reconnect.
-	probeCtx, cancel := context.WithTimeout(
-		s.reconnectConfig.ReconnectCtx, 2*time.Second)
+	probeCtx, cancel := context.WithTimeout(s.reconnectConfig.ReconnectCtx, 2*time.Second)
 	defer cancel()
 	conn, err := dialWithProbe(probeCtx, s.reconnectConfig.DialFunc)
 	if err != nil {
@@ -303,7 +283,6 @@ func (s *Session) attemptReconnect() error {
 	}
 	_ = conn.Close()
 
-	// Perform a full reconnection attempt (this will retry forever).
 	newSession, err := dialWithBackoff(
 		s.reconnectConfig.ReconnectCtx,
 		s.reconnectConfig.DialFunc,
@@ -313,8 +292,7 @@ func (s *Session) attemptReconnect() error {
 	)
 	if err != nil {
 		s.circuitOpen.Store(true)
-		s.circuitResetAt.Store(time.Now().Add(
-			s.reconnectConfig.CircuitBreakTime).Unix())
+		s.circuitResetAt.Store(time.Now().Add(s.reconnectConfig.CircuitBreakTime).Unix())
 		s.state.Store(int32(StateFailed))
 		return fmt.Errorf("reconnection failed: %w", err)
 	}
