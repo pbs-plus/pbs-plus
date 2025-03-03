@@ -247,7 +247,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				arpcSess := storeInstance.GetARPC(targetSplit[0])
 				if arpcSess != nil {
 					var respBody arpc.MapStringStringMsg
-					raw, err := arpcSess.CallMsgWithTimeout(3*time.Second, "ping", nil)
+					raw, err := arpcSess.CallMsgWithTimeout(1*time.Second, "ping", nil)
 					if err == nil {
 						_, err = respBody.UnmarshalMsg(raw)
 						if err == nil {
