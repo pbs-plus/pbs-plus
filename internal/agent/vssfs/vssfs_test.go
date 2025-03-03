@@ -217,7 +217,7 @@ func TestVSSFSServer(t *testing.T) {
 		openResult.UnmarshalMsg(raw)
 
 		// Log handle ID and handles map after open
-		t.Logf("After OpenFile - Handle ID received: %s", string(openResult))
+		t.Logf("After OpenFile - Handle ID received: %d", uint64(openResult))
 		t.Log(dumpHandleMap(vssServer))
 
 		// Verify the handle exists in the server's map
@@ -239,7 +239,7 @@ func TestVSSFSServer(t *testing.T) {
 		}
 
 		// Log before ReadAt
-		t.Logf("Before ReadAt - Using Handle ID: %s", string(readAtPayload.HandleID))
+		t.Logf("Before ReadAt - Using Handle ID: %d", uint64(readAtPayload.HandleID))
 		t.Log(dumpHandleMap(vssServer))
 
 		p := make([]byte, 100)
@@ -252,7 +252,7 @@ func TestVSSFSServer(t *testing.T) {
 		assert.Equal(t, "2 content with more data", string(p[:bytesRead]))
 
 		// Log before Close
-		t.Logf("Before Close - Using Handle ID: %s", string(openResult))
+		t.Logf("Before Close - Using Handle ID: %d", uint64(openResult))
 		t.Log(dumpHandleMap(vssServer))
 
 		// Close file
@@ -286,7 +286,7 @@ func TestVSSFSServer(t *testing.T) {
 			require.NoError(t, err, "OpenFile should succeed for %s", fileName)
 			openResult.UnmarshalMsg(raw)
 
-			t.Logf("Received handle ID: %s for file: %s", string(openResult), fileName)
+			t.Logf("Received handle ID: %d for file: %s", uint64(openResult), fileName)
 			handles = append(handles, openResult)
 
 			// Verify handle was added correctly
@@ -295,7 +295,7 @@ func TestVSSFSServer(t *testing.T) {
 
 		// Verify all handles can be read from
 		for i, handle := range handles {
-			t.Logf("Reading from file %d with handle: %s", i, string(handle))
+			t.Logf("Reading from file %d with handle: %d", i, uint64(handle))
 
 			readAtPayload := ReadAtReq{
 				HandleID: handle,
@@ -306,23 +306,23 @@ func TestVSSFSServer(t *testing.T) {
 			p := make([]byte, 10)
 			_, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayload, p)
 			if err != nil {
-				t.Logf("ReadAt error for handle %s: %v - Current handle map: %s",
-					string(handle), err, dumpHandleMap(vssServer))
+				t.Logf("ReadAt error for handle %d: %v - Current handle map: %s",
+					uint64(handle), err, dumpHandleMap(vssServer))
 				t.FailNow()
 			}
 		}
 
 		// Now close all handles
 		for i, handle := range handles {
-			t.Logf("Closing file %d with handle: %s", i, string(handle))
+			t.Logf("Closing file %d with handle: %d", i, uint64(handle))
 
 			closePayload := CloseReq{HandleID: handle}
 
 			t.Log("Before Close:", dumpHandleMap(vssServer))
 			resp, err := clientSession.Call("vss/Close", closePayload)
 			if err != nil {
-				t.Logf("Close error for handle %s: %v - Current handle map: %s",
-					string(handle), err, dumpHandleMap(vssServer))
+				t.Logf("Close error for handle %d: %v - Current handle map: %s",
+					uint64(handle), err, dumpHandleMap(vssServer))
 				t.FailNow()
 			}
 			assert.Equal(t, 200, resp.Status)
@@ -338,7 +338,7 @@ func TestVSSFSServer(t *testing.T) {
 		openResult.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 
-		t.Logf("Large file open, handle ID: %s", string(openResult))
+		t.Logf("Large file open, handle ID: %d", uint64(openResult))
 		t.Log(dumpHandleMap(vssServer))
 
 		readSize := 256 * 1024 // 256KB - well above threshold
@@ -413,7 +413,7 @@ func TestVSSFSServer(t *testing.T) {
 		require.NoError(t, err)
 		openResult.UnmarshalMsg(raw)
 
-		t.Logf("File opened with handle ID: %s", string(openResult))
+		t.Logf("File opened with handle ID: %d", uint64(openResult))
 		t.Log(dumpHandleMap(vssServer))
 
 		// First close - should succeed
@@ -440,7 +440,7 @@ func TestVSSFSServer(t *testing.T) {
 		require.NoError(t, err, "OpenFile should succeed")
 		openResult.UnmarshalMsg(raw)
 
-		t.Logf("File opened with handle ID: %s", string(openResult))
+		t.Logf("File opened with handle ID: %d", uint64(openResult))
 		t.Log(dumpHandleMap(vssServer))
 
 		// Test seeking to the beginning of the file
@@ -537,7 +537,7 @@ func TestVSSFSServer(t *testing.T) {
 			require.NoError(t, err, "OpenFile should succeed for sparse file")
 			openResult.UnmarshalMsg(raw)
 
-			t.Logf("Sparse file opened with handle ID: %s", string(openResult))
+			t.Logf("Sparse file opened with handle ID: %d", uint64(openResult))
 			t.Log(dumpHandleMap(vssServer))
 
 			// Test SeekData
