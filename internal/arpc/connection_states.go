@@ -174,7 +174,7 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 		return nil, errors.New("failed to reconnect")
 	}
 
-	newSession := s.muxSess.Load().(*smux.Session)
+	newSession := s.muxSess.Load()
 	return newSession.OpenStream()
 }
 
@@ -215,7 +215,7 @@ func (s *Session) connectionMonitor() {
 		case <-s.ctx.Done():
 			return
 		case <-timer.C:
-			sess := s.muxSess.Load().(*smux.Session)
+			sess := s.muxSess.Load()
 			if sess == nil || sess.IsClosed() {
 				currentState := ConnectionState(s.state.Load())
 				if currentState != StateReconnecting {

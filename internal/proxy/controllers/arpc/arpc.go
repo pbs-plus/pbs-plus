@@ -12,13 +12,13 @@ import (
 
 func ARPCHandler(store *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		session, err := arpc.HijackUpgradeHTTP(w, r, nil)
+		agentHostname := r.Header.Get("X-PBS-Agent")
+
+		session, err := arpc.HijackUpgradeHTTP(w, r, agentHostname, store.ARPCSessionManager, nil)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
-		agentHostname := r.Header.Get("X-PBS-Agent")
 
 		syslog.L.Infof("Agent successfully connected: %s", agentHostname)
 		defer syslog.L.Infof("Agent disconnected: %s", agentHostname)

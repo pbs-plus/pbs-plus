@@ -8,8 +8,6 @@ import (
 	"net"
 	"net/http"
 	"time"
-
-	"github.com/xtaci/smux"
 )
 
 // Call initiates a request/response conversation on a new stream.
@@ -29,7 +27,7 @@ func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload 
 func (s *Session) CallContext(ctx context.Context, method string, payload []byte) (*Response, error) {
 
 	// Use the atomic pointer to avoid holding a lock while reading.
-	curSession := s.muxSess.Load().(*smux.Session)
+	curSession := s.muxSess.Load()
 
 	// Open a new stream.
 	stream, err := openStreamWithReconnect(s, curSession)
@@ -113,7 +111,7 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 // CallMsgWithBuffer performs an RPC call for file I/O-style operations in which the server
 // first sends metadata about a binary transfer and then writes the payload directly.
 func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload []byte, buffer []byte) (int, error) {
-	curSession := s.muxSess.Load().(*smux.Session)
+	curSession := s.muxSess.Load()
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
 		return 0, fmt.Errorf("failed to open stream: %w", err)

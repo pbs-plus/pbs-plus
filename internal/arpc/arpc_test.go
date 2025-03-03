@@ -355,7 +355,7 @@ func TestAutoReconnect(t *testing.T) {
 	clientSession.EnableAutoReconnect(rc)
 
 	// Simulate network failure by closing the underlying session.
-	curMux := clientSession.muxSess.Load().(*smux.Session)
+	curMux := clientSession.muxSess.Load()
 	curMux.Close()
 
 	// Now call "ping" which should trigger auto‑reconnect.
@@ -403,7 +403,7 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 
 	// Launch a goroutine to simulate a buffered-call handler on the server side.
 	go func() {
-		curSession := serverSess.muxSess.Load().(*smux.Session)
+		curSession := serverSess.muxSess.Load()
 		stream, err := curSession.AcceptStream()
 		if err != nil {
 			t.Errorf("server: AcceptStream error: %v", err)

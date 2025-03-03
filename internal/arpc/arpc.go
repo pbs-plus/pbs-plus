@@ -16,7 +16,7 @@ import (
 // Session wraps an underlying smux.Session with improved connection management.
 type Session struct {
 	// muxSess holds a *smux.Session.
-	muxSess atomic.Value
+	muxSess atomic.Pointer[smux.Session]
 
 	// Connection state management
 	reconnectConfig *ReconnectConfig
@@ -92,7 +92,7 @@ func defaultSmuxConfig() *smux.Config {
 // If a stream accept fails and auto‑reconnect is enabled, it attempts to reconnect.
 func (s *Session) Serve(router *Router) error {
 	for {
-		curSession := s.muxSess.Load().(*smux.Session)
+		curSession := s.muxSess.Load()
 		rc := s.reconnectConfig
 
 		stream, err := curSession.AcceptStream()
@@ -151,7 +151,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 func (s *Session) Close() error {
 	s.cancelFunc() // Stop the connection monitor
 
-	sess := s.muxSess.Load().(*smux.Session)
+	sess := s.muxSess.Load()
 	if sess != nil {
 		return sess.Close()
 	}
