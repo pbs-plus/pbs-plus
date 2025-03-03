@@ -65,7 +65,7 @@ type VSSDirEntry struct {
 }
 
 type ReadDirEntries []*VSSDirEntry
-type FileHandleId string
+type FileHandleId uint64
 
 type StatFS struct {
 	Bsize   uint64 // Block size

@@ -13,13 +13,13 @@ func (se *SerializableError) Error() string {
 }
 
 // WrapError identifies and wraps standard Go errors for serialization
-func WrapError(err error) *SerializableError {
+func WrapError(err error) SerializableError {
 	if err == nil {
-		return nil
+		return SerializableError{}
 	}
 
 	// Start with a generic error wrapper
-	serErr := &SerializableError{
+	serErr := SerializableError{
 		ErrorType:     "unknown",
 		Message:       err.Error(),
 		OriginalError: err,
@@ -58,7 +58,7 @@ func WrapError(err error) *SerializableError {
 
 func WrapErrorBytes(err error) *bytebufferpool.ByteBuffer {
 	errWrapped := WrapError(err)
-	errBytes, _ := marshalWithPool(errWrapped)
+	errBytes, _ := marshalWithPool(&errWrapped)
 	if errBytes == nil {
 		return nil
 	}
@@ -67,11 +67,7 @@ func WrapErrorBytes(err error) *bytebufferpool.ByteBuffer {
 }
 
 // UnwrapError reconstructs the original error type from the serialized data
-func UnwrapError(serErr *SerializableError) error {
-	if serErr == nil {
-		return nil
-	}
-
+func UnwrapError(serErr SerializableError) error {
 	switch serErr.ErrorType {
 	case "os.ErrNotExist":
 		// Create a PathError with os.ErrNotExist and the correct path

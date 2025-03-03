@@ -15,7 +15,7 @@ var (
 	procGetDiskFreeSpace = modkernel32.NewProc("GetDiskFreeSpaceW")
 )
 
-func getStatFS(driveLetter string) (*StatFS, error) {
+func getStatFS(driveLetter string) (StatFS, error) {
 	driveLetter = strings.TrimSpace(driveLetter)
 	driveLetter = strings.ToUpper(driveLetter)
 
@@ -24,7 +24,7 @@ func getStatFS(driveLetter string) (*StatFS, error) {
 	}
 
 	if len(driveLetter) != 2 || driveLetter[1] != ':' {
-		return nil, fmt.Errorf("invalid drive letter format: %s", driveLetter)
+		return StatFS{}, fmt.Errorf("invalid drive letter format: %s", driveLetter)
 	}
 
 	path := driveLetter + `\`
@@ -33,7 +33,7 @@ func getStatFS(driveLetter string) (*StatFS, error) {
 
 	rootPathPtr, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert path to UTF16: %w", err)
+		return StatFS{}, fmt.Errorf("failed to convert path to UTF16: %w", err)
 	}
 
 	ret, _, err := procGetDiskFreeSpace.Call(
@@ -44,13 +44,13 @@ func getStatFS(driveLetter string) (*StatFS, error) {
 		uintptr(unsafe.Pointer(&totalNumberOfClusters)),
 	)
 	if ret == 0 {
-		return nil, fmt.Errorf("GetDiskFreeSpaceW failed: %w", err)
+		return StatFS{}, fmt.Errorf("GetDiskFreeSpaceW failed: %w", err)
 	}
 
 	blockSize := uint64(sectorsPerCluster) * uint64(bytesPerSector)
 	totalBlocks := uint64(totalNumberOfClusters)
 
-	stat := &StatFS{
+	stat := StatFS{
 		Bsize:   blockSize,
 		Blocks:  totalBlocks,
 		Bfree:   0,

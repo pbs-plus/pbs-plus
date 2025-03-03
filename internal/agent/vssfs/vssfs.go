@@ -12,13 +12,12 @@ import (
 	"syscall"
 
 	"github.com/Microsoft/go-winio"
-	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
-	"github.com/rekby/fastuuid"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/idgen"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
@@ -35,22 +34,24 @@ type VSSFSServer struct {
 	ctx         context.Context
 	ctxCancel   context.CancelFunc
 	jobId       string
-	snapshot    *snapshots.WinVSSSnapshot
-	handles     *haxmap.Map[string, *FileHandle]
+	snapshot    snapshots.WinVSSSnapshot
+	handleIdGen *idgen.IDGenerator
+	handles     *safemap.Map[uint64, *FileHandle]
 	arpcRouter  *arpc.Router
-	statFs      *StatFS
+	statFs      StatFS
 	statFsBytes []byte
 }
 
-func NewVSSFSServer(jobId string, snapshot *snapshots.WinVSSSnapshot) *VSSFSServer {
+func NewVSSFSServer(jobId string, snapshot snapshots.WinVSSSnapshot) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &VSSFSServer{
-		snapshot:  snapshot,
-		jobId:     jobId,
-		handles:   hashmap.New[*FileHandle](),
-		ctx:       ctx,
-		ctxCancel: cancel,
+		snapshot:    snapshot,
+		jobId:       jobId,
+		handles:     safemap.New[uint64, *FileHandle](),
+		ctx:         ctx,
+		ctxCancel:   cancel,
+		handleIdGen: idgen.NewIDGenerator(),
 	}
 
 	if err := s.initializeStatFS(); err != nil && syslog.L != nil {
@@ -105,17 +106,17 @@ func (s *VSSFSServer) initializeStatFS() error {
 	return nil
 }
 
-func (s *VSSFSServer) handleStatFS(req arpc.Request) (*arpc.Response, error) {
-	return &arpc.Response{
+func (s *VSSFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
+	return arpc.Response{
 		Status: 200,
 		Data:   s.statFsBytes,
 	}, nil
 }
 
-func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
+func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	var payload OpenFileReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	// Disallow write operations.
@@ -123,9 +124,9 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		errStr := arpc.StringMsg("write operations not allowed")
 		errBytes, err := errStr.MarshalMsg(nil)
 		if err != nil {
-			return nil, err
+			return arpc.Response{}, err
 		}
-		return &arpc.Response{
+		return arpc.Response{
 			Status: 403,
 			Data:   errBytes,
 		}, nil
@@ -133,13 +134,13 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 
 	path, err := s.abs(payload.Path)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	// Check file status to mark directories.
 	stat, err := os.Stat(path)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	handle, err := windows.CreateFile(
@@ -152,16 +153,12 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 		0,
 	)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	f := os.NewFile(uintptr(handle), path)
 
-	handleId, err := fastuuid.UUIDv4String()
-	if err != nil {
-		return nil, os.ErrInvalid
-	}
-
+	handleId := s.handleIdGen.NextID()
 	fh := &FileHandle{
 		handle: handle,
 		file:   f,
@@ -173,10 +170,10 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 	// Return the handle ID to the client.
 	dataBytes, err := FileHandleId(handleId).MarshalMsg(nil)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
-	return &arpc.Response{
+	return arpc.Response{
 		Status: 200,
 		Data:   dataBytes,
 	}, nil
@@ -185,23 +182,23 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 // handleStat first checks the cache. If an entry is available it pops (removes)
 // the CachedEntry and returns the stat info. Otherwise, it falls back to the
 // Windows API‐based lookup.
-func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
+func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	var payload StatReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	fullPath, err := s.abs(payload.Path)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	rawInfo, err := os.Stat(fullPath)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
-	info := &VSSFileInfo{
+	info := VSSFileInfo{
 		Name:    rawInfo.Name(),
 		Size:    rawInfo.Size(),
 		Mode:    uint32(rawInfo.Mode()),
@@ -213,12 +210,12 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 	if !rawInfo.IsDir() {
 		file, err := os.Open(fullPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open file: %w", err)
+			return arpc.Response{}, fmt.Errorf("failed to open file: %w", err)
 		}
 		defer file.Close()
 
 		var blockSize uint64
-		if s.statFs != nil {
+		if s.statFs != (StatFS{}) {
 			blockSize = s.statFs.Bsize
 		}
 		if blockSize == 0 {
@@ -227,7 +224,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 
 		standardInfo, err := winio.GetFileStandardInfo(file)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get file standard info: %w", err)
+			return arpc.Response{}, fmt.Errorf("failed to get file standard info: %w", err)
 		}
 
 		info.Blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
@@ -237,9 +234,9 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 
 	data, err := info.MarshalMsg(nil)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
-	return &arpc.Response{
+	return arpc.Response{
 		Status: 200,
 		Data:   data,
 	}, nil
@@ -247,16 +244,16 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 
 // handleReadDir first attempts to serve the directory listing from the cache.
 // It returns the cached DirEntries for that directory.
-func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
+func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	var payload ReadDirReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	windowsDir := filepath.FromSlash(payload.Path)
 	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	// If the payload is empty (or "."), use the root.
@@ -266,10 +263,10 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 
 	entries, err := s.readDirBulk(fullDirPath)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
-	return &arpc.Response{
+	return arpc.Response{
 		Status: 200,
 		Data:   entries,
 	}, nil
@@ -277,18 +274,18 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 
 // handleReadAt now duplicates the file handle, opens a backup reading session,
 // and then uses backupSeek to skip to the desired offset without copying bytes.
-func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
+func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	var payload ReadAtReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
-	fh, exists := s.handles.Get(string(payload.HandleID))
+	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		return nil, os.ErrNotExist
+		return arpc.Response{}, os.ErrNotExist
 	}
 	if fh.isDir {
-		return nil, os.ErrInvalid
+		return arpc.Response{}, os.ErrInvalid
 	}
 
 	// Get a buffer from the bytebufferpool
@@ -313,16 +310,16 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 
 	newPos, err := windows.Seek(fh.handle, distanceToMove, int(moveMethod))
 	if err != nil {
-		return nil, mapWinError(err)
+		return arpc.Response{}, mapWinError(err)
 	}
 	if newPos != payload.Offset {
-		return nil, os.ErrInvalid
+		return arpc.Response{}, os.ErrInvalid
 	}
 
 	var bytesRead uint32
 	err = windows.ReadFile(fh.handle, buf.B, &bytesRead, nil)
 	if err != nil {
-		return nil, mapWinError(err)
+		return arpc.Response{}, mapWinError(err)
 	}
 
 	// Resize the buffer to the actual number of bytes read
@@ -354,16 +351,16 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		_, _ = stream.Write(callbackBuf.B)
 	}
 
-	return &arpc.Response{
+	return arpc.Response{
 		Status:    213,
 		RawStream: streamCallback,
 	}, nil
 }
 
-func (s *VSSFSServer) handleLseek(req arpc.Request) (*arpc.Response, error) {
+func (s *VSSFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	var payload LseekReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	// Validate whence
@@ -372,22 +369,22 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (*arpc.Response, error) {
 		payload.Whence != io.SeekEnd &&
 		payload.Whence != SeekData &&
 		payload.Whence != SeekHole {
-		return nil, os.ErrInvalid
+		return arpc.Response{}, os.ErrInvalid
 	}
 
 	// Retrieve the file handle
-	fh, exists := s.handles.Get(string(payload.HandleID))
+	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		return nil, os.ErrNotExist
+		return arpc.Response{}, os.ErrNotExist
 	}
 	if fh.isDir {
-		return nil, os.ErrInvalid
+		return arpc.Response{}, os.ErrInvalid
 	}
 
 	// Query the file size
 	fileSize, err := getFileSize(fh.handle)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	var newOffset int64
@@ -396,44 +393,44 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (*arpc.Response, error) {
 	if payload.Whence == SeekData || payload.Whence == SeekHole {
 		newOffset, err = sparseSeek(fh.handle, payload.Offset, payload.Whence, fileSize)
 		if err != nil {
-			return nil, err
+			return arpc.Response{}, err
 		}
 	} else {
 		// Handle standard seek operations
 		switch payload.Whence {
 		case io.SeekStart:
 			if payload.Offset < 0 {
-				return nil, os.ErrInvalid
+				return arpc.Response{}, os.ErrInvalid
 			}
 			newOffset = payload.Offset
 
 		case io.SeekCurrent:
 			currentPos, err := windows.SetFilePointer(fh.handle, 0, nil, windows.FILE_CURRENT)
 			if err != nil {
-				return nil, err
+				return arpc.Response{}, err
 			}
 			newOffset = int64(currentPos) + payload.Offset
 			if newOffset < 0 {
-				return nil, os.ErrInvalid
+				return arpc.Response{}, os.ErrInvalid
 			}
 
 		case io.SeekEnd:
 			newOffset = fileSize + payload.Offset
 			if newOffset < 0 {
-				return nil, os.ErrInvalid
+				return arpc.Response{}, os.ErrInvalid
 			}
 		}
 	}
 
 	// Validate the new offset
 	if newOffset > fileSize {
-		return nil, syscall.ENXIO // Seeking beyond EOF
+		return arpc.Response{}, syscall.ENXIO // Seeking beyond EOF
 	}
 
 	// Set the new position
 	_, err = windows.SetFilePointer(fh.handle, int32(newOffset), nil, windows.FILE_BEGIN)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
 	// Prepare the response
@@ -442,38 +439,38 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (*arpc.Response, error) {
 	}
 	respBytes, err := resp.MarshalMsg(nil)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
-	return &arpc.Response{
+	return arpc.Response{
 		Status: 200,
 		Data:   respBytes,
 	}, nil
 }
 
-func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
+func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	var payload CloseReq
 	if _, err := payload.UnmarshalMsg(req.Payload); err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
-	handle, exists := s.handles.Get(string(payload.HandleID))
+	handle, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		return nil, os.ErrNotExist
+		return arpc.Response{}, os.ErrNotExist
 	}
 
 	// Close the underlying file.
 	handle.file.Close()
 
-	s.handles.Del(string(payload.HandleID))
+	s.handles.Del(uint64(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")
 	data, err := closed.MarshalMsg(nil)
 	if err != nil {
-		return nil, err
+		return arpc.Response{}, err
 	}
 
-	return &arpc.Response{Status: 200, Data: data}, nil
+	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *VSSFSServer) abs(filename string) (string, error) {

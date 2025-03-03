@@ -3,17 +3,16 @@ package arpc
 import (
 	"net"
 
-	"github.com/alphadose/haxmap"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
 type SessionManager struct {
-	sessions *haxmap.Map[string, *Session] // Map of client ID to Session
+	sessions *safemap.Map[string, *Session] // Map of client ID to Session
 }
 
 func NewSessionManager() *SessionManager {
 	return &SessionManager{
-		sessions: hashmap.New[*Session](),
+		sessions: safemap.New[string, *Session](),
 	}
 }
 
@@ -32,16 +31,16 @@ func (sm *SessionManager) GetOrCreateSession(clientID string, version string, co
 	session.version = version
 
 	router := NewRouter()
-	router.Handle("echo", func(req Request) (*Response, error) {
+	router.Handle("echo", func(req Request) (Response, error) {
 		var msg StringMsg
 		if _, err := msg.UnmarshalMsg(req.Payload); err != nil {
-			return nil, err
+			return Response{}, err
 		}
 		data, err := msg.MarshalMsg(nil)
 		if err != nil {
-			return nil, err
+			return Response{}, err
 		}
-		return &Response{Status: 200, Data: data}, nil
+		return Response{Status: 200, Data: data}, nil
 	})
 	session.SetRouter(router)
 

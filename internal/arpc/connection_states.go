@@ -124,7 +124,7 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 		return stream, nil
 	}
 
-	if s.reconnectConfig == nil || !s.reconnectConfig.AutoReconnect {
+	if !s.reconnectConfig.AutoReconnect {
 		return nil, err
 	}
 
@@ -179,7 +179,7 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 }
 
 // EnableAutoReconnect configures auto-reconnection and starts the connection monitor.
-func (s *Session) EnableAutoReconnect(rc *ReconnectConfig) {
+func (s *Session) EnableAutoReconnect(rc ReconnectConfig) {
 	if rc.InitialBackoff <= 0 {
 		rc.InitialBackoff = 100 * time.Millisecond
 	}
@@ -202,7 +202,7 @@ func (s *Session) EnableAutoReconnect(rc *ReconnectConfig) {
 
 // connectionMonitor periodically checks if reconnection is needed.
 func (s *Session) connectionMonitor() {
-	if s.reconnectConfig == nil || !s.reconnectConfig.AutoReconnect {
+	if !s.reconnectConfig.AutoReconnect {
 		return
 	}
 
@@ -267,7 +267,7 @@ func (s *Session) attemptReconnect() error {
 		}
 	}()
 
-	if s.reconnectConfig == nil || !s.reconnectConfig.AutoReconnect {
+	if !s.reconnectConfig.AutoReconnect {
 		s.state.Store(int32(StateDisconnected))
 		return fmt.Errorf("auto reconnect not configured")
 	}

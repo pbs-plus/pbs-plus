@@ -5,23 +5,22 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/alphadose/haxmap"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 )
 
 // HandlerFunc handles an RPC Request and returns a Response.
-type HandlerFunc func(req Request) (*Response, error)
+type HandlerFunc func(req Request) (Response, error)
 
 // Router holds a map from method names to handler functions.
 type Router struct {
-	handlers *haxmap.Map[string, HandlerFunc]
+	handlers *safemap.Map[string, HandlerFunc]
 }
 
 // NewRouter creates a new Router instance.
-func NewRouter() *Router {
-	return &Router{handlers: hashmap.New[HandlerFunc]()}
+func NewRouter() Router {
+	return Router{handlers: safemap.New[string, HandlerFunc]()}
 }
 
 // Handle registers a handler for a given method name.
@@ -75,7 +74,7 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 	}
 
 	// Write response status first
-	respBytes, err := marshalWithPool(resp)
+	respBytes, err := marshalWithPool(&resp)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return

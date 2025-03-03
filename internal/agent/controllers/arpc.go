@@ -7,21 +7,20 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/alphadose/haxmap"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
 var (
-	activeSessions *haxmap.Map[string, *backupSession]
+	activeSessions *safemap.Map[string, *backupSession]
 )
 
 func init() {
-	activeSessions = hashmap.New[*backupSession]()
+	activeSessions = safemap.New[string, *backupSession]()
 }
 
 type backupSession struct {
@@ -29,7 +28,7 @@ type backupSession struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	store    *agent.BackupStore
-	snapshot *snapshots.WinVSSSnapshot
+	snapshot snapshots.WinVSSSnapshot
 	fs       *vssfs.VSSFSServer
 	once     sync.Once
 }
@@ -39,7 +38,7 @@ func (s *backupSession) Close() {
 		if s.fs != nil {
 			s.fs.Close()
 		}
-		if s.snapshot != nil {
+		if s.snapshot != (snapshots.WinVSSSnapshot{}) {
 			s.snapshot.Close()
 		}
 		if s.store != nil {

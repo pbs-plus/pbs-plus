@@ -20,7 +20,7 @@ type Session struct {
 	router  atomic.Pointer[Router]
 
 	// Connection state management
-	reconnectConfig *ReconnectConfig
+	reconnectConfig ReconnectConfig
 	reconnectMu     sync.Mutex
 
 	// Connection state tracking
@@ -38,8 +38,8 @@ type Session struct {
 	version string
 }
 
-func (s *Session) SetRouter(router *Router) {
-	s.router.Store(router)
+func (s *Session) SetRouter(router Router) {
+	s.router.Store(&router) // Store a pointer to the value
 }
 
 func (s *Session) GetRouter() *Router {
@@ -63,7 +63,7 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	session := &Session{
-		reconnectConfig: nil,
+		reconnectConfig: ReconnectConfig{},
 		reconnectChan:   make(chan struct{}, 1), // Buffer of 1 to prevent blocking
 		ctx:             ctx,
 		cancelFunc:      cancel,
@@ -87,7 +87,7 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	session := &Session{
-		reconnectConfig: nil,
+		reconnectConfig: ReconnectConfig{},
 		reconnectChan:   make(chan struct{}, 1), // Buffer of 1 to prevent blocking
 		ctx:             ctx,
 		cancelFunc:      cancel,
@@ -113,7 +113,7 @@ func (s *Session) Serve() error {
 		stream, err := curSession.AcceptStream()
 		if err != nil {
 			s.state.Store(int32(StateDisconnected))
-			if rc != nil && rc.AutoReconnect {
+			if rc.AutoReconnect {
 				if err2 := s.attemptReconnect(); err2 != nil {
 					return err2
 				}
@@ -151,7 +151,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 	}
 
 	// Configure auto-reconnect with the same parameters
-	session.EnableAutoReconnect(&ReconnectConfig{
+	session.EnableAutoReconnect(ReconnectConfig{
 		AutoReconnect:    true,
 		DialFunc:         dialFunc,
 		UpgradeFunc:      upgradeFunc,

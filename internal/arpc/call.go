@@ -14,11 +14,11 @@ import (
 )
 
 // Call initiates a request/response conversation on a new stream.
-func (s *Session) Call(method string, payload []byte) (*Response, error) {
+func (s *Session) Call(method string, payload msgp.Marshaler) (Response, error) {
 	return s.CallContext(context.Background(), method, payload)
 }
 
-func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload []byte) (*Response, error) {
+func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload msgp.Marshaler) (Response, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -27,7 +27,7 @@ func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload 
 
 // CallContext performs an RPC call over a new stream.
 // It applies any context deadlines to the smux stream.
-func (s *Session) CallContext(ctx context.Context, method string, payload []byte) (*Response, error) {
+func (s *Session) CallContext(ctx context.Context, method string, payload msgp.Marshaler) (Response, error) {
 
 	// Use the atomic pointer to avoid holding a lock while reading.
 	curSession := s.muxSess.Load()
@@ -35,7 +35,7 @@ func (s *Session) CallContext(ctx context.Context, method string, payload []byte
 	// Open a new stream.
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
-		return nil, err
+		return Response{}, err
 	}
 	defer stream.Close()
 
@@ -45,44 +45,54 @@ func (s *Session) CallContext(ctx context.Context, method string, payload []byte
 		stream.SetReadDeadline(deadline)
 	}
 
+	var payloadBytes []byte
+	if payload != nil {
+		poolBytes, err := marshalWithPool(payload)
+		if err != nil {
+			return Response{}, err
+		}
+		defer bytebufferpool.Put(poolBytes)
+		payloadBytes = poolBytes.B
+	}
+
 	// Build and send the RPC request.
 	req := Request{
 		Method:  method,
-		Payload: payload,
+		Payload: payloadBytes,
 	}
 
 	reqBytes, err := marshalWithPool(&req)
 	if err != nil {
-		return nil, err
+		return Response{}, err
 	}
 	defer bytebufferpool.Put(reqBytes)
 	if err := writeMsgpMsg(stream, reqBytes.B); err != nil {
-		return nil, err
+		return Response{}, err
 	}
 
 	respBytes, err := readMsgpMsgPooled(stream)
 	if err != nil {
 		if ne, ok := err.(net.Error); ok && ne.Timeout() {
-			return nil, context.DeadlineExceeded
+			return Response{}, context.DeadlineExceeded
 		}
-		return nil, err
+		return Response{}, err
 	}
 	defer bytebufferpool.Put(respBytes)
 
 	if len(respBytes.B) == 0 {
-		return nil, fmt.Errorf("empty response")
+		return Response{}, fmt.Errorf("empty response")
 	}
 
 	var resp Response
 	if _, err := resp.UnmarshalMsg(respBytes.B); err != nil {
-		return nil, err
+		return Response{}, err
 	}
-	return &resp, nil
+	return resp, nil
 }
 
 // CallMsg performs an RPC call and unmarshals its Data into v on success,
 // or decodes the error from Data if status != http.StatusOK.
-func (s *Session) CallMsg(ctx context.Context, method string, payload []byte) ([]byte, error) {
+func (s *Session) CallMsg(ctx context.Context, method string, payload msgp.Marshaler) ([]byte, error) {
 	resp, err := s.CallContext(ctx, method, payload)
 	if err != nil {
 		return nil, err
@@ -93,7 +103,7 @@ func (s *Session) CallMsg(ctx context.Context, method string, payload []byte) ([
 			if _, err := serErr.UnmarshalMsg(resp.Data); err != nil {
 				return nil, fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
 			}
-			return nil, UnwrapError(&serErr)
+			return nil, UnwrapError(serErr)
 		}
 		return nil, fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
 	}
@@ -104,7 +114,7 @@ func (s *Session) CallMsg(ctx context.Context, method string, payload []byte) ([
 	return resp.Data, nil
 }
 
-func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, payload []byte) ([]byte, error) {
+func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, payload msgp.Marshaler) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -126,7 +136,6 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	}
 
 	var payloadBytes []byte
-
 	if payload != nil {
 		poolBytes, err := marshalWithPool(payload)
 		if err != nil {
@@ -167,7 +176,7 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	if resp.Status != 213 {
 		var serErr SerializableError
 		if _, err := serErr.UnmarshalMsg(respBytes.B); err == nil {
-			return 0, UnwrapError(&serErr)
+			return 0, UnwrapError(serErr)
 		}
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
