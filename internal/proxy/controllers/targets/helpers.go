@@ -16,7 +16,7 @@ import (
 
 // CacheEntry represents a single cache entry with a value and a timestamp
 type CacheEntry struct {
-	Value     arpc.MapStringStringMsg
+	Value     string
 	Timestamp time.Time
 }
 
@@ -35,32 +35,55 @@ func NewCache(ttl time.Duration) *Cache {
 }
 
 // Get retrieves a value from the cache if it exists and is not expired
-func (c *Cache) Get(key string) (arpc.MapStringStringMsg, bool) {
+func (c *Cache) Get(key string) (string, bool) {
 	entry, exists := c.data.Get(key)
 	if !exists || time.Since(entry.Timestamp) > c.ttl {
 		// Entry does not exist or is expired
 		if exists {
 			c.data.Del(key)
 		}
-		return arpc.MapStringStringMsg{}, false
+		return "", false
 	}
 	return entry.Value, true
 }
 
 // Set adds a value to the cache
-func (c *Cache) Set(key string, value arpc.MapStringStringMsg) {
+func (c *Cache) Set(key string, value string) {
 	c.data.Set(key, &CacheEntry{
 		Value:     value,
 		Timestamp: time.Now(),
 	})
 }
 
+// Global variables to manage the single instance of processTargets
+var (
+	processTargetsMutex sync.Mutex
+	processTargetsCond  = sync.NewCond(&processTargetsMutex)
+	isProcessing        bool
+	cache               = NewCache(10 * time.Second)
+)
+
+// processTargets ensures only one instance is running globally
 func processTargets(all []types.Target, storeInstance *store.Store, workerCount int) {
+	processTargetsMutex.Lock()
+	for isProcessing {
+		// Wait for the current processTargets instance to finish
+		processTargetsCond.Wait()
+	}
+	// Mark as processing
+	isProcessing = true
+	processTargetsMutex.Unlock()
+
+	defer func() {
+		// Mark as not processing and signal waiting goroutines
+		processTargetsMutex.Lock()
+		isProcessing = false
+		processTargetsCond.Broadcast()
+		processTargetsMutex.Unlock()
+	}()
+
 	var wg sync.WaitGroup
 	tasks := make(chan int, len(all)) // Channel to distribute tasks to workers
-
-	// Create a cache with a TTL of 5 seconds
-	cache := NewCache(5 * time.Second)
 
 	// Start worker goroutines
 	for w := 0; w < workerCount; w++ {
@@ -76,7 +99,7 @@ func processTargets(all []types.Target, storeInstance *store.Store, workerCount 
 					if cachedResp, found := cache.Get(cacheKey); found {
 						// Use cached response
 						all[i].ConnectionStatus = true
-						all[i].AgentVersion = cachedResp["version"]
+						all[i].AgentVersion = cachedResp
 						continue
 					}
 
@@ -95,7 +118,7 @@ func processTargets(all []types.Target, storeInstance *store.Store, workerCount 
 							all[i].AgentVersion = respBody["version"]
 
 							// Store the response in the cache
-							cache.Set(cacheKey, respBody)
+							cache.Set(cacheKey, respBody["version"])
 						}
 					}
 				}

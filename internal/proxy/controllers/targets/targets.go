@@ -31,7 +31,12 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		processTargets(all, storeInstance, runtime.NumCPU())
+		workers := 1
+		if runtime.NumCPU() > 1 {
+			workers = runtime.NumCPU() / 2
+		}
+
+		processTargets(all, storeInstance, workers)
 
 		digest, err := utils.CalculateDigest(all)
 		if err != nil {
