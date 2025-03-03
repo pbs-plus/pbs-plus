@@ -3,6 +3,8 @@ package arpc
 import (
 	"errors"
 	"os"
+
+	"github.com/valyala/bytebufferpool"
 )
 
 // Error implements the error interface
@@ -54,7 +56,7 @@ func WrapError(err error) *SerializableError {
 	return serErr
 }
 
-func WrapErrorBytes(err error) *PooledMsg {
+func WrapErrorBytes(err error) *bytebufferpool.ByteBuffer {
 	errWrapped := WrapError(err)
 	errBytes, _ := marshalWithPool(errWrapped)
 	if errBytes == nil {

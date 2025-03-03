@@ -37,7 +37,7 @@ func getJitteredBackoff(d time.Duration, jitterFactor float64) time.Duration {
 // It uses a 4‑byte big‑endian length header followed by that many bytes. For messages up to
 // 4096 bytes it attempts to use a pooled buffer (avoiding an extra copy in hot paths).
 // The caller is responsible for calling Release() on the returned *PooledMsg if pm.pooled is true.
-func readMsgpMsgPooled(r io.Reader) (*PooledMsg, error) {
+func readMsgpMsgPooled(r io.Reader) (*bytebufferpool.ByteBuffer, error) {
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return nil, err
@@ -54,7 +54,7 @@ func readMsgpMsgPooled(r io.Reader) (*PooledMsg, error) {
 		bytebufferpool.Put(buf)
 		return nil, err
 	}
-	return &PooledMsg{Data: buf.B, buffer: buf}, nil
+	return buf, nil
 }
 
 // writeMsgpMsg writes msg to w with a 4‑byte length header. We combine the header and msg
@@ -88,8 +88,8 @@ func writeErrorResponse(stream *smux.Stream, status int, err error) {
 
 	var respData []byte
 	if errBytes != nil {
-		respData = errBytes.Data
-		defer errBytes.Release()
+		respData = errBytes.B
+		defer bytebufferpool.Put(errBytes)
 	}
 
 	// Set the error message so that the client can fall back to it,
@@ -106,8 +106,8 @@ func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	}
 	var respBytesData []byte
 	if respBytes != nil {
-		respBytesData = respBytes.Data
-		defer respBytes.Release()
+		respBytesData = respBytes.B
+		defer bytebufferpool.Put(respBytes)
 	}
 	wErr := writeMsgpMsg(stream, respBytesData)
 	if wErr != nil && syslog.L != nil {

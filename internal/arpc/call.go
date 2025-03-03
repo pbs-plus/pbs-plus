@@ -8,6 +8,9 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/tinylib/msgp/msgp"
+	"github.com/valyala/bytebufferpool"
 )
 
 // Call initiates a request/response conversation on a new stream.
@@ -52,8 +55,8 @@ func (s *Session) CallContext(ctx context.Context, method string, payload []byte
 	if err != nil {
 		return nil, err
 	}
-	defer reqBytes.Release()
-	if err := writeMsgpMsg(stream, reqBytes.Data); err != nil {
+	defer bytebufferpool.Put(reqBytes)
+	if err := writeMsgpMsg(stream, reqBytes.B); err != nil {
 		return nil, err
 	}
 
@@ -64,14 +67,14 @@ func (s *Session) CallContext(ctx context.Context, method string, payload []byte
 		}
 		return nil, err
 	}
-	defer respBytes.Release()
+	defer bytebufferpool.Put(respBytes)
 
-	if len(respBytes.Data) == 0 {
+	if len(respBytes.B) == 0 {
 		return nil, fmt.Errorf("empty response")
 	}
 
 	var resp Response
-	if _, err := resp.UnmarshalMsg(respBytes.Data); err != nil {
+	if _, err := resp.UnmarshalMsg(respBytes.B); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -110,7 +113,7 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 
 // CallMsgWithBuffer performs an RPC call for file I/O-style operations in which the server
 // first sends metadata about a binary transfer and then writes the payload directly.
-func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload []byte, buffer []byte) (int, error) {
+func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload msgp.Marshaler, buffer []byte) (int, error) {
 	curSession := s.muxSess.Load()
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
@@ -122,19 +125,30 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 		_ = stream.SetDeadline(deadline)
 	}
 
+	var payloadBytes []byte
+
+	if payload != nil {
+		poolBytes, err := marshalWithPool(payload)
+		if err != nil {
+			return 0, fmt.Errorf("failed to marshal request: %w", err)
+		}
+		defer bytebufferpool.Put(poolBytes)
+		payloadBytes = poolBytes.B
+	}
+
 	// Send request
 	req := Request{
 		Method:  method,
-		Payload: payload,
+		Payload: payloadBytes,
 	}
 
 	reqBytes, err := marshalWithPool(&req)
 	if err != nil {
 		return 0, fmt.Errorf("failed to marshal request: %w", err)
 	}
-	defer reqBytes.Release()
+	defer bytebufferpool.Put(reqBytes)
 
-	if err := writeMsgpMsg(stream, reqBytes.Data); err != nil {
+	if err := writeMsgpMsg(stream, reqBytes.B); err != nil {
 		return 0, fmt.Errorf("failed to write request: %w", err)
 	}
 
@@ -143,16 +157,16 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	if err != nil {
 		return 0, fmt.Errorf("failed to read response: %w", err)
 	}
-	defer respBytes.Release()
+	defer bytebufferpool.Put(respBytes)
 
 	var resp Response
-	if _, err := resp.UnmarshalMsg(respBytes.Data); err != nil {
+	if _, err := resp.UnmarshalMsg(respBytes.B); err != nil {
 		return 0, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
 	if resp.Status != 213 {
 		var serErr SerializableError
-		if _, err := serErr.UnmarshalMsg(respBytes.Data); err == nil {
+		if _, err := serErr.UnmarshalMsg(respBytes.B); err == nil {
 			return 0, UnwrapError(&serErr)
 		}
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)

@@ -240,14 +240,13 @@ func TestVSSFSServer(t *testing.T) {
 			Offset:   10,
 			Length:   100,
 		}
-		readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
 
 		// Log before ReadAt
 		t.Logf("Before ReadAt - Using Handle ID: %s", string(readAtPayload.HandleID))
 		t.Log(dumpHandleMap(vssServer))
 
 		p := make([]byte, 100)
-		bytesRead, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, p)
+		bytesRead, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayload, p)
 		if err != nil {
 			t.Logf("ReadAt error: %v - Current handle map: %s", err, dumpHandleMap(vssServer))
 			t.FailNow()
@@ -308,10 +307,9 @@ func TestVSSFSServer(t *testing.T) {
 				Offset:   0,
 				Length:   10, // Just read a small amount
 			}
-			readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
 
 			p := make([]byte, 10)
-			_, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, p)
+			_, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayload, p)
 			if err != nil {
 				t.Logf("ReadAt error for handle %s: %v - Current handle map: %s",
 					string(handle), err, dumpHandleMap(vssServer))
@@ -356,10 +354,9 @@ func TestVSSFSServer(t *testing.T) {
 			Offset:   1024, // Start at 1KB offset
 			Length:   readSize,
 		}
-		readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
 
 		buffer := make([]byte, readSize)
-		bytesRead, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayloadBytes, buffer)
+		bytesRead, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", readAtPayload, buffer)
 		if err != nil {
 			t.Logf("Large file ReadAt error: %v - Current handle map: %s", err, dumpHandleMap(vssServer))
 			t.FailNow()
