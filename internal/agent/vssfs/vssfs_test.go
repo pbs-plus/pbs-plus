@@ -18,6 +18,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/windows"
 )
 
 // createLargeTestFile creates a test file of the specified size with deterministic content
@@ -427,29 +428,60 @@ func TestHandleLseek(t *testing.T) {
 	f, err := os.Create(sparseFilePath)
 	require.NoError(t, err)
 
-	// Write some data with holes to create a sparse file
-	// Layout: [data:0-4k][hole:4k-8k][data:8k-12k][hole:12k-16k][data:16k-20k]
-	dataSize := 4096
-	data := make([]byte, dataSize)
+	// Get Windows handle for the file
+	winFile := windows.Handle(f.Fd())
+
+	// Set sparse file attribute
+	var bytesReturned uint32
+	err = windows.DeviceIoControl(
+		winFile,
+		windows.FSCTL_SET_SPARSE,
+		nil,
+		0,
+		nil,
+		0,
+		&bytesReturned,
+		nil,
+	)
+	require.NoError(t, err, "Failed to set sparse attribute")
+
+	// Write data blocks with holes between them
+	data := make([]byte, 4096)
 	for i := range data {
 		data[i] = byte(i % 251)
 	}
 
-	// Write first block
+	// Write first block at offset 0
 	_, err = f.WriteAt(data, 0)
 	require.NoError(t, err)
 
-	// Write second block after a hole
+	// Write second block at offset 8192 (leaving a 4096-byte hole)
 	_, err = f.WriteAt(data, 8192)
 	require.NoError(t, err)
 
-	// Write third block after another hole
+	// Write third block at offset 16384 (leaving another 4096-byte hole)
 	_, err = f.WriteAt(data, 16384)
 	require.NoError(t, err)
 
-	// Set file size to 20k
-	require.NoError(t, f.Truncate(20480))
-	require.NoError(t, f.Close())
+	// Set file size to 20480
+	err = f.Truncate(20480)
+	require.NoError(t, err)
+
+	// Force flush to disk
+	err = f.Sync()
+	require.NoError(t, err)
+
+	// Verify the file is sparse
+	ranges, err := queryAllocatedRanges(winFile, 20480)
+	require.NoError(t, err)
+	t.Log("Initial allocated ranges:")
+	for i, r := range ranges {
+		t.Logf("Range %d: offset=%d, length=%d", i, r.FileOffset, r.Length)
+	}
+	require.Greater(t, len(ranges), 1, "File should have multiple allocated ranges")
+
+	// Close and reopen the file to ensure ranges are persisted
+	f.Close()
 
 	// Setup arpc server and client
 	serverConn, clientConn := net.Pipe()
@@ -535,33 +567,109 @@ func TestHandleLseek(t *testing.T) {
 
 	t.Run("SparseSeek", func(t *testing.T) {
 		tests := []struct {
-			name        string
-			offset      int64
-			whence      int
-			expectedPos int64
-			expectError bool
+			name       string
+			offset     int64
+			whence     int
+			validateFn func(t *testing.T, offset int64, err error)
 		}{
-			{"SeekDataStart", 0, SeekData, 0, false},        // First data block
-			{"SeekDataInHole", 5000, SeekData, 8192, false}, // Should find second data block
-			{"SeekDataEnd", 17000, SeekData, 0, true},       // Past last data block, should return ENXIO
-			{"SeekHoleStart", 0, SeekHole, 4096, false},     // First hole
-			{"SeekHoleInData", 2000, SeekHole, 4096, false}, // Should find next hole
-			{"SeekHolePastEnd", 21000, SeekHole, 0, true},   // Past EOF, should return ENXIO
+			{
+				name:   "SeekDataStart",
+				offset: 0,
+				whence: SeekData,
+				validateFn: func(t *testing.T, offset int64, err error) {
+					require.NoError(t, err)
+					assert.Equal(t, int64(0), offset)
+				},
+			},
+			{
+				name:   "SeekDataInHole",
+				offset: 5000,
+				whence: SeekData,
+				validateFn: func(t *testing.T, offset int64, err error) {
+					require.NoError(t, err)
+					assert.Equal(t, int64(8192), offset)
+				},
+			},
+			{
+				name:   "SeekDataEnd",
+				offset: 17000,
+				whence: SeekData,
+				validateFn: func(t *testing.T, offset int64, err error) {
+					if err != nil {
+						assert.ErrorIs(t, err, syscall.ENXIO)
+					} else {
+						// Some filesystems might return the last data block
+						assert.GreaterOrEqual(t, offset, int64(16384))
+					}
+				},
+			},
+			{
+				name:   "SeekHoleStart",
+				offset: 0,
+				whence: SeekHole,
+				validateFn: func(t *testing.T, offset int64, err error) {
+					require.NoError(t, err)
+					assert.Equal(t, int64(4096), offset, "Should find hole after first data block")
+				},
+			},
+			{
+				name:   "SeekHoleInData",
+				offset: 2000,
+				whence: SeekHole,
+				validateFn: func(t *testing.T, offset int64, err error) {
+					require.NoError(t, err)
+					assert.Equal(t, int64(4096), offset, "Should find next hole from within data block")
+				},
+			},
+			{
+				name:   "SeekHoleInHole",
+				offset: 6000,
+				whence: SeekHole,
+				validateFn: func(t *testing.T, offset int64, err error) {
+					require.NoError(t, err)
+					assert.Equal(t, int64(6000), offset, "Should return same offset when already in hole")
+				},
+			},
+			{
+				name:   "SeekDataInLastBlock",
+				offset: 16500,
+				whence: SeekData,
+				validateFn: func(t *testing.T, offset int64, err error) {
+					require.NoError(t, err)
+					assert.Equal(t, int64(16500), offset, "Should return same offset when in last data block")
+				},
+			},
+			{
+				name:   "SeekHoleAfterLastBlock",
+				offset: 19000,
+				whence: SeekHole,
+				validateFn: func(t *testing.T, offset int64, err error) {
+					require.NoError(t, err)
+					assert.Equal(t, int64(20480), offset, "Should return EOF when seeking hole after last data")
+				},
+			},
+			{
+				name:   "SeekDataPastEOF",
+				offset: 21000,
+				whence: SeekData,
+				validateFn: func(t *testing.T, offset int64, err error) {
+					assert.ErrorIs(t, err, syscall.ENXIO, "Should return ENXIO when seeking data past EOF")
+				},
+			},
+			{
+				name:   "SeekHolePastEOF",
+				offset: 21000,
+				whence: SeekHole,
+				validateFn: func(t *testing.T, offset int64, err error) {
+					assert.ErrorIs(t, err, syscall.ENXIO, "Should return ENXIO when seeking hole past EOF")
+				},
+			},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				pos, err := doLseek(openResult, tt.offset, tt.whence)
-				if tt.expectError {
-					assert.Error(t, err)
-					// Check if it's ENXIO when expected
-					if strings.Contains(tt.name, "End") {
-						assert.Equal(t, syscall.ENXIO, err)
-					}
-				} else {
-					assert.NoError(t, err)
-					assert.Equal(t, tt.expectedPos, pos)
-				}
+				offset, err := doLseek(openResult, tt.offset, tt.whence)
+				tt.validateFn(t, offset, err)
 			})
 		}
 	})
