@@ -558,6 +558,8 @@ func TestHandleLseekWithAlignedSparseRegions(t *testing.T) {
 			BeyondFinalZero: hole[1],
 		}
 
+		t.Logf("Marking hole from %d to %d", hole[0], hole[1]-1)
+
 		err = windows.DeviceIoControl(
 			handle,
 			windows.FSCTL_SET_ZERO_DATA,

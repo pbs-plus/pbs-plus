@@ -126,7 +126,7 @@ func queryAllocatedRanges(handle windows.Handle, size int64) ([]FileAllocatedRan
 		Length:     size,
 	}
 
-	buffer := make([]byte, 4096) // Initial buffer size (can be increased if needed)
+	buffer := make([]byte, 4096) // Buffer sized for typical scenarios
 
 	for {
 		var bytesReturned uint32
@@ -142,19 +142,16 @@ func queryAllocatedRanges(handle windows.Handle, size int64) ([]FileAllocatedRan
 		)
 
 		if err == windows.ERROR_MORE_DATA {
-			// Calculate how many full ranges we received
+			// Process what we've received so far
 			count := int(bytesReturned) / int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
-			if count == 0 {
-				break
+			if count > 0 {
+				newRanges := unsafe.Slice((*FileAllocatedRangeBuffer)(unsafe.Pointer(&buffer[0])), count)
+				ranges = append(ranges, newRanges...)
+				// Update query to search after the last range
+				lastRange := newRanges[len(newRanges)-1]
+				query.FileOffset = lastRange.FileOffset + lastRange.Length
+				query.Length = size - query.FileOffset // Fix: Adjust length to remaining file size
 			}
-
-			// Convert buffer to slice of ranges
-			newRanges := unsafe.Slice((*FileAllocatedRangeBuffer)(unsafe.Pointer(&buffer[0])), count)
-			ranges = append(ranges, newRanges...)
-
-			// Update query to start after the last received range
-			lastRange := newRanges[len(newRanges)-1]
-			query.FileOffset = lastRange.FileOffset + lastRange.Length
 			continue
 		}
 
@@ -162,7 +159,7 @@ func queryAllocatedRanges(handle windows.Handle, size int64) ([]FileAllocatedRan
 			return nil, fmt.Errorf("DeviceIoControl failed: %w", err)
 		}
 
-		// Process remaining data
+		// Process final batch
 		if bytesReturned > 0 {
 			count := int(bytesReturned) / int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
 			if count > 0 {
