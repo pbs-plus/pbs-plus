@@ -226,7 +226,11 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 		if err == nil {
 			defer windows.CloseHandle(handle)
 
-			blockSize := s.statFs.Bsize
+			var blockSize uint64
+			if s.statFs != nil {
+				blockSize = s.statFs.Bsize
+			}
+
 			if blockSize == 0 {
 				blockSize = 4096 // Default to 4KB block size
 			}
