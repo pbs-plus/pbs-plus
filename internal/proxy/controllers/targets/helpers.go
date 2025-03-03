@@ -7,41 +7,107 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alphadose/haxmap"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
 )
 
-func processTargets(all []types.Target, storeInstance *store.Store, maxConcurrency int) {
+// CacheEntry represents a single cache entry with a value and a timestamp
+type CacheEntry struct {
+	Value     arpc.MapStringStringMsg
+	Timestamp time.Time
+}
+
+// Cache is a thread-safe cache with TTL
+type Cache struct {
+	data *haxmap.Map[string, *CacheEntry]
+	ttl  time.Duration
+}
+
+// NewCache creates a new cache with the specified TTL
+func NewCache(ttl time.Duration) *Cache {
+	return &Cache{
+		data: hashmap.New[*CacheEntry](),
+		ttl:  ttl,
+	}
+}
+
+// Get retrieves a value from the cache if it exists and is not expired
+func (c *Cache) Get(key string) (arpc.MapStringStringMsg, bool) {
+	entry, exists := c.data.Get(key)
+	if !exists || time.Since(entry.Timestamp) > c.ttl {
+		// Entry does not exist or is expired
+		if exists {
+			c.data.Del(key)
+		}
+		return arpc.MapStringStringMsg{}, false
+	}
+	return entry.Value, true
+}
+
+// Set adds a value to the cache
+func (c *Cache) Set(key string, value arpc.MapStringStringMsg) {
+	c.data.Set(key, &CacheEntry{
+		Value:     value,
+		Timestamp: time.Now(),
+	})
+}
+
+func processTargets(all []types.Target, storeInstance *store.Store, workerCount int) {
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, maxConcurrency) // Semaphore to limit concurrency
+	tasks := make(chan int, len(all)) // Channel to distribute tasks to workers
 
-	for i := range all {
-		if all[i].IsAgent {
-			wg.Add(1)
-			sem <- struct{}{} // Acquire a slot in the semaphore
+	// Create a cache with a TTL of 5 seconds
+	cache := NewCache(5 * time.Second)
 
-			go func(i int) {
-				defer wg.Done()
-				defer func() { <-sem }() // Release the slot in the semaphore
+	// Start worker goroutines
+	for w := 0; w < workerCount; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range tasks {
+				if all[i].IsAgent {
+					targetSplit := strings.Split(all[i].Name, " - ")
+					cacheKey := targetSplit[0]
 
-				targetSplit := strings.Split(all[i].Name, " - ")
-				arpcSess := storeInstance.GetARPC(targetSplit[0])
-				if arpcSess != nil {
-					var respBody arpc.MapStringStringMsg
-					raw, err := arpcSess.CallMsgWithTimeout(3*time.Second, "ping", nil)
-					if err != nil {
-						return
-					}
-					_, err = respBody.UnmarshalMsg(raw)
-					if err == nil {
+					// Check the cache first
+					if cachedResp, found := cache.Get(cacheKey); found {
+						// Use cached response
 						all[i].ConnectionStatus = true
-						all[i].AgentVersion = respBody["version"]
+						all[i].AgentVersion = cachedResp["version"]
+						continue
+					}
+
+					// If not in cache, make the ARPC call
+					arpcSess := storeInstance.GetARPC(cacheKey)
+					if arpcSess != nil {
+						var respBody arpc.MapStringStringMsg
+						raw, err := arpcSess.CallMsgWithTimeout(1*time.Second, "ping", nil)
+						if err != nil {
+							continue
+						}
+						_, err = respBody.UnmarshalMsg(raw)
+						if err == nil {
+							// Update the target
+							all[i].ConnectionStatus = true
+							all[i].AgentVersion = respBody["version"]
+
+							// Store the response in the cache
+							cache.Set(cacheKey, respBody)
+						}
 					}
 				}
-			}(i)
-		}
+			}
+		}()
 	}
 
-	wg.Wait() // Wait for all goroutines to finish
+	// Send tasks to the workers
+	for i := range all {
+		tasks <- i
+	}
+	close(tasks) // Close the task channel to signal workers to stop
+
+	wg.Wait() // Wait for all workers to finish
 }
