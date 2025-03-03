@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -425,8 +426,15 @@ func TestHandleLseek(t *testing.T) {
 
 	// Create a sparse file
 	sparseFilePath := filepath.Join(testDir, "sparse.bin")
-	f, err := os.Create(sparseFilePath)
+	f, err := os.OpenFile(sparseFilePath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	require.NoError(t, err)
+	defer f.Close()
+
+	// Define the FileZeroDataInformation structure
+	type FileZeroDataInformation struct {
+		FileOffset      int64
+		BeyondFinalZero int64
+	}
 
 	// Get Windows handle for the file
 	winFile := windows.Handle(f.Fd())
@@ -445,40 +453,104 @@ func TestHandleLseek(t *testing.T) {
 	)
 	require.NoError(t, err, "Failed to set sparse attribute")
 
-	// Write data blocks with holes between them
+	// First, set the file size to create a sparse region
+	err = f.Truncate(20480)
+	require.NoError(t, err)
+
+	// Create data for our blocks
 	data := make([]byte, 4096)
 	for i := range data {
 		data[i] = byte(i % 251)
 	}
 
-	// Write first block at offset 0
-	_, err = f.WriteAt(data, 0)
-	require.NoError(t, err)
+	// Define our data regions
+	type dataRegion struct {
+		offset int64
+		data   []byte
+	}
 
-	// Write second block at offset 8192 (leaving a 4096-byte hole)
-	_, err = f.WriteAt(data, 8192)
-	require.NoError(t, err)
+	regions := []dataRegion{
+		{offset: 0, data: data},     // First block at 0
+		{offset: 8192, data: data},  // Second block at 8k
+		{offset: 16384, data: data}, // Third block at 16k
+	}
 
-	// Write third block at offset 16384 (leaving another 4096-byte hole)
-	_, err = f.WriteAt(data, 16384)
-	require.NoError(t, err)
+	// Track the end of the previous data region
+	var prevEnd int64 = 0
 
-	// Set file size to 20480
-	err = f.Truncate(20480)
-	require.NoError(t, err)
+	// Write data regions and mark the holes explicitly
+	for _, region := range regions {
+		// Define the region to mark as sparse (from end of previous data to start of this data)
+		if region.offset > prevEnd {
+			zeroRegion := FileZeroDataInformation{
+				FileOffset:      prevEnd,
+				BeyondFinalZero: region.offset,
+			}
+
+			err = windows.DeviceIoControl(
+				winFile,
+				windows.FSCTL_SET_ZERO_DATA,
+				(*byte)(unsafe.Pointer(&zeroRegion)),
+				uint32(unsafe.Sizeof(zeroRegion)),
+				nil,
+				0,
+				&bytesReturned,
+				nil,
+			)
+			require.NoError(t, err, "Failed to mark region as sparse")
+		}
+
+		// Write the data
+		_, err = f.WriteAt(region.data, region.offset)
+		require.NoError(t, err)
+
+		prevEnd = region.offset + int64(len(region.data))
+	}
+
+	// Mark the final region as sparse (if needed)
+	if prevEnd < 20480 {
+		zeroRegion := FileZeroDataInformation{
+			FileOffset:      prevEnd,
+			BeyondFinalZero: 20480,
+		}
+
+		err = windows.DeviceIoControl(
+			winFile,
+			windows.FSCTL_SET_ZERO_DATA,
+			(*byte)(unsafe.Pointer(&zeroRegion)),
+			uint32(unsafe.Sizeof(zeroRegion)),
+			nil,
+			0,
+			&bytesReturned,
+			nil,
+		)
+		require.NoError(t, err, "Failed to mark final region as sparse")
+	}
 
 	// Force flush to disk
 	err = f.Sync()
 	require.NoError(t, err)
 
-	// Verify the file is sparse
+	// Verify the file is sparse and has the correct ranges
 	ranges, err := queryAllocatedRanges(winFile, 20480)
 	require.NoError(t, err)
 	t.Log("Initial allocated ranges:")
 	for i, r := range ranges {
 		t.Logf("Range %d: offset=%d, length=%d", i, r.FileOffset, r.Length)
 	}
-	require.Greater(t, len(ranges), 1, "File should have multiple allocated ranges")
+	require.Equal(t, 3, len(ranges), "File should have exactly three allocated ranges")
+
+	// Verify the ranges are at the expected positions
+	if len(ranges) == 3 {
+		assert.Equal(t, int64(0), ranges[0].FileOffset, "First range should start at 0")
+		assert.Equal(t, int64(4096), ranges[0].Length, "First range should be 4KB")
+
+		assert.Equal(t, int64(8192), ranges[1].FileOffset, "Second range should start at 8KB")
+		assert.Equal(t, int64(4096), ranges[1].Length, "Second range should be 4KB")
+
+		assert.Equal(t, int64(16384), ranges[2].FileOffset, "Third range should start at 16KB")
+		assert.Equal(t, int64(4096), ranges[2].Length, "Third range should be 4KB")
+	}
 
 	// Close and reopen the file to ensure ranges are persisted
 	f.Close()
