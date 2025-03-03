@@ -62,24 +62,26 @@ func getStatFS(driveLetter string) (*StatFS, error) {
 
 	path := driveLetter + `\`
 
-	var sectorsPerCluster, bytesPerSector, freeClusters, totalClusters uint32
+	var sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters uint32
 
-	r1, _, err := syscall.SyscallN(
-		procGetDiskFreeSpace.Addr(),
-		5,
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(path))),
+	rootPathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert path to UTF16: %w", err)
+	}
+
+	ret, _, err := procGetDiskFreeSpace.Call(
+		uintptr(unsafe.Pointer(rootPathPtr)),
 		uintptr(unsafe.Pointer(&sectorsPerCluster)),
 		uintptr(unsafe.Pointer(&bytesPerSector)),
-		uintptr(unsafe.Pointer(&freeClusters)),
-		uintptr(unsafe.Pointer(&totalClusters)),
-		0,
+		uintptr(unsafe.Pointer(&numberOfFreeClusters)),
+		uintptr(unsafe.Pointer(&totalNumberOfClusters)),
 	)
-	if r1 == 0 {
-		return nil, err
+	if ret == 0 {
+		return nil, fmt.Errorf("GetDiskFreeSpaceW failed: %w", err)
 	}
 
 	blockSize := uint64(sectorsPerCluster) * uint64(bytesPerSector)
-	totalBlocks := uint64(totalClusters)
+	totalBlocks := uint64(totalNumberOfClusters)
 
 	stat := &StatFS{
 		Bsize:   blockSize,
@@ -206,38 +208,4 @@ func getFileSize(handle windows.Handle) (int64, error) {
 
 	// Combine the high and low parts of the file size
 	return int64(fileInfo.FileSizeHigh)<<32 + int64(fileInfo.FileSizeLow), nil
-}
-
-func getClusterSize(path string) (int64, error) {
-	var sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters uint32
-
-	// Ensure the path points to the root of the volume (e.g., "C:\")
-	rootPath := path[:3] // Extract the drive letter and root (e.g., "C:\")
-	if len(rootPath) != 3 || rootPath[1] != ':' || rootPath[2] != '\\' {
-		return 0, fmt.Errorf("invalid path for GetDiskFreeSpaceW: %s", path)
-	}
-
-	// Call GetDiskFreeSpaceW to retrieve cluster size information
-	kernel32 := windows.NewLazySystemDLL("kernel32.dll")
-	procGetDiskFreeSpaceW := kernel32.NewProc("GetDiskFreeSpaceW")
-
-	rootPathPtr, err := windows.UTF16PtrFromString(rootPath)
-	if err != nil {
-		return 0, fmt.Errorf("failed to convert path to UTF16: %w", err)
-	}
-
-	ret, _, err := procGetDiskFreeSpaceW.Call(
-		uintptr(unsafe.Pointer(rootPathPtr)),
-		uintptr(unsafe.Pointer(&sectorsPerCluster)),
-		uintptr(unsafe.Pointer(&bytesPerSector)),
-		uintptr(unsafe.Pointer(&numberOfFreeClusters)),
-		uintptr(unsafe.Pointer(&totalNumberOfClusters)),
-	)
-	if ret == 0 {
-		return 0, fmt.Errorf("GetDiskFreeSpaceW failed: %w", err)
-	}
-
-	// Calculate cluster size
-	clusterSize := int64(sectorsPerCluster) * int64(bytesPerSector)
-	return clusterSize, nil
 }

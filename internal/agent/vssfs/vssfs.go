@@ -388,66 +388,9 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (*arpc.Response, error) {
 
 	// Handle sparse file operations
 	if payload.Whence == SeekData || payload.Whence == SeekHole {
-		// Check if offset is beyond EOF
-		if payload.Offset >= fileSize {
-			return nil, syscall.ENXIO
-		}
-
-		// Query allocated ranges
-		ranges, err := queryAllocatedRanges(fh.handle, fileSize)
+		newOffset, err = sparseSeek(fh.handle, payload.Offset, payload.Whence, fileSize)
 		if err != nil {
 			return nil, err
-		}
-
-		if payload.Whence == SeekData {
-			// Find the next data region
-			found := false
-			for _, r := range ranges {
-				if payload.Offset >= r.FileOffset && payload.Offset < r.FileOffset+r.Length {
-					// Already in data
-					newOffset = payload.Offset
-					found = true
-					break
-				}
-				if payload.Offset < r.FileOffset {
-					// Found next data
-					newOffset = r.FileOffset
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, syscall.ENXIO
-			}
-		} else { // SeekHole
-			// Find the next hole
-			found := false
-			for i, r := range ranges {
-				if payload.Offset < r.FileOffset {
-					// Already in a hole
-					newOffset = payload.Offset
-					found = true
-					break
-				}
-				if payload.Offset >= r.FileOffset && payload.Offset < r.FileOffset+r.Length {
-					// In data, seek to the end of this region
-					newOffset = r.FileOffset + r.Length
-					found = true
-					break
-				}
-				// Check if there's a gap between this range and the next
-				if i < len(ranges)-1 && r.FileOffset+r.Length < ranges[i+1].FileOffset {
-					if payload.Offset < ranges[i+1].FileOffset {
-						newOffset = r.FileOffset + r.Length
-						found = true
-						break
-					}
-				}
-			}
-			if !found {
-				// After all ranges, everything to EOF is a hole
-				newOffset = payload.Offset
-			}
 		}
 	} else {
 		// Handle standard seek operations
@@ -474,6 +417,11 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (*arpc.Response, error) {
 				return nil, os.ErrInvalid
 			}
 		}
+	}
+
+	// Validate the new offset
+	if newOffset > fileSize {
+		return nil, syscall.ENXIO // Seeking beyond EOF
 	}
 
 	// Set the new position
