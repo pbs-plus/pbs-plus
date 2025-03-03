@@ -5,11 +5,13 @@ package vssfs
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"syscall"
 
+	"github.com/Microsoft/go-winio"
 	"github.com/alphadose/haxmap"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/rekby/fastuuid"
@@ -84,7 +86,7 @@ func (s *VSSFSServer) Close() {
 		r.CloseHandle(s.jobId + "/ReadAt")
 		r.CloseHandle(s.jobId + "/Lseek")
 		r.CloseHandle(s.jobId + "/Close")
-		r.CloseHandle(s.jobId + "/FSstat")
+		r.CloseHandle(s.jobId + "/StatFS")
 	}
 
 	s.handles.Clear()
@@ -215,32 +217,26 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (*arpc.Response, error) {
 
 	// Only check for sparse file attributes and block allocation if it's a regular file
 	if !rawInfo.IsDir() {
-		handle, err := windows.CreateFile(
-			windows.StringToUTF16Ptr(fullPath),
-			windows.GENERIC_READ,
-			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-			nil,
-			windows.OPEN_EXISTING,
-			windows.FILE_ATTRIBUTE_NORMAL,
-			0,
-		)
-		if err == nil {
-			defer windows.CloseHandle(handle)
-
-			var blockSize uint64
-			if s.statFs != nil {
-				blockSize = s.statFs.Bsize
-			}
-
-			if blockSize == 0 {
-				blockSize = 4096 // Default to 4KB block size
-			}
-
-			standardInfo, err := getFileStandardInfo(handle)
-			if err == nil {
-				info.Blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
-			}
+		file, err := os.Open(fullPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file: %w", err)
 		}
+		defer file.Close()
+
+		var blockSize uint64
+		if s.statFs != nil {
+			blockSize = s.statFs.Bsize
+		}
+		if blockSize == 0 {
+			blockSize = 4096 // Default to 4KB block size
+		}
+
+		standardInfo, err := winio.GetFileStandardInfo(file)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get file standard info: %w", err)
+		}
+
+		info.Blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
 	} else {
 		info.Blocks = 0
 	}

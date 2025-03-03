@@ -5,48 +5,15 @@ package vssfs
 import (
 	"fmt"
 	"strings"
-	"sync"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-// FileStandardInfo structure for GetFileInformationByHandleEx
-type FileStandardInfo struct {
-	AllocationSize int64 // Allocated size in bytes
-	EndOfFile      int64 // Logical size in bytes
-	NumberOfLinks  uint32
-	DeletePending  uint32
-	Directory      uint32
-}
-
 var (
-	modkernel32                      = windows.NewLazySystemDLL("kernel32.dll")
-	procGetFileInformationByHandleEx = modkernel32.NewProc("GetFileInformationByHandleEx")
-	procGetDiskFreeSpace             = modkernel32.NewProc("GetDiskFreeSpaceW")
+	modkernel32          = windows.NewLazySystemDLL("kernel32.dll")
+	procGetDiskFreeSpace = modkernel32.NewProc("GetDiskFreeSpaceW")
 )
-
-// Constants for GetFileInformationByHandleEx
-const (
-	FileStandardInfoClass = 1
-)
-
-// Wrapper for GetFileInformationByHandleEx
-func getFileStandardInfo(handle windows.Handle) (*FileStandardInfo, error) {
-	var info FileStandardInfo
-	r1, _, e1 := syscall.SyscallN(
-		procGetFileInformationByHandleEx.Addr(),
-		3,
-		uintptr(handle),
-		uintptr(FileStandardInfoClass),
-		uintptr(unsafe.Pointer(&info)),
-	)
-	if r1 == 0 {
-		return nil, e1
-	}
-	return &info, nil
-}
 
 func getStatFS(driveLetter string) (*StatFS, error) {
 	driveLetter = strings.TrimSpace(driveLetter)
@@ -106,89 +73,62 @@ const (
 	SeekHole = 4 // SEEK_HOLE: seek to the next hole
 )
 
-var bufferSizes = []int{64, 256, 1024, 4096, 16384, 65536, 262144, 1048576}
-
-var rangeBufferPools = make([]sync.Pool, len(bufferSizes))
-
-func init() {
-	for i, size := range bufferSizes {
-		size := size // Capture for closure
-		rangeBufferPools[i] = sync.Pool{
-			New: func() interface{} {
-				return make([]FileAllocatedRangeBuffer, size)
-			},
-		}
-	}
-}
-
 func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocatedRangeBuffer, error) {
+	// Handle edge case: zero file size
+	if fileSize == 0 {
+		return nil, nil
+	}
+
 	// Define the input range for the query
 	var inputRange FileAllocatedRangeBuffer
 	inputRange.FileOffset = 0
 	inputRange.Length = fileSize
 
-	// Allocate an initial buffer for the output ranges
-	const initialBufferSize = 64 // Number of ranges to allocate initially
-	outputBuffer := make([]FileAllocatedRangeBuffer, initialBufferSize)
+	// Constants for buffer size calculations
+	rangeSize := int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
+
+	// Start with a small buffer and dynamically resize if needed
+	bufferSize := 1 // Start with space for 1 range
 	var bytesReturned uint32
 
-	// Call FSCTL_QUERY_ALLOCATED_RANGES
-	err := windows.DeviceIoControl(
-		handle,
-		windows.FSCTL_QUERY_ALLOCATED_RANGES,
-		(*byte)(unsafe.Pointer(&inputRange)),
-		uint32(unsafe.Sizeof(inputRange)),
-		(*byte)(unsafe.Pointer(&outputBuffer[0])),
-		uint32(len(outputBuffer)*int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))),
-		&bytesReturned,
-		nil,
-	)
+	for {
+		// Allocate the output buffer
+		outputBuffer := make([]FileAllocatedRangeBuffer, bufferSize)
 
-	if err != nil {
-		if err == windows.ERROR_INVALID_FUNCTION {
-			// Filesystem does not support FSCTL_QUERY_ALLOCATED_RANGES
-			// Return a single range covering the whole file
-			result := make([]FileAllocatedRangeBuffer, 1)
-			result[0] = FileAllocatedRangeBuffer{FileOffset: 0, Length: fileSize}
-			return result, nil
-		}
-		return nil, fmt.Errorf("DeviceIoControl failed: %w", err)
-	}
-
-	// Calculate how many ranges were returned
-	rangeSize := int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
-	count := int(bytesReturned) / rangeSize
-
-	if count == 0 {
-		// No allocated ranges were returned
-		return nil, fmt.Errorf("No allocated ranges found")
-	}
-
-	// If the buffer was too small, retry with a larger buffer
-	if count == len(outputBuffer) {
-		// Double the buffer size and retry
-		outputBuffer = make([]FileAllocatedRangeBuffer, len(outputBuffer)*2)
-		err = windows.DeviceIoControl(
+		// Call DeviceIoControl
+		err := windows.DeviceIoControl(
 			handle,
 			windows.FSCTL_QUERY_ALLOCATED_RANGES,
 			(*byte)(unsafe.Pointer(&inputRange)),
 			uint32(unsafe.Sizeof(inputRange)),
 			(*byte)(unsafe.Pointer(&outputBuffer[0])),
-			uint32(len(outputBuffer)*int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))),
+			uint32(bufferSize*rangeSize),
 			&bytesReturned,
 			nil,
 		)
-		if err != nil {
-			return nil, fmt.Errorf("DeviceIoControl failed on retry: %w", err)
+
+		if err == nil {
+			// Success: Calculate the number of ranges returned
+			count := int(bytesReturned) / rangeSize
+			return outputBuffer[:count], nil
 		}
-		count = int(bytesReturned) / rangeSize
+
+		if err == windows.ERROR_MORE_DATA {
+			// Buffer was too small: Increase the buffer size and retry
+			bufferSize *= 2
+			continue
+		}
+
+		if err == windows.ERROR_INVALID_FUNCTION {
+			// Filesystem does not support FSCTL_QUERY_ALLOCATED_RANGES
+			// Return a single range covering the whole file
+			return []FileAllocatedRangeBuffer{
+				{FileOffset: 0, Length: fileSize},
+			}, nil
+		}
+
+		return nil, fmt.Errorf("DeviceIoControl failed: %w", err)
 	}
-
-	// Create a result slice with the exact number of ranges
-	result := make([]FileAllocatedRangeBuffer, count)
-	copy(result, outputBuffer[:count])
-
-	return result, nil
 }
 
 func getFileSize(handle windows.Handle) (int64, error) {
