@@ -295,6 +295,7 @@ func (p *agentService) connectARPC() error {
 	session.SetRouter(router)
 
 	go func() {
+		defer session.Close()
 		syslog.L.Info("Connecting aRPC endpoint from /plus/arpc")
 		if err := session.Serve(); err != nil {
 			syslog.L.Errorf("session closed: %v", err)
