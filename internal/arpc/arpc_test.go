@@ -244,12 +244,7 @@ func TestSessionCall_Concurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			payload := MapStringIntMsg{"client": id}
-			payloadBytes, err := payload.MarshalMsg(nil)
-			if err != nil {
-				t.Errorf("Client %d error: %v", id, err)
-				return
-			}
-			resp, err := clientSession.Call("ping", payloadBytes)
+			resp, err := clientSession.Call("ping", payload)
 			if err != nil {
 				t.Errorf("Client %d error: %v", id, err)
 				return

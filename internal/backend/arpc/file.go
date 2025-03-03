@@ -23,12 +23,7 @@ func (f *ARPCFile) Close() error {
 	}
 
 	req := vssfs.CloseReq{HandleID: f.handleID}
-	reqBytes, err := req.MarshalMsg(nil)
-	if err != nil {
-		return os.ErrInvalid
-	}
-
-	_, err = f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Close", reqBytes)
+	_, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Close", req)
 	if err != nil {
 		syslog.L.Errorf("Write RPC failed (%s): %v", f.name, err)
 		return err
@@ -44,13 +39,8 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 		Offset:   int64(off),
 		Whence:   whence,
 	}
-	reqBytes, err := req.MarshalMsg(nil)
-	if err != nil {
-		return 0, os.ErrInvalid
-	}
-
 	// Send the request to the server
-	respBytes, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Lseek", reqBytes)
+	respBytes, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Lseek", req)
 	if err != nil {
 		return 0, os.ErrInvalid
 	}

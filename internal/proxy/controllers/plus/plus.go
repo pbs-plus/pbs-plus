@@ -43,13 +43,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 			req := vssfs.BackupReq{Drive: agentDrive, JobId: jobId}
-			reqBytes, err := req.MarshalMsg(nil)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			backupResp, err := arpcSess.CallContext(ctx, "backup", reqBytes)
+			backupResp, err := arpcSess.CallContext(ctx, "backup", req)
 			if err != nil || backupResp.Status != 200 {
 				if err != nil {
 					err = errors.New(backupResp.Message)
@@ -102,13 +96,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			req := vssfs.BackupReq{Drive: agentDrive, JobId: jobId}
-			reqBytes, err := req.MarshalMsg(nil)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", reqBytes)
+			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", req)
 			if err != nil || cleanupResp.Status != 200 {
 				if err != nil {
 					err = errors.New(cleanupResp.Message)

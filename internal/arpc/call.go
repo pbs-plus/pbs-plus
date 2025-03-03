@@ -14,11 +14,11 @@ import (
 )
 
 // Call initiates a request/response conversation on a new stream.
-func (s *Session) Call(method string, payload []byte) (*Response, error) {
+func (s *Session) Call(method string, payload msgp.Marshaler) (*Response, error) {
 	return s.CallContext(context.Background(), method, payload)
 }
 
-func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload []byte) (*Response, error) {
+func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload msgp.Marshaler) (*Response, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -27,7 +27,7 @@ func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload 
 
 // CallContext performs an RPC call over a new stream.
 // It applies any context deadlines to the smux stream.
-func (s *Session) CallContext(ctx context.Context, method string, payload []byte) (*Response, error) {
+func (s *Session) CallContext(ctx context.Context, method string, payload msgp.Marshaler) (*Response, error) {
 
 	// Use the atomic pointer to avoid holding a lock while reading.
 	curSession := s.muxSess.Load()
@@ -45,10 +45,20 @@ func (s *Session) CallContext(ctx context.Context, method string, payload []byte
 		stream.SetReadDeadline(deadline)
 	}
 
+	var payloadBytes []byte
+	if payload != nil {
+		poolBytes, err := marshalWithPool(payload)
+		if err != nil {
+			return nil, err
+		}
+		defer bytebufferpool.Put(poolBytes)
+		payloadBytes = poolBytes.B
+	}
+
 	// Build and send the RPC request.
 	req := Request{
 		Method:  method,
-		Payload: payload,
+		Payload: payloadBytes,
 	}
 
 	reqBytes, err := marshalWithPool(&req)
@@ -82,7 +92,7 @@ func (s *Session) CallContext(ctx context.Context, method string, payload []byte
 
 // CallMsg performs an RPC call and unmarshals its Data into v on success,
 // or decodes the error from Data if status != http.StatusOK.
-func (s *Session) CallMsg(ctx context.Context, method string, payload []byte) ([]byte, error) {
+func (s *Session) CallMsg(ctx context.Context, method string, payload msgp.Marshaler) ([]byte, error) {
 	resp, err := s.CallContext(ctx, method, payload)
 	if err != nil {
 		return nil, err
@@ -104,7 +114,7 @@ func (s *Session) CallMsg(ctx context.Context, method string, payload []byte) ([
 	return resp.Data, nil
 }
 
-func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, payload []byte) ([]byte, error) {
+func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, payload msgp.Marshaler) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -126,7 +136,6 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	}
 
 	var payloadBytes []byte
-
 	if payload != nil {
 		poolBytes, err := marshalWithPool(payload)
 		if err != nil {

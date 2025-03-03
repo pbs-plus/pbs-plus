@@ -173,9 +173,8 @@ func TestVSSFSServer(t *testing.T) {
 
 	t.Run("Stat", func(t *testing.T) {
 		payload := StatReq{Path: "test1.txt"}
-		payloadBytes, _ := payload.MarshalMsg(nil)
 		var result VSSFileInfo
-		raw, err := clientSession.CallMsg(ctx, "vss/Stat", payloadBytes)
+		raw, err := clientSession.CallMsg(ctx, "vss/Stat", payload)
 		result.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 		assert.NotNil(t, result.Size)
@@ -184,9 +183,8 @@ func TestVSSFSServer(t *testing.T) {
 
 	t.Run("ReadDir", func(t *testing.T) {
 		payload := ReadDirReq{Path: "/"}
-		payloadBytes, _ := payload.MarshalMsg(nil)
 		var result ReadDirEntries
-		raw, err := clientSession.CallMsg(ctx, "vss/ReadDir", payloadBytes)
+		raw, err := clientSession.CallMsg(ctx, "vss/ReadDir", payload)
 		result.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(result), 3) // Should have at least test1.txt, test2.txt, and subdir
@@ -213,9 +211,8 @@ func TestVSSFSServer(t *testing.T) {
 
 		// Open file
 		payload := OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
-		payloadBytes, _ := payload.MarshalMsg(nil)
 		var openResult FileHandleId
-		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
 		require.NoError(t, err, "OpenFile should succeed")
 		openResult.UnmarshalMsg(raw)
 
@@ -260,8 +257,7 @@ func TestVSSFSServer(t *testing.T) {
 
 		// Close file
 		closePayload := CloseReq{HandleID: openResult}
-		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
-		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+		resp, err := clientSession.Call("vss/Close", closePayload)
 		if err != nil {
 			t.Logf("Close error: %v - Current handle map: %s", err, dumpHandleMap(vssServer))
 			t.FailNow()
@@ -285,9 +281,8 @@ func TestVSSFSServer(t *testing.T) {
 			t.Logf("Opening file %d: %s", i, fileName)
 
 			payload := OpenFileReq{Path: fileName, Flag: 0, Perm: 0644}
-			payloadBytes, _ := payload.MarshalMsg(nil)
 			var openResult FileHandleId
-			raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+			raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
 			require.NoError(t, err, "OpenFile should succeed for %s", fileName)
 			openResult.UnmarshalMsg(raw)
 
@@ -322,10 +317,9 @@ func TestVSSFSServer(t *testing.T) {
 			t.Logf("Closing file %d with handle: %s", i, string(handle))
 
 			closePayload := CloseReq{HandleID: handle}
-			closePayloadBytes, _ := closePayload.MarshalMsg(nil)
 
 			t.Log("Before Close:", dumpHandleMap(vssServer))
-			resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+			resp, err := clientSession.Call("vss/Close", closePayload)
 			if err != nil {
 				t.Logf("Close error for handle %s: %v - Current handle map: %s",
 					string(handle), err, dumpHandleMap(vssServer))
@@ -339,9 +333,8 @@ func TestVSSFSServer(t *testing.T) {
 	t.Run("LargeFile_Read", func(t *testing.T) {
 		// Open large file
 		payload := OpenFileReq{Path: "large_file.bin", Flag: 0, Perm: 0644}
-		payloadBytes, _ := payload.MarshalMsg(nil)
 		var openResult FileHandleId
-		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
 		openResult.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 
@@ -380,8 +373,7 @@ func TestVSSFSServer(t *testing.T) {
 
 		// Close file
 		closePayload := CloseReq{HandleID: openResult}
-		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
-		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+		resp, err := clientSession.Call("vss/Close", closePayload)
 		if err != nil {
 			t.Logf("Large file Close error: %v - Current handle map: %s", err, dumpHandleMap(vssServer))
 			t.FailNow()
@@ -397,19 +389,17 @@ func TestVSSFSServer(t *testing.T) {
 			Offset:   0,
 			Length:   100,
 		}
-		readAtPayloadBytes, _ := readAtPayload.MarshalMsg(nil)
 
 		t.Log("Current handle map before invalid ReadAt:", dumpHandleMap(vssServer))
-		resp, err := clientSession.Call("vss/ReadAt", readAtPayloadBytes)
+		resp, err := clientSession.Call("vss/ReadAt", readAtPayload)
 		assert.NoError(t, err, "Call should succeed but response should indicate error")
 		assert.Equal(t, 500, resp.Status, "ReadAt with invalid handle should return 500 status")
 
 		// Try to close a non-existent handle
 		closePayload := CloseReq{HandleID: "nonexistent_handle_id"}
-		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
 
 		t.Log("Current handle map before invalid Close:", dumpHandleMap(vssServer))
-		resp, err = clientSession.Call("vss/Close", closePayloadBytes)
+		resp, err = clientSession.Call("vss/Close", closePayload)
 		assert.NoError(t, err, "Call should succeed but response should indicate error")
 		assert.Equal(t, 500, resp.Status, "Close with invalid handle should return 500 status")
 	})
@@ -418,9 +408,8 @@ func TestVSSFSServer(t *testing.T) {
 	t.Run("DoubleClose", func(t *testing.T) {
 		// Open file
 		payload := OpenFileReq{Path: "test1.txt", Flag: 0, Perm: 0644}
-		payloadBytes, _ := payload.MarshalMsg(nil)
 		var openResult FileHandleId
-		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
 		require.NoError(t, err)
 		openResult.UnmarshalMsg(raw)
 
@@ -429,15 +418,14 @@ func TestVSSFSServer(t *testing.T) {
 
 		// First close - should succeed
 		closePayload := CloseReq{HandleID: openResult}
-		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
-		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+		resp, err := clientSession.Call("vss/Close", closePayload)
 		assert.NoError(t, err)
 		assert.Equal(t, 200, resp.Status)
 
 		t.Log("After first close:", dumpHandleMap(vssServer))
 
 		// Second close - should fail
-		resp, err = clientSession.Call("vss/Close", closePayloadBytes)
+		resp, err = clientSession.Call("vss/Close", closePayload)
 		assert.NoError(t, err, "Call should succeed but response should indicate error")
 		assert.NotEqual(t, 200, resp.Status, "Second close with same handle should return error status")
 
@@ -447,9 +435,8 @@ func TestVSSFSServer(t *testing.T) {
 	t.Run("Lseek", func(t *testing.T) {
 		// Open a test file
 		payload := OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
-		payloadBytes, _ := payload.MarshalMsg(nil)
 		var openResult FileHandleId
-		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
 		require.NoError(t, err, "OpenFile should succeed")
 		openResult.UnmarshalMsg(raw)
 
@@ -463,9 +450,8 @@ func TestVSSFSServer(t *testing.T) {
 				Offset:   0,
 				Whence:   io.SeekStart,
 			}
-			lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
 
-			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayload)
 			require.NoError(t, err, "Lseek should succeed")
 			var lseekResp LseekResp
 			lseekResp.UnmarshalMsg(raw)
@@ -480,9 +466,8 @@ func TestVSSFSServer(t *testing.T) {
 				Offset:   10,
 				Whence:   io.SeekStart,
 			}
-			lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
 
-			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayload)
 			require.NoError(t, err, "Lseek should succeed")
 			var lseekResp LseekResp
 			lseekResp.UnmarshalMsg(raw)
@@ -497,9 +482,8 @@ func TestVSSFSServer(t *testing.T) {
 				Offset:   5,
 				Whence:   io.SeekCurrent,
 			}
-			lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
 
-			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayload)
 			require.NoError(t, err, "Lseek should succeed")
 			var lseekResp LseekResp
 			lseekResp.UnmarshalMsg(raw)
@@ -514,9 +498,8 @@ func TestVSSFSServer(t *testing.T) {
 				Offset:   -5,
 				Whence:   io.SeekEnd,
 			}
-			lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
 
-			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+			raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayload)
 			require.NoError(t, err, "Lseek should succeed")
 			var lseekResp LseekResp
 			lseekResp.UnmarshalMsg(raw)
@@ -535,9 +518,8 @@ func TestVSSFSServer(t *testing.T) {
 				Offset:   100,
 				Whence:   io.SeekStart,
 			}
-			lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
 
-			_, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+			_, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayload)
 			require.Error(t, err, "Lseek should fail when seeking beyond EOF")
 		})
 
@@ -550,9 +532,8 @@ func TestVSSFSServer(t *testing.T) {
 
 			// Open the sparse file
 			payload := OpenFileReq{Path: "sparse_file.bin", Flag: 0, Perm: 0644}
-			payloadBytes, _ := payload.MarshalMsg(nil)
 			var openResult FileHandleId
-			raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payloadBytes)
+			raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
 			require.NoError(t, err, "OpenFile should succeed for sparse file")
 			openResult.UnmarshalMsg(raw)
 
@@ -567,9 +548,8 @@ func TestVSSFSServer(t *testing.T) {
 					Offset:   0,
 					Whence:   SeekData,
 				}
-				lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
 
-				raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+				raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayload)
 				require.NoError(t, err, "SeekData should succeed")
 				var lseekResp LseekResp
 				lseekResp.UnmarshalMsg(raw)
@@ -579,9 +559,8 @@ func TestVSSFSServer(t *testing.T) {
 
 				// Seek to the second data region
 				lseekPayload.Offset = 1024 * 1024 // Start searching after the first data region
-				lseekPayloadBytes, _ = lseekPayload.MarshalMsg(nil)
 
-				raw, err = clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+				raw, err = clientSession.CallMsg(ctx, "vss/Lseek", lseekPayload)
 				require.NoError(t, err, "SeekData should succeed")
 				lseekResp.UnmarshalMsg(raw)
 
@@ -597,9 +576,8 @@ func TestVSSFSServer(t *testing.T) {
 					Offset:   0,
 					Whence:   SeekHole,
 				}
-				lseekPayloadBytes, _ := lseekPayload.MarshalMsg(nil)
 
-				raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+				raw, err := clientSession.CallMsg(ctx, "vss/Lseek", lseekPayload)
 				require.NoError(t, err, "SeekHole should succeed")
 				var lseekResp LseekResp
 				lseekResp.UnmarshalMsg(raw)
@@ -609,9 +587,7 @@ func TestVSSFSServer(t *testing.T) {
 
 				// Seek to the second hole region
 				lseekPayload.Offset = 1048576 // Start searching after the first data region
-				lseekPayloadBytes, _ = lseekPayload.MarshalMsg(nil)
-
-				raw, err = clientSession.CallMsg(ctx, "vss/Lseek", lseekPayloadBytes)
+				raw, err = clientSession.CallMsg(ctx, "vss/Lseek", lseekPayload)
 				require.NoError(t, err, "SeekHole should succeed")
 				lseekResp.UnmarshalMsg(raw)
 
@@ -621,16 +597,14 @@ func TestVSSFSServer(t *testing.T) {
 
 			// Close the file
 			closePayload := CloseReq{HandleID: openResult}
-			closePayloadBytes, _ := closePayload.MarshalMsg(nil)
-			resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+			resp, err := clientSession.Call("vss/Close", closePayload)
 			assert.NoError(t, err, "Close should succeed")
 			assert.Equal(t, 200, resp.Status)
 		})
 
 		// Close the file
 		closePayload := CloseReq{HandleID: openResult}
-		closePayloadBytes, _ := closePayload.MarshalMsg(nil)
-		resp, err := clientSession.Call("vss/Close", closePayloadBytes)
+		resp, err := clientSession.Call("vss/Close", closePayload)
 		assert.NoError(t, err, "Close should succeed")
 		assert.Equal(t, 200, resp.Status)
 	})

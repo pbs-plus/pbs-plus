@@ -108,13 +108,9 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (*ARPCFi
 		Flag: flag,
 		Perm: int(perm),
 	}
-	reqBytes, err := req.MarshalMsg(nil)
-	if err != nil {
-		return nil, os.ErrInvalid
-	}
 
 	// Use the CPU efficient CallMsgDirect helper.
-	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/OpenFile", reqBytes)
+	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/OpenFile", req)
 	if err != nil {
 		return nil, err
 	}
@@ -141,13 +137,7 @@ func (fs *ARPCFS) Stat(filename string) (*vssfs.VSSFileInfo, error) {
 	}
 
 	req := vssfs.StatReq{Path: filename}
-	reqBytes, err := req.MarshalMsg(nil)
-	if err != nil {
-		return nil, os.ErrInvalid
-	}
-
-	// Use the new CallMsgDirect helper:
-	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Stat", reqBytes)
+	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Stat", req)
 	if err != nil {
 		return nil, err
 	}
@@ -198,12 +188,7 @@ func (fs *ARPCFS) ReadDir(path string) (*vssfs.ReadDirEntries, error) {
 
 	var resp vssfs.ReadDirEntries
 	req := vssfs.ReadDirReq{Path: path}
-	reqBytes, err := req.MarshalMsg(nil)
-	if err != nil {
-		return nil, os.ErrInvalid
-	}
-
-	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/ReadDir", reqBytes)
+	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/ReadDir", req)
 	if err != nil {
 		return nil, err
 	}
