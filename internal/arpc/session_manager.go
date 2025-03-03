@@ -18,7 +18,7 @@ func NewSessionManager() *SessionManager {
 }
 
 // GetOrCreateSession ensures a single Session per client.
-func (sm *SessionManager) GetOrCreateSession(clientID string, conn net.Conn) (*Session, error) {
+func (sm *SessionManager) GetOrCreateSession(clientID string, version string, conn net.Conn) (*Session, error) {
 	// Check if a session already exists for the client
 	if session, exists := sm.sessions.Get(clientID); exists {
 		return session, nil
@@ -29,6 +29,7 @@ func (sm *SessionManager) GetOrCreateSession(clientID string, conn net.Conn) (*S
 	if err != nil {
 		return nil, err
 	}
+	session.version = version
 
 	router := NewRouter()
 	router.Handle("echo", func(req Request) (*Response, error) {

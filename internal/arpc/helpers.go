@@ -11,7 +11,7 @@ import (
 )
 
 // HijackUpgradeHTTP helps a server upgrade an HTTP connection.
-func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, mgr *SessionManager, config *smux.Config) (*Session, error) {
+func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, version string, mgr *SessionManager, config *smux.Config) (*Session, error) {
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		return nil, fmt.Errorf("response writer does not support hijacking")
@@ -32,7 +32,7 @@ func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, 
 		return nil, err
 	}
 
-	return mgr.GetOrCreateSession(hostname, conn)
+	return mgr.GetOrCreateSession(hostname, version, conn)
 }
 
 // upgradeHTTPClient helps a client upgrade an HTTP connection.
