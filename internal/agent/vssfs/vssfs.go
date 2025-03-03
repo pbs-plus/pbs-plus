@@ -5,6 +5,7 @@ package vssfs
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -386,93 +387,117 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (*arpc.Response, error) {
 
 	var newOffset int64
 
-	// Handle standard seek operations first
-	switch payload.Whence {
-	case io.SeekStart:
-		if payload.Offset < 0 {
-			return nil, os.ErrInvalid
-		}
-		newOffset = payload.Offset
-
-	case io.SeekCurrent:
-		// Get current position
-		currentPos, err := windows.SetFilePointer(fh.handle, 0, nil, windows.FILE_CURRENT)
-		if err != nil {
-			return nil, err
-		}
-		newOffset = int64(currentPos) + payload.Offset
-		if newOffset < 0 {
-			return nil, os.ErrInvalid
-		}
-
-	case io.SeekEnd:
-		newOffset = fileSize + payload.Offset
-		if newOffset < 0 {
-			return nil, os.ErrInvalid
-		}
-
-	case SeekData, SeekHole:
-		// Query allocated ranges only for sparse operations
-		ranges, err := queryAllocatedRanges(fh.handle, fileSize)
-		if err != nil {
-			return nil, err
-		}
-
+	// Handle sparse file operations
+	if payload.Whence == SeekData || payload.Whence == SeekHole {
+		// Check if offset is beyond EOF
 		if payload.Offset >= fileSize {
 			return nil, syscall.ENXIO
 		}
 
+		// Query allocated ranges
+		ranges, err := queryAllocatedRanges(fh.handle, fileSize)
+		if err != nil {
+			// If filesystem doesn't support sparse files, treat the whole file as data
+			if err == windows.ERROR_INVALID_FUNCTION {
+				if payload.Whence == SeekData {
+					newOffset = payload.Offset
+				} else { // SeekHole
+					newOffset = fileSize // Everything is data, so hole starts at EOF
+				}
+				goto respond
+			}
+			return nil, err
+		}
+
+		// Log ranges for debugging
+		fmt.Printf("Ranges for file: %d ranges found\n", len(ranges))
+		for i, r := range ranges {
+			fmt.Printf("Range %d: offset=%d, length=%d\n", i, r.FileOffset, r.Length)
+		}
+
+		if len(ranges) == 0 {
+			// File is completely sparse
+			if payload.Whence == SeekData {
+				return nil, syscall.ENXIO // No data found
+			} else { // SeekHole
+				newOffset = payload.Offset // Everything is a hole
+			}
+			goto respond
+		}
+
 		if payload.Whence == SeekData {
 			// Find next data region
-			found := false
 			for _, r := range ranges {
 				if payload.Offset >= r.FileOffset && payload.Offset < r.FileOffset+r.Length {
 					// Already in data
 					newOffset = payload.Offset
-					found = true
-					break
+					goto respond
 				}
 				if payload.Offset < r.FileOffset {
 					// Found next data
 					newOffset = r.FileOffset
-					found = true
-					break
+					goto respond
 				}
 			}
-			if !found {
-				return nil, syscall.ENXIO
-			}
+			// No data found after offset
+			return nil, syscall.ENXIO
+
 		} else { // SeekHole
 			// Find next hole
-			found := false
 			for i, r := range ranges {
-				if payload.Offset >= r.FileOffset && payload.Offset < r.FileOffset+r.Length {
-					// In data, seek to end of region
-					newOffset = r.FileOffset + r.Length
-					found = true
-					break
-				}
 				if payload.Offset < r.FileOffset {
 					// Already in a hole
 					newOffset = payload.Offset
-					found = true
-					break
+					goto respond
 				}
-				// Check if this is the last range
-				if i == len(ranges)-1 && payload.Offset >= r.FileOffset+r.Length {
-					// After last data region, everything to EOF is a hole
-					newOffset = payload.Offset
-					found = true
-					break
+				if payload.Offset >= r.FileOffset && payload.Offset < r.FileOffset+r.Length {
+					// In data, seek to end of this region
+					newOffset = r.FileOffset + r.Length
+					goto respond
+				}
+				// Check if there's a gap between this range and the next
+				if i < len(ranges)-1 && r.FileOffset+r.Length < ranges[i+1].FileOffset {
+					if payload.Offset < ranges[i+1].FileOffset {
+						newOffset = r.FileOffset + r.Length
+						goto respond
+					}
 				}
 			}
-			if !found {
-				// If no ranges, everything is a hole
+			// After all ranges, everything to EOF is a hole
+			if payload.Offset >= ranges[len(ranges)-1].FileOffset+ranges[len(ranges)-1].Length {
 				newOffset = payload.Offset
+			} else {
+				newOffset = ranges[len(ranges)-1].FileOffset + ranges[len(ranges)-1].Length
+			}
+		}
+	} else {
+		// Handle standard seek operations
+		switch payload.Whence {
+		case io.SeekStart:
+			if payload.Offset < 0 {
+				return nil, os.ErrInvalid
+			}
+			newOffset = payload.Offset
+
+		case io.SeekCurrent:
+			currentPos, err := windows.SetFilePointer(fh.handle, 0, nil, windows.FILE_CURRENT)
+			if err != nil {
+				return nil, err
+			}
+			newOffset = int64(currentPos) + payload.Offset
+			if newOffset < 0 {
+				return nil, os.ErrInvalid
+			}
+
+		case io.SeekEnd:
+			newOffset = fileSize + payload.Offset
+			if newOffset < 0 {
+				return nil, os.ErrInvalid
 			}
 		}
 	}
 
+respond:
 	// Set the new position
 	_, err = windows.SetFilePointer(fh.handle, int32(newOffset), nil, windows.FILE_BEGIN)
 	if err != nil {
