@@ -81,7 +81,7 @@ func writeMsgpMsg(w io.Writer, msg []byte) error {
 // writeErrorResponse sends an error response over the stream.
 func writeErrorResponse(stream *smux.Stream, status int, err error) {
 	serErr := WrapError(err)
-	errBytes, mErr := marshalWithPool(serErr)
+	errBytes, mErr := marshalWithPool(&serErr)
 	if mErr != nil && syslog.L != nil {
 		syslog.L.Errorf("[writeErrorResponse] %s", mErr.Error())
 	}

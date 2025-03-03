@@ -154,8 +154,8 @@ func (z *CloseReq) DecodeMsg(dc *msgp.Reader) (err error) {
 		switch msgp.UnsafeString(field) {
 		case "handleID":
 			{
-				var zb0002 string
-				zb0002, err = dc.ReadString()
+				var zb0002 uint64
+				zb0002, err = dc.ReadUint64()
 				if err != nil {
 					err = msgp.WrapError(err, "HandleID")
 					return
@@ -181,7 +181,7 @@ func (z CloseReq) EncodeMsg(en *msgp.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	err = en.WriteString(string(z.HandleID))
+	err = en.WriteUint64(uint64(z.HandleID))
 	if err != nil {
 		err = msgp.WrapError(err, "HandleID")
 		return
@@ -195,7 +195,7 @@ func (z CloseReq) MarshalMsg(b []byte) (o []byte, err error) {
 	// map header, size 1
 	// string "handleID"
 	o = append(o, 0x81, 0xa8, 0x68, 0x61, 0x6e, 0x64, 0x6c, 0x65, 0x49, 0x44)
-	o = msgp.AppendString(o, string(z.HandleID))
+	o = msgp.AppendUint64(o, uint64(z.HandleID))
 	return
 }
 
@@ -219,8 +219,8 @@ func (z *CloseReq) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		switch msgp.UnsafeString(field) {
 		case "handleID":
 			{
-				var zb0002 string
-				zb0002, bts, err = msgp.ReadStringBytes(bts)
+				var zb0002 uint64
+				zb0002, bts, err = msgp.ReadUint64Bytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "HandleID")
 					return
@@ -241,15 +241,15 @@ func (z *CloseReq) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z CloseReq) Msgsize() (s int) {
-	s = 1 + 9 + msgp.StringPrefixSize + len(string(z.HandleID))
+	s = 1 + 9 + msgp.Uint64Size
 	return
 }
 
 // DecodeMsg implements msgp.Decodable
 func (z *FileHandleId) DecodeMsg(dc *msgp.Reader) (err error) {
 	{
-		var zb0001 string
-		zb0001, err = dc.ReadString()
+		var zb0001 uint64
+		zb0001, err = dc.ReadUint64()
 		if err != nil {
 			err = msgp.WrapError(err)
 			return
@@ -261,7 +261,7 @@ func (z *FileHandleId) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z FileHandleId) EncodeMsg(en *msgp.Writer) (err error) {
-	err = en.WriteString(string(z))
+	err = en.WriteUint64(uint64(z))
 	if err != nil {
 		err = msgp.WrapError(err)
 		return
@@ -272,15 +272,15 @@ func (z FileHandleId) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z FileHandleId) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	o = msgp.AppendString(o, string(z))
+	o = msgp.AppendUint64(o, uint64(z))
 	return
 }
 
 // UnmarshalMsg implements msgp.Unmarshaler
 func (z *FileHandleId) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	{
-		var zb0001 string
-		zb0001, bts, err = msgp.ReadStringBytes(bts)
+		var zb0001 uint64
+		zb0001, bts, err = msgp.ReadUint64Bytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err)
 			return
@@ -293,7 +293,7 @@ func (z *FileHandleId) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z FileHandleId) Msgsize() (s int) {
-	s = msgp.StringPrefixSize + len(string(z))
+	s = msgp.Uint64Size
 	return
 }
 
@@ -317,8 +317,8 @@ func (z *LseekReq) DecodeMsg(dc *msgp.Reader) (err error) {
 		switch msgp.UnsafeString(field) {
 		case "handle_id":
 			{
-				var zb0002 string
-				zb0002, err = dc.ReadString()
+				var zb0002 uint64
+				zb0002, err = dc.ReadUint64()
 				if err != nil {
 					err = msgp.WrapError(err, "HandleID")
 					return
@@ -356,7 +356,7 @@ func (z LseekReq) EncodeMsg(en *msgp.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	err = en.WriteString(string(z.HandleID))
+	err = en.WriteUint64(uint64(z.HandleID))
 	if err != nil {
 		err = msgp.WrapError(err, "HandleID")
 		return
@@ -390,7 +390,7 @@ func (z LseekReq) MarshalMsg(b []byte) (o []byte, err error) {
 	// map header, size 3
 	// string "handle_id"
 	o = append(o, 0x83, 0xa9, 0x68, 0x61, 0x6e, 0x64, 0x6c, 0x65, 0x5f, 0x69, 0x64)
-	o = msgp.AppendString(o, string(z.HandleID))
+	o = msgp.AppendUint64(o, uint64(z.HandleID))
 	// string "offset"
 	o = append(o, 0xa6, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74)
 	o = msgp.AppendInt64(o, z.Offset)
@@ -420,8 +420,8 @@ func (z *LseekReq) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		switch msgp.UnsafeString(field) {
 		case "handle_id":
 			{
-				var zb0002 string
-				zb0002, bts, err = msgp.ReadStringBytes(bts)
+				var zb0002 uint64
+				zb0002, bts, err = msgp.ReadUint64Bytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "HandleID")
 					return
@@ -454,7 +454,7 @@ func (z *LseekReq) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z LseekReq) Msgsize() (s int) {
-	s = 1 + 10 + msgp.StringPrefixSize + len(string(z.HandleID)) + 7 + msgp.Int64Size + 7 + msgp.IntSize
+	s = 1 + 10 + msgp.Uint64Size + 7 + msgp.Int64Size + 7 + msgp.IntSize
 	return
 }
 
@@ -734,8 +734,8 @@ func (z *ReadAtReq) DecodeMsg(dc *msgp.Reader) (err error) {
 		switch msgp.UnsafeString(field) {
 		case "handleID":
 			{
-				var zb0002 string
-				zb0002, err = dc.ReadString()
+				var zb0002 uint64
+				zb0002, err = dc.ReadUint64()
 				if err != nil {
 					err = msgp.WrapError(err, "HandleID")
 					return
@@ -773,7 +773,7 @@ func (z ReadAtReq) EncodeMsg(en *msgp.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	err = en.WriteString(string(z.HandleID))
+	err = en.WriteUint64(uint64(z.HandleID))
 	if err != nil {
 		err = msgp.WrapError(err, "HandleID")
 		return
@@ -807,7 +807,7 @@ func (z ReadAtReq) MarshalMsg(b []byte) (o []byte, err error) {
 	// map header, size 3
 	// string "handleID"
 	o = append(o, 0x83, 0xa8, 0x68, 0x61, 0x6e, 0x64, 0x6c, 0x65, 0x49, 0x44)
-	o = msgp.AppendString(o, string(z.HandleID))
+	o = msgp.AppendUint64(o, uint64(z.HandleID))
 	// string "offset"
 	o = append(o, 0xa6, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74)
 	o = msgp.AppendInt64(o, z.Offset)
@@ -837,8 +837,8 @@ func (z *ReadAtReq) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		switch msgp.UnsafeString(field) {
 		case "handleID":
 			{
-				var zb0002 string
-				zb0002, bts, err = msgp.ReadStringBytes(bts)
+				var zb0002 uint64
+				zb0002, bts, err = msgp.ReadUint64Bytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "HandleID")
 					return
@@ -871,7 +871,7 @@ func (z *ReadAtReq) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z ReadAtReq) Msgsize() (s int) {
-	s = 1 + 9 + msgp.StringPrefixSize + len(string(z.HandleID)) + 7 + msgp.Int64Size + 7 + msgp.IntSize
+	s = 1 + 9 + msgp.Uint64Size + 7 + msgp.Int64Size + 7 + msgp.IntSize
 	return
 }
 
@@ -1203,8 +1203,8 @@ func (z *ReadReq) DecodeMsg(dc *msgp.Reader) (err error) {
 		switch msgp.UnsafeString(field) {
 		case "handleID":
 			{
-				var zb0002 string
-				zb0002, err = dc.ReadString()
+				var zb0002 uint64
+				zb0002, err = dc.ReadUint64()
 				if err != nil {
 					err = msgp.WrapError(err, "HandleID")
 					return
@@ -1236,7 +1236,7 @@ func (z ReadReq) EncodeMsg(en *msgp.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	err = en.WriteString(string(z.HandleID))
+	err = en.WriteUint64(uint64(z.HandleID))
 	if err != nil {
 		err = msgp.WrapError(err, "HandleID")
 		return
@@ -1260,7 +1260,7 @@ func (z ReadReq) MarshalMsg(b []byte) (o []byte, err error) {
 	// map header, size 2
 	// string "handleID"
 	o = append(o, 0x82, 0xa8, 0x68, 0x61, 0x6e, 0x64, 0x6c, 0x65, 0x49, 0x44)
-	o = msgp.AppendString(o, string(z.HandleID))
+	o = msgp.AppendUint64(o, uint64(z.HandleID))
 	// string "length"
 	o = append(o, 0xa6, 0x6c, 0x65, 0x6e, 0x67, 0x74, 0x68)
 	o = msgp.AppendInt(o, z.Length)
@@ -1287,8 +1287,8 @@ func (z *ReadReq) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		switch msgp.UnsafeString(field) {
 		case "handleID":
 			{
-				var zb0002 string
-				zb0002, bts, err = msgp.ReadStringBytes(bts)
+				var zb0002 uint64
+				zb0002, bts, err = msgp.ReadUint64Bytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "HandleID")
 					return
@@ -1315,7 +1315,7 @@ func (z *ReadReq) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z ReadReq) Msgsize() (s int) {
-	s = 1 + 9 + msgp.StringPrefixSize + len(string(z.HandleID)) + 7 + msgp.IntSize
+	s = 1 + 9 + msgp.Uint64Size + 7 + msgp.IntSize
 	return
 }
 

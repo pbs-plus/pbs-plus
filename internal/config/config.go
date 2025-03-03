@@ -16,10 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/alphadose/haxmap"
 	"github.com/fsnotify/fsnotify"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
 // PropertyType represents the type of a configuration property
@@ -68,7 +67,7 @@ type SectionConfig[T any] struct {
 	parseSectionHead func(string) (string, string, error)
 	parseSectionLine func(string) (string, string, error)
 
-	cache       *haxmap.Map[string, *ConfigData[T]]
+	cache       *safemap.Map[string, *ConfigData[T]]
 	lastModTime atomic.Int64
 }
 
@@ -79,7 +78,7 @@ func NewSectionConfig[T any](plugin *SectionPlugin[T]) *SectionConfig[T] {
 		parseSectionHead: defaultParseSectionHeader,
 		parseSectionLine: defaultParseSectionContent,
 		fileMutex:        NewFileMutexManager(),
-		cache:            hashmap.New[*ConfigData[T]](),
+		cache:            safemap.New[string, *ConfigData[T]](),
 	}
 }
 

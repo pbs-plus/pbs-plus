@@ -12,7 +12,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string) *ARPCFS {
@@ -22,7 +22,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 		session:       session,
 		JobId:         jobId,
 		Hostname:      hostname,
-		accessedPaths: hashmap.New[bool](),
+		accessedPaths: safemap.New[string, bool](),
 	}
 
 	return fs

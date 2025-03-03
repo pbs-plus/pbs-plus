@@ -24,7 +24,7 @@ import (
 // The function returns the client‑side session (which is used for calls)
 // plus a cleanup function to shut down both sessions.
 // ---------------------------------------------------------------------
-func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Session, cleanup func()) {
+func setupSessionWithRouter(t *testing.T, router Router) (clientSession *Session, cleanup func()) {
 	t.Helper()
 
 	clientConn, serverConn := net.Pipe()
@@ -84,9 +84,9 @@ func TestRouterServeStream_Echo(t *testing.T) {
 
 	// Create the router and register an "echo" handler.
 	router := NewRouter()
-	router.Handle("echo", func(req Request) (*Response, error) {
+	router.Handle("echo", func(req Request) (Response, error) {
 		// Echo back the payload.
-		return &Response{
+		return Response{
 			Status: 200,
 			Data:   req.Payload,
 		}, nil
@@ -187,12 +187,12 @@ func TestRouterServeStream_Echo(t *testing.T) {
 // ---------------------------------------------------------------------
 func TestSessionCall_Success(t *testing.T) {
 	router := NewRouter()
-	router.Handle("ping", func(req Request) (*Response, error) {
+	router.Handle("ping", func(req Request) (Response, error) {
 		// Marshal "pong" using MessagePack.
 		var pong StringMsg
 		pong = "pong"
 		p, _ := pong.MarshalMsg(nil)
-		return &Response{
+		return Response{
 			Status: 200,
 			Data:   p,
 		}, nil
@@ -223,11 +223,11 @@ func TestSessionCall_Success(t *testing.T) {
 // ---------------------------------------------------------------------
 func TestSessionCall_Concurrency(t *testing.T) {
 	router := NewRouter()
-	router.Handle("ping", func(req Request) (*Response, error) {
+	router.Handle("ping", func(req Request) (Response, error) {
 		var pong StringMsg
 		pong = "pong"
 		p, _ := pong.MarshalMsg(nil)
-		return &Response{
+		return Response{
 			Status: 200,
 			Data:   p,
 		}, nil
@@ -272,12 +272,12 @@ func TestSessionCall_Concurrency(t *testing.T) {
 // ---------------------------------------------------------------------
 func TestCallContext_Timeout(t *testing.T) {
 	router := NewRouter()
-	router.Handle("slow", func(req Request) (*Response, error) {
+	router.Handle("slow", func(req Request) (Response, error) {
 		time.Sleep(200 * time.Millisecond)
 		var done StringMsg
 		done = "done"
 		p, _ := done.MarshalMsg(nil)
-		return &Response{
+		return Response{
 			Status: 200,
 			Data:   p,
 		}, nil
@@ -305,11 +305,11 @@ func TestCallContext_Timeout(t *testing.T) {
 // ---------------------------------------------------------------------
 func TestAutoReconnect(t *testing.T) {
 	router := NewRouter()
-	router.Handle("ping", func(req Request) (*Response, error) {
+	router.Handle("ping", func(req Request) (Response, error) {
 		var pong StringMsg
 		pong = "pong"
 		p, _ := pong.MarshalMsg(nil)
-		return &Response{
+		return Response{
 			Status: 200,
 			Data:   p,
 		}, nil
@@ -343,7 +343,7 @@ func TestAutoReconnect(t *testing.T) {
 	}
 
 	// Enable auto‑reconnect on the client session.
-	rc := &ReconnectConfig{
+	rc := ReconnectConfig{
 		AutoReconnect:  true,
 		DialFunc:       dialFunc,
 		UpgradeFunc:    upgradeFunc,
@@ -422,7 +422,7 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 		binaryData := []byte("hello world")
 
 		// Send the response status
-		response := &Response{Status: 213}
+		response := Response{Status: 213}
 		respBytes, err := response.MarshalMsg(nil)
 		if err != nil {
 			t.Errorf("server: error marshaling response: %v", err)
@@ -473,10 +473,10 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 func TestCallMsg_ErrorResponse(t *testing.T) {
 	router := NewRouter()
 	// Register a handler that deliberately returns an error.
-	router.Handle("error", func(req Request) (*Response, error) {
+	router.Handle("error", func(req Request) (Response, error) {
 		// Returning an error here will trigger writeErrorResponse,
 		// which wraps the error inside a Response with non‑200 status.
-		return &Response{}, errors.New("test error")
+		return Response{}, errors.New("test error")
 	})
 
 	clientSession, cleanup := setupSessionWithRouter(t, router)
@@ -502,9 +502,9 @@ func TestCallMsg_ErrorResponse(t *testing.T) {
 func TestCallMsgWithBuffer_ErrorResponse(t *testing.T) {
 	router := NewRouter()
 	// Register a handler that simulates an error response.
-	router.Handle("buffer_error", func(req Request) (*Response, error) {
+	router.Handle("buffer_error", func(req Request) (Response, error) {
 		// Trigger an error response; writeErrorResponse is used internally.
-		return &Response{}, errors.New("buffer error occurred")
+		return Response{}, errors.New("buffer error occurred")
 	})
 
 	clientSession, cleanup := setupSessionWithRouter(t, router)

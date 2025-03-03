@@ -4,10 +4,10 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/alphadose/haxmap"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
 // ARPCFS implements billy.Filesystem using aRPC calls
@@ -19,7 +19,7 @@ type ARPCFS struct {
 	Mount    *gofuse.Server
 	basePath string
 
-	accessedPaths *haxmap.Map[string, bool]
+	accessedPaths *safemap.Map[string, bool]
 
 	// Atomic counters for the number of unique file and folder accesses.
 	fileCount   int64

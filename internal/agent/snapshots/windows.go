@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/mxk/go-vss"
@@ -28,7 +27,6 @@ type WinVSSSnapshot struct {
 	Id           string    `json:"vss_id"`
 	TimeStarted  time.Time `json:"time_started"`
 	DriveLetter  string
-	closed       atomic.Bool
 }
 
 func getVSSFolder() (string, error) {
@@ -41,11 +39,11 @@ func getVSSFolder() (string, error) {
 }
 
 // Snapshot creates a new VSS snapshot for the specified drive
-func Snapshot(jobId string, driveLetter string) (*WinVSSSnapshot, error) {
+func Snapshot(jobId string, driveLetter string) (WinVSSSnapshot, error) {
 	volName := filepath.VolumeName(fmt.Sprintf("%s:", driveLetter))
 	vssFolder, err := getVSSFolder()
 	if err != nil {
-		return nil, fmt.Errorf("error getting VSS folder: %w", err)
+		return WinVSSSnapshot{}, fmt.Errorf("error getting VSS folder: %w", err)
 	}
 
 	snapshotPath := filepath.Join(vssFolder, jobId)
@@ -58,16 +56,16 @@ func Snapshot(jobId string, driveLetter string) (*WinVSSSnapshot, error) {
 
 	if err := createSnapshotWithRetry(ctx, snapshotPath, volName); err != nil {
 		cleanupExistingSnapshot(snapshotPath)
-		return nil, fmt.Errorf("snapshot creation failed: %w", err)
+		return WinVSSSnapshot{}, fmt.Errorf("snapshot creation failed: %w", err)
 	}
 
 	sc, err := vss.Get(snapshotPath)
 	if err != nil {
 		cleanupExistingSnapshot(snapshotPath)
-		return nil, fmt.Errorf("snapshot validation failed: %w", err)
+		return WinVSSSnapshot{}, fmt.Errorf("snapshot validation failed: %w", err)
 	}
 
-	snapshot := &WinVSSSnapshot{
+	snapshot := WinVSSSnapshot{
 		SnapshotPath: snapshotPath,
 		Id:           sc.ID,
 		TimeStarted:  timeStarted,
@@ -145,10 +143,6 @@ func cleanupExistingSnapshot(path string) {
 }
 
 func (s *WinVSSSnapshot) Close() {
-	if s == nil || !s.closed.CompareAndSwap(false, true) {
-		return
-	}
-
 	_ = vss.Remove(s.Id)
 	_ = os.Remove(s.SnapshotPath)
 }

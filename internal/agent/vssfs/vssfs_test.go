@@ -100,8 +100,8 @@ func dumpHandleMap(server *VSSFSServer) string {
 	var info strings.Builder
 	info.WriteString(fmt.Sprintf("Current handles map contains %d entries:\n", server.handles.Len()))
 
-	server.handles.ForEach(func(key string, fh *FileHandle) bool {
-		info.WriteString(fmt.Sprintf("  - Handle ID: %s, Path: %s, IsDir: %v\n", key, fh.path, fh.isDir))
+	server.handles.ForEach(func(key uint64, fh *FileHandle) bool {
+		info.WriteString(fmt.Sprintf("  - Handle ID: %d, Path: %s, IsDir: %v\n", key, fh.path, fh.isDir))
 		return true
 	})
 
@@ -148,8 +148,8 @@ func TestVSSFSServer(t *testing.T) {
 
 	// Start the server
 	serverRouter := arpc.NewRouter()
-	vssServer := NewVSSFSServer("vss", &snapshots.WinVSSSnapshot{SnapshotPath: testDir, DriveLetter: ""})
-	vssServer.RegisterHandlers(serverRouter)
+	vssServer := NewVSSFSServer("vss", snapshots.WinVSSSnapshot{SnapshotPath: testDir, DriveLetter: ""})
+	vssServer.RegisterHandlers(&serverRouter)
 
 	serverSession, err := arpc.NewServerSession(serverConn, nil)
 	require.NoError(t, err)
@@ -222,8 +222,8 @@ func TestVSSFSServer(t *testing.T) {
 
 		// Verify the handle exists in the server's map
 		exists := false
-		vssServer.handles.ForEach(func(key string, fh *FileHandle) bool {
-			if key == string(openResult) {
+		vssServer.handles.ForEach(func(key uint64, fh *FileHandle) bool {
+			if key == uint64(openResult) {
 				exists = true
 				return false // stop iteration
 			}
@@ -385,7 +385,7 @@ func TestVSSFSServer(t *testing.T) {
 	t.Run("InvalidHandle_Operations", func(t *testing.T) {
 		// Try to read with a non-existent handle
 		readAtPayload := ReadAtReq{
-			HandleID: "nonexistent_handle_id",
+			HandleID: 33123,
 			Offset:   0,
 			Length:   100,
 		}
@@ -396,7 +396,7 @@ func TestVSSFSServer(t *testing.T) {
 		assert.Equal(t, 500, resp.Status, "ReadAt with invalid handle should return 500 status")
 
 		// Try to close a non-existent handle
-		closePayload := CloseReq{HandleID: "nonexistent_handle_id"}
+		closePayload := CloseReq{HandleID: 33123}
 
 		t.Log("Current handle map before invalid Close:", dumpHandleMap(vssServer))
 		resp, err = clientSession.Call("vss/Close", closePayload)
