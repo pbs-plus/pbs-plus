@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -424,47 +423,28 @@ func TestHandleLseek(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 
-	// Constants for Windows API
-	const (
-		FSCTL_SET_SPARSE           = 0x000900C4
-		FSCTL_SET_ZERO_DATA        = 0x000900C8
-		FILE_SUPPORTS_SPARSE_FILES = 0x00000040
-	)
-
-	type FileZeroDataInformation struct {
-		FileOffset      int64
-		BeyondFinalZero int64
-	}
-
-	// Create a sparse file
+	// Create file with proper Windows API
 	sparseFilePath := filepath.Join(testDir, "sparse.bin")
-	f, err := os.OpenFile(sparseFilePath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+	pathPtr, err := windows.UTF16PtrFromString(sparseFilePath)
 	require.NoError(t, err)
-	defer f.Close()
 
-	// Get Windows handle for the file
-	winFile := windows.Handle(f.Fd())
-
-	// Check if filesystem supports sparse files
-	var fsFlags uint32
-	err = windows.GetVolumeInformation(
-		windows.StringToUTF16Ptr(testDir[:3]), // Drive letter with :\
+	handle, err := windows.CreateFile(
+		pathPtr,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
 		nil,
-		0,
-		nil,
-		nil,
-		&fsFlags,
-		nil,
+		windows.CREATE_ALWAYS,
+		windows.FILE_ATTRIBUTE_NORMAL,
 		0,
 	)
 	require.NoError(t, err)
-	require.True(t, fsFlags&FILE_SUPPORTS_SPARSE_FILES != 0, "Filesystem must support sparse files")
+	defer windows.CloseHandle(handle)
 
-	// Set sparse attribute
+	// Set sparse file attribute
 	var bytesReturned uint32
 	err = windows.DeviceIoControl(
-		winFile,
-		FSCTL_SET_SPARSE,
+		handle,
+		windows.FSCTL_SET_SPARSE,
 		nil,
 		0,
 		nil,
@@ -474,8 +454,13 @@ func TestHandleLseek(t *testing.T) {
 	)
 	require.NoError(t, err, "Failed to set sparse attribute")
 
-	// Set file size first
-	err = f.Truncate(20480)
+	// Set file size to 20KB
+	size := int64(20480)
+	sizeHigh := int32(size >> 32)
+	sizeLow := int32(size & 0xFFFFFFFF)
+	_, err = windows.SetFilePointer(handle, sizeLow, &sizeHigh, windows.FILE_BEGIN)
+	require.NoError(t, err)
+	err = windows.SetEndOfFile(handle)
 	require.NoError(t, err)
 
 	// Create test pattern
@@ -484,69 +469,41 @@ func TestHandleLseek(t *testing.T) {
 		data[i] = byte(i % 251)
 	}
 
-	// Write data blocks with explicit zero regions between them
+	// Write data blocks at specific positions
 	writePositions := []int64{0, 8192, 16384}
-	for i, pos := range writePositions {
-		// Write data block
-		_, err = f.WriteAt(data, pos)
+	for _, pos := range writePositions {
+		// Set file pointer
+		posHigh := int32(pos >> 32)
+		posLow := int32(pos & 0xFFFFFFFF)
+		_, err = windows.SetFilePointer(handle, posLow, &posHigh, windows.FILE_BEGIN)
 		require.NoError(t, err)
 
-		// If not the last block, create a hole after it
-		if i < len(writePositions)-1 {
-			nextPos := writePositions[i+1]
-			zeroRegion := FileZeroDataInformation{
-				FileOffset:      pos + 4096, // End of current block
-				BeyondFinalZero: nextPos,    // Start of next block
-			}
-
-			err = windows.DeviceIoControl(
-				winFile,
-				FSCTL_SET_ZERO_DATA,
-				(*byte)(unsafe.Pointer(&zeroRegion)),
-				uint32(unsafe.Sizeof(zeroRegion)),
-				nil,
-				0,
-				&bytesReturned,
-				nil,
-			)
-			require.NoError(t, err, "Failed to create hole")
-		}
+		// Write data
+		var written uint32
+		err = windows.WriteFile(
+			handle,
+			data,
+			&written,
+			nil,
+		)
+		require.NoError(t, err)
+		require.Equal(t, uint32(len(data)), written)
 	}
 
-	// Create final hole if needed
-	finalZeroRegion := FileZeroDataInformation{
-		FileOffset:      writePositions[len(writePositions)-1] + 4096,
-		BeyondFinalZero: 20480,
-	}
-	err = windows.DeviceIoControl(
-		winFile,
-		FSCTL_SET_ZERO_DATA,
-		(*byte)(unsafe.Pointer(&finalZeroRegion)),
-		uint32(unsafe.Sizeof(finalZeroRegion)),
-		nil,
-		0,
-		&bytesReturned,
-		nil,
-	)
-	require.NoError(t, err, "Failed to create final hole")
-
-	// Force flush to disk
-	err = f.Sync()
-	require.NoError(t, err)
-
-	// Print file attributes
-	var fileInfo windows.ByHandleFileInformation
-	err = windows.GetFileInformationByHandle(winFile, &fileInfo)
-	require.NoError(t, err)
-	t.Logf("File attributes: %x", fileInfo.FileAttributes)
-
-	// Query and verify ranges
-	ranges, err := queryAllocatedRanges(winFile, 20480)
+	// Verify the file is sparse and has the correct ranges
+	ranges, err := queryAllocatedRanges(handle, size)
 	require.NoError(t, err)
 	t.Log("Initial allocated ranges:")
 	for i, r := range ranges {
 		t.Logf("Range %d: offset=%d, length=%d", i, r.FileOffset, r.Length)
 	}
+
+	// Get file attributes for debugging
+	var fileInfo windows.ByHandleFileInformation
+	err = windows.GetFileInformationByHandle(handle, &fileInfo)
+	require.NoError(t, err)
+	t.Logf("File attributes: 0x%x", fileInfo.FileAttributes)
+	t.Logf("File size: %d", (uint64(fileInfo.FileSizeHigh)<<32)|uint64(fileInfo.FileSizeLow))
 
 	// Verify ranges
 	require.Equal(t, 3, len(ranges), "File should have exactly three allocated ranges")
