@@ -34,6 +34,8 @@ type Session struct {
 	// Context for coordinating shutdown
 	ctx        context.Context
 	cancelFunc context.CancelFunc
+
+	version string
 }
 
 func (s *Session) SetRouter(router *Router) {
@@ -42,6 +44,10 @@ func (s *Session) SetRouter(router *Router) {
 
 func (s *Session) GetRouter() *Router {
 	return s.router.Load()
+}
+
+func (s *Session) GetVersion() string {
+	return s.version
 }
 
 // NewServerSession creates a new Session for a server connection.

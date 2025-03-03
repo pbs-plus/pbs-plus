@@ -6,12 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"runtime"
 	"slices"
 	"strings"
-	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
@@ -31,12 +28,18 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		workers := 1
-		if runtime.NumCPU() > 1 {
-			workers = min(runtime.NumCPU()/2, 4)
-		}
+		for i := range all {
+			if all[i].IsAgent {
+				targetSplit := strings.Split(all[i].Name, " - ")
+				hostname := targetSplit[0]
 
-		processTargets(all, storeInstance, workers)
+				arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
+				if ok {
+					all[i].ConnectionStatus = true
+					all[i].AgentVersion = arpcSess.GetVersion()
+				}
+			}
+		}
 
 		digest, err := utils.CalculateDigest(all)
 		if err != nil {
@@ -251,15 +254,8 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				targetSplit := strings.Split(target.Name, " - ")
 				arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
 				if ok {
-					var respBody arpc.MapStringStringMsg
-					raw, err := arpcSess.CallMsgWithTimeout(1*time.Second, "ping", nil)
-					if err == nil {
-						_, err = respBody.UnmarshalMsg(raw)
-						if err == nil {
-							target.ConnectionStatus = true
-							target.AgentVersion = respBody["version"]
-						}
-					}
+					target.ConnectionStatus = true
+					target.AgentVersion = arpcSess.GetVersion()
 				}
 			}
 
