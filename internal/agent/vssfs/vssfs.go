@@ -32,29 +32,27 @@ type FileHandle struct {
 }
 
 type VSSFSServer struct {
-	ctx             context.Context
-	ctxCancel       context.CancelFunc
-	jobId           string
-	snapshot        *snapshots.WinVSSSnapshot
-	handles         *haxmap.Map[string, *FileHandle]
-	readAtStatCache *haxmap.Map[string, *windows.ByHandleFileInformation]
-	arpcRouter      *arpc.Router
-	bufferPool      *utils.BufferPool
-	statFs          *StatFS
-	statFsBytes     []byte
+	ctx         context.Context
+	ctxCancel   context.CancelFunc
+	jobId       string
+	snapshot    *snapshots.WinVSSSnapshot
+	handles     *haxmap.Map[string, *FileHandle]
+	arpcRouter  *arpc.Router
+	bufferPool  *utils.BufferPool
+	statFs      *StatFS
+	statFsBytes []byte
 }
 
 func NewVSSFSServer(jobId string, snapshot *snapshots.WinVSSSnapshot) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &VSSFSServer{
-		snapshot:        snapshot,
-		jobId:           jobId,
-		handles:         hashmap.New[*FileHandle](),
-		readAtStatCache: hashmap.New[*windows.ByHandleFileInformation](),
-		ctx:             ctx,
-		ctxCancel:       cancel,
-		bufferPool:      utils.NewBufferPool(),
+		snapshot:   snapshot,
+		jobId:      jobId,
+		handles:    hashmap.New[*FileHandle](),
+		ctx:        ctx,
+		ctxCancel:  cancel,
+		bufferPool: utils.NewBufferPool(),
 	}
 
 	if err := s.initializeStatFS(); err != nil && syslog.L != nil {
@@ -90,7 +88,6 @@ func (s *VSSFSServer) Close() {
 	}
 
 	s.handles.Clear()
-	s.readAtStatCache.Clear()
 
 	s.ctxCancel()
 }
@@ -176,8 +173,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (*arpc.Response, error) {
 	s.handles.Set(handleId, fh)
 
 	// Return the handle ID to the client.
-	respHandle := FileHandleId(handleId)
-	dataBytes, err := respHandle.MarshalMsg(nil)
+	dataBytes, err := FileHandleId(handleId).MarshalMsg(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -275,14 +271,9 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (*arpc.Response, error) {
 		return nil, err
 	}
 
-	entryBytes, err := entries.MarshalMsg(nil)
-	if err != nil {
-		return nil, err
-	}
-
 	return &arpc.Response{
 		Status: 200,
-		Data:   entryBytes,
+		Data:   entries,
 	}, nil
 }
 
@@ -456,7 +447,6 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (*arpc.Response, error) {
 	handle.file.Close()
 
 	s.handles.Del(string(payload.HandleID))
-	s.readAtStatCache.Del(string(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")
 	data, err := closed.MarshalMsg(nil)
