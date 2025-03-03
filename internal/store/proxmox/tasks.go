@@ -115,7 +115,7 @@ func IsUPIDRunning(upid string) bool {
 			return false
 		}
 		if syslog.L != nil {
-			syslog.L.Errorf("error running grep: %w", err)
+			syslog.L.Errorf("error running grep: %v", err)
 		}
 		return false
 	}
