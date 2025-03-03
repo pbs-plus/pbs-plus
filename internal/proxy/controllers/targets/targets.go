@@ -30,24 +30,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		for i, target := range all {
-			if target.IsAgent {
-				targetSplit := strings.Split(target.Name, " - ")
-				arpcSess := storeInstance.GetARPC(targetSplit[0])
-				if arpcSess != nil {
-					var respBody arpc.MapStringStringMsg
-					raw, err := arpcSess.CallMsgWithTimeout(3*time.Second, "ping", nil)
-					if err != nil {
-						continue
-					}
-					_, err = respBody.UnmarshalMsg(raw)
-					if err == nil {
-						all[i].ConnectionStatus = true
-						all[i].AgentVersion = respBody["version"]
-					}
-				}
-			}
-		}
+		processTargets(all, storeInstance, 100)
 
 		digest, err := utils.CalculateDigest(all)
 		if err != nil {
