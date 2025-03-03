@@ -468,6 +468,135 @@ func TestSparseFileSupport(t *testing.T) {
 	}
 }
 
+func TestHandleLseekWithAlignedSparseRegions(t *testing.T) {
+	// Setup test directory structure
+	testDir, err := os.MkdirTemp("", "vssfs-lseek-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(testDir)
+
+	// Create file with proper Windows API
+	sparseFilePath := filepath.Join(testDir, "sparse.bin")
+	pathPtr, err := windows.UTF16PtrFromString(sparseFilePath)
+	require.NoError(t, err)
+
+	handle, err := windows.CreateFile(
+		pathPtr,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		windows.CREATE_ALWAYS,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	require.NoError(t, err)
+	defer windows.CloseHandle(handle)
+
+	// Set sparse file attribute
+	var bytesReturned uint32
+	err = windows.DeviceIoControl(
+		handle,
+		windows.FSCTL_SET_SPARSE,
+		nil,
+		0,
+		nil,
+		0,
+		&bytesReturned,
+		nil,
+	)
+	require.NoError(t, err, "Failed to set sparse attribute")
+
+	// Set file size to 20KB
+	size := int64(20480)
+	sizeHigh := int32(size >> 32)
+	sizeLow := int32(size & 0xFFFFFFFF)
+	_, err = windows.SetFilePointer(handle, sizeLow, &sizeHigh, windows.FILE_BEGIN)
+	require.NoError(t, err)
+	err = windows.SetEndOfFile(handle)
+	require.NoError(t, err)
+
+	// Create test pattern
+	data := make([]byte, 4096)
+	for i := range data {
+		data[i] = byte(i % 251)
+	}
+
+	// Write data blocks at specific positions
+	writePositions := []int64{0, 8192, 16384}
+	for _, pos := range writePositions {
+		// Set file pointer
+		posHigh := int32(pos >> 32)
+		posLow := int32(pos & 0xFFFFFFFF)
+		_, err = windows.SetFilePointer(handle, posLow, &posHigh, windows.FILE_BEGIN)
+		require.NoError(t, err)
+
+		// Write data
+		var written uint32
+		err = windows.WriteFile(
+			handle,
+			data,
+			&written,
+			nil,
+		)
+		require.NoError(t, err)
+		require.Equal(t, uint32(len(data)), written)
+	}
+
+	// Explicitly mark holes as sparse
+	type FILE_ZERO_DATA_INFORMATION struct {
+		FileOffset      int64
+		BeyondFinalZero int64
+	}
+
+	holeRanges := [][2]int64{
+		{4096, 8192},   // First hole
+		{12288, 16384}, // Second hole
+	}
+
+	for _, hole := range holeRanges {
+		zeroInfo := FILE_ZERO_DATA_INFORMATION{
+			FileOffset:      hole[0],
+			BeyondFinalZero: hole[1],
+		}
+
+		err = windows.DeviceIoControl(
+			handle,
+			windows.FSCTL_SET_ZERO_DATA,
+			(*byte)(unsafe.Pointer(&zeroInfo)),
+			uint32(unsafe.Sizeof(zeroInfo)),
+			nil,
+			0,
+			&bytesReturned,
+			nil,
+		)
+		require.NoError(t, err, "Failed to mark hole")
+	}
+
+	// Force flush to disk
+	err = windows.FlushFileBuffers(handle)
+	require.NoError(t, err)
+
+	// Query and verify ranges
+	ranges, err := queryAllocatedRanges(handle, size)
+	require.NoError(t, err)
+	t.Log("Initial allocated ranges:")
+	for i, r := range ranges {
+		t.Logf("Range %d: offset=%d, length=%d", i, r.FileOffset, r.Length)
+	}
+
+	// Verify ranges
+	require.Equal(t, 3, len(ranges), "File should have exactly three allocated ranges")
+	if len(ranges) == 3 {
+		assert.Equal(t, int64(0), ranges[0].FileOffset, "First range should start at 0")
+		assert.Equal(t, int64(4096), ranges[0].Length, "First range should be 4KB")
+
+		assert.Equal(t, int64(8192), ranges[1].FileOffset, "Second range should start at 8KB")
+		assert.Equal(t, int64(4096), ranges[1].Length, "Second range should be 4KB")
+
+		assert.Equal(t, int64(16384), ranges[2].FileOffset, "Third range should start at 16KB")
+		assert.Equal(t, int64(4096), ranges[2].Length, "Third range should be 4KB")
+	}
+}
+
 func TestHandleLseekWithZeroWrites(t *testing.T) {
 	// Setup test directory structure
 	testDir, err := os.MkdirTemp("", "vssfs-lseek-test")
