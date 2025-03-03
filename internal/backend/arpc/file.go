@@ -78,12 +78,8 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		Offset:   off,
 		Length:   len(p),
 	}
-	reqBytes, err := req.MarshalMsg(nil)
-	if err != nil {
-		return 0, os.ErrInvalid
-	}
 
-	bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", reqBytes, p)
+	bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", req, p)
 	if err != nil {
 		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
 		return 0, err
