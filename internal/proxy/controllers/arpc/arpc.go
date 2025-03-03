@@ -19,6 +19,7 @@ func ARPCHandler(store *store.Store) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		defer store.ARPCSessionManager.CloseSession(agentHostname)
 
 		syslog.L.Infof("Agent successfully connected: %s", agentHostname)
 		defer syslog.L.Infof("Agent disconnected: %s", agentHostname)
