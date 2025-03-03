@@ -33,7 +33,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		workers := 1
 		if runtime.NumCPU() > 1 {
-			workers = runtime.NumCPU() / 2
+			workers = min(runtime.NumCPU()/2, 4)
 		}
 
 		processTargets(all, storeInstance, workers)
