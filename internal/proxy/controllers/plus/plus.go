@@ -263,12 +263,3 @@ func DownloadChecksum(storeInstance *store.Store, version string) http.HandlerFu
 		proxyUrl(targetURL, w, r)
 	}
 }
-
-// copyHeaders is a helper function to copy headers from one Header map to another
-func copyHeaders(src, dst http.Header) {
-	for name, values := range src {
-		for _, value := range values {
-			dst.Add(name, value)
-		}
-	}
-}

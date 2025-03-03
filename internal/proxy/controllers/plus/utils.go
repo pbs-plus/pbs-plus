@@ -3,7 +3,24 @@ package plus
 import (
 	"io"
 	"net/http"
+	"time"
 )
+
+var sharedClient = &http.Client{
+	Timeout: 30 * time.Second, // Set a timeout for requests
+	Transport: &http.Transport{
+		MaxIdleConns:        100, // Maximum idle connections
+		MaxIdleConnsPerHost: 10,  // Maximum idle connections per host
+	},
+}
+
+func copyHeaders(src, dst http.Header) {
+	for name, values := range src {
+		for _, value := range values {
+			dst.Add(name, value)
+		}
+	}
+}
 
 func proxyUrl(targetURL string, w http.ResponseWriter, r *http.Request) {
 	// Proxy the request
@@ -16,9 +33,8 @@ func proxyUrl(targetURL string, w http.ResponseWriter, r *http.Request) {
 	// Copy headers from the original request to the proxy request
 	copyHeaders(r.Header, req.Header)
 
-	// Perform the request
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	// Perform the request using the shared HTTP client
+	resp, err := sharedClient.Do(req)
 	if err != nil {
 		http.Error(w, "failed to fetch binary", http.StatusInternalServerError)
 		return
