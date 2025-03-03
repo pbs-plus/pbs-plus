@@ -107,7 +107,7 @@ func processTargets(all []types.Target, storeInstance *store.Store, workerCount 
 					arpcSess := storeInstance.GetARPC(cacheKey)
 					if arpcSess != nil {
 						var respBody arpc.MapStringStringMsg
-						raw, err := arpcSess.CallMsgWithTimeout(1*time.Second, "ping", nil)
+						raw, err := arpcSess.CallMsgWithTimeout(500*time.Millisecond, "ping", nil)
 						if err != nil {
 							continue
 						}
