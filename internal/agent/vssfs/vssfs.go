@@ -18,8 +18,8 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
+	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
 )
@@ -38,7 +38,6 @@ type VSSFSServer struct {
 	snapshot    *snapshots.WinVSSSnapshot
 	handles     *haxmap.Map[string, *FileHandle]
 	arpcRouter  *arpc.Router
-	bufferPool  *utils.BufferPool
 	statFs      *StatFS
 	statFsBytes []byte
 }
@@ -47,12 +46,11 @@ func NewVSSFSServer(jobId string, snapshot *snapshots.WinVSSSnapshot) *VSSFSServ
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &VSSFSServer{
-		snapshot:   snapshot,
-		jobId:      jobId,
-		handles:    hashmap.New[*FileHandle](),
-		ctx:        ctx,
-		ctxCancel:  cancel,
-		bufferPool: utils.NewBufferPool(),
+		snapshot:  snapshot,
+		jobId:     jobId,
+		handles:   hashmap.New[*FileHandle](),
+		ctx:       ctx,
+		ctxCancel: cancel,
 	}
 
 	if err := s.initializeStatFS(); err != nil && syslog.L != nil {
@@ -293,7 +291,21 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 		return nil, os.ErrInvalid
 	}
 
-	buf := s.bufferPool.Get(payload.Length)
+	// Get a buffer from the bytebufferpool
+	buf := bytebufferpool.Get()
+	defer func() {
+		// Ensure the buffer is returned to the pool only if it's not nil
+		if buf != nil {
+			bytebufferpool.Put(buf)
+		}
+	}()
+
+	// Ensure the buffer has enough capacity
+	if cap(buf.B) < int(payload.Length) {
+		buf.B = make([]byte, payload.Length)
+	} else {
+		buf.B = buf.B[:payload.Length]
+	}
 
 	// Perform synchronous read - first seek to the position
 	distanceToMove := int64(payload.Offset)
@@ -301,38 +313,45 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (*arpc.Response, error) {
 
 	newPos, err := windows.Seek(fh.handle, distanceToMove, int(moveMethod))
 	if err != nil {
-		s.bufferPool.Put(buf)
 		return nil, mapWinError(err)
 	}
 	if newPos != payload.Offset {
-		s.bufferPool.Put(buf)
 		return nil, os.ErrInvalid
 	}
 
 	var bytesRead uint32
-	err = windows.ReadFile(fh.handle, buf, &bytesRead, nil)
+	err = windows.ReadFile(fh.handle, buf.B, &bytesRead, nil)
 	if err != nil {
-		s.bufferPool.Put(buf)
 		return nil, mapWinError(err)
 	}
 
-	buf = buf[:bytesRead]
+	// Resize the buffer to the actual number of bytes read
+	buf.B = buf.B[:bytesRead]
+
+	// Create a local reference to the buffer for the callback
+	callbackBuf := buf
+	buf = nil // Prevent double release in the deferred function
 
 	streamCallback := func(stream *smux.Stream) {
-		defer s.bufferPool.Put(buf)
+		// Ensure the buffer is returned to the pool after the callback
+		defer func() {
+			if callbackBuf != nil {
+				bytebufferpool.Put(callbackBuf)
+			}
+		}()
 
 		if stream == nil {
 			return
 		}
 
 		// Write length prefix
-		length := uint32(len(buf))
+		length := uint32(callbackBuf.Len())
 		if err := binary.Write(stream, binary.LittleEndian, length); err != nil {
 			return
 		}
 
 		// Write data
-		stream.Write(buf)
+		_, _ = stream.Write(callbackBuf.B)
 	}
 
 	return &arpc.Response{

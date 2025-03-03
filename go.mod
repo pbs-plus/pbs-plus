@@ -18,6 +18,7 @@ require (
 	github.com/rekby/fastuuid v0.9.0
 	github.com/stretchr/testify v1.10.0
 	github.com/tinylib/msgp v1.2.5
+	github.com/valyala/bytebufferpool v1.0.0
 	github.com/xtaci/smux v1.5.34
 	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/crypto v0.33.0

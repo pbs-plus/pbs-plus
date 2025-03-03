@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/valyala/bytebufferpool"
 	"golang.org/x/sys/windows"
 )
 
@@ -111,10 +112,21 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 	}
 	defer windows.CloseHandle(handle)
 
-	// Start with a smaller buffer and grow if needed
-	const initialBufSize = 4 * 1024
-	buf := s.bufferPool.Get(initialBufSize)
-	defer s.bufferPool.Put(buf)
+	const initialBufSize = 64 * 1024
+	buf := bytebufferpool.Get()
+	defer func() {
+		// Ensure the buffer is returned to the pool only if it's not nil
+		if buf != nil {
+			bytebufferpool.Put(buf)
+		}
+	}()
+
+	// Ensure the buffer has enough capacity
+	if cap(buf.B) < initialBufSize {
+		buf.B = make([]byte, initialBufSize)
+	} else {
+		buf.B = buf.B[:initialBufSize]
+	}
 
 	var entries ReadDirEntries
 	var usingFull bool
@@ -124,8 +136,8 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 		err = windows.GetFileInformationByHandleEx(
 			handle,
 			uint32(infoClass),
-			&buf[0],
-			uint32(len(buf)),
+			&buf.B[0],
+			uint32(buf.Len()),
 		)
 
 		if err != nil {
@@ -146,12 +158,12 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 
 		// Process entries in the buffer
 		offset := 0
-		for offset < len(buf) {
+		for offset < buf.Len() {
 			var info *FILE_ID_BOTH_DIR_INFO
 			if usingFull {
-				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
+				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf.B[offset]))
 			} else {
-				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
+				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf.B[offset]))
 			}
 
 			nameLen := int(info.FileNameLength) / 2

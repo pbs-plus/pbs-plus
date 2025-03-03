@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 )
 
@@ -43,22 +44,17 @@ func readMsgpMsgPooled(r io.Reader) (*PooledMsg, error) {
 	}
 	msgLen := binary.BigEndian.Uint32(lenBuf[:])
 
-	if msgLen <= 4096 {
-		buf := msgpackBufferPool.Get().([]byte)
-		if cap(buf) < int(msgLen) {
-			buf = make([]byte, msgLen)
-		}
-		msg := buf[:msgLen]
-		if _, err := io.ReadFull(r, msg); err != nil {
-			msgpackBufferPool.Put(buf)
-			return nil, err
-		}
-		return &PooledMsg{Data: msg, pooled: true}, nil
+	buf := bytebufferpool.Get()
+	if cap(buf.B) < int(msgLen) {
+		buf.B = make([]byte, msgLen)
+	} else {
+		buf.B = buf.B[:msgLen]
 	}
-
-	msg := make([]byte, msgLen)
-	_, err := io.ReadFull(r, msg)
-	return &PooledMsg{Data: msg, pooled: false}, err
+	if _, err := io.ReadFull(r, buf.B); err != nil {
+		bytebufferpool.Put(buf)
+		return nil, err
+	}
+	return &PooledMsg{Data: buf.B, buffer: buf}, nil
 }
 
 // writeMsgpMsg writes msg to w with a 4‑byte length header. We combine the header and msg
