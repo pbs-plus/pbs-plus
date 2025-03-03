@@ -435,7 +435,7 @@ func TestHandleLseek(t *testing.T) {
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
 		nil,
 		windows.CREATE_ALWAYS,
-		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_NO_BUFFERING|windows.FILE_FLAG_WRITE_THROUGH,
+		windows.FILE_ATTRIBUTE_NORMAL,
 		0,
 	)
 	require.NoError(t, err)
@@ -455,30 +455,20 @@ func TestHandleLseek(t *testing.T) {
 	)
 	require.NoError(t, err, "Failed to set sparse attribute")
 
-	// Allocate aligned buffer for direct I/O
-	const blockSize = 4096
-	const fileSize = 20480
-
-	// Allocate virtual memory for aligned buffer
-	buffer, err := windows.VirtualAlloc(0, blockSize,
-		windows.MEM_COMMIT|windows.MEM_RESERVE,
-		windows.PAGE_READWRITE)
-	require.NoError(t, err)
-	defer windows.VirtualFree(buffer, 0, windows.MEM_RELEASE)
-
-	// Create test pattern in the aligned buffer
-	data := (*[blockSize]byte)(unsafe.Pointer(buffer))
-	for i := range data {
-		data[i] = byte(i % 251)
-	}
-
-	// Set file size
-	sizeHigh := int32(fileSize >> 32)
-	sizeLow := int32(fileSize & 0xFFFFFFFF)
+	// Set file size to 20KB
+	size := int64(20480)
+	sizeHigh := int32(size >> 32)
+	sizeLow := int32(size & 0xFFFFFFFF)
 	_, err = windows.SetFilePointer(handle, sizeLow, &sizeHigh, windows.FILE_BEGIN)
 	require.NoError(t, err)
 	err = windows.SetEndOfFile(handle)
 	require.NoError(t, err)
+
+	// Create test pattern
+	data := make([]byte, 4096)
+	for i := range data {
+		data[i] = byte(i % 251)
+	}
 
 	// Write data blocks at specific positions
 	writePositions := []int64{0, 8192, 16384}
@@ -489,31 +479,24 @@ func TestHandleLseek(t *testing.T) {
 		_, err = windows.SetFilePointer(handle, posLow, &posHigh, windows.FILE_BEGIN)
 		require.NoError(t, err)
 
-		// Convert the data to a byte slice
-		dataSlice := (*[blockSize]byte)(unsafe.Pointer(buffer))[:]
-
-		// Write data using aligned buffer
+		// Write data
 		var written uint32
 		err = windows.WriteFile(
-			handle,    // windows.Handle
-			dataSlice, // []byte
-			&written,  // *uint32
-			nil,       // *windows.Overlapped
+			handle,
+			data,
+			&written,
+			nil,
 		)
 		require.NoError(t, err)
-		require.Equal(t, uint32(blockSize), written)
-
-		// Force flush after each write
-		err = windows.FlushFileBuffers(handle)
-		require.NoError(t, err)
+		require.Equal(t, uint32(len(data)), written)
 	}
 
-	// Explicitly mark regions as sparse
+	// Explicitly mark holes as sparse
 	type FILE_ZERO_DATA_INFORMATION struct {
-		FileOffset, BeyondFinalZero int64
+		FileOffset      int64
+		BeyondFinalZero int64
 	}
 
-	// Mark holes between data blocks
 	holeRanges := [][2]int64{
 		{4096, 8192},   // First hole
 		{12288, 16384}, // Second hole
@@ -538,7 +521,7 @@ func TestHandleLseek(t *testing.T) {
 		require.NoError(t, err, "Failed to mark hole")
 	}
 
-	// Force final flush
+	// Force flush to disk
 	err = windows.FlushFileBuffers(handle)
 	require.NoError(t, err)
 
@@ -550,7 +533,7 @@ func TestHandleLseek(t *testing.T) {
 	t.Logf("File size: %d", (uint64(fileInfo.FileSizeHigh)<<32)|uint64(fileInfo.FileSizeLow))
 
 	// Query and verify ranges
-	ranges, err := queryAllocatedRanges(handle, fileSize)
+	ranges, err := queryAllocatedRanges(handle, size)
 	require.NoError(t, err)
 	t.Log("Initial allocated ranges:")
 	for i, r := range ranges {
