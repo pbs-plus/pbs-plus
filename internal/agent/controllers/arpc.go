@@ -50,7 +50,7 @@ func (s *backupSession) Close() {
 	})
 }
 
-func BackupStartHandler(req arpc.Request, router *arpc.Router) (*arpc.Response, error) {
+func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (*arpc.Response, error) {
 	var reqData vssfs.BackupReq
 	_, err := reqData.UnmarshalMsg(req.Payload)
 	if err != nil {
@@ -100,7 +100,7 @@ func BackupStartHandler(req arpc.Request, router *arpc.Router) (*arpc.Response, 
 		session.Close()
 		return nil, fmt.Errorf("fs is nil")
 	}
-	fs.RegisterHandlers(router)
+	fs.RegisterHandlers(rpcSess.GetRouter())
 	session.fs = fs
 
 	return &arpc.Response{Status: 200, Message: "success"}, nil

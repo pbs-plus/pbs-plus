@@ -15,10 +15,10 @@ import (
 
 // Store holds the configuration system.
 type Store struct {
-	CertGenerator *certificates.Generator
-	Database      *database.Database
-	aRPCs         *haxmap.Map[string, *arpc.Session]
-	arpcFS        *haxmap.Map[string, *arpcfs.ARPCFS]
+	CertGenerator      *certificates.Generator
+	Database           *database.Database
+	ARPCSessionManager *arpc.SessionManager
+	arpcFS             *haxmap.Map[string, *arpcfs.ARPCFS]
 }
 
 func Initialize(paths map[string]string) (*Store, error) {
@@ -28,9 +28,9 @@ func Initialize(paths map[string]string) (*Store, error) {
 	}
 
 	store := &Store{
-		Database: db,
-		aRPCs:    hashmap.New[*arpc.Session](),
-		arpcFS:   hashmap.New[*arpcfs.ARPCFS](),
+		Database:           db,
+		arpcFS:             hashmap.New[*arpcfs.ARPCFS](),
+		ARPCSessionManager: arpc.NewSessionManager(),
 	}
 
 	return store, nil

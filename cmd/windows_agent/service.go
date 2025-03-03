@@ -288,13 +288,16 @@ func (p *agentService) connectARPC() error {
 		return &arpc.Response{Status: 200, Data: b}, nil
 	})
 	router.Handle("backup", func(req arpc.Request) (*arpc.Response, error) {
-		return controllers.BackupStartHandler(req, router)
+		return controllers.BackupStartHandler(req, session)
 	})
 	router.Handle("cleanup", controllers.BackupCloseHandler)
 
+	session.SetRouter(router)
+
 	go func() {
+		defer session.Close()
 		syslog.L.Info("Connecting aRPC endpoint from /plus/arpc")
-		if err := session.Serve(router); err != nil {
+		if err := session.Serve(); err != nil {
 			syslog.L.Errorf("session closed: %v", err)
 		}
 	}()

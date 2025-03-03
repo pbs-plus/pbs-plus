@@ -37,8 +37,8 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 
-			arpcSess := storeInstance.GetARPC(targetHostname)
-			if arpcSess == nil {
+			arpcSess, exists := storeInstance.ARPCSessionManager.GetSession(targetHostname)
+			if !exists {
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> unable to reach target"), http.StatusInternalServerError)
 				return
 			}
@@ -61,7 +61,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			arpcFS := storeInstance.GetARPCFS(jobId)
 			if arpcFS == nil {
-				arpcFS = arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), targetHostname, jobId)
+				arpcFS = arpcfs.NewARPCFS(context.Background(), arpcSess, targetHostname, jobId)
 			}
 
 			mntPath := filepath.Join(constants.AgentMountBasePath, jobId)
@@ -87,15 +87,15 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			arpcSess := storeInstance.GetARPC(targetHostname)
-			if arpcSess == nil {
+			arpcSess, exists := storeInstance.ARPCSessionManager.GetSession(targetHostname)
+			if !exists {
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send closure request to target -> unable to reach target"), http.StatusInternalServerError)
 				return
 			}
 
 			arpcFS := storeInstance.GetARPCFS(jobId)
 			if arpcFS == nil {
-				arpcFS = arpcfs.NewARPCFS(context.Background(), storeInstance.GetARPC(targetHostname), targetHostname, jobId)
+				arpcFS = arpcfs.NewARPCFS(context.Background(), arpcSess, targetHostname, jobId)
 				arpcFS.Unmount()
 			} else {
 				storeInstance.RemoveARPCFS(jobId)

@@ -110,8 +110,8 @@ func runBackupAttempt(
 	if !skipCheck {
 		pinged := false
 		targetSplit := strings.Split(target.Name, " - ")
-		arpcSess := storeInstance.GetARPC(targetSplit[0])
-		if arpcSess != nil {
+		arpcSess, exists := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
+		if exists {
 			pingResp, err := arpcSess.CallWithTimeout(3*time.Second, "ping", nil)
 			if err == nil && pingResp.Status == 200 {
 				pinged = true

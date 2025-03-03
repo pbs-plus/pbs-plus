@@ -154,9 +154,11 @@ func TestVSSFSServer(t *testing.T) {
 	serverSession, err := arpc.NewServerSession(serverConn, nil)
 	require.NoError(t, err)
 
+	serverSession.SetRouter(serverRouter)
+
 	// Start server in a goroutine
 	go func() {
-		err := serverSession.Serve(serverRouter)
+		err := serverSession.Serve()
 		// Ignore "closed pipe" errors during shutdown.
 		if err != nil && ctx.Err() == nil && err != io.EOF && !strings.Contains(err.Error(), "closed pipe") {
 			t.Errorf("Server error: %v", err)

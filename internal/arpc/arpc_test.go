@@ -38,11 +38,13 @@ func setupSessionWithRouter(t *testing.T, router *Router) (clientSession *Sessio
 		t.Fatalf("failed to create client session: %v", err)
 	}
 
+	serverSession.SetRouter(router)
+
 	done := make(chan struct{})
 
 	// Start the server session in a goroutine. Serve() continuously accepts streams.
 	go func() {
-		_ = serverSession.Serve(router)
+		_ = serverSession.Serve()
 		close(done)
 	}()
 
@@ -334,7 +336,8 @@ func TestAutoReconnect(t *testing.T) {
 				t.Logf("server session error: %v", err)
 				return
 			}
-			_ = sess.Serve(router)
+			sess.SetRouter(router)
+			_ = sess.Serve()
 		}()
 		return clientConn, nil
 	}
@@ -355,7 +358,7 @@ func TestAutoReconnect(t *testing.T) {
 	clientSession.EnableAutoReconnect(rc)
 
 	// Simulate network failure by closing the underlying session.
-	curMux := clientSession.muxSess.Load().(*smux.Session)
+	curMux := clientSession.muxSess.Load()
 	curMux.Close()
 
 	// Now call "ping" which should trigger auto‑reconnect.
@@ -403,7 +406,7 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 
 	// Launch a goroutine to simulate a buffered-call handler on the server side.
 	go func() {
-		curSession := serverSess.muxSess.Load().(*smux.Session)
+		curSession := serverSess.muxSess.Load()
 		stream, err := curSession.AcceptStream()
 		if err != nil {
 			t.Errorf("server: AcceptStream error: %v", err)

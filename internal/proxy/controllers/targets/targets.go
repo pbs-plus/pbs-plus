@@ -249,8 +249,8 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			if target.IsAgent {
 				targetSplit := strings.Split(target.Name, " - ")
-				arpcSess := storeInstance.GetARPC(targetSplit[0])
-				if arpcSess != nil {
+				arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
+				if ok {
 					var respBody arpc.MapStringStringMsg
 					raw, err := arpcSess.CallMsgWithTimeout(1*time.Second, "ping", nil)
 					if err == nil {
