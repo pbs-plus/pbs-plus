@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -30,7 +31,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		processTargets(all, storeInstance, 100)
+		processTargets(all, storeInstance, runtime.NumCPU())
 
 		digest, err := utils.CalculateDigest(all)
 		if err != nil {

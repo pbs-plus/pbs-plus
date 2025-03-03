@@ -12,36 +12,41 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func processTargets(all []types.Target, storeInstance *store.Store, maxConcurrency int) {
+func processTargets(all []types.Target, storeInstance *store.Store, workerCount int) {
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, maxConcurrency) // Semaphore to limit concurrency
+	tasks := make(chan int, len(all)) // Channel to distribute tasks to workers
 
-	for i := range all {
-		if all[i].IsAgent {
-			wg.Add(1)
-			sem <- struct{}{} // Acquire a slot in the semaphore
-
-			go func(i int) {
-				defer wg.Done()
-				defer func() { <-sem }() // Release the slot in the semaphore
-
-				targetSplit := strings.Split(all[i].Name, " - ")
-				arpcSess := storeInstance.GetARPC(targetSplit[0])
-				if arpcSess != nil {
-					var respBody arpc.MapStringStringMsg
-					raw, err := arpcSess.CallMsgWithTimeout(3*time.Second, "ping", nil)
-					if err != nil {
-						return
-					}
-					_, err = respBody.UnmarshalMsg(raw)
-					if err == nil {
-						all[i].ConnectionStatus = true
-						all[i].AgentVersion = respBody["version"]
+	// Start worker goroutines
+	for w := 0; w < workerCount; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range tasks {
+				if all[i].IsAgent {
+					targetSplit := strings.Split(all[i].Name, " - ")
+					arpcSess := storeInstance.GetARPC(targetSplit[0])
+					if arpcSess != nil {
+						var respBody arpc.MapStringStringMsg
+						raw, err := arpcSess.CallMsgWithTimeout(3*time.Second, "ping", nil)
+						if err != nil {
+							continue
+						}
+						_, err = respBody.UnmarshalMsg(raw)
+						if err == nil {
+							all[i].ConnectionStatus = true
+							all[i].AgentVersion = respBody["version"]
+						}
 					}
 				}
-			}(i)
-		}
+			}
+		}()
 	}
 
-	wg.Wait() // Wait for all goroutines to finish
+	// Send tasks to the workers
+	for i := range all {
+		tasks <- i
+	}
+	close(tasks) // Close the task channel to signal workers to stop
+
+	wg.Wait() // Wait for all workers to finish
 }
