@@ -468,15 +468,19 @@ func TestSparseFileSupport(t *testing.T) {
 	}
 }
 
-func TestHandleLseekWithProperSparseRegions(t *testing.T) {
-	// Assume cluster size is 64KB (adjust based on actual cluster size)
-	const clusterSize = 64 * 1024
-	const fileSize = 3 * clusterSize // 3 clusters (192KB)
-
-	// Setup test directory structure
+func TestHandleLseekWithDynamicClusterSize(t *testing.T) {
+	// Get the cluster size of the filesystem
 	testDir, err := os.MkdirTemp("", "vssfs-lseek-test")
 	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
+
+	clusterSize, err := getClusterSize(testDir)
+	require.NoError(t, err)
+	t.Logf("Cluster size: %d bytes", clusterSize)
+
+	// Set file size to 3 clusters
+	const numClusters = 3
+	fileSize := numClusters * clusterSize
 
 	// Create file with proper Windows API
 	sparseFilePath := filepath.Join(testDir, "sparse.bin")
@@ -590,13 +594,13 @@ func TestHandleLseekWithProperSparseRegions(t *testing.T) {
 	require.Equal(t, 3, len(ranges), "File should have exactly three allocated ranges")
 	if len(ranges) == 3 {
 		assert.Equal(t, int64(0), ranges[0].FileOffset, "First range should start at 0")
-		assert.Equal(t, int64(clusterSize), ranges[0].Length, "First range should be 1 cluster")
+		assert.Equal(t, clusterSize, ranges[0].Length, "First range should be 1 cluster")
 
-		assert.Equal(t, int64(clusterSize), ranges[1].FileOffset, "Second range should start at 1 cluster")
-		assert.Equal(t, int64(clusterSize), ranges[1].Length, "Second range should be 1 cluster")
+		assert.Equal(t, clusterSize, ranges[1].FileOffset, "Second range should start at 1 cluster")
+		assert.Equal(t, clusterSize, ranges[1].Length, "Second range should be 1 cluster")
 
-		assert.Equal(t, int64(2*clusterSize), ranges[2].FileOffset, "Third range should start at 2 clusters")
-		assert.Equal(t, int64(clusterSize), ranges[2].Length, "Third range should be 1 cluster")
+		assert.Equal(t, 2*clusterSize, ranges[2].FileOffset, "Third range should start at 2 clusters")
+		assert.Equal(t, clusterSize, ranges[2].Length, "Third range should be 1 cluster")
 	}
 }
 

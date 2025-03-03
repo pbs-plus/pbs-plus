@@ -207,3 +207,24 @@ func getFileSize(handle windows.Handle) (int64, error) {
 	// Combine the high and low parts of the file size
 	return int64(fileInfo.FileSizeHigh)<<32 + int64(fileInfo.FileSizeLow), nil
 }
+
+func getClusterSize(path string) (int64, error) {
+	var sectorsPerCluster, bytesPerSector, freeClusters, totalClusters uint32
+
+	r1, _, err := syscall.SyscallN(
+		procGetDiskFreeSpace.Addr(),
+		5,
+		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(path))),
+		uintptr(unsafe.Pointer(&sectorsPerCluster)),
+		uintptr(unsafe.Pointer(&bytesPerSector)),
+		uintptr(unsafe.Pointer(&freeClusters)),
+		uintptr(unsafe.Pointer(&totalClusters)),
+		0,
+	)
+	if r1 == 0 {
+		return 0, err
+	}
+
+	clusterSize := uint64(sectorsPerCluster) * uint64(bytesPerSector)
+	return int64(clusterSize), nil
+}
