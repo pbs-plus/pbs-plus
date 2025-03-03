@@ -209,22 +209,35 @@ func getFileSize(handle windows.Handle) (int64, error) {
 }
 
 func getClusterSize(path string) (int64, error) {
-	var sectorsPerCluster, bytesPerSector, freeClusters, totalClusters uint32
+	var sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters uint32
 
-	r1, _, err := syscall.SyscallN(
-		procGetDiskFreeSpace.Addr(),
-		5,
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(path))),
-		uintptr(unsafe.Pointer(&sectorsPerCluster)),
-		uintptr(unsafe.Pointer(&bytesPerSector)),
-		uintptr(unsafe.Pointer(&freeClusters)),
-		uintptr(unsafe.Pointer(&totalClusters)),
-		0,
-	)
-	if r1 == 0 {
-		return 0, err
+	// Ensure the path points to the root of the volume (e.g., "C:\")
+	rootPath := path[:3] // Extract the drive letter and root (e.g., "C:\")
+	if len(rootPath) != 3 || rootPath[1] != ':' || rootPath[2] != '\\' {
+		return 0, fmt.Errorf("invalid path for GetDiskFreeSpaceW: %s", path)
 	}
 
-	clusterSize := uint64(sectorsPerCluster) * uint64(bytesPerSector)
-	return int64(clusterSize), nil
+	// Call GetDiskFreeSpaceW to retrieve cluster size information
+	kernel32 := windows.NewLazySystemDLL("kernel32.dll")
+	procGetDiskFreeSpaceW := kernel32.NewProc("GetDiskFreeSpaceW")
+
+	rootPathPtr, err := windows.UTF16PtrFromString(rootPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to convert path to UTF16: %w", err)
+	}
+
+	ret, _, err := procGetDiskFreeSpaceW.Call(
+		uintptr(unsafe.Pointer(rootPathPtr)),
+		uintptr(unsafe.Pointer(&sectorsPerCluster)),
+		uintptr(unsafe.Pointer(&bytesPerSector)),
+		uintptr(unsafe.Pointer(&numberOfFreeClusters)),
+		uintptr(unsafe.Pointer(&totalNumberOfClusters)),
+	)
+	if ret == 0 {
+		return 0, fmt.Errorf("GetDiskFreeSpaceW failed: %w", err)
+	}
+
+	// Calculate cluster size
+	clusterSize := int64(sectorsPerCluster) * int64(bytesPerSector)
+	return clusterSize, nil
 }
