@@ -5,12 +5,11 @@ package store
 import (
 	"fmt"
 
-	"github.com/alphadose/haxmap"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/database"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/hashmap"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
 // Store holds the configuration system.
@@ -18,7 +17,7 @@ type Store struct {
 	CertGenerator      *certificates.Generator
 	Database           *database.Database
 	ARPCSessionManager *arpc.SessionManager
-	arpcFS             *haxmap.Map[string, *arpcfs.ARPCFS]
+	arpcFS             *safemap.Map[string, *arpcfs.ARPCFS]
 }
 
 func Initialize(paths map[string]string) (*Store, error) {
@@ -29,7 +28,7 @@ func Initialize(paths map[string]string) (*Store, error) {
 
 	store := &Store{
 		Database:           db,
-		arpcFS:             hashmap.New[*arpcfs.ARPCFS](),
+		arpcFS:             safemap.New[string, *arpcfs.ARPCFS](),
 		ARPCSessionManager: arpc.NewSessionManager(),
 	}
 

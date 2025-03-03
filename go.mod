@@ -5,7 +5,6 @@ go 1.24.0
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/alexflint/go-filemutex v1.3.0
-	github.com/alphadose/haxmap v1.4.1
 	github.com/billgraziano/dpapi v0.5.0
 	github.com/cyphar/filepath-securejoin v0.4.1
 	github.com/fsnotify/fsnotify v1.8.0
@@ -15,7 +14,6 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.7.2
 	github.com/kardianos/service v1.2.2
 	github.com/mxk/go-vss v1.2.0
-	github.com/rekby/fastuuid v0.9.0
 	github.com/stretchr/testify v1.10.0
 	github.com/tinylib/msgp v1.2.5
 	github.com/valyala/bytebufferpool v1.0.0
@@ -45,7 +43,6 @@ require (
 	github.com/philhofer/fwd v1.1.3-0.20240916144458-20a13a1f6b7c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/valyala/fastrand v1.1.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.34.0 // indirect
 	go.opentelemetry.io/otel/metric v1.34.0 // indirect
