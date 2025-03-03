@@ -60,7 +60,7 @@ var (
 	processTargetsMutex sync.Mutex
 	processTargetsCond  = sync.NewCond(&processTargetsMutex)
 	isProcessing        bool
-	cache               = NewCache(10 * time.Second)
+	cache               = NewCache(1 * time.Minute)
 )
 
 // processTargets ensures only one instance is running globally
@@ -82,55 +82,37 @@ func processTargets(all []types.Target, storeInstance *store.Store, workerCount 
 		processTargetsMutex.Unlock()
 	}()
 
-	var wg sync.WaitGroup
-	tasks := make(chan int, len(all)) // Channel to distribute tasks to workers
+	for i := range all {
+		if all[i].IsAgent {
+			targetSplit := strings.Split(all[i].Name, " - ")
+			cacheKey := targetSplit[0]
 
-	// Start worker goroutines
-	for w := 0; w < workerCount; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range tasks {
-				if all[i].IsAgent {
-					targetSplit := strings.Split(all[i].Name, " - ")
-					cacheKey := targetSplit[0]
+			// Check the cache first
+			if cachedResp, found := cache.Get(cacheKey); found {
+				// Use cached response
+				all[i].ConnectionStatus = true
+				all[i].AgentVersion = cachedResp
+				continue
+			}
 
-					// Check the cache first
-					if cachedResp, found := cache.Get(cacheKey); found {
-						// Use cached response
-						all[i].ConnectionStatus = true
-						all[i].AgentVersion = cachedResp
-						continue
-					}
+			// If not in cache, make the ARPC call
+			arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(cacheKey)
+			if ok {
+				var respBody arpc.MapStringStringMsg
+				raw, err := arpcSess.CallMsgWithTimeout(500*time.Millisecond, "ping", nil)
+				if err != nil {
+					continue
+				}
+				_, err = respBody.UnmarshalMsg(raw)
+				if err == nil {
+					// Update the target
+					all[i].ConnectionStatus = true
+					all[i].AgentVersion = respBody["version"]
 
-					// If not in cache, make the ARPC call
-					arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(cacheKey)
-					if ok {
-						var respBody arpc.MapStringStringMsg
-						raw, err := arpcSess.CallMsgWithTimeout(500*time.Millisecond, "ping", nil)
-						if err != nil {
-							continue
-						}
-						_, err = respBody.UnmarshalMsg(raw)
-						if err == nil {
-							// Update the target
-							all[i].ConnectionStatus = true
-							all[i].AgentVersion = respBody["version"]
-
-							// Store the response in the cache
-							cache.Set(cacheKey, respBody["version"])
-						}
-					}
+					// Store the response in the cache
+					cache.Set(cacheKey, respBody["version"])
 				}
 			}
-		}()
+		}
 	}
-
-	// Send tasks to the workers
-	for i := range all {
-		tasks <- i
-	}
-	close(tasks) // Close the task channel to signal workers to stop
-
-	wg.Wait() // Wait for all workers to finish
 }
