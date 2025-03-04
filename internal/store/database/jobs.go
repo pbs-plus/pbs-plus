@@ -301,7 +301,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 		}
 
 		target, err := database.GetTarget(job.Target)
-		if err == nil {
+		if err == nil && target != nil {
 			job.ExpectedSize = utils.HumanReadableBytes(int64(target.DriveTotalBytes))
 		}
 
