@@ -315,6 +315,14 @@ Ext.define("PBS.config.DiskBackupJobView", {
     },
     {
       xtype: "proxmoxButton",
+      text: gettext("Show last success log"),
+      handler: "openSuccessTaskLog",
+      enableFn: (rec) => !!rec.data["last-successful-upid"],
+      disabled: true,
+    },
+    "-",
+    {
+      xtype: "proxmoxButton",
       text: gettext("Run Job"),
       handler: "runJob",
       reference: "d2dBackupRun",
@@ -329,13 +337,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
       disabled: true,
     },
     "-",
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Show last success log"),
-      handler: "openSuccessTaskLog",
-      enableFn: (rec) => !!rec.data["last-successful-upid"],
-      disabled: true,
-    },
     {
       xtype: "proxmoxButton",
       text: gettext("Export CSV"),
