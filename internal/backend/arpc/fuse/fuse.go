@@ -197,8 +197,9 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 		return nil, fs.ToErrno(err)
 	}
 
-	result := make([]fuse.DirEntry, 0, len(*entries))
-	for _, e := range *entries {
+	// Preallocate the slice with the exact size needed
+	result := make([]fuse.DirEntry, len(entries))
+	for i, e := range entries {
 		entryType := uint32(0) // DT_Unknown
 		mode := os.FileMode(e.Mode)
 		if mode.IsDir() {
@@ -209,10 +210,11 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 			entryType = syscall.DT_REG
 		}
 
-		result = append(result, fuse.DirEntry{
+		// Directly assign to the preallocated slice
+		result[i] = fuse.DirEntry{
 			Name: e.Name,
 			Mode: entryType << 12,
-		})
+		}
 	}
 
 	return fs.NewListDirStream(result), 0
@@ -227,7 +229,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 
 	return &FileHandle{
 		fs:   n.fs,
-		file: file,
+		file: &file,
 	}, 0, 0
 }
 

@@ -889,51 +889,39 @@ func (z *ReadDirEntries) DecodeMsg(dc *msgp.Reader) (err error) {
 		(*z) = make(ReadDirEntries, zb0002)
 	}
 	for zb0001 := range *z {
-		if dc.IsNil() {
-			err = dc.ReadNil()
+		var field []byte
+		_ = field
+		var zb0003 uint32
+		zb0003, err = dc.ReadMapHeader()
+		if err != nil {
+			err = msgp.WrapError(err, zb0001)
+			return
+		}
+		for zb0003 > 0 {
+			zb0003--
+			field, err = dc.ReadMapKeyPtr()
 			if err != nil {
 				err = msgp.WrapError(err, zb0001)
 				return
 			}
-			(*z)[zb0001] = nil
-		} else {
-			if (*z)[zb0001] == nil {
-				(*z)[zb0001] = new(VSSDirEntry)
-			}
-			var field []byte
-			_ = field
-			var zb0003 uint32
-			zb0003, err = dc.ReadMapHeader()
-			if err != nil {
-				err = msgp.WrapError(err, zb0001)
-				return
-			}
-			for zb0003 > 0 {
-				zb0003--
-				field, err = dc.ReadMapKeyPtr()
+			switch msgp.UnsafeString(field) {
+			case "name":
+				(*z)[zb0001].Name, err = dc.ReadString()
+				if err != nil {
+					err = msgp.WrapError(err, zb0001, "Name")
+					return
+				}
+			case "mode":
+				(*z)[zb0001].Mode, err = dc.ReadUint32()
+				if err != nil {
+					err = msgp.WrapError(err, zb0001, "Mode")
+					return
+				}
+			default:
+				err = dc.Skip()
 				if err != nil {
 					err = msgp.WrapError(err, zb0001)
 					return
-				}
-				switch msgp.UnsafeString(field) {
-				case "name":
-					(*z)[zb0001].Name, err = dc.ReadString()
-					if err != nil {
-						err = msgp.WrapError(err, zb0001, "Name")
-						return
-					}
-				case "mode":
-					(*z)[zb0001].Mode, err = dc.ReadUint32()
-					if err != nil {
-						err = msgp.WrapError(err, zb0001, "Mode")
-						return
-					}
-				default:
-					err = dc.Skip()
-					if err != nil {
-						err = msgp.WrapError(err, zb0001)
-						return
-					}
 				}
 			}
 		}
@@ -949,33 +937,26 @@ func (z ReadDirEntries) EncodeMsg(en *msgp.Writer) (err error) {
 		return
 	}
 	for zb0004 := range z {
-		if z[zb0004] == nil {
-			err = en.WriteNil()
-			if err != nil {
-				return
-			}
-		} else {
-			// map header, size 2
-			// write "name"
-			err = en.Append(0x82, 0xa4, 0x6e, 0x61, 0x6d, 0x65)
-			if err != nil {
-				return
-			}
-			err = en.WriteString(z[zb0004].Name)
-			if err != nil {
-				err = msgp.WrapError(err, zb0004, "Name")
-				return
-			}
-			// write "mode"
-			err = en.Append(0xa4, 0x6d, 0x6f, 0x64, 0x65)
-			if err != nil {
-				return
-			}
-			err = en.WriteUint32(z[zb0004].Mode)
-			if err != nil {
-				err = msgp.WrapError(err, zb0004, "Mode")
-				return
-			}
+		// map header, size 2
+		// write "name"
+		err = en.Append(0x82, 0xa4, 0x6e, 0x61, 0x6d, 0x65)
+		if err != nil {
+			return
+		}
+		err = en.WriteString(z[zb0004].Name)
+		if err != nil {
+			err = msgp.WrapError(err, zb0004, "Name")
+			return
+		}
+		// write "mode"
+		err = en.Append(0xa4, 0x6d, 0x6f, 0x64, 0x65)
+		if err != nil {
+			return
+		}
+		err = en.WriteUint32(z[zb0004].Mode)
+		if err != nil {
+			err = msgp.WrapError(err, zb0004, "Mode")
+			return
 		}
 	}
 	return
@@ -986,17 +967,13 @@ func (z ReadDirEntries) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	o = msgp.AppendArrayHeader(o, uint32(len(z)))
 	for zb0004 := range z {
-		if z[zb0004] == nil {
-			o = msgp.AppendNil(o)
-		} else {
-			// map header, size 2
-			// string "name"
-			o = append(o, 0x82, 0xa4, 0x6e, 0x61, 0x6d, 0x65)
-			o = msgp.AppendString(o, z[zb0004].Name)
-			// string "mode"
-			o = append(o, 0xa4, 0x6d, 0x6f, 0x64, 0x65)
-			o = msgp.AppendUint32(o, z[zb0004].Mode)
-		}
+		// map header, size 2
+		// string "name"
+		o = append(o, 0x82, 0xa4, 0x6e, 0x61, 0x6d, 0x65)
+		o = msgp.AppendString(o, z[zb0004].Name)
+		// string "mode"
+		o = append(o, 0xa4, 0x6d, 0x6f, 0x64, 0x65)
+		o = msgp.AppendUint32(o, z[zb0004].Mode)
 	}
 	return
 }
@@ -1015,50 +992,39 @@ func (z *ReadDirEntries) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		(*z) = make(ReadDirEntries, zb0002)
 	}
 	for zb0001 := range *z {
-		if msgp.IsNil(bts) {
-			bts, err = msgp.ReadNilBytes(bts)
-			if err != nil {
-				return
-			}
-			(*z)[zb0001] = nil
-		} else {
-			if (*z)[zb0001] == nil {
-				(*z)[zb0001] = new(VSSDirEntry)
-			}
-			var field []byte
-			_ = field
-			var zb0003 uint32
-			zb0003, bts, err = msgp.ReadMapHeaderBytes(bts)
+		var field []byte
+		_ = field
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadMapHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, zb0001)
+			return
+		}
+		for zb0003 > 0 {
+			zb0003--
+			field, bts, err = msgp.ReadMapKeyZC(bts)
 			if err != nil {
 				err = msgp.WrapError(err, zb0001)
 				return
 			}
-			for zb0003 > 0 {
-				zb0003--
-				field, bts, err = msgp.ReadMapKeyZC(bts)
+			switch msgp.UnsafeString(field) {
+			case "name":
+				(*z)[zb0001].Name, bts, err = msgp.ReadStringBytes(bts)
+				if err != nil {
+					err = msgp.WrapError(err, zb0001, "Name")
+					return
+				}
+			case "mode":
+				(*z)[zb0001].Mode, bts, err = msgp.ReadUint32Bytes(bts)
+				if err != nil {
+					err = msgp.WrapError(err, zb0001, "Mode")
+					return
+				}
+			default:
+				bts, err = msgp.Skip(bts)
 				if err != nil {
 					err = msgp.WrapError(err, zb0001)
 					return
-				}
-				switch msgp.UnsafeString(field) {
-				case "name":
-					(*z)[zb0001].Name, bts, err = msgp.ReadStringBytes(bts)
-					if err != nil {
-						err = msgp.WrapError(err, zb0001, "Name")
-						return
-					}
-				case "mode":
-					(*z)[zb0001].Mode, bts, err = msgp.ReadUint32Bytes(bts)
-					if err != nil {
-						err = msgp.WrapError(err, zb0001, "Mode")
-						return
-					}
-				default:
-					bts, err = msgp.Skip(bts)
-					if err != nil {
-						err = msgp.WrapError(err, zb0001)
-						return
-					}
 				}
 			}
 		}
@@ -1071,11 +1037,7 @@ func (z *ReadDirEntries) UnmarshalMsg(bts []byte) (o []byte, err error) {
 func (z ReadDirEntries) Msgsize() (s int) {
 	s = msgp.ArrayHeaderSize
 	for zb0004 := range z {
-		if z[zb0004] == nil {
-			s += msgp.NilSize
-		} else {
-			s += 1 + 5 + msgp.StringPrefixSize + len(z[zb0004].Name) + 5 + msgp.Uint32Size
-		}
+		s += 1 + 5 + msgp.StringPrefixSize + len(z[zb0004].Name) + 5 + msgp.Uint32Size
 	}
 	return
 }
