@@ -210,6 +210,15 @@ func (database *Database) getJob(id string) (*types.Job, error) {
 		}
 	}
 
+	if job.LastSuccessfulUpid != "" {
+		successTask, err := proxmox.Session.GetTaskByUPID(job.LastSuccessfulUpid)
+		if err != nil {
+			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
+		} else {
+			job.LastSuccessfulEndtime = &successTask.EndTime
+		}
+	}
+
 	// Get next schedule
 	nextSchedule, err := system.GetNextSchedule(job)
 	if err == nil && nextSchedule != nil {
