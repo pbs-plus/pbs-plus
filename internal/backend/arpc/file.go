@@ -75,7 +75,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, err
 	}
 
-	go atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
+	atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
 
 	// If we read less than requested, it indicates EOF
 	if bytesRead < len(p) {
