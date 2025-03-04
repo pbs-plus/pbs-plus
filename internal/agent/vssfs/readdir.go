@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/valyala/bytebufferpool"
 	"golang.org/x/sys/windows"
 )
 
@@ -49,9 +48,8 @@ type FILE_FULL_DIR_INFO struct {
 
 // Constants for file attributes checking
 const (
-	initialBufSize  = 64 * 1024  // 64KB initial buffer on stack
-	maxStackBufSize = 128 * 1024 // 128KB maximum stack buffer
-	exclusions      = windows.FILE_ATTRIBUTE_REPARSE_POINT |
+	bufSize    = 64 * 1024 // 64KB initial buffer
+	exclusions = windows.FILE_ATTRIBUTE_REPARSE_POINT |
 		windows.FILE_ATTRIBUTE_DEVICE |
 		windows.FILE_ATTRIBUTE_OFFLINE |
 		windows.FILE_ATTRIBUTE_VIRTUAL |
@@ -65,14 +63,16 @@ const (
 // back to the full-directory information class. The entries that match skipPathWithAttributes
 // (and the "." and ".." names) are omitted.
 func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
+	// Convert the directory path to UTF-16
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
 		return nil, mapWinError(err)
 	}
 
+	// Open the directory handle
 	handle, err := windows.CreateFile(
 		pDir,
-		windows.GENERIC_READ,
+		windows.FILE_LIST_DIRECTORY,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,
@@ -84,43 +84,32 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 	}
 	defer windows.CloseHandle(handle)
 
-	const initialBufSize = 64 * 1024
-	buf := bytebufferpool.Get()
-	defer func() {
-		// Ensure the buffer is returned to the pool only if it's not nil
-		if buf != nil {
-			bytebufferpool.Put(buf)
-		}
-	}()
+	// Fixed-size buffer
+	var buffer [bufSize]byte
 
-	// Ensure the buffer has enough capacity
-	if cap(buf.B) < initialBufSize {
-		buf.B = make([]byte, initialBufSize)
-	} else {
-		buf.B = buf.B[:initialBufSize]
-	}
-
-	var entries ReadDirEntries
-	var usingFull bool
 	infoClass := windows.FileIdBothDirectoryInfo
+	usingFull := false // false means we’re using FILE_ID_BOTH_DIR_INFO
+
+	// Process the buffer
+	var entries ReadDirEntries
 
 	for {
 		err = windows.GetFileInformationByHandleEx(
 			handle,
 			uint32(infoClass),
-			&buf.B[0],
-			uint32(buf.Len()),
+			&buffer[0],
+			uint32(len(buffer)),
 		)
-
 		if err != nil {
 			var errno syscall.Errno
 			if errors.As(err, &errno) {
+				// Fallback to FILE_FULL_DIR_INFO if necessary.
 				if errno == windows.ERROR_INVALID_PARAMETER && !usingFull {
-					// Switch to FileFullDirectoryInfo
 					infoClass = windows.FileFullDirectoryInfo
 					usingFull = true
 					continue
 				}
+				// No more files? (caller interprets ERROR_NO_MORE_FILES)
 				if errno == windows.ERROR_NO_MORE_FILES {
 					break
 				}
@@ -128,47 +117,71 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 			return nil, mapWinError(err)
 		}
 
-		// Process entries in the buffer
+		// Inner loop: process every entry in the fetched buffer.
 		offset := 0
-		for offset < buf.Len() {
-			var info *FILE_ID_BOTH_DIR_INFO
-			if usingFull {
-				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf.B[offset]))
-			} else {
-				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf.B[offset]))
-			}
-
-			nameLen := int(info.FileNameLength) / 2
-			if nameLen > 0 {
-				filenamePtr := (*uint16)(unsafe.Pointer(&info.FileName[0]))
-				nameSlice := unsafe.Slice(filenamePtr, nameLen)
-				name := syscall.UTF16ToString(nameSlice)
-
-				if shouldIncludeEntry(name, info.FileAttributes) {
-					mode := windowsAttributesToFileMode(info.FileAttributes)
-					entries = append(entries, VSSDirEntry{Name: name, Mode: mode})
+		for {
+			if !usingFull {
+				// Use FILE_ID_BOTH_DIR_INFO.
+				both := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buffer[offset]))
+				nameLen := int(both.FileNameLength) / 2
+				if nameLen > 0 {
+					filenamePtr := (*uint16)(unsafe.Pointer(&both.FileName[0]))
+					nameSlice := unsafe.Slice(filenamePtr, nameLen)
+					name := syscall.UTF16ToString(nameSlice)
+					if shouldIncludeEntry(name, both.FileAttributes) {
+						mode := windowsAttributesToFileMode(both.FileAttributes)
+						entries = append(entries, VSSDirEntry{Name: name, Mode: mode})
+					}
 				}
-			}
 
-			if info.NextEntryOffset == 0 {
-				break
+				if both.NextEntryOffset == 0 {
+					break
+				}
+				offset += int(both.NextEntryOffset)
+			} else {
+				// Use FILE_FULL_DIR_INFO.
+				full := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buffer[offset]))
+				nameLen := int(full.FileNameLength) / 2
+				if nameLen > 0 {
+					filenamePtr := (*uint16)(unsafe.Pointer(&full.FileName[0]))
+					nameSlice := unsafe.Slice(filenamePtr, nameLen)
+					name := syscall.UTF16ToString(nameSlice)
+					if shouldIncludeEntry(name, full.FileAttributes) {
+						mode := windowsAttributesToFileMode(full.FileAttributes)
+						entries = append(entries, VSSDirEntry{Name: name, Mode: mode})
+					}
+				}
+
+				if full.NextEntryOffset == 0 {
+					break
+				}
+				offset += int(full.NextEntryOffset)
 			}
-			offset += int(info.NextEntryOffset)
 		}
 	}
 
 	return entries.MarshalMsg(nil)
 }
 
+// shouldIncludeEntry determines whether to include a file entry
 func shouldIncludeEntry(name string, attrs uint32) bool {
 	if name == "." || name == ".." {
 		return false
 	}
 
-	return attrs&(exclusions) == 0
+	const exclusions = windows.FILE_ATTRIBUTE_REPARSE_POINT |
+		windows.FILE_ATTRIBUTE_DEVICE |
+		windows.FILE_ATTRIBUTE_OFFLINE |
+		windows.FILE_ATTRIBUTE_VIRTUAL |
+		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN |
+		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+
+	return attrs&exclusions == 0
 }
 
+// windowsAttributesToFileMode converts Windows file attributes to Go file modes
 func windowsAttributesToFileMode(attrs uint32) uint32 {
+	// Start with a default permission (non-directory files)
 	mode := uint32(0644)
 	if attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
 		mode = 0755 | uint32(os.ModeDir)
