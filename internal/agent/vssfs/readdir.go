@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/valyala/bytebufferpool"
 	"golang.org/x/sys/windows"
 )
 
@@ -49,8 +48,8 @@ type FILE_FULL_DIR_INFO struct {
 
 // Constants for file attributes checking
 const (
-	initialBufSize  = 64 * 1024  // 64KB initial buffer on stack
-	maxStackBufSize = 128 * 1024 // 128KB maximum stack buffer
+	initialBufSize  = 64 * 1024  // 64KB initial buffer
+	maxStackBufSize = 128 * 1024 // 128KB maximum buffer size
 	exclusions      = windows.FILE_ATTRIBUTE_REPARSE_POINT |
 		windows.FILE_ATTRIBUTE_DEVICE |
 		windows.FILE_ATTRIBUTE_OFFLINE |
@@ -84,21 +83,8 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 	}
 	defer windows.CloseHandle(handle)
 
-	const initialBufSize = 64 * 1024
-	buf := bytebufferpool.Get()
-	defer func() {
-		// Ensure the buffer is returned to the pool only if it's not nil
-		if buf != nil {
-			bytebufferpool.Put(buf)
-		}
-	}()
-
-	// Ensure the buffer has enough capacity
-	if cap(buf.B) < initialBufSize {
-		buf.B = make([]byte, initialBufSize)
-	} else {
-		buf.B = buf.B[:initialBufSize]
-	}
+	// Allocate buffer directly without using a pool
+	buf := make([]byte, initialBufSize)
 
 	var entries ReadDirEntries
 	var usingFull bool
@@ -108,8 +94,8 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 		err = windows.GetFileInformationByHandleEx(
 			handle,
 			uint32(infoClass),
-			&buf.B[0],
-			uint32(buf.Len()),
+			&buf[0],
+			uint32(len(buf)),
 		)
 
 		if err != nil {
@@ -130,12 +116,12 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 
 		// Process entries in the buffer
 		offset := 0
-		for offset < buf.Len() {
+		for offset < len(buf) {
 			var info *FILE_ID_BOTH_DIR_INFO
 			if usingFull {
-				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf.B[offset]))
+				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 			} else {
-				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf.B[offset]))
+				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 			}
 
 			nameLen := int(info.FileNameLength) / 2
