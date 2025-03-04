@@ -78,7 +78,6 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
   mixins: ["Proxmox.Mixin.CBind"],
 
   id: undefined,
-  upid: undefined,
 
   cbindData: function (config) {
     let me = this;
@@ -88,7 +87,6 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
         me.id,
       ),
       id: me.id,
-      upid: me.upid,
     };
   },
 
@@ -96,14 +94,29 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
   url: '/api2/extjs/nodes',
   isCreate: true,
   showProgress: false,
-  submitUrl: function (url, values) {
-    let upid = values.upid;
-    delete values.upid;
-
-    let task = Proxmox.Utils.parse_task_upid(upid);
-
-    return `${url}/${task.node}/tasks/${encodeURIComponent(upid)}`
+  submitUrl: function (url) {
+	  let me = this;
+    let task = Proxmox.Utils.parse_task_upid(me.upid);
+    return `${url}/${task.node}/tasks/${encodeURIComponent(me.upid)}`
   },
+  submit: function() {
+    let me = this;
+
+    let url = Ext.isFunction(me.submitUrl)
+        ? me.submitUrl(me.url)
+        : me.submitUrl || me.url;
+
+    Proxmox.Utils.API2Request({
+      url: url,
+      waitMsgTarget: me,
+      method: 'DELETE',
+      failure: response => Ext.Msg.alert(gettext('Error'), response.htmlStatus),
+      success: function(response, options) {
+        me.close();
+      }
+    });
+  },
+
   submitOptions: {
     timeout: 120000,
   },
