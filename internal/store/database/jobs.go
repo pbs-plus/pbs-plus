@@ -80,7 +80,7 @@ func (database *Database) CreateJob(job types.Job) error {
 
 	jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
 	if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
-		return fmt.Errorf("unable to create directory: %s", jobLogsPath)
+		syslog.L.Errorf("CreateJob: error creating log directory: %v", err)
 	}
 
 	// Convert job to config format
@@ -263,18 +263,18 @@ func (database *Database) UpdateJob(job types.Job) error {
 	if job.LastRunUpid != "" {
 		jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
 		if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
-			return fmt.Errorf("UpdateJob: unable to create directory: %s", jobLogsPath)
-		}
-
-		jobLogPath := filepath.Join(jobLogsPath, job.LastRunUpid)
-		if _, err := os.Lstat(jobLogPath); err != nil {
-			origLogPath, err := proxmox.GetLogPath(job.LastRunUpid)
-			if err != nil {
-				syslog.L.Errorf("UpdateJob: failed to get original log path %s: %v", jobLogPath, err)
-			}
-			err = os.Link(origLogPath, jobLogPath)
-			if err != nil {
-				syslog.L.Errorf("UpdateJob: failed to link original log %s: %v", jobLogPath, err)
+			syslog.L.Errorf("UpdateJob: error creating log directory: %v", err)
+		} else {
+			jobLogPath := filepath.Join(jobLogsPath, job.LastRunUpid)
+			if _, err := os.Lstat(jobLogPath); err != nil {
+				origLogPath, err := proxmox.GetLogPath(job.LastRunUpid)
+				if err != nil {
+					syslog.L.Errorf("UpdateJob: failed to get original log path %s: %v", jobLogPath, err)
+				}
+				err = os.Link(origLogPath, jobLogPath)
+				if err != nil {
+					syslog.L.Errorf("UpdateJob: failed to link original log %s: %v", jobLogPath, err)
+				}
 			}
 		}
 	}
@@ -322,7 +322,7 @@ func (database *Database) DeleteJob(id string) error {
 	jobLogsPath := filepath.Join(constants.JobLogsBasePath, id)
 	if err := os.RemoveAll(jobLogsPath); err != nil {
 		if !os.IsNotExist(err) {
-			return fmt.Errorf("DeleteJob: error deleting job logs folder: %w", err)
+			syslog.L.Errorf("DeleteJob: error deleting job logs folder: %v", err)
 		}
 	}
 
