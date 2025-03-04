@@ -275,7 +275,7 @@ func (database *Database) UpdateJob(job types.Job) error {
 				if err != nil {
 					syslog.L.Errorf("UpdateJob: failed to get original log path %s: %v", jobLogPath, err)
 				}
-				err = os.Link(origLogPath, jobLogPath)
+				err = os.Symlink(origLogPath, jobLogPath)
 				if err != nil {
 					syslog.L.Errorf("UpdateJob: failed to link original log %s: %v", jobLogPath, err)
 				}
