@@ -136,7 +136,7 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 	}
 
 	if job == nil {
-		return nil, fmt.Errorf("GetJob: job does not exist")
+		return nil, nil
 	}
 
 	// Get UPIDs
