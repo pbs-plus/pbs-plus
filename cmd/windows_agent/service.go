@@ -296,9 +296,26 @@ func (p *agentService) connectARPC() error {
 
 	go func() {
 		defer session.Close()
-		syslog.L.Info("Connecting aRPC endpoint from /plus/arpc")
-		if err := session.Serve(); err != nil {
-			syslog.L.Errorf("session closed: %v", err)
+		for {
+			select {
+			case <-p.ctx.Done():
+				return
+			default:
+				syslog.L.Info("Connecting aRPC endpoint from /plus/arpc")
+				if err := session.Serve(); err != nil {
+					syslog.L.Errorf("session closed: %v", err)
+
+					store, err := agent.NewBackupStore()
+					if err != nil {
+						syslog.L.Errorf("Error initializing backup store: %v", err)
+					} else {
+						err = store.ClearAll()
+						if err != nil {
+							syslog.L.Errorf("Error clearing backup store: %v", err)
+						}
+					}
+				}
+			}
 		}
 	}()
 
