@@ -12,6 +12,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 )
 
@@ -193,8 +194,12 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 // Readdir implements NodeReaddirer
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(n.path)
-	if err != nil || entries == nil {
+	if err != nil {
 		return nil, fs.ToErrno(err)
+	}
+
+	if entries == nil {
+		entries = vssfs.ReadDirEntries{}
 	}
 
 	result := make([]fuse.DirEntry, 0, len(entries))

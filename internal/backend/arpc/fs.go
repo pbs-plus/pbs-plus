@@ -198,6 +198,10 @@ func (fs *ARPCFS) ReadDir(path string) (vssfs.ReadDirEntries, error) {
 		return nil, os.ErrInvalid
 	}
 
+	if resp == nil {
+		return vssfs.ReadDirEntries{}, nil // Return an empty slice instead of nil
+	}
+
 	fs.trackAccess(path, true)
 
 	return resp, nil
