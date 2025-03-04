@@ -149,7 +149,7 @@ func (fs *ARPCFS) Stat(filename string) (*vssfs.VSSFileInfo, error) {
 
 	fi.Name = filepath.Base(fi.Name)
 
-	go fs.trackAccess(filename, fi.IsDir)
+	fs.trackAccess(filename, fi.IsDir)
 
 	return &fi, nil
 }
@@ -198,7 +198,7 @@ func (fs *ARPCFS) ReadDir(path string) (*vssfs.ReadDirEntries, error) {
 		return nil, os.ErrInvalid
 	}
 
-	go fs.trackAccess(path, true)
+	fs.trackAccess(path, true)
 
 	return &resp, nil
 }

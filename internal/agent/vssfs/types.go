@@ -64,7 +64,7 @@ type VSSDirEntry struct {
 	Mode uint32 `msg:"mode"`
 }
 
-type ReadDirEntries []*VSSDirEntry
+type ReadDirEntries []VSSDirEntry
 type FileHandleId uint64
 
 type StatFS struct {
