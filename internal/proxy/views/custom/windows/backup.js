@@ -88,6 +88,7 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
         me.id,
       ),
       id: me.id,
+      upid: me.upid,
     };
   },
 
