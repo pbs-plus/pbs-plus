@@ -6,10 +6,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
@@ -77,7 +79,8 @@ func ParseUPID(upid string) (*Task, error) {
 }
 
 func IsUPIDRunning(upid string) bool {
-	cmd := exec.Command("grep", "-F", upid, "/var/log/proxmox-backup/tasks/active")
+	activePath := filepath.Join(constants.TaskLogsBasePath, "active")
+	cmd := exec.Command("grep", "-F", upid, activePath)
 	output, err := cmd.Output()
 	if err != nil {
 		// If grep exits with a non-zero status, it means the UPID was not found.
@@ -116,7 +119,7 @@ func encodeToHexEscapes(input string) string {
 	return encoded.String()
 }
 
-func getLogPath(upid string) (string, error) {
+func GetLogPath(upid string) (string, error) {
 	upidSplit := strings.Split(upid, ":")
 	if len(upidSplit) < 4 {
 		return "", fmt.Errorf("invalid upid")
@@ -125,13 +128,13 @@ func getLogPath(upid string) (string, error) {
 	parsed := upidSplit[3]
 	logFolder := parsed[len(parsed)-2:]
 
-	logPath := fmt.Sprintf("/var/log/proxmox-backup/tasks/%s/%s", logFolder, upid)
+	logPath := filepath.Join(constants.TaskLogsBasePath, logFolder, upid)
 
 	return logPath, nil
 }
 
 func parseLastLogMessage(upid string) (string, error) {
-	logPath, err := getLogPath(upid)
+	logPath, err := GetLogPath(upid)
 	if err != nil {
 		return "", err
 	}

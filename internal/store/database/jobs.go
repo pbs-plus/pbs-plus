@@ -11,6 +11,7 @@ import (
 	"time"
 
 	configLib "github.com/sonroyaalmerol/pbs-plus/internal/config"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/system"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
@@ -77,6 +78,11 @@ func (database *Database) CreateJob(job types.Job) error {
 		return fmt.Errorf("CreateJob: invalid id string -> %s", job.ID)
 	}
 
+	jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
+	if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
+		syslog.L.Errorf("CreateJob: error creating log directory: %v", err)
+	}
+
 	// Convert job to config format
 	configData := &configLib.ConfigData[types.Job]{
 		Sections: map[string]*configLib.Section[types.Job]{
@@ -124,6 +130,35 @@ func (database *Database) CreateJob(job types.Job) error {
 }
 
 func (database *Database) GetJob(id string) (*types.Job, error) {
+	job, err := database.getJob(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if job == nil {
+		return nil, nil
+	}
+
+	// Get UPIDs
+	jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
+	upids, err := os.ReadDir(jobLogsPath)
+	if err == nil {
+		job.UPIDs = make([]string, len(upids))
+		for i, upid := range upids {
+			job.UPIDs[i] = upid.Name()
+		}
+	}
+
+	// Get global exclusions
+	globalExclusions, err := database.GetAllGlobalExclusions()
+	if err == nil && globalExclusions != nil {
+		job.Exclusions = append(job.Exclusions, globalExclusions...)
+	}
+
+	return job, nil
+}
+
+func (database *Database) getJob(id string) (*types.Job, error) {
 	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
 	configData, err := database.jobsConfig.Parse(jobPath)
 	if err != nil {
@@ -151,12 +186,6 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 			pathSlice = append(pathSlice, exclusion.Path)
 		}
 		job.RawExclusions = strings.Join(pathSlice, "\n")
-	}
-
-	// Get global exclusions
-	globalExclusions, err := database.GetAllGlobalExclusions()
-	if err == nil && globalExclusions != nil {
-		job.Exclusions = append(job.Exclusions, globalExclusions...)
 	}
 
 	if job.LastRunPlusError != "" {
@@ -235,6 +264,25 @@ func (database *Database) UpdateJob(job types.Job) error {
 		syslog.L.Errorf("UpdateJob: error setting schedule: %v", err)
 	}
 
+	if job.LastRunUpid != "" {
+		jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
+		if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
+			syslog.L.Errorf("UpdateJob: error creating log directory: %v", err)
+		} else {
+			jobLogPath := filepath.Join(jobLogsPath, job.LastRunUpid)
+			if _, err := os.Lstat(jobLogPath); err != nil {
+				origLogPath, err := proxmox.GetLogPath(job.LastRunUpid)
+				if err != nil {
+					syslog.L.Errorf("UpdateJob: failed to get original log path %s: %v", jobLogPath, err)
+				}
+				err = os.Link(origLogPath, jobLogPath)
+				if err != nil {
+					syslog.L.Errorf("UpdateJob: failed to link original log %s: %v", jobLogPath, err)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -250,11 +298,17 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 			continue
 		}
 
-		job, err := database.GetJob(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
+		job, err := database.getJob(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
 		if err != nil || job == nil {
 			syslog.L.Errorf("GetAllJobs: error getting job: %v", err)
 			continue
 		}
+
+		target, err := database.GetTarget(job.Target)
+		if err == nil && target != nil {
+			job.ExpectedSize = utils.HumanReadableBytes(int64(target.DriveTotalBytes))
+		}
+
 		jobs = append(jobs, *job)
 	}
 
@@ -266,6 +320,13 @@ func (database *Database) DeleteJob(id string) error {
 	if err := os.Remove(jobPath); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("DeleteJob: error deleting job file: %w", err)
+		}
+	}
+
+	jobLogsPath := filepath.Join(constants.JobLogsBasePath, id)
+	if err := os.RemoveAll(jobLogsPath); err != nil {
+		if !os.IsNotExist(err) {
+			syslog.L.Errorf("DeleteJob: error deleting job logs folder: %v", err)
 		}
 	}
 

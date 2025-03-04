@@ -72,3 +72,81 @@ Ext.define("PBS.D2DManagement.BackupWindow", {
     },
   ],
 });
+
+Ext.define("PBS.D2DManagement.StopBackupWindow", {
+  extend: "Proxmox.window.Edit",
+  mixins: ["Proxmox.Mixin.CBind"],
+
+  id: undefined,
+
+  cbindData: function (config) {
+    let me = this;
+    return {
+      warning: Ext.String.format(
+        gettext("Stop backup job '{0}'?"),
+        me.id,
+      ),
+      id: me.id,
+    };
+  },
+
+  title: gettext("Stopping Backup Job"),
+  url: '/api2/extjs/nodes',
+  showProgress: false,
+  submitUrl: function (url, values) {
+    let id = values.id;
+    delete values.id;
+
+    let task = Proxmox.Utils.parse_task_upid(id);
+
+    return `${url}/${task.node}/tasks/${encodeURIComponent(id)}`
+  },
+  submitOptions: {
+    timeout: 120000,
+  },
+
+  layout: "hbox",
+  width: 400,
+  method: "DELETE",
+  isRemove: true,
+  submitText: gettext("Stop Backup"),
+  items: [
+    {
+      xtype: "container",
+      padding: 0,
+      layout: {
+        type: "hbox",
+        align: "stretch",
+      },
+      items: [
+        {
+          xtype: "component",
+          cls: [
+            Ext.baseCSSPrefix + "message-box-icon",
+            Ext.baseCSSPrefix + "message-box-question",
+            Ext.baseCSSPrefix + "dlg-icon",
+          ],
+        },
+        {
+          xtype: "container",
+          flex: 1,
+          items: [
+            {
+              xtype: "displayfield",
+              cbind: {
+                value: "{warning}",
+              },
+            },
+            {
+              xtype: "hidden",
+              name: "id",
+              cbind: {
+                value: "{id}",
+              },
+            },
+          ],
+        },
+      ],
+    },
+  ],
+});

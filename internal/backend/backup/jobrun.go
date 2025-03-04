@@ -242,8 +242,7 @@ func runBackupAttempt(
 		return nil, fmt.Errorf("runBackupAttempt: task detection timed out: %w", monitorCtx.Err())
 	}
 
-	// Task is guaranteed to be non-nil at this point
-	if err := updateJobStatus(job, task, storeInstance); err != nil {
+	if err := updateJobStatus(false, job, task, storeInstance); err != nil {
 		errCleanUp()
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
@@ -277,15 +276,14 @@ func runBackupAttempt(
 		clientLogFile.Close()
 
 		// Read log files after process completes
-		err := processPBSProxyLogs(task.UPID, clientLogPath)
+		succeeded, err := processPBSProxyLogs(task.UPID, clientLogPath)
 		if err != nil {
 			syslog.L.Errorf("Failed to process logs: %v", err)
 		}
-
 		// Clean up temp files
 		os.Remove(clientLogPath)
 
-		if err := updateJobStatus(job, task, storeInstance); err != nil {
+		if err := updateJobStatus(succeeded, job, task, storeInstance); err != nil {
 			syslog.L.Errorf("runBackupAttempt: failed to update job status (post cmd.Wait): %v", err)
 		}
 

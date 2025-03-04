@@ -171,7 +171,7 @@ func (proxmoxSess *ProxmoxSession) GetTaskEndTime(task *Task) (int64, error) {
 		return -1, fmt.Errorf("GetTaskEndTime: token is required")
 	}
 
-	logPath, err := getLogPath(task.UPID)
+	logPath, err := GetLogPath(task.UPID)
 	if err != nil {
 		return -1, fmt.Errorf("GetTaskEndTime: error getting log path (%s) -> %w", logPath, err)
 	}
