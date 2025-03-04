@@ -78,6 +78,7 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
   mixins: ["Proxmox.Mixin.CBind"],
 
   id: undefined,
+  upid: undefined,
 
   cbindData: function (config) {
     let me = this;
@@ -92,14 +93,14 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
 
   title: gettext("Stopping Backup Job"),
   url: '/api2/extjs/nodes',
-  showProgress: false,
+  showProgress: true,
   submitUrl: function (url, values) {
-    let id = values.id;
-    delete values.id;
+    let upid = values.upid;
+    delete values.upid;
 
-    let task = Proxmox.Utils.parse_task_upid(id);
+    let task = Proxmox.Utils.parse_task_upid(upid);
 
-    return `${url}/${task.node}/tasks/${encodeURIComponent(id)}`
+    return `${url}/${task.node}/tasks/${encodeURIComponent(upid)}`
   },
   submitOptions: {
     timeout: 120000,

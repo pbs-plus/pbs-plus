@@ -96,8 +96,11 @@ Ext.define("PBS.config.DiskBackupJobView", {
       let upid = selection[0].data["last-run-upid"];
       if (upid === "") return;
 
+      let id = selection[0].data.id;
+
       Ext.create("PBS.D2DManagement.StopBackupWindow", {
-        id: upid,
+        id,
+        upid: upid,
         listeners: {
           destroy: function () {
             me.reload();
@@ -312,6 +315,14 @@ Ext.define("PBS.config.DiskBackupJobView", {
     },
     {
       xtype: "proxmoxButton",
+      text: gettext("Show last success log"),
+      handler: "openSuccessTaskLog",
+      enableFn: (rec) => !!rec.data["last-successful-upid"],
+      disabled: true,
+    },
+    "-",
+    {
+      xtype: "proxmoxButton",
       text: gettext("Run Job"),
       handler: "runJob",
       reference: "d2dBackupRun",
@@ -322,16 +333,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Stop Job"),
       handler: "stopJob",
       reference: "d2dBackupStop",
+      enableFn: (rec) => (!!rec.data["last-run-upid"] && !rec.data["last-run-state"]),
       disabled: true,
     },
     "-",
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Show last success log"),
-      handler: "openSuccessTaskLog",
-      enableFn: (rec) => !!rec.data["last-successful-upid"],
-      disabled: true,
-    },
     {
       xtype: "proxmoxButton",
       text: gettext("Export CSV"),
