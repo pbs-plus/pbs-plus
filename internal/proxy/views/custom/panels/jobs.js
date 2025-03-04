@@ -55,6 +55,20 @@ Ext.define("PBS.config.DiskBackupJobView", {
       }).show();
     },
 
+    openSuccessTaskLog: function () {
+      let me = this;
+      let view = me.getView();
+      let selection = view.getSelection();
+      if (selection.length < 1) return;
+
+      let upid = selection[0].data["last-successful-upid"];
+      if (!upid) return;
+
+      Ext.create("PBS.plusWindow.TaskViewer", {
+        upid,
+      }).show();
+    },
+
     runJob: function () {
       let me = this;
       let view = me.getView();
@@ -65,6 +79,25 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
       Ext.create("PBS.D2DManagement.BackupWindow", {
         id,
+        listeners: {
+          destroy: function () {
+            me.reload();
+          },
+        },
+      }).show();
+    },
+
+    stopJob: function () {
+      let me = this;
+      let view = me.getView();
+      let selection = view.getSelection();
+      if (selection.length < 1) return;
+
+      let upid = selection[0].data["last-run-upid"];
+      if (upid === "") return;
+
+      Ext.create("PBS.D2DManagement.StopBackupWindow", {
+        id: upid,
         listeners: {
           destroy: function () {
             me.reload();
@@ -148,6 +181,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
           // Remove unwanted job properties.
           delete job.exclusions;
+          delete job.upids;
           delete job["last-plus-error"];
 
           return {
@@ -278,12 +312,26 @@ Ext.define("PBS.config.DiskBackupJobView", {
     },
     {
       xtype: "proxmoxButton",
-      text: gettext("Run now"),
+      text: gettext("Run Job"),
       handler: "runJob",
       reference: "d2dBackupRun",
       disabled: true,
     },
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Stop Job"),
+      handler: "stopJob",
+      reference: "d2dBackupStop",
+      disabled: true,
+    },
     "-",
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Show last success log"),
+      handler: "openSuccessTaskLog",
+      enableFn: (rec) => !!rec.data["last-successful-upid"],
+      disabled: true,
+    },
     {
       xtype: "proxmoxButton",
       text: gettext("Export CSV"),
@@ -301,6 +349,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       minWidth: 75,
       flex: 1,
       sortable: true,
+      hidden: true,
     },
     {
       header: gettext("Target"),
@@ -319,6 +368,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       dataIndex: "store",
       width: 120,
       sortable: true,
+      hidden: true,
     },
     {
       header: gettext("Namespace"),
@@ -335,7 +385,14 @@ Ext.define("PBS.config.DiskBackupJobView", {
       sortable: true,
     },
     {
-      header: gettext("Last Backup Attempt"),
+      header: gettext("Last Success"),
+      dataIndex: "last-successful-endtime",
+      renderer: PBS.Utils.render_optional_timestamp,
+      width: 140,
+      sortable: true,
+    },
+    {
+      header: gettext("Last Attempt"),
       dataIndex: "last-run-endtime",
       renderer: PBS.Utils.render_optional_timestamp,
       width: 140,
@@ -370,6 +427,17 @@ Ext.define("PBS.config.DiskBackupJobView", {
       width: 60,
     },
     {
+      text: gettext("Target Size"),
+      dataIndex: "expected_size",
+      renderer: function (value) {
+        if (value === "") {
+          return "-";
+        }
+        return value;
+      },
+      width: 60,
+    },
+    {
       text: gettext("Processing Speed"),
       dataIndex: "current_files_speed",
       renderer: function (value) {
@@ -390,6 +458,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
         return value;
       },
       width: 60,
+      hidden: true,
     },
     {
       text: gettext("Folders Processed"),
@@ -401,6 +470,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
         return value;
       },
       width: 60,
+      hidden: true,
     },
     {
       header: gettext("Status"),
@@ -414,6 +484,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       renderer: PBS.Utils.render_next_task_run,
       width: 150,
       sortable: true,
+      hidden: true,
     },
     {
       header: gettext("Comment"),
@@ -421,6 +492,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       renderer: Ext.String.htmlEncode,
       flex: 2,
       sortable: true,
+      hidden: true,
     },
   ],
 

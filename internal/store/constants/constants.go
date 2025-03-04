@@ -8,4 +8,7 @@ const (
 	TimerBasePath      = "/lib/systemd/system"
 	DbBasePath         = "/var/lib/proxmox-backup"
 	AgentMountBasePath = "/mnt/pbs-plus-mounts"
+	LogsBasePath       = "/var/log/proxmox-backup"
+	TaskLogsBasePath   = LogsBasePath + "/tasks"
+	JobLogsBasePath    = "/var/log/pbs-plus"
 )

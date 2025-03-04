@@ -9,7 +9,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
-func updateJobStatus(job *types.Job, task *proxmox.Task, storeInstance *store.Store) error {
+func updateJobStatus(succeeded bool, job *types.Job, task *proxmox.Task, storeInstance *store.Store) error {
 	// Update task status
 	taskFound, err := proxmox.Session.GetTaskByUPID(task.UPID)
 	if err != nil {
@@ -30,6 +30,11 @@ func updateJobStatus(job *types.Job, task *proxmox.Task, storeInstance *store.St
 	latestJob.LastRunEndtime = &taskFound.EndTime
 	latestJob.LastRunPlusTime = 0
 	latestJob.LastRunPlusError = ""
+
+	if succeeded {
+		latestJob.LastSuccessfulUpid = taskFound.UPID
+		latestJob.LastSuccessfulEndtime = &task.EndTime
+	}
 
 	if err := storeInstance.Database.UpdateJob(*latestJob); err != nil {
 		syslog.L.Errorf("Unable to update job: %v", err)
