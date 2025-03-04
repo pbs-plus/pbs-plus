@@ -82,7 +82,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 		0,
 	)
 	if err != nil {
-		return nil, err
+		return nil, mapWinError(err)
 	}
 	defer windows.CloseHandle(handle)
 
@@ -113,7 +113,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 						usingFull = true
 						continue
 					}
-					return nil, err
+					return nil, mapWinError(err)
 				case windows.ERROR_MORE_DATA:
 					newSize := len(buffer) * 2
 					if len(heapBuf) == 0 && newSize <= maxStackBufSize {
@@ -126,10 +126,10 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 				case windows.ERROR_NO_MORE_FILES:
 					return entries.MarshalMsg(nil)
 				default:
-					return nil, err
+					return nil, mapWinError(err)
 				}
 			}
-			return nil, err
+			return nil, mapWinError(err)
 		}
 
 		entries, err = processBuffer(buffer, entries, usingFull)
