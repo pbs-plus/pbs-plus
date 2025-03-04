@@ -5,10 +5,10 @@ package vssfs
 import (
 	"errors"
 	"os"
-	"runtime"
 	"syscall"
 	"unsafe"
 
+	"github.com/valyala/bytebufferpool"
 	"golang.org/x/sys/windows"
 )
 
@@ -59,17 +59,15 @@ const (
 		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
 )
 
-//go:noinline
+// readDirBulk opens the directory at dirPath and enumerates its entries using
+// GetFileInformationByHandleEx. It first attempts to use the file-ID based
+// information class; if that fails (with ERROR_INVALID_PARAMETER), it falls
+// back to the full-directory information class. The entries that match skipPathWithAttributes
+// (and the "." and ".." names) are omitted.
 func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
-	var (
-		entries   = make(ReadDirEntries, 0, 128)
-		usingFull bool
-		infoClass = windows.FileIdBothDirectoryInfo
-	)
-
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
-		return nil, err
+		return nil, mapWinError(err)
 	}
 
 	handle, err := windows.CreateFile(
@@ -86,109 +84,80 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 	}
 	defer windows.CloseHandle(handle)
 
-	// Start with stack buffer
-	var stackBuf [initialBufSize]byte
-	buffer := stackBuf[:]
-	var heapBuf []byte
+	const initialBufSize = 64 * 1024
+	buf := bytebufferpool.Get()
+	defer func() {
+		// Ensure the buffer is returned to the pool only if it's not nil
+		if buf != nil {
+			bytebufferpool.Put(buf)
+		}
+	}()
+
+	// Ensure the buffer has enough capacity
+	if cap(buf.B) < initialBufSize {
+		buf.B = make([]byte, initialBufSize)
+	} else {
+		buf.B = buf.B[:initialBufSize]
+	}
+
+	var entries ReadDirEntries
+	var usingFull bool
+	infoClass := windows.FileIdBothDirectoryInfo
 
 	for {
 		err = windows.GetFileInformationByHandleEx(
 			handle,
 			uint32(infoClass),
-			&buffer[0],
-			uint32(len(buffer)),
+			&buf.B[0],
+			uint32(buf.Len()),
 		)
 
-		// Keep buffer alive until Windows API call is complete
-		if heapBuf != nil {
-			runtime.KeepAlive(heapBuf)
-		}
-
 		if err != nil {
-			if errno, ok := err.(syscall.Errno); ok {
-				switch errno {
-				case windows.ERROR_INVALID_PARAMETER:
-					if !usingFull {
-						infoClass = windows.FileFullDirectoryInfo
-						usingFull = true
-						continue
-					}
-					return nil, mapWinError(err)
-				case windows.ERROR_MORE_DATA:
-					newSize := len(buffer) * 2
-					if len(heapBuf) == 0 && newSize <= maxStackBufSize {
-						buffer = stackBuf[:newSize]
-					} else {
-						heapBuf = make([]byte, newSize)
-						buffer = heapBuf
-					}
+			var errno syscall.Errno
+			if errors.As(err, &errno) {
+				if errno == windows.ERROR_INVALID_PARAMETER && !usingFull {
+					// Switch to FileFullDirectoryInfo
+					infoClass = windows.FileFullDirectoryInfo
+					usingFull = true
 					continue
-				case windows.ERROR_NO_MORE_FILES:
-					return entries.MarshalMsg(nil)
-				default:
-					return nil, mapWinError(err)
+				}
+				if errno == windows.ERROR_NO_MORE_FILES {
+					break
 				}
 			}
 			return nil, mapWinError(err)
 		}
 
-		entries, err = processBuffer(buffer, entries, usingFull)
-		if err != nil {
-			return nil, err
-		}
+		// Process entries in the buffer
+		offset := 0
+		for offset < buf.Len() {
+			var info *FILE_ID_BOTH_DIR_INFO
+			if usingFull {
+				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf.B[offset]))
+			} else {
+				info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf.B[offset]))
+			}
 
-		return entries.MarshalMsg(nil)
+			nameLen := int(info.FileNameLength) / 2
+			if nameLen > 0 {
+				filenamePtr := (*uint16)(unsafe.Pointer(&info.FileName[0]))
+				nameSlice := unsafe.Slice(filenamePtr, nameLen)
+				name := syscall.UTF16ToString(nameSlice)
+
+				if shouldIncludeEntry(name, info.FileAttributes) {
+					mode := windowsAttributesToFileMode(info.FileAttributes)
+					entries = append(entries, VSSDirEntry{Name: name, Mode: mode})
+				}
+			}
+
+			if info.NextEntryOffset == 0 {
+				break
+			}
+			offset += int(info.NextEntryOffset)
+		}
 	}
-}
 
-func processBuffer(buffer []byte, entries ReadDirEntries, usingFull bool) (ReadDirEntries, error) {
-	var offset uintptr
-	for offset < uintptr(len(buffer)) {
-		var info *FILE_ID_BOTH_DIR_INFO
-		if usingFull {
-			fullInfo := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buffer[offset]))
-			info = &FILE_ID_BOTH_DIR_INFO{
-				NextEntryOffset: fullInfo.NextEntryOffset,
-				FileIndex:       fullInfo.FileIndex,
-				CreationTime:    fullInfo.CreationTime,
-				LastAccessTime:  fullInfo.LastAccessTime,
-				LastWriteTime:   fullInfo.LastWriteTime,
-				ChangeTime:      fullInfo.ChangeTime,
-				EndOfFile:       fullInfo.EndOfFile,
-				AllocationSize:  fullInfo.AllocationSize,
-				FileAttributes:  fullInfo.FileAttributes,
-				FileNameLength:  fullInfo.FileNameLength,
-				EaSize:          fullInfo.EaSize,
-			}
-			copy(info.FileName[:], fullInfo.FileName[:])
-		} else {
-			info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buffer[offset]))
-		}
-
-		nameLen := int(info.FileNameLength) / 2
-		if nameLen > 0 {
-			if offset+uintptr(info.FileNameLength) > uintptr(len(buffer)) {
-				return nil, errors.New("buffer overflow while reading filename")
-			}
-
-			filenamePtr := (*uint16)(unsafe.Pointer(&info.FileName[0]))
-			nameSlice := unsafe.Slice(filenamePtr, nameLen)
-			name := syscall.UTF16ToString(nameSlice)
-
-			if shouldIncludeEntry(name, info.FileAttributes) {
-				entries = append(entries, VSSDirEntry{
-					Name: name,
-					Mode: windowsAttributesToFileMode(info.FileAttributes),
-				})
-			}
-		}
-
-		if info.NextEntryOffset == 0 {
-			return entries, nil
-		}
-		offset += uintptr(info.NextEntryOffset)
-	}
-	return entries, nil
+	return entries.MarshalMsg(nil)
 }
 
 func shouldIncludeEntry(name string, attrs uint32) bool {
