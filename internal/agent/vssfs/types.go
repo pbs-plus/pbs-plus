@@ -7,17 +7,17 @@ import (
 )
 
 type OpenFileReq struct {
-	Path string `msg:"path"`
+	Path []byte `msg:"path"`
 	Flag int    `msg:"flag"`
 	Perm int    `msg:"perm"`
 }
 
 type StatReq struct {
-	Path string `msg:"path"`
+	Path []byte `msg:"path"`
 }
 
 type ReadDirReq struct {
-	Path string `msg:"path"`
+	Path []byte `msg:"path"`
 }
 
 type ReadReq struct {
@@ -36,8 +36,8 @@ type CloseReq struct {
 }
 
 type BackupReq struct {
-	JobId string `msg:"job_id"`
-	Drive string `msg:"drive"`
+	JobId []byte `msg:"job_id"`
+	Drive []byte `msg:"drive"`
 }
 
 type LseekReq struct {
@@ -51,7 +51,7 @@ type LseekResp struct {
 }
 
 type VSSFileInfo struct {
-	Name    string    `msg:"name"`
+	Name    []byte    `msg:"name"`
 	Size    int64     `msg:"size"`
 	Mode    uint32    `msg:"mode"`
 	ModTime time.Time `msg:"modTime"`
@@ -60,7 +60,7 @@ type VSSFileInfo struct {
 }
 
 type VSSDirEntry struct {
-	Name string `msg:"name"`
+	Name []byte `msg:"name"`
 	Mode uint32 `msg:"mode"`
 }
 

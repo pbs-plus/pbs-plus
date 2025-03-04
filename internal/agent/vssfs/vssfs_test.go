@@ -16,6 +16,7 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -172,9 +173,9 @@ func TestVSSFSServer(t *testing.T) {
 	defer clientSession.Close()
 
 	t.Run("Stat", func(t *testing.T) {
-		payload := StatReq{Path: "test1.txt"}
+		payload := StatReq{Path: utils.ToBytes("test1.txt")}
 		var result VSSFileInfo
-		raw, err := clientSession.CallMsg(ctx, "vss/Stat", payload)
+		raw, err := clientSession.CallMsg(ctx, "vss/Stat", &payload)
 		result.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 		assert.NotNil(t, result.Size)
@@ -182,9 +183,9 @@ func TestVSSFSServer(t *testing.T) {
 	})
 
 	t.Run("ReadDir", func(t *testing.T) {
-		payload := ReadDirReq{Path: "/"}
+		payload := ReadDirReq{Path: utils.ToBytes("/")}
 		var result ReadDirEntries
-		raw, err := clientSession.CallMsg(ctx, "vss/ReadDir", payload)
+		raw, err := clientSession.CallMsg(ctx, "vss/ReadDir", &payload)
 		result.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(result), 3) // Should have at least test1.txt, test2.txt, and subdir
@@ -193,7 +194,7 @@ func TestVSSFSServer(t *testing.T) {
 		foundTest1 := false
 		foundSubdir := false
 		for _, entry := range result {
-			name := entry.Name
+			name := utils.ToString(entry.Name)
 			if name == "test1.txt" {
 				foundTest1 = true
 			} else if name == "subdir" {
@@ -210,9 +211,9 @@ func TestVSSFSServer(t *testing.T) {
 		t.Log("Before OpenFile:", dumpHandleMap(vssServer))
 
 		// Open file
-		payload := OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
+		payload := OpenFileReq{Path: utils.ToBytes("test2.txt"), Flag: 0, Perm: 0644}
 		var openResult FileHandleId
-		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", &payload)
 		require.NoError(t, err, "OpenFile should succeed")
 		openResult.UnmarshalMsg(raw)
 
@@ -280,9 +281,9 @@ func TestVSSFSServer(t *testing.T) {
 		for i, fileName := range files {
 			t.Logf("Opening file %d: %s", i, fileName)
 
-			payload := OpenFileReq{Path: fileName, Flag: 0, Perm: 0644}
+			payload := OpenFileReq{Path: utils.ToBytes(fileName), Flag: 0, Perm: 0644}
 			var openResult FileHandleId
-			raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
+			raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", &payload)
 			require.NoError(t, err, "OpenFile should succeed for %s", fileName)
 			openResult.UnmarshalMsg(raw)
 
@@ -332,9 +333,9 @@ func TestVSSFSServer(t *testing.T) {
 
 	t.Run("LargeFile_Read", func(t *testing.T) {
 		// Open large file
-		payload := OpenFileReq{Path: "large_file.bin", Flag: 0, Perm: 0644}
+		payload := OpenFileReq{Path: utils.ToBytes("large_file.bin"), Flag: 0, Perm: 0644}
 		var openResult FileHandleId
-		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", &payload)
 		openResult.UnmarshalMsg(raw)
 		assert.NoError(t, err)
 
@@ -407,9 +408,9 @@ func TestVSSFSServer(t *testing.T) {
 	// Test for double close behavior
 	t.Run("DoubleClose", func(t *testing.T) {
 		// Open file
-		payload := OpenFileReq{Path: "test1.txt", Flag: 0, Perm: 0644}
+		payload := OpenFileReq{Path: utils.ToBytes("test1.txt"), Flag: 0, Perm: 0644}
 		var openResult FileHandleId
-		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", &payload)
 		require.NoError(t, err)
 		openResult.UnmarshalMsg(raw)
 
@@ -434,9 +435,9 @@ func TestVSSFSServer(t *testing.T) {
 
 	t.Run("Lseek", func(t *testing.T) {
 		// Open a test file
-		payload := OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
+		payload := OpenFileReq{Path: utils.ToBytes("test2.txt"), Flag: 0, Perm: 0644}
 		var openResult FileHandleId
-		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", &payload)
 		require.NoError(t, err, "OpenFile should succeed")
 		openResult.UnmarshalMsg(raw)
 
@@ -531,9 +532,9 @@ func TestVSSFSServer(t *testing.T) {
 			require.NoError(t, err, "Failed to create sparse file with fsutil")
 
 			// Open the sparse file
-			payload := OpenFileReq{Path: "sparse_file.bin", Flag: 0, Perm: 0644}
+			payload := OpenFileReq{Path: utils.ToBytes("sparse_file.bin"), Flag: 0, Perm: 0644}
 			var openResult FileHandleId
-			raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", payload)
+			raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", &payload)
 			require.NoError(t, err, "OpenFile should succeed for sparse file")
 			openResult.UnmarshalMsg(raw)
 

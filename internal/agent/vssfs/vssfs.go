@@ -3,6 +3,7 @@
 package vssfs
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/idgen"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 	"github.com/valyala/bytebufferpool"
@@ -132,7 +134,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		}, nil
 	}
 
-	path, err := s.abs(payload.Path)
+	path, err := s.abs(utils.ToString(payload.Path))
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -188,7 +190,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	fullPath, err := s.abs(payload.Path)
+	fullPath, err := s.abs(utils.ToString(payload.Path))
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -199,7 +201,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	}
 
 	info := VSSFileInfo{
-		Name:    rawInfo.Name(),
+		Name:    utils.ToBytes(rawInfo.Name()),
 		Size:    rawInfo.Size(),
 		Mode:    uint32(rawInfo.Mode()),
 		ModTime: rawInfo.ModTime(),
@@ -250,14 +252,14 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	windowsDir := filepath.FromSlash(payload.Path)
+	windowsDir := filepath.FromSlash(utils.ToString(payload.Path))
 	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
 		return arpc.Response{}, err
 	}
 
 	// If the payload is empty (or "."), use the root.
-	if payload.Path == "." || payload.Path == "" {
+	if bytes.Equal(payload.Path, utils.ToBytes(".")) || bytes.Equal(payload.Path, utils.ToBytes("")) {
 		fullDirPath = s.snapshot.SnapshotPath
 	}
 

@@ -11,23 +11,23 @@ type BufferMetadata struct {
 
 // Request defines the MessagePack‑encoded request format.
 type Request struct {
-	Method  string `msg:"method"`
+	Method  []byte `msg:"method"`
 	Payload []byte `msg:"payload,allownil"`
 }
 
 // Response defines the MessagePack‑encoded response format.
 type Response struct {
 	Status    int                `msg:"status"`
-	Message   string             `msg:"message,omitempty"`
+	Message   []byte             `msg:"message,omitempty"`
 	Data      []byte             `msg:"data,allownil,omitempty"`
 	RawStream func(*smux.Stream) `msg:"-"`
 }
 
 type SerializableError struct {
-	ErrorType     string `msg:"error_type"`
-	Message       string `msg:"message"`
-	Op            string `msg:"op,omitempty"`
-	Path          string `msg:"path,omitempty"`
+	ErrorType     []byte `msg:"error_type"`
+	Message       []byte `msg:"message"`
+	Op            []byte `msg:"op,omitempty"`
+	Path          []byte `msg:"path,omitempty"`
 	OriginalError error  `msg:"-"`
 }
 

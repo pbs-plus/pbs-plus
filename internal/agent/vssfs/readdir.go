@@ -50,7 +50,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 		}
 
 		entries = append(entries, VSSDirEntry{
-			Name: entry.Name(),
+			Name: []byte(entry.Name()),
 			Mode: uint32(entry.Type()),
 		})
 	}

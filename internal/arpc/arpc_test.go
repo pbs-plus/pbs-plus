@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 )
@@ -121,7 +122,7 @@ func TestRouterServeStream_Echo(t *testing.T) {
 
 	// Build and send a request using our MessagePack helper.
 	req := Request{
-		Method:  "echo",
+		Method:  utils.ToBytes("echo"),
 		Payload: payloadBytes,
 	}
 
