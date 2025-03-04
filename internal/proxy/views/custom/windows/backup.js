@@ -93,7 +93,7 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
 
   title: gettext("Stopping Backup Job"),
   url: '/api2/extjs/nodes',
-  showProgress: true,
+  showProgress: false,
   submitUrl: function (url, values) {
     let upid = values.upid;
     delete values.upid;
@@ -109,7 +109,6 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
   layout: "hbox",
   width: 400,
   method: "DELETE",
-  isRemove: true,
   submitText: gettext("Stop Backup"),
   items: [
     {
