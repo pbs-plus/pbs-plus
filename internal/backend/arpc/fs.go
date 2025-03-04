@@ -12,6 +12,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
@@ -104,13 +105,13 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 
 	var resp vssfs.FileHandleId
 	req := vssfs.OpenFileReq{
-		Path: filename,
+		Path: utils.ToBytes(filename),
 		Flag: flag,
 		Perm: int(perm),
 	}
 
 	// Use the CPU efficient CallMsgDirect helper.
-	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/OpenFile", req)
+	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/OpenFile", &req)
 	if err != nil {
 		return ARPCFile{}, err
 	}
@@ -136,8 +137,8 @@ func (fs *ARPCFS) Stat(filename string) (vssfs.VSSFileInfo, error) {
 		return vssfs.VSSFileInfo{}, os.ErrInvalid
 	}
 
-	req := vssfs.StatReq{Path: filename}
-	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Stat", req)
+	req := vssfs.StatReq{Path: utils.ToBytes(filename)}
+	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Stat", &req)
 	if err != nil {
 		return vssfs.VSSFileInfo{}, err
 	}
@@ -146,8 +147,6 @@ func (fs *ARPCFS) Stat(filename string) (vssfs.VSSFileInfo, error) {
 	if err != nil {
 		return vssfs.VSSFileInfo{}, os.ErrInvalid
 	}
-
-	fi.Name = filepath.Base(fi.Name)
 
 	fs.trackAccess(filename, fi.IsDir)
 
@@ -187,8 +186,8 @@ func (fs *ARPCFS) ReadDir(path string) (vssfs.ReadDirEntries, error) {
 	}
 
 	var resp vssfs.ReadDirEntries
-	req := vssfs.ReadDirReq{Path: path}
-	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/ReadDir", req)
+	req := vssfs.ReadDirReq{Path: utils.ToBytes(path)}
+	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/ReadDir", &req)
 	if err != nil {
 		return nil, err
 	}

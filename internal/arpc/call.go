@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/tinylib/msgp/msgp"
 	"github.com/valyala/bytebufferpool"
 )
@@ -57,7 +58,7 @@ func (s *Session) CallContext(ctx context.Context, method string, payload msgp.M
 
 	// Build and send the RPC request.
 	req := Request{
-		Method:  method,
+		Method:  utils.ToBytes(method),
 		Payload: payloadBytes,
 	}
 
@@ -147,7 +148,7 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 
 	// Send request
 	req := Request{
-		Method:  method,
+		Method:  utils.ToBytes(method),
 		Payload: payloadBytes,
 	}
 

@@ -42,11 +42,11 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> unable to reach target"), http.StatusInternalServerError)
 				return
 			}
-			req := vssfs.BackupReq{Drive: agentDrive, JobId: jobId}
-			backupResp, err := arpcSess.CallContext(ctx, "backup", req)
+			req := vssfs.BackupReq{Drive: utils.ToBytes(agentDrive), JobId: utils.ToBytes(jobId)}
+			backupResp, err := arpcSess.CallContext(ctx, "backup", &req)
 			if err != nil || backupResp.Status != 200 {
 				if err != nil {
-					err = errors.New(backupResp.Message)
+					err = errors.New(utils.ToString(backupResp.Message))
 				}
 				syslog.L.Errorf("MountHandler: Failed to send backup request to target -> %v", err)
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> %v", err), http.StatusInternalServerError)
@@ -95,11 +95,11 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				storeInstance.RemoveARPCFS(jobId)
 			}
 
-			req := vssfs.BackupReq{Drive: agentDrive, JobId: jobId}
-			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", req)
+			req := vssfs.BackupReq{Drive: utils.ToBytes(agentDrive), JobId: utils.ToBytes(jobId)}
+			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", &req)
 			if err != nil || cleanupResp.Status != 200 {
 				if err != nil {
-					err = errors.New(cleanupResp.Message)
+					err = errors.New(utils.ToString(cleanupResp.Message))
 				}
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send closure request to target -> %v", err), http.StatusInternalServerError)
 				return

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
@@ -51,13 +52,13 @@ func (r *Router) ServeStream(stream *smux.Stream) {
 		return
 	}
 
-	if req.Method == "" {
+	if utils.ToString(req.Method) == "" {
 		writeErrorResponse(stream, http.StatusBadRequest,
 			errors.New("missing method field"))
 		return
 	}
 
-	handler, ok := r.handlers.Get(req.Method)
+	handler, ok := r.handlers.Get(utils.ToString(req.Method))
 	if !ok {
 		writeErrorResponse(
 			stream,
