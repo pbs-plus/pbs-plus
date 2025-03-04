@@ -108,7 +108,7 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
   layout: "hbox",
   width: 400,
   method: "DELETE",
-  isCreate: true,
+  isRemove: true,
   submitText: gettext("Stop Backup"),
   items: [
     {
