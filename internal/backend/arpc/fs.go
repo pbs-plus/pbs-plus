@@ -9,10 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
@@ -103,9 +102,9 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 		return ARPCFile{}, os.ErrInvalid
 	}
 
-	var resp vssfs.FileHandleId
-	req := vssfs.OpenFileReq{
-		Path: utils.ToBytes(filename),
+	var resp types.FileHandleId
+	req := types.OpenFileReq{
+		Path: filename,
 		Flag: flag,
 		Perm: int(perm),
 	}
@@ -116,7 +115,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 		return ARPCFile{}, err
 	}
 
-	_, err = resp.UnmarshalMsg(raw)
+	err = resp.Decode(raw)
 	if err != nil {
 		return ARPCFile{}, os.ErrInvalid
 	}
@@ -130,22 +129,22 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 }
 
 // Stat first tries the LRU cache before performing an RPC call.
-func (fs *ARPCFS) Stat(filename string) (vssfs.VSSFileInfo, error) {
-	var fi vssfs.VSSFileInfo
+func (fs *ARPCFS) Stat(filename string) (types.VSSFileInfo, error) {
+	var fi types.VSSFileInfo
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
-		return vssfs.VSSFileInfo{}, os.ErrInvalid
+		return types.VSSFileInfo{}, os.ErrInvalid
 	}
 
-	req := vssfs.StatReq{Path: utils.ToBytes(filename)}
+	req := types.StatReq{Path: filename}
 	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Stat", &req)
 	if err != nil {
-		return vssfs.VSSFileInfo{}, err
+		return types.VSSFileInfo{}, err
 	}
 
-	_, err = fi.UnmarshalMsg(raw)
+	err = fi.Decode(raw)
 	if err != nil {
-		return vssfs.VSSFileInfo{}, os.ErrInvalid
+		return types.VSSFileInfo{}, os.ErrInvalid
 	}
 
 	fs.trackAccess(filename, fi.IsDir)
@@ -154,51 +153,51 @@ func (fs *ARPCFS) Stat(filename string) (vssfs.VSSFileInfo, error) {
 }
 
 // StatFS tries the LRU cache before making the RPC call.
-func (fs *ARPCFS) StatFS() (vssfs.StatFS, error) {
+func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	const statFSKey = "statFS"
 
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
-		return vssfs.StatFS{}, os.ErrInvalid
+		return types.StatFS{}, os.ErrInvalid
 	}
 
-	var fsStat vssfs.StatFS
+	var fsStat types.StatFS
 	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/StatFS", nil)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
-		return vssfs.StatFS{}, err
+		return types.StatFS{}, err
 	}
 
-	_, err = fsStat.UnmarshalMsg(raw)
+	err = fsStat.Decode(raw)
 	if err != nil {
 		syslog.L.Errorf("StatFS RPC failed: %v", err)
-		return vssfs.StatFS{}, os.ErrInvalid
+		return types.StatFS{}, os.ErrInvalid
 	}
 
 	return fsStat, nil
 }
 
 // ReadDir first tries the LRU cache before performing an RPC call.
-func (fs *ARPCFS) ReadDir(path string) (vssfs.ReadDirEntries, error) {
+func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 	if fs.session == nil {
 		syslog.L.Error("RPC failed: aRPC session is nil")
 		return nil, os.ErrInvalid
 	}
 
-	var resp vssfs.ReadDirEntries
-	req := vssfs.ReadDirReq{Path: utils.ToBytes(path)}
+	var resp types.ReadDirEntries
+	req := types.ReadDirReq{Path: path}
 	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/ReadDir", &req)
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = resp.UnmarshalMsg(raw)
+	err = resp.Decode(raw)
 	if err != nil {
 		return nil, os.ErrInvalid
 	}
 
 	if resp == nil {
-		return vssfs.ReadDirEntries{}, nil // Return an empty slice instead of nil
+		return types.ReadDirEntries{}, nil // Return an empty slice instead of nil
 	}
 
 	fs.trackAccess(path, true)

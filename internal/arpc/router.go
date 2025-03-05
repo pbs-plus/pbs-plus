@@ -4,12 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
-	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 )
+
+// Buffer pool for reusing buffers across requests and responses.
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 4096) // Default buffer size
+	},
+}
 
 // HandlerFunc handles an RPC Request and returns a Response.
 type HandlerFunc func(req Request) (Response, error)
@@ -35,54 +41,56 @@ func (r *Router) CloseHandle(method string) {
 }
 
 // ServeStream reads a single RPC request from the stream, routes it to the correct handler,
-// and writes back the Response. In case of errors an error response is sent.
+// and writes back the Response. In case of errors, an error response is sent.
 func (r *Router) ServeStream(stream *smux.Stream) {
 	defer stream.Close()
 
-	pm, err := readMsgpMsgPooled(stream)
+	// Get a buffer from the pool for the request
+	reqBuf := bufferPool.Get().([]byte)
+	defer bufferPool.Put(reqBuf)
+
+	// Read the request from the stream
+	n, err := stream.Read(reqBuf)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
-	defer bytebufferpool.Put(pm)
 
+	// Decode the request
 	var req Request
-	if _, err := req.UnmarshalMsg(pm.B); err != nil {
+	if err := req.Decode(reqBuf[:n]); err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
 
-	if utils.ToString(req.Method) == "" {
-		writeErrorResponse(stream, http.StatusBadRequest,
-			errors.New("missing method field"))
+	// Validate the method field
+	if req.Method == "" {
+		writeErrorResponse(stream, http.StatusBadRequest, errors.New("missing method field"))
 		return
 	}
 
-	handler, ok := r.handlers.Get(utils.ToString(req.Method))
+	// Find the handler for the method
+	handler, ok := r.handlers.Get(req.Method)
 	if !ok {
-		writeErrorResponse(
-			stream,
-			http.StatusNotFound,
-			fmt.Errorf("method not found: %s", req.Method),
-		)
+		writeErrorResponse(stream, http.StatusNotFound, fmt.Errorf("method not found: %s", req.Method))
 		return
 	}
 
+	// Call the handler
 	resp, err := handler(req)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
 
-	// Write response status first
-	respBytes, err := marshalWithPool(&resp)
+	// Encode and write the response
+	respBytes, err := resp.Encode()
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
-	defer bytebufferpool.Put(respBytes)
 
-	if err := writeMsgpMsg(stream, respBytes.B); err != nil {
+	if _, err := stream.Write(respBytes); err != nil {
 		return
 	}
 

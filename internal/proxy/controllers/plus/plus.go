@@ -13,7 +13,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
@@ -42,11 +42,11 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> unable to reach target"), http.StatusInternalServerError)
 				return
 			}
-			req := vssfs.BackupReq{Drive: utils.ToBytes(agentDrive), JobId: utils.ToBytes(jobId)}
+			req := types.BackupReq{Drive: (agentDrive), JobId: (jobId)}
 			backupResp, err := arpcSess.CallContext(ctx, "backup", &req)
 			if err != nil || backupResp.Status != 200 {
 				if err != nil {
-					err = errors.New(utils.ToString(backupResp.Message))
+					err = errors.New(backupResp.Message)
 				}
 				syslog.L.Errorf("MountHandler: Failed to send backup request to target -> %v", err)
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> %v", err), http.StatusInternalServerError)
@@ -95,11 +95,11 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				storeInstance.RemoveARPCFS(jobId)
 			}
 
-			req := vssfs.BackupReq{Drive: utils.ToBytes(agentDrive), JobId: utils.ToBytes(jobId)}
+			req := types.BackupReq{Drive: (agentDrive), JobId: (jobId)}
 			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", &req)
 			if err != nil || cleanupResp.Status != 200 {
 				if err != nil {
-					err = errors.New(utils.ToString(cleanupResp.Message))
+					err = errors.New(cleanupResp.Message)
 				}
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send closure request to target -> %v", err), http.StatusInternalServerError)
 				return

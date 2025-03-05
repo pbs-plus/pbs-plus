@@ -4,16 +4,14 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"io"
 	"net"
+	_ "net/http/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
-	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 )
 
@@ -64,8 +62,7 @@ func setupSessionWithRouter(t *testing.T, router Router) (clientSession *Session
 
 // ---------------------------------------------------------------------
 // Test 1: Router.ServeStream working as expected (Echo handler).
-// We simulate a single MessagePack‑encoded request/response using a net.Pipe
-// as the underlying stream.
+// We simulate a single request/response using a net.Pipe as the underlying stream.
 // ---------------------------------------------------------------------
 func TestRouterServeStream_Echo(t *testing.T) {
 	// Create an in‑memory connection pair.
@@ -114,42 +111,38 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open client stream: %v", err)
 	}
+
+	// Build and send a request.
 	payload := StringMsg("hello")
-	payloadBytes, err := payload.MarshalMsg(nil)
+	payloadBytes, err := payload.Encode()
 	if err != nil {
-		t.Fatalf("failed to build request msgpack: %v", err)
+		t.Fatalf("failed to encode payload: %v", err)
 	}
 
-	// Build and send a request using our MessagePack helper.
 	req := Request{
-		Method:  utils.ToBytes("echo"),
+		Method:  "echo",
 		Payload: payloadBytes,
 	}
 
-	reqBytes, err := marshalWithPool(&req)
+	reqBytes, err := req.Encode()
 	if err != nil {
-		t.Fatalf("failed to build request msgpack: %v", err)
+		t.Fatalf("failed to encode request: %v", err)
 	}
-	defer bytebufferpool.Put(reqBytes)
-	// Wrap the request using our framing (a 4‑byte length header).
-	if err := writeMsgpMsg(clientStream, reqBytes.B); err != nil {
+
+	if _, err := clientStream.Write(reqBytes); err != nil {
 		t.Fatalf("failed to write request: %v", err)
 	}
 
-	// Read and parse the MessagePack response.
-	respBytes, err := readMsgpMsgPooled(clientStream)
-	if err != nil && err != io.EOF {
+	// Read and decode the response.
+	respBuf := make([]byte, 1024)
+	n, err := clientStream.Read(respBuf)
+	if err != nil {
 		t.Fatalf("failed to read response: %v", err)
-	}
-	defer bytebufferpool.Put(respBytes)
-
-	if len(respBytes.B) == 0 {
-		t.Fatalf("no response received")
 	}
 
 	var resp Response
-	if _, err := resp.UnmarshalMsg(respBytes.B); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
+	if err := resp.Decode(respBuf[:n]); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
 	}
 
 	if resp.Status != 200 {
@@ -158,8 +151,8 @@ func TestRouterServeStream_Echo(t *testing.T) {
 
 	// Extract the echoed payload.
 	var echoed StringMsg
-	if _, err := echoed.UnmarshalMsg(resp.Data); err != nil {
-		t.Fatalf("failed to unmarshal echoed data: %v", err)
+	if err := echoed.Decode(resp.Data); err != nil {
+		t.Fatalf("failed to decode echoed data: %v", err)
 	}
 	if echoed != "hello" {
 		t.Fatalf("expected data 'hello', got %q", echoed)
@@ -189,13 +182,12 @@ func TestRouterServeStream_Echo(t *testing.T) {
 func TestSessionCall_Success(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
-		// Marshal "pong" using MessagePack.
-		var pong StringMsg
-		pong = "pong"
-		p, _ := pong.MarshalMsg(nil)
+		// Echo back "pong".
+		var pong StringMsg = "pong"
+		pongBytes, _ := pong.Encode()
 		return Response{
 			Status: 200,
-			Data:   p,
+			Data:   pongBytes,
 		}, nil
 	})
 
@@ -209,9 +201,10 @@ func TestSessionCall_Success(t *testing.T) {
 	if resp.Status != 200 {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
+
 	var pong StringMsg
-	if _, err := pong.UnmarshalMsg(resp.Data); err != nil {
-		t.Fatalf("failed to unmarshal pong: %v", err)
+	if err := pong.Decode(resp.Data); err != nil {
+		t.Fatalf("failed to decode pong: %v", err)
 	}
 	if pong != "pong" {
 		t.Fatalf("expected pong response, got %q", pong)
@@ -225,12 +218,11 @@ func TestSessionCall_Success(t *testing.T) {
 func TestSessionCall_Concurrency(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
-		var pong StringMsg
-		pong = "pong"
-		p, _ := pong.MarshalMsg(nil)
+		var pong StringMsg = "pong"
+		pongBytes, _ := pong.Encode()
 		return Response{
 			Status: 200,
-			Data:   p,
+			Data:   pongBytes,
 		}, nil
 	})
 
@@ -245,7 +237,7 @@ func TestSessionCall_Concurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			payload := MapStringIntMsg{"client": id}
-			resp, err := clientSession.Call("ping", payload)
+			resp, err := clientSession.Call("ping", &payload)
 			if err != nil {
 				t.Errorf("Client %d error: %v", id, err)
 				return
@@ -254,8 +246,8 @@ func TestSessionCall_Concurrency(t *testing.T) {
 				t.Errorf("Client %d: expected status 200, got %d", id, resp.Status)
 			}
 			var pong StringMsg
-			if _, err := pong.UnmarshalMsg(resp.Data); err != nil {
-				t.Errorf("Client %d: failed to unmarshal: %v", id, err)
+			if err := pong.Decode(resp.Data); err != nil {
+				t.Errorf("Client %d: failed to decode: %v", id, err)
 				return
 			}
 			if pong != "pong" {
@@ -275,12 +267,11 @@ func TestCallContext_Timeout(t *testing.T) {
 	router := NewRouter()
 	router.Handle("slow", func(req Request) (Response, error) {
 		time.Sleep(200 * time.Millisecond)
-		var done StringMsg
-		done = "done"
-		p, _ := done.MarshalMsg(nil)
+		var done StringMsg = "done"
+		doneBytes, _ := done.Encode()
 		return Response{
 			Status: 200,
-			Data:   p,
+			Data:   doneBytes,
 		}, nil
 	})
 
@@ -307,12 +298,11 @@ func TestCallContext_Timeout(t *testing.T) {
 func TestAutoReconnect(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
-		var pong StringMsg
-		pong = "pong"
-		p, _ := pong.MarshalMsg(nil)
+		var pong StringMsg = "pong"
+		pongBytes, _ := pong.Encode()
 		return Response{
 			Status: 200,
-			Data:   p,
+			Data:   pongBytes,
 		}, nil
 	})
 
@@ -367,8 +357,8 @@ func TestAutoReconnect(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
 	var pong StringMsg
-	if _, err := pong.UnmarshalMsg(resp.Data); err != nil {
-		t.Fatalf("failed to unmarshal pong: %v", err)
+	if err := pong.Decode(resp.Data); err != nil {
+		t.Fatalf("failed to decode pong: %v", err)
 	}
 	if pong != "pong" {
 		t.Fatalf("expected 'pong', got %q", pong)
@@ -411,27 +401,32 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 		}
 		defer stream.Close()
 
-		// Read and discard the complete request.
-		resp, err := readMsgpMsgPooled(stream)
+		// Read and decode the request.
+		reqBuf := make([]byte, 1024)
+		n, err := stream.Read(reqBuf)
 		if err != nil {
 			t.Errorf("server: error reading request: %v", err)
 			return
 		}
-		defer bytebufferpool.Put(resp)
+
+		var req Request
+		if err := req.Decode(reqBuf[:n]); err != nil {
+			t.Errorf("server: error decoding request: %v", err)
+			return
+		}
 
 		// Prepare the binary payload
 		binaryData := []byte("hello world")
 
-		// Send the response status
-		response := Response{Status: 213}
-		respBytes, err := response.MarshalMsg(nil)
+		// Send the response
+		resp := Response{Status: 213}
+		respBytes, err := resp.Encode()
 		if err != nil {
-			t.Errorf("server: error marshaling response: %v", err)
+			t.Errorf("server: error encoding response: %v", err)
 			return
 		}
 
-		// Write the response using MessagePack framing
-		if err := writeMsgpMsg(stream, respBytes); err != nil {
+		if _, err := stream.Write(respBytes); err != nil {
 			t.Errorf("server: error writing response: %v", err)
 			return
 		}
@@ -524,4 +519,106 @@ func TestCallMsgWithBuffer_ErrorResponse(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("expected 0 bytes read on error response, got %d", n)
 	}
+}
+
+func setupSessionWithRouterForBenchmark(b *testing.B, router Router) (clientSession *Session, cleanup func()) {
+	b.Helper()
+
+	clientConn, serverConn := net.Pipe()
+
+	serverSession, err := NewServerSession(serverConn, nil)
+	if err != nil {
+		b.Fatalf("failed to create server session: %v", err)
+	}
+
+	clientSession, err = NewClientSession(clientConn, nil)
+	if err != nil {
+		b.Fatalf("failed to create client session: %v", err)
+	}
+
+	serverSession.SetRouter(router)
+
+	done := make(chan struct{})
+
+	// Start the server session in a goroutine. Serve() continuously accepts streams.
+	go func() {
+		_ = serverSession.Serve()
+		close(done)
+	}()
+
+	cleanup = func() {
+		_ = clientSession.Close()
+		_ = serverSession.Close()
+		select {
+		case <-done:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	return clientSession, cleanup
+}
+
+// BenchmarkSessionCall benchmarks the performance of the Session.Call method
+// with a high number of concurrent requests.
+func BenchmarkSessionCall(b *testing.B) {
+	// Define the number of concurrent clients and requests per client.
+	const (
+		numClients        = 100 // Number of concurrent clients
+		requestsPerClient = 100 // Number of requests per client
+	)
+
+	// Set up the router with a simple "ping" handler.
+	router := NewRouter()
+	router.Handle("ping", func(req Request) (Response, error) {
+		// Simulate minimal processing time.
+		var pong StringMsg = "pong"
+		pongBytes, _ := pong.Encode()
+		return Response{
+			Status: 200,
+			Data:   pongBytes,
+		}, nil
+	})
+
+	// Set up the client session and cleanup function.
+	clientSession, cleanup := setupSessionWithRouterForBenchmark(b, router)
+	defer cleanup()
+
+	// Report memory allocations.
+	b.ReportAllocs()
+
+	// Run the benchmark.
+	b.ResetTimer() // Reset the timer to exclude setup time.
+	for i := 0; i < b.N; i++ {
+		var wg sync.WaitGroup
+		wg.Add(numClients)
+
+		// Launch multiple clients in parallel.
+		for clientID := 0; clientID < numClients; clientID++ {
+			go func(clientID int) {
+				defer wg.Done()
+				for j := 0; j < requestsPerClient; j++ {
+					// Make a "ping" call.
+					resp, err := clientSession.Call("ping", nil)
+					if err != nil {
+						b.Errorf("Client %d: Call failed: %v", clientID, err)
+						return
+					}
+					if resp.Status != 200 {
+						b.Errorf("Client %d: Expected status 200, got %d", clientID, resp.Status)
+					}
+					var pong StringMsg
+					if err := pong.Decode(resp.Data); err != nil {
+						b.Errorf("Client %d: Failed to decode response: %v", clientID, err)
+					}
+					if pong != "pong" {
+						b.Errorf("Client %d: Expected 'pong', got %q", clientID, pong)
+					}
+				}
+			}(clientID)
+		}
+
+		// Wait for all clients to finish.
+		wg.Wait()
+	}
+	b.StopTimer() // Stop the timer after the benchmark is complete.
 }

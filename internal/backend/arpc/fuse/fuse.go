@@ -12,9 +12,8 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
@@ -200,7 +199,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	}
 
 	if entries == nil {
-		entries = vssfs.ReadDirEntries{}
+		entries = types.ReadDirEntries{}
 	}
 
 	result := make([]fuse.DirEntry, 0, len(entries))
@@ -216,7 +215,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 		}
 
 		result = append(result, fuse.DirEntry{
-			Name: utils.ToString(e.Name),
+			Name: e.Name,
 			Mode: entryType << 12,
 		})
 	}
