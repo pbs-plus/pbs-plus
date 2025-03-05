@@ -5,7 +5,6 @@ package vssfs
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -28,7 +27,7 @@ import (
 type FileHandle struct {
 	handle    windows.Handle
 	mapHandle windows.Handle
-	path      string
+	fileSize  int64
 	isDir     bool
 }
 
@@ -94,6 +93,7 @@ func (s *VSSFSServer) Close() {
 	}
 
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
+		windows.CloseHandle(fh.mapHandle)
 		windows.CloseHandle(fh.handle)
 
 		return true
@@ -175,11 +175,17 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, mapWinError(err)
 	}
 
+	fileSize, err := getFileSize(handle)
+	if err != nil {
+		log.Printf("failed to get file size: %v", err)
+		return arpc.Response{}, err
+	}
+
 	handleId := s.handleIdGen.NextID()
 	fh := &FileHandle{
 		handle:    handle,
 		mapHandle: h,
-		path:      path,
+		fileSize:  fileSize,
 		isDir:     stat.IsDir(),
 	}
 	s.handles.Set(handleId, fh)
@@ -306,14 +312,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	fileSize, err := getFileSize(fh.handle)
-	if err != nil {
-		log.Printf("failed to get file size: %v", err)
-		return arpc.Response{}, fmt.Errorf("failed to get file size: %w", err)
-	}
-
 	// If the requested offset is at or beyond EOF, return an empty result.
-	if payload.Offset >= fileSize {
+	if payload.Offset >= fh.fileSize {
 		streamCallback := func(stream *smux.Stream) {
 			err := binarystream.SendDataFromReader(nil, payload.Length, stream)
 			if err != nil && syslog.L != nil {
@@ -327,8 +327,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 
 	// Clamp length if the requested region goes beyond EOF
-	if payload.Offset+int64(payload.Length) > fileSize {
-		payload.Length = int(fileSize - payload.Offset)
+	if payload.Offset+int64(payload.Length) > fh.fileSize {
+		payload.Length = int(fh.fileSize - payload.Offset)
 	}
 
 	// Get the system page size.
