@@ -1,8 +1,8 @@
 package arpc
 
 import (
+	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"net"
 	_ "net/http/pprof"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	binarystream "github.com/sonroyaalmerol/pbs-plus/internal/arpc/binary"
 	"github.com/xtaci/smux"
 )
 
@@ -370,12 +371,12 @@ func TestAutoReconnect(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------
-// Test 6: CallMsgWithBuffer_Success
+// Test 6: CallBinary_Success
 //
-// Verifies that CallMsgWithBuffer correctly reads the metadata and then the
+// Verifies that CallBinary correctly reads the metadata and then the
 // binary payload written by a custom server.
 // ---------------------------------------------------------------------
-func TestCallMsgWithBuffer_Success(t *testing.T) {
+func TestCallBinary_Success(t *testing.T) {
 	// Create an in-memory connection pair.
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
@@ -431,25 +432,18 @@ func TestCallMsgWithBuffer_Success(t *testing.T) {
 			return
 		}
 
-		// Write the length prefix
-		dataLen := uint32(len(binaryData))
-		if err := binary.Write(stream, binary.LittleEndian, dataLen); err != nil {
-			t.Errorf("server: error writing length prefix: %v", err)
-			return
-		}
-
-		// Write the binary payload
-		if _, err := stream.Write(binaryData); err != nil {
-			t.Errorf("server: error writing binary data: %v", err)
+		r := bytes.NewReader(binaryData)
+		if err := binarystream.SendDataFromReader(r, len(binaryData), stream); err != nil {
+			t.Errorf("server: error writing response: %v", err)
 			return
 		}
 	}()
 
-	// On the client side, use CallMsgWithBuffer to send a request.
+	// On the client side, use CallBinary to send a request.
 	buffer := make([]byte, 64)
-	n, err := clientSess.CallMsgWithBuffer(context.Background(), "buffer", nil, buffer)
+	n, err := clientSess.CallBinary(context.Background(), "buffer", nil, buffer)
 	if err != nil {
-		t.Fatalf("client: CallMsgWithBuffer error: %v", err)
+		t.Fatalf("client: CallBinary error: %v", err)
 	}
 
 	expected := "hello world"
@@ -492,10 +486,10 @@ func TestCallMsg_ErrorResponse(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------
-// TestCallMsgWithBuffer_ErrorResponse verifies that when the server handler
+// TestCallBinary_ErrorResponse verifies that when the server handler
 // returns an error during a buffered call, the client returns the expected error.
 // ---------------------------------------------------------------------
-func TestCallMsgWithBuffer_ErrorResponse(t *testing.T) {
+func TestCallBinary_ErrorResponse(t *testing.T) {
 	router := NewRouter()
 	// Register a handler that simulates an error response.
 	router.Handle("buffer_error", func(req Request) (Response, error) {
@@ -508,9 +502,9 @@ func TestCallMsgWithBuffer_ErrorResponse(t *testing.T) {
 
 	// Prepare a buffer for the expected binary payload.
 	buffer := make([]byte, 64)
-	n, err := clientSession.CallMsgWithBuffer(context.Background(), "buffer_error", nil, buffer)
+	n, err := clientSession.CallBinary(context.Background(), "buffer_error", nil, buffer)
 	if err == nil {
-		t.Fatal("expected error response from CallMsgWithBuffer, got nil")
+		t.Fatal("expected error response from CallBinary, got nil")
 	}
 	if !strings.Contains(err.Error(), "buffer error occurred") {
 		t.Fatalf("expected error message to contain 'buffer error occurred', got: %v", err)
