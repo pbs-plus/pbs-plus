@@ -150,7 +150,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		0,
 	)
 	if err != nil {
-		return arpc.Response{}, err
+		return arpc.Response{}, mapWinError(err)
 	}
 
 	// Determine if the handle is a directory using Windows API
