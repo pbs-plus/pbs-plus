@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"unsafe"
@@ -293,22 +294,19 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	flProtect := uint32(windows.PAGE_READONLY)
-	dwDesiredAccess := uint32(windows.FILE_MAP_READ)
-
 	// Compute the maximum mappable size.
 	maxSizeHigh := uint32((payload.Offset + int64(payload.Length)) >> 32)
 	maxSizeLow := uint32((payload.Offset + int64(payload.Length)) & 0xFFFFFFFF)
-	h, err := windows.CreateFileMapping(fh.handle, nil, flProtect, maxSizeHigh, maxSizeLow, nil)
+	h, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, maxSizeHigh, maxSizeLow, nil)
 	if err != nil {
+		log.Printf(err.Error())
 		return arpc.Response{}, mapWinError(err)
 	}
 
 	// Map the requested view.
 	fileOffsetHigh := uint32(payload.Offset >> 32)
 	fileOffsetLow := uint32(payload.Offset & 0xFFFFFFFF)
-	addr, _ := windows.MapViewOfFile(h, dwDesiredAccess, fileOffsetHigh,
-		fileOffsetLow, uintptr(payload.Length))
+	addr, _ := windows.MapViewOfFile(h, windows.FILE_MAP_READ, fileOffsetHigh, fileOffsetLow, uintptr(payload.Length))
 	if addr == 0 {
 		windows.CloseHandle(windows.Handle(h))
 		return arpc.Response{}, os.ErrInvalid
@@ -317,6 +315,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	// If VirtualLock fails, clean up before returning.
 	err = windows.VirtualLock(addr, uintptr(payload.Length))
 	if err != nil {
+		log.Printf(err.Error())
 		windows.UnmapViewOfFile(addr)
 		windows.CloseHandle(windows.Handle(h))
 		return arpc.Response{}, os.ErrInvalid
