@@ -281,7 +281,7 @@ func (p *agentService) connectARPC() error {
 	router := arpc.NewRouter()
 	router.Handle("ping", func(req arpc.Request) (arpc.Response, error) {
 		resp := arpc.MapStringStringMsg{"version": Version, "hostname": clientId}
-		b, err := resp.MarshalMsg(nil)
+		b, err := resp.Encode()
 		if err != nil {
 			return arpc.Response{}, err
 		}
