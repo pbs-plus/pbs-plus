@@ -5,7 +5,6 @@ package vssfs
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -313,14 +312,23 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, fmt.Errorf("failed to get file size: %w", err)
 	}
 
-	if payload.Offset+int64(payload.Length) > fileSize {
-		payload.Length = int(fileSize - payload.Offset)
+	// If the requested offset is at or beyond EOF, return an empty result.
+	if payload.Offset >= fileSize {
+		streamCallback := func(stream *smux.Stream) {
+			err := binarystream.SendDataFromReader(nil, payload.Length, stream)
+			if err != nil && syslog.L != nil {
+				syslog.L.Errorf("handleReadAt error: %v", err)
+			}
+		}
+		return arpc.Response{
+			Status:    213,
+			RawStream: streamCallback,
+		}, nil
 	}
 
-	// Check that the requested region is within the file's boundaries.
-	if payload.Offset < 0 || payload.Length <= 0 || payload.Offset+int64(payload.Length) > fileSize {
-		log.Println("requested region is outside the file boundaries")
-		return arpc.Response{}, errors.New("requested region is outside the file boundaries")
+	// Clamp length if the requested region goes beyond EOF
+	if payload.Offset+int64(payload.Length) > fileSize {
+		payload.Length = int(fileSize - payload.Offset)
 	}
 
 	// Get the system page size.
@@ -353,7 +361,6 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 			data = nil
 		}()
 
-		// Use our AtReader to perform an overlapped read from the given offset.
 		err := binarystream.SendDataFromReader(reader, payload.Length, stream)
 		if err != nil && syslog.L != nil {
 			syslog.L.Errorf("handleReadAt error: %v", err)

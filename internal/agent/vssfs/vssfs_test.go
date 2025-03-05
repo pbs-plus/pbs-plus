@@ -663,14 +663,17 @@ func TestVSSFSServer(t *testing.T) {
 		expectedContent := "test file 2 content with more data"
 		for i, result := range results {
 			start := i * readSize
-			end := start + readSize
-			if start > len(expectedContent) {
-				t.Fatalf("Invalid slice range: start=%d, len=%d", start, len(expectedContent))
+			var expected string
+			if start >= len(expectedContent) {
+				// If the requested offset is beyond EOF, we expect an empty result.
+				expected = ""
+			} else {
+				end := start + readSize
+				if end > len(expectedContent) {
+					end = len(expectedContent)
+				}
+				expected = expectedContent[start:end]
 			}
-			if end > len(expectedContent) {
-				end = len(expectedContent)
-			}
-			expected := expectedContent[start:end]
 			t.Logf("Goroutine %d: Expected=%q, Actual=%q", i, expected, result)
 			assert.Equal(t, expected, result, "Goroutine %d read incorrect data", i)
 		}
