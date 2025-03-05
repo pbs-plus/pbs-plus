@@ -9,7 +9,7 @@ import (
 type FileHandleId uint64
 
 func (id *FileHandleId) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(8)
 	if err := enc.WriteUint64(uint64(*id)); err != nil {
 		return nil, err
 	}

@@ -3,7 +3,6 @@ package arpcdata
 import (
 	"encoding/binary"
 	"math"
-	"sync"
 	"time"
 )
 
@@ -12,82 +11,40 @@ type Encodable interface {
 	Encode() ([]byte, error)
 }
 
-// Buffer pools for reusable buffers of different sizes.
-var smallBufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 1024) // 1 KB buffer
-	},
-}
-
-var mediumBufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 4096) // 4 KB buffer
-	},
-}
-
-var largeBufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 16384) // 16 KB buffer
-	},
-}
-
-// getBuffer retrieves a buffer of the appropriate size from the pool.
-func getBuffer(size int) []byte {
-	switch {
-	case size <= 1024:
-		return smallBufferPool.Get().([]byte)
-	case size <= 4096:
-		return mediumBufferPool.Get().([]byte)
-	default:
-		return largeBufferPool.Get().([]byte)
-	}
-}
-
-// putBuffer returns a buffer to the appropriate pool based on its capacity.
-func putBuffer(buf []byte) {
-	switch cap(buf) {
-	case 1024:
-		smallBufferPool.Put(buf[:0])
-	case 4096:
-		mediumBufferPool.Put(buf[:0])
-	case 16384:
-		largeBufferPool.Put(buf[:0])
-	}
-}
-
 // Encoder writes data to a reusable buffer.
+// To minimize allocations, you can pass a sufficiently large buffer using
+// NewEncoderWithSize, or let the Encoder grow as needed.
 type Encoder struct {
 	buf []byte
 	pos int
 }
 
-// NewEncoder creates a new Encoder instance with a reusable buffer.
-func NewEncoder() *Encoder {
+// NewEncoderWithSize creates an Encoder with a pre-allocated buffer of the
+// specified size. The first 4 bytes are reserved for the total length.
+func NewEncoderWithSize(initialSize int) *Encoder {
+	initialSize += 4
+	buf := make([]byte, initialSize)
 	return &Encoder{
-		buf: getBuffer(1024), // Start with a small buffer
-		pos: 4,               // Reserve 4 bytes for the total length
+		buf: buf,
+		pos: 4, // Reserve 4 bytes for total length
 	}
 }
 
-// Release returns the buffer to the pool for reuse.
-func (e *Encoder) Release() {
-	putBuffer(e.buf) // Return the buffer to the appropriate pool
-	e.buf = nil      // Clear the reference
+// NewEncoder creates an Encoder with a default buffer size.
+func NewEncoder() *Encoder {
+	return NewEncoderWithSize(128)
 }
 
-// grow ensures the buffer has enough capacity to write additional data.
-// It dynamically resizes the buffer using the appropriate pool.
+// grow checks if there's enough space for size more bytes.
+// It doubles the current buffer repeatedly until it can accommodate the new data.
 func (e *Encoder) grow(size int) {
 	if len(e.buf)-e.pos < size {
 		newSize := len(e.buf) * 2
-		if newSize < e.pos+size {
-			newSize = e.pos + size
+		for newSize < e.pos+size {
+			newSize *= 2
 		}
-
-		// Get a new buffer from the pool
-		newBuf := getBuffer(newSize)
-		copy(newBuf, e.buf[:e.pos]) // Copy existing data to the new buffer
-		putBuffer(e.buf)            // Return the old buffer to the pool
+		newBuf := make([]byte, newSize)
+		copy(newBuf, e.buf[:e.pos])
 		e.buf = newBuf
 	}
 }
@@ -144,6 +101,8 @@ func (e *Encoder) WriteBytes(data []byte) error {
 }
 
 // WriteString writes a length-prefixed string to the buffer.
+// Note: Converting a string to a []byte will allocate.
+// If you need to avoid that allocation as well, consider a different API.
 func (e *Encoder) WriteString(value string) error {
 	return e.WriteBytes([]byte(value))
 }
@@ -160,7 +119,7 @@ func (e *Encoder) WriteBool(value bool) error {
 	return nil
 }
 
-// WriteTime writes a time.Time as UnixNano (int64).
+// WriteTime writes a time.Time by encoding its UnixNano (int64).
 func (e *Encoder) WriteTime(value time.Time) error {
 	return e.WriteInt64(value.UnixNano())
 }
@@ -204,9 +163,9 @@ func (e *Encoder) WriteFloat64Array(values []float64) error {
 	return nil
 }
 
-// Bytes returns the encoded data and writes the total length at the beginning.
+// Bytes finalizes the encoding by writing the total length at the buffer's start,
+// then returns the encoded byte slice.
 func (e *Encoder) Bytes() []byte {
-	// Write the total length at the beginning of the buffer
 	totalLength := uint32(e.pos)
 	binary.LittleEndian.PutUint32(e.buf[0:], totalLength)
 	return e.buf[:e.pos]

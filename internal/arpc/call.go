@@ -7,17 +7,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
 )
-
-var respBufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 4096)
-	},
-}
 
 // Call initiates a request/response conversation on a new stream.
 func (s *Session) Call(method string, payload arpcdata.Encodable) (Response, error) {
@@ -75,24 +68,34 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 		return Response{}, fmt.Errorf("failed to write request: %w", err)
 	}
 
-	// Get a response buffer from the pool.
-	buf := respBufferPool.Get().([]byte)
-	// Return the buffer to the pool irrespective of success or error.
-	defer respBufferPool.Put(buf)
-
-	// Read the response into the pooled buffer.
-	n, err := stream.Read(buf)
-	if err != nil {
-		// Map timeout errors to context.DeadlineExceeded
+	prefix := make([]byte, 4)
+	if _, err := io.ReadFull(stream, prefix); err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return Response{}, context.DeadlineExceeded
 		}
-		return Response{}, fmt.Errorf("failed to read response: %w", err)
+		return Response{}, fmt.Errorf("failed to read length prefix: %w", err)
+	}
+	totalLength := binary.LittleEndian.Uint32(prefix)
+	if totalLength < 4 {
+		return Response{}, fmt.Errorf("invalid total length %d", totalLength)
+	}
+
+	// Allocate a buffer with exactly totalLength bytes.
+	buf := make([]byte, totalLength)
+
+	// Copy the already-read prefix into buf.
+	copy(buf, prefix)
+	// Read the remaining totalLength-4 bytes.
+	if _, err := io.ReadFull(stream, buf[4:]); err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return Response{}, context.DeadlineExceeded
+		}
+		return Response{}, fmt.Errorf("failed to read full response: %w", err)
 	}
 
 	// Decode the response.
 	var resp Response
-	if err := resp.Decode(buf[:n]); err != nil {
+	if err := resp.Decode(buf); err != nil {
 		return Response{}, fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -174,15 +177,28 @@ func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload 
 	}
 
 	// Read the response
-	respBuf := make([]byte, 4096) // Pre-allocate a buffer for the response
-	n, err := stream.Read(respBuf)
-	if err != nil {
-		return 0, fmt.Errorf("failed to read response: %w", err)
+	headerPrefix := make([]byte, 4)
+	if _, err := io.ReadFull(stream, headerPrefix); err != nil {
+		return 0, fmt.Errorf("failed to read header length prefix: %w", err)
+	}
+	headerTotalLength := binary.LittleEndian.Uint32(headerPrefix)
+	if headerTotalLength < 4 {
+		return 0, fmt.Errorf("invalid header length %d", headerTotalLength)
 	}
 
-	// Decode the response
+	// Allocate header buffer.
+	headerBuf := make([]byte, headerTotalLength)
+
+	// Copy prefix into headerBuf.
+	copy(headerBuf, headerPrefix)
+	// Read the remainder of the header.
+	if _, err := io.ReadFull(stream, headerBuf[4:]); err != nil {
+		return 0, fmt.Errorf("failed to read full header: %w", err)
+	}
+
+	// Decode the header.
 	var resp Response
-	if err := resp.Decode(respBuf[:n]); err != nil {
+	if err := resp.Decode(headerBuf); err != nil {
 		return 0, fmt.Errorf("failed to decode response: %w", err)
 	}
 

@@ -13,7 +13,7 @@ type OpenFileReq struct {
 }
 
 func (req *OpenFileReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(req.Path) + 4 + 4)
 	if err := enc.WriteBytes(sb.ToBytes(req.Path)); err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ type StatReq struct {
 }
 
 func (req *StatReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(req.Path))
 	if err := enc.WriteBytes(sb.ToBytes(req.Path)); err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ type ReadDirReq struct {
 }
 
 func (req *ReadDirReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(req.Path))
 	if err := enc.WriteBytes(sb.ToBytes(req.Path)); err != nil {
 		return nil, err
 	}
@@ -108,7 +108,7 @@ type ReadReq struct {
 }
 
 func (req *ReadReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(8 + 4)
 	if err := enc.WriteUint64(uint64(req.HandleID)); err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ type ReadAtReq struct {
 }
 
 func (req *ReadAtReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(8 + 8 + 4)
 	if err := enc.WriteUint64(uint64(req.HandleID)); err != nil {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ type CloseReq struct {
 }
 
 func (req *CloseReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(8)
 	if err := enc.WriteUint64(uint64(req.HandleID)); err != nil {
 		return nil, err
 	}
@@ -213,7 +213,7 @@ type BackupReq struct {
 }
 
 func (req *BackupReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(req.JobId) + len(req.Drive))
 	if err := enc.WriteBytes(sb.ToBytes(req.JobId)); err != nil {
 		return nil, err
 	}
@@ -249,7 +249,7 @@ type LseekReq struct {
 }
 
 func (req *LseekReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(8 + 8 + 4)
 	if err := enc.WriteUint64(uint64(req.HandleID)); err != nil {
 		return nil, err
 	}

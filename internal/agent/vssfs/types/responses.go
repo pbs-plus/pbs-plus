@@ -44,7 +44,7 @@ type VSSFileInfo struct {
 }
 
 func (info *VSSFileInfo) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(info.Name) + 8 + 4 + 8 + 1 + 8)
 	if err := enc.WriteBytes(sb.ToBytes(info.Name)); err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ type VSSDirEntry struct {
 }
 
 func (entry *VSSDirEntry) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(entry.Name) + 4)
 	if err := enc.WriteBytes(sb.ToBytes(entry.Name)); err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ type StatFS struct {
 }
 
 func (stat *StatFS) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(8 * 7)
 	if err := enc.WriteUint64(stat.Bsize); err != nil {
 		return nil, err
 	}

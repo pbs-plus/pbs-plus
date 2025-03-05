@@ -12,7 +12,7 @@ type Request struct {
 }
 
 func (req *Request) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(req.Method) + len(req.Payload))
 	if err := enc.WriteBytes(sb.ToBytes(req.Method)); err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ type Response struct {
 }
 
 func (resp *Response) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(4 + len(sb.ToBytes(resp.Message)) + len(resp.Data))
 	if err := enc.WriteUint32(uint32(resp.Status)); err != nil {
 		return nil, err
 	}
@@ -80,9 +80,7 @@ func (resp *Response) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	// Copy the data to avoid referencing the pooled buffer
-	resp.Data = make([]byte, len(dataField))
-	copy(resp.Data, dataField)
+	resp.Data = dataField
 	// Note: RawStream is skipped
 	return nil
 }
@@ -97,7 +95,7 @@ type SerializableError struct {
 }
 
 func (errObj *SerializableError) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(errObj.ErrorType) + len(errObj.Message) + len(errObj.Op) + len(errObj.Path))
 	if err := enc.WriteBytes(sb.ToBytes(errObj.ErrorType)); err != nil {
 		return nil, err
 	}

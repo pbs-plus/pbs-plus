@@ -8,7 +8,7 @@ import (
 type StringMsg string
 
 func (msg *StringMsg) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(*msg))
 	if err := enc.WriteString(string(*msg)); err != nil {
 		return nil, err
 	}
@@ -34,7 +34,7 @@ func (msg *StringMsg) Decode(buf []byte) error {
 type MapStringIntMsg map[string]int
 
 func (msg *MapStringIntMsg) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(4)
 	if err := enc.WriteUint32(uint32(len(*msg))); err != nil {
 		return nil, err
 	}
