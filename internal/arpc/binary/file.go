@@ -66,6 +66,17 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 		return fmt.Errorf("stream is nil")
 	}
 
+	// If length is zero, write the sentinel and a final total of 0 to signal an empty result.
+	if length == 0 || r == nil {
+		if err := binary.Write(stream, binary.LittleEndian, uint32(0)); err != nil {
+			return fmt.Errorf("failed to write sentinel: %w", err)
+		}
+		if err := binary.Write(stream, binary.LittleEndian, uint32(0)); err != nil {
+			return fmt.Errorf("failed to write final total: %w", err)
+		}
+		return nil
+	}
+
 	// Choose a buffer pool based on the expected total length.
 	pool, poolSize := selectBufferPool(length)
 	chunkBuf := pool.Get().([]byte)
