@@ -291,27 +291,28 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Duplicate the handle for isolated reading
-	dupHandle, err := duplicateHandle(fh.handle)
+	// Open a new file handle for isolated, concurrent reading.
+	newHandle, err := windows.CreateFile(
+		windows.StringToUTF16Ptr(fh.path),
+		windows.GENERIC_READ,
+		windows.FILE_SHARE_READ,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN,
+		0,
+	)
 	if err != nil {
 		return arpc.Response{}, err
 	}
 
-	// Perform synchronous read - first seek to the position
-	distanceToMove := int64(payload.Offset)
-	moveMethod := uint32(windows.FILE_BEGIN)
-
-	newPos, err := windows.Seek(dupHandle, distanceToMove, int(moveMethod))
-	if err != nil {
-		return arpc.Response{}, mapWinError(err)
-	}
-	if newPos != payload.Offset {
-		return arpc.Response{}, os.ErrInvalid
-	}
-
 	streamCallback := func(stream *smux.Stream) {
-		defer windows.CloseHandle(dupHandle) // Ensure the duplicated handle is closed after use
-		err := binarystream.SendData(dupHandle, payload.Length, stream)
+		defer windows.CloseHandle(newHandle)
+		// Use our AtReader to perform an overlapped read from the given offset.
+		reader := &AtReader{
+			handle: newHandle,
+			offset: payload.Offset,
+		}
+		err := binarystream.SendDataFromReader(reader, payload.Length, stream)
 		if err != nil && syslog.L != nil {
 			syslog.L.Errorf("handleReadAt error: %v", err)
 		}
