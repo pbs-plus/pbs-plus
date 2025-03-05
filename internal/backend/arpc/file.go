@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
@@ -22,8 +22,8 @@ func (f *ARPCFile) Close() error {
 		return os.ErrInvalid
 	}
 
-	req := vssfs.CloseReq{HandleID: f.handleID}
-	_, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Close", req)
+	req := types.CloseReq{HandleID: f.handleID}
+	_, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Close", &req)
 	if err != nil {
 		syslog.L.Errorf("Write RPC failed (%s): %v", f.name, err)
 		return err
@@ -34,20 +34,20 @@ func (f *ARPCFile) Close() error {
 }
 
 func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
-	req := vssfs.LseekReq{
+	req := types.LseekReq{
 		HandleID: f.handleID,
 		Offset:   int64(off),
 		Whence:   whence,
 	}
 	// Send the request to the server
-	respBytes, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Lseek", req)
+	respBytes, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Lseek", &req)
 	if err != nil {
 		return 0, os.ErrInvalid
 	}
 
 	// Parse the response
-	var resp vssfs.LseekResp
-	if _, err := resp.UnmarshalMsg(respBytes); err != nil {
+	var resp types.LseekResp
+	if err := resp.Decode(respBytes); err != nil {
 		return 0, os.ErrInvalid
 	}
 
@@ -63,13 +63,13 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, os.ErrInvalid
 	}
 
-	req := vssfs.ReadAtReq{
+	req := types.ReadAtReq{
 		HandleID: f.handleID,
 		Offset:   off,
 		Length:   len(p),
 	}
 
-	bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", req, p)
+	bytesRead, err := f.fs.session.CallMsgWithBuffer(f.fs.ctx, f.jobId+"/ReadAt", &req, p)
 	if err != nil {
 		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
 		return 0, err

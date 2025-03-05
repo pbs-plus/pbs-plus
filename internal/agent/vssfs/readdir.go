@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
 	"golang.org/x/sys/windows"
 )
 
@@ -114,7 +114,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 	// Allocate an initial slice with a capacity of 128 KB.
 	buf := make([]byte, initialBufSize)
 
-	var entries ReadDirEntries
+	var entries types.ReadDirEntries
 	var usingFull bool
 	infoClass := windows.FileIdBothDirectoryInfo
 
@@ -163,7 +163,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 
 				if name != "." && name != ".." && info.FileAttributes&excludedAttrs == 0 {
 					mode := windowsAttributesToFileMode(info.FileAttributes)
-					entries = append(entries, VSSDirEntry{Name: utils.ToBytes(name), Mode: mode})
+					entries = append(entries, types.VSSDirEntry{Name: name, Mode: mode})
 				}
 			}
 
@@ -174,5 +174,5 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 		}
 	}
 
-	return entries.MarshalMsg(nil)
+	return entries.Encode()
 }

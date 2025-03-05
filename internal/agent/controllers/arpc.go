@@ -10,9 +10,9 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
@@ -51,31 +51,31 @@ func (s *backupSession) Close() {
 }
 
 func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response, error) {
-	var reqData vssfs.BackupReq
-	_, err := reqData.UnmarshalMsg(req.Payload)
+	var reqData types.BackupReq
+	err := reqData.Decode(req.Payload)
 	if err != nil {
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Infof("Received backup request for job: %s.", utils.ToString(reqData.JobId))
+	syslog.L.Infof("Received backup request for job: %s.", (reqData.JobId))
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
 		return arpc.Response{}, err
 	}
-	if existingSession, ok := activeSessions.Get(utils.ToString(reqData.JobId)); ok {
+	if existingSession, ok := activeSessions.Get((reqData.JobId)); ok {
 		existingSession.Close()
 	}
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	session := &backupSession{
-		jobId:  utils.ToString(reqData.JobId),
+		jobId:  (reqData.JobId),
 		ctx:    sessionCtx,
 		cancel: cancel,
 		store:  store,
 	}
-	activeSessions.Set(utils.ToString(reqData.JobId), session)
+	activeSessions.Set((reqData.JobId), session)
 
-	if hasActive, err := store.HasActiveBackupForJob(utils.ToString(reqData.JobId)); hasActive || err != nil {
+	if hasActive, err := store.HasActiveBackupForJob((reqData.JobId)); hasActive || err != nil {
 		if err != nil {
 			return arpc.Response{}, err
 		}
@@ -83,19 +83,19 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 		return arpc.Response{}, err
 	}
 
-	if err := store.StartBackup(utils.ToString(reqData.JobId)); err != nil {
+	if err := store.StartBackup((reqData.JobId)); err != nil {
 		session.Close()
 		return arpc.Response{}, err
 	}
 
-	snapshot, err := snapshots.Snapshot(utils.ToString(reqData.JobId), utils.ToString(reqData.Drive))
+	snapshot, err := snapshots.Snapshot((reqData.JobId), (reqData.Drive))
 	if err != nil {
 		session.Close()
 		return arpc.Response{}, err
 	}
 	session.snapshot = snapshot
 
-	fs := vssfs.NewVSSFSServer(utils.ToString(reqData.JobId), snapshot)
+	fs := vssfs.NewVSSFSServer((reqData.JobId), snapshot)
 	if fs == nil {
 		session.Close()
 		return arpc.Response{}, fmt.Errorf("fs is nil")
@@ -103,24 +103,24 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 	fs.RegisterHandlers(rpcSess.GetRouter())
 	session.fs = fs
 
-	return arpc.Response{Status: 200, Message: utils.ToBytes("success")}, nil
+	return arpc.Response{Status: 200, Message: ("success")}, nil
 }
 
 func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
-	var reqData vssfs.BackupReq
-	_, err := reqData.UnmarshalMsg(req.Payload)
+	var reqData types.BackupReq
+	err := reqData.Decode(req.Payload)
 	if err != nil {
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Infof("Received closure request for job %s.", utils.ToString(reqData.JobId))
+	syslog.L.Infof("Received closure request for job %s.", (reqData.JobId))
 
-	session, ok := activeSessions.Get(utils.ToString(reqData.JobId))
+	session, ok := activeSessions.Get((reqData.JobId))
 	if !ok {
 		err := fmt.Errorf("no ongoing backup")
 		return arpc.Response{}, err
 	}
 
 	session.Close()
-	return arpc.Response{Status: 200, Message: utils.ToBytes("success")}, nil
+	return arpc.Response{Status: 200, Message: ("success")}, nil
 }
