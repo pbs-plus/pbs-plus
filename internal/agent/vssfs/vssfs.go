@@ -3,10 +3,12 @@
 package vssfs
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
 	"path/filepath"
+	"unsafe"
 
 	"github.com/Microsoft/go-winio"
 	securejoin "github.com/cyphar/filepath-securejoin"
@@ -291,27 +293,49 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Open a new file handle for isolated, concurrent reading.
-	newHandle, err := windows.CreateFile(
-		windows.StringToUTF16Ptr(fh.path),
-		windows.GENERIC_READ,
-		windows.FILE_SHARE_READ,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN,
-		0,
-	)
+	flProtect := uint32(windows.PAGE_READONLY)
+	dwDesiredAccess := uint32(windows.FILE_MAP_READ)
+
+	// Compute the maximum mappable size.
+	maxSizeHigh := uint32((payload.Offset + int64(payload.Length)) >> 32)
+	maxSizeLow := uint32((payload.Offset + int64(payload.Length)) & 0xFFFFFFFF)
+	h, err := windows.CreateFileMapping(fh.handle, nil, flProtect, maxSizeHigh, maxSizeLow, nil)
 	if err != nil {
-		return arpc.Response{}, err
+		return arpc.Response{}, mapWinError(err)
 	}
 
+	// Map the requested view.
+	fileOffsetHigh := uint32(payload.Offset >> 32)
+	fileOffsetLow := uint32(payload.Offset & 0xFFFFFFFF)
+	addr, _ := windows.MapViewOfFile(h, dwDesiredAccess, fileOffsetHigh,
+		fileOffsetLow, uintptr(payload.Length))
+	if addr == 0 {
+		windows.CloseHandle(windows.Handle(h))
+		return arpc.Response{}, os.ErrInvalid
+	}
+
+	// If VirtualLock fails, clean up before returning.
+	err = windows.VirtualLock(addr, uintptr(payload.Length))
+	if err != nil {
+		windows.UnmapViewOfFile(addr)
+		windows.CloseHandle(windows.Handle(h))
+		return arpc.Response{}, os.ErrInvalid
+	}
+
+	ptr := (*byte)(unsafe.Pointer(addr))
+	data := unsafe.Slice(ptr, payload.Length)
+
+	reader := bytes.NewReader(data)
+
 	streamCallback := func(stream *smux.Stream) {
-		defer windows.CloseHandle(newHandle)
+		defer func() {
+			windows.VirtualUnlock(addr, uintptr(payload.Length))
+			windows.UnmapViewOfFile(addr)
+			windows.CloseHandle(windows.Handle(h))
+			data = nil
+		}()
+
 		// Use our AtReader to perform an overlapped read from the given offset.
-		reader := &AtReader{
-			handle: newHandle,
-			offset: payload.Offset,
-		}
 		err := binarystream.SendDataFromReader(reader, payload.Length, stream)
 		if err != nil && syslog.L != nil {
 			syslog.L.Errorf("handleReadAt error: %v", err)
