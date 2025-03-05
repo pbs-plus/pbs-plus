@@ -42,13 +42,13 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> unable to reach target"), http.StatusInternalServerError)
 				return
 			}
-			req := types.BackupReq{Drive: (agentDrive), JobId: (jobId)}
+			req := types.BackupReq{Drive: agentDrive, JobId: jobId}
 			backupResp, err := arpcSess.CallContext(ctx, "backup", &req)
 			if err != nil || backupResp.Status != 200 {
 				if err != nil {
 					err = errors.New(backupResp.Message)
+					syslog.L.Errorf("MountHandler: Failed to send backup request to target -> %v", err)
 				}
-				syslog.L.Errorf("MountHandler: Failed to send backup request to target -> %v", err)
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> %v", err), http.StatusInternalServerError)
 				return
 			}
