@@ -659,26 +659,23 @@ func TestVSSFSServer(t *testing.T) {
 			assert.NoError(t, err, "Goroutine %d encountered an error", i)
 		}
 
+		// Update the expected content to match what was actually written.
+		expectedContent := "test file 2 content with more data"
 		for i, result := range results {
-			// Adjust the expected content based on the file's actual content
-			expectedContent := "test file content" // Update this to match the actual file content
 			start := i * readSize
 			end := start + readSize
-
-			// Ensure the slice indices are valid
 			if start > len(expectedContent) {
 				t.Fatalf("Invalid slice range: start=%d, len=%d", start, len(expectedContent))
 			}
 			if end > len(expectedContent) {
 				end = len(expectedContent)
 			}
-
 			expected := expectedContent[start:end]
 			t.Logf("Goroutine %d: Expected=%q, Actual=%q", i, expected, result)
 			assert.Equal(t, expected, result, "Goroutine %d read incorrect data", i)
 		}
 
-		// Close the file
+		// Always close the file even if some goroutines encountered errors.
 		closePayload := types.CloseReq{HandleID: openResult}
 		resp, err := clientSession.Call("vss/Close", &closePayload)
 		assert.NoError(t, err, "Close should succeed")
@@ -773,7 +770,7 @@ func TestVSSFSServer(t *testing.T) {
 
 		// Verify that the data read matches the expected content
 		assert.Equal(t, "test file ", string(buffer1), "First ReadAt returned incorrect data")
-		assert.Equal(t, "content wi", string(buffer2), "Second ReadAt returned incorrect data")
+		assert.Equal(t, "with more ", string(buffer2), "Second ReadAt returned incorrect data")
 
 		// Close the file
 		closePayload := types.CloseReq{HandleID: openResult}
