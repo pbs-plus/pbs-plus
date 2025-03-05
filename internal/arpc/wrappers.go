@@ -80,7 +80,9 @@ func (resp *Response) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	resp.Data = dataField
+	// Copy the data to avoid referencing the pooled buffer
+	resp.Data = make([]byte, len(dataField))
+	copy(resp.Data, dataField)
 	// Note: RawStream is skipped
 	return nil
 }
