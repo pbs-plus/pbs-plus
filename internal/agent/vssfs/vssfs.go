@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"unsafe"
@@ -170,14 +169,12 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 
 	h, err := windows.CreateFileMapping(handle, nil, windows.PAGE_READONLY, 0, 0, nil)
 	if err != nil {
-		log.Printf("CreateFileMapping error: %v", err)
 		windows.CloseHandle(handle)
 		return arpc.Response{}, mapWinError(err)
 	}
 
 	fileSize, err := getFileSize(handle)
 	if err != nil {
-		log.Printf("failed to get file size: %v", err)
 		windows.CloseHandle(h)
 		windows.CloseHandle(handle)
 		return arpc.Response{}, err
@@ -346,9 +343,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	// Map the requested view.
 	addr, err := windows.MapViewOfFile(fh.mapHandle, windows.FILE_MAP_READ, uint32(alignedOffset>>32), uint32(alignedOffset&0xFFFFFFFF), viewSize)
 	if err != nil {
-		log.Printf("Offset: %d, Length: %d", payload.Offset, payload.Length)
-		log.Printf("MapViewOfFile error: %v", err)
-		return arpc.Response{}, os.ErrInvalid
+		return arpc.Response{}, mapWinError(err)
 	}
 
 	ptr := (*byte)(unsafe.Pointer(addr))
