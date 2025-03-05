@@ -13,7 +13,7 @@ type Request struct {
 
 func (req *Request) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(req.Method) + len(req.Payload))
-	if err := enc.WriteBytes(sb.ToBytes(req.Method)); err != nil {
+	if err := enc.WriteString(req.Method); err != nil {
 		return nil, err
 	}
 	if err := enc.WriteBytes(req.Payload); err != nil {
@@ -27,11 +27,11 @@ func (req *Request) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	method, err := dec.ReadBytes()
+	method, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	req.Method = sb.ToString(method)
+	req.Method = method
 	payload, err := dec.ReadBytes()
 	if err != nil {
 		return err
@@ -52,7 +52,7 @@ func (resp *Response) Encode() ([]byte, error) {
 	if err := enc.WriteUint32(uint32(resp.Status)); err != nil {
 		return nil, err
 	}
-	if err := enc.WriteBytes(sb.ToBytes(resp.Message)); err != nil {
+	if err := enc.WriteString(resp.Message); err != nil {
 		return nil, err
 	}
 	if err := enc.WriteBytes(resp.Data); err != nil {
@@ -71,11 +71,11 @@ func (resp *Response) Decode(buf []byte) error {
 		return err
 	}
 	resp.Status = int(status)
-	message, err := dec.ReadBytes()
+	message, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	resp.Message = sb.ToString(message)
+	resp.Message = message
 	dataField, err := dec.ReadBytes()
 	if err != nil {
 		return err
@@ -96,16 +96,16 @@ type SerializableError struct {
 
 func (errObj *SerializableError) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(errObj.ErrorType) + len(errObj.Message) + len(errObj.Op) + len(errObj.Path))
-	if err := enc.WriteBytes(sb.ToBytes(errObj.ErrorType)); err != nil {
+	if err := enc.WriteString(errObj.ErrorType); err != nil {
 		return nil, err
 	}
-	if err := enc.WriteBytes(sb.ToBytes(errObj.Message)); err != nil {
+	if err := enc.WriteString(errObj.Message); err != nil {
 		return nil, err
 	}
-	if err := enc.WriteBytes(sb.ToBytes(errObj.Op)); err != nil {
+	if err := enc.WriteString(errObj.Op); err != nil {
 		return nil, err
 	}
-	if err := enc.WriteBytes(sb.ToBytes(errObj.Path)); err != nil {
+	if err := enc.WriteString(errObj.Path); err != nil {
 		return nil, err
 	}
 	// Note: OriginalError is skipped
