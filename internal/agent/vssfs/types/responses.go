@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/sb"
 )
 
 // LseekResp represents the response to a seek request
@@ -45,7 +44,7 @@ type VSSFileInfo struct {
 
 func (info *VSSFileInfo) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(info.Name) + 8 + 4 + 8 + 1 + 8)
-	if err := enc.WriteBytes(sb.ToBytes(info.Name)); err != nil {
+	if err := enc.WriteString(info.Name); err != nil {
 		return nil, err
 	}
 	if err := enc.WriteInt64(info.Size); err != nil {
@@ -71,11 +70,11 @@ func (info *VSSFileInfo) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	name, err := dec.ReadBytes()
+	name, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	info.Name = sb.ToString(name)
+	info.Name = name
 	size, err := dec.ReadInt64()
 	if err != nil {
 		return err
@@ -112,7 +111,7 @@ type VSSDirEntry struct {
 
 func (entry *VSSDirEntry) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(entry.Name) + 4)
-	if err := enc.WriteBytes(sb.ToBytes(entry.Name)); err != nil {
+	if err := enc.WriteString(entry.Name); err != nil {
 		return nil, err
 	}
 	if err := enc.WriteUint32(entry.Mode); err != nil {
@@ -126,11 +125,11 @@ func (entry *VSSDirEntry) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	name, err := dec.ReadBytes()
+	name, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	entry.Name = sb.ToString(name)
+	entry.Name = name
 	mode, err := dec.ReadUint32()
 	if err != nil {
 		return err

@@ -45,9 +45,11 @@ func (sm *Map[K, V]) Get(key K) (V, bool) {
 // If the key does not exist, it sets the key with the provided value and returns it.
 // The second return value indicates whether the value was loaded (true) or set (false).
 func (sm *Map[K, V]) GetOrSet(key K, value V) (actual V, loaded bool) {
-	// Use SetIfAbsent to implement GetOrSet
-	sm.internal.SetIfAbsent(key, value)
 	actual, loaded = sm.internal.Load(key)
+	if !loaded {
+		sm.internal.Store(key, value)
+	}
+
 	return actual, loaded
 }
 

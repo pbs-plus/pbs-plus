@@ -2,7 +2,6 @@ package types
 
 import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/sb"
 )
 
 // FileHandleId is a type alias for uint64
@@ -33,19 +32,21 @@ func (id *FileHandleId) Decode(buf []byte) error {
 type ReadDirEntries []VSSDirEntry
 
 func (entries *ReadDirEntries) Encode() ([]byte, error) {
+	// Create an encoder with an estimated size
 	enc := arpcdata.NewEncoder()
 
-	// Write the number of entries
+	// Write the number of entries as a uint32
 	if err := enc.WriteUint32(uint32(len(*entries))); err != nil {
 		return nil, err
 	}
 
-	// Write each VSSDirEntry
+	// Encode each entry and append it to the encoder
 	for _, entry := range *entries {
-		if err := enc.WriteBytes(sb.ToBytes(entry.Name)); err != nil {
+		entryBytes, err := entry.Encode()
+		if err != nil {
 			return nil, err
 		}
-		if err := enc.WriteUint32(entry.Mode); err != nil {
+		if err := enc.WriteBytes(entryBytes); err != nil {
 			return nil, err
 		}
 	}
@@ -53,6 +54,7 @@ func (entries *ReadDirEntries) Encode() ([]byte, error) {
 	return enc.Bytes(), nil
 }
 
+// DecodeVSSDirEntries decodes a byte slice into an array of VSSDirEntry
 func (entries *ReadDirEntries) Decode(buf []byte) error {
 	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
@@ -65,21 +67,18 @@ func (entries *ReadDirEntries) Decode(buf []byte) error {
 		return err
 	}
 
-	// Read each VSSDirEntry
+	// Decode each entry
 	*entries = make([]VSSDirEntry, count)
-	for i := 0; i < int(count); i++ {
-		name, err := dec.ReadBytes()
+	for i := uint32(0); i < count; i++ {
+		entryBytes, err := dec.ReadBytes()
 		if err != nil {
 			return err
 		}
-		mode, err := dec.ReadUint32()
-		if err != nil {
+		var entry VSSDirEntry
+		if err := entry.Decode(entryBytes); err != nil {
 			return err
 		}
-		(*entries)[i] = VSSDirEntry{
-			Name: sb.ToString(name),
-			Mode: mode,
-		}
+		(*entries)[i] = entry
 	}
 
 	return nil

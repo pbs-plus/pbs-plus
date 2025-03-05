@@ -2,7 +2,6 @@ package types
 
 import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/sb"
 )
 
 // OpenFileReq represents a request to open a file
@@ -14,7 +13,7 @@ type OpenFileReq struct {
 
 func (req *OpenFileReq) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(req.Path) + 4 + 4)
-	if err := enc.WriteBytes(sb.ToBytes(req.Path)); err != nil {
+	if err := enc.WriteString(req.Path); err != nil {
 		return nil, err
 	}
 	if err := enc.WriteUint32(uint32(req.Flag)); err != nil {
@@ -31,11 +30,11 @@ func (req *OpenFileReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	path, err := dec.ReadBytes()
+	path, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	req.Path = sb.ToString(path)
+	req.Path = path
 	flag, err := dec.ReadUint32()
 	if err != nil {
 		return err
@@ -56,7 +55,7 @@ type StatReq struct {
 
 func (req *StatReq) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(req.Path))
-	if err := enc.WriteBytes(sb.ToBytes(req.Path)); err != nil {
+	if err := enc.WriteString(req.Path); err != nil {
 		return nil, err
 	}
 	return enc.Bytes(), nil
@@ -67,11 +66,11 @@ func (req *StatReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	path, err := dec.ReadBytes()
+	path, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	req.Path = sb.ToString(path)
+	req.Path = path
 	return nil
 }
 
@@ -82,7 +81,7 @@ type ReadDirReq struct {
 
 func (req *ReadDirReq) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(req.Path))
-	if err := enc.WriteBytes(sb.ToBytes(req.Path)); err != nil {
+	if err := enc.WriteString(req.Path); err != nil {
 		return nil, err
 	}
 	return enc.Bytes(), nil
@@ -93,11 +92,11 @@ func (req *ReadDirReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	path, err := dec.ReadBytes()
+	path, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	req.Path = sb.ToString(path)
+	req.Path = path
 	return nil
 }
 
@@ -214,10 +213,10 @@ type BackupReq struct {
 
 func (req *BackupReq) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(req.JobId) + len(req.Drive))
-	if err := enc.WriteBytes(sb.ToBytes(req.JobId)); err != nil {
+	if err := enc.WriteString(req.JobId); err != nil {
 		return nil, err
 	}
-	if err := enc.WriteBytes(sb.ToBytes(req.Drive)); err != nil {
+	if err := enc.WriteString(req.Drive); err != nil {
 		return nil, err
 	}
 	return enc.Bytes(), nil
@@ -228,16 +227,16 @@ func (req *BackupReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	jobId, err := dec.ReadBytes()
+	jobId, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	req.JobId = sb.ToString(jobId)
-	drive, err := dec.ReadBytes()
+	req.JobId = jobId
+	drive, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	req.Drive = sb.ToString(drive)
+	req.Drive = drive
 	return nil
 }
 
