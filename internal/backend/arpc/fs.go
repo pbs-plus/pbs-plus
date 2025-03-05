@@ -30,7 +30,8 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 
 // trackAccess records that a path has been accessed using its xxHash
 func (fs *ARPCFS) trackAccess(path string, isDir bool) {
-	if _, loaded := fs.accessedPaths.GetOrSet(path, isDir); !loaded {
+	if _, loaded := fs.accessedPaths.Get(path); !loaded {
+		fs.accessedPaths.Set(path, isDir)
 		if isDir {
 			atomic.AddInt64(&fs.folderCount, 1)
 		} else {
