@@ -295,9 +295,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 
 	// Compute the maximum mappable size.
-	maxSizeHigh := uint32((payload.Offset + int64(payload.Length)) >> 32)
-	maxSizeLow := uint32((payload.Offset + int64(payload.Length)) & 0xFFFFFFFF)
-	h, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, maxSizeHigh, maxSizeLow, nil)
+	h, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, 0, 0, nil)
 	if err != nil {
 		log.Printf("Offset: %d, Length: %d", payload.Offset, payload.Length)
 		log.Println(err.Error())
@@ -309,6 +307,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	fileOffsetLow := uint32(payload.Offset & 0xFFFFFFFF)
 	addr, _ := windows.MapViewOfFile(h, windows.FILE_MAP_READ, fileOffsetHigh, fileOffsetLow, uintptr(payload.Length))
 	if addr == 0 {
+		log.Printf("Offset: %d, Length: %d", payload.Offset, payload.Length)
+		log.Println(err.Error())
 		windows.CloseHandle(windows.Handle(h))
 		return arpc.Response{}, os.ErrInvalid
 	}
