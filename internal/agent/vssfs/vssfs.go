@@ -9,8 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
+	"unsafe"
 
-	"github.com/Microsoft/go-winio"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
@@ -26,6 +27,12 @@ import (
 type FileHandle struct {
 	handle windows.Handle
 	isDir  bool
+}
+
+type FileStandardInfo struct {
+	AllocationSize, EndOfFile int64
+	NumberOfLinks             uint32
+	DeletePending, Directory  bool
 }
 
 type VSSFSServer struct {
@@ -117,7 +124,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 
 	// Disallow write operations.
 	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
-		errStr := arpc.StringMsg("write operations not allowed")
+		errStr := arpc.WrapError(os.ErrPermission)
 		errBytes, err := errStr.Encode()
 		if err != nil {
 			return arpc.Response{}, err
@@ -150,7 +157,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	var fileInfo windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle, &fileInfo); err != nil {
 		windows.CloseHandle(handle)
-		return arpc.Response{}, err
+		return arpc.Response{}, mapWinError(err)
 	}
 	isDir := (fileInfo.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
 
@@ -188,58 +195,66 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	file, err := os.Open(fullPath)
+	// Use windows.CreateFile to open the file or directory with FILE_FLAG_BACKUP_SEMANTICS
+	pathPtr, err := windows.UTF16PtrFromString(fullPath)
 	if err != nil {
-		rawInfo, statErr := os.Stat(fullPath)
-		if statErr != nil {
-			return arpc.Response{}, err
-		}
-
-		info := types.VSSFileInfo{
-			Name:    rawInfo.Name(),
-			Size:    rawInfo.Size(),
-			Mode:    uint32(rawInfo.Mode()),
-			ModTime: rawInfo.ModTime(),
-			IsDir:   rawInfo.IsDir(),
-			Blocks:  0,
-		}
-		data, err := info.Encode()
-		if err != nil {
-			return arpc.Response{}, err
-		}
-		return arpc.Response{Status: 200, Data: data}, nil
+		return arpc.Response{}, mapWinError(err)
 	}
-	defer file.Close()
 
-	// Use fstat on the open file handle to get basic file info.
-	rawInfo, err := file.Stat()
+	handle, err := windows.CreateFile(
+		pathPtr,
+		windows.GENERIC_READ,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
 	if err != nil {
-		return arpc.Response{}, err
+		return arpc.Response{}, fmt.Errorf("failed to open file: %w", err)
 	}
+	defer windows.CloseHandle(handle)
+
+	// Use GetFileInformationByHandle to retrieve file information
+	var fileInfo windows.ByHandleFileInformation
+	err = windows.GetFileInformationByHandle(handle, &fileInfo)
+	if err != nil {
+		return arpc.Response{}, mapWinError(err)
+	}
+
+	// Convert the file information to a Go struct
+	isDir := fileInfo.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
+	modTime := time.Unix(0, fileInfo.LastWriteTime.Nanoseconds())
+	size := int64(fileInfo.FileSizeHigh)<<32 + int64(fileInfo.FileSizeLow)
 
 	var blocks uint64 = 0
-	if !rawInfo.IsDir() {
-		// Get the extended allocation info from the already open file.
+	if !isDir {
+		// Use GetFileInformationByHandleEx to retrieve allocation size
+		var info FileStandardInfo
+		err = windows.GetFileInformationByHandleEx(
+			handle,
+			windows.FileStandardInfo,
+			(*byte)(unsafe.Pointer(&info)),
+			uint32(unsafe.Sizeof(info)),
+		)
+		if err != nil {
+			return arpc.Response{}, mapWinError(err)
+		}
+
+		// Calculate the number of blocks based on allocation size
 		var blockSize = s.statFs.Bsize
 		if blockSize == 0 {
 			blockSize = 4096 // Default to 4KB
 		}
-		standardInfo, err := winio.GetFileStandardInfo(file)
-		if err != nil {
-			return arpc.Response{},
-				fmt.Errorf("failed to get file standard info: %w", err)
-		}
-
-		blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) /
-			int64(blockSize))
+		blocks = uint64((info.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
 	}
 
 	info := types.VSSFileInfo{
-		Name:    rawInfo.Name(),
-		Size:    rawInfo.Size(),
-		Mode:    uint32(rawInfo.Mode()),
-		ModTime: rawInfo.ModTime(),
-		IsDir:   rawInfo.IsDir(),
+		Name:    filepath.Base(fullPath),
+		Size:    size,
+		Mode:    uint32(fileInfo.FileAttributes),
+		ModTime: modTime,
+		IsDir:   isDir,
 		Blocks:  blocks,
 	}
 
