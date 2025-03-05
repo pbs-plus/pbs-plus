@@ -291,11 +291,17 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
+	// Duplicate the handle for isolated reading
+	dupHandle, err := duplicateHandle(fh.handle)
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
 	// Perform synchronous read - first seek to the position
 	distanceToMove := int64(payload.Offset)
 	moveMethod := uint32(windows.FILE_BEGIN)
 
-	newPos, err := windows.Seek(fh.handle, distanceToMove, int(moveMethod))
+	newPos, err := windows.Seek(dupHandle, distanceToMove, int(moveMethod))
 	if err != nil {
 		return arpc.Response{}, mapWinError(err)
 	}
@@ -304,7 +310,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 
 	streamCallback := func(stream *smux.Stream) {
-		err := binarystream.SendData(fh.handle, payload.Length, stream)
+		defer windows.CloseHandle(dupHandle) // Ensure the duplicated handle is closed after use
+		err := binarystream.SendData(dupHandle, payload.Length, stream)
 		if err != nil && syslog.L != nil {
 			syslog.L.Errorf("handleReadAt error: %v", err)
 		}

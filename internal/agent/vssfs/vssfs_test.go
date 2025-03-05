@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -602,6 +603,177 @@ func TestVSSFSServer(t *testing.T) {
 			assert.NoError(t, err, "Close should succeed")
 			assert.Equal(t, 200, resp.Status)
 		})
+
+		// Close the file
+		closePayload := types.CloseReq{HandleID: openResult}
+		resp, err := clientSession.Call("vss/Close", &closePayload)
+		assert.NoError(t, err, "Close should succeed")
+		assert.Equal(t, 200, resp.Status)
+	})
+
+	t.Run("ConcurrentReadAt", func(t *testing.T) {
+		// Open a test file
+		payload := types.OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
+		var openResult types.FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", &payload)
+		require.NoError(t, err, "OpenFile should succeed")
+		openResult.Decode(raw)
+
+		t.Logf("File opened with handle ID: %d", uint64(openResult))
+		t.Log(dumpHandleMap(vssServer))
+
+		// Perform concurrent ReadAt operations
+		const numGoroutines = 10
+		const readSize = 10
+		results := make([]string, numGoroutines)
+		errors := make([]error, numGoroutines)
+
+		var wg sync.WaitGroup
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func(goroutineID int) {
+				defer wg.Done()
+
+				offset := int64(goroutineID * readSize)
+				readAtPayload := types.ReadAtReq{
+					HandleID: openResult,
+					Offset:   offset,
+					Length:   readSize,
+				}
+
+				buffer := make([]byte, readSize)
+				bytesRead, err := clientSession.CallBinary(ctx, "vss/ReadAt", &readAtPayload, buffer)
+				if err != nil {
+					errors[goroutineID] = err
+					return
+				}
+
+				results[goroutineID] = string(buffer[:bytesRead])
+			}(i)
+		}
+
+		wg.Wait()
+
+		// Verify results
+		for i, err := range errors {
+			assert.NoError(t, err, "Goroutine %d encountered an error", i)
+		}
+
+		for i, result := range results {
+			// Adjust the expected content based on the file's actual content
+			expectedContent := "test file content" // Update this to match the actual file content
+			start := i * readSize
+			end := start + readSize
+
+			// Ensure the slice indices are valid
+			if start > len(expectedContent) {
+				t.Fatalf("Invalid slice range: start=%d, len=%d", start, len(expectedContent))
+			}
+			if end > len(expectedContent) {
+				end = len(expectedContent)
+			}
+
+			expected := expectedContent[start:end]
+			t.Logf("Goroutine %d: Expected=%q, Actual=%q", i, expected, result)
+			assert.Equal(t, expected, result, "Goroutine %d read incorrect data", i)
+		}
+
+		// Close the file
+		closePayload := types.CloseReq{HandleID: openResult}
+		resp, err := clientSession.Call("vss/Close", &closePayload)
+		assert.NoError(t, err, "Close should succeed")
+		assert.Equal(t, 200, resp.Status)
+	})
+
+	t.Run("StressTest_HandleManagement", func(t *testing.T) {
+		const numFiles = 100
+		const numIterations = 10
+
+		// Create multiple test files
+		for i := 0; i < numFiles; i++ {
+			filePath := filepath.Join(testDir, fmt.Sprintf("stress_test_file_%d.txt", i))
+			err := os.WriteFile(filePath, []byte(fmt.Sprintf("content for file %d", i)), 0644)
+			require.NoError(t, err, "Failed to create test file %d", i)
+		}
+
+		// Open and close files repeatedly
+		for iteration := 0; iteration < numIterations; iteration++ {
+			t.Logf("Iteration %d: Opening and closing files", iteration)
+
+			for i := 0; i < numFiles; i++ {
+				filePath := fmt.Sprintf("stress_test_file_%d.txt", i)
+
+				// Open file
+				payload := types.OpenFileReq{Path: (filePath), Flag: 0, Perm: 0644}
+				var openResult types.FileHandleId
+				raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", &payload)
+				require.NoError(t, err, "OpenFile should succeed for %s", filePath)
+				openResult.Decode(raw)
+
+				// Close file
+				closePayload := types.CloseReq{HandleID: openResult}
+				resp, err := clientSession.Call("vss/Close", &closePayload)
+				assert.NoError(t, err, "Close should succeed for %s", filePath)
+				assert.Equal(t, 200, resp.Status)
+			}
+		}
+
+		// Verify no handles are left open
+		assert.Equal(t, 0, vssServer.handles.Len(), "All handles should be closed after stress test")
+	})
+
+	t.Run("ResourceLeakTest", func(t *testing.T) {
+		initialHandleCount := vssServer.handles.Len()
+
+		// Open and close a file
+		payload := types.OpenFileReq{Path: ("test1.txt"), Flag: 0, Perm: 0644}
+		var openResult types.FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", &payload)
+		require.NoError(t, err, "OpenFile should succeed")
+		openResult.Decode(raw)
+
+		closePayload := types.CloseReq{HandleID: openResult}
+		resp, err := clientSession.Call("vss/Close", &closePayload)
+		assert.NoError(t, err, "Close should succeed")
+		assert.Equal(t, 200, resp.Status)
+
+		// Verify handle count remains the same
+		finalHandleCount := vssServer.handles.Len()
+		assert.Equal(t, initialHandleCount, finalHandleCount, "Handle count should remain unchanged after open/close")
+	})
+
+	t.Run("FilePointerIsolation", func(t *testing.T) {
+		// Open a test file
+		payload := types.OpenFileReq{Path: ("test2.txt"), Flag: 0, Perm: 0644}
+		var openResult types.FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "vss/OpenFile", &payload)
+		require.NoError(t, err, "OpenFile should succeed")
+		openResult.Decode(raw)
+
+		// Perform two ReadAt operations with different offsets
+		readAtPayload1 := types.ReadAtReq{
+			HandleID: openResult,
+			Offset:   0,
+			Length:   10,
+		}
+		readAtPayload2 := types.ReadAtReq{
+			HandleID: openResult,
+			Offset:   20,
+			Length:   10,
+		}
+
+		buffer1 := make([]byte, 10)
+		buffer2 := make([]byte, 10)
+
+		_, err1 := clientSession.CallBinary(ctx, "vss/ReadAt", &readAtPayload1, buffer1)
+		_, err2 := clientSession.CallBinary(ctx, "vss/ReadAt", &readAtPayload2, buffer2)
+
+		assert.NoError(t, err1, "First ReadAt should succeed")
+		assert.NoError(t, err2, "Second ReadAt should succeed")
+
+		// Verify that the data read matches the expected content
+		assert.Equal(t, "test file ", string(buffer1), "First ReadAt returned incorrect data")
+		assert.Equal(t, "content wi", string(buffer2), "Second ReadAt returned incorrect data")
 
 		// Close the file
 		closePayload := types.CloseReq{HandleID: openResult}

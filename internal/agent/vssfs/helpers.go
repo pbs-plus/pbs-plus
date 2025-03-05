@@ -24,3 +24,20 @@ func mapWinError(err error) error {
 		}
 	}
 }
+
+func duplicateHandle(original windows.Handle) (windows.Handle, error) {
+	var duplicated windows.Handle
+	err := windows.DuplicateHandle(
+		windows.CurrentProcess(),
+		original,
+		windows.CurrentProcess(),
+		&duplicated,
+		0,
+		false,
+		windows.DUPLICATE_SAME_ACCESS,
+	)
+	if err != nil {
+		return 0, mapWinError(err)
+	}
+	return duplicated, nil
+}
