@@ -178,6 +178,8 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	fileSize, err := getFileSize(handle)
 	if err != nil {
 		log.Printf("failed to get file size: %v", err)
+		windows.CloseHandle(h)
+		windows.CloseHandle(handle)
 		return arpc.Response{}, err
 	}
 
@@ -194,8 +196,8 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	fhId := types.FileHandleId(handleId)
 	dataBytes, err := fhId.Encode()
 	if err != nil {
-		windows.CloseHandle(handle)
 		windows.CloseHandle(h)
+		windows.CloseHandle(handle)
 		return arpc.Response{}, err
 	}
 
