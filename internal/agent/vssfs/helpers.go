@@ -5,6 +5,7 @@ package vssfs
 import (
 	"os"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
 
@@ -17,6 +18,9 @@ func mapWinError(err error) error {
 	case windows.ERROR_ACCESS_DENIED:
 		return os.ErrPermission
 	default:
+		if syslog.L != nil {
+			syslog.L.Errorf("Unknown Win Error: %v", err)
+		}
 		return &os.PathError{
 			Op:   "access",
 			Path: "",
