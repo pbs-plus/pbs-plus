@@ -3,6 +3,7 @@ module github.com/sonroyaalmerol/pbs-plus
 go 1.24.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/alexflint/go-filemutex v1.3.0
 	github.com/billgraziano/dpapi v0.5.0
 	github.com/cyphar/filepath-securejoin v0.4.1
