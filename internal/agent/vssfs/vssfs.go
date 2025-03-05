@@ -3,10 +3,13 @@
 package vssfs
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"unsafe"
 
 	"github.com/Microsoft/go-winio"
 	securejoin "github.com/cyphar/filepath-securejoin"
@@ -22,9 +25,10 @@ import (
 )
 
 type FileHandle struct {
-	handle windows.Handle
-	path   string
-	isDir  bool
+	handle    windows.Handle
+	mapHandle windows.Handle
+	fileSize  int64
+	isDir     bool
 }
 
 type FileStandardInfo struct {
@@ -89,6 +93,7 @@ func (s *VSSFSServer) Close() {
 	}
 
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
+		windows.CloseHandle(fh.mapHandle)
 		windows.CloseHandle(fh.handle)
 
 		return true
@@ -163,11 +168,27 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
+	h, err := windows.CreateFileMapping(handle, nil, windows.PAGE_READONLY, 0, 0, nil)
+	if err != nil {
+		log.Printf("CreateFileMapping error: %v", err)
+		windows.CloseHandle(handle)
+		return arpc.Response{}, mapWinError(err)
+	}
+
+	fileSize, err := getFileSize(handle)
+	if err != nil {
+		log.Printf("failed to get file size: %v", err)
+		windows.CloseHandle(h)
+		windows.CloseHandle(handle)
+		return arpc.Response{}, err
+	}
+
 	handleId := s.handleIdGen.NextID()
 	fh := &FileHandle{
-		handle: handle,
-		path:   path,
-		isDir:  stat.IsDir(),
+		handle:    handle,
+		mapHandle: h,
+		fileSize:  fileSize,
+		isDir:     stat.IsDir(),
 	}
 	s.handles.Set(handleId, fh)
 
@@ -175,6 +196,8 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	fhId := types.FileHandleId(handleId)
 	dataBytes, err := fhId.Encode()
 	if err != nil {
+		windows.CloseHandle(h)
+		windows.CloseHandle(handle)
 		return arpc.Response{}, err
 	}
 
@@ -291,20 +314,56 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Perform synchronous read - first seek to the position
-	distanceToMove := int64(payload.Offset)
-	moveMethod := uint32(windows.FILE_BEGIN)
-
-	newPos, err := windows.Seek(fh.handle, distanceToMove, int(moveMethod))
-	if err != nil {
-		return arpc.Response{}, mapWinError(err)
+	// If the requested offset is at or beyond EOF, return an empty result.
+	if payload.Offset >= fh.fileSize {
+		streamCallback := func(stream *smux.Stream) {
+			err := binarystream.SendDataFromReader(nil, payload.Length, stream)
+			if err != nil && syslog.L != nil {
+				syslog.L.Errorf("handleReadAt error: %v", err)
+			}
+		}
+		return arpc.Response{
+			Status:    213,
+			RawStream: streamCallback,
+		}, nil
 	}
-	if newPos != payload.Offset {
+
+	// Clamp length if the requested region goes beyond EOF
+	if payload.Offset+int64(payload.Length) > fh.fileSize {
+		payload.Length = int(fh.fileSize - payload.Offset)
+	}
+
+	// Get the system page size.
+	pageSize := int64(os.Getpagesize())
+
+	// Align the offset down to the nearest multiple of the page size.
+	alignedOffset := payload.Offset - (payload.Offset % pageSize)
+	offsetDiff := int(payload.Offset - alignedOffset)
+
+	// Calculate the view size by adding the difference.
+	viewSize := uintptr(payload.Length + offsetDiff)
+
+	// Map the requested view.
+	addr, err := windows.MapViewOfFile(fh.mapHandle, windows.FILE_MAP_READ, uint32(alignedOffset>>32), uint32(alignedOffset&0xFFFFFFFF), viewSize)
+	if err != nil {
+		log.Printf("Offset: %d, Length: %d", payload.Offset, payload.Length)
+		log.Printf("MapViewOfFile error: %v", err)
 		return arpc.Response{}, os.ErrInvalid
 	}
 
+	ptr := (*byte)(unsafe.Pointer(addr))
+	data := unsafe.Slice(ptr, viewSize)
+	result := data[offsetDiff : offsetDiff+int(payload.Length)]
+
+	reader := bytes.NewReader(result)
+
 	streamCallback := func(stream *smux.Stream) {
-		err := binarystream.SendData(fh.handle, payload.Length, stream)
+		defer func() {
+			windows.UnmapViewOfFile(addr)
+			data = nil
+		}()
+
+		err := binarystream.SendDataFromReader(reader, payload.Length, stream)
 		if err != nil && syslog.L != nil {
 			syslog.L.Errorf("handleReadAt error: %v", err)
 		}
@@ -419,6 +478,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	}
 
 	// Close the Windows handle directly
+	windows.CloseHandle(handle.mapHandle)
 	windows.CloseHandle(handle.handle)
 	s.handles.Del(uint64(payload.HandleID))
 
