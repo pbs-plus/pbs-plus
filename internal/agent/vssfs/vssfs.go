@@ -299,6 +299,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	maxSizeLow := uint32((payload.Offset + int64(payload.Length)) & 0xFFFFFFFF)
 	h, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, maxSizeHigh, maxSizeLow, nil)
 	if err != nil {
+		log.Printf("Offset: %d, Length: %d", payload.Offset, payload.Length)
 		log.Println(err.Error())
 		return arpc.Response{}, mapWinError(err)
 	}
