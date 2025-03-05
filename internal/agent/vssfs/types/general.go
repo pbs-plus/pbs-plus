@@ -55,16 +55,16 @@ func (entries *ReadDirEntries) Encode() ([]byte, error) {
 }
 
 // DecodeVSSDirEntries decodes a byte slice into an array of VSSDirEntry
-func (entries *ReadDirEntries) Decode(buf []byte) (ReadDirEntries, error) {
+func (entries *ReadDirEntries) Decode(buf []byte) error {
 	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Read the number of entries
 	count, err := dec.ReadUint32()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Decode each entry
@@ -72,14 +72,14 @@ func (entries *ReadDirEntries) Decode(buf []byte) (ReadDirEntries, error) {
 	for i := uint32(0); i < count; i++ {
 		entryBytes, err := dec.ReadBytes()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		var entry VSSDirEntry
 		if err := entry.Decode(entryBytes); err != nil {
-			return nil, err
+			return err
 		}
 		(*entries)[i] = entry
 	}
 
-	return *entries, nil
+	return nil
 }
