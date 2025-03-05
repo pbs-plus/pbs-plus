@@ -4,7 +4,6 @@ package vssfs
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -16,18 +15,16 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	binarystream "github.com/sonroyaalmerol/pbs-plus/internal/arpc/binary"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/idgen"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
-	"github.com/valyala/bytebufferpool"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
 )
 
 type FileHandle struct {
 	handle windows.Handle
-	file   io.ReadWriteCloser
-	path   string
 	isDir  bool
 }
 
@@ -136,12 +133,6 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	// Check file status to mark directories.
-	stat, err := os.Stat(path)
-	if err != nil {
-		return arpc.Response{}, err
-	}
-
 	handle, err := windows.CreateFile(
 		windows.StringToUTF16Ptr(path),
 		windows.GENERIC_READ,
@@ -155,14 +146,18 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	f := os.NewFile(uintptr(handle), path)
+	// Determine if the handle is a directory using Windows API
+	var fileInfo windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &fileInfo); err != nil {
+		windows.CloseHandle(handle)
+		return arpc.Response{}, err
+	}
+	isDir := (fileInfo.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
 
 	handleId := s.handleIdGen.NextID()
 	fh := &FileHandle{
 		handle: handle,
-		file:   f,
-		path:   path,
-		isDir:  stat.IsDir(),
+		isDir:  isDir,
 	}
 	s.handles.Set(handleId, fh)
 
@@ -193,34 +188,50 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	rawInfo, err := os.Stat(fullPath)
+	file, err := os.Open(fullPath)
+	if err != nil {
+		rawInfo, statErr := os.Stat(fullPath)
+		if statErr != nil {
+			return arpc.Response{}, err
+		}
+
+		info := types.VSSFileInfo{
+			Name:    rawInfo.Name(),
+			Size:    rawInfo.Size(),
+			Mode:    uint32(rawInfo.Mode()),
+			ModTime: rawInfo.ModTime(),
+			IsDir:   rawInfo.IsDir(),
+			Blocks:  0,
+		}
+		data, err := info.Encode()
+		if err != nil {
+			return arpc.Response{}, err
+		}
+		return arpc.Response{Status: 200, Data: data}, nil
+	}
+	defer file.Close()
+
+	// Use fstat on the open file handle to get basic file info.
+	rawInfo, err := file.Stat()
 	if err != nil {
 		return arpc.Response{}, err
 	}
 
-	// Only check for sparse file attributes and block allocation if it's a regular file
-	blocks := uint64(0)
+	var blocks uint64 = 0
 	if !rawInfo.IsDir() {
-		file, err := os.Open(fullPath)
-		if err != nil {
-			return arpc.Response{}, fmt.Errorf("failed to open file: %w", err)
-		}
-		defer file.Close()
-
-		var blockSize uint64
-		if s.statFs != (types.StatFS{}) {
-			blockSize = s.statFs.Bsize
-		}
+		// Get the extended allocation info from the already open file.
+		var blockSize = s.statFs.Bsize
 		if blockSize == 0 {
-			blockSize = 4096 // Default to 4KB block size
+			blockSize = 4096 // Default to 4KB
 		}
-
 		standardInfo, err := winio.GetFileStandardInfo(file)
 		if err != nil {
-			return arpc.Response{}, fmt.Errorf("failed to get file standard info: %w", err)
+			return arpc.Response{},
+				fmt.Errorf("failed to get file standard info: %w", err)
 		}
 
-		blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
+		blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) /
+			int64(blockSize))
 	}
 
 	info := types.VSSFileInfo{
@@ -236,6 +247,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	if err != nil {
 		return arpc.Response{}, err
 	}
+
 	return arpc.Response{
 		Status: 200,
 		Data:   data,
@@ -288,22 +300,6 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Get a buffer from the bytebufferpool
-	buf := bytebufferpool.Get()
-	defer func() {
-		// Ensure the buffer is returned to the pool only if it's not nil
-		if buf != nil {
-			bytebufferpool.Put(buf)
-		}
-	}()
-
-	// Ensure the buffer has enough capacity
-	if cap(buf.B) < int(payload.Length) {
-		buf.B = make([]byte, payload.Length)
-	} else {
-		buf.B = buf.B[:payload.Length]
-	}
-
 	// Perform synchronous read - first seek to the position
 	distanceToMove := int64(payload.Offset)
 	moveMethod := uint32(windows.FILE_BEGIN)
@@ -316,39 +312,11 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	var bytesRead uint32
-	err = windows.ReadFile(fh.handle, buf.B, &bytesRead, nil)
-	if err != nil {
-		return arpc.Response{}, mapWinError(err)
-	}
-
-	// Resize the buffer to the actual number of bytes read
-	buf.B = buf.B[:bytesRead]
-
-	// Create a local reference to the buffer for the callback
-	callbackBuf := buf
-	buf = nil // Prevent double release in the deferred function
-
 	streamCallback := func(stream *smux.Stream) {
-		// Ensure the buffer is returned to the pool after the callback
-		defer func() {
-			if callbackBuf != nil {
-				bytebufferpool.Put(callbackBuf)
-			}
-		}()
-
-		if stream == nil {
-			return
+		err := binarystream.SendData(fh.handle, payload.Length, stream)
+		if err != nil && syslog.L != nil {
+			syslog.L.Errorf("handleReadAt error: %v", err)
 		}
-
-		// Write length prefix
-		length := uint32(callbackBuf.Len())
-		if err := binary.Write(stream, binary.LittleEndian, length); err != nil {
-			return
-		}
-
-		// Write data
-		_, _ = stream.Write(callbackBuf.B)
 	}
 
 	return arpc.Response{
@@ -459,9 +427,8 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrNotExist
 	}
 
-	// Close the underlying file.
-	handle.file.Close()
-
+	// Close the Windows handle directly
+	windows.CloseHandle(handle.handle)
 	s.handles.Del(uint64(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")

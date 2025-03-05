@@ -102,7 +102,7 @@ func dumpHandleMap(server *VSSFSServer) string {
 	info.WriteString(fmt.Sprintf("Current handles map contains %d entries:\n", server.handles.Len()))
 
 	server.handles.ForEach(func(key uint64, fh *FileHandle) bool {
-		info.WriteString(fmt.Sprintf("  - Handle ID: %d, Path: %s, IsDir: %v\n", key, fh.path, fh.isDir))
+		info.WriteString(fmt.Sprintf("  - Handle ID: %d, IsDir: %v\n", key, fh.isDir))
 		return true
 	})
 
@@ -244,7 +244,7 @@ func TestVSSFSServer(t *testing.T) {
 		t.Log(dumpHandleMap(vssServer))
 
 		p := make([]byte, 100)
-		bytesRead, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", &readAtPayload, p)
+		bytesRead, err := clientSession.CallBinary(ctx, "vss/ReadAt", &readAtPayload, p)
 		if err != nil {
 			t.Logf("ReadAt error: %v - Current handle map: %s", err, dumpHandleMap(vssServer))
 			t.FailNow()
@@ -305,7 +305,7 @@ func TestVSSFSServer(t *testing.T) {
 			}
 
 			p := make([]byte, 10)
-			_, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", &readAtPayload, p)
+			_, err := clientSession.CallBinary(ctx, "vss/ReadAt", &readAtPayload, p)
 			if err != nil {
 				t.Logf("ReadAt error for handle %d: %v - Current handle map: %s",
 					uint64(handle), err, dumpHandleMap(vssServer))
@@ -350,7 +350,7 @@ func TestVSSFSServer(t *testing.T) {
 		}
 
 		buffer := make([]byte, readSize)
-		bytesRead, err := clientSession.CallMsgWithBuffer(ctx, "vss/ReadAt", &readAtPayload, buffer)
+		bytesRead, err := clientSession.CallBinary(ctx, "vss/ReadAt", &readAtPayload, buffer)
 		if err != nil {
 			t.Logf("Large file ReadAt error: %v - Current handle map: %s", err, dumpHandleMap(vssServer))
 			t.FailNow()
