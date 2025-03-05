@@ -294,6 +294,16 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
+	// Get the system page size.
+	pageSize := int64(os.Getpagesize())
+
+	// Align the offset down to the nearest multiple of the page size.
+	alignedOffset := payload.Offset - (payload.Offset % pageSize)
+	offsetDiff := int(payload.Offset - alignedOffset)
+
+	// Calculate the view size by adding the difference.
+	viewSize := uintptr(payload.Length + offsetDiff)
+
 	// Compute the maximum mappable size.
 	h, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, 0, 0, nil)
 	if err != nil {
@@ -303,9 +313,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 
 	// Map the requested view.
-	fileOffsetHigh := uint32(payload.Offset >> 32)
-	fileOffsetLow := uint32(payload.Offset & 0xFFFFFFFF)
-	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, fileOffsetHigh, fileOffsetLow, uintptr(payload.Length))
+	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, uint32(alignedOffset>>32), uint32(alignedOffset&0xFFFFFFFF), viewSize)
 	if err != nil {
 		log.Printf("Offset: %d, Length: %d", payload.Offset, payload.Length)
 		log.Println(err.Error())
@@ -314,9 +322,10 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 
 	ptr := (*byte)(unsafe.Pointer(addr))
-	data := unsafe.Slice(ptr, payload.Length)
+	data := unsafe.Slice(ptr, viewSize)
+	result := data[offsetDiff : offsetDiff+int(payload.Length)]
 
-	reader := bytes.NewReader(data)
+	reader := bytes.NewReader(result)
 
 	streamCallback := func(stream *smux.Stream) {
 		defer func() {
