@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
-	binarystream "github.com/sonroyaalmerol/pbs-plus/internal/arpc/binary"
 )
 
 // Call initiates a request/response conversation on a new stream.
@@ -137,9 +136,9 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 	return s.CallMsg(ctx, method, payload)
 }
 
-// CallBinary performs an RPC call for file I/O-style operations in which the server
+// CallMsgWithBuffer performs an RPC call for file I/O-style operations in which the server
 // first sends metadata about a binary transfer and then writes the payload directly.
-func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdata.Encodable, buffer []byte) (int, error) {
+func (s *Session) CallMsgWithBuffer(ctx context.Context, method string, payload arpcdata.Encodable, buffer []byte) (int, error) {
 	curSession := s.muxSess.Load()
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
@@ -212,5 +211,30 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
-	return binarystream.ReceiveData(stream, buffer)
+	// Read the length prefix
+	var length uint32
+	if err := binary.Read(stream, binary.LittleEndian, &length); err != nil {
+		return 0, fmt.Errorf("failed to read length prefix: %w", err)
+	}
+
+	// Ensure we don't exceed buffer capacity
+	bytesToRead := min(int(length), len(buffer))
+
+	// Read the data
+	totalRead := 0
+	for totalRead < bytesToRead {
+		n, err := stream.Read(buffer[totalRead:bytesToRead])
+		if n > 0 {
+			totalRead += n
+		}
+		if err != nil {
+			if err == io.EOF && totalRead == bytesToRead {
+				return totalRead, nil
+			}
+			return totalRead, fmt.Errorf("read error after %d/%d bytes: %w",
+				totalRead, bytesToRead, err)
+		}
+	}
+
+	return totalRead, nil
 }
