@@ -3,6 +3,7 @@
 package arpcfs
 
 import (
+	"errors"
 	"io"
 	"os"
 	"sync/atomic"
@@ -24,7 +25,7 @@ func (f *ARPCFile) Close() error {
 
 	req := types.CloseReq{HandleID: f.handleID}
 	_, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Close", &req)
-	if err != nil && err != os.ErrNotExist {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		syslog.L.Errorf("Close RPC failed (%s): %v", f.name, err)
 		return err
 	}
