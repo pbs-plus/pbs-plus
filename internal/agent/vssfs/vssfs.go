@@ -9,9 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
-	"time"
-	"unsafe"
 
+	"github.com/Microsoft/go-winio"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
@@ -26,6 +25,8 @@ import (
 
 type FileHandle struct {
 	handle windows.Handle
+	file   io.ReadWriteCloser
+	path   string
 	isDir  bool
 }
 
@@ -90,6 +91,12 @@ func (s *VSSFSServer) Close() {
 		r.CloseHandle(s.jobId + "/StatFS")
 	}
 
+	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
+		fh.file.Close()
+
+		return true
+	})
+
 	s.handles.Clear()
 
 	s.ctxCancel()
@@ -124,7 +131,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 
 	// Disallow write operations.
 	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
-		errStr := arpc.WrapError(os.ErrPermission)
+		errStr := arpc.StringMsg("write operations not allowed")
 		errBytes, err := errStr.Encode()
 		if err != nil {
 			return arpc.Response{}, err
@@ -140,6 +147,12 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
+	// Check file status to mark directories.
+	stat, err := os.Stat(path)
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
 	handle, err := windows.CreateFile(
 		windows.StringToUTF16Ptr(path),
 		windows.GENERIC_READ,
@@ -150,27 +163,23 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		0,
 	)
 	if err != nil {
-		return arpc.Response{}, mapWinError(err)
+		return arpc.Response{}, err
 	}
 
-	// Determine if the handle is a directory using Windows API
-	var fileInfo windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(handle, &fileInfo); err != nil {
-		windows.CloseHandle(handle)
-		return arpc.Response{}, mapWinError(err)
-	}
-	isDir := (fileInfo.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
+	f := os.NewFile(uintptr(handle), path)
 
 	handleId := s.handleIdGen.NextID()
 	fh := &FileHandle{
 		handle: handle,
-		isDir:  isDir,
+		file:   f,
+		path:   path,
+		isDir:  stat.IsDir(),
 	}
 	s.handles.Set(handleId, fh)
 
 	// Return the handle ID to the client.
-	handleIdT := types.FileHandleId(handleId)
-	dataBytes, err := handleIdT.Encode()
+	fhId := types.FileHandleId(handleId)
+	dataBytes, err := fhId.Encode()
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -195,66 +204,42 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	// Use windows.CreateFile to open the file or directory with FILE_FLAG_BACKUP_SEMANTICS
-	pathPtr, err := windows.UTF16PtrFromString(fullPath)
+	rawInfo, err := os.Stat(fullPath)
 	if err != nil {
-		return arpc.Response{}, mapWinError(err)
+		return arpc.Response{}, err
 	}
 
-	handle, err := windows.CreateFile(
-		pathPtr,
-		windows.GENERIC_READ,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS,
-		0,
-	)
-	if err != nil {
-		return arpc.Response{}, fmt.Errorf("failed to open file: %w", err)
-	}
-	defer windows.CloseHandle(handle)
-
-	// Use GetFileInformationByHandle to retrieve file information
-	var fileInfo windows.ByHandleFileInformation
-	err = windows.GetFileInformationByHandle(handle, &fileInfo)
-	if err != nil {
-		return arpc.Response{}, mapWinError(err)
-	}
-
-	// Convert the file information to a Go struct
-	isDir := fileInfo.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
-	modTime := time.Unix(0, fileInfo.LastWriteTime.Nanoseconds())
-	size := int64(fileInfo.FileSizeHigh)<<32 + int64(fileInfo.FileSizeLow)
-
-	var blocks uint64 = 0
-	if !isDir {
-		// Use GetFileInformationByHandleEx to retrieve allocation size
-		var info FileStandardInfo
-		err = windows.GetFileInformationByHandleEx(
-			handle,
-			windows.FileStandardInfo,
-			(*byte)(unsafe.Pointer(&info)),
-			uint32(unsafe.Sizeof(info)),
-		)
+	// Only check for sparse file attributes and block allocation if it's a regular file
+	blocks := uint64(0)
+	if !rawInfo.IsDir() {
+		file, err := os.Open(fullPath)
 		if err != nil {
-			return arpc.Response{}, mapWinError(err)
+			return arpc.Response{}, fmt.Errorf("failed to open file: %w", err)
+		}
+		defer file.Close()
+
+		var blockSize uint64
+		if s.statFs != (types.StatFS{}) {
+			blockSize = s.statFs.Bsize
+		}
+		if blockSize == 0 {
+			blockSize = 4096 // Default to 4KB block size
 		}
 
-		// Calculate the number of blocks based on allocation size
-		var blockSize = s.statFs.Bsize
-		if blockSize == 0 {
-			blockSize = 4096 // Default to 4KB
+		standardInfo, err := winio.GetFileStandardInfo(file)
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("failed to get file standard info: %w", err)
 		}
-		blocks = uint64((info.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
+
+		blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
 	}
 
 	info := types.VSSFileInfo{
-		Name:    filepath.Base(fullPath),
-		Size:    size,
-		Mode:    uint32(fileInfo.FileAttributes),
-		ModTime: modTime,
-		IsDir:   isDir,
+		Name:    rawInfo.Name(),
+		Size:    rawInfo.Size(),
+		Mode:    uint32(rawInfo.Mode()),
+		ModTime: rawInfo.ModTime(),
+		IsDir:   rawInfo.IsDir(),
 		Blocks:  blocks,
 	}
 
@@ -262,7 +247,6 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
 	return arpc.Response{
 		Status: 200,
 		Data:   data,
@@ -443,7 +427,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	}
 
 	// Close the Windows handle directly
-	windows.CloseHandle(handle.handle)
+	handle.file.Close()
 	s.handles.Del(uint64(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")
