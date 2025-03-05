@@ -4,7 +4,6 @@ package vssfs
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -214,7 +213,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	if !rawInfo.IsDir() {
 		file, err := os.Open(fullPath)
 		if err != nil {
-			return arpc.Response{}, fmt.Errorf("failed to open file: %w", err)
+			return arpc.Response{}, err
 		}
 		defer file.Close()
 
@@ -227,11 +226,9 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		}
 
 		standardInfo, err := winio.GetFileStandardInfo(file)
-		if err != nil {
-			return arpc.Response{}, fmt.Errorf("failed to get file standard info: %w", err)
+		if err == nil {
+			blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
 		}
-
-		blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
 	}
 
 	info := types.VSSFileInfo{

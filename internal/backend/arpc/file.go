@@ -24,8 +24,8 @@ func (f *ARPCFile) Close() error {
 
 	req := types.CloseReq{HandleID: f.handleID}
 	_, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Close", &req)
-	if err != nil {
-		syslog.L.Errorf("Write RPC failed (%s): %v", f.name, err)
+	if err != nil && err != os.ErrNotExist {
+		syslog.L.Errorf("Close RPC failed (%s): %v", f.name, err)
 		return err
 	}
 	f.isClosed.Store(true)
@@ -42,12 +42,13 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 	// Send the request to the server
 	respBytes, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Lseek", &req)
 	if err != nil {
-		return 0, os.ErrInvalid
+		return 0, err
 	}
 
 	// Parse the response
 	var resp types.LseekResp
 	if err := resp.Decode(respBytes); err != nil {
+		syslog.L.Errorf("Lseek RPC failed (%s): %v", f.name, err)
 		return 0, os.ErrInvalid
 	}
 
