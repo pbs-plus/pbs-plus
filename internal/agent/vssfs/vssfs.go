@@ -313,6 +313,10 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, fmt.Errorf("failed to get file size: %w", err)
 	}
 
+	if payload.Offset+int64(payload.Length) > fileSize {
+		payload.Length = int(fileSize - payload.Offset)
+	}
+
 	// Check that the requested region is within the file's boundaries.
 	if payload.Offset < 0 || payload.Length <= 0 || payload.Offset+int64(payload.Length) > fileSize {
 		log.Println("requested region is outside the file boundaries")
