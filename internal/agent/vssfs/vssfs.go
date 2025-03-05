@@ -5,6 +5,8 @@ package vssfs
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -303,6 +305,18 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 	if fh.isDir {
 		return arpc.Response{}, os.ErrInvalid
+	}
+
+	fileSize, err := getFileSize(fh.handle)
+	if err != nil {
+		log.Printf("failed to get file size: %v", err)
+		return arpc.Response{}, fmt.Errorf("failed to get file size: %w", err)
+	}
+
+	// Check that the requested region is within the file's boundaries.
+	if payload.Offset < 0 || payload.Length <= 0 || payload.Offset+int64(payload.Length) > fileSize {
+		log.Println("requested region is outside the file boundaries")
+		return arpc.Response{}, errors.New("requested region is outside the file boundaries")
 	}
 
 	// Get the system page size.
