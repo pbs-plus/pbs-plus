@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 
 	"github.com/Microsoft/go-winio"
 	securejoin "github.com/cyphar/filepath-securejoin"
@@ -24,7 +23,6 @@ import (
 
 type FileHandle struct {
 	handle windows.Handle
-	file   io.ReadWriteCloser
 	path   string
 	isDir  bool
 }
@@ -91,7 +89,7 @@ func (s *VSSFSServer) Close() {
 	}
 
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
-		fh.file.Close()
+		windows.CloseHandle(fh.handle)
 
 		return true
 	})
@@ -165,12 +163,9 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	f := os.NewFile(uintptr(handle), path)
-
 	handleId := s.handleIdGen.NextID()
 	fh := &FileHandle{
 		handle: handle,
-		file:   f,
 		path:   path,
 		isDir:  stat.IsDir(),
 	}
@@ -371,7 +366,7 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 		case io.SeekCurrent:
 			currentPos, err := windows.SetFilePointer(fh.handle, 0, nil, windows.FILE_CURRENT)
 			if err != nil {
-				return arpc.Response{}, err
+				return arpc.Response{}, mapWinError(err)
 			}
 			newOffset = int64(currentPos) + payload.Offset
 			if newOffset < 0 {
@@ -388,13 +383,13 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 
 	// Validate the new offset
 	if newOffset > fileSize {
-		return arpc.Response{}, syscall.ENXIO // Seeking beyond EOF
+		return arpc.Response{}, os.ErrInvalid
 	}
 
 	// Set the new position
 	_, err = windows.SetFilePointer(fh.handle, int32(newOffset), nil, windows.FILE_BEGIN)
 	if err != nil {
-		return arpc.Response{}, err
+		return arpc.Response{}, mapWinError(err)
 	}
 
 	// Prepare the response
@@ -424,7 +419,7 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	}
 
 	// Close the Windows handle directly
-	handle.file.Close()
+	windows.CloseHandle(handle.handle)
 	s.handles.Del(uint64(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")
