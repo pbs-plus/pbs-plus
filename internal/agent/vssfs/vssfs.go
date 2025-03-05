@@ -299,7 +299,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	maxSizeLow := uint32((payload.Offset + int64(payload.Length)) & 0xFFFFFFFF)
 	h, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, maxSizeHigh, maxSizeLow, nil)
 	if err != nil {
-		log.Printf(err.Error())
+		log.Println(err.Error())
 		return arpc.Response{}, mapWinError(err)
 	}
 
@@ -312,15 +312,6 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// If VirtualLock fails, clean up before returning.
-	err = windows.VirtualLock(addr, uintptr(payload.Length))
-	if err != nil {
-		log.Printf(err.Error())
-		windows.UnmapViewOfFile(addr)
-		windows.CloseHandle(windows.Handle(h))
-		return arpc.Response{}, os.ErrInvalid
-	}
-
 	ptr := (*byte)(unsafe.Pointer(addr))
 	data := unsafe.Slice(ptr, payload.Length)
 
@@ -328,7 +319,6 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 
 	streamCallback := func(stream *smux.Stream) {
 		defer func() {
-			windows.VirtualUnlock(addr, uintptr(payload.Length))
 			windows.UnmapViewOfFile(addr)
 			windows.CloseHandle(windows.Handle(h))
 			data = nil
