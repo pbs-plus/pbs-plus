@@ -5,6 +5,7 @@ package vssfs
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"unsafe"
@@ -194,7 +195,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 	}
 
 	for i := 0; i < 10000; i++ {
-		fileName := filepath.Join(largeDir, "file"+string(i))
+		fileName := filepath.Join(largeDir, "file"+strconv.Itoa(i))
 		if err := os.WriteFile(fileName, []byte("test content"), 0644); err != nil {
 			t.Fatalf("Failed to create file %s: %v", fileName, err)
 		}
