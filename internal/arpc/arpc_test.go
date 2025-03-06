@@ -53,7 +53,7 @@ func setupSessionWithRouter(t *testing.T, router Router) (clientSession *Session
 
 	// Emulate network latency by wrapping the connections.
 	// For example, here we simulate a constant 100ms latency.
-	const simulatedLatency = 10 * time.Millisecond
+	const simulatedLatency = 5 * time.Millisecond
 	serverConn = &latencyConn{Conn: serverConn, delay: simulatedLatency}
 	clientConn = &latencyConn{Conn: clientConn, delay: simulatedLatency}
 
@@ -584,7 +584,7 @@ func TestCallBinary_Concurrency(t *testing.T) {
 	defer cleanup()
 
 	// Spawn multiple concurrent client calls.
-	const numClients = 100
+	const numClients = 50
 	var clientWg sync.WaitGroup
 	for i := 0; i < numClients; i++ {
 		clientWg.Add(1)

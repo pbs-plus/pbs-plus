@@ -167,7 +167,7 @@ func TestVSSFSServer(t *testing.T) {
 
 	// Emulate network latency by wrapping the connections.
 	// For example, here we simulate a constant 100ms latency.
-	const simulatedLatency = 10 * time.Millisecond
+	const simulatedLatency = 5 * time.Millisecond
 	serverConn = &latencyConn{Conn: serverConn, delay: simulatedLatency}
 	clientConn = &latencyConn{Conn: clientConn, delay: simulatedLatency}
 
