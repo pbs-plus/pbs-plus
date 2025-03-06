@@ -24,10 +24,9 @@ import (
 )
 
 type FileHandle struct {
-	handle    windows.Handle
-	mapHandle windows.Handle
-	fileSize  int64
-	isDir     bool
+	handle   windows.Handle
+	fileSize int64
+	isDir    bool
 }
 
 type FileStandardInfo struct {
@@ -92,7 +91,6 @@ func (s *VSSFSServer) Close() {
 	}
 
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
-		windows.CloseHandle(fh.mapHandle)
 		windows.CloseHandle(fh.handle)
 
 		return true
@@ -167,25 +165,17 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	h, err := windows.CreateFileMapping(handle, nil, windows.PAGE_READONLY, 0, 0, nil)
-	if err != nil {
-		windows.CloseHandle(handle)
-		return arpc.Response{}, mapWinError(err)
-	}
-
 	fileSize, err := getFileSize(handle)
 	if err != nil {
-		windows.CloseHandle(h)
 		windows.CloseHandle(handle)
 		return arpc.Response{}, err
 	}
 
 	handleId := s.handleIdGen.NextID()
 	fh := &FileHandle{
-		handle:    handle,
-		mapHandle: h,
-		fileSize:  fileSize,
-		isDir:     stat.IsDir(),
+		handle:   handle,
+		fileSize: fileSize,
+		isDir:    stat.IsDir(),
 	}
 	s.handles.Set(handleId, fh)
 
@@ -193,7 +183,6 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	fhId := types.FileHandleId(handleId)
 	dataBytes, err := fhId.Encode()
 	if err != nil {
-		windows.CloseHandle(h)
 		windows.CloseHandle(handle)
 		return arpc.Response{}, err
 	}
@@ -340,8 +329,13 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	// Calculate the view size by adding the difference.
 	viewSize := uintptr(payload.Length + offsetDiff)
 
+	h, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, 0, 0, nil)
+	if err != nil {
+		return arpc.Response{}, mapWinError(err)
+	}
+
 	// Map the requested view.
-	addr, err := windows.MapViewOfFile(fh.mapHandle, windows.FILE_MAP_READ, uint32(alignedOffset>>32), uint32(alignedOffset&0xFFFFFFFF), viewSize)
+	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, uint32(alignedOffset>>32), uint32(alignedOffset&0xFFFFFFFF), viewSize)
 	if err != nil {
 		return arpc.Response{}, mapWinError(err)
 	}
@@ -355,6 +349,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	streamCallback := func(stream *smux.Stream) {
 		defer func() {
 			windows.UnmapViewOfFile(addr)
+			windows.CloseHandle(h)
 			data = nil
 		}()
 
@@ -473,7 +468,6 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	}
 
 	// Close the Windows handle directly
-	windows.CloseHandle(handle.mapHandle)
 	windows.CloseHandle(handle.handle)
 	s.handles.Del(uint64(payload.HandleID))
 
