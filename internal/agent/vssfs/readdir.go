@@ -24,10 +24,11 @@ type FILE_ID_BOTH_DIR_INFO struct {
 	FileAttributes  uint32
 	FileNameLength  uint32
 	EaSize          uint32
-	ShortNameLength uint32
-	ShortName       [12]uint16
-	FileID          uint64
-	FileName        [1]uint16
+	ShortNameLength byte       // 1 byte
+	_               [3]byte    // Padding to align ShortName to 8-byte boundary
+	ShortName       [12]uint16 // 24 bytes (12 WCHARs, 2 bytes each)
+	FileId          uint64     // 8 bytes
+	FileName        [1]uint16  // Variable-length array
 }
 
 type FILE_FULL_DIR_INFO struct {
@@ -90,7 +91,7 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 // information class. If that fails with ERROR_INVALID_PARAMETER, it falls
 // back to the full-directory information class. The entries that match
 // skipPathWithAttributes (and the "." and ".." names) are omitted.
-func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
+func readDirBulk(dirPath string) ([]byte, error) {
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
 		return nil, mapWinError(err, "readDirBulk UTF16PtrFromString")
