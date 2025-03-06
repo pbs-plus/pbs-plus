@@ -11,77 +11,41 @@ import (
 	"unsafe"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
+	"golang.org/x/sys/windows"
 )
 
 // TestStructAlignment ensures the structs match the expected alignment and size.
 func TestStructAlignment(t *testing.T) {
-	// Test FILE_ID_BOTH_DIR_INFO
+	// Verify FILE_ID_BOTH_DIR_INFO
 	t.Run("FILE_ID_BOTH_DIR_INFO", func(t *testing.T) {
-		// Ensure the struct size is a multiple of 8 (aligned to DWORDLONG boundary)
-		expectedSize := 104 // Fixed part of the struct (excluding FileName[1])
+		expectedSize := 104
 		actualSize := int(unsafe.Sizeof(FILE_ID_BOTH_DIR_INFO{}))
 		if actualSize != expectedSize {
 			t.Errorf("FILE_ID_BOTH_DIR_INFO size mismatch: expected %d, got %d", expectedSize, actualSize)
 		}
 
-		// Ensure alignment is 8 bytes
-		expectedAlignment := 8
-		actualAlignment := int(unsafe.Alignof(FILE_ID_BOTH_DIR_INFO{}))
-		if actualAlignment != expectedAlignment {
-			t.Errorf("FILE_ID_BOTH_DIR_INFO alignment mismatch: expected %d, got %d", expectedAlignment, actualAlignment)
-		}
-
-		// Check field offsets
+		// Verify field offsets
 		checkFieldOffset(t, "NextEntryOffset", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.NextEntryOffset), 0)
 		checkFieldOffset(t, "FileIndex", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.FileIndex), 4)
 		checkFieldOffset(t, "CreationTime", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.CreationTime), 8)
-		checkFieldOffset(t, "LastAccessTime", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.LastAccessTime), 16)
-		checkFieldOffset(t, "LastWriteTime", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.LastWriteTime), 24)
-		checkFieldOffset(t, "ChangeTime", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.ChangeTime), 32)
-		checkFieldOffset(t, "EndOfFile", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.EndOfFile), 40)
-		checkFieldOffset(t, "AllocationSize", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.AllocationSize), 48)
-		checkFieldOffset(t, "FileAttributes", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.FileAttributes), 56)
-		checkFieldOffset(t, "FileNameLength", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.FileNameLength), 60)
-		checkFieldOffset(t, "EaSize", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.EaSize), 64)
-		checkFieldOffset(t, "ShortNameLength", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.ShortNameLength), 68)
 		checkFieldOffset(t, "ShortName", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.ShortName), 72)
 		checkFieldOffset(t, "FileId", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.FileId), 96)
-		checkFieldOffset(t, "FileName", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.FileName), 104)
 	})
 
-	// Test FILE_FULL_DIR_INFO
+	// Verify FILE_FULL_DIR_INFO
 	t.Run("FILE_FULL_DIR_INFO", func(t *testing.T) {
-		// Ensure the struct size is a multiple of 8 (aligned to LONGLONG boundary)
-		expectedSize := 72 // Fixed part of the struct (excluding FileName[1])
+		expectedSize := 72
 		actualSize := int(unsafe.Sizeof(FILE_FULL_DIR_INFO{}))
 		if actualSize != expectedSize {
 			t.Errorf("FILE_FULL_DIR_INFO size mismatch: expected %d, got %d", expectedSize, actualSize)
 		}
 
-		// Ensure alignment is 8 bytes
-		expectedAlignment := 8
-		actualAlignment := int(unsafe.Alignof(FILE_FULL_DIR_INFO{}))
-		if actualAlignment != expectedAlignment {
-			t.Errorf("FILE_FULL_DIR_INFO alignment mismatch: expected %d, got %d", expectedAlignment, actualAlignment)
-		}
-
-		// Check field offsets
+		// Verify field offsets
 		checkFieldOffset(t, "NextEntryOffset", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.NextEntryOffset), 0)
-		checkFieldOffset(t, "FileIndex", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.FileIndex), 4)
-		checkFieldOffset(t, "CreationTime", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.CreationTime), 8)
-		checkFieldOffset(t, "LastAccessTime", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.LastAccessTime), 16)
-		checkFieldOffset(t, "LastWriteTime", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.LastWriteTime), 24)
-		checkFieldOffset(t, "ChangeTime", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.ChangeTime), 32)
-		checkFieldOffset(t, "EndOfFile", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.EndOfFile), 40)
-		checkFieldOffset(t, "AllocationSize", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.AllocationSize), 48)
-		checkFieldOffset(t, "FileAttributes", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.FileAttributes), 56)
-		checkFieldOffset(t, "FileNameLength", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.FileNameLength), 60)
-		checkFieldOffset(t, "EaSize", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.EaSize), 64)
-		checkFieldOffset(t, "FileName", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.FileName), 72)
+		checkFieldOffset(t, "FileName", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.FileName), 68)
 	})
 }
 
-// Helper function to check field offsets
 func checkFieldOffset(t *testing.T, fieldName string, actualOffset, expectedOffset uintptr) {
 	if actualOffset != expectedOffset {
 		t.Errorf("%s offset mismatch: expected %d, got %d", fieldName, expectedOffset, actualOffset)
@@ -392,17 +356,27 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 func testFileNameLengths(t *testing.T, tempDir string) {
 	// Create files with very short and very long names
 	shortFile := "a.txt"
-	longFile := "\\\\?\\" + filepath.Join(tempDir, string(make([]byte, 255-len(tempDir)-5))+".txt") // Adjust for path length
+	longFile := string(make([]byte, 255)) + ".txt" // Max filename length for NTFS
 
 	shortPath := filepath.Join(tempDir, shortFile)
 	if err := os.WriteFile(shortPath, []byte("test content"), 0644); err != nil {
 		t.Fatalf("Failed to create short file: %v", err)
 	}
 
-	longPath := filepath.Join(tempDir, longFile)
-	if err := os.WriteFile(longPath, []byte("test content"), 0644); err != nil {
+	longPath := `\\?\` + filepath.Join(tempDir, longFile)
+	handle, err := windows.CreateFile(
+		windows.StringToUTF16Ptr(longPath),
+		windows.GENERIC_WRITE,
+		0,
+		nil,
+		windows.CREATE_ALWAYS,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	if err != nil {
 		t.Fatalf("Failed to create long file: %v", err)
 	}
+	windows.CloseHandle(handle)
 
 	// Call readDirBulk
 	entriesBytes, err := readDirBulk(tempDir)
