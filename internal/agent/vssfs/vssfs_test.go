@@ -165,12 +165,6 @@ func TestVSSFSServer(t *testing.T) {
 	// Create a pair of connected net.Conn
 	serverConn, clientConn := net.Pipe()
 
-	// Emulate network latency by wrapping the connections.
-	// For example, here we simulate a constant 100ms latency.
-	const simulatedLatency = 5 * time.Millisecond
-	serverConn = &latencyConn{Conn: serverConn, delay: simulatedLatency}
-	clientConn = &latencyConn{Conn: clientConn, delay: simulatedLatency}
-
 	// Context for the test with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
