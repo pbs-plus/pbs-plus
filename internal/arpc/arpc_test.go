@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"math/rand"
 	"net"
 	_ "net/http/pprof"
 	"strings"
@@ -15,6 +17,26 @@ import (
 	binarystream "github.com/sonroyaalmerol/pbs-plus/internal/arpc/binary"
 	"github.com/xtaci/smux"
 )
+
+type latencyConn struct {
+	net.Conn
+	delay time.Duration
+}
+
+func (l *latencyConn) randomDelay() {
+	jitter := time.Duration(rand.Int63n(int64(l.delay)))
+	time.Sleep(l.delay + jitter)
+}
+
+func (l *latencyConn) Read(b []byte) (n int, err error) {
+	l.randomDelay()
+	return l.Conn.Read(b)
+}
+
+func (l *latencyConn) Write(b []byte) (n int, err error) {
+	l.randomDelay()
+	return l.Conn.Write(b)
+}
 
 // ---------------------------------------------------------------------
 // Helper: setupSessionWithRouter
@@ -28,6 +50,12 @@ func setupSessionWithRouter(t *testing.T, router Router) (clientSession *Session
 	t.Helper()
 
 	clientConn, serverConn := net.Pipe()
+
+	// Emulate network latency by wrapping the connections.
+	// For example, here we simulate a constant 100ms latency.
+	const simulatedLatency = 5 * time.Millisecond
+	serverConn = &latencyConn{Conn: serverConn, delay: simulatedLatency}
+	clientConn = &latencyConn{Conn: clientConn, delay: simulatedLatency}
 
 	serverSession, err := NewServerSession(serverConn, nil)
 	if err != nil {
@@ -167,7 +195,7 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	}()
 	select {
 	case <-doneCh:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 		t.Fatal("timeout waiting for ServeStream to finish")
 	}
 
@@ -513,6 +541,79 @@ func TestCallBinary_ErrorResponse(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("expected 0 bytes read on error response, got %d", n)
 	}
+}
+
+// TestCallBinary_Concurrency verifies that CallBinary works concurrently
+// with different sets of binary data. For each client call, a unique payload
+// (with an "id") is sent and the server replies with a binary message that
+// includes the id.
+func TestCallBinary_Concurrency(t *testing.T) {
+	// Create a router and register a handler for "binary_concurrent".
+	router := NewRouter()
+	router.Handle("binary_concurrent", func(req Request) (Response, error) {
+		// Decode the payload to extract the client ID.
+		var payload MapStringIntMsg
+		id := 0
+		if req.Payload != nil {
+			if err := payload.Decode(req.Payload); err == nil {
+				if v, ok := payload["id"]; ok {
+					id = v
+				}
+			}
+		}
+
+		// Prepare binary data that is unique for this client.
+		dataStr := fmt.Sprintf("binary data for client %d", id)
+		binaryData := []byte(dataStr)
+
+		// Return a response with status 213 and a streaming callback.
+		return Response{
+			Status: 213,
+			RawStream: func(stream *smux.Stream) {
+				// Send the binary data to the client.
+				r := bytes.NewReader(binaryData)
+				if err := binarystream.SendDataFromReader(r, len(binaryData), stream); err != nil {
+					t.Logf("server: error sending binary data for client %d: %v", id, err)
+				}
+			},
+		}, nil
+	})
+
+	// Set up the client and server sessions with the router.
+	clientSession, cleanup := setupSessionWithRouter(t, router)
+	defer cleanup()
+
+	// Spawn multiple concurrent client calls.
+	const numClients = 50
+	var clientWg sync.WaitGroup
+	for i := 0; i < numClients; i++ {
+		clientWg.Add(1)
+		go func(id int) {
+			defer clientWg.Done()
+
+			// Prepare a payload with a unique client ID.
+			payload := MapStringIntMsg{"id": id}
+
+			// Allocate a buffer to hold the binary response.
+			buffer := make([]byte, 64)
+			n, err := clientSession.CallBinary(context.Background(), "binary_concurrent", &payload, buffer)
+			if err != nil {
+				t.Errorf("client %d: CallBinary error: %v", id, err)
+				return
+			}
+
+			// Verify the response.
+			expected := fmt.Sprintf("binary data for client %d", id)
+			if n != len(expected) {
+				t.Errorf("client %d: expected %d bytes, got %d", id, len(expected), n)
+				return
+			}
+			if got := string(buffer[:n]); got != expected {
+				t.Errorf("client %d: expected %q, got %q", id, expected, got)
+			}
+		}(i)
+	}
+	clientWg.Wait()
 }
 
 func setupSessionWithRouterForBenchmark(b *testing.B, router Router) (clientSession *Session, cleanup func()) {
