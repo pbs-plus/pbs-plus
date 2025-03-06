@@ -136,7 +136,7 @@ func getFileSize(handle windows.Handle) (int64, error) {
 	var fileInfo windows.ByHandleFileInformation
 	err := windows.GetFileInformationByHandle(handle, &fileInfo)
 	if err != nil {
-		return 0, mapWinError(err)
+		return 0, mapWinError(err, "getFileSize GetFileInformationByHandle")
 	}
 
 	// Combine the high and low parts of the file size
