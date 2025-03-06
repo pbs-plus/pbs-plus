@@ -127,6 +127,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		newJob := types.Job{
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
+			Mode:             r.FormValue("mode"),
 			Target:           r.FormValue("target"),
 			Subpath:          r.FormValue("subpath"),
 			Schedule:         r.FormValue("schedule"),
@@ -199,6 +200,9 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("store") != "" {
 				job.Store = r.FormValue("store")
 			}
+			if r.FormValue("mode") != "" {
+				job.Store = r.FormValue("mode")
+			}
 			if r.FormValue("target") != "" {
 				job.Target = r.FormValue("target")
 			}
@@ -242,6 +246,8 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					switch attr {
 					case "store":
 						job.Store = ""
+					case "mode":
+						job.Mode = ""
 					case "target":
 						job.Target = ""
 					case "subpath":
