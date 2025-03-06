@@ -320,10 +320,18 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 
 	// Get the system page size.
-	pageSize := int64(os.Getpagesize())
+	allocGranularity := int64(65536) // 64 KB usually
+	systemInfo, err := getSystemInfo()
+	if err != nil {
+		if syslog.L != nil {
+			syslog.L.Errorf("getSystemInfo error: %v", err)
+		}
+	} else {
+		allocGranularity = int64(systemInfo.AllocationGranularity)
+	}
 
 	// Align the offset down to the nearest multiple of the page size.
-	alignedOffset := payload.Offset - (payload.Offset % pageSize)
+	alignedOffset := payload.Offset - (payload.Offset % int64(allocGranularity))
 	offsetDiff := int(payload.Offset - alignedOffset)
 
 	// Calculate the view size by adding the difference.
