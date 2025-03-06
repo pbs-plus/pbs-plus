@@ -1,3 +1,12 @@
+var backupModes = Ext.create('Ext.data.Store', {
+  fields: ['display', 'value'],
+  data: [
+    {'display': 'Metadata', 'value': 'metadata'},
+    {'display': 'Data', 'value': 'data'},
+    {'display': 'Legacy', 'value': 'legacy'},
+  ],
+});
+
 Ext.define("PBS.D2DManagement.BackupJobEdit", {
   extend: "Proxmox.window.Edit",
   alias: "widget.pbsDiskBackupJobEdit",
@@ -113,7 +122,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             fieldLabel: gettext('Backup Mode'),
             name: 'mode',
             queryMode: 'local',
-            store: Ext.create('PBS.PlusModeStore'),
+            store: backupModes,
             displayField: 'display',
             valueField: 'value',
             editable: false,
