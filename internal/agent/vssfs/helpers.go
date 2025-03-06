@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func mapWinError(err error) error {
+func mapWinError(err error, helper string) error {
 	switch err {
 	case windows.ERROR_FILE_NOT_FOUND:
 		return os.ErrNotExist
@@ -19,7 +19,7 @@ func mapWinError(err error) error {
 		return os.ErrPermission
 	default:
 		if syslog.L != nil {
-			syslog.L.Errorf("Unknown Win Error: %v", err)
+			syslog.L.Errorf("Unknown Win Error (%s): %v", helper, err)
 		}
 		return &os.PathError{
 			Op:   "access",

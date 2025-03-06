@@ -93,7 +93,7 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
-		return nil, mapWinError(err)
+		return nil, mapWinError(err, "readDirBulk UTF16PtrFromString")
 	}
 
 	handle, err := windows.CreateFile(
@@ -106,7 +106,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 		0,
 	)
 	if err != nil {
-		return nil, mapWinError(err)
+		return nil, mapWinError(err, "readDirBulk CreateFile")
 	}
 	defer windows.CloseHandle(handle)
 
@@ -145,7 +145,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 					break
 				}
 			}
-			return nil, mapWinError(err)
+			return nil, mapWinError(err, "readDirBulk GetFileInformationByHandleEx")
 		}
 
 		// Process entries in the buffer.
