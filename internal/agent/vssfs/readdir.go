@@ -13,38 +13,38 @@ import (
 )
 
 type FILE_ID_BOTH_DIR_INFO struct {
-	NextEntryOffset uint32
-	FileIndex       uint32
-	CreationTime    syscall.Filetime
-	LastAccessTime  syscall.Filetime
-	LastWriteTime   syscall.Filetime
-	ChangeTime      syscall.Filetime
-	EndOfFile       uint64
-	AllocationSize  uint64
-	FileAttributes  uint32
-	FileNameLength  uint32
-	EaSize          uint32
+	NextEntryOffset uint32     // 4 bytes
+	FileIndex       uint32     // 4 bytes
+	CreationTime    [8]byte    // LARGE_INTEGER (8 bytes)
+	LastAccessTime  [8]byte    // LARGE_INTEGER (8 bytes)
+	LastWriteTime   [8]byte    // LARGE_INTEGER (8 bytes)
+	ChangeTime      [8]byte    // LARGE_INTEGER (8 bytes)
+	EndOfFile       [8]byte    // LARGE_INTEGER (8 bytes)
+	AllocationSize  [8]byte    // LARGE_INTEGER (8 bytes)
+	FileAttributes  uint32     // 4 bytes
+	FileNameLength  uint32     // 4 bytes
+	EaSize          uint32     // 4 bytes
 	ShortNameLength byte       // 1 byte
-	_               [3]byte    // Padding to align ShortName to 8-byte boundary
-	ShortName       [12]uint16 // 24 bytes (12 WCHARs, 2 bytes each)
-	FileId          uint64     // 8 bytes
-	FileName        [1]uint16  // Variable-length array
+	_               [3]byte    // Padding to align ShortName to 8 bytes
+	ShortName       [12]uint16 // WCHAR[12] (24 bytes)
+	FileId          [8]byte    // LARGE_INTEGER (8 bytes)
+	FileName        [1]uint16  // WCHAR[1] (flexible array member)
 }
 
 type FILE_FULL_DIR_INFO struct {
-	NextEntryOffset uint32
-	FileIndex       uint32
-	CreationTime    syscall.Filetime
-	LastAccessTime  syscall.Filetime
-	LastWriteTime   syscall.Filetime
-	ChangeTime      syscall.Filetime
-	EndOfFile       uint64
-	AllocationSize  uint64
-	FileAttributes  uint32
-	FileNameLength  uint32
-	EaSize          uint32
-	_               [4]byte   // Padding to align FileName to 8-byte boundary
-	FileName        [1]uint16 // Variable-length array
+	NextEntryOffset uint32    // 4 bytes
+	FileIndex       uint32    // 4 bytes
+	CreationTime    [8]byte   // LARGE_INTEGER (8 bytes)
+	LastAccessTime  [8]byte   // LARGE_INTEGER (8 bytes)
+	LastWriteTime   [8]byte   // LARGE_INTEGER (8 bytes)
+	ChangeTime      [8]byte   // LARGE_INTEGER (8 bytes)
+	EndOfFile       [8]byte   // LARGE_INTEGER (8 bytes)
+	AllocationSize  [8]byte   // LARGE_INTEGER (8 bytes)
+	FileAttributes  uint32    // 4 bytes
+	FileNameLength  uint32    // 4 bytes
+	EaSize          uint32    // 4 bytes
+	_               [4]byte   // Padding to align FileName to 8 bytes
+	FileName        [1]uint16 // WCHAR[1] (flexible array member)
 }
 
 const (
@@ -161,8 +161,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 					filenamePtr := (*uint16)(unsafe.Pointer(&fullInfo.FileName[0]))
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					name := syscall.UTF16ToString(nameSlice)
-					if name != "." && name != ".." &&
-						fullInfo.FileAttributes&excludedAttrs == 0 {
+					if name != "." && name != ".." && fullInfo.FileAttributes&excludedAttrs == 0 {
 						mode := windowsAttributesToFileMode(fullInfo.FileAttributes)
 						entries = append(entries, types.VSSDirEntry{
 							Name: name,
@@ -182,8 +181,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 					filenamePtr := (*uint16)(unsafe.Pointer(&bothInfo.FileName[0]))
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					name := syscall.UTF16ToString(nameSlice)
-					if name != "." && name != ".." &&
-						bothInfo.FileAttributes&excludedAttrs == 0 {
+					if name != "." && name != ".." && bothInfo.FileAttributes&excludedAttrs == 0 {
 						mode := windowsAttributesToFileMode(bothInfo.FileAttributes)
 						entries = append(entries, types.VSSDirEntry{
 							Name: name,
