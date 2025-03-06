@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -21,6 +22,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type latencyConn struct {
+	net.Conn
+	delay time.Duration
+}
+
+func (l *latencyConn) randomDelay() {
+	jitter := time.Duration(rand.Int63n(int64(l.delay)))
+	time.Sleep(l.delay + jitter)
+}
+
+func (l *latencyConn) Read(b []byte) (n int, err error) {
+	l.randomDelay()
+	return l.Conn.Read(b)
+}
+
+func (l *latencyConn) Write(b []byte) (n int, err error) {
+	l.randomDelay()
+	return l.Conn.Write(b)
+}
 
 // createLargeTestFile creates a test file of the specified size with deterministic content
 func createLargeTestFile(t *testing.T, path string, size int) {
@@ -141,14 +162,20 @@ func TestVSSFSServer(t *testing.T) {
 	err = os.WriteFile(subFilePath, []byte("content in subdirectory"), 0644)
 	require.NoError(t, err)
 
-	// Setup arpc server and client using in-memory connection
+	// Create a pair of connected net.Conn
 	serverConn, clientConn := net.Pipe()
+
+	// Emulate network latency by wrapping the connections.
+	// For example, here we simulate a constant 100ms latency.
+	const simulatedLatency = 10 * time.Millisecond
+	serverConn = &latencyConn{Conn: serverConn, delay: simulatedLatency}
+	clientConn = &latencyConn{Conn: clientConn, delay: simulatedLatency}
 
 	// Context for the test with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Start the server
+	// Start the server with the latency-wrapped connection.
 	serverRouter := arpc.NewRouter()
 	vssServer := NewVSSFSServer("vss", snapshots.WinVSSSnapshot{SnapshotPath: testDir, DriveLetter: ""})
 	vssServer.RegisterHandlers(&serverRouter)
@@ -158,7 +185,6 @@ func TestVSSFSServer(t *testing.T) {
 
 	serverSession.SetRouter(serverRouter)
 
-	// Start server in a goroutine
 	go func() {
 		err := serverSession.Serve()
 		// Ignore "closed pipe" errors during shutdown.
@@ -168,7 +194,7 @@ func TestVSSFSServer(t *testing.T) {
 	}()
 	defer serverSession.Close()
 
-	// Setup client
+	// Setup client session using the latency-wrapped connection.
 	clientSession, err := arpc.NewClientSession(clientConn, nil)
 	require.NoError(t, err)
 	defer clientSession.Close()

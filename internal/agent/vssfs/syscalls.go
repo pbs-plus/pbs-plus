@@ -14,7 +14,7 @@ import (
 var (
 	modkernel32          = windows.NewLazySystemDLL("kernel32.dll")
 	procGetDiskFreeSpace = modkernel32.NewProc("GetDiskFreeSpaceW")
-	procGetSystemInfo        = modkernel32.NewProc("GetSystemInfo")
+	procGetSystemInfo    = modkernel32.NewProc("GetSystemInfo")
 )
 
 func getStatFS(driveLetter string) (types.StatFS, error) {
@@ -144,13 +144,16 @@ func getFileSize(handle windows.Handle) (int64, error) {
 	return int64(fileInfo.FileSizeHigh)<<32 + int64(fileInfo.FileSizeLow), nil
 }
 
-type SystemInfo struct {
-	ProcessorArchitecture     uint16
-	Reserved                  uint16
+type systemInfo struct {
+	// This is the first member of the union
+	OemID uint32
+	// These are the second member of the union
+	//      ProcessorArchitecture uint16;
+	//      Reserved uint16;
 	PageSize                  uint32
 	MinimumApplicationAddress uintptr
 	MaximumApplicationAddress uintptr
-	ActiveProcessorMask       uintptr
+	ActiveProcessorMask       *uint32
 	NumberOfProcessors        uint32
 	ProcessorType             uint32
 	AllocationGranularity     uint32
@@ -158,12 +161,9 @@ type SystemInfo struct {
 	ProcessorRevision         uint16
 }
 
-func getSystemInfo() (SystemInfo, error) {
-	var sysInfo SystemInfo
-	_, _, err := procGetSystemInfo.Call(uintptr(unsafe.Pointer(&sysInfo)))
-	if err != nil {
-		return SystemInfo{}, mapWinError(err, "getSystemInfo procGetSystemInfo")
-	}
-
-	return sysInfo, nil
+func GetAllocGranularity() int {
+	var si systemInfo
+	// this cannot fail
+	procGetSystemInfo.Call(uintptr(unsafe.Pointer(&si)))
+	return int(si.AllocationGranularity)
 }
