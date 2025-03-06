@@ -251,21 +251,20 @@ func (database *Database) UpdateJob(job types.Job) error {
 	}
 
 	// Update exclusions
-	exclusionPath := filepath.Join(database.paths["exclusions"], job.ID+".cfg")
+	exclusionFileName := utils.EncodePath(job.ID)
+	exclusionPath := filepath.Join(database.paths["exclusions"], exclusionFileName+".cfg")
 	if err := os.RemoveAll(exclusionPath); err != nil {
 		return fmt.Errorf("UpdateJob: error removing old exclusions: %w", err)
 	}
 
-	if len(job.Exclusions) > 0 {
-		for _, exclusion := range job.Exclusions {
-			if exclusion.JobID != job.ID {
-				continue
-			}
-			err := database.CreateExclusion(exclusion)
-			if err != nil {
-				syslog.L.Errorf("UpdateJob: error creating job exclusion: %v", err)
-				continue
-			}
+	for _, exclusion := range job.Exclusions {
+		if exclusion.JobID != job.ID {
+			continue
+		}
+		err := database.CreateExclusion(exclusion)
+		if err != nil {
+			syslog.L.Errorf("UpdateJob: error creating job exclusion: %v", err)
+			continue
 		}
 	}
 
