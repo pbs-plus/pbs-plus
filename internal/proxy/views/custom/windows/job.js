@@ -108,6 +108,19 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             emptyText: gettext("0"),
             name: "retry",
           },
+          {
+            xtype: 'combo',
+            fieldLabel: gettext('Backup Mode'),
+            name: 'mode',
+            queryMode: 'local',
+            store: Ext.create('PBS.PlusModeStore'),
+            displayField: 'display',
+            valueField: 'value',
+            editable: false,
+            anyMatch: true,
+            forceSelection: true,
+            allowBlank: true,
+          },
         ],
 
         columnB: [

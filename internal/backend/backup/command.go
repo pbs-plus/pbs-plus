@@ -64,11 +64,19 @@ func buildCommandArgs(storeInstance *store.Store, job *types.Job, srcPath string
 		return nil
 	}
 
+	detectionMode := "--change-detection-mode=metadata"
+	switch job.Mode {
+	case "legacy":
+		detectionMode = "--change-detection-mode=legacy"
+	case "data":
+		detectionMode = "--change-detection-mode=data"
+	}
+
 	cmdArgs := []string{
 		"backup",
 		fmt.Sprintf("%s.pxar:%s", strings.ReplaceAll(job.Target, " ", "-"), srcPath),
 		"--repository", jobStore,
-		"--change-detection-mode=metadata",
+		detectionMode,
 		"--backup-id", backupId,
 		"--crypt-mode=none",
 	}
