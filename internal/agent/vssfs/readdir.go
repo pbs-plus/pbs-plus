@@ -33,22 +33,22 @@ import (
 //	  WCHAR         FileName[1];            // flexible array member
 //	} FILE_ID_BOTH_DIR_INFO;
 type FILE_ID_BOTH_DIR_INFO struct {
-	NextEntryOffset uint32     // offset 0,  size 4
-	FileIndex       uint32     // offset 4,  size 4
-	CreationTime    [8]byte    // offset 8,  size 8
-	LastAccessTime  [8]byte    // offset 16, size 8
-	LastWriteTime   [8]byte    // offset 24, size 8
-	ChangeTime      [8]byte    // offset 32, size 8
-	EndOfFile       [8]byte    // offset 40, size 8
-	AllocationSize  [8]byte    // offset 48, size 8
-	FileAttributes  uint32     // offset 56, size 4
-	FileNameLength  uint32     // offset 60, size 4
-	EaSize          uint32     // offset 64, size 4
-	ShortNameLength byte       // offset 68, size 1
-	_               [3]byte    // padding to bring offset to 72
-	ShortName       [12]uint16 // offset 72, size 24 (12*2)
-	FileId          [8]byte    // offset 96, size 8
-	FileName        [0]uint16  // flexible array member, offset 104 (ignored in sizeof)
+	NextEntryOffset uint32     // 0   4
+	FileIndex       uint32     // 4   4
+	CreationTime    [8]byte    // 8   8
+	LastAccessTime  [8]byte    // 16  8
+	LastWriteTime   [8]byte    // 24  8
+	ChangeTime      [8]byte    // 32  8
+	EndOfFile       [8]byte    // 40  8
+	AllocationSize  [8]byte    // 48  8
+	FileAttributes  uint32     // 56  4
+	FileNameLength  uint32     // 60  4
+	EaSize          uint32     // 64  4
+	ShortNameLength byte       // 68  1
+	_               [3]byte    // 69-71: 3 bytes padding
+	ShortName       [12]uint16 // 72  24 bytes (12 * 2)
+	FileId          [8]byte    // 96  8 bytes
+	// Fixed size total: 104 bytes.
 }
 
 // FILE_FULL_DIR_INFO corresponds to:
@@ -68,19 +68,29 @@ type FILE_ID_BOTH_DIR_INFO struct {
 //	  WCHAR         FileName[1];           // flexible array member
 //	} FILE_FULL_DIR_INFO;
 type FILE_FULL_DIR_INFO struct {
-	NextEntryOffset uint32    // offset 0,  size 4
-	FileIndex       uint32    // offset 4,  size 4
-	CreationTime    [8]byte   // offset 8,  size 8
-	LastAccessTime  [8]byte   // offset 16, size 8
-	LastWriteTime   [8]byte   // offset 24, size 8
-	ChangeTime      [8]byte   // offset 32, size 8
-	EndOfFile       [8]byte   // offset 40, size 8
-	AllocationSize  [8]byte   // offset 48, size 8
-	FileAttributes  uint32    // offset 56, size 4
-	FileNameLength  uint32    // offset 60, size 4
-	EaSize          uint32    // offset 64, size 4
-	_               [4]byte   // padding to bring the start of FileName to offset 72
-	FileName        [0]uint16 // flexible array member, offset 72
+	NextEntryOffset uint32  // 0   4
+	FileIndex       uint32  // 4   4
+	CreationTime    [8]byte // 8   8
+	LastAccessTime  [8]byte // 16  8
+	LastWriteTime   [8]byte // 24  8
+	ChangeTime      [8]byte // 32  8
+	EndOfFile       [8]byte // 40  8
+	AllocationSize  [8]byte // 48  8
+	FileAttributes  uint32  // 56  4
+	FileNameLength  uint32  // 60  4
+	EaSize          uint32  // 64  4
+	_               [4]byte // 68-71: 4 bytes padding
+	// Fixed size total: 72 bytes.
+}
+
+// For FILE_ID_BOTH_DIR_INFO, the filename data begins at offset 104.
+func fileNamePtrIdBoth(info *FILE_ID_BOTH_DIR_INFO) *uint16 {
+	return (*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(info)) + 104))
+}
+
+// For FILE_FULL_DIR_INFO, the filename data begins at offset 72.
+func fileNamePtrFull(info *FILE_FULL_DIR_INFO) *uint16 {
+	return (*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(info)) + 72))
 }
 
 const (
@@ -194,9 +204,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				fullInfo := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 				nameLen := int(fullInfo.FileNameLength) / 2
 				if nameLen > 0 {
-					filenamePtr := (*uint16)(unsafe.Pointer(
-						uintptr(unsafe.Pointer(fullInfo)) + unsafe.Offsetof(fullInfo.FileName),
-					))
+					filenamePtr := fileNamePtrFull(fullInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					name := syscall.UTF16ToString(nameSlice)
 					if name != "." && name != ".." && fullInfo.FileAttributes&excludedAttrs == 0 {
@@ -216,9 +224,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				bothInfo := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 				nameLen := int(bothInfo.FileNameLength) / 2
 				if nameLen > 0 {
-					filenamePtr := (*uint16)(unsafe.Pointer(
-						uintptr(unsafe.Pointer(bothInfo)) + unsafe.Offsetof(bothInfo.FileName),
-					))
+					filenamePtr := fileNamePtrIdBoth(bothInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					name := syscall.UTF16ToString(nameSlice)
 					if name != "." && name != ".." && bothInfo.FileAttributes&excludedAttrs == 0 {

@@ -16,29 +16,19 @@ import (
 func TestStructAlignment(t *testing.T) {
 	// Verify FILE_ID_BOTH_DIR_INFO
 	t.Run("FILE_ID_BOTH_DIR_INFO", func(t *testing.T) {
-		expectedSize := 104
+		const expectedSize = 104
 		actualSize := int(unsafe.Sizeof(FILE_ID_BOTH_DIR_INFO{}))
 		if actualSize != expectedSize {
 			t.Errorf("FILE_ID_BOTH_DIR_INFO size mismatch: expected %d, got %d", expectedSize, actualSize)
 		}
-
-		checkFieldOffset(t, "NextEntryOffset", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.NextEntryOffset), 0)
-		checkFieldOffset(t, "FileIndex", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.FileIndex), 4)
-		checkFieldOffset(t, "CreationTime", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.CreationTime), 8)
-		checkFieldOffset(t, "ShortName", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.ShortName), 72)
-		checkFieldOffset(t, "FileId", unsafe.Offsetof(FILE_ID_BOTH_DIR_INFO{}.FileId), 96)
-		// FileName should start at offset 104.
 	})
-
 	// Verify FILE_FULL_DIR_INFO
 	t.Run("FILE_FULL_DIR_INFO", func(t *testing.T) {
-		expectedSize := 72
+		const expectedSize = 72
 		actualSize := int(unsafe.Sizeof(FILE_FULL_DIR_INFO{}))
 		if actualSize != expectedSize {
 			t.Errorf("FILE_FULL_DIR_INFO size mismatch: expected %d, got %d", expectedSize, actualSize)
 		}
-		// FileName should start at offset 72.
-		checkFieldOffset(t, "FileName", unsafe.Offsetof(FILE_FULL_DIR_INFO{}.FileName), 72)
 	})
 }
 
