@@ -87,9 +87,9 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 
 // readDirBulk opens the directory at dirPath and enumerates its entries using
 // GetFileInformationByHandleEx. It first attempts to use the file-ID based
-// information class; if that fails (with ERROR_INVALID_PARAMETER), it falls
-// back to the full-directory information class. The entries that match skipPathWithAttributes
-// (and the "." and ".." names) are omitted.
+// information class. If that fails with ERROR_INVALID_PARAMETER, it falls
+// back to the full-directory information class. The entries that match
+// skipPathWithAttributes (and the "." and ".." names) are omitted.
 func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
@@ -115,7 +115,7 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 	buf := make([]byte, initialBufSize)
 
 	var entries types.ReadDirEntries
-	var usingFull bool
+	usingFull := false
 	infoClass := windows.FileIdBothDirectoryInfo
 
 	for {
@@ -151,26 +151,49 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 		// Process entries in the buffer.
 		offset := 0
 		for offset < len(buf) {
-			var info *FILE_ID_BOTH_DIR_INFO
-			// We use the same struct for both info classes here.
-			info = (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
-
-			nameLen := int(info.FileNameLength) / 2
-			if nameLen > 0 {
-				filenamePtr := (*uint16)(unsafe.Pointer(&info.FileName[0]))
-				nameSlice := unsafe.Slice(filenamePtr, nameLen)
-				name := syscall.UTF16ToString(nameSlice)
-
-				if name != "." && name != ".." && info.FileAttributes&excludedAttrs == 0 {
-					mode := windowsAttributesToFileMode(info.FileAttributes)
-					entries = append(entries, types.VSSDirEntry{Name: name, Mode: mode})
+			if usingFull {
+				// Use the FILE_FULL_DIR_INFO structure.
+				fullInfo := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
+				nameLen := int(fullInfo.FileNameLength) / 2
+				if nameLen > 0 {
+					filenamePtr := (*uint16)(unsafe.Pointer(&fullInfo.FileName[0]))
+					nameSlice := unsafe.Slice(filenamePtr, nameLen)
+					name := syscall.UTF16ToString(nameSlice)
+					if name != "." && name != ".." &&
+						fullInfo.FileAttributes&excludedAttrs == 0 {
+						mode := windowsAttributesToFileMode(fullInfo.FileAttributes)
+						entries = append(entries, types.VSSDirEntry{
+							Name: name,
+							Mode: mode,
+						})
+					}
 				}
+				if fullInfo.NextEntryOffset == 0 {
+					break
+				}
+				offset += int(fullInfo.NextEntryOffset)
+			} else {
+				// Use the FILE_ID_BOTH_DIR_INFO structure.
+				bothInfo := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
+				nameLen := int(bothInfo.FileNameLength) / 2
+				if nameLen > 0 {
+					filenamePtr := (*uint16)(unsafe.Pointer(&bothInfo.FileName[0]))
+					nameSlice := unsafe.Slice(filenamePtr, nameLen)
+					name := syscall.UTF16ToString(nameSlice)
+					if name != "." && name != ".." &&
+						bothInfo.FileAttributes&excludedAttrs == 0 {
+						mode := windowsAttributesToFileMode(bothInfo.FileAttributes)
+						entries = append(entries, types.VSSDirEntry{
+							Name: name,
+							Mode: mode,
+						})
+					}
+				}
+				if bothInfo.NextEntryOffset == 0 {
+					break
+				}
+				offset += int(bothInfo.NextEntryOffset)
 			}
-
-			if info.NextEntryOffset == 0 {
-				break
-			}
-			offset += int(info.NextEntryOffset)
 		}
 	}
 

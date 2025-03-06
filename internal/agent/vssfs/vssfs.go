@@ -36,26 +36,38 @@ type FileStandardInfo struct {
 }
 
 type VSSFSServer struct {
-	ctx         context.Context
-	ctxCancel   context.CancelFunc
-	jobId       string
-	snapshot    snapshots.WinVSSSnapshot
-	handleIdGen *idgen.IDGenerator
-	handles     *safemap.Map[uint64, *FileHandle]
-	arpcRouter  *arpc.Router
-	statFs      types.StatFS
+	ctx              context.Context
+	ctxCancel        context.CancelFunc
+	jobId            string
+	snapshot         snapshots.WinVSSSnapshot
+	handleIdGen      *idgen.IDGenerator
+	handles          *safemap.Map[uint64, *FileHandle]
+	arpcRouter       *arpc.Router
+	statFs           types.StatFS
+	allocGranularity uint32
 }
 
 func NewVSSFSServer(jobId string, snapshot snapshots.WinVSSSnapshot) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	allocGranularity := uint32(65536) // 64 KB usually
+	systemInfo, err := getSystemInfo()
+	if err != nil {
+		if syslog.L != nil {
+			syslog.L.Errorf("getSystemInfo error: %v", err)
+		}
+	} else {
+		allocGranularity = systemInfo.AllocationGranularity
+	}
+
 	s := &VSSFSServer{
-		snapshot:    snapshot,
-		jobId:       jobId,
-		handles:     safemap.New[uint64, *FileHandle](),
-		ctx:         ctx,
-		ctxCancel:   cancel,
-		handleIdGen: idgen.NewIDGenerator(),
+		snapshot:         snapshot,
+		jobId:            jobId,
+		handles:          safemap.New[uint64, *FileHandle](),
+		ctx:              ctx,
+		ctxCancel:        cancel,
+		handleIdGen:      idgen.NewIDGenerator(),
+		allocGranularity: allocGranularity,
 	}
 
 	if err := s.initializeStatFS(); err != nil && syslog.L != nil {
@@ -319,19 +331,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		payload.Length = int(fh.fileSize - payload.Offset)
 	}
 
-	// Get the system page size.
-	allocGranularity := int64(65536) // 64 KB usually
-	systemInfo, err := getSystemInfo()
-	if err != nil {
-		if syslog.L != nil {
-			syslog.L.Errorf("getSystemInfo error: %v", err)
-		}
-	} else {
-		allocGranularity = int64(systemInfo.AllocationGranularity)
-	}
-
 	// Align the offset down to the nearest multiple of the page size.
-	alignedOffset := payload.Offset - (payload.Offset % int64(allocGranularity))
+	alignedOffset := payload.Offset - (payload.Offset % int64(s.allocGranularity))
 	offsetDiff := int(payload.Offset - alignedOffset)
 
 	// Calculate the view size by adding the difference.
