@@ -9,6 +9,7 @@ import (
 // Encodable defines the interface for types that can be encoded.
 type Encodable interface {
 	Encode() ([]byte, error)
+	Decode([]byte) error
 }
 
 // Encoder writes data to a reusable buffer.
