@@ -3,6 +3,7 @@ package types
 type Job struct {
 	ID                    string      `json:"id"`
 	Store                 string      `config:"type=string,required" json:"store"`
+	Mode                  string      `config:"type=string" json:"mode"`
 	Target                string      `config:"type=string,required" json:"target"`
 	Subpath               string      `config:"type=string" json:"subpath"`
 	Schedule              string      `config:"type=string" json:"schedule"`
