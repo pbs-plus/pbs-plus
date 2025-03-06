@@ -12,39 +12,75 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// FILE_ID_BOTH_DIR_INFO corresponds to:
+//
+//	typedef struct _FILE_ID_BOTH_DIR_INFO {
+//	  DWORD         NextEntryOffset;        // 4 bytes
+//	  DWORD         FileIndex;              // 4 bytes
+//	  LARGE_INTEGER CreationTime;           // 8 bytes
+//	  LARGE_INTEGER LastAccessTime;         // 8 bytes
+//	  LARGE_INTEGER LastWriteTime;          // 8 bytes
+//	  LARGE_INTEGER ChangeTime;             // 8 bytes
+//	  LARGE_INTEGER EndOfFile;              // 8 bytes
+//	  LARGE_INTEGER AllocationSize;         // 8 bytes
+//	  DWORD         FileAttributes;         // 4 bytes
+//	  DWORD         FileNameLength;         // 4 bytes
+//	  DWORD         EaSize;                 // 4 bytes
+//	  CCHAR         ShortNameLength;        // 1 byte
+//	  // 3 bytes padding to get to offset 72
+//	  WCHAR         ShortName[12];          // 24 bytes (12 WCHAR's)
+//	  LARGE_INTEGER FileId;                 // 8 bytes
+//	  WCHAR         FileName[1];            // flexible array member
+//	} FILE_ID_BOTH_DIR_INFO;
 type FILE_ID_BOTH_DIR_INFO struct {
-	NextEntryOffset uint32     // 4 bytes
-	FileIndex       uint32     // 4 bytes
-	CreationTime    [8]byte    // LARGE_INTEGER (8 bytes)
-	LastAccessTime  [8]byte    // LARGE_INTEGER (8 bytes)
-	LastWriteTime   [8]byte    // LARGE_INTEGER (8 bytes)
-	ChangeTime      [8]byte    // LARGE_INTEGER (8 bytes)
-	EndOfFile       [8]byte    // LARGE_INTEGER (8 bytes)
-	AllocationSize  [8]byte    // LARGE_INTEGER (8 bytes)
-	FileAttributes  uint32     // 4 bytes
-	FileNameLength  uint32     // 4 bytes
-	EaSize          uint32     // 4 bytes
-	ShortNameLength byte       // 1 byte
-	_               [3]byte    // Padding to align ShortName to 8 bytes
-	ShortName       [12]uint16 // WCHAR[12] (24 bytes)
-	FileId          [8]byte    // LARGE_INTEGER (8 bytes)
-	FileName        [1]uint16  // WCHAR[1] (flexible array member)
+	NextEntryOffset uint32     // offset 0,  size 4
+	FileIndex       uint32     // offset 4,  size 4
+	CreationTime    [8]byte    // offset 8,  size 8
+	LastAccessTime  [8]byte    // offset 16, size 8
+	LastWriteTime   [8]byte    // offset 24, size 8
+	ChangeTime      [8]byte    // offset 32, size 8
+	EndOfFile       [8]byte    // offset 40, size 8
+	AllocationSize  [8]byte    // offset 48, size 8
+	FileAttributes  uint32     // offset 56, size 4
+	FileNameLength  uint32     // offset 60, size 4
+	EaSize          uint32     // offset 64, size 4
+	ShortNameLength byte       // offset 68, size 1
+	_               [3]byte    // padding to bring offset to 72
+	ShortName       [12]uint16 // offset 72, size 24 (12*2)
+	FileId          [8]byte    // offset 96, size 8
+	FileName        [0]uint16  // flexible array member, offset 104 (ignored in sizeof)
 }
 
+// FILE_FULL_DIR_INFO corresponds to:
+//
+//	typedef struct _FILE_FULL_DIR_INFO {
+//	  ULONG         NextEntryOffset;       // 4 bytes
+//	  ULONG         FileIndex;             // 4 bytes
+//	  LARGE_INTEGER CreationTime;          // 8 bytes
+//	  LARGE_INTEGER LastAccessTime;        // 8 bytes
+//	  LARGE_INTEGER LastWriteTime;         // 8 bytes
+//	  LARGE_INTEGER ChangeTime;            // 8 bytes
+//	  LARGE_INTEGER EndOfFile;             // 8 bytes
+//	  LARGE_INTEGER AllocationSize;        // 8 bytes
+//	  ULONG         FileAttributes;        // 4 bytes
+//	  ULONG         FileNameLength;        // 4 bytes
+//	  ULONG         EaSize;                // 4 bytes
+//	  WCHAR         FileName[1];           // flexible array member
+//	} FILE_FULL_DIR_INFO;
 type FILE_FULL_DIR_INFO struct {
-	NextEntryOffset uint32    // 4 bytes
-	FileIndex       uint32    // 4 bytes
-	CreationTime    [8]byte   // LARGE_INTEGER (8 bytes)
-	LastAccessTime  [8]byte   // LARGE_INTEGER (8 bytes)
-	LastWriteTime   [8]byte   // LARGE_INTEGER (8 bytes)
-	ChangeTime      [8]byte   // LARGE_INTEGER (8 bytes)
-	EndOfFile       [8]byte   // LARGE_INTEGER (8 bytes)
-	AllocationSize  [8]byte   // LARGE_INTEGER (8 bytes)
-	FileAttributes  uint32    // 4 bytes
-	FileNameLength  uint32    // 4 bytes
-	EaSize          uint32    // 4 bytes
-	_               [4]byte   // Padding to align FileName to 8 bytes
-	FileName        [1]uint16 // WCHAR[1] (flexible array member)
+	NextEntryOffset uint32    // offset 0,  size 4
+	FileIndex       uint32    // offset 4,  size 4
+	CreationTime    [8]byte   // offset 8,  size 8
+	LastAccessTime  [8]byte   // offset 16, size 8
+	LastWriteTime   [8]byte   // offset 24, size 8
+	ChangeTime      [8]byte   // offset 32, size 8
+	EndOfFile       [8]byte   // offset 40, size 8
+	AllocationSize  [8]byte   // offset 48, size 8
+	FileAttributes  uint32    // offset 56, size 4
+	FileNameLength  uint32    // offset 60, size 4
+	EaSize          uint32    // offset 64, size 4
+	_               [4]byte   // padding to bring the start of FileName to offset 72
+	FileName        [0]uint16 // flexible array member, offset 72
 }
 
 const (
@@ -158,7 +194,9 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				fullInfo := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 				nameLen := int(fullInfo.FileNameLength) / 2
 				if nameLen > 0 {
-					filenamePtr := (*uint16)(unsafe.Pointer(&fullInfo.FileName[0]))
+					filenamePtr := (*uint16)(unsafe.Pointer(
+						uintptr(unsafe.Pointer(fullInfo)) + unsafe.Offsetof(fullInfo.FileName),
+					))
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					name := syscall.UTF16ToString(nameSlice)
 					if name != "." && name != ".." && fullInfo.FileAttributes&excludedAttrs == 0 {
@@ -178,7 +216,9 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				bothInfo := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 				nameLen := int(bothInfo.FileNameLength) / 2
 				if nameLen > 0 {
-					filenamePtr := (*uint16)(unsafe.Pointer(&bothInfo.FileName[0]))
+					filenamePtr := (*uint16)(unsafe.Pointer(
+						uintptr(unsafe.Pointer(bothInfo)) + unsafe.Offsetof(bothInfo.FileName),
+					))
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					name := syscall.UTF16ToString(nameSlice)
 					if name != "." && name != ".." && bothInfo.FileAttributes&excludedAttrs == 0 {
