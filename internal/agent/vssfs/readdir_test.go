@@ -32,12 +32,6 @@ func TestStructAlignment(t *testing.T) {
 	})
 }
 
-func checkFieldOffset(t *testing.T, fieldName string, actualOffset, expectedOffset uintptr) {
-	if actualOffset != expectedOffset {
-		t.Errorf("%s offset mismatch: expected %d, got %d", fieldName, expectedOffset, actualOffset)
-	}
-}
-
 // TestReadDirBulk is the main test suite for readDirBulk
 func TestReadDirBulk(t *testing.T) {
 	// Create a temporary directory for testing
