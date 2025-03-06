@@ -337,6 +337,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	// Map the requested view.
 	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, uint32(alignedOffset>>32), uint32(alignedOffset&0xFFFFFFFF), viewSize)
 	if err != nil {
+		windows.CloseHandle(h)
 		return arpc.Response{}, mapWinError(err)
 	}
 
