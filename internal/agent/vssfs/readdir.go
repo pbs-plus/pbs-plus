@@ -43,7 +43,8 @@ type FILE_FULL_DIR_INFO struct {
 	FileAttributes  uint32
 	FileNameLength  uint32
 	EaSize          uint32
-	FileName        [1]uint16
+	_               [4]byte   // Padding to align FileName to 8-byte boundary
+	FileName        [1]uint16 // Variable-length array
 }
 
 const (
