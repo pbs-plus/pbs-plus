@@ -50,14 +50,9 @@ type VSSFSServer struct {
 func NewVSSFSServer(jobId string, snapshot snapshots.WinVSSSnapshot) *VSSFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	allocGranularity := uint32(65536) // 64 KB usually
-	systemInfo, err := getSystemInfo()
-	if err != nil {
-		if syslog.L != nil {
-			syslog.L.Errorf("getSystemInfo error: %v", err)
-		}
-	} else {
-		allocGranularity = systemInfo.AllocationGranularity
+	allocGranularity := GetAllocGranularity()
+	if allocGranularity == 0 {
+		allocGranularity = 65536 // 64 KB usually
 	}
 
 	s := &VSSFSServer{
@@ -67,7 +62,7 @@ func NewVSSFSServer(jobId string, snapshot snapshots.WinVSSSnapshot) *VSSFSServe
 		ctx:              ctx,
 		ctxCancel:        cancel,
 		handleIdGen:      idgen.NewIDGenerator(),
-		allocGranularity: allocGranularity,
+		allocGranularity: uint32(allocGranularity),
 	}
 
 	if err := s.initializeStatFS(); err != nil && syslog.L != nil {
@@ -170,7 +165,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 		windows.FILE_SHARE_READ,
 		nil,
 		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN|windows.FILE_FLAG_OVERLAPPED,
 		0,
 	)
 	if err != nil {
@@ -338,32 +333,59 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	// Calculate the view size by adding the difference.
 	viewSize := uintptr(payload.Length + offsetDiff)
 
+	// Attempt to create a file mapping.
 	h, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, 0, 0, nil)
-	if err != nil {
-		return arpc.Response{}, mapWinError(err, "handleReadAt CreateFileMapping")
-	}
+	if err == nil {
+		// Map the requested view.
+		addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, uint32(alignedOffset>>32), uint32(alignedOffset&0xFFFFFFFF), viewSize)
+		if err == nil {
+			// Successfully mapped the view.
+			ptr := (*byte)(unsafe.Pointer(addr))
+			data := unsafe.Slice(ptr, viewSize)
+			result := data[offsetDiff : offsetDiff+int(payload.Length)]
 
-	// Map the requested view.
-	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, uint32(alignedOffset>>32), uint32(alignedOffset&0xFFFFFFFF), viewSize)
-	if err != nil {
+			reader := bytes.NewReader(result)
+
+			streamCallback := func(stream *smux.Stream) {
+				defer func() {
+					windows.UnmapViewOfFile(addr)
+					windows.CloseHandle(h)
+					data = nil
+				}()
+
+				err := binarystream.SendDataFromReader(reader, payload.Length, stream)
+				if err != nil && syslog.L != nil {
+					syslog.L.Errorf("handleReadAt error: %v", err)
+				}
+			}
+
+			return arpc.Response{
+				Status:    213,
+				RawStream: streamCallback,
+			}, nil
+		}
+
+		// Cleanup if mapping fails.
 		windows.CloseHandle(h)
-		return arpc.Response{}, mapWinError(err, "handleReadAt MapViewOfFile")
 	}
 
-	ptr := (*byte)(unsafe.Pointer(addr))
-	data := unsafe.Slice(ptr, viewSize)
-	result := data[offsetDiff : offsetDiff+int(payload.Length)]
+	// Fallback to OVERLAPPED method if file mapping fails.
+	var overlapped windows.Overlapped
+	overlapped.Offset = uint32(payload.Offset & 0xFFFFFFFF)
+	overlapped.OffsetHigh = uint32(payload.Offset >> 32)
 
-	reader := bytes.NewReader(result)
+	buffer := make([]byte, payload.Length)
+	var bytesRead uint32
+
+	err = windows.ReadFile(fh.handle, buffer, &bytesRead, &overlapped)
+	if err != nil {
+		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile (OVERLAPPED fallback)")
+	}
+
+	reader := bytes.NewReader(buffer[:bytesRead])
 
 	streamCallback := func(stream *smux.Stream) {
-		defer func() {
-			windows.UnmapViewOfFile(addr)
-			windows.CloseHandle(h)
-			data = nil
-		}()
-
-		err := binarystream.SendDataFromReader(reader, payload.Length, stream)
+		err := binarystream.SendDataFromReader(reader, int(bytesRead), stream)
 		if err != nil && syslog.L != nil {
 			syslog.L.Errorf("handleReadAt error: %v", err)
 		}
