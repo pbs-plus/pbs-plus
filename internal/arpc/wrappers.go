@@ -2,7 +2,6 @@ package arpc
 
 import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/sb"
 	"github.com/xtaci/smux"
 )
 
@@ -48,7 +47,7 @@ type Response struct {
 }
 
 func (resp *Response) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(4 + len(sb.ToBytes(resp.Message)) + len(resp.Data))
+	enc := arpcdata.NewEncoderWithSize(4 + len(resp.Message) + len(resp.Data))
 	if err := enc.WriteUint32(uint32(resp.Status)); err != nil {
 		return nil, err
 	}
@@ -117,26 +116,26 @@ func (errObj *SerializableError) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	errorType, err := dec.ReadBytes()
+	errorType, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	errObj.ErrorType = sb.ToString(errorType)
-	message, err := dec.ReadBytes()
+	errObj.ErrorType = errorType
+	message, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	errObj.Message = sb.ToString(message)
-	op, err := dec.ReadBytes()
+	errObj.Message = message
+	op, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	errObj.Op = sb.ToString(op)
-	path, err := dec.ReadBytes()
+	errObj.Op = op
+	path, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	errObj.Path = sb.ToString(path)
+	errObj.Path = path
 	// Note: OriginalError is skipped
 	return nil
 }
