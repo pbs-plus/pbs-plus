@@ -331,14 +331,14 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 
 	h, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, 0, 0, nil)
 	if err != nil {
-		return arpc.Response{}, mapWinError(err)
+		return arpc.Response{}, mapWinError(err, "handleReadAt CreateFileMapping")
 	}
 
 	// Map the requested view.
 	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, uint32(alignedOffset>>32), uint32(alignedOffset&0xFFFFFFFF), viewSize)
 	if err != nil {
 		windows.CloseHandle(h)
-		return arpc.Response{}, mapWinError(err)
+		return arpc.Response{}, mapWinError(err, "handleReadAt MapViewOfFile")
 	}
 
 	ptr := (*byte)(unsafe.Pointer(addr))
@@ -416,7 +416,7 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 		case io.SeekCurrent:
 			currentPos, err := windows.SetFilePointer(fh.handle, 0, nil, windows.FILE_CURRENT)
 			if err != nil {
-				return arpc.Response{}, mapWinError(err)
+				return arpc.Response{}, mapWinError(err, "handleLseek SetFilePointer (FILE_CURRENT)")
 			}
 			newOffset = int64(currentPos) + payload.Offset
 			if newOffset < 0 {
@@ -439,7 +439,7 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	// Set the new position
 	_, err = windows.SetFilePointer(fh.handle, int32(newOffset), nil, windows.FILE_BEGIN)
 	if err != nil {
-		return arpc.Response{}, mapWinError(err)
+		return arpc.Response{}, mapWinError(err, "handleLseek SetFilePointer (FILE_BEGIN)")
 	}
 
 	// Prepare the response
