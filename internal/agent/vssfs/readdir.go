@@ -12,37 +12,85 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// FILE_ID_BOTH_DIR_INFO corresponds to:
+//
+//	typedef struct _FILE_ID_BOTH_DIR_INFO {
+//	  DWORD         NextEntryOffset;        // 4 bytes
+//	  DWORD         FileIndex;              // 4 bytes
+//	  LARGE_INTEGER CreationTime;           // 8 bytes
+//	  LARGE_INTEGER LastAccessTime;         // 8 bytes
+//	  LARGE_INTEGER LastWriteTime;          // 8 bytes
+//	  LARGE_INTEGER ChangeTime;             // 8 bytes
+//	  LARGE_INTEGER EndOfFile;              // 8 bytes
+//	  LARGE_INTEGER AllocationSize;         // 8 bytes
+//	  DWORD         FileAttributes;         // 4 bytes
+//	  DWORD         FileNameLength;         // 4 bytes
+//	  DWORD         EaSize;                 // 4 bytes
+//	  CCHAR         ShortNameLength;        // 1 byte
+//	  // 3 bytes padding to get to offset 72
+//	  WCHAR         ShortName[12];          // 24 bytes (12 WCHAR's)
+//	  LARGE_INTEGER FileId;                 // 8 bytes
+//	  WCHAR         FileName[1];            // flexible array member
+//	} FILE_ID_BOTH_DIR_INFO;
 type FILE_ID_BOTH_DIR_INFO struct {
-	NextEntryOffset uint32
-	FileIndex       uint32
-	CreationTime    syscall.Filetime
-	LastAccessTime  syscall.Filetime
-	LastWriteTime   syscall.Filetime
-	ChangeTime      syscall.Filetime
-	EndOfFile       uint64
-	AllocationSize  uint64
-	FileAttributes  uint32
-	FileNameLength  uint32
-	EaSize          uint32
-	ShortNameLength uint32
-	ShortName       [12]uint16
-	FileID          uint64
-	FileName        [1]uint16
+	NextEntryOffset uint32     // 0   4
+	FileIndex       uint32     // 4   4
+	CreationTime    [8]byte    // 8   8
+	LastAccessTime  [8]byte    // 16  8
+	LastWriteTime   [8]byte    // 24  8
+	ChangeTime      [8]byte    // 32  8
+	EndOfFile       [8]byte    // 40  8
+	AllocationSize  [8]byte    // 48  8
+	FileAttributes  uint32     // 56  4
+	FileNameLength  uint32     // 60  4
+	EaSize          uint32     // 64  4
+	ShortNameLength byte       // 68  1
+	_               [3]byte    // 69-71: 3 bytes padding
+	ShortName       [12]uint16 // 72  24 bytes (12 * 2)
+	FileId          [8]byte    // 96  8 bytes
+	// Fixed size total: 104 bytes.
 }
 
+// FILE_FULL_DIR_INFO corresponds to:
+//
+//	typedef struct _FILE_FULL_DIR_INFO {
+//	  ULONG         NextEntryOffset;       // 4 bytes
+//	  ULONG         FileIndex;             // 4 bytes
+//	  LARGE_INTEGER CreationTime;          // 8 bytes
+//	  LARGE_INTEGER LastAccessTime;        // 8 bytes
+//	  LARGE_INTEGER LastWriteTime;         // 8 bytes
+//	  LARGE_INTEGER ChangeTime;            // 8 bytes
+//	  LARGE_INTEGER EndOfFile;             // 8 bytes
+//	  LARGE_INTEGER AllocationSize;        // 8 bytes
+//	  ULONG         FileAttributes;        // 4 bytes
+//	  ULONG         FileNameLength;        // 4 bytes
+//	  ULONG         EaSize;                // 4 bytes
+//	  WCHAR         FileName[1];           // flexible array member
+//	} FILE_FULL_DIR_INFO;
 type FILE_FULL_DIR_INFO struct {
-	NextEntryOffset uint32
-	FileIndex       uint32
-	CreationTime    syscall.Filetime
-	LastAccessTime  syscall.Filetime
-	LastWriteTime   syscall.Filetime
-	ChangeTime      syscall.Filetime
-	EndOfFile       uint64
-	AllocationSize  uint64
-	FileAttributes  uint32
-	FileNameLength  uint32
-	EaSize          uint32
-	FileName        [1]uint16
+	NextEntryOffset uint32  // 0   4
+	FileIndex       uint32  // 4   4
+	CreationTime    [8]byte // 8   8
+	LastAccessTime  [8]byte // 16  8
+	LastWriteTime   [8]byte // 24  8
+	ChangeTime      [8]byte // 32  8
+	EndOfFile       [8]byte // 40  8
+	AllocationSize  [8]byte // 48  8
+	FileAttributes  uint32  // 56  4
+	FileNameLength  uint32  // 60  4
+	EaSize          uint32  // 64  4
+	_               [4]byte // 68-71: 4 bytes padding
+	// Fixed size total: 72 bytes.
+}
+
+// For FILE_ID_BOTH_DIR_INFO, the filename data begins at offset 104.
+func fileNamePtrIdBoth(info *FILE_ID_BOTH_DIR_INFO) *uint16 {
+	return (*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(info)) + 104))
+}
+
+// For FILE_FULL_DIR_INFO, the filename data begins at offset 72.
+func fileNamePtrFull(info *FILE_FULL_DIR_INFO) *uint16 {
+	return (*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(info)) + 72))
 }
 
 const (
@@ -90,7 +138,7 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 // information class. If that fails with ERROR_INVALID_PARAMETER, it falls
 // back to the full-directory information class. The entries that match
 // skipPathWithAttributes (and the "." and ".." names) are omitted.
-func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
+func readDirBulk(dirPath string) ([]byte, error) {
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
 		return nil, mapWinError(err, "readDirBulk UTF16PtrFromString")
@@ -156,11 +204,10 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 				fullInfo := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 				nameLen := int(fullInfo.FileNameLength) / 2
 				if nameLen > 0 {
-					filenamePtr := (*uint16)(unsafe.Pointer(&fullInfo.FileName[0]))
+					filenamePtr := fileNamePtrFull(fullInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					name := syscall.UTF16ToString(nameSlice)
-					if name != "." && name != ".." &&
-						fullInfo.FileAttributes&excludedAttrs == 0 {
+					if name != "." && name != ".." && fullInfo.FileAttributes&excludedAttrs == 0 {
 						mode := windowsAttributesToFileMode(fullInfo.FileAttributes)
 						entries = append(entries, types.VSSDirEntry{
 							Name: name,
@@ -177,11 +224,10 @@ func (s *VSSFSServer) readDirBulk(dirPath string) ([]byte, error) {
 				bothInfo := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 				nameLen := int(bothInfo.FileNameLength) / 2
 				if nameLen > 0 {
-					filenamePtr := (*uint16)(unsafe.Pointer(&bothInfo.FileName[0]))
+					filenamePtr := fileNamePtrIdBoth(bothInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					name := syscall.UTF16ToString(nameSlice)
-					if name != "." && name != ".." &&
-						bothInfo.FileAttributes&excludedAttrs == 0 {
+					if name != "." && name != ".." && bothInfo.FileAttributes&excludedAttrs == 0 {
 						mode := windowsAttributesToFileMode(bothInfo.FileAttributes)
 						entries = append(entries, types.VSSDirEntry{
 							Name: name,

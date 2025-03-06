@@ -285,7 +285,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		fullDirPath = s.snapshot.SnapshotPath
 	}
 
-	entries, err := s.readDirBulk(fullDirPath)
+	entries, err := readDirBulk(fullDirPath)
 	if err != nil {
 		return arpc.Response{}, err
 	}
