@@ -4,6 +4,7 @@ package syslog
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/syslog"
 	"os"
 	"sync"
@@ -80,6 +81,21 @@ func (l *Logger) Info() *LogEntry {
 // WithMessage adds a message to the log entry
 func (e *LogEntry) WithMessage(msg string) *LogEntry {
 	e.message = msg
+	return e
+}
+
+func (e *LogEntry) WithJSON(msg string) *LogEntry {
+	var fields map[string]interface{}
+
+	err := json.Unmarshal([]byte(msg), &fields)
+	if err == nil {
+		e.message = msg
+	} else {
+		for k, v := range fields {
+			e.fields[k] = v
+		}
+	}
+
 	return e
 }
 
