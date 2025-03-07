@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mxk/go-vss"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 var (
@@ -56,7 +57,12 @@ func Snapshot(jobId string, driveLetter string) (WinVSSSnapshot, error) {
 
 	if err := createSnapshotWithRetry(ctx, snapshotPath, volName); err != nil {
 		cleanupExistingSnapshot(snapshotPath)
-		return WinVSSSnapshot{}, fmt.Errorf("snapshot creation failed: %w", err)
+		return WinVSSSnapshot{
+			SnapshotPath: volName + "\\",
+			Id:           "",
+			TimeStarted:  timeStarted,
+			DriveLetter:  driveLetter,
+		}, fmt.Errorf("snapshot creation failed: %w", err)
 	}
 
 	sc, err := vss.Get(snapshotPath)
@@ -112,9 +118,9 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 				// try re-registering writers
 				if attempts == 0 && (strings.Contains(err.Error(), "VSS") ||
 					strings.Contains(err.Error(), "shadow copy")) {
-					fmt.Println("VSS error detected, attempting to re-register writers...")
+					syslog.L.Errorf("VSS error detected, attempting to re-register writers...")
 					if reregErr := reregisterVSSWriters(); reregErr != nil {
-						fmt.Printf("Warning: failed to re-register VSS writers: %v\n", reregErr)
+						syslog.L.Warnf("Warning: failed to re-register VSS writers: %v\n", reregErr)
 					}
 					// Break inner loop to start fresh after re-registration
 					break
@@ -139,10 +145,19 @@ func cleanupExistingSnapshot(path string) {
 		_ = vss.Remove(sc.ID)
 	}
 
-	_ = os.Remove(path)
+	if vssFolder, err := getVSSFolder(); err == nil {
+		if strings.HasPrefix(path, vssFolder) {
+			_ = os.Remove(path)
+		}
+	}
 }
 
 func (s *WinVSSSnapshot) Close() {
 	_ = vss.Remove(s.Id)
-	_ = os.Remove(s.SnapshotPath)
+
+	if vssFolder, err := getVSSFolder(); err == nil {
+		if strings.HasPrefix(s.SnapshotPath, vssFolder) {
+			_ = os.Remove(s.SnapshotPath)
+		}
+	}
 }
