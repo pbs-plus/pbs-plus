@@ -130,6 +130,18 @@ func (s *VSSFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
+	var err error // Named return value for error
+	defer func() {
+		if r := recover(); r != nil {
+			// Log the panic
+			if syslog.L != nil {
+				syslog.L.Errorf("handleOpenFile panic: %v", r)
+			}
+			// Set the error to indicate a panic occurred
+			err = os.ErrInvalid
+		}
+	}()
+
 	var payload types.OpenFileReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -264,6 +276,18 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 // handleReadDir first attempts to serve the directory listing from the cache.
 // It returns the cached DirEntries for that directory.
 func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
+	var err error // Named return value for error
+	defer func() {
+		if r := recover(); r != nil {
+			// Log the panic
+			if syslog.L != nil {
+				syslog.L.Errorf("handleReadDir panic: %v", r)
+			}
+			// Set the error to indicate a panic occurred
+			err = os.ErrInvalid
+		}
+	}()
+
 	var payload types.ReadDirReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -294,6 +318,18 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 // handleReadAt now duplicates the file handle, opens a backup reading session,
 // and then uses backupSeek to skip to the desired offset without copying bytes.
 func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
+	var err error // Named return value for error
+	defer func() {
+		if r := recover(); r != nil {
+			// Log the panic
+			if syslog.L != nil {
+				syslog.L.Errorf("handleReadDir panic: %v", r)
+			}
+			// Set the error to indicate a panic occurred
+			err = os.ErrInvalid
+		}
+	}()
+
 	var payload types.ReadAtReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
