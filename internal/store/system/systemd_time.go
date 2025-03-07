@@ -47,7 +47,7 @@ WantedBy=timers.target`, job.ID, job.Schedule)
 
 	return nil
 }
-
+
 func generateService(job *types.Job) error {
 	if strings.Contains(job.ID, "/") || strings.Contains(job.ID, "\\") || strings.Contains(job.ID, "..") {
 		return fmt.Errorf("generateService: invalid job ID -> %s", job.ID)
@@ -184,20 +184,10 @@ func SetSchedule(job types.Job) error {
 	if job.Schedule == "" {
 		cmd := exec.Command("/usr/bin/systemctl", "disable", "--now", timerPath)
 		cmd.Env = os.Environ()
-		err := cmd.Run()
-		if err != nil {
-			return fmt.Errorf("SetSchedule: error disabling timer -> %w", err)
-		}
+		_ = cmd.Run()
 
-		err = os.RemoveAll(fullSvcPath)
-		if err != nil {
-			return fmt.Errorf("SetSchedule: error deleting service -> %w", err)
-		}
-
-		err = os.RemoveAll(fullTimerPath)
-		if err != nil {
-			return fmt.Errorf("SetSchedule: error deleting timer -> %w", err)
-		}
+		_ = os.RemoveAll(fullSvcPath)
+		_ = os.RemoveAll(fullTimerPath)
 	} else {
 		err := generateService(&job)
 		if err != nil {
