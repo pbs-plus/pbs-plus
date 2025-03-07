@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -118,7 +117,6 @@ func (p *agentService) run() {
 	}
 
 	if err := p.connectARPC(); err != nil {
-		syslog.L.Errorf("ARPC connection failed: %v", err)
 		return
 	}
 
@@ -271,11 +269,11 @@ func (p *agentService) connectARPC() error {
 	headers := http.Header{}
 	headers.Add("X-PBS-Agent", clientId)
 	headers.Add("X-PBS-Plus-Version", Version)
-	syslog.L.Infof("Setting connection headers: %s, %s", clientId, Version)
 
 	session, err := arpc.ConnectToServer(p.ctx, uri.Host, headers, tlsConfig)
 	if err != nil {
-		log.Fatalf("failed to connect: %v", err)
+		arpc.LogConnError(err)
+		return err
 	}
 
 	router := arpc.NewRouter()
@@ -303,7 +301,7 @@ func (p *agentService) connectARPC() error {
 			default:
 				syslog.L.Info("Connecting aRPC endpoint from /plus/arpc")
 				if err := session.Serve(); err != nil {
-					syslog.L.Errorf("session closed: %v", err)
+					arpc.LogConnError(err)
 
 					store, err := agent.NewBackupStore()
 					if err != nil {
