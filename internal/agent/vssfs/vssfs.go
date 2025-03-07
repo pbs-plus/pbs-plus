@@ -323,7 +323,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		if r := recover(); r != nil {
 			// Log the panic
 			if syslog.L != nil {
-				syslog.L.Errorf("handleReadDir panic: %v", r)
+				syslog.L.Errorf("handleReadAt panic: %v", r)
 			}
 			// Set the error to indicate a panic occurred
 			err = os.ErrInvalid
