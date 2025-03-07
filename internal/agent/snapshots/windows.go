@@ -57,7 +57,12 @@ func Snapshot(jobId string, driveLetter string) (WinVSSSnapshot, error) {
 
 	if err := createSnapshotWithRetry(ctx, snapshotPath, volName); err != nil {
 		cleanupExistingSnapshot(snapshotPath)
-		return WinVSSSnapshot{}, fmt.Errorf("snapshot creation failed: %w", err)
+		return WinVSSSnapshot{
+			SnapshotPath: volName + "\\",
+			Id:           "",
+			TimeStarted:  timeStarted,
+			DriveLetter:  driveLetter,
+		}, fmt.Errorf("snapshot creation failed: %w", err)
 	}
 
 	sc, err := vss.Get(snapshotPath)
@@ -140,10 +145,19 @@ func cleanupExistingSnapshot(path string) {
 		_ = vss.Remove(sc.ID)
 	}
 
-	_ = os.Remove(path)
+	if vssFolder, err := getVSSFolder(); err == nil {
+		if strings.HasPrefix(path, vssFolder) {
+			_ = os.Remove(path)
+		}
+	}
 }
 
 func (s *WinVSSSnapshot) Close() {
 	_ = vss.Remove(s.Id)
-	_ = os.Remove(s.SnapshotPath)
+
+	if vssFolder, err := getVSSFolder(); err == nil {
+		if strings.HasPrefix(s.SnapshotPath, vssFolder) {
+			_ = os.Remove(s.SnapshotPath)
+		}
+	}
 }
