@@ -222,9 +222,9 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				job.NotificationMode = r.FormValue("notification-mode")
 			}
 
-			if r.FormValue("rawexclusions") != "" {
-				job.Exclusions = []types.Exclusion{}
+			job.Exclusions = []types.Exclusion{}
 
+			if r.FormValue("rawexclusions") != "" {
 				rawExclusions := r.FormValue("rawexclusions")
 				for _, exclusion := range strings.Split(rawExclusions, "\n") {
 					exclusion = strings.TrimSpace(exclusion)
