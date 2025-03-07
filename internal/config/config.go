@@ -88,13 +88,17 @@ func NewSectionConfig[T any](plugin *SectionPlugin[T]) *SectionConfig[T] {
 func (sc *SectionConfig[T]) Parse(filename string) (*ConfigData[T], error) {
 	// Check if a cached copy exists and the file has not been mutated.
 	stat, err := os.Stat(filename)
-	if err == nil {
-		currentModTime := stat.ModTime().Unix()
-		lastMod := sc.lastModTime.Load()
-		if cached, exists := sc.cache.Get(filename); exists && lastMod == currentModTime {
-			// The file has not changed so return the cached config.
-			return cached, nil
-		}
+	if err != nil {
+		// If the file is deleted, clear the cache and return an error.
+		sc.cache.Del(filename)
+		return nil, os.ErrNotExist
+	}
+
+	currentModTimeUnix := stat.ModTime().Unix()
+	lastMod := sc.lastModTime.Load()
+	if cached, exists := sc.cache.Get(filename); exists && lastMod == currentModTimeUnix {
+		// The file has not changed so return the cached config.
+		return cached, nil
 	}
 
 	// Otherwise, read and parse the config file.
