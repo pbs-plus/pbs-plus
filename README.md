@@ -23,7 +23,6 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 - [x] File backup from bare-metal workstations with agent
 - [ ] File restore to bare-metal workstations with agent
 - [x] File-level exclusions for backups with agent
-- [ ] Pipelining backup jobs from Web UI
 - [x] Windows agent support for workstations
 - [ ] Linux agent support for workstations
 - [ ] Containerized agent support for Docker/Kubernetes

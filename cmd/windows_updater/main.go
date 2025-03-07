@@ -27,9 +27,11 @@ type UpdaterService struct {
 	wg     sync.WaitGroup
 }
 
-const (
-	updateCheckInterval = 2 * time.Minute
-)
+type VersionResp struct {
+	Version string `json:"version"`
+}
+
+const updateCheckInterval = 2 * time.Minute
 
 var (
 	mutex  sync.Mutex
@@ -73,7 +75,6 @@ func (u *UpdaterService) runUpdateCheck() {
 		}
 
 		if hasActiveBackups && !agentStopped {
-			syslog.L.Info("Skipping version check - backup in progress")
 			return
 		}
 
@@ -91,10 +92,10 @@ func (u *UpdaterService) runUpdateCheck() {
 			}
 			syslog.L.Infof("New version %s available, current version: %s", newVersion, mainVersion)
 
-			// Double check before update
+			// Double-check before updating
 			hasActiveBackups, _ = u.checkForActiveBackups()
 			if hasActiveBackups {
-				syslog.L.Info("Postponing update - backup started during version check")
+				syslog.L.Infof("Postponing update: backup started during version check")
 				return
 			}
 
@@ -104,6 +105,11 @@ func (u *UpdaterService) runUpdateCheck() {
 			}
 
 			syslog.L.Infof("Successfully updated to version %s", newVersion)
+		}
+
+		// Perform cleanup after update check
+		if err := u.cleanupOldUpdates(); err != nil {
+			syslog.L.Errorf("Failed to clean up old updates: %v", err)
 		}
 	}
 
@@ -192,7 +198,7 @@ func main() {
 	}
 }
 
-func (p *UpdaterService) readVersionFromFile() (string, error) {
+func (u *UpdaterService) readVersionFromFile() (string, error) {
 	ex, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("failed to get executable path: %w", err)
@@ -226,20 +232,17 @@ func createMutex() error {
 	mutex.Lock()
 	defer mutex.Unlock()
 
-	// Create a unique mutex name based on the executable path
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %v", err)
 	}
 	mutexName := filepath.Base(execPath)
 
-	// Try to create/acquire the named mutex
 	h, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr(mutexName))
 	if err != nil {
 		return fmt.Errorf("failed to create mutex: %v", err)
 	}
 
-	// Check if the mutex already exists
 	if windows.GetLastError() == syscall.ERROR_ALREADY_EXISTS {
 		windows.CloseHandle(h)
 		return fmt.Errorf("another instance is already running")

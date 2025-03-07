@@ -26,7 +26,7 @@ func ARPCHandler(store *store.Store) http.HandlerFunc {
 		defer syslog.L.Infof("Agent disconnected: %s", agentHostname)
 
 		if err := session.Serve(); err != nil {
-			syslog.L.Errorf("session closed: %v", err)
+			arpc.LogConnError(err)
 		}
 	}
 }
