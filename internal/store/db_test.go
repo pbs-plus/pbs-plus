@@ -5,7 +5,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,11 +34,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		fmt.Printf("Failed to create temp directory: %v\n", err)
 		os.Exit(1)
-	}
-
-	err = syslog.InitializeLogger()
-	if err != nil {
-		log.Fatalf("Failed to initialize logger: %s", err)
 	}
 
 	// Override the constant paths for testing
