@@ -41,7 +41,7 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 		case "info":
 			syslog.L.Info().WithMessage(reqParsed.Message).WithField("agent", reqParsed.Hostname).Write()
 		case "error":
-			syslog.L.Error(errors.New(reqParsed.Message)).WithField("agent", reqParsed.Hostname).Write()
+			syslog.L.Error(errors.New("agent error received")).WithJSON(reqParsed.Message).WithField("agent", reqParsed.Hostname).Write()
 		case "warn":
 			syslog.L.Warn().WithMessage(reqParsed.Message).WithField("agent", reqParsed.Hostname).Write()
 		default:

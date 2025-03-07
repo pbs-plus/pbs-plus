@@ -4,14 +4,20 @@ package syslog
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/kardianos/service"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 )
 
 // Logger struct for Windows Event Log integration
@@ -29,19 +35,34 @@ type LogEntry struct {
 	logger  *Logger
 }
 
+type LogRemoteRequest struct {
+	Hostname string `json:"hostname"`
+	Message  string `json:"message"`
+	Level    string `json:"level"`
+}
+
 // Global logger instance
 var L *Logger
+
+// Worker pool variables
+var (
+	logQueue   chan LogEntry
+	workerOnce sync.Once
+	stopChan   chan struct{}
+)
 
 func init() {
 	// Initialize the logger with zerolog output to stdout by default
 	log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}).
-		With().
+		With().CallerWithSkipFrameCount(3).
 		Timestamp().
 		Caller(). // Automatically include caller information (file and line number)
 		Logger()
 
 	// Initialize the global logger instance
 	L = &Logger{}
+
+	initializeWorkerPool()
 }
 
 // SetServiceLogger sets the service logger for Windows Event Log integration
@@ -93,6 +114,21 @@ func (e *LogEntry) WithMessage(msg string) *LogEntry {
 	return e
 }
 
+func (e *LogEntry) WithJSON(msg string) *LogEntry {
+	var fields map[string]interface{}
+
+	err := json.Unmarshal([]byte(msg), &fields)
+	if err == nil {
+		e.message = msg
+	} else {
+		for k, v := range fields {
+			e.fields[k] = v
+		}
+	}
+
+	return e
+}
+
 // WithField adds a single key-value pair to the log entry
 func (e *LogEntry) WithField(key string, value interface{}) *LogEntry {
 	e.fields[key] = value
@@ -111,6 +147,8 @@ func (e *LogEntry) WithFields(fields map[string]interface{}) *LogEntry {
 func (e *LogEntry) Write() {
 	// Format the log entry as JSON
 	jsonMsg := e.formatLogAsJSON()
+
+	e.enqueueLog()
 
 	// Send to Windows Event Log if available
 	e.logger.mu.Lock()
@@ -167,4 +205,80 @@ func (e *LogEntry) formatLogAsJSON() string {
 
 	// Return the serialized JSON as a string
 	return buf.String()
+}
+
+// initializeWorkerPool sets up the singleton worker pool for logToServer
+func initializeWorkerPool() {
+	workerOnce.Do(func() {
+		logQueue = make(chan LogEntry, 100) // Buffered channel for log messages
+		stopChan = make(chan struct{})
+		go startWorkerPool(5) // Start 5 workers
+	})
+}
+
+// startWorkerPool starts the specified number of workers
+func startWorkerPool(workerCount int) {
+	for i := 0; i < workerCount; i++ {
+		go worker()
+	}
+}
+
+// worker processes log messages from the logQueue
+func worker() {
+	for {
+		select {
+		case logMsg := <-logQueue:
+			sendLogToServer(logMsg)
+		case <-stopChan:
+			return
+		}
+	}
+}
+
+// sendLogToServer sends a log message to the remote server
+func sendLogToServer(entry LogEntry) {
+	hostname, _ := os.Hostname()
+	reqBody, err := json.Marshal(&LogRemoteRequest{
+		Hostname: hostname,
+		Message:  entry.formatLogAsJSON(),
+		Level:    entry.level,
+	})
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to marshal log request")
+		return
+	}
+
+	body, err := agent.ProxmoxHTTPRequest(
+		http.MethodPost,
+		"/api2/json/d2d/agent-log",
+		bytes.NewBuffer(reqBody),
+		nil,
+	)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to send log to remote server")
+		return
+	}
+	defer body.Close()
+	_, _ = io.Copy(io.Discard, body)
+}
+
+// StopWorkerPool gracefully shuts down the worker pool
+func StopWorkerPool() {
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	close(stopChan)
+	close(logQueue)
+}
+
+// enqueueLog adds a log message to the logQueue for processing by the worker pool
+func (e *LogEntry) enqueueLog() {
+	select {
+	case logQueue <- *e:
+		// Successfully enqueued
+	default:
+		// If the queue is full, drop the log and log a warning
+		log.Warn().Msg("Log queue is full, dropping log message")
+	}
 }
