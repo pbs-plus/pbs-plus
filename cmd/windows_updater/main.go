@@ -64,13 +64,13 @@ func (u *UpdaterService) runUpdateCheck() {
 	checkAndUpdate := func() {
 		hasActiveBackups, err := u.checkForActiveBackups()
 		if err != nil {
-			syslog.L.Errorf("Failed to check backup status: %v", err)
+			syslog.L.Error(err).WithMessage("failed to check backup status").Write()
 			return
 		}
 
 		agentStopped, err := u.isServiceStopped()
 		if err != nil {
-			syslog.L.Errorf("Failed to check service status: %v", err)
+			syslog.L.Error(err).WithMessage("failed to check service status").Write()
 			agentStopped = false
 		}
 
@@ -80,36 +80,38 @@ func (u *UpdaterService) runUpdateCheck() {
 
 		newVersion, err := u.checkForNewVersion()
 		if err != nil {
-			syslog.L.Errorf("Version check failed: %v", err)
+			syslog.L.Error(err).WithMessage("failed to check version").Write()
 			return
 		}
 
 		if newVersion != "" {
 			mainVersion, err := u.getMainServiceVersion()
 			if err != nil {
-				syslog.L.Errorf("Failed to get main version: %v", err)
+				syslog.L.Error(err).WithMessage("failed to get main version").Write()
 				return
 			}
-			syslog.L.Infof("New version %s available, current version: %s", newVersion, mainVersion)
+			syslog.L.Info().WithMessage("new version available").
+				WithFields(map[string]interface{}{"new": newVersion, "current": mainVersion}).
+				Write()
 
 			// Double-check before updating
 			hasActiveBackups, _ = u.checkForActiveBackups()
 			if hasActiveBackups {
-				syslog.L.Infof("Postponing update: backup started during version check")
+				syslog.L.Info().WithMessage("postponing update due to started backup").Write()
 				return
 			}
 
 			if err := u.performUpdate(); err != nil {
-				syslog.L.Errorf("Update failed: %v", err)
+				syslog.L.Error(err).WithMessage("failed to update").Write()
 				return
 			}
 
-			syslog.L.Infof("Successfully updated to version %s", newVersion)
+			syslog.L.Info().WithMessage("updated to version").WithField("version", newVersion).Write()
 		}
 
 		// Perform cleanup after update check
 		if err := u.cleanupOldUpdates(); err != nil {
-			syslog.L.Errorf("Failed to clean up old updates: %v", err)
+			syslog.L.Error(err).WithMessage("failed to clean up old updates").Write()
 		}
 	}
 
@@ -171,14 +173,8 @@ func main() {
 		return
 	}
 
-	err = syslog.InitializeLogger(s)
-	if err != nil {
-		fmt.Printf("Failed to initialize logger: %v\n", err)
-		return
-	}
-
 	if err := createMutex(); err != nil {
-		syslog.L.Errorf("Error: %v", err)
+		syslog.L.Error(err).Write()
 		os.Exit(1)
 	}
 	defer releaseMutex()
@@ -194,7 +190,7 @@ func main() {
 
 	err = s.Run()
 	if err != nil {
-		syslog.L.Errorf("Service run failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to run service").Write()
 	}
 }
 
@@ -221,7 +217,6 @@ func (u *UpdaterService) readVersionFromFile() (string, error) {
 
 	version := strings.TrimSpace(string(data))
 	if version == "" {
-		syslog.L.Errorf("Version file is empty")
 		return "", fmt.Errorf("version file is empty")
 	}
 

@@ -87,9 +87,7 @@ func IsUPIDRunning(upid string) bool {
 		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
 			return false
 		}
-		if syslog.L != nil {
-			syslog.L.Errorf("error running grep: %v", err)
-		}
+		syslog.L.Error(err).WithField("upid", upid)
 		return false
 	}
 

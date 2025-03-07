@@ -66,7 +66,7 @@ func NewVSSFSServer(jobId string, snapshot snapshots.WinVSSSnapshot) *VSSFSServe
 	}
 
 	if err := s.initializeStatFS(); err != nil && syslog.L != nil {
-		syslog.L.Errorf("initializeStatFS error: %s", err)
+		syslog.L.Error(err).WithMessage("failed to initialize statfs").Write()
 	}
 
 	return s
@@ -311,8 +311,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	if payload.Offset >= fh.fileSize {
 		streamCallback := func(stream *smux.Stream) {
 			err := binarystream.SendDataFromReader(nil, payload.Length, stream)
-			if err != nil && syslog.L != nil {
-				syslog.L.Errorf("handleReadAt error: %v", err)
+			if err != nil {
+				syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 			}
 		}
 		return arpc.Response{
@@ -354,8 +354,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 				}()
 
 				err := binarystream.SendDataFromReader(reader, payload.Length, stream)
-				if err != nil && syslog.L != nil {
-					syslog.L.Errorf("handleReadAt error: %v", err)
+				if err != nil {
+					syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 				}
 			}
 
@@ -386,8 +386,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 
 	streamCallback := func(stream *smux.Stream) {
 		err := binarystream.SendDataFromReader(reader, int(bytesRead), stream)
-		if err != nil && syslog.L != nil {
-			syslog.L.Errorf("handleReadAt error: %v", err)
+		if err != nil {
+			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 		}
 	}
 
