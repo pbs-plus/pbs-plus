@@ -5,6 +5,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
@@ -89,10 +90,14 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 	}
 
 	snapshot, err := snapshots.Snapshot((reqData.JobId), (reqData.Drive))
-	if err != nil {
+	if err != nil && snapshot == (snapshots.WinVSSSnapshot{}) {
 		session.Close()
 		return arpc.Response{}, err
 	}
+	if snapshot.Id == "" && filepath.VolumeName(snapshot.SnapshotPath)+"\\" == snapshot.SnapshotPath {
+		syslog.L.Warnf("Warning: VSS snapshot failed and has switched to direct backup mode.")
+	}
+
 	session.snapshot = snapshot
 
 	fs := vssfs.NewVSSFSServer((reqData.JobId), snapshot)
