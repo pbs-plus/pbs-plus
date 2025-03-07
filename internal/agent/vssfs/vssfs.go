@@ -5,6 +5,7 @@ package vssfs
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -134,9 +135,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Log the panic
-			if syslog.L != nil {
-				syslog.L.Errorf("handleOpenFile panic: %v", r)
-			}
+			syslog.L.Error(fmt.Errorf("%v", r)).WithField("payload", req.Payload).Write()
 			// Set the error to indicate a panic occurred
 			err = os.ErrInvalid
 		}
@@ -280,9 +279,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Log the panic
-			if syslog.L != nil {
-				syslog.L.Errorf("handleReadDir panic: %v", r)
-			}
+			syslog.L.Error(fmt.Errorf("%v", r)).WithField("payload", req.Payload).Write()
 			// Set the error to indicate a panic occurred
 			err = os.ErrInvalid
 		}
@@ -322,9 +319,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Log the panic
-			if syslog.L != nil {
-				syslog.L.Errorf("handleReadAt panic: %v", r)
-			}
+			syslog.L.Error(fmt.Errorf("%v", r)).WithField("payload", req.Payload).Write()
 			// Set the error to indicate a panic occurred
 			err = os.ErrInvalid
 		}
