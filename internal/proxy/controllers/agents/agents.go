@@ -38,13 +38,13 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		switch reqParsed.Level {
 		case "info":
-			syslog.L.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+			syslog.L.Info().WithMessage(reqParsed.Message).WithField("agent", reqParsed.Hostname).Write()
 		case "error":
-			syslog.L.Errorf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+			syslog.L.Error(fmt.Errorf(reqParsed.Message)).WithField("agent", reqParsed.Hostname).Write()
 		case "warn":
-			syslog.L.Warnf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+			syslog.L.Warn().WithMessage(reqParsed.Message).WithField("agent", reqParsed.Hostname).Write()
 		default:
-			syslog.L.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
+			syslog.L.Info().WithMessage(reqParsed.Message).WithField("agent", reqParsed.Hostname).Write()
 		}
 
 		w.Header().Set("Content-Type", "application/json")

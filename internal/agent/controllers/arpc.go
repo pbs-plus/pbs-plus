@@ -57,7 +57,7 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Infof("Received backup request for job: %s.", (reqData.JobId))
+	syslog.L.Info().WithMessage("received backup request for job").WithField("id", reqData.JobId).Write()
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
@@ -113,7 +113,7 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Infof("Received closure request for job %s.", (reqData.JobId))
+	syslog.L.Info().WithMessage("received closure request for job").WithField("id", reqData.JobId).Write()
 
 	session, ok := activeSessions.Get((reqData.JobId))
 	if !ok {

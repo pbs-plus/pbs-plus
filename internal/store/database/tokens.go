@@ -95,7 +95,7 @@ func (database *Database) GetAllTokens() ([]types.AgentToken, error) {
 
 		token, err := database.GetToken(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
 		if err != nil || token == nil {
-			syslog.L.Errorf("GetAllTokens: error getting token: %v", err)
+			syslog.L.Error(err).WithField("id", file.Name())
 			continue
 		}
 

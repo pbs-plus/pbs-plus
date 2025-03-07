@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mxk/go-vss"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 var (
@@ -112,9 +113,9 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 				// try re-registering writers
 				if attempts == 0 && (strings.Contains(err.Error(), "VSS") ||
 					strings.Contains(err.Error(), "shadow copy")) {
-					fmt.Println("VSS error detected, attempting to re-register writers...")
+					syslog.L.Error(err).WithMessage("vss error detected, attempting to re-register").Write()
 					if reregErr := reregisterVSSWriters(); reregErr != nil {
-						fmt.Printf("Warning: failed to re-register VSS writers: %v\n", reregErr)
+						syslog.L.Error(reregErr).WithMessage("failed to re-register VSS writers")
 					}
 					// Break inner loop to start fresh after re-registration
 					break

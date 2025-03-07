@@ -18,9 +18,7 @@ func mapWinError(err error, helper string) error {
 	case windows.ERROR_ACCESS_DENIED:
 		return os.ErrPermission
 	default:
-		if syslog.L != nil {
-			syslog.L.Errorf("Unknown Win Error (%s): %v", helper, err)
-		}
+		syslog.L.Error(err).WithMessage("unknown windows error").WithField("helper", helper).Write()
 		return &os.PathError{
 			Op:   "access",
 			Path: "",
