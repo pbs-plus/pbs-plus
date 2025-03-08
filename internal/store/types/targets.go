@@ -7,6 +7,7 @@ type Target struct {
 	AgentVersion     string `json:"agent_version"`
 	ConnectionStatus bool   `json:"connection_status"`
 	Auth             string `config:"type=string" json:"auth"`
+	JobCount         int    `json:"job_count"`
 	TokenUsed        string `config:"key=token_used,type=string" json:"token_used"`
 	DriveType        string `config:"key=drive_type,type=string" json:"drive_type"`
 	DriveName        string `config:"key=drive_name,type=string" json:"drive_name"`

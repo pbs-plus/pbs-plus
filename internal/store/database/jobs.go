@@ -160,6 +160,25 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 	return job, nil
 }
 
+func (database *Database) getJobTarget(id string) string {
+	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
+	configData, err := database.jobsConfig.Parse(jobPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		return ""
+	}
+
+	section, exists := configData.Sections[id]
+	if !exists {
+		return ""
+	}
+	job := &section.Properties
+
+	return job.Target
+}
+
 func (database *Database) getJob(id string) (*types.Job, error) {
 	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
 	configData, err := database.jobsConfig.Parse(jobPath)
