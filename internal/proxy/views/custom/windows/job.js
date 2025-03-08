@@ -130,6 +130,9 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             emptyText: gettext("Root"),
             name: "ns",
             reference: "namespace",
+            cbind: {
+              deleteEmpty: "{!isCreate}",
+            },
           },
         ],
 
