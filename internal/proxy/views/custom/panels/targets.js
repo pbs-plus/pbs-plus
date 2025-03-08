@@ -16,6 +16,28 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }).show();
     },
 
+    addJob: function () {
+      let me = this;
+      let view = me.getView();
+      let selection = view.getSelection();
+
+      if (!selection || selection.length < 1) {
+        return;
+      }
+
+      targetName = selection[0].data.name;
+
+      Ext.create("PBS.D2DManagement.BackupJobEdit", {
+        autoShow: true,
+        jobData: { target: targetName },
+        listeners: {
+          destroy: function () {
+            me.reload();
+          },
+        },
+      }).show();
+    },
+
     onEdit: function () {
       let me = this;
       let view = me.getView();
@@ -91,6 +113,12 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       handler: "onAdd",
       selModel: false,
     },
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Create Job"),
+      handler: "addJob",
+      disabled: true,
+    },
     "-",
     {
       text: gettext("Edit"),
@@ -117,6 +145,11 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       text: gettext("Path"),
       dataIndex: "path",
       flex: 2,
+    },
+    {
+      text: gettext("Backup Job Count"),
+      dataIndex: "job_count",
+      flex: 1,
     },
     {
       text: gettext("Drive Type"),
