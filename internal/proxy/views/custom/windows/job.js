@@ -1,9 +1,9 @@
-var backupModes = Ext.create('Ext.data.Store', {
-  fields: ['display', 'value'],
+var backupModes = Ext.create("Ext.data.Store", {
+  fields: ["display", "value"],
   data: [
-    {'display': 'Metadata', 'value': 'metadata'},
-    {'display': 'Data', 'value': 'data'},
-    {'display': 'Legacy', 'value': 'legacy'},
+    { display: "Metadata", value: "metadata" },
+    { display: "Data", value: "data" },
+    { display: "Legacy", value: "legacy" },
   ],
 });
 
@@ -43,6 +43,13 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
   initComponent: function () {
     let me = this;
     me.callParent();
+
+    if (me.jobData) {
+      let inputPanel = me.down("inputpanel");
+      if (inputPanel && inputPanel.setValues) {
+        inputPanel.setValues(me.jobData);
+      }
+    }
   },
 
   items: {
@@ -118,13 +125,13 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             name: "retry",
           },
           {
-            xtype: 'combo',
-            fieldLabel: gettext('Backup Mode'),
-            name: 'mode',
-            queryMode: 'local',
+            xtype: "combo",
+            fieldLabel: gettext("Backup Mode"),
+            name: "mode",
+            queryMode: "local",
             store: backupModes,
-            displayField: 'display',
-            valueField: 'value',
+            displayField: "display",
+            valueField: "value",
             editable: false,
             anyMatch: true,
             forceSelection: true,
