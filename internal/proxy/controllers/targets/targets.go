@@ -28,10 +28,25 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		currJobs, err := storeInstance.Database.GetAllBareJobs()
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
 		for i := range all {
 			if all[i].IsAgent {
 				targetSplit := strings.Split(all[i].Name, " - ")
 				hostname := targetSplit[0]
+
+				jobCount := 0
+				for _, job := range currJobs {
+					if job.Target == all[i].Name {
+						jobCount++
+					}
+				}
+
+				all[i].JobCount = jobCount
 
 				arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
 				if ok {

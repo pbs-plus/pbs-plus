@@ -160,6 +160,25 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 	return job, nil
 }
 
+func (database *Database) getJobTarget(id string) string {
+	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
+	configData, err := database.jobsConfig.Parse(jobPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		return ""
+	}
+
+	section, exists := configData.Sections[id]
+	if !exists {
+		return ""
+	}
+	job := &section.Properties
+
+	return job.Target
+}
+
 func (database *Database) getJob(id string) (*types.Job, error) {
 	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
 	configData, err := database.jobsConfig.Parse(jobPath)
@@ -294,6 +313,30 @@ func (database *Database) UpdateJob(job types.Job) error {
 	}
 
 	return nil
+}
+
+func (database *Database) GetAllBareJobs() ([]types.Job, error) {
+	files, err := os.ReadDir(database.paths["jobs"])
+	if err != nil {
+		return nil, fmt.Errorf("GetAllJobs: error reading jobs directory: %w", err)
+	}
+
+	var jobs []types.Job
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		job, err := database.getJob(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
+		if err != nil || job == nil {
+			syslog.L.Error(err).WithField("id", job.ID).Write()
+			continue
+		}
+
+		jobs = append(jobs, *job)
+	}
+
+	return jobs, nil
 }
 
 func (database *Database) GetAllJobs() ([]types.Job, error) {
