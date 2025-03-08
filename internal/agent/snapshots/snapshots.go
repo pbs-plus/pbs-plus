@@ -11,6 +11,7 @@ type Snapshot struct {
 	Path        string          `json:"path"`
 	TimeStarted time.Time       `json:"time_started"`
 	SourcePath  string          `json:"source_path"`
+	Direct      bool            `json:"direct"`
 	Handler     SnapshotHandler `json:"-"`
 }
 

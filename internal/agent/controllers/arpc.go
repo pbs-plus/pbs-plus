@@ -40,7 +40,7 @@ func (s *backupSession) Close() {
 		if s.fs != nil {
 			s.fs.Close()
 		}
-		if s.snapshot != (snapshots.Snapshot{}) {
+		if s.snapshot != (snapshots.Snapshot{}) && !s.snapshot.Direct && s.snapshot.Handler != nil {
 			s.snapshot.Handler.DeleteSnapshot(s.snapshot)
 		}
 		if s.store != nil {
@@ -102,6 +102,7 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 			Path:        path,
 			TimeStarted: time.Now(),
 			SourcePath:  reqData.Drive,
+			Direct:      true,
 		}
 	default:
 		manager := snapshots.NewSnapshotManager()
@@ -118,6 +119,7 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 				Path:        path,
 				TimeStarted: time.Now(),
 				SourcePath:  reqData.Drive,
+				Direct:      true,
 			}
 		}
 	}
