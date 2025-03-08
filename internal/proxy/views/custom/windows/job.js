@@ -41,17 +41,14 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
     me.method = id ? "PUT" : "POST";
     me.autoLoad = !!id;
     me.scheduleValue = id ? null : "";
+    me.backupModeValue = id ? null : "metadata";
+    me.sourceModeValue = id ? null : "snapshot";
     me.authid = id ? null : Proxmox.UserName;
     me.editDatastore = me.datastore === undefined && me.isCreate;
     return {};
   },
 
-  viewModel: {
-    data: {
-      modeValue: "metadata",
-      sourceModeValue: "snapshot",
-    },
-  },
+  viewModel: {},
 
   controller: {
     xclass: "Ext.app.ViewController",
@@ -76,14 +73,6 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       let inputPanel = me.down("inputpanel");
       if (inputPanel && inputPanel.setValues) {
         inputPanel.setValues(me.jobData);
-      }
-
-      if (me.jobData.mode) {
-        me.getViewModel().set("modeValue", me.jobData.mode);
-      }
-
-      if (me.jobData.sourcemode) {
-        me.getViewModel().set("sourceModeValue", me.jobData.sourcemode);
       }
     }
   },
@@ -169,13 +158,13 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             store: backupModes,
             displayField: "display",
             valueField: "value",
-            bind: {
-              value: "{modeValue}",
-            },
             editable: false,
             anyMatch: true,
             forceSelection: true,
             allowBlank: true,
+            cbind: {
+              value: "{backupModeValue}",
+            },
           },
           {
             xtype: "combo",
@@ -185,13 +174,13 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             store: sourceModes,
             displayField: "display",
             valueField: "value",
-            bind: {
-              value: "{sourceModeValue}",
-            },
             editable: false,
             anyMatch: true,
             forceSelection: true,
             allowBlank: true,
+            cbind: {
+              value: "{sourceModeValue}",
+            },
           },
         ],
 
