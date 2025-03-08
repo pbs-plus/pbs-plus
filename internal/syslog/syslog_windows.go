@@ -33,6 +33,7 @@ func (l *Logger) SetServiceLogger(s service.Service) error {
 
 	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
 		w.Out = &LogWriter{logger: logger}
+		w.NoColor = true
 	})).With().
 		CallerWithSkipFrameCount(3).
 		Timestamp().
