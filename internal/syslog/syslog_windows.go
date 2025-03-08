@@ -15,7 +15,6 @@ func init() {
 	zlogger := zerolog.New(zerolog.NewConsoleWriter()).With().
 		CallerWithSkipFrameCount(5).
 		Timestamp().
-		Caller().
 		Logger()
 
 	L = &Logger{zlog: &zlogger}
@@ -37,7 +36,6 @@ func (l *Logger) SetServiceLogger(s service.Service) error {
 	})).With().
 		CallerWithSkipFrameCount(5).
 		Timestamp().
-		Caller().
 		Logger()
 
 	l.zlog = &zlogger
