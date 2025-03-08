@@ -207,8 +207,10 @@ func (req *CloseReq) Decode(buf []byte) error {
 
 // BackupReq represents a request to back up a file
 type BackupReq struct {
-	JobId string
-	Drive string
+	JobId      string
+	Drive      string
+	SourceMode string
+	Extras     string
 }
 
 func (req *BackupReq) Encode() ([]byte, error) {
@@ -217,6 +219,12 @@ func (req *BackupReq) Encode() ([]byte, error) {
 		return nil, err
 	}
 	if err := enc.WriteString(req.Drive); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteString(req.SourceMode); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteString(req.Extras); err != nil {
 		return nil, err
 	}
 	return enc.Bytes(), nil
@@ -237,6 +245,16 @@ func (req *BackupReq) Decode(buf []byte) error {
 		return err
 	}
 	req.Drive = drive
+	sourceMode, err := dec.ReadString()
+	if err != nil {
+		return err
+	}
+	req.SourceMode = sourceMode
+	extras, err := dec.ReadString()
+	if err != nil {
+		return err
+	}
+	req.Extras = extras
 	return nil
 }
 

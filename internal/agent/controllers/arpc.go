@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
@@ -64,19 +65,19 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 	if err != nil {
 		return arpc.Response{}, err
 	}
-	if existingSession, ok := activeSessions.Get((reqData.JobId)); ok {
+	if existingSession, ok := activeSessions.Get(reqData.JobId); ok {
 		existingSession.Close()
 	}
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	session := &backupSession{
-		jobId:  (reqData.JobId),
+		jobId:  reqData.JobId,
 		ctx:    sessionCtx,
 		cancel: cancel,
 		store:  store,
 	}
-	activeSessions.Set((reqData.JobId), session)
+	activeSessions.Set(reqData.JobId, session)
 
-	if hasActive, err := store.HasActiveBackupForJob((reqData.JobId)); hasActive || err != nil {
+	if hasActive, err := store.HasActiveBackupForJob(reqData.JobId); hasActive || err != nil {
 		if err != nil {
 			return arpc.Response{}, err
 		}
@@ -84,23 +85,36 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 		return arpc.Response{}, err
 	}
 
-	if err := store.StartBackup((reqData.JobId)); err != nil {
+	if err := store.StartBackup(reqData.JobId); err != nil {
 		session.Close()
 		return arpc.Response{}, err
 	}
 
-	snapshot, err := snapshots.Snapshot((reqData.JobId), (reqData.Drive))
-	if err != nil && snapshot == (snapshots.WinVSSSnapshot{}) {
-		session.Close()
-		return arpc.Response{}, err
-	}
-	if snapshot.Id == "" && filepath.VolumeName(snapshot.SnapshotPath)+"\\" == snapshot.SnapshotPath {
-		syslog.L.Warn().WithMessage("Warning: VSS snapshot failed and has switched to direct backup mode.").Write()
+	var snapshot snapshots.WinVSSSnapshot
+
+	switch reqData.SourceMode {
+	case "direct":
+		volName := filepath.VolumeName(fmt.Sprintf("%s:", reqData.Drive))
+		snapshot = snapshots.WinVSSSnapshot{
+			SnapshotPath: volName + "\\",
+			Id:           "",
+			TimeStarted:  time.Now(),
+			DriveLetter:  reqData.Drive,
+		}
+	default:
+		snapshot, err := snapshots.Snapshot(reqData.JobId, reqData.Drive)
+		if err != nil && snapshot == (snapshots.WinVSSSnapshot{}) {
+			session.Close()
+			return arpc.Response{}, err
+		}
+		if snapshot.Id == "" && filepath.VolumeName(snapshot.SnapshotPath)+"\\" == snapshot.SnapshotPath {
+			syslog.L.Warn().WithMessage("Warning: VSS snapshot failed and has switched to direct backup mode.").Write()
+		}
 	}
 
 	session.snapshot = snapshot
 
-	fs := vssfs.NewVSSFSServer((reqData.JobId), snapshot)
+	fs := vssfs.NewVSSFSServer(reqData.JobId, snapshot)
 	if fs == nil {
 		session.Close()
 		return arpc.Response{}, fmt.Errorf("fs is nil")
@@ -120,7 +134,7 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 
 	syslog.L.Info().WithMessage("received closure request for job").WithField("id", reqData.JobId).Write()
 
-	session, ok := activeSessions.Get((reqData.JobId))
+	session, ok := activeSessions.Get(reqData.JobId)
 	if !ok {
 		err := fmt.Errorf("no ongoing backup")
 		return arpc.Response{}, err
