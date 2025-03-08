@@ -315,30 +315,6 @@ func (database *Database) UpdateJob(job types.Job) error {
 	return nil
 }
 
-func (database *Database) GetAllBareJobs() ([]types.Job, error) {
-	files, err := os.ReadDir(database.paths["jobs"])
-	if err != nil {
-		return nil, fmt.Errorf("GetAllJobs: error reading jobs directory: %w", err)
-	}
-
-	var jobs []types.Job
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		job, err := database.getJob(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
-		if err != nil || job == nil {
-			syslog.L.Error(err).WithField("id", job.ID).Write()
-			continue
-		}
-
-		jobs = append(jobs, *job)
-	}
-
-	return jobs, nil
-}
-
 func (database *Database) GetAllJobs() ([]types.Job, error) {
 	files, err := os.ReadDir(database.paths["jobs"])
 	if err != nil {
