@@ -219,13 +219,11 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("comment") != "" {
 				job.Comment = r.FormValue("comment")
 			}
-			if r.FormValue("ns") != "" {
-				job.Namespace = r.FormValue("ns")
-			}
 			if r.FormValue("notification-mode") != "" {
 				job.NotificationMode = r.FormValue("notification-mode")
 			}
 
+			job.Namespace = r.FormValue("ns")
 			job.Exclusions = []types.Exclusion{}
 
 			if r.FormValue("rawexclusions") != "" {
