@@ -16,35 +16,17 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-type LogRequest struct {
-	Hostname string `json:"hostname"`
-	Message  string `json:"message"`
-	Level    string `json:"level"`
-}
-
 func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
-		var reqParsed LogRequest
-		err := json.NewDecoder(r.Body).Decode(&reqParsed)
+		err := syslog.ParseAndLogWindowsEntry(r.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
 			return
-		}
-
-		switch reqParsed.Level {
-		case "info":
-			syslog.L.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
-		case "error":
-			syslog.L.Errorf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
-		case "warn":
-			syslog.L.Warnf("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
-		default:
-			syslog.L.Infof("PBS Agent [%s]: %s", reqParsed.Hostname, reqParsed.Message)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

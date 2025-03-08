@@ -99,7 +99,7 @@ func (fs *ARPCFS) Open(filename string) (ARPCFile, error) {
 
 func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFile, error) {
 	if fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
 		return ARPCFile{}, os.ErrInvalid
 	}
 
@@ -133,7 +133,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 func (fs *ARPCFS) Stat(filename string) (types.VSSFileInfo, error) {
 	var fi types.VSSFileInfo
 	if fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
 		return types.VSSFileInfo{}, os.ErrInvalid
 	}
 
@@ -158,20 +158,20 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	const statFSKey = "statFS"
 
 	if fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
 		return types.StatFS{}, os.ErrInvalid
 	}
 
 	var fsStat types.StatFS
 	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/StatFS", nil)
 	if err != nil {
-		syslog.L.Errorf("StatFS RPC failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to handle statfs").Write()
 		return types.StatFS{}, err
 	}
 
 	err = fsStat.Decode(raw)
 	if err != nil {
-		syslog.L.Errorf("StatFS RPC failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to handle statfs decode").Write()
 		return types.StatFS{}, os.ErrInvalid
 	}
 
@@ -181,7 +181,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 // ReadDir first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 	if fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
 		return nil, os.ErrInvalid
 	}
 

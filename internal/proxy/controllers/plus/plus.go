@@ -47,7 +47,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 			if err != nil || backupResp.Status != 200 {
 				if err != nil {
 					err = errors.New(backupResp.Message)
-					syslog.L.Errorf("MountHandler: Failed to send backup request to target -> %v", err)
+					syslog.L.Error(err).Write()
 				}
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> %v", err), http.StatusInternalServerError)
 				return
@@ -62,7 +62,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			err = mount.Mount(arpcFS, mntPath)
 			if err != nil {
-				syslog.L.Errorf("MountHandler: Failed to create fuse connection for target -> %v", err)
+				syslog.L.Error(err).Write()
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to create fuse connection for target -> %v", err), http.StatusInternalServerError)
 				return
 			}
@@ -157,7 +157,7 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 		// Read the embedded PowerShell script
 		scriptContent, err := scriptFS.ReadFile("install-agent.ps1")
 		if err != nil {
-			syslog.L.Errorf("Failed to read embedded script: %v", err)
+			syslog.L.Error(err).Write()
 			http.Error(w, "failed to write response body", http.StatusInternalServerError)
 			return
 		}
@@ -165,7 +165,7 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 		// Parse the template
 		tmpl, err := template.New("script").Parse(string(scriptContent))
 		if err != nil {
-			syslog.L.Errorf("Failed to parse template: %v", err)
+			syslog.L.Error(err).Write()
 			http.Error(w, "failed to write response body", http.StatusInternalServerError)
 			return
 		}
@@ -173,7 +173,7 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		err = tmpl.Execute(w, config)
 		if err != nil {
-			syslog.L.Errorf("Error executing template: %v", err)
+			syslog.L.Error(err).Write()
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
