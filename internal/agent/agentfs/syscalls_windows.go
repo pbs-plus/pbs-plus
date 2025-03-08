@@ -1,13 +1,13 @@
 //go:build windows
 
-package vssfs
+package agentfs
 
 import (
 	"fmt"
 	"strings"
 	"unsafe"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"golang.org/x/sys/windows"
 )
 
@@ -69,11 +69,6 @@ type FileAllocatedRangeBuffer struct {
 	FileOffset int64 // Starting offset of the range
 	Length     int64 // Length of the range
 }
-
-const (
-	SeekData = 3 // SEEK_DATA: seek to the next data
-	SeekHole = 4 // SEEK_HOLE: seek to the next hole
-)
 
 func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocatedRangeBuffer, error) {
 	// Handle edge case: zero file size

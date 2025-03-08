@@ -1,6 +1,6 @@
 //go:build windows
 
-package vssfs
+package agentfs
 
 import (
 	"os"

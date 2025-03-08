@@ -1,6 +1,6 @@
 //go:build windows
 
-package vssfs
+package agentfs
 
 import (
 	"errors"
@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"golang.org/x/sys/windows"
 )
 
@@ -209,7 +209,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 					name := syscall.UTF16ToString(nameSlice)
 					if name != "." && name != ".." && fullInfo.FileAttributes&excludedAttrs == 0 {
 						mode := windowsAttributesToFileMode(fullInfo.FileAttributes)
-						entries = append(entries, types.VSSDirEntry{
+						entries = append(entries, types.AgentDirEntry{
 							Name: name,
 							Mode: mode,
 						})
@@ -229,7 +229,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 					name := syscall.UTF16ToString(nameSlice)
 					if name != "." && name != ".." && bothInfo.FileAttributes&excludedAttrs == 0 {
 						mode := windowsAttributesToFileMode(bothInfo.FileAttributes)
-						entries = append(entries, types.VSSDirEntry{
+						entries = append(entries, types.AgentDirEntry{
 							Name: name,
 							Mode: mode,
 						})

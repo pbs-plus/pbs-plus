@@ -1,18 +1,17 @@
-//go:build windows
-
 package controllers
 
 import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
@@ -31,8 +30,8 @@ type backupSession struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	store    *agent.BackupStore
-	snapshot snapshots.WinVSSSnapshot
-	fs       *vssfs.VSSFSServer
+	snapshot snapshots.Snapshot
+	fs       *agentfs.AgentFSServer
 	once     sync.Once
 }
 
@@ -41,8 +40,8 @@ func (s *backupSession) Close() {
 		if s.fs != nil {
 			s.fs.Close()
 		}
-		if s.snapshot != (snapshots.WinVSSSnapshot{}) {
-			s.snapshot.Close()
+		if s.snapshot != (snapshots.Snapshot{}) {
+			s.snapshot.Handler.DeleteSnapshot(s.snapshot)
 		}
 		if s.store != nil {
 			_ = s.store.EndBackup(s.jobId)
@@ -90,31 +89,42 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 		return arpc.Response{}, err
 	}
 
-	var snapshot snapshots.WinVSSSnapshot
+	var snapshot snapshots.Snapshot
 
 	switch reqData.SourceMode {
 	case "direct":
-		volName := filepath.VolumeName(fmt.Sprintf("%s:", reqData.Drive))
-		snapshot = snapshots.WinVSSSnapshot{
-			SnapshotPath: volName + "\\",
-			Id:           "",
-			TimeStarted:  time.Now(),
-			DriveLetter:  reqData.Drive,
+		path := reqData.Drive
+		if runtime.GOOS == "windows" {
+			volName := filepath.VolumeName(fmt.Sprintf("%s:", reqData.Drive))
+			path = volName + "\\"
+		}
+		snapshot = snapshots.Snapshot{
+			Path:        path,
+			TimeStarted: time.Now(),
+			SourcePath:  reqData.Drive,
 		}
 	default:
-		snapshot, err := snapshots.Snapshot(reqData.JobId, reqData.Drive)
-		if err != nil && snapshot == (snapshots.WinVSSSnapshot{}) {
-			session.Close()
-			return arpc.Response{}, err
-		}
-		if snapshot.Id == "" && filepath.VolumeName(snapshot.SnapshotPath)+"\\" == snapshot.SnapshotPath {
-			syslog.L.Warn().WithMessage("Warning: VSS snapshot failed and has switched to direct backup mode.").Write()
+		manager := snapshots.NewSnapshotManager()
+		snapshot, err := manager.CreateSnapshot(context.Background(), reqData.JobId, reqData.Drive)
+		if err != nil && snapshot == (snapshots.Snapshot{}) {
+			syslog.L.Error(err).WithMessage("Warning: VSS snapshot failed and has switched to direct backup mode.").Write()
+
+			path := reqData.Drive
+			if runtime.GOOS == "windows" {
+				volName := filepath.VolumeName(fmt.Sprintf("%s:", reqData.Drive))
+				path = volName + "\\"
+			}
+			snapshot = snapshots.Snapshot{
+				Path:        path,
+				TimeStarted: time.Now(),
+				SourcePath:  reqData.Drive,
+			}
 		}
 	}
 
 	session.snapshot = snapshot
 
-	fs := vssfs.NewVSSFSServer(reqData.JobId, snapshot)
+	fs := agentfs.NewAgentFSServer(reqData.JobId, snapshot)
 	if fs == nil {
 		session.Close()
 		return arpc.Response{}, fmt.Errorf("fs is nil")

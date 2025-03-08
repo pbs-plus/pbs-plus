@@ -32,8 +32,8 @@ func (resp *LseekResp) Decode(buf []byte) error {
 	return nil
 }
 
-// VSSFileInfo represents file metadata
-type VSSFileInfo struct {
+// AgentFileInfo represents file metadata
+type AgentFileInfo struct {
 	Name    string
 	Size    int64
 	Mode    uint32
@@ -42,7 +42,7 @@ type VSSFileInfo struct {
 	Blocks  uint64
 }
 
-func (info *VSSFileInfo) Encode() ([]byte, error) {
+func (info *AgentFileInfo) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(info.Name) + 8 + 4 + 8 + 1 + 8)
 	if err := enc.WriteString(info.Name); err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func (info *VSSFileInfo) Encode() ([]byte, error) {
 	return enc.Bytes(), nil
 }
 
-func (info *VSSFileInfo) Decode(buf []byte) error {
+func (info *AgentFileInfo) Decode(buf []byte) error {
 	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
 		return err
@@ -103,13 +103,13 @@ func (info *VSSFileInfo) Decode(buf []byte) error {
 	return nil
 }
 
-// VSSDirEntry represents a directory entry
-type VSSDirEntry struct {
+// AgentDirEntry represents a directory entry
+type AgentDirEntry struct {
 	Name string
 	Mode uint32
 }
 
-func (entry *VSSDirEntry) Encode() ([]byte, error) {
+func (entry *AgentDirEntry) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(entry.Name) + 4)
 	if err := enc.WriteString(entry.Name); err != nil {
 		return nil, err
@@ -120,7 +120,7 @@ func (entry *VSSDirEntry) Encode() ([]byte, error) {
 	return enc.Bytes(), nil
 }
 
-func (entry *VSSDirEntry) Decode(buf []byte) error {
+func (entry *AgentDirEntry) Decode(buf []byte) error {
 	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
 		return err
