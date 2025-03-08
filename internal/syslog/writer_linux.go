@@ -3,10 +3,9 @@
 package syslog
 
 import (
+	"log"
 	"log/syslog"
 	"strings"
-
-	"github.com/rs/zerolog/log"
 )
 
 // SyslogWriter is a custom writer that sends the formatted log output

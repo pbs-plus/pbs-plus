@@ -4,8 +4,6 @@ package syslog
 
 import (
 	"fmt"
-	"os"
-	"time"
 
 	"github.com/kardianos/service"
 	"github.com/rs/zerolog"
@@ -14,10 +12,7 @@ import (
 
 func init() {
 	// Configure zerolog to output via our EventLogWriter wrapped in a ConsoleWriter.
-	zlogger := zerolog.New(zerolog.ConsoleWriter{
-		Out:        os.Stdout,
-		TimeFormat: time.RFC3339,
-	}).With().
+	zlogger := zerolog.New(zerolog.NewConsoleWriter()).With().
 		CallerWithSkipFrameCount(3).
 		Timestamp().
 		Caller().
@@ -36,11 +31,9 @@ func (l *Logger) SetServiceLogger(s service.Service) error {
 		return fmt.Errorf("failed to set service logger: %w", err)
 	}
 
-	zlogger := zerolog.New(zerolog.ConsoleWriter{
-		Out:        &LogWriter{logger: logger},
-		NoColor:    true,
-		TimeFormat: time.RFC3339,
-	}).With().
+	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
+		w.Out = &LogWriter{logger: logger}
+	})).With().
 		CallerWithSkipFrameCount(3).
 		Timestamp().
 		Caller().
