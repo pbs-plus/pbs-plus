@@ -13,7 +13,7 @@ func init() {
 	logger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
 		w.Out = &LogWriter{logger: sysWriter}
 		w.NoColor = true
-	})).With().Timestamp().CallerWithSkipFrameCount(5).Logger()
+	})).With().Timestamp().CallerWithSkipFrameCount(4).Logger()
 
 	L = &Logger{zlog: &logger}
 }
