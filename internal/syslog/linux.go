@@ -167,19 +167,20 @@ func (e *LogEntry) Write() {
 		}
 	} else {
 		fallbackLogger := zlog.With().
+			Timestamp().
 			CallerWithSkipFrameCount(3).
 			Fields(e.Fields).
 			Logger()
 
 		switch e.Level {
 		case "info":
-			fallbackLogger.Info().Msg(formattedMsg)
+			fallbackLogger.Info().Err(e.Err).Msg(e.Message)
 		case "warn":
-			fallbackLogger.Warn().Msg(formattedMsg)
+			fallbackLogger.Warn().Err(e.Err).Msg(e.Message)
 		case "error":
-			fallbackLogger.Error().Msg(formattedMsg)
+			fallbackLogger.Error().Err(e.Err).Msg(e.Message)
 		default:
-			fallbackLogger.Info().Msg(formattedMsg)
+			fallbackLogger.Info().Err(e.Err).Msg(e.Message)
 		}
 	}
 }
@@ -190,6 +191,7 @@ func (e *LogEntry) formatLogAsJSON() string {
 
 	logger := zerolog.New(&buf).With().
 		Timestamp().
+		CallerWithSkipFrameCount(3).
 		Fields(e.Fields).
 		Logger()
 
