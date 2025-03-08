@@ -18,8 +18,8 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 		})
 	})
 
-	t.Run("VSSFileInfo", func(t *testing.T) {
-		original := &VSSFileInfo{
+	t.Run("AgentFileInfo", func(t *testing.T) {
+		original := &AgentFileInfo{
 			Name:    "testfile.txt",
 			Size:    1024,
 			Mode:    0644,
@@ -28,17 +28,17 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 			Blocks:  8,
 		}
 		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
-			return &VSSFileInfo{}
+			return &AgentFileInfo{}
 		})
 	})
 
-	t.Run("VSSDirEntry", func(t *testing.T) {
-		original := &VSSDirEntry{
+	t.Run("AgentDirEntry", func(t *testing.T) {
+		original := &AgentDirEntry{
 			Name: "subdir",
 			Mode: 0755,
 		}
 		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
-			return &VSSDirEntry{}
+			return &AgentDirEntry{}
 		})
 	})
 

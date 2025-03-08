@@ -13,7 +13,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 

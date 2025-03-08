@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )

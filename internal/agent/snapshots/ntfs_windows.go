@@ -5,7 +5,6 @@ package snapshots
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,17 +16,64 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
-var (
-	ErrSnapshotTimeout  = errors.New("timeout waiting for in-progress snapshot")
-	ErrSnapshotCreation = errors.New("failed to create snapshot")
-	ErrInvalidSnapshot  = errors.New("invalid snapshot")
-)
+type NtfsSnapshotHandler struct{}
 
-type WinVSSSnapshot struct {
-	SnapshotPath string    `json:"path"`
-	Id           string    `json:"vss_id"`
-	TimeStarted  time.Time `json:"time_started"`
-	DriveLetter  string
+func (w *NtfsSnapshotHandler) CreateSnapshot(ctx context.Context, jobId string, sourcePath string) (Snapshot, error) {
+	// Extract the drive letter from the source path
+	driveLetter := sourcePath[:1] // Assuming sourcePath is like "C:\\path\\to\\source"
+	volName := fmt.Sprintf("%s:", driveLetter)
+
+	vssFolder, err := getVSSFolder()
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("error getting VSS folder: %w", err)
+	}
+
+	snapshotPath := filepath.Join(vssFolder, jobId)
+	timeStarted := time.Now()
+
+	// Cleanup any existing snapshot
+	cleanupExistingSnapshot(snapshotPath)
+
+	// Create the snapshot with retry logic
+	if err := createSnapshotWithRetry(ctx, snapshotPath, volName); err != nil {
+		cleanupExistingSnapshot(snapshotPath)
+		return Snapshot{}, fmt.Errorf("snapshot creation failed: %w", err)
+	}
+
+	// Validate the snapshot
+	_, err = vss.Get(snapshotPath)
+	if err != nil {
+		cleanupExistingSnapshot(snapshotPath)
+		return Snapshot{}, fmt.Errorf("snapshot validation failed: %w", err)
+	}
+
+	return Snapshot{
+		Path:        snapshotPath,
+		TimeStarted: timeStarted,
+		SourcePath:  sourcePath,
+		Handler:     w,
+	}, nil
+}
+
+func (w *NtfsSnapshotHandler) DeleteSnapshot(snapshot Snapshot) error {
+	// Remove the VSS snapshot
+	if err := vss.Remove(snapshot.Path); err != nil {
+		return fmt.Errorf("failed to delete VSS snapshot: %w", err)
+	}
+
+	// Cleanup the snapshot folder
+	if vssFolder, err := getVSSFolder(); err == nil {
+		if strings.HasPrefix(snapshot.Path, vssFolder) {
+			_ = os.Remove(snapshot.Path)
+		}
+	}
+
+	return nil
+}
+
+func (w *NtfsSnapshotHandler) IsSupported(sourcePath string) bool {
+	// Assume VSS is supported on Windows
+	return true
 }
 
 func getVSSFolder() (string, error) {
@@ -37,48 +83,6 @@ func getVSSFolder() (string, error) {
 		return "", fmt.Errorf("failed to create VSS directory %q: %w", configBasePath, err)
 	}
 	return configBasePath, nil
-}
-
-// Snapshot creates a new VSS snapshot for the specified drive
-func Snapshot(jobId string, driveLetter string) (WinVSSSnapshot, error) {
-	volName := filepath.VolumeName(fmt.Sprintf("%s:", driveLetter))
-	vssFolder, err := getVSSFolder()
-	if err != nil {
-		return WinVSSSnapshot{}, fmt.Errorf("error getting VSS folder: %w", err)
-	}
-
-	snapshotPath := filepath.Join(vssFolder, jobId)
-	timeStarted := time.Now()
-
-	cleanupExistingSnapshot(snapshotPath)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	if err := createSnapshotWithRetry(ctx, snapshotPath, volName); err != nil {
-		cleanupExistingSnapshot(snapshotPath)
-		return WinVSSSnapshot{
-			SnapshotPath: volName + "\\",
-			Id:           "",
-			TimeStarted:  timeStarted,
-			DriveLetter:  driveLetter,
-		}, fmt.Errorf("snapshot creation failed: %w", err)
-	}
-
-	sc, err := vss.Get(snapshotPath)
-	if err != nil {
-		cleanupExistingSnapshot(snapshotPath)
-		return WinVSSSnapshot{}, fmt.Errorf("snapshot validation failed: %w", err)
-	}
-
-	snapshot := WinVSSSnapshot{
-		SnapshotPath: snapshotPath,
-		Id:           sc.ID,
-		TimeStarted:  timeStarted,
-		DriveLetter:  driveLetter,
-	}
-
-	return snapshot, nil
 }
 
 // reregisterVSSWriters attempts to restart VSS services when needed
@@ -148,16 +152,6 @@ func cleanupExistingSnapshot(path string) {
 	if vssFolder, err := getVSSFolder(); err == nil {
 		if strings.HasPrefix(path, vssFolder) {
 			_ = os.Remove(path)
-		}
-	}
-}
-
-func (s *WinVSSSnapshot) Close() {
-	_ = vss.Remove(s.Id)
-
-	if vssFolder, err := getVSSFolder(); err == nil {
-		if strings.HasPrefix(s.SnapshotPath, vssFolder) {
-			_ = os.Remove(s.SnapshotPath)
 		}
 	}
 }

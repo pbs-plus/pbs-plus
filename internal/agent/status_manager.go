@@ -1,11 +1,8 @@
-//go:build windows
-
 package agent
 
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/alexflint/go-filemutex"
@@ -19,26 +16,6 @@ type BackupSessionData struct {
 type BackupStore struct {
 	filePath string
 	fileLock *filemutex.FileMutex
-}
-
-func NewBackupStore() (*BackupStore, error) {
-	execPath, err := os.Executable()
-	if err != nil {
-		panic(err)
-	}
-	dir := filepath.Dir(execPath)
-	filePath := filepath.Join(dir, "backup_sessions.json")
-	lockPath := filepath.Join(dir, "backup_sessions.lock")
-
-	fl, err := filemutex.New(lockPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return &BackupStore{
-		filePath: filePath,
-		fileLock: fl,
-	}, nil
 }
 
 func (bs *BackupStore) updateSessions(fn func(map[string]*BackupSessionData)) error {

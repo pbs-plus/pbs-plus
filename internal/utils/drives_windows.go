@@ -4,6 +4,7 @@ package utils
 
 import (
 	"fmt"
+	"runtime"
 
 	"golang.org/x/sys/windows"
 )
@@ -120,16 +121,17 @@ func GetLocalDrives() ([]DriveInfo, error) {
 		freeHuman := humanizeBytes(freeBytes)
 
 		drives = append(drives, DriveInfo{
-			Letter:     string(drive),
-			Type:       getDriveTypeString(driveType),
-			VolumeName: volumeNameStr,
-			FileSystem: fileSystemStr,
-			TotalBytes: totalBytes,
-			UsedBytes:  usedBytes,
-			FreeBytes:  freeBytes,
-			Total:      totalHuman,
-			Used:       usedHuman,
-			Free:       freeHuman,
+			Letter:          string(drive),
+			Type:            getDriveTypeString(driveType),
+			VolumeName:      volumeNameStr,
+			FileSystem:      fileSystemStr,
+			TotalBytes:      totalBytes,
+			UsedBytes:       usedBytes,
+			FreeBytes:       freeBytes,
+			Total:           totalHuman,
+			Used:            usedHuman,
+			Free:            freeHuman,
+			OperatingSystem: runtime.GOOS,
 		})
 	}
 

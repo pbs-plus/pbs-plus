@@ -1,6 +1,6 @@
 //go:build windows
 
-package vssfs
+package agentfs
 
 import (
 	"os"
@@ -10,7 +10,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 )
 
 func TestStructAlignment(t *testing.T) {

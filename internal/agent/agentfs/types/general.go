@@ -28,8 +28,8 @@ func (id *FileHandleId) Decode(buf []byte) error {
 	return nil
 }
 
-// ReadDirEntries is a slice of VSSDirEntry
-type ReadDirEntries []VSSDirEntry
+// ReadDirEntries is a slice of AgentDirEntry
+type ReadDirEntries []AgentDirEntry
 
 func (entries *ReadDirEntries) Encode() ([]byte, error) {
 	// Create an encoder with an estimated size
@@ -54,7 +54,7 @@ func (entries *ReadDirEntries) Encode() ([]byte, error) {
 	return enc.Bytes(), nil
 }
 
-// DecodeVSSDirEntries decodes a byte slice into an array of VSSDirEntry
+// DecodeAgentDirEntries decodes a byte slice into an array of AgentDirEntry
 func (entries *ReadDirEntries) Decode(buf []byte) error {
 	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
@@ -68,13 +68,13 @@ func (entries *ReadDirEntries) Decode(buf []byte) error {
 	}
 
 	// Decode each entry
-	*entries = make([]VSSDirEntry, count)
+	*entries = make([]AgentDirEntry, count)
 	for i := uint32(0); i < count; i++ {
 		entryBytes, err := dec.ReadBytes()
 		if err != nil {
 			return err
 		}
-		var entry VSSDirEntry
+		var entry AgentDirEntry
 		if err := entry.Decode(entryBytes); err != nil {
 			return err
 		}

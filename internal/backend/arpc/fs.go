@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
@@ -130,22 +130,22 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 }
 
 // Stat first tries the LRU cache before performing an RPC call.
-func (fs *ARPCFS) Stat(filename string) (types.VSSFileInfo, error) {
-	var fi types.VSSFileInfo
+func (fs *ARPCFS) Stat(filename string) (types.AgentFileInfo, error) {
+	var fi types.AgentFileInfo
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
-		return types.VSSFileInfo{}, os.ErrInvalid
+		return types.AgentFileInfo{}, os.ErrInvalid
 	}
 
 	req := types.StatReq{Path: filename}
 	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Stat", &req)
 	if err != nil {
-		return types.VSSFileInfo{}, err
+		return types.AgentFileInfo{}, err
 	}
 
 	err = fi.Decode(raw)
 	if err != nil {
-		return types.VSSFileInfo{}, os.ErrInvalid
+		return types.AgentFileInfo{}, os.ErrInvalid
 	}
 
 	fs.trackAccess(filename, fi.IsDir)

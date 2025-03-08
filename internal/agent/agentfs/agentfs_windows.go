@@ -1,6 +1,6 @@
 //go:build windows
 
-package vssfs
+package agentfs
 
 import (
 	"bytes"
@@ -13,8 +13,8 @@ import (
 
 	"github.com/Microsoft/go-winio"
 	securejoin "github.com/cyphar/filepath-securejoin"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	binarystream "github.com/sonroyaalmerol/pbs-plus/internal/arpc/binary"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -36,11 +36,11 @@ type FileStandardInfo struct {
 	DeletePending, Directory  bool
 }
 
-type VSSFSServer struct {
+type AgentFSServer struct {
 	ctx              context.Context
 	ctxCancel        context.CancelFunc
 	jobId            string
-	snapshot         snapshots.WinVSSSnapshot
+	snapshot         snapshots.Snapshot
 	handleIdGen      *idgen.IDGenerator
 	handles          *safemap.Map[uint64, *FileHandle]
 	arpcRouter       *arpc.Router
@@ -48,7 +48,7 @@ type VSSFSServer struct {
 	allocGranularity uint32
 }
 
-func NewVSSFSServer(jobId string, snapshot snapshots.WinVSSSnapshot) *VSSFSServer {
+func NewAgentFSServer(jobId string, snapshot snapshots.Snapshot) *AgentFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	allocGranularity := GetAllocGranularity()
@@ -56,7 +56,7 @@ func NewVSSFSServer(jobId string, snapshot snapshots.WinVSSSnapshot) *VSSFSServe
 		allocGranularity = 65536 // 64 KB usually
 	}
 
-	s := &VSSFSServer{
+	s := &AgentFSServer{
 		snapshot:         snapshot,
 		jobId:            jobId,
 		handles:          safemap.New[uint64, *FileHandle](),
@@ -87,7 +87,7 @@ func safeHandler(fn func(req arpc.Request) (arpc.Response, error)) func(req arpc
 	}
 }
 
-func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
+func (s *AgentFSServer) RegisterHandlers(r *arpc.Router) {
 	r.Handle(s.jobId+"/OpenFile", safeHandler(s.handleOpenFile))
 	r.Handle(s.jobId+"/Stat", safeHandler(s.handleStat))
 	r.Handle(s.jobId+"/ReadDir", safeHandler(s.handleReadDir))
@@ -100,7 +100,7 @@ func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
 }
 
 // Update the Close method so that the cache is stopped:
-func (s *VSSFSServer) Close() {
+func (s *AgentFSServer) Close() {
 	if s.arpcRouter != nil {
 		r := s.arpcRouter
 		r.CloseHandle(s.jobId + "/OpenFile")
@@ -123,9 +123,11 @@ func (s *VSSFSServer) Close() {
 	s.ctxCancel()
 }
 
-func (s *VSSFSServer) initializeStatFS() error {
+func (s *AgentFSServer) initializeStatFS() error {
 	var err error
-	s.statFs, err = getStatFS(s.snapshot.DriveLetter)
+
+	driveLetter := s.snapshot.SourcePath[:1]
+	s.statFs, err = getStatFS(driveLetter)
 	if err != nil {
 		return err
 	}
@@ -133,7 +135,7 @@ func (s *VSSFSServer) initializeStatFS() error {
 	return nil
 }
 
-func (s *VSSFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
 	enc, err := s.statFs.Encode()
 	if err != nil {
 		return arpc.Response{}, err
@@ -144,7 +146,7 @@ func (s *VSSFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
-func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 	var payload types.OpenFileReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -218,7 +220,7 @@ func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
 // handleStat first checks the cache. If an entry is available it pops (removes)
 // the CachedEntry and returns the stat info. Otherwise, it falls back to the
 // Windows API‐based lookup.
-func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	var payload types.StatReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -257,7 +259,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		}
 	}
 
-	info := types.VSSFileInfo{
+	info := types.AgentFileInfo{
 		Name:    rawInfo.Name(),
 		Size:    rawInfo.Size(),
 		Mode:    uint32(rawInfo.Mode()),
@@ -278,7 +280,7 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 
 // handleReadDir first attempts to serve the directory listing from the cache.
 // It returns the cached DirEntries for that directory.
-func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	var payload types.ReadDirReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -292,7 +294,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 
 	// If the payload is empty (or "."), use the root.
 	if payload.Path == "." || payload.Path == "" {
-		fullDirPath = s.snapshot.SnapshotPath
+		fullDirPath = s.snapshot.Path
 	}
 
 	entries, err := readDirBulk(fullDirPath)
@@ -308,7 +310,7 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 
 // handleReadAt now duplicates the file handle, opens a backup reading session,
 // and then uses backupSeek to skip to the desired offset without copying bytes.
-func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	var payload types.ReadAtReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -412,7 +414,7 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
-func (s *VSSFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	var payload types.LseekReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -503,7 +505,7 @@ func (s *VSSFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
-func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	var payload types.CloseReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -527,11 +529,11 @@ func (s *VSSFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
-func (s *VSSFSServer) abs(filename string) (string, error) {
+func (s *AgentFSServer) abs(filename string) (string, error) {
 	if filename == "" || filename == "." {
-		return s.snapshot.SnapshotPath, nil
+		return s.snapshot.Path, nil
 	}
-	path, err := securejoin.SecureJoin(s.snapshot.SnapshotPath, filename)
+	path, err := securejoin.SecureJoin(s.snapshot.Path, filename)
 	if err != nil {
 		return "", err
 	}
