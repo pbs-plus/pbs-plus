@@ -28,18 +28,18 @@ type Logger struct {
 }
 
 // LogEntry represents a single log entry with additional context.
+// It now includes Hostname so that logs can be identified by host.
 type LogEntry struct {
-	level   string
-	message string
-	err     error
-	fields  map[string]interface{}
-	logger  *Logger
-}
-
-type LogRemoteRequest struct {
-	Hostname string `json:"hostname"`
-	Message  string `json:"message"`
 	Level    string `json:"level"`
+	Message  string `json:"message"`
+	Hostname string `json:"hostname,omitempty"`
+	// Err is not automatically marshaled; see MarshalJSON.
+	Err       error  `json:"-"`
+	ErrString string `json:"error,omitempty"`
+	// Fields contains extra log data.
+	Fields map[string]interface{} `json:"fields,omitempty"`
+	// logger is omitted from JSON.
+	logger *Logger `json:"-"`
 }
 
 // Global logger instance.
@@ -70,11 +70,11 @@ func init() {
 
 	// Initialize the worker pool.
 	initializeWorkerPool()
-	// Start a goroutine that automatically shuts down the worker pool when a SIGINT or SIGTERM is received.
+	// Launch a goroutine that gracefully shuts down the worker pool on SIGINT/SIGTERM.
 	go stopWorkerPool()
 }
 
-// SetServiceLogger sets the service logger for Windows Event Log integration.
+// SetServiceLogger configures the service logger for Windows Event Log integration.
 func (l *Logger) SetServiceLogger(s service.Service) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -92,9 +92,9 @@ func (l *Logger) SetServiceLogger(s service.Service) error {
 // Error starts a new log entry for an error.
 func (l *Logger) Error(err error) *LogEntry {
 	return &LogEntry{
-		level:  "error",
-		err:    err,
-		fields: make(map[string]interface{}),
+		Level:  "error",
+		Err:    err,
+		Fields: make(map[string]interface{}),
 		logger: l,
 	}
 }
@@ -102,8 +102,8 @@ func (l *Logger) Error(err error) *LogEntry {
 // Warn starts a new log entry for a warning.
 func (l *Logger) Warn() *LogEntry {
 	return &LogEntry{
-		level:  "warn",
-		fields: make(map[string]interface{}),
+		Level:  "warn",
+		Fields: make(map[string]interface{}),
 		logger: l,
 	}
 }
@@ -111,15 +111,15 @@ func (l *Logger) Warn() *LogEntry {
 // Info starts a new log entry for informational messages.
 func (l *Logger) Info() *LogEntry {
 	return &LogEntry{
-		level:  "info",
-		fields: make(map[string]interface{}),
+		Level:  "info",
+		Fields: make(map[string]interface{}),
 		logger: l,
 	}
 }
 
 // WithMessage adds a message to the log entry.
 func (e *LogEntry) WithMessage(msg string) *LogEntry {
-	e.message = msg
+	e.Message = msg
 	return e
 }
 
@@ -129,90 +129,78 @@ func (e *LogEntry) WithJSON(msg string) *LogEntry {
 	var parsed map[string]interface{}
 	if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
 		for k, v := range parsed {
-			e.fields[k] = v
+			e.Fields[k] = v
 		}
 	} else {
-		e.message = msg
+		e.Message = msg
 	}
 	return e
 }
 
 // WithField adds a single key-value pair to the log entry.
 func (e *LogEntry) WithField(key string, value interface{}) *LogEntry {
-	e.fields[key] = value
+	e.Fields[key] = value
 	return e
 }
 
 // WithFields adds multiple key-value pairs to the log entry.
 func (e *LogEntry) WithFields(fields map[string]interface{}) *LogEntry {
 	for k, v := range fields {
-		e.fields[k] = v
+		e.Fields[k] = v
 	}
 	return e
 }
 
-// Write finalizes the log entry and sends it to the appropriate destination.
+// Write finalizes the log entry and dispatches it both locally and remotely.
 func (e *LogEntry) Write() {
-	// Format the log entry as JSON.
-	jsonMsg := e.formatLogAsJSON()
+	// Ensure the hostname is set if it's not provided.
+	if e.Hostname == "" {
+		if host, err := os.Hostname(); err == nil {
+			e.Hostname = host
+		}
+	}
+
+	// Format the complete log entry as JSON (including hostname).
+	formattedMsg := e.formatLogAsJSON()
 
 	// Enqueue the log for remote processing.
 	e.enqueueLog()
 
-	// Send to Windows Event Log if available.
 	e.logger.mu.Lock()
 	defer e.logger.mu.Unlock()
 
 	if e.logger.LogWriter != nil {
-		switch e.level {
+		switch e.Level {
 		case "info":
-			_ = e.logger.LogWriter.Info(jsonMsg)
+			_ = e.logger.LogWriter.Info(formattedMsg)
 		case "warn":
-			_ = e.logger.LogWriter.Warning(jsonMsg)
+			_ = e.logger.LogWriter.Warning(formattedMsg)
 		case "error":
-			_ = e.logger.LogWriter.Error(jsonMsg)
+			_ = e.logger.LogWriter.Error(formattedMsg)
 		default:
-			_ = e.logger.LogWriter.Info(jsonMsg)
+			_ = e.logger.LogWriter.Info(formattedMsg)
 		}
 	} else {
-		// Fallback to stdout using zerolog.
 		fallbackLogger := log.With().
 			CallerWithSkipFrameCount(3).
-			Fields(e.fields).
+			// Pass the structured fields including hostname.
+			Fields(map[string]interface{}{"hostname": e.Hostname}).
 			Logger()
 
-		switch e.level {
+		switch e.Level {
 		case "info":
-			fallbackLogger.Info().Err(e.err).Msg(e.message)
+			fallbackLogger.Info().Err(e.Err).Msg(formattedMsg)
 		case "warn":
-			fallbackLogger.Warn().Err(e.err).Msg(e.message)
+			fallbackLogger.Warn().Err(e.Err).Msg(formattedMsg)
 		case "error":
-			fallbackLogger.Error().Err(e.err).Msg(e.message)
+			fallbackLogger.Error().Err(e.Err).Msg(formattedMsg)
 		default:
-			fallbackLogger.Info().Err(e.err).Msg(e.message)
+			fallbackLogger.Info().Err(e.Err).Msg(formattedMsg)
 		}
 	}
 }
 
-// formatLogAsJSON formats the log entry as a JSON string.
-func (e *LogEntry) formatLogAsJSON() string {
-	var buf bytes.Buffer
-
-	logger := zerolog.New(&buf).With().
-		Timestamp().
-		Fields(e.fields).
-		Logger()
-
-	event := logger.Log()
-	if e.err != nil {
-		event = event.Err(e.err)
-	}
-
-	event.Msg(e.message)
-	return buf.String()
-}
-
-// initializeWorkerPool sets up the worker pool for sending logs to the server.
+// initializeWorkerPool sets up the singleton worker pool.
 func initializeWorkerPool() {
 	workerOnce.Do(func() {
 		logQueue = make(chan LogEntry, 100) // Buffered channel for log messages.
@@ -236,16 +224,13 @@ func worker() {
 	}
 }
 
-// sendLogToServer sends a log message to the remote server.
+// sendLogToServer marshals and sends the LogEntry as JSON to the remote server.
 func sendLogToServer(entry LogEntry) {
-	hostname, _ := os.Hostname()
-	reqBody, err := json.Marshal(&LogRemoteRequest{
-		Hostname: hostname,
-		Message:  entry.formatLogAsJSON(),
-		Level:    entry.level,
-	})
+	entry.ErrString = entry.Err.Error()
+
+	reqBody, err := json.Marshal(entry)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to marshal log request")
+		log.Error().Err(err).Msg("Failed to marshal log entry")
 		return
 	}
 
@@ -263,19 +248,13 @@ func sendLogToServer(entry LogEntry) {
 	_, _ = io.Copy(io.Discard, body)
 }
 
-// stopWorkerPool gracefully shuts down the worker pool by creating a context
-// that gets canceled when a SIGINT or SIGTERM signal is received. Once the signal
-// is captured, it closes the logQueue so that workers finish processing the remaining
-// messages before exiting.
+// stopWorkerPool gracefully shuts down the worker pool using a context that cancels on SIGINT or SIGTERM.
 func stopWorkerPool() {
-	// Create a context that is canceled upon receiving SIGINT or SIGTERM.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	<-ctx.Done()
 
-	// Close the log queue to signal workers that no new logs will arrive.
 	close(logQueue)
-	// Wait until all workers have finished processing.
 	workerWg.Wait()
 }
 
@@ -285,7 +264,37 @@ func (e *LogEntry) enqueueLog() {
 	case logQueue <- *e:
 		// Successfully enqueued.
 	default:
-		// If the queue is full, drop the log and log a warning.
 		log.Warn().Msg("Log queue is full, dropping log message")
 	}
+}
+
+// formatLogAsJSON formats the log entry as a JSON string, ensuring
+// that the hostname is included.
+func (e *LogEntry) formatLogAsJSON() string {
+	// Ensure a hostname is present.
+	if e.Hostname == "" {
+		if host, err := os.Hostname(); err == nil {
+			e.Hostname = host
+		}
+	}
+
+	// Merge the hostname into the fields.
+	fields := make(map[string]interface{}, len(e.Fields)+1)
+	for k, v := range e.Fields {
+		fields[k] = v
+	}
+	fields["hostname"] = e.Hostname
+
+	var buf bytes.Buffer
+	logger := zerolog.New(&buf).With().
+		Timestamp().
+		Fields(fields).
+		Logger()
+
+	event := logger.Log()
+	if e.Err != nil {
+		event = event.Err(e.Err)
+	}
+	event.Msg(e.Message)
+	return buf.String()
 }
