@@ -57,7 +57,6 @@ func sendLogToServer(entry LogEntry) {
 
 	reqBody, err := json.Marshal(entry)
 	if err != nil {
-		L.zlog.Error().Err(err).Msg("Failed to marshal log entry")
 		return
 	}
 
@@ -68,7 +67,6 @@ func sendLogToServer(entry LogEntry) {
 		nil,
 	)
 	if err != nil {
-		L.zlog.Error().Err(err).Msg("Failed to send log to remote server")
 		return
 	}
 	defer body.Close()
