@@ -126,10 +126,12 @@ func (s *AgentFSServer) Close() {
 func (s *AgentFSServer) initializeStatFS() error {
 	var err error
 
-	driveLetter := s.snapshot.SourcePath[:1]
-	s.statFs, err = getStatFS(driveLetter)
-	if err != nil {
-		return err
+	if s.snapshot.SourcePath != "" {
+		driveLetter := s.snapshot.SourcePath[:1]
+		s.statFs, err = getStatFS(driveLetter)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
