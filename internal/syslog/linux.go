@@ -4,176 +4,251 @@ package syslog
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/syslog"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
+	zlog "github.com/rs/zerolog/log"
 )
 
-// Logger struct for Linux syslog integration
+// Logger struct for Linux syslog integration.
 type Logger struct {
 	syslogWriter *syslog.Writer
 	mu           sync.Mutex // Protects syslogWriter
 }
 
-// LogEntry represents a single log entry with additional context
+// LogEntry represents a single log entry with additional context.
+// It now includes Hostname to match the Windows log format.
 type LogEntry struct {
-	level   string
-	message string
-	err     error
-	fields  map[string]interface{}
-	logger  *Logger
+	Level    string `json:"level"`
+	Message  string `json:"message"`
+	Hostname string `json:"hostname,omitempty"`
+	// Err is omitted on JSON unmarshaling (it can be added as needed).
+	Err       error                  `json:"-"`
+	ErrString string                 `json:"error,omitempty"`
+	Fields    map[string]interface{} `json:"fields,omitempty"`
+	// logger is omitted from JSON.
+	logger *Logger `json:"-"`
 }
 
-// Global logger instance
+// Global logger instance.
 var L *Logger
 
 func init() {
-	// Attempt to initialize the syslog writer
+	// Attempt to initialize the syslog writer.
 	syslogWriter, err := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-plus")
 	if err != nil {
-		// If syslog initialization fails, fallback to zerolog with stdout
-		log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}).
+		// If syslog initialization fails, fallback to zerolog with stdout.
+		zlog.Logger = zerolog.New(zerolog.ConsoleWriter{
+			Out:        os.Stdout,
+			TimeFormat: time.RFC3339,
+		}).
 			With().
 			Timestamp().
-			Caller(). // Automatically include caller information (file and line number)
+			CallerWithSkipFrameCount(3).
 			Logger()
-		log.Warn().Err(err).Msg("Failed to initialize syslog, falling back to stdout")
+		zlog.Warn().Err(err).Msg("Failed to initialize syslog, falling back to stdout")
 		L = &Logger{syslogWriter: nil}
 	} else {
-		// If syslog is successfully initialized, use it
 		L = &Logger{syslogWriter: syslogWriter}
 	}
+
+	// Launch a goroutine to close the syslog writer on shutdown.
+	go func() {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		<-ctx.Done()
+		stop()
+		if L != nil {
+			if err := L.Close(); err != nil {
+				zlog.Error().Err(err).Msg("Failed to close syslog writer")
+			}
+		}
+	}()
 }
 
-// Error starts a new log entry for an error
+// Close gracefully closes the syslog writer if available.
+func (l *Logger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.syslogWriter != nil {
+		return l.syslogWriter.Close()
+	}
+	return nil
+}
+
+// Error starts a new log entry for an error.
 func (l *Logger) Error(err error) *LogEntry {
 	return &LogEntry{
-		level:  "error",
-		err:    err,
-		fields: make(map[string]interface{}),
+		Level:  "error",
+		Err:    err,
+		Fields: make(map[string]interface{}),
 		logger: l,
 	}
 }
 
-// Warn starts a new log entry for a warning
+// Warn starts a new log entry for a warning.
 func (l *Logger) Warn() *LogEntry {
 	return &LogEntry{
-		level:  "warn",
-		fields: make(map[string]interface{}),
+		Level:  "warn",
+		Fields: make(map[string]interface{}),
 		logger: l,
 	}
 }
 
-// Info starts a new log entry for informational messages
+// Info starts a new log entry for informational messages.
 func (l *Logger) Info() *LogEntry {
 	return &LogEntry{
-		level:  "info",
-		fields: make(map[string]interface{}),
+		Level:  "info",
+		Fields: make(map[string]interface{}),
 		logger: l,
 	}
 }
 
-// WithMessage adds a message to the log entry
+// WithMessage adds a message to the log entry.
 func (e *LogEntry) WithMessage(msg string) *LogEntry {
-	e.message = msg
+	e.Message = msg
 	return e
 }
 
 // WithJSON attempts to unmarshal the provided string into JSON fields.
-// If successful, it merges the parsed fields in; otherwise, it sets the raw message.
+// If successful, it merges the parsed fields; otherwise, it sets the raw message.
 func (e *LogEntry) WithJSON(msg string) *LogEntry {
 	var parsed map[string]interface{}
 	if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
-		// Merge parsed JSON fields into the log entry's fields.
 		for k, v := range parsed {
-			e.fields[k] = v
+			e.Fields[k] = v
 		}
 	} else {
-		// If parsing fails, assign the raw string as the message.
-		e.message = msg
+		e.Message = msg
 	}
 	return e
 }
 
-// WithField adds a single key-value pair to the log entry
+// WithField adds a single key-value pair to the log entry.
 func (e *LogEntry) WithField(key string, value interface{}) *LogEntry {
-	e.fields[key] = value
+	e.Fields[key] = value
 	return e
 }
 
-// WithFields adds multiple key-value pairs to the log entry
+// WithFields adds multiple key-value pairs to the log entry.
 func (e *LogEntry) WithFields(fields map[string]interface{}) *LogEntry {
 	for k, v := range fields {
-		e.fields[k] = v
+		e.Fields[k] = v
 	}
 	return e
 }
 
-// Send finalizes the log entry and sends it to the appropriate destination
+// Write finalizes the log entry and sends it to syslog (or falls back to stdout).
 func (e *LogEntry) Write() {
-	// Format the log entry as JSON
-	jsonMsg := e.formatLogAsJSON()
+	// Preformat the entire log entry as JSON (with timestamp, fields, and error, etc.)
+	formattedMsg := e.formatLogAsJSON()
 
-	// Send to syslog if available
 	e.logger.mu.Lock()
 	defer e.logger.mu.Unlock()
 
 	if e.logger.syslogWriter != nil {
-		switch e.level {
+		switch e.Level {
 		case "info":
-			_ = e.logger.syslogWriter.Info(jsonMsg)
+			_ = e.logger.syslogWriter.Info(formattedMsg)
 		case "warn":
-			_ = e.logger.syslogWriter.Warning(jsonMsg)
+			_ = e.logger.syslogWriter.Warning(formattedMsg)
 		case "error":
-			_ = e.logger.syslogWriter.Err(jsonMsg)
+			_ = e.logger.syslogWriter.Err(formattedMsg)
 		default:
-			_ = e.logger.syslogWriter.Info(jsonMsg)
+			_ = e.logger.syslogWriter.Info(formattedMsg)
 		}
 	} else {
-		// Fallback to stdout using zerolog.
-		// Build a logger from the current context.
-		fallbackLogger := log.With().
+		fallbackLogger := zlog.With().
 			CallerWithSkipFrameCount(3).
-			Fields(e.fields).
+			Fields(e.Fields).
 			Logger()
 
-		switch e.level {
+		switch e.Level {
 		case "info":
-			fallbackLogger.Info().Err(e.err).Msg(e.message)
+			fallbackLogger.Info().Msg(formattedMsg)
 		case "warn":
-			fallbackLogger.Warn().Err(e.err).Msg(e.message)
+			fallbackLogger.Warn().Msg(formattedMsg)
 		case "error":
-			fallbackLogger.Error().Err(e.err).Msg(e.message)
+			fallbackLogger.Error().Msg(formattedMsg)
 		default:
-			fallbackLogger.Info().Err(e.err).Msg(e.message)
+			fallbackLogger.Info().Msg(formattedMsg)
 		}
 	}
 }
 
-// formatLogAsJSON formats the log entry as a JSON string
+// formatLogAsJSON formats the log entry as a JSON string.
 func (e *LogEntry) formatLogAsJSON() string {
 	var buf bytes.Buffer
 
-	// Create a zerolog logger that writes to the buffer
 	logger := zerolog.New(&buf).With().
 		Timestamp().
-		Fields(e.fields).
+		Fields(e.Fields).
 		Logger()
 
-	// Add the error if present
 	event := logger.Log()
-	if e.err != nil {
-		event = event.Err(e.err)
+	if e.Err != nil {
+		event = event.Err(e.Err)
 	}
-
-	// Add the message
-	event.Msg(e.message)
-
-	// Return the serialized JSON as a string
+	event.Msg(e.Message)
 	return buf.String()
+}
+
+// ParseLogEntry parses a JSON payload (sent from Windows) into a LogEntry.
+func parseLogEntry(body io.ReadCloser) (*LogEntry, error) {
+	var entry LogEntry
+	err := json.NewDecoder(body).Decode(&entry)
+	if err != nil {
+		return nil, err
+	}
+	entry.Err = errors.New(entry.ErrString)
+	return &entry, nil
+}
+
+// ParseAndLogWindowsEntry parses a Windows LogEntry JSON payload and logs it
+// using the Linux logger (syslog if available or fallback).
+func ParseAndLogWindowsEntry(body io.ReadCloser) error {
+	entry, err := parseLogEntry(body)
+	if err != nil {
+		return err
+	}
+	L.mu.Lock()
+	defer L.mu.Unlock()
+
+	if L.syslogWriter != nil {
+		switch entry.Level {
+		case "info":
+			_ = L.syslogWriter.Info(entry.Message)
+		case "warn":
+			_ = L.syslogWriter.Warning(entry.Message)
+		case "error":
+			_ = L.syslogWriter.Err(entry.Message)
+		default:
+			_ = L.syslogWriter.Info(entry.Message)
+		}
+	} else {
+		fallbackLogger := zlog.With().
+			CallerWithSkipFrameCount(3).
+			Fields(entry.Fields).
+			Logger()
+
+		switch entry.Level {
+		case "info":
+			fallbackLogger.Info().Msg(entry.Message)
+		case "warn":
+			fallbackLogger.Warn().Msg(entry.Message)
+		case "error":
+			fallbackLogger.Error().Msg(entry.Message)
+		default:
+			fallbackLogger.Info().Msg(entry.Message)
+		}
+	}
+	return nil
 }

@@ -5,7 +5,6 @@ package agents
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,35 +16,17 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-type LogRequest struct {
-	Hostname string `json:"hostname"`
-	Message  string `json:"message"`
-	Level    string `json:"level"`
-}
-
 func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
 
-		var reqParsed LogRequest
-		err := json.NewDecoder(r.Body).Decode(&reqParsed)
+		err := syslog.ParseAndLogWindowsEntry(r.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
 			return
-		}
-
-		switch reqParsed.Level {
-		case "info":
-			syslog.L.Info().WithMessage(reqParsed.Message).WithField("agent", reqParsed.Hostname).Write()
-		case "error":
-			syslog.L.Error(errors.New("agent error received")).WithJSON(reqParsed.Message).WithField("agent", reqParsed.Hostname).Write()
-		case "warn":
-			syslog.L.Warn().WithMessage(reqParsed.Message).WithField("agent", reqParsed.Hostname).Write()
-		default:
-			syslog.L.Info().WithMessage(reqParsed.Message).WithField("agent", reqParsed.Hostname).Write()
 		}
 
 		w.Header().Set("Content-Type", "application/json")
