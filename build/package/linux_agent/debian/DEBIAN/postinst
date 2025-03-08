@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+
+chmod +x /usr/bin/pbs-plus-agent
+
+systemctl daemon-reload
+
+# Enable the service to start on boot
+systemctl enable pbs-plus-agent.service
+
+# Start the service
+systemctl restart pbs-plus-agent.service
+
+exit 0
