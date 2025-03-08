@@ -104,6 +104,9 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             fieldLabel: gettext("Namespace"),
             emptyText: gettext("Root"),
             name: "ns",
+            cbind: {
+              datastore: "{datastore}",
+            },
           },
         ],
 
