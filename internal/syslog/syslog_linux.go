@@ -28,12 +28,12 @@ func (e *LogEntry) Write() {
 	// Produce a full JSON log entry.
 	switch e.Level {
 	case "info":
-		e.logger.zlog.Info().Msg(e.Message)
+		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
 	case "warn":
-		e.logger.zlog.Warn().Msg(e.Message)
+		e.logger.zlog.Warn().Fields(e.Fields).Msg(e.Message)
 	case "error":
-		e.logger.zlog.Error().Msg(e.Message)
+		e.logger.zlog.Error().Fields(e.Fields).Msg(e.Message)
 	default:
-		e.logger.zlog.Info().Msg(e.Message)
+		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
 	}
 }
