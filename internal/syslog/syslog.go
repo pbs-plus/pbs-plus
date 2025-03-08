@@ -97,13 +97,13 @@ func ParseAndLogWindowsEntry(body io.ReadCloser) error {
 
 	switch entry.Level {
 	case "info":
-		entry.logger.zlog.Info().Msg(entry.Message)
+		entry.logger.zlog.Info().Fields(entry.Fields).Msg(entry.Message)
 	case "warn":
-		entry.logger.zlog.Warn().Msg(entry.Message)
+		entry.logger.zlog.Warn().Fields(entry.Fields).Msg(entry.Message)
 	case "error":
-		entry.logger.zlog.Error().Msg(entry.Message)
+		entry.logger.zlog.Error().Fields(entry.Fields).Msg(entry.Message)
 	default:
-		entry.logger.zlog.Info().Msg(entry.Message)
+		entry.logger.zlog.Info().Fields(entry.Fields).Msg(entry.Message)
 	}
 	return nil
 }
