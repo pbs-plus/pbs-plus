@@ -60,17 +60,17 @@ func checkAgentAuth(store *store.Store, r *http.Request) error {
 		return fmt.Errorf("CheckAgentAuth: client certificate required")
 	}
 
-	agentHostname := r.Header.Get("X-PBS-Agent")
+	clientCert := r.TLS.PeerCertificates[0]
+
+	agentHostname := clientCert.Subject.CommonName
 	if agentHostname == "" {
-		return fmt.Errorf("CheckAgentAuth: missing X-PBS-Agent header")
+		return fmt.Errorf("CheckAgentAuth: missing certificate subject common name")
 	}
 
 	trustedCert, err := loadTrustedCert(store, agentHostname+" - C")
 	if err != nil {
 		return fmt.Errorf("CheckAgentAuth: certificate not trusted")
 	}
-
-	clientCert := r.TLS.PeerCertificates[0]
 
 	if !clientCert.Equal(trustedCert) {
 		return fmt.Errorf("certificate does not match pinned certificate")
