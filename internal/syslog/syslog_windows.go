@@ -13,7 +13,7 @@ import (
 func init() {
 	// Configure zerolog to output via our EventLogWriter wrapped in a ConsoleWriter.
 	zlogger := zerolog.New(zerolog.NewConsoleWriter()).With().
-		CallerWithSkipFrameCount(4).
+		CallerWithSkipFrameCount(3).
 		Timestamp().
 		Logger()
 
@@ -34,7 +34,7 @@ func (l *Logger) SetServiceLogger(s service.Service) error {
 		w.Out = &LogWriter{logger: logger}
 		w.NoColor = true
 	})).With().
-		CallerWithSkipFrameCount(4).
+		CallerWithSkipFrameCount(3).
 		Timestamp().
 		Logger()
 
