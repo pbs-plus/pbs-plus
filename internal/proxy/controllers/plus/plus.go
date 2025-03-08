@@ -83,6 +83,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			arpcSess, exists := storeInstance.ARPCSessionManager.GetSession(targetHostname)
 			if !exists {
+				storeInstance.RemoveARPCFS(jobId)
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send closure request to target -> unable to reach target"), http.StatusInternalServerError)
 				return
 			}
