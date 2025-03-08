@@ -1,5 +1,5 @@
 Ext.define("PBS.config.DiskBackupJobView", {
-  extend: "Ext.tree.Panel",
+  extend: "Ext.grid.GridPanel",
   alias: "widget.pbsDiskBackupJobView",
 
   stateful: true,
@@ -29,6 +29,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       if (!selection || selection.length < 1) {
         return;
       }
+
       Ext.create("PBS.D2DManagement.BackupJobEdit", {
         id: selection[0].data.id,
         autoShow: true,
@@ -44,11 +45,14 @@ Ext.define("PBS.config.DiskBackupJobView", {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
+
       if (!selection || selection.length < 1) {
         return;
       }
+
       let jobData = Ext.Object.merge({}, selection[0].data);
       delete jobData.id;
+
       Ext.create("PBS.D2DManagement.BackupJobEdit", {
         autoShow: true,
         jobData: jobData,
@@ -65,8 +69,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
       let view = me.getView();
       let selection = view.getSelection();
       if (selection.length < 1) return;
+
       let upid = selection[0].data["last-run-upid"];
       if (!upid) return;
+
       Ext.create("PBS.plusWindow.TaskViewer", {
         upid,
       }).show();
@@ -77,8 +83,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
       let view = me.getView();
       let selection = view.getSelection();
       if (selection.length < 1) return;
+
       let upid = selection[0].data["last-successful-upid"];
       if (!upid) return;
+
       Ext.create("PBS.plusWindow.TaskViewer", {
         upid,
       }).show();
@@ -89,7 +97,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
       let view = me.getView();
       let selection = view.getSelection();
       if (selection.length < 1) return;
+
       let id = selection[0].data.id;
+
       Ext.create("PBS.D2DManagement.BackupWindow", {
         id,
         listeners: {
@@ -105,9 +115,12 @@ Ext.define("PBS.config.DiskBackupJobView", {
       let view = me.getView();
       let selection = view.getSelection();
       if (selection.length < 1) return;
+
       let upid = selection[0].data["last-run-upid"];
       if (upid === "") return;
+
       let id = selection[0].data.id;
+
       Ext.create("PBS.D2DManagement.StopBackupWindow", {
         id,
         upid: upid,
@@ -121,7 +134,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
     exportCSV: async function () {
       const view = this.getView();
-      const store = view.getStore().rstore;
+      const store = view.getStore();
       const records = store.getData().items.map((item) => item.data);
 
       if (!records || records.length === 0) {
@@ -143,7 +156,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
           const resData = await response.json();
           const snapshots = resData.data || [];
           let totalSize = 0;
+
           const backupTimes = [];
+
           snapshots.forEach((snap) => {
             totalSize += snap.size || 0;
             if (Object.prototype.hasOwnProperty.call(snap, "backup-time")) {
@@ -156,6 +171,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
               }
             }
           });
+
           return {
             snapshotCount: snapshots.length,
             snapshotTotalSize: totalSize,
@@ -176,9 +192,11 @@ Ext.define("PBS.config.DiskBackupJobView", {
         const extraDataArray = await Promise.all(
           records.map((job) => fetchSnapshotData(job)),
         );
+
         // Merge each job's data with the corresponding snapshot data.
         const mergedRecords = records.map((job, idx) => {
           const extra = extraDataArray[idx];
+
           // Process only the "backup-time" attribute.
           const backupTimes = extra.snapshotAttributes["backup-time"] || [];
           const snapshotBackupTime = JSON.stringify(
@@ -186,10 +204,12 @@ Ext.define("PBS.config.DiskBackupJobView", {
               new Date(timestamp * 1000).toString(),
             ),
           );
+
           // Remove unwanted job properties.
           delete job.exclusions;
           delete job.upids;
           delete job["last-plus-error"];
+
           return {
             ...job,
             snapshotCount: extra.snapshotCount,
@@ -197,6 +217,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
             snapshot_backup_time: snapshotBackupTime,
           };
         });
+
         return mergedRecords;
       }
 
@@ -209,14 +230,18 @@ Ext.define("PBS.config.DiskBackupJobView", {
       } catch (error) {
         console.error("Error processing records:", error);
       }
+
       const headerSet = new Set();
       mergedRecords.forEach((record) => {
         Object.keys(record).forEach((key) => headerSet.add(key));
       });
+
       const headers = Array.from(headerSet);
+
       // Build CSV rows.
       const csvRows = [];
       csvRows.push(headers.join(","));
+
       mergedRecords.forEach((row) => {
         const values = headers.map((header) => {
           let val = row[header] != null ? row[header] : "";
@@ -226,7 +251,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
         });
         csvRows.push(values.join(","));
       });
+
       const csvText = csvRows.join("\n");
+
       // Create a Blob and trigger the download.
       const blob = new Blob([csvText], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
@@ -248,43 +275,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
     },
 
     reload: function () {
-      let view = this.getView();
-      view.getStore().rstore.load({
-        callback: function () {
-          let flatRecords = view
-            .getStore()
-            .rstore.getData()
-            .items.map((item) => item.data);
-
-          // Group jobs by namespace.
-          let groups = {};
-          flatRecords.forEach((job) => {
-            let ns = job.ns || "";
-            if (!groups[ns]) {
-              groups[ns] = [];
-            }
-            groups[ns].push(job);
-          });
-
-          let treeChildren = [];
-          for (let ns in groups) {
-            treeChildren.push({
-              text: ns ? ns : gettext("Root"),
-              ns: ns,
-              expanded: true,
-              leaf: false,
-              // Each job record becomes a leaf. We set its text property to job.target.
-              children: groups[ns].map((job) =>
-                Ext.apply(job, { leaf: true, text: job.target }),
-              ),
-            });
-          }
-          view.getStore().setRoot({
-            expanded: true,
-            children: treeChildren,
-          });
-        },
-      });
+      this.getView().getStore().rstore.load();
     },
 
     init: function (view) {
@@ -299,17 +290,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
   },
 
   store: {
-    type: "tree",
-    root: {
-      expanded: true,
-      children: [],
-    },
+    type: "diff",
     autoDestroy: true,
     autoDestroyRstore: true,
-    sorters: [
-      { property: "ns", direction: "ASC" },
-      { property: "id", direction: "ASC" },
-    ],
+    sorters: "id",
     rstore: {
       type: "update",
       storeid: "pbs-disk-backup-job-status",
@@ -346,9 +330,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       baseurl: pbsPlusBaseUrl + "/api2/extjs/config/disk-backup-job",
       getUrl: (rec) =>
         pbsPlusBaseUrl +
-        `/api2/extjs/config/disk-backup-job/${encodeURIComponent(
-          encodePathValue(rec.getId()),
-        )}`,
+        `/api2/extjs/config/disk-backup-job/${encodeURIComponent(encodePathValue(rec.getId()))}`,
       confirmMsg: gettext("Remove entry?"),
       callback: "reload",
     },
@@ -405,7 +387,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
       hidden: true,
     },
     {
-      xtype: "treecolumn",
       header: gettext("Target"),
       dataIndex: "target",
       width: 120,
@@ -552,6 +533,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
   initComponent: function () {
     let me = this;
+
     me.callParent();
   },
 });
