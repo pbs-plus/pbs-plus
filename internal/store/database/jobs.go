@@ -92,6 +92,7 @@ func (database *Database) CreateJob(job types.Job) error {
 				Properties: types.Job{
 					Store:            job.Store,
 					Mode:             job.Mode,
+					SourceMode:       job.SourceMode,
 					Target:           job.Target,
 					Subpath:          job.Subpath,
 					Schedule:         job.Schedule,

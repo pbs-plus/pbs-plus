@@ -33,6 +33,12 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 		agentDrive := utils.DecodePath(r.PathValue("drive"))
 		jobId := utils.DecodePath(r.PathValue("jobid"))
 
+		job, err := storeInstance.Database.GetJob(jobId)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Unable to get job from id"), http.StatusNotFound)
+			return
+		}
+
 		if r.Method == http.MethodPost {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -42,7 +48,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> unable to reach target"), http.StatusInternalServerError)
 				return
 			}
-			req := types.BackupReq{Drive: agentDrive, JobId: jobId}
+			req := types.BackupReq{Drive: agentDrive, JobId: jobId, SourceMode: job.SourceMode}
 			backupResp, err := arpcSess.CallContext(ctx, "backup", &req)
 			if err != nil || backupResp.Status != 200 {
 				if err != nil {
@@ -96,7 +102,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				storeInstance.RemoveARPCFS(jobId)
 			}
 
-			req := types.BackupReq{Drive: (agentDrive), JobId: (jobId)}
+			req := types.BackupReq{Drive: agentDrive, JobId: jobId}
 			cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", &req)
 			if err != nil || cleanupResp.Status != 200 {
 				if err != nil {
