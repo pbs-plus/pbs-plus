@@ -58,14 +58,17 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
     let me = this;
     me.callParent();
 
+    let datastoreStore = me.down("pbsDataStoreSelector").getStore();
+    datastoreStore.on("load", function () {
+      if (me.jobData && me.jobData.store) {
+        me.getViewModel().set("storeValue", me.jobData.store);
+      }
+    });
+
     if (me.jobData) {
       let inputPanel = me.down("inputpanel");
       if (inputPanel && inputPanel.setValues) {
         inputPanel.setValues(me.jobData);
-      }
-
-      if (me.jobData.store) {
-        me.getViewModel().set("storeValue", me.jobData.store);
       }
 
       if (me.jobData.mode) {
@@ -121,7 +124,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             name: "subpath",
           },
           {
-            xtype: "pbsD2DDataStoreSelector",
+            xtype: "pbsDataStoreSelector",
             fieldLabel: gettext("Local Datastore"),
             name: "store",
             bind: {
