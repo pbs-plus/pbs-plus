@@ -40,7 +40,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
 
   viewModel: {
     data: {
-      store: null, // or a default value for the datastore, e.g., "localDataStore"
+      datastoreValue: null, // or a default value for the datastore, e.g., "localDataStore"
     },
   },
 
@@ -103,7 +103,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             fieldLabel: gettext("Local Datastore"),
             name: "store",
             bind: {
-              value: "{store}",
+              value: "{datastoreValue}",
             },
           },
           {
@@ -112,7 +112,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             emptyText: gettext("Root"),
             name: "ns",
             bind: {
-              datastore: "{store}",
+              datastore: "{datastoreValue}",
             },
           },
         ],
