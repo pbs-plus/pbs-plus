@@ -95,7 +95,7 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 		return arpc.Response{}, err
 	}
 	if snapshot.Id == "" && filepath.VolumeName(snapshot.SnapshotPath)+"\\" == snapshot.SnapshotPath {
-		syslog.L.Warnf("Warning: VSS snapshot failed and has switched to direct backup mode.")
+		syslog.L.Warn().WithMessage("Warning: VSS snapshot failed and has switched to direct backup mode.").Write()
 	}
 
 	session.snapshot = snapshot
