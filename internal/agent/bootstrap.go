@@ -26,8 +26,8 @@ type BootstrapRequest struct {
 }
 
 type BootstrapResponse struct {
-	Cert       string `json:"cert"`
-	ServerCert string `json:"server_cert"`
+	Cert string `json:"cert"`
+	CA   string `json:"ca"`
 }
 
 func Bootstrap() error {
@@ -113,9 +113,9 @@ func Bootstrap() error {
 		return fmt.Errorf("Bootstrap: error json unmarshal body content (%s) -> %w", string(rawBody), err)
 	}
 
-	decodedServerCert, err := base64.StdEncoding.DecodeString(bootstrapResp.ServerCert)
+	decodedCA, err := base64.StdEncoding.DecodeString(bootstrapResp.CA)
 	if err != nil {
-		return fmt.Errorf("Bootstrap: error decoding ca content (%s) -> %w", string(bootstrapResp.ServerCert), err)
+		return fmt.Errorf("Bootstrap: error decoding ca content (%s) -> %w", string(bootstrapResp.CA), err)
 	}
 
 	decodedCert, err := base64.StdEncoding.DecodeString(bootstrapResp.Cert)
@@ -127,7 +127,7 @@ func Bootstrap() error {
 
 	caEntry := registry.RegistryEntry{
 		Key:      "ServerCA",
-		Value:    string(decodedServerCert),
+		Value:    string(decodedCA),
 		Path:     registry.AUTH,
 		IsSecret: true,
 	}

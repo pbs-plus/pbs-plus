@@ -96,7 +96,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		encodedCert := base64.StdEncoding.EncodeToString(cert)
-		encodedServerCert := base64.StdEncoding.EncodeToString(storeInstance.CertGenerator.GetCertificatePEM())
+		encodedCA := base64.StdEncoding.EncodeToString(storeInstance.CertGenerator.GetCAPEM())
 
 		clientIP := r.RemoteAddr
 
@@ -132,7 +132,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(map[string]string{"server_cert": encodedServerCert, "cert": encodedCert})
+		err = json.NewEncoder(w).Encode(map[string]string{"ca": encodedCA, "cert": encodedCert})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
@@ -177,7 +177,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		encodedCert := base64.StdEncoding.EncodeToString(cert)
-		encodedServerCert := base64.StdEncoding.EncodeToString(storeInstance.CertGenerator.GetCertificatePEM())
+		encodedCA := base64.StdEncoding.EncodeToString(storeInstance.CertGenerator.GetCAPEM())
 
 		clientIP := r.RemoteAddr
 
@@ -213,7 +213,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(map[string]string{"server_cert": encodedServerCert, "cert": encodedCert})
+		err = json.NewEncoder(w).Encode(map[string]string{"ca": encodedCA, "cert": encodedCert})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)

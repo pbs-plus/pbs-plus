@@ -103,7 +103,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		targetTemplate := existingTargets[0]
 
-		hostname := r.TLS.PeerCertificates[0].Subject.CommonName
+		hostname := r.Header.Get("X-PBS-Agent")
 
 		var driveLetters = make([]string, len(reqParsed.Drives))
 		for i, parsedDrive := range reqParsed.Drives {

@@ -12,7 +12,7 @@ import (
 
 func ARPCHandler(store *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		agentHostname := r.TLS.PeerCertificates[0].Subject.CommonName
+		agentHostname := r.Header.Get("X-PBS-Agent")
 		agentVersion := r.Header.Get("X-PBS-Plus-Version")
 
 		session, err := arpc.HijackUpgradeHTTP(w, r, agentHostname, agentVersion, store.ARPCSessionManager, nil)
