@@ -60,9 +60,9 @@ func checkAgentAuth(store *store.Store, r *http.Request) error {
 		return fmt.Errorf("CheckAgentAuth: client certificate required")
 	}
 
-	agentHostname := r.Header.Get("X-PBS-Agent")
+	agentHostname := r.TLS.PeerCertificates[0].Subject.CommonName
 	if agentHostname == "" {
-		return fmt.Errorf("CheckAgentAuth: missing X-PBS-Agent header")
+		return fmt.Errorf("CheckAgentAuth: invalid agent common name in agent certificate")
 	}
 
 	trustedCert, err := loadTrustedCert(store, agentHostname+" - C")

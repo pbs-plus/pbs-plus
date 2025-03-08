@@ -15,8 +15,6 @@ type Config struct {
 	// Server TLS configuration
 	CertFile string
 	KeyFile  string
-	CAFile   string
-	CAKey    string
 
 	// Token configuration
 	TokenExpiration time.Duration
@@ -52,12 +50,12 @@ func DefaultConfig() *Config {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
-	if c.CertFile == "" || c.KeyFile == "" || c.CAFile == "" {
+	if c.CertFile == "" || c.KeyFile == "" {
 		return authErrors.ErrCertificateRequired
 	}
 
 	// Check if certificate files exist
-	files := []string{c.CertFile, c.KeyFile, c.CAFile}
+	files := []string{c.CertFile, c.KeyFile}
 	for _, file := range files {
 		if _, err := os.Stat(file); err != nil {
 			return authErrors.WrapError("validate_config", err)
@@ -75,16 +73,16 @@ func (c *Config) LoadTLSConfig() (*tls.Config, error) {
 		return nil, authErrors.WrapError("load_tls_config", err)
 	}
 
-	// Load CA cert
-	caCert, err := os.ReadFile(c.CAFile)
+	// Load server cert
+	serverCert, err := os.ReadFile(c.CertFile)
 	if err != nil {
 		return nil, authErrors.WrapError("load_tls_config", err)
 	}
 
 	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCert) {
+	if !caCertPool.AppendCertsFromPEM(serverCert) {
 		return nil, authErrors.WrapError("load_tls_config",
-			errors.New("failed to append CA certificate"))
+			errors.New("failed to append server certificate"))
 	}
 
 	return &tls.Config{
