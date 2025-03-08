@@ -135,6 +135,7 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 			continue
 		}
 		if target != nil {
+			jobCount := 0
 			for _, jobFile := range jobFiles {
 				if jobFile.IsDir() {
 					continue
@@ -142,9 +143,11 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 
 				jobTarget := database.getJobTarget(utils.DecodePath(strings.TrimSuffix(jobFile.Name(), ".cfg")))
 				if jobTarget == target.Name {
-					target.JobCount++
+					jobCount++
 				}
 			}
+
+			target.JobCount = jobCount
 
 			targets = append(targets, *target)
 		}
