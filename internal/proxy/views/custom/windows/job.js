@@ -54,16 +54,24 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
     },
   },
 
+  controller: {
+    xclass: "Ext.app.ViewController",
+    control: {
+      "pbsDataStoreSelector[name=store]": {
+        change: "storeChange",
+      },
+    },
+
+    storeChange: function (field, value) {
+      let me = this;
+      let nsSelector = me.lookup("namespace");
+      nsSelector.setDatastore(value);
+    },
+  },
+
   initComponent: function () {
     let me = this;
     me.callParent();
-
-    let datastoreStore = me.down("pbsDataStoreSelector").getStore();
-    datastoreStore.on("load", function () {
-      if (me.jobData && me.jobData.store) {
-        me.getViewModel().set("storeValue", me.jobData.store);
-      }
-    });
 
     if (me.jobData) {
       let inputPanel = me.down("inputpanel");
@@ -127,18 +135,13 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             xtype: "pbsDataStoreSelector",
             fieldLabel: gettext("Local Datastore"),
             name: "store",
-            bind: {
-              value: "{storeValue}",
-            },
           },
           {
             xtype: "pbsD2DNamespaceSelector",
             fieldLabel: gettext("Namespace"),
             emptyText: gettext("Root"),
             name: "ns",
-            bind: {
-              datastore: "{storeValue}",
-            },
+            reference: "namespace",
           },
         ],
 
