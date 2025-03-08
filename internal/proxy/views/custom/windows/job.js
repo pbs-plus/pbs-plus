@@ -48,7 +48,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
 
   viewModel: {
     data: {
-      storeValue: null, // or a default value for the datastore, e.g., "localDataStore"
+      storeValue: "",
       modeValue: "metadata",
       sourceModeValue: "snapshot",
     },
@@ -121,7 +121,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             name: "subpath",
           },
           {
-            xtype: "pbsDataStoreSelector",
+            xtype: "pbsD2DDataStoreSelector",
             fieldLabel: gettext("Local Datastore"),
             name: "store",
             bind: {
