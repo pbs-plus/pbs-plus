@@ -380,7 +380,7 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 				op, err := runBackupAttempt(ctx, job, storeInstance, skipCheck)
 				if err != nil {
 					lastErr = err
-					if err == ErrOneInstance || err == ErrUnreachable {
+					if errors.Is(err, ErrOneInstance) || errors.Is(err, ErrUnreachable) {
 						autoOp.err = err
 						close(autoOp.done)
 						return
