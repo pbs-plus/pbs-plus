@@ -14,16 +14,17 @@ type SnapshotManager struct {
 func NewSnapshotManager() *SnapshotManager {
 	return &SnapshotManager{
 		handlerMap: map[string]SnapshotHandler{
-			"btrfs": &BtrfsSnapshotHandler{},
-			"zfs":   &ZFSSnapshotHandler{},
-			"lvm":   &LVMSnapshotHandler{},
-			"ext4":  &EXT4XFSHandler{}, // EXT4 delegates to LVM
-			"xfs":   &EXT4XFSHandler{}, // XFS delegates to LVM
-			"ntfs":  &NtfsSnapshotHandler{},
-			"refs":  &NtfsSnapshotHandler{},
-			"fat32": nil, // FAT32 does not support snapshots
-			"exfat": nil, // exFAT does not support snapshots
-			"hfs+":  nil, // HFS+ does not support snapshots
+			"cephfs": &CephfsSnapshotHandler{},
+			"btrfs":  &BtrfsSnapshotHandler{},
+			"zfs":    &ZFSSnapshotHandler{},
+			"lvm":    &LVMSnapshotHandler{},
+			"ext4":   &EXT4XFSHandler{}, // EXT4 delegates to LVM
+			"xfs":    &EXT4XFSHandler{}, // XFS delegates to LVM
+			"ntfs":   &NtfsSnapshotHandler{},
+			"refs":   &NtfsSnapshotHandler{},
+			"fat32":  nil, // FAT32 does not support snapshots
+			"exfat":  nil, // exFAT does not support snapshots
+			"hfs+":   nil, // HFS+ does not support snapshots
 		},
 	}
 }
