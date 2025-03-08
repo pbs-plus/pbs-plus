@@ -20,7 +20,7 @@ func monitorPBSClientLogs(filePath string, cmd *exec.Cmd, done <-chan struct{}) 
 	// Create a new watcher with a specific buffer size to handle high event volume
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		syslog.L.Errorf("failed to create watcher: %v", err)
+		syslog.L.Error(err).WithMessage("failed to create watcher").Write()
 		return
 	}
 	defer watcher.Close()
@@ -28,7 +28,7 @@ func monitorPBSClientLogs(filePath string, cmd *exec.Cmd, done <-chan struct{}) 
 	// Open the file for reading
 	file, err := os.Open(filePath)
 	if err != nil {
-		syslog.L.Errorf("failed to open file: %v", err)
+		syslog.L.Error(err).WithMessage("failed to open file").Write()
 		return
 	}
 	defer file.Close()
@@ -36,13 +36,13 @@ func monitorPBSClientLogs(filePath string, cmd *exec.Cmd, done <-chan struct{}) 
 	// Start reading at the file's end
 	offset, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
-		syslog.L.Errorf("failed to seek file: %v", err)
+		syslog.L.Error(err).WithMessage("failed to seek file").Write()
 		return
 	}
 
 	// Add the file to the watcher
 	if err := watcher.Add(filePath); err != nil {
-		syslog.L.Errorf("failed to add file to watcher: %v", err)
+		syslog.L.Error(err).WithMessage("failed to add file to watcher").Write()
 		return
 	}
 
@@ -111,7 +111,7 @@ func monitorPBSClientLogs(filePath string, cmd *exec.Cmd, done <-chan struct{}) 
 			if !ok {
 				return
 			}
-			syslog.L.Errorf("watcher error: %v", err)
+			syslog.L.Error(err).WithMessage("watcher error").Write()
 
 		case <-terminateCh:
 			// Do a final check when terminating
@@ -126,14 +126,14 @@ func processFileBuffer(file *os.File, offset int64, buf []byte, cmd *exec.Cmd) (
 	// Seek to the last read position
 	currentPos, err := file.Seek(offset, io.SeekStart)
 	if err != nil {
-		syslog.L.Errorf("seek error: %v", err)
+		syslog.L.Error(err).WithMessage("seek error").Write()
 		return offset, false
 	}
 
 	// Read new content directly into the buffer
 	n, err := file.Read(buf)
 	if err != nil && err != io.EOF {
-		syslog.L.Errorf("read error: %v", err)
+		syslog.L.Error(err).WithMessage("read error").Write()
 		return currentPos, false
 	}
 

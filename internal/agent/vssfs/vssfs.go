@@ -5,6 +5,7 @@ package vssfs
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -66,20 +67,34 @@ func NewVSSFSServer(jobId string, snapshot snapshots.WinVSSSnapshot) *VSSFSServe
 	}
 
 	if err := s.initializeStatFS(); err != nil && syslog.L != nil {
-		syslog.L.Errorf("initializeStatFS error: %s", err)
+		syslog.L.Error(err).WithMessage("failed to initialize statfs").Write()
 	}
 
 	return s
 }
 
+func safeHandler(fn func(req arpc.Request) (arpc.Response, error)) func(req arpc.Request) (arpc.Response, error) {
+	return func(req arpc.Request) (res arpc.Response, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				syslog.L.Error(fmt.Errorf("panic in handler: %v", r)).
+					WithField("payload", req.Payload).
+					Write()
+				err = os.ErrInvalid
+			}
+		}()
+		return fn(req)
+	}
+}
+
 func (s *VSSFSServer) RegisterHandlers(r *arpc.Router) {
-	r.Handle(s.jobId+"/OpenFile", s.handleOpenFile)
-	r.Handle(s.jobId+"/Stat", s.handleStat)
-	r.Handle(s.jobId+"/ReadDir", s.handleReadDir)
-	r.Handle(s.jobId+"/ReadAt", s.handleReadAt)
-	r.Handle(s.jobId+"/Lseek", s.handleLseek)
-	r.Handle(s.jobId+"/Close", s.handleClose)
-	r.Handle(s.jobId+"/StatFS", s.handleStatFS)
+	r.Handle(s.jobId+"/OpenFile", safeHandler(s.handleOpenFile))
+	r.Handle(s.jobId+"/Stat", safeHandler(s.handleStat))
+	r.Handle(s.jobId+"/ReadDir", safeHandler(s.handleReadDir))
+	r.Handle(s.jobId+"/ReadAt", safeHandler(s.handleReadAt))
+	r.Handle(s.jobId+"/Lseek", safeHandler(s.handleLseek))
+	r.Handle(s.jobId+"/Close", safeHandler(s.handleClose))
+	r.Handle(s.jobId+"/StatFS", safeHandler(s.handleStatFS))
 
 	s.arpcRouter = r
 }
@@ -130,18 +145,6 @@ func (s *VSSFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *VSSFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
-	var err error // Named return value for error
-	defer func() {
-		if r := recover(); r != nil {
-			// Log the panic
-			if syslog.L != nil {
-				syslog.L.Errorf("handleOpenFile panic: %v", r)
-			}
-			// Set the error to indicate a panic occurred
-			err = os.ErrInvalid
-		}
-	}()
-
 	var payload types.OpenFileReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -276,18 +279,6 @@ func (s *VSSFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 // handleReadDir first attempts to serve the directory listing from the cache.
 // It returns the cached DirEntries for that directory.
 func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
-	var err error // Named return value for error
-	defer func() {
-		if r := recover(); r != nil {
-			// Log the panic
-			if syslog.L != nil {
-				syslog.L.Errorf("handleReadDir panic: %v", r)
-			}
-			// Set the error to indicate a panic occurred
-			err = os.ErrInvalid
-		}
-	}()
-
 	var payload types.ReadDirReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -318,18 +309,6 @@ func (s *VSSFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 // handleReadAt now duplicates the file handle, opens a backup reading session,
 // and then uses backupSeek to skip to the desired offset without copying bytes.
 func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
-	var err error // Named return value for error
-	defer func() {
-		if r := recover(); r != nil {
-			// Log the panic
-			if syslog.L != nil {
-				syslog.L.Errorf("handleReadAt panic: %v", r)
-			}
-			// Set the error to indicate a panic occurred
-			err = os.ErrInvalid
-		}
-	}()
-
 	var payload types.ReadAtReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -347,8 +326,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	if payload.Offset >= fh.fileSize {
 		streamCallback := func(stream *smux.Stream) {
 			err := binarystream.SendDataFromReader(nil, payload.Length, stream)
-			if err != nil && syslog.L != nil {
-				syslog.L.Errorf("handleReadAt error: %v", err)
+			if err != nil {
+				syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 			}
 		}
 		return arpc.Response{
@@ -390,8 +369,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 				}()
 
 				err := binarystream.SendDataFromReader(reader, payload.Length, stream)
-				if err != nil && syslog.L != nil {
-					syslog.L.Errorf("handleReadAt error: %v", err)
+				if err != nil {
+					syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 				}
 			}
 
@@ -422,8 +401,8 @@ func (s *VSSFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 
 	streamCallback := func(stream *smux.Stream) {
 		err := binarystream.SendDataFromReader(reader, int(bytesRead), stream)
-		if err != nil && syslog.L != nil {
-			syslog.L.Errorf("handleReadAt error: %v", err)
+		if err != nil {
+			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 		}
 	}
 
