@@ -48,7 +48,6 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
 
   viewModel: {
     data: {
-      storeValue: "",
       modeValue: "metadata",
       sourceModeValue: "snapshot",
     },
