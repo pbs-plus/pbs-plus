@@ -210,9 +210,6 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("target") != "" {
 				job.Target = r.FormValue("target")
 			}
-			if r.FormValue("subpath") != "" {
-				job.Subpath = r.FormValue("subpath")
-			}
 			if r.FormValue("schedule") != "" {
 				job.Schedule = r.FormValue("schedule")
 			}
@@ -223,6 +220,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				job.NotificationMode = r.FormValue("notification-mode")
 			}
 
+			job.Subpath = r.FormValue("subpath")
 			job.Namespace = r.FormValue("ns")
 			job.Exclusions = []types.Exclusion{}
 
