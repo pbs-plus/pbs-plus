@@ -4,6 +4,7 @@ package syslog
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,13 +21,13 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 )
 
-// Logger struct for Windows Event Log integration
+// Logger struct for Windows Event Log integration.
 type Logger struct {
 	LogWriter service.Logger
 	mu        sync.Mutex // Protects LogWriter
 }
 
-// LogEntry represents a single log entry with additional context
+// LogEntry represents a single log entry with additional context.
 type LogEntry struct {
 	level   string
 	message string
@@ -41,31 +42,39 @@ type LogRemoteRequest struct {
 	Level    string `json:"level"`
 }
 
-// Global logger instance
+// Global logger instance.
 var L *Logger
 
-// Worker pool variables
+// Worker pool variables.
 var (
 	logQueue   chan LogEntry
 	workerOnce sync.Once
-	stopChan   chan struct{}
+	workerWg   sync.WaitGroup
 )
 
 func init() {
-	// Initialize the logger with zerolog output to stdout by default
-	log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}).
-		With().CallerWithSkipFrameCount(3).
+	// Initialize zerolog with output to stdout.
+	log.Logger = zerolog.New(
+		zerolog.ConsoleWriter{
+			Out:        os.Stdout,
+			TimeFormat: time.RFC3339,
+		},
+	).With().
+		CallerWithSkipFrameCount(3).
 		Timestamp().
-		Caller(). // Automatically include caller information (file and line number)
+		Caller().
 		Logger()
 
-	// Initialize the global logger instance
+	// Initialize the global logger instance.
 	L = &Logger{}
 
+	// Initialize the worker pool.
 	initializeWorkerPool()
+	// Start a goroutine that automatically shuts down the worker pool when a SIGINT or SIGTERM is received.
+	go stopWorkerPool()
 }
 
-// SetServiceLogger sets the service logger for Windows Event Log integration
+// SetServiceLogger sets the service logger for Windows Event Log integration.
 func (l *Logger) SetServiceLogger(s service.Service) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -80,7 +89,7 @@ func (l *Logger) SetServiceLogger(s service.Service) error {
 	return nil
 }
 
-// Error starts a new log entry for an error
+// Error starts a new log entry for an error.
 func (l *Logger) Error(err error) *LogEntry {
 	return &LogEntry{
 		level:  "error",
@@ -90,7 +99,7 @@ func (l *Logger) Error(err error) *LogEntry {
 	}
 }
 
-// Warn starts a new log entry for a warning
+// Warn starts a new log entry for a warning.
 func (l *Logger) Warn() *LogEntry {
 	return &LogEntry{
 		level:  "warn",
@@ -99,7 +108,7 @@ func (l *Logger) Warn() *LogEntry {
 	}
 }
 
-// Info starts a new log entry for informational messages
+// Info starts a new log entry for informational messages.
 func (l *Logger) Info() *LogEntry {
 	return &LogEntry{
 		level:  "info",
@@ -108,34 +117,33 @@ func (l *Logger) Info() *LogEntry {
 	}
 }
 
-// WithMessage adds a message to the log entry
+// WithMessage adds a message to the log entry.
 func (e *LogEntry) WithMessage(msg string) *LogEntry {
 	e.message = msg
 	return e
 }
 
+// WithJSON attempts to unmarshal the provided string into JSON fields.
+// If successful, it merges the parsed fields; otherwise, it sets the raw message.
 func (e *LogEntry) WithJSON(msg string) *LogEntry {
-	var fields map[string]interface{}
-
-	err := json.Unmarshal([]byte(msg), &fields)
-	if err == nil {
-		e.message = msg
-	} else {
-		for k, v := range fields {
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
+		for k, v := range parsed {
 			e.fields[k] = v
 		}
+	} else {
+		e.message = msg
 	}
-
 	return e
 }
 
-// WithField adds a single key-value pair to the log entry
+// WithField adds a single key-value pair to the log entry.
 func (e *LogEntry) WithField(key string, value interface{}) *LogEntry {
 	e.fields[key] = value
 	return e
 }
 
-// WithFields adds multiple key-value pairs to the log entry
+// WithFields adds multiple key-value pairs to the log entry.
 func (e *LogEntry) WithFields(fields map[string]interface{}) *LogEntry {
 	for k, v := range fields {
 		e.fields[k] = v
@@ -143,14 +151,15 @@ func (e *LogEntry) WithFields(fields map[string]interface{}) *LogEntry {
 	return e
 }
 
-// Send finalizes the log entry and sends it to the appropriate destination
+// Write finalizes the log entry and sends it to the appropriate destination.
 func (e *LogEntry) Write() {
-	// Format the log entry as JSON
+	// Format the log entry as JSON.
 	jsonMsg := e.formatLogAsJSON()
 
+	// Enqueue the log for remote processing.
 	e.enqueueLog()
 
-	// Send to Windows Event Log if available
+	// Send to Windows Event Log if available.
 	e.logger.mu.Lock()
 	defer e.logger.mu.Unlock()
 
@@ -166,76 +175,68 @@ func (e *LogEntry) Write() {
 			_ = e.logger.LogWriter.Info(jsonMsg)
 		}
 	} else {
-		// Fallback to stdout using zerolog
-		event := log.With().CallerWithSkipFrameCount(3).Fields(e.fields) // Skip 3 frames to get the correct caller
-		if e.err != nil {
-			event = event.Err(e.err)
-		}
+		// Fallback to stdout using zerolog.
+		fallbackLogger := log.With().
+			CallerWithSkipFrameCount(3).
+			Fields(e.fields).
+			Logger()
+
 		switch e.level {
 		case "info":
-			log.Info().Msg(e.message)
+			fallbackLogger.Info().Err(e.err).Msg(e.message)
 		case "warn":
-			log.Warn().Msg(e.message)
+			fallbackLogger.Warn().Err(e.err).Msg(e.message)
 		case "error":
-			log.Error().Msg(e.message)
+			fallbackLogger.Error().Err(e.err).Msg(e.message)
 		default:
-			log.Info().Msg(e.message)
+			fallbackLogger.Info().Err(e.err).Msg(e.message)
 		}
 	}
 }
 
-// formatLogAsJSON formats the log entry as a JSON string
+// formatLogAsJSON formats the log entry as a JSON string.
 func (e *LogEntry) formatLogAsJSON() string {
 	var buf bytes.Buffer
 
-	// Create a zerolog logger that writes to the buffer
 	logger := zerolog.New(&buf).With().
 		Timestamp().
 		Fields(e.fields).
 		Logger()
 
-	// Add the error if present
 	event := logger.Log()
 	if e.err != nil {
 		event = event.Err(e.err)
 	}
 
-	// Add the message
 	event.Msg(e.message)
-
-	// Return the serialized JSON as a string
 	return buf.String()
 }
 
-// initializeWorkerPool sets up the singleton worker pool for logToServer
+// initializeWorkerPool sets up the worker pool for sending logs to the server.
 func initializeWorkerPool() {
 	workerOnce.Do(func() {
-		logQueue = make(chan LogEntry, 100) // Buffered channel for log messages
-		stopChan = make(chan struct{})
-		go startWorkerPool(5) // Start 5 workers
+		logQueue = make(chan LogEntry, 100) // Buffered channel for log messages.
+		startWorkerPool(5)                  // Start 5 workers.
 	})
 }
 
-// startWorkerPool starts the specified number of workers
+// startWorkerPool starts the specified number of worker goroutines.
 func startWorkerPool(workerCount int) {
+	workerWg.Add(workerCount)
 	for i := 0; i < workerCount; i++ {
 		go worker()
 	}
 }
 
-// worker processes log messages from the logQueue
+// worker processes log messages from the logQueue.
 func worker() {
-	for {
-		select {
-		case logMsg := <-logQueue:
-			sendLogToServer(logMsg)
-		case <-stopChan:
-			return
-		}
+	defer workerWg.Done()
+	for logMsg := range logQueue {
+		sendLogToServer(logMsg)
 	}
 }
 
-// sendLogToServer sends a log message to the remote server
+// sendLogToServer sends a log message to the remote server.
 func sendLogToServer(entry LogEntry) {
 	hostname, _ := os.Hostname()
 	reqBody, err := json.Marshal(&LogRemoteRequest{
@@ -262,23 +263,29 @@ func sendLogToServer(entry LogEntry) {
 	_, _ = io.Copy(io.Discard, body)
 }
 
-// StopWorkerPool gracefully shuts down the worker pool
-func StopWorkerPool() {
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+// stopWorkerPool gracefully shuts down the worker pool by creating a context
+// that gets canceled when a SIGINT or SIGTERM signal is received. Once the signal
+// is captured, it closes the logQueue so that workers finish processing the remaining
+// messages before exiting.
+func stopWorkerPool() {
+	// Create a context that is canceled upon receiving SIGINT or SIGTERM.
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	<-ctx.Done()
 
-	close(stopChan)
+	// Close the log queue to signal workers that no new logs will arrive.
 	close(logQueue)
+	// Wait until all workers have finished processing.
+	workerWg.Wait()
 }
 
-// enqueueLog adds a log message to the logQueue for processing by the worker pool
+// enqueueLog adds a log message to the logQueue for processing.
 func (e *LogEntry) enqueueLog() {
 	select {
 	case logQueue <- *e:
-		// Successfully enqueued
+		// Successfully enqueued.
 	default:
-		// If the queue is full, drop the log and log a warning
+		// If the queue is full, drop the log and log a warning.
 		log.Warn().Msg("Log queue is full, dropping log message")
 	}
 }

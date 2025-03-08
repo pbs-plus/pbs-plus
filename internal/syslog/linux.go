@@ -84,18 +84,19 @@ func (e *LogEntry) WithMessage(msg string) *LogEntry {
 	return e
 }
 
+// WithJSON attempts to unmarshal the provided string into JSON fields.
+// If successful, it merges the parsed fields in; otherwise, it sets the raw message.
 func (e *LogEntry) WithJSON(msg string) *LogEntry {
-	var fields map[string]interface{}
-
-	err := json.Unmarshal([]byte(msg), &fields)
-	if err == nil {
-		e.message = msg
-	} else {
-		for k, v := range fields {
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
+		// Merge parsed JSON fields into the log entry's fields.
+		for k, v := range parsed {
 			e.fields[k] = v
 		}
+	} else {
+		// If parsing fails, assign the raw string as the message.
+		e.message = msg
 	}
-
 	return e
 }
 
@@ -134,20 +135,22 @@ func (e *LogEntry) Write() {
 			_ = e.logger.syslogWriter.Info(jsonMsg)
 		}
 	} else {
-		// Fallback to stdout using zerolog
-		event := log.With().CallerWithSkipFrameCount(3).Fields(e.fields) // Skip 3 frames to get the correct caller
-		if e.err != nil {
-			event = event.Err(e.err)
-		}
+		// Fallback to stdout using zerolog.
+		// Build a logger from the current context.
+		fallbackLogger := log.With().
+			CallerWithSkipFrameCount(3).
+			Fields(e.fields).
+			Logger()
+
 		switch e.level {
 		case "info":
-			log.Info().Msg(e.message)
+			fallbackLogger.Info().Err(e.err).Msg(e.message)
 		case "warn":
-			log.Warn().Msg(e.message)
+			fallbackLogger.Warn().Err(e.err).Msg(e.message)
 		case "error":
-			log.Error().Msg(e.message)
+			fallbackLogger.Error().Err(e.err).Msg(e.message)
 		default:
-			log.Info().Msg(e.message)
+			fallbackLogger.Info().Err(e.err).Msg(e.message)
 		}
 	}
 }
