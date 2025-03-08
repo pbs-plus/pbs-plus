@@ -11,7 +11,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/rs/zerolog/log"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 )
 
@@ -58,7 +57,7 @@ func sendLogToServer(entry LogEntry) {
 
 	reqBody, err := json.Marshal(entry)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to marshal log entry")
+		L.zlog.Error().Err(err).Msg("Failed to marshal log entry")
 		return
 	}
 
@@ -69,7 +68,7 @@ func sendLogToServer(entry LogEntry) {
 		nil,
 	)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to send log to remote server")
+		L.zlog.Error().Err(err).Msg("Failed to send log to remote server")
 		return
 	}
 	defer body.Close()

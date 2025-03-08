@@ -3,10 +3,10 @@
 package syslog
 
 import (
+	"log"
 	"strings"
 
 	"github.com/kardianos/service"
-	"github.com/rs/zerolog/log"
 )
 
 // EventLogWriter is a custom io.Writer that sends formatted log

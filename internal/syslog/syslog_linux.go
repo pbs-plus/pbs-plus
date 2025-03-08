@@ -4,17 +4,15 @@ package syslog
 
 import (
 	"log/syslog"
-	"time"
 
 	"github.com/rs/zerolog"
 )
 
 func init() {
 	sysWriter, _ := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-plus")
-	logger := zerolog.New(zerolog.ConsoleWriter{
-		Out:        &LogWriter{logger: sysWriter},
-		TimeFormat: time.RFC3339,
-	}).With().Timestamp().CallerWithSkipFrameCount(3).Logger()
+	logger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
+		w.Out = &LogWriter{logger: sysWriter}
+	})).With().Timestamp().CallerWithSkipFrameCount(3).Logger()
 
 	L = &Logger{zlog: &logger}
 }
