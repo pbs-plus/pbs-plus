@@ -182,20 +182,20 @@ func (e *LogEntry) Write() {
 		}
 	} else {
 		fallbackLogger := log.With().
+			Timestamp().
 			CallerWithSkipFrameCount(3).
-			// Pass the structured fields including hostname.
-			Fields(map[string]interface{}{"hostname": e.Hostname}).
+			Fields(e.Fields).
 			Logger()
 
 		switch e.Level {
 		case "info":
-			fallbackLogger.Info().Err(e.Err).Msg(formattedMsg)
+			fallbackLogger.Info().Err(e.Err).Msg(e.Message)
 		case "warn":
-			fallbackLogger.Warn().Err(e.Err).Msg(formattedMsg)
+			fallbackLogger.Warn().Err(e.Err).Msg(e.Message)
 		case "error":
-			fallbackLogger.Error().Err(e.Err).Msg(formattedMsg)
+			fallbackLogger.Error().Err(e.Err).Msg(e.Message)
 		default:
-			fallbackLogger.Info().Err(e.Err).Msg(formattedMsg)
+			fallbackLogger.Info().Err(e.Err).Msg(e.Message)
 		}
 	}
 }
@@ -288,7 +288,8 @@ func (e *LogEntry) formatLogAsJSON() string {
 	var buf bytes.Buffer
 	logger := zerolog.New(&buf).With().
 		Timestamp().
-		Fields(fields).
+		CallerWithSkipFrameCount(3).
+		Fields(e.Fields).
 		Logger()
 
 	event := logger.Log()
