@@ -122,9 +122,9 @@ func renewCertificate() error {
 		return fmt.Errorf("failed to fetch renewed certificate: %w", err)
 	}
 
-	decodedCA, err := base64.StdEncoding.DecodeString(renewResp.CA)
+	decodedServerCert, err := base64.StdEncoding.DecodeString(renewResp.ServerCert)
 	if err != nil {
-		return fmt.Errorf("Renew: error decoding ca content (%s) -> %w", string(renewResp.CA), err)
+		return fmt.Errorf("Renew: error decoding server cert content (%s) -> %w", string(renewResp.ServerCert), err)
 	}
 
 	decodedCert, err := base64.StdEncoding.DecodeString(renewResp.Cert)
@@ -136,7 +136,7 @@ func renewCertificate() error {
 
 	caEntry := registry.RegistryEntry{
 		Key:      "ServerCA",
-		Value:    string(decodedCA),
+		Value:    string(decodedServerCert),
 		Path:     registry.AUTH,
 		IsSecret: true,
 	}
@@ -157,7 +157,7 @@ func renewCertificate() error {
 
 	err = registry.CreateEntry(&caEntry)
 	if err != nil {
-		return fmt.Errorf("Renew: error storing ca to registry -> %w", err)
+		return fmt.Errorf("Renew: error storing server cert to registry -> %w", err)
 	}
 
 	err = registry.CreateEntry(&certEntry)

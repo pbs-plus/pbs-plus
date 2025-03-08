@@ -11,4 +11,6 @@ const (
 	LogsBasePath       = "/var/log/proxmox-backup"
 	TaskLogsBasePath   = LogsBasePath + "/tasks"
 	JobLogsBasePath    = "/var/log/pbs-plus"
+	PBSCert            = "/etc/proxmox-backup/proxy.pem"
+	PBSKey             = "/etc/proxmox-backup/proxy.key"
 )

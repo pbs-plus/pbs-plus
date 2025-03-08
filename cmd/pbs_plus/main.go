@@ -137,8 +137,7 @@ func main() {
 	}
 	defer unmountLib()
 
-	certOpts := certificates.DefaultOptions()
-	generator, err := certificates.NewGenerator(certOpts)
+	generator, err := certificates.NewGenerator()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to initialize certificate generator").Write()
 		return
@@ -151,22 +150,12 @@ func main() {
 	}
 
 	serverConfig := server.DefaultConfig()
-	serverConfig.CertFile = filepath.Join(certOpts.OutputDir, "server.crt")
-	serverConfig.KeyFile = filepath.Join(certOpts.OutputDir, "server.key")
-	serverConfig.CAFile = filepath.Join(certOpts.OutputDir, "ca.crt")
-	serverConfig.CAKey = filepath.Join(certOpts.OutputDir, "ca.key")
+	serverConfig.CertFile = constants.PBSCert
+	serverConfig.KeyFile = constants.PBSKey
 	serverConfig.TokenSecret = string(csrfKey)
 
 	if err := generator.ValidateExistingCerts(); err != nil {
-		if err := generator.GenerateCA(); err != nil {
-			syslog.L.Error(err).WithMessage("failed to generate certificate").Write()
-			return
-		}
-
-		if err := generator.GenerateCert("server"); err != nil {
-			syslog.L.Error(err).WithMessage("failed to generate certificate").Write()
-			return
-		}
+		syslog.L.Error(err).WithMessage("pbs cert is invalid").Write()
 	}
 
 	if err := serverConfig.Validate(); err != nil {
@@ -175,27 +164,6 @@ func main() {
 	}
 
 	storeInstance.CertGenerator = generator
-
-	err = os.Chown(serverConfig.KeyFile, 0, 34)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to change cert key permissions").Write()
-		return
-	}
-
-	err = os.Chown(serverConfig.CertFile, 0, 34)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to change cert permissions").Write()
-		return
-	}
-
-	err = serverConfig.Mount()
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to mount new certificate for mTLS").Write()
-		return
-	}
-	defer func() {
-		_ = serverConfig.Unmount()
-	}()
 
 	proxy := exec.Command("/usr/bin/systemctl", "restart", "proxmox-backup-proxy")
 	proxy.Env = os.Environ()
@@ -227,15 +195,7 @@ func main() {
 				return
 			case <-time.After(time.Hour):
 				if err := generator.ValidateExistingCerts(); err != nil {
-					if err := generator.GenerateCA(); err != nil {
-						syslog.L.Error(err).WithMessage("failed to generate CA").Write()
-					}
-
-					if err := generator.GenerateCert("server"); err != nil {
-						syslog.L.Error(err).WithMessage("failed to generate server certificate").Write()
-					}
 				}
-
 			}
 		}
 	}()
