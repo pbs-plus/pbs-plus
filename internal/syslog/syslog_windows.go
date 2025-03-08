@@ -4,6 +4,7 @@ package syslog
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/kardianos/service"
@@ -13,8 +14,8 @@ import (
 
 func init() {
 	// Configure zerolog to output via our EventLogWriter wrapped in a ConsoleWriter.
-	logger := zerolog.New(zerolog.ConsoleWriter{
-		Out:        &LogWriter{logger: nil},
+	zlogger := zerolog.New(zerolog.ConsoleWriter{
+		Out:        os.Stdout,
 		TimeFormat: time.RFC3339,
 	}).With().
 		CallerWithSkipFrameCount(3).
@@ -22,7 +23,7 @@ func init() {
 		Caller().
 		Logger()
 
-	L = &Logger{zlog: &logger}
+	L = &Logger{zlog: &zlogger}
 }
 
 // SetServiceLogger configures the service logger for Windows Event Log integration.
@@ -37,6 +38,7 @@ func (l *Logger) SetServiceLogger(s service.Service) error {
 
 	zlogger := zerolog.New(zerolog.ConsoleWriter{
 		Out:        &LogWriter{logger: logger},
+		NoColor:    true,
 		TimeFormat: time.RFC3339,
 	}).With().
 		CallerWithSkipFrameCount(3).

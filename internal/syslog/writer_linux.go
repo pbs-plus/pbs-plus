@@ -16,8 +16,7 @@ type LogWriter struct {
 }
 
 // Write implements io.Writer. It converts the provided bytes into a string
-// and sends it to syslog. (In this simple example, we always use the Info level.
-// You can extend this if needed.)
+// and sends it to syslog.
 func (sw *LogWriter) Write(p []byte) (n int, err error) {
 	message := string(p)
 	if sw.logger != nil {
