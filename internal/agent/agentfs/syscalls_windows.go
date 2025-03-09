@@ -72,28 +72,42 @@ type FileAllocatedRangeBuffer struct {
 }
 
 func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocatedRangeBuffer, error) {
-	// Handle edge case: zero file size
+	// Validate fileSize.
+	if fileSize < 0 {
+		return nil, fmt.Errorf("invalid fileSize: %d", fileSize)
+	}
+
+	// Handle edge case: zero file size.
 	if fileSize == 0 {
 		return nil, nil
 	}
 
-	// Define the input range for the query
+	// Define the input range for the query.
 	var inputRange FileAllocatedRangeBuffer
 	inputRange.FileOffset = 0
 	inputRange.Length = fileSize
 
-	// Constants for buffer size calculations
+	// Constant for buffer size calculations.
 	rangeSize := int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
+	if rangeSize == 0 {
+		return nil, fmt.Errorf("computed rangeSize is 0, invalid FileAllocatedRangeBuffer")
+	}
 
-	// Start with a small buffer and dynamically resize if needed
-	bufferSize := 1 // Start with space for 1 range
+	// Start with a small buffer and dynamically resize if needed.
+	bufferSize := 1 // Start with space for 1 range.
 	var bytesReturned uint32
 
+	// Set an arbitrary maximum to avoid infinite allocation.
+	const maxBufferSize = 1 << 20 // for example, 1 million entries.
 	for {
-		// Allocate the output buffer
+		if bufferSize > maxBufferSize {
+			return nil, fmt.Errorf("buffer size exceeded maximum threshold: %d", bufferSize)
+		}
+
+		// Allocate the output buffer.
 		outputBuffer := make([]FileAllocatedRangeBuffer, bufferSize)
 
-		// Call DeviceIoControl
+		// Call DeviceIoControl.
 		err := windows.DeviceIoControl(
 			handle,
 			windows.FSCTL_QUERY_ALLOCATED_RANGES,
@@ -106,25 +120,32 @@ func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocate
 		)
 
 		if err == nil {
-			// Success: Calculate the number of ranges returned
+			// Success: calculate the number of ranges returned.
+			if bytesReturned%uint32(rangeSize) != 0 {
+				return nil, fmt.Errorf("inconsistent number of bytes returned: %d", bytesReturned)
+			}
 			count := int(bytesReturned) / rangeSize
+			if count > len(outputBuffer) {
+				return nil, fmt.Errorf("invalid count computed: %d", count)
+			}
 			return outputBuffer[:count], nil
 		}
 
+		// If the buffer was too small, double the bufferSize and retry.
 		if err == windows.ERROR_MORE_DATA {
-			// Buffer was too small: Increase the buffer size and retry
 			bufferSize *= 2
 			continue
 		}
 
+		// If the filesystem doesn't support FSCTL_QUERY_ALLOCATED_RANGES, return
+		// a single range covering the whole file.
 		if err == windows.ERROR_INVALID_FUNCTION {
-			// Filesystem does not support FSCTL_QUERY_ALLOCATED_RANGES
-			// Return a single range covering the whole file
 			return []FileAllocatedRangeBuffer{
 				{FileOffset: 0, Length: fileSize},
 			}, nil
 		}
 
+		// For any other error, return it wrapped.
 		return nil, fmt.Errorf("DeviceIoControl failed: %w", err)
 	}
 }
@@ -221,7 +242,7 @@ func parseFileAttributes(attr uint32) map[string]bool {
 	return attributes
 }
 
-func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
+func getWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	// Request DACL, owner, and group information.
 	sd, err := windows.GetNamedSecurityInfo(
 		filePath,
@@ -251,21 +272,22 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	// Iterate over each ACE in the DACL.
 	for i := uint32(0); i < aceCount; i++ {
 		// Use a generic *byte pointer for the ACE.
-		var acePtr *windows.ACCESS_ALLOWED_ACE
-		if err := windows.GetAce(dacl, i, &acePtr); err != nil {
-			return "", "", nil, fmt.Errorf(
-				"GetAce failed at index %d: %v", i, err,
-			)
+		var aceRaw *byte
+		if err := windows.GetAce(
+			dacl,
+			i,
+			(**windows.ACCESS_ALLOWED_ACE)(unsafe.Pointer(&aceRaw)),
+		); err != nil {
+			return "", "", nil, fmt.Errorf("GetAce failed at index %d: %v", i, err)
 		}
 
-		// Determine the ACE type.
-		aceHeader := (*windows.ACE_HEADER)(unsafe.Pointer(acePtr))
+		aceHeader := (*windows.ACE_HEADER)(unsafe.Pointer(aceRaw))
 		switch aceHeader.AceType {
 		case windows.ACCESS_ALLOWED_ACE_TYPE, windows.ACCESS_DENIED_ACE_TYPE:
-			// Both allowed and denied ACEs share the same layout.
-			ace := (*windows.ACCESS_ALLOWED_ACE)(unsafe.Pointer(acePtr))
+			// Since both allowed and denied ACEs have similar layout, cast it.
+			ace := (*windows.ACCESS_ALLOWED_ACE)(unsafe.Pointer(aceRaw))
 
-			// Convert the SID to a string. (This is the older API pattern.)
+			// Convert the SID to a string.
 			var sid *uint16
 			err = windows.ConvertSidToStringSid(
 				(*windows.SID)(unsafe.Pointer(&ace.SidStart)),
@@ -291,7 +313,7 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 				Flags:      ace.Header.AceFlags,
 			})
 		default:
-			// Skip any unhandled ACE types.
+			// Skip unhandled ACE types.
 			continue
 		}
 	}
