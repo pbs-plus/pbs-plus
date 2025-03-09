@@ -15,7 +15,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
-func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string) *ARPCFS {
+func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string, backupMode string) *ARPCFS {
 	fs := &ARPCFS{
 		basePath:      "/",
 		ctx:           ctx,
@@ -23,9 +23,14 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 		JobId:         jobId,
 		Hostname:      hostname,
 		accessedPaths: safemap.New[string, bool](),
+		backupMode:    backupMode,
 	}
 
 	return fs
+}
+
+func (fs *ARPCFS) GetBackupMode() string {
+	return fs.backupMode
 }
 
 // trackAccess records that a path has been accessed using its xxHash
