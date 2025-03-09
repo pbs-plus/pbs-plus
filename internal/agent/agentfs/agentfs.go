@@ -56,6 +56,7 @@ func safeHandler(fn func(req arpc.Request) (arpc.Response, error)) func(req arpc
 		defer func() {
 			if r := recover(); r != nil {
 				syslog.L.Error(fmt.Errorf("panic in handler: %v", r)).
+					WithMessage(fmt.Sprintf("panic in handler: %v", r)).
 					WithField("payload", req.Payload).
 					Write()
 				err = os.ErrInvalid

@@ -285,15 +285,12 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	// Retrieve explicit ACE entries from the ACL.
 	expEntries, err := GetExplicitEntriesFromACL(acl)
 	if err != nil {
-		return owner, group, nil, fmt.Errorf("GetExplicitEntriesFromACL failed: %w", err)
-	}
-	if expEntries == nil {
 		return owner, group, []types.WinACL{}, nil
 	}
 
 	var winAcls []types.WinACL
 	// Iterate over each explicit access entry.
-	for _, entry := range *expEntries {
+	for _, entry := range expEntries {
 		// In an absolute descriptor, Trustee.TrusteeValue is a pointer to a SID.
 		pSid := (*windows.SID)(unsafe.Pointer(entry.Trustee.TrusteeValue))
 		if pSid == nil {

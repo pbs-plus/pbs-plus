@@ -253,10 +253,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		fileAttributes = parseFileAttributes(statT.FileAttributes)
 
 		// Retrieve owner, group and ACL info.
-		owner, group, acls, err = GetWinACLs(fullPath)
-		if err != nil {
-			return arpc.Response{}, err
-		}
+		owner, group, acls, _ = GetWinACLs(fullPath)
 	}
 
 	info := types.AgentFileInfo{
