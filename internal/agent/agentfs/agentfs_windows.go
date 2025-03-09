@@ -8,10 +8,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 	"unsafe"
 
 	"github.com/Microsoft/go-winio"
+	"github.com/pkg/errors"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	binarystream "github.com/sonroyaalmerol/pbs-plus/internal/arpc/binary"
@@ -209,60 +209,33 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	rawInfo, err := os.Stat(fullPath)
+	// Use windows.GetFileAttributesEx to retrieve Win32FileAttributeData directly
+	var fileAttrData windows.Win32FileAttributeData
+	utf16, err := windows.UTF16FromString(fullPath)
 	if err != nil {
-		return arpc.Response{}, err
+		return arpc.Response{}, mapWinError(err, "handleXattr")
 	}
 
-	blocks := uint64(0)
-	if !rawInfo.IsDir() {
-		file, err := os.Open(fullPath)
-		if err != nil {
-			return arpc.Response{}, err
-		}
-		defer file.Close()
-
-		var blockSize uint64
-		if s.statFs != (types.StatFS{}) {
-			blockSize = s.statFs.Bsize
-		}
-		if blockSize == 0 {
-			blockSize = 4096 // default 4KB block size
-		}
-
-		standardInfo, err := winio.GetFileStandardInfo(file)
-		if err == nil {
-			blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
-		}
+	err = windows.GetFileAttributesEx(&utf16[0], windows.GetFileExInfoStandard, (*byte)(unsafe.Pointer(&fileAttrData)))
+	if err != nil {
+		return arpc.Response{}, errors.Wrap(err, "failed to get file attributes")
 	}
 
-	// Set defaults for extended attributes.
-	creationTime := int64(0)
-	lastAccessTime := int64(0)
-	lastWriteTime := int64(0)
-	fileAttributes := make(map[string]bool)
+	// Extract extended attributes from Win32FileAttributeData
+	creationTime := filetimeToUnix(fileAttrData.CreationTime)
+	lastAccessTime := filetimeToUnix(fileAttrData.LastAccessTime)
+	lastWriteTime := filetimeToUnix(fileAttrData.LastWriteTime)
+	fileAttributes := parseFileAttributes(fileAttrData.FileAttributes)
+
+	// Retrieve owner, group, and ACL info
 	owner := ""
 	group := ""
 	var acls []types.WinACL
+	owner, group, acls, _ = GetWinACLs(fullPath)
 
-	// If the underlying FileInfo supports Windows-specific data, use it.
-	if statT, ok := rawInfo.Sys().(*syscall.Win32FileAttributeData); ok {
-		creationTime = filetimeToUnix(statT.CreationTime)
-		lastAccessTime = filetimeToUnix(statT.LastAccessTime)
-		lastWriteTime = filetimeToUnix(statT.LastWriteTime)
-		fileAttributes = parseFileAttributes(statT.FileAttributes)
-
-		// Retrieve owner, group and ACL info.
-		owner, group, acls, _ = GetWinACLs(fullPath)
-	}
-
+	// Populate AgentFileInfo
 	info := types.AgentFileInfo{
-		Name:           rawInfo.Name(),
-		Size:           rawInfo.Size(),
-		Mode:           uint32(rawInfo.Mode()),
-		ModTime:        rawInfo.ModTime(),
-		IsDir:          rawInfo.IsDir(),
-		Blocks:         blocks,
+		Name:           fullPath,
 		CreationTime:   creationTime,
 		LastAccessTime: lastAccessTime,
 		LastWriteTime:  lastWriteTime,

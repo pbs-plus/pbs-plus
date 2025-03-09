@@ -5,7 +5,6 @@ package agentfs
 import (
 	"fmt"
 	"strings"
-	"syscall"
 	"unsafe"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
@@ -187,7 +186,7 @@ func GetAllocGranularity() int {
 
 // filetimeToUnix converts a Windows FILETIME to a Unix timestamp.
 // Windows file times are in 100-nanosecond intervals since January 1, 1601.
-func filetimeToUnix(ft syscall.Filetime) int64 {
+func filetimeToUnix(ft windows.Filetime) int64 {
 	const (
 		winToUnixEpochDiff = 116444736000000000 // in 100-nanosecond units
 		hundredNano        = 10000000           // 100-ns units per second

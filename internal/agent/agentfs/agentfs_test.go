@@ -203,6 +203,41 @@ func TestAgentFSServer(t *testing.T) {
 		assert.EqualValues(t, 19, result.Size)
 	})
 
+	t.Run("Xattr", func(t *testing.T) {
+		// Create a test file
+		testFilePath := filepath.Join(testDir, "xattr_test_file.txt")
+		err := os.WriteFile(testFilePath, []byte("test content for xattr"), 0644)
+		require.NoError(t, err, "Failed to create test file for xattr")
+
+		// Call the xattr handler via the client session
+		payload := types.StatReq{Path: "xattr_test_file.txt"}
+		var result types.AgentFileInfo
+		raw, err := clientSession.CallMsg(ctx, "agentFs/Xattr", &payload)
+		require.NoError(t, err, "Failed to call xattr handler")
+		err = result.Decode(raw)
+		require.NoError(t, err, "Failed to decode xattr response")
+
+		// Log the extended attributes (if any)
+		t.Logf("Owner for %s: %+v", testFilePath, result.Owner)
+		assert.NotEmpty(t, result.Owner, "Owner should not be empty")
+		t.Logf("Group for %s: %+v", testFilePath, result.Group)
+		assert.NotEmpty(t, result.Group, "Group should not be empty")
+		t.Logf("CreationTime for %s: %+v", testFilePath, result.CreationTime)
+		t.Logf("LastAccessTime for %s: %+v", testFilePath, result.LastAccessTime)
+		assert.NotEmpty(t, result.LastAccessTime, "LastAccessTime should not be empty")
+		t.Logf("LastWriteTime for %s: %+v", testFilePath, result.LastWriteTime)
+		assert.NotEmpty(t, result.LastWriteTime, "LastWriteTime should not be empty")
+		t.Logf("WinACLs for %s: %+v", testFilePath, result.WinACLs)
+		t.Logf("PosixACLs for %s: %+v", testFilePath, result.PosixACLs)
+
+		// Verify that the FileAttributes map is not nil
+		assert.NotNil(t, result.FileAttributes, "FileAttributes map should not be nil")
+
+		// Clean up the test file
+		err = os.Remove(testFilePath)
+		require.NoError(t, err, "Failed to remove test file")
+	})
+
 	t.Run("ReadDir", func(t *testing.T) {
 		payload := types.ReadDirReq{Path: ("/")}
 		var result types.ReadDirEntries
