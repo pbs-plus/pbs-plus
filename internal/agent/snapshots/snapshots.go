@@ -1,7 +1,6 @@
 package snapshots
 
 import (
-	"context"
 	"errors"
 	"time"
 )
@@ -17,7 +16,7 @@ type Snapshot struct {
 
 // SnapshotHandler defines the interface for snapshot operations
 type SnapshotHandler interface {
-	CreateSnapshot(ctx context.Context, jobId string, sourcePath string) (Snapshot, error)
+	CreateSnapshot(jobId string, sourcePath string) (Snapshot, error)
 	DeleteSnapshot(snapshot Snapshot) error
 	IsSupported(sourcePath string) bool
 }

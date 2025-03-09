@@ -1,11 +1,13 @@
+//go:build linux
+
 package agentfs
 
 import (
+	"math"
 	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
-	"math"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 )

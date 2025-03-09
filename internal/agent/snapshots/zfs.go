@@ -1,7 +1,6 @@
 package snapshots
 
 import (
-	"context"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -11,7 +10,7 @@ import (
 
 type ZFSSnapshotHandler struct{}
 
-func (z *ZFSSnapshotHandler) CreateSnapshot(ctx context.Context, jobId string, sourcePath string) (Snapshot, error) {
+func (z *ZFSSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
 	if !z.IsSupported(sourcePath) {
 		return Snapshot{}, fmt.Errorf("source path %q is not on a ZFS filesystem", sourcePath)
 	}
@@ -20,7 +19,7 @@ func (z *ZFSSnapshotHandler) CreateSnapshot(ctx context.Context, jobId string, s
 	snapshotName := fmt.Sprintf("%s@%s", sourcePath, jobId)
 	timeStarted := time.Now()
 
-	cmd := exec.CommandContext(ctx, "zfs", "snapshot", snapshotName)
+	cmd := exec.Command("zfs", "snapshot", snapshotName)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return Snapshot{}, fmt.Errorf("failed to create ZFS snapshot: %s, %w", string(output), err)
 	}
