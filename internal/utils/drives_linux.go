@@ -64,6 +64,26 @@ func humanizeBytes(bytes uint64) string {
 func GetLocalDrives() ([]DriveInfo, error) {
 	var drives []DriveInfo
 
+	// List of filesystem types to ignore
+	excludedFsTypes := map[string]bool{
+		"tmpfs":           true,
+		"devtmpfs":        true,
+		"proc":            true,
+		"sysfs":           true,
+		"securityfs":      true,
+		"cgroup2":         true,
+		"pstore":          true,
+		"efivarfs":        true,
+		"bpf":             true,
+		"debugfs":         true,
+		"mqueue":          true,
+		"hugetlbfs":       true,
+		"fusectl":         true,
+		"configfs":        true,
+		"ramfs":           true,
+		"fuse.gvfsd-fuse": true,
+	}
+
 	// Use the `df` command to get information about mounted filesystems
 	output, err := exec.Command("df", "-T").Output()
 	if err != nil {
@@ -102,6 +122,11 @@ func GetLocalDrives() ([]DriveInfo, error) {
 		// Parse the fields from the `df` output
 		fsType := fields[1]
 		mountPoint := fields[6]
+
+		// Check if the filesystem type is in the excluded list
+		if excludedFsTypes[fsType] {
+			continue
+		}
 
 		// Get disk space information
 		var stat syscall.Statfs_t
