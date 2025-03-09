@@ -212,7 +212,7 @@ func TestAgentFSServer(t *testing.T) {
 		// Call the xattr handler via the client session
 		payload := types.StatReq{Path: "xattr_test_file.txt"}
 		var result types.AgentFileInfo
-		raw, err := clientSession.CallMsg(ctx, "agentFs/Attr", &payload)
+		raw, err := clientSession.CallMsg(ctx, "agentFs/Xattr", &payload)
 		require.NoError(t, err, "Failed to call xattr handler")
 		err = result.Decode(raw)
 		require.NoError(t, err, "Failed to decode xattr response")
