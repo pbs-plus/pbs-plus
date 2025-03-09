@@ -13,7 +13,7 @@ type LseekResp struct {
 }
 
 func (resp *LseekResp) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(8)
 	if err := enc.WriteInt64(resp.NewOffset); err != nil {
 		return nil, err
 	}
@@ -43,7 +43,7 @@ type WinACL struct {
 
 // Encode encodes a single WinACL into a byte slice
 func (acl *WinACL) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(acl.SID) + 4 + 1 + 1)
 
 	if err := enc.WriteString(acl.SID); err != nil {
 		return nil, err
@@ -157,7 +157,7 @@ type PosixACL struct {
 }
 
 func (entry *PosixACL) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(len(entry.Tag) + 4 + 1)
 
 	if err := enc.WriteString(entry.Tag); err != nil {
 		return nil, err
