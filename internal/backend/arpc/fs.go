@@ -130,7 +130,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 }
 
 // Stat first tries the LRU cache before performing an RPC call.
-func (fs *ARPCFS) Stat(filename string) (types.AgentFileInfo, error) {
+func (fs *ARPCFS) Attr(filename string) (types.AgentFileInfo, error) {
 	var fi types.AgentFileInfo
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
@@ -138,7 +138,30 @@ func (fs *ARPCFS) Stat(filename string) (types.AgentFileInfo, error) {
 	}
 
 	req := types.StatReq{Path: filename}
-	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Stat", &req)
+	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Attr", &req)
+	if err != nil {
+		return types.AgentFileInfo{}, err
+	}
+
+	err = fi.Decode(raw)
+	if err != nil {
+		return types.AgentFileInfo{}, os.ErrInvalid
+	}
+
+	fs.trackAccess(filename, fi.IsDir)
+
+	return fi, nil
+}
+
+func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
+	var fi types.AgentFileInfo
+	if fs.session == nil {
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
+		return types.AgentFileInfo{}, os.ErrInvalid
+	}
+
+	req := types.StatReq{Path: filename}
+	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Xattr", &req)
 	if err != nil {
 		return types.AgentFileInfo{}, err
 	}
