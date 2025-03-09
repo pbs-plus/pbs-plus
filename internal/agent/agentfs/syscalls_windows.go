@@ -298,6 +298,10 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 			fmt.Errorf("GetExplicitEntriesFromACL failed: %w", err)
 	}
 
+	if expEntries == nil {
+		return owner, group, []types.WinACL{}, nil
+	}
+
 	var winAcls []types.WinACL
 	// Iterate over each explicit access entry.
 	for _, entry := range *expEntries {
