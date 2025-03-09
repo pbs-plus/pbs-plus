@@ -11,6 +11,7 @@ import (
 )
 
 var modAdvapi32 = syscall.NewLazyDLL("advapi32.dll")
+var modKernel32 = syscall.NewLazyDLL("kernel32.dll")
 
 var (
 	procGetFileSecurity            = modAdvapi32.NewProc("GetFileSecurityW")
@@ -20,6 +21,7 @@ var (
 	procGetExplicitEntriesFromACL  = modAdvapi32.NewProc("GetExplicitEntriesFromAclW")
 	procGetSecurityDescriptorOwner = modAdvapi32.NewProc("GetSecurityDescriptorOwner")
 	procGetSecurityDescriptorGroup = modAdvapi32.NewProc("GetSecurityDescriptorGroup")
+	procLocalFree                  = modKernel32.NewProc("LocalFree")
 )
 
 // GetFileSecurityDescriptor retrieves a file security descriptor
@@ -154,19 +156,30 @@ func GetSecurityDescriptorDACL(pSecDescriptor []uint16) (*windows.ACL, bool, boo
 }
 
 // GetExplicitEntriesFromACL retrieves the explicit access entries from an ACL.
-func GetExplicitEntriesFromACL(acl *windows.ACL) (*[]windows.EXPLICIT_ACCESS, error) {
-	var explicitEntries *[]windows.EXPLICIT_ACCESS
+func GetExplicitEntriesFromACL(acl *windows.ACL) ([]windows.EXPLICIT_ACCESS, error) {
 	var entriesSize uint32
-	ret, _, err := procGetExplicitEntriesFromACL.Call(
+	var explicitEntries *windows.EXPLICIT_ACCESS
+
+	_, _, err := procGetExplicitEntriesFromACL.Call(
 		uintptr(unsafe.Pointer(acl)),
 		uintptr(unsafe.Pointer(&entriesSize)),
 		uintptr(unsafe.Pointer(&explicitEntries)),
 	)
-	// If ret is non-zero, assume success.
-	if ret != 0 {
-		return explicitEntries, nil
+
+	if err != windows.ERROR_SUCCESS {
+		return nil, err
 	}
-	return explicitEntries, err
+
+	entries := make([]windows.EXPLICIT_ACCESS, entriesSize)
+	for i := uint32(0); i < entriesSize; i++ {
+		entries[i] = *(*windows.EXPLICIT_ACCESS)(unsafe.Pointer(
+			uintptr(unsafe.Pointer(explicitEntries)) + uintptr(i)*unsafe.Sizeof(*explicitEntries),
+		))
+	}
+
+	_, _, _ = procLocalFree.Call(uintptr(unsafe.Pointer(explicitEntries)))
+
+	return entries, nil
 }
 
 // getOwnerGroupAbsolute extracts the owner and group SIDs (as strings) from an absolute
