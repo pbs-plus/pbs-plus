@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"math"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 )
@@ -40,8 +41,10 @@ func getPosixACL(path string) ([]types.PosixACL, error) {
 		permsStr := parts[2]
 		var id int32 = -1
 		if qualifier != "" {
-			if uid, err := strconv.Atoi(qualifier); err == nil {
-				id = int32(uid)
+			if uid, err := strconv.ParseInt(qualifier, 10, 32); err == nil {
+				if uid >= math.MinInt32 && uid <= math.MaxInt32 {
+					id = int32(uid)
+				}
 			}
 		}
 		var perms uint8 = 0
