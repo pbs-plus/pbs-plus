@@ -222,20 +222,25 @@ func parseFileAttributes(attr uint32) map[string]bool {
 }
 
 func getWinACLs(filePath string) (string, string, []types.WinACL, error) {
-	// Get the security descriptor for the file.
+	// Request DACL, owner, and group information.
 	sd, err := windows.GetNamedSecurityInfo(
 		filePath,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION,
+		windows.DACL_SECURITY_INFORMATION|
+			windows.OWNER_SECURITY_INFORMATION|
+			windows.GROUP_SECURITY_INFORMATION,
 	)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("GetNamedSecurityInfo failed: %v", err)
 	}
-	// Free the security descriptor memory when we are done.
+	// Free the security descriptor when done.
 	defer windows.LocalFree(windows.Handle(unsafe.Pointer(sd)))
 
 	// Extract the DACL from the security descriptor.
-	dacl, present, _ := sd.DACL()
+	dacl, present, err := sd.DACL()
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to get DACL: %v", err)
+	}
 	if !present || dacl == nil {
 		return "", "", nil, fmt.Errorf("no DACL present")
 	}
@@ -245,27 +250,32 @@ func getWinACLs(filePath string) (string, string, []types.WinACL, error) {
 
 	// Iterate over each ACE in the DACL.
 	for i := uint32(0); i < aceCount; i++ {
-		// GetAce returns a pointer to the ACE via a pointer to a byte.
+		// Use a generic *byte pointer for the ACE.
 		var acePtr *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, i, &acePtr); err != nil {
-			return "", "", nil, fmt.Errorf("GetAce failed at index %d: %v", i, err)
+			return "", "", nil, fmt.Errorf(
+				"GetAce failed at index %d: %v", i, err,
+			)
 		}
 
-		// Obtain a reference to the header to determine the ACE type.
+		// Determine the ACE type.
 		aceHeader := (*windows.ACE_HEADER)(unsafe.Pointer(acePtr))
 		switch aceHeader.AceType {
 		case windows.ACCESS_ALLOWED_ACE_TYPE, windows.ACCESS_DENIED_ACE_TYPE:
 			// Both allowed and denied ACEs share the same layout.
 			ace := (*windows.ACCESS_ALLOWED_ACE)(unsafe.Pointer(acePtr))
 
-			// Convert the SID to a string.
+			// Convert the SID to a string. (This is the older API pattern.)
 			var sid *uint16
-			err := windows.ConvertSidToStringSid(
+			err = windows.ConvertSidToStringSid(
 				(*windows.SID)(unsafe.Pointer(&ace.SidStart)),
 				&sid,
 			)
 			if err != nil {
-				return "", "", nil, fmt.Errorf("failed to convert ACE SID at index %d: %v", i, err)
+				return "", "", nil, fmt.Errorf(
+					"failed to convert ACE SID at index %d: %v",
+					i, err,
+				)
 			}
 
 			// Convert the returned UTF-16 pointer to a Go string.
@@ -287,7 +297,10 @@ func getWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	}
 
 	// Retrieve the Owner SID.
-	ownerSid, ownerPresent, _ := sd.Owner()
+	ownerSid, ownerPresent, err := sd.Owner()
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to get owner SID: %v", err)
+	}
 	if !ownerPresent || ownerSid == nil {
 		return "", "", nil, fmt.Errorf("no owner present")
 	}
@@ -295,14 +308,16 @@ func getWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	var ownerUtf16Sid *uint16
 	err = windows.ConvertSidToStringSid(ownerSid, &ownerUtf16Sid)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, fmt.Errorf("failed to convert owner SID: %v", err)
 	}
-
 	ownerSidString := windows.UTF16PtrToString(ownerUtf16Sid)
 	windows.LocalFree(windows.Handle(unsafe.Pointer(ownerUtf16Sid)))
 
 	// Retrieve the Group SID.
-	groupSid, groupPresent, _ := sd.Group()
+	groupSid, groupPresent, err := sd.Group()
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to get group SID: %v", err)
+	}
 	if !groupPresent || groupSid == nil {
 		return "", "", nil, fmt.Errorf("no group present")
 	}
@@ -310,9 +325,8 @@ func getWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	var groupUtf16Sid *uint16
 	err = windows.ConvertSidToStringSid(groupSid, &groupUtf16Sid)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, fmt.Errorf("failed to convert group SID: %v", err)
 	}
-
 	groupSidString := windows.UTF16PtrToString(groupUtf16Sid)
 	windows.LocalFree(windows.Handle(unsafe.Pointer(groupUtf16Sid)))
 
