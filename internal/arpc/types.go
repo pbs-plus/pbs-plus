@@ -159,3 +159,45 @@ func (msg *MapStringStringMsg) Decode(buf []byte) error {
 	}
 	return nil
 }
+
+type MapStringBoolMsg map[string]bool
+
+func (msg *MapStringBoolMsg) Encode() ([]byte, error) {
+	enc := arpcdata.NewEncoder()
+	if err := enc.WriteUint32(uint32(len(*msg))); err != nil {
+		return nil, err
+	}
+	for key, value := range *msg {
+		if err := enc.WriteString(key); err != nil {
+			return nil, err
+		}
+		if err := enc.WriteBool(value); err != nil {
+			return nil, err
+		}
+	}
+	return enc.Bytes(), nil
+}
+
+func (msg *MapStringBoolMsg) Decode(buf []byte) error {
+	dec, err := arpcdata.NewDecoder(buf)
+	if err != nil {
+		return err
+	}
+	length, err := dec.ReadUint32()
+	if err != nil {
+		return err
+	}
+	*msg = make(MapStringBoolMsg, length)
+	for i := 0; i < int(length); i++ {
+		key, err := dec.ReadString()
+		if err != nil {
+			return err
+		}
+		value, err := dec.ReadBool()
+		if err != nil {
+			return err
+		}
+		(*msg)[key] = value
+	}
+	return nil
+}

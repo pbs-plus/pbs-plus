@@ -50,6 +50,14 @@ func (e *Encoder) grow(size int) {
 	}
 }
 
+// WriteUint8 writes a uint8 to the buffer.
+func (e *Encoder) WriteUint8(value uint8) error {
+	e.grow(1) // Ensure there is enough space for 1 byte
+	e.buf[e.pos] = value
+	e.pos++
+	return nil
+}
+
 // WriteUint32 writes a uint32 to the buffer.
 func (e *Encoder) WriteUint32(value uint32) error {
 	e.grow(4)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"unsafe"
 
 	"github.com/Microsoft/go-winio"
@@ -136,10 +137,7 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 	}, nil
 }
 
-// handleStat first checks the cache. If an entry is available it pops (removes)
-// the CachedEntry and returns the stat info. Otherwise, it falls back to the
-// Windows API‐based lookup.
-func (s *AgentFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	var payload types.StatReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -155,7 +153,6 @@ func (s *AgentFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	// Only check for sparse file attributes and block allocation if it's a regular file
 	blocks := uint64(0)
 	if !rawInfo.IsDir() {
 		file, err := os.Open(fullPath)
@@ -169,7 +166,7 @@ func (s *AgentFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 			blockSize = s.statFs.Bsize
 		}
 		if blockSize == 0 {
-			blockSize = 4096 // Default to 4KB block size
+			blockSize = 4096 // default 4KB block size
 		}
 
 		standardInfo, err := winio.GetFileStandardInfo(file)
@@ -191,6 +188,97 @@ func (s *AgentFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 	if err != nil {
 		return arpc.Response{}, err
 	}
+
+	return arpc.Response{
+		Status: 200,
+		Data:   data,
+	}, nil
+}
+
+// handleStatx populates extended file statistics including Windows-specific
+// creation time, last access time, group/owner and file attributes.
+func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
+	var payload types.StatReq
+	if err := payload.Decode(req.Payload); err != nil {
+		return arpc.Response{}, err
+	}
+
+	fullPath, err := s.abs(payload.Path)
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
+	rawInfo, err := os.Stat(fullPath)
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
+	blocks := uint64(0)
+	if !rawInfo.IsDir() {
+		file, err := os.Open(fullPath)
+		if err != nil {
+			return arpc.Response{}, err
+		}
+		defer file.Close()
+
+		var blockSize uint64
+		if s.statFs != (types.StatFS{}) {
+			blockSize = s.statFs.Bsize
+		}
+		if blockSize == 0 {
+			blockSize = 4096 // default 4KB block size
+		}
+
+		standardInfo, err := winio.GetFileStandardInfo(file)
+		if err == nil {
+			blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
+		}
+	}
+
+	// Set defaults for extended attributes.
+	creationTime := int64(0)
+	lastAccessTime := int64(0)
+	lastWriteTime := int64(0)
+	fileAttributes := make(map[string]bool)
+	owner := ""
+	group := ""
+	var acls []types.WinACL
+
+	// If the underlying FileInfo supports Windows-specific data, use it.
+	if statT, ok := rawInfo.Sys().(*syscall.Win32FileAttributeData); ok {
+		creationTime = filetimeToUnix(statT.CreationTime)
+		lastAccessTime = filetimeToUnix(statT.LastAccessTime)
+		lastWriteTime = filetimeToUnix(statT.LastWriteTime)
+		fileAttributes = parseFileAttributes(statT.FileAttributes)
+
+		// Retrieve owner, group and ACL info.
+		owner, group, acls, err = getFileSecurityInfo(fullPath)
+		if err != nil {
+			return arpc.Response{}, err
+		}
+	}
+
+	info := types.AgentFileInfo{
+		Name:           rawInfo.Name(),
+		Size:           rawInfo.Size(),
+		Mode:           uint32(rawInfo.Mode()),
+		ModTime:        rawInfo.ModTime(),
+		IsDir:          rawInfo.IsDir(),
+		Blocks:         blocks,
+		CreationTime:   creationTime,
+		LastAccessTime: lastAccessTime,
+		LastWriteTime:  lastWriteTime,
+		FileAttributes: fileAttributes,
+		Owner:          owner,
+		Group:          group,
+		WinACLs:        acls,
+	}
+
+	data, err := info.Encode()
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
 	return arpc.Response{
 		Status: 200,
 		Data:   data,
