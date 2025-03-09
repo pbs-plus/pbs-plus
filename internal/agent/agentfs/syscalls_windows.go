@@ -221,7 +221,7 @@ func parseFileAttributes(attr uint32) map[string]bool {
 	return attributes
 }
 
-func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
+func getWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	// Request DACL, owner, and group information.
 	sd, err := windows.GetNamedSecurityInfo(
 		filePath,
@@ -251,21 +251,22 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	// Iterate over each ACE in the DACL.
 	for i := uint32(0); i < aceCount; i++ {
 		// Use a generic *byte pointer for the ACE.
-		var acePtr *windows.ACCESS_ALLOWED_ACE
-		if err := windows.GetAce(dacl, i, &acePtr); err != nil {
-			return "", "", nil, fmt.Errorf(
-				"GetAce failed at index %d: %v", i, err,
-			)
+		var aceRaw *byte
+		if err := windows.GetAce(
+			dacl,
+			i,
+			(**windows.ACCESS_ALLOWED_ACE)(unsafe.Pointer(&aceRaw)),
+		); err != nil {
+			return "", "", nil, fmt.Errorf("GetAce failed at index %d: %v", i, err)
 		}
 
-		// Determine the ACE type.
-		aceHeader := (*windows.ACE_HEADER)(unsafe.Pointer(acePtr))
+		aceHeader := (*windows.ACE_HEADER)(unsafe.Pointer(aceRaw))
 		switch aceHeader.AceType {
 		case windows.ACCESS_ALLOWED_ACE_TYPE, windows.ACCESS_DENIED_ACE_TYPE:
-			// Both allowed and denied ACEs share the same layout.
-			ace := (*windows.ACCESS_ALLOWED_ACE)(unsafe.Pointer(acePtr))
+			// Since both allowed and denied ACEs have similar layout, cast it.
+			ace := (*windows.ACCESS_ALLOWED_ACE)(unsafe.Pointer(aceRaw))
 
-			// Convert the SID to a string. (This is the older API pattern.)
+			// Convert the SID to a string.
 			var sid *uint16
 			err = windows.ConvertSidToStringSid(
 				(*windows.SID)(unsafe.Pointer(&ace.SidStart)),
@@ -291,7 +292,7 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 				Flags:      ace.Header.AceFlags,
 			})
 		default:
-			// Skip any unhandled ACE types.
+			// Skip unhandled ACE types.
 			continue
 		}
 	}
