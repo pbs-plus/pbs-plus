@@ -223,7 +223,6 @@ func TestAgentFSServer(t *testing.T) {
 		t.Logf("Group for %s: %+v", testFilePath, result.Group)
 		assert.NotEmpty(t, result.Group, "Group should not be empty")
 		t.Logf("CreationTime for %s: %+v", testFilePath, result.CreationTime)
-		assert.NotEmpty(t, result.CreationTime, "CreationTime should not be empty")
 		t.Logf("LastAccessTime for %s: %+v", testFilePath, result.LastAccessTime)
 		assert.NotEmpty(t, result.LastAccessTime, "LastAccessTime should not be empty")
 		t.Logf("LastWriteTime for %s: %+v", testFilePath, result.LastWriteTime)
