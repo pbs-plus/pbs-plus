@@ -1,6 +1,7 @@
 package snapshots
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,7 +25,10 @@ func (b *BtrfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (
 	// Cleanup existing snapshot
 	_ = b.DeleteSnapshot(Snapshot{Path: snapshotPath})
 
-	cmd := exec.Command("btrfs", "subvolume", "snapshot", sourcePath, snapshotPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "btrfs", "subvolume", "snapshot", sourcePath, snapshotPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return Snapshot{}, fmt.Errorf("failed to create Btrfs snapshot: %s, %w", string(output), err)
 	}

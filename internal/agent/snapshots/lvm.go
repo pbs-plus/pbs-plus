@@ -1,6 +1,7 @@
 package snapshots
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +25,10 @@ func (l *LVMSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Sn
 	snapshotName := fmt.Sprintf("%s-snap-%s", lvName, jobId)
 	timeStarted := time.Now()
 
-	cmd := exec.Command("lvcreate", "--snapshot", "--name", snapshotName, "--size", "1G", fmt.Sprintf("/dev/%s/%s", vgName, lvName))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "lvcreate", "--snapshot", "--name", snapshotName, "--size", "1G", fmt.Sprintf("/dev/%s/%s", vgName, lvName))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return Snapshot{}, fmt.Errorf("failed to create LVM snapshot: %s, %w", string(output), err)
 	}
