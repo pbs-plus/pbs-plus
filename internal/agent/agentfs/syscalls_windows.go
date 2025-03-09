@@ -245,52 +245,67 @@ func parseFileAttributes(attr uint32) map[string]bool {
 // GetWinACLs returns the owner SID, group SID, and list of ACL entries for the given file.
 func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	// Request owner, group, and DACL information.
-	secInfo := windows.OWNER_SECURITY_INFORMATION |
+	secInfo := windows.SECURITY_INFORMATION(windows.OWNER_SECURITY_INFORMATION |
 		windows.GROUP_SECURITY_INFORMATION |
-		windows.DACL_SECURITY_INFORMATION
+		windows.DACL_SECURITY_INFORMATION)
 
-	secDesc, err := GetFileSecurityDescriptor(filePath, windows.SECURITY_INFORMATION(secInfo))
+	// Obtain the self-relative security descriptor.
+	secDesc, err := GetFileSecurityDescriptor(filePath, secInfo)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to get file security descriptor: %w", err)
 	}
 
+	// Validate the security descriptor.
 	valid, err := IsValidSecDescriptor(secDesc)
 	if err != nil || !valid {
 		return "", "", nil, fmt.Errorf("invalid security descriptor: %w", err)
 	}
 
-	owner, group, err := getOwnerGroup(secDesc)
+	// Convert the self-relative descriptor into an absolute descriptor.
+	absoluteSD, err := MakeAbsoluteSD(secDesc)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to get owner/group: %w", err)
+		return "", "", nil, fmt.Errorf("failed to convert security descriptor to absolute: %w", err)
 	}
 
-	acl, present, _, err := GetSecurityDescriptorDACL(secDesc)
+	// Extract the owner and group SIDs from the absolute security descriptor.
+	owner, group, err := getOwnerGroup(absoluteSD)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to extract owner/group: %w", err)
+	}
+
+	// Get the DACL from the absolute security descriptor.
+	acl, present, _, err := GetSecurityDescriptorDACL(absoluteSD)
 	if err != nil {
 		return owner, group, nil, fmt.Errorf("failed to get DACL: %w", err)
 	}
-
 	if !present {
+		// No DACL present: return empty ACL list.
 		return owner, group, []types.WinACL{}, nil
 	}
 
+	// Retrieve the explicit ACL entries from the DACL.
 	expEntries, err := GetExplicitEntriesFromACL(acl)
 	if err != nil {
 		return owner, group, nil, fmt.Errorf("failed to get explicit ACL entries: %w", err)
 	}
 
 	var winAcls []types.WinACL
+	// Iterate over each explicit entry.
 	for _, entry := range *expEntries {
-		// Assume that the trustee is a SID.
+		// The Trustee value is expected to be a pointer to a Windows SID.
 		pSid := (*windows.SID)(unsafe.Pointer(entry.Trustee.TrusteeValue))
+		if pSid == nil {
+			continue
+		}
 		sidString := pSid.String()
 
 		ace := types.WinACL{
 			SID:        sidString,
 			AccessMask: uint32(entry.AccessPermissions),
-			Type:       uint8(entry.AccessMode),
-			Flags:      uint8(entry.Inheritance),
+			// The AccessMode and Inheritance fields are casted to our custom types.
+			Type:  uint8(entry.AccessMode),
+			Flags: uint8(entry.Inheritance),
 		}
-
 		winAcls = append(winAcls, ace)
 	}
 
