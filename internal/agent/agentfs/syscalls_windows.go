@@ -242,115 +242,75 @@ func parseFileAttributes(attr uint32) map[string]bool {
 	return attributes
 }
 
-func getWinACLs(filePath string) (string, string, []types.WinACL, error) {
-	// Request DACL, owner, and group information.
-	sd, err := windows.GetNamedSecurityInfo(
-		filePath,
-		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|
-			windows.OWNER_SECURITY_INFORMATION|
-			windows.GROUP_SECURITY_INFORMATION,
-	)
+// GetWinACLs returns the owner SID, group SID, and list of ACL entries for the given file.
+func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
+	// Request owner, group, and DACL information.
+	secInfo := windows.OWNER_SECURITY_INFORMATION |
+		windows.GROUP_SECURITY_INFORMATION |
+		windows.DACL_SECURITY_INFORMATION
+
+	secDesc, err := GetFileSecurityDescriptor(filePath, windows.SECURITY_INFORMATION(secInfo))
 	if err != nil {
-		return "", "", nil, fmt.Errorf("GetNamedSecurityInfo failed: %v", err)
+		return "", "", nil, fmt.Errorf("failed to get file security descriptor: %w", err)
 	}
-	// Free the security descriptor when done.
-	defer windows.LocalFree(windows.Handle(unsafe.Pointer(sd)))
 
-	// Extract the DACL from the security descriptor.
-	dacl, present, err := sd.DACL()
+	valid, err := IsValidSecDescriptor(secDesc)
+	if err != nil || !valid {
+		return "", "", nil, fmt.Errorf("invalid security descriptor: %w", err)
+	}
+
+	owner, group, err := getOwnerGroup(secDesc)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to get DACL: %v", err)
-	}
-	if !present || dacl == nil {
-		return "", "", nil, fmt.Errorf("no DACL present")
+		return "", "", nil, fmt.Errorf("failed to get owner/group: %w", err)
 	}
 
-	aceCount := uint32(dacl.AceCount)
-	var acls []types.WinACL
+	acl, present, _, err := GetSecurityDescriptorDACL(secDesc)
+	if err != nil {
+		return owner, group, nil, fmt.Errorf("failed to get DACL: %w", err)
+	}
 
-	// Iterate over each ACE in the DACL.
-	for i := uint32(0); i < aceCount; i++ {
-		// Use a generic *byte pointer for the ACE.
-		var aceRaw *byte
-		if err := windows.GetAce(
-			dacl,
-			i,
-			(**windows.ACCESS_ALLOWED_ACE)(unsafe.Pointer(&aceRaw)),
-		); err != nil {
-			return "", "", nil, fmt.Errorf("GetAce failed at index %d: %v", i, err)
+	if !present {
+		return owner, group, []types.WinACL{}, nil
+	}
+
+	expEntries, err := GetExplicitEntriesFromACL(acl)
+	if err != nil {
+		return owner, group, nil, fmt.Errorf("failed to get explicit ACL entries: %w", err)
+	}
+
+	var winAcls []types.WinACL
+	for _, entry := range *expEntries {
+		// Assume that the trustee is a SID.
+		pSid := (*windows.SID)(unsafe.Pointer(entry.Trustee.TrusteeValue))
+		sidString := pSid.String()
+
+		ace := types.WinACL{
+			SID:        sidString,
+			AccessMask: uint32(entry.AccessPermissions),
+			Type:       uint8(entry.AccessMode),
+			Flags:      uint8(entry.Inheritance),
 		}
 
-		aceHeader := (*windows.ACE_HEADER)(unsafe.Pointer(aceRaw))
-		switch aceHeader.AceType {
-		case windows.ACCESS_ALLOWED_ACE_TYPE, windows.ACCESS_DENIED_ACE_TYPE:
-			// Since both allowed and denied ACEs have similar layout, cast it.
-			ace := (*windows.ACCESS_ALLOWED_ACE)(unsafe.Pointer(aceRaw))
-
-			// Convert the SID to a string.
-			var sid *uint16
-			err = windows.ConvertSidToStringSid(
-				(*windows.SID)(unsafe.Pointer(&ace.SidStart)),
-				&sid,
-			)
-			if err != nil {
-				return "", "", nil, fmt.Errorf(
-					"failed to convert ACE SID at index %d: %v",
-					i, err,
-				)
-			}
-
-			// Convert the returned UTF-16 pointer to a Go string.
-			sidString := windows.UTF16PtrToString(sid)
-
-			// Free the memory allocated by ConvertSidToStringSid.
-			windows.LocalFree(windows.Handle(unsafe.Pointer(sid)))
-
-			acls = append(acls, types.WinACL{
-				SID:        sidString,
-				AccessMask: uint32(ace.Mask),
-				Type:       ace.Header.AceType,
-				Flags:      ace.Header.AceFlags,
-			})
-		default:
-			// Skip unhandled ACE types.
-			continue
-		}
+		winAcls = append(winAcls, ace)
 	}
 
-	// Retrieve the Owner SID.
-	ownerSid, ownerPresent, err := sd.Owner()
+	return owner, group, winAcls, nil
+}
+
+// getOwnerGroup extracts the owner and group SIDs (as strings) from the given
+// self-relative security descriptor.
+func getOwnerGroup(secDesc []uint16) (string, string, error) {
+	owner, _, err := GetSecurityDescriptorOwner(secDesc)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to get owner SID: %v", err)
+		return "", "", fmt.Errorf("failed to get owner: %w", err)
 	}
-	if !ownerPresent || ownerSid == nil {
-		return "", "", nil, fmt.Errorf("no owner present")
-	}
+	ownerStr := owner.String()
 
-	var ownerUtf16Sid *uint16
-	err = windows.ConvertSidToStringSid(ownerSid, &ownerUtf16Sid)
+	group, _, err := GetSecurityDescriptorGroup(secDesc)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to convert owner SID: %v", err)
+		return "", "", fmt.Errorf("failed to get group: %w", err)
 	}
-	ownerSidString := windows.UTF16PtrToString(ownerUtf16Sid)
-	windows.LocalFree(windows.Handle(unsafe.Pointer(ownerUtf16Sid)))
+	groupStr := group.String()
 
-	// Retrieve the Group SID.
-	groupSid, groupPresent, err := sd.Group()
-	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to get group SID: %v", err)
-	}
-	if !groupPresent || groupSid == nil {
-		return "", "", nil, fmt.Errorf("no group present")
-	}
-
-	var groupUtf16Sid *uint16
-	err = windows.ConvertSidToStringSid(groupSid, &groupUtf16Sid)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to convert group SID: %v", err)
-	}
-	groupSidString := windows.UTF16PtrToString(groupUtf16Sid)
-	windows.LocalFree(windows.Handle(unsafe.Pointer(groupUtf16Sid)))
-
-	return ownerSidString, groupSidString, acls, nil
+	return ownerStr, groupStr, nil
 }
