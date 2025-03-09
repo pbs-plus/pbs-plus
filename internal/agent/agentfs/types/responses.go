@@ -1,8 +1,12 @@
 package types
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
 )
 
@@ -32,18 +36,262 @@ func (resp *LseekResp) Decode(buf []byte) error {
 	return nil
 }
 
+// WinACL represents an Access Control Entry
+type WinACL struct {
+	SID        string
+	AccessMask uint32
+	Type       uint8
+	Flags      uint8
+}
+
+// Encode encodes a single WinACL into a byte slice
+func (acl *WinACL) Encode() ([]byte, error) {
+	enc := arpcdata.NewEncoder()
+
+	if err := enc.WriteString(acl.SID); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteUint32(acl.AccessMask); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteUint8(acl.Type); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteUint8(acl.Flags); err != nil {
+		return nil, err
+	}
+
+	return enc.Bytes(), nil
+}
+
+// Decode decodes a byte slice into a single WinACL
+func (acl *WinACL) Decode(buf []byte) error {
+	dec, err := arpcdata.NewDecoder(buf)
+	if err != nil {
+		return err
+	}
+
+	sid, err := dec.ReadString()
+	if err != nil {
+		return err
+	}
+	acl.SID = sid
+
+	accessMask, err := dec.ReadUint32()
+	if err != nil {
+		return err
+	}
+	acl.AccessMask = accessMask
+
+	aceType, err := dec.ReadUint8()
+	if err != nil {
+		return err
+	}
+	acl.Type = aceType
+
+	flags, err := dec.ReadUint8()
+	if err != nil {
+		return err
+	}
+	acl.Flags = flags
+
+	return nil
+}
+
+type WinACLArray []WinACL
+
+// Encode encodes an array of WinACLs into a byte slice
+func (acls *WinACLArray) Encode() ([]byte, error) {
+	enc := arpcdata.NewEncoder()
+
+	// Write the number of WinACLs
+	if err := enc.WriteUint32(uint32(len(*acls))); err != nil {
+		return nil, err
+	}
+
+	// Encode each WinACL and append it to the encoder
+	for _, acl := range *acls {
+		aclBytes, err := acl.Encode()
+		if err != nil {
+			return nil, err
+		}
+		if err := enc.WriteBytes(aclBytes); err != nil {
+			return nil, err
+		}
+	}
+
+	return enc.Bytes(), nil
+}
+
+// Decode decodes a byte slice into an array of WinACLs
+func (acls *WinACLArray) Decode(buf []byte) error {
+	dec, err := arpcdata.NewDecoder(buf)
+	if err != nil {
+		return err
+	}
+
+	// Read the number of WinACLs
+	count, err := dec.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	// Decode each WinACL
+	*acls = make([]WinACL, count)
+	for i := uint32(0); i < count; i++ {
+		aclBytes, err := dec.ReadBytes()
+		if err != nil {
+			return err
+		}
+		var acl WinACL
+		if err := acl.Decode(aclBytes); err != nil {
+			return err
+		}
+		(*acls)[i] = acl
+	}
+
+	return nil
+}
+
+type PosixACL struct {
+	Tag   string
+	ID    int32
+	Perms uint8
+}
+
+func (entry *PosixACL) Encode() ([]byte, error) {
+	var buf bytes.Buffer
+
+	// Encode the Tag length and the Tag
+	if err := binary.Write(&buf, binary.LittleEndian, uint8(len(entry.Tag))); err != nil {
+		return nil, err
+	}
+	buf.WriteString(entry.Tag)
+
+	// Write ID (4 bytes)
+	if err := binary.Write(&buf, binary.LittleEndian, entry.ID); err != nil {
+		return nil, err
+	}
+
+	// Write Perms (1 byte)
+	if err := buf.WriteByte(entry.Perms); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// Decode deserializes a byte slice into a PosixACL.
+func (entry *PosixACL) Decode(data []byte) error {
+	buf := bytes.NewReader(data)
+
+	// Read the length of the Tag
+	var tagLength uint8
+	if err := binary.Read(buf, binary.LittleEndian, &tagLength); err != nil {
+		return err
+	}
+
+	tagBytes := make([]byte, tagLength)
+	n, err := buf.Read(tagBytes)
+	if err != nil {
+		return err
+	}
+	if n != int(tagLength) {
+		return errors.New("could not read complete tag")
+	}
+	entry.Tag = string(tagBytes)
+
+	// Read the ID (4 bytes)
+	if err := binary.Read(buf, binary.LittleEndian, &entry.ID); err != nil {
+		return err
+	}
+
+	// Read the Perms (1 byte)
+	perms, err := buf.ReadByte()
+	if err != nil {
+		return err
+	}
+	entry.Perms = perms
+
+	return nil
+}
+
+type PosixACLArray []PosixACL
+
+// Encode encodes an array of WinACLs into a byte slice
+func (acls *PosixACLArray) Encode() ([]byte, error) {
+	enc := arpcdata.NewEncoder()
+
+	// Write the number of WinACLs
+	if err := enc.WriteUint32(uint32(len(*acls))); err != nil {
+		return nil, err
+	}
+
+	// Encode each WinACL and append it to the encoder
+	for _, acl := range *acls {
+		aclBytes, err := acl.Encode()
+		if err != nil {
+			return nil, err
+		}
+		if err := enc.WriteBytes(aclBytes); err != nil {
+			return nil, err
+		}
+	}
+
+	return enc.Bytes(), nil
+}
+
+// Decode decodes a byte slice into an array of WinACLs
+func (acls *PosixACLArray) Decode(buf []byte) error {
+	dec, err := arpcdata.NewDecoder(buf)
+	if err != nil {
+		return err
+	}
+
+	// Read the number of WinACLs
+	count, err := dec.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	// Decode each WinACL
+	*acls = make([]PosixACL, count)
+	for i := uint32(0); i < count; i++ {
+		aclBytes, err := dec.ReadBytes()
+		if err != nil {
+			return err
+		}
+		var acl PosixACL
+		if err := acl.Decode(aclBytes); err != nil {
+			return err
+		}
+		(*acls)[i] = acl
+	}
+
+	return nil
+}
+
 // AgentFileInfo represents file metadata
 type AgentFileInfo struct {
-	Name    string
-	Size    int64
-	Mode    uint32
-	ModTime time.Time
-	IsDir   bool
-	Blocks  uint64
+	Name           string
+	Size           int64
+	Mode           uint32
+	ModTime        time.Time
+	IsDir          bool
+	Blocks         uint64
+	CreationTime   int64
+	LastAccessTime int64
+	LastWriteTime  int64
+	FileAttributes map[string]bool
+	Owner          string
+	Group          string
+	WinACLs        []WinACL
+	PosixACLs      []PosixACL
 }
 
 func (info *AgentFileInfo) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(info.Name) + 8 + 4 + 8 + 1 + 8)
+	enc := arpcdata.NewEncoder()
+
 	if err := enc.WriteString(info.Name); err != nil {
 		return nil, err
 	}
@@ -62,6 +310,51 @@ func (info *AgentFileInfo) Encode() ([]byte, error) {
 	if err := enc.WriteUint64(info.Blocks); err != nil {
 		return nil, err
 	}
+
+	if err := enc.WriteInt64(info.CreationTime); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteInt64(info.LastAccessTime); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteInt64(info.LastWriteTime); err != nil {
+		return nil, err
+	}
+
+	fileAttributes := arpc.MapStringBoolMsg(info.FileAttributes)
+	fileAttributesBytes, err := fileAttributes.Encode()
+	if err != nil {
+		return nil, err
+	}
+	if err := enc.WriteBytes(fileAttributesBytes); err != nil {
+		return nil, err
+	}
+
+	if err := enc.WriteString(info.Owner); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteString(info.Group); err != nil {
+		return nil, err
+	}
+
+	winAcls := WinACLArray(info.WinACLs)
+	winAclsBytes, err := winAcls.Encode()
+	if err != nil {
+		return nil, err
+	}
+	if err := enc.WriteBytes(winAclsBytes); err != nil {
+		return nil, err
+	}
+
+	posixAcls := PosixACLArray(info.PosixACLs)
+	posixAclsBytes, err := posixAcls.Encode()
+	if err != nil {
+		return nil, err
+	}
+	if err := enc.WriteBytes(posixAclsBytes); err != nil {
+		return nil, err
+	}
+
 	return enc.Bytes(), nil
 }
 
@@ -70,36 +363,103 @@ func (info *AgentFileInfo) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
+
 	name, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
 	info.Name = name
+
 	size, err := dec.ReadInt64()
 	if err != nil {
 		return err
 	}
 	info.Size = size
+
 	mode, err := dec.ReadUint32()
 	if err != nil {
 		return err
 	}
 	info.Mode = mode
+
 	modTime, err := dec.ReadTime()
 	if err != nil {
 		return err
 	}
 	info.ModTime = modTime
+
 	isDir, err := dec.ReadBool()
 	if err != nil {
 		return err
 	}
 	info.IsDir = isDir
+
 	blocks, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	info.Blocks = blocks
+
+	creationTime, err := dec.ReadInt64()
+	if err != nil {
+		return err
+	}
+	info.CreationTime = creationTime
+
+	lastAccessTime, err := dec.ReadInt64()
+	if err != nil {
+		return err
+	}
+	info.LastAccessTime = lastAccessTime
+
+	lastWriteTime, err := dec.ReadInt64()
+	if err != nil {
+		return err
+	}
+	info.LastWriteTime = lastWriteTime
+
+	fileAttributesBytes, err := dec.ReadBytes()
+	if err != nil {
+		return err
+	}
+	var fileAttributes arpc.MapStringBoolMsg
+	if err := fileAttributes.Decode(fileAttributesBytes); err != nil {
+		return err
+	}
+	info.FileAttributes = fileAttributes
+
+	owner, err := dec.ReadString()
+	if err != nil {
+		return err
+	}
+	info.Owner = owner
+
+	group, err := dec.ReadString()
+	if err != nil {
+		return err
+	}
+	info.Group = group
+
+	winAclsBytes, err := dec.ReadBytes()
+	if err != nil {
+		return err
+	}
+	var winAcls WinACLArray
+	if err := winAcls.Decode(winAclsBytes); err != nil {
+		return err
+	}
+	info.WinACLs = winAcls
+
+	posixAclsBytes, err := dec.ReadBytes()
+	if err != nil {
+		return err
+	}
+	var posixAcls PosixACLArray
+	if err := posixAcls.Decode(posixAclsBytes); err != nil {
+		return err
+	}
+	info.PosixACLs = posixAcls
+
 	return nil
 }
 

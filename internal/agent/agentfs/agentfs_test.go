@@ -196,7 +196,7 @@ func TestAgentFSServer(t *testing.T) {
 	t.Run("Stat", func(t *testing.T) {
 		payload := types.StatReq{Path: ("test1.txt")}
 		var result types.AgentFileInfo
-		raw, err := clientSession.CallMsg(ctx, "agentFs/Stat", &payload)
+		raw, err := clientSession.CallMsg(ctx, "agentFs/Attr", &payload)
 		result.Decode(raw)
 		assert.NoError(t, err)
 		assert.NotNil(t, result.Size)

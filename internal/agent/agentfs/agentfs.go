@@ -67,7 +67,8 @@ func safeHandler(fn func(req arpc.Request) (arpc.Response, error)) func(req arpc
 
 func (s *AgentFSServer) RegisterHandlers(r *arpc.Router) {
 	r.Handle(s.jobId+"/OpenFile", safeHandler(s.handleOpenFile))
-	r.Handle(s.jobId+"/Stat", safeHandler(s.handleStat))
+	r.Handle(s.jobId+"/Attr", safeHandler(s.handleAttr))
+	r.Handle(s.jobId+"/Xattr", safeHandler(s.handleXattr))
 	r.Handle(s.jobId+"/ReadDir", safeHandler(s.handleReadDir))
 	r.Handle(s.jobId+"/ReadAt", safeHandler(s.handleReadAt))
 	r.Handle(s.jobId+"/Lseek", safeHandler(s.handleLseek))
@@ -81,7 +82,8 @@ func (s *AgentFSServer) Close() {
 	if s.arpcRouter != nil {
 		r := s.arpcRouter
 		r.CloseHandle(s.jobId + "/OpenFile")
-		r.CloseHandle(s.jobId + "/Stat")
+		r.CloseHandle(s.jobId + "/Attr")
+		r.CloseHandle(s.jobId + "/Xattr")
 		r.CloseHandle(s.jobId + "/ReadDir")
 		r.CloseHandle(s.jobId + "/ReadAt")
 		r.CloseHandle(s.jobId + "/Lseek")

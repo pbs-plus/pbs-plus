@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -138,7 +141,7 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 	}, nil
 }
 
-func (s *AgentFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	var payload types.StatReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
@@ -166,6 +169,87 @@ func (s *AgentFSServer) handleStat(req arpc.Request) (arpc.Response, error) {
 		ModTime: rawInfo.ModTime(),
 		IsDir:   rawInfo.IsDir(),
 		Blocks:  blocks,
+	}
+
+	data, err := info.Encode()
+	if err != nil {
+		return arpc.Response{}, err
+	}
+	return arpc.Response{
+		Status: 200,
+		Data:   data,
+	}, nil
+}
+
+func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
+	var payload types.StatReq
+	if err := payload.Decode(req.Payload); err != nil {
+		return arpc.Response{}, err
+	}
+
+	fullPath, err := s.abs(payload.Path)
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
+	rawInfo, err := os.Stat(fullPath)
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
+	blocks := uint64(0)
+	if !rawInfo.IsDir() && s.statFs.Bsize != 0 {
+		blocks = uint64((rawInfo.Size() + int64(s.statFs.Bsize) - 1) / int64(s.statFs.Bsize))
+	}
+
+	// Initialize default values.
+	creationTime := int64(0)
+	lastAccessTime := int64(0)
+	lastWriteTime := int64(0)
+	fileAttributes := make(map[string]bool)
+	owner := ""
+	group := ""
+
+	if stat, ok := rawInfo.Sys().(*syscall.Stat_t); ok {
+		uidStr := strconv.Itoa(int(stat.Uid))
+		groupStr := strconv.Itoa(int(stat.Gid))
+		usr, err := user.LookupId(uidStr)
+		if err == nil {
+			owner = usr.Username
+		} else {
+			owner = uidStr
+		}
+		grp, err := user.LookupGroupId(groupStr)
+		if err == nil {
+			group = grp.Name
+		} else {
+			group = groupStr
+		}
+		// Use the file's modification time as a fallback.
+		lastAccessTime = rawInfo.ModTime().Unix()
+		lastWriteTime = rawInfo.ModTime().Unix()
+	}
+
+	// Get POSIX ACL entries.
+	posixAcls, err := getPosixACL(fullPath)
+	if err != nil {
+		// Optionally log the error and continue.
+	}
+
+	info := types.AgentFileInfo{
+		Name:           rawInfo.Name(),
+		Size:           rawInfo.Size(),
+		Mode:           uint32(rawInfo.Mode()),
+		ModTime:        rawInfo.ModTime(),
+		IsDir:          rawInfo.IsDir(),
+		Blocks:         blocks,
+		CreationTime:   creationTime,
+		LastAccessTime: lastAccessTime,
+		LastWriteTime:  lastWriteTime,
+		FileAttributes: fileAttributes,
+		Owner:          owner,
+		Group:          group,
+		PosixACLs:      posixAcls,
 	}
 
 	data, err := info.Encode()
