@@ -3,13 +3,12 @@
 package snapshots
 
 import (
-	"context"
 	"errors"
 )
 
 type NtfsSnapshotHandler struct{}
 
-func (w *NtfsSnapshotHandler) CreateSnapshot(ctx context.Context, jobId string, sourcePath string) (Snapshot, error) {
+func (w *NtfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
 	return Snapshot{}, errors.New("unsupported")
 }
 

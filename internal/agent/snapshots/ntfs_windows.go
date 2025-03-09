@@ -19,7 +19,7 @@ import (
 
 type NtfsSnapshotHandler struct{}
 
-func (w *NtfsSnapshotHandler) CreateSnapshot(ctx context.Context, jobId string, sourcePath string) (Snapshot, error) {
+func (w *NtfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
 	// Extract the drive letter from the source path
 	if sourcePath == "" {
 		return Snapshot{}, errors.New("empty source path")
@@ -38,6 +38,9 @@ func (w *NtfsSnapshotHandler) CreateSnapshot(ctx context.Context, jobId string, 
 
 	// Cleanup any existing snapshot
 	cleanupExistingSnapshot(snapshotPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 
 	// Create the snapshot with retry logic
 	if err := createSnapshotWithRetry(ctx, snapshotPath, volName); err != nil {

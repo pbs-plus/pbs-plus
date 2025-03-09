@@ -214,7 +214,7 @@ type BackupReq struct {
 }
 
 func (req *BackupReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(req.JobId) + len(req.Drive))
+	enc := arpcdata.NewEncoderWithSize(len(req.JobId) + len(req.Drive) + len(req.SourceMode) + len(req.Extras))
 	if err := enc.WriteString(req.JobId); err != nil {
 		return nil, err
 	}

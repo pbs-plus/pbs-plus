@@ -1,7 +1,6 @@
 package snapshots
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,7 +12,7 @@ import (
 
 type BtrfsSnapshotHandler struct{}
 
-func (b *BtrfsSnapshotHandler) CreateSnapshot(ctx context.Context, jobId string, sourcePath string) (Snapshot, error) {
+func (b *BtrfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
 	if !b.IsSupported(sourcePath) {
 		return Snapshot{}, fmt.Errorf("source path %q is not on a Btrfs volume", sourcePath)
 	}
@@ -25,7 +24,7 @@ func (b *BtrfsSnapshotHandler) CreateSnapshot(ctx context.Context, jobId string,
 	// Cleanup existing snapshot
 	_ = b.DeleteSnapshot(Snapshot{Path: snapshotPath})
 
-	cmd := exec.CommandContext(ctx, "btrfs", "subvolume", "snapshot", sourcePath, snapshotPath)
+	cmd := exec.Command("btrfs", "subvolume", "snapshot", sourcePath, snapshotPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return Snapshot{}, fmt.Errorf("failed to create Btrfs snapshot: %s, %w", string(output), err)
 	}

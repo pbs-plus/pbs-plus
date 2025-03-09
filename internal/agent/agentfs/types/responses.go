@@ -1,9 +1,6 @@
 package types
 
 import (
-	"bytes"
-	"encoding/binary"
-	"errors"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -160,54 +157,41 @@ type PosixACL struct {
 }
 
 func (entry *PosixACL) Encode() ([]byte, error) {
-	var buf bytes.Buffer
+	enc := arpcdata.NewEncoder()
 
-	// Encode the Tag length and the Tag
-	if err := binary.Write(&buf, binary.LittleEndian, uint8(len(entry.Tag))); err != nil {
+	if err := enc.WriteString(entry.Tag); err != nil {
 		return nil, err
 	}
-	buf.WriteString(entry.Tag)
-
-	// Write ID (4 bytes)
-	if err := binary.Write(&buf, binary.LittleEndian, entry.ID); err != nil {
+	if err := enc.WriteUint32(uint32(entry.ID)); err != nil {
 		return nil, err
 	}
-
-	// Write Perms (1 byte)
-	if err := buf.WriteByte(entry.Perms); err != nil {
+	if err := enc.WriteByte(entry.Perms); err != nil {
 		return nil, err
 	}
 
-	return buf.Bytes(), nil
+	return enc.Bytes(), nil
 }
 
 // Decode deserializes a byte slice into a PosixACL.
-func (entry *PosixACL) Decode(data []byte) error {
-	buf := bytes.NewReader(data)
-
-	// Read the length of the Tag
-	var tagLength uint8
-	if err := binary.Read(buf, binary.LittleEndian, &tagLength); err != nil {
-		return err
-	}
-
-	tagBytes := make([]byte, tagLength)
-	n, err := buf.Read(tagBytes)
+func (entry *PosixACL) Decode(buf []byte) error {
+	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
 		return err
 	}
-	if n != int(tagLength) {
-		return errors.New("could not read complete tag")
-	}
-	entry.Tag = string(tagBytes)
 
-	// Read the ID (4 bytes)
-	if err := binary.Read(buf, binary.LittleEndian, &entry.ID); err != nil {
+	tag, err := dec.ReadString()
+	if err != nil {
 		return err
 	}
+	entry.Tag = tag
 
-	// Read the Perms (1 byte)
-	perms, err := buf.ReadByte()
+	id, err := dec.ReadUint32()
+	if err != nil {
+		return err
+	}
+	entry.ID = int32(id)
+
+	perms, err := dec.ReadByte()
 	if err != nil {
 		return err
 	}
