@@ -6,6 +6,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/alexflint/go-filemutex v1.3.0
 	github.com/billgraziano/dpapi v0.5.0
+	github.com/ceph/go-ceph v0.32.0
 	github.com/cyphar/filepath-securejoin v0.4.1
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/gobwas/glob v0.2.3

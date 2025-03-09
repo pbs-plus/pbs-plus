@@ -25,16 +25,53 @@ jobs:
     - name: pre-packaging script
       env:
         BINARY_PATH: ${{steps.go_build.outputs.release_asset_dir}}
-      run: ./build/package/pre-packaging.sh 
+      run: ./build/package/server/pre-packaging.sh 
     - uses: jiro4989/build-deb-action@v3
       with:
         package: ${{ github.event.repository.name }} 
-        package_root: build/package/debian
+        package_root: build/package/server/debian
         maintainer: Son Roy Almerol <github@snry.me> 
         version: ${{ github.ref }} # refs/tags/v*.*.*
         arch: 'amd64'
         depends: 'proxmox-backup-server (>= 3.2), proxmox-backup-client (>= 3.2.5)'
         desc: 'PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution'
+        homepage: 'https://github.com/${{ github.repository }}'
+    - name: Publish Release Assets
+      uses: softprops/action-gh-release@v1
+      with:
+        tag: ${{ github.event.release.tag_name }}
+        files: ./*.deb
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-build-linux-amd64-agent:
+    name: release build agent linux/amd64
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: wangyoucao577/go-release-action@v1
+      id: go_build
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        goos: linux
+        goarch: amd64
+        compress_assets: false
+        executable_compression: upx
+        binary_name: pbs-plus-agent
+        project_path: ./cmd/linux_agent
+        ldflags: "-X 'main.Version=${{ github.event.release.tag_name }}'"
+    - name: pre-packaging script
+      env:
+        BINARY_PATH: ${{ steps.go_build.outputs.release_asset_dir }}
+      run: ./build/package/linux_agent/pre-packaging.sh
+    - uses: jiro4989/build-deb-action@v3
+      with:
+        package: pbs-plus-agent
+        package_root: build/package/linux_agent/debian
+        maintainer: Son Roy Almerol <github@snry.me>
+        version: ${{ github.ref }} # refs/tags/v*.*.*
+        arch: 'amd64'
+        desc: 'An agent for PBS Plus: project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution'
         homepage: 'https://github.com/${{ github.repository }}'
     - name: Publish Release Assets
       uses: softprops/action-gh-release@v1

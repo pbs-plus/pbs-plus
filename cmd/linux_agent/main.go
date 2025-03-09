@@ -18,6 +18,7 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -139,11 +140,11 @@ func (p *agentService) waitForBootstrap() error {
 	defer ticker.Stop()
 
 	for {
-		serverCA := os.Getenv("SERVER_CA")
-		cert := os.Getenv("CERT")
-		priv := os.Getenv("PRIV")
+		serverCA, _ := registry.GetEntry(registry.AUTH, "ServerCA", true)
+		cert, _ := registry.GetEntry(registry.AUTH, "Cert", true)
+		priv, _ := registry.GetEntry(registry.AUTH, "Priv", true)
 
-		if serverCA != "" && cert != "" && priv != "" {
+		if serverCA != nil && cert != nil && priv != nil {
 			err := agent.CheckAndRenewCertificate()
 			if err == nil {
 				return nil
@@ -200,11 +201,11 @@ func (p *agentService) initializeDrives() error {
 }
 
 func (p *agentService) connectARPC() error {
-	serverURL := os.Getenv("SERVER_URL")
-	if serverURL == "" {
-		return fmt.Errorf("server URL not set")
+	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
+	if err != nil {
+		return fmt.Errorf("invalid server URL: %v", err)
 	}
-	uri, err := url.Parse(serverURL)
+	uri, err := url.Parse(serverUrl.Value)
 	if err != nil {
 		return fmt.Errorf("invalid server URL: %v", err)
 	}

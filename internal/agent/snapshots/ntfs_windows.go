@@ -5,6 +5,7 @@ package snapshots
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +21,10 @@ type NtfsSnapshotHandler struct{}
 
 func (w *NtfsSnapshotHandler) CreateSnapshot(ctx context.Context, jobId string, sourcePath string) (Snapshot, error) {
 	// Extract the drive letter from the source path
+	if sourcePath == "" {
+		return Snapshot{}, errors.New("empty source path")
+	}
+
 	driveLetter := sourcePath[:1] // Assuming sourcePath is like "C:\\path\\to\\source"
 	volName := fmt.Sprintf("%s:", driveLetter)
 
