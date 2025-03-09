@@ -91,6 +91,8 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 
 	var snapshot snapshots.Snapshot
 
+	backupMode := reqData.SourceMode
+
 	switch reqData.SourceMode {
 	case "direct":
 		path := reqData.Drive
@@ -109,6 +111,7 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 		snapshot, err = snapshots.Manager.CreateSnapshot(reqData.JobId, reqData.Drive)
 		if err != nil && snapshot == (snapshots.Snapshot{}) {
 			syslog.L.Error(err).WithMessage("Warning: VSS snapshot failed and has switched to direct backup mode.").Write()
+			backupMode = "direct"
 
 			path := reqData.Drive
 			if runtime.GOOS == "windows" {
@@ -134,7 +137,7 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 	fs.RegisterHandlers(rpcSess.GetRouter())
 	session.fs = fs
 
-	return arpc.Response{Status: 200, Message: ("success")}, nil
+	return arpc.Response{Status: 200, Message: backupMode}, nil
 }
 
 func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
@@ -153,5 +156,5 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 	}
 
 	session.Close()
-	return arpc.Response{Status: 200, Message: ("success")}, nil
+	return arpc.Response{Status: 200, Message: "success"}, nil
 }

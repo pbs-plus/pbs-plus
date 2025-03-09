@@ -19,6 +19,8 @@ type ARPCFS struct {
 	Mount    *gofuse.Server
 	basePath string
 
+	backupMode string
+
 	accessedPaths *safemap.Map[string, bool]
 
 	// Atomic counters for the number of unique file and folder accesses.

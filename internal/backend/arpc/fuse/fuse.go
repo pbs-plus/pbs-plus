@@ -29,6 +29,9 @@ func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, 
 	root := newRoot(afs)
 
 	timeout := time.Hour * 24 * 365
+	if afs.GetBackupMode() == "direct" {
+		timeout = time.Second
+	}
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{

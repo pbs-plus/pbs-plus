@@ -61,7 +61,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			arpcFS := storeInstance.GetARPCFS(jobId)
 			if arpcFS == nil {
-				arpcFS = arpcfs.NewARPCFS(context.Background(), arpcSess, targetHostname, jobId)
+				arpcFS = arpcfs.NewARPCFS(context.Background(), arpcSess, targetHostname, jobId, backupResp.Message)
 			}
 
 			mntPath := filepath.Join(constants.AgentMountBasePath, jobId)
@@ -96,7 +96,7 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			arpcFS := storeInstance.GetARPCFS(jobId)
 			if arpcFS == nil {
-				arpcFS = arpcfs.NewARPCFS(context.Background(), arpcSess, targetHostname, jobId)
+				arpcFS = arpcfs.NewARPCFS(context.Background(), arpcSess, targetHostname, jobId, "")
 				arpcFS.Unmount()
 			} else {
 				storeInstance.RemoveARPCFS(jobId)
