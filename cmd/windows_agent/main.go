@@ -95,6 +95,22 @@ func (w *watchdogService) Stop(s service.Service) error {
 }
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("Panic occurred: %v\nStack trace:\n%s", r, debug.Stack())
+
+			logFile, err := os.OpenFile("panic.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err == nil {
+				defer logFile.Close()
+				logFile.WriteString(msg)
+			} else {
+				fmt.Println("Error opening log file:", err)
+			}
+
+			os.Exit(1)
+		}
+	}()
+
 	constants.Version = Version
 
 	svcConfig := &service.Config{
