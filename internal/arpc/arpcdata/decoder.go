@@ -39,6 +39,16 @@ func (d *Decoder) Reset(buf []byte) error {
 	return nil
 }
 
+// ReadUint8 reads a uint8 from the buffer.
+func (d *Decoder) ReadUint8() (uint8, error) {
+	if len(d.buf)-d.pos < 1 {
+		return 0, errors.New("buffer too small to read uint8")
+	}
+	value := d.buf[d.pos]
+	d.pos++
+	return value, nil
+}
+
 func (d *Decoder) ReadUint32() (uint32, error) {
 	if len(d.buf)-d.pos < 4 {
 		return 0, errors.New("buffer too small to read uint32")
