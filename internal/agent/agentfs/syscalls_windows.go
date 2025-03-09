@@ -13,12 +13,11 @@ import (
 )
 
 var (
-	modadvapi32                    = windows.NewLazySystemDLL("advapi32.dll")
-	modkernel32                    = windows.NewLazySystemDLL("kernel32.dll")
-	procGetDiskFreeSpace           = modkernel32.NewProc("GetDiskFreeSpaceW")
-	procGetSystemInfo              = modkernel32.NewProc("GetSystemInfo")
-	procGetSecurityDescriptorOwner = modadvapi32.NewProc("GetSecurityDescriptorOwner")
-	procGetSecurityDescriptorGroup = modadvapi32.NewProc("GetSecurityDescriptorGroup")
+	modadvapi32          = windows.NewLazySystemDLL("advapi32.dll")
+	modkernel32          = windows.NewLazySystemDLL("kernel32.dll")
+	procGetDiskFreeSpace = modkernel32.NewProc("GetDiskFreeSpaceW")
+	procGetSystemInfo    = modkernel32.NewProc("GetSystemInfo")
+	procGetSecurityInfo  = modadvapi32.NewProc("GetSecurityInfo")
 )
 
 func getStatFS(driveLetter string) (types.StatFS, error) {
@@ -227,72 +226,153 @@ func parseFileAttributes(attr uint32) map[string]bool {
 // getFileSecurityInfo retrieves owner, group, and ACL details using the
 // corrected GetNamedSecurityInfo usage. The ACL extraction is left as a stub.
 func getFileSecurityInfo(fullPath string) (string, string, []types.WinACL, error) {
-	// Call the wrapper version of GetNamedSecurityInfo, which takes a golang
-	// string and returns a self-relative SECURITY_DESCRIPTOR.
-	sd, err := windows.GetNamedSecurityInfo(
-		fullPath,
-		windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|
+	// Convert the path to a UTF16 pointer.
+	fullPathPtr, err := syscall.UTF16PtrFromString(fullPath)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	// Open the file or folder. The FILE_FLAG_BACKUP_SEMANTICS flag is required
+	// to open directories (and many reparse-point objects, as is the case with VSS).
+	handle, err := windows.CreateFile(
+		fullPathPtr,
+		windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+	if err != nil {
+		return "", "", nil, err
+	}
+	defer windows.CloseHandle(handle)
+
+	var pOwner *windows.SID
+	var pGroup *windows.SID
+	var pDACL *windows.ACL
+	var pSecurityDescriptor uintptr
+
+	// Call the handle-based GetSecurityInfo.
+	r, _, err := procGetSecurityInfo.Call(
+		uintptr(handle),
+		uintptr(windows.SE_FILE_OBJECT),
+		uintptr(windows.OWNER_SECURITY_INFORMATION|
 			windows.GROUP_SECURITY_INFORMATION|
-			windows.DACL_SECURITY_INFORMATION,
+			windows.DACL_SECURITY_INFORMATION),
+		uintptr(unsafe.Pointer(&pOwner)),
+		uintptr(unsafe.Pointer(&pGroup)),
+		uintptr(unsafe.Pointer(&pDACL)),
+		0,
+		uintptr(unsafe.Pointer(&pSecurityDescriptor)),
 	)
+	if r != 0 {
+		return "", "", nil, syscall.Errno(r)
+	}
+
+	// Convert the owner SID to a string.
+	ownerStr := pOwner.String()
+
+	// Convert the group SID to a string.
+	groupStr := pGroup.String()
+
+	winacls, err := convertDaclToWinACL(pDACL)
 	if err != nil {
 		return "", "", nil, err
 	}
-	// Retrieve owner SID.
-	ownerSID, _, err := getSecurityDescriptorOwner(sd)
-	if err != nil {
-		return "", "", nil, err
+
+	if pSecurityDescriptor != 0 {
+		syscall.LocalFree(syscall.Handle(pSecurityDescriptor))
 	}
-	ownerStr := ownerSID.String()
 
-	// Retrieve group SID.
-	groupSID, _, err := getSecurityDescriptorGroup(sd)
-	if err != nil {
-		return "", "", nil, err
-	}
-	groupStr := groupSID.String()
-
-	// ACL extraction would normally enumerate the DACL here.
-	acls := []types.WinACL{}
-
-	return ownerStr, groupStr, acls, nil
+	return ownerStr, groupStr, winacls, nil
 }
 
-// getSecurityDescriptorOwner is a wrapper for the Win32 API
-// GetSecurityDescriptorOwner. It returns the owner SID.
-func getSecurityDescriptorOwner(
-	sd *windows.SECURITY_DESCRIPTOR,
-) (*windows.SID, bool, error) {
-	var owner *windows.SID
-	var ownerDefaulted uint32
-
-	ret, _, err := procGetSecurityDescriptorOwner.Call(
-		uintptr(unsafe.Pointer(sd)),
-		uintptr(unsafe.Pointer(&owner)),
-		uintptr(unsafe.Pointer(&ownerDefaulted)),
-	)
-	if ret == 0 {
-		return nil, false, err
-	}
-	return owner, ownerDefaulted != 0, nil
+// AceHeader defines the standard Windows ACE header.
+type AceHeader struct {
+	AceType  byte
+	AceFlags byte
+	AceSize  uint16
 }
 
-// getSecurityDescriptorGroup is a wrapper for the Win32 API
-// GetSecurityDescriptorGroup. It returns the group SID.
-func getSecurityDescriptorGroup(
-	sd *windows.SECURITY_DESCRIPTOR,
-) (*windows.SID, bool, error) {
-	var group *windows.SID
-	var groupDefaulted uint32
+// AccessAllowedAce represents an ACCESS_ALLOWED_ACE structure.
+// The SID starts immediately after the Mask field.
+type AccessAllowedAce struct {
+	Header   AceHeader
+	Mask     uint32
+	SidStart uint32 // This is the start of a variable-length SID.
+}
 
-	ret, _, err := procGetSecurityDescriptorGroup.Call(
-		uintptr(unsafe.Pointer(sd)),
-		uintptr(unsafe.Pointer(&group)),
-		uintptr(unsafe.Pointer(&groupDefaulted)),
-	)
-	if ret == 0 {
-		return nil, false, err
+// AccessDeniedAce represents an ACCESS_DENIED_ACE structure.
+type AccessDeniedAce struct {
+	Header   AceHeader
+	Mask     uint32
+	SidStart uint32
+}
+
+// getAceFromACL returns a pointer to the ACE header for the given index.
+// We start after the ACL header (whose size we compute via unsafe.Sizeof).
+func getAceFromACL(acl *windows.ACL, index uint32) (*AceHeader, error) {
+	if index >= uint32(acl.AceCount) {
+		return nil, windows.ERROR_INVALID_PARAMETER
 	}
-	return group, groupDefaulted != 0, nil
+
+	// Start offset: the ACL header size.
+	var offset uintptr = unsafe.Sizeof(*acl)
+	var ace *AceHeader
+
+	// Walk to the ACE we need.
+	for i := uint32(0); i < index; i++ {
+		ace = (*AceHeader)(unsafe.Pointer(uintptr(unsafe.Pointer(acl)) + offset))
+		// Increase the offset by the size of the current ACE.
+		offset += uintptr(ace.AceSize)
+	}
+
+	ace = (*AceHeader)(unsafe.Pointer(uintptr(unsafe.Pointer(acl)) + offset))
+	return ace, nil
+}
+
+// convertDaclToWinACL converts the raw DACL (a pointer to windows.ACL)
+// into a slice of WinACL entries.
+func convertDaclToWinACL(pDACL *windows.ACL) ([]types.WinACL, error) {
+	var winacls []types.WinACL
+
+	// AceCount indicates how many ACEs are in the DACL.
+	count := int(pDACL.AceCount)
+	for i := 0; i < count; i++ {
+		aceHeader, err := getAceFromACL(pDACL, uint32(i))
+		if err != nil {
+			return nil, err
+		}
+
+		var sid *windows.SID
+		var mask uint32
+
+		// Depending on the ACE type, interpret the ACE accordingly.
+		switch aceHeader.AceType {
+		case windows.ACCESS_ALLOWED_ACE_TYPE:
+			ace := (*AccessAllowedAce)(unsafe.Pointer(aceHeader))
+			mask = ace.Mask
+			// The variable-length SID begins at the address of SidStart.
+			sid = (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		case windows.ACCESS_DENIED_ACE_TYPE:
+			ace := (*AccessDeniedAce)(unsafe.Pointer(aceHeader))
+			mask = ace.Mask
+			sid = (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		default:
+			// Skip ACE types that are not ACCESS_ALLOWED or ACCESS_DENIED.
+			continue
+		}
+
+		sidStr := sid.String()
+
+		winace := types.WinACL{
+			SID:        sidStr,
+			AccessMask: mask,
+			Type:       aceHeader.AceType,
+			Flags:      aceHeader.AceFlags,
+		}
+		winacls = append(winacls, winace)
+	}
+	return winacls, nil
 }
