@@ -60,7 +60,7 @@ func (e *LogEntry) Write() {
 	case "warn":
 		e.logger.zlog.Warn().Fields(e.Fields).Msg(e.Message)
 	case "error":
-		e.logger.zlog.Error().Fields(e.Fields).Msg(e.Message)
+		e.logger.zlog.Error().Err(e.Err).Fields(e.Fields).Msg(e.Message)
 	default:
 		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
 	}

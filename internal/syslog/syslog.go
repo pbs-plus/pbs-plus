@@ -101,7 +101,7 @@ func ParseAndLogWindowsEntry(body io.ReadCloser) error {
 	case "warn":
 		entry.logger.zlog.Warn().Fields(entry.Fields).Msg(entry.Message)
 	case "error":
-		entry.logger.zlog.Error().Fields(entry.Fields).Msg(entry.Message)
+		entry.logger.zlog.Error().Err(entry.Err).Fields(entry.Fields).Msg(entry.Message)
 	default:
 		entry.logger.zlog.Info().Fields(entry.Fields).Msg(entry.Message)
 	}
