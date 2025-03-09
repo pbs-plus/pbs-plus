@@ -219,10 +219,15 @@ func TestAgentFSServer(t *testing.T) {
 
 		// Log the extended attributes (if any)
 		t.Logf("Owner for %s: %+v", testFilePath, result.Owner)
+		assert.NotEmpty(t, result.Owner, "Owner should not be empty")
 		t.Logf("Group for %s: %+v", testFilePath, result.Group)
+		assert.NotEmpty(t, result.Group, "Group should not be empty")
 		t.Logf("CreationTime for %s: %+v", testFilePath, result.CreationTime)
+		assert.NotEmpty(t, result.CreationTime, "CreationTime should not be empty")
 		t.Logf("LastAccessTime for %s: %+v", testFilePath, result.LastAccessTime)
+		assert.NotEmpty(t, result.LastAccessTime, "LastAccessTime should not be empty")
 		t.Logf("LastWriteTime for %s: %+v", testFilePath, result.LastWriteTime)
+		assert.NotEmpty(t, result.LastWriteTime, "LastWriteTime should not be empty")
 		t.Logf("WinACLs for %s: %+v", testFilePath, result.WinACLs)
 		t.Logf("PosixACLs for %s: %+v", testFilePath, result.PosixACLs)
 
