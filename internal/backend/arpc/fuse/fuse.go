@@ -36,7 +36,7 @@ func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, 
 			FsName:             fsName,
 			Name:               "pbsagent",
 			AllowOther:         true,
-			DisableXAttrs:      true,
+			DisableXAttrs:      false,
 			DisableReadDirPlus: true,
 			Options: []string{
 				"ro",
@@ -196,6 +196,8 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 			if err != nil {
 				return 0, syscall.EIO
 			}
+		} else {
+			return 0, syscall.ENODATA
 		}
 	default:
 		return 0, syscall.ENODATA
