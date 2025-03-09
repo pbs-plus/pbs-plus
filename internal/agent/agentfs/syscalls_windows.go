@@ -242,14 +242,23 @@ func parseFileAttributes(attr uint32) map[string]bool {
 	return attributes
 }
 
-// GetWinACLs returns the owner SID, group SID, and list of ACL entries for the given file.
+// Note:
+//   We assume that GetFileSecurityDescriptor returns a security descriptor
+//   in self-relative format, stored as a []uint16. In self-relative format the
+//   internal pointers (for owner, group, DACL, etc.) are offsets from the base
+//   of the descriptor. Windows API calls such as GetSecurityDescriptorOwner and
+//   GetSecurityDescriptorDacl will return those offsets. Therefore, before
+//   using those pointers we add the base address of the security descriptor to them.
+
+// GetWinACLs retrieves the owner SID, group SID, and explicit DACL entries (as WinACL)
+// for the given file. Rather than converting the descriptor to an absolute format, we
+// adjust the returned pointers from the self-relative descriptor manually.
 func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
-	// Request owner, group, and DACL information.
+	// We request owner, group, and DACL information.
 	secInfo := windows.SECURITY_INFORMATION(windows.OWNER_SECURITY_INFORMATION |
 		windows.GROUP_SECURITY_INFORMATION |
 		windows.DACL_SECURITY_INFORMATION)
 
-	// Obtain the self-relative security descriptor.
 	secDesc, err := GetFileSecurityDescriptor(filePath, secInfo)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to get file security descriptor: %w", err)
@@ -261,50 +270,46 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 		return "", "", nil, fmt.Errorf("invalid security descriptor: %w", err)
 	}
 
-	// Convert the self-relative descriptor into an absolute descriptor.
-	absoluteSD, err := MakeAbsoluteSD(secDesc)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to convert security descriptor to absolute: %w", err)
-	}
+	// Get the base address of the self-relative descriptor.
+	base := uintptr(unsafe.Pointer(&secDesc[0]))
 
-	// Extract the owner and group SIDs from the absolute security descriptor.
-	owner, group, err := getOwnerGroup(absoluteSD)
+	// Retrieve owner and group by using our helper that adjusts
+	// the returned pointers by the base address.
+	owner, group, err := getOwnerGroupWithBase(secDesc, base)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to extract owner/group: %w", err)
 	}
 
-	// Get the DACL from the absolute security descriptor.
-	acl, present, _, err := GetSecurityDescriptorDACL(absoluteSD)
+	// Get the DACL from the security descriptor.
+	acl, present, _, err := GetSecurityDescriptorDACL(secDesc)
 	if err != nil {
 		return owner, group, nil, fmt.Errorf("failed to get DACL: %w", err)
 	}
 	if !present {
-		// No DACL present: return empty ACL list.
+		// No DACL present means no explicit ACL entries.
 		return owner, group, []types.WinACL{}, nil
 	}
 
-	// Retrieve the explicit ACL entries from the DACL.
+	// Retrieve explicit ACE entries from the ACL.
 	expEntries, err := GetExplicitEntriesFromACL(acl)
 	if err != nil {
 		return owner, group, nil, fmt.Errorf("failed to get explicit ACL entries: %w", err)
 	}
 
 	var winAcls []types.WinACL
-	// Iterate over each explicit entry.
+	// For each explicit entry, adjust the trustee pointer.
 	for _, entry := range *expEntries {
-		// The Trustee value is expected to be a pointer to a Windows SID.
-		pSid := (*windows.SID)(unsafe.Pointer(entry.Trustee.TrusteeValue))
-		if pSid == nil {
-			continue
-		}
+		// entry.Trustee.TrusteeValue is an offset in the self-relative descriptor.
+		offset := uintptr(entry.Trustee.TrusteeValue)
+		absoluteTrustee := unsafe.Pointer(base + offset)
+		pSid := (*windows.SID)(absoluteTrustee)
 		sidString := pSid.String()
 
 		ace := types.WinACL{
 			SID:        sidString,
 			AccessMask: uint32(entry.AccessPermissions),
-			// The AccessMode and Inheritance fields are casted to our custom types.
-			Type:  uint8(entry.AccessMode),
-			Flags: uint8(entry.Inheritance),
+			Type:       uint8(entry.AccessMode),
+			Flags:      uint8(entry.Inheritance),
 		}
 		winAcls = append(winAcls, ace)
 	}
@@ -312,20 +317,41 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	return owner, group, winAcls, nil
 }
 
-// getOwnerGroup extracts the owner and group SIDs (as strings) from the given
-// self-relative security descriptor.
-func getOwnerGroup(secDesc []uint16) (string, string, error) {
-	owner, _, err := GetSecurityDescriptorOwner(secDesc)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get owner: %w", err)
+// getOwnerGroupWithBase takes a self-relative security descriptor (secDesc)
+// and its base address, retrieves the owner and group pointers (which are offsets),
+// and converts them to absolute pointers before converting the SIDs to strings.
+func getOwnerGroupWithBase(secDesc []uint16, base uintptr) (string, string, error) {
+	// Retrieve the owner pointer from the security descriptor.
+	var rawOwner *windows.SID
+	var ownerDefaulted int32
+	r1, _, err := procGetSecurityDescriptorOwner.Call(
+		uintptr(unsafe.Pointer(&secDesc[0])),
+		uintptr(unsafe.Pointer(&rawOwner)),
+		uintptr(unsafe.Pointer(&ownerDefaulted)),
+	)
+	if r1 == 0 {
+		return "", "", fmt.Errorf("GetSecurityDescriptorOwner failed: %w", err)
 	}
-	ownerStr := owner.String()
 
-	group, _, err := GetSecurityDescriptorGroup(secDesc)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get group: %w", err)
+	// Adjust the owner pointer: rawOwner is really an offset.
+	ownerOffset := uintptr(unsafe.Pointer(rawOwner))
+	absoluteOwner := (*windows.SID)(unsafe.Pointer(base + ownerOffset))
+	ownerStr := absoluteOwner.String()
+
+	// Retrieve the group pointer.
+	var rawGroup *windows.SID
+	var groupDefaulted int32
+	r1, _, err = procGetSecurityDescriptorGroup.Call(
+		uintptr(unsafe.Pointer(&secDesc[0])),
+		uintptr(unsafe.Pointer(&rawGroup)),
+		uintptr(unsafe.Pointer(&groupDefaulted)),
+	)
+	if r1 == 0 {
+		return "", "", fmt.Errorf("GetSecurityDescriptorGroup failed: %w", err)
 	}
-	groupStr := group.String()
+	groupOffset := uintptr(unsafe.Pointer(rawGroup))
+	absoluteGroup := (*windows.SID)(unsafe.Pointer(base + groupOffset))
+	groupStr := absoluteGroup.String()
 
 	return ownerStr, groupStr, nil
 }
