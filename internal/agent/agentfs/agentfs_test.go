@@ -218,7 +218,13 @@ func TestAgentFSServer(t *testing.T) {
 		require.NoError(t, err, "Failed to decode xattr response")
 
 		// Log the extended attributes (if any)
-		t.Logf("File Attributes for %s: %+v", testFilePath, result.FileAttributes)
+		t.Logf("Owner for %s: %+v", testFilePath, result.Owner)
+		t.Logf("Group for %s: %+v", testFilePath, result.Group)
+		t.Logf("CreationTime for %s: %+v", testFilePath, result.CreationTime)
+		t.Logf("LastAccessTime for %s: %+v", testFilePath, result.LastAccessTime)
+		t.Logf("LastWriteTime for %s: %+v", testFilePath, result.LastWriteTime)
+		t.Logf("WinACLs for %s: %+v", testFilePath, result.WinACLs)
+		t.Logf("PosixACLs for %s: %+v", testFilePath, result.PosixACLs)
 
 		// Verify that the FileAttributes map is not nil
 		assert.NotNil(t, result.FileAttributes, "FileAttributes map should not be nil")
