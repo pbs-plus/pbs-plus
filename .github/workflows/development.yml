@@ -171,7 +171,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ghcr.io/${{ github.repository }}
+            ghcr.io/sonroyaalmerol/pbs-plus-agent
           tags: |
             tags: type=raw,value=dev
           flavor: latest=false
