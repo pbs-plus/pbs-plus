@@ -221,7 +221,7 @@ func parseFileAttributes(attr uint32) map[string]bool {
 	return attributes
 }
 
-func getWinACLs(filePath string) (string, string, []types.WinACL, error) {
+func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	// Request DACL, owner, and group information.
 	sd, err := windows.GetNamedSecurityInfo(
 		filePath,
