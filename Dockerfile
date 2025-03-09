@@ -19,9 +19,9 @@ RUN apt-get update && \
   rm -rf /var/lib/apt/lists/*
 
 # Copy the compiled binary from the builder stage
-COPY --from=builder /app/pbs-plus-agent /usr/local/pbs-plus-agent
+COPY --from=builder /app/pbs-plus-agent /usr/local/bin/pbs-plus-agent
 
 VOLUME [ "/etc/pbs-plus-agent" ]
 
 # Set the entrypoint
-ENTRYPOINT ["/usr/local/pbs-plus-agent"]
+ENTRYPOINT ["/usr/local/bin/pbs-plus-agent"]
