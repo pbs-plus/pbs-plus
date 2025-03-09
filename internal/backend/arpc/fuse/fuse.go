@@ -64,6 +64,7 @@ type Node struct {
 }
 
 var _ = (fs.NodeGetattrer)((*Node)(nil))
+var _ = (fs.NodeListxattrer)((*Node)(nil))
 var _ = (fs.NodeGetxattrer)((*Node)(nil))
 var _ = (fs.NodeLookuper)((*Node)(nil))
 var _ = (fs.NodeReaddirer)((*Node)(nil))
@@ -211,6 +212,52 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 	}
 
 	copy(dest, data)
+	return length, 0
+}
+
+func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
+	// Retrieve extended attribute information for the node.
+	fi, err := n.fs.Xattr(n.path)
+	if err != nil {
+		return 0, fs.ToErrno(err)
+	}
+
+	// Build our list of supported attribute keys.
+	attrs := []string{
+		"user.creationtime",
+		"user.lastaccesstime",
+		"user.lastwritetime",
+		"user.owner",
+		"user.group",
+		"user.fileattributes",
+	}
+
+	// Only add ACLs if available.
+	if fi.PosixACLs != nil || fi.WinACLs != nil {
+		attrs = append(attrs, "user.acls")
+	}
+
+	// Create the null-terminated list of attribute names.
+	var list []byte
+	for _, attr := range attrs {
+		list = append(list, attr...)
+		list = append(list, 0) // Add null terminator.
+	}
+
+	length := uint32(len(list))
+
+	// If dest is nil, just return the required length.
+	if dest == nil {
+		return length, 0
+	}
+
+	// If the provided dest slice is too small, return ERANGE.
+	if len(dest) < len(list) {
+		return length, syscall.ERANGE
+	}
+
+	// Copy the extended attribute list into dest.
+	copy(dest, list)
 	return length, 0
 }
 
