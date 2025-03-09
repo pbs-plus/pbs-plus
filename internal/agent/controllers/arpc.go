@@ -105,7 +105,8 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 			Direct:      true,
 		}
 	default:
-		snapshot, err := snapshots.Manager.CreateSnapshot(reqData.JobId, reqData.Drive)
+		var err error
+		snapshot, err = snapshots.Manager.CreateSnapshot(reqData.JobId, reqData.Drive)
 		if err != nil && snapshot == (snapshots.Snapshot{}) {
 			syslog.L.Error(err).WithMessage("Warning: VSS snapshot failed and has switched to direct backup mode.").Write()
 
