@@ -121,8 +121,8 @@ func (p *agentService) waitForServerURL() error {
 	defer ticker.Stop()
 
 	for {
-		serverURL := os.Getenv("SERVER_URL")
-		if serverURL != "" {
+		entry, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
+		if err == nil && entry != nil {
 			return nil
 		}
 
