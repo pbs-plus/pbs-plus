@@ -1,6 +1,7 @@
 package snapshots
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -19,7 +20,10 @@ func (z *ZFSSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Sn
 	snapshotName := fmt.Sprintf("%s@%s", sourcePath, jobId)
 	timeStarted := time.Now()
 
-	cmd := exec.Command("zfs", "snapshot", snapshotName)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "zfs", "snapshot", snapshotName)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return Snapshot{}, fmt.Errorf("failed to create ZFS snapshot: %s, %w", string(output), err)
 	}
