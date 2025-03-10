@@ -102,17 +102,19 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       },
     },
     sorters: "name",
-    grouper: {
-      groupFn: function (record) {
-        let ns = record.get("path");
-        let name = record.get("name");
-        if (ns.startsWith("agent://")) {
-          host = name.split(" - ")[0];
-          return "Agent - " + host;
-        }
-        return "Non-Agent";
+    groupers: [
+      {
+        groupFn: function (record) {
+          let ns = record.get("path");
+          let name = record.get("name");
+          if (ns.startsWith("agent://")) {
+            host = name.split(" - ")[0];
+            return "Agent - " + host;
+          }
+          return "Non-Agent";
+        },
       },
-    },
+    ],
   },
 
   features: [
