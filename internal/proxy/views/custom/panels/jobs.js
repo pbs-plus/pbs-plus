@@ -291,7 +291,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
   store: {
     type: "diff",
-    // autoDestroy: true,
+    autoDestroy: true,
     autoDestroyRstore: true,
     sorters: "id",
     rstore: {
