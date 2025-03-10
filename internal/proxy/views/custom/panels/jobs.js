@@ -299,18 +299,18 @@ Ext.define("PBS.config.DiskBackupJobView", {
       storeid: "pbs-disk-backup-job-status",
       model: "pbs-disk-backup-job-status",
       interval: 5000,
-    },
-    groupers: [
-      {
-        groupFn: function (record) {
-          let ns = record.get("ns");
-          if (ns) {
-            return ns.split("/")[0];
-          }
-          return "/";
+      listeners: {
+        load: function (store) {
+          store.group(); // Reapply grouping after load
         },
       },
-    ],
+      grouper: {
+        groupFn: function (record) {
+          let ns = record.get("ns");
+          return ns ? ns.split("/")[0] : "/";
+        },
+      },
+    },
   },
 
   viewConfig: {
