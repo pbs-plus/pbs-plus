@@ -107,7 +107,6 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
         let ns = record.get("path");
         let name = record.get("name");
         if (ns.startsWith("agent://")) {
-          group = ns.replace("agent://", "");
           host = name.split(" - ")[0];
           return "Agent - " + host;
         }
