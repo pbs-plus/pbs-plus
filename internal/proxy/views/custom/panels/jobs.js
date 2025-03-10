@@ -294,6 +294,13 @@ Ext.define("PBS.config.DiskBackupJobView", {
     autoDestroy: true,
     autoDestroyRstore: true,
     sorters: "id",
+    groupField: "ns",
+    grouper: {
+      groupFn: function (record) {
+        const ns = record.get("ns");
+        return ns ? ns.split("/")[0] : "/";
+      },
+    },
     rstore: {
       type: "update",
       storeid: "pbs-disk-backup-job-status",
@@ -378,24 +385,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
   features: [
     {
       ftype: "grouping",
-      groupers: [
-        {
-          groupFn: function (record) {
-            let ns = record.get("ns");
-            if (ns) {
-              return ns.split("/")[0];
-            }
-            return "/";
-          },
-        },
-      ],
       groupHeaderTpl: [
-        // Display the group name and a count of items.
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
           formatNS: function (ns) {
-            // Optionally format the group header. If the ns is empty,
-            // show "Unassigned" as the group name.
             return ns || "/";
           },
         },
