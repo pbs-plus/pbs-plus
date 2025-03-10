@@ -100,29 +100,26 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
         type: "proxmox",
         url: pbsPlusBaseUrl + "/api2/json/d2d/target",
       },
-      listeners: {
-        load: function (store) {
-          store.group(); // Reapply grouping after load
-        },
-      },
     },
     sorters: "name",
-    groupers: {
-      groupFn: function (record) {
-        let ns = record.get("path");
-        let name = record.get("name");
-        if (ns.startsWith("agent://")) {
-          host = name.split(" - ")[0];
-          return "Agent - " + host;
-        }
-        return "Non-Agent";
-      },
-    },
   },
 
   features: [
     {
       ftype: "grouping",
+      groupers: [
+        {
+          groupFn: function (record) {
+            let ns = record.get("path");
+            let name = record.get("name");
+            if (ns.startsWith("agent://")) {
+              host = name.split(" - ")[0];
+              return "Agent - " + host;
+            }
+            return "Non-Agent";
+          },
+        },
+      ],
       groupHeaderTpl: [
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
