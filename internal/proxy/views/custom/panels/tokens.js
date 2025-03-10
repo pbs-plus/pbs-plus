@@ -156,22 +156,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       },
     },
     sorters: "name",
-    groupField: "revoked",
   },
-
-  features: [
-    {
-      ftype: "grouping",
-      groupHeaderTpl: [
-        "{name:this.formatNS}",
-        {
-          formatNS: function (revoked) {
-            return revoked ? "Invalid Tokens" : "Valid Tokens";
-          },
-        },
-      ],
-    },
-  ],
 
   tbar: [
     {
