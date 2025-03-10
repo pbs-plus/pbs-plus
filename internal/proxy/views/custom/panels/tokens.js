@@ -156,7 +156,6 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       },
     },
     sorters: "name",
-    groupField: "revoked",
   },
 
   features: [
