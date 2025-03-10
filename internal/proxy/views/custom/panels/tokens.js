@@ -158,6 +158,8 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
     sorters: "name",
   },
 
+  features: [],
+
   tbar: [
     {
       text: gettext("Generate Token"),

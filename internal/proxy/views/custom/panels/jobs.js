@@ -300,15 +300,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
       model: "pbs-disk-backup-job-status",
       interval: 5000,
     },
-    grouper: {
-      groupFn: function (record) {
-        let ns = record.get("ns");
-        if (ns) {
-          return ns.split("/")[0];
-        }
-        return "/";
-      },
-    },
   },
 
   viewConfig: {
@@ -387,6 +378,17 @@ Ext.define("PBS.config.DiskBackupJobView", {
   features: [
     {
       ftype: "grouping",
+      groupers: [
+        {
+          groupFn: function (record) {
+            let ns = record.get("ns");
+            if (ns) {
+              return ns.split("/")[0];
+            }
+            return "/";
+          },
+        },
+      ],
       groupHeaderTpl: [
         // Display the group name and a count of items.
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
