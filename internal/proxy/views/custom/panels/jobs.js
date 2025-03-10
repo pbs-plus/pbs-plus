@@ -306,6 +306,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
   features: [
     {
       ftype: "grouping",
+      startCollapsed: true,
       groupHeaderTpl: [
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
