@@ -13,6 +13,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.7.2
 	github.com/kardianos/service v1.2.2
 	github.com/mxk/go-vss v1.2.0
+	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.10.0
 	github.com/xtaci/smux v1.5.34
@@ -20,7 +21,7 @@ require (
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	golang.org/x/sys v0.31.0
 	golang.org/x/text v0.23.0
-	golang.org/x/time v0.10.0
+	golang.org/x/time v0.11.0
 )
 
 require (
@@ -29,7 +30,6 @@ require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
