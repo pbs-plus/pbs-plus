@@ -105,19 +105,19 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
           store.group(); // Reapply grouping after load
         },
       },
-      groupers: {
-        groupFn: function (record) {
-          let ns = record.get("path");
-          let name = record.get("name");
-          if (ns.startsWith("agent://")) {
-            host = name.split(" - ")[0];
-            return "Agent - " + host;
-          }
-          return "Non-Agent";
-        },
-      },
     },
     sorters: "name",
+    groupers: {
+      groupFn: function (record) {
+        let ns = record.get("path");
+        let name = record.get("name");
+        if (ns.startsWith("agent://")) {
+          host = name.split(" - ")[0];
+          return "Agent - " + host;
+        }
+        return "Non-Agent";
+      },
+    },
   },
 
   features: [
