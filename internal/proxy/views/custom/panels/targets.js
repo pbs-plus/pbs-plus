@@ -105,9 +105,9 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     grouper: {
       groupFn: function (record) {
         let ns = record.get("path");
+        let name = record.get("name");
         if (ns.startsWith("agent://")) {
-          group = ns.replace("agent://", "");
-          host = group.split("/")[0];
+          host = name.split(" - ")[0];
           return "Agent - " + host;
         }
         return "Non-Agent";
