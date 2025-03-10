@@ -102,7 +102,6 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       },
     },
     sorters: "name",
-    groupField: "path",
     grouper: {
       groupFn: function (record) {
         let ns = record.get("path");

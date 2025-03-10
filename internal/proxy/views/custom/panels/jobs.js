@@ -1,5 +1,5 @@
 Ext.define("PBS.config.DiskBackupJobView", {
-  extend: "Ext.grid.GridPanel",
+  extend: "Ext.grid.Panel",
   alias: "widget.pbsDiskBackupJobView",
 
   stateful: true,
@@ -293,25 +293,38 @@ Ext.define("PBS.config.DiskBackupJobView", {
     type: "diff",
     autoDestroy: true,
     autoDestroyRstore: true,
-    sorters: "id",
-    groupField: "ns",
-    grouper: {
-      groupFn: function (record) {
-        const ns = record.get("ns");
-        return ns ? ns.split("/")[0] : "/";
-      },
-    },
     rstore: {
       type: "update",
       storeid: "pbs-disk-backup-job-status",
       model: "pbs-disk-backup-job-status",
       interval: 5000,
     },
+    sorters: "id",
+    grouper: {
+      groupFn: function (record) {
+        const ns = record.get("ns");
+        return ns ? ns.split("/")[0] : "/";
+      },
+    },
   },
 
   viewConfig: {
     trackOver: false,
   },
+
+  features: [
+    {
+      ftype: "grouping",
+      groupHeaderTpl: [
+        '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
+        {
+          formatNS: function (ns) {
+            return ns || "/";
+          },
+        },
+      ],
+    },
+  ],
 
   tbar: [
     {
@@ -379,20 +392,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Export CSV"),
       handler: "exportCSV",
       selModel: false,
-    },
-  ],
-
-  features: [
-    {
-      ftype: "grouping",
-      groupHeaderTpl: [
-        '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
-        {
-          formatNS: function (ns) {
-            return ns || "/";
-          },
-        },
-      ],
     },
   ],
 
