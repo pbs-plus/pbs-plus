@@ -310,7 +310,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
           formatNS: function (ns) {
-            return ns || "/";
+            return "Namespace: " + ns;
           },
         },
       ],
