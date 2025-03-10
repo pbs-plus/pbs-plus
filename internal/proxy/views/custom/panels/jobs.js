@@ -2,9 +2,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
   extend: "Ext.grid.Panel",
   alias: "widget.pbsDiskBackupJobView",
 
-  stateful: true,
-  stateId: "grid-disk-backup-jobs-v1",
-
   title: "Disk Backup Jobs",
 
   controller: {
@@ -291,8 +288,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
   store: {
     type: "diff",
-    autoDestroy: true,
-    autoDestroyRstore: true,
     rstore: {
       type: "update",
       storeid: "pbs-disk-backup-job-status",
@@ -306,10 +301,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
         return ns ? ns.split("/")[0] : "/";
       },
     },
-  },
-
-  viewConfig: {
-    trackOver: false,
   },
 
   features: [
@@ -550,10 +541,4 @@ Ext.define("PBS.config.DiskBackupJobView", {
       hidden: true,
     },
   ],
-
-  initComponent: function () {
-    let me = this;
-
-    me.callParent();
-  },
 });
