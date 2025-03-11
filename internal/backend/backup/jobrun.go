@@ -133,6 +133,12 @@ func runBackupAttempt(
 			return nil, fmt.Errorf("runBackupAttempt: mount initialization error: %w", err)
 		}
 		srcPath = agentMount.Path
+
+		// in case mount updates the job
+		latestAgent, err := storeInstance.Database.GetJob(job.ID)
+		if err == nil {
+			job = latestAgent
+		}
 	}
 	srcPath = filepath.Join(srcPath, job.Subpath)
 
