@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"text/template"
 	"time"
 
@@ -59,9 +60,19 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
+			backupRespSplit := strings.Split(backupResp.Message, "|")
+			backupMode := backupRespSplit[0]
+
+			if len(backupRespSplit) == 2 && backupRespSplit[1] != "" {
+				job.Namespace = backupRespSplit[1]
+				if err := storeInstance.Database.UpdateJob(*job); err != nil {
+					syslog.L.Error(err).WithField("namespace", backupRespSplit[1]).Write()
+				}
+			}
+
 			arpcFS := storeInstance.GetARPCFS(jobId)
 			if arpcFS == nil {
-				arpcFS = arpcfs.NewARPCFS(context.Background(), arpcSess, targetHostname, jobId, backupResp.Message)
+				arpcFS = arpcfs.NewARPCFS(context.Background(), arpcSess, targetHostname, jobId, backupMode)
 			}
 
 			mntPath := filepath.Join(constants.AgentMountBasePath, jobId)
