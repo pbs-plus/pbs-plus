@@ -3,116 +3,103 @@ var backupScheduleDefaults = Ext.create("Ext.data.Store", {
   data: [
     // Weekday Evening Options (backups after office hours)
     {
-      value: "mon..fri 6:00PM",
+      value: "mon..fri 18:00",
       text: gettext("Weekdays at 6:00 PM"),
     },
     {
-      value: "mon..fri 6:30PM",
+      value: "mon..fri 18:30",
       text: gettext("Weekdays at 6:30 PM"),
     },
     {
-      value: "mon..fri 7:00PM",
+      value: "mon..fri 19:00",
       text: gettext("Weekdays at 7:00 PM"),
     },
     {
-      value: "mon..fri 7:30PM",
+      value: "mon..fri 19:30",
       text: gettext("Weekdays at 7:30 PM"),
     },
     {
-      value: "mon..fri 8:00PM",
+      value: "mon..fri 20:00",
       text: gettext("Weekdays at 8:00 PM"),
     },
     {
-      value: "mon..fri 8:30PM",
+      value: "mon..fri 20:30",
       text: gettext("Weekdays at 8:30 PM"),
     },
     {
-      value: "mon..fri 9:00PM",
+      value: "mon..fri 21:00",
       text: gettext("Weekdays at 9:00 PM"),
     },
     {
-      value: "mon..fri 9:30PM",
+      value: "mon..fri 21:30",
       text: gettext("Weekdays at 9:30 PM"),
     },
     {
-      value: "mon..fri 10:00PM",
+      value: "mon..fri 22:00",
       text: gettext("Weekdays at 10:00 PM"),
     },
     // Weekday Early Morning Options
     {
-      value: "mon..fri 12:00AM",
+      value: "mon..fri 0:00",
       text: gettext("Weekdays at 12:00 AM"),
     },
     {
-      value: "mon..fri 12:30AM",
+      value: "mon..fri 0:30",
       text: gettext("Weekdays at 12:30 AM"),
     },
     {
-      value: "mon..fri 1:00AM",
+      value: "mon..fri 1:00",
       text: gettext("Weekdays at 1:00 AM"),
     },
     {
-      value: "mon..fri 1:30AM",
+      value: "mon..fri 1:30",
       text: gettext("Weekdays at 1:30 AM"),
     },
     {
-      value: "mon..fri 2:00AM",
+      value: "mon..fri 2:00",
       text: gettext("Weekdays at 2:00 AM"),
     },
     {
-      value: "mon..fri 2:30AM",
+      value: "mon..fri 2:30",
       text: gettext("Weekdays at 2:30 AM"),
     },
     {
-      value: "mon..fri 3:00AM",
+      value: "mon..fri 3:00",
       text: gettext("Weekdays at 3:00 AM"),
     },
     // Daily Overnight Options
     {
-      value: "daily 10:00PM",
+      value: "22:00",
       text: gettext("Daily at 10:00 PM"),
     },
     {
-      value: "daily 10:30PM",
+      value: "22:30",
       text: gettext("Daily at 10:30 PM"),
     },
     // Weekend Options
     {
-      value: "sat 2:00AM",
+      value: "sat 2:00",
       text: gettext("Saturday at 2:00 AM"),
     },
     {
-      value: "sat 2:30AM",
+      value: "sat 2:30",
       text: gettext("Saturday at 2:30 AM"),
     },
     {
-      value: "sat 3:00AM",
+      value: "sat 3:00",
       text: gettext("Saturday at 3:00 AM"),
     },
     {
-      value: "sun 2:00AM",
+      value: "sun 2:00",
       text: gettext("Sunday at 2:00 AM"),
     },
     {
-      value: "sun 2:30AM",
+      value: "sun 2:30",
       text: gettext("Sunday at 2:30 AM"),
     },
     {
-      value: "sun 3:00AM",
+      value: "sun 3:00",
       text: gettext("Sunday at 3:00 AM"),
-    },
-    // Maintenance Windows: Monthly and Yearly
-    {
-      value: "monthly 2:00AM",
-      text: gettext("Monthly on the 1st at 2:00 AM"),
-    },
-    {
-      value: "monthly 2:30AM",
-      text: gettext("Monthly on the 1st at 2:30 AM"),
-    },
-    {
-      value: "yearly 2:00AM",
-      text: gettext("Yearly on January 1st at 2:00 AM"),
     },
   ],
 });
