@@ -118,6 +118,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
   features: [
     {
       ftype: "grouping",
+      startCollapsed: true,
       groupHeaderTpl: [
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
