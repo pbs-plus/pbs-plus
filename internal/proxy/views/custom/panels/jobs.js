@@ -7,14 +7,28 @@ Ext.define("PBS.config.DiskBackupJobView", {
   stateful: true,
   stateId: "grid-disk-backup-jobs-v1",
 
+  // Override getState to include grouper state
   getState: function () {
-    let me = this;
-    var state = me.callParent();
-    // remove any grouper/sorter state that might include a stale groupFn
-    delete state.sorters;
-    delete state.groupers;
-    delete state.grouper;
+    const state = this.callParent(arguments);
+    const store = this.getStore();
+
+    if (store && store.grouper) {
+      state.grouper = store.grouper.getGroupFn();
+    }
+
     return state;
+  },
+
+  // Override applyState to restore grouper state
+  applyState: function (state) {
+    this.callParent(arguments);
+
+    const store = this.getStore();
+    if (store && state.grouper) {
+      store.setGrouper({
+        groupFn: state.grouper, // Restore the grouper function
+      });
+    }
   },
 
   controller: {
