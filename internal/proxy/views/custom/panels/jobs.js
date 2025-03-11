@@ -322,7 +322,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       interval: 5000,
     },
     sorters: "id",
-    grouper: "ns",
+    groupField: "ns",
   },
 
   features: [
