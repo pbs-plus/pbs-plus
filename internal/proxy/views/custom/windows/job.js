@@ -1,9 +1,17 @@
-var backupModes = Ext.create('Ext.data.Store', {
-  fields: ['display', 'value'],
+var backupModes = Ext.create("Ext.data.Store", {
+  fields: ["display", "value"],
   data: [
-    {'display': 'Metadata', 'value': 'metadata'},
-    {'display': 'Data', 'value': 'data'},
-    {'display': 'Legacy', 'value': 'legacy'},
+    { display: "Metadata", value: "metadata" },
+    { display: "Data", value: "data" },
+    { display: "Legacy", value: "legacy" },
+  ],
+});
+
+var sourceModes = Ext.create("Ext.data.Store", {
+  fields: ["display", "value"],
+  data: [
+    { display: "Snapshot", value: "snapshot" },
+    { display: "Direct", value: "direct" },
   ],
 });
 
@@ -32,7 +40,9 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
     me.url = id ? `${baseurl}/${encodePathValue(id)}` : baseurl;
     me.method = id ? "PUT" : "POST";
     me.autoLoad = !!id;
-    me.scheduleValue = id ? null : "daily";
+    me.scheduleValue = id ? null : "";
+    me.backupModeValue = id ? null : "metadata";
+    me.sourceModeValue = id ? null : "snapshot";
     me.authid = id ? null : Proxmox.UserName;
     me.editDatastore = me.datastore === undefined && me.isCreate;
     return {};
@@ -40,9 +50,31 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
 
   viewModel: {},
 
+  controller: {
+    xclass: "Ext.app.ViewController",
+    control: {
+      "pbsDataStoreSelector[name=store]": {
+        change: "storeChange",
+      },
+    },
+
+    storeChange: function (field, value) {
+      let me = this;
+      let nsSelector = me.lookup("namespace");
+      nsSelector.setDatastore(value);
+    },
+  },
+
   initComponent: function () {
     let me = this;
     me.callParent();
+
+    if (me.jobData) {
+      let inputPanel = me.down("inputpanel");
+      if (inputPanel && inputPanel.setValues) {
+        inputPanel.setValues(me.jobData);
+      }
+    }
   },
 
   items: {
@@ -93,17 +125,21 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             name: "store",
           },
           {
-            xtype: "proxmoxtextfield",
+            xtype: "pbsD2DNamespaceSelector",
             fieldLabel: gettext("Namespace"),
             emptyText: gettext("Root"),
             name: "ns",
+            reference: "namespace",
+            cbind: {
+              deleteEmpty: "{!isCreate}",
+            },
           },
         ],
 
         column2: [
           {
             fieldLabel: gettext("Schedule"),
-            xtype: "pbsCalendarEvent",
+            xtype: "pbsD2DCalendarEvent",
             name: "schedule",
             emptyText: gettext("none (disabled)"),
             cbind: {
@@ -118,17 +154,36 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             name: "retry",
           },
           {
-            xtype: 'combo',
-            fieldLabel: gettext('Backup Mode'),
-            name: 'mode',
-            queryMode: 'local',
+            xtype: "combo",
+            fieldLabel: gettext("Backup Mode"),
+            name: "mode",
+            queryMode: "local",
             store: backupModes,
-            displayField: 'display',
-            valueField: 'value',
+            displayField: "display",
+            valueField: "value",
             editable: false,
             anyMatch: true,
             forceSelection: true,
             allowBlank: true,
+            cbind: {
+              value: "{backupModeValue}",
+            },
+          },
+          {
+            xtype: "combo",
+            fieldLabel: gettext("Source Mode"),
+            name: "sourcemode",
+            queryMode: "local",
+            store: sourceModes,
+            displayField: "display",
+            valueField: "value",
+            editable: false,
+            anyMatch: true,
+            forceSelection: true,
+            allowBlank: true,
+            cbind: {
+              value: "{sourceModeValue}",
+            },
           },
         ],
 

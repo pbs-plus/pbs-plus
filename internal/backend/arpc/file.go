@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
@@ -19,14 +19,14 @@ func (f *ARPCFile) Close() error {
 	}
 
 	if f.fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
 		return os.ErrInvalid
 	}
 
 	req := types.CloseReq{HandleID: f.handleID}
 	_, err := f.fs.session.CallMsgWithTimeout(10*time.Second, f.jobId+"/Close", &req)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		syslog.L.Errorf("Close RPC failed (%s): %v", f.name, err)
+		syslog.L.Error(err).WithMessage("failed to handle close request").WithField("name", f.name).Write()
 		return err
 	}
 	f.isClosed.Store(true)
@@ -49,7 +49,7 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 	// Parse the response
 	var resp types.LseekResp
 	if err := resp.Decode(respBytes); err != nil {
-		syslog.L.Errorf("Lseek RPC failed (%s): %v", f.name, err)
+		syslog.L.Error(err).WithMessage("failed to handle lseek request").WithField("name", f.name).Write()
 		return 0, os.ErrInvalid
 	}
 
@@ -73,7 +73,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 
 	bytesRead, err := f.fs.session.CallBinary(f.fs.ctx, f.jobId+"/ReadAt", &req, p)
 	if err != nil {
-		syslog.L.Errorf("Read RPC failed (%s): %v", f.name, err)
+		syslog.L.Error(err).WithMessage("failed to handle read request").WithField("name", f.name).Write()
 		return 0, err
 	}
 

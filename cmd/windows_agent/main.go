@@ -58,13 +58,13 @@ func (w *watchdogService) Start(s service.Service) error {
 		for {
 			err := w.runWithRecovery(s)
 			if err != nil {
-				syslog.L.Errorf("Service failed with error: %v - Attempting restart", err)
+				syslog.L.Error(err).WithMessage("service failed and attempting to restart").Write()
 
 				w.restartCount++
 				w.lastRestartTime = time.Now()
 
 				if !w.shouldRestart() {
-					syslog.L.Errorf("Too many restart attempts (%d) within window. Waiting for window reset.", w.restartCount)
+					syslog.L.Error(nil).WithMessage("maximum restarts attempts reached and will resume in a few seconds").Write()
 					time.Sleep(w.restartWindow)
 					w.restartCount = 0
 				}
@@ -83,7 +83,7 @@ func (w *watchdogService) runWithRecovery(s service.Service) (err error) {
 		if r := recover(); r != nil {
 			stack := string(debug.Stack())
 			err = fmt.Errorf("service panicked: %v\nStack:\n%s", r, stack)
-			syslog.L.Error(err)
+			syslog.L.Error(err).Write()
 		}
 	}()
 
@@ -95,6 +95,22 @@ func (w *watchdogService) Stop(s service.Service) error {
 }
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("Panic occurred: %v\nStack trace:\n%s", r, debug.Stack())
+
+			logFile, err := os.OpenFile("panic.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err == nil {
+				defer logFile.Close()
+				logFile.WriteString(msg)
+			} else {
+				fmt.Println("Error opening log file:", err)
+			}
+
+			os.Exit(1)
+		}
+	}()
+
 	constants.Version = Version
 
 	svcConfig := &service.Config{
@@ -109,33 +125,27 @@ func main() {
 
 	s, err := service.New(watchdog, svcConfig)
 	if err != nil {
-		fmt.Printf("Failed to initialize service: %v\n", err)
+		syslog.L.Error(err).WithMessage("failed to initialize service").Write()
 		return
 	}
 	prg.svc = s
 
-	err = syslog.InitializeLogger(s)
-	if err != nil {
-		fmt.Printf("Failed to initialize logger: %v\n", err)
-		return
-	}
-
 	if err := createMutex(); err != nil {
-		syslog.L.Errorf("Error: %v", err)
+		syslog.L.Error(err).Write()
 		os.Exit(1)
 	}
 	defer releaseMutex()
 
 	err = prg.writeVersionToFile()
 	if err != nil {
-		fmt.Printf("Error writing version to file: %v\n", err)
+		syslog.L.Error(err).WithMessage("failed to write version to file").Write()
 		return
 	}
 
 	// Handle special commands (install, uninstall, etc.)
 	if len(os.Args) > 1 {
 		if err := handleServiceCommands(s, os.Args[1]); err != nil {
-			syslog.L.Errorf("Command handling failed: %v", err)
+			syslog.L.Error(err).WithMessage("failed to handle command").Write()
 			return
 		}
 		return
@@ -144,10 +154,10 @@ func main() {
 	// Run the service
 	err = s.Run()
 	if err != nil {
-		syslog.L.Errorf("Service run failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to run service").Write()
 		// Instead of exiting, restart the service
 		if err := restartService(); err != nil {
-			syslog.L.Errorf("Service restart failed: %v", err)
+			syslog.L.Error(err).WithMessage("failed to restart service").Write()
 		}
 	}
 }

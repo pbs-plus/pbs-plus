@@ -77,7 +77,7 @@ func Initialize(paths map[string]string) (*Database, error) {
 				Path:    exclusion,
 				Comment: "Generated exclusion from default list",
 			}); err != nil {
-				syslog.L.Errorf("Initialize: error creating default exclusion: %v", err)
+				syslog.L.Error(err).WithField("path", exclusion).Write()
 			}
 		}
 

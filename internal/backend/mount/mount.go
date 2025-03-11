@@ -143,7 +143,7 @@ func (a *AgentMount) CloseMount() {
 	agentDriveEnc := utils.EncodePath(a.Drive)
 	jobIdEnc := utils.EncodePath(a.JobId)
 
-	syslog.L.Infof("CloseMount: Sending request for %s/%s", a.Hostname, a.Drive)
+	syslog.L.Info().WithMessage("sending closure request").WithFields(map[string]interface{}{"hostname": a.Hostname, "drive": a.Drive}).Write()
 	err := proxmox.Session.ProxmoxHTTPRequest(
 		http.MethodDelete,
 		fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s/%s", jobIdEnc, targetHostnameEnc, agentDriveEnc),
@@ -151,6 +151,6 @@ func (a *AgentMount) CloseMount() {
 		nil,
 	)
 	if err != nil {
-		syslog.L.Errorf("CloseMount: error sending unmount request -> %v", err)
+		syslog.L.Error(err).WithFields(map[string]interface{}{"hostname": a.Hostname, "drive": a.Drive}).Write()
 	}
 }

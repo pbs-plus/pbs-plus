@@ -13,14 +13,14 @@ func updateJobStatus(succeeded bool, job *types.Job, task *proxmox.Task, storeIn
 	// Update task status
 	taskFound, err := proxmox.Session.GetTaskByUPID(task.UPID)
 	if err != nil {
-		syslog.L.Errorf("Unable to get task by UPID: %v", err)
+		syslog.L.Error(err).WithMessage("unable to get task by upid").Write()
 		return err
 	}
 
 	// Update job status
 	latestJob, err := storeInstance.Database.GetJob(job.ID)
 	if err != nil {
-		syslog.L.Errorf("Unable to get job: %v", err)
+		syslog.L.Error(err).WithMessage("unable to get job").Write()
 		return err
 	}
 
@@ -37,7 +37,7 @@ func updateJobStatus(succeeded bool, job *types.Job, task *proxmox.Task, storeIn
 	}
 
 	if err := storeInstance.Database.UpdateJob(*latestJob); err != nil {
-		syslog.L.Errorf("Unable to update job: %v", err)
+		syslog.L.Error(err).WithMessage("unable to update job").Write()
 		return err
 	}
 
