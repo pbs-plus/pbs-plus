@@ -7,12 +7,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
   stateful: true,
   stateId: "grid-disk-backup-jobs-v1",
 
-  initComponent: function () {
-    let me = this;
-
-    me.callParent();
-  },
-
   controller: {
     xclass: "Ext.app.ViewController",
 
