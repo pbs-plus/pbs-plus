@@ -7,17 +7,13 @@ Ext.define("PBS.config.DiskBackupJobView", {
   stateful: true,
   stateId: "grid-disk-backup-jobs-v1",
 
-  initComponent: function () {
-    let me = this;
-    me.callParent();
-  },
-
   getState: function () {
     let me = this;
     var state = me.callParent();
     // remove any grouper/sorter state that might include a stale groupFn
     delete state.sorters;
     delete state.groupers;
+    delete state.grouper;
     return state;
   },
 
