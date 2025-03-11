@@ -49,12 +49,14 @@ type agentService struct {
 }
 
 func (p *agentService) Start(s service.Service) error {
+	syslog.L.SetServiceLogger(s)
+
 	handle := windows.CurrentProcess()
 
 	const IDLE_PRIORITY_CLASS = 0x00000040
 	err := windows.SetPriorityClass(handle, uint32(IDLE_PRIORITY_CLASS))
 	if err != nil {
-		syslog.L.Errorf("failed to set process priority: %v", err)
+		syslog.L.Error(err).WithMessage("failed to set process priority").Write()
 	}
 
 	p.svc = s
@@ -74,7 +76,7 @@ func (p *agentService) Start(s service.Service) error {
 			case <-time.After(time.Hour):
 				err := agent.CheckAndRenewCertificate()
 				if err != nil {
-					syslog.L.Errorf("Certificate renewal manager: %v", err)
+					syslog.L.Error(err).WithMessage("failed to check and renew certificate").Write()
 				}
 			}
 		}
@@ -82,11 +84,11 @@ func (p *agentService) Start(s service.Service) error {
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
-		syslog.L.Errorf("Error initializing backup store: %v", err)
+		syslog.L.Error(err).WithMessage("error initializing backup store").Write()
 	} else {
 		err = store.ClearAll()
 		if err != nil {
-			syslog.L.Errorf("Error clearing backup store: %v", err)
+			syslog.L.Error(err).WithMessage("error clearing backup store").Write()
 		}
 	}
 
@@ -102,17 +104,17 @@ func (p *agentService) Stop(s service.Service) error {
 func (p *agentService) run() {
 	agent.SetStatus("Starting")
 	if err := p.waitForServerURL(); err != nil {
-		syslog.L.Errorf("Failed waiting for server URL: %v", err)
+		syslog.L.Error(err).WithMessage("failed waiting for server url").Write()
 		return
 	}
 
 	if err := p.waitForBootstrap(); err != nil {
-		syslog.L.Errorf("Failed waiting for bootstrap: %v", err)
+		syslog.L.Error(err).WithMessage("failed waiting for bootstrap").Write()
 		return
 	}
 
 	if err := p.initializeDrives(); err != nil {
-		syslog.L.Errorf("Failed to initialize drives: %v", err)
+		syslog.L.Error(err).WithMessage("failed to initializing drives").Write()
 		return
 	}
 
@@ -169,11 +171,11 @@ func (p *agentService) waitForBootstrap() error {
 			if err == nil {
 				return nil
 			}
-			syslog.L.Errorf("Renewal error: %v", err)
+			syslog.L.Error(err).WithMessage("error renewing certificate").Write()
 		} else {
 			err := agent.Bootstrap()
 			if err != nil {
-				syslog.L.Errorf("Bootstrap error: %v", err)
+				syslog.L.Error(err).WithMessage("error bootstrapping agent").Write()
 			}
 		}
 
@@ -256,13 +258,13 @@ func (p *agentService) connectARPC() error {
 
 	tlsConfig, err := agent.GetTLSConfig()
 	if err != nil {
-		syslog.L.Errorf("ARPC client tls config error: %s", err)
+		syslog.L.Error(err).WithMessage("failed to get tls config error for arpc client").Write()
 		return err
 	}
 
 	clientId, err := os.Hostname()
 	if err != nil {
-		syslog.L.Errorf("hostname retrieval error: %s", err)
+		syslog.L.Error(err).WithMessage("failed to retrieve machine hostname").Write()
 		return err
 	}
 
@@ -272,7 +274,6 @@ func (p *agentService) connectARPC() error {
 
 	session, err := arpc.ConnectToServer(p.ctx, uri.Host, headers, tlsConfig)
 	if err != nil {
-		arpc.LogConnError(err)
 		return err
 	}
 
@@ -299,17 +300,15 @@ func (p *agentService) connectARPC() error {
 			case <-p.ctx.Done():
 				return
 			default:
-				syslog.L.Info("Connecting aRPC endpoint from /plus/arpc")
+				syslog.L.Info().WithMessage("connecting arpc endpoing from /plus/arpc").Write()
 				if err := session.Serve(); err != nil {
-					arpc.LogConnError(err)
-
 					store, err := agent.NewBackupStore()
 					if err != nil {
-						syslog.L.Errorf("Error initializing backup store: %v", err)
+						syslog.L.Error(err).WithMessage("error initializing backup store").Write()
 					} else {
 						err = store.ClearAll()
 						if err != nil {
-							syslog.L.Errorf("Error clearing backup store: %v", err)
+							syslog.L.Error(err).WithMessage("error clearing backup store").Write()
 						}
 					}
 				}

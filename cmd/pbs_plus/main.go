@@ -36,10 +36,6 @@ import (
 var Version = "v0.0.0"
 
 func main() {
-	err := syslog.InitializeLogger()
-	if err != nil {
-		log.Fatalf("Failed to initialize logger: %s", err)
-	}
 	proxmox.InitializeProxmox()
 
 	jobRun := flag.String("job", "", "Job ID to execute")
@@ -92,13 +88,13 @@ func main() {
 
 	storeInstance, err := store.Initialize(nil)
 	if err != nil {
-		syslog.L.Errorf("Failed to initialize store: %v", err)
+		syslog.L.Error(err).WithMessage("failed to initialize store").Write()
 		return
 	}
 
 	apiToken, err := proxmox.GetAPITokenFromFile()
 	if err != nil {
-		syslog.L.Error(err)
+		syslog.L.Error(err).WithMessage("failed to get token from file").Write()
 	}
 	proxmox.Session.APIToken = apiToken
 
@@ -110,7 +106,7 @@ func main() {
 
 		jobTask, err := storeInstance.Database.GetJob(*jobRun)
 		if err != nil {
-			syslog.L.Error(err)
+			syslog.L.Error(err).Write()
 			return
 		}
 
@@ -119,7 +115,7 @@ func main() {
 
 		op := backup.RunBackup(ctx, jobTask, storeInstance, true)
 		if waitErr := op.Wait(); waitErr != nil {
-			syslog.L.Error(waitErr)
+			syslog.L.Error(waitErr).Write()
 		}
 
 		return
@@ -128,7 +124,7 @@ func main() {
 	pbsJsLocation := "/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js"
 	unmountJs, err := proxy.MountCompiledJS(pbsJsLocation)
 	if err != nil {
-		syslog.L.Errorf("Modified JS mounting failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to mount modified proxmox-backup-gui.js").Write()
 		return
 	}
 	defer unmountJs()
@@ -136,7 +132,7 @@ func main() {
 	proxmoxLibLocation := "/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js"
 	unmountLib, err := proxy.MountModdedProxmoxLib(proxmoxLibLocation)
 	if err != nil {
-		syslog.L.Errorf("Modified JS mounting failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to mount modified proxmoxlib.js").Write()
 		return
 	}
 	defer unmountLib()
@@ -144,13 +140,13 @@ func main() {
 	certOpts := certificates.DefaultOptions()
 	generator, err := certificates.NewGenerator(certOpts)
 	if err != nil {
-		syslog.L.Errorf("Initializing certificate generator failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to initialize certificate generator").Write()
 		return
 	}
 
 	csrfKey, err := os.ReadFile("/etc/proxmox-backup/csrf.key")
 	if err != nil {
-		syslog.L.Errorf("CSRF key not found: %v", err)
+		syslog.L.Error(err).WithMessage("failed to read csrf.key").Write()
 		return
 	}
 
@@ -163,18 +159,18 @@ func main() {
 
 	if err := generator.ValidateExistingCerts(); err != nil {
 		if err := generator.GenerateCA(); err != nil {
-			syslog.L.Errorf("Generating certificates failed: %v", err)
+			syslog.L.Error(err).WithMessage("failed to generate certificate").Write()
 			return
 		}
 
 		if err := generator.GenerateCert("server"); err != nil {
-			syslog.L.Errorf("Generating certificates failed: %v", err)
+			syslog.L.Error(err).WithMessage("failed to generate certificate").Write()
 			return
 		}
 	}
 
 	if err := serverConfig.Validate(); err != nil {
-		syslog.L.Errorf("Validating server config failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to validate server config").Write()
 		return
 	}
 
@@ -182,19 +178,19 @@ func main() {
 
 	err = os.Chown(serverConfig.KeyFile, 0, 34)
 	if err != nil {
-		syslog.L.Errorf("Changing permissions of key failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to change cert key permissions").Write()
 		return
 	}
 
 	err = os.Chown(serverConfig.CertFile, 0, 34)
 	if err != nil {
-		syslog.L.Errorf("Changing permissions of cert failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to change cert permissions").Write()
 		return
 	}
 
 	err = serverConfig.Mount()
 	if err != nil {
-		syslog.L.Errorf("Mounting certificates failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to mount new certificate for mTLS").Write()
 		return
 	}
 	defer func() {
@@ -211,7 +207,7 @@ func main() {
 		SecretKey:       serverConfig.TokenSecret,
 	})
 	if err != nil {
-		syslog.L.Errorf("Initializing token manager failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to initialize token manager").Write()
 		return
 	}
 	storeInstance.Database.TokenManager = tokenManager
@@ -232,11 +228,11 @@ func main() {
 			case <-time.After(time.Hour):
 				if err := generator.ValidateExistingCerts(); err != nil {
 					if err := generator.GenerateCA(); err != nil {
-						syslog.L.Errorf("Generating certificates failed: %v", err)
+						syslog.L.Error(err).WithMessage("failed to generate CA").Write()
 					}
 
 					if err := generator.GenerateCert("server"); err != nil {
-						syslog.L.Errorf("Generating certificates failed: %v", err)
+						syslog.L.Error(err).WithMessage("failed to generate server certificate").Write()
 					}
 				}
 
@@ -248,8 +244,7 @@ func main() {
 	// Get all mount points under the base path
 	mountPoints, err := filepath.Glob(filepath.Join(constants.AgentMountBasePath, "*"))
 	if err != nil {
-		// Handle error
-		syslog.L.Errorf("Error finding mount points: %v", err)
+		syslog.L.Error(err).WithMessage("failed to find agent mount base path").Write()
 	}
 
 	// Unmount each one
@@ -258,16 +253,16 @@ func main() {
 		umount.Env = os.Environ()
 		if err := umount.Run(); err != nil {
 			// Optionally handle individual unmount errors
-			syslog.L.Errorf("Failed to unmount %s: %v", mountPoint, err)
+			syslog.L.Error(err).WithMessage("failed to unmount some mounted agents").Write()
 		}
 	}
 
 	if err := os.RemoveAll(constants.AgentMountBasePath); err != nil {
-		syslog.L.Errorf("failed to remove directory: %v", err)
+		syslog.L.Error(err).WithMessage("failed to remove directory").Write()
 	}
 
 	if err := os.Mkdir(constants.AgentMountBasePath, 0700); err != nil {
-		syslog.L.Errorf("failed to recreate directory: %v", err)
+		syslog.L.Error(err).WithMessage("failed to recreate directory").Write()
 	}
 
 	mux := http.NewServeMux()
@@ -315,10 +310,8 @@ func main() {
 		MaxHeaderBytes: serverConfig.MaxHeaderBytes,
 	}
 
-	syslog.L.Info("Starting proxy server on :8008")
+	syslog.L.Info().WithMessage("starting proxy server on :8008").Write()
 	if err := server.ListenAndServeTLS(serverConfig.CertFile, serverConfig.KeyFile); err != nil {
-		if syslog.L != nil {
-			syslog.L.Errorf("Server failed: %v", err)
-		}
+		syslog.L.Error(err).WithMessage("http server failed")
 	}
 }

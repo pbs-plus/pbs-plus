@@ -16,6 +16,28 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }).show();
     },
 
+    addJob: function () {
+      let me = this;
+      let view = me.getView();
+      let selection = view.getSelection();
+
+      if (!selection || selection.length < 1) {
+        return;
+      }
+
+      targetName = selection[0].data.name;
+
+      Ext.create("PBS.D2DManagement.BackupJobEdit", {
+        autoShow: true,
+        jobData: { target: targetName },
+        listeners: {
+          destroy: function () {
+            me.reload();
+          },
+        },
+      }).show();
+    },
+
     onEdit: function () {
       let me = this;
       let view = me.getView();
@@ -80,9 +102,32 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       },
     },
     sorters: "name",
+    grouper: {
+      groupFn: function (record) {
+        let ns = record.get("path");
+        let name = record.get("name");
+        if (ns.startsWith("agent://")) {
+          host = name.split(" - ")[0];
+          return "Agent - " + host;
+        }
+        return "Non-Agent";
+      },
+    },
   },
 
-  features: [],
+  features: [
+    {
+      ftype: "grouping",
+      groupHeaderTpl: [
+        '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
+        {
+          formatNS: function (group) {
+            return group || "Unassigned";
+          },
+        },
+      ],
+    },
+  ],
 
   tbar: [
     {
@@ -90,6 +135,12 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       xtype: "proxmoxButton",
       handler: "onAdd",
       selModel: false,
+    },
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Create Job"),
+      handler: "addJob",
+      disabled: true,
     },
     "-",
     {

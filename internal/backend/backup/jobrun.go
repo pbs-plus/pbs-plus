@@ -284,13 +284,13 @@ func runBackupAttempt(
 		// Read log files after process completes
 		succeeded, err := processPBSProxyLogs(task.UPID, clientLogPath)
 		if err != nil {
-			syslog.L.Errorf("Failed to process logs: %v", err)
+			syslog.L.Error(err).WithMessage("failed to process logs").Write()
 		}
 		// Clean up temp files
 		os.Remove(clientLogPath)
 
 		if err := updateJobStatus(succeeded, job, task, storeInstance); err != nil {
-			syslog.L.Errorf("runBackupAttempt: failed to update job status (post cmd.Wait): %v", err)
+			syslog.L.Error(err).WithMessage("failed to update job status - post cmd.Wait").Write()
 		}
 
 		if currOwner != "" {
@@ -358,7 +358,7 @@ func (a *AutoBackupOperation) updatePlusError() {
 		a.job.LastRunPlusError = a.err.Error()
 		a.job.LastRunPlusTime = int(time.Now().Unix())
 		if uErr := a.storeInstance.Database.UpdateJob(*a.job); uErr != nil {
-			syslog.L.Errorf("LastRunPlusError update: %v", uErr)
+			syslog.L.Error(uErr).WithMessage("failed to update plus error").Write()
 		}
 	}
 }
@@ -386,12 +386,12 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 				op, err := runBackupAttempt(ctx, job, storeInstance, skipCheck)
 				if err != nil {
 					lastErr = err
-					if err == ErrOneInstance || err == ErrUnreachable {
+					if errors.Is(err, ErrOneInstance) || errors.Is(err, ErrUnreachable) {
 						autoOp.err = err
 						close(autoOp.done)
 						return
 					}
-					syslog.L.Errorf("Backup attempt %d setup failed: %v", attempt, err)
+					syslog.L.Error(err).WithField("attempt", attempt).Write()
 					time.Sleep(10 * time.Second)
 					continue
 				}
@@ -401,7 +401,7 @@ func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, 
 
 				if err := op.Wait(); err != nil {
 					lastErr = err
-					syslog.L.Errorf("Backup attempt %d execution failed: %v", attempt, err)
+					syslog.L.Error(err).WithField("attempt", attempt).Write()
 					if err.Error() == "signal: killed" {
 						autoOp.err = err
 						close(autoOp.done)

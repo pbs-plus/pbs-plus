@@ -80,7 +80,7 @@ func (database *Database) CreateJob(job types.Job) error {
 
 	jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
 	if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
-		syslog.L.Errorf("CreateJob: error creating log directory: %v", err)
+		syslog.L.Error(err).WithField("id", job.ID).Write()
 	}
 
 	// Convert job to config format
@@ -92,6 +92,7 @@ func (database *Database) CreateJob(job types.Job) error {
 				Properties: types.Job{
 					Store:            job.Store,
 					Mode:             job.Mode,
+					SourceMode:       job.SourceMode,
 					Target:           job.Target,
 					Subpath:          job.Subpath,
 					Schedule:         job.Schedule,
@@ -124,7 +125,7 @@ func (database *Database) CreateJob(job types.Job) error {
 	}
 
 	if err := system.SetSchedule(job); err != nil {
-		syslog.L.Errorf("CreateJob: error setting schedule: %v", err)
+		syslog.L.Error(err).WithField("id", job.ID).Write()
 	}
 
 	return nil
@@ -157,6 +158,25 @@ func (database *Database) GetJob(id string) (*types.Job, error) {
 	}
 
 	return job, nil
+}
+
+func (database *Database) getJobTarget(id string) string {
+	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
+	configData, err := database.jobsConfig.Parse(jobPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		return ""
+	}
+
+	section, exists := configData.Sections[id]
+	if !exists {
+		return ""
+	}
+	job := &section.Properties
+
+	return job.Target
 }
 
 func (database *Database) getJob(id string) (*types.Job, error) {
@@ -264,29 +284,29 @@ func (database *Database) UpdateJob(job types.Job) error {
 		}
 		err := database.CreateExclusion(exclusion)
 		if err != nil {
-			syslog.L.Errorf("UpdateJob: error creating job exclusion: %v", err)
+			syslog.L.Error(err).WithField("id", job.ID).Write()
 			continue
 		}
 	}
 
 	if err := system.SetSchedule(job); err != nil {
-		syslog.L.Errorf("UpdateJob: error setting schedule: %v", err)
+		syslog.L.Error(err).WithField("id", job.ID).Write()
 	}
 
 	if job.LastRunUpid != "" {
 		jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
 		if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
-			syslog.L.Errorf("UpdateJob: error creating log directory: %v", err)
+			syslog.L.Error(err).WithField("id", job.ID).Write()
 		} else {
 			jobLogPath := filepath.Join(jobLogsPath, job.LastRunUpid)
 			if _, err := os.Lstat(jobLogPath); err != nil {
 				origLogPath, err := proxmox.GetLogPath(job.LastRunUpid)
 				if err != nil {
-					syslog.L.Errorf("UpdateJob: failed to get original log path %s: %v", jobLogPath, err)
+					syslog.L.Error(err).WithField("id", job.ID).Write()
 				}
 				err = os.Symlink(origLogPath, jobLogPath)
 				if err != nil {
-					syslog.L.Errorf("UpdateJob: failed to link original log %s: %v", jobLogPath, err)
+					syslog.L.Error(err).WithField("id", job.ID).Write()
 				}
 			}
 		}
@@ -309,7 +329,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 
 		job, err := database.getJob(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
 		if err != nil || job == nil {
-			syslog.L.Errorf("GetAllJobs: error getting job: %v", err)
+			syslog.L.Error(err).WithField("id", job.ID).Write()
 			continue
 		}
 
@@ -335,12 +355,12 @@ func (database *Database) DeleteJob(id string) error {
 	jobLogsPath := filepath.Join(constants.JobLogsBasePath, id)
 	if err := os.RemoveAll(jobLogsPath); err != nil {
 		if !os.IsNotExist(err) {
-			syslog.L.Errorf("DeleteJob: error deleting job logs folder: %v", err)
+			syslog.L.Error(err).WithField("id", id).Write()
 		}
 	}
 
 	if err := system.DeleteSchedule(id); err != nil {
-		syslog.L.Errorf("DeleteJob: error deleting schedule: %v", err)
+		syslog.L.Error(err).WithField("id", id).Write()
 	}
 
 	return nil

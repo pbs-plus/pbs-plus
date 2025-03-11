@@ -126,7 +126,7 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 
 		target, err := database.GetTarget(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
 		if err != nil {
-			syslog.L.Errorf("GetAllTargets: error getting target: %v", err)
+			syslog.L.Error(err).WithField("id", file.Name()).Write()
 			continue
 		}
 		if target != nil {
@@ -151,7 +151,7 @@ func (database *Database) GetAllTargetsByIP(clientIP string) ([]types.Target, er
 
 		target, err := database.GetTarget(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
 		if err != nil {
-			syslog.L.Errorf("GetAllTargets: error getting target: %v", err)
+			syslog.L.Error(err).WithField("id", file.Name()).Write()
 			continue
 		}
 		if target == nil {

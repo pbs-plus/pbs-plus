@@ -1,9 +1,6 @@
 Ext.define("PBS.config.DiskBackupJobView", {
-  extend: "Ext.grid.GridPanel",
+  extend: "Ext.grid.Panel",
   alias: "widget.pbsDiskBackupJobView",
-
-  stateful: true,
-  stateId: "grid-disk-backup-jobs-v1",
 
   title: "Disk Backup Jobs",
 
@@ -33,6 +30,29 @@ Ext.define("PBS.config.DiskBackupJobView", {
       Ext.create("PBS.D2DManagement.BackupJobEdit", {
         id: selection[0].data.id,
         autoShow: true,
+        listeners: {
+          destroy: function () {
+            me.reload();
+          },
+        },
+      }).show();
+    },
+
+    duplicateJob: function () {
+      let me = this;
+      let view = me.getView();
+      let selection = view.getSelection();
+
+      if (!selection || selection.length < 1) {
+        return;
+      }
+
+      let jobData = Ext.Object.merge({}, selection[0].data);
+      delete jobData.id;
+
+      Ext.create("PBS.D2DManagement.BackupJobEdit", {
+        autoShow: true,
+        jobData: jobData,
         listeners: {
           destroy: function () {
             me.reload();
@@ -268,20 +288,35 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
   store: {
     type: "diff",
-    autoDestroy: true,
-    autoDestroyRstore: true,
-    sorters: "id",
     rstore: {
       type: "update",
       storeid: "pbs-disk-backup-job-status",
       model: "pbs-disk-backup-job-status",
       interval: 5000,
     },
+    sorters: "id",
+    grouper: {
+      groupFn: function (record) {
+        const ns = record.get("ns");
+        return ns ? ns.split("/")[0] : "/";
+      },
+    },
   },
 
-  viewConfig: {
-    trackOver: false,
-  },
+  features: [
+    {
+      ftype: "grouping",
+      startCollapsed: true,
+      groupHeaderTpl: [
+        '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
+        {
+          formatNS: function (ns) {
+            return "Namespace: " + ns;
+          },
+        },
+      ],
+    },
+  ],
 
   tbar: [
     {
@@ -289,6 +324,12 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Add"),
       selModel: false,
       handler: "addJob",
+    },
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Duplicate"),
+      handler: "duplicateJob",
+      disabled: true,
     },
     {
       xtype: "proxmoxButton",
@@ -333,7 +374,8 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Stop Job"),
       handler: "stopJob",
       reference: "d2dBackupStop",
-      enableFn: (rec) => (!!rec.data["last-run-upid"] && !rec.data["last-run-state"]),
+      enableFn: (rec) =>
+        !!rec.data["last-run-upid"] && !rec.data["last-run-state"],
       disabled: true,
     },
     "-",
@@ -500,10 +542,4 @@ Ext.define("PBS.config.DiskBackupJobView", {
       hidden: true,
     },
   ],
-
-  initComponent: function () {
-    let me = this;
-
-    me.callParent();
-  },
 });

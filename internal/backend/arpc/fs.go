@@ -9,13 +9,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/vssfs/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
-func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string) *ARPCFS {
+func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string, backupMode string) *ARPCFS {
 	fs := &ARPCFS{
 		basePath:      "/",
 		ctx:           ctx,
@@ -23,9 +23,14 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 		JobId:         jobId,
 		Hostname:      hostname,
 		accessedPaths: safemap.New[string, bool](),
+		backupMode:    backupMode,
 	}
 
 	return fs
+}
+
+func (fs *ARPCFS) GetBackupMode() string {
+	return fs.backupMode
 }
 
 // trackAccess records that a path has been accessed using its xxHash
@@ -99,7 +104,7 @@ func (fs *ARPCFS) Open(filename string) (ARPCFile, error) {
 
 func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFile, error) {
 	if fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
 		return ARPCFile{}, os.ErrInvalid
 	}
 
@@ -130,22 +135,45 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 }
 
 // Stat first tries the LRU cache before performing an RPC call.
-func (fs *ARPCFS) Stat(filename string) (types.VSSFileInfo, error) {
-	var fi types.VSSFileInfo
+func (fs *ARPCFS) Attr(filename string) (types.AgentFileInfo, error) {
+	var fi types.AgentFileInfo
 	if fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
-		return types.VSSFileInfo{}, os.ErrInvalid
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
+		return types.AgentFileInfo{}, os.ErrInvalid
 	}
 
 	req := types.StatReq{Path: filename}
-	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Stat", &req)
+	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Attr", &req)
 	if err != nil {
-		return types.VSSFileInfo{}, err
+		return types.AgentFileInfo{}, err
 	}
 
 	err = fi.Decode(raw)
 	if err != nil {
-		return types.VSSFileInfo{}, os.ErrInvalid
+		return types.AgentFileInfo{}, os.ErrInvalid
+	}
+
+	fs.trackAccess(filename, fi.IsDir)
+
+	return fi, nil
+}
+
+func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
+	var fi types.AgentFileInfo
+	if fs.session == nil {
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
+		return types.AgentFileInfo{}, os.ErrInvalid
+	}
+
+	req := types.StatReq{Path: filename}
+	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Xattr", &req)
+	if err != nil {
+		return types.AgentFileInfo{}, err
+	}
+
+	err = fi.Decode(raw)
+	if err != nil {
+		return types.AgentFileInfo{}, os.ErrInvalid
 	}
 
 	fs.trackAccess(filename, fi.IsDir)
@@ -158,20 +186,20 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	const statFSKey = "statFS"
 
 	if fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
 		return types.StatFS{}, os.ErrInvalid
 	}
 
 	var fsStat types.StatFS
 	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/StatFS", nil)
 	if err != nil {
-		syslog.L.Errorf("StatFS RPC failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to handle statfs").Write()
 		return types.StatFS{}, err
 	}
 
 	err = fsStat.Decode(raw)
 	if err != nil {
-		syslog.L.Errorf("StatFS RPC failed: %v", err)
+		syslog.L.Error(err).WithMessage("failed to handle statfs decode").Write()
 		return types.StatFS{}, os.ErrInvalid
 	}
 
@@ -181,7 +209,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 // ReadDir first tries the LRU cache before performing an RPC call.
 func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 	if fs.session == nil {
-		syslog.L.Error("RPC failed: aRPC session is nil")
+		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
 		return nil, os.ErrInvalid
 	}
 

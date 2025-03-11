@@ -127,6 +127,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		newJob := types.Job{
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
+			SourceMode:       r.FormValue("sourcemode"),
 			Mode:             r.FormValue("mode"),
 			Target:           r.FormValue("target"),
 			Subpath:          r.FormValue("subpath"),
@@ -201,13 +202,13 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				job.Store = r.FormValue("store")
 			}
 			if r.FormValue("mode") != "" {
-				job.Store = r.FormValue("mode")
+				job.Mode = r.FormValue("mode")
+			}
+			if r.FormValue("sourcemode") != "" {
+				job.SourceMode = r.FormValue("sourcemode")
 			}
 			if r.FormValue("target") != "" {
 				job.Target = r.FormValue("target")
-			}
-			if r.FormValue("subpath") != "" {
-				job.Subpath = r.FormValue("subpath")
 			}
 			if r.FormValue("schedule") != "" {
 				job.Schedule = r.FormValue("schedule")
@@ -215,13 +216,12 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("comment") != "" {
 				job.Comment = r.FormValue("comment")
 			}
-			if r.FormValue("ns") != "" {
-				job.Namespace = r.FormValue("ns")
-			}
 			if r.FormValue("notification-mode") != "" {
 				job.NotificationMode = r.FormValue("notification-mode")
 			}
 
+			job.Subpath = r.FormValue("subpath")
+			job.Namespace = r.FormValue("ns")
 			job.Exclusions = []types.Exclusion{}
 
 			if r.FormValue("rawexclusions") != "" {
@@ -248,6 +248,8 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						job.Store = ""
 					case "mode":
 						job.Mode = ""
+					case "sourcemode":
+						job.SourceMode = ""
 					case "target":
 						job.Target = ""
 					case "subpath":
