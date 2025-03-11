@@ -7,30 +7,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
   stateful: true,
   stateId: "grid-disk-backup-jobs-v1",
 
-  // Override getState to include grouper state
-  getState: function () {
-    const state = this.callParent(arguments);
-    const store = this.getStore();
-
-    if (store && store.grouper) {
-      state.grouper = store.grouper.getGroupFn();
-    }
-
-    return state;
-  },
-
-  // Override applyState to restore grouper state
-  applyState: function (state) {
-    this.callParent(arguments);
-
-    const store = this.getStore();
-    if (store && state.grouper) {
-      store.setGrouper({
-        groupFn: state.grouper, // Restore the grouper function
-      });
-    }
-  },
-
   controller: {
     xclass: "Ext.app.ViewController",
 
@@ -304,6 +280,16 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
     init: function (view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+
+      // Apply custom grouper for "ns" on initialization
+      const store = view.getStore();
+      store.setGrouper({
+        property: "ns",
+        groupFn: function (record) {
+          const ns = record.get("ns");
+          return ns ? "Namespace: " + ns.split("/")[0] :  "Namespace: /";
+        },
+      });
     },
   },
 
@@ -334,7 +320,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
           property: "ns",
           groupFn: function (record) {
             const ns = record.get("ns");
-            return ns ? ns.split("/")[0] : "/";
+            return ns ? "Namespace: " + ns.split("/")[0] :  "Namespace: /";
           },
         },
       ],
@@ -342,7 +328,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
           formatNS: function (ns) {
-            return "Namespace: " + ns;
+            return ns;
           },
         },
       ],
