@@ -1,6 +1,6 @@
 # Proxmox Backup Server (PBS) Plus
 
-A Proxmox Backup Server (PBS) "overlay" proxy server designed to add advanced backup features, positioning PBS as a robust alternative to Veeam.
+A Proxmox Backup Server (PBS) "extension" designed to add advanced backup features, positioning PBS as a robust alternative to Veeam.
 
 > [!WARNING]  
 > This repo is currently in heavy development. Expect major changes on every release until the first stable release, `1.0.0`.
@@ -17,6 +17,10 @@ A Proxmox Backup Server (PBS) "overlay" proxy server designed to add advanced ba
 
 ## Introduction
 PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution, aiming to make PBS a viable alternative to Veeam. Among these enhancements is remote file-level backup, integrated directly within the PBS Web UI, allowing for streamlined configuration and management of backups of bare-metal workstations without requiring external cron jobs or additional scripts.
+
+## How does it work?
+![image](https://github.com/user-attachments/assets/e9005288-b95e-44e7-b5d8-211907cfab10)
+
 
 ## Planned Features/Roadmap
 - [x] Execute remote backups directly from Proxmox Backup Server Web UI
