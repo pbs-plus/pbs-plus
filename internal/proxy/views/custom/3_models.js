@@ -49,7 +49,6 @@ Ext.define("pbs-model-targets", {
     "drive_total",
     "drive_used",
     "drive_free",
-    "job_count",
   ],
   idProperty: "name",
 });
