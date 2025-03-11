@@ -118,11 +118,6 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 		return nil, fmt.Errorf("GetAllTargets: error reading targets directory: %w", err)
 	}
 
-	jobFiles, err := os.ReadDir(database.paths["jobs"])
-	if err != nil {
-		return nil, fmt.Errorf("GetAllJobs: error reading jobs directory: %w", err)
-	}
-
 	var targets []types.Target
 	for _, file := range files {
 		if file.IsDir() {
@@ -135,20 +130,6 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 			continue
 		}
 		if target != nil {
-			jobCount := 0
-			for _, jobFile := range jobFiles {
-				if jobFile.IsDir() {
-					continue
-				}
-
-				jobTarget := database.getJobTarget(utils.DecodePath(strings.TrimSuffix(jobFile.Name(), ".cfg")))
-				if jobTarget == target.Name {
-					jobCount++
-				}
-			}
-
-			target.JobCount = jobCount
-
 			targets = append(targets, *target)
 		}
 	}

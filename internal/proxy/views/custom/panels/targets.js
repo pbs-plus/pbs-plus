@@ -170,11 +170,6 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       flex: 2,
     },
     {
-      text: gettext("Backup Job Count"),
-      dataIndex: "job_count",
-      flex: 1,
-    },
-    {
       text: gettext("Drive Type"),
       dataIndex: "drive_type",
       flex: 1,
