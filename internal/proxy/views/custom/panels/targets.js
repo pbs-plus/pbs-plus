@@ -2,6 +2,9 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
   extend: "Ext.grid.Panel",
   alias: "widget.pbsDiskTargetPanel",
 
+  stateful: true,
+  stateId: "grid-disk-backup-targets-v1",
+
   controller: {
     xclass: "Ext.app.ViewController",
 
@@ -80,6 +83,21 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
 
     init: function (view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+
+      // Apply custom grouper for "ns" on initialization
+      const store = view.getStore();
+      store.setGrouper({
+        property: "path",
+        groupFn: function (record) {
+          let ns = record.get("path");
+          let name = record.get("name");
+          if (ns.startsWith("agent://")) {
+            host = name.split(" - ")[0];
+            return "Agent - " + host;
+          }
+          return "Non-Agent";
+        },
+      });
     },
   },
 
@@ -102,23 +120,26 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       },
     },
     sorters: "name",
-    grouper: {
-      groupFn: function (record) {
-        let ns = record.get("path");
-        let name = record.get("name");
-        if (ns.startsWith("agent://")) {
-          host = name.split(" - ")[0];
-          return "Agent - " + host;
-        }
-        return "Non-Agent";
-      },
-    },
+    groupField: "path",
   },
 
   features: [
     {
       ftype: "grouping",
-      startCollapsed: true,
+      groupers: [
+        {
+          property: "path",
+          groupFn: function (record) {
+            let ns = record.get("path");
+            let name = record.get("name");
+            if (ns.startsWith("agent://")) {
+              host = name.split(" - ")[0];
+              return "Agent - " + host;
+            }
+            return "Non-Agent";
+          },
+        },
+      ],
       groupHeaderTpl: [
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
