@@ -322,18 +322,22 @@ Ext.define("PBS.config.DiskBackupJobView", {
       interval: 5000,
     },
     sorters: "id",
-    grouper: {
-      groupFn: function (record) {
-        const ns = record.get("ns");
-        return ns ? ns.split("/")[0] : "/";
-      },
-    },
+    grouper: "ns",
   },
 
   features: [
     {
       ftype: "grouping",
       startCollapsed: true,
+      groupers: [
+        {
+          property: "ns",
+          groupFn: function (record) {
+            const ns = record.get("ns");
+            return ns ? ns.split("/")[0] : "/";
+          },
+        },
+      ],
       groupHeaderTpl: [
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
