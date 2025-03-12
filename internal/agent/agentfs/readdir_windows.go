@@ -5,6 +5,7 @@ package agentfs
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"syscall"
 	"unsafe"
 
@@ -133,6 +134,36 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 	return uint32(mode)
 }
 
+// fileIsAvailable checks if the file (or directory) at "dirPath/name" can be opened.
+// If isDir is true, FILE_FLAG_BACKUP_SEMANTICS is used.
+func fileIsAvailable(dirPath, name string, isDir bool) bool {
+	fullPath := filepath.Join(dirPath, name)
+	pFullPath, err := windows.UTF16PtrFromString(fullPath)
+	if err != nil {
+		return false
+	}
+
+	var flags uint32 = 0
+	if isDir {
+		flags = windows.FILE_FLAG_BACKUP_SEMANTICS
+	}
+
+	h, err := windows.CreateFile(
+		pFullPath,
+		windows.GENERIC_READ,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		flags,
+		0,
+	)
+	if err != nil {
+		return false
+	}
+	windows.CloseHandle(h)
+	return true
+}
+
 // readDirBulk opens the directory at dirPath and enumerates its entries using
 // GetFileInformationByHandleEx. It first attempts to use the file-ID based
 // information class. If that fails with ERROR_INVALID_PARAMETER, it falls
@@ -208,11 +239,15 @@ func readDirBulk(dirPath string) ([]byte, error) {
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					name := syscall.UTF16ToString(nameSlice)
 					if name != "." && name != ".." && fullInfo.FileAttributes&excludedAttrs == 0 {
-						mode := windowsAttributesToFileMode(fullInfo.FileAttributes)
-						entries = append(entries, types.AgentDirEntry{
-							Name: name,
-							Mode: mode,
-						})
+						isDir := (fullInfo.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
+
+						if fileIsAvailable(dirPath, name, isDir) {
+							mode := windowsAttributesToFileMode(fullInfo.FileAttributes)
+							entries = append(entries, types.AgentDirEntry{
+								Name: name,
+								Mode: mode,
+							})
+						}
 					}
 				}
 				if fullInfo.NextEntryOffset == 0 {
@@ -228,11 +263,15 @@ func readDirBulk(dirPath string) ([]byte, error) {
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					name := syscall.UTF16ToString(nameSlice)
 					if name != "." && name != ".." && bothInfo.FileAttributes&excludedAttrs == 0 {
-						mode := windowsAttributesToFileMode(bothInfo.FileAttributes)
-						entries = append(entries, types.AgentDirEntry{
-							Name: name,
-							Mode: mode,
-						})
+						isDir := (bothInfo.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
+
+						if fileIsAvailable(dirPath, name, isDir) {
+							mode := windowsAttributesToFileMode(bothInfo.FileAttributes)
+							entries = append(entries, types.AgentDirEntry{
+								Name: name,
+								Mode: mode,
+							})
+						}
 					}
 				}
 				if bothInfo.NextEntryOffset == 0 {
