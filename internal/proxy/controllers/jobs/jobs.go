@@ -189,15 +189,6 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			if r.FormValue("retry") != "" {
-				retry, err := strconv.Atoi(r.FormValue("retry"))
-				if err != nil {
-					controllers.WriteErrorResponse(w, err)
-					return
-				}
-
-				job.Retry = retry
-			}
 			if r.FormValue("store") != "" {
 				job.Store = r.FormValue("store")
 			}
@@ -219,6 +210,13 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("notification-mode") != "" {
 				job.NotificationMode = r.FormValue("notification-mode")
 			}
+
+			retry, err := strconv.Atoi(r.FormValue("retry"))
+			if err != nil {
+				retry = 0
+			}
+
+			job.Retry = retry
 
 			job.Subpath = r.FormValue("subpath")
 			job.Namespace = r.FormValue("ns")
