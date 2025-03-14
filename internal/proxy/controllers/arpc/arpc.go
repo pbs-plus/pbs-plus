@@ -15,7 +15,12 @@ func ARPCHandler(store *store.Store) http.HandlerFunc {
 		clientCert := r.TLS.PeerCertificates[0]
 
 		agentHostname := clientCert.Subject.CommonName
+		jobId := r.Header.Get("X-PBS-Plus-JobId")
 		agentVersion := r.Header.Get("X-PBS-Plus-Version")
+
+		if jobId != "" {
+			agentHostname = agentHostname + "|" + jobId
+		}
 
 		session, err := arpc.HijackUpgradeHTTP(w, r, agentHostname, agentVersion, store.ARPCSessionManager, nil)
 		if err != nil {
