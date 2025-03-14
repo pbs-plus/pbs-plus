@@ -9,12 +9,15 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/containers/winquit/pkg/winquit"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
@@ -102,6 +105,7 @@ func CmdBackup() {
 		fmt.Fprintf(os.Stderr, "failed to connect to server: %v", err)
 		return
 	}
+	rpcSess.SetRouter(arpc.NewRouter())
 
 	// Start the long-running background RPC goroutine.
 	var wg sync.WaitGroup
@@ -147,8 +151,20 @@ func CmdBackup() {
 		os.Exit(1)
 	}
 
-	// Output the backup mode immediately to stdout.
 	fmt.Println(backupMode)
+
+	done := make(chan os.Signal, 1)
+
+	signal.Notify(done, syscall.SIGINT)
+	winquit.SimulateSigTermOnQuit(done)
+
+	go func() {
+		<-done
+		rpcSess.Close()
+		if session, ok := activeSessions.Get(*jobId); ok {
+			session.Close()
+		}
+	}()
 
 	// Block here until the background RPC goroutine ends.
 	wg.Wait()
@@ -158,6 +174,10 @@ func ExecBackup(sourceMode string, drive string, jobId string) (string, int, err
 	execCmd, err := os.Executable()
 	if err != nil {
 		return "", -1, err
+	}
+
+	if sourceMode == "" {
+		sourceMode = "snapshot"
 	}
 
 	// Prepare the flags as command-line arguments.
