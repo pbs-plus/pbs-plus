@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
@@ -105,7 +106,7 @@ func (fs *ARPCFS) Open(filename string) (ARPCFile, error) {
 func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFile, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
-		return ARPCFile{}, os.ErrInvalid
+		return ARPCFile{}, syscall.EIO
 	}
 
 	var resp types.FileHandleId
@@ -118,12 +119,15 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 	// Use the CPU efficient CallMsgDirect helper.
 	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/OpenFile", &req)
 	if err != nil {
-		return ARPCFile{}, err
+		if arpc.IsOSError(err) {
+			return ARPCFile{}, err
+		}
+		return ARPCFile{}, syscall.EIO
 	}
 
 	err = resp.Decode(raw)
 	if err != nil {
-		return ARPCFile{}, os.ErrInvalid
+		return ARPCFile{}, syscall.EIO
 	}
 
 	return ARPCFile{
@@ -139,18 +143,21 @@ func (fs *ARPCFS) Attr(filename string) (types.AgentFileInfo, error) {
 	var fi types.AgentFileInfo
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
-		return types.AgentFileInfo{}, os.ErrInvalid
+		return types.AgentFileInfo{}, syscall.EIO
 	}
 
 	req := types.StatReq{Path: filename}
 	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Attr", &req)
 	if err != nil {
-		return types.AgentFileInfo{}, err
+		if arpc.IsOSError(err) {
+			return types.AgentFileInfo{}, err
+		}
+		return types.AgentFileInfo{}, syscall.EIO
 	}
 
 	err = fi.Decode(raw)
 	if err != nil {
-		return types.AgentFileInfo{}, os.ErrInvalid
+		return types.AgentFileInfo{}, syscall.EIO
 	}
 
 	fs.trackAccess(filename, fi.IsDir)
@@ -162,18 +169,21 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	var fi types.AgentFileInfo
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
-		return types.AgentFileInfo{}, os.ErrInvalid
+		return types.AgentFileInfo{}, syscall.EIO
 	}
 
 	req := types.StatReq{Path: filename}
 	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Xattr", &req)
 	if err != nil {
-		return types.AgentFileInfo{}, err
+		if arpc.IsOSError(err) {
+			return types.AgentFileInfo{}, err
+		}
+		return types.AgentFileInfo{}, syscall.EIO
 	}
 
 	err = fi.Decode(raw)
 	if err != nil {
-		return types.AgentFileInfo{}, os.ErrInvalid
+		return types.AgentFileInfo{}, syscall.EIO
 	}
 
 	fs.trackAccess(filename, fi.IsDir)
@@ -187,20 +197,23 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
-		return types.StatFS{}, os.ErrInvalid
+		return types.StatFS{}, syscall.EIO
 	}
 
 	var fsStat types.StatFS
 	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/StatFS", nil)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to handle statfs").Write()
-		return types.StatFS{}, err
+		if arpc.IsOSError(err) {
+			return types.StatFS{}, err
+		}
+		return types.StatFS{}, syscall.EIO
 	}
 
 	err = fsStat.Decode(raw)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to handle statfs decode").Write()
-		return types.StatFS{}, os.ErrInvalid
+		return types.StatFS{}, syscall.EIO
 	}
 
 	return fsStat, nil
@@ -210,19 +223,22 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
-		return nil, os.ErrInvalid
+		return nil, syscall.EIO
 	}
 
 	var resp types.ReadDirEntries
 	req := types.ReadDirReq{Path: path}
 	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/ReadDir", &req)
 	if err != nil {
-		return nil, err
+		if arpc.IsOSError(err) {
+			return nil, err
+		}
+		return nil, syscall.EIO
 	}
 
 	err = resp.Decode(raw)
 	if err != nil {
-		return nil, os.ErrInvalid
+		return nil, syscall.EIO
 	}
 
 	if resp == nil {
