@@ -72,7 +72,12 @@ func MountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			arpcFS := storeInstance.GetARPCFS(jobId)
 			if arpcFS == nil {
-				arpcFS = arpcfs.NewARPCFS(context.Background(), arpcSess, targetHostname, jobId, backupMode)
+				arpcFSRPC, exists := storeInstance.ARPCSessionManager.GetSession(targetHostname + "|" + jobId)
+				if !exists {
+					http.Error(w, fmt.Sprintf("MountHandler: Failed to send backup request to target -> unable to reach child target"), http.StatusInternalServerError)
+					return
+				}
+				arpcFS = arpcfs.NewARPCFS(context.Background(), arpcFSRPC, targetHostname, jobId, backupMode)
 			}
 
 			mntPath := filepath.Join(constants.AgentMountBasePath, jobId)
