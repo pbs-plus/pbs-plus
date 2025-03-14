@@ -1,6 +1,9 @@
 package controllers
 
 import (
+	"os"
+	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/containers/winquit/pkg/winquit"
@@ -33,12 +36,24 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 	if err != nil {
 		syslog.L.Error(err).WithMessage("forking process for backup job").WithField("id", reqData.JobId).Write()
 		if pid != -1 {
-			timeout := time.Second * 5
-			if err := winquit.QuitProcess(pid, timeout); err != nil {
-				syslog.L.Error(err).
-					WithMessage("failed to send signal for graceful shutdown").
-					WithField("jobId", reqData.JobId).
-					Write()
+			if runtime.GOOS == "windows" {
+				timeout := time.Second * 5
+				if err := winquit.QuitProcess(pid, timeout); err != nil {
+					syslog.L.Error(err).
+						WithMessage("failed to send signal for graceful shutdown").
+						WithField("jobId", reqData.JobId).
+						Write()
+				}
+			} else {
+				process, err := os.FindProcess(pid)
+				if err == nil {
+					if sigErr := process.Signal(syscall.SIGTERM); sigErr != nil {
+						syslog.L.Error(sigErr).
+							WithMessage("failed to send SIGTERM").
+							WithField("id", reqData.JobId).
+							Write()
+					}
+				}
 			}
 		}
 		return arpc.Response{}, err
@@ -61,12 +76,24 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 	pid, ok := activePids.Get(reqData.JobId)
 	if ok {
 		activePids.Del(reqData.JobId)
-		timeout := time.Second * 5
-		if err := winquit.QuitProcess(pid, timeout); err != nil {
-			syslog.L.Error(err).
-				WithMessage("failed to send signal for graceful shutdown").
-				WithField("jobId", reqData.JobId).
-				Write()
+		if runtime.GOOS == "windows" {
+			timeout := time.Second * 5
+			if err := winquit.QuitProcess(pid, timeout); err != nil {
+				syslog.L.Error(err).
+					WithMessage("failed to send signal for graceful shutdown").
+					WithField("jobId", reqData.JobId).
+					Write()
+			}
+		} else {
+			process, err := os.FindProcess(pid)
+			if err == nil {
+				if sigErr := process.Signal(syscall.SIGTERM); sigErr != nil {
+					syslog.L.Error(sigErr).
+						WithMessage("failed to send SIGTERM").
+						WithField("id", reqData.JobId).
+						Write()
+				}
+			}
 		}
 	}
 
