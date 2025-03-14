@@ -1,8 +1,9 @@
 package controllers
 
 import (
-	"os"
+	"time"
 
+	"github.com/containers/winquit/pkg/winquit"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/forks"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -27,12 +28,17 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response,
 
 	syslog.L.Info().WithMessage("received backup request for job").WithField("id", reqData.JobId).Write()
 
+	syslog.L.Info().WithMessage("forking process for backup job").WithField("id", reqData.JobId).Write()
 	backupMode, pid, err := forks.ExecBackup(reqData.SourceMode, reqData.Drive, reqData.JobId)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("forking process for backup job").WithField("id", reqData.JobId).Write()
 		if pid != -1 {
-			process, err := os.FindProcess(pid)
-			if err == nil {
-				_ = process.Kill()
+			timeout := time.Second * 5
+			if err := winquit.QuitProcess(pid, timeout); err != nil {
+				syslog.L.Error(err).
+					WithMessage("failed to send signal for graceful shutdown").
+					WithField("jobId", reqData.JobId).
+					Write()
 			}
 		}
 		return arpc.Response{}, err
@@ -55,9 +61,12 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 	pid, ok := activePids.Get(reqData.JobId)
 	if ok {
 		activePids.Del(reqData.JobId)
-		process, err := os.FindProcess(pid)
-		if err == nil {
-			_ = process.Kill()
+		timeout := time.Second * 5
+		if err := winquit.QuitProcess(pid, timeout); err != nil {
+			syslog.L.Error(err).
+				WithMessage("failed to send signal for graceful shutdown").
+				WithField("jobId", reqData.JobId).
+				Write()
 		}
 	}
 
