@@ -240,6 +240,7 @@ func Backup(rpcSess *arpc.Session, sourceMode string, drive string, jobId string
 	}
 	if existingSession, ok := activeSessions.Get(jobId); ok {
 		existingSession.Close()
+		_ = store.EndBackup(jobId)
 	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())
@@ -255,8 +256,7 @@ func Backup(rpcSess *arpc.Session, sourceMode string, drive string, jobId string
 		if err != nil {
 			return "", err
 		}
-		err = fmt.Errorf("existing backup")
-		return "", err
+		_ = store.EndBackup(jobId)
 	}
 
 	if err := store.StartBackup(jobId); err != nil {
