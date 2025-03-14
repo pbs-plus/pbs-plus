@@ -197,9 +197,16 @@ func ExecBackup(sourceMode string, drive string, jobId string) (string, int, err
 		return "", -1, err
 	}
 
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return "", -1, err
+	}
+
 	if err := cmd.Start(); err != nil {
 		return "", -1, err
 	}
+
+	errScanner := bufio.NewScanner(stderrPipe)
 
 	// Read only the first line that contains backupMode.
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -207,6 +214,9 @@ func ExecBackup(sourceMode string, drive string, jobId string) (string, int, err
 	if scanner.Scan() {
 		backupMode = scanner.Text()
 	} else {
+		if errScanner.Scan() {
+			return "", cmd.Process.Pid, fmt.Errorf("error from child process: %v", errScanner.Text())
+		}
 		return "", cmd.Process.Pid, fmt.Errorf("failed to read backup mode from child process")
 	}
 
