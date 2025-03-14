@@ -10,6 +10,20 @@ func (se *SerializableError) Error() string {
 	return se.Message
 }
 
+func IsOSError(err error) bool {
+	if os.IsNotExist(err) {
+		return true
+	} else if os.IsPermission(err) {
+		return true
+	} else if os.IsTimeout(err) {
+		return true
+	} else if errors.Is(err, os.ErrClosed) {
+		return true
+	}
+
+	return false
+}
+
 // WrapError identifies and wraps standard Go errors for serialization.
 func WrapError(err error) *SerializableError {
 	if err == nil {
