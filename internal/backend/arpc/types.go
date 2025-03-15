@@ -2,6 +2,7 @@ package arpcfs
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/RoaringBitmap/roaring"
@@ -22,6 +23,7 @@ type ARPCFS struct {
 	backupMode string
 
 	accessedPaths *roaring.Bitmap // Roaring Bitmap to track accessed paths
+	accessMutex   sync.RWMutex
 
 	// Atomic counters for the number of unique file and folder accesses.
 	fileCount   int64
