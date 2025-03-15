@@ -20,7 +20,7 @@ type AgentFSServer struct {
 	jobId            string
 	snapshot         snapshots.Snapshot
 	handleIdGen      *idgen.IDGenerator
-	handles          *safemap.Map[uint64, *FileHandle]
+	handles          *safemap.GenericMap[uint64, *FileHandle]
 	arpcRouter       *arpc.Router
 	statFs           types.StatFS
 	allocGranularity uint32
@@ -37,7 +37,7 @@ func NewAgentFSServer(jobId string, snapshot snapshots.Snapshot) *AgentFSServer 
 	s := &AgentFSServer{
 		snapshot:         snapshot,
 		jobId:            jobId,
-		handles:          safemap.New[uint64, *FileHandle](),
+		handles:          safemap.NewGeneric[uint64, *FileHandle](),
 		ctx:              ctx,
 		ctxCancel:        cancel,
 		handleIdGen:      idgen.NewIDGenerator(),

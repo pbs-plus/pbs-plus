@@ -94,6 +94,8 @@ func (fs *ARPCFS) GetStats() Stats {
 }
 
 func (f *ARPCFS) Unmount() {
+	f.accessedPaths.Clear()
+
 	if f.Mount != nil {
 		_ = f.Mount.Unmount()
 	}
