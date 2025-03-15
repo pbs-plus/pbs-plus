@@ -4,10 +4,10 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/RoaringBitmap/roaring"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
 // ARPCFS implements billy.Filesystem using aRPC calls
@@ -21,7 +21,7 @@ type ARPCFS struct {
 
 	backupMode string
 
-	accessedPaths *safemap.Map[string, bool]
+	accessedPaths *roaring.Bitmap // Roaring Bitmap to track accessed paths
 
 	// Atomic counters for the number of unique file and folder accesses.
 	fileCount   int64

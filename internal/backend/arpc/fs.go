@@ -10,10 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/RoaringBitmap/roaring"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
+	"github.com/zeebo/xxh3"
 )
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string, backupMode string) *ARPCFS {
@@ -23,7 +24,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 		session:       session,
 		JobId:         jobId,
 		Hostname:      hostname,
-		accessedPaths: safemap.New[string, bool](),
+		accessedPaths: roaring.NewBitmap(),
 		backupMode:    backupMode,
 	}
 
@@ -34,10 +35,15 @@ func (fs *ARPCFS) GetBackupMode() string {
 	return fs.backupMode
 }
 
+func hashPath(path string) uint32 {
+	return uint32(xxh3.HashString(path))
+}
+
 // trackAccess records that a path has been accessed using its xxHash
 func (fs *ARPCFS) trackAccess(path string, isDir bool) {
-	if _, loaded := fs.accessedPaths.Get(path); !loaded {
-		fs.accessedPaths.Set(path, isDir)
+	hashedPath := hashPath(path)
+	if !fs.accessedPaths.Contains(hashedPath) {
+		fs.accessedPaths.Add(hashedPath)
 		if isDir {
 			atomic.AddInt64(&fs.folderCount, 1)
 		} else {
