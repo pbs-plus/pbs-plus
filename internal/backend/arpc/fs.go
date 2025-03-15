@@ -42,13 +42,22 @@ func hashPath(path string) uint32 {
 // trackAccess records that a path has been accessed using its xxHash
 func (fs *ARPCFS) trackAccess(path string, isDir bool) {
 	hashedPath := hashPath(path)
-	if !fs.accessedPaths.Contains(hashedPath) {
-		fs.accessedPaths.Add(hashedPath)
-		if isDir {
-			atomic.AddInt64(&fs.folderCount, 1)
-		} else {
-			atomic.AddInt64(&fs.fileCount, 1)
+
+	fs.accessMutex.RLock()
+	alreadyAccessed := fs.accessedPaths.Contains(hashedPath)
+	fs.accessMutex.RUnlock()
+
+	if !alreadyAccessed {
+		fs.accessMutex.Lock()
+		if !fs.accessedPaths.Contains(hashedPath) {
+			fs.accessedPaths.Add(hashedPath)
+			if isDir {
+				atomic.AddInt64(&fs.folderCount, 1)
+			} else {
+				atomic.AddInt64(&fs.fileCount, 1)
+			}
 		}
+		fs.accessMutex.Unlock()
 	}
 }
 
