@@ -65,11 +65,6 @@ func Mount(storeInstance *store.Store, job *types.Job, target *types.Target) (*A
 
 	agentMount.Unmount() // Ensure clean mount point
 
-	if err != nil {
-		agentMount.CloseMount()
-		return nil, fmt.Errorf("Mount: Failed to send mount request to target '%s' -> %w", target.Name, err)
-	}
-
 	// Try mounting with retries
 	const maxRetries = 3
 	const retryDelay = 2 * time.Second
@@ -84,7 +79,7 @@ func Mount(storeInstance *store.Store, job *types.Job, target *types.Target) (*A
 		)
 		if err == nil {
 			isAccessible := false
-			checkTimeout := time.After(10 * time.Second)
+			checkTimeout := time.After(30 * time.Second)
 			ticker := time.NewTicker(500 * time.Millisecond)
 			defer ticker.Stop()
 
