@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RoaringBitmap/roaring"
+	"github.com/RoaringBitmap/roaring/roaring64"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -24,7 +24,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobI
 		session:       session,
 		JobId:         jobId,
 		Hostname:      hostname,
-		accessedPaths: roaring.NewBitmap(),
+		accessedPaths: roaring64.NewBitmap(),
 		backupMode:    backupMode,
 	}
 
@@ -35,8 +35,8 @@ func (fs *ARPCFS) GetBackupMode() string {
 	return fs.backupMode
 }
 
-func hashPath(path string) uint32 {
-	return uint32(xxh3.HashString(path))
+func hashPath(path string) uint64 {
+	return xxh3.HashString(path)
 }
 
 // trackAccess records that a path has been accessed using its xxHash
