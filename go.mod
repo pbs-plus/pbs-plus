@@ -15,6 +15,7 @@ require (
 	github.com/kardianos/service v1.2.2
 	github.com/mxk/go-vss v1.2.0
 	github.com/pkg/errors v0.9.1
+	github.com/puzpuzpuz/xsync/v3 v3.5.1
 	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.10.0
 	github.com/xtaci/smux v1.5.34
@@ -32,7 +33,6 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
