@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/RoaringBitmap/roaring"
+	"github.com/RoaringBitmap/roaring/roaring64"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
@@ -22,7 +22,7 @@ type ARPCFS struct {
 
 	backupMode string
 
-	accessedPaths *roaring.Bitmap // Roaring Bitmap to track accessed paths
+	accessedPaths *roaring64.Bitmap // Roaring Bitmap to track accessed paths
 	accessMutex   sync.RWMutex
 
 	// Atomic counters for the number of unique file and folder accesses.
