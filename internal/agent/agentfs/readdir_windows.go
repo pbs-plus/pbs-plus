@@ -216,71 +216,51 @@ func readDirBulk(dirPath string) ([]byte, error) {
 		}
 
 		offset := 0
-		for offset < len(buf) {
+		for {
+			var nextOffset int
 			var name string
 			var attrs uint32
 
 			if usingFull {
-				syslog.L.Info().WithMessage("using full").WithFields(map[string]interface{}{"path": dirPath}).Write()
 				fullInfo := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
-				if fullInfo.NextEntryOffset == 0 {
-					syslog.L.Info().WithMessage("next entry offset is 0").WithFields(map[string]interface{}{"path": dirPath}).Write()
-					offset += int(fullInfo.NextEntryOffset)
-					break
-				}
+				nextOffset = int(fullInfo.NextEntryOffset)
 				nameLen := int(fullInfo.FileNameLength) / 2
 				attrs = fullInfo.FileAttributes
+
 				if nameLen > 0 {
 					filenamePtr := fileNamePtrFull(fullInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
-					if nameLen == 1 && nameSlice[0] == '.' {
-						syslog.L.Info().WithMessage("exclude .").WithFields(map[string]interface{}{"file": nameSlice}).Write()
-						offset += int(fullInfo.NextEntryOffset)
-						continue
+					if (nameLen == 1 && nameSlice[0] == '.') ||
+						(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.') {
+						syslog.L.Info().WithMessage("exclude . or ..").
+							WithFields(map[string]interface{}{"file": nameSlice}).Write()
+					} else if attrs&excludedAttrs != 0 {
+						syslog.L.Info().WithMessage("Excluding file due to attrs").
+							WithFields(map[string]interface{}{"attrs": attrs, "file": nameSlice}).Write()
+					} else {
+						name = utf16ToString(nameSlice)
 					}
-					if nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.' {
-						syslog.L.Info().WithMessage("exclude ..").WithFields(map[string]interface{}{"file": nameSlice}).Write()
-						offset += int(fullInfo.NextEntryOffset)
-						continue
-					}
-					if attrs&excludedAttrs != 0 {
-						syslog.L.Info().WithMessage("Excluding file due to attrs").WithFields(map[string]interface{}{"attrs": attrs, "file": nameSlice}).Write()
-						offset += int(fullInfo.NextEntryOffset)
-						continue
-					}
-					name = utf16ToString(nameSlice)
 				}
-				offset += int(fullInfo.NextEntryOffset)
 			} else {
-				syslog.L.Info().WithMessage("using bothInfo").WithFields(map[string]interface{}{"path": dirPath}).Write()
 				bothInfo := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
-				if bothInfo.NextEntryOffset == 0 {
-					offset += int(bothInfo.NextEntryOffset)
-					break
-				}
+				nextOffset = int(bothInfo.NextEntryOffset)
 				nameLen := int(bothInfo.FileNameLength) / 2
 				attrs = bothInfo.FileAttributes
+
 				if nameLen > 0 {
 					filenamePtr := fileNamePtrIdBoth(bothInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
-					if nameLen == 1 && nameSlice[0] == '.' {
-						syslog.L.Info().WithMessage("exclude .").WithFields(map[string]interface{}{"file": nameSlice}).Write()
-						offset += int(bothInfo.NextEntryOffset)
-						continue
+					if (nameLen == 1 && nameSlice[0] == '.') ||
+						(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.') {
+						syslog.L.Info().WithMessage("exclude . or ..").
+							WithFields(map[string]interface{}{"file": nameSlice}).Write()
+					} else if attrs&excludedAttrs != 0 {
+						syslog.L.Info().WithMessage("Excluding file due to attrs").
+							WithFields(map[string]interface{}{"attrs": attrs, "file": nameSlice}).Write()
+					} else {
+						name = utf16ToString(nameSlice)
 					}
-					if nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.' {
-						syslog.L.Info().WithMessage("exclude ..").WithFields(map[string]interface{}{"file": nameSlice}).Write()
-						offset += int(bothInfo.NextEntryOffset)
-						continue
-					}
-					if attrs&excludedAttrs != 0 {
-						syslog.L.Info().WithMessage("Excluding file due to attrs").WithFields(map[string]interface{}{"attrs": attrs, "file": nameSlice}).Write()
-						offset += int(bothInfo.NextEntryOffset)
-						continue
-					}
-					name = utf16ToString(nameSlice)
 				}
-				offset += int(bothInfo.NextEntryOffset)
 			}
 
 			if name != "" {
@@ -290,7 +270,15 @@ func readDirBulk(dirPath string) ([]byte, error) {
 					Mode: mode,
 				})
 			}
+
+			// If there is no next entry, break out of the inner loop.
+			if nextOffset == 0 {
+				break
+			}
+			offset += nextOffset
 		}
+		// Exit if GetFileInformationByHandleEx did not return more data.
+		break
 	}
 
 	return entries.Encode()
