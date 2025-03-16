@@ -100,8 +100,7 @@ const (
 )
 
 const (
-	excludedAttrs = windows.FILE_ATTRIBUTE_REPARSE_POINT |
-		windows.FILE_ATTRIBUTE_DEVICE |
+	excludedAttrs = windows.FILE_ATTRIBUTE_DEVICE |
 		windows.FILE_ATTRIBUTE_OFFLINE |
 		windows.FILE_ATTRIBUTE_VIRTUAL |
 		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN |
