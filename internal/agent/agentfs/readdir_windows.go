@@ -9,7 +9,6 @@ import (
 	"unsafe"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
 
@@ -230,14 +229,9 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				if nameLen > 0 {
 					filenamePtr := fileNamePtrFull(fullInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
-					if (nameLen == 1 && nameSlice[0] == '.') ||
-						(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.') {
-						syslog.L.Info().WithMessage("exclude . or ..").
-							WithFields(map[string]interface{}{"file": nameSlice}).Write()
-					} else if attrs&excludedAttrs != 0 {
-						syslog.L.Info().WithMessage("Excluding file due to attrs").
-							WithFields(map[string]interface{}{"attrs": attrs, "file": nameSlice}).Write()
-					} else {
+					if !((nameLen == 1 && nameSlice[0] == '.') ||
+						(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.')) &&
+						(attrs&excludedAttrs) == 0 {
 						name = utf16ToString(nameSlice)
 					}
 				}
@@ -250,14 +244,9 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				if nameLen > 0 {
 					filenamePtr := fileNamePtrIdBoth(bothInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
-					if (nameLen == 1 && nameSlice[0] == '.') ||
-						(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.') {
-						syslog.L.Info().WithMessage("exclude . or ..").
-							WithFields(map[string]interface{}{"file": nameSlice}).Write()
-					} else if attrs&excludedAttrs != 0 {
-						syslog.L.Info().WithMessage("Excluding file due to attrs").
-							WithFields(map[string]interface{}{"attrs": attrs, "file": nameSlice}).Write()
-					} else {
+					if !((nameLen == 1 && nameSlice[0] == '.') ||
+						(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.')) &&
+						(attrs&excludedAttrs) == 0 {
 						name = utf16ToString(nameSlice)
 					}
 				}
