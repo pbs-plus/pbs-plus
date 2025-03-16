@@ -141,7 +141,7 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 
 var bufPool = sync.Pool{
 	New: func() interface{} {
-		b := make([]byte, 256*1024) // 256KB initial buffer
+		b := make([]byte, 512*1024) // 512KB initial buffer
 		return &b
 	},
 }
