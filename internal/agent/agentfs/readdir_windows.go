@@ -228,6 +228,10 @@ func readDirBulk(dirPath string) ([]byte, error) {
 						offset += int(fullInfo.NextEntryOffset)
 						continue
 					}
+					if attrs&excludedAttrs != 0 {
+						offset += int(fullInfo.NextEntryOffset)
+						continue
+					}
 					name = syscall.UTF16ToString(nameSlice)
 				}
 				offset += int(fullInfo.NextEntryOffset)
@@ -249,12 +253,16 @@ func readDirBulk(dirPath string) ([]byte, error) {
 						offset += int(bothInfo.NextEntryOffset)
 						continue
 					}
+					if attrs&excludedAttrs != 0 {
+						offset += int(bothInfo.NextEntryOffset)
+						continue
+					}
 					name = syscall.UTF16ToString(nameSlice)
 				}
 				offset += int(bothInfo.NextEntryOffset)
 			}
 
-			if name != "" && attrs&excludedAttrs == 0 {
+			if name != "" {
 				mode := windowsAttributesToFileMode(attrs)
 				entries = append(entries, types.AgentDirEntry{
 					Name: name,
