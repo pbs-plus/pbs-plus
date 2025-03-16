@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
 
@@ -239,6 +240,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 						continue
 					}
 					if attrs&excludedAttrs != 0 {
+						syslog.L.Info().WithMessage("Excluding file due to attrs").WithFields(map[string]interface{}{"attrs": attrs, "file": nameSlice}).Write()
 						offset += int(fullInfo.NextEntryOffset)
 						continue
 					}
@@ -265,6 +267,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 						continue
 					}
 					if attrs&excludedAttrs != 0 {
+						syslog.L.Info().WithMessage("Excluding file due to attrs").WithFields(map[string]interface{}{"attrs": attrs, "file": nameSlice}).Write()
 						offset += int(bothInfo.NextEntryOffset)
 						continue
 					}
