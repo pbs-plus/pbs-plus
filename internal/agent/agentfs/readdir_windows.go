@@ -5,7 +5,7 @@ package agentfs
 import (
 	"os"
 	"sync"
-	"syscall"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
@@ -146,6 +146,16 @@ var bufPool = sync.Pool{
 	},
 }
 
+func utf16ToString(s []uint16) string {
+	for i := range s {
+		if s[i] == 0 {
+			s = s[:i]
+			break
+		}
+	}
+	return string(utf16.Decode(s))
+}
+
 func readDirBulk(dirPath string) ([]byte, error) {
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
@@ -175,7 +185,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 	}()
 
 	var entries types.ReadDirEntries
-	entries = make([]types.AgentDirEntry, 0, 100) // Pre-allocate
+	entries = make([]types.AgentDirEntry, 0, 100)
 
 	usingFull := false
 	infoClass := windows.FileIdBothDirectoryInfo
@@ -190,7 +200,6 @@ func readDirBulk(dirPath string) ([]byte, error) {
 		if err != nil {
 			if err == windows.ERROR_MORE_DATA {
 				newBuf := make([]byte, len(buf)*2)
-				copy(newBuf, buf)
 				buf = newBuf
 				continue
 			}
@@ -212,7 +221,8 @@ func readDirBulk(dirPath string) ([]byte, error) {
 
 			if usingFull {
 				fullInfo := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
-				if fullInfo.NextEntryOffset == 0 && offset > 0 {
+				if fullInfo.NextEntryOffset == 0 {
+					offset += int(fullInfo.NextEntryOffset)
 					break
 				}
 				nameLen := int(fullInfo.FileNameLength) / 2
@@ -232,12 +242,13 @@ func readDirBulk(dirPath string) ([]byte, error) {
 						offset += int(fullInfo.NextEntryOffset)
 						continue
 					}
-					name = syscall.UTF16ToString(nameSlice)
+					name = utf16ToString(nameSlice)
 				}
 				offset += int(fullInfo.NextEntryOffset)
 			} else {
 				bothInfo := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
-				if bothInfo.NextEntryOffset == 0 && offset > 0 {
+				if bothInfo.NextEntryOffset == 0 {
+					offset += int(bothInfo.NextEntryOffset)
 					break
 				}
 				nameLen := int(bothInfo.FileNameLength) / 2
@@ -257,7 +268,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 						offset += int(bothInfo.NextEntryOffset)
 						continue
 					}
-					name = syscall.UTF16ToString(nameSlice)
+					name = utf16ToString(nameSlice)
 				}
 				offset += int(bothInfo.NextEntryOffset)
 			}
