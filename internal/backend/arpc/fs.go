@@ -133,8 +133,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 		Perm: int(perm),
 	}
 
-	// Use the CPU efficient CallMsgDirect helper.
-	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/OpenFile", &req)
+	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/OpenFile", &req)
 	if err != nil {
 		if arpc.IsOSError(err) {
 			return ARPCFile{}, err
@@ -164,7 +163,7 @@ func (fs *ARPCFS) Attr(filename string) (types.AgentFileInfo, error) {
 	}
 
 	req := types.StatReq{Path: filename}
-	raw, err := fs.session.CallMsgWithTimeout(time.Second*10, fs.JobId+"/Attr", &req)
+	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/Attr", &req)
 	if err != nil {
 		if arpc.IsOSError(err) {
 			return types.AgentFileInfo{}, err
@@ -218,7 +217,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	}
 
 	var fsStat types.StatFS
-	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/StatFS", nil)
+	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/StatFS", nil)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to handle statfs").Write()
 		if arpc.IsOSError(err) {
@@ -245,7 +244,7 @@ func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 
 	var resp types.ReadDirEntries
 	req := types.ReadDirReq{Path: path}
-	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/ReadDir", &req)
+	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/ReadDir", &req)
 	if err != nil {
 		if arpc.IsOSError(err) {
 			return nil, err
