@@ -271,14 +271,12 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				})
 			}
 
-			// If there is no next entry, break out of the inner loop.
 			if nextOffset == 0 {
 				break
 			}
 			offset += nextOffset
 		}
-		// Exit if GetFileInformationByHandleEx did not return more data.
-		break
+		// Continue the outer loop until ERROR_NO_MORE_FILES is returned.
 	}
 
 	return entries.Encode()
