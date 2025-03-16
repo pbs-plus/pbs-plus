@@ -100,7 +100,8 @@ const (
 )
 
 const (
-	excludedAttrs = windows.FILE_ATTRIBUTE_DEVICE |
+	excludedAttrs = windows.FILE_ATTRIBUTE_REPARSE_POINT |
+		windows.FILE_ATTRIBUTE_DEVICE |
 		windows.FILE_ATTRIBUTE_OFFLINE |
 		windows.FILE_ATTRIBUTE_VIRTUAL |
 		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN |
@@ -220,8 +221,10 @@ func readDirBulk(dirPath string) ([]byte, error) {
 			var attrs uint32
 
 			if usingFull {
+				syslog.L.Info().WithMessage("using full").WithFields(map[string]interface{}{"path": dirPath}).Write()
 				fullInfo := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 				if fullInfo.NextEntryOffset == 0 {
+					syslog.L.Info().WithMessage("next entry offset is 0").WithFields(map[string]interface{}{"path": dirPath}).Write()
 					offset += int(fullInfo.NextEntryOffset)
 					break
 				}
@@ -231,10 +234,12 @@ func readDirBulk(dirPath string) ([]byte, error) {
 					filenamePtr := fileNamePtrFull(fullInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					if nameLen == 1 && nameSlice[0] == '.' {
+						syslog.L.Info().WithMessage("exclude .").WithFields(map[string]interface{}{"file": nameSlice}).Write()
 						offset += int(fullInfo.NextEntryOffset)
 						continue
 					}
 					if nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.' {
+						syslog.L.Info().WithMessage("exclude ..").WithFields(map[string]interface{}{"file": nameSlice}).Write()
 						offset += int(fullInfo.NextEntryOffset)
 						continue
 					}
@@ -247,6 +252,7 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				}
 				offset += int(fullInfo.NextEntryOffset)
 			} else {
+				syslog.L.Info().WithMessage("using bothInfo").WithFields(map[string]interface{}{"path": dirPath}).Write()
 				bothInfo := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
 				if bothInfo.NextEntryOffset == 0 {
 					offset += int(bothInfo.NextEntryOffset)
@@ -258,10 +264,12 @@ func readDirBulk(dirPath string) ([]byte, error) {
 					filenamePtr := fileNamePtrIdBoth(bothInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
 					if nameLen == 1 && nameSlice[0] == '.' {
+						syslog.L.Info().WithMessage("exclude .").WithFields(map[string]interface{}{"file": nameSlice}).Write()
 						offset += int(bothInfo.NextEntryOffset)
 						continue
 					}
 					if nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.' {
+						syslog.L.Info().WithMessage("exclude ..").WithFields(map[string]interface{}{"file": nameSlice}).Write()
 						offset += int(bothInfo.NextEntryOffset)
 						continue
 					}
