@@ -147,14 +147,14 @@ var bufPool = sync.Pool{
 }
 
 func readDirBulk(dirPath string) ([]byte, error) {
-	r, err := windows.UTF16PtrFromString(dirPath)
-	err != nil {
-		 nil, mapWinError(err, "readDirBulk UTF16PtrFromString")
-	
+	pDir, err := windows.UTF16PtrFromString(dirPath)
+	if err != nil {
+		return nil, mapWinError(err, "readDirBulk UTF16PtrFromString")
+	}
 
-	dle, err := windows.CreateFile(
-		
-		s.GENERIC_READ,
+	handle, err := windows.CreateFile(
+		pDir,
+		windows.GENERIC_READ,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,
@@ -258,11 +258,11 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				mode := windowsAttributesToFileMode(attrs)
 				entries = append(entries, types.AgentDirEntry{
 					Name: name,
-					Mode:
-				
-			
-		
-	
+					Mode: mode,
+				})
+			}
+		}
+	}
 
-	urn entries.Encode()
+	return entries.Encode()
 }
