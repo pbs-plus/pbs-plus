@@ -3,10 +3,9 @@
 package agentfs
 
 import (
-	"errors"
 	"os"
-	"path/filepath"
-	"syscall"
+	"sync"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
@@ -95,12 +94,18 @@ func fileNamePtrFull(info *FILE_FULL_DIR_INFO) *uint16 {
 }
 
 const (
+	FILE_ATTRIBUTE_UNPINNED = 0x00100000
+	FILE_ATTRIBUTE_PINNED   = 0x00080000
+)
+
+const (
 	excludedAttrs = windows.FILE_ATTRIBUTE_REPARSE_POINT |
 		windows.FILE_ATTRIBUTE_DEVICE |
 		windows.FILE_ATTRIBUTE_OFFLINE |
 		windows.FILE_ATTRIBUTE_VIRTUAL |
 		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN |
-		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS |
+		FILE_ATTRIBUTE_UNPINNED | FILE_ATTRIBUTE_PINNED
 )
 
 // windowsAttributesToFileMode converts Windows file attributes to Go's os.FileMode
@@ -134,41 +139,23 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 	return uint32(mode)
 }
 
-// fileIsAvailable checks if the file (or directory) at "dirPath/name" can be opened.
-// If isDir is true, FILE_FLAG_BACKUP_SEMANTICS is used.
-func fileIsAvailable(dirPath, name string, isDir bool) bool {
-	fullPath := filepath.Join(dirPath, name)
-	pFullPath, err := windows.UTF16PtrFromString(fullPath)
-	if err != nil {
-		return false
-	}
-
-	var flags uint32 = 0
-	if isDir {
-		flags = windows.FILE_FLAG_BACKUP_SEMANTICS
-	}
-
-	h, err := windows.CreateFile(
-		pFullPath,
-		windows.GENERIC_READ,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil,
-		windows.OPEN_EXISTING,
-		flags,
-		0,
-	)
-	if err != nil {
-		return false
-	}
-	windows.CloseHandle(h)
-	return true
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 256*1024) // 256KB initial buffer
+		return &b
+	},
 }
 
-// readDirBulk opens the directory at dirPath and enumerates its entries using
-// GetFileInformationByHandleEx. It first attempts to use the file-ID based
-// information class. If that fails with ERROR_INVALID_PARAMETER, it falls
-// back to the full-directory information class. The entries that match
-// skipPathWithAttributes (and the "." and ".." names) are omitted.
+func utf16ToString(s []uint16) string {
+	for i := range s {
+		if s[i] == 0 {
+			s = s[:i]
+			break
+		}
+	}
+	return string(utf16.Decode(s))
+}
+
 func readDirBulk(dirPath string) ([]byte, error) {
 	pDir, err := windows.UTF16PtrFromString(dirPath)
 	if err != nil {
@@ -189,11 +176,17 @@ func readDirBulk(dirPath string) ([]byte, error) {
 	}
 	defer windows.CloseHandle(handle)
 
-	const initialBufSize = 128 * 1024
-	// Allocate an initial slice with a capacity of 128 KB.
-	buf := make([]byte, initialBufSize)
+	bufPtr := bufPool.Get().(*[]byte)
+	buf := *bufPtr
+	defer func() {
+		if cap(buf) == cap(*bufPtr) {
+			bufPool.Put(bufPtr)
+		}
+	}()
 
 	var entries types.ReadDirEntries
+	entries = make([]types.AgentDirEntry, 0, 100)
+
 	usingFull := false
 	infoClass := windows.FileIdBothDirectoryInfo
 
@@ -205,81 +198,74 @@ func readDirBulk(dirPath string) ([]byte, error) {
 			uint32(len(buf)),
 		)
 		if err != nil {
-			var errno syscall.Errno
-			if errors.As(err, &errno) {
-				// If the buffer is too small, double its size and try again.
-				if errno == windows.ERROR_MORE_DATA {
-					newSize := len(buf) * 2
-					buf = make([]byte, newSize)
-					continue
-				}
-				// Fallback to using the full-directory information class if needed.
-				if errno == windows.ERROR_INVALID_PARAMETER && !usingFull {
-					infoClass = windows.FileFullDirectoryInfo
-					usingFull = true
-					continue
-				}
-				// When there are no more files, break out of the loop.
-				if errno == windows.ERROR_NO_MORE_FILES {
-					break
-				}
+			if err == windows.ERROR_MORE_DATA {
+				newBuf := make([]byte, len(buf)*2)
+				buf = newBuf
+				continue
+			}
+			if err == windows.ERROR_INVALID_PARAMETER && !usingFull {
+				infoClass = windows.FileFullDirectoryInfo
+				usingFull = true
+				continue
+			}
+			if err == windows.ERROR_NO_MORE_FILES {
+				break
 			}
 			return nil, mapWinError(err, "readDirBulk GetFileInformationByHandleEx")
 		}
 
-		// Process entries in the buffer.
 		offset := 0
-		for offset < len(buf) {
+		for {
+			var nextOffset int
+			var name string
+			var attrs uint32
+
 			if usingFull {
-				// Use the FILE_FULL_DIR_INFO structure.
 				fullInfo := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
+				nextOffset = int(fullInfo.NextEntryOffset)
 				nameLen := int(fullInfo.FileNameLength) / 2
+				attrs = fullInfo.FileAttributes
+
 				if nameLen > 0 {
 					filenamePtr := fileNamePtrFull(fullInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
-					name := syscall.UTF16ToString(nameSlice)
-					if name != "." && name != ".." && fullInfo.FileAttributes&excludedAttrs == 0 {
-						isDir := (fullInfo.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
-
-						if fileIsAvailable(dirPath, name, isDir) {
-							mode := windowsAttributesToFileMode(fullInfo.FileAttributes)
-							entries = append(entries, types.AgentDirEntry{
-								Name: name,
-								Mode: mode,
-							})
-						}
+					if !((nameLen == 1 && nameSlice[0] == '.') ||
+						(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.')) &&
+						(attrs&excludedAttrs) == 0 {
+						name = utf16ToString(nameSlice)
 					}
 				}
-				if fullInfo.NextEntryOffset == 0 {
-					break
-				}
-				offset += int(fullInfo.NextEntryOffset)
 			} else {
-				// Use the FILE_ID_BOTH_DIR_INFO structure.
 				bothInfo := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
+				nextOffset = int(bothInfo.NextEntryOffset)
 				nameLen := int(bothInfo.FileNameLength) / 2
+				attrs = bothInfo.FileAttributes
+
 				if nameLen > 0 {
 					filenamePtr := fileNamePtrIdBoth(bothInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
-					name := syscall.UTF16ToString(nameSlice)
-					if name != "." && name != ".." && bothInfo.FileAttributes&excludedAttrs == 0 {
-						isDir := (bothInfo.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
-
-						if fileIsAvailable(dirPath, name, isDir) {
-							mode := windowsAttributesToFileMode(bothInfo.FileAttributes)
-							entries = append(entries, types.AgentDirEntry{
-								Name: name,
-								Mode: mode,
-							})
-						}
+					if !((nameLen == 1 && nameSlice[0] == '.') ||
+						(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.')) &&
+						(attrs&excludedAttrs) == 0 {
+						name = utf16ToString(nameSlice)
 					}
 				}
-				if bothInfo.NextEntryOffset == 0 {
-					break
-				}
-				offset += int(bothInfo.NextEntryOffset)
 			}
+
+			if name != "" {
+				mode := windowsAttributesToFileMode(attrs)
+				entries = append(entries, types.AgentDirEntry{
+					Name: name,
+					Mode: mode,
+				})
+			}
+
+			if nextOffset == 0 {
+				break
+			}
+			offset += nextOffset
 		}
+		// Continue the outer loop until ERROR_NO_MORE_FILES is returned.
 	}
 
 	return entries.Encode()
