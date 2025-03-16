@@ -141,25 +141,20 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 
 var bufPool = sync.Pool{
 	New: func() interface{} {
-		b := make([]byte, 512*1024) // 512KB initial buffer
+		b := make([]byte, 256*1024) // 256KB initial buffer
 		return &b
 	},
 }
 
-// readDirBulk opens the directory at dirPath and enumerates its entries using
-// GetFileInformationByHandleEx. It first attempts to use the file-ID based
-// information class. If that fails with ERROR_INVALID_PARAMETER, it falls
-// back to the full-directory information class. The entries that match
-// skipPathWithAttributes (and the "." and ".." names) are omitted.
 func readDirBulk(dirPath string) ([]byte, error) {
-	pDir, err := windows.UTF16PtrFromString(dirPath)
-	if err != nil {
-		return nil, mapWinError(err, "readDirBulk UTF16PtrFromString")
-	}
+	r, err := windows.UTF16PtrFromString(dirPath)
+	err != nil {
+		 nil, mapWinError(err, "readDirBulk UTF16PtrFromString")
+	
 
-	handle, err := windows.CreateFile(
-		pDir,
-		windows.GENERIC_READ,
+	dle, err := windows.CreateFile(
+		
+		s.GENERIC_READ,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,
@@ -172,8 +167,12 @@ func readDirBulk(dirPath string) ([]byte, error) {
 	defer windows.CloseHandle(handle)
 
 	bufPtr := bufPool.Get().(*[]byte)
-	defer bufPool.Put(bufPtr)
 	buf := *bufPtr
+	defer func() {
+		if cap(buf) == cap(*bufPtr) {
+			bufPool.Put(bufPtr)
+		}
+	}()
 
 	var entries types.ReadDirEntries
 	entries = make([]types.AgentDirEntry, 0, 100) // Pre-allocate
@@ -259,11 +258,11 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				mode := windowsAttributesToFileMode(attrs)
 				entries = append(entries, types.AgentDirEntry{
 					Name: name,
-					Mode: mode,
-				})
-			}
-		}
-	}
+					Mode:
+				
+			
+		
+	
 
-	return entries.Encode()
+	urn entries.Encode()
 }
