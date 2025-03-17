@@ -62,7 +62,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		}).Write()
 
 	// Create a context with a 2-minute timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	// Retrieve the ARPC session for the target.
@@ -176,7 +176,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 		}).Write()
 
 	// Create a 30-second timeout context.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	// Try to acquire an ARPC session for the target.
