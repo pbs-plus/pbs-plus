@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/rpc"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -28,7 +27,6 @@ type BackupArgs struct {
 	JobId          string
 	TargetHostname string
 	Drive          string
-	SourceMode     string
 }
 
 type BackupReply struct {
@@ -61,6 +59,14 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 			"drive":  args.Drive,
 		}).Write()
 
+	// Retrieve the job from the database.
+	job, err := s.Store.Database.GetJob(args.JobId)
+	if err != nil {
+		reply.Status = 404
+		reply.Message = "MountHandler: Unable to get job from id"
+		return fmt.Errorf("backup: %w", err)
+	}
+
 	// Create a context with a 2-minute timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -77,7 +83,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	backupReq := types.BackupReq{
 		Drive:      args.Drive,
 		JobId:      args.JobId,
-		SourceMode: args.SourceMode,
+		SourceMode: job.SourceMode,
 	}
 
 	// Call the target's backup method via ARPC.
@@ -95,14 +101,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	// Parse the backup response message (format: "backupMode|namespace").
 	backupRespSplit := strings.Split(backupResp.Message, "|")
 	backupMode := backupRespSplit[0]
-
-	// Retrieve the job from the database.
-	job, err := s.Store.Database.GetJob(args.JobId)
-	if err != nil {
-		reply.Status = 404
-		reply.Message = "MountHandler: Unable to get job from id"
-		return fmt.Errorf("backup: %w", err)
-	}
 
 	// If a namespace is provided in the backup response, update the job.
 	if len(backupRespSplit) == 2 && backupRespSplit[1] != "" {
@@ -128,18 +126,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 
 	// Set up the local mount path.
 	mntPath := filepath.Join(constants.AgentMountBasePath, args.JobId)
-	if err := os.MkdirAll(mntPath, 0700); err != nil {
-		reply.Status = 500
-		reply.Message = fmt.Sprintf("MountHandler: error creating directory \"%s\" -> %v", mntPath, err)
-		return fmt.Errorf("backup: %w", err)
-	}
 
-	// Clean up any previous mount.
-	umountCmd := exec.Command("umount", "-lf", mntPath)
-	_ = umountCmd.Run()
-	_ = os.RemoveAll(mntPath)
-
-	// Perform the FUSE mount.
 	if err := mount.Mount(arpcFS, mntPath); err != nil {
 		syslog.L.Error(err).Write()
 		reply.Status = 500
