@@ -265,7 +265,7 @@ func (sc *SectionConfig[T]) Write(config *ConfigData[T]) error {
 		sort.Strings(keys)
 
 		for _, key := range keys {
-			value := props[key]
+			value := strings.TrimSpace(props[key])
 			if value != "" {
 				output.WriteString(fmt.Sprintf("\t%s %s\n", key, value))
 			} else if key == "tags" {
