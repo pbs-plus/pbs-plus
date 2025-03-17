@@ -74,6 +74,7 @@ func Mount(storeInstance *store.Store, job *types.Job, target *types.Target) (*A
 			err = rpcClient.Call("MountRPCService.Backup", args, &reply)
 			rpcClient.Close()
 			if err == nil && reply.Status == 200 {
+				lastErr = nil
 				break
 			}
 			lastErr = fmt.Errorf("RPC Backup call failed: %w", err)
@@ -82,6 +83,7 @@ func Mount(storeInstance *store.Store, job *types.Job, target *types.Target) (*A
 			time.Sleep(retryDelay)
 		}
 	}
+
 	if lastErr != nil {
 		agentMount.CloseMount()
 		agentMount.Unmount()
