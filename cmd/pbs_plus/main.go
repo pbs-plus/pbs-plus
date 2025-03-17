@@ -276,7 +276,7 @@ func main() {
 				syslog.L.Error(rpcCtx.Err()).WithMessage("rpc server cancelled")
 				return
 			default:
-				if err := rpcmount.StartRPCServer(constants.SocketPath, storeInstance); err != nil {
+				if err := rpcmount.StartRPCServer(constants.MountSocketPath, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("rpc server failed, restarting")
 				}
 			}
