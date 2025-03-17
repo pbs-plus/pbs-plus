@@ -4,16 +4,17 @@ package mount
 
 import (
 	"fmt"
-	"net/http"
+	"net"
+	"net/rpc"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	rpcmount "github.com/sonroyaalmerol/pbs-plus/internal/proxy/rpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -40,20 +41,6 @@ func Mount(storeInstance *store.Store, job *types.Job, target *types.Target) (*A
 		Drive:    agentDrive,
 	}
 
-	// Encode hostname and drive for API call
-	targetHostnameEnc := utils.EncodePath(targetHostname)
-	agentDriveEnc := utils.EncodePath(agentDrive)
-	jobIdEnc := utils.EncodePath(job.ID)
-
-	// Request mount from agent
-	backupSession := &proxmox.ProxmoxSession{
-		APIToken: proxmox.Session.APIToken,
-		HTTPClient: &http.Client{
-			Timeout:   time.Minute * 5,
-			Transport: utils.MountTransport,
-		},
-	}
-
 	// Setup mount path
 	agentMount.Path = filepath.Join(constants.AgentMountBasePath, job.ID)
 	// Create mount directory if it doesn't exist
@@ -70,53 +57,61 @@ func Mount(storeInstance *store.Store, job *types.Job, target *types.Target) (*A
 	const retryDelay = 2 * time.Second
 
 	var lastErr error
+
+	args := &rpcmount.BackupArgs{
+		JobId:          job.ID,
+		TargetHostname: targetHostname,
+		Drive:          agentDrive,
+		SourceMode:     job.SourceMode,
+	}
+	var reply rpcmount.BackupReply
+
 	for i := 0; i < maxRetries; i++ {
-		err = backupSession.ProxmoxHTTPRequest(
-			http.MethodPost,
-			fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s/%s", jobIdEnc, targetHostnameEnc, agentDriveEnc),
-			nil,
-			nil,
-		)
-		if err == nil {
-			isAccessible := false
-			checkTimeout := time.After(30 * time.Second)
-			ticker := time.NewTicker(500 * time.Millisecond)
-			defer ticker.Stop()
-
-		checkLoop:
-			for {
-				select {
-				case <-checkTimeout:
-					break checkLoop
-				case <-ticker.C:
-					// Try to read directory contents
-					_, err := os.ReadDir(agentMount.Path)
-					if err == nil {
-						isAccessible = true
-						break checkLoop
-					}
-				}
+		conn, err := net.DialTimeout("unix", constants.SocketPath, 5*time.Second)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to dial RPC server: %w", err)
+		} else {
+			rpcClient := rpc.NewClient(conn)
+			err = rpcClient.Call("MountRPCService.Backup", args, &reply)
+			rpcClient.Close()
+			if err == nil && reply.Status == 200 {
+				break
 			}
-
-			if !isAccessible {
-				// Clean up if mount point isn't accessible
-				agentMount.Unmount()
-				agentMount.CloseMount()
-				return nil, fmt.Errorf("Mount: mounted directory not accessible after 10 seconds")
-			}
-
-			return agentMount, nil
+			lastErr = fmt.Errorf("RPC Backup call failed: %w", err)
 		}
-		lastErr = err
 		if i < maxRetries-1 {
 			time.Sleep(retryDelay)
 		}
 	}
+	if lastErr != nil {
+		agentMount.CloseMount()
+		agentMount.Unmount()
+		return nil, fmt.Errorf("Mount: error mounting FUSE mount after %d attempts -> %w", maxRetries, lastErr)
+	}
 
-	// If all retries failed, clean up and return error
-	agentMount.CloseMount()
-	agentMount.Unmount()
-	return nil, fmt.Errorf("Mount: error mounting NFS share after %d attempts -> %w", maxRetries, lastErr)
+	isAccessible := false
+	checkTimeout := time.After(30 * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+checkLoop:
+	for {
+		select {
+		case <-checkTimeout:
+			break checkLoop
+		case <-ticker.C:
+			if _, err := os.ReadDir(agentMount.Path); err == nil {
+				isAccessible = true
+				break checkLoop
+			}
+		}
+	}
+	if !isAccessible {
+		agentMount.Unmount()
+		agentMount.CloseMount()
+		return nil, fmt.Errorf("Mount: mounted directory not accessible after timeout")
+	}
+	return agentMount, nil
 }
 
 func (a *AgentMount) Unmount() {
@@ -134,18 +129,21 @@ func (a *AgentMount) Unmount() {
 }
 
 func (a *AgentMount) CloseMount() {
-	targetHostnameEnc := utils.EncodePath(a.Hostname)
-	agentDriveEnc := utils.EncodePath(a.Drive)
-	jobIdEnc := utils.EncodePath(a.JobId)
+	args := &rpcmount.CleanupArgs{
+		JobId:          a.JobId,
+		TargetHostname: utils.EncodePath(a.Hostname),
+		Drive:          a.Drive,
+	}
+	var reply rpcmount.CleanupReply
 
-	syslog.L.Info().WithMessage("sending closure request").WithFields(map[string]interface{}{"hostname": a.Hostname, "drive": a.Drive}).Write()
-	err := proxmox.Session.ProxmoxHTTPRequest(
-		http.MethodDelete,
-		fmt.Sprintf("https://localhost:8008/plus/mount/%s/%s/%s", jobIdEnc, targetHostnameEnc, agentDriveEnc),
-		nil,
-		nil,
-	)
+	conn, err := net.DialTimeout("unix", constants.SocketPath, 5*time.Second)
 	if err != nil {
+		return
+	}
+	rpcClient := rpc.NewClient(conn)
+	defer rpcClient.Close()
+
+	if err := rpcClient.Call("MountRPCService.Cleanup", args, &reply); err != nil {
 		syslog.L.Error(err).WithFields(map[string]interface{}{"hostname": a.Hostname, "drive": a.Drive}).Write()
 	}
 }
