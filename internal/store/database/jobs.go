@@ -329,7 +329,9 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 
 		job, err := database.getJob(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
 		if err != nil || job == nil {
-			syslog.L.Error(err).WithField("id", job.ID).Write()
+			if job != nil {
+				syslog.L.Error(err).WithField("id", job.ID).Write()
+			}
 			continue
 		}
 
