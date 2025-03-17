@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/fs"
-	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 //go:embed all:views/custom
@@ -33,15 +33,15 @@ var jsReplacer = strings.NewReplacer(
 	"Proxmox.panel.LogView", "PBS.plusPanel.LogView",
 )
 
-// ComputeContentChecksum computes the SHA-256 checksum of data.
-func ComputeContentChecksum(data []byte) string {
+// computeChecksum computes the SHA-256 checksum of data.
+func computeChecksum(data []byte) string {
 	hasher := sha256.New()
 	hasher.Write(data)
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-// BackupFile creates a backup of targetPath and returns the backup file path.
-func BackupFile(targetPath string) (string, error) {
+// backupFile creates a backup of targetPath and returns the backup file path.
+func backupFile(targetPath string) (string, error) {
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create backup directory: %w", err)
 	}
@@ -58,8 +58,8 @@ func BackupFile(targetPath string) (string, error) {
 	return backupPath, nil
 }
 
-// RestoreBackup restores targetPath from backupPath.
-func RestoreBackup(targetPath, backupPath string) error {
+// restoreBackup restores targetPath from backupPath.
+func restoreBackup(targetPath, backupPath string) error {
 	content, err := os.ReadFile(backupPath)
 	if err != nil {
 		return fmt.Errorf("failed to read backup file: %w", err)
@@ -67,12 +67,12 @@ func RestoreBackup(targetPath, backupPath string) error {
 	if err := os.WriteFile(targetPath, content, 0644); err != nil {
 		return fmt.Errorf("failed to restore file: %w", err)
 	}
-	log.Printf("Restored original file %s from backup.", targetPath)
+	syslog.L.Info().WithMessage(fmt.Sprintf("Restored original file %s from backup.", targetPath)).Write()
 	return nil
 }
 
-// ReplaceFile writes newContent directly to targetPath.
-func ReplaceFile(targetPath string, newContent []byte) error {
+// replaceFile writes newContent directly to targetPath.
+func replaceFile(targetPath string, newContent []byte) error {
 	if err := os.WriteFile(targetPath, newContent, 0644); err != nil {
 		return fmt.Errorf("failed to write new content: %w", err)
 	}
@@ -116,7 +116,7 @@ func sortedWalk(embedded fs.FS, root string) ([][]byte, error) {
 func compileJS(embedded *embed.FS) []byte {
 	parts, err := sortedWalk(*embedded, ".")
 	if err != nil {
-		log.Printf("failed to walk embedded FS: %v", err)
+		syslog.L.Error(err).Write()
 		return nil
 	}
 	return bytes.Join(parts, []byte("\n"))
@@ -140,7 +140,7 @@ func ModifyLib(original []byte) []byte {
 // the backup if the program terminates. The file watcher’s event loop is enclosed in a goroutine.
 func WatchAndReplace(targetPath string, modifyFunc func([]byte) []byte) error {
 	// Create an initial backup.
-	backupPath, err := BackupFile(targetPath)
+	backupPath, err := backupFile(targetPath)
 	if err != nil {
 		return fmt.Errorf("backup error: %w", err)
 	}
@@ -150,11 +150,10 @@ func WatchAndReplace(targetPath string, modifyFunc func([]byte) []byte) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigChan
-		log.Printf("Termination signal (%v) received. Restoring backup for %s...", sig, targetPath)
-		if err := RestoreBackup(targetPath, backupPath); err != nil {
-			log.Printf("Error restoring backup: %v", err)
+		syslog.L.Info().WithMessage(fmt.Sprintf("Termination signal (%v) received. Restoring backup for %s...", sig, targetPath)).Write()
+		if err := restoreBackup(targetPath, backupPath); err != nil {
+			syslog.L.Error(err).Write()
 		}
-		os.Exit(0)
 	}()
 
 	// Read the current file.
@@ -164,17 +163,17 @@ func WatchAndReplace(targetPath string, modifyFunc func([]byte) []byte) error {
 	}
 
 	// Determine if an initial modification is needed.
-	origChecksum := ComputeContentChecksum(original)
+	origChecksum := computeChecksum(original)
 	modifiedContent := modifyFunc(original)
-	modChecksum := ComputeContentChecksum(modifiedContent)
+	modChecksum := computeChecksum(modifiedContent)
 
 	if origChecksum == modChecksum {
-		log.Printf("File %s is already modified; skipping initial modification.", targetPath)
+		syslog.L.Info().WithMessage(fmt.Sprintf("File %s is already modified; skipping initial modification.", targetPath)).Write()
 	} else {
-		if err := ReplaceFile(targetPath, modifiedContent); err != nil {
+		if err := replaceFile(targetPath, modifiedContent); err != nil {
 			return fmt.Errorf("failed to replace file: %w", err)
 		}
-		log.Printf("File %s modified initially.", targetPath)
+		syslog.L.Info().WithMessage(fmt.Sprintf("File %s modified initially.", targetPath)).Write()
 		origChecksum = modChecksum
 	}
 
@@ -187,7 +186,7 @@ func WatchAndReplace(targetPath string, modifyFunc func([]byte) []byte) error {
 	if err := watcher.Add(targetPath); err != nil {
 		return fmt.Errorf("failed to add file to watcher: %w", err)
 	}
-	log.Printf("Watching file: %s", targetPath)
+	syslog.L.Info().WithMessage(fmt.Sprintf("Watching file: %s", targetPath)).Write()
 
 	// Enclose the watcher event loop in a goroutine.
 	go func() {
@@ -195,43 +194,43 @@ func WatchAndReplace(targetPath string, modifyFunc func([]byte) []byte) error {
 			select {
 			case event, ok := <-watcher.Events:
 				if !ok {
-					log.Printf("Watcher events channel closed")
+					syslog.L.Info().WithMessage(fmt.Sprintf("Watcher events channel closed")).Write()
 					return
 				}
 				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-					log.Printf("Change detected on %s", targetPath)
+					syslog.L.Info().WithMessage(fmt.Sprintf("Change detected on %s", targetPath)).Write()
 					newData, err := os.ReadFile(targetPath)
 					if err != nil {
-						log.Printf("Error reading file: %v", err)
+						syslog.L.Error(err).Write()
 						continue
 					}
-					newChecksum := ComputeContentChecksum(newData)
+					newChecksum := computeChecksum(newData)
 					if newChecksum == origChecksum {
-						log.Printf("No effective change on %s, skipping.", targetPath)
+						syslog.L.Info().WithMessage(fmt.Sprintf("No effective change on %s, skipping.", targetPath)).Write()
 						continue
 					}
 
 					// Update backup.
-					if _, err := BackupFile(targetPath); err != nil {
-						log.Printf("Error backing up file: %v", err)
+					if _, err := backupFile(targetPath); err != nil {
+						syslog.L.Error(err).Write()
 					}
 
 					// Apply modification.
 					updatedModified := modifyFunc(newData)
-					newModChecksum := ComputeContentChecksum(updatedModified)
-					if err := ReplaceFile(targetPath, updatedModified); err != nil {
-						log.Printf("Error replacing file: %v", err)
+					newModChecksum := computeChecksum(updatedModified)
+					if err := replaceFile(targetPath, updatedModified); err != nil {
+						syslog.L.Error(err).Write()
 						continue
 					}
-					log.Printf("File %s updated.", targetPath)
+					syslog.L.Info().WithMessage(fmt.Sprintf("File %s updated.", targetPath)).Write()
 					origChecksum = newModChecksum
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
-					log.Printf("Watcher errors channel closed")
+					syslog.L.Info().WithMessage(fmt.Sprintf("Watcher errors channel closed")).Write()
 					return
 				}
-				log.Printf("Watcher error: %v", err)
+				syslog.L.Error(err).Write()
 			}
 		}
 	}()
