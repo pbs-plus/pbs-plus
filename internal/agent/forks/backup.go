@@ -113,32 +113,14 @@ func CmdBackup() {
 	go func() {
 		defer rpcSess.Close()
 		defer wg.Done()
-
-		syslog.L.Info().
-			WithMessage("connecting child arpc for backup job").
-			WithFields(map[string]interface{}{
-				"drive": *drive,
-				"jobId": *jobId,
-			}).Write()
-
 		if err := rpcSess.Serve(); err != nil {
 			// Handle RPC serve error if needed.
 			store, err := agent.NewBackupStore()
 			if err != nil {
-				syslog.L.Error(err).
-					WithMessage("error initializing backup store").
-					WithFields(map[string]interface{}{
-						"drive": *drive,
-						"jobId": *jobId,
-					}).Write()
+				fmt.Fprintf(os.Stderr, "error initializing backup store: %v", err)
 			} else {
 				if err := store.ClearAll(); err != nil {
-					syslog.L.Error(err).
-						WithMessage("error clearing backup store").
-						WithFields(map[string]interface{}{
-							"drive": *drive,
-							"jobId": *jobId,
-						}).Write()
+					fmt.Fprintf(os.Stderr, "error initializing clearing backup store: %v", err)
 				}
 			}
 		}
