@@ -27,6 +27,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/targets"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers/tokens"
 	mw "github.com/sonroyaalmerol/pbs-plus/internal/proxy/middlewares"
+	rpcmount "github.com/sonroyaalmerol/pbs-plus/internal/proxy/rpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
@@ -265,6 +266,23 @@ func main() {
 		syslog.L.Error(err).WithMessage("failed to recreate directory").Write()
 	}
 
+	rpcCtx, rpcCancel := context.WithCancel(context.Background())
+	defer rpcCancel()
+
+	go func() {
+		for {
+			select {
+			case <-rpcCtx.Done():
+				syslog.L.Error(rpcCtx.Err()).WithMessage("rpc server cancelled")
+				return
+			default:
+				if err := rpcmount.StartRPCServer(constants.MountSocketPath, storeInstance); err != nil {
+					syslog.L.Error(err).WithMessage("rpc server failed, restarting")
+				}
+			}
+		}
+	}()
+
 	mux := http.NewServeMux()
 
 	// API routes
@@ -291,9 +309,8 @@ func main() {
 	mux.HandleFunc("/api2/extjs/config/disk-backup-job", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, jobs.ExtJsJobHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance))))
 
-	// WebSocket-related routes
+	// aRPC route
 	mux.HandleFunc("/plus/arpc", mw.AgentOnly(storeInstance, arpc.ARPCHandler(storeInstance)))
-	mux.HandleFunc("/plus/mount/{jobid}/{target}/{drive}", mw.ServerOnly(storeInstance, plus.MountHandler(storeInstance)))
 
 	// Agent auth routes
 	mux.HandleFunc("/plus/agent/bootstrap", mw.CORS(storeInstance, agents.AgentBootstrapHandler(storeInstance)))
