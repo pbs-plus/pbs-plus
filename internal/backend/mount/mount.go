@@ -17,7 +17,6 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
 type AgentMount struct {
@@ -132,7 +131,7 @@ func (a *AgentMount) Unmount() {
 func (a *AgentMount) CloseMount() {
 	args := &rpcmount.CleanupArgs{
 		JobId:          a.JobId,
-		TargetHostname: utils.EncodePath(a.Hostname),
+		TargetHostname: a.Hostname,
 		Drive:          a.Drive,
 	}
 	var reply rpcmount.CleanupReply
