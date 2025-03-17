@@ -21,11 +21,18 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 		return fmt.Errorf("stream is nil")
 	}
 
+	var header [4]byte
+
+	// If nothing to send, write sentinel values.
 	if length == 0 || r == nil {
-		if err := binary.Write(stream, binary.LittleEndian, uint32(0)); err != nil {
+		// Write 0 as the sentinel chunk size.
+		binary.LittleEndian.PutUint32(header[:], 0)
+		if _, err := stream.Write(header[:]); err != nil {
 			return fmt.Errorf("failed to write sentinel: %w", err)
 		}
-		if err := binary.Write(stream, binary.LittleEndian, uint32(0)); err != nil {
+		// Write 0 as the final total.
+		binary.LittleEndian.PutUint32(header[:], 0)
+		if _, err := stream.Write(header[:]); err != nil {
 			return fmt.Errorf("failed to write final total: %w", err)
 		}
 		return nil
@@ -45,10 +52,13 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 			break
 		}
 
-		if err := binary.Write(stream, binary.LittleEndian, uint32(n)); err != nil {
+		// Write the chunk size header.
+		binary.LittleEndian.PutUint32(header[:], uint32(n))
+		if _, err := stream.Write(header[:]); err != nil {
 			return fmt.Errorf("failed to write chunk size: %w", err)
 		}
 
+		// Write the actual chunk data.
 		if _, err := stream.Write(buf[:n]); err != nil {
 			return fmt.Errorf("failed to write chunk data: %w", err)
 		}
@@ -56,10 +66,14 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 		totalRead += n
 	}
 
-	if err := binary.Write(stream, binary.LittleEndian, uint32(0)); err != nil {
+	// Write the sentinel
+	binary.LittleEndian.PutUint32(header[:], 0)
+	if _, err := stream.Write(header[:]); err != nil {
 		return fmt.Errorf("failed to write sentinel: %w", err)
 	}
-	if err := binary.Write(stream, binary.LittleEndian, uint32(totalRead)); err != nil {
+	// Write the final total.
+	binary.LittleEndian.PutUint32(header[:], uint32(totalRead))
+	if _, err := stream.Write(header[:]); err != nil {
 		return fmt.Errorf("failed to write final total: %w", err)
 	}
 
@@ -67,29 +81,41 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 }
 
 func ReceiveData(stream *smux.Stream, buffer []byte) (int, error) {
+	var header [4]byte
 	totalRead := 0
 
 	for {
-		var chunkSize uint32
-		if err := binary.Read(stream, binary.LittleEndian, &chunkSize); err != nil {
+		// Read the 4-byte chunk size header.
+		if _, err := io.ReadFull(stream, header[:]); err != nil {
 			return totalRead, fmt.Errorf("failed to read chunk size: %w", err)
 		}
+		chunkSize := binary.LittleEndian.Uint32(header[:])
 
+		// If header is zero, then finish.
 		if chunkSize == 0 {
-			var finalTotal uint32
-			if err := binary.Read(stream, binary.LittleEndian, &finalTotal); err != nil {
+			// Read the final total.
+			if _, err := io.ReadFull(stream, header[:]); err != nil {
 				return totalRead, fmt.Errorf("failed to read final total: %w", err)
 			}
+			finalTotal := binary.LittleEndian.Uint32(header[:])
 			if int(finalTotal) != totalRead {
-				return totalRead, fmt.Errorf("data length mismatch: expected %d, got %d", finalTotal, totalRead)
+				return totalRead, fmt.Errorf(
+					"data length mismatch: expected %d, got %d",
+					finalTotal, totalRead,
+				)
 			}
 			break
 		}
 
+		// Check buffer size to avoid overflow.
 		if totalRead+int(chunkSize) > len(buffer) {
-			return totalRead, fmt.Errorf("buffer overflow: need %d, have %d", totalRead+int(chunkSize), len(buffer))
+			return totalRead, fmt.Errorf(
+				"buffer overflow: need %d, have %d",
+				totalRead+int(chunkSize), len(buffer),
+			)
 		}
 
+		// Read the chunk data directly.
 		n, err := io.ReadFull(stream, buffer[totalRead:totalRead+int(chunkSize)])
 		if err != nil {
 			return totalRead, fmt.Errorf("failed to read chunk data: %w", err)
