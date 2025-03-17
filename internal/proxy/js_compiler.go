@@ -4,17 +4,20 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/fsnotify/fsnotify"
 )
 
 //go:embed all:views/custom
@@ -23,49 +26,81 @@ var customJsFS embed.FS
 //go:embed all:views/pre
 var preJsFS embed.FS
 
-const backupDirName = "pbs-plus-backups"
+const backupDir = "/var/lib/pbs-plus/backups"
 
 var jsReplacer = strings.NewReplacer(
 	"Proxmox.window.TaskViewer", "PBS.plusWindow.TaskViewer",
 	"Proxmox.panel.LogView", "PBS.plusPanel.LogView",
 )
 
-// sortedWalk performs a breadth-first traversal of the given FS starting at rootPath,
-// listing files grouped by directory depth and sorting entries alphabetically.
-func sortedWalk(embedded fs.FS, rootPath string) ([][]byte, error) {
-	var results [][]byte
+// ComputeContentChecksum computes the SHA-256 checksum of data.
+func ComputeContentChecksum(data []byte) string {
+	hasher := sha256.New()
+	hasher.Write(data)
+	return hex.EncodeToString(hasher.Sum(nil))
+}
 
-	// Queue holds directories to explore.
-	type entry struct {
-		path string
+// BackupFile creates a backup of targetPath and returns the backup file path.
+func BackupFile(targetPath string) (string, error) {
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create backup directory: %w", err)
 	}
-	queue := []entry{{path: rootPath}}
 
-	// While queue is not empty.
+	backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.backup", filepath.Base(targetPath)))
+	content, err := os.ReadFile(targetPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file for backup: %w", err)
+	}
+
+	if err := os.WriteFile(backupPath, content, 0644); err != nil {
+		return "", fmt.Errorf("failed to write backup: %w", err)
+	}
+	return backupPath, nil
+}
+
+// RestoreBackup restores targetPath from backupPath.
+func RestoreBackup(targetPath, backupPath string) error {
+	content, err := os.ReadFile(backupPath)
+	if err != nil {
+		return fmt.Errorf("failed to read backup file: %w", err)
+	}
+	if err := os.WriteFile(targetPath, content, 0644); err != nil {
+		return fmt.Errorf("failed to restore file: %w", err)
+	}
+	log.Printf("Restored original file %s from backup.", targetPath)
+	return nil
+}
+
+// ReplaceFile writes newContent directly to targetPath.
+func ReplaceFile(targetPath string, newContent []byte) error {
+	if err := os.WriteFile(targetPath, newContent, 0644); err != nil {
+		return fmt.Errorf("failed to write new content: %w", err)
+	}
+	return nil
+}
+
+// sortedWalk returns the contents of all files in an embedded FS, sorted alphabetically.
+func sortedWalk(embedded fs.FS, root string) ([][]byte, error) {
+	var results [][]byte
+	var queue []string
+	queue = append(queue, root)
+
 	for len(queue) > 0 {
-		// Pop the first directory.
 		cur := queue[0]
 		queue = queue[1:]
-
-		// Read and sort directory entries.
-		entries, err := fs.ReadDir(embedded, cur.path)
+		entries, err := fs.ReadDir(embedded, cur)
 		if err != nil {
 			return nil, err
 		}
-
-		// Sort entries by Name.
 		sort.Slice(entries, func(i, j int) bool {
 			return entries[i].Name() < entries[j].Name()
 		})
-
-		// Process files first then add directories to the queue.
-		for _, e := range entries {
-			// Build the complete path.
-			entryPath := filepath.Join(cur.path, e.Name())
-			if e.IsDir() {
-				queue = append(queue, entry{path: entryPath})
+		for _, entry := range entries {
+			path := filepath.Join(cur, entry.Name())
+			if entry.IsDir() {
+				queue = append(queue, path)
 			} else {
-				data, err := fs.ReadFile(embedded, entryPath)
+				data, err := fs.ReadFile(embedded, path)
 				if err != nil {
 					return nil, err
 				}
@@ -73,117 +108,133 @@ func sortedWalk(embedded fs.FS, rootPath string) ([][]byte, error) {
 			}
 		}
 	}
-
 	return results, nil
 }
 
-// compileJS walks the embedded FS in breadth-first, alphanumerical order (shallow files
-// first) and concatenates all files with newline separators.
+// compileJS concatenates all JavaScript files found in the embedded FS (alphabetically),
+// / joining them with newline characters.
 func compileJS(embedded *embed.FS) []byte {
-	parts, err := sortedWalk(embedded, ".")
+	parts, err := sortedWalk(*embedded, ".")
 	if err != nil {
-		log.Println("failed to walk embed FS:", err)
+		log.Printf("failed to walk embedded FS: %v", err)
 		return nil
 	}
 	return bytes.Join(parts, []byte("\n"))
 }
 
-// mountWithBackup performs a backup of the original file and then bind mounts the new
-// content over the target. It writes a temporary file in the backup directory.
-func mountWithBackup(targetPath string, newContent, original []byte) error {
-	// Unmount if something is already mounted.
-	if utils.IsMounted(targetPath) {
-		if err := syscall.Unmount(targetPath, 0); err != nil {
-			return fmt.Errorf("failed to unmount existing file: %w", err)
-		}
-	}
-
-	// Create backup directory.
-	backupDir := filepath.Join(os.TempDir(), backupDirName)
-	if err := os.MkdirAll(backupDir, 0755); err != nil {
-		return fmt.Errorf("failed to create backup directory: %w", err)
-	}
-
-	// Create backup file name (could add timestamp for uniqueness if desired).
-	backupPath := filepath.Join(backupDir,
-		fmt.Sprintf("%s.backup", filepath.Base(targetPath)))
-
-	// Backup the original file.
-	if err := os.WriteFile(backupPath, original, 0644); err != nil {
-		return fmt.Errorf("failed to create backup: %w", err)
-	}
-
-	// Write the new content to a temporary file (this is the file we bind mount).
-	tempFile := filepath.Join(backupDir, filepath.Base(targetPath))
-	if err := os.WriteFile(tempFile, newContent, 0644); err != nil {
-		return fmt.Errorf("failed to write new content: %w", err)
-	}
-
-	// Bind mount the temporary file over the target.
-	if err := syscall.Mount(tempFile, targetPath, "", syscall.MS_BIND, ""); err != nil {
-		return fmt.Errorf("failed to mount file: %w", err)
-	}
-
-	return nil
-}
-
-// MountCompiledJS reads the original file, applies custom mappings, concatenates pre,
-// modified original, and custom JS, then bind mounts the new file.
-func MountCompiledJS(targetPath string) (func(), error) {
-	// Read the original file.
-	original, err := os.ReadFile(targetPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read original file: %w", err)
-	}
-
-	// Apply the custom mapping in one pass using strings.Replacer.
-	modified := []byte(jsReplacer.Replace(string(original)))
-
+func ModifyJS(original []byte) []byte {
+	replaced := []byte(jsReplacer.Replace(string(original)))
 	preJS := compileJS(&preJsFS)
 	compiledJS := compileJS(&customJsFS)
-
-	// Concatenate preJS, modified original, and compiledJS with newlines.
-	newContent := bytes.Join([][]byte{preJS, modified, compiledJS}, []byte("\n"))
-
-	return func() {
-		unmountModdedFile(targetPath)
-	}, mountWithBackup(targetPath, newContent, original)
+	return bytes.Join([][]byte{preJS, replaced, compiledJS}, []byte("\n"))
 }
 
-// MountModdedProxmoxLib makes a simple text replacement (without custom mapping) in the
-// original file and then bind mounts the modified file.
-func MountModdedProxmoxLib(targetPath string) (func(), error) {
-	original, err := os.ReadFile(targetPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read original file: %w", err)
-	}
-
+func ModifyLib(original []byte) []byte {
 	oldString := `if (!newopts.url.match(/^\/api2/))`
 	newString := `if (!newopts.url.match(/^\/api2/) && !newopts.url.match(/^[a-z][a-z\d+\-.]*:/i))`
 	newContent := strings.Replace(string(original), oldString, newString, 1)
-
-	return func() {
-		unmountModdedFile(targetPath)
-	}, mountWithBackup(targetPath, []byte(newContent), original)
+	return []byte(newContent)
 }
 
-// UnmountModdedFile unmounts the file and, if a backup exists, restores the original.
-func unmountModdedFile(targetPath string) {
-	if err := syscall.Unmount(targetPath, 0); err != nil {
-		log.Printf("failed to unmount file: %v", err)
-		return
+// WatchAndReplace watches targetPath for changes, applies modifications (if needed), and restores
+// the backup if the program terminates. The file watcher’s event loop is enclosed in a goroutine.
+func WatchAndReplace(targetPath string, modifyFunc func([]byte) []byte) error {
+	// Create an initial backup.
+	backupPath, err := BackupFile(targetPath)
+	if err != nil {
+		return fmt.Errorf("backup error: %w", err)
 	}
 
-	backupDir := filepath.Join(os.TempDir(), backupDirName)
-	backupPath := filepath.Join(backupDir,
-		fmt.Sprintf("%s.backup", filepath.Base(targetPath)))
-
-	if backup, err := os.ReadFile(backupPath); err == nil {
-		if err := os.WriteFile(targetPath, backup, 0644); err != nil {
-			log.Printf("failed to restore backup: %v", err)
-			return
+	// Set up a signal handler to restore the backup upon termination.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		log.Printf("Termination signal (%v) received. Restoring backup for %s...", sig, targetPath)
+		if err := RestoreBackup(targetPath, backupPath); err != nil {
+			log.Printf("Error restoring backup: %v", err)
 		}
-		// Clean up the backup directory.
-		os.RemoveAll(backupDir)
+		os.Exit(0)
+	}()
+
+	// Read the current file.
+	original, err := os.ReadFile(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
 	}
+
+	// Determine if an initial modification is needed.
+	origChecksum := ComputeContentChecksum(original)
+	modifiedContent := modifyFunc(original)
+	modChecksum := ComputeContentChecksum(modifiedContent)
+
+	if origChecksum == modChecksum {
+		log.Printf("File %s is already modified; skipping initial modification.", targetPath)
+	} else {
+		if err := ReplaceFile(targetPath, modifiedContent); err != nil {
+			return fmt.Errorf("failed to replace file: %w", err)
+		}
+		log.Printf("File %s modified initially.", targetPath)
+		origChecksum = modChecksum
+	}
+
+	// Create a file watcher.
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to create watcher: %w", err)
+	}
+
+	if err := watcher.Add(targetPath); err != nil {
+		return fmt.Errorf("failed to add file to watcher: %w", err)
+	}
+	log.Printf("Watching file: %s", targetPath)
+
+	// Enclose the watcher event loop in a goroutine.
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					log.Printf("Watcher events channel closed")
+					return
+				}
+				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+					log.Printf("Change detected on %s", targetPath)
+					newData, err := os.ReadFile(targetPath)
+					if err != nil {
+						log.Printf("Error reading file: %v", err)
+						continue
+					}
+					newChecksum := ComputeContentChecksum(newData)
+					if newChecksum == origChecksum {
+						log.Printf("No effective change on %s, skipping.", targetPath)
+						continue
+					}
+
+					// Update backup.
+					if _, err := BackupFile(targetPath); err != nil {
+						log.Printf("Error backing up file: %v", err)
+					}
+
+					// Apply modification.
+					updatedModified := modifyFunc(newData)
+					newModChecksum := ComputeContentChecksum(updatedModified)
+					if err := ReplaceFile(targetPath, updatedModified); err != nil {
+						log.Printf("Error replacing file: %v", err)
+						continue
+					}
+					log.Printf("File %s updated.", targetPath)
+					origChecksum = newModChecksum
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					log.Printf("Watcher errors channel closed")
+					return
+				}
+				log.Printf("Watcher error: %v", err)
+			}
+		}
+	}()
+
+	return nil
 }
