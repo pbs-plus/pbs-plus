@@ -62,7 +62,6 @@ func Mount(storeInstance *store.Store, job *types.Job, target *types.Target) (*A
 		JobId:          job.ID,
 		TargetHostname: targetHostname,
 		Drive:          agentDrive,
-		SourceMode:     job.SourceMode,
 	}
 	var reply rpcmount.BackupReply
 
