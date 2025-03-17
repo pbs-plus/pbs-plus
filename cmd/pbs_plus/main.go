@@ -123,20 +123,17 @@ func main() {
 	}
 
 	pbsJsLocation := "/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js"
-	unmountJs, err := proxy.MountCompiledJS(pbsJsLocation)
-	if err != nil {
+	proxmoxLibLocation := "/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js"
+
+	if err := proxy.WatchAndReplace(pbsJsLocation, proxy.ModifyJS); err != nil {
 		syslog.L.Error(err).WithMessage("failed to mount modified proxmox-backup-gui.js").Write()
 		return
 	}
-	defer unmountJs()
 
-	proxmoxLibLocation := "/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js"
-	unmountLib, err := proxy.MountModdedProxmoxLib(proxmoxLibLocation)
-	if err != nil {
+	if err := proxy.WatchAndReplace(proxmoxLibLocation, proxy.ModifyLib); err != nil {
 		syslog.L.Error(err).WithMessage("failed to mount modified proxmoxlib.js").Write()
 		return
 	}
-	defer unmountLib()
 
 	certOpts := certificates.DefaultOptions()
 	generator, err := certificates.NewGenerator(certOpts)
