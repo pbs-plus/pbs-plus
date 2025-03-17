@@ -67,7 +67,7 @@ func Mount(storeInstance *store.Store, job *types.Job, target *types.Target) (*A
 	var reply rpcmount.BackupReply
 
 	for i := 0; i < maxRetries; i++ {
-		conn, err := net.DialTimeout("unix", constants.SocketPath, 5*time.Second)
+		conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to dial RPC server: %w", err)
 		} else {
@@ -136,7 +136,7 @@ func (a *AgentMount) CloseMount() {
 	}
 	var reply rpcmount.CleanupReply
 
-	conn, err := net.DialTimeout("unix", constants.SocketPath, 5*time.Second)
+	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
 	if err != nil {
 		return
 	}
