@@ -5,6 +5,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/system"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -100,6 +102,12 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				err = storeInstance.Database.UpdateJob(*latestJob)
 				if err != nil {
 					syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
+				}
+			}
+
+			if !errors.Is(err, backup.ErrOneInstance) {
+				if err := system.SetRetrySchedule(job); err != nil {
+					syslog.L.Error(err).WithField("jobId", job.ID).Write()
 				}
 			}
 

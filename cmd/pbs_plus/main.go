@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -31,6 +32,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/system"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
@@ -117,6 +119,7 @@ func main() {
 		op, err := backup.RunBackup(ctx, jobTask, storeInstance, true)
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
+
 			if task, err := proxmox.GenerateTaskErrorFile(jobTask, err, []string{"Error handling from a scheduled job run request", "Job ID: " + jobTask.ID, "Source Mode: " + jobTask.SourceMode}); err != nil {
 				syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
 			} else {
@@ -133,6 +136,12 @@ func main() {
 				err = storeInstance.Database.UpdateJob(*latestJob)
 				if err != nil {
 					syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
+				}
+			}
+
+			if !errors.Is(err, backup.ErrOneInstance) {
+				if err := system.SetRetrySchedule(jobTask); err != nil {
+					syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
 				}
 			}
 		}
