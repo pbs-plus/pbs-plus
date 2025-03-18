@@ -15,7 +15,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func generateTimer(job *types.Job) error {
+func generateTimer(job types.Job) error {
 	if strings.Contains(job.ID, "/") || strings.Contains(job.ID, "\\") || strings.Contains(job.ID, "..") {
 		return fmt.Errorf("generateTimer: invalid job ID -> %s", job.ID)
 	}
@@ -48,7 +48,7 @@ WantedBy=timers.target`, job.ID, job.Schedule)
 	return nil
 }
 
-func generateService(job *types.Job) error {
+func generateService(job types.Job) error {
 	if strings.Contains(job.ID, "/") || strings.Contains(job.ID, "\\") || strings.Contains(job.ID, "..") {
 		return fmt.Errorf("generateService: invalid job ID -> %s", job.ID)
 	}
@@ -122,7 +122,7 @@ type TimerInfo struct {
 	Activates string
 }
 
-func GetNextSchedule(job *types.Job) (*time.Time, error) {
+func GetNextSchedule(job types.Job) (*time.Time, error) {
 	cmd := exec.Command("systemctl", "list-timers", "--all")
 	cmd.Env = os.Environ()
 
@@ -200,12 +200,12 @@ func SetSchedule(job types.Job) error {
 		_ = os.RemoveAll(fullSvcPath)
 		_ = os.RemoveAll(fullTimerPath)
 	} else {
-		err := generateService(&job)
+		err := generateService(job)
 		if err != nil {
 			return fmt.Errorf("SetSchedule: error generating service -> %w", err)
 		}
 
-		err = generateTimer(&job)
+		err = generateTimer(job)
 		if err != nil {
 			return fmt.Errorf("SetSchedule: error generating timer -> %v", err)
 		}

@@ -53,22 +53,22 @@ func (database *Database) CreateToken(comment string) error {
 	return nil
 }
 
-func (database *Database) GetToken(token string) (*types.AgentToken, error) {
+func (database *Database) GetToken(token string) (types.AgentToken, error) {
 	configPath := filepath.Join(database.paths["tokens"], utils.EncodePath(token)+".cfg")
 	configData, err := database.tokensConfig.Parse(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return types.AgentToken{}, err
 		}
-		return nil, fmt.Errorf("GetToken: error reading config: %w", err)
+		return types.AgentToken{}, fmt.Errorf("GetToken: error reading config: %w", err)
 	}
 
 	section, exists := configData.Sections[token]
 	if !exists {
-		return nil, fmt.Errorf("GetToken: section %s does not exist", token)
+		return types.AgentToken{}, fmt.Errorf("GetToken: section %s does not exist", token)
 	}
 
-	tokenProp := &section.Properties
+	tokenProp := section.Properties
 	revoked := tokenProp.Revoked
 
 	// Double-check token validity
@@ -94,18 +94,18 @@ func (database *Database) GetAllTokens() ([]types.AgentToken, error) {
 		}
 
 		token, err := database.GetToken(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
-		if err != nil || token == nil {
+		if err != nil {
 			syslog.L.Error(err).WithField("id", file.Name())
 			continue
 		}
 
-		tokens = append(tokens, *token)
+		tokens = append(tokens, token)
 	}
 
 	return tokens, nil
 }
 
-func (database *Database) RevokeToken(token *types.AgentToken) error {
+func (database *Database) RevokeToken(token types.AgentToken) error {
 	if token.Revoked {
 		return nil
 	}
@@ -117,7 +117,7 @@ func (database *Database) RevokeToken(token *types.AgentToken) error {
 			token.Token: {
 				Type:       "token",
 				ID:         token.Token,
-				Properties: *token,
+				Properties: token,
 			},
 		},
 		Order: []string{token.Token},

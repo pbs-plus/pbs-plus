@@ -156,7 +156,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		existingTarget, err := storeInstance.Database.GetTarget(reqParsed.Hostname + " - C")
-		if err != nil || existingTarget == nil {
+		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			controllers.WriteErrorResponse(w, err)
 			return

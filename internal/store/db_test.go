@@ -129,9 +129,8 @@ func TestJobCRUD(t *testing.T) {
 		err = store.Database.DeleteJob(job.ID)
 		assert.NoError(t, err)
 
-		deletedJob, err := store.Database.GetJob(job.ID)
-		assert.NoError(t, err)
-		assert.Nil(t, deletedJob)
+		_, err = store.Database.GetJob(job.ID)
+		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
 	t.Run("Concurrent Operations", func(t *testing.T) {

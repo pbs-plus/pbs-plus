@@ -130,10 +130,10 @@ func main() {
 				}
 
 				latestJob.LastRunUpid = task.UPID
-				latestJob.LastRunState = &task.Status
-				latestJob.LastRunEndtime = &task.EndTime
+				latestJob.LastRunState = task.Status
+				latestJob.LastRunEndtime = task.EndTime
 
-				err = storeInstance.Database.UpdateJob(*latestJob)
+				err = storeInstance.Database.UpdateJob(latestJob)
 				if err != nil {
 					syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
 				}

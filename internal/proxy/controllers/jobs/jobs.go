@@ -96,10 +96,10 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 
 				latestJob.LastRunUpid = task.UPID
-				latestJob.LastRunState = &task.Status
-				latestJob.LastRunEndtime = &task.EndTime
+				latestJob.LastRunState = task.Status
+				latestJob.LastRunEndtime = task.EndTime
 
-				err = storeInstance.Database.UpdateJob(*latestJob)
+				err = storeInstance.Database.UpdateJob(latestJob)
 				if err != nil {
 					syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
 				}
@@ -297,7 +297,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.Database.UpdateJob(*job)
+			err = storeInstance.Database.UpdateJob(job)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

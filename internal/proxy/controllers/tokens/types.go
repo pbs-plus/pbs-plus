@@ -14,7 +14,7 @@ type TokensResponse struct {
 type TokenConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    *types.AgentToken `json:"data"`
+	Data    types.AgentToken  `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }
