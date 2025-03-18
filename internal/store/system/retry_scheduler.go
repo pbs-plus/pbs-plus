@@ -173,8 +173,8 @@ func SetRetrySchedule(job types.Job) error {
 		}
 	}
 
-	// Compute the new retry time (5 minutes from now).
-	retryTime := time.Now().Add(5 * time.Minute)
+	// Compute the new retry time
+	retryTime := time.Now().Add(time.Duration(job.RetryInterval) * time.Minute)
 	layout := "Mon 2006-01-02 15:04:05 MST"
 	retrySchedule := retryTime.Format(layout)
 
