@@ -92,8 +92,7 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 	authId := Session.APIToken.TokenId
 
 	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
-	backupId := fmt.Sprintf("%s:host-%s", job.Store, targetName)
-
+	backupId := fmt.Sprintf("%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 	hostname, err := os.Hostname()
 	if err != nil {
