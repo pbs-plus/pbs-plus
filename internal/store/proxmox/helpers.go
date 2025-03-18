@@ -1,17 +1,23 @@
+//go:build linux
+
 package proxmox
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
@@ -76,6 +82,97 @@ func ParseUPID(upid string) (*Task, error) {
 	}
 
 	return task, nil
+}
+
+func GenerateTaskErrorFile(job *types.Job, pbsError error, additionalData []string) (*Task, error) {
+	if Session.APIToken == nil {
+		return nil, errors.New("session api token is missing")
+	}
+
+	authId := Session.APIToken.TokenId
+
+	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
+	backupId := fmt.Sprintf("%s:host-%s", job.Store, targetName)
+
+	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostnameBytes, err := os.ReadFile("/etc/hostname")
+		if err != nil {
+			hostname = "localhost"
+		}
+		hostname = strings.TrimSpace(string(hostnameBytes))
+	}
+
+	wtype := "backup"
+	wid := encodeToHexEscapes(backupId)
+	node := encodeToHexEscapes(hostname)
+
+	task := Task{
+		Node:       node,
+		PID:        int(rand.Uint32()),
+		PStart:     int(rand.Uint32()),
+		StartTime:  time.Now().Unix(),
+		WorkerType: wtype,
+		WID:        wid,
+		User:       authId,
+	}
+
+	pid := fmt.Sprintf("%08X", task.PID)
+	pstart := fmt.Sprintf("%08X", task.PStart)
+	taskID := fmt.Sprintf("%08X", rand.Uint32())
+
+	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, authId)
+
+	task.UPID = upid
+
+	path, err := GetLogPath(upid)
+	if err != nil {
+		return nil, err
+	}
+
+	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	file, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return nil, err
+	}
+
+	err = file.Chown(34, 34)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	timestamp := time.Now().Format(time.RFC3339)
+
+	for _, data := range additionalData {
+		dataLine := fmt.Sprintf("%s: %s\n", timestamp, data)
+		if _, err := file.WriteString(dataLine); err != nil {
+			return nil, fmt.Errorf("failed to write additional data line: %w", err)
+		}
+	}
+
+	errorLine := fmt.Sprintf("%s: TASK ERROR: %s\n", timestamp, pbsError.Error())
+	if _, err := file.WriteString(errorLine); err != nil {
+		return nil, fmt.Errorf("failed to write error line: %w", err)
+	}
+
+	archive, err := os.OpenFile(filepath.Join(constants.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file archive: %w", err)
+	}
+	defer archive.Close()
+
+	archiveLine := fmt.Sprintf("\n%s %s %s", upid, startTime, pbsError.Error())
+	if _, err := archive.WriteString(archiveLine); err != nil {
+		return nil, fmt.Errorf("failed to write archive line: %w", err)
+	}
+
+	task.Status = "stopped"
+	task.ExitStatus = pbsError.Error()
+	task.EndTime = time.Now().Unix()
+
+	return &task, nil
 }
 
 func IsUPIDRunning(upid string) bool {
