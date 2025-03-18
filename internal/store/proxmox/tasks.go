@@ -106,13 +106,6 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 
 	searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
 
-	task, err := scanDirectory(tasksParentPath, searchString)
-	if err == nil {
-		return task, nil
-	} else if !os.IsNotExist(err) {
-		return Task{}, err
-	}
-
 	syslog.L.Info().WithMessage("ready to start backup").Write()
 	close(readyChan)
 
