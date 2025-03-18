@@ -120,26 +120,25 @@ func main() {
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
 
-			if task, err := proxmox.GenerateTaskErrorFile(jobTask, err, []string{"Error handling from a scheduled job run request", "Job ID: " + jobTask.ID, "Source Mode: " + jobTask.SourceMode}); err != nil {
-				syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
-			} else {
-				// Update job status
-				latestJob, err := storeInstance.Database.GetJob(jobTask.ID)
-				if err != nil {
-					latestJob = jobTask
-				}
-
-				latestJob.LastRunUpid = task.UPID
-				latestJob.LastRunState = task.Status
-				latestJob.LastRunEndtime = task.EndTime
-
-				err = storeInstance.Database.UpdateJob(latestJob)
-				if err != nil {
-					syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
-				}
-			}
-
 			if !errors.Is(err, backup.ErrOneInstance) {
+				if task, err := proxmox.GenerateTaskErrorFile(jobTask, err, []string{"Error handling from a scheduled job run request", "Job ID: " + jobTask.ID, "Source Mode: " + jobTask.SourceMode}); err != nil {
+					syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
+				} else {
+					// Update job status
+					latestJob, err := storeInstance.Database.GetJob(jobTask.ID)
+					if err != nil {
+						latestJob = jobTask
+					}
+
+					latestJob.LastRunUpid = task.UPID
+					latestJob.LastRunState = task.Status
+					latestJob.LastRunEndtime = task.EndTime
+
+					err = storeInstance.Database.UpdateJob(latestJob)
+					if err != nil {
+						syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
+					}
+				}
 				if err := system.SetRetrySchedule(jobTask); err != nil {
 					syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
 				}
