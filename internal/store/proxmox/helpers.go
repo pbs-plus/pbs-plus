@@ -168,6 +168,8 @@ func GenerateTaskErrorFile(job *types.Job, pbsError error, additionalData []stri
 		return nil, fmt.Errorf("failed to write archive line: %w", err)
 	}
 
+	task.Status = "stopped"
+	task.ExitStatus = pbsError.Error()
 	task.EndTime = time.Now().Unix()
 
 	return &task, nil
