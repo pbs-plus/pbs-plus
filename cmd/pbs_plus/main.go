@@ -117,8 +117,23 @@ func main() {
 		op, err := backup.RunBackup(ctx, jobTask, storeInstance, true)
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
-			if err := proxmox.GenerateTaskErrorFile(storeInstance, jobTask, err, []string{"Error handling from a scheduled job run request", "Job ID: " + jobTask.ID, "Source Mode: " + jobTask.SourceMode}); err != nil {
+			if task, err := proxmox.GenerateTaskErrorFile(jobTask, err, []string{"Error handling from a scheduled job run request", "Job ID: " + jobTask.ID, "Source Mode: " + jobTask.SourceMode}); err != nil {
 				syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
+			} else {
+				// Update job status
+				latestJob, err := storeInstance.Database.GetJob(jobTask.ID)
+				if err != nil {
+					latestJob = jobTask
+				}
+
+				latestJob.LastRunUpid = task.UPID
+				latestJob.LastRunState = &task.Status
+				latestJob.LastRunEndtime = &task.EndTime
+
+				err = storeInstance.Database.UpdateJob(*latestJob)
+				if err != nil {
+					syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
+				}
 			}
 		}
 		if waitErr := op.Wait(); waitErr != nil {
