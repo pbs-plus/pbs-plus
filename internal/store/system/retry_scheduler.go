@@ -146,6 +146,7 @@ func SetRetrySchedule(job types.Job) error {
 	if newAttempt > maxRetry {
 		fmt.Printf("Job %s reached max retry count (%d). No further retry scheduled.\n",
 			job.ID, maxRetry)
+		RemoveAllRetrySchedules(job)
 		return nil
 	}
 
