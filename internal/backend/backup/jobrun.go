@@ -294,7 +294,7 @@ func RunBackup(
 
 		_ = clientLogFile.Close()
 
-		succeeded, err := processPBSProxyLogs(task.UPID, clientLogPath)
+		succeeded, cancelled, err := processPBSProxyLogs(task.UPID, clientLogPath)
 		if err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed to process logs").
@@ -308,7 +308,7 @@ func RunBackup(
 				Write()
 		}
 
-		if succeeded {
+		if succeeded || cancelled {
 			system.RemoveAllRetrySchedules(job)
 		} else {
 			if err := system.SetRetrySchedule(job); err != nil {

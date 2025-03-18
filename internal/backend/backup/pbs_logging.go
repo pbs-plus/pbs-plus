@@ -35,24 +35,24 @@ func isJunkLog(line string) bool {
 	return false
 }
 
-func processPBSProxyLogs(upid, clientLogPath string) (bool, error) {
+func processPBSProxyLogs(upid, clientLogPath string) (bool, bool, error) {
 	logFilePath := utils.GetTaskLogPath(upid)
 	inFile, err := os.Open(logFilePath)
 	if err != nil {
-		return false, fmt.Errorf("opening input log file: %w", err)
+		return false, false, fmt.Errorf("opening input log file: %w", err)
 	}
 	defer inFile.Close()
 
 	// Retrieve original file's metadata (permissions, ownership, and timestamps)
 	info, err := inFile.Stat()
 	if err != nil {
-		return false, fmt.Errorf("getting stat of file %s: %w", logFilePath, err)
+		return false, false, fmt.Errorf("getting stat of file %s: %w", logFilePath, err)
 	}
 	origMode := info.Mode()
 	origModTime := info.ModTime()
 	statT, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return false, fmt.Errorf("failed to retrieve underlying stat for file %s", logFilePath)
+		return false, false, fmt.Errorf("failed to retrieve underlying stat for file %s", logFilePath)
 	}
 	origUid := int(statT.Uid)
 	origGid := int(statT.Gid)
@@ -62,7 +62,7 @@ func processPBSProxyLogs(upid, clientLogPath string) (bool, error) {
 	dir := filepath.Dir(logFilePath)
 	tmpFile, err := os.CreateTemp(dir, "processed_*.tmp")
 	if err != nil {
-		return false, fmt.Errorf("creating temporary file: %w", err)
+		return false, false, fmt.Errorf("creating temporary file: %w", err)
 	}
 	tmpName := tmpFile.Name()
 	defer func() {
@@ -86,18 +86,18 @@ func processPBSProxyLogs(upid, clientLogPath string) (bool, error) {
 			continue // Skip junk lines
 		}
 		if _, err := tmpWriter.WriteString(line + "\n"); err != nil {
-			return false, fmt.Errorf("writing to temporary file: %w", err)
+			return false, false, fmt.Errorf("writing to temporary file: %w", err)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return false, fmt.Errorf("scanning input file: %w", err)
+		return false, false, fmt.Errorf("scanning input file: %w", err)
 	}
 
 	// Write header for proxmox backup client logs
 	if _, err := tmpWriter.WriteString(
 		"--- proxmox-backup-client log starts here ---\n",
 	); err != nil {
-		return false, fmt.Errorf("failed to write log header: %w", err)
+		return false, false, fmt.Errorf("failed to write log header: %w", err)
 	}
 
 	// Process output files and analyze for status info
@@ -147,10 +147,11 @@ func processPBSProxyLogs(upid, clientLogPath string) (bool, error) {
 
 	// Process stdout and stderr
 	if err := processLogFile(clientLogPath); err != nil {
-		return false, err
+		return false, false, err
 	}
 
 	succeeded := false
+	cancelled := false
 
 	// Build and write final status line
 	var sb strings.Builder
@@ -160,6 +161,7 @@ func processPBSProxyLogs(upid, clientLogPath string) (bool, error) {
 		sb.WriteString(errorString)
 	} else if incomplete && disconnected {
 		sb.WriteString(": TASK ERROR: Job cancelled")
+		cancelled = true
 	} else {
 		sb.WriteString(": TASK OK")
 		succeeded = true
@@ -167,34 +169,34 @@ func processPBSProxyLogs(upid, clientLogPath string) (bool, error) {
 	sb.WriteString("\n")
 
 	if _, err := tmpWriter.WriteString(sb.String()); err != nil {
-		return false, fmt.Errorf("failed to write final status: %w", err)
+		return false, false, fmt.Errorf("failed to write final status: %w", err)
 	}
 
 	if err := tmpWriter.Flush(); err != nil {
-		return false, fmt.Errorf("failed to flush temporary writer: %w", err)
+		return false, false, fmt.Errorf("failed to flush temporary writer: %w", err)
 	}
 
 	// Close the temp file before renaming
 	if err := tmpFile.Close(); err != nil {
-		return false, fmt.Errorf("closing temporary file: %w", err)
+		return false, false, fmt.Errorf("closing temporary file: %w", err)
 	}
 	tmpFile = nil // Prevent cleanup in deferred function
 
 	// Ensure the temporary file has the same permissions, ownership, and timestamps
 	if err := os.Chmod(tmpName, origMode); err != nil {
-		return false, fmt.Errorf("setting permissions on temporary file: %w", err)
+		return false, false, fmt.Errorf("setting permissions on temporary file: %w", err)
 	}
 	if err := os.Chown(tmpName, origUid, origGid); err != nil {
-		return false, fmt.Errorf("setting ownership on temporary file: %w", err)
+		return false, false, fmt.Errorf("setting ownership on temporary file: %w", err)
 	}
 	if err := os.Chtimes(tmpName, origAccessTime, origModTime); err != nil {
-		return false, fmt.Errorf("setting timestamps on temporary file: %w", err)
+		return false, false, fmt.Errorf("setting timestamps on temporary file: %w", err)
 	}
 
 	// Replace the original log file with the processed temporary file.
 	if err := os.Rename(tmpName, logFilePath); err != nil {
-		return false, fmt.Errorf("replacing original file: %w", err)
+		return false, false, fmt.Errorf("replacing original file: %w", err)
 	}
 
-	return succeeded, nil
+	return succeeded, cancelled, nil
 }
