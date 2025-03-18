@@ -81,6 +81,39 @@ ExecStart=/usr/bin/pbs-plus -job="%s"`, job.ID, attempt, job.ID)
 	return nil
 }
 
+func RemoveAllRetrySchedules(job *types.Job) {
+	retryPattern := filepath.Join(
+		constants.TimerBasePath,
+		fmt.Sprintf("pbs-plus-job-%s-retry-*.timer",
+			strings.ReplaceAll(job.ID, " ", "-")),
+	)
+	retryFiles, err := filepath.Glob(retryPattern)
+	if err == nil {
+		for _, file := range retryFiles {
+			cmd := exec.Command("/usr/bin/systemctl", "disable", "--now", file)
+			cmd.Env = os.Environ()
+			_ = cmd.Run()
+			_ = os.Remove(file)
+		}
+	}
+
+	svcRetryPattern := filepath.Join(
+		constants.TimerBasePath,
+		fmt.Sprintf("pbs-plus-job-%s-retry-*.service",
+			strings.ReplaceAll(job.ID, " ", "-")),
+	)
+	svcRetryFiles, err := filepath.Glob(svcRetryPattern)
+	if err == nil {
+		for _, svcFile := range svcRetryFiles {
+			_ = os.Remove(svcFile)
+		}
+	}
+
+	cmd := exec.Command("/usr/bin/systemctl", "daemon-reload")
+	cmd.Env = os.Environ()
+	_ = cmd.Run()
+}
+
 func SetRetrySchedule(job *types.Job) error {
 	maxRetry := job.Retry
 	retryPattern := filepath.Join(
