@@ -7,11 +7,18 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
 	binarystream "github.com/sonroyaalmerol/pbs-plus/internal/arpc/binary"
 )
+
+var headerPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 4)
+	},
+}
 
 // Call initiates a request/response conversation on a new stream.
 func (s *Session) Call(method string, payload arpcdata.Encodable) (Response, error) {
@@ -69,7 +76,9 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 		return Response{}, fmt.Errorf("failed to write request: %w", err)
 	}
 
-	prefix := make([]byte, 4)
+	prefix := headerPool.Get().([]byte)
+	defer headerPool.Put(prefix)
+
 	if _, err := io.ReadFull(stream, prefix); err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return Response{}, context.DeadlineExceeded
@@ -178,7 +187,9 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 	}
 
 	// Read the response
-	headerPrefix := make([]byte, 4)
+	headerPrefix := headerPool.Get().([]byte)
+	defer headerPool.Put(headerPrefix)
+
 	if _, err := io.ReadFull(stream, headerPrefix); err != nil {
 		return 0, fmt.Errorf("failed to read header length prefix: %w", err)
 	}
