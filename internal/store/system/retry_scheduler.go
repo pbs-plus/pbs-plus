@@ -62,7 +62,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/pbs-plus -job="%s"`, job.ID, attempt, job.ID)
+ExecStart=/usr/bin/pbs-plus -job="%s" -retry="%d"`, job.ID, attempt, job.ID, attempt)
 
 	fileName := fmt.Sprintf("pbs-plus-job-%s-retry-%d.service",
 		strings.ReplaceAll(job.ID, " ", "-"), attempt)
@@ -182,20 +182,6 @@ func SetRetrySchedule(job types.Job) error {
 	retryTime := time.Now().Add(time.Duration(job.RetryInterval) * time.Minute)
 	layout := "Mon 2006-01-02 15:04:05 MST"
 	retrySchedule := retryTime.Format(layout)
-
-	// If an original schedule exists and fires sooner than the retry, then skip.
-	if job.Schedule != "" {
-		originalTime, err := time.Parse(layout, job.Schedule)
-		if err != nil {
-			return fmt.Errorf("SetRetrySchedule: error parsing original schedule: %w", err)
-		}
-		if retryTime.After(originalTime) {
-			fmt.Printf("Original schedule (%s) is sooner than retry schedule (%s). "+
-				"No retry scheduled.\n",
-				originalTime.Format(layout), retrySchedule)
-			return nil
-		}
-	}
 
 	// Create the new retry service and timer unit files.
 	if err := generateRetryService(job, newAttempt); err != nil {

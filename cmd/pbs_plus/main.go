@@ -42,6 +42,7 @@ func main() {
 	proxmox.InitializeProxmox()
 
 	jobRun := flag.String("job", "", "Job ID to execute")
+	retryAttempts := flag.String("retry", "", "Current attempt number")
 	flag.Parse()
 
 	argsWithoutProg := os.Args[1:]
@@ -116,6 +117,10 @@ func main() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
+		if retryAttempts == nil || *retryAttempts == "" {
+			system.RemoveAllRetrySchedules(jobTask)
+		}
+
 		op, err := backup.RunBackup(ctx, jobTask, storeInstance, true)
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
@@ -144,6 +149,7 @@ func main() {
 				}
 			}
 		}
+
 		if waitErr := op.Wait(); waitErr != nil {
 			syslog.L.Error(waitErr).Write()
 		}
