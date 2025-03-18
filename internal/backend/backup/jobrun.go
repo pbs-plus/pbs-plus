@@ -238,6 +238,9 @@ func RunBackup(
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
 		}
+		if os.IsNotExist(err) {
+			return nil, ErrNilTask
+		}
 		return nil, fmt.Errorf("%w: %v", ErrTaskDetectionFailed, err)
 	case <-monitorCtx.Done():
 		if cmd.Process != nil {
