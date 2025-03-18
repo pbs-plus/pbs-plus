@@ -3,6 +3,7 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -21,7 +22,7 @@ import (
 
 const maxAttempts = 100
 
-func (database *Database) generateUniqueJobID(job *types.Job) error {
+func (database *Database) generateUniqueJobID(job types.Job) error {
 	baseID := utils.Slugify(job.Target)
 	if baseID == "" {
 		return fmt.Errorf("invalid target: slugified value is empty")
@@ -35,8 +36,8 @@ func (database *Database) generateUniqueJobID(job *types.Job) error {
 			newID = fmt.Sprintf("%s-%d", baseID, idx)
 		}
 
-		existing, _ := database.GetJob(newID)
-		if existing == nil {
+		_, err := database.GetJob(newID)
+		if err != nil {
 			// Unique id found; assign and exit.
 			job.ID = newID
 			return nil
@@ -68,7 +69,7 @@ func (database *Database) RegisterJobPlugin() {
 
 func (database *Database) CreateJob(job types.Job) error {
 	if job.ID == "" {
-		err := database.generateUniqueJobID(&job)
+		err := database.generateUniqueJobID(job)
 		if err != nil {
 			return fmt.Errorf("CreateJob: failed to generate unique id -> %w", err)
 		}
@@ -101,9 +102,8 @@ func (database *Database) CreateJob(job types.Job) error {
 					Namespace:        job.Namespace,
 					CurrentPID:       job.CurrentPID,
 					LastRunUpid:      job.LastRunUpid,
-					LastRunPlusError: job.LastRunPlusError,
-					LastRunPlusTime:  job.LastRunPlusTime,
 					Retry:            job.Retry,
+					RetryInterval:    job.RetryInterval,
 				},
 			},
 		},
@@ -131,14 +131,10 @@ func (database *Database) CreateJob(job types.Job) error {
 	return nil
 }
 
-func (database *Database) GetJob(id string) (*types.Job, error) {
+func (database *Database) GetJob(id string) (types.Job, error) {
 	job, err := database.getJob(id)
 	if err != nil {
-		return nil, err
-	}
-
-	if job == nil {
-		return nil, nil
+		return types.Job{}, err
 	}
 
 	// Get UPIDs
@@ -164,9 +160,6 @@ func (database *Database) getJobTarget(id string) string {
 	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
 	configData, err := database.jobsConfig.Parse(jobPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return ""
-		}
 		return ""
 	}
 
@@ -179,23 +172,23 @@ func (database *Database) getJobTarget(id string) string {
 	return job.Target
 }
 
-func (database *Database) getJob(id string) (*types.Job, error) {
+func (database *Database) getJob(id string) (types.Job, error) {
 	jobPath := filepath.Join(database.paths["jobs"], utils.EncodePath(id)+".cfg")
 	configData, err := database.jobsConfig.Parse(jobPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return types.Job{}, err
 		}
-		return nil, fmt.Errorf("GetJob: error reading config: %w", err)
+		return types.Job{}, fmt.Errorf("GetJob: error reading config: %w", err)
 	}
 
 	section, exists := configData.Sections[id]
 	if !exists {
-		return nil, fmt.Errorf("GetJob: section %s does not exist", id)
+		return types.Job{}, fmt.Errorf("GetJob: section %s does not exist", id)
 	}
 
 	// Convert config to Job struct
-	job := &section.Properties
+	job := section.Properties
 	job.ID = id
 
 	// Get exclusions
@@ -209,24 +202,19 @@ func (database *Database) getJob(id string) (*types.Job, error) {
 		job.RawExclusions = strings.Join(pathSlice, "\n")
 	}
 
-	if job.LastRunPlusError != "" {
-		job.LastRunState = &job.LastRunPlusError
-		lastRunPlusTime := int64(job.LastRunPlusTime)
-		job.LastRunEndtime = &lastRunPlusTime
-		job.LastRunUpid = ""
-	} else if job.LastRunUpid != "" {
+	if job.LastRunUpid != "" {
 		task, err := proxmox.Session.GetTaskByUPID(job.LastRunUpid)
 		if err != nil {
 			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
 		} else {
-			job.LastRunEndtime = &task.EndTime
+			job.LastRunEndtime = task.EndTime
 			if task.Status == "stopped" {
-				job.LastRunState = &task.ExitStatus
+				job.LastRunState = task.ExitStatus
 				tmpDuration := task.EndTime - task.StartTime
-				job.Duration = &tmpDuration
+				job.Duration = tmpDuration
 			} else {
 				tmpDuration := time.Now().Unix() - task.StartTime
-				job.Duration = &tmpDuration
+				job.Duration = tmpDuration
 			}
 		}
 	}
@@ -236,7 +224,7 @@ func (database *Database) getJob(id string) (*types.Job, error) {
 		if err != nil {
 			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
 		} else {
-			job.LastSuccessfulEndtime = &successTask.EndTime
+			job.LastSuccessfulEndtime = successTask.EndTime
 		}
 	}
 
@@ -244,7 +232,7 @@ func (database *Database) getJob(id string) (*types.Job, error) {
 	nextSchedule, err := system.GetNextSchedule(job)
 	if err == nil && nextSchedule != nil {
 		nextSchedUnix := nextSchedule.Unix()
-		job.NextRun = &nextSchedUnix
+		job.NextRun = nextSchedUnix
 	}
 
 	return job, nil
@@ -328,19 +316,19 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 		}
 
 		job, err := database.getJob(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
-		if err != nil || job == nil {
-			if job != nil {
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
 				syslog.L.Error(err).WithField("id", job.ID).Write()
 			}
 			continue
 		}
 
 		target, err := database.GetTarget(job.Target)
-		if err == nil && target != nil {
+		if err == nil {
 			job.ExpectedSize = utils.HumanReadableBytes(int64(target.DriveUsedBytes))
 		}
 
-		jobs = append(jobs, *job)
+		jobs = append(jobs, job)
 	}
 
 	return jobs, nil

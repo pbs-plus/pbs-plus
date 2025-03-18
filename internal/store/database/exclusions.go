@@ -81,7 +81,7 @@ func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, 
 	configData, err := database.exclusionsConfig.Parse(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []types.Exclusion{}, nil
+			return []types.Exclusion{}, err
 		}
 		return nil, fmt.Errorf("GetAllJobExclusions: error reading config: %w", err)
 	}
@@ -106,7 +106,7 @@ func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
 	configData, err := database.exclusionsConfig.Parse(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []types.Exclusion{}, nil
+			return []types.Exclusion{}, err
 		}
 		return nil, fmt.Errorf("GetAllGlobalExclusions: error reading config: %w", err)
 	}
@@ -140,7 +140,7 @@ func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
 	files, err := os.ReadDir(database.paths["exclusions"])
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, err
 		}
 		return nil, fmt.Errorf("GetExclusion: error reading directory: %w", err)
 	}

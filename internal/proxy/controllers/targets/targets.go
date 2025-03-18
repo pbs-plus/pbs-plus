@@ -207,7 +207,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
-			if err != nil || target == nil {
+			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
@@ -230,7 +230,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.Database.UpdateTarget(*target)
+			err = storeInstance.Database.UpdateTarget(target)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -245,7 +245,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		if r.Method == http.MethodGet {
 			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
-			if err != nil || target == nil {
+			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
