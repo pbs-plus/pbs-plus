@@ -56,7 +56,7 @@ var (
 
 // BackupOperation encapsulates a backup operation.
 type BackupOperation struct {
-	Task      *proxmox.Task
+	Task      proxmox.Task
 	waitGroup *sync.WaitGroup
 	err       error
 }
@@ -71,7 +71,7 @@ func (b *BackupOperation) Wait() error {
 
 func RunBackup(
 	ctx context.Context,
-	job *types.Job,
+	job types.Job,
 	storeInstance *store.Store,
 	skipCheck bool,
 ) (*BackupOperation, error) {
@@ -131,11 +131,10 @@ func RunBackup(
 	target, err := storeInstance.Database.GetTarget(job.Target)
 	if err != nil {
 		errCleanUp()
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %s", ErrTargetNotFound, job.Target)
+		}
 		return nil, fmt.Errorf("%w: %v", ErrTargetGet, err)
-	}
-	if target == nil {
-		errCleanUp()
-		return nil, fmt.Errorf("%w: %s", ErrTargetNotFound, job.Target)
 	}
 
 	if !skipCheck {
@@ -172,7 +171,7 @@ func RunBackup(
 	}
 
 	readyChan := make(chan struct{})
-	taskResultChan := make(chan *proxmox.Task, 1)
+	taskResultChan := make(chan proxmox.Task, 1)
 	taskErrorChan := make(chan error, 1)
 
 	monitorCtx, monitorCancel := context.WithTimeout(ctx, 20*time.Second)
@@ -227,20 +226,9 @@ func RunBackup(
 
 	go monitorPBSClientLogs(clientLogPath, cmd, errorMonitorDone)
 
-	var task *proxmox.Task
+	var task proxmox.Task
 	select {
 	case task = <-taskResultChan:
-		if task == nil {
-			monitorCancel()
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-			errCleanUp()
-			if currOwner != "" {
-				_ = SetDatastoreOwner(job, storeInstance, currOwner)
-			}
-			return nil, ErrNilTask
-		}
 	case err := <-taskErrorChan:
 		monitorCancel()
 		if cmd.Process != nil {
@@ -249,6 +237,9 @@ func RunBackup(
 		errCleanUp()
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+		}
+		if os.IsNotExist(err) {
+			return nil, ErrNilTask
 		}
 		return nil, fmt.Errorf("%w: %v", ErrTaskDetectionFailed, err)
 	case <-monitorCtx.Done():

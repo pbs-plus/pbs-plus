@@ -22,24 +22,24 @@ import (
 )
 
 // ParseUPID parses a Proxmox Backup Server UPID string and returns a Task struct.
-func ParseUPID(upid string) (*Task, error) {
+func ParseUPID(upid string) (Task, error) {
 	// Define the regex pattern for the UPID.
 	pattern := `^UPID:(?P<node>[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?):(?P<pid>[0-9A-Fa-f]{8}):(?P<pstart>[0-9A-Fa-f]{8,9}):(?P<task_id>[0-9A-Fa-f]{8,16}):(?P<starttime>[0-9A-Fa-f]{8}):(?P<wtype>[^:\s]+):(?P<wid>[^:\s]*):(?P<authid>[^:\s]+):$`
 
 	// Compile the regex.
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compile regex: %w", err)
+		return Task{}, fmt.Errorf("failed to compile regex: %w", err)
 	}
 
 	// Match the UPID string against the regex.
 	matches := re.FindStringSubmatch(upid)
 	if matches == nil {
-		return nil, fmt.Errorf("invalid UPID format")
+		return Task{}, fmt.Errorf("invalid UPID format")
 	}
 
 	// Create a new Task instance.
-	task := &Task{
+	task := Task{
 		UPID: upid, // Store the original UPID string.
 	}
 
@@ -55,21 +55,21 @@ func ParseUPID(upid string) (*Task, error) {
 			// Convert PID from hex to int.
 			pid, err := strconv.ParseInt(matches[i], 16, 32)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse PID: %w", err)
+				return Task{}, fmt.Errorf("failed to parse PID: %w", err)
 			}
 			task.PID = int(pid)
 		case "pstart":
 			// Convert PStart from hex to int.
 			pstart, err := strconv.ParseInt(matches[i], 16, 32)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse PStart: %w", err)
+				return Task{}, fmt.Errorf("failed to parse PStart: %w", err)
 			}
 			task.PStart = int(pstart)
 		case "starttime":
 			// Convert StartTime from hex to int64.
 			startTime, err := strconv.ParseInt(matches[i], 16, 64)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse StartTime: %w", err)
+				return Task{}, fmt.Errorf("failed to parse StartTime: %w", err)
 			}
 			task.StartTime = startTime
 		case "wtype":
@@ -84,9 +84,9 @@ func ParseUPID(upid string) (*Task, error) {
 	return task, nil
 }
 
-func GenerateTaskErrorFile(job *types.Job, pbsError error, additionalData []string) (*Task, error) {
+func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []string) (Task, error) {
 	if Session.APIToken == nil {
-		return nil, errors.New("session api token is missing")
+		return Task{}, errors.New("session api token is missing")
 	}
 
 	authId := Session.APIToken.TokenId
@@ -128,18 +128,18 @@ func GenerateTaskErrorFile(job *types.Job, pbsError error, additionalData []stri
 
 	path, err := GetLogPath(upid)
 	if err != nil {
-		return nil, err
+		return Task{}, err
 	}
 
 	_ = os.MkdirAll(filepath.Dir(path), 0755)
 	file, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
-		return nil, err
+		return Task{}, err
 	}
 
 	err = file.Chown(34, 34)
 	if err != nil {
-		return nil, err
+		return Task{}, err
 	}
 	defer file.Close()
 
@@ -148,31 +148,31 @@ func GenerateTaskErrorFile(job *types.Job, pbsError error, additionalData []stri
 	for _, data := range additionalData {
 		dataLine := fmt.Sprintf("%s: %s\n", timestamp, data)
 		if _, err := file.WriteString(dataLine); err != nil {
-			return nil, fmt.Errorf("failed to write additional data line: %w", err)
+			return Task{}, fmt.Errorf("failed to write additional data line: %w", err)
 		}
 	}
 
 	errorLine := fmt.Sprintf("%s: TASK ERROR: %s\n", timestamp, pbsError.Error())
 	if _, err := file.WriteString(errorLine); err != nil {
-		return nil, fmt.Errorf("failed to write error line: %w", err)
+		return Task{}, fmt.Errorf("failed to write error line: %w", err)
 	}
 
 	archive, err := os.OpenFile(filepath.Join(constants.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file archive: %w", err)
+		return Task{}, fmt.Errorf("failed to open file archive: %w", err)
 	}
 	defer archive.Close()
 
 	archiveLine := fmt.Sprintf("\n%s %s %s", upid, startTime, pbsError.Error())
 	if _, err := archive.WriteString(archiveLine); err != nil {
-		return nil, fmt.Errorf("failed to write archive line: %w", err)
+		return Task{}, fmt.Errorf("failed to write archive line: %w", err)
 	}
 
 	task.Status = "stopped"
 	task.ExitStatus = pbsError.Error()
 	task.EndTime = time.Now().Unix()
 
-	return &task, nil
+	return task, nil
 }
 
 func IsUPIDRunning(upid string) bool {

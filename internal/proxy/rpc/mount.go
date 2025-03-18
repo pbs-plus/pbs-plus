@@ -105,7 +105,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	// If a namespace is provided in the backup response, update the job.
 	if len(backupRespSplit) == 2 && backupRespSplit[1] != "" {
 		job.Namespace = backupRespSplit[1]
-		if err := s.Store.Database.UpdateJob(*job); err != nil {
+		if err := s.Store.Database.UpdateJob(job); err != nil {
 			syslog.L.Error(err).WithField("namespace", backupRespSplit[1]).Write()
 		}
 	}

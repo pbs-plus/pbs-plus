@@ -30,7 +30,7 @@ type PBSStoreGroupsResponse struct {
 	Data PBSStoreGroups `json:"data"`
 }
 
-func CreateNamespace(namespace string, job *types.Job, storeInstance *store.Store) error {
+func CreateNamespace(namespace string, job types.Job, storeInstance *store.Store) error {
 	if storeInstance == nil {
 		return fmt.Errorf("CreateNamespace: store is required")
 	}
@@ -71,7 +71,7 @@ func CreateNamespace(namespace string, job *types.Job, storeInstance *store.Stor
 	}
 
 	job.Namespace = namespace
-	err := storeInstance.Database.UpdateJob(*job)
+	err := storeInstance.Database.UpdateJob(job)
 	if err != nil {
 		return fmt.Errorf("CreateNamespace: error updating job to namespace -> %w", err)
 	}
@@ -79,7 +79,7 @@ func CreateNamespace(namespace string, job *types.Job, storeInstance *store.Stor
 	return nil
 }
 
-func GetCurrentOwner(job *types.Job, storeInstance *store.Store) (string, error) {
+func GetCurrentOwner(job types.Job, storeInstance *store.Store) (string, error) {
 	if storeInstance == nil {
 		return "", fmt.Errorf("GetCurrentOwner: store is required")
 	}
@@ -90,11 +90,10 @@ func GetCurrentOwner(job *types.Job, storeInstance *store.Store) (string, error)
 
 	target, err := storeInstance.Database.GetTarget(job.Target)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("GetCurrentOwner: Target '%s' does not exist.", job.Target)
+		}
 		return "", fmt.Errorf("GetCurrentOwner -> %w", err)
-	}
-
-	if target == nil {
-		return "", fmt.Errorf("GetCurrentOwner: Target '%s' does not exist.", job.Target)
 	}
 
 	if !target.ConnectionStatus {
@@ -118,7 +117,7 @@ func GetCurrentOwner(job *types.Job, storeInstance *store.Store) (string, error)
 	return groupsResp.Data.Owner, nil
 }
 
-func SetDatastoreOwner(job *types.Job, storeInstance *store.Store, owner string) error {
+func SetDatastoreOwner(job types.Job, storeInstance *store.Store, owner string) error {
 	if storeInstance == nil {
 		return fmt.Errorf("SetDatastoreOwner: store is required")
 	}
@@ -129,11 +128,10 @@ func SetDatastoreOwner(job *types.Job, storeInstance *store.Store, owner string)
 
 	target, err := storeInstance.Database.GetTarget(job.Target)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("SetDatastoreOwner: Target '%s' does not exist.", job.Target)
+		}
 		return fmt.Errorf("SetDatastoreOwner -> %w", err)
-	}
-
-	if target == nil {
-		return fmt.Errorf("SetDatastoreOwner: Target '%s' does not exist.", job.Target)
 	}
 
 	if !target.ConnectionStatus {
@@ -200,7 +198,7 @@ func SetDatastoreOwner(job *types.Job, storeInstance *store.Store, owner string)
 	return nil
 }
 
-func FixDatastore(job *types.Job, storeInstance *store.Store) error {
+func FixDatastore(job types.Job, storeInstance *store.Store) error {
 	newOwner := ""
 	if proxmox.Session.APIToken != nil {
 		newOwner = proxmox.Session.APIToken.TokenId
