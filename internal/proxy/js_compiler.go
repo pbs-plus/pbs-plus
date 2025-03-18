@@ -220,7 +220,6 @@ func WatchAndReplace(targetPath string,
 		if err := restoreBackup(targetPath, originalBackup); err != nil {
 			syslog.L.Error(err).Write()
 		}
-		os.Exit(0)
 	}()
 
 	// On startup, restore the file if a hard reboot left it modified.
