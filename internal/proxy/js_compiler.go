@@ -44,11 +44,14 @@ func computeChecksum(data []byte) string {
 
 // createOriginalBackup creates a backup that preserves the original file,
 // stored under a ".original" suffix. This file is created only once.
-func createOriginalBackup(targetPath string) (string, error) {
+func createOriginalBackup(targetPath string, force bool) (string, error) {
 	backupPath := filepath.Join(backupDir,
 		fmt.Sprintf("%s.original", filepath.Base(targetPath)))
-	if _, err := os.Stat(backupPath); err == nil {
-		return backupPath, nil
+
+	if !force {
+		if _, err := os.Stat(backupPath); err == nil {
+			return backupPath, nil
+		}
 	}
 
 	info, err := os.Stat(targetPath)
@@ -259,7 +262,7 @@ func WatchAndReplace(targetPath string,
 	}
 
 	// Create original backup once.
-	originalBackup, err := createOriginalBackup(targetPath)
+	originalBackup, err := createOriginalBackup(targetPath, false)
 	if err != nil {
 		return fmt.Errorf("original backup error: %w", err)
 	}
@@ -285,25 +288,33 @@ func WatchAndReplace(targetPath string,
 	}
 
 	// Read the current file and apply initial modification if needed.
-	initialContent, err := os.ReadFile(targetPath)
-	if err != nil {
-		return fmt.Errorf("failed to read target file: %w", err)
-	}
-	modifiedContent := modifyFunc(initialContent)
-	modChecksum := computeChecksum(modifiedContent)
-	if origChecksum != modChecksum {
-		if err := atomicReplaceFile(targetPath, modifiedContent); err != nil {
-			return fmt.Errorf("failed to apply initial modification: %w", err)
+	modify := func() error {
+		initialContent, err := os.ReadFile(targetPath)
+		if err != nil {
+			return fmt.Errorf("failed to read target file: %w", err)
 		}
-		syslog.L.Info().WithMessage(
-			fmt.Sprintf("File %s modified initially.", targetPath),
-		).Write()
-		origChecksum = modChecksum
-	} else {
-		syslog.L.Info().WithMessage(
-			fmt.Sprintf("File %s is already modified; skipping initial modification.",
-				targetPath),
-		).Write()
+		modifiedContent := modifyFunc(initialContent)
+		modChecksum := computeChecksum(modifiedContent)
+		if origChecksum != modChecksum {
+			if err := atomicReplaceFile(targetPath, modifiedContent); err != nil {
+				return fmt.Errorf("failed to apply initial modification: %w", err)
+			}
+			syslog.L.Info().WithMessage(
+				fmt.Sprintf("File %s modified initially.", targetPath),
+			).Write()
+			origChecksum = modChecksum
+		} else {
+			syslog.L.Info().WithMessage(
+				fmt.Sprintf("File %s is already modified; skipping initial modification.",
+					targetPath),
+			).Write()
+		}
+
+		return nil
+	}
+
+	if err := modify(); err != nil {
+		return err
 	}
 
 	// Set up file watcher.
@@ -370,6 +381,15 @@ func WatchAndReplace(targetPath string,
 					for {
 						time.Sleep(100 * time.Millisecond)
 						if _, err := os.Stat(targetPath); err == nil {
+							_, err := createOriginalBackup(targetPath, true)
+							if err != nil {
+								syslog.L.Error(err).WithMessage("New original backup error").Write()
+							}
+
+							if err := modify(); err != nil {
+								syslog.L.Error(err).WithMessage("Modification error").Write()
+							}
+
 							if err := watcher.Add(targetPath); err != nil {
 								syslog.L.Error(err).Write()
 							} else {
