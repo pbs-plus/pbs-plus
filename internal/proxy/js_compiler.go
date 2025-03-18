@@ -210,17 +210,17 @@ func compileJS(embedded *embed.FS) []byte {
 	return bytes.Join(parts, []byte("\n"))
 }
 
-// ModifyJS applies a string replacer between application JS and PBS.plus,
+// modifyJS applies a string replacer between application JS and PBS.plus,
 // and appends the contents of "pre" and "custom" JS files.
-func ModifyJS(original []byte) []byte {
+func modifyJS(original []byte) []byte {
 	replaced := []byte(jsReplacer.Replace(string(original)))
 	preJS := compileJS(&preJsFS)
 	customJS := compileJS(&customJsFS)
 	return bytes.Join([][]byte{preJS, replaced, customJS}, []byte("\n"))
 }
 
-// ModifyLib applies a one-off string replacement.
-func ModifyLib(original []byte) []byte {
+// modifyLib applies a one-off string replacement.
+func modifyLib(original []byte) []byte {
 	oldStr := `if (!newopts.url.match(/^\/api2/))`
 	newStr := `if (!newopts.url.match(/^\/api2/) && !newopts.url.match(/^[a-z][a-z\d+\-.]*:/i))`
 	return []byte(strings.Replace(string(original), oldStr, newStr, 1))
@@ -250,11 +250,52 @@ func checkAndRestoreOnStartup(targetPath, originalBackup string) (string, error)
 	return computeChecksum(current), nil
 }
 
-// WatchAndReplace watches targetPath for changes, applies modifications via
+func ModifyPBSJavascript() error {
+	pbsJsLocation := "/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js"
+	proxmoxLibLocation := "/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js"
+
+	if err := watchAndReplace(pbsJsLocation, modifyJS); err != nil {
+		return err
+	}
+
+	if err := watchAndReplace(proxmoxLibLocation, modifyLib); err != nil {
+		return err
+	}
+
+	// Set up signal handler for graceful termination.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		syslog.L.Info().WithMessage(
+			fmt.Sprintf("Termination signal (%v) received. Restoring backup for %s...", sig, pbsJsLocation),
+		).Write()
+
+		pbsJsBackup := filepath.Join(backupDir, fmt.Sprintf("%s.original", filepath.Base(pbsJsLocation)))
+		if err := restoreBackup(pbsJsLocation, pbsJsBackup); err != nil {
+			syslog.L.Error(err).Write()
+		}
+
+		syslog.L.Info().WithMessage(
+			fmt.Sprintf("Termination signal (%v) received. Restoring backup for %s...", sig, proxmoxLibLocation),
+		).Write()
+
+		proxLibBackup := filepath.Join(backupDir, fmt.Sprintf("%s.original", filepath.Base(proxmoxLibLocation)))
+		if err := restoreBackup(proxmoxLibLocation, proxLibBackup); err != nil {
+			syslog.L.Error(err).Write()
+		}
+
+		os.Exit(0)
+	}()
+
+	return nil
+}
+
+// watchAndReplace watches targetPath for changes, applies modifications via
 // modifyFunc, and ensures that the file is restored on shutdown (or on startup
 // in case of a hard reboot). It uses debounced, atomic updates and re-adds the
 // watcher on removal/rename events.
-func WatchAndReplace(targetPath string,
+func watchAndReplace(targetPath string,
 	modifyFunc func([]byte) []byte) error {
 	// Ensure backup directory exists.
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
@@ -266,20 +307,6 @@ func WatchAndReplace(targetPath string,
 	if err != nil {
 		return fmt.Errorf("original backup error: %w", err)
 	}
-
-	// Set up signal handler for graceful termination.
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		sig := <-sigChan
-		syslog.L.Info().WithMessage(
-			fmt.Sprintf("Termination signal (%v) received. Restoring backup for %s...",
-				sig, targetPath),
-		).Write()
-		if err := restoreBackup(targetPath, originalBackup); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	}()
 
 	// On startup, restore the file if a hard reboot left it modified.
 	origChecksum, err := checkAndRestoreOnStartup(targetPath, originalBackup)
