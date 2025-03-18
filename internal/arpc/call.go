@@ -28,19 +28,25 @@ func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload 
 // CallContext performs an RPC call over a new stream.
 // It applies any context deadlines to the smux stream.
 func (s *Session) CallContext(ctx context.Context, method string, payload arpcdata.Encodable) (Response, error) {
+	// Grab the current smux session
 	curSession := s.muxSess.Load()
 
+	// Open a new stream. (Note: while stream reuse might reduce overhead,
+	// with smux the recommended pattern is one stream per RPC call to avoid
+	// interleaved messages. If your protocol allows reuse, you might pool streams.)
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
 		return Response{}, err
 	}
 	defer stream.Close()
 
+	// Propagate context deadlines to the stream
 	if deadline, ok := ctx.Deadline(); ok {
 		stream.SetWriteDeadline(deadline)
 		stream.SetReadDeadline(deadline)
 	}
 
+	// Serialize the payload if provided
 	var payloadBytes []byte
 	if payload != nil {
 		payloadBytes, err = payload.Encode()
@@ -49,6 +55,7 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 		}
 	}
 
+	// Build the RPC request and encode it.
 	req := Request{
 		Method:  method,
 		Payload: payloadBytes,
@@ -62,24 +69,24 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 		return Response{}, fmt.Errorf("failed to write request: %w", err)
 	}
 
-	var prefix [4]byte
-	if _, err := io.ReadFull(stream, prefix[:]); err != nil {
+	prefix := make([]byte, 4)
+	if _, err := io.ReadFull(stream, prefix); err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return Response{}, context.DeadlineExceeded
 		}
 		return Response{}, fmt.Errorf("failed to read length prefix: %w", err)
 	}
-
-	totalLength := binary.LittleEndian.Uint32(prefix[:])
+	totalLength := binary.LittleEndian.Uint32(prefix)
 	if totalLength < 4 {
 		return Response{}, fmt.Errorf("invalid total length %d", totalLength)
 	}
 
-	// Allocate a buffer to hold the entire response (the prefix is already read).
+	// Allocate a buffer with exactly totalLength bytes.
 	buf := make([]byte, totalLength)
-	// Copy the already-read 4-byte prefix into the buffer.
-	copy(buf, prefix[:])
-	// Read the remaining bytes of the response.
+
+	// Copy the already-read prefix into buf.
+	copy(buf, prefix)
+	// Read the remaining totalLength-4 bytes.
 	if _, err := io.ReadFull(stream, buf[4:]); err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return Response{}, context.DeadlineExceeded
@@ -87,6 +94,7 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 		return Response{}, fmt.Errorf("failed to read full response: %w", err)
 	}
 
+	// Decode the response.
 	var resp Response
 	if err := resp.Decode(buf); err != nil {
 		return Response{}, fmt.Errorf("failed to decode response: %w", err)
@@ -139,10 +147,12 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 	}
 	defer stream.Close()
 
+	// Propagate context deadlines to the stream
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
 	}
 
+	// Serialize the payload
 	var payloadBytes []byte
 	if payload != nil {
 		payloadBytes, err = payload.Encode()
@@ -151,49 +161,49 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 		}
 	}
 
+	// Build the RPC request
 	req := Request{
 		Method:  method,
 		Payload: payloadBytes,
 	}
+
+	// Encode and send the request
 	reqBytes, err := req.Encode()
 	if err != nil {
 		return 0, fmt.Errorf("failed to encode request: %w", err)
 	}
+
 	if _, err := stream.Write(reqBytes); err != nil {
 		return 0, fmt.Errorf("failed to write request: %w", err)
 	}
 
-	var prefix [4]byte
-	if _, err := io.ReadFull(stream, prefix[:]); err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return 0, context.DeadlineExceeded
-		}
+	// Read the response
+	headerPrefix := make([]byte, 4)
+	if _, err := io.ReadFull(stream, headerPrefix); err != nil {
 		return 0, fmt.Errorf("failed to read header length prefix: %w", err)
 	}
-	totalLength := binary.LittleEndian.Uint32(prefix[:])
-	if totalLength < 4 {
-		return 0, fmt.Errorf("invalid header length %d", totalLength)
+	headerTotalLength := binary.LittleEndian.Uint32(headerPrefix)
+	if headerTotalLength < 4 {
+		return 0, fmt.Errorf("invalid header length %d", headerTotalLength)
 	}
 
-	var headerBytes []byte
-	if totalLength == 4 {
-		headerBytes = prefix[:]
-	} else {
-		headerBytes = make([]byte, totalLength)
-		copy(headerBytes, prefix[:])
-		if _, err := io.ReadFull(stream, headerBytes[4:]); err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				return 0, context.DeadlineExceeded
-			}
-			return 0, fmt.Errorf("failed to read full header: %w", err)
-		}
+	// Allocate header buffer.
+	headerBuf := make([]byte, headerTotalLength)
+
+	// Copy prefix into headerBuf.
+	copy(headerBuf, headerPrefix)
+	// Read the remainder of the header.
+	if _, err := io.ReadFull(stream, headerBuf[4:]); err != nil {
+		return 0, fmt.Errorf("failed to read full header: %w", err)
 	}
 
+	// Decode the header.
 	var resp Response
-	if err := resp.Decode(headerBytes); err != nil {
+	if err := resp.Decode(headerBuf); err != nil {
 		return 0, fmt.Errorf("failed to decode response: %w", err)
 	}
 
+	// Handle error responses
 	if resp.Status != 213 {
 		var serErr SerializableError
 		if err := serErr.Decode(resp.Data); err == nil {
