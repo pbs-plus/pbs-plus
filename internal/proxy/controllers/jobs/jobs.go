@@ -83,6 +83,8 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		system.RemoveAllRetrySchedules(job)
+
 		op, err := backup.RunBackup(context.Background(), job, storeInstance, false)
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", job.ID).Write()
