@@ -34,6 +34,8 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/system"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+
+	_ "net/http/pprof"
 )
 
 var Version = "v0.0.0"
