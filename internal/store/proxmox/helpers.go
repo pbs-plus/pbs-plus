@@ -179,9 +179,9 @@ func GenerateTaskErrorFile(storeInstance *store.Store, job *types.Job, pbsError 
 	latestJob.LastRunState = &taskFound.Status
 	latestJob.LastRunEndtime = &taskFound.EndTime
 
-	err = storeInstance.Database.UpdateJob(*job)
+	err = storeInstance.Database.UpdateJob(*latestJob)
 	if err != nil {
-		syslog.L.Error(err).WithField("jobId", job.ID).WithField("upid", upid).Write()
+		syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", upid).Write()
 	}
 
 	return nil
