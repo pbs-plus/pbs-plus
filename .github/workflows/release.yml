@@ -33,7 +33,7 @@ jobs:
         maintainer: Son Roy Almerol <github@snry.me> 
         version: ${{ github.ref }} # refs/tags/v*.*.*
         arch: 'amd64'
-        depends: 'proxmox-backup-server (>= 3.2), proxmox-backup-client (>= 3.2.5), fusermount'
+        depends: 'proxmox-backup-server (>= 3.2), proxmox-backup-client (>= 3.2.5), fuse3'
         desc: 'PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution'
         homepage: 'https://github.com/${{ github.repository }}'
     - name: Publish Release Assets
