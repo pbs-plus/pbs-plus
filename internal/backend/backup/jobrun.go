@@ -22,14 +22,45 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
 )
 
-var ErrOneInstance = errors.New("a job is still running; only one instance allowed")
+// Sentinel error values.
+var (
+	ErrJobMutexCreation = errors.New("failed to create job mutex")
+	ErrOneInstance      = errors.New("a job is still running; only one instance allowed")
 
+	ErrStdoutTempCreation = errors.New("failed to create stdout temp file")
+
+	ErrBackupMutexCreation = errors.New("failed to create backup mutex")
+	ErrBackupMutexLock     = errors.New("failed to lock backup mutex")
+
+	ErrAPITokenRequired = errors.New("API token is required")
+
+	ErrTargetGet         = errors.New("failed to get target")
+	ErrTargetNotFound    = errors.New("target does not exist")
+	ErrTargetUnreachable = errors.New("target unreachable")
+
+	ErrMountInitialization  = errors.New("mount initialization error")
+	ErrPrepareBackupCommand = errors.New("failed to prepare backup command")
+
+	ErrTaskMonitoringInitializationFailed = errors.New("task monitoring initialization failed")
+	ErrTaskMonitoringTimedOut             = errors.New("task monitoring initialization timed out")
+
+	ErrProxmoxBackupClientStart = errors.New("proxmox-backup-client start error")
+
+	ErrNilTask               = errors.New("received nil task")
+	ErrTaskDetectionFailed   = errors.New("task detection failed")
+	ErrTaskDetectionTimedOut = errors.New("task detection timed out")
+
+	ErrJobStatusUpdateFailed = errors.New("failed to update job status")
+)
+
+// BackupOperation encapsulates a backup operation.
 type BackupOperation struct {
 	Task      *proxmox.Task
 	waitGroup *sync.WaitGroup
 	err       error
 }
 
+// Wait blocks until the backup operation is complete.
 func (b *BackupOperation) Wait() error {
 	if b.waitGroup != nil {
 		b.waitGroup.Wait()
@@ -37,26 +68,25 @@ func (b *BackupOperation) Wait() error {
 	return b.err
 }
 
-func runBackupAttempt(
+func RunBackup(
 	ctx context.Context,
 	job *types.Job,
 	storeInstance *store.Store,
 	skipCheck bool,
 ) (*BackupOperation, error) {
-	jobInstanceMutex, err := filemutex.New(fmt.Sprintf("/tmp/pbs-plus-mutex-job-%s", job.ID))
+	jobInstanceMutex, err := filemutex.New(
+		fmt.Sprintf("/tmp/pbs-plus-mutex-job-%s", job.ID),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("runBackupAttempt: failed to create job mutex: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrJobMutexCreation, err)
 	}
 	if err := jobInstanceMutex.TryLock(); err != nil {
 		return nil, ErrOneInstance
 	}
 
-	ErrUnreachable := fmt.Errorf("runBackupAttempt: target '%s' is unreachable", job.Target)
-
-	// Create temporary files for stdout and stderr
 	clientLogFile, err := os.CreateTemp("", fmt.Sprintf("backup-%s-stdout-*", job.ID))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create stdout temp file: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrStdoutTempCreation, err)
 	}
 	clientLogPath := clientLogFile.Name()
 
@@ -74,8 +104,8 @@ func runBackupAttempt(
 			agentMount.CloseMount()
 		}
 		if clientLogFile != nil {
-			clientLogFile.Close()
-			os.Remove(clientLogPath)
+			_ = clientLogFile.Close()
+			_ = os.Remove(clientLogPath)
 		}
 		close(errorMonitorDone)
 	}
@@ -83,28 +113,28 @@ func runBackupAttempt(
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
 	if err != nil {
 		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: failed to create backup mutex: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrBackupMutexCreation, err)
 	}
 	defer backupMutex.Close()
 
 	if err := backupMutex.Lock(); err != nil {
 		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: failed to lock backup mutex: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrBackupMutexLock, err)
 	}
 
 	if proxmox.Session.APIToken == nil {
 		errCleanUp()
-		return nil, errors.New("runBackupAttempt: API token is required")
+		return nil, ErrAPITokenRequired
 	}
 
 	target, err := storeInstance.Database.GetTarget(job.Target)
 	if err != nil {
 		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: failed to get target: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrTargetGet, err)
 	}
 	if target == nil {
 		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: target '%s' does not exist", job.Target)
+		return nil, fmt.Errorf("%w: %s", ErrTargetNotFound, job.Target)
 	}
 
 	if !skipCheck {
@@ -112,7 +142,7 @@ func runBackupAttempt(
 		_, exists := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
 		if !exists {
 			errCleanUp()
-			return nil, ErrUnreachable
+			return nil, fmt.Errorf("%w: %s", ErrTargetUnreachable, job.Target)
 		}
 	}
 
@@ -122,11 +152,11 @@ func runBackupAttempt(
 		agentMount, err = mount.Mount(storeInstance, job, target)
 		if err != nil {
 			errCleanUp()
-			return nil, fmt.Errorf("runBackupAttempt: mount initialization error: %w", err)
+			return nil, fmt.Errorf("%w: %v", ErrMountInitialization, err)
 		}
 		srcPath = agentMount.Path
 
-		// in case mount updates the job
+		// In case mount updates the job.
 		latestAgent, err := storeInstance.Database.GetJob(job.ID)
 		if err == nil {
 			job = latestAgent
@@ -137,19 +167,16 @@ func runBackupAttempt(
 	cmd, err := prepareBackupCommand(ctx, job, storeInstance, srcPath, isAgent)
 	if err != nil {
 		errCleanUp()
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
 	}
 
-	// Create channels for task handling
 	readyChan := make(chan struct{})
 	taskResultChan := make(chan *proxmox.Task, 1)
 	taskErrorChan := make(chan error, 1)
 
-	// Setup monitoring context
 	monitorCtx, monitorCancel := context.WithTimeout(ctx, 20*time.Second)
 	defer monitorCancel()
 
-	// Launch the task monitoring goroutine
 	go func() {
 		task, err := proxmox.Session.GetJobTask(monitorCtx, readyChan, job, target)
 		if err != nil {
@@ -165,46 +192,40 @@ func runBackupAttempt(
 		}
 	}()
 
-	// Wait for monitor initialization
 	select {
 	case <-readyChan:
-		// Watcher is ready
 	case err := <-taskErrorChan:
 		monitorCancel()
 		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: task monitoring initialization failed: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrTaskMonitoringInitializationFailed, err)
 	case <-monitorCtx.Done():
 		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: task monitoring initialization timed out: %w", monitorCtx.Err())
+		return nil, fmt.Errorf("%w: %v", ErrTaskMonitoringTimedOut, monitorCtx.Err())
 	}
 
 	currOwner, _ := GetCurrentOwner(job, storeInstance)
 	_ = FixDatastore(job, storeInstance)
 
-	// Create multi-writers that write to both file and standard output/error
 	stdoutWriter := io.MultiWriter(clientLogFile, os.Stdout)
-
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stdoutWriter
 
-	// Start the command
 	if err := cmd.Start(); err != nil {
 		monitorCancel()
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
 		}
 		errCleanUp()
-		return nil, fmt.Errorf("runBackupAttempt: proxmox-backup-client start error (%s): %w", cmd.String(), err)
+		return nil, fmt.Errorf("%w (%s): %v",
+			ErrProxmoxBackupClientStart, cmd.String(), err)
 	}
 
 	if cmd.Process != nil {
 		job.CurrentPID = cmd.Process.Pid
 	}
 
-	// Start a low-overhead monitor for critical errors
 	go monitorPBSClientLogs(clientLogPath, cmd, errorMonitorDone)
 
-	// Wait for task to be detected
 	var task *proxmox.Task
 	select {
 	case task = <-taskResultChan:
@@ -217,7 +238,7 @@ func runBackupAttempt(
 			if currOwner != "" {
 				_ = SetDatastoreOwner(job, storeInstance, currOwner)
 			}
-			return nil, errors.New("runBackupAttempt: received nil task")
+			return nil, ErrNilTask
 		}
 	case err := <-taskErrorChan:
 		monitorCancel()
@@ -228,7 +249,7 @@ func runBackupAttempt(
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
 		}
-		return nil, fmt.Errorf("runBackupAttempt: task detection failed: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrTaskDetectionFailed, err)
 	case <-monitorCtx.Done():
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
@@ -237,7 +258,7 @@ func runBackupAttempt(
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
 		}
-		return nil, fmt.Errorf("runBackupAttempt: task detection timed out: %w", monitorCtx.Err())
+		return nil, fmt.Errorf("%w: %v", ErrTaskDetectionTimedOut, monitorCtx.Err())
 	}
 
 	if err := updateJobStatus(false, job, task, storeInstance); err != nil {
@@ -245,10 +266,9 @@ func runBackupAttempt(
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
 		}
-		return nil, fmt.Errorf("runBackupAttempt: failed to update job status: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrJobStatusUpdateFailed, err)
 	}
 
-	// Create operation with proper waitgroup
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	operation := &BackupOperation{
@@ -267,22 +287,22 @@ func runBackupAttempt(
 		utils.ClearIOStats(job.CurrentPID)
 		job.CurrentPID = 0
 
-		// Signal monitor to stop and wait for it
 		close(errorMonitorDone)
 
-		// Close the files
-		clientLogFile.Close()
+		_ = clientLogFile.Close()
 
-		// Read log files after process completes
 		succeeded, err := processPBSProxyLogs(task.UPID, clientLogPath)
 		if err != nil {
-			syslog.L.Error(err).WithMessage("failed to process logs").Write()
+			syslog.L.Error(err).
+				WithMessage("failed to process logs").
+				Write()
 		}
-		// Clean up temp files
-		os.Remove(clientLogPath)
+		_ = os.Remove(clientLogPath)
 
 		if err := updateJobStatus(succeeded, job, task, storeInstance); err != nil {
-			syslog.L.Error(err).WithMessage("failed to update job status - post cmd.Wait").Write()
+			syslog.L.Error(err).
+				WithMessage("failed to update job status - post cmd.Wait").
+				Write()
 		}
 
 		if currOwner != "" {
@@ -296,123 +316,4 @@ func runBackupAttempt(
 	}()
 
 	return operation, nil
-}
-
-type AutoBackupOperation struct {
-	Task          *proxmox.Task
-	err           error
-	done          chan struct{}
-	job           *types.Job
-	storeInstance *store.Store
-
-	ctx context.Context
-
-	BackupOp *BackupOperation
-	started  chan struct{}
-}
-
-func (a *AutoBackupOperation) Wait() error {
-	select {
-	case <-a.done:
-		select {
-		case <-a.started:
-		default:
-			if a.err != nil {
-				a.updatePlusError()
-			}
-		}
-		return a.err
-	case <-a.ctx.Done():
-		return errors.New("RunBackup: context cancelled")
-	}
-}
-
-func (a *AutoBackupOperation) WaitForStart() error {
-	select {
-	case <-a.done:
-		if a.err != nil {
-			a.updatePlusError()
-		}
-		return a.err
-	case <-a.started:
-	case <-a.ctx.Done():
-		return errors.New("context cancelled")
-	}
-	return nil
-}
-
-func (a *AutoBackupOperation) updatePlusError() {
-	if a.err == nil {
-		return
-	}
-
-	if !strings.Contains(a.err.Error(), "job is still running") {
-		a.job.LastRunPlusError = a.err.Error()
-		a.job.LastRunPlusTime = int(time.Now().Unix())
-		if uErr := a.storeInstance.Database.UpdateJob(*a.job); uErr != nil {
-			syslog.L.Error(uErr).WithMessage("failed to update plus error").Write()
-		}
-	}
-}
-
-func RunBackup(ctx context.Context, job *types.Job, storeInstance *store.Store, skipCheck bool) *AutoBackupOperation {
-	ErrUnreachable := fmt.Errorf("runBackupAttempt: target '%s' is unreachable", job.Target)
-
-	autoOp := &AutoBackupOperation{
-		done:          make(chan struct{}),
-		started:       make(chan struct{}),
-		job:           job,
-		storeInstance: storeInstance,
-		ctx:           ctx,
-	}
-
-	go func() {
-		var lastErr error
-		for attempt := 0; attempt <= job.Retry; attempt++ {
-			select {
-			case <-autoOp.ctx.Done():
-				autoOp.err = errors.New("context cancelled")
-				close(autoOp.done)
-				return
-			default:
-				op, err := runBackupAttempt(ctx, job, storeInstance, skipCheck)
-				if err != nil {
-					lastErr = err
-					if errors.Is(err, ErrOneInstance) || errors.Is(err, ErrUnreachable) {
-						autoOp.err = err
-						close(autoOp.done)
-						return
-					}
-					syslog.L.Error(err).WithField("attempt", attempt).Write()
-					time.Sleep(10 * time.Second)
-					continue
-				}
-
-				autoOp.Task = op.Task
-				close(autoOp.started)
-
-				if err := op.Wait(); err != nil {
-					lastErr = err
-					syslog.L.Error(err).WithField("attempt", attempt).Write()
-					if err.Error() == "signal: killed" {
-						autoOp.err = err
-						close(autoOp.done)
-						return
-					}
-					time.Sleep(10 * time.Second)
-					autoOp.started = make(chan struct{})
-					continue
-				}
-
-				autoOp.err = nil
-				autoOp.BackupOp = op
-				close(autoOp.done)
-				return
-			}
-		}
-
-		autoOp.err = fmt.Errorf("backup failed after %d attempts, last error: %w", job.Retry+1, lastErr)
-		close(autoOp.done)
-	}()
-	return autoOp
 }

@@ -114,7 +114,14 @@ func main() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		op := backup.RunBackup(ctx, jobTask, storeInstance, true)
+		op, err := backup.RunBackup(ctx, jobTask, storeInstance, true)
+		if err != nil {
+			syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
+			err := proxmox.GenerateTaskErrorFile(jobTask, err, []string{})
+			if err != nil {
+				syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
+			}
+		}
 		if waitErr := op.Wait(); waitErr != nil {
 			syslog.L.Error(waitErr).Write()
 		}

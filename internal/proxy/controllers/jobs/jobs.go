@@ -13,6 +13,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/backup"
 	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -80,12 +81,17 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		op := backup.RunBackup(context.Background(), job, storeInstance, false)
-		if waitErr := op.WaitForStart(); waitErr != nil {
-			syslog.L.Error(waitErr)
-			controllers.WriteErrorResponse(w, waitErr)
+		op, err := backup.RunBackup(context.Background(), job, storeInstance, false)
+		if err != nil {
+			syslog.L.Error(err).WithField("jobId", job.ID).Write()
+			if err := proxmox.GenerateTaskErrorFile(job, err, []string{}); err != nil {
+				syslog.L.Error(err).WithField("jobId", job.ID).Write()
+			}
+
+			controllers.WriteErrorResponse(w, err)
 			return
 		}
+
 		task := op.Task
 
 		w.Header().Set("Content-Type", "application/json")
