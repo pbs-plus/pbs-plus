@@ -177,15 +177,22 @@ func RunBackup(
 	monitorCtx, monitorCancel := context.WithTimeout(ctx, 20*time.Second)
 	defer monitorCancel()
 
+	syslog.L.Info().WithMessage("starting monitor goroutine").Write()
 	go func() {
+		defer syslog.L.Info().WithMessage("monitor goroutine closing").Write()
 		task, err := proxmox.Session.GetJobTask(monitorCtx, readyChan, job, target)
 		if err != nil {
+			syslog.L.Error(err).WithMessage("found error in getjobtask return").Write()
+
 			select {
 			case taskErrorChan <- err:
 			case <-monitorCtx.Done():
 			}
 			return
 		}
+
+		syslog.L.Info().WithMessage("found task in getjobtask return").WithField("task", task.UPID).Write()
+
 		select {
 		case taskResultChan <- task:
 		case <-monitorCtx.Done():
@@ -210,6 +217,7 @@ func RunBackup(
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stdoutWriter
 
+	syslog.L.Info().WithMessage("starting backup job").WithField("args", cmd.Args).Write()
 	if err := cmd.Start(); err != nil {
 		monitorCancel()
 		if currOwner != "" {
@@ -226,6 +234,7 @@ func RunBackup(
 
 	go monitorPBSClientLogs(clientLogPath, cmd, errorMonitorDone)
 
+	syslog.L.Info().WithMessage("waiting for task monitoring results").Write()
 	var task proxmox.Task
 	select {
 	case task = <-taskResultChan:
@@ -260,6 +269,8 @@ func RunBackup(
 		}
 		return nil, fmt.Errorf("%w: %v", ErrJobStatusUpdateFailed, err)
 	}
+
+	syslog.L.Info().WithMessage("task monitoring finished").WithField("task", task.UPID).Write()
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
