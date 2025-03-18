@@ -50,13 +50,31 @@ func createOriginalBackup(targetPath string) (string, error) {
 	if _, err := os.Stat(backupPath); err == nil {
 		return backupPath, nil
 	}
+
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get file metadata: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", fmt.Errorf("failed to get file ownership information")
+	}
+
 	content, err := os.ReadFile(targetPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file for original backup: %w", err)
 	}
-	if err := os.WriteFile(backupPath, content, 0644); err != nil {
+	if err := os.WriteFile(backupPath, content, info.Mode().Perm()); err != nil {
 		return "", fmt.Errorf("failed to write original backup: %w", err)
 	}
+
+	if err := os.Chown(backupPath, int(stat.Uid), int(stat.Gid)); err != nil {
+		return "", fmt.Errorf("failed to set ownership for original backup: %w", err)
+	}
+	if err := os.Chmod(backupPath, info.Mode()); err != nil {
+		return "", fmt.Errorf("failed to set permissions for original backup: %w", err)
+	}
+
 	return backupPath, nil
 }
 
@@ -78,6 +96,16 @@ func createTimestampBackup(targetPath string) (string, error) {
 // atomicReplaceFile writes newContent to targetPath atomically by writing to
 // a temporary file and then renaming it.
 func atomicReplaceFile(targetPath string, newContent []byte) error {
+	// Get file metadata (permissions and ownership)
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to get file metadata: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("failed to get file ownership information")
+	}
+
 	dir := filepath.Dir(targetPath)
 	tmpFile, err := os.CreateTemp(dir, "tmp")
 	if err != nil {
@@ -91,6 +119,15 @@ func atomicReplaceFile(targetPath string, newContent []byte) error {
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("failed to close temporary file: %w", err)
 	}
+
+	// Set ownership and permissions for the temporary file
+	if err := os.Chown(tempName, int(stat.Uid), int(stat.Gid)); err != nil {
+		return fmt.Errorf("failed to set ownership for temporary file: %w", err)
+	}
+	if err := os.Chmod(tempName, info.Mode()); err != nil {
+		return fmt.Errorf("failed to set permissions for temporary file: %w", err)
+	}
+
 	if err := os.Rename(tempName, targetPath); err != nil {
 		return fmt.Errorf("failed to rename temporary file: %w", err)
 	}
@@ -99,13 +136,32 @@ func atomicReplaceFile(targetPath string, newContent []byte) error {
 
 // restoreBackup restores targetPath from backupPath.
 func restoreBackup(targetPath, backupPath string) error {
+	// Get file metadata (permissions and ownership) from the target file
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to get file metadata: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("failed to get file ownership information")
+	}
+
 	backupContent, err := os.ReadFile(backupPath)
 	if err != nil {
 		return fmt.Errorf("failed to read backup file: %w", err)
 	}
-	if err := os.WriteFile(targetPath, backupContent, 0644); err != nil {
+	if err := os.WriteFile(targetPath, backupContent, info.Mode().Perm()); err != nil {
 		return fmt.Errorf("failed to restore file: %w", err)
 	}
+
+	// Set ownership and permissions for the restored file
+	if err := os.Chown(targetPath, int(stat.Uid), int(stat.Gid)); err != nil {
+		return fmt.Errorf("failed to set ownership for restored file: %w", err)
+	}
+	if err := os.Chmod(targetPath, info.Mode()); err != nil {
+		return fmt.Errorf("failed to set permissions for restored file: %w", err)
+	}
+
 	syslog.L.Info().WithMessage(
 		fmt.Sprintf("Restored original file %s from backup.", targetPath),
 	).Write()
