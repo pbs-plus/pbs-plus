@@ -54,22 +54,22 @@ func (database *Database) CreateTarget(target types.Target) error {
 	return nil
 }
 
-func (database *Database) GetTarget(name string) (*types.Target, error) {
+func (database *Database) GetTarget(name string) (types.Target, error) {
 	targetPath := filepath.Join(database.paths["targets"], utils.EncodePath(name)+".cfg")
 	configData, err := database.targetsConfig.Parse(targetPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return types.Target{}, err
 		}
-		return nil, fmt.Errorf("GetTarget: error reading config: %w", err)
+		return types.Target{}, fmt.Errorf("GetTarget: error reading config: %w", err)
 	}
 
 	section, exists := configData.Sections[name]
 	if !exists {
-		return nil, fmt.Errorf("GetTarget: section %s does not exist", name)
+		return types.Target{}, fmt.Errorf("GetTarget: section %s does not exist", name)
 	}
 
-	target := &section.Properties
+	target := section.Properties
 	target.Name = name
 
 	if strings.HasPrefix(target.Path, "agent://") {
@@ -129,9 +129,7 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 			syslog.L.Error(err).WithField("id", file.Name()).Write()
 			continue
 		}
-		if target != nil {
-			targets = append(targets, *target)
-		}
+		targets = append(targets, target)
 	}
 
 	return targets, nil
@@ -154,16 +152,13 @@ func (database *Database) GetAllTargetsByIP(clientIP string) ([]types.Target, er
 			syslog.L.Error(err).WithField("id", file.Name()).Write()
 			continue
 		}
-		if target == nil {
-			continue
-		}
 
 		// Check if it's an agent target and matches the clientIP
 		if target.IsAgent {
 			// Split path into parts: ["agent:", "", "<clientIP>", "<driveLetter>"]
 			parts := strings.Split(target.Path, "/")
 			if len(parts) >= 3 && parts[2] == clientIP {
-				targets = append(targets, *target)
+				targets = append(targets, target)
 			}
 		}
 	}

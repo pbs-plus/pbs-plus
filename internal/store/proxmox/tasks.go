@@ -14,39 +14,39 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan chan struct{}, job *types.Job, target *types.Target) (*Task, error) {
+func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan chan struct{}, job types.Job, target types.Target) (Task, error) {
 	tasksParentPath := "/var/log/proxmox-backup/tasks"
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create watcher: %w", err)
+		return Task{}, fmt.Errorf("failed to create watcher: %w", err)
 	}
 	err = watcher.Add(tasksParentPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to add folder to watcher: %w", err)
+		return Task{}, fmt.Errorf("failed to add folder to watcher: %w", err)
 	}
 
 	// Helper function to check if a file matches our search criteria
-	checkFile := func(filePath string, searchString string) (*Task, error) {
+	checkFile := func(filePath string, searchString string) (Task, error) {
 		if !strings.Contains(filePath, ".tmp_") && strings.Contains(filePath, searchString) {
 			log.Printf("Proceeding: %s contains %s\n", filePath, searchString)
 			fileName := filepath.Base(filePath)
 			log.Printf("Getting UPID: %s\n", fileName)
 			newTask, err := proxmoxSess.GetTaskByUPID(fileName)
 			if err != nil {
-				return nil, fmt.Errorf("GetJobTask: error getting task: %v\n", err)
+				return Task{}, fmt.Errorf("GetJobTask: error getting task: %v\n", err)
 			}
 			log.Printf("Sending UPID: %s\n", fileName)
 			return newTask, nil
 		}
-		return nil, nil
+		return Task{}, os.ErrNotExist
 	}
 
 	// Helper function to scan directory for matching files
-	scanDirectory := func(dirPath string, searchString string) (*Task, error) {
+	scanDirectory := func(dirPath string, searchString string) (Task, error) {
 		files, err := os.ReadDir(dirPath)
 		if err != nil {
 			log.Printf("Error reading directory %s: %v\n", dirPath, err)
-			return nil, nil
+			return Task{}, os.ErrNotExist
 		}
 
 		for _, file := range files {
@@ -54,14 +54,12 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 				filePath := filepath.Join(dirPath, file.Name())
 				task, err := checkFile(filePath, searchString)
 				if err != nil {
-					return nil, err
+					return Task{}, err
 				}
-				if task != nil {
-					return task, nil
-				}
+				return task, nil
 			}
 		}
-		return nil, nil
+		return Task{}, os.ErrNotExist
 	}
 
 	err = filepath.Walk(tasksParentPath, func(path string, info os.FileInfo, err error) error {
@@ -78,7 +76,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to walk folder: %w", err)
+		return Task{}, fmt.Errorf("failed to walk folder: %w", err)
 	}
 
 	hostname, err := os.Hostname()
@@ -112,32 +110,29 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 					}
 
 					task, err := scanDirectory(event.Name, searchString)
-					if err != nil {
-						return nil, err
-					}
-					if task != nil {
+					if err != nil && !os.IsNotExist(err) {
+						return Task{}, err
+					} else if !os.IsNotExist(err) {
 						return task, nil
 					}
 				} else {
 					task, err := checkFile(event.Name, searchString)
 					if err != nil {
-						return nil, err
+						return Task{}, err
 					}
-					if task != nil {
-						return task, nil
-					}
+					return task, nil
 				}
 			}
 		case <-ctx.Done():
-			return nil, nil
+			return Task{}, ctx.Err()
 		}
 	}
 }
 
-func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (*Task, error) {
+func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (Task, error) {
 	resp, err := ParseUPID(upid)
 	if err != nil {
-		return nil, err
+		return Task{}, err
 	}
 
 	resp.Status = "stopped"
@@ -158,7 +153,7 @@ func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (*Task, error) {
 
 	endTime, err := proxmoxSess.GetTaskEndTime(resp)
 	if err != nil {
-		return nil, fmt.Errorf("GetTaskByUPID: error getting task end time -> %w", err)
+		return Task{}, fmt.Errorf("GetTaskByUPID: error getting task end time -> %w", err)
 	}
 
 	resp.EndTime = endTime
@@ -166,7 +161,7 @@ func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (*Task, error) {
 	return resp, nil
 }
 
-func (proxmoxSess *ProxmoxSession) GetTaskEndTime(task *Task) (int64, error) {
+func (proxmoxSess *ProxmoxSession) GetTaskEndTime(task Task) (int64, error) {
 	if proxmoxSess.APIToken == nil {
 		return -1, fmt.Errorf("GetTaskEndTime: token is required")
 	}

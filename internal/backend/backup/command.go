@@ -15,7 +15,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func prepareBackupCommand(ctx context.Context, job *types.Job, storeInstance *store.Store, srcPath string, isAgent bool) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *store.Store, srcPath string, isAgent bool) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
@@ -59,7 +59,7 @@ func getBackupId(isAgent bool, targetName string) (string, error) {
 	return strings.TrimSpace(strings.Split(targetName, " - ")[0]), nil
 }
 
-func buildCommandArgs(storeInstance *store.Store, job *types.Job, srcPath string, jobStore string, backupId string) []string {
+func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string, jobStore string, backupId string) []string {
 	if srcPath == "" || jobStore == "" || backupId == "" {
 		return nil
 	}

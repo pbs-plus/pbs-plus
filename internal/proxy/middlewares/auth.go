@@ -132,7 +132,7 @@ func checkProxyAuth(r *http.Request) error {
 
 func loadTrustedCert(store *store.Store, targetName string) (*x509.Certificate, error) {
 	target, err := store.Database.GetTarget(targetName)
-	if err != nil || target == nil {
+	if err != nil {
 		return nil, fmt.Errorf("failed to get target: %w", err)
 	}
 

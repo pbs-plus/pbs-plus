@@ -15,7 +15,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func generateRetryTimer(job *types.Job, schedule string, attempt int) error {
+func generateRetryTimer(job types.Job, schedule string, attempt int) error {
 	if strings.Contains(job.ID, "/") ||
 		strings.Contains(job.ID, "\\") ||
 		strings.Contains(job.ID, "..") {
@@ -48,7 +48,7 @@ WantedBy=timers.target`, job.ID, attempt, schedule)
 	return nil
 }
 
-func generateRetryService(job *types.Job, attempt int) error {
+func generateRetryService(job types.Job, attempt int) error {
 	if strings.Contains(job.ID, "/") ||
 		strings.Contains(job.ID, "\\") ||
 		strings.Contains(job.ID, "..") {
@@ -81,7 +81,7 @@ ExecStart=/usr/bin/pbs-plus -job="%s"`, job.ID, attempt, job.ID)
 	return nil
 }
 
-func RemoveAllRetrySchedules(job *types.Job) {
+func RemoveAllRetrySchedules(job types.Job) {
 	retryPattern := filepath.Join(
 		constants.TimerBasePath,
 		fmt.Sprintf("pbs-plus-job-%s-retry-*.timer",
@@ -114,7 +114,7 @@ func RemoveAllRetrySchedules(job *types.Job) {
 	_ = cmd.Run()
 }
 
-func SetRetrySchedule(job *types.Job) error {
+func SetRetrySchedule(job types.Job) error {
 	maxRetry := job.Retry
 	retryPattern := filepath.Join(
 		constants.TimerBasePath,
@@ -213,15 +213,6 @@ func SetRetrySchedule(job *types.Job) error {
 	cmd.Env = os.Environ()
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("SetRetrySchedule: error enabling retry timer: %w", err)
-	}
-
-	// Optionally, display the next scheduled activation.
-	next, err := GetNextSchedule(job)
-	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: error checking next schedule: %w", err)
-	}
-	if next != nil {
-		fmt.Printf("Next schedule for job %s: %s\n", job.ID, next.Format(layout))
 	}
 
 	return nil
