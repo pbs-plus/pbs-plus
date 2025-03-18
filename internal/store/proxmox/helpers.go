@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -84,7 +85,7 @@ func ParseUPID(upid string) (*Task, error) {
 	return task, nil
 }
 
-func GenerateTaskErrorFile(job *types.Job, pbsError error, additionalData []string) error {
+func GenerateTaskErrorFile(storeInstance *store.Store, job *types.Job, pbsError error, additionalData []string) error {
 	if Session.APIToken == nil {
 		return errors.New("session api token is missing")
 	}
@@ -124,10 +125,10 @@ func GenerateTaskErrorFile(job *types.Job, pbsError error, additionalData []stri
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 
 	err = file.Chown(34, 34)
 	if err != nil {
+		file.Close()
 		return err
 	}
 
@@ -136,24 +137,51 @@ func GenerateTaskErrorFile(job *types.Job, pbsError error, additionalData []stri
 	for _, data := range additionalData {
 		dataLine := fmt.Sprintf("%s: %s\n", timestamp, data)
 		if _, err := file.WriteString(dataLine); err != nil {
+			file.Close()
 			return fmt.Errorf("failed to write additional data line: %w", err)
 		}
 	}
 
 	errorLine := fmt.Sprintf("%s: TASK ERROR: %s\n", timestamp, pbsError.Error())
 	if _, err := file.WriteString(errorLine); err != nil {
+		file.Close()
 		return fmt.Errorf("failed to write error line: %w", err)
 	}
+
+	file.Close()
 
 	archive, err := os.OpenFile(filepath.Join(constants.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open file archive: %w", err)
 	}
-	defer archive.Close()
 
 	archiveLine := fmt.Sprintf("\n%s %s %s", upid, startTime, pbsError.Error())
 	if _, err := archive.WriteString(archiveLine); err != nil {
+		archive.Close()
 		return fmt.Errorf("failed to write archive line: %w", err)
+	}
+
+	archive.Close()
+
+	taskFound, err := Session.GetTaskByUPID(upid)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("unable to get task by upid").Write()
+		return err
+	}
+
+	// Update job status
+	latestJob, err := storeInstance.Database.GetJob(job.ID)
+	if err != nil {
+		latestJob = job
+	}
+
+	latestJob.LastRunUpid = taskFound.UPID
+	latestJob.LastRunState = &taskFound.Status
+	latestJob.LastRunEndtime = &taskFound.EndTime
+
+	err = storeInstance.Database.UpdateJob(*job)
+	if err != nil {
+		syslog.L.Error(err).WithField("jobId", job.ID).WithField("upid", upid).Write()
 	}
 
 	return nil
