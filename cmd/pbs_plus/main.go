@@ -152,16 +152,8 @@ func main() {
 		return
 	}
 
-	pbsJsLocation := "/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js"
-	proxmoxLibLocation := "/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js"
-
-	if err := proxy.WatchAndReplace(pbsJsLocation, proxy.ModifyJS); err != nil {
+	if err := proxy.ModifyPBSJavascript(); err != nil {
 		syslog.L.Error(err).WithMessage("failed to mount modified proxmox-backup-gui.js").Write()
-		return
-	}
-
-	if err := proxy.WatchAndReplace(proxmoxLibLocation, proxy.ModifyLib); err != nil {
-		syslog.L.Error(err).WithMessage("failed to mount modified proxmoxlib.js").Write()
 		return
 	}
 
