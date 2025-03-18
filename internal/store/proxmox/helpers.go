@@ -161,7 +161,7 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 	}
 	defer archive.Close()
 
-	archiveLine := fmt.Sprintf("\n%s %s %s", upid, startTime, pbsError.Error())
+	archiveLine := fmt.Sprintf("%s %s %s\n", upid, startTime, pbsError.Error())
 	if _, err := archive.WriteString(archiveLine); err != nil {
 		return Task{}, fmt.Errorf("failed to write archive line: %w", err)
 	}
