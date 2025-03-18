@@ -84,6 +84,14 @@ func (database *Database) CreateJob(job types.Job) error {
 		syslog.L.Error(err).WithField("id", job.ID).Write()
 	}
 
+	if job.RetryInterval <= 0 {
+		job.RetryInterval = 1
+	}
+
+	if job.Retry < 0 {
+		job.Retry = 0
+	}
+
 	// Convert job to config format
 	configData := &configLib.ConfigData[types.Job]{
 		Sections: map[string]*configLib.Section[types.Job]{
@@ -241,6 +249,14 @@ func (database *Database) getJob(id string) (types.Job, error) {
 func (database *Database) UpdateJob(job types.Job) error {
 	if !utils.IsValidID(job.ID) && job.ID != "" {
 		return fmt.Errorf("UpdateJob: invalid id string -> %s", job.ID)
+	}
+
+	if job.RetryInterval <= 0 {
+		job.RetryInterval = 1
+	}
+
+	if job.Retry < 0 {
+		job.Retry = 0
 	}
 
 	// Convert job to config format

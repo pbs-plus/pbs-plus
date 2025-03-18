@@ -154,6 +154,12 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             name: "retry",
           },
           {
+            xtype: "proxmoxtextfield",
+            fieldLabel: gettext("Retry interval (minutes)"),
+            emptyText: gettext("1"),
+            name: "retry-interval",
+          },
+          {
             xtype: "combo",
             fieldLabel: gettext("Backup Mode"),
             name: "mode",
