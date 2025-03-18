@@ -35,58 +35,48 @@ var jsReplacer = strings.NewReplacer(
 	"Proxmox.panel.LogView", "PBS.plusPanel.LogView",
 )
 
-// computeChecksum computes the SHA-256 checksum of data.
+// computeChecksum computes the SHA256 checksum of data.
 func computeChecksum(data []byte) string {
 	hasher := sha256.New()
 	hasher.Write(data)
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-// createOriginalBackup creates a backup that preserves the original file.
-// This backup is only created once and is never overwritten.
+// createOriginalBackup creates a backup that preserves the original file,
+// stored under a ".original" suffix. This file is created only once.
 func createOriginalBackup(targetPath string) (string, error) {
-	backupPath := filepath.Join(
-		backupDir,
-		fmt.Sprintf("%s.original", filepath.Base(targetPath)),
-	)
+	backupPath := filepath.Join(backupDir,
+		fmt.Sprintf("%s.original", filepath.Base(targetPath)))
 	if _, err := os.Stat(backupPath); err == nil {
-		// Original backup already exists.
 		return backupPath, nil
 	}
-
 	content, err := os.ReadFile(targetPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file for original backup: %w", err)
 	}
-
 	if err := os.WriteFile(backupPath, content, 0644); err != nil {
 		return "", fmt.Errorf("failed to write original backup: %w", err)
 	}
 	return backupPath, nil
 }
 
-// createTimestampBackup creates a backup of the current target file using a
-// timestamp to avoid overwriting.
+// createTimestampBackup creates a timestamped backup to avoid overwriting.
 func createTimestampBackup(targetPath string) (string, error) {
-	timestamp := time.Now().Format("20060102_150405")
-	backupPath := filepath.Join(
-		backupDir,
-		fmt.Sprintf("%s.%s.backup", filepath.Base(targetPath), timestamp),
-	)
-
+	ts := time.Now().Format("20060102_150405")
+	backupPath := filepath.Join(backupDir,
+		fmt.Sprintf("%s.%s.backup", filepath.Base(targetPath), ts))
 	content, err := os.ReadFile(targetPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file for timestamp backup: %w", err)
 	}
-
 	if err := os.WriteFile(backupPath, content, 0644); err != nil {
 		return "", fmt.Errorf("failed to write timestamp backup: %w", err)
 	}
 	return backupPath, nil
 }
 
-// atomicReplaceFile writes newContent to targetPath in an atomic manner.
-// It writes to a temporary file and then renames it.
+// atomicReplaceFile writes newContent to targetPath atomically by writing to
+// a temporary file and then renaming it.
 func atomicReplaceFile(targetPath string, newContent []byte) error {
 	dir := filepath.Dir(targetPath)
 	tmpFile, err := os.CreateTemp(dir, "tmp")
@@ -94,28 +84,39 @@ func atomicReplaceFile(targetPath string, newContent []byte) error {
 		return fmt.Errorf("failed to create temporary file: %w", err)
 	}
 	tempName := tmpFile.Name()
-
 	if _, err := tmpFile.Write(newContent); err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("failed to write temporary file: %w", err)
 	}
-
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("failed to close temporary file: %w", err)
 	}
-
 	if err := os.Rename(tempName, targetPath); err != nil {
 		return fmt.Errorf("failed to rename temporary file: %w", err)
 	}
-
 	return nil
 }
 
-// sortedWalk returns the contents of all files in an embedded FS, sorting
-// the file paths alphabetically over the entire tree.
+// restoreBackup restores targetPath from backupPath.
+func restoreBackup(targetPath, backupPath string) error {
+	backupContent, err := os.ReadFile(backupPath)
+	if err != nil {
+		return fmt.Errorf("failed to read backup file: %w", err)
+	}
+	if err := os.WriteFile(targetPath, backupContent, 0644); err != nil {
+		return fmt.Errorf("failed to restore file: %w", err)
+	}
+	syslog.L.Info().WithMessage(
+		fmt.Sprintf("Restored original file %s from backup.", targetPath),
+	).Write()
+	return nil
+}
+
+// sortedWalk recursively collects file paths in embedded FS, globally sorted.
 func sortedWalk(embedded fs.FS, root string) ([][]byte, error) {
 	var filePaths []string
-	err := fs.WalkDir(embedded, root, func(path string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(embedded, root, func(path string, d fs.DirEntry,
+		err error) error {
 		if err != nil {
 			return err
 		}
@@ -128,10 +129,9 @@ func sortedWalk(embedded fs.FS, root string) ([][]byte, error) {
 		return nil, err
 	}
 	sort.Strings(filePaths)
-
 	var results [][]byte
-	for _, fp := range filePaths {
-		data, err := fs.ReadFile(embedded, fp)
+	for _, p := range filePaths {
+		data, err := fs.ReadFile(embedded, p)
 		if err != nil {
 			return nil, err
 		}
@@ -140,7 +140,7 @@ func sortedWalk(embedded fs.FS, root string) ([][]byte, error) {
 	return results, nil
 }
 
-// compileJS concatenates all JavaScript files found in the embedded FS (alphabetically),
+// compileJS concatenates all JavaScript files found in the embedded FS,
 // joining them with newline characters.
 func compileJS(embedded *embed.FS) []byte {
 	parts, err := sortedWalk(*embedded, ".")
@@ -151,40 +151,64 @@ func compileJS(embedded *embed.FS) []byte {
 	return bytes.Join(parts, []byte("\n"))
 }
 
+// ModifyJS applies a string replacer between application JS and PBS.plus,
+// and appends the contents of "pre" and "custom" JS files.
 func ModifyJS(original []byte) []byte {
 	replaced := []byte(jsReplacer.Replace(string(original)))
 	preJS := compileJS(&preJsFS)
-	compiledJS := compileJS(&customJsFS)
-	return bytes.Join([][]byte{preJS, replaced, compiledJS}, []byte("\n"))
+	customJS := compileJS(&customJsFS)
+	return bytes.Join([][]byte{preJS, replaced, customJS}, []byte("\n"))
 }
 
+// ModifyLib applies a one-off string replacement.
 func ModifyLib(original []byte) []byte {
-	oldString := `if (!newopts.url.match(/^\/api2/))`
-	newString := `if (!newopts.url.match(/^\/api2/) && !newopts.url.match(/^[a-z][a-z\d+\-.]*:/i))`
-	newContent := strings.Replace(string(original), oldString, newString, 1)
-	return []byte(newContent)
+	oldStr := `if (!newopts.url.match(/^\/api2/))`
+	newStr := `if (!newopts.url.match(/^\/api2/) && !newopts.url.match(/^[a-z][a-z\d+\-.]*:/i))`
+	return []byte(strings.Replace(string(original), oldStr, newStr, 1))
 }
 
-// WatchAndReplace watches targetPath for changes, applies modifications (if needed),
-// and restores the original backup when the program terminates.
-// File events are debounced to avoid processing rapid, successive events.
-// If the file is removed or renamed, the watcher is re-added once it reappears.
-func WatchAndReplace(
-	targetPath string,
-	modifyFunc func([]byte) []byte,
-) error {
-	// Create backup directory if needed.
+// checkAndRestoreOnStartup compares targetPath with the original backup.
+// If they differ (e.g. after a hard reboot), the original is restored.
+func checkAndRestoreOnStartup(targetPath, originalBackup string) (string, error) {
+	current, err := os.ReadFile(targetPath)
+	if err != nil {
+		return "", err
+	}
+	origContent, err := os.ReadFile(originalBackup)
+	if err != nil {
+		return "", err
+	}
+	if computeChecksum(current) != computeChecksum(origContent) {
+		syslog.L.Info().WithMessage(
+			fmt.Sprintf("Detected leftover modification on %s; restoring original file.",
+				targetPath),
+		).Write()
+		if err := atomicReplaceFile(targetPath, origContent); err != nil {
+			return "", err
+		}
+		return computeChecksum(origContent), nil
+	}
+	return computeChecksum(current), nil
+}
+
+// WatchAndReplace watches targetPath for changes, applies modifications via
+// modifyFunc, and ensures that the file is restored on shutdown (or on startup
+// in case of a hard reboot). It uses debounced, atomic updates and re-adds the
+// watcher on removal/rename events.
+func WatchAndReplace(targetPath string,
+	modifyFunc func([]byte) []byte) error {
+	// Ensure backup directory exists.
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
 
-	// Create and store the original backup.
+	// Create original backup once.
 	originalBackup, err := createOriginalBackup(targetPath)
 	if err != nil {
 		return fmt.Errorf("original backup error: %w", err)
 	}
 
-	// Set up a signal handler to restore the original backup upon termination.
+	// Set up signal handler for graceful termination.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -196,21 +220,25 @@ func WatchAndReplace(
 		if err := restoreBackup(targetPath, originalBackup); err != nil {
 			syslog.L.Error(err).Write()
 		}
+		os.Exit(0)
 	}()
 
-	// Read the current file.
-	original, err := os.ReadFile(targetPath)
+	// On startup, restore the file if a hard reboot left it modified.
+	origChecksum, err := checkAndRestoreOnStartup(targetPath, originalBackup)
 	if err != nil {
-		return fmt.Errorf("failed to read file: %w", err)
+		return fmt.Errorf("startup restore error: %w", err)
 	}
-	origChecksum := computeChecksum(original)
 
-	// Determine if an initial modification is needed.
-	modifiedContent := modifyFunc(original)
+	// Read the current file and apply initial modification if needed.
+	initialContent, err := os.ReadFile(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to read target file: %w", err)
+	}
+	modifiedContent := modifyFunc(initialContent)
 	modChecksum := computeChecksum(modifiedContent)
 	if origChecksum != modChecksum {
 		if err := atomicReplaceFile(targetPath, modifiedContent); err != nil {
-			return fmt.Errorf("failed to replace file atomically: %w", err)
+			return fmt.Errorf("failed to apply initial modification: %w", err)
 		}
 		syslog.L.Info().WithMessage(
 			fmt.Sprintf("File %s modified initially.", targetPath),
@@ -223,54 +251,53 @@ func WatchAndReplace(
 		).Write()
 	}
 
-	// Create a file watcher.
+	// Set up file watcher.
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("failed to create watcher: %w", err)
 	}
-
 	if err := watcher.Add(targetPath); err != nil {
 		return fmt.Errorf("failed to add file to watcher: %w", err)
 	}
-	syslog.L.Info().WithMessage(fmt.Sprintf("Watching file: %s", targetPath)).Write()
+	syslog.L.Info().WithMessage(
+		fmt.Sprintf("Watching file: %s", targetPath),
+	).Write()
 
-	// Debounce setup.
+	// Debounce settings.
 	eventTriggerChan := make(chan struct{}, 1)
 	var debounceTimer *time.Timer
-	const debounceDuration = 100 * time.Millisecond
 	var debounceMu sync.Mutex
+	const debounceDuration = 100 * time.Millisecond
 
-	// processChange reads the file, applies the modification, and updates it.
 	processChange := func() {
-		newData, err := os.ReadFile(targetPath)
+		data, err := os.ReadFile(targetPath)
 		if err != nil {
 			syslog.L.Error(err).Write()
 			return
 		}
-		newChecksum := computeChecksum(newData)
-		if newChecksum == origChecksum {
+		if computeChecksum(data) == origChecksum {
 			syslog.L.Info().WithMessage(
 				fmt.Sprintf("No effective change on %s, skipping.", targetPath),
 			).Write()
 			return
 		}
-
-		// Create a timestamped backup to preserve the current state.
+		// Create a timestamped backup.
 		if _, err := createTimestampBackup(targetPath); err != nil {
 			syslog.L.Error(err).Write()
 		}
-
-		updatedModified := modifyFunc(newData)
-		newModChecksum := computeChecksum(updatedModified)
-		if err := atomicReplaceFile(targetPath, updatedModified); err != nil {
+		updated := modifyFunc(data)
+		newChk := computeChecksum(updated)
+		if err := atomicReplaceFile(targetPath, updated); err != nil {
 			syslog.L.Error(err).Write()
 			return
 		}
-		syslog.L.Info().WithMessage(fmt.Sprintf("File %s updated.", targetPath)).Write()
-		origChecksum = newModChecksum
+		syslog.L.Info().WithMessage(
+			fmt.Sprintf("File %s updated.", targetPath),
+		).Write()
+		origChecksum = newChk
 	}
 
-	// Event loop.
+	// Watcher event loop.
 	go func() {
 		for {
 			select {
@@ -279,17 +306,16 @@ func WatchAndReplace(
 					syslog.L.Info().WithMessage("Watcher events channel closed").Write()
 					return
 				}
-
-				// Handle deletion or renaming:
+				// If removed or renamed, wait for re-creation.
 				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 					syslog.L.Info().WithMessage(
-						fmt.Sprintf("File %s was removed or renamed. Waiting for re-creation...", targetPath),
+						fmt.Sprintf("File %s removed/renamed; waiting for re-creation...",
+							targetPath),
 					).Write()
-					// Poll until the file reappears, then re-add it to the watcher.
 					for {
 						time.Sleep(100 * time.Millisecond)
 						if _, err := os.Stat(targetPath); err == nil {
-							if err = watcher.Add(targetPath); err != nil {
+							if err := watcher.Add(targetPath); err != nil {
 								syslog.L.Error(err).Write()
 							} else {
 								syslog.L.Info().WithMessage(
@@ -301,8 +327,7 @@ func WatchAndReplace(
 					}
 					continue
 				}
-
-				// For Write and Create events, trigger the debounce timer.
+				// For Write and Create events, debounce the change handling.
 				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
 					debounceMu.Lock()
 					if debounceTimer != nil {
@@ -316,34 +341,17 @@ func WatchAndReplace(
 					})
 					debounceMu.Unlock()
 				}
-
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					syslog.L.Info().WithMessage("Watcher errors channel closed").Write()
 					return
 				}
 				syslog.L.Error(err).Write()
-
 			case <-eventTriggerChan:
 				processChange()
 			}
 		}
 	}()
 
-	return nil
-}
-
-// restoreBackup restores targetPath from backupPath.
-func restoreBackup(targetPath, backupPath string) error {
-	content, err := os.ReadFile(backupPath)
-	if err != nil {
-		return fmt.Errorf("failed to read backup file: %w", err)
-	}
-	if err := os.WriteFile(targetPath, content, 0644); err != nil {
-		return fmt.Errorf("failed to restore file: %w", err)
-	}
-	syslog.L.Info().WithMessage(
-		fmt.Sprintf("Restored original file %s from backup.", targetPath),
-	).Write()
 	return nil
 }
