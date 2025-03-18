@@ -152,6 +152,10 @@ func SetRetrySchedule(job types.Job) error {
 
 	// Now remove all existing retry timer files so that the new one is unique.
 	for _, file := range retryFiles {
+		cmd := exec.Command("/usr/bin/systemctl", "disable", "--now", file)
+		cmd.Env = os.Environ()
+		_ = cmd.Run()
+
 		if err := os.Remove(file); err != nil {
 			return fmt.Errorf("SetRetrySchedule: error removing old retry timer file %s: %w", file, err)
 		}
