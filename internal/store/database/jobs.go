@@ -22,10 +22,10 @@ import (
 
 const maxAttempts = 100
 
-func (database *Database) generateUniqueJobID(job types.Job) error {
+func (database *Database) generateUniqueJobID(job types.Job) (string, error) {
 	baseID := utils.Slugify(job.Target)
 	if baseID == "" {
-		return fmt.Errorf("invalid target: slugified value is empty")
+		return "", fmt.Errorf("invalid target: slugified value is empty")
 	}
 
 	for idx := 0; idx < maxAttempts; idx++ {
@@ -39,11 +39,10 @@ func (database *Database) generateUniqueJobID(job types.Job) error {
 		_, err := database.GetJob(newID)
 		if err != nil {
 			// Unique id found; assign and exit.
-			job.ID = newID
-			return nil
+			return newID, nil
 		}
 	}
-	return fmt.Errorf("failed to generate a unique job ID after %d attempts", maxAttempts)
+	return "", fmt.Errorf("failed to generate a unique job ID after %d attempts", maxAttempts)
 }
 
 func (database *Database) RegisterJobPlugin() {
@@ -69,10 +68,11 @@ func (database *Database) RegisterJobPlugin() {
 
 func (database *Database) CreateJob(job types.Job) error {
 	if job.ID == "" {
-		err := database.generateUniqueJobID(job)
+		id, err := database.generateUniqueJobID(job)
 		if err != nil {
 			return fmt.Errorf("CreateJob: failed to generate unique id -> %w", err)
 		}
+		job.ID = id
 	}
 
 	if !utils.IsValidID(job.ID) && job.ID != "" {
