@@ -76,7 +76,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 		return nil
 	})
 	if err != nil {
-		return Task{}, fmt.Errorf("failed to walk folder: %w", err)
+		return Task{}, err
 	}
 
 	hostname, err := os.Hostname()
@@ -112,7 +112,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 					task, err := scanDirectory(event.Name, searchString)
 					if err != nil && !os.IsNotExist(err) {
 						return Task{}, err
-					} else if !os.IsNotExist(err) {
+					} else if err == nil {
 						return task, nil
 					}
 				} else {
