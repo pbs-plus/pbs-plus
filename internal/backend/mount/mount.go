@@ -55,7 +55,10 @@ func Mount(storeInstance *store.Store, job types.Job, target types.Target) (*Age
 	const maxRetries = 3
 	const retryDelay = 2 * time.Second
 
-	var lastErr error
+	errCleanup := func() {
+		agentMount.CloseMount()
+		agentMount.Unmount()
+	}
 
 	args := &rpcmount.BackupArgs{
 		JobId:          job.ID,
@@ -64,29 +67,22 @@ func Mount(storeInstance *store.Store, job types.Job, target types.Target) (*Age
 	}
 	var reply rpcmount.BackupReply
 
-	for i := 0; i < maxRetries; i++ {
-		conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
+	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
+	if err != nil {
+		errCleanup()
+		return nil, fmt.Errorf("failed to dial RPC server: %w", err)
+	} else {
+		rpcClient := rpc.NewClient(conn)
+		err = rpcClient.Call("MountRPCService.Backup", args, &reply)
+		rpcClient.Close()
 		if err != nil {
-			lastErr = fmt.Errorf("failed to dial RPC server: %w", err)
-		} else {
-			rpcClient := rpc.NewClient(conn)
-			err = rpcClient.Call("MountRPCService.Backup", args, &reply)
-			rpcClient.Close()
-			if err == nil && reply.Status == 200 {
-				lastErr = nil
-				break
-			}
-			lastErr = fmt.Errorf("RPC Backup call failed: %w", err)
+			errCleanup()
+			return nil, fmt.Errorf("failed to call backup RPC: %w", err)
 		}
-		if i < maxRetries-1 {
-			time.Sleep(retryDelay)
+		if reply.Status != 200 {
+			errCleanup()
+			return nil, fmt.Errorf("backup RPC returned an error %d: %s", reply.Status, reply.Message)
 		}
-	}
-
-	if lastErr != nil {
-		agentMount.CloseMount()
-		agentMount.Unmount()
-		return nil, fmt.Errorf("Mount: error mounting FUSE mount after %d attempts -> %w", maxRetries, lastErr)
 	}
 
 	isAccessible := false
@@ -107,8 +103,7 @@ checkLoop:
 		}
 	}
 	if !isAccessible {
-		agentMount.Unmount()
-		agentMount.CloseMount()
+		errCleanup()
 		return nil, fmt.Errorf("Mount: mounted directory not accessible after timeout")
 	}
 	return agentMount, nil
