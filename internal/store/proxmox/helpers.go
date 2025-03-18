@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
@@ -84,6 +85,12 @@ func ParseUPID(upid string) (Task, error) {
 	return task, nil
 }
 
+var pstart = atomic.Int32{}
+
+func getPStart() int {
+	return int(pstart.Add(1))
+}
+
 func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []string) (Task, error) {
 	if Session.APIToken == nil {
 		return Task{}, errors.New("session api token is missing")
@@ -109,7 +116,7 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 	task := Task{
 		Node:       node,
 		PID:        os.Getpid(),
-		PStart:     int(rand.Uint32()),
+		PStart:     getPStart(),
 		StartTime:  time.Now().Unix(),
 		WorkerType: wtype,
 		WID:        wid,
@@ -166,7 +173,7 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 		return Task{}, fmt.Errorf("failed to write archive line: %w", err)
 	}
 
-	task.Status = "stopped"
+	task.Status = pbsError.Error()
 	task.ExitStatus = pbsError.Error()
 	task.EndTime = time.Now().Unix()
 

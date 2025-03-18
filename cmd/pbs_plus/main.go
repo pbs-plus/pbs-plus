@@ -131,7 +131,7 @@ func main() {
 					}
 
 					latestJob.LastRunUpid = task.UPID
-					latestJob.LastRunState = task.Status
+					latestJob.LastRunState = task.ExitStatus
 					latestJob.LastRunEndtime = task.EndTime
 
 					err = storeInstance.Database.UpdateJob(latestJob)
