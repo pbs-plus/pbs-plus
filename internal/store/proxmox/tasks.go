@@ -5,13 +5,13 @@ package proxmox
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 func (proxmoxSess *ProxmoxSession) GetJobTask(
@@ -35,14 +35,14 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 	// Helper function to check if a file matches our search criteria
 	checkFile := func(filePath string, searchString string) (Task, error) {
 		if !strings.Contains(filePath, ".tmp_") && strings.Contains(filePath, searchString) {
-			log.Printf("Proceeding: %s contains %s\n", filePath, searchString)
+			syslog.L.Info().WithMessage(fmt.Sprintf("Proceeding: %s contains %s\n", filePath, searchString)).Write()
 			fileName := filepath.Base(filePath)
-			log.Printf("Getting UPID: %s\n", fileName)
+			syslog.L.Info().WithMessage(fmt.Sprintf("Getting UPID: %s\n", fileName)).Write()
 			newTask, err := proxmoxSess.GetTaskByUPID(fileName)
 			if err != nil {
 				return Task{}, fmt.Errorf("GetJobTask: error getting task: %v\n", err)
 			}
-			log.Printf("Sending UPID: %s\n", fileName)
+			syslog.L.Info().WithMessage(fmt.Sprintf("Sending UPID: %s\n", fileName)).Write()
 			return newTask, nil
 		}
 		return Task{}, os.ErrNotExist
@@ -52,7 +52,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 	scanDirectory := func(dirPath string, searchString string) (Task, error) {
 		files, err := os.ReadDir(dirPath)
 		if err != nil {
-			log.Printf("Error reading directory %s: %v\n", dirPath, err)
+			syslog.L.Error(err).Write()
 			return Task{}, os.ErrNotExist
 		}
 
@@ -73,13 +73,13 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 
 	err = filepath.WalkDir(tasksParentPath, func(path string, info os.DirEntry, err error) error {
 		if err != nil {
-			log.Println("Error walking the path:", err)
+			syslog.L.Error(err).Write()
 			return nil // Continue walking the tree
 		}
 		if info.IsDir() {
 			err = watcher.Add(path)
 			if err != nil {
-				log.Println("Failed to add directory to watcher:", err)
+				syslog.L.Error(err).Write()
 			}
 		}
 		return nil
@@ -113,6 +113,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 		return Task{}, err
 	}
 
+	syslog.L.Info().WithMessage("ready to start backup").Write()
 	close(readyChan)
 
 	for {
@@ -125,7 +126,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 				if isDir(event.Name) {
 					err = watcher.Add(event.Name)
 					if err != nil {
-						log.Println("Failed to add directory to watcher:", err)
+						syslog.L.Error(err).Write()
 					}
 
 					task, err := scanDirectory(event.Name, searchString)
