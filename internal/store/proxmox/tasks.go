@@ -5,41 +5,81 @@ package proxmox
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func (ps *ProxmoxSession) GetJobTask(
+func (proxmoxSess *ProxmoxSession) GetJobTask(
 	ctx context.Context,
 	readyChan chan struct{},
 	job types.Job,
 	target types.Target,
 ) (Task, error) {
 	tasksParentPath := "/var/log/proxmox-backup/tasks"
-
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return Task{}, fmt.Errorf("failed to create watcher: %w", err)
 	}
 	defer watcher.Close()
 
-	// Recursively add all directories under tasksParentPath.
-	err = filepath.WalkDir(tasksParentPath, func(path string, info os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			log.Printf("error walking the path %q: %v", path, walkErr)
-			// Continue walking so that one error does not abort the entire walk.
-			return nil
+	err = watcher.Add(tasksParentPath)
+	if err != nil {
+		return Task{}, fmt.Errorf("failed to add folder to watcher: %w", err)
+	}
+
+	// Helper function to check if a file matches our search criteria
+	checkFile := func(filePath string, searchString string) (Task, error) {
+		if !strings.Contains(filePath, ".tmp_") && strings.Contains(filePath, searchString) {
+			log.Printf("Proceeding: %s contains %s\n", filePath, searchString)
+			fileName := filepath.Base(filePath)
+			log.Printf("Getting UPID: %s\n", fileName)
+			newTask, err := proxmoxSess.GetTaskByUPID(fileName)
+			if err != nil {
+				return Task{}, fmt.Errorf("GetJobTask: error getting task: %v\n", err)
+			}
+			log.Printf("Sending UPID: %s\n", fileName)
+			return newTask, nil
+		}
+		return Task{}, os.ErrNotExist
+	}
+
+	// Helper function to scan directory for matching files
+	scanDirectory := func(dirPath string, searchString string) (Task, error) {
+		files, err := os.ReadDir(dirPath)
+		if err != nil {
+			log.Printf("Error reading directory %s: %v\n", dirPath, err)
+			return Task{}, os.ErrNotExist
+		}
+
+		for _, file := range files {
+			if !file.IsDir() {
+				filePath := filepath.Join(dirPath, file.Name())
+				task, err := checkFile(filePath, searchString)
+				if err == nil {
+					return task, nil
+				}
+				if !os.IsNotExist(err) {
+					return Task{}, err
+				}
+			}
+		}
+		return Task{}, os.ErrNotExist
+	}
+
+	err = filepath.WalkDir(tasksParentPath, func(path string, info os.DirEntry, err error) error {
+		if err != nil {
+			log.Println("Error walking the path:", err)
+			return nil // Continue walking the tree
 		}
 		if info.IsDir() {
-			if addErr := watcher.Add(path); addErr != nil {
-				log.Printf("failed to add directory %q: %v", path, addErr)
+			err = watcher.Add(path)
+			if err != nil {
+				log.Println("Failed to add directory to watcher:", err)
 			}
 		}
 		return nil
@@ -48,122 +88,62 @@ func (ps *ProxmoxSession) GetJobTask(
 		return Task{}, fmt.Errorf("failed to walk folder: %w", err)
 	}
 
-	// Determine the hostname, factoring in potential fallbacks.
 	hostname, err := os.Hostname()
 	if err != nil {
-		hostnameData, readErr := os.ReadFile("/etc/hostname")
-		if readErr != nil {
+		hostnameFile, err := os.ReadFile("/etc/hostname")
+		if err != nil {
 			hostname = "localhost"
 		} else {
-			hostname = strings.TrimSpace(string(hostnameData))
+			hostname = strings.TrimSpace(string(hostnameFile))
 		}
 	}
 
-	// Determine the backup identifier.
 	isAgent := strings.HasPrefix(target.Path, "agent://")
-	backupID := hostname
+	backupId := hostname
 	if isAgent {
-		backupID = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
+		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
 	}
 
-	// Build the matching substring using the job's store and backupID.
-	searchString := fmt.Sprintf(
-		":backup:%s%shost-%s",
-		job.Store,
-		encodeToHexEscapes(":"),
-		encodeToHexEscapes(backupID),
-	)
+	searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
 
-	// checkFile returns a Task if filePath matches our search criteria.
-	checkFile := func(filePath string, searchString string) (Task, error) {
-		// We skip temporary files.
-		if !strings.Contains(filePath, ".tmp_") &&
-			strings.Contains(filePath, searchString) {
-			log.Printf("Matching file found: %s", filePath)
-			fileName := filepath.Base(filePath)
-			task, err := ps.GetTaskByUPID(fileName)
-			if err != nil {
-				return Task{}, fmt.Errorf("error getting task for UPID %q: %w", fileName, err)
-			}
-			return task, nil
-		}
-		return Task{}, os.ErrNotExist
-	}
-
-	// scanRecursive walks the entire tree starting at 'root' and returns the Task
-	// as soon as it finds a matching file. We use io.EOF as a sentinel error to break early.
-	scanRecursive := func(root, searchString string) (Task, error) {
-		var result Task
-		err := filepath.WalkDir(root, func(path string, info os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				// Log and ignore individual errors.
-				return nil
-			}
-			if !info.IsDir() {
-				if task, err := checkFile(path, searchString); err == nil {
-					result = task
-					// Use io.EOF as a sentinel error to exit early.
-					return io.EOF
-				}
-			}
-			return nil
-		})
-		if err == io.EOF {
-			return result, nil
-		}
-		return Task{}, os.ErrNotExist
-	}
-
-	// Perform an initial full scan of the tasks directory.
-	if task, err := scanRecursive(tasksParentPath, searchString); err == nil {
+	task, err := scanDirectory(tasksParentPath, searchString)
+	if err == nil {
 		return task, nil
+	} else if !os.IsNotExist(err) {
+		return Task{}, err
 	}
 
-	// Signal readiness.
 	close(readyChan)
 
-	// Set up a ticker for periodic rescanning to catch any files that might be missed
-	// because of race condition or fsnotify event drops.
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	// Main event loop: wait for file events or ticker ticks.
 	for {
 		select {
 		case event, ok := <-watcher.Events:
 			if !ok {
-				return Task{}, fmt.Errorf("fsnotify events channel closed")
+				return Task{}, fmt.Errorf("watcher events channel closed")
 			}
-			// Look for file events that might indicate a new task file.
-			if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename) != 0 {
-				// If a new directory is created, add it (and later scan it recursively).
-				stat, statErr := os.Stat(event.Name)
-				if statErr != nil {
-					// The file/directory may have been removed already.
-					continue
-				}
-				if stat.IsDir() {
-					if addErr := watcher.Add(event.Name); addErr != nil {
-						log.Printf("failed to add new directory %q: %v", event.Name, addErr)
+			if event.Op&fsnotify.Create == fsnotify.Create {
+				if isDir(event.Name) {
+					err = watcher.Add(event.Name)
+					if err != nil {
+						log.Println("Failed to add directory to watcher:", err)
 					}
-					// Immediately scan the new directory.
-					if task, err := scanRecursive(event.Name, searchString); err ==
-						nil {
+
+					task, err := scanDirectory(event.Name, searchString)
+					if err == nil {
 						return task, nil
+					}
+					if !os.IsNotExist(err) {
+						return Task{}, err
 					}
 				} else {
-					// Check individual file event.
-					if task, err := checkFile(event.Name, searchString); err == nil {
+					task, err := checkFile(event.Name, searchString)
+					if err == nil {
 						return task, nil
 					}
+					if !os.IsNotExist(err) {
+						return Task{}, err
+					}
 				}
-			}
-		case err := <-watcher.Errors:
-			log.Printf("fsnotify error: %v", err)
-		case <-ticker.C:
-			// Periodically rescan the entire tree.
-			if task, err := scanRecursive(tasksParentPath, searchString); err == nil {
-				return task, nil
 			}
 		case <-ctx.Done():
 			return Task{}, ctx.Err()
