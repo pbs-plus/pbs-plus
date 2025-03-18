@@ -117,8 +117,7 @@ func main() {
 		op, err := backup.RunBackup(ctx, jobTask, storeInstance, true)
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
-			err := proxmox.GenerateTaskErrorFile(jobTask, err, []string{})
-			if err != nil {
+			if err := proxmox.GenerateTaskErrorFile(jobTask, err, []string{"Error handling from a scheduled job run request", "Job ID: " + jobTask.ID, "Source Mode: " + jobTask.SourceMode}); err != nil {
 				syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
 			}
 		}

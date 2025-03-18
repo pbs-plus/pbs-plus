@@ -17,6 +17,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/backend/mount"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/system"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
@@ -108,6 +109,10 @@ func RunBackup(
 			_ = os.Remove(clientLogPath)
 		}
 		close(errorMonitorDone)
+
+		if err := system.SetRetrySchedule(job); err != nil {
+			syslog.L.Error(err).WithField("jobId", job.ID).Write()
+		}
 	}
 
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
@@ -282,6 +287,10 @@ func RunBackup(
 
 		if err := cmd.Wait(); err != nil {
 			operation.err = err
+
+			if err := system.SetRetrySchedule(job); err != nil {
+				syslog.L.Error(err).WithField("jobId", job.ID).Write()
+			}
 		}
 
 		utils.ClearIOStats(job.CurrentPID)
