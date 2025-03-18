@@ -25,6 +25,7 @@ Ext.define("pbs-disk-backup-job-status", {
     "last-successful-endtime",
     "rawexclusions",
     "retry",
+    "retry-interval",
   ],
   idProperty: "id",
   proxy: {
