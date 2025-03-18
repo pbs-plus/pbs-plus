@@ -108,7 +108,7 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 
 	task := Task{
 		Node:       node,
-		PID:        int(rand.Uint32()),
+		PID:        os.Getpid(),
 		PStart:     int(rand.Uint32()),
 		StartTime:  time.Now().Unix(),
 		WorkerType: wtype,
