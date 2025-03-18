@@ -109,10 +109,6 @@ func RunBackup(
 			_ = os.Remove(clientLogPath)
 		}
 		close(errorMonitorDone)
-
-		if err := system.SetRetrySchedule(job); err != nil {
-			syslog.L.Error(err).WithField("jobId", job.ID).Write()
-		}
 	}
 
 	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
@@ -287,10 +283,6 @@ func RunBackup(
 
 		if err := cmd.Wait(); err != nil {
 			operation.err = err
-
-			if err := system.SetRetrySchedule(job); err != nil {
-				syslog.L.Error(err).WithField("jobId", job.ID).Write()
-			}
 		}
 
 		utils.ClearIOStats(job.CurrentPID)
@@ -312,6 +304,14 @@ func RunBackup(
 			syslog.L.Error(err).
 				WithMessage("failed to update job status - post cmd.Wait").
 				Write()
+		}
+
+		if succeeded {
+			system.RemoveAllRetrySchedules(job)
+		} else {
+			if err := system.SetRetrySchedule(job); err != nil {
+				syslog.L.Error(err).WithField("jobId", job.ID).Write()
+			}
 		}
 
 		if currOwner != "" {
