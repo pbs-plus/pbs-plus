@@ -137,6 +137,7 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 	}
 
 	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	_ = os.Chown(filepath.Dir(path), 34, 34)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return Task{}, err
