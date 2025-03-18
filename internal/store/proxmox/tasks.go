@@ -14,12 +14,19 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 )
 
-func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan chan struct{}, job types.Job, target types.Target) (Task, error) {
+func (proxmoxSess *ProxmoxSession) GetJobTask(
+	ctx context.Context,
+	readyChan chan struct{},
+	job types.Job,
+	target types.Target,
+) (Task, error) {
 	tasksParentPath := "/var/log/proxmox-backup/tasks"
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return Task{}, fmt.Errorf("failed to create watcher: %w", err)
 	}
+	defer watcher.Close()
+
 	err = watcher.Add(tasksParentPath)
 	if err != nil {
 		return Task{}, fmt.Errorf("failed to add folder to watcher: %w", err)
@@ -53,10 +60,12 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 			if !file.IsDir() {
 				filePath := filepath.Join(dirPath, file.Name())
 				task, err := checkFile(filePath, searchString)
-				if err != nil {
+				if err == nil {
+					return task, nil
+				}
+				if !os.IsNotExist(err) {
 					return Task{}, err
 				}
-				return task, nil
 			}
 		}
 		return Task{}, os.ErrNotExist
@@ -65,7 +74,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 	err = filepath.Walk(tasksParentPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			log.Println("Error walking the path:", err)
-			return err
+			return nil // Continue walking the tree
 		}
 		if info.IsDir() {
 			err = watcher.Add(path)
@@ -76,7 +85,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 		return nil
 	})
 	if err != nil {
-		return Task{}, err
+		return Task{}, fmt.Errorf("failed to walk folder: %w", err)
 	}
 
 	hostname, err := os.Hostname()
@@ -84,8 +93,9 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 		hostnameFile, err := os.ReadFile("/etc/hostname")
 		if err != nil {
 			hostname = "localhost"
+		} else {
+			hostname = strings.TrimSpace(string(hostnameFile))
 		}
-		hostname = strings.TrimSpace(string(hostnameFile))
 	}
 
 	isAgent := strings.HasPrefix(target.Path, "agent://")
@@ -97,11 +107,13 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 	searchString := fmt.Sprintf(":backup:%s%shost-%s", job.Store, encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
 
 	close(readyChan)
-	defer watcher.Close()
 
 	for {
 		select {
-		case event := <-watcher.Events:
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return Task{}, fmt.Errorf("watcher events channel closed")
+			}
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				if isDir(event.Name) {
 					err = watcher.Add(event.Name)
@@ -110,17 +122,20 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(ctx context.Context, readyChan cha
 					}
 
 					task, err := scanDirectory(event.Name, searchString)
-					if err != nil && !os.IsNotExist(err) {
-						return Task{}, err
-					} else if err == nil {
+					if err == nil {
 						return task, nil
+					}
+					if !os.IsNotExist(err) {
+						return Task{}, err
 					}
 				} else {
 					task, err := checkFile(event.Name, searchString)
-					if err != nil {
+					if err == nil {
+						return task, nil
+					}
+					if !os.IsNotExist(err) {
 						return Task{}, err
 					}
-					return task, nil
 				}
 			}
 		case <-ctx.Done():
