@@ -86,26 +86,27 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		op, err := backup.RunBackup(context.Background(), job, storeInstance, false)
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", job.ID).Write()
-			if task, err := proxmox.GenerateTaskErrorFile(job, err, []string{"Error handling from a web job run request", "Job ID: " + job.ID, "Source Mode: " + job.SourceMode}); err != nil {
-				syslog.L.Error(err).WithField("jobId", job.ID).Write()
-			} else {
-				// Update job status
-				latestJob, err := storeInstance.Database.GetJob(job.ID)
-				if err != nil {
-					latestJob = job
-				}
-
-				latestJob.LastRunUpid = task.UPID
-				latestJob.LastRunState = task.Status
-				latestJob.LastRunEndtime = task.EndTime
-
-				err = storeInstance.Database.UpdateJob(latestJob)
-				if err != nil {
-					syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
-				}
-			}
 
 			if !errors.Is(err, backup.ErrOneInstance) {
+				if task, err := proxmox.GenerateTaskErrorFile(job, err, []string{"Error handling from a web job run request", "Job ID: " + job.ID, "Source Mode: " + job.SourceMode}); err != nil {
+					syslog.L.Error(err).WithField("jobId", job.ID).Write()
+				} else {
+					// Update job status
+					latestJob, err := storeInstance.Database.GetJob(job.ID)
+					if err != nil {
+						latestJob = job
+					}
+
+					latestJob.LastRunUpid = task.UPID
+					latestJob.LastRunState = task.Status
+					latestJob.LastRunEndtime = task.EndTime
+
+					err = storeInstance.Database.UpdateJob(latestJob)
+					if err != nil {
+						syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
+					}
+				}
+
 				if err := system.SetRetrySchedule(job); err != nil {
 					syslog.L.Error(err).WithField("jobId", job.ID).Write()
 				}
