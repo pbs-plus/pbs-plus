@@ -90,11 +90,10 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	backupResp, err := arpcSess.CallContext(ctx, "backup", &backupReq)
 	if err != nil || backupResp.Status != 200 {
 		if err != nil {
-			err = errors.New(backupResp.Message)
-			syslog.L.Error(err).Write()
+			syslog.L.Error(err).WithMessage(backupResp.Message).Write()
 		}
-		reply.Status = 500
-		reply.Message = fmt.Sprintf("MountHandler: Failed to send backup request to target -> %v", err)
+		reply.Status = backupResp.Status
+		reply.Message = backupResp.Message
 		return errors.New(reply.Message)
 	}
 
@@ -197,12 +196,12 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 		if err != nil {
 			err = errors.New(cleanupResp.Message)
 		}
-		reply.Status = 500
-		reply.Message = fmt.Sprintf("Failed to send closure request to target -> %v", err)
+		reply.Status = cleanupResp.Status
+		reply.Message = cleanupResp.Message
 		return fmt.Errorf("cleanup: %w", err)
 	}
 
-	reply.Status = 200
+	reply.Status = cleanupResp.Status
 	reply.Message = "Cleanup successful"
 
 	syslog.L.Info().
