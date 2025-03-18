@@ -123,51 +123,62 @@ type TimerInfo struct {
 }
 
 func GetNextSchedule(job *types.Job) (*time.Time, error) {
-	if job.Schedule == "" {
-		return nil, nil
-	}
-
-	timerUnit := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
-
-	cmd := exec.Command("systemctl", "list-timers", "--all", "|", "grep", timerUnit)
+	cmd := exec.Command("systemctl", "list-timers", "--all")
 	cmd.Env = os.Environ()
 
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("getNextSchedule: error running systemctl command -> %w", err)
+		return nil, fmt.Errorf("GetNextSchedule: error running systemctl command: %w", err)
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	layout := "Mon 2006-01-02 15:04:05 MST"
 
-	scanner.Scan()
+	// Look for both the primary timer and any retry timer entries.
+	primaryTimer := fmt.Sprintf("pbs-plus-job-%s.timer", strings.ReplaceAll(job.ID, " ", "-"))
+	retryPrefix := fmt.Sprintf("pbs-plus-job-%s-retry", strings.ReplaceAll(job.ID, " ", "-"))
 
+	var nextTimes []time.Time
 	for scanner.Scan() {
 		line := scanner.Text()
-		fields := strings.Fields(line)
+		if strings.Contains(line, primaryTimer) ||
+			strings.Contains(line, retryPrefix) {
+			fields := strings.Fields(line)
+			if len(fields) < 4 {
+				continue
+			}
 
-		if len(fields) < 10 {
-			continue
+			nextStr := strings.Join(fields[0:4], " ")
+			if strings.TrimSpace(nextStr) == "-" {
+				continue
+			}
+
+			nextTime, err := time.Parse(layout, nextStr)
+			if err != nil {
+				return nil, fmt.Errorf("GetNextSchedule: error parsing time: %w", err)
+			}
+
+			nextTimes = append(nextTimes, nextTime)
 		}
-
-		nextStr := strings.Join(fields[0:4], " ")
-		if strings.TrimSpace(nextStr) == "-" {
-			return nil, nil
-		}
-
-		nextTime, err := time.Parse(layout, nextStr)
-		if err != nil {
-			return nil, fmt.Errorf("getNextSchedule: error parsing Next time -> %w", err)
-		}
-
-		return &nextTime, nil
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("getNextSchedule: error reading command output -> %w", err)
+		return nil, fmt.Errorf("GetNextSchedule: error reading command output: %w", err)
 	}
 
-	return nil, nil
+	if len(nextTimes) == 0 {
+		return nil, nil
+	}
+
+	// Return the earliest of all the scheduled times.
+	earliest := nextTimes[0]
+	for _, t := range nextTimes {
+		if t.Before(earliest) {
+			earliest = t
+		}
+	}
+
+	return &earliest, nil
 }
 
 func SetSchedule(job types.Job) error {
