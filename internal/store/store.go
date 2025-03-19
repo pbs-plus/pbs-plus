@@ -4,6 +4,7 @@ package store
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
@@ -51,7 +52,7 @@ func Initialize(paths map[string]string) (*Store, error) {
 			return nil, fmt.Errorf("Initialize: error migrating legacy database -> %w", err)
 		}
 
-		syslog.L.Info().WithMessage("PBS Plus has successfully migrated your legacy database to the newer model. Please check if anything is missing and delete /etc/proxmox-backup/pbs-plus/[jobs.d, targets.d, exclusions.d, tokens.d]").Write()
+		syslog.L.Info().WithMessage("PBS Plus has successfully migrated your legacy database to the newer model. Legacy databases has been deleted: /etc/proxmox-backup/pbs-plus/[jobs.d, targets.d, exclusions.d, tokens.d]").Write()
 	}
 
 	store := &Store{
@@ -113,5 +114,51 @@ func migrateLegacyData(legacy *database.Database, newDb *sqlite.Database) error 
 		}
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	newJobs, err := newDb.GetAllJobs()
+	if err != nil {
+		return fmt.Errorf("MigrateLegacyData: error retrieving new jobs: %w", err)
+	}
+
+	if len(legacyJobs) != len(newJobs) {
+		return fmt.Errorf("MigrateLegacyData: legacyJobs != newJobs: %d != %d", len(legacyJobs), len(newJobs))
+	}
+
+	newGlobals, err := newDb.GetAllGlobalExclusions()
+	if err != nil {
+		return fmt.Errorf("MigrateLegacyData: error retrieving new globals: %w", err)
+	}
+
+	if len(legacyGlobals) != len(newGlobals) {
+		return fmt.Errorf("MigrateLegacyData: legacyGlobals != newGlobals: %d != %d", len(legacyGlobals), len(newGlobals))
+	}
+
+	newTargets, err := newDb.GetAllTargets()
+	if err != nil {
+		return fmt.Errorf("MigrateLegacyData: error retrieving new targets: %w", err)
+	}
+
+	if len(legacyTargets) != len(newTargets) {
+		return fmt.Errorf("MigrateLegacyData: legacyTargets != newTargets : %d != %d", len(legacyTargets), len(newTargets))
+	}
+
+	newTokens, err := newDb.GetAllTokens()
+	if err != nil {
+		return fmt.Errorf("MigrateLegacyData: error retrieving new tokens: %w", err)
+	}
+
+	if len(legacyTokens) != len(newTokens) {
+		return fmt.Errorf("MigrateLegacyData: legacyTokens != newTokens: %d != %d", len(legacyTokens), len(newTokens))
+	}
+
+	_ = os.RemoveAll("/etc/proxmox-backup/pbs-plus/jobs.d")
+	_ = os.RemoveAll("/etc/proxmox-backup/pbs-plus/targets.d")
+	_ = os.RemoveAll("/etc/proxmox-backup/pbs-plus/exclusions.d")
+	_ = os.RemoveAll("/etc/proxmox-backup/pbs-plus/tokens.d")
+
+	return nil
 }
