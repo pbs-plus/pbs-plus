@@ -39,6 +39,8 @@ func Initialize(dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
 	}
 
+	db.SetMaxOpenConns(1)
+
 	database := &Database{
 		db:     db,
 		dbPath: dbPath,
