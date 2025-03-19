@@ -46,6 +46,11 @@ func Initialize(dbPath string) (*Database, error) {
 	}
 	writeDb.SetMaxOpenConns(1)
 
+	_, err = writeDb.Exec("PRAGMA journal_mode=WAL;")
+	if err != nil {
+		return nil, fmt.Errorf("Initialize: error DB: %w", err)
+	}
+
 	database := &Database{
 		dbPath:  dbPath,
 		readDb:  readDb,
