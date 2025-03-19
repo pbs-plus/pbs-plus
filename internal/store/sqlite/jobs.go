@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
@@ -153,6 +154,11 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 	exclusions, err := database.GetAllJobExclusions(id)
 	if err == nil && exclusions != nil {
 		job.Exclusions = exclusions
+		pathSlice := []string{}
+		for _, exclusion := range exclusions {
+			pathSlice = append(pathSlice, exclusion.Path)
+		}
+		job.RawExclusions = strings.Join(pathSlice, "\n")
 	}
 
 	jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
@@ -180,6 +186,12 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 		if successTask, err := proxmox.Session.GetTaskByUPID(job.LastSuccessfulUpid); err == nil {
 			job.LastSuccessfulEndtime = successTask.EndTime
 		}
+	}
+
+	// Get global exclusions
+	globalExclusions, err := database.GetAllGlobalExclusions()
+	if err == nil && globalExclusions != nil {
+		job.Exclusions = append(job.Exclusions, globalExclusions...)
 	}
 
 	if nextSchedule, err := system.GetNextSchedule(job); err == nil && nextSchedule != nil {
