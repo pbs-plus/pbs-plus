@@ -91,6 +91,19 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 		cmdArgs = append(cmdArgs, "--exclude", path)
 	}
 
+	// Get global exclusions
+	globalExclusions, err := storeInstance.Database.GetAllGlobalExclusions()
+	if err == nil && globalExclusions != nil {
+		for _, exclusion := range globalExclusions {
+			path := exclusion.Path
+			if !strings.HasPrefix(exclusion.Path, "/") && !strings.HasPrefix(exclusion.Path, "!") && !strings.HasPrefix(exclusion.Path, "**/") {
+				path = "**/" + path
+			}
+
+			cmdArgs = append(cmdArgs, "--exclude", path)
+		}
+	}
+
 	// Add namespace if specified
 	if job.Namespace != "" {
 		_ = CreateNamespace(job.Namespace, job, storeInstance)
