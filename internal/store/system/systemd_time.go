@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
@@ -122,11 +123,14 @@ type TimerInfo struct {
 	Activates string
 }
 
+var lastSchedMux sync.Mutex
 var lastSchedUpdate time.Time
 var lastSchedString []byte
 
 func GetNextSchedule(job types.Job) (*time.Time, error) {
 	var output []byte
+
+	lastSchedMux.Lock()
 	if !lastSchedUpdate.IsZero() && time.Now().Sub(lastSchedUpdate) <= 5*time.Second {
 		output = lastSchedString
 	} else {
@@ -136,12 +140,14 @@ func GetNextSchedule(job types.Job) (*time.Time, error) {
 		var err error
 		output, err = cmd.Output()
 		if err != nil {
+			lastSchedMux.Unlock()
 			return nil, fmt.Errorf("GetNextSchedule: error running systemctl command: %w", err)
 		}
 
 		lastSchedUpdate = time.Now()
 		lastSchedString = output
 	}
+	lastSchedMux.Unlock()
 
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	layout := "Mon 2006-01-02 15:04:05 MST"
