@@ -4,7 +4,6 @@ go 1.24.0
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
-	github.com/RoaringBitmap/roaring v1.9.4
 	github.com/alexflint/go-filemutex v1.3.0
 	github.com/billgraziano/dpapi v0.5.0
 	github.com/containers/winquit v1.1.0
@@ -21,6 +20,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/xtaci/smux v1.5.34
 	github.com/zeebo/xxh3 v1.0.2
+	go.etcd.io/bbolt v1.4.0
 	golang.org/x/crypto v0.36.0
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	golang.org/x/sys v0.31.0
@@ -29,14 +29,12 @@ require (
 )
 
 require (
-	github.com/bits-and-blooms/bitset v1.12.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
-	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect

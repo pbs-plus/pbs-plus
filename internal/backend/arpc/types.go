@@ -2,13 +2,12 @@ package arpcfs
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 
-	"github.com/RoaringBitmap/roaring/roaring64"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"go.etcd.io/bbolt"
 )
 
 // ARPCFS implements billy.Filesystem using aRPC calls
@@ -22,8 +21,10 @@ type ARPCFS struct {
 
 	backupMode string
 
-	accessedPaths *roaring64.Bitmap // Roaring Bitmap to track accessed paths
-	accessMutex   sync.RWMutex
+	// bbolt DB for write-behind logging.
+	db            *bbolt.DB
+	logCh         chan accessMsg
+	logWorkerDone chan struct{}
 
 	// Atomic counters for the number of unique file and folder accesses.
 	fileCount   int64
