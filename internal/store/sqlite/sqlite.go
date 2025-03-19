@@ -3,6 +3,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -19,7 +20,8 @@ const maxAttempts = 100
 
 // Database is our SQLite-backed store.
 type Database struct {
-	db           *sql.DB
+	readDb       *sql.DB
+	writeDb      *sql.DB
 	dbPath       string
 	TokenManager *token.Manager
 }
@@ -33,17 +35,21 @@ func Initialize(dbPath string) (*Database, error) {
 		dbPath = "/etc/proxmox-backup/pbs-plus/plus.db"
 	}
 
-	// Open (or create) the SQLite database.
-	db, err := sql.Open("sqlite", dbPath)
+	readDb, err := sql.Open("sqlite", dbPath+"?mode=ro")
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
 	}
 
-	db.SetMaxOpenConns(1)
+	writeDb, err := sql.Open("sqlite", dbPath+"?mode=rw")
+	if err != nil {
+		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
+	}
+	writeDb.SetMaxOpenConns(1)
 
 	database := &Database{
-		db:     db,
-		dbPath: dbPath,
+		dbPath:  dbPath,
+		readDb:  readDb,
+		writeDb: writeDb,
 	}
 
 	// Auto migrate on initialization
@@ -51,9 +57,14 @@ func Initialize(dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
 	}
 
+	tx, err := writeDb.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
+	}
+
 	// Insert default (global) exclusions if they are not present.
 	for _, exclusion := range constants.DefaultExclusions {
-		err = database.CreateExclusion(types.Exclusion{
+		err = database.CreateExclusion(tx, types.Exclusion{
 			Path:    exclusion,
 			Comment: "Generated exclusion from default list",
 		})
@@ -62,5 +73,14 @@ func Initialize(dbPath string) (*Database, error) {
 		}
 	}
 
+	err = tx.Commit()
+	if err != nil {
+		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
+	}
+
 	return database, nil
+}
+
+func (d *Database) NewTransaction() (*sql.Tx, error) {
+	return d.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 }

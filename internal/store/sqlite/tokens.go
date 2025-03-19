@@ -3,6 +3,8 @@
 package sqlite
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -18,7 +20,7 @@ func (database *Database) CreateToken(comment string) error {
 		return fmt.Errorf("CreateToken: error generating token: %w", err)
 	}
 	now := time.Now().Unix()
-	_, err = database.db.Exec(`
+	_, err = database.writeDb.Exec(`
         INSERT INTO tokens (token, comment, created_at, revoked)
         VALUES (?, ?, ?, ?)
     `, tokenStr, comment, now, false)
@@ -30,7 +32,7 @@ func (database *Database) CreateToken(comment string) error {
 
 // GetToken retrieves a token’s entry and double-checks its validity.
 func (database *Database) GetToken(tokenStr string) (types.AgentToken, error) {
-	row := database.db.QueryRow(`
+	row := database.readDb.QueryRow(`
         SELECT token, comment, created_at, revoked FROM tokens WHERE token = ?
     `, tokenStr)
 	var tokenProp types.AgentToken
@@ -48,7 +50,7 @@ func (database *Database) GetToken(tokenStr string) (types.AgentToken, error) {
 
 // GetAllTokens returns all token entries.
 func (database *Database) GetAllTokens() ([]types.AgentToken, error) {
-	rows, err := database.db.Query("SELECT token FROM tokens")
+	rows, err := database.readDb.Query("SELECT token FROM tokens")
 	if err != nil {
 		return nil, fmt.Errorf("GetAllTokens: error querying tokens: %w", err)
 	}
@@ -77,7 +79,7 @@ func (database *Database) RevokeToken(tokenData types.AgentToken) error {
 	}
 
 	tokenData.Revoked = true
-	_, err := database.db.Exec(`
+	_, err := database.writeDb.Exec(`
         UPDATE tokens SET revoked = ? WHERE token = ?
     `, true, tokenData.Token)
 	if err != nil {
@@ -87,8 +89,17 @@ func (database *Database) RevokeToken(tokenData types.AgentToken) error {
 }
 
 // Only used for legacy database migration
-func (database *Database) MigrateToken(tokenData types.AgentToken) error {
-	_, err := database.db.Exec(`
+func (database *Database) MigrateToken(tx *sql.Tx, tokenData types.AgentToken) error {
+	if tx == nil {
+		var err error
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return err
+		}
+		defer tx.Commit()
+	}
+
+	_, err := database.writeDb.Exec(`
         INSERT INTO tokens (token, comment, created_at, revoked)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(token) DO UPDATE SET

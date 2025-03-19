@@ -64,13 +64,18 @@ func Initialize(paths map[string]string) (*Store, error) {
 }
 
 func migrateLegacyData(legacy *database.Database, newDb *sqlite.Database) error {
+	tx, err := newDb.NewTransaction()
+	if err != nil {
+		return fmt.Errorf("MigrateLegacyData: error creating transaction: %w", err)
+	}
+
 	// Migrate Jobs
 	legacyJobs, err := legacy.GetAllJobs()
 	if err != nil {
 		return fmt.Errorf("MigrateLegacyData: error retrieving legacy jobs: %w", err)
 	}
 	for _, job := range legacyJobs {
-		if err := newDb.CreateJob(job); err != nil {
+		if err := newDb.CreateJob(tx, job); err != nil {
 			syslog.L.Error(err).WithField("job", job.ID).Write()
 		}
 	}
@@ -81,7 +86,7 @@ func migrateLegacyData(legacy *database.Database, newDb *sqlite.Database) error 
 		return fmt.Errorf("MigrateLegacyData: error retrieving legacy global exclusions: %w", err)
 	}
 	for _, excl := range legacyGlobals {
-		if err := newDb.CreateExclusion(excl); err != nil {
+		if err := newDb.CreateExclusion(tx, excl); err != nil {
 			syslog.L.Error(err).WithField("exclusion", excl.Path).Write()
 		}
 	}
@@ -92,7 +97,7 @@ func migrateLegacyData(legacy *database.Database, newDb *sqlite.Database) error 
 		return fmt.Errorf("MigrateLegacyData: error retrieving legacy targets: %w", err)
 	}
 	for _, target := range legacyTargets {
-		if err := newDb.CreateTarget(target); err != nil {
+		if err := newDb.CreateTarget(tx, target); err != nil {
 			syslog.L.Error(err).WithField("target", target.Name).Write()
 		}
 	}
@@ -103,10 +108,10 @@ func migrateLegacyData(legacy *database.Database, newDb *sqlite.Database) error 
 		return fmt.Errorf("MigrateLegacyData: error retrieving legacy tokens: %w", err)
 	}
 	for _, token := range legacyTokens {
-		if err := newDb.MigrateToken(token); err != nil {
+		if err := newDb.MigrateToken(tx, token); err != nil {
 			syslog.L.Error(err).WithField("token", token.Token).Write()
 		}
 	}
 
-	return nil
+	return tx.Commit()
 }

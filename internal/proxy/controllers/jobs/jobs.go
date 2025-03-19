@@ -103,7 +103,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 					latestJob.LastRunState = task.Status
 					latestJob.LastRunEndtime = task.EndTime
 
-					err = storeInstance.Database.UpdateJob(latestJob)
+					err = storeInstance.Database.UpdateJob(nil, latestJob)
 					if err != nil {
 						syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
 					}
@@ -186,7 +186,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			newJob.Exclusions = append(newJob.Exclusions, exclusionInst)
 		}
 
-		err = storeInstance.Database.CreateJob(newJob)
+		err = storeInstance.Database.CreateJob(nil, newJob)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -300,7 +300,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.Database.UpdateJob(job)
+			err = storeInstance.Database.UpdateJob(nil, job)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -329,7 +329,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.Database.DeleteJob(utils.DecodePath(r.PathValue("job")))
+			err := storeInstance.Database.DeleteJob(nil, utils.DecodePath(r.PathValue("job")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

@@ -3,6 +3,8 @@
 package sqlite
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,7 +34,7 @@ func (database *Database) generateUniqueJobID(job types.Job) (string, error) {
 			newID = fmt.Sprintf("%s-%d", baseID, idx)
 		}
 		var count int
-		err := database.db.
+		err := database.readDb.
 			QueryRow("SELECT COUNT(*) FROM jobs WHERE id = ?", newID).
 			Scan(&count)
 		if err != nil {
@@ -48,7 +50,16 @@ func (database *Database) generateUniqueJobID(job types.Job) (string, error) {
 }
 
 // CreateJob creates a new job record and adds any associated exclusions.
-func (database *Database) CreateJob(job types.Job) error {
+func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
+	if tx == nil {
+		var err error
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return err
+		}
+		defer tx.Commit()
+	}
+
 	if job.ID == "" {
 		id, err := database.generateUniqueJobID(job)
 		if err != nil {
@@ -70,7 +81,7 @@ func (database *Database) CreateJob(job types.Job) error {
 	}
 
 	// Insert the job.
-	_, err := database.db.Exec(`
+	_, err := tx.Exec(`
         INSERT INTO jobs (
             id, store, mode, source_mode, target, subpath, schedule, comment,
             notification_mode, namespace, current_pid, last_run_upid, retry,
@@ -90,7 +101,7 @@ func (database *Database) CreateJob(job types.Job) error {
 		if exclusion.JobID == "" {
 			exclusion.JobID = job.ID
 		}
-		if err := database.CreateExclusion(exclusion); err != nil {
+		if err := database.CreateExclusion(tx, exclusion); err != nil {
 			syslog.L.Error(err).WithField("id", job.ID).Write()
 			continue
 		}
@@ -105,7 +116,7 @@ func (database *Database) CreateJob(job types.Job) error {
 
 // GetJob retrieves a job by id and assembles its exclusions.
 func (database *Database) GetJob(id string) (types.Job, error) {
-	row := database.db.QueryRow(`
+	row := database.readDb.QueryRow(`
         SELECT id, store, mode, source_mode, target, subpath, schedule, comment,
                notification_mode, namespace, current_pid, last_run_upid, retry,
                retry_interval, raw_exclusions, last_run_endtime, last_run_state,
@@ -164,7 +175,16 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 }
 
 // UpdateJob updates an existing job and its exclusions.
-func (database *Database) UpdateJob(job types.Job) error {
+func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
+	if tx == nil {
+		var err error
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return err
+		}
+		defer tx.Commit()
+	}
+
 	if !utils.IsValidID(job.ID) && job.ID != "" {
 		return fmt.Errorf("UpdateJob: invalid id string -> %s", job.ID)
 	}
@@ -175,7 +195,7 @@ func (database *Database) UpdateJob(job types.Job) error {
 		job.Retry = 0
 	}
 
-	_, err := database.db.Exec(`
+	_, err := tx.Exec(`
         UPDATE jobs SET store = ?, mode = ?, source_mode = ?, target = ?,
             subpath = ?, schedule = ?, comment = ?, notification_mode = ?,
             namespace = ?, current_pid = ?, last_run_upid = ?, retry = ?,
@@ -193,7 +213,7 @@ func (database *Database) UpdateJob(job types.Job) error {
 	}
 
 	// Remove old exclusions and insert updated ones.
-	if _, err := database.db.Exec(`
+	if _, err := tx.Exec(`
         DELETE FROM exclusions WHERE job_id = ?
     `, job.ID); err != nil {
 		return fmt.Errorf("UpdateJob: error removing old exclusions: %w", err)
@@ -204,7 +224,7 @@ func (database *Database) UpdateJob(job types.Job) error {
 		if exclusion.JobID != job.ID {
 			continue
 		}
-		if err := database.CreateExclusion(exclusion); err != nil {
+		if err := database.CreateExclusion(tx, exclusion); err != nil {
 			syslog.L.Error(err).WithField("id", job.ID).Write()
 			continue
 		}
@@ -238,7 +258,7 @@ func (database *Database) UpdateJob(job types.Job) error {
 
 // GetAllJobs returns all job records.
 func (database *Database) GetAllJobs() ([]types.Job, error) {
-	rows, err := database.db.Query("SELECT id FROM jobs")
+	rows, err := database.readDb.Query("SELECT id FROM jobs")
 	if err != nil {
 		return nil, fmt.Errorf("GetAllJobs: error querying jobs: %w", err)
 	}
@@ -264,14 +284,23 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 }
 
 // DeleteJob deletes a job and any related exclusions.
-func (database *Database) DeleteJob(id string) error {
-	_, err := database.db.Exec("DELETE FROM jobs WHERE id = ?", id)
+func (database *Database) DeleteJob(tx *sql.Tx, id string) error {
+	if tx == nil {
+		var err error
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return err
+		}
+		defer tx.Commit()
+	}
+
+	_, err := tx.Exec("DELETE FROM jobs WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("DeleteJob: error deleting job: %w", err)
 	}
 
 	// Delete associated exclusions.
-	if _, err := database.db.Exec("DELETE FROM exclusions WHERE job_id = ?", id); err != nil {
+	if _, err := tx.Exec("DELETE FROM exclusions WHERE job_id = ?", id); err != nil {
 		syslog.L.Error(err).WithField("id", id).Write()
 	}
 

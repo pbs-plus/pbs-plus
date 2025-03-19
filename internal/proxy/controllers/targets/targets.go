@@ -105,11 +105,17 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		hostname := r.Header.Get("X-PBS-Agent")
 
+		tx, err := storeInstance.Database.NewTransaction()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+		}
+
 		var driveLetters = make([]string, len(reqParsed.Drives))
 		for i, parsedDrive := range reqParsed.Drives {
 			driveLetters[i] = parsedDrive.Letter
 
-			_ = storeInstance.Database.CreateTarget(types.Target{
+			_ = storeInstance.Database.CreateTarget(tx, types.Target{
 				Name:            hostname + " - " + parsedDrive.Letter,
 				Path:            "agent://" + clientIP + "/" + parsedDrive.Letter,
 				Auth:            targetTemplate.Auth,
@@ -129,8 +135,15 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		for _, target := range existingTargets {
 			targetDrive := strings.Split(target.Path, "/")[3]
 			if !slices.Contains(driveLetters, targetDrive) {
-				_ = storeInstance.Database.DeleteTarget(target.Name)
+				_ = storeInstance.Database.DeleteTarget(tx, target.Name)
 			}
+		}
+
+		err = tx.Commit()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -172,7 +185,7 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			Path: r.FormValue("path"),
 		}
 
-		err = storeInstance.Database.CreateTarget(newTarget)
+		err = storeInstance.Database.CreateTarget(nil, newTarget)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -230,7 +243,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.Database.UpdateTarget(target)
+			err = storeInstance.Database.UpdateTarget(nil, target)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -268,7 +281,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.Database.DeleteTarget(utils.DecodePath(r.PathValue("target")))
+			err := storeInstance.Database.DeleteTarget(nil, utils.DecodePath(r.PathValue("target")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

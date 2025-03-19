@@ -3,6 +3,8 @@
 package sqlite
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -13,15 +15,24 @@ import (
 )
 
 // CreateTarget inserts a new target.
-func (database *Database) CreateTarget(target types.Target) error {
-	_, err := database.db.Exec(`
+func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) error {
+	if tx == nil {
+		var err error
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return err
+		}
+		defer tx.Commit()
+	}
+
+	_, err := tx.Exec(`
         INSERT INTO targets (name, path, drive_used_bytes, is_agent, connection_status)
         VALUES (?, ?, ?, ?, ?)
     `, target.Name, target.Path, target.DriveUsedBytes, target.IsAgent, target.ConnectionStatus)
 	if err != nil {
 		// If the target already exists, update it.
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return database.UpdateTarget(target)
+			return database.UpdateTarget(tx, target)
 		}
 		return fmt.Errorf("CreateTarget: error inserting target: %w", err)
 	}
@@ -30,7 +41,7 @@ func (database *Database) CreateTarget(target types.Target) error {
 
 // GetTarget retrieves a target by name.
 func (database *Database) GetTarget(name string) (types.Target, error) {
-	row := database.db.QueryRow(`
+	row := database.readDb.QueryRow(`
         SELECT name, path, drive_used_bytes, is_agent, connection_status FROM targets
         WHERE name = ?
     `, name)
@@ -52,8 +63,17 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 }
 
 // UpdateTarget updates an existing target.
-func (database *Database) UpdateTarget(target types.Target) error {
-	_, err := database.db.Exec(`
+func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) error {
+	if tx == nil {
+		var err error
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return err
+		}
+		defer tx.Commit()
+	}
+
+	_, err := tx.Exec(`
         UPDATE targets SET path = ?, drive_used_bytes = ?, is_agent = ?, connection_status = ?
         WHERE name = ?
     `, target.Path, target.DriveUsedBytes, target.IsAgent, target.ConnectionStatus, target.Name)
@@ -64,8 +84,17 @@ func (database *Database) UpdateTarget(target types.Target) error {
 }
 
 // DeleteTarget removes a target.
-func (database *Database) DeleteTarget(name string) error {
-	_, err := database.db.Exec("DELETE FROM targets WHERE name = ?", name)
+func (database *Database) DeleteTarget(tx *sql.Tx, name string) error {
+	if tx == nil {
+		var err error
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return err
+		}
+		defer tx.Commit()
+	}
+
+	_, err := tx.Exec("DELETE FROM targets WHERE name = ?", name)
 	if err != nil {
 		return fmt.Errorf("DeleteTarget: error deleting target: %w", err)
 	}
@@ -74,7 +103,7 @@ func (database *Database) DeleteTarget(name string) error {
 
 // GetAllTargets returns all targets.
 func (database *Database) GetAllTargets() ([]types.Target, error) {
-	rows, err := database.db.Query("SELECT name FROM targets")
+	rows, err := database.readDb.Query("SELECT name FROM targets")
 	if err != nil {
 		return nil, fmt.Errorf("GetAllTargets: error querying targets: %w", err)
 	}
@@ -98,7 +127,7 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 
 // GetAllTargetsByIP returns all agent targets matching the given client IP.
 func (database *Database) GetAllTargetsByIP(clientIP string) ([]types.Target, error) {
-	rows, err := database.db.Query("SELECT name FROM targets")
+	rows, err := database.readDb.Query("SELECT name FROM targets")
 	if err != nil {
 		return nil, fmt.Errorf("GetAllTargetsByIP: error querying targets: %w", err)
 	}

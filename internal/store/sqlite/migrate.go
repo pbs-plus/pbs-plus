@@ -14,7 +14,7 @@ import (
 var migrations embed.FS
 
 func (d *Database) Migrate() error {
-	driver, err := sqlite.WithInstance(d.db, &sqlite.Config{})
+	driver, err := sqlite.WithInstance(d.writeDb, &sqlite.Config{})
 	if err != nil {
 		return err
 	}
