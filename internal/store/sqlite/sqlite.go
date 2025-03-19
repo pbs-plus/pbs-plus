@@ -10,6 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/token"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
@@ -58,7 +59,7 @@ func Initialize(dbPath string) (*Database, error) {
 	}
 
 	// Auto migrate on initialization
-	if err := database.Migrate(); err != nil {
+	if err := database.Migrate(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
 	}
 
