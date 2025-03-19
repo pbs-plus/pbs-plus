@@ -12,6 +12,8 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/sqlite"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
+
+	_ "modernc.org/sqlite"
 )
 
 // Store holds the configuration system.
@@ -49,7 +51,7 @@ func Initialize(paths map[string]string) (*Store, error) {
 			return nil, fmt.Errorf("Initialize: error migrating legacy database -> %w", err)
 		}
 
-		syslog.L.Info().WithMessage("PBS Plus has successfully migrated your legacy database to the newer model. Please check if anything is missing and feel free to delete /etc/proxmox-backup/pbs-plus/[jobs.d, targets.d, exclusions.d, tokens.d]").Write()
+		syslog.L.Info().WithMessage("PBS Plus has successfully migrated your legacy database to the newer model. Please check if anything is missing and delete /etc/proxmox-backup/pbs-plus/[jobs.d, targets.d, exclusions.d, tokens.d]").Write()
 	}
 
 	store := &Store{

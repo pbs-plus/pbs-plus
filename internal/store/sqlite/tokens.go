@@ -8,6 +8,7 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	_ "modernc.org/sqlite"
 )
 
 // CreateToken generates a new token using the manager and stores it.

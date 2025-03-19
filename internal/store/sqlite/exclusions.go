@@ -8,6 +8,7 @@ import (
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils/pattern"
+	_ "modernc.org/sqlite"
 )
 
 // CreateExclusion inserts a new exclusion into the database.

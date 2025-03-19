@@ -9,6 +9,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	_ "modernc.org/sqlite"
 )
 
 // CreateTarget inserts a new target.
