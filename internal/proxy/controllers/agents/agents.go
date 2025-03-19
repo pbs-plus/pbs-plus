@@ -107,6 +107,12 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		clientIP = strings.Split(clientIP, ":")[0]
 
+		tx, err := storeInstance.Database.NewTransaction()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+		}
+
 		for _, drive := range reqParsed.Drives {
 			newTarget := types.Target{
 				Name:            fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter),
@@ -123,12 +129,19 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				DriveTotal:      drive.Total,
 			}
 
-			err := storeInstance.Database.CreateTarget(newTarget)
+			err := storeInstance.Database.CreateTarget(tx, newTarget)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
+		}
+
+		err = tx.Commit()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -188,6 +201,12 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		clientIP = strings.Split(clientIP, ":")[0]
 
+		tx, err := storeInstance.Database.NewTransaction()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+		}
+
 		for _, drive := range reqParsed.Drives {
 			newTarget := types.Target{
 				Name:            fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter),
@@ -204,12 +223,19 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				DriveTotal:      drive.Total,
 			}
 
-			err := storeInstance.Database.CreateTarget(newTarget)
+			err := storeInstance.Database.CreateTarget(tx, newTarget)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
+		}
+
+		err = tx.Commit()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
