@@ -63,6 +63,7 @@ func (s *Store) MigrateLegacyData() error {
 
 	syslog.L.Info().WithMessage("Legacy database format detected, attempting to migrate automatically...").Write()
 
+	syslog.L.Info().WithMessage("Migrating legacy jobs...").Write()
 	tx, err := s.Database.NewTransaction()
 	if err != nil {
 		return fmt.Errorf("MigrateLegacyData: error creating transaction: %w", err)
@@ -77,6 +78,17 @@ func (s *Store) MigrateLegacyData() error {
 		if err := s.Database.CreateJob(tx, job); err != nil {
 			syslog.L.Error(err).WithField("job", job.ID).Write()
 		}
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	syslog.L.Info().WithMessage("Migrating legacy exclusions...").Write()
+	tx, err = s.Database.NewTransaction()
+	if err != nil {
+		return fmt.Errorf("MigrateLegacyData: error creating transaction: %w", err)
 	}
 
 	defaultExclusionsMap := make(map[string]struct{})
@@ -99,6 +111,17 @@ func (s *Store) MigrateLegacyData() error {
 		}
 	}
 
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	syslog.L.Info().WithMessage("Migrating legacy targets...").Write()
+	tx, err = s.Database.NewTransaction()
+	if err != nil {
+		return fmt.Errorf("MigrateLegacyData: error creating transaction: %w", err)
+	}
+
 	// Migrate Targets
 	legacyTargets, err := s.LegacyDatabase.GetAllTargets()
 	if err != nil {
@@ -108,6 +131,17 @@ func (s *Store) MigrateLegacyData() error {
 		if err := s.Database.CreateTarget(tx, target); err != nil {
 			syslog.L.Error(err).WithField("target", target.Name).Write()
 		}
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	syslog.L.Info().WithMessage("Migrating legacy tokens...").Write()
+	tx, err = s.Database.NewTransaction()
+	if err != nil {
+		return fmt.Errorf("MigrateLegacyData: error creating transaction: %w", err)
 	}
 
 	// Migrate Tokens
@@ -126,6 +160,7 @@ func (s *Store) MigrateLegacyData() error {
 		return err
 	}
 
+	syslog.L.Info().WithMessage("Verifying jobs migration...").Write()
 	newJobs, err := s.Database.GetAllJobs()
 	if err != nil {
 		return fmt.Errorf("MigrateLegacyData: error retrieving new jobs: %w", err)
@@ -135,6 +170,7 @@ func (s *Store) MigrateLegacyData() error {
 		return fmt.Errorf("MigrateLegacyData: legacyJobs != newJobs: %d != %d", len(legacyJobs), len(newJobs))
 	}
 
+	syslog.L.Info().WithMessage("Verifying exclusions migration...").Write()
 	newGlobals, err := s.Database.GetAllGlobalExclusions()
 	if err != nil {
 		return fmt.Errorf("MigrateLegacyData: error retrieving new globals: %w", err)
@@ -144,6 +180,7 @@ func (s *Store) MigrateLegacyData() error {
 		return fmt.Errorf("MigrateLegacyData: legacyGlobals != newGlobals: %d != %d", len(legacyGlobals), len(newGlobals))
 	}
 
+	syslog.L.Info().WithMessage("Verifying targets migration...").Write()
 	newTargets, err := s.Database.GetAllTargets()
 	if err != nil {
 		return fmt.Errorf("MigrateLegacyData: error retrieving new targets: %w", err)
@@ -153,6 +190,7 @@ func (s *Store) MigrateLegacyData() error {
 		return fmt.Errorf("MigrateLegacyData: legacyTargets != newTargets : %d != %d", len(legacyTargets), len(newTargets))
 	}
 
+	syslog.L.Info().WithMessage("Verifying tokens migration...").Write()
 	newTokens, err := s.Database.GetAllTokens()
 	if err != nil {
 		return fmt.Errorf("MigrateLegacyData: error retrieving new tokens: %w", err)
@@ -161,6 +199,8 @@ func (s *Store) MigrateLegacyData() error {
 	if len(legacyTokens) != len(newTokens) {
 		return fmt.Errorf("MigrateLegacyData: legacyTokens != newTokens: %d != %d", len(legacyTokens), len(newTokens))
 	}
+
+	syslog.L.Info().WithMessage("Deleting legacy database directories...").Write()
 
 	_ = os.RemoveAll("/etc/proxmox-backup/pbs-plus/jobs.d")
 	_ = os.RemoveAll("/etc/proxmox-backup/pbs-plus/targets.d")
