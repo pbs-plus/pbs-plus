@@ -5,6 +5,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,6 +67,14 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
 			return fmt.Errorf("CreateJob: failed to generate unique id -> %w", err)
 		}
 		job.ID = id
+	}
+
+	if job.Target == "" {
+		return errors.New("target is required for a job")
+	}
+
+	if job.Store == "" {
+		return errors.New("datastore is required for a job")
 	}
 
 	if !utils.IsValidID(job.ID) && job.ID != "" {
@@ -198,6 +207,15 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
 	if !utils.IsValidID(job.ID) && job.ID != "" {
 		return fmt.Errorf("UpdateJob: invalid id string -> %s", job.ID)
 	}
+
+	if job.Target == "" {
+		return errors.New("target is required for a job")
+	}
+
+	if job.Store == "" {
+		return errors.New("datastore is required for a job")
+	}
+
 	if job.RetryInterval <= 0 {
 		job.RetryInterval = 1
 	}
