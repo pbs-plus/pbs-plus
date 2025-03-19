@@ -14,5 +14,5 @@ CREATE TABLE IF NOT EXISTS jobs (
   last_successful_upid TEXT,
   retry INTEGER,
   retry_interval INTEGER,
-  raw_exclusions TEXT,
+  raw_exclusions TEXT
 );
