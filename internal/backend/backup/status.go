@@ -34,7 +34,7 @@ func updateJobStatus(succeeded bool, job types.Job, task proxmox.Task, storeInst
 		latestJob.LastSuccessfulEndtime = task.EndTime
 	}
 
-	if err := storeInstance.Database.UpdateJob(latestJob); err != nil {
+	if err := storeInstance.Database.UpdateJob(nil, latestJob); err != nil {
 		syslog.L.Error(err).WithMessage("unable to update job").Write()
 		return err
 	}

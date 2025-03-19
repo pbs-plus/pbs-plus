@@ -4,10 +4,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,30 +18,20 @@ import (
 )
 
 var (
-	testInitPath       string
-	testBasePath       string
-	testJobsPath       string
-	testTargetsPath    string
-	testExclusionsPath string
-	testTokensPath     string
+	testDbPath string
 )
 
 // TestMain handles setup and teardown for all tests
 func TestMain(m *testing.M) {
 	// Create temporary test directory
 	var err error
-	testBasePath, err = os.MkdirTemp("", "pbs-plus-test-*")
+	testBasePath, err := os.MkdirTemp("", "pbs-plus-test-*")
 	if err != nil {
 		fmt.Printf("Failed to create temp directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Override the constant paths for testing
-	testInitPath = filepath.Join(testBasePath, "init")
-	testJobsPath = filepath.Join(testBasePath, "jobs.d")
-	testTargetsPath = filepath.Join(testBasePath, "targets.d")
-	testExclusionsPath = filepath.Join(testBasePath, "exclusions.d")
-	testTokensPath = filepath.Join(testBasePath, "tokens.d")
+	testDbPath = filepath.Join(testBasePath, "test.db")
 
 	// Run tests
 	code := m.Run()
@@ -56,24 +46,11 @@ func TestMain(m *testing.M) {
 func setupTestStore(t *testing.T) *Store {
 	// Create test directories
 	paths := map[string]string{
-		"init":       testInitPath,
-		"jobs":       testJobsPath,
-		"targets":    testTargetsPath,
-		"exclusions": testExclusionsPath,
-		"tokens":     testTokensPath,
+		"sqlite": testDbPath,
 	}
 
 	for _, path := range paths {
 		err := os.RemoveAll(path)
-		require.NoError(t, err)
-	}
-
-	for key, path := range paths {
-		if key == "cert" || key == "key" {
-			continue
-		}
-
-		err := os.MkdirAll(path, 0750)
 		require.NoError(t, err)
 	}
 
@@ -100,7 +77,7 @@ func TestJobCRUD(t *testing.T) {
 			Namespace:        "test",
 		}
 
-		err := store.Database.CreateJob(job)
+		err := store.Database.CreateJob(nil, job)
 		assert.NoError(t, err)
 
 		// Test Get
@@ -113,7 +90,7 @@ func TestJobCRUD(t *testing.T) {
 
 		// Test Update
 		job.Comment = "Updated comment"
-		err = store.Database.UpdateJob(job)
+		err = store.Database.UpdateJob(nil, job)
 		assert.NoError(t, err)
 
 		updatedJob, err := store.Database.GetJob(job.ID)
@@ -126,11 +103,11 @@ func TestJobCRUD(t *testing.T) {
 		assert.Len(t, jobs, 1)
 
 		// Test Delete
-		err = store.Database.DeleteJob(job.ID)
+		err = store.Database.DeleteJob(nil, job.ID)
 		assert.NoError(t, err)
 
 		_, err = store.Database.GetJob(job.ID)
-		assert.ErrorIs(t, err, os.ErrNotExist)
+		assert.ErrorIs(t, err, sql.ErrNoRows)
 	})
 
 	t.Run("Concurrent Operations", func(t *testing.T) {
@@ -152,7 +129,7 @@ func TestJobCRUD(t *testing.T) {
 					NotificationMode: "always",
 					Namespace:        "test",
 				}
-				err := store.Database.CreateJob(job)
+				err := store.Database.CreateJob(nil, job)
 				assert.NoError(t, err)
 			}(i)
 		}
@@ -175,7 +152,7 @@ func TestJobCRUD(t *testing.T) {
 			NotificationMode: "always",
 			Namespace:        "test",
 		}
-		err := store.Database.CreateJob(job)
+		err := store.Database.CreateJob(nil, job)
 		assert.Error(t, err) // Should reject special characters
 	})
 }
@@ -223,22 +200,11 @@ func TestJobValidation(t *testing.T) {
 			wantErr: true,
 			errMsg:  "is empty",
 		},
-		{
-			name: "very long fields",
-			job: types.Job{
-				ID:        strings.Repeat("a", 256),
-				Store:     "local",
-				Target:    "test",
-				Namespace: "test",
-			},
-			wantErr: true,
-			errMsg:  "file name too long",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreateJob(tt.job)
+			err := store.Database.CreateJob(nil, tt.job)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" && err != nil {
@@ -298,7 +264,7 @@ func TestTargetValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreateTarget(tt.target)
+			err := store.Database.CreateTarget(nil, tt.target)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" && err != nil {
@@ -355,7 +321,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreateExclusion(tt.exclusion)
+			err := store.Database.CreateExclusion(nil, tt.exclusion)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -379,7 +345,7 @@ func TestConcurrentOperations(t *testing.T) {
 					Name: fmt.Sprintf("concurrent-target-%d", idx),
 					Path: fmt.Sprintf("/path/to/target-%d", idx),
 				}
-				err := store.Database.CreateTarget(target)
+				err := store.Database.CreateTarget(nil, target)
 				assert.NoError(t, err)
 			}(i)
 		}
@@ -411,7 +377,7 @@ func TestConcurrentOperations(t *testing.T) {
 						Name: fmt.Sprintf("concurrent-target-%d", i),
 						Path: fmt.Sprintf("/path/to/target-%d", i),
 					}
-					_ = store.Database.CreateTarget(target)
+					_ = store.Database.CreateTarget(nil, target)
 				}
 			}
 			doneCh <- struct{}{}
