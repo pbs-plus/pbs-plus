@@ -122,13 +122,25 @@ type TimerInfo struct {
 	Activates string
 }
 
-func GetNextSchedule(job types.Job) (*time.Time, error) {
-	cmd := exec.Command("systemctl", "list-timers", "--all")
-	cmd.Env = os.Environ()
+var lastSchedUpdate time.Time
+var lastSchedString []byte
 
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("GetNextSchedule: error running systemctl command: %w", err)
+func GetNextSchedule(job types.Job) (*time.Time, error) {
+	var output []byte
+	if !lastSchedUpdate.IsZero() && time.Now().Sub(lastSchedUpdate) <= 5*time.Second {
+		output = lastSchedString
+	} else {
+		cmd := exec.Command("systemctl", "list-timers", "--all")
+		cmd.Env = os.Environ()
+
+		var err error
+		output, err = cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("GetNextSchedule: error running systemctl command: %w", err)
+		}
+
+		lastSchedUpdate = time.Now()
+		lastSchedString = output
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
