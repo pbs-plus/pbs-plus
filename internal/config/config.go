@@ -3,6 +3,7 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -84,24 +85,24 @@ func NewSectionConfig[T any](plugin *SectionPlugin[T]) *SectionConfig[T] {
 // Parse reads and parses a configuration file
 // It first checks whether a valid cache exists (by stat-ing the file) and returns
 // that if nothing has changed. Otherwise, it parses the file and updates the cache.
-// Parse reads and parses a configuration file using fewer syscalls.
 func (sc *SectionConfig[T]) Parse(filename string) (*ConfigData[T], error) {
-	// First check: use os.Stat to decide if cache is still valid.
+	// Check if a cached copy exists and the file has not been mutated.
 	stat, err := os.Stat(filename)
 	if err != nil {
+		// If the file is deleted, clear the cache and return an error.
 		sc.cache.Del(filename)
 		return nil, os.ErrNotExist
 	}
+
 	currentModTimeUnix := stat.ModTime().Unix()
-	if cached, exists := sc.cache.Get(filename); exists &&
-		sc.lastModTime.Load() == currentModTimeUnix {
-		// No change in mod time; use cache.
+	lastMod := sc.lastModTime.Load()
+	if cached, exists := sc.cache.Get(filename); exists && lastMod == currentModTimeUnix {
+		// The file has not changed so return the cached config.
 		return cached, nil
 	}
 
+	// Otherwise, read and parse the config file.
 	var config *ConfigData[T]
-	var fileModTime time.Time
-
 	err = sc.fileMutex.WithReadLock(filename, func() error {
 		file, err := os.Open(filename)
 		if err != nil {
@@ -109,45 +110,36 @@ func (sc *SectionConfig[T]) Parse(filename string) (*ConfigData[T], error) {
 		}
 		defer file.Close()
 
-		// Retrieve the mod time directly from the open file.
-		fStat, err := file.Stat()
-		if err != nil {
-			return err
-		}
-		fileModTime = fStat.ModTime()
-
-		// Read the entire file in one call to reduce syscalls.
-		data, err := io.ReadAll(file)
-		if err != nil {
-			return err
-		}
-		lines := strings.Split(string(data), "\n")
-
 		config = &ConfigData[T]{
 			Sections: make(map[string]*Section[T]),
 			Order:    make([]string, 0),
 			FilePath: filename,
 		}
 
+		reader := bufio.NewReader(file)
 		var currentSection *Section[T]
 		var currentProps map[string]string
 		lineNum := 0
 
-		for _, line := range lines {
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil && err != io.EOF {
+				return fmt.Errorf("error reading line %d: %w", lineNum, err)
+			}
+
 			line = strings.TrimSpace(line)
 			lineNum++
+
 			if line == "" {
 				if currentSection != nil && currentProps != nil {
 					props, err := sc.unmarshal(currentProps)
 					if err != nil {
-						return fmt.Errorf("error unmarshaling properties: %w",
-							err)
+						return fmt.Errorf("error unmarshaling properties: %w", err)
 					}
 					currentSection.Properties = props
 
 					if err := sc.validateSection(currentSection); err != nil {
-						return fmt.Errorf("validation error in section %s: %w",
-							currentSection.ID, err)
+						return fmt.Errorf("validation error in section %s: %w", currentSection.ID, err)
 					}
 
 					config.Sections[currentSection.ID] = currentSection
@@ -155,14 +147,16 @@ func (sc *SectionConfig[T]) Parse(filename string) (*ConfigData[T], error) {
 					currentSection = nil
 					currentProps = nil
 				}
+				if err == io.EOF {
+					break
+				}
 				continue
 			}
 
 			if currentSection == nil {
 				sectionType, sectionID, err := sc.parseSectionHead(line)
 				if err != nil {
-					return fmt.Errorf("error parsing section header at line %d: %w",
-						lineNum, err)
+					return fmt.Errorf("error parsing section header at line %d: %w", lineNum, err)
 				}
 				currentSection = &Section[T]{
 					Type: sectionType,
@@ -172,10 +166,13 @@ func (sc *SectionConfig[T]) Parse(filename string) (*ConfigData[T], error) {
 			} else {
 				key, value, err := sc.parseSectionLine(line)
 				if err != nil {
-					return fmt.Errorf("error parsing line %d: %w",
-						lineNum, err)
+					return fmt.Errorf("error parsing line %d: %w", lineNum, err)
 				}
 				currentProps[key] = value
+			}
+
+			if err == io.EOF {
+				break
 			}
 		}
 
@@ -187,8 +184,7 @@ func (sc *SectionConfig[T]) Parse(filename string) (*ConfigData[T], error) {
 			currentSection.Properties = props
 
 			if err := sc.validateSection(currentSection); err != nil {
-				return fmt.Errorf("validation error in section %s: %w",
-					currentSection.ID, err)
+				return fmt.Errorf("validation error in section %s: %w", currentSection.ID, err)
 			}
 
 			config.Sections[currentSection.ID] = currentSection
@@ -197,13 +193,22 @@ func (sc *SectionConfig[T]) Parse(filename string) (*ConfigData[T], error) {
 
 		return nil
 	})
+
 	if err != nil {
 		return nil, err
 	}
 
-	// Update the cache using the mod time obtained from the open file.
+	// Update the cache with the freshly parsed value and current mod time.
+	stat, err = os.Stat(filename)
+	var currentModTime time.Time
+	if err == nil {
+		currentModTime = stat.ModTime()
+	} else {
+		// if unable to stat, use current time as fallback
+		currentModTime = time.Now()
+	}
 	sc.cache.Set(filename, config)
-	sc.lastModTime.Store(fileModTime.Unix())
+	sc.lastModTime.Store(currentModTime.Unix())
 
 	return config, nil
 }
