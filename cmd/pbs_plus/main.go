@@ -239,6 +239,9 @@ func main() {
 	}
 	storeInstance.Database.TokenManager = tokenManager
 
+	if storeInstance.LegacyDatabase != nil {
+		storeInstance.LegacyDatabase.TokenManager = tokenManager
+	}
 	if err = storeInstance.MigrateLegacyData(); err != nil {
 		syslog.L.Error(err).WithMessage("error migrating legacy database").Write()
 		return
