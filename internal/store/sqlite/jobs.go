@@ -161,15 +161,6 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 		job.RawExclusions = strings.Join(pathSlice, "\n")
 	}
 
-	jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
-	upids, err := os.ReadDir(jobLogsPath)
-	if err == nil {
-		job.UPIDs = make([]string, len(upids))
-		for i, upid := range upids {
-			job.UPIDs[i] = upid.Name()
-		}
-	}
-
 	if job.LastRunUpid != "" {
 		task, err := proxmox.Session.GetTaskByUPID(job.LastRunUpid)
 		if err == nil {
@@ -186,12 +177,6 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 		if successTask, err := proxmox.Session.GetTaskByUPID(job.LastSuccessfulUpid); err == nil {
 			job.LastSuccessfulEndtime = successTask.EndTime
 		}
-	}
-
-	// Get global exclusions
-	globalExclusions, err := database.GetAllGlobalExclusions()
-	if err == nil && globalExclusions != nil {
-		job.Exclusions = append(job.Exclusions, globalExclusions...)
 	}
 
 	if nextSchedule, err := system.GetNextSchedule(job); err == nil && nextSchedule != nil {
