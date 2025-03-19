@@ -159,6 +159,11 @@ func main() {
 		return
 	}
 
+	if err = storeInstance.MigrateLegacyData(); err != nil {
+		syslog.L.Error(err).WithMessage("error migrating legacy database").Write()
+		return
+	}
+
 	if err := proxy.ModifyPBSJavascript(); err != nil {
 		syslog.L.Error(err).WithMessage("failed to mount modified proxmox-backup-gui.js").Write()
 		return
@@ -238,14 +243,6 @@ func main() {
 		return
 	}
 	storeInstance.Database.TokenManager = tokenManager
-
-	if storeInstance.LegacyDatabase != nil {
-		storeInstance.LegacyDatabase.TokenManager = tokenManager
-	}
-	if err = storeInstance.MigrateLegacyData(); err != nil {
-		syslog.L.Error(err).WithMessage("error migrating legacy database").Write()
-		return
-	}
 
 	// Setup HTTP server
 	tlsConfig, err := serverConfig.LoadTLSConfig()

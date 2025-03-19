@@ -33,9 +33,15 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) error {
 	}
 
 	_, err := tx.Exec(`
-        INSERT INTO targets (name, path, drive_used_bytes, is_agent, connection_status)
-        VALUES (?, ?, ?, ?, ?)
-    `, target.Name, target.Path, target.DriveUsedBytes, target.IsAgent, target.ConnectionStatus)
+        INSERT INTO targets (name, path, auth, token_used, drive_type, drive_name, drive_fs, drive_total_bytes,
+					drive_used_bytes, drive_free_bytes, drive_total, drive_used, drive_free)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+		target.Name, target.Path, target.Auth, target.TokenUsed,
+		target.DriveType, target.DriveName, target.DriveFS,
+		target.DriveTotalBytes, target.DriveUsedBytes, target.DriveFreeBytes,
+		target.DriveTotal, target.DriveUsed, target.DriveFree,
+	)
 	if err != nil {
 		// If the target already exists, update it.
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -49,12 +55,17 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) error {
 // GetTarget retrieves a target by name.
 func (database *Database) GetTarget(name string) (types.Target, error) {
 	row := database.readDb.QueryRow(`
-        SELECT name, path, drive_used_bytes, is_agent, connection_status FROM targets
+        SELECT name, path, auth, token_used, drive_type, drive_name, drive_fs, drive_total_bytes,
+					drive_used_bytes, drive_free_bytes, drive_total, drive_used, drive_free FROM targets
         WHERE name = ?
     `, name)
 	var target types.Target
-	err := row.Scan(&target.Name, &target.Path, &target.DriveUsedBytes, &target.IsAgent,
-		&target.ConnectionStatus)
+	err := row.Scan(
+		&target.Name, &target.Path, &target.Auth, &target.TokenUsed,
+		&target.DriveType, &target.DriveName, &target.DriveFS,
+		&target.DriveTotalBytes, &target.DriveUsedBytes, &target.DriveFreeBytes,
+		&target.DriveTotal, &target.DriveUsed, &target.DriveFree,
+	)
 	if err != nil {
 		return types.Target{}, fmt.Errorf("GetTarget: error fetching target: %w", err)
 	}
@@ -88,9 +99,18 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) error {
 	}
 
 	_, err := tx.Exec(`
-        UPDATE targets SET path = ?, drive_used_bytes = ?, is_agent = ?, connection_status = ?
+        UPDATE targets SET
+					path = ?, auth = ?, token_used = ?, drive_type = ?,
+					drive_name = ?, drive_fs = ?, drive_total_bytes = ?,
+					drive_used_bytes = ?, drive_free_bytes = ?, drive_total = ?,
+					drive_used = ?, drive_free = ?
         WHERE name = ?
-    `, target.Path, target.DriveUsedBytes, target.IsAgent, target.ConnectionStatus, target.Name)
+    `,
+		target.Path, target.Auth, target.TokenUsed,
+		target.DriveType, target.DriveName, target.DriveFS,
+		target.DriveTotalBytes, target.DriveUsedBytes, target.DriveFreeBytes,
+		target.DriveTotal, target.DriveUsed, target.DriveFree, target.Name,
+	)
 	if err != nil {
 		return fmt.Errorf("UpdateTarget: error updating target: %w", err)
 	}
