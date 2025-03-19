@@ -9,6 +9,7 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/database"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/sqlite"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
@@ -78,12 +79,21 @@ func (s *Store) MigrateLegacyData() error {
 		}
 	}
 
+	defaultExclusionsMap := make(map[string]struct{})
+	for _, defaultExc := range constants.DefaultExclusions {
+		defaultExclusionsMap[defaultExc] = struct{}{}
+	}
+
 	// Migrate Global Exclusions
 	legacyGlobals, err := s.LegacyDatabase.GetAllGlobalExclusions()
 	if err != nil {
 		return fmt.Errorf("MigrateLegacyData: error retrieving legacy global exclusions: %w", err)
 	}
 	for _, excl := range legacyGlobals {
+		if _, ok := defaultExclusionsMap[excl.Path]; ok {
+			continue
+		}
+
 		if err := s.Database.CreateExclusion(tx, excl); err != nil {
 			syslog.L.Error(err).WithField("exclusion", excl.Path).Write()
 		}
