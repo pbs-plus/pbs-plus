@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 
 	_ "modernc.org/sqlite"
 
@@ -36,6 +37,12 @@ func Initialize(dbPath string) (*Database, error) {
 		dbPath = "/etc/proxmox-backup/pbs-plus/plus.db"
 	}
 
+	initialized := false
+	_, err := os.Stat(dbPath)
+	if err == nil {
+		initialized = true
+	}
+
 	readDb, err := sql.Open("sqlite", dbPath+"?mode=ro")
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
@@ -63,27 +70,24 @@ func Initialize(dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
 	}
 
-	tx, err := writeDb.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
-	}
-
-	// Insert default (global) exclusions if they are not present.
-	for _, exclusion := range constants.DefaultExclusions {
-		err = database.CreateExclusion(tx, types.Exclusion{
-			Path:    exclusion,
-			Comment: "Generated exclusion from default list",
-		})
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			syslog.L.Error(err).WithField("path", exclusion).Write()
+	if !initialized {
+		tx, err := writeDb.Begin()
+		if err != nil {
+			return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
 		}
-	}
 
-	err = tx.Commit()
-	if err != nil {
-		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
-	}
+		for _, exclusion := range constants.DefaultExclusions {
+			err = database.CreateExclusion(tx, types.Exclusion{
+				Path:    exclusion,
+				Comment: "Generated exclusion from default list",
+			})
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				syslog.L.Error(err).WithField("path", exclusion).Write()
+			}
+		}
 
+		_ = tx.Commit()
+	}
 	return database, nil
 }
 
