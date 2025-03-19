@@ -34,11 +34,10 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 		return fmt.Errorf("CreateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
-	sectionID := fmt.Sprintf("excl-%s", exclusion.Path)
 	_, err := tx.Exec(`
-        INSERT INTO exclusions (section_id, job_id, path, comment)
-        VALUES (?, ?, ?, ?)
-    `, sectionID, exclusion.JobID, exclusion.Path, exclusion.Comment)
+        INSERT INTO exclusions (job_id, path, comment)
+        VALUES (?, ?, ?)
+    `, exclusion.JobID, exclusion.Path, exclusion.Comment)
 	if err != nil {
 		return fmt.Errorf("CreateExclusion: error inserting exclusion: %w", err)
 	}
@@ -48,7 +47,7 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 // GetAllJobExclusions returns all exclusions associated with a job.
 func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, error) {
 	rows, err := database.readDb.Query(`
-        SELECT section_id, job_id, path, comment FROM exclusions
+        SELECT job_id, path, comment FROM exclusions
         WHERE job_id = ?
     `, jobId)
 	if err != nil {
@@ -60,9 +59,8 @@ func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, 
 	seenPaths := make(map[string]bool)
 
 	for rows.Next() {
-		var sectionID string
 		var excl types.Exclusion
-		if err := rows.Scan(&sectionID, &excl.JobID, &excl.Path, &excl.Comment); err != nil {
+		if err := rows.Scan(&excl.JobID, &excl.Path, &excl.Comment); err != nil {
 			continue // Skip problematic rows.
 		}
 		if seenPaths[excl.Path] {
@@ -77,7 +75,7 @@ func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, 
 // GetAllGlobalExclusions returns all exclusions that are not tied to any job.
 func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
 	rows, err := database.readDb.Query(`
-        SELECT section_id, job_id, path, comment FROM exclusions
+        SELECT job_id, path, comment FROM exclusions
         WHERE job_id IS NULL OR job_id = ''
     `)
 	if err != nil {
@@ -88,9 +86,8 @@ func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
 	var exclusions []types.Exclusion
 	seenPaths := make(map[string]bool)
 	for rows.Next() {
-		var sectionID string
 		var excl types.Exclusion
-		if err := rows.Scan(&sectionID, &excl.JobID, &excl.Path, &excl.Comment); err != nil {
+		if err := rows.Scan(&excl.JobID, &excl.Path, &excl.Comment); err != nil {
 			continue
 		}
 		if seenPaths[excl.Path] {
@@ -104,10 +101,9 @@ func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
 
 // GetExclusion retrieves a single exclusion by its path.
 func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
-	sectionID := fmt.Sprintf("excl-%s", path)
 	row := database.readDb.QueryRow(`
-        SELECT job_id, path, comment FROM exclusions WHERE section_id = ?
-    `, sectionID)
+        SELECT job_id, path, comment FROM exclusions WHERE path = ?
+    `, path)
 	var excl types.Exclusion
 	err := row.Scan(&excl.JobID, &excl.Path, &excl.Comment)
 	if err != nil {
@@ -136,10 +132,9 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 		return fmt.Errorf("UpdateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
-	sectionID := fmt.Sprintf("excl-%s", exclusion.Path)
 	res, err := tx.Exec(`
-        UPDATE exclusions SET job_id = ?, comment = ? WHERE section_id = ?
-    `, exclusion.JobID, exclusion.Comment, sectionID)
+        UPDATE exclusions SET job_id = ?, comment = ? WHERE path = ?
+    `, exclusion.JobID, exclusion.Comment, exclusion.Path)
 	if err != nil {
 		return fmt.Errorf("UpdateExclusion: error updating exclusion: %w", err)
 	}
@@ -162,10 +157,9 @@ func (database *Database) DeleteExclusion(tx *sql.Tx, path string) error {
 	}
 
 	path = strings.ReplaceAll(path, "\\", "/")
-	sectionID := fmt.Sprintf("excl-%s", path)
 	res, err := tx.Exec(`
-        DELETE FROM exclusions WHERE section_id = ?
-    `, sectionID)
+        DELETE FROM exclusions WHERE path = ?
+    `, path)
 	if err != nil {
 		return fmt.Errorf("DeleteExclusion: error deleting exclusion: %w", err)
 	}
