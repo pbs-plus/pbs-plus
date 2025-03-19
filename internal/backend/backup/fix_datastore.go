@@ -71,7 +71,7 @@ func CreateNamespace(namespace string, job types.Job, storeInstance *store.Store
 	}
 
 	job.Namespace = namespace
-	err := storeInstance.Database.UpdateJob(job)
+	err := storeInstance.Database.UpdateJob(nil, job)
 	if err != nil {
 		return fmt.Errorf("CreateNamespace: error updating job to namespace -> %w", err)
 	}

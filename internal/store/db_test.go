@@ -77,7 +77,7 @@ func TestJobCRUD(t *testing.T) {
 			Namespace:        "test",
 		}
 
-		err := store.Database.CreateJob(job)
+		err := store.Database.CreateJob(nil, job)
 		assert.NoError(t, err)
 
 		// Test Get
@@ -90,7 +90,7 @@ func TestJobCRUD(t *testing.T) {
 
 		// Test Update
 		job.Comment = "Updated comment"
-		err = store.Database.UpdateJob(job)
+		err = store.Database.UpdateJob(nil, job)
 		assert.NoError(t, err)
 
 		updatedJob, err := store.Database.GetJob(job.ID)
@@ -103,7 +103,7 @@ func TestJobCRUD(t *testing.T) {
 		assert.Len(t, jobs, 1)
 
 		// Test Delete
-		err = store.Database.DeleteJob(job.ID)
+		err = store.Database.DeleteJob(nil, job.ID)
 		assert.NoError(t, err)
 
 		_, err = store.Database.GetJob(job.ID)
@@ -129,7 +129,7 @@ func TestJobCRUD(t *testing.T) {
 					NotificationMode: "always",
 					Namespace:        "test",
 				}
-				err := store.Database.CreateJob(job)
+				err := store.Database.CreateJob(nil, job)
 				assert.NoError(t, err)
 			}(i)
 		}
@@ -152,7 +152,7 @@ func TestJobCRUD(t *testing.T) {
 			NotificationMode: "always",
 			Namespace:        "test",
 		}
-		err := store.Database.CreateJob(job)
+		err := store.Database.CreateJob(nil, job)
 		assert.Error(t, err) // Should reject special characters
 	})
 }
@@ -215,7 +215,7 @@ func TestJobValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreateJob(tt.job)
+			err := store.Database.CreateJob(nil, tt.job)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" && err != nil {
@@ -275,7 +275,7 @@ func TestTargetValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreateTarget(tt.target)
+			err := store.Database.CreateTarget(nil, tt.target)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" && err != nil {
@@ -332,7 +332,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreateExclusion(tt.exclusion)
+			err := store.Database.CreateExclusion(nil, tt.exclusion)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -356,7 +356,7 @@ func TestConcurrentOperations(t *testing.T) {
 					Name: fmt.Sprintf("concurrent-target-%d", idx),
 					Path: fmt.Sprintf("/path/to/target-%d", idx),
 				}
-				err := store.Database.CreateTarget(target)
+				err := store.Database.CreateTarget(nil, target)
 				assert.NoError(t, err)
 			}(i)
 		}
@@ -388,7 +388,7 @@ func TestConcurrentOperations(t *testing.T) {
 						Name: fmt.Sprintf("concurrent-target-%d", i),
 						Path: fmt.Sprintf("/path/to/target-%d", i),
 					}
-					_ = store.Database.CreateTarget(target)
+					_ = store.Database.CreateTarget(nil, target)
 				}
 			}
 			doneCh <- struct{}{}

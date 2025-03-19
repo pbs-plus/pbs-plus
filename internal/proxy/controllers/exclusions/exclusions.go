@@ -67,7 +67,7 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 			Comment: r.FormValue("comment"),
 		}
 
-		err = storeInstance.Database.CreateExclusion(newExclusion)
+		err = storeInstance.Database.CreateExclusion(nil, newExclusion)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -124,7 +124,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.Database.UpdateExclusion(*exclusion)
+			err = storeInstance.Database.UpdateExclusion(nil, *exclusion)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -165,7 +165,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			err = storeInstance.Database.DeleteExclusion(pathDecoded)
+			err = storeInstance.Database.DeleteExclusion(nil, pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
