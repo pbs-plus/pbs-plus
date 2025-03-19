@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
 )
 
 func (proxmoxSess *ProxmoxSession) GetJobTask(
@@ -145,7 +147,19 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 	}
 }
 
+type TaskCache struct {
+	task      Task
+	timestamp time.Time
+}
+
+var taskCache = safemap.New[string, TaskCache]()
+
 func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (Task, error) {
+	task, ok := taskCache.Get(upid)
+	if ok && time.Now().Sub(task.timestamp) <= 5*time.Second {
+		return task.task, nil
+	}
+
 	resp, err := ParseUPID(upid)
 	if err != nil {
 		return Task{}, err
@@ -173,6 +187,8 @@ func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (Task, error) {
 	}
 
 	resp.EndTime = endTime
+
+	taskCache.Set(upid, TaskCache{task: resp, timestamp: time.Now()})
 
 	return resp, nil
 }
