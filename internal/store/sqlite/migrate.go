@@ -5,9 +5,8 @@ package sqlite
 import (
 	"embed"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/sqlite"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
@@ -15,12 +14,17 @@ import (
 var migrations embed.FS
 
 func (d *Database) Migrate() error {
+	driver, err := sqlite.WithInstance(d.db, &sqlite.Config{})
+	if err != nil {
+		return err
+	}
+
 	fs, err := iofs.New(migrations, "migrations")
 	if err != nil {
 		return err
 	}
 
-	m, err := migrate.NewWithSourceInstance("iofs", fs, "sqlite://"+d.dbPath)
+	m, err := migrate.NewWithInstance("iofs", fs, "sqlite", driver)
 	if err != nil {
 		return err
 	}
