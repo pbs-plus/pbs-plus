@@ -18,30 +18,20 @@ import (
 )
 
 var (
-	testInitPath       string
-	testBasePath       string
-	testJobsPath       string
-	testTargetsPath    string
-	testExclusionsPath string
-	testTokensPath     string
+	testDbPath string
 )
 
 // TestMain handles setup and teardown for all tests
 func TestMain(m *testing.M) {
 	// Create temporary test directory
 	var err error
-	testBasePath, err = os.MkdirTemp("", "pbs-plus-test-*")
+	testBasePath, err := os.MkdirTemp("", "pbs-plus-test-*")
 	if err != nil {
 		fmt.Printf("Failed to create temp directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Override the constant paths for testing
-	testInitPath = filepath.Join(testBasePath, "init")
-	testJobsPath = filepath.Join(testBasePath, "jobs.d")
-	testTargetsPath = filepath.Join(testBasePath, "targets.d")
-	testExclusionsPath = filepath.Join(testBasePath, "exclusions.d")
-	testTokensPath = filepath.Join(testBasePath, "tokens.d")
+	testDbPath = filepath.Join(testBasePath, "test.db")
 
 	// Run tests
 	code := m.Run()
@@ -56,24 +46,11 @@ func TestMain(m *testing.M) {
 func setupTestStore(t *testing.T) *Store {
 	// Create test directories
 	paths := map[string]string{
-		"init":       testInitPath,
-		"jobs":       testJobsPath,
-		"targets":    testTargetsPath,
-		"exclusions": testExclusionsPath,
-		"tokens":     testTokensPath,
+		"sqlite": testDbPath,
 	}
 
 	for _, path := range paths {
 		err := os.RemoveAll(path)
-		require.NoError(t, err)
-	}
-
-	for key, path := range paths {
-		if key == "cert" || key == "key" {
-			continue
-		}
-
-		err := os.MkdirAll(path, 0750)
 		require.NoError(t, err)
 	}
 
