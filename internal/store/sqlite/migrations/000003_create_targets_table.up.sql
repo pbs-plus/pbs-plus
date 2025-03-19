@@ -11,5 +11,5 @@ CREATE TABLE IF NOT EXISTS targets (
   drive_free_bytes INTEGER,
   drive_total TEXT,
   drive_used TEXT,
-  drive_free TEXT,
+  drive_free TEXT
 );
