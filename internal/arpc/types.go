@@ -27,6 +27,7 @@ func (msg *StringMsg) Decode(buf []byte) error {
 	}
 
 	*msg = StringMsg(str)
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -71,6 +72,7 @@ func (msg *MapStringIntMsg) Decode(buf []byte) error {
 		}
 		(*msg)[key] = int(value)
 	}
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -114,6 +116,7 @@ func (msg *MapStringUint64Msg) Decode(buf []byte) error {
 		}
 		(*msg)[key] = value
 	}
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -157,6 +160,7 @@ func (msg *MapStringStringMsg) Decode(buf []byte) error {
 		}
 		(*msg)[key] = value
 	}
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -199,5 +203,6 @@ func (msg *MapStringBoolMsg) Decode(buf []byte) error {
 		}
 		(*msg)[key] = value
 	}
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }

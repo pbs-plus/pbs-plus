@@ -36,6 +36,7 @@ func (req *Request) Decode(buf []byte) error {
 		return err
 	}
 	req.Payload = payload
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -81,6 +82,7 @@ func (resp *Response) Decode(buf []byte) error {
 	}
 	resp.Data = dataField
 	// Note: RawStream is skipped
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -137,5 +139,6 @@ func (errObj *SerializableError) Decode(buf []byte) error {
 	}
 	errObj.Path = path
 	// Note: OriginalError is skipped
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }

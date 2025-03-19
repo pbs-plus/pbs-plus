@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/binary"
 	"os"
-	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -409,10 +408,6 @@ func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 	fs.trackAccess(path, true)
 
 	return resp, nil
-}
-
-func (fs *ARPCFS) Join(elem ...string) string {
-	return filepath.Join(elem...)
 }
 
 func (fs *ARPCFS) Root() string {
