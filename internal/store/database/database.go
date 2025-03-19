@@ -5,6 +5,7 @@ package database
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/token"
 	configLib "github.com/sonroyaalmerol/pbs-plus/internal/config"
@@ -33,6 +34,31 @@ type Database struct {
 func Initialize(paths map[string]string) (*Database, error) {
 	if paths == nil {
 		paths = defaultPaths
+	}
+
+	dirEntries, err := os.ReadDir(filepath.Dir(paths["init"]))
+	if err != nil {
+		return nil, err
+	}
+
+	hasLegacy := false
+
+	for _, dirEntry := range dirEntries {
+		switch dirEntry.Name() {
+		case "jobs.d":
+			fallthrough
+		case "targets.d":
+			fallthrough
+		case "exclusions.d":
+			fallthrough
+		case "tokens.d":
+			hasLegacy = true
+			break
+		}
+	}
+
+	if !hasLegacy {
+		return nil, nil
 	}
 
 	// Check if paths map contains required keys
