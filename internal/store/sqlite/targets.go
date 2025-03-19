@@ -25,6 +25,13 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) error {
 		defer tx.Commit()
 	}
 
+	if target.Path == "" {
+		return fmt.Errorf("target path empty")
+	}
+	if !utils.ValidateTargetPath(target.Path) {
+		return fmt.Errorf("invalid target path: %s", target.Path)
+	}
+
 	_, err := tx.Exec(`
         INSERT INTO targets (name, path, drive_used_bytes, is_agent, connection_status)
         VALUES (?, ?, ?, ?, ?)
@@ -71,6 +78,13 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) error {
 			return err
 		}
 		defer tx.Commit()
+	}
+
+	if target.Path == "" {
+		return fmt.Errorf("target path empty")
+	}
+	if !utils.ValidateTargetPath(target.Path) {
+		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
 	_, err := tx.Exec(`

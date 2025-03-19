@@ -4,10 +4,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -107,7 +107,7 @@ func TestJobCRUD(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = store.Database.GetJob(job.ID)
-		assert.ErrorIs(t, err, os.ErrNotExist)
+		assert.ErrorIs(t, err, sql.ErrNoRows)
 	})
 
 	t.Run("Concurrent Operations", func(t *testing.T) {
@@ -199,17 +199,6 @@ func TestJobValidation(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  "is empty",
-		},
-		{
-			name: "very long fields",
-			job: types.Job{
-				ID:        strings.Repeat("a", 256),
-				Store:     "local",
-				Target:    "test",
-				Namespace: "test",
-			},
-			wantErr: true,
-			errMsg:  "file name too long",
 		},
 	}
 

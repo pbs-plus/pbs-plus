@@ -72,6 +72,16 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
 		return fmt.Errorf("CreateJob: invalid id string -> %s", job.ID)
 	}
 
+	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
+		return fmt.Errorf("invalid namespace string: %s", job.Namespace)
+	}
+	if err := utils.ValidateOnCalendar(job.Schedule); err != nil && job.Schedule != "" {
+		return fmt.Errorf("invalid schedule string: %s", job.Schedule)
+	}
+	if !utils.IsValidPathString(job.Subpath) {
+		return fmt.Errorf("invalid subpath string: %s", job.Subpath)
+	}
+
 	// Ensure retry parameters are sane.
 	if job.RetryInterval <= 0 {
 		job.RetryInterval = 1
@@ -193,6 +203,15 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
 	}
 	if job.Retry < 0 {
 		job.Retry = 0
+	}
+	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
+		return fmt.Errorf("invalid namespace string: %s", job.Namespace)
+	}
+	if err := utils.ValidateOnCalendar(job.Schedule); err != nil && job.Schedule != "" {
+		return fmt.Errorf("invalid schedule string: %s", job.Schedule)
+	}
+	if !utils.IsValidPathString(job.Subpath) {
+		return fmt.Errorf("invalid subpath string: %s", job.Subpath)
 	}
 
 	_, err := tx.Exec(`
