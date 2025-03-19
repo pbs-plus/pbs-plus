@@ -4,7 +4,6 @@ package store
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
 	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
@@ -138,28 +137,6 @@ func (s *Store) MigrateLegacyData() error {
 		return err
 	}
 
-	syslog.L.Info().WithMessage("Migrating legacy tokens...").Write()
-	tx, err = s.Database.NewTransaction()
-	if err != nil {
-		return fmt.Errorf("MigrateLegacyData: error creating transaction: %w", err)
-	}
-
-	// Migrate Tokens
-	legacyTokens, err := s.LegacyDatabase.GetAllTokens()
-	if err != nil {
-		return fmt.Errorf("MigrateLegacyData: error retrieving legacy tokens: %w", err)
-	}
-	for _, token := range legacyTokens {
-		if err := s.Database.MigrateToken(tx, token); err != nil {
-			syslog.L.Error(err).WithField("token", token.Token).Write()
-		}
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return err
-	}
-
 	syslog.L.Info().WithMessage("Verifying jobs migration...").Write()
 	newJobs, err := s.Database.GetAllJobs()
 	if err != nil {
@@ -190,22 +167,7 @@ func (s *Store) MigrateLegacyData() error {
 		return fmt.Errorf("MigrateLegacyData: legacyTargets != newTargets : %d != %d", len(legacyTargets), len(newTargets))
 	}
 
-	syslog.L.Info().WithMessage("Verifying tokens migration...").Write()
-	newTokens, err := s.Database.GetAllTokens()
-	if err != nil {
-		return fmt.Errorf("MigrateLegacyData: error retrieving new tokens: %w", err)
-	}
-
-	if len(legacyTokens) != len(newTokens) {
-		return fmt.Errorf("MigrateLegacyData: legacyTokens != newTokens: %d != %d", len(legacyTokens), len(newTokens))
-	}
-
 	syslog.L.Info().WithMessage("Deleting legacy database directories...").Write()
-
-	_ = os.RemoveAll("/etc/proxmox-backup/pbs-plus/jobs.d")
-	_ = os.RemoveAll("/etc/proxmox-backup/pbs-plus/targets.d")
-	_ = os.RemoveAll("/etc/proxmox-backup/pbs-plus/exclusions.d")
-	_ = os.RemoveAll("/etc/proxmox-backup/pbs-plus/tokens.d")
 
 	syslog.L.Info().WithMessage("PBS Plus has successfully migrated your legacy database to the newer model. Legacy databases has been deleted: /etc/proxmox-backup/pbs-plus/[jobs.d, targets.d, exclusions.d, tokens.d]").Write()
 

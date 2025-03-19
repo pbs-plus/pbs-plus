@@ -3,8 +3,6 @@
 package sqlite
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
@@ -86,26 +84,4 @@ func (database *Database) RevokeToken(tokenData types.AgentToken) error {
 		return fmt.Errorf("RevokeToken: error updating token: %w", err)
 	}
 	return nil
-}
-
-// Only used for legacy database migration
-func (database *Database) MigrateToken(tx *sql.Tx, tokenData types.AgentToken) error {
-	if tx == nil {
-		var err error
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
-		if err != nil {
-			return err
-		}
-		defer tx.Commit()
-	}
-
-	_, err := database.writeDb.Exec(`
-        INSERT INTO tokens (token, comment, created_at, revoked)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(token) DO UPDATE SET
-          comment = excluded.comment,
-          created_at = excluded.created_at,
-          revoked = excluded.revoked
-    `, tokenData.Token, tokenData.Comment, tokenData.CreatedAt, tokenData.Revoked)
-	return err
 }
