@@ -5,6 +5,8 @@ package sqlite
 import (
 	"embed"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
