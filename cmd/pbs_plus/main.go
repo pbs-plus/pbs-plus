@@ -239,6 +239,11 @@ func main() {
 	}
 	storeInstance.Database.TokenManager = tokenManager
 
+	if err = storeInstance.MigrateLegacyData(); err != nil {
+		syslog.L.Error(err).WithMessage("error migrating legacy database").Write()
+		return
+	}
+
 	// Setup HTTP server
 	tlsConfig, err := serverConfig.LoadTLSConfig()
 	if err != nil {
