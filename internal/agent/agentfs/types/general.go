@@ -25,6 +25,8 @@ func (id *FileHandleId) Decode(buf []byte) error {
 		return err
 	}
 	*id = FileHandleId(value)
+
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -81,5 +83,6 @@ func (entries *ReadDirEntries) Decode(buf []byte) error {
 		(*entries)[i] = entry
 	}
 
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }

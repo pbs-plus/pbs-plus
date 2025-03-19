@@ -30,6 +30,7 @@ func (resp *LseekResp) Decode(buf []byte) error {
 		return err
 	}
 	resp.NewOffset = newOffset
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -92,6 +93,7 @@ func (acl *WinACL) Decode(buf []byte) error {
 	}
 	acl.Flags = flags
 
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -147,6 +149,7 @@ func (acls *WinACLArray) Decode(buf []byte) error {
 		(*acls)[i] = acl
 	}
 
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -197,6 +200,7 @@ func (entry *PosixACL) Decode(buf []byte) error {
 	}
 	entry.Perms = perms
 
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -252,6 +256,7 @@ func (acls *PosixACLArray) Decode(buf []byte) error {
 		(*acls)[i] = acl
 	}
 
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -444,6 +449,8 @@ func (info *AgentFileInfo) Decode(buf []byte) error {
 	}
 	info.PosixACLs = posixAcls
 
+	arpcdata.ReleaseDecoder(dec)
+
 	return nil
 }
 
@@ -479,6 +486,7 @@ func (entry *AgentDirEntry) Decode(buf []byte) error {
 		return err
 	}
 	entry.Mode = mode
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -559,5 +567,6 @@ func (stat *StatFS) Decode(buf []byte) error {
 		return err
 	}
 	stat.NameLen = nameLen
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }

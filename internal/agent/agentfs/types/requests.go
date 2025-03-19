@@ -45,6 +45,7 @@ func (req *OpenFileReq) Decode(buf []byte) error {
 		return err
 	}
 	req.Perm = int(perm)
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -71,6 +72,7 @@ func (req *StatReq) Decode(buf []byte) error {
 		return err
 	}
 	req.Path = path
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -97,6 +99,7 @@ func (req *ReadDirReq) Decode(buf []byte) error {
 		return err
 	}
 	req.Path = path
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -132,6 +135,7 @@ func (req *ReadReq) Decode(buf []byte) error {
 		return err
 	}
 	req.Length = int(length)
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -176,6 +180,7 @@ func (req *ReadAtReq) Decode(buf []byte) error {
 		return err
 	}
 	req.Length = int(length)
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -202,6 +207,7 @@ func (req *CloseReq) Decode(buf []byte) error {
 		return err
 	}
 	req.HandleID = FileHandleId(handleID)
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -255,6 +261,7 @@ func (req *BackupReq) Decode(buf []byte) error {
 		return err
 	}
 	req.Extras = extras
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -299,5 +306,6 @@ func (req *LseekReq) Decode(buf []byte) error {
 		return err
 	}
 	req.Whence = int(whence)
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
