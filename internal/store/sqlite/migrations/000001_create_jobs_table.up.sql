@@ -1,9 +1,9 @@
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY,
-  store TEXT NOT NULL,
+  store TEXT NOT NULL CHECK (store != ''),
   mode TEXT DEFAULT "metadata",
   source_mode TEXT DEFAULT "snapshot",
-  target TEXT NOT NULL,
+  target TEXT NOT NULL CHECK (target != ''),
   subpath TEXT,
   schedule TEXT,
   comment TEXT,
