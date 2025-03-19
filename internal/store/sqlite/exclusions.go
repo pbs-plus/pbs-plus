@@ -26,7 +26,7 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 	}
 
 	if exclusion.Path == "" {
-		return errors.New("path is required for an exclusion")
+		return errors.New("path is empty")
 	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
@@ -128,7 +128,7 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 	}
 
 	if exclusion.Path == "" {
-		return errors.New("path is required for an exclusion")
+		return errors.New("path is empty")
 	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
