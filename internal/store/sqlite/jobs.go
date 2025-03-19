@@ -70,11 +70,11 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
 	}
 
 	if job.Target == "" {
-		return errors.New("target is required for a job")
+		return errors.New("target is empty")
 	}
 
 	if job.Store == "" {
-		return errors.New("datastore is required for a job")
+		return errors.New("datastore is empty")
 	}
 
 	if !utils.IsValidID(job.ID) && job.ID != "" {
@@ -209,11 +209,11 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
 	}
 
 	if job.Target == "" {
-		return errors.New("target is required for a job")
+		return errors.New("target is empty")
 	}
 
 	if job.Store == "" {
-		return errors.New("datastore is required for a job")
+		return errors.New("datastore is empty")
 	}
 
 	if job.RetryInterval <= 0 {
