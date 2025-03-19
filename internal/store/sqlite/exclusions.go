@@ -5,6 +5,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,6 +23,10 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 			return err
 		}
 		defer tx.Commit()
+	}
+
+	if exclusion.Path == "" {
+		return errors.New("path is required for an exclusion")
 	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
@@ -120,6 +125,10 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 			return err
 		}
 		defer tx.Commit()
+	}
+
+	if exclusion.Path == "" {
+		return errors.New("path is required for an exclusion")
 	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
