@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,6 +18,12 @@ import (
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 )
+
+var pathPool = sync.Pool{
+	New: func() interface{} {
+		return &strings.Builder{}
+	},
+}
 
 func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
 	return &Node{
@@ -28,10 +35,7 @@ func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
 func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, error) {
 	root := newRoot(afs)
 
-	timeout := time.Hour * 24 * 365
-	if afs.GetBackupMode() == "direct" {
-		timeout = 1 * time.Minute
-	}
+	timeout := 1 * time.Minute
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
@@ -47,9 +51,8 @@ func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, 
 				"noatime",
 			},
 		},
-		EntryTimeout:    &timeout,
-		AttrTimeout:     &timeout,
-		NegativeTimeout: &timeout,
+		EntryTimeout: &timeout,
+		AttrTimeout:  &timeout,
 	}
 
 	server, err := fs.Mount(mountpoint, root, options)
@@ -268,7 +271,17 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 // Lookup implements NodeLookuper
 func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	childPath := filepath.Join(n.path, name)
+	builder := pathPool.Get().(*strings.Builder)
+	builder.Reset()
+	defer pathPool.Put(builder)
+
+	builder.WriteString(n.path)
+	if !strings.HasSuffix(n.path, "/") {
+		builder.WriteString("/")
+	}
+	builder.WriteString(name)
+	childPath := builder.String()
+
 	fi, err := n.fs.Attr(childPath)
 	if err != nil {
 		return nil, fs.ToErrno(err)

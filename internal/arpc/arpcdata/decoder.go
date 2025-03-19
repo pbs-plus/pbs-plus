@@ -4,8 +4,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"sync"
 	"time"
 )
+
+var DecoderPool = sync.Pool{
+	New: func() interface{} {
+		return &Decoder{}
+	},
+}
 
 // Decoder reads data from a buffer
 type Decoder struct {
@@ -22,7 +29,20 @@ func NewDecoder(buf []byte) (*Decoder, error) {
 	if len(buf) != int(totalLength) {
 		return nil, errors.New("total length mismatch: data may be corrupted or incomplete")
 	}
-	return &Decoder{buf: buf, pos: 4}, nil // Skip the total length field
+
+	// Get a Decoder from the pool.
+	decoder := DecoderPool.Get().(*Decoder)
+	decoder.buf = buf
+	decoder.pos = 4 // Skip the total length field
+	return decoder, nil
+}
+
+// ReleaseDecoder returns the Decoder to the pool for reuse.
+func ReleaseDecoder(d *Decoder) {
+	// Reset the Decoder's state before putting it back in the pool.
+	d.buf = nil
+	d.pos = 0
+	DecoderPool.Put(d)
 }
 
 // Reset allows reusing the Decoder with a new buffer
