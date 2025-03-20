@@ -85,6 +85,12 @@ func (fs *ARPCFS) GetStats() Stats {
 }
 
 func (fs *ARPCFS) Unmount() {
+	if fs.Mount != nil {
+		_ = fs.Mount.Unmount()
+	}
+	if fs.session != nil {
+		_ = fs.session.Close()
+	}
 }
 
 func (fs *ARPCFS) GetBackupMode() string {
