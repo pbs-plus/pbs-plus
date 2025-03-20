@@ -35,7 +35,7 @@ func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
 func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, error) {
 	root := newRoot(afs)
 
-	timeout := 1 * time.Minute
+	timeout := 2 * time.Second
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
