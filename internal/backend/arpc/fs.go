@@ -331,7 +331,7 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	}
 
 	req := types.StatReq{Path: filename}
-	raw, err := fs.session.CallMsgWithTimeout(10*time.Second, fs.JobId+"/Xattr", &req)
+	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/Xattr", &req)
 	if err != nil {
 		if arpc.IsOSError(err) {
 			return types.AgentFileInfo{}, err

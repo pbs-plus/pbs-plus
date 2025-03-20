@@ -150,8 +150,14 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 		return types.Job{}, fmt.Errorf("GetJob: error fetching job: %w", err)
 	}
 
+	database.getJobExtras(&job)
+
+	return job, nil
+}
+
+func (database *Database) getJobExtras(job *types.Job) {
 	// Retrieve and attach exclusions.
-	exclusions, err := database.GetAllJobExclusions(id)
+	exclusions, err := database.GetAllJobExclusions(job.ID)
 	if err == nil && exclusions != nil {
 		job.Exclusions = exclusions
 		pathSlice := []string{}
@@ -179,10 +185,9 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 		}
 	}
 
-	if nextSchedule, err := system.GetNextSchedule(job); err == nil && nextSchedule != nil {
+	if nextSchedule, err := system.GetNextSchedule(*job); err == nil && nextSchedule != nil {
 		job.NextRun = nextSchedule.Unix()
 	}
-	return job, nil
 }
 
 // UpdateJob updates an existing job and its exclusions.
@@ -284,26 +289,39 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
 
 // GetAllJobs returns all job records.
 func (database *Database) GetAllJobs() ([]types.Job, error) {
-	rows, err := database.readDb.Query("SELECT id FROM jobs")
+	rows, err := database.readDb.Query(`
+			SELECT id, store, mode, source_mode, target, subpath, schedule, comment,
+						 notification_mode, namespace, current_pid, last_run_upid, last_successful_upid,
+						 retry, retry_interval, raw_exclusions
+			FROM jobs
+  `)
 	if err != nil {
-		return nil, fmt.Errorf("GetAllJobs: error querying jobs: %w", err)
+		return nil, fmt.Errorf("GetJob: error fetching job: %w", err)
 	}
 	defer rows.Close()
 
 	var jobs []types.Job
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			continue
-		}
-		job, err := database.GetJob(id)
+		var job types.Job
+		err := rows.Scan(&job.ID, &job.Store, &job.Mode, &job.SourceMode,
+			&job.Target, &job.Subpath, &job.Schedule, &job.Comment,
+			&job.NotificationMode, &job.Namespace, &job.CurrentPID, &job.LastRunUpid,
+			&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval, &job.RawExclusions)
 		if err != nil {
-			syslog.L.Error(err).WithField("id", id).Write()
 			continue
 		}
-		if target, err := database.GetTarget(job.Target); err == nil {
-			job.ExpectedSize = utils.HumanReadableBytes(int64(target.DriveUsedBytes))
+
+		database.getJobExtras(&job)
+
+		var driveUsedBytes int
+		targetRow := database.readDb.QueryRow(`
+        SELECT drive_used_bytes FROM targets WHERE name = ?
+    `, job.Target)
+		err = targetRow.Scan(&driveUsedBytes)
+		if err == nil {
+			job.ExpectedSize = utils.HumanReadableBytes(int64(driveUsedBytes))
 		}
+
 		jobs = append(jobs, job)
 	}
 	return jobs, nil

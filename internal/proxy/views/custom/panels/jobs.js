@@ -351,6 +351,8 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Edit"),
       handler: "editJob",
+      enableFn: (rec) =>
+        !rec.data["last-run-upid"] || !!rec.data["last-run-state"],
       disabled: true,
     },
     {
@@ -383,6 +385,8 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Run Job"),
       handler: "runJob",
       reference: "d2dBackupRun",
+      enableFn: (rec) =>
+        !rec.data["last-run-upid"] || !!rec.data["last-run-state"],
       disabled: true,
     },
     {
