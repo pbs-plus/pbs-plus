@@ -100,7 +100,7 @@ func CmdBackup() {
 	headers := http.Header{}
 	headers.Add("X-PBS-Plus-JobId", *jobId)
 
-	rpcSess, err := arpc.ConnectToServer(context.Background(), uri.Host, headers, tlsConfig)
+	rpcSess, err := arpc.ConnectToServer(context.Background(), false, uri.Host, headers, tlsConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to connect to server: %v", err)
 		return
@@ -114,14 +114,8 @@ func CmdBackup() {
 		defer rpcSess.Close()
 		defer wg.Done()
 		if err := rpcSess.Serve(); err != nil {
-			// Handle RPC serve error if needed.
-			store, err := agent.NewBackupStore()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error initializing backup store: %v", err)
-			} else {
-				if err := store.ClearAll(); err != nil {
-					fmt.Fprintf(os.Stderr, "error initializing clearing backup store: %v", err)
-				}
+			if session, ok := activeSessions.Get(*jobId); ok {
+				session.Close()
 			}
 		}
 	}()

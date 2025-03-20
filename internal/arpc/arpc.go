@@ -3,6 +3,7 @@ package arpc
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -128,7 +129,7 @@ func (s *Session) Serve() error {
 	}
 }
 
-func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
+func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
 	dialFunc := func() (net.Conn, error) {
 		return tls.Dial("tcp", serverAddr, tlsConfig)
 	}
@@ -137,30 +138,45 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
 	}
 
-	// Use DialWithBackoff for the initial connection
-	session, err := dialWithBackoff(
-		ctx,
-		dialFunc,
-		upgradeFunc,
-		100*time.Millisecond, // Initial backoff
-		30*time.Second,       // Max backoff
-	)
+	var session *Session
+	var err error
+	if autoReconnect {
+		// Use DialWithBackoff for the initial connection
+		session, err = dialWithBackoff(
+			ctx,
+			dialFunc,
+			upgradeFunc,
+			100*time.Millisecond, // Initial backoff
+			30*time.Second,       // Max backoff
+		)
+	} else {
+		conn, err := dialWithProbe(ctx, dialFunc)
+		if err != nil {
+			return nil, errors.New("server not reachable")
+		}
 
+		session, err = upgradeFunc(conn)
+		if err != nil {
+			_ = conn.Close()
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 
-	// Configure auto-reconnect with the same parameters
-	session.EnableAutoReconnect(ReconnectConfig{
-		AutoReconnect:    true,
-		DialFunc:         dialFunc,
-		UpgradeFunc:      upgradeFunc,
-		InitialBackoff:   100 * time.Millisecond,
-		MaxBackoff:       30 * time.Second,
-		BackoffJitter:    0.2,
-		CircuitBreakTime: 60 * time.Second,
-		ReconnectCtx:     ctx,
-	})
+	if autoReconnect {
+		// Configure auto-reconnect with the same parameters
+		session.EnableAutoReconnect(ReconnectConfig{
+			AutoReconnect:    true,
+			DialFunc:         dialFunc,
+			UpgradeFunc:      upgradeFunc,
+			InitialBackoff:   100 * time.Millisecond,
+			MaxBackoff:       30 * time.Second,
+			BackoffJitter:    0.2,
+			CircuitBreakTime: 60 * time.Second,
+			ReconnectCtx:     ctx,
+		})
+	}
 
 	return session, nil
 }
