@@ -3,6 +3,7 @@
 package agentfs
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -278,9 +279,16 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
+	reader := bytes.NewReader(entries)
+	streamCallback := func(stream *smux.Stream) {
+		if err := binarystream.SendDataFromReader(reader, int(len(entries)), stream); err != nil {
+			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
+		}
+	}
+
 	return arpc.Response{
-		Status: 200,
-		Data:   entries,
+		Status:    213,
+		RawStream: streamCallback,
 	}, nil
 }
 
