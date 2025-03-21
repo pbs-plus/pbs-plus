@@ -39,7 +39,9 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		p := message.NewPrinter(language.English)
 		for i, job := range allJobs {
-			childKey := job.Target + "|" + job.ID
+			splittedTargetName := strings.Split(job.Target, " - ")
+			targetHostname := splittedTargetName[0]
+			childKey := targetHostname + "|" + job.ID
 			arpcfs := store.GetSessionFS(childKey)
 			if arpcfs == nil {
 				continue
