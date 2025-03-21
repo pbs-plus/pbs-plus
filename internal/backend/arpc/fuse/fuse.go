@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -274,18 +273,22 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	pathBytes := pathPool.Get().([]byte)
 	nPathLen := len(n.path)
+
 	nPathBytes := unsafe.Slice(unsafe.StringData(n.path), nPathLen)
 	nameLen := len(name)
+
 	nameBytes := unsafe.Slice(unsafe.StringData(name), nameLen)
 
 	copy(pathBytes, nPathBytes)
 	nextLen := nPathLen
-	if !strings.HasSuffix(n.path, "/") {
-		copy(pathBytes[:nPathLen], []byte{'/'})
-		nextLen += 1
+	if n.path[len(n.path)-1] != '/' {
+		pathBytes[nPathLen] = '/'
+		nextLen++
 	}
-	copy(pathBytes[:nextLen], nameBytes)
+
+	copy(pathBytes[nextLen:], nameBytes)
 	childPath := string(pathBytes[:nextLen+nameLen])
+
 	pathPool.Put(pathBytes)
 
 	fi, err := n.fs.Attr(childPath)
