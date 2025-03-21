@@ -34,10 +34,10 @@ var bufferPools = []BufferPool{
 		},
 	},
 	{
-		Size: 65536,
+		Size: 32768,
 		Pool: &sync.Pool{
 			New: func() interface{} {
-				return make([]byte, 65536)
+				return make([]byte, 32768)
 			},
 		},
 	},
