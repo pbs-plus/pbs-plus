@@ -41,6 +41,9 @@ import (
 var Version = "v0.0.0"
 
 func main() {
+	mainCtx, mainCancel := context.WithCancel(context.Background())
+	defer mainCancel()
+
 	proxmox.InitializeProxmox()
 
 	jobRun := flag.String("job", "", "Job ID to execute")
@@ -92,7 +95,7 @@ func main() {
 		return
 	}
 
-	storeInstance, err := store.Initialize(nil)
+	storeInstance, err := store.Initialize(mainCtx, nil)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to initialize store").Write()
 		return

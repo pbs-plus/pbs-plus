@@ -125,6 +125,7 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 	}
 
 	if !s.reconnectConfig.AutoReconnect {
+		s.Close()
 		return nil, err
 	}
 
@@ -135,6 +136,7 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 	if s.circuitOpen.Load() {
 		resetTime := s.circuitResetAt.Load()
 		if resetTime > 0 && time.Now().Unix() < resetTime {
+			s.Close()
 			return nil, errors.New("connection failed and circuit breaker is open")
 		}
 		s.circuitOpen.Store(false)
@@ -146,6 +148,8 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 	if probeErr != nil {
 		s.circuitOpen.Store(true)
 		s.circuitResetAt.Store(time.Now().Add(5 * time.Second).Unix())
+
+		s.Close()
 		return nil, errors.New("server not reachable")
 	}
 	_ = conn.Close()
@@ -155,8 +159,10 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 		select {
 		case <-s.reconnectChan:
 		case <-time.After(timeout):
+			s.Close()
 			return nil, errors.New("timeout waiting for reconnection")
 		case <-s.ctx.Done():
+			s.Close()
 			return nil, s.ctx.Err()
 		}
 	} else {
@@ -164,13 +170,16 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 		select {
 		case <-s.reconnectChan:
 		case <-time.After(timeout):
+			s.Close()
 			return nil, errors.New("timeout waiting for reconnection")
 		case <-s.ctx.Done():
+			s.Close()
 			return nil, s.ctx.Err()
 		}
 	}
 
 	if ConnectionState(s.state.Load()) != StateConnected {
+		s.Close()
 		return nil, errors.New("failed to reconnect")
 	}
 

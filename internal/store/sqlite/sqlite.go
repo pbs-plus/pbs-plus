@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 
 	_ "modernc.org/sqlite"
 
@@ -24,6 +25,7 @@ const maxAttempts = 100
 type Database struct {
 	readDb       *sql.DB
 	writeDb      *sql.DB
+	writeMu      sync.Mutex
 	dbPath       string
 	TokenManager *token.Manager
 }

@@ -54,6 +54,9 @@ func (database *Database) generateUniqueJobID(job types.Job) (string, error) {
 // CreateJob creates a new job record and adds any associated exclusions.
 func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
 	if tx == nil {
+		database.writeMu.Lock()
+		defer database.writeMu.Unlock()
+
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
@@ -193,6 +196,9 @@ func (database *Database) getJobExtras(job *types.Job) {
 // UpdateJob updates an existing job and its exclusions.
 func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
 	if tx == nil {
+		database.writeMu.Lock()
+		defer database.writeMu.Unlock()
+
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
@@ -266,22 +272,24 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
 	}
 
 	if job.LastRunUpid != "" {
-		jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
-		if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
-			syslog.L.Error(err).WithField("id", job.ID).Write()
-		} else {
-			jobLogPath := filepath.Join(jobLogsPath, job.LastRunUpid)
-			if _, err := os.Lstat(jobLogPath); err != nil {
-				origLogPath, err := proxmox.GetLogPath(job.LastRunUpid)
-				if err != nil {
-					syslog.L.Error(err).WithField("id", job.ID).Write()
-				}
-				err = os.Symlink(origLogPath, jobLogPath)
-				if err != nil {
-					syslog.L.Error(err).WithField("id", job.ID).Write()
+		go func() {
+			jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
+			if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
+				syslog.L.Error(err).WithField("id", job.ID).Write()
+			} else {
+				jobLogPath := filepath.Join(jobLogsPath, job.LastRunUpid)
+				if _, err := os.Lstat(jobLogPath); err != nil {
+					origLogPath, err := proxmox.GetLogPath(job.LastRunUpid)
+					if err != nil {
+						syslog.L.Error(err).WithField("id", job.ID).Write()
+					}
+					err = os.Symlink(origLogPath, jobLogPath)
+					if err != nil {
+						syslog.L.Error(err).WithField("id", job.ID).Write()
+					}
 				}
 			}
-		}
+		}()
 	}
 
 	return nil
@@ -330,6 +338,9 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 // DeleteJob deletes a job and any related exclusions.
 func (database *Database) DeleteJob(tx *sql.Tx, id string) error {
 	if tx == nil {
+		database.writeMu.Lock()
+		defer database.writeMu.Unlock()
+
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
