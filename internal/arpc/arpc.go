@@ -102,6 +102,7 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 // defaultSmuxConfig returns a default smux configuration
 func defaultSmuxConfig() *smux.Config {
 	defaults := smux.DefaultConfig()
+	defaults.MaxFrameSize = 32768 + 8
 	return defaults
 }
 
