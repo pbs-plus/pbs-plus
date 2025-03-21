@@ -12,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -21,7 +22,7 @@ import (
 
 var pathPool = sync.Pool{
 	New: func() interface{} {
-		return &strings.Builder{}
+		return make([]byte, 4096)
 	},
 }
 
@@ -271,16 +272,21 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 // Lookup implements NodeLookuper
 func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	builder := pathPool.Get().(*strings.Builder)
-	builder.Reset()
-	defer pathPool.Put(builder)
+	pathBytes := pathPool.Get().([]byte)
+	nPathLen := len(n.path)
+	nPathBytes := unsafe.Slice(unsafe.StringData(n.path), nPathLen)
+	nameLen := len(name)
+	nameBytes := unsafe.Slice(unsafe.StringData(name), nameLen)
 
-	builder.WriteString(n.path)
+	copy(pathBytes, nPathBytes)
+	nextLen := nPathLen
 	if !strings.HasSuffix(n.path, "/") {
-		builder.WriteString("/")
+		copy(pathBytes[:nPathLen], []byte{'/'})
+		nextLen += 1
 	}
-	builder.WriteString(name)
-	childPath := builder.String()
+	copy(pathBytes[:nextLen], nameBytes)
+	childPath := string(pathBytes[:nextLen+nameLen])
+	pathPool.Put(pathBytes)
 
 	fi, err := n.fs.Attr(childPath)
 	if err != nil {
