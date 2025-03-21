@@ -241,8 +241,10 @@ func TestAgentFSServer(t *testing.T) {
 	t.Run("ReadDir", func(t *testing.T) {
 		payload := types.ReadDirReq{Path: ("/")}
 		var result types.ReadDirEntries
-		raw, err := clientSession.CallMsg(ctx, "agentFs/ReadDir", &payload)
-		result.Decode(raw)
+		raw := make([]byte, 200)
+		readSize, err := clientSession.CallBinary(ctx, "agentFs/ReadDir", &payload, raw)
+		assert.NoError(t, err)
+		result.Decode(raw[:readSize])
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(result), 3) // Should have at least test1.txt, test2.txt, and subdir
 
