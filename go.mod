@@ -55,4 +55,4 @@ require (
 	modernc.org/memory v1.8.2 // indirect
 )
 
-replace github.com/hanwen/go-fuse/v2 v2.7.2 => github.com/sonroyaalmerol/go-fuse/v2 v2.0.3
+replace github.com/hanwen/go-fuse/v2 v2.7.2 => github.com/sonroyaalmerol/go-fuse/v2 v2.0.4
