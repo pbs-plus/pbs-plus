@@ -5,6 +5,7 @@ package arpcfs
 import (
 	"context"
 	"os"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -232,6 +233,13 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	return fsStat, nil
 }
 
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 256*1024) // 256KB initial buffer
+		return &b
+	},
+}
+
 // ReadDir calls ReadDir via RPC and logs directory accesses.
 func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 	if fs.session == nil {
@@ -241,9 +249,17 @@ func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 		return nil, syscall.EIO
 	}
 
+	bufPtr := bufPool.Get().(*[]byte)
+	buf := *bufPtr
+	defer func() {
+		if cap(buf) == cap(*bufPtr) {
+			bufPool.Put(bufPtr)
+		}
+	}()
+
 	var resp types.ReadDirEntries
 	req := types.ReadDirReq{Path: path}
-	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/ReadDir", &req)
+	bytesRead, err := fs.session.CallBinary(fs.ctx, fs.JobId+"/ReadDir", &req, buf)
 	if err != nil {
 		if arpc.IsOSError(err) {
 			return nil, err
@@ -251,7 +267,7 @@ func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 		return nil, syscall.EIO
 	}
 
-	err = resp.Decode(raw)
+	err = resp.Decode(buf[:bytesRead])
 	if err != nil {
 		return nil, syscall.EIO
 	}
