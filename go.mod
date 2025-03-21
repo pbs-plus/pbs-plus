@@ -32,6 +32,7 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -54,3 +55,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.8.2 // indirect
 )
+
+replace github.com/hanwen/go-fuse/v2 v2.7.2 => github.com/sonroyaalmerol/go-fuse/v2 v2.0.0-20250321135216-3a739d2b5004
