@@ -281,7 +281,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 
 	copy(pathBytes, nPathBytes)
 	nextLen := nPathLen
-	if n.path[len(n.path)-1] != '/' {
+	if nPathLen > 0 && n.path[nPathLen-1] != '/' {
 		pathBytes[nPathLen] = '/'
 		nextLen++
 	}
