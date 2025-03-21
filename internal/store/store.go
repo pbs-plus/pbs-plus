@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -20,6 +21,7 @@ import (
 
 // Store holds the configuration system.
 type Store struct {
+	Ctx                context.Context
 	CertGenerator      *certificates.Generator
 	LegacyDatabase     *database.Database
 	Database           *sqlite.Database
@@ -27,7 +29,7 @@ type Store struct {
 	arpcFS             *safemap.Map[string, *arpcfs.ARPCFS]
 }
 
-func Initialize(paths map[string]string) (*Store, error) {
+func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	sqlitePath := ""
 	if paths != nil {
 		sqlitePathTmp, ok := paths["sqlite"]
@@ -47,6 +49,7 @@ func Initialize(paths map[string]string) (*Store, error) {
 	}
 
 	store := &Store{
+		Ctx:                ctx,
 		LegacyDatabase:     legacy,
 		Database:           db,
 		arpcFS:             safemap.New[string, *arpcfs.ARPCFS](),

@@ -17,6 +17,9 @@ import (
 // CreateExclusion inserts a new exclusion into the database.
 func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion) error {
 	if tx == nil {
+		database.writeMu.Lock()
+		defer database.writeMu.Unlock()
+
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
@@ -115,6 +118,9 @@ func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
 // UpdateExclusion updates an existing exclusion.
 func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion) error {
 	if tx == nil {
+		database.writeMu.Lock()
+		defer database.writeMu.Unlock()
+
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
@@ -148,6 +154,9 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 // DeleteExclusion removes an exclusion from the database.
 func (database *Database) DeleteExclusion(tx *sql.Tx, path string) error {
 	if tx == nil {
+		database.writeMu.Lock()
+		defer database.writeMu.Unlock()
+
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {

@@ -55,7 +55,7 @@ func setupTestStore(t *testing.T) *Store {
 	}
 
 	// Create store with temporary paths
-	store, err := Initialize(paths)
+	store, err := Initialize(t.Context(), paths)
 	require.NoError(t, err)
 
 	return store

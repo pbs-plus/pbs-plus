@@ -68,7 +68,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	}
 
 	// Create a context with a 2-minute timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(s.Store.Ctx, 5*time.Minute)
 	defer cancel()
 
 	// Retrieve the ARPC session for the target.
@@ -110,18 +110,22 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	}
 
 	// Retrieve or initialize an ARPCFS instance.
-	arpcFS := s.Store.GetARPCFS(args.JobId)
-	if arpcFS == nil {
-		// The child session key is "targetHostname|jobId".
-		childKey := args.TargetHostname + "|" + args.JobId
-		arpcFSRPC, exists := s.Store.ARPCSessionManager.GetSession(childKey)
-		if !exists {
-			reply.Status = 500
-			reply.Message = "MountHandler: Failed to send backup request to target -> unable to reach child target"
-			return errors.New(reply.Message)
-		}
-		arpcFS = arpcfs.NewARPCFS(context.Background(), arpcFSRPC, args.TargetHostname, args.JobId, backupMode)
+	// The child session key is "targetHostname|jobId".
+	childKey := args.TargetHostname + "|" + args.JobId
+	arpcFSRPC, exists := s.Store.ARPCSessionManager.GetSession(childKey)
+	if !exists {
+		reply.Status = 500
+		reply.Message = "MountHandler: Failed to send backup request to target -> unable to reach child target"
+		return errors.New(reply.Message)
 	}
+	arpcFS := arpcfs.NewARPCFS(s.Store.Ctx, arpcFSRPC, args.TargetHostname, args.JobId, backupMode)
+	if arpcFS == nil {
+		reply.Status = 500
+		reply.Message = "MountHandler: Failed to send create ARPCFS"
+		return errors.New(reply.Message)
+	}
+
+	store.CreateFSConnection(childKey, arpcFSRPC, arpcFS)
 
 	// Set up the local mount path.
 	mntPath := filepath.Join(constants.AgentMountBasePath, args.JobId)
@@ -132,9 +136,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		reply.Message = fmt.Sprintf("MountHandler: Failed to create fuse connection for target -> %v", err)
 		return fmt.Errorf("backup: %w", err)
 	}
-
-	// Register the ARPCFS instance for future cleanup.
-	s.Store.AddARPCFS(args.JobId, arpcFS)
 
 	// Set the reply values.
 	reply.Status = 200
@@ -162,26 +163,15 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 		}).Write()
 
 	// Create a 30-second timeout context.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(s.Store.Ctx, 5*time.Minute)
 	defer cancel()
 
 	// Try to acquire an ARPC session for the target.
 	arpcSess, exists := s.Store.ARPCSessionManager.GetSession(args.TargetHostname)
 	if !exists {
-		s.Store.RemoveARPCFS(args.JobId)
 		reply.Status = 500
 		reply.Message = "Failed to send closure request to target -> unable to reach target"
 		return fmt.Errorf("cleanup: unable to reach target for job %s", args.JobId)
-	}
-
-	// Retrieve the ARPCFS instance.
-	arpcFS := s.Store.GetARPCFS(args.JobId)
-	if arpcFS == nil {
-		// If not found, create one temporarily to unmount.
-		arpcFS = arpcfs.NewARPCFS(ctx, arpcSess, args.TargetHostname, args.JobId, "")
-		arpcFS.Unmount()
-	} else {
-		s.Store.RemoveARPCFS(args.JobId)
 	}
 
 	// Create a cleanup request (using the BackupReq type).
@@ -203,6 +193,8 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 
 	reply.Status = cleanupResp.Status
 	reply.Message = "Cleanup successful"
+
+	arpcSess.Close()
 
 	syslog.L.Info().
 		WithMessage("Cleanup successful").
