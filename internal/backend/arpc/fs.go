@@ -29,14 +29,17 @@ func hashPath(path string) uint64 {
 // NewARPCFS creates an instance of ARPCFS and opens the bbolt DB.
 // It also starts a background worker to batch and flush file-access events.
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, jobId string, backupMode string) *ARPCFS {
+	ctxFs, cancel := context.WithCancel(ctx)
 	fs := &ARPCFS{
 		basePath:   "/",
-		ctx:        ctx,
+		ctx:        ctxFs,
+		cancel:     cancel,
 		session:    session,
 		JobId:      jobId,
 		Hostname:   hostname,
 		backupMode: backupMode,
 	}
+
 	return fs
 }
 
@@ -91,6 +94,7 @@ func (fs *ARPCFS) Unmount() {
 	if fs.session != nil {
 		_ = fs.session.Close()
 	}
+	fs.cancel()
 }
 
 func (fs *ARPCFS) GetBackupMode() string {

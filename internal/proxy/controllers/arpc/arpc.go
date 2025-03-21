@@ -6,11 +6,11 @@ import (
 	"net/http"
 
 	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	s "github.com/sonroyaalmerol/pbs-plus/internal/store"
 	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
-func ARPCHandler(store *store.Store) http.HandlerFunc {
+func ARPCHandler(store *s.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		clientCert := r.TLS.PeerCertificates[0]
 
@@ -27,7 +27,10 @@ func ARPCHandler(store *store.Store) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		defer store.ARPCSessionManager.CloseSession(agentHostname)
+		defer func() {
+			store.ARPCSessionManager.CloseSession(agentHostname)
+			s.DisconnectSession(agentHostname)
+		}()
 
 		syslog.L.Info().WithMessage("agent successfully connected").WithField("hostname", agentHostname).Write()
 		defer syslog.L.Info().WithMessage("agent disconnected").WithField("hostname", agentHostname).Write()

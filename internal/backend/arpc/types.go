@@ -12,6 +12,7 @@ import (
 // ARPCFS implements billy.Filesystem using aRPC calls
 type ARPCFS struct {
 	ctx      context.Context
+	cancel   context.CancelFunc
 	session  *arpc.Session
 	JobId    string
 	Hostname string
