@@ -39,6 +39,7 @@ Ext.define("pbs-model-targets", {
   fields: [
     "name",
     "path",
+    "job_count",
     "drive_type",
     "agent_version",
     "connection_status",
