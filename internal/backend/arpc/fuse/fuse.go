@@ -7,23 +7,17 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 )
-
-var pathPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 4096)
-	},
-}
 
 var nodePool = &sync.Pool{
 	New: func() any {
@@ -34,6 +28,9 @@ var nodePool = &sync.Pool{
 func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
 	rootNode := nodePool.Get().(*Node)
 	rootNode.fs = fs
+	rootNode.fullPathCache = "/"
+	rootNode.name = ""
+	rootNode.parent = nil
 	return rootNode
 }
 
@@ -71,8 +68,35 @@ func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, 
 // Node represents a file or directory in the filesystem
 type Node struct {
 	fs.Inode
-	fs   *arpcfs.ARPCFS
-	path string
+	fs            *arpcfs.ARPCFS
+	name          string
+	fullPathCache string
+	parent        *Node
+}
+
+func (n *Node) getPath() string {
+	if n.fullPathCache != "" {
+		return n.fullPathCache
+	}
+
+	if n.parent.fullPathCache != "" {
+		n.fullPathCache = filepath.Join(n.parent.fullPathCache, n.name)
+		return n.fullPathCache
+	}
+
+	var parts []string
+	for current := n; current != nil; current = current.parent {
+		if current.parent != nil { // Skip root's empty name if necessary
+			parts = append(parts, current.name)
+		}
+	}
+	// Reverse to get root-to-current order
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	n.fullPathCache = filepath.Join(parts...)
+
+	return n.fullPathCache
 }
 
 var _ = (fs.NodeGetattrer)((*Node)(nil))
@@ -150,7 +174,7 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 
 // Getattr implements NodeGetattrer
 func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	fi, err := n.fs.Attr(n.path)
+	fi, err := n.fs.Attr(n.getPath())
 	if err != nil {
 		return fs.ToErrno(err)
 	}
@@ -177,7 +201,7 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 }
 
 func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
-	fi, err := n.fs.Xattr(n.path)
+	fi, err := n.fs.Xattr(n.getPath())
 	if err != nil {
 		return 0, fs.ToErrno(err)
 	}
@@ -233,7 +257,7 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 
 func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
 	// Retrieve extended attribute information for the node.
-	fi, err := n.fs.Xattr(n.path)
+	fi, err := n.fs.Xattr(n.getPath())
 	if err != nil {
 		return 0, fs.ToErrno(err)
 	}
@@ -279,34 +303,17 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 // Lookup implements NodeLookuper
 func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	pathBytes := pathPool.Get().([]byte)
-	nPathLen := len(n.path)
-
-	nPathBytes := unsafe.Slice(unsafe.StringData(n.path), nPathLen)
-	nameLen := len(name)
-
-	nameBytes := unsafe.Slice(unsafe.StringData(name), nameLen)
-
-	copy(pathBytes, nPathBytes)
-	nextLen := nPathLen
-	if nPathLen > 0 && n.path[nPathLen-1] != '/' {
-		pathBytes[nPathLen] = '/'
-		nextLen++
-	}
-
-	copy(pathBytes[nextLen:], nameBytes)
-	childPath := string(pathBytes[:nextLen+nameLen])
-
-	pathPool.Put(pathBytes)
-
-	fi, err := n.fs.Attr(childPath)
+	path := n.getPath()
+	fi, err := n.fs.Attr(path)
 	if err != nil {
 		return nil, fs.ToErrno(err)
 	}
 
 	childNode := nodePool.Get().(*Node)
 	childNode.fs = n.fs
-	childNode.path = childPath
+	childNode.parent = n
+	childNode.name = name
+	childNode.fullPathCache = ""
 
 	mode := fi.Mode
 	if fi.IsDir {
@@ -333,7 +340,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 
 // Readdir implements NodeReaddirer
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	entries, err := n.fs.ReadDir(n.path)
+	entries, err := n.fs.ReadDir(n.getPath())
 	if err != nil {
 		return nil, fs.ToErrno(err)
 	}
@@ -369,7 +376,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 
 // Open implements NodeOpener
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	file, err := n.fs.OpenFile(n.path, int(flags), 0)
+	file, err := n.fs.OpenFile(n.getPath(), int(flags), 0)
 	if err != nil {
 		return nil, 0, fs.ToErrno(err)
 	}
