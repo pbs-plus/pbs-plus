@@ -9,7 +9,7 @@ permissions:
 jobs:
   release-linux-amd64:
     name: release linux/amd64
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-default
     steps:
     - uses: actions/checkout@v4
     - uses: wangyoucao577/go-release-action@v1
@@ -83,7 +83,7 @@ jobs:
 
   release-windows-amd64-agent:
     name: release agent windows/amd64
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-default
     steps:
     - uses: actions/checkout@v4
     - uses: wangyoucao577/go-release-action@v1
@@ -104,7 +104,7 @@ jobs:
 
   release-windows-amd64-updater:
     name: release updater windows/amd64
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-default
     steps:
     - uses: actions/checkout@v4
     - uses: wangyoucao577/go-release-action@v1
