@@ -19,9 +19,15 @@ import (
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 )
 
+var nodePool = &sync.Pool{
+	New: func() any {
+		return &Node{}
+	},
+}
+
 var pathPool = &sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 4096)
+		return make([]byte, 256)
 	},
 }
 
@@ -32,7 +38,7 @@ var pathBuilderPool = &sync.Pool{
 }
 
 func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
-	rootNode := &Node{}
+	rootNode := nodePool.Get().(*Node)
 	rootNode.fs = fs
 	rootNode.fullPathCache = ""
 	rootNode.name = ""
@@ -167,6 +173,7 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 		pathPtr := unsafe.Slice(unsafe.StringData(n.fullPathCache), max(4096, len(n.fullPathCache)))
 		pathPool.Put(pathPtr)
 	}
+	nodePool.Put(n)
 
 	return 0
 }
@@ -336,7 +343,7 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 // Lookup implements NodeLookuper
 func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	childNode := &Node{}
+	childNode := nodePool.Get().(*Node)
 	childNode.fs = n.fs
 	childNode.parent = n
 	childNode.name = name
