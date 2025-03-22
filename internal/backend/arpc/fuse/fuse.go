@@ -33,7 +33,7 @@ var pathPool = &sync.Pool{
 
 var pathBuilderPool = &sync.Pool{
 	New: func() interface{} {
-		return make([][]byte, 0, 128)
+		return make([][]byte, 128)
 	},
 }
 
@@ -96,7 +96,7 @@ func (n *Node) getPath() string {
 
 	parts := pathBuilderPool.Get().([][]byte)
 	defer func() {
-		if cap(parts) == 128 {
+		if len(parts) == 128 {
 			pathBuilderPool.Put(parts)
 		} else {
 			pathBuilderPool.Put(parts[0:128])
