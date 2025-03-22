@@ -132,6 +132,7 @@ func (n *Node) getPath() string {
 			} else {
 				pathBytes = append(pathBytes, '/')
 			}
+			totalLen++
 		}
 	}
 
