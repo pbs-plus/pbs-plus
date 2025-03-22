@@ -95,13 +95,7 @@ func (n *Node) getPath() string {
 	defer pathPool.Put(pathBytes)
 
 	parts := pathBuilderPool.Get().([][]byte)
-	defer func() {
-		if len(parts) == 128 {
-			pathBuilderPool.Put(parts)
-		} else {
-			pathBuilderPool.Put(parts[0:128])
-		}
-	}()
+	defer pathBuilderPool.Put(parts)
 	numParts := 0
 
 	if n.parent.fullPathCache != "" {
@@ -115,10 +109,10 @@ func (n *Node) getPath() string {
 		for current := n; current != nil; current = current.parent {
 			if current.parent != nil {
 				nameBytes := unsafe.Slice(unsafe.StringData(current.name), len(current.name))
-				if numParts > 128 {
-					parts = append(parts, nameBytes)
-				} else {
+				if numParts <= len(parts) {
 					parts[numParts] = nameBytes
+				} else {
+					parts = append(parts, nameBytes)
 				}
 				numParts++
 			}
@@ -126,14 +120,18 @@ func (n *Node) getPath() string {
 	}
 
 	totalLen := 0
-	for i := numParts; i >= 0; i-- {
+	for i := numParts - 1; i >= 0; i-- {
 		currPart := parts[i]
 		currLen := len(parts[i])
 
 		copy(pathBytes[totalLen:], currPart)
 		totalLen += currLen
 		if currLen > 0 && currPart[currLen-1] != '/' && i-1 >= 0 {
-			pathBytes[currLen] = '/'
+			if totalLen <= len(pathBytes) {
+				pathBytes[totalLen] = '/'
+			} else {
+				pathBytes = append(pathBytes, '/')
+			}
 		}
 	}
 
