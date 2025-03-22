@@ -25,12 +25,6 @@ var nodePool = &sync.Pool{
 	},
 }
 
-var pathPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 256)
-	},
-}
-
 var pathBuilderPool = &sync.Pool{
 	New: func() interface{} {
 		return make([]string, 128)
@@ -91,7 +85,7 @@ func (n *Node) getPath() string {
 		return n.fullPathCache
 	}
 
-	pathBytes := pathPool.Get().([]byte)
+	pathBytes := make([]byte, 256)
 
 	parts := pathBuilderPool.Get().([]string)
 	defer pathBuilderPool.Put(parts)
@@ -169,10 +163,6 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 		return fh.Release(ctx)
 	}
 
-	if n.fullPathCache != "" {
-		pathPtr := unsafe.Slice(unsafe.StringData(n.fullPathCache), max(4096, len(n.fullPathCache)))
-		pathPool.Put(pathPtr)
-	}
 	nodePool.Put(n)
 
 	return 0
