@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -142,7 +143,7 @@ func (n *Node) getPath() string {
 		}
 	}
 
-	n.fullPathCache = string(buffer)
+	n.fullPathCache = unsafe.String(unsafe.SliceData(buffer[:totalLen]), totalLen)
 	return n.fullPathCache
 }
 
