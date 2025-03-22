@@ -19,16 +19,22 @@ import (
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
 )
 
-var pathPool = sync.Pool{
+var pathPool = &sync.Pool{
 	New: func() interface{} {
 		return make([]byte, 4096)
 	},
 }
 
+var nodePool = &sync.Pool{
+	New: func() any {
+		return &Node{}
+	},
+}
+
 func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
-	return &Node{
-		fs: fs,
-	}
+	rootNode := nodePool.Get().(*Node)
+	rootNode.fs = fs
+	return rootNode
 }
 
 // Mount mounts the billy filesystem at the specified mountpoint
@@ -102,6 +108,8 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 	if fh, ok := f.(fs.FileReleaser); ok {
 		return fh.Release(ctx)
 	}
+
+	nodePool.Put(n)
 
 	return 0
 }
@@ -296,10 +304,9 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 		return nil, fs.ToErrno(err)
 	}
 
-	childNode := &Node{
-		fs:   n.fs,
-		path: childPath,
-	}
+	childNode := nodePool.Get().(*Node)
+	childNode.fs = n.fs
+	childNode.path = childPath
 
 	mode := fi.Mode
 	if fi.IsDir {
