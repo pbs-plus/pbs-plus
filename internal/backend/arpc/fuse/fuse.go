@@ -11,7 +11,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -81,51 +80,69 @@ type Node struct {
 }
 
 func (n *Node) getPath() string {
-	if len(n.fullPathCache) > 0 || n.parent == nil {
+	if n.fullPathCache != "" || n.parent == nil {
 		return n.fullPathCache
 	}
 
-	pathBytes := make([]byte, 256)
+	// Check if parent's path is cached to build the current path directly
+	if parentPath := n.parent.fullPathCache; parentPath != "" {
+		const maxStackBuffer = 256
+		totalLen := len(parentPath) + 1 + len(n.name)
+		if totalLen <= maxStackBuffer {
+			var buffer [maxStackBuffer]byte
+			b := buffer[:0]
+			b = append(b, parentPath...)
+			b = append(b, '/')
+			b = append(b, n.name...)
+			n.fullPathCache = string(b)
+		} else {
+			b := make([]byte, 0, totalLen)
+			b = append(b, parentPath...)
+			b = append(b, '/')
+			b = append(b, n.name...)
+			n.fullPathCache = string(b)
+		}
+		return n.fullPathCache
+	}
 
-	parts := pathBuilderPool.Get().([]string)
-	defer pathBuilderPool.Put(parts)
-	numParts := 0
-
-	if n.parent.fullPathCache != "" {
-		parts[0] = n.name
-		parts[1] = n.parent.fullPathCache
-		numParts = 2
-	} else {
-		for current := n; current != nil; current = current.parent {
-			if current.parent != nil {
-				if numParts <= len(parts) {
-					parts[numParts] = current.name
-				} else {
-					parts = append(parts, current.name)
-				}
-				numParts++
-			}
+	// Collect path components by traversing to the root
+	var partsStorage [128]string
+	parts := partsStorage[:0]
+	for current := n; current != nil; current = current.parent {
+		if current.parent != nil {
+			parts = append(parts, current.name)
 		}
 	}
 
+	// Calculate total length needed for the path
 	totalLen := 0
-	for i := numParts - 1; i >= 0; i-- {
-		currPart := parts[i]
-		currLen := len(parts[i])
-
-		copy(pathBytes[totalLen:], currPart)
-		totalLen += currLen
-		if currLen > 0 && currPart[currLen-1] != '/' && i-1 >= 0 {
-			if totalLen <= len(pathBytes) {
-				pathBytes[totalLen] = '/'
-			} else {
-				pathBytes = append(pathBytes, '/')
-			}
+	for i := len(parts) - 1; i >= 0; i-- {
+		totalLen += len(parts[i])
+		if i > 0 {
 			totalLen++
 		}
 	}
 
-	n.fullPathCache = unsafe.String(unsafe.SliceData(pathBytes[:totalLen]), totalLen)
+	// Use stack-allocated buffer for common path lengths
+	const maxPathBuffer = 4096
+	var buffer []byte
+	if totalLen <= maxPathBuffer {
+		var stackBuffer [maxPathBuffer]byte
+		buffer = stackBuffer[:0]
+	} else {
+		buffer = make([]byte, 0, totalLen)
+	}
+
+	// Build the path from collected parts
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := parts[i]
+		buffer = append(buffer, part...)
+		if i > 0 {
+			buffer = append(buffer, '/')
+		}
+	}
+
+	n.fullPathCache = string(buffer)
 	return n.fullPathCache
 }
 
