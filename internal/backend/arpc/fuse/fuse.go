@@ -169,8 +169,10 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 		return fh.Release(ctx)
 	}
 
-	pathPtr := unsafe.Slice(unsafe.StringData(n.fullPathCache), len(n.fullPathCache))
-	pathPool.Put(pathPtr)
+	if n.fullPathCache != "" {
+		pathPtr := unsafe.Slice(unsafe.StringData(n.fullPathCache), max(4096, len(n.fullPathCache)))
+		pathPool.Put(pathPtr)
+	}
 	nodePool.Put(n)
 
 	return 0
