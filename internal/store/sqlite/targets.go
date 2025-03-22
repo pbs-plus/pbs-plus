@@ -138,7 +138,7 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 	err = jobCountRow.Scan(
 		&jobCount,
 	)
-	if err == nil {
+	if err != nil {
 		jobCount = 0
 	}
 	target.JobCount = jobCount
@@ -182,7 +182,7 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 		err = jobCountRow.Scan(
 			&jobCount,
 		)
-		if err == nil {
+		if err != nil {
 			jobCount = 0
 		}
 		target.JobCount = jobCount
