@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -86,12 +87,11 @@ type Node struct {
 }
 
 func (n *Node) getPath() string {
-	if n.fullPathCache != "" || n.parent == nil {
+	if len(n.fullPathCache) > 0 || n.parent == nil {
 		return n.fullPathCache
 	}
 
 	pathBytes := pathPool.Get().([]byte)
-	defer pathPool.Put(pathBytes)
 
 	parts := pathBuilderPool.Get().([]string)
 	defer pathBuilderPool.Put(parts)
@@ -131,7 +131,7 @@ func (n *Node) getPath() string {
 		}
 	}
 
-	n.fullPathCache = string(pathBytes[:totalLen])
+	n.fullPathCache = unsafe.String(unsafe.SliceData(pathBytes[:totalLen]), totalLen)
 	return n.fullPathCache
 }
 
@@ -169,6 +169,8 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 		return fh.Release(ctx)
 	}
 
+	pathPtr := unsafe.Slice(unsafe.StringData(n.fullPathCache), len(n.fullPathCache))
+	pathPool.Put(pathPtr)
 	nodePool.Put(n)
 
 	return 0
