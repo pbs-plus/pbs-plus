@@ -362,6 +362,8 @@ Ext.define("PBS.config.DiskBackupJobView", {
         pbsPlusBaseUrl +
         `/api2/extjs/config/disk-backup-job/${encodeURIComponent(encodePathValue(rec.getId()))}`,
       confirmMsg: gettext("Remove entry?"),
+      enableFn: (rec) =>
+        !rec.data["last-run-upid"] || !!rec.data["last-run-state"],
       callback: "reload",
     },
     "-",

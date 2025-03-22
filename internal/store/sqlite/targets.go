@@ -133,6 +133,16 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 		return types.Target{}, fmt.Errorf("GetTarget: error fetching target: %w", err)
 	}
 
+	jobCountRow := database.readDb.QueryRow(`SELECT COUNT(*) FROM jobs WHERE target = ?`, target.Name)
+	var jobCount int
+	err = jobCountRow.Scan(
+		&jobCount,
+	)
+	if err == nil {
+		jobCount = 0
+	}
+	target.JobCount = jobCount
+
 	// Adjust fields based on target.Path.
 	if strings.HasPrefix(target.Path, "agent://") {
 		target.IsAgent = true
@@ -166,6 +176,16 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 		if err != nil {
 			continue
 		}
+
+		jobCountRow := database.readDb.QueryRow(`SELECT COUNT(*) FROM jobs WHERE target = ?`, target.Name)
+		var jobCount int
+		err = jobCountRow.Scan(
+			&jobCount,
+		)
+		if err == nil {
+			jobCount = 0
+		}
+		target.JobCount = jobCount
 
 		if strings.HasPrefix(target.Path, "agent://") {
 			target.IsAgent = true
