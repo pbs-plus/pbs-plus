@@ -17,6 +17,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
+	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 var nodePool = &sync.Pool{
@@ -28,7 +29,7 @@ var nodePool = &sync.Pool{
 func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
 	rootNode := nodePool.Get().(*Node)
 	rootNode.fs = fs
-	rootNode.fullPathCache = "/"
+	rootNode.fullPathCache = ""
 	rootNode.name = ""
 	rootNode.parent = nil
 	return rootNode
@@ -75,7 +76,9 @@ type Node struct {
 }
 
 func (n *Node) getPath() string {
-	if n.fullPathCache != "" {
+	defer syslog.L.Info().WithField("fullPathCache", n.fullPathCache).Write()
+
+	if n.fullPathCache != "" || n.parent == nil {
 		return n.fullPathCache
 	}
 
