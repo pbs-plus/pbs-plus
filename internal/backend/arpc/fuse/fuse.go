@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -22,6 +22,18 @@ import (
 var nodePool = &sync.Pool{
 	New: func() any {
 		return &Node{}
+	},
+}
+
+var pathPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 4096)
+	},
+}
+
+var pathBuilderPool = &sync.Pool{
+	New: func() interface{} {
+		return make([][]byte, 0, 128)
 	},
 }
 
@@ -79,23 +91,53 @@ func (n *Node) getPath() string {
 		return n.fullPathCache
 	}
 
-	if n.parent.fullPathCache != "" {
-		n.fullPathCache = filepath.Join(n.parent.fullPathCache, n.name)
-		return n.fullPathCache
-	}
+	pathBytes := pathPool.Get().([]byte)
+	defer pathPool.Put(pathBytes)
 
-	var parts []string
-	for current := n; current != nil; current = current.parent {
-		if current.parent != nil { // Skip root's empty name if necessary
-			parts = append(parts, current.name)
+	parts := pathBuilderPool.Get().([][]byte)
+	defer func() {
+		if cap(parts) == 128 {
+			pathBuilderPool.Put(parts)
+		} else {
+			pathBuilderPool.Put(parts[0:128])
+		}
+	}()
+	numParts := 0
+
+	if n.parent.fullPathCache != "" {
+		nameBytes := unsafe.Slice(unsafe.StringData(n.name), len(n.name))
+		bytePathCache := unsafe.Slice(unsafe.StringData(n.parent.fullPathCache), len(n.parent.fullPathCache))
+
+		parts[0] = nameBytes
+		parts[1] = bytePathCache
+		numParts = 2
+	} else {
+		for current := n; current != nil; current = current.parent {
+			if current.parent != nil {
+				nameBytes := unsafe.Slice(unsafe.StringData(current.name), len(current.name))
+				if numParts > 128 {
+					parts = append(parts, nameBytes)
+				} else {
+					parts[numParts] = nameBytes
+				}
+				numParts++
+			}
 		}
 	}
-	// Reverse to get root-to-current order
-	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-		parts[i], parts[j] = parts[j], parts[i]
-	}
-	n.fullPathCache = filepath.Join(parts...)
 
+	totalLen := 0
+	for i := numParts; i >= 0; i-- {
+		currPart := parts[i]
+		currLen := len(parts[i])
+
+		copy(pathBytes[totalLen:], currPart)
+		totalLen += currLen
+		if currLen > 0 && currPart[currLen-1] != '/' && i-1 >= 0 {
+			pathBytes[currLen] = '/'
+		}
+	}
+
+	n.fullPathCache = string(pathBytes[:totalLen])
 	return n.fullPathCache
 }
 
