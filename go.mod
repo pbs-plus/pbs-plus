@@ -56,3 +56,5 @@ require (
 )
 
 replace github.com/hanwen/go-fuse/v2 v2.7.2 => github.com/sonroyaalmerol/go-fuse/v2 v2.0.4-1
+
+replace github.com/xtaci/smux v1.5.34 => github.com/sonroyaalmerol/smux v0.0.0-20250322005336-855507aa64bf
