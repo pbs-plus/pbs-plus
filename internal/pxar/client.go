@@ -9,7 +9,7 @@ import (
 
 type Client struct {
 	pipe  *arpc.StreamPipe
-	pr    *PxarReader
+	pr    Reader
 	errCh chan error
 	name  string
 }
@@ -18,7 +18,7 @@ func NewRemoteClient(pipe *arpc.StreamPipe, name string) *Client {
 	return &Client{pipe: pipe, name: name}
 }
 
-func NewLocalClient(pr *PxarReader, name string) (*Client, chan error) {
+func NewLocalClient(pr Reader, name string) (*Client, chan error) {
 	errCh := make(chan error, 16)
 	return &Client{pr: pr, errCh: errCh, name: name}, errCh
 }

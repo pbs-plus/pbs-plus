@@ -20,7 +20,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
@@ -269,18 +268,13 @@ func (b *RestoreOperation) agentExecute() error {
 		return err
 	}
 
-	socketPath := filepath.Join(
-		constants.RestoreSocketPath,
-		strings.ReplaceAll(childKey, "|", "-")+".sock",
-	)
-
 	b.task.WriteString(fmt.Sprintf(
 		"running pxar reader [datastore: %s, namespace: %s, snapshot: %s]",
 		b.job.Store, b.job.Namespace, b.job.Snapshot,
 	))
 
-	reader, err := pxar.NewPxarReader(
-		b.ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task,
+	reader, err := pxar.NewNativePxarReader(
+		b.job.Store, b.job.Namespace, b.job.Snapshot, b.task,
 	)
 	if err != nil {
 		return err
@@ -357,18 +351,14 @@ func (b *RestoreOperation) localExecute() error {
 	}
 
 	childKey := b.job.GetStreamID()
-	socketPath := filepath.Join(
-		constants.RestoreSocketPath,
-		strings.ReplaceAll(childKey, "|", "-")+".sock",
-	)
 
 	b.task.WriteString(fmt.Sprintf(
 		"running pxar reader [datastore: %s, namespace: %s, snapshot: %s]",
 		b.job.Store, b.job.Namespace, b.job.Snapshot,
 	))
 
-	reader, err := pxar.NewPxarReader(
-		b.ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task,
+	reader, err := pxar.NewNativePxarReader(
+		b.job.Store, b.job.Namespace, b.job.Snapshot, b.task,
 	)
 	if err != nil {
 		return err
@@ -451,9 +441,10 @@ func (b *RestoreOperation) OnError(err error) {
 
 	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
 	if r != nil {
-		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
-		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
-		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(r.TotalBytes.Value())))
+		stats := r.GetStats()
+		b.task.WriteString(fmt.Sprintf(" - %d total files", stats.FilesAccessed))
+		b.task.WriteString(fmt.Sprintf(" - %d total folders", stats.FoldersAccessed))
+		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(int64(stats.TotalBytes))))
 	}
 
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
@@ -465,9 +456,10 @@ func (b *RestoreOperation) OnSuccess() {
 
 	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
 	if r != nil {
-		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
-		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
-		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(r.TotalBytes.Value())))
+		stats := r.GetStats()
+		b.task.WriteString(fmt.Sprintf(" - %d total files", stats.FilesAccessed))
+		b.task.WriteString(fmt.Sprintf(" - %d total folders", stats.FoldersAccessed))
+		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(int64(stats.TotalBytes))))
 	}
 
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
