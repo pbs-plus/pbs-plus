@@ -17,7 +17,6 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
 	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
 )
 
 var nodePool = &sync.Pool{
@@ -76,8 +75,6 @@ type Node struct {
 }
 
 func (n *Node) getPath() string {
-	defer syslog.L.Info().WithField("fullPathCache", n.fullPathCache).Write()
-
 	if n.fullPathCache != "" || n.parent == nil {
 		return n.fullPathCache
 	}
@@ -306,17 +303,17 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 // Lookup implements NodeLookuper
 func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	path := n.getPath()
-	fi, err := n.fs.Attr(path)
-	if err != nil {
-		return nil, fs.ToErrno(err)
-	}
-
 	childNode := nodePool.Get().(*Node)
 	childNode.fs = n.fs
 	childNode.parent = n
 	childNode.name = name
 	childNode.fullPathCache = ""
+
+	path := childNode.getPath()
+	fi, err := childNode.fs.Attr(path)
+	if err != nil {
+		return nil, fs.ToErrno(err)
+	}
 
 	mode := fi.Mode
 	if fi.IsDir {
