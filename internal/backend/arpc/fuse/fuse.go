@@ -11,7 +11,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -33,7 +32,7 @@ var pathPool = &sync.Pool{
 
 var pathBuilderPool = &sync.Pool{
 	New: func() interface{} {
-		return make([][]byte, 128)
+		return make([]string, 128)
 	},
 }
 
@@ -94,25 +93,21 @@ func (n *Node) getPath() string {
 	pathBytes := pathPool.Get().([]byte)
 	defer pathPool.Put(pathBytes)
 
-	parts := pathBuilderPool.Get().([][]byte)
+	parts := pathBuilderPool.Get().([]string)
 	defer pathBuilderPool.Put(parts)
 	numParts := 0
 
 	if n.parent.fullPathCache != "" {
-		nameBytes := unsafe.Slice(unsafe.StringData(n.name), len(n.name))
-		bytePathCache := unsafe.Slice(unsafe.StringData(n.parent.fullPathCache), len(n.parent.fullPathCache))
-
-		parts[0] = nameBytes
-		parts[1] = bytePathCache
+		parts[0] = n.name
+		parts[1] = n.parent.fullPathCache
 		numParts = 2
 	} else {
 		for current := n; current != nil; current = current.parent {
 			if current.parent != nil {
-				nameBytes := unsafe.Slice(unsafe.StringData(current.name), len(current.name))
 				if numParts <= len(parts) {
-					parts[numParts] = nameBytes
+					parts[numParts] = current.name
 				} else {
-					parts = append(parts, nameBytes)
+					parts = append(parts, current.name)
 				}
 				numParts++
 			}
