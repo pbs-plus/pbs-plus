@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/system"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/store/system"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	_ "modernc.org/sqlite"
 )
 

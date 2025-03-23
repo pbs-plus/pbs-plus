@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
 )
 
 func generateTimer(job types.Job) error {

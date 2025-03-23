@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	authErrors "github.com/sonroyaalmerol/pbs-plus/internal/auth/errors"
-	serverLib "github.com/sonroyaalmerol/pbs-plus/internal/auth/server"
-	"github.com/sonroyaalmerol/pbs-plus/internal/auth/token"
+	authErrors "github.com/pbs-plus/pbs-plus/internal/auth/errors"
+	serverLib "github.com/pbs-plus/pbs-plus/internal/auth/server"
+	"github.com/pbs-plus/pbs-plus/internal/auth/token"
 	"golang.org/x/time/rate"
 )
 

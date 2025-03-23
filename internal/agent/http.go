@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 )
 
 var httpClient *http.Client

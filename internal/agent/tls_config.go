@@ -12,9 +12,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
-	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 func GetTLSConfig() (*tls.Config, error) {

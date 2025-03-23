@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func (f *ARPCFile) Close() error {

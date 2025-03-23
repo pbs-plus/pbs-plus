@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/forks"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )

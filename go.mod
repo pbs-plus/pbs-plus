@@ -1,4 +1,4 @@
-module github.com/sonroyaalmerol/pbs-plus
+module github.com/pbs-plus/pbs-plus
 
 go 1.24.0
 
@@ -55,6 +55,6 @@ require (
 	modernc.org/memory v1.8.2 // indirect
 )
 
-replace github.com/hanwen/go-fuse/v2 v2.7.2 => github.com/sonroyaalmerol/go-fuse/v2 v2.1.2
+replace github.com/hanwen/go-fuse/v2 v2.7.2 => github.com/pbs-plus/go-fuse/v2 v2.1.2
 
-replace github.com/xtaci/smux v1.5.34 => github.com/sonroyaalmerol/smux v0.0.0-20250322005336-855507aa64bf
+replace github.com/xtaci/smux v1.5.34 => github.com/pbs-plus/smux v0.0.0-20250322005336-855507aa64bf

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 var Session *ProxmoxSession

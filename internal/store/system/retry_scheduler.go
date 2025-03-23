@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
 )
 
 func generateRetryTimer(job types.Job, schedule string, attempt int) error {

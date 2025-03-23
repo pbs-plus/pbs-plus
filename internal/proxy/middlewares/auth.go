@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store"
 )
 
 func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {

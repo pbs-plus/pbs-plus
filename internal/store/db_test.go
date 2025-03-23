@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

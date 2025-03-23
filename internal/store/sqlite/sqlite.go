@@ -13,10 +13,10 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/sonroyaalmerol/pbs-plus/internal/auth/token"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/auth/token"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const maxAttempts = 100

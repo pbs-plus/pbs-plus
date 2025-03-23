@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/mxk/go-vss"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type NtfsSnapshotHandler struct{}

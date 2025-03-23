@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 	"github.com/xtaci/smux"
 )
 

@@ -3,7 +3,7 @@
 package tokens
 
 import (
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
 )
 
 type TokensResponse struct {

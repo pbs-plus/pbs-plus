@@ -10,7 +10,7 @@ import (
 	"unsafe"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 // Pre-compile the error pattern for faster matching

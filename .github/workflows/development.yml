@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: namespace-profile-default
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
@@ -24,7 +24,7 @@ jobs:
 
   dev-build-linux-amd64:
     name: dev build linux/amd64
-    runs-on: namespace-profile-default
+    runs-on: ubuntu-latest
     needs: test
     steps:
     - uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
 
   dev-build-linux-amd64-agent:
     name: dev build agent linux/amd64
-    runs-on: namespace-profile-default
+    runs-on: ubuntu-latest
     needs: test
     steps:
     - uses: actions/checkout@v4
@@ -104,7 +104,7 @@ jobs:
 
   dev-build-windows-amd64-agent:
     name: dev build agent windows/amd64
-    runs-on: namespace-profile-default
+    runs-on: ubuntu-latest
     needs: test
     steps:
     - uses: actions/checkout@v4
@@ -124,7 +124,7 @@ jobs:
 
   dev-build-windows-amd64-updater:
     name: dev build updater windows/amd64
-    runs-on: namespace-profile-default
+    runs-on: ubuntu-latest
     needs: test
     steps:
     - uses: actions/checkout@v4
@@ -144,7 +144,7 @@ jobs:
 
   dev-build-docker-agent:
     name: dev build agent docker
-    runs-on: namespace-profile-default
+    runs-on: ubuntu-latest
     needs: test
     steps:
       - name: Checkout

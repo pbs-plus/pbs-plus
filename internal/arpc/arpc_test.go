@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	binarystream "github.com/sonroyaalmerol/pbs-plus/internal/arpc/binary"
+	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/xtaci/smux"
 )
 

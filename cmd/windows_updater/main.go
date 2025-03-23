@@ -15,8 +15,8 @@ import (
 
 	"github.com/alexflint/go-filemutex"
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
 

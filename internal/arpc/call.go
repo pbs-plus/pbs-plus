@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
-	binarystream "github.com/sonroyaalmerol/pbs-plus/internal/arpc/binary"
+	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
+	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 )
 
 var headerPool = &sync.Pool{

@@ -6,8 +6,8 @@ import (
 	"os"
 	"os/exec"
 
-	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc/fuse"
+	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/backend/arpc/fuse"
 )
 
 func Mount(f *arpcfs.ARPCFS, mountpoint string) error {

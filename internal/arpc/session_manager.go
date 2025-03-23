@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 // SessionManager manages client sessions.

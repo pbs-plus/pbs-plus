@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/containers/winquit/pkg/winquit"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/forks"
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 var (

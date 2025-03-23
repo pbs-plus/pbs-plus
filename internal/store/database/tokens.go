@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	configLib "github.com/sonroyaalmerol/pbs-plus/internal/config"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	configLib "github.com/pbs-plus/pbs-plus/internal/config"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 func (database *Database) RegisterTokenPlugin() {

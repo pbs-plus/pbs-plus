@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"text/template"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 //go:embed install-agent.ps1
@@ -93,7 +93,7 @@ func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc
 	}
 }
 
-const PBS_DOWNLOAD_BASE = "https://github.com/sonroyaalmerol/pbs-plus/releases/download/"
+const PBS_DOWNLOAD_BASE = "https://github.com/pbs-plus/pbs-plus/releases/download/"
 
 func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
