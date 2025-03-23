@@ -14,8 +14,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
-	"github.com/pkg/errors"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pkg/errors"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
 )
