@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 const proxyCert = "/etc/proxmox-backup/proxy.pem"

@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	_ "modernc.org/sqlite"
 )
 

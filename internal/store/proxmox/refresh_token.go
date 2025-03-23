@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 )
 
 type Token struct {

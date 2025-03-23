@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 //go:embed all:views/custom

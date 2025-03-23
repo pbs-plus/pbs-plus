@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	_ "modernc.org/sqlite"
 )
 

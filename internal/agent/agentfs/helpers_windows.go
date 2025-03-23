@@ -5,7 +5,7 @@ package agentfs
 import (
 	"os"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
 

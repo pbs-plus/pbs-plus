@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/snapshots"
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

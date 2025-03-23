@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/auth/certificates"
-	serverLib "github.com/sonroyaalmerol/pbs-plus/internal/auth/server"
-	"github.com/sonroyaalmerol/pbs-plus/internal/auth/testhelpers"
+	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
+	serverLib "github.com/pbs-plus/pbs-plus/internal/auth/server"
+	"github.com/pbs-plus/pbs-plus/internal/auth/testhelpers"
 )
 
 func TestEndToEnd(t *testing.T) {

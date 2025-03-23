@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 var JunkSubstrings = []string{

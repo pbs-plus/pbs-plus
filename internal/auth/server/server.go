@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	authErrors "github.com/sonroyaalmerol/pbs-plus/internal/auth/errors"
+	authErrors "github.com/pbs-plus/pbs-plus/internal/auth/errors"
 )
 
 // Config represents the server configuration

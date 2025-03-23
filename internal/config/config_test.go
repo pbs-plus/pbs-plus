@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

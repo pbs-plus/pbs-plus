@@ -3,9 +3,9 @@ package store
 import (
 	"sync"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 type FSConnection struct {

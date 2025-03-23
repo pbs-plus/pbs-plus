@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt"
-	authErrors "github.com/sonroyaalmerol/pbs-plus/internal/auth/errors"
+	authErrors "github.com/pbs-plus/pbs-plus/internal/auth/errors"
 )
 
 // Claims represents the JWT claims

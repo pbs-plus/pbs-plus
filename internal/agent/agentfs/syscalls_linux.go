@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 )
 
 func GetAllocGranularity() int {

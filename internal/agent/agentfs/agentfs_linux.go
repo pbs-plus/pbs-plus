@@ -12,10 +12,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	binarystream "github.com/sonroyaalmerol/pbs-plus/internal/arpc/binary"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/unix"
 )

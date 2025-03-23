@@ -12,9 +12,9 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
 )
 
 type NamespaceReq struct {

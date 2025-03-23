@@ -1,7 +1,7 @@
 package types
 
 import (
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
+	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
 )
 
 // OpenFileReq represents a request to open a file

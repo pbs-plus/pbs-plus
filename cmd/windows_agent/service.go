@@ -19,12 +19,12 @@ import (
 
 	"github.com/alexflint/go-filemutex"
 	"github.com/kardianos/service"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
+	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows"
 )
 

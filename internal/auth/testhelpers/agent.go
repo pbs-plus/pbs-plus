@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	authErrors "github.com/sonroyaalmerol/pbs-plus/internal/auth/errors"
+	authErrors "github.com/pbs-plus/pbs-plus/internal/auth/errors"
 	"math"
 	"net"
 	"net/http"

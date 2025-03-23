@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type ErrorReponse struct {

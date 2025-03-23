@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/proxy/controllers"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers"
+	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {

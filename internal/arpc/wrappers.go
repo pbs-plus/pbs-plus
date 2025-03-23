@@ -1,7 +1,7 @@
 package arpc
 
 import (
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc/arpcdata"
+	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
 	"github.com/xtaci/smux"
 )
 

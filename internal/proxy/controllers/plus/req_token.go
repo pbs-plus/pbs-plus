@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/store"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 type TokenRequest struct {

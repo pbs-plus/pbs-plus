@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 // PropertyType represents the type of a configuration property

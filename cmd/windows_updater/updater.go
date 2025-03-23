@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/agent"
 )
 
 const (

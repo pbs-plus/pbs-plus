@@ -16,13 +16,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/controllers"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/registry"
-	"github.com/sonroyaalmerol/pbs-plus/internal/arpc"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/constants"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
+	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 var Version = "v0.0.0"

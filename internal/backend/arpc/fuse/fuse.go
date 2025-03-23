@@ -15,8 +15,8 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/sonroyaalmerol/pbs-plus/internal/agent/agentfs/types"
-	arpcfs "github.com/sonroyaalmerol/pbs-plus/internal/backend/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/arpc"
 )
 
 var nodePool = &sync.Pool{

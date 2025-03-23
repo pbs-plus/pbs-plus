@@ -3,10 +3,10 @@
 package backup
 
 import (
-	"github.com/sonroyaalmerol/pbs-plus/internal/store"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/proxmox"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func updateJobStatus(succeeded bool, job types.Job, task proxmox.Task, storeInstance *store.Store) error {

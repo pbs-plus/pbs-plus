@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
-	"github.com/sonroyaalmerol/pbs-plus/internal/syslog"
-	"github.com/sonroyaalmerol/pbs-plus/internal/utils/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 func (proxmoxSess *ProxmoxSession) GetJobTask(

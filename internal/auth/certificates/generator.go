@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
-	authErrors "github.com/sonroyaalmerol/pbs-plus/internal/auth/errors"
+	authErrors "github.com/pbs-plus/pbs-plus/internal/auth/errors"
 )
 
 // Options represents configuration for certificate generation

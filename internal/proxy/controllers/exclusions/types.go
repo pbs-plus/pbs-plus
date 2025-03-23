@@ -3,7 +3,7 @@
 package exclusions
 
 import (
-	"github.com/sonroyaalmerol/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
 )
 
 type ExclusionsResponse struct {
