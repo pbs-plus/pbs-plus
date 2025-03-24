@@ -85,11 +85,7 @@ func RunBackup(
 		return nil, ErrOneInstance
 	}
 
-	clientLogFile, err := os.CreateTemp("", fmt.Sprintf("backup-%s-stdout-*", job.ID))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrStdoutTempCreation, err)
-	}
-	clientLogPath := clientLogFile.Name()
+	clientLogFile := syslog.GetOrCreateBackupLogger(job.ID)
 
 	errorMonitorDone := make(chan struct{})
 
@@ -106,7 +102,6 @@ func RunBackup(
 		}
 		if clientLogFile != nil {
 			_ = clientLogFile.Close()
-			_ = os.Remove(clientLogPath)
 		}
 		close(errorMonitorDone)
 	}
@@ -213,7 +208,7 @@ func RunBackup(
 	currOwner, _ := GetCurrentOwner(job, storeInstance)
 	_ = FixDatastore(job, storeInstance)
 
-	stdoutWriter := io.MultiWriter(clientLogFile, os.Stdout)
+	stdoutWriter := io.MultiWriter(clientLogFile.File, os.Stdout)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stdoutWriter
 
@@ -232,7 +227,7 @@ func RunBackup(
 		job.CurrentPID = cmd.Process.Pid
 	}
 
-	go monitorPBSClientLogs(clientLogPath, cmd, errorMonitorDone)
+	go monitorPBSClientLogs(clientLogFile.Path, cmd, errorMonitorDone)
 
 	syslog.L.Info().WithMessage("waiting for task monitoring results").Write()
 	var task proxmox.Task
@@ -262,7 +257,7 @@ func RunBackup(
 		return nil, fmt.Errorf("%w: %v", ErrTaskDetectionTimedOut, monitorCtx.Err())
 	}
 
-	if err := updateJobStatus(false, job, task, storeInstance); err != nil {
+	if err := updateJobStatus(false, 0, job, task, storeInstance); err != nil {
 		errCleanUp()
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, storeInstance, currOwner)
@@ -291,18 +286,16 @@ func RunBackup(
 		job.CurrentPID = 0
 
 		close(errorMonitorDone)
-
-		_ = clientLogFile.Close()
-
-		succeeded, cancelled, err := processPBSProxyLogs(task.UPID, clientLogPath)
+		succeeded, cancelled, warningsNum, err := processPBSProxyLogs(task.UPID, clientLogFile)
 		if err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed to process logs").
 				Write()
 		}
-		_ = os.Remove(clientLogPath)
 
-		if err := updateJobStatus(succeeded, job, task, storeInstance); err != nil {
+		_ = clientLogFile.Close()
+
+		if err := updateJobStatus(succeeded, warningsNum, job, task, storeInstance); err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed to update job status - post cmd.Wait").
 				Write()

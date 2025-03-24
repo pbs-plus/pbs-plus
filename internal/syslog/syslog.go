@@ -43,6 +43,12 @@ func (e *LogEntry) WithMessage(msg string) *LogEntry {
 	return e
 }
 
+// WithMessage sets the log message.
+func (e *LogEntry) WithJob(jobId string) *LogEntry {
+	e.JobID = jobId
+	return e
+}
+
 // WithJSON attempts to unmarshal the input JSON and merge the fields.
 func (e *LogEntry) WithJSON(msg string) *LogEntry {
 	var parsed map[string]interface{}

@@ -110,8 +110,9 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
+			WithJob(fs.JobId).
 			Write()
-		return ARPCFile{}, syscall.EIO
+		return ARPCFile{}, syscall.ENOENT
 	}
 
 	var resp types.FileHandleId
@@ -124,14 +125,26 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/OpenFile", &req)
 	if err != nil {
 		if arpc.IsOSError(err) {
+			syslog.L.Error(err).
+				WithField("path", req.Path).
+				WithJob(fs.JobId).
+				Write()
 			return ARPCFile{}, err
 		}
-		return ARPCFile{}, syscall.EIO
+		syslog.L.Error(err).
+			WithField("path", req.Path).
+			WithJob(fs.JobId).
+			Write()
+		return ARPCFile{}, syscall.ENOENT
 	}
 
 	err = resp.Decode(raw)
 	if err != nil {
-		return ARPCFile{}, syscall.EIO
+		syslog.L.Error(err).
+			WithField("path", req.Path).
+			WithJob(fs.JobId).
+			Write()
+		return ARPCFile{}, syscall.ENOENT
 	}
 
 	return ARPCFile{
@@ -148,22 +161,28 @@ func (fs *ARPCFS) Attr(filename string) (types.AgentFileInfo, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
+			WithJob(fs.JobId).
 			Write()
-		return types.AgentFileInfo{}, syscall.EIO
+		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
 	req := types.StatReq{Path: filename}
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/Attr", &req)
 	if err != nil {
-		if arpc.IsOSError(err) {
-			return types.AgentFileInfo{}, err
-		}
-		return types.AgentFileInfo{}, syscall.EIO
+		syslog.L.Error(err).
+			WithField("path", req.Path).
+			WithJob(fs.JobId).
+			Write()
+		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
 	err = fi.Decode(raw)
 	if err != nil {
-		return types.AgentFileInfo{}, syscall.EIO
+		syslog.L.Error(err).
+			WithField("path", req.Path).
+			WithJob(fs.JobId).
+			Write()
+		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
 	if fi.IsDir {
@@ -181,22 +200,35 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
+			WithJob(fs.JobId).
 			Write()
-		return types.AgentFileInfo{}, syscall.EIO
+		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
 	req := types.StatReq{Path: filename}
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/Xattr", &req)
 	if err != nil {
 		if arpc.IsOSError(err) {
+			syslog.L.Error(err).
+				WithField("path", req.Path).
+				WithJob(fs.JobId).
+				Write()
 			return types.AgentFileInfo{}, err
 		}
-		return types.AgentFileInfo{}, syscall.EIO
+		syslog.L.Error(err).
+			WithField("path", req.Path).
+			WithJob(fs.JobId).
+			Write()
+		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
 	err = fi.Decode(raw)
 	if err != nil {
-		return types.AgentFileInfo{}, syscall.EIO
+		syslog.L.Error(err).
+			WithField("path", req.Path).
+			WithJob(fs.JobId).
+			Write()
+		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
 	return fi, nil
@@ -207,8 +239,9 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
+			WithJob(fs.JobId).
 			Write()
-		return types.StatFS{}, syscall.EIO
+		return types.StatFS{}, syscall.ENOENT
 	}
 
 	var fsStat types.StatFS
@@ -217,17 +250,24 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to handle statfs").Write()
 		if arpc.IsOSError(err) {
+			syslog.L.Error(err).
+				WithJob(fs.JobId).
+				Write()
 			return types.StatFS{}, err
 		}
-		return types.StatFS{}, syscall.EIO
+		syslog.L.Error(err).
+			WithJob(fs.JobId).
+			Write()
+		return types.StatFS{}, syscall.ENOENT
 	}
 
 	err = fsStat.Decode(raw)
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("failed to handle statfs decode").
+			WithJob(fs.JobId).
 			Write()
-		return types.StatFS{}, syscall.EIO
+		return types.StatFS{}, syscall.ENOENT
 	}
 
 	return fsStat, nil
@@ -245,8 +285,9 @@ func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
+			WithJob(fs.JobId).
 			Write()
-		return nil, syscall.EIO
+		return nil, syscall.ENOENT
 	}
 
 	bufPtr := bufPool.Get().(*[]byte)
@@ -262,14 +303,26 @@ func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 	bytesRead, err := fs.session.CallBinary(fs.ctx, fs.JobId+"/ReadDir", &req, buf)
 	if err != nil {
 		if arpc.IsOSError(err) {
+			syslog.L.Error(err).
+				WithField("path", req.Path).
+				WithJob(fs.JobId).
+				Write()
 			return nil, err
 		}
-		return nil, syscall.EIO
+		syslog.L.Error(err).
+			WithField("path", req.Path).
+			WithJob(fs.JobId).
+			Write()
+		return nil, syscall.ENOENT
 	}
 
 	err = resp.Decode(buf[:bytesRead])
 	if err != nil {
-		return nil, syscall.EIO
+		syslog.L.Error(err).
+			WithField("path", req.Path).
+			WithJob(fs.JobId).
+			Write()
+		return nil, syscall.ENOENT
 	}
 
 	return resp, nil

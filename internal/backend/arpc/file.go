@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -21,14 +20,14 @@ func (f *ARPCFile) Close() error {
 	}
 
 	if f.fs.session == nil {
-		syslog.L.Error(os.ErrInvalid).WithMessage("arpc session is nil").Write()
-		return syscall.EIO
+		syslog.L.Error(os.ErrInvalid).WithJob(f.jobId).WithMessage("arpc session is nil").Write()
+		return syscall.ENOENT
 	}
 
 	req := types.CloseReq{HandleID: f.handleID}
 	_, err := f.fs.session.CallMsgWithTimeout(1*time.Minute, f.jobId+"/Close", &req)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		syslog.L.Error(err).WithMessage("failed to handle close request").WithField("name", f.name).Write()
+		syslog.L.Error(err).WithJob(f.jobId).WithMessage("failed to handle close request").WithField("path", f.name).Write()
 		return err
 	}
 	f.isClosed.Store(true)
@@ -45,17 +44,15 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 	// Send the request to the server
 	respBytes, err := f.fs.session.CallMsgWithTimeout(1*time.Minute, f.jobId+"/Lseek", &req)
 	if err != nil {
-		if arpc.IsOSError(err) {
-			return 0, err
-		}
-		return 0, syscall.EIO
+		syslog.L.Error(err).WithJob(f.jobId).WithMessage("lseek call failed").WithField("path", f.name).Write()
+		return 0, syscall.ENOENT
 	}
 
 	// Parse the response
 	var resp types.LseekResp
 	if err := resp.Decode(respBytes); err != nil {
-		syslog.L.Error(err).WithMessage("failed to handle lseek request").WithField("name", f.name).Write()
-		return 0, syscall.EIO
+		syslog.L.Error(err).WithJob(f.jobId).WithMessage("failed to handle lseek request").WithField("path", f.name).Write()
+		return 0, syscall.ENOENT
 	}
 
 	return uint64(resp.NewOffset), nil
@@ -63,11 +60,13 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 
 func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 	if f.isClosed.Load() {
-		return 0, syscall.EIO
+		syslog.L.Error(syscall.ENOENT).WithJob(f.jobId).WithMessage("file is closed").WithField("path", f.name).Write()
+		return 0, syscall.ENOENT
 	}
 
 	if f.fs.session == nil {
-		return 0, syscall.EIO
+		syslog.L.Error(syscall.ENOENT).WithJob(f.jobId).WithMessage("fs session is nil").WithField("path", f.name).Write()
+		return 0, syscall.ENOENT
 	}
 
 	req := types.ReadAtReq{
@@ -78,11 +77,8 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 
 	bytesRead, err := f.fs.session.CallBinary(f.fs.ctx, f.jobId+"/ReadAt", &req, p)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to handle read request").WithField("name", f.name).Write()
-		if arpc.IsOSError(err) {
-			return 0, err
-		}
-		return 0, syscall.EIO
+		syslog.L.Error(err).WithJob(f.jobId).WithMessage("failed to handle read request").WithField("path", f.name).Write()
+		return 0, syscall.ENOENT
 	}
 
 	atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
