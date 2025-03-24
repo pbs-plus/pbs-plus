@@ -53,6 +53,10 @@ func (e *LogEntry) Write() {
 
 	e.enqueueLog()
 
+	if e.JobID != "" {
+		e.Fields["jobId"] = e.JobID
+	}
+
 	// Produce a full JSON log entry.
 	switch e.Level {
 	case "info":
