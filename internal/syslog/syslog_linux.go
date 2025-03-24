@@ -3,6 +3,7 @@
 package syslog
 
 import (
+	"fmt"
 	"log/syslog"
 
 	"github.com/rs/zerolog"
@@ -24,6 +25,14 @@ func init() {
 func (e *LogEntry) Write() {
 	e.logger.mu.RLock()
 	defer e.logger.mu.RUnlock()
+
+	if e.JobID != "" {
+		backupLogger := GetExistingBackupLogger(e.JobID)
+		if backupLogger != nil {
+			backupLogger.Write(fmt.Sprintf("[%s] %s - %v (%v)", e.Level, e.Message, e.Err, e.Fields))
+		}
+		e.Fields["jobId"] = e.JobID
+	}
 
 	// Produce a full JSON log entry.
 	switch e.Level {
