@@ -5,6 +5,7 @@ package arpcfs
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -124,26 +125,23 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/OpenFile", &req)
 	if err != nil {
-		if arpc.IsOSError(err) {
+		if !strings.HasSuffix(req.Path, ".pxarexclude") {
 			syslog.L.Error(err).
 				WithField("path", req.Path).
 				WithJob(fs.JobId).
 				Write()
-			return ARPCFile{}, err
 		}
-		syslog.L.Error(err).
-			WithField("path", req.Path).
-			WithJob(fs.JobId).
-			Write()
 		return ARPCFile{}, syscall.ENOENT
 	}
 
 	err = resp.Decode(raw)
 	if err != nil {
-		syslog.L.Error(err).
-			WithField("path", req.Path).
-			WithJob(fs.JobId).
-			Write()
+		if !strings.HasSuffix(req.Path, ".pxarexclude") {
+			syslog.L.Error(err).
+				WithField("path", req.Path).
+				WithJob(fs.JobId).
+				Write()
+		}
 		return ARPCFile{}, syscall.ENOENT
 	}
 
@@ -169,19 +167,23 @@ func (fs *ARPCFS) Attr(filename string) (types.AgentFileInfo, error) {
 	req := types.StatReq{Path: filename}
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/Attr", &req)
 	if err != nil {
-		syslog.L.Error(err).
-			WithField("path", req.Path).
-			WithJob(fs.JobId).
-			Write()
+		if !strings.HasSuffix(req.Path, ".pxarexclude") {
+			syslog.L.Error(err).
+				WithField("path", req.Path).
+				WithJob(fs.JobId).
+				Write()
+		}
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
 	err = fi.Decode(raw)
 	if err != nil {
-		syslog.L.Error(err).
-			WithField("path", req.Path).
-			WithJob(fs.JobId).
-			Write()
+		if !strings.HasSuffix(req.Path, ".pxarexclude") {
+			syslog.L.Error(err).
+				WithField("path", req.Path).
+				WithJob(fs.JobId).
+				Write()
+		}
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
@@ -208,26 +210,23 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	req := types.StatReq{Path: filename}
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.JobId+"/Xattr", &req)
 	if err != nil {
-		if arpc.IsOSError(err) {
+		if !strings.HasSuffix(req.Path, ".pxarexclude") {
 			syslog.L.Error(err).
 				WithField("path", req.Path).
 				WithJob(fs.JobId).
 				Write()
-			return types.AgentFileInfo{}, err
 		}
-		syslog.L.Error(err).
-			WithField("path", req.Path).
-			WithJob(fs.JobId).
-			Write()
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
 	err = fi.Decode(raw)
 	if err != nil {
-		syslog.L.Error(err).
-			WithField("path", req.Path).
-			WithJob(fs.JobId).
-			Write()
+		if !strings.HasSuffix(req.Path, ".pxarexclude") {
+			syslog.L.Error(err).
+				WithField("path", req.Path).
+				WithJob(fs.JobId).
+				Write()
+		}
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
@@ -248,13 +247,6 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute,
 		fs.JobId+"/StatFS", nil)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to handle statfs").Write()
-		if arpc.IsOSError(err) {
-			syslog.L.Error(err).
-				WithJob(fs.JobId).
-				Write()
-			return types.StatFS{}, err
-		}
 		syslog.L.Error(err).
 			WithJob(fs.JobId).
 			Write()
@@ -302,13 +294,6 @@ func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 	req := types.ReadDirReq{Path: path}
 	bytesRead, err := fs.session.CallBinary(fs.ctx, fs.JobId+"/ReadDir", &req, buf)
 	if err != nil {
-		if arpc.IsOSError(err) {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.JobId).
-				Write()
-			return nil, err
-		}
 		syslog.L.Error(err).
 			WithField("path", req.Path).
 			WithJob(fs.JobId).
