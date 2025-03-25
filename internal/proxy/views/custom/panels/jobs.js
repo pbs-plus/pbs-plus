@@ -477,10 +477,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Read Speed"),
       dataIndex: "current_bytes_speed",
       renderer: function (value) {
-        if (value === "") {
+        if (!value && value !== 0) {
           return "-";
         }
-        return value;
+        return humanReadableSpeed(value);
       },
       width: 60,
     },
@@ -488,10 +488,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Read Total"),
       dataIndex: "current_bytes_total",
       renderer: function (value) {
-        if (value === "") {
+        if (!value && value !== 0) {
           return "-";
         }
-        return value;
+        return humanReadableBytes(value);
       },
       width: 60,
     },
@@ -499,10 +499,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Target Size"),
       dataIndex: "expected_size",
       renderer: function (value) {
-        if (value === "") {
+        if (!value && value !== 0) {
           return "-";
         }
-        return value;
+        return humanReadableBytes(value);
       },
       width: 60,
     },
@@ -510,10 +510,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Processing Speed"),
       dataIndex: "current_files_speed",
       renderer: function (value) {
-        if (value === "") {
+        if (!value && value !== 0) {
           return "-";
         }
-        return value;
+        return `${value.toFixed(2)} files/s`;
       },
       width: 60,
     },
@@ -521,10 +521,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Files Processed"),
       dataIndex: "current_file_count",
       renderer: function (value) {
-        if (value === "") {
+        if (!value && value !== 0) {
           return "-";
         }
-        return value;
+        return value.toLocaleString();
       },
       width: 60,
       hidden: true,
@@ -533,10 +533,10 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Folders Processed"),
       dataIndex: "current_folder_count",
       renderer: function (value) {
-        if (value === "") {
+        if (!value && value !== 0) {
           return "-";
         }
-        return value;
+        return value.toLocaleString();
       },
       width: 60,
       hidden: true,
