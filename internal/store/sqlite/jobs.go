@@ -327,7 +327,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
     `, job.Target)
 		err = targetRow.Scan(&driveUsedBytes)
 		if err == nil {
-			job.ExpectedSize = utils.HumanReadableBytes(int64(driveUsedBytes))
+			job.ExpectedSize = driveUsedBytes
 		}
 
 		jobs = append(jobs, job)
