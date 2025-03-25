@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,9 +18,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
-
-	"golang.org/x/text/language"
-	"golang.org/x/text/message"
 )
 
 func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -37,7 +33,6 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		p := message.NewPrinter(language.English)
 		for i, job := range allJobs {
 			splittedTargetName := strings.Split(job.Target, " - ")
 			targetHostname := splittedTargetName[0]
@@ -49,11 +44,11 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			stats := arpcfs.GetStats()
 
-			allJobs[i].CurrentFileCount = p.Sprintf("%d", stats.FilesAccessed)
-			allJobs[i].CurrentFolderCount = p.Sprintf("%d", stats.FoldersAccessed)
-			allJobs[i].CurrentBytesTotal = utils.HumanReadableBytes(int64(stats.TotalBytes))
-			allJobs[i].CurrentBytesSpeed = utils.HumanReadableSpeed(stats.ByteReadSpeed)
-			allJobs[i].CurrentFilesSpeed = fmt.Sprintf("%.2f files/s", stats.FileAccessSpeed)
+			allJobs[i].CurrentFileCount = int(stats.FilesAccessed)
+			allJobs[i].CurrentFolderCount = int(stats.FoldersAccessed)
+			allJobs[i].CurrentBytesTotal = int(stats.TotalBytes)
+			allJobs[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
+			allJobs[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
 		}
 
 		digest, err := utils.CalculateDigest(allJobs)
