@@ -341,7 +341,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 
 		target, err := database.GetTarget(job.Target)
 		if err == nil {
-			job.ExpectedSize = utils.HumanReadableBytes(int64(target.DriveUsedBytes))
+			job.ExpectedSize = target.DriveUsedBytes
 		}
 
 		jobs = append(jobs, job)
