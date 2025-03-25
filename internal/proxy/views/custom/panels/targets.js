@@ -212,8 +212,25 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       flex: 1,
     },
     {
-      text: gettext("Drive Used"),
-      dataIndex: "drive_used",
+      text: gettext("Used Size"),
+      dataIndex: "drive_used_bytes",
+      renderer: function (value) {
+        if (!value && value !== 0) {
+          return "-";
+        }
+        return humanReadableBytes(value);
+      },
+      flex: 1,
+    },
+    {
+      text: gettext("Total Size"),
+      dataIndex: "drive_total_bytes",
+      renderer: function (value) {
+        if (!value && value !== 0) {
+          return "-";
+        }
+        return humanReadableBytes(value);
+      },
       flex: 1,
     },
     {
