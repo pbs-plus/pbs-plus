@@ -148,7 +148,9 @@ var bufPool = sync.Pool{
 }
 
 func readDirBulk(dirPath string) ([]byte, error) {
-	pDir, err := windows.UTF16PtrFromString(dirPath)
+	extendedPath := `\\?\` + dirPath
+
+	pDir, err := windows.UTF16PtrFromString(extendedPath)
 	if err != nil {
 		return nil, mapWinError(err, "readDirBulk UTF16PtrFromString")
 	}
