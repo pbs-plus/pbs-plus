@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -227,7 +228,12 @@ func (database *Database) GetAllTargetsByIP(clientIP string) ([]types.Target, er
 		if strings.HasPrefix(target.Path, "agent://") {
 			target.IsAgent = true
 		} else {
-			target.ConnectionStatus = utils.IsValid(target.Path)
+			_, err := os.Stat(target.Path)
+			if err != nil {
+				target.ConnectionStatus = false
+			} else {
+				target.ConnectionStatus = utils.IsValid(target.Path)
+			}
 			target.IsAgent = false
 		}
 
