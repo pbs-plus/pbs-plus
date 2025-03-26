@@ -15,7 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils/securejoin"
+	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
 	"github.com/pkg/errors"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
@@ -38,10 +38,7 @@ func (s *AgentFSServer) absUNC(filename string) (string, error) {
 		return "\\\\?\\" + s.snapshot.Path, nil
 	}
 
-	path, err := securejoin.SecureJoin(s.snapshot.Path, filename)
-	if err != nil {
-		return "", err
-	}
+	path := pathjoin.Join(s.snapshot.Path, filename)
 
 	return "\\\\?\\" + path, nil
 }
@@ -279,7 +276,7 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	}
 
 	windowsDir := filepath.FromSlash(payload.Path)
-	fullDirPath, err := s.absUNC(windowsDir)
+	fullDirPath, err := s.abs(windowsDir)
 	if err != nil {
 		return arpc.Response{}, err
 	}
