@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 
@@ -37,6 +38,15 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				if ok {
 					all[i].ConnectionStatus = true
 					all[i].AgentVersion = arpcSess.GetVersion()
+				}
+			} else {
+				all[i].AgentVersion = "N/A (local target)"
+
+				_, err := os.Stat(all[i].Path)
+				if err != nil {
+					all[i].ConnectionStatus = false
+				} else {
+					all[i].ConnectionStatus = utils.IsValid(all[i].Path)
 				}
 			}
 		}
@@ -269,6 +279,15 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				if ok {
 					target.ConnectionStatus = true
 					target.AgentVersion = arpcSess.GetVersion()
+				}
+			} else {
+				target.AgentVersion = "N/A (local target)"
+
+				_, err := os.Stat(target.Path)
+				if err != nil {
+					target.ConnectionStatus = false
+				} else {
+					target.ConnectionStatus = utils.IsValid(target.Path)
 				}
 			}
 
