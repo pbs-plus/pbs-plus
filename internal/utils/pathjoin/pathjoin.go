@@ -2,7 +2,7 @@ package pathjoin
 
 import (
 	"os"
-	"strings"
+	"unsafe"
 )
 
 func Join(paths ...string) string {
@@ -10,15 +10,41 @@ func Join(paths ...string) string {
 		return ""
 	}
 
-	separator := string(os.PathSeparator)
-	var result strings.Builder
+	separator := byte(os.PathSeparator)
+	var totalLength int
+	for _, path := range paths {
+		totalLength += len(path)
+	}
+	result := make([]byte, 0, totalLength+len(paths)-1)
 
-	for i, path := range paths {
-		if i > 0 && !strings.HasSuffix(result.String(), separator) && !strings.HasPrefix(path, separator) {
-			result.WriteString(separator)
+	for _, path := range paths {
+		if path == "" {
+			continue // Skip empty paths
 		}
-		result.WriteString(path)
+
+		pathBytes := unsafe.Slice(unsafe.StringData(path), len(path))
+
+		// Replace all '/' and '\' with the platform-specific separator
+		for j := 0; j < len(pathBytes); j++ {
+			if pathBytes[j] == '/' || pathBytes[j] == '\\' {
+				pathBytes[j] = separator
+			}
+		}
+
+		start, end := 0, len(pathBytes)
+		for start < end && pathBytes[start] == separator {
+			start++
+		}
+		for end > start && pathBytes[end-1] == separator {
+			end--
+		}
+
+		if len(result) > 0 && result[len(result)-1] != separator {
+			result = append(result, separator)
+		}
+
+		result = append(result, pathBytes[start:end]...)
 	}
 
-	return result.String()
+	return unsafe.String(unsafe.SliceData(result), len(result))
 }
