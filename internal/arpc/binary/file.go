@@ -133,19 +133,33 @@ func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
 		return nil, 0, fmt.Errorf("stream is nil")
 	}
 
-	currentPoolIndex := 0
-	pool, poolSize := bufferPools[currentPoolIndex].Pool, bufferPools[currentPoolIndex].Size
-	buffer := pool.Get().([]byte)
-	buffer = buffer[:poolSize]
+	var firstChunkSize uint32
+	if err := binary.Read(stream, binary.LittleEndian, &firstChunkSize); err != nil {
+		return nil, 0, fmt.Errorf("failed to read initial chunk size: %w", err)
+	}
 
-	defer func() {
-		if buffer != nil {
-			pool.Put(buffer)
+	if firstChunkSize == 0 {
+		var finalTotal uint32
+		if err := binary.Read(stream, binary.LittleEndian, &finalTotal); err != nil {
+			return nil, 0, fmt.Errorf("failed to read final total: %w", err)
 		}
-	}()
+		return make([]byte, 0), 0, nil
+	}
 
+	pool, poolSize := selectBufferPool(int(firstChunkSize))
+	buffer := pool.Get().([]byte)
+
+	defer pool.Put(buffer)
+
+	result := make([]byte, 0, poolSize)
 	totalRead := 0
-	var result []byte
+
+	n, err := io.ReadFull(stream, buffer[:firstChunkSize])
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read first chunk: %w", err)
+	}
+	result = append(result, buffer[:n]...)
+	totalRead += n
 
 	for {
 		var chunkSize uint32
@@ -168,66 +182,31 @@ func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
 			break
 		}
 
-		neededSize := totalRead + int(chunkSize)
-		if neededSize > poolSize {
-			newPoolIndex := currentPoolIndex
-			for i := currentPoolIndex + 1; i < len(bufferPools); i++ {
-				if bufferPools[i].Size >= neededSize {
-					newPoolIndex = i
-					break
-				}
+		if totalRead+int(chunkSize) > cap(result) {
+			newCapacity := cap(result)
+			for newCapacity < totalRead+int(chunkSize) {
+				newCapacity = (newCapacity * 3) / 2
 			}
 
-			if newPoolIndex != currentPoolIndex {
-				newPool := bufferPools[newPoolIndex].Pool
-				newBuffer := newPool.Get().([]byte)
-				newBuffer = newBuffer[:bufferPools[newPoolIndex].Size]
-
-				copy(newBuffer, buffer)
-
-				pool.Put(buffer)
-
-				buffer = newBuffer
-				pool = newPool
-				poolSize = bufferPools[newPoolIndex].Size
-				currentPoolIndex = newPoolIndex
-			} else {
-				if result == nil {
-					result = make([]byte, neededSize)
-					copy(result, buffer[:totalRead])
-				} else {
-					newResult := make([]byte, neededSize)
-					copy(newResult, result)
-					result = newResult
-				}
-
-				pool.Put(buffer)
-				buffer = nil
-			}
+			newResult := make([]byte, totalRead, newCapacity)
+			copy(newResult, result)
+			result = newResult
 		}
 
-		if buffer != nil {
-			n, err := io.ReadFull(stream, buffer[totalRead:totalRead+int(chunkSize)])
-			totalRead += n
-			if err != nil {
-				return result, totalRead, fmt.Errorf("failed to read chunk data: %w", err)
-			}
-		} else {
-			n, err := io.ReadFull(stream, result[totalRead:totalRead+int(chunkSize)])
-			totalRead += n
-			if err != nil {
-				return result, totalRead, fmt.Errorf("failed to read chunk data: %w", err)
-			}
+		if int(chunkSize) > len(buffer) {
+			newPool, _ := selectBufferPool(int(chunkSize))
+			pool.Put(buffer)
+			buffer = newPool.Get().([]byte)
+			pool = newPool
 		}
-	}
 
-	if buffer != nil {
-		result = make([]byte, totalRead)
-		copy(result, buffer[:totalRead])
-	} else if len(result) != totalRead {
-		newResult := make([]byte, totalRead)
-		copy(newResult, result)
-		result = newResult
+		n, err := io.ReadFull(stream, buffer[:chunkSize])
+		if err != nil {
+			return result, totalRead, fmt.Errorf("failed to read chunk: %w", err)
+		}
+
+		result = append(result, buffer[:n]...)
+		totalRead += n
 	}
 
 	return result, totalRead, nil
