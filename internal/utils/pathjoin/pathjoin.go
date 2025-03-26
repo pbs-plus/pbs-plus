@@ -22,7 +22,7 @@ func Join(paths ...string) string {
 			continue // Skip empty paths
 		}
 
-		pathBytes := unsafe.Slice(unsafe.StringData(path), len(path))
+		pathBytes := []byte(path)
 
 		// Replace all '/' and '\' with the platform-specific separator
 		for j := 0; j < len(pathBytes); j++ {
@@ -46,5 +46,9 @@ func Join(paths ...string) string {
 		result = append(result, pathBytes[start:end]...)
 	}
 
-	return string(result)
+	if len(result) == 0 {
+		return ""
+	}
+
+	return unsafe.String(unsafe.SliceData(result), len(result))
 }
