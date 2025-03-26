@@ -132,7 +132,9 @@ func RunBackup(
 		return nil, fmt.Errorf("%w: %v", ErrTargetGet, err)
 	}
 
-	if !skipCheck {
+	isAgent := strings.HasPrefix(target.Path, "agent://")
+
+	if !skipCheck && isAgent {
 		targetSplit := strings.Split(target.Name, " - ")
 		_, exists := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
 		if !exists {
@@ -142,7 +144,6 @@ func RunBackup(
 	}
 
 	srcPath := target.Path
-	isAgent := strings.HasPrefix(target.Path, "agent://")
 	if isAgent {
 		agentMount, err = mount.Mount(storeInstance, job, target)
 		if err != nil {
