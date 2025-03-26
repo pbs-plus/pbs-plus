@@ -36,7 +36,7 @@ type FileStandardInfo struct {
 func (s *AgentFSServer) absUNC(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
 
-	if windowsDir == "" || windowsDir == "." {
+	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
 		return "\\\\?\\" + s.snapshot.Path, nil
 	}
 
