@@ -2,7 +2,6 @@ package pathjoin
 
 import (
 	"os"
-	"unsafe"
 )
 
 func Join(paths ...string) string {
@@ -46,9 +45,5 @@ func Join(paths ...string) string {
 		result = append(result, pathBytes[start:end]...)
 	}
 
-	if len(result) == 0 {
-		return ""
-	}
-
-	return unsafe.String(unsafe.SliceData(result), len(result))
+	return string(result)
 }
