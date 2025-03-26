@@ -179,11 +179,6 @@ func readDirNT(path string) ([]byte, error) {
 		fileName := utf16.Decode(fileNameSlice)
 		name := string(fileName)
 
-		// Skip files with trailing and leading spaces
-		if strings.HasSuffix(name, " ") || strings.HasPrefix(name, " ") {
-			continue
-		}
-
 		// Skip special directory entries
 		if name == "." || name == ".." {
 			continue

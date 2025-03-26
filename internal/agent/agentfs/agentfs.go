@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os"
 
-	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/idgen"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/utils/securejoin"
 )
 
 type AgentFSServer struct {
