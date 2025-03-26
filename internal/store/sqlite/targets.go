@@ -148,7 +148,11 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 	if strings.HasPrefix(target.Path, "agent://") {
 		target.IsAgent = true
 	} else {
-		target.ConnectionStatus = utils.IsValid(target.Path)
+		if err != nil {
+			target.ConnectionStatus = false
+		} else {
+			target.ConnectionStatus = utils.IsValid(target.Path)
+		}
 		target.IsAgent = false
 	}
 	return target, nil
@@ -191,7 +195,11 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 		if strings.HasPrefix(target.Path, "agent://") {
 			target.IsAgent = true
 		} else {
-			target.ConnectionStatus = utils.IsValid(target.Path)
+			if err != nil {
+				target.ConnectionStatus = false
+			} else {
+				target.ConnectionStatus = utils.IsValid(target.Path)
+			}
 			target.IsAgent = false
 		}
 
