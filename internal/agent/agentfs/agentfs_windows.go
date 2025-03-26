@@ -34,11 +34,13 @@ type FileStandardInfo struct {
 }
 
 func (s *AgentFSServer) absUNC(filename string) (string, error) {
-	if filename == "" || filename == "." {
+	windowsDir := filepath.FromSlash(filename)
+
+	if windowsDir == "" || windowsDir == "." {
 		return "\\\\?\\" + s.snapshot.Path, nil
 	}
 
-	path := pathjoin.Join(s.snapshot.Path, filename)
+	path := pathjoin.Join(s.snapshot.Path, windowsDir)
 
 	return "\\\\?\\" + path, nil
 }
@@ -275,8 +277,7 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	windowsDir := filepath.FromSlash(payload.Path)
-	fullDirPath, err := s.abs(windowsDir)
+	fullDirPath, err := s.abs(payload.Path)
 	if err != nil {
 		return arpc.Response{}, err
 	}
