@@ -16,6 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/unix"
 )
@@ -24,6 +25,15 @@ type FileHandle struct {
 	file     *os.File
 	fileSize int64
 	isDir    bool
+}
+
+func (s *AgentFSServer) abs(filename string) (string, error) {
+	if filename == "" || filename == "." || filename == "/" {
+		return s.snapshot.Path, nil
+	}
+
+	path := pathjoin.Join(s.snapshot.Path, filename)
+	return path, nil
 }
 
 func (s *AgentFSServer) closeFileHandles() {
