@@ -11,21 +11,13 @@ func Join(paths ...string) string {
 	}
 
 	separator := string(os.PathSeparator)
-	invalidSeperator := "/"
-	if separator == "/" {
-		invalidSeperator = "\\"
-	}
-
 	var result strings.Builder
 
-	for _, path := range paths {
-		subpaths := strings.Split(path, invalidSeperator)
-		for i, subpath := range subpaths {
-			if i > 0 && !strings.HasSuffix(result.String(), separator) && !strings.HasPrefix(subpath, separator) {
-				result.WriteString(separator)
-			}
-			result.WriteString(subpath)
+	for i, path := range paths {
+		if i > 0 && !strings.HasSuffix(result.String(), separator) && !strings.HasPrefix(path, separator) {
+			result.WriteString(separator)
 		}
+		result.WriteString(path)
 	}
 
 	return result.String()
