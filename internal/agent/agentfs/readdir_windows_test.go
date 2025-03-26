@@ -84,7 +84,7 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 
 	// Call readDirBulk
-	entriesBytes, err := readDirBulk(tempDir)
+	entriesBytes, err := readDirNT(tempDir)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -112,7 +112,7 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 	}
 
 	// Call readDirBulk
-	entriesBytes, err := readDirBulk(emptyDir)
+	entriesBytes, err := readDirNT(emptyDir)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -143,7 +143,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 	}
 
 	// Call readDirBulk
-	entriesBytes, err := readDirBulk(largeDir)
+	entriesBytes, err := readDirNT(largeDir)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -175,7 +175,7 @@ func testFileAttributes(t *testing.T, tempDir string) {
 	}
 
 	// Call readDirBulk
-	entriesBytes, err := readDirBulk(tempDir)
+	entriesBytes, err := readDirNT(tempDir)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -237,7 +237,7 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 	}
 
 	// Call readDirBulk
-	entriesBytes, err := readDirBulk(tempDir)
+	entriesBytes, err := readDirNT(tempDir)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -267,7 +267,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 	}
 
 	// Call readDirBulk
-	entriesBytes, err := readDirBulk(tempDir)
+	entriesBytes, err := readDirNT(tempDir)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -304,7 +304,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 	}
 
 	// Call readDirBulk
-	entriesBytes, err := readDirBulk(tempDir)
+	entriesBytes, err := readDirNT(tempDir)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}

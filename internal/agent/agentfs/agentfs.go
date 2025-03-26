@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -94,15 +93,4 @@ func (s *AgentFSServer) Close() {
 
 	s.closeFileHandles()
 	s.ctxCancel()
-}
-
-func (s *AgentFSServer) abs(filename string) (string, error) {
-	if filename == "" || filename == "." {
-		return s.snapshot.Path, nil
-	}
-	path, err := securejoin.SecureJoin(s.snapshot.Path, filename)
-	if err != nil {
-		return "", err
-	}
-	return path, nil
 }

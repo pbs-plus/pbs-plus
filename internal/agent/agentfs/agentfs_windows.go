@@ -15,6 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
 	"github.com/pkg/errors"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
@@ -30,6 +31,29 @@ type FileStandardInfo struct {
 	AllocationSize, EndOfFile int64
 	NumberOfLinks             uint32
 	DeletePending, Directory  bool
+}
+
+func (s *AgentFSServer) abs(filename string) (string, error) {
+	windowsDir := filepath.FromSlash(filename)
+
+	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
+		return s.snapshot.Path, nil
+	}
+
+	path := pathjoin.Join(s.snapshot.Path, windowsDir)
+	return path, nil
+}
+
+func (s *AgentFSServer) absUNC(filename string) (string, error) {
+	windowsDir := filepath.FromSlash(filename)
+
+	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
+		return "\\\\?\\" + s.snapshot.Path, nil
+	}
+
+	path := pathjoin.Join(s.snapshot.Path, windowsDir)
+
+	return "\\\\?\\" + path, nil
 }
 
 func (s *AgentFSServer) closeFileHandles() {
@@ -86,7 +110,7 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		}, nil
 	}
 
-	path, err := s.abs(payload.Path)
+	path, err := s.absUNC(payload.Path)
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -144,7 +168,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	fullPath, err := s.abs(payload.Path)
+	fullPath, err := s.absUNC(payload.Path)
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -204,7 +228,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	fullPath, err := s.abs(payload.Path)
+	fullPath, err := s.absUNC(payload.Path)
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -264,8 +288,7 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	windowsDir := filepath.FromSlash(payload.Path)
-	fullDirPath, err := s.abs(windowsDir)
+	fullDirPath, err := s.abs(payload.Path)
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -275,7 +298,7 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		fullDirPath = s.snapshot.Path
 	}
 
-	entries, err := readDirBulk(fullDirPath)
+	entries, err := readDirNT(fullDirPath)
 	if err != nil {
 		return arpc.Response{}, err
 	}
