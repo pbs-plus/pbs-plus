@@ -142,19 +142,9 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 
 var bufPool = sync.Pool{
 	New: func() interface{} {
-		b := make([]byte, 256*1024) // 256KB initial buffer
+		b := make([]byte, 1024*1024)
 		return &b
 	},
-}
-
-func utf16ToString(s []uint16) string {
-	for i := range s {
-		if s[i] == 0 {
-			s = s[:i]
-			break
-		}
-	}
-	return string(utf16.Decode(s))
 }
 
 func readDirBulk(dirPath string) ([]byte, error) {
@@ -180,16 +170,29 @@ func readDirBulk(dirPath string) ([]byte, error) {
 	bufPtr := bufPool.Get().(*[]byte)
 	buf := *bufPtr
 	defer func() {
-		if cap(buf) == cap(*bufPtr) {
+		if cap(buf) <= 1024*1024 {
+			*bufPtr = buf
 			bufPool.Put(bufPtr)
 		}
 	}()
 
+	initialCapacity := 128
+
+	var dirInfo windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &dirInfo); err == nil {
+		if dirInfo.NumberOfLinks > 2 {
+			initialCapacity = int(dirInfo.NumberOfLinks - 2)
+			initialCapacity = min(initialCapacity, 10000)
+		}
+	}
+
 	var entries types.ReadDirEntries
-	entries = make([]types.AgentDirEntry, 0, 100)
+	entries = make([]types.AgentDirEntry, 0, initialCapacity)
 
 	usingFull := false
 	infoClass := windows.FileIdBothDirectoryInfo
+
+	var lastDataSize uint32
 
 	for {
 		err = windows.GetFileInformationByHandleEx(
@@ -200,7 +203,31 @@ func readDirBulk(dirPath string) ([]byte, error) {
 		)
 		if err != nil {
 			if err == windows.ERROR_MORE_DATA {
-				newBuf := make([]byte, len(buf)*2)
+				newSize := len(buf)
+
+				if lastDataSize > 0 {
+					estimatedSize := int(float64(len(buf)) * 1.2)
+
+					if newSize < 4*1024*1024 {
+						newSize *= 2
+					} else if newSize < 16*1024*1024 {
+						newSize += 4 * 1024 * 1024
+					} else {
+						newSize += 8 * 1024 * 1024
+					}
+
+					if estimatedSize > newSize {
+						newSize = estimatedSize
+					}
+				} else {
+					if newSize < 4*1024*1024 {
+						newSize *= 2
+					} else {
+						newSize += newSize / 4
+					}
+				}
+
+				newBuf := make([]byte, newSize)
 				buf = newBuf
 				continue
 			}
@@ -227,13 +254,13 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				nameLen := int(fullInfo.FileNameLength) / 2
 				attrs = fullInfo.FileAttributes
 
-				if nameLen > 0 {
+				if nameLen > 0 && (attrs&excludedAttrs) == 0 {
 					filenamePtr := fileNamePtrFull(fullInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
-					if !((nameLen == 1 && nameSlice[0] == '.') ||
-						(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.')) &&
-						(attrs&excludedAttrs) == 0 {
-						name = utf16ToString(nameSlice)
+
+					if !(nameLen == 1 && nameSlice[0] == '.') &&
+						!(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.') {
+						name = string(utf16.Decode(nameSlice))
 					}
 				}
 			} else {
@@ -242,13 +269,13 @@ func readDirBulk(dirPath string) ([]byte, error) {
 				nameLen := int(bothInfo.FileNameLength) / 2
 				attrs = bothInfo.FileAttributes
 
-				if nameLen > 0 {
+				if nameLen > 0 && (attrs&excludedAttrs) == 0 {
 					filenamePtr := fileNamePtrIdBoth(bothInfo)
 					nameSlice := unsafe.Slice(filenamePtr, nameLen)
-					if !((nameLen == 1 && nameSlice[0] == '.') ||
-						(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.')) &&
-						(attrs&excludedAttrs) == 0 {
-						name = utf16ToString(nameSlice)
+
+					if !(nameLen == 1 && nameSlice[0] == '.') &&
+						!(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.') {
+						name = string(utf16.Decode(nameSlice))
 					}
 				}
 			}
@@ -262,11 +289,11 @@ func readDirBulk(dirPath string) ([]byte, error) {
 			}
 
 			if nextOffset == 0 {
+				lastDataSize = uint32(offset + 1)
 				break
 			}
 			offset += nextOffset
 		}
-		// Continue the outer loop until ERROR_NO_MORE_FILES is returned.
 	}
 
 	return entries.Encode()
