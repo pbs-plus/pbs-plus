@@ -127,44 +127,108 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	return nil
 }
 
-// ReceiveData reads data from the smux stream into the provided buffer.
-// It expects each chunk to be preceded by its 4-byte size. A chunk size of 0
-// signals that data transfer has finished; it is then followed by a final total
-// which is compared to the accumulated data.
-func ReceiveData(stream *smux.Stream, buffer []byte) (int, error) {
+// ReceiveData reads data from the smux stream, using the buffer pools and growing as needed.
+func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
+	if stream == nil {
+		return nil, 0, fmt.Errorf("stream is nil")
+	}
+
+	currentPoolIndex := 0
+	pool, poolSize := bufferPools[currentPoolIndex].Pool, bufferPools[currentPoolIndex].Size
+	buffer := pool.Get().([]byte)
+	buffer = buffer[:poolSize]
+
+	defer func() {
+		if buffer != nil {
+			pool.Put(buffer)
+		}
+	}()
+
 	totalRead := 0
+	var result []byte
 
 	for {
 		var chunkSize uint32
 		if err := binary.Read(stream, binary.LittleEndian, &chunkSize); err != nil {
-			return totalRead, fmt.Errorf("failed to read chunk size: %w", err)
+			return result, totalRead, fmt.Errorf("failed to read chunk size: %w", err)
 		}
 
-		// A chunk size of zero signals the end.
 		if chunkSize == 0 {
 			var finalTotal uint32
 			if err := binary.Read(stream, binary.LittleEndian, &finalTotal); err != nil {
-				return totalRead, fmt.Errorf("failed to read final total: %w", err)
+				return result, totalRead, fmt.Errorf("failed to read final total: %w", err)
 			}
 			if int(finalTotal) != totalRead {
-				return totalRead, fmt.Errorf("data length mismatch: expected %d bytes, got %d",
-					finalTotal, totalRead)
+				return result, totalRead, fmt.Errorf(
+					"data length mismatch: expected %d bytes, got %d",
+					finalTotal,
+					totalRead,
+				)
 			}
 			break
 		}
 
-		// Ensure the provided buffer is large enough.
-		if totalRead+int(chunkSize) > len(buffer) {
-			return totalRead, fmt.Errorf("buffer overflow: need %d bytes, have %d",
-				totalRead+int(chunkSize), len(buffer))
+		neededSize := totalRead + int(chunkSize)
+		if neededSize > poolSize {
+			newPoolIndex := currentPoolIndex
+			for i := currentPoolIndex + 1; i < len(bufferPools); i++ {
+				if bufferPools[i].Size >= neededSize {
+					newPoolIndex = i
+					break
+				}
+			}
+
+			if newPoolIndex != currentPoolIndex {
+				newPool := bufferPools[newPoolIndex].Pool
+				newBuffer := newPool.Get().([]byte)
+				newBuffer = newBuffer[:bufferPools[newPoolIndex].Size]
+
+				copy(newBuffer, buffer)
+
+				pool.Put(buffer)
+
+				buffer = newBuffer
+				pool = newPool
+				poolSize = bufferPools[newPoolIndex].Size
+				currentPoolIndex = newPoolIndex
+			} else {
+				if result == nil {
+					result = make([]byte, neededSize)
+					copy(result, buffer[:totalRead])
+				} else {
+					newResult := make([]byte, neededSize)
+					copy(newResult, result)
+					result = newResult
+				}
+
+				pool.Put(buffer)
+				buffer = nil
+			}
 		}
 
-		n, err := io.ReadFull(stream, buffer[totalRead:totalRead+int(chunkSize)])
-		totalRead += n
-		if err != nil {
-			return totalRead, fmt.Errorf("failed to read chunk data: %w", err)
+		if buffer != nil {
+			n, err := io.ReadFull(stream, buffer[totalRead:totalRead+int(chunkSize)])
+			totalRead += n
+			if err != nil {
+				return result, totalRead, fmt.Errorf("failed to read chunk data: %w", err)
+			}
+		} else {
+			n, err := io.ReadFull(stream, result[totalRead:totalRead+int(chunkSize)])
+			totalRead += n
+			if err != nil {
+				return result, totalRead, fmt.Errorf("failed to read chunk data: %w", err)
+			}
 		}
 	}
 
-	return totalRead, nil
+	if buffer != nil {
+		result = make([]byte, totalRead)
+		copy(result, buffer[:totalRead])
+	} else if len(result) != totalRead {
+		newResult := make([]byte, totalRead)
+		copy(newResult, result)
+		result = newResult
+	}
+
+	return result, totalRead, nil
 }
