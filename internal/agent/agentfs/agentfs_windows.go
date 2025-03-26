@@ -33,6 +33,17 @@ type FileStandardInfo struct {
 	DeletePending, Directory  bool
 }
 
+func (s *AgentFSServer) abs(filename string) (string, error) {
+	windowsDir := filepath.FromSlash(filename)
+
+	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
+		return s.snapshot.Path, nil
+	}
+
+	path := pathjoin.Join(s.snapshot.Path, windowsDir)
+	return path, nil
+}
+
 func (s *AgentFSServer) absUNC(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
 

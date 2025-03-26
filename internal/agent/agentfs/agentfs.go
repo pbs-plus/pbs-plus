@@ -10,7 +10,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/idgen"
-	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
@@ -94,13 +93,4 @@ func (s *AgentFSServer) Close() {
 
 	s.closeFileHandles()
 	s.ctxCancel()
-}
-
-func (s *AgentFSServer) abs(filename string) (string, error) {
-	if filename == "" || filename == "." {
-		return s.snapshot.Path, nil
-	}
-
-	path := pathjoin.Join(s.snapshot.Path, filename)
-	return path, nil
 }
