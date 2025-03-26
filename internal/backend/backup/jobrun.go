@@ -141,6 +141,12 @@ func RunBackup(
 			errCleanUp()
 			return nil, fmt.Errorf("%w: %s", ErrTargetUnreachable, job.Target)
 		}
+	} else if !skipCheck && !isAgent {
+		_, err := os.Stat(target.Path)
+		if err != nil {
+			errCleanUp()
+			return nil, fmt.Errorf("%w: %s (%v)", ErrTargetUnreachable, job.Target, err)
+		}
 	}
 
 	srcPath := target.Path
