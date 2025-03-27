@@ -24,6 +24,9 @@ const (
 	OBJ_CASE_INSENSITIVE         = 0x00000040
 	STATUS_NO_MORE_FILES         = 0x80000006
 	STATUS_SUCCESS               = 0x00000000
+	STATUS_BUFFER_OVERFLOW       = 0x80000005
+
+	FileDirectoryInformationClass = 1
 )
 
 type UnicodeString struct {
@@ -57,10 +60,10 @@ type FileDirectoryInformation struct {
 	AllocationSize  int64
 	FileAttributes  uint32
 	FileNameLength  uint32
-	FileName        [260]uint16
+	FileName        [1]uint16
 }
 
-var fileDirInfoBaseSize = unsafe.Sizeof(FileDirectoryInformation{}) - unsafe.Sizeof(uint16(0))
+var fileDirInfoBaseSize = unsafe.Offsetof(FileDirectoryInformation{}.FileName)
 
 var (
 	ntdll                = syscall.NewLazyDLL("ntdll.dll")
@@ -74,12 +77,6 @@ var (
 var fileInfoPool = sync.Pool{
 	New: func() interface{} {
 		return make([]byte, 65536)
-	},
-}
-
-var pathStringPool = sync.Pool{
-	New: func() interface{} {
-		return make([]uint16, 260)
 	},
 }
 
@@ -177,7 +174,7 @@ func readDirNT(path string) ([]byte, error) {
 				return nil, fmt.Errorf("NtQueryDirectoryFile failed for path '%s': %w", path, err)
 			}
 			// STATUS_BUFFER_OVERFLOW might occur if a single entry is larger than the buffer
-			if status == 0x80000005 { // STATUS_BUFFER_OVERFLOW
+			if status == STATUS_BUFFER_OVERFLOW {
 				return nil, fmt.Errorf("NtQueryDirectoryFile failed for path '%s': single entry too large for buffer (size %d)", path, len(buffer))
 			}
 			return nil, fmt.Errorf("NtQueryDirectoryFile failed for path '%s' with status: 0x%X", path, status)
@@ -192,29 +189,36 @@ func readDirNT(path string) ([]byte, error) {
 
 		var currentOffset uintptr = 0
 		for {
+			if currentOffset >= bytesWritten {
+				break
+			}
+
 			if currentOffset+fileDirInfoBaseSize > bytesWritten {
 				return nil, fmt.Errorf("NtQueryDirectoryFile buffer read error: offset %d exceeds bytes written %d", currentOffset, bytesWritten)
 			}
 
 			entry := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[currentOffset]))
 
-			fileNameBytes := uintptr(entry.FileNameLength)
-			if currentOffset+fileDirInfoBaseSize+fileNameBytes > bytesWritten {
-				return nil, fmt.Errorf("NtQueryDirectoryFile buffer read error: record at offset %d exceeds bytes written %d (name length %d)", currentOffset, bytesWritten, fileNameBytes)
+			fileNameBytes := uintptr(entry.FileNameLength) // Length is in bytes
+			recordSize := fileDirInfoBaseSize + fileNameBytes
+			if currentOffset+recordSize > bytesWritten {
+				return nil, fmt.Errorf("NtQueryDirectoryFile buffer read error: record at offset %d with size %d (base %d + name %d) exceeds bytes written %d for path '%s'", currentOffset, recordSize, fileDirInfoBaseSize, fileNameBytes, bytesWritten, path)
 			}
 
 			if entry.FileAttributes&excludedAttrs == 0 {
-				fileNameChars := fileNameBytes / 2
+				fileNameChars := fileNameBytes / unsafe.Sizeof(uint16(0)) // Convert byte length to uint16 count
 
+				// Create a slice pointing directly to the filename in the buffer
 				namePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + fileDirInfoBaseSize)
 				nameSlice := unsafe.Slice((*uint16)(namePtr), int(fileNameChars))
 
-				// Skip "." and ".."
+				// Skip "." and ".." more efficiently
 				if !(fileNameChars == 1 && nameSlice[0] == '.') &&
 					!(fileNameChars == 2 && nameSlice[0] == '.' && nameSlice[1] == '.') {
 
+					// Decode UTF-16 slice to Go string
 					name := string(utf16.Decode(nameSlice))
-					mode := windowsAttributesToFileMode(entry.FileAttributes)
+					mode := windowsAttributesToFileMode(entry.FileAttributes) // Assumes this function exists
 					entries = append(entries, types.AgentDirEntry{
 						Name: name,
 						Mode: mode,
@@ -226,10 +230,6 @@ func readDirNT(path string) ([]byte, error) {
 				break // Last entry in this buffer batch
 			}
 			currentOffset += uintptr(entry.NextEntryOffset)
-
-			if currentOffset >= bytesWritten && entry.NextEntryOffset != 0 {
-				return nil, fmt.Errorf("NtQueryDirectoryFile buffer read error: NextEntryOffset %d points beyond bytes written %d", entry.NextEntryOffset, bytesWritten)
-			}
 		}
 	}
 
