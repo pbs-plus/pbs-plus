@@ -23,10 +23,7 @@ const (
 	FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020
 	OBJ_CASE_INSENSITIVE         = 0x00000040
 	STATUS_NO_MORE_FILES         = 0x80000006
-	STATUS_SUCCESS               = 0x00000000
-	STATUS_BUFFER_OVERFLOW       = 0x80000005
-
-	FileDirectoryInformationClass = 1
+	FileBothDirectoryInformation = 3 // Information class level
 )
 
 type UnicodeString struct {
@@ -60,10 +57,8 @@ type FileDirectoryInformation struct {
 	AllocationSize  int64
 	FileAttributes  uint32
 	FileNameLength  uint32
-	FileName        [1]uint16
+	FileName        [260]uint16
 }
-
-var fileDirInfoBaseSize = unsafe.Offsetof(FileDirectoryInformation{}.FileName)
 
 var (
 	ntdll                = syscall.NewLazyDLL("ntdll.dll")
@@ -74,163 +69,138 @@ var (
 	rtlInitUnicodeString = ntdll.NewProc("RtlInitUnicodeString")
 )
 
+func convertToNTPath(path string) string {
+	if len(path) >= 4 && path[:4] == "\\??\\" {
+		return path
+	}
+
+	if len(path) >= 2 && path[1] == ':' {
+		return "\\??\\" + path
+	} else {
+		return "\\??\\" + path
+	}
+}
+
 var fileInfoPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 65536)
+		b := make([]byte, 32*1024)
+		return &b
 	},
 }
 
-func convertToNTPath(path string) []uint16 {
-	// Fast path for already NT-style paths
-	if len(path) >= 4 && path[:4] == "\\??\\" {
-		return utf16.Encode([]rune(path + "\x00"))
-	}
+func readDirNT(path string) ([]byte, error) {
+	var entries types.ReadDirEntries
 
-	// Construct NT path
-	var ntPath string
-	if len(path) >= 2 && path[1] == ':' {
-		ntPath = "\\??\\" + path
-	} else {
-		ntPath = "\\??\\" + path
-	}
+	bufferPtr := fileInfoPool.Get().(*[]byte)
+	buffer := *bufferPtr
+	defer func() {
+		*bufferPtr = buffer
+		fileInfoPool.Put(bufferPtr)
+	}()
 
+	ntPath := convertToNTPath(path)
 	if !strings.HasSuffix(ntPath, "\\") {
 		ntPath += "\\"
 	}
 
-	return utf16.Encode([]rune(ntPath + "\x00"))
-}
-
-func readDirNT(path string) ([]byte, error) {
-	entries := make(types.ReadDirEntries, 0, 128) // Initial capacity
-
-	bufInterface := fileInfoPool.Get()
-	buffer := bufInterface.([]byte)
-	defer fileInfoPool.Put(buffer) // Return buffer to pool when done
-
-	pathUTF16 := convertToNTPath(path)
+	pathUTF16, err := syscall.UTF16PtrFromString(ntPath)
+	if err != nil {
+		return nil, fmt.Errorf("UTF16PtrFromString failed: %w", err)
+	}
 
 	var unicodeString UnicodeString
-	unicodeString.Buffer = &pathUTF16[0]
-	unicodeString.Length = uint16((len(pathUTF16) - 1) * 2) // Length in bytes, excluding null terminator
-	unicodeString.MaximumLength = uint16(len(pathUTF16) * 2)
+	rtlInitUnicodeString.Call(
+		uintptr(unsafe.Pointer(&unicodeString)),
+		uintptr(unsafe.Pointer(pathUTF16)),
+	)
 
 	var objectAttributes ObjectAttributes
 	objectAttributes.Length = uint32(unsafe.Sizeof(objectAttributes))
 	objectAttributes.ObjectName = &unicodeString
 	objectAttributes.Attributes = OBJ_CASE_INSENSITIVE
 
-	var handle syscall.Handle // Use syscall.Handle for type safety
+	var handle uintptr
 	var ioStatusBlock IoStatusBlock
 
-	status, _, err := ntCreateFile.Call(
+	status, _, _ := ntCreateFile.Call(
 		uintptr(unsafe.Pointer(&handle)),
-		FILE_LIST_DIRECTORY|syscall.SYNCHRONIZE, // Desired access
+		FILE_LIST_DIRECTORY|syscall.SYNCHRONIZE,
 		uintptr(unsafe.Pointer(&objectAttributes)),
 		uintptr(unsafe.Pointer(&ioStatusBlock)),
-		0, // AllocationSize (not used for dirs)
-		0, // FileAttributes (not used for opening)
-		FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, // Share mode
-		OPEN_EXISTING, // CreationDisposition
-		FILE_DIRECTORY_FILE|FILE_SYNCHRONOUS_IO_NONALERT, // CreateOptions
-		0, // EaBuffer (optional)
-		0, // EaLength (optional)
+		0,
+		0,
+		FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+		OPEN_EXISTING,
+		FILE_DIRECTORY_FILE|FILE_SYNCHRONOUS_IO_NONALERT,
+		0,
+		0,
 	)
-	if status != STATUS_SUCCESS {
-		if err != nil && err != syscall.Errno(0) {
-			return nil, fmt.Errorf("NtCreateFile failed for path '%s': %w", path, err)
-		}
-		return nil, fmt.Errorf("NtCreateFile failed for path '%s' with status: 0x%X", path, status)
-	}
-	defer ntClose.Call(uintptr(handle)) // Close handle when function exits
 
-	restart := true // Start scan from the beginning
+	if status != 0 {
+		return nil, fmt.Errorf(
+			"NtCreateFile failed with status: 0x%x, path: %s",
+			uint32(status),
+			ntPath,
+		)
+	}
+	defer ntClose.Call(handle)
+
+	restartScan := true
 
 	for {
-		ioStatusBlock = IoStatusBlock{}
-
-		status, _, err := ntQueryDirectoryFile.Call(
-			uintptr(handle),
-			0, // Event handle (optional, for async)
-			0, // ApcRoutine (optional, for async)
-			0, // ApcContext (optional, for async)
+		status, _, _ := ntQueryDirectoryFile.Call(
+			handle,
+			0,
+			0,
+			0,
 			uintptr(unsafe.Pointer(&ioStatusBlock)),
-			uintptr(unsafe.Pointer(&buffer[0])), // Pointer to buffer
-			uintptr(len(buffer)),                // Buffer length
-			uintptr(3),                          // FileInformationClass: FileIdBothDirectoryInformation (3) is often preferred
-			uintptr(0),                          // ReturnSingleEntry: 0 for multiple entries
-			0,                                   // FileName (optional filter, requires specific FileInformationClass)
-			uintptr(boolToInt(restart)),         // RestartScan
+			uintptr(unsafe.Pointer(&buffer[0])),
+			uintptr(len(buffer)),
+			uintptr(FileBothDirectoryInformation),
+			uintptr(0),
+			0,
+			uintptr(boolToInt(restartScan)),
 		)
 
-		restart = false // Subsequent calls continue the scan
+		restartScan = false
 
 		if status == STATUS_NO_MORE_FILES {
-			break // End of directory listing
-		}
-
-		if status != STATUS_SUCCESS {
-			if err != nil && err != syscall.Errno(0) {
-				return nil, fmt.Errorf("NtQueryDirectoryFile failed for path '%s': %w", path, err)
-			}
-			// STATUS_BUFFER_OVERFLOW might occur if a single entry is larger than the buffer
-			if status == STATUS_BUFFER_OVERFLOW {
-				return nil, fmt.Errorf("NtQueryDirectoryFile failed for path '%s': single entry too large for buffer (size %d)", path, len(buffer))
-			}
-			return nil, fmt.Errorf("NtQueryDirectoryFile failed for path '%s' with status: 0x%X", path, status)
-		}
-
-		bytesWritten := ioStatusBlock.Information
-		if bytesWritten == 0 {
-			// If status is success but no bytes written, it might mean the end.
-			// Or it could be an edge case. Breaking seems safest.
 			break
 		}
 
-		var currentOffset uintptr = 0
+		if status != 0 {
+			return nil, fmt.Errorf(
+				"NtQueryDirectoryFile failed with status: 0x%x",
+				uint32(status),
+			)
+		}
+
+		var currentOffset uint32
 		for {
-			if currentOffset >= bytesWritten {
-				break
-			}
+			entryPtr := unsafe.Pointer(&buffer[currentOffset])
+			fileInfo := (*FileDirectoryInformation)(entryPtr)
 
-			if currentOffset+fileDirInfoBaseSize > bytesWritten {
-				return nil, fmt.Errorf("NtQueryDirectoryFile buffer read error: offset %d exceeds bytes written %d", currentOffset, bytesWritten)
-			}
+			if fileInfo.FileAttributes&excludedAttrs == 0 {
+				fileNameLen := fileInfo.FileNameLength / 2
+				fileNameSlice := unsafe.Slice(
+					&fileInfo.FileName[0],
+					fileNameLen,
+				)
+				name := string(utf16.Decode(fileNameSlice))
 
-			entry := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[currentOffset]))
-
-			fileNameBytes := uintptr(entry.FileNameLength) // Length is in bytes
-			recordSize := fileDirInfoBaseSize + fileNameBytes
-			if currentOffset+recordSize > bytesWritten {
-				return nil, fmt.Errorf("NtQueryDirectoryFile buffer read error: record at offset %d with size %d (base %d + name %d) exceeds bytes written %d for path '%s'", currentOffset, recordSize, fileDirInfoBaseSize, fileNameBytes, bytesWritten, path)
-			}
-
-			if entry.FileAttributes&excludedAttrs == 0 {
-				fileNameChars := fileNameBytes / unsafe.Sizeof(uint16(0)) // Convert byte length to uint16 count
-
-				// Create a slice pointing directly to the filename in the buffer
-				namePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + fileDirInfoBaseSize)
-				nameSlice := unsafe.Slice((*uint16)(namePtr), int(fileNameChars))
-
-				name := string(utf16.Decode(nameSlice))
-
-				// Skip "." and ".." using the decoded string name
 				if name != "." && name != ".." {
-					// Process entry if attributes don't match exclusion mask
-					if entry.FileAttributes&excludedAttrs == 0 {
-						mode := windowsAttributesToFileMode(entry.FileAttributes)
-						entries = append(entries, types.AgentDirEntry{
-							Name: name,
-							Mode: mode,
-						})
-					}
+					mode := windowsAttributesToFileMode(fileInfo.FileAttributes)
+					entries = append(entries, types.AgentDirEntry{
+						Name: name,
+						Mode: mode,
+					})
 				}
 			}
 
-			if entry.NextEntryOffset == 0 {
-				break // Last entry in this buffer batch
+			if fileInfo.NextEntryOffset == 0 {
+				break
 			}
-			currentOffset += uintptr(entry.NextEntryOffset)
+			currentOffset += fileInfo.NextEntryOffset
 		}
 	}
 
