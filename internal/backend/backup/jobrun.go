@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexflint/go-filemutex"
+	"github.com/gofrs/flock"
 	"github.com/pbs-plus/pbs-plus/internal/backend/mount"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
@@ -75,13 +75,10 @@ func RunBackup(
 	storeInstance *store.Store,
 	skipCheck bool,
 ) (*BackupOperation, error) {
-	jobInstanceMutex, err := filemutex.New(
+	jobInstanceMutex := flock.New(
 		fmt.Sprintf("/tmp/pbs-plus-mutex-job-%s", job.ID),
 	)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrJobMutexCreation, err)
-	}
-	if err := jobInstanceMutex.TryLock(); err != nil {
+	if locked, err := jobInstanceMutex.TryLock(); err != nil || !locked {
 		return nil, ErrOneInstance
 	}
 
@@ -106,12 +103,11 @@ func RunBackup(
 		close(errorMonitorDone)
 	}
 
-	backupMutex, err := filemutex.New("/tmp/pbs-plus-mutex-lock")
-	if err != nil {
-		errCleanUp()
-		return nil, fmt.Errorf("%w: %v", ErrBackupMutexCreation, err)
-	}
-	defer backupMutex.Close()
+	backupMutex := flock.New("/tmp/pbs-plus-mutex-lock")
+	defer func() {
+		backupMutex.Close()
+		_ = os.RemoveAll(backupMutex.Path())
+	}()
 
 	if err := backupMutex.Lock(); err != nil {
 		errCleanUp()
@@ -283,7 +279,10 @@ func RunBackup(
 
 	go func() {
 		defer wg.Done()
-		defer jobInstanceMutex.Close()
+		defer func() {
+			jobInstanceMutex.Close()
+			_ = os.RemoveAll(jobInstanceMutex.Path())
+		}()
 
 		if err := cmd.Wait(); err != nil {
 			operation.err = err
