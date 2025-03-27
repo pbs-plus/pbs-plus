@@ -56,7 +56,7 @@ type FileDirectoryInformation struct {
 	AllocationSize  int64
 	FileAttributes  uint32
 	FileNameLength  uint32
-	FileName        [260]uint16
+	FileName        uint16
 }
 
 var (
@@ -131,7 +131,11 @@ func readDirNT(path string) ([]byte, error) {
 	)
 
 	if status != 0 {
-		return nil, fmt.Errorf("NtCreateFile failed with status: %x, path: %s", status, ntPath)
+		return nil, fmt.Errorf(
+			"NtCreateFile failed with status: %x, path: %s",
+			status,
+			ntPath,
+		)
 	}
 	defer ntClose.Call(handle)
 
@@ -146,9 +150,9 @@ func readDirNT(path string) ([]byte, error) {
 			uintptr(unsafe.Pointer(&ioStatusBlock)),
 			uintptr(unsafe.Pointer(&buffer[0])),
 			uintptr(len(buffer)),
-			uintptr(1),
-			uintptr(0),
-			0,
+			uintptr(1), // FileInformationClass: FileDirectoryInformation
+			uintptr(0), // ReturnSingleEntry: FALSE
+			0,          // FileName: NULL
 			uintptr(boolToInt(restart)),
 		)
 
@@ -159,14 +163,37 @@ func readDirNT(path string) ([]byte, error) {
 		}
 
 		if status != 0 {
-			return nil, fmt.Errorf("NtQueryDirectoryFile failed with status: %x", status)
+			return nil, fmt.Errorf(
+				"NtQueryDirectoryFile failed with status: %x",
+				status,
+			)
 		}
 
 		offset := 0
 		for {
-			entry := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[offset]))
+			if offset >= len(buffer) {
+				return nil, fmt.Errorf("offset exceeded buffer length")
+			}
+
+			entry := (*FileDirectoryInformation)(
+				unsafe.Pointer(&buffer[offset]),
+			)
+
 			if entry.FileAttributes&excludedAttrs == 0 {
-				fileNameSlice := entry.FileName[:entry.FileNameLength/2]
+				fileNameLen := entry.FileNameLength / 2 // Length in uint16
+				fileNamePtr := unsafe.Pointer(
+					uintptr(unsafe.Pointer(entry)) +
+						unsafe.Offsetof(entry.FileName),
+				)
+
+				if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) > uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
+					return nil, fmt.Errorf("filename data exceeds buffer bounds")
+				}
+
+				fileNameSlice := unsafe.Slice(
+					(*uint16)(fileNamePtr),
+					fileNameLen,
+				)
 				fileName := utf16.Decode(fileNameSlice)
 				name := string(fileName)
 
@@ -182,7 +209,15 @@ func readDirNT(path string) ([]byte, error) {
 			if entry.NextEntryOffset == 0 {
 				break
 			}
-			offset += int(entry.NextEntryOffset)
+			nextOffset := offset + int(entry.NextEntryOffset)
+			if nextOffset <= offset || nextOffset > len(buffer) {
+				return nil, fmt.Errorf(
+					"invalid NextEntryOffset: %d from offset %d",
+					entry.NextEntryOffset,
+					offset,
+				)
+			}
+			offset = nextOffset
 		}
 	}
 
