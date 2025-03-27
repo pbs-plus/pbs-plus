@@ -106,7 +106,7 @@ func RunBackup(
 	backupMutex := flock.New("/tmp/pbs-plus-mutex-lock")
 	defer func() {
 		backupMutex.Close()
-		_ = os.RemoveAll("/tmp/pbs-plus-mutex-lock")
+		_ = os.RemoveAll(backupMutex.Path())
 	}()
 
 	if err := backupMutex.Lock(); err != nil {
@@ -281,7 +281,7 @@ func RunBackup(
 		defer wg.Done()
 		defer func() {
 			jobInstanceMutex.Close()
-			_ = os.RemoveAll(fmt.Sprintf("/tmp/pbs-plus-mutex-job-%s", job.ID))
+			_ = os.RemoveAll(jobInstanceMutex.Path())
 		}()
 
 		if err := cmd.Wait(); err != nil {
