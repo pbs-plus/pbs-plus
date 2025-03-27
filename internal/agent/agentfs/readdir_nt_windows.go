@@ -56,7 +56,7 @@ type FileDirectoryInformation struct {
 	AllocationSize  int64
 	FileAttributes  uint32
 	FileNameLength  uint32
-	FileName        [260]uint16
+	FileName        uint16
 }
 
 var (
@@ -75,23 +75,19 @@ func convertToNTPath(path string) string {
 
 	if len(path) >= 2 && path[1] == ':' {
 		return "\\??\\" + path
-	} else {
-		return "\\??\\" + path
 	}
+	return "\\??\\" + path
 }
 
-// Buffer pool for file information
 var fileInfoPool = sync.Pool{
 	New: func() interface{} {
-		// 4KB buffer for file information
-		return make([]byte, 4096)
+		return make([]byte, 32768)
 	},
 }
 
 func readDirNT(path string) ([]byte, error) {
 	var entries types.ReadDirEntries
 
-	// Get buffer from pool
 	bufInterface := fileInfoPool.Get()
 	buffer := bufInterface.([]byte)
 	defer fileInfoPool.Put(buffer)
@@ -112,7 +108,6 @@ func readDirNT(path string) ([]byte, error) {
 		uintptr(unsafe.Pointer(&pathUTF16[0])),
 	)
 
-	// Setup ObjectAttributes
 	var objectAttributes ObjectAttributes
 	objectAttributes.Length = uint32(unsafe.Sizeof(objectAttributes))
 	objectAttributes.ObjectName = &unicodeString
@@ -121,7 +116,6 @@ func readDirNT(path string) ([]byte, error) {
 	var handle uintptr
 	var ioStatusBlock IoStatusBlock
 
-	// Open directory
 	status, _, _ := ntCreateFile.Call(
 		uintptr(unsafe.Pointer(&handle)),
 		FILE_LIST_DIRECTORY|syscall.SYNCHRONIZE,
@@ -137,11 +131,15 @@ func readDirNT(path string) ([]byte, error) {
 	)
 
 	if status != 0 {
-		return nil, fmt.Errorf("NtCreateFile failed with status: %x, path: %s", status, ntPath)
+		return nil, fmt.Errorf(
+			"NtCreateFile failed with status: %x, path: %s",
+			status,
+			ntPath,
+		)
 	}
 	defer ntClose.Call(handle)
 
-	var restart bool = true
+	restart := true
 
 	for {
 		status, _, _ := ntQueryDirectoryFile.Call(
@@ -152,9 +150,9 @@ func readDirNT(path string) ([]byte, error) {
 			uintptr(unsafe.Pointer(&ioStatusBlock)),
 			uintptr(unsafe.Pointer(&buffer[0])),
 			uintptr(len(buffer)),
-			uintptr(1), // FileBothDirectoryInformation
-			uintptr(1), // Return single entry
-			0,
+			uintptr(1), // FileInformationClass: FileDirectoryInformation
+			uintptr(0), // ReturnSingleEntry: FALSE
+			0,          // FileName: NULL
 			uintptr(boolToInt(restart)),
 		)
 
@@ -165,31 +163,62 @@ func readDirNT(path string) ([]byte, error) {
 		}
 
 		if status != 0 {
-			return nil, fmt.Errorf("NtQueryDirectoryFile failed with status: %x", status)
+			return nil, fmt.Errorf(
+				"NtQueryDirectoryFile failed with status: %x",
+				status,
+			)
 		}
 
-		fileInfo := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[0]))
+		offset := 0
+		for {
+			if offset >= len(buffer) {
+				return nil, fmt.Errorf("offset exceeded buffer length")
+			}
 
-		if fileInfo.FileAttributes&excludedAttrs != 0 {
-			continue
+			entry := (*FileDirectoryInformation)(
+				unsafe.Pointer(&buffer[offset]),
+			)
+
+			if entry.FileAttributes&excludedAttrs == 0 {
+				fileNameLen := entry.FileNameLength / 2 // Length in uint16
+				fileNamePtr := unsafe.Pointer(
+					uintptr(unsafe.Pointer(entry)) +
+						unsafe.Offsetof(entry.FileName),
+				)
+
+				if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) > uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
+					return nil, fmt.Errorf("filename data exceeds buffer bounds")
+				}
+
+				fileNameSlice := unsafe.Slice(
+					(*uint16)(fileNamePtr),
+					fileNameLen,
+				)
+				fileName := utf16.Decode(fileNameSlice)
+				name := string(fileName)
+
+				if name != "." && name != ".." {
+					mode := windowsAttributesToFileMode(entry.FileAttributes)
+					entries = append(entries, types.AgentDirEntry{
+						Name: name,
+						Mode: mode,
+					})
+				}
+			}
+
+			if entry.NextEntryOffset == 0 {
+				break
+			}
+			nextOffset := offset + int(entry.NextEntryOffset)
+			if nextOffset <= offset || nextOffset > len(buffer) {
+				return nil, fmt.Errorf(
+					"invalid NextEntryOffset: %d from offset %d",
+					entry.NextEntryOffset,
+					offset,
+				)
+			}
+			offset = nextOffset
 		}
-
-		// Get exact slice of the filename UTF-16 bytes
-		fileNameSlice := fileInfo.FileName[:fileInfo.FileNameLength/2]
-		fileName := utf16.Decode(fileNameSlice)
-		name := string(fileName)
-
-		// Skip special directory entries
-		if name == "." || name == ".." {
-			continue
-		}
-
-		// Remove length validation since UTF-16 to UTF-8 conversion can change byte counts
-		mode := windowsAttributesToFileMode(fileInfo.FileAttributes)
-		entries = append(entries, types.AgentDirEntry{
-			Name: name,
-			Mode: mode,
-		})
 	}
 
 	return entries.Encode()
