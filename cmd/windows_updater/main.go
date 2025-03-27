@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alexflint/go-filemutex"
+	"github.com/gofrs/flock"
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -201,10 +201,7 @@ func (u *UpdaterService) readVersionFromFile() (string, error) {
 	}
 
 	versionLockPath := filepath.Join(filepath.Dir(ex), "version.lock")
-	mutex, err := filemutex.New(versionLockPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute mutex: %w", err)
-	}
+	mutex := flock.New(versionLockPath)
 
 	mutex.RLock()
 	defer mutex.Close()
