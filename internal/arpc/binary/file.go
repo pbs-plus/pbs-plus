@@ -43,8 +43,6 @@ var bufferPools = []BufferPool{
 	},
 }
 
-const defaultReceiveCapacity = 32768
-
 // selectBufferPool returns a pool and its size based on the requested total
 // length. The heuristic is: pick the smallest pool whose capacity is at least
 // the requested length; if none qualifies, use the largest pool.
@@ -129,91 +127,44 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	return nil
 }
 
-func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
-	if stream == nil {
-		return nil, 0, fmt.Errorf("stream is nil")
-	}
-
-	var chunkSize uint32
-	if err := binary.Read(stream, binary.LittleEndian, &chunkSize); err != nil {
-		if err == io.EOF {
-			return nil, 0, fmt.Errorf("failed to read initial chunk size: unexpected EOF")
-		}
-		return nil, 0, fmt.Errorf("failed to read initial chunk size: %w", err)
-	}
-
-	if chunkSize == 0 {
-		var finalTotal uint32
-		if err := binary.Read(stream, binary.LittleEndian, &finalTotal); err != nil {
-			return nil, 0, fmt.Errorf("failed to read final total for empty data: %w", err)
-		}
-		if finalTotal != 0 {
-			return nil, 0, fmt.Errorf("received non-zero final total (%d) for zero-length data", finalTotal)
-		}
-		return make([]byte, 0), 0, nil
-	}
-
-	initialCapacity := max(int(chunkSize), defaultReceiveCapacity)
-	result := make([]byte, 0, initialCapacity)
+// ReceiveData reads data from the smux stream into the provided buffer.
+// It expects each chunk to be preceded by its 4-byte size. A chunk size of 0
+// signals that data transfer has finished; it is then followed by a final total
+// which is compared to the accumulated data.
+func ReceiveData(stream *smux.Stream, buffer []byte) (int, error) {
 	totalRead := 0
 
-	if cap(result) < int(chunkSize) {
-		newResult := make([]byte, 0, int(chunkSize))
-		result = newResult
-	}
-
-	start := len(result)
-	result = result[:start+int(chunkSize)]
-	n, err := io.ReadFull(stream, result[start:])
-	if err != nil {
-		result = result[:start+n]
-		totalRead += n
-		return result, totalRead, fmt.Errorf("failed to read first chunk fully (read %d, expected %d): %w", n, chunkSize, err)
-	}
-	totalRead += n
-
 	for {
+		var chunkSize uint32
 		if err := binary.Read(stream, binary.LittleEndian, &chunkSize); err != nil {
-			return result, totalRead, fmt.Errorf("failed to read subsequent chunk size: %w", err)
+			return totalRead, fmt.Errorf("failed to read chunk size: %w", err)
 		}
 
+		// A chunk size of zero signals the end.
 		if chunkSize == 0 {
 			var finalTotal uint32
 			if err := binary.Read(stream, binary.LittleEndian, &finalTotal); err != nil {
-				return result, totalRead, fmt.Errorf("failed to read final total: %w", err)
+				return totalRead, fmt.Errorf("failed to read final total: %w", err)
 			}
 			if int(finalTotal) != totalRead {
-				return result, totalRead, fmt.Errorf("data length mismatch: expected %d bytes, got %d", finalTotal, totalRead)
+				return totalRead, fmt.Errorf("data length mismatch: expected %d bytes, got %d",
+					finalTotal, totalRead)
 			}
 			break
 		}
 
-		neededCapacity := totalRead + int(chunkSize)
-		if neededCapacity > cap(result) {
-			newCapacity := cap(result)
-			for newCapacity < neededCapacity {
-				newCapacity = (newCapacity * 3) / 2
-				if newCapacity < neededCapacity {
-					newCapacity = neededCapacity
-				}
-			}
-
-			newResult := make([]byte, totalRead, newCapacity)
-			copy(newResult, result[:totalRead])
-			result = newResult
+		// Ensure the provided buffer is large enough.
+		if totalRead+int(chunkSize) > len(buffer) {
+			return totalRead, fmt.Errorf("buffer overflow: need %d bytes, have %d",
+				totalRead+int(chunkSize), len(buffer))
 		}
 
-		start := totalRead
-		result = result[:start+int(chunkSize)]
-
-		n, err := io.ReadFull(stream, result[start:])
-		if err != nil {
-			result = result[:start+n]
-			totalRead += n
-			return result, totalRead, fmt.Errorf("failed to read chunk fully (read %d, expected %d): %w", n, chunkSize, err)
-		}
+		n, err := io.ReadFull(stream, buffer[totalRead:totalRead+int(chunkSize)])
 		totalRead += n
+		if err != nil {
+			return totalRead, fmt.Errorf("failed to read chunk data: %w", err)
+		}
 	}
 
-	return result[:totalRead], totalRead, nil
+	return totalRead, nil
 }
