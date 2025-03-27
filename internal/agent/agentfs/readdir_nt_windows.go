@@ -81,7 +81,7 @@ func convertToNTPath(path string) string {
 
 var fileInfoPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 32768)
+		return make([]byte, 1024*1024)
 	},
 }
 
