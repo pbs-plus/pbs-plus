@@ -146,12 +146,12 @@ func readDirNT(path string) ([]byte, error) {
 			break
 		}
 		if status != 0 {
-			return nil, fmt.Errorf("NtQueryDirectoryFile failed with status: %x",
-				status)
+			return nil, fmt.Errorf("NtQueryDirectoryFile failed with status: %x", status)
 		}
 		offset := 0
+		base := unsafe.Pointer(&buffer[0])
 		for {
-			fileInfo := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[offset]))
+			fileInfo := (*FileDirectoryInformation)(unsafe.Add(base, offset))
 			if fileInfo.FileAttributes&excludedAttrs == 0 {
 				fileNameSlice := fileInfo.FileName[:fileInfo.FileNameLength/2]
 				fileName := utf16.Decode(fileNameSlice)
