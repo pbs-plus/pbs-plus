@@ -72,51 +72,42 @@ func convertToNTPath(path string) string {
 	if len(path) >= 4 && path[:4] == "\\??\\" {
 		return path
 	}
-
 	if len(path) >= 2 && path[1] == ':' {
 		return "\\??\\" + path
-	} else {
-		return "\\??\\" + path
 	}
+	return "\\??\\" + path
 }
 
 var fileInfoPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 8192)
+		return make([]byte, 65536)
 	},
 }
 
 func readDirNT(path string) ([]byte, error) {
 	var entries types.ReadDirEntries
-
 	bufInterface := fileInfoPool.Get()
 	buffer := bufInterface.([]byte)
 	defer fileInfoPool.Put(buffer)
-
 	ntPath := convertToNTPath(path)
 	if !strings.HasSuffix(ntPath, "\\") {
 		ntPath += "\\"
 	}
-
 	pathUTF16 := utf16.Encode([]rune(ntPath))
 	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
 		pathUTF16 = append(pathUTF16, 0)
 	}
-
 	var unicodeString UnicodeString
 	rtlInitUnicodeString.Call(
 		uintptr(unsafe.Pointer(&unicodeString)),
 		uintptr(unsafe.Pointer(&pathUTF16[0])),
 	)
-
 	var objectAttributes ObjectAttributes
 	objectAttributes.Length = uint32(unsafe.Sizeof(objectAttributes))
 	objectAttributes.ObjectName = &unicodeString
 	objectAttributes.Attributes = OBJ_CASE_INSENSITIVE
-
 	var handle uintptr
 	var ioStatusBlock IoStatusBlock
-
 	status, _, _ := ntCreateFile.Call(
 		uintptr(unsafe.Pointer(&handle)),
 		FILE_LIST_DIRECTORY|syscall.SYNCHRONIZE,
@@ -124,22 +115,20 @@ func readDirNT(path string) ([]byte, error) {
 		uintptr(unsafe.Pointer(&ioStatusBlock)),
 		0,
 		0,
-		FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+		FILE_SHARE_READ|FILE_SHARE_WRITE,
 		OPEN_EXISTING,
 		FILE_DIRECTORY_FILE|FILE_SYNCHRONOUS_IO_NONALERT,
 		0,
 		0,
 	)
-
 	if status != 0 {
-		return nil, fmt.Errorf("NtCreateFile failed with status: %x, path: %s", status, ntPath)
+		return nil, fmt.Errorf("NtCreateFile failed with status: %x, path: %s",
+			status, ntPath)
 	}
 	defer ntClose.Call(handle)
-
 	restart := true
-
 	for {
-		status, _, _ := ntQueryDirectoryFile.Call(
+		status, _, _ = ntQueryDirectoryFile.Call(
 			handle,
 			0,
 			0,
@@ -147,31 +136,26 @@ func readDirNT(path string) ([]byte, error) {
 			uintptr(unsafe.Pointer(&ioStatusBlock)),
 			uintptr(unsafe.Pointer(&buffer[0])),
 			uintptr(len(buffer)),
-			uintptr(1), // FileBothDirectoryInformation
-			uintptr(0), // Return multiple entries
+			uintptr(1),
+			uintptr(0),
 			0,
 			uintptr(boolToInt(restart)),
 		)
-
 		restart = false
-
 		if status == STATUS_NO_MORE_FILES {
 			break
 		}
-
 		if status != 0 {
-			return nil, fmt.Errorf("NtQueryDirectoryFile failed with status: %x", status)
+			return nil, fmt.Errorf("NtQueryDirectoryFile failed with status: %x",
+				status)
 		}
-
-		offset := uintptr(0)
+		offset := 0
 		for {
-			fileInfo := (*FileDirectoryInformation)(unsafe.Pointer(uintptr(unsafe.Pointer(&buffer[0])) + offset))
-
+			fileInfo := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[offset]))
 			if fileInfo.FileAttributes&excludedAttrs == 0 {
 				fileNameSlice := fileInfo.FileName[:fileInfo.FileNameLength/2]
 				fileName := utf16.Decode(fileNameSlice)
 				name := string(fileName)
-
 				if name != "." && name != ".." {
 					mode := windowsAttributesToFileMode(fileInfo.FileAttributes)
 					entries = append(entries, types.AgentDirEntry{
@@ -180,14 +164,12 @@ func readDirNT(path string) ([]byte, error) {
 					})
 				}
 			}
-
 			if fileInfo.NextEntryOffset == 0 {
 				break
 			}
-			offset += uintptr(fileInfo.NextEntryOffset)
+			offset += int(fileInfo.NextEntryOffset)
 		}
 	}
-
 	return entries.Encode()
 }
 
