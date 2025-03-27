@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/alexflint/go-filemutex"
+	"github.com/gofrs/flock"
 )
 
 type BackupSessionData struct {
@@ -15,7 +15,7 @@ type BackupSessionData struct {
 
 type BackupStore struct {
 	filePath string
-	fileLock *filemutex.FileMutex
+	fileLock *flock.Flock
 }
 
 func (bs *BackupStore) updateSessions(fn func(map[string]*BackupSessionData)) error {
