@@ -212,17 +212,18 @@ func readDirNT(path string) ([]byte, error) {
 				namePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + fileDirInfoBaseSize)
 				nameSlice := unsafe.Slice((*uint16)(namePtr), int(fileNameChars))
 
-				// Skip "." and ".." more efficiently
-				if !(fileNameChars == 1 && nameSlice[0] == '.') &&
-					!(fileNameChars == 2 && nameSlice[0] == '.' && nameSlice[1] == '.') {
+				name := string(utf16.Decode(nameSlice))
 
-					// Decode UTF-16 slice to Go string
-					name := string(utf16.Decode(nameSlice))
-					mode := windowsAttributesToFileMode(entry.FileAttributes) // Assumes this function exists
-					entries = append(entries, types.AgentDirEntry{
-						Name: name,
-						Mode: mode,
-					})
+				// Skip "." and ".." using the decoded string name
+				if name != "." && name != ".." {
+					// Process entry if attributes don't match exclusion mask
+					if entry.FileAttributes&excludedAttrs == 0 {
+						mode := windowsAttributesToFileMode(entry.FileAttributes)
+						entries = append(entries, types.AgentDirEntry{
+							Name: name,
+							Mode: mode,
+						})
+					}
 				}
 			}
 
