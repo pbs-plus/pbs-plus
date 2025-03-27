@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/alexflint/go-filemutex"
+	"github.com/gofrs/flock"
 )
 
 func NewBackupStore() (*BackupStore, error) {
@@ -18,10 +18,7 @@ func NewBackupStore() (*BackupStore, error) {
 	filePath := filepath.Join(dir, "backup_sessions.json")
 	lockPath := filepath.Join(dir, "backup_sessions.lock")
 
-	fl, err := filemutex.New(lockPath)
-	if err != nil {
-		return nil, err
-	}
+	fl := flock.New(lockPath)
 
 	return &BackupStore{
 		filePath: filePath,
