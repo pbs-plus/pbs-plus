@@ -120,35 +120,30 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	return nil
 }
 
-func ReceiveData(stream *smux.Stream, buffer []byte) ([]byte, int, error) {
+func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
 	var totalLength uint64
 	if err := binary.Read(stream, binary.LittleEndian, &totalLength); err != nil {
 		// Check for EOF specifically, might indicate clean closure before data
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			return buffer, 0, fmt.Errorf(
+			return nil, 0, fmt.Errorf(
 				"failed to read total length prefix (EOF/UnexpectedEOF): %w",
 				err,
 			)
 		}
-		return buffer, 0, fmt.Errorf("failed to read total length prefix: %w", err)
+		return nil, 0, fmt.Errorf("failed to read total length prefix: %w", err)
 	}
 
 	// Add a reasonable maximum length check to prevent OOM attacks
 	const maxLength = 1 << 30 // 1 GiB limit, adjust as needed
 	if totalLength > maxLength {
-		return buffer, 0, fmt.Errorf(
+		return nil, 0, fmt.Errorf(
 			"declared total length %d exceeds maximum allowed %d",
 			totalLength,
 			maxLength,
 		)
 	}
 
-	if totalLength > 0 {
-		if cap(buffer) < int(totalLength) {
-			buffer = make([]byte, int(totalLength))
-		}
-	}
-
+	buffer := make([]byte, int(totalLength))
 	totalRead := 0
 
 	for {
@@ -158,12 +153,8 @@ func ReceiveData(stream *smux.Stream, buffer []byte) ([]byte, int, error) {
 			if totalLength == 0 && totalRead == 0 && (err == io.EOF || err == io.ErrUnexpectedEOF) {
 				// This case means totalLength=0 was sent, and then the stream closed before the sentinel(0)
 				// This might be acceptable depending on the sender logic, but indicates an incomplete transmission
-				// according to the current protocol (missing sentinel). Return mismatch error.
-				return buffer, totalRead, fmt.Errorf(
-					"data length mismatch: expected %d bytes, got %d (stream closed before sentinel)",
-					totalLength,
-					totalRead,
-				)
+				// according to the current protocol (missing sentinel).
+				return buffer, totalRead, nil
 			}
 			// If EOF happens *before* reading the expected amount, it's an error.
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
@@ -229,14 +220,5 @@ func ReceiveData(stream *smux.Stream, buffer []byte) ([]byte, int, error) {
 		// totalRead is now expectedEnd after successful ReadFull
 	}
 
-	// Final check: Verify that the total bytes read match the declared total length *after* seeing the sentinel.
-	if totalRead != int(totalLength) {
-		return buffer, totalRead, fmt.Errorf(
-			"data length mismatch after sentinel: expected %d bytes, got %d",
-			totalLength,
-			totalRead,
-		)
-	}
-
-	return buffer, totalRead, nil
+	return buffer[:totalRead], totalRead, nil
 }
