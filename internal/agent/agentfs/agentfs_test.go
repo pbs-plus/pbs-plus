@@ -242,7 +242,8 @@ func TestAgentFSServer(t *testing.T) {
 		payload := types.ReadDirReq{Path: ("/")}
 		var result types.ReadDirEntries
 		raw := make([]byte, 200)
-		readSize, err := clientSession.CallBinary(ctx, "agentFs/ReadDir", &payload, raw)
+		raw2, readSize, err := clientSession.CallBinary(ctx, "agentFs/ReadDir", &payload, raw)
+		raw = raw2
 		assert.NoError(t, err)
 		result.Decode(raw[:readSize])
 		assert.NoError(t, err)
@@ -302,11 +303,12 @@ func TestAgentFSServer(t *testing.T) {
 		t.Log(dumpHandleMap(agentFsServer))
 
 		p := make([]byte, 100)
-		bytesRead, err := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload, p)
+		p2, bytesRead, err := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload, p)
 		if err != nil {
 			t.Logf("ReadAt error: %v - Current handle map: %s", err, dumpHandleMap(agentFsServer))
 			t.FailNow()
 		}
+		p = p2
 
 		assert.Equal(t, "2 content with more data", string(p[:bytesRead]))
 
@@ -363,12 +365,13 @@ func TestAgentFSServer(t *testing.T) {
 			}
 
 			p := make([]byte, 10)
-			_, err := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload, p)
+			p2, _, err := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload, p)
 			if err != nil {
 				t.Logf("ReadAt error for handle %d: %v - Current handle map: %s",
 					uint64(handle), err, dumpHandleMap(agentFsServer))
 				t.FailNow()
 			}
+			p = p2
 		}
 
 		// Now close all handles
@@ -408,11 +411,12 @@ func TestAgentFSServer(t *testing.T) {
 		}
 
 		buffer := make([]byte, readSize)
-		bytesRead, err := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload, buffer)
+		buffer2, bytesRead, err := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload, buffer)
 		if err != nil {
 			t.Logf("Large file ReadAt error: %v - Current handle map: %s", err, dumpHandleMap(agentFsServer))
 			t.FailNow()
 		}
+		buffer = buffer2
 		assert.Equal(t, readSize, bytesRead, "Should read the full requested size")
 
 		// Verify the data matches what we expect
@@ -701,11 +705,12 @@ func TestAgentFSServer(t *testing.T) {
 				}
 
 				buffer := make([]byte, readSize)
-				bytesRead, err := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload, buffer)
+				buffer2, bytesRead, err := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload, buffer)
 				if err != nil {
 					errors[goroutineID] = err
 					return
 				}
+				buffer = buffer2
 
 				results[goroutineID] = string(buffer[:bytesRead])
 			}(i)
@@ -824,8 +829,10 @@ func TestAgentFSServer(t *testing.T) {
 		buffer1 := make([]byte, 10)
 		buffer2 := make([]byte, 10)
 
-		_, err1 := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload1, buffer1)
-		_, err2 := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload2, buffer2)
+		buffer11, _, err1 := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload1, buffer1)
+		buffer21, _, err2 := clientSession.CallBinary(ctx, "agentFs/ReadAt", &readAtPayload2, buffer2)
+		buffer1 = buffer11
+		buffer2 = buffer21
 
 		assert.NoError(t, err1, "First ReadAt should succeed")
 		assert.NoError(t, err2, "Second ReadAt should succeed")

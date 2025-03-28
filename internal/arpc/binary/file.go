@@ -131,23 +131,23 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 // It expects each chunk to be preceded by its 4-byte size. A chunk size of 0
 // signals that data transfer has finished; it is then followed by a final total
 // which is compared to the accumulated data.
-func ReceiveData(stream *smux.Stream, buffer []byte) (int, error) {
+func ReceiveData(stream *smux.Stream, buffer []byte) ([]byte, int, error) {
 	totalRead := 0
 
 	for {
 		var chunkSize uint32
 		if err := binary.Read(stream, binary.LittleEndian, &chunkSize); err != nil {
-			return totalRead, fmt.Errorf("failed to read chunk size: %w", err)
+			return buffer, totalRead, fmt.Errorf("failed to read chunk size: %w", err)
 		}
 
 		// A chunk size of zero signals the end.
 		if chunkSize == 0 {
 			var finalTotal uint32
 			if err := binary.Read(stream, binary.LittleEndian, &finalTotal); err != nil {
-				return totalRead, fmt.Errorf("failed to read final total: %w", err)
+				return buffer, totalRead, fmt.Errorf("failed to read final total: %w", err)
 			}
 			if int(finalTotal) != totalRead {
-				return totalRead, fmt.Errorf("data length mismatch: expected %d bytes, got %d",
+				return buffer, totalRead, fmt.Errorf("data length mismatch: expected %d bytes, got %d",
 					finalTotal, totalRead)
 			}
 			break
@@ -170,9 +170,9 @@ func ReceiveData(stream *smux.Stream, buffer []byte) (int, error) {
 		n, err := io.ReadFull(stream, buffer[totalRead:requiredLen])
 		totalRead += n
 		if err != nil {
-			return totalRead, fmt.Errorf("failed to read chunk data: %w", err)
+			return buffer, totalRead, fmt.Errorf("failed to read chunk data: %w", err)
 		}
 	}
 
-	return totalRead, nil
+	return buffer, totalRead, nil
 }
