@@ -9,13 +9,11 @@ import (
 	"github.com/xtaci/smux"
 )
 
-// BufferPool groups a fixed-size buffer and an associated sync.Pool.
 type BufferPool struct {
 	Size int
 	Pool *sync.Pool
 }
 
-// Define a handful of pools with different buffer sizes.
 var bufferPools = []BufferPool{
 	{
 		Size: 4096,
@@ -43,61 +41,55 @@ var bufferPools = []BufferPool{
 	},
 }
 
-// selectBufferPool returns a pool and its size based on the requested total
-// length. The heuristic is: pick the smallest pool whose capacity is at least
-// the requested length; if none qualifies, use the largest pool.
 func selectBufferPool(totalLength int) (pool *sync.Pool, poolSize int) {
 	for _, bp := range bufferPools {
 		if totalLength <= bp.Size {
 			return bp.Pool, bp.Size
 		}
 	}
-	// Default to the largest pool.
 	last := bufferPools[len(bufferPools)-1]
 	return last.Pool, last.Size
 }
 
-// SendDataFromReader reads up to 'length' bytes from the provided io.Reader
-// in chunks. For each chunk it writes a 4-byte little-endian prefix (the actual
-// size of that chunk) to the smux stream, followed immediately by the chunk data.
-// After sending all chunks it writes a sentinel (0) and then the final total.
 func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	if stream == nil {
 		return fmt.Errorf("stream is nil")
 	}
 
-	// If length is zero, write the sentinel and a final total of 0 to signal an empty result.
+	// Write the total expected length prefix (64-bit little-endian).
+	if err := binary.Write(stream, binary.LittleEndian, uint64(length)); err != nil {
+		return fmt.Errorf("failed to write total length prefix: %w", err)
+	}
+
+	// If length is zero, write the sentinel and return.
 	if length == 0 || r == nil {
 		if err := binary.Write(stream, binary.LittleEndian, uint32(0)); err != nil {
-			return fmt.Errorf("failed to write sentinel: %w", err)
-		}
-		if err := binary.Write(stream, binary.LittleEndian, uint32(0)); err != nil {
-			return fmt.Errorf("failed to write final total: %w", err)
+			return fmt.Errorf("failed to write sentinel for zero length: %w", err)
 		}
 		return nil
 	}
 
-	// Choose a buffer pool based on the expected total length.
 	pool, poolSize := selectBufferPool(length)
 	chunkBuf := pool.Get().([]byte)
-	// Make sure we use the entire capacity of the buffer.
 	chunkBuf = chunkBuf[:poolSize]
 	defer pool.Put(chunkBuf)
 
-	totalRead := 0
+	totalSent := 0
 
-	for totalRead < length {
-		remaining := length - totalRead
+	for totalSent < length {
+		remaining := length - totalSent
 		readSize := min(len(chunkBuf), remaining)
 		if readSize <= 0 {
-			break
+			break // Should not happen if length > 0 initially, but safe check
 		}
 
 		n, err := r.Read(chunkBuf[:readSize])
 		if err != nil && err != io.EOF {
+			_ = binary.Write(stream, binary.LittleEndian, uint32(0))
 			return fmt.Errorf("read error: %w", err)
 		}
 		if n == 0 {
+			// EOF reached or reader behaving unexpectedly.
 			break
 		}
 
@@ -107,11 +99,17 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 		}
 
 		// Write the actual chunk data.
-		if _, err := stream.Write(chunkBuf[:n]); err != nil {
-			return fmt.Errorf("failed to write chunk data: %w", err)
+		written := 0
+		for written < n {
+			nw, err := stream.Write(chunkBuf[written:n])
+			if err != nil {
+				_ = binary.Write(stream, binary.LittleEndian, uint32(0))
+				return fmt.Errorf("failed to write chunk data: %w", err)
+			}
+			written += nw
 		}
 
-		totalRead += n
+		totalSent += n
 	}
 
 	// Write sentinel (0) to signal there are no more chunks.
@@ -119,59 +117,130 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 		return fmt.Errorf("failed to write sentinel: %w", err)
 	}
 
-	// Write the final total number of bytes sent.
-	if err := binary.Write(stream, binary.LittleEndian, uint32(totalRead)); err != nil {
-		return fmt.Errorf("failed to write final total: %w", err)
-	}
-
 	return nil
 }
 
-// ReceiveData reads data from the smux stream into the provided buffer.
-// It expects each chunk to be preceded by its 4-byte size. A chunk size of 0
-// signals that data transfer has finished; it is then followed by a final total
-// which is compared to the accumulated data.
-func ReceiveData(stream *smux.Stream, buffer []byte) ([]byte, int, error) {
+func ReceiveData(stream *smux.Stream, initialBuffer []byte) ([]byte, int, error) {
+	var totalLength uint64
+	if err := binary.Read(stream, binary.LittleEndian, &totalLength); err != nil {
+		// Check for EOF specifically, might indicate clean closure before data
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return initialBuffer, 0, fmt.Errorf(
+				"failed to read total length prefix (EOF/UnexpectedEOF): %w",
+				err,
+			)
+		}
+		return initialBuffer, 0, fmt.Errorf("failed to read total length prefix: %w", err)
+	}
+
+	// Add a reasonable maximum length check to prevent OOM attacks
+	const maxLength = 1 << 30 // 1 GiB limit, adjust as needed
+	if totalLength > maxLength {
+		return initialBuffer, 0, fmt.Errorf(
+			"declared total length %d exceeds maximum allowed %d",
+			totalLength,
+			maxLength,
+		)
+	}
+
+	var buffer []byte
+	if totalLength > 0 {
+		if cap(initialBuffer) >= int(totalLength) {
+			buffer = initialBuffer[:int(totalLength)]
+		} else {
+			buffer = make([]byte, int(totalLength))
+		}
+	} else {
+		buffer = initialBuffer[:0]
+	}
+
 	totalRead := 0
 
 	for {
 		var chunkSize uint32
 		if err := binary.Read(stream, binary.LittleEndian, &chunkSize); err != nil {
+			// If we expected 0 bytes total and read 0 bytes, EOF after total length is okay.
+			if totalLength == 0 && totalRead == 0 && (err == io.EOF || err == io.ErrUnexpectedEOF) {
+				// This case means totalLength=0 was sent, and then the stream closed before the sentinel(0)
+				// This might be acceptable depending on the sender logic, but indicates an incomplete transmission
+				// according to the current protocol (missing sentinel). Return mismatch error.
+				return buffer, totalRead, fmt.Errorf(
+					"data length mismatch: expected %d bytes, got %d (stream closed before sentinel)",
+					totalLength,
+					totalRead,
+				)
+			}
+			// If EOF happens *before* reading the expected amount, it's an error.
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return buffer, totalRead, fmt.Errorf(
+					"failed to read chunk size (EOF/UnexpectedEOF before completion): expected %d, got %d: %w",
+					totalLength,
+					totalRead,
+					err,
+				)
+			}
 			return buffer, totalRead, fmt.Errorf("failed to read chunk size: %w", err)
 		}
 
-		// A chunk size of zero signals the end.
 		if chunkSize == 0 {
-			var finalTotal uint32
-			if err := binary.Read(stream, binary.LittleEndian, &finalTotal); err != nil {
-				return buffer, totalRead, fmt.Errorf("failed to read final total: %w", err)
-			}
-			if int(finalTotal) != totalRead {
-				return buffer, totalRead, fmt.Errorf("data length mismatch: expected %d bytes, got %d",
-					finalTotal, totalRead)
-			}
+			// Sentinel found, break the loop to perform final check.
 			break
 		}
 
-		requiredLen := totalRead + int(chunkSize)
+		chunkLen := int(chunkSize)
+		expectedEnd := totalRead + chunkLen
 
-		if requiredLen > cap(buffer) {
-			newCap := cap(buffer) * 2
-			if newCap < requiredLen {
-				newCap = requiredLen
-			}
-			newBuffer := make([]byte, requiredLen, newCap)
-			copy(newBuffer, buffer[:totalRead])
-			buffer = newBuffer
-		} else {
-			buffer = buffer[:requiredLen]
+		if expectedEnd > int(totalLength) {
+			// Read the remaining unexpected data to clear the stream? Or just error out?
+			// Erroring out is safer as the stream state is inconsistent.
+			// Drain the specific chunk that overflows?
+			_, _ = io.CopyN(io.Discard, stream, int64(chunkLen))
+			return buffer, totalRead, fmt.Errorf(
+				"received chunk overflows declared total length: total %d, current %d, chunk %d",
+				totalLength,
+				totalRead,
+				chunkLen,
+			)
 		}
 
-		n, err := io.ReadFull(stream, buffer[totalRead:requiredLen])
-		totalRead += n
+		// Ensure buffer slice is correct (should be guaranteed by allocation/reslicing)
+		if expectedEnd > cap(buffer) {
+			// This should not happen if allocation logic is correct
+			return buffer, totalRead, fmt.Errorf(
+				"internal buffer error: required capacity %d, have %d",
+				expectedEnd,
+				cap(buffer),
+			)
+		}
+		// No need to reslice buffer here, as it was allocated/sliced to totalLength initially
+
+		n, err := io.ReadFull(stream, buffer[totalRead:expectedEnd])
+		// 'n' is implicitly added to totalRead outside the ReadFull call in this structure
+		totalRead += n // Keep track even if ReadFull returns an error partially
 		if err != nil {
-			return buffer, totalRead, fmt.Errorf("failed to read chunk data: %w", err)
+			// If ReadFull fails (e.g., EOF before chunk completion), report it
+			if err == io.ErrUnexpectedEOF {
+				err = fmt.Errorf(
+					"unexpected EOF reading chunk data: expected %d bytes for chunk, got %d: %w",
+					chunkLen,
+					n,
+					err,
+				)
+			} else {
+				err = fmt.Errorf("failed to read chunk data: %w", err)
+			}
+			return buffer, totalRead, err // Return partially read buffer and error
 		}
+		// totalRead is now expectedEnd after successful ReadFull
+	}
+
+	// Final check: Verify that the total bytes read match the declared total length *after* seeing the sentinel.
+	if totalRead != int(totalLength) {
+		return buffer, totalRead, fmt.Errorf(
+			"data length mismatch after sentinel: expected %d bytes, got %d",
+			totalLength,
+			totalRead,
+		)
 	}
 
 	return buffer, totalRead, nil
