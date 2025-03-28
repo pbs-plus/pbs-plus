@@ -120,38 +120,33 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	return nil
 }
 
-func ReceiveData(stream *smux.Stream, initialBuffer []byte) ([]byte, int, error) {
+func ReceiveData(stream *smux.Stream, buffer []byte) ([]byte, int, error) {
 	var totalLength uint64
 	if err := binary.Read(stream, binary.LittleEndian, &totalLength); err != nil {
 		// Check for EOF specifically, might indicate clean closure before data
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			return initialBuffer, 0, fmt.Errorf(
+			return buffer, 0, fmt.Errorf(
 				"failed to read total length prefix (EOF/UnexpectedEOF): %w",
 				err,
 			)
 		}
-		return initialBuffer, 0, fmt.Errorf("failed to read total length prefix: %w", err)
+		return buffer, 0, fmt.Errorf("failed to read total length prefix: %w", err)
 	}
 
 	// Add a reasonable maximum length check to prevent OOM attacks
 	const maxLength = 1 << 30 // 1 GiB limit, adjust as needed
 	if totalLength > maxLength {
-		return initialBuffer, 0, fmt.Errorf(
+		return buffer, 0, fmt.Errorf(
 			"declared total length %d exceeds maximum allowed %d",
 			totalLength,
 			maxLength,
 		)
 	}
 
-	var buffer []byte
 	if totalLength > 0 {
-		if cap(initialBuffer) >= int(totalLength) {
-			buffer = initialBuffer[:int(totalLength)]
-		} else {
+		if cap(buffer) < int(totalLength) {
 			buffer = make([]byte, int(totalLength))
 		}
-	} else {
-		buffer = initialBuffer[:0]
 	}
 
 	totalRead := 0
