@@ -153,13 +153,21 @@ func ReceiveData(stream *smux.Stream, buffer []byte) (int, error) {
 			break
 		}
 
-		// Ensure the provided buffer is large enough.
-		if totalRead+int(chunkSize) > len(buffer) {
-			return totalRead, fmt.Errorf("buffer overflow: need %d bytes, have %d",
-				totalRead+int(chunkSize), len(buffer))
+		requiredLen := totalRead + int(chunkSize)
+
+		if requiredLen > cap(buffer) {
+			newCap := cap(buffer) * 2
+			if newCap < requiredLen {
+				newCap = requiredLen
+			}
+			newBuffer := make([]byte, requiredLen, newCap)
+			copy(newBuffer, buffer[:totalRead])
+			buffer = newBuffer
+		} else {
+			buffer = buffer[:requiredLen]
 		}
 
-		n, err := io.ReadFull(stream, buffer[totalRead:totalRead+int(chunkSize)])
+		n, err := io.ReadFull(stream, buffer[totalRead:requiredLen])
 		totalRead += n
 		if err != nil {
 			return totalRead, fmt.Errorf("failed to read chunk data: %w", err)
