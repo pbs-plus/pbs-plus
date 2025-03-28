@@ -292,7 +292,7 @@ func (fs *ARPCFS) ReadDir(path string) (types.ReadDirEntries, error) {
 
 	var resp types.ReadDirEntries
 	req := types.ReadDirReq{Path: path}
-	bytesRead, err := fs.session.CallBinary(fs.ctx, fs.JobId+"/ReadDir", &req, buf)
+	buf, bytesRead, err := fs.session.CallBinary(fs.ctx, fs.JobId+"/ReadDir", &req)
 	if err != nil {
 		syslog.L.Error(err).
 			WithField("path", req.Path).
