@@ -468,12 +468,10 @@ func TestCallBinary_Success(t *testing.T) {
 	}()
 
 	// On the client side, use CallBinary to send a request.
-	buffer := make([]byte, 64)
-	buffer1, n, err := clientSess.CallBinary(context.Background(), "buffer", nil, buffer)
+	buffer, n, err := clientSess.CallBinary(context.Background(), "buffer", nil)
 	if err != nil {
 		t.Fatalf("client: CallBinary error: %v", err)
 	}
-	buffer = buffer1
 
 	expected := "hello world"
 	if n != len(expected) {
@@ -530,12 +528,10 @@ func TestCallBinary_ErrorResponse(t *testing.T) {
 	defer cleanup()
 
 	// Prepare a buffer for the expected binary payload.
-	buffer := make([]byte, 64)
-	buffer1, n, err := clientSession.CallBinary(context.Background(), "buffer_error", nil, buffer)
+	_, n, err := clientSession.CallBinary(context.Background(), "buffer_error", nil)
 	if err == nil {
 		t.Fatal("expected error response from CallBinary, got nil")
 	}
-	buffer = buffer1
 	if !strings.Contains(err.Error(), "buffer error occurred") {
 		t.Fatalf("expected error message to contain 'buffer error occurred', got: %v", err)
 	}
@@ -597,13 +593,11 @@ func TestCallBinary_Concurrency(t *testing.T) {
 			payload := MapStringIntMsg{"id": id}
 
 			// Allocate a buffer to hold the binary response.
-			buffer := make([]byte, 64)
-			buffer1, n, err := clientSession.CallBinary(context.Background(), "binary_concurrent", &payload, buffer)
+			buffer, n, err := clientSession.CallBinary(context.Background(), "binary_concurrent", &payload)
 			if err != nil {
 				t.Errorf("client %d: CallBinary error: %v", id, err)
 				return
 			}
-			buffer = buffer1
 
 			// Verify the response.
 			expected := fmt.Sprintf("binary data for client %d", id)
