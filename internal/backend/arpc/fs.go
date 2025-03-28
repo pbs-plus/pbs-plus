@@ -204,7 +204,7 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 			WithMessage("arpc session is nil").
 			WithJob(fs.JobId).
 			Write()
-		return types.AgentFileInfo{}, syscall.ENOENT
+		return types.AgentFileInfo{}, syscall.ENODATA
 	}
 
 	req := types.StatReq{Path: filename}
@@ -216,7 +216,7 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 				WithJob(fs.JobId).
 				Write()
 		}
-		return types.AgentFileInfo{}, syscall.ENOENT
+		return types.AgentFileInfo{}, syscall.ENODATA
 	}
 
 	err = fi.Decode(raw)
@@ -227,7 +227,7 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 				WithJob(fs.JobId).
 				Write()
 		}
-		return types.AgentFileInfo{}, syscall.ENOENT
+		return types.AgentFileInfo{}, syscall.ENODATA
 	}
 
 	return fi, nil
