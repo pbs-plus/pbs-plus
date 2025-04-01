@@ -160,6 +160,12 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             name: "retry-interval",
           },
           {
+            xtype: "proxmoxtextfield",
+            fieldLabel: gettext("Max number of entries per directory"),
+            emptyText: gettext("1048576"),
+            name: "max-dir-entries",
+          },
+          {
             xtype: "combo",
             fieldLabel: gettext("Backup Mode"),
             name: "mode",

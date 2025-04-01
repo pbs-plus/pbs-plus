@@ -185,13 +185,6 @@ func processPBSProxyLogs(upid string, clientLogFile *syslog.BackupLogger) (bool,
 
 	// Build and write final status line
 	var sb strings.Builder
-	if warningsNum > 0 {
-		sb.WriteString(timestamp)
-		sb.WriteString(": TASK WARNINGS: ")
-		sb.WriteString(strconv.Itoa(warningsNum))
-		sb.WriteString("\n")
-	}
-
 	sb.WriteString(timestamp)
 	if hasError {
 		sb.WriteString(": ")
@@ -200,7 +193,13 @@ func processPBSProxyLogs(upid string, clientLogFile *syslog.BackupLogger) (bool,
 		sb.WriteString(": TASK ERROR: Job cancelled")
 		cancelled = true
 	} else {
-		sb.WriteString(": TASK OK")
+		if warningsNum > 0 {
+			sb.WriteString(timestamp)
+			sb.WriteString(": TASK WARNINGS: ")
+			sb.WriteString(strconv.Itoa(warningsNum))
+		} else {
+			sb.WriteString(": TASK OK")
+		}
 		succeeded = true
 	}
 	sb.WriteString("\n")
