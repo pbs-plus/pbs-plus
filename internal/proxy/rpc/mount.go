@@ -118,7 +118,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		reply.Message = "MountHandler: Failed to send backup request to target -> unable to reach child target"
 		return errors.New(reply.Message)
 	}
-	arpcFS := arpcfs.NewARPCFS(s.Store.Ctx, arpcFSRPC, args.TargetHostname, args.JobId, backupMode)
+	arpcFS := arpcfs.NewARPCFS(s.Store.Ctx, arpcFSRPC, args.TargetHostname, job, backupMode)
 	if arpcFS == nil {
 		reply.Status = 500
 		reply.Message = "MountHandler: Failed to send create ARPCFS"
