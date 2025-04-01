@@ -152,8 +152,7 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 	err := row.Scan(&job.ID, &job.Store, &job.Mode, &job.SourceMode,
 		&job.Target, &job.Subpath, &job.Schedule, &job.Comment,
 		&job.NotificationMode, &job.Namespace, &job.CurrentPID, &job.LastRunUpid,
-		&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval,
-		&job.MaxDirEntries)
+		&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval, &job.MaxDirEntries)
 	if err != nil {
 		return types.Job{}, fmt.Errorf("GetJob: error fetching job: %w", err)
 	}
