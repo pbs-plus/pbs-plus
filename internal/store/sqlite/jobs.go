@@ -115,7 +115,7 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, job.ID, job.Store, job.Mode, job.SourceMode, job.Target, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace, job.CurrentPID,
-		job.LastRunUpid, job.LastSuccessfulUpid, job.Retry, job.RetryInterval, job.RawExclusions,
+		job.LastRunUpid, job.LastSuccessfulUpid, job.Retry, job.RetryInterval,
 		job.MaxDirEntries)
 	if err != nil {
 		return fmt.Errorf("CreateJob: error inserting job: %w", err)
