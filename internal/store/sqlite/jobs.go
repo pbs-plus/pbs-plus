@@ -111,11 +111,11 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
         INSERT INTO jobs (
             id, store, mode, source_mode, target, subpath, schedule, comment,
             notification_mode, namespace, current_pid, last_run_upid, last_successful_upid, retry,
-            retry_interval, raw_exclusions, max_dir_entries
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            retry_interval, max_dir_entries
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, job.ID, job.Store, job.Mode, job.SourceMode, job.Target, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace, job.CurrentPID,
-		job.LastRunUpid, job.LastSuccessfulUpid, job.Retry, job.RetryInterval, job.RawExclusions,
+		job.LastRunUpid, job.LastSuccessfulUpid, job.Retry, job.RetryInterval,
 		job.MaxDirEntries)
 	if err != nil {
 		return fmt.Errorf("CreateJob: error inserting job: %w", err)
@@ -144,7 +144,7 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 	row := database.readDb.QueryRow(`
         SELECT id, store, mode, source_mode, target, subpath, schedule, comment,
                notification_mode, namespace, current_pid, last_run_upid, last_successful_upid,
-							 retry, retry_interval, raw_exclusions, max_dir_entries
+							 retry, retry_interval, max_dir_entries
         FROM jobs WHERE id = ?
     `, id)
 
@@ -152,8 +152,7 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 	err := row.Scan(&job.ID, &job.Store, &job.Mode, &job.SourceMode,
 		&job.Target, &job.Subpath, &job.Schedule, &job.Comment,
 		&job.NotificationMode, &job.Namespace, &job.CurrentPID, &job.LastRunUpid,
-		&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval, &job.RawExclusions,
-		&job.MaxDirEntries)
+		&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval, &job.MaxDirEntries)
 	if err != nil {
 		return types.Job{}, fmt.Errorf("GetJob: error fetching job: %w", err)
 	}
@@ -244,13 +243,13 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
         UPDATE jobs SET store = ?, mode = ?, source_mode = ?, target = ?,
             subpath = ?, schedule = ?, comment = ?, notification_mode = ?,
             namespace = ?, current_pid = ?, last_run_upid = ?, retry = ?,
-            retry_interval = ?, raw_exclusions = ?, last_successful_upid = ?,
+            retry_interval = ?, last_successful_upid = ?,
 						max_dir_entries = ?
         WHERE id = ?
     `, job.Store, job.Mode, job.SourceMode, job.Target, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace,
 		job.CurrentPID, job.LastRunUpid, job.Retry, job.RetryInterval,
-		job.RawExclusions, job.LastSuccessfulUpid, job.MaxDirEntries, job.ID)
+		job.LastSuccessfulUpid, job.MaxDirEntries, job.ID)
 	if err != nil {
 		return fmt.Errorf("UpdateJob: error updating job: %w", err)
 	}
@@ -306,7 +305,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 	rows, err := database.readDb.Query(`
 			SELECT id, store, mode, source_mode, target, subpath, schedule, comment,
 						 notification_mode, namespace, current_pid, last_run_upid, last_successful_upid,
-						 retry, retry_interval, raw_exclusions, max_dir_entries
+						 retry, retry_interval, max_dir_entries
 			FROM jobs
   `)
 	if err != nil {
@@ -320,7 +319,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 		err := rows.Scan(&job.ID, &job.Store, &job.Mode, &job.SourceMode,
 			&job.Target, &job.Subpath, &job.Schedule, &job.Comment,
 			&job.NotificationMode, &job.Namespace, &job.CurrentPID, &job.LastRunUpid,
-			&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval, &job.RawExclusions,
+			&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval,
 			&job.MaxDirEntries)
 		if err != nil {
 			continue
