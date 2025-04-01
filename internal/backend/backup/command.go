@@ -79,6 +79,7 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 		fmt.Sprintf("%s.pxar:%s", strings.ReplaceAll(job.Target, " ", "-"), srcPath),
 		"--repository", jobStore,
 		detectionMode,
+		"--entries-max", fmt.Sprintf("%d", job.MaxDirEntries),
 		"--backup-id", backupId,
 		"--crypt-mode=none",
 	}

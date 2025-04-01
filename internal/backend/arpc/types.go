@@ -7,6 +7,7 @@ import (
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
 )
 
 // ARPCFS implements billy.Filesystem using aRPC calls
@@ -14,7 +15,7 @@ type ARPCFS struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	session  *arpc.Session
-	JobId    string
+	Job      storeTypes.Job
 	Hostname string
 	Mount    *gofuse.Server
 	basePath string

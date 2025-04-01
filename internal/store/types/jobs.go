@@ -14,6 +14,7 @@ type Job struct {
 	NextRun               int64       `json:"next-run"`
 	Retry                 int         `config:"type=int" json:"retry"`
 	RetryInterval         int         `config:"type=int" json:"retry-interval"`
+	MaxDirEntries         int         `json:"max-dir-entries"`
 	CurrentFileCount      int         `json:"current_file_count,omitempty"`
 	CurrentFolderCount    int         `json:"current_folder_count,omitempty"`
 	CurrentFilesSpeed     int         `json:"current_files_speed,omitempty"`
