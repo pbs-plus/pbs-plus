@@ -35,7 +35,7 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 		return nil, fmt.Errorf("RunBackup: failed to build command arguments")
 	}
 
-	cmd := exec.CommandContext(ctx, "/usr/bin/proxmox-backup-client", cmdArgs...)
+	cmd := exec.CommandContext(ctx, "/usr/bin/prlimit", cmdArgs...)
 	cmd.Env = buildCommandEnv(storeInstance)
 
 	return cmd, nil
@@ -73,6 +73,8 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 	}
 
 	cmdArgs := []string{
+		"--nofile=1024:1024",
+		"/usr/bin/proxmox-backup-client",
 		"backup",
 		fmt.Sprintf("%s.pxar:%s", strings.ReplaceAll(job.Target, " ", "-"), srcPath),
 		"--repository", jobStore,

@@ -17,6 +17,7 @@ PIDFile=/run/proxmox-backup/pbs-plus.pid
 Restart=on-failure
 User=root
 Group=root
+LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
