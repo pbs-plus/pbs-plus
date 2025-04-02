@@ -194,7 +194,6 @@ func processPBSProxyLogs(upid string, clientLogFile *syslog.BackupLogger) (bool,
 		cancelled = true
 	} else {
 		if warningsNum > 0 {
-			sb.WriteString(timestamp)
 			sb.WriteString(": TASK WARNINGS: ")
 			sb.WriteString(strconv.Itoa(warningsNum))
 		} else {
