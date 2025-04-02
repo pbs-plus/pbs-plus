@@ -204,34 +204,34 @@ func processPBSProxyLogs(upid string, clientLogFile *syslog.BackupLogger) (bool,
 	sb.WriteString("\n")
 
 	if _, err := tmpWriter.WriteString(sb.String()); err != nil {
-		return false, false, 0, fmt.Errorf("failed to write final status: %w", err)
+		return false, false, warningsNum, fmt.Errorf("failed to write final status: %w", err)
 	}
 
 	if err := tmpWriter.Flush(); err != nil {
-		return false, false, 0, fmt.Errorf("failed to flush temporary writer: %w", err)
+		return false, false, warningsNum, fmt.Errorf("failed to flush temporary writer: %w", err)
 	}
 
 	// Close the temp file before renaming
 	if err := tmpFile.Close(); err != nil {
-		return false, false, 0, fmt.Errorf("closing temporary file: %w", err)
+		return false, false, warningsNum, fmt.Errorf("closing temporary file: %w", err)
 	}
 	tmpFile = nil // Prevent cleanup in deferred function
 
 	// Ensure the temporary file has the same permissions, ownership, and timestamps
 	if err := os.Chmod(tmpName, origMode); err != nil {
-		return false, false, 0, fmt.Errorf("setting permissions on temporary file: %w", err)
+		return false, false, warningsNum, fmt.Errorf("setting permissions on temporary file: %w", err)
 	}
 	if err := os.Chown(tmpName, origUid, origGid); err != nil {
-		return false, false, 0, fmt.Errorf("setting ownership on temporary file: %w", err)
+		return false, false, warningsNum, fmt.Errorf("setting ownership on temporary file: %w", err)
 	}
 	if err := os.Chtimes(tmpName, origAccessTime, origModTime); err != nil {
-		return false, false, 0, fmt.Errorf("setting timestamps on temporary file: %w", err)
+		return false, false, warningsNum, fmt.Errorf("setting timestamps on temporary file: %w", err)
 	}
 
 	// Replace the original log file with the processed temporary file.
 	if err := os.Rename(tmpName, logFilePath); err != nil {
-		return false, false, 0, fmt.Errorf("replacing original file: %w", err)
+		return false, false, warningsNum, fmt.Errorf("replacing original file: %w", err)
 	}
 
-	return succeeded, cancelled, int(warningsNum), nil
+	return succeeded, cancelled, warningsNum, nil
 }
