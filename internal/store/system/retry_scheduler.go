@@ -71,6 +71,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+LimitNOFILE=1048576
 ExecStart=%s`, job.ID, attempt, execStartCmd)
 
 	fileName := fmt.Sprintf("pbs-plus-job-%s-retry-%d.service",
