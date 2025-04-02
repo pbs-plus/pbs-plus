@@ -83,7 +83,9 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		system.RemoveAllRetrySchedules(job)
 
-		op, err := backup.RunBackup(context.Background(), job, storeInstance, false)
+		extExclusion := []string{}
+
+		op, err := backup.RunBackup(context.Background(), job, storeInstance, false, &extExclusion)
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", job.ID).Write()
 
@@ -107,7 +109,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 					}
 				}
 
-				if err := system.SetRetrySchedule(job); err != nil {
+				if err := system.SetRetrySchedule(job, extExclusion); err != nil {
 					syslog.L.Error(err).WithField("jobId", job.ID).Write()
 				}
 			}

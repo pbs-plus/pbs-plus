@@ -32,7 +32,12 @@ func (e *LogEntry) Write() {
 		if backupLogger != nil {
 			var sb strings.Builder
 
-			sb.WriteString("[" + e.Level + "]")
+			if e.Level == "error" {
+				sb.WriteString("[non-fatal " + e.Level + "]")
+			} else {
+				sb.WriteString("[" + e.Level + "]")
+			}
+
 			if e.Err != nil {
 				sb.WriteString(" " + e.Err.Error())
 			}
