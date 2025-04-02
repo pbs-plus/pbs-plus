@@ -15,7 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 )
 
-func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *store.Store, srcPath string, isAgent bool) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
@@ -30,7 +30,7 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 		return nil, fmt.Errorf("RunBackup: invalid job store configuration")
 	}
 
-	cmdArgs := buildCommandArgs(storeInstance, job, srcPath, jobStore, backupId)
+	cmdArgs := buildCommandArgs(storeInstance, job, srcPath, jobStore, backupId, extraExclusions)
 	if len(cmdArgs) == 0 {
 		return nil, fmt.Errorf("RunBackup: failed to build command arguments")
 	}
@@ -59,7 +59,7 @@ func getBackupId(isAgent bool, targetName string) (string, error) {
 	return strings.TrimSpace(strings.Split(targetName, " - ")[0]), nil
 }
 
-func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string, jobStore string, backupId string) []string {
+func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string, jobStore string, backupId string, extraExclusions []string) []string {
 	if srcPath == "" || jobStore == "" || backupId == "" {
 		return nil
 	}
@@ -85,6 +85,17 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 	}
 
 	// Add exclusions
+	if extraExclusions != nil {
+		for _, extraExclusion := range extraExclusions {
+			path := extraExclusion
+			if !strings.HasPrefix(extraExclusion, "/") && !strings.HasPrefix(extraExclusion, "!") && !strings.HasPrefix(extraExclusion, "**/") {
+				path = "**/" + path
+			}
+
+			cmdArgs = append(cmdArgs, "--exclude", path)
+		}
+	}
+
 	for _, exclusion := range job.Exclusions {
 		path := exclusion.Path
 		if !strings.HasPrefix(exclusion.Path, "/") && !strings.HasPrefix(exclusion.Path, "!") && !strings.HasPrefix(exclusion.Path, "**/") {

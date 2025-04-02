@@ -74,6 +74,7 @@ func RunBackup(
 	job types.Job,
 	storeInstance *store.Store,
 	skipCheck bool,
+	extraExclusions *[]string,
 ) (*BackupOperation, error) {
 	jobInstanceMutex := flock.New(
 		fmt.Sprintf("/tmp/pbs-plus-mutex-job-%s", job.ID),
@@ -162,7 +163,7 @@ func RunBackup(
 	}
 	srcPath = filepath.Join(srcPath, job.Subpath)
 
-	cmd, err := prepareBackupCommand(ctx, job, storeInstance, srcPath, isAgent)
+	cmd, err := prepareBackupCommand(ctx, job, storeInstance, srcPath, isAgent, *extraExclusions)
 	if err != nil {
 		errCleanUp()
 		return nil, fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
@@ -292,11 +293,20 @@ func RunBackup(
 		job.CurrentPID = 0
 
 		close(errorMonitorDone)
-		succeeded, cancelled, warningsNum, err := processPBSProxyLogs(task.UPID, clientLogFile)
+
+		for _, extraExclusion := range *extraExclusions {
+			syslog.L.Warn().WithJob(job.ID).WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", extraExclusion))
+		}
+
+		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(task.UPID, clientLogFile)
 		if err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed to process logs").
 				Write()
+		}
+
+		if errorPath != "" {
+			*extraExclusions = append(*extraExclusions, errorPath)
 		}
 
 		_ = clientLogFile.Close()
@@ -310,7 +320,7 @@ func RunBackup(
 		if succeeded || cancelled {
 			system.RemoveAllRetrySchedules(job)
 		} else {
-			if err := system.SetRetrySchedule(job); err != nil {
+			if err := system.SetRetrySchedule(job, *extraExclusions); err != nil {
 				syslog.L.Error(err).WithField("jobId", job.ID).Write()
 			}
 		}

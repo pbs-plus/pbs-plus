@@ -45,14 +45,27 @@ import (
 
 var Version = "v0.0.0"
 
+type arrayFlags []string
+
+func (i *arrayFlags) String() string {
+	return fmt.Sprintf("%v", *i)
+}
+
+func (i *arrayFlags) Set(value string) error {
+	*i = append(*i, value)
+	return nil
+}
+
 func main() {
 	mainCtx, mainCancel := context.WithCancel(context.Background())
 	defer mainCancel()
 
 	proxmox.InitializeProxmox()
 
+	var extExclusions arrayFlags
 	jobRun := flag.String("job", "", "Job ID to execute")
 	retryAttempts := flag.String("retry", "", "Current attempt number")
+	flag.Var(&extExclusions, "skip", "Extra exclusions")
 	flag.Parse()
 
 	argsWithoutProg := os.Args[1:]
@@ -131,7 +144,9 @@ func main() {
 			system.RemoveAllRetrySchedules(jobTask)
 		}
 
-		op, err := backup.RunBackup(ctx, jobTask, storeInstance, true)
+		arrExtExc := []string(extExclusions)
+
+		op, err := backup.RunBackup(ctx, jobTask, storeInstance, true, &arrExtExc)
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
 
@@ -154,7 +169,7 @@ func main() {
 						syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
 					}
 				}
-				if err := system.SetRetrySchedule(jobTask); err != nil {
+				if err := system.SetRetrySchedule(jobTask, extExclusions); err != nil {
 					syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
 				}
 			}
