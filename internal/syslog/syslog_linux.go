@@ -5,6 +5,7 @@ package syslog
 import (
 	"fmt"
 	"log/syslog"
+	"strings"
 
 	"github.com/rs/zerolog"
 )
@@ -29,7 +30,24 @@ func (e *LogEntry) Write() {
 	if e.JobID != "" {
 		backupLogger := GetExistingBackupLogger(e.JobID)
 		if backupLogger != nil {
-			backupLogger.Write(fmt.Sprintf("[%s] %s - %v (%v)", e.Level, e.Message, e.Err, e.Fields))
+			var sb strings.Builder
+
+			sb.WriteString("[" + e.Level + "]")
+			if e.Err != nil {
+				sb.WriteString(" " + e.Err.Error())
+			}
+
+			if e.Message != "" {
+				sb.WriteString(": " + e.Message)
+			}
+
+			if e.Fields != nil {
+				sb.WriteString(fmt.Sprintf(" (debug values: %v)", e.Fields))
+			}
+
+			backupLogger.Write(sb.String())
+
+			sb.Reset()
 		}
 		e.Fields["jobId"] = e.JobID
 	}
