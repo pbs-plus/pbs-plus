@@ -48,11 +48,20 @@ WantedBy=timers.target`, job.ID, attempt, schedule)
 	return nil
 }
 
-func generateRetryService(job types.Job, attempt int) error {
+func generateRetryService(job types.Job, attempt int, extraExclusions []string) error {
 	if strings.Contains(job.ID, "/") ||
 		strings.Contains(job.ID, "\\") ||
 		strings.Contains(job.ID, "..") {
 		return fmt.Errorf("generateRetryService: invalid job ID -> %s", job.ID)
+	}
+
+	execStartCmd := fmt.Sprintf(`/usr/bin/pbs-plus -job="%s" -retry="%d"`, job.ID, attempt)
+
+	for _, exclusion := range extraExclusions {
+		if strings.Contains(exclusion, `"`) {
+			continue
+		}
+		execStartCmd += fmt.Sprintf(` -skip="%s"`, exclusion)
 	}
 
 	content := fmt.Sprintf(`[Unit]
@@ -62,7 +71,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/pbs-plus -job="%s" -retry="%d"`, job.ID, attempt, job.ID, attempt)
+LimitNOFILE=1048576
+ExecStart=%s`, job.ID, attempt, execStartCmd)
 
 	fileName := fmt.Sprintf("pbs-plus-job-%s-retry-%d.service",
 		strings.ReplaceAll(job.ID, " ", "-"), attempt)
@@ -114,7 +124,7 @@ func RemoveAllRetrySchedules(job types.Job) {
 	_ = cmd.Run()
 }
 
-func SetRetrySchedule(job types.Job) error {
+func SetRetrySchedule(job types.Job, extraExclusions []string) error {
 	maxRetry := job.Retry
 	retryPattern := filepath.Join(
 		constants.TimerBasePath,
@@ -184,7 +194,7 @@ func SetRetrySchedule(job types.Job) error {
 	retrySchedule := retryTime.Format(layout)
 
 	// Create the new retry service and timer unit files.
-	if err := generateRetryService(job, newAttempt); err != nil {
+	if err := generateRetryService(job, newAttempt, extraExclusions); err != nil {
 		return fmt.Errorf("SetRetrySchedule: error generating retry service: %w", err)
 	}
 	if err := generateRetryTimer(job, retrySchedule, newAttempt); err != nil {
