@@ -177,6 +177,8 @@ func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (Task, error) {
 	}
 	if lastLog == "TASK OK" {
 		resp.ExitStatus = "OK"
+	} else if strings.HasPrefix(lastLog, "TASK WARNINGS: ") {
+		resp.ExitStatus = strings.TrimPrefix(lastLog, "TASK ")
 	} else {
 		resp.ExitStatus = strings.TrimPrefix(lastLog, "TASK ERROR: ")
 	}
