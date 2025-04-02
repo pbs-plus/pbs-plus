@@ -59,7 +59,6 @@ func generateRetryService(job types.Job, attempt int, extraExclusions []string) 
 
 	for _, exclusion := range extraExclusions {
 		if strings.Contains(exclusion, `"`) {
-			fmt.Printf("Warning: Skipping exclusion with quote: %s\n", exclusion)
 			continue
 		}
 		execStartCmd += fmt.Sprintf(` -skip="%s"`, exclusion)
