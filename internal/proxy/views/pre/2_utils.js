@@ -15,7 +15,7 @@ Ext.define('PBS.PlusUtils', {
         return 'warning';
     }
 
-    let match = status.match(/^QUEUED: (.*)$/);
+    match = status.match(/^QUEUED: (.*)$/);
     if (match) {
         return 'queued';
     }
