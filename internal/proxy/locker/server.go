@@ -136,12 +136,16 @@ func StartLockerServer(watcher chan struct{}, socketPath string) error {
 		WithField("socket", socketPath).
 		Write()
 
+	ready := make(chan struct{})
 	go func() {
 		if watcher != nil {
 			defer close(watcher)
 		}
+		close(ready)
 		rpc.Accept(listener)
 	}()
+
+	<-ready
 
 	return nil
 }
