@@ -196,7 +196,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	succeeded := false
 	cancelled := false
 	warningsNum := int(clientLogFile.Count.Load())
-	if pbsWarnings == 0 {
+	if pbsWarnings > 0 {
 		warningsNum += pbsWarnings
 	} else {
 		warningsNum += pbsWarningRawCount
