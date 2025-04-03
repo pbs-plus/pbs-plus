@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/rpc"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -115,8 +114,6 @@ func (s *LockerRPC) Unlock(args *Args, reply *Reply) error {
 
 func StartLockerServer(watcher chan struct{}, socketPath string) error {
 	_ = os.Remove(socketPath)
-	_ = os.MkdirAll(filepath.Dir(socketPath), os.ModeDir)
-
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %v", socketPath, err)
