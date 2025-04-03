@@ -56,8 +56,9 @@ Ext.define('PBS.PlusUtils', {
 	    case 'ok':
 	      icon = 'check good';
 	      text = gettext("OK");
+        break;
 	    case 'queued':
-	      icon = 'tasks good';
+	      icon = 'tasks faded';
 	      break;
 	  }
 
