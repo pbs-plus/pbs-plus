@@ -134,7 +134,7 @@ func main() {
 
 		jobTask, err := storeInstance.Database.GetJob(*jobRun)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			syslog.L.Error(err).WithField("jobId", *jobRun).Write()
 			return
 		}
 
