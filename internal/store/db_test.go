@@ -19,7 +19,8 @@ import (
 )
 
 var (
-	testDbPath string
+	testDbPath     string
+	testLockerPath string
 )
 
 // TestMain handles setup and teardown for all tests
@@ -33,6 +34,7 @@ func TestMain(m *testing.M) {
 	}
 
 	testDbPath = filepath.Join(testBasePath, "test.db")
+	testLockerPath = filepath.Join(testBasePath, "test.lock")
 
 	// Run tests
 	code := m.Run()
@@ -46,7 +48,7 @@ func TestMain(m *testing.M) {
 // setupTestStore creates a new store instance with temporary paths
 func setupTestStore(t *testing.T) *Store {
 	go func() {
-		rpclocker.StartLockerServer(t.Context())
+		rpclocker.StartLockerServer(t.Context(), testLockerPath)
 	}()
 
 	// Create test directories

@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -112,13 +111,13 @@ func (s *LockerRPC) Unlock(args *Args, reply *Reply) error {
 	return nil
 }
 
-func StartLockerServer(ctx context.Context) error {
-	_ = os.RemoveAll(constants.LockSocketPath)
-	_ = os.MkdirAll(filepath.Dir(constants.LockSocketPath), os.ModeDir)
+func StartLockerServer(ctx context.Context, socketPath string) error {
+	_ = os.RemoveAll(socketPath)
+	_ = os.MkdirAll(filepath.Dir(socketPath), os.ModeDir)
 
-	listener, err := net.Listen("unix", constants.LockSocketPath)
+	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %v", constants.LockSocketPath, err)
+		return fmt.Errorf("failed to listen on %s: %v", socketPath, err)
 	}
 
 	service := &LockerRPC{
@@ -132,7 +131,7 @@ func StartLockerServer(ctx context.Context) error {
 
 	syslog.L.Info().
 		WithMessage("lock server starting").
-		WithField("socket", constants.LockSocketPath).
+		WithField("socket", socketPath).
 		Write()
 
 	go func() {

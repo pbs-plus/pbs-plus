@@ -345,7 +345,7 @@ func main() {
 				syslog.L.Error(rpcCtx.Err()).WithMessage("locker server cancelled")
 				return
 			default:
-				if err := rpclocker.StartLockerServer(rpcCtx); err != nil {
+				if err := rpclocker.StartLockerServer(rpcCtx, constants.LockSocketPath); err != nil {
 					syslog.L.Error(err).WithMessage("locker server failed, restarting")
 				}
 			}
