@@ -252,7 +252,16 @@ func RunRPCServer(ctx context.Context, socketPath string, storeInstance *store.S
 
 	select {
 	case <-ctx.Done():
+		syslog.L.Info().
+			WithMessage("rpc mount server shutting down due to context cancellation").
+			WithField("socket", socketPath).
+			Write()
+		_ = os.Remove(socketPath)
 	case <-watcher:
+		syslog.L.Info().
+			WithMessage("rpc mount server shut down unexpectedly").
+			WithField("socket", socketPath).
+			Write()
 	}
 
 	return nil
