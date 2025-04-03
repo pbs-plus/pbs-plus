@@ -8,8 +8,6 @@ import (
 	"net"
 	"net/rpc"
 	"time"
-
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 )
 
 // LockerClient provides a client interface to the LockerRPC service.
@@ -21,7 +19,7 @@ type LockerClient struct {
 func NewLockerClient(socketPath string) (*LockerClient, error) {
 	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to lock server at %s: %w", constants.LockSocketPath, err)
+		return nil, fmt.Errorf("failed to connect to lock server at %s: %w", socketPath, err)
 	}
 	return &LockerClient{client: rpc.NewClient(conn)}, nil
 }
