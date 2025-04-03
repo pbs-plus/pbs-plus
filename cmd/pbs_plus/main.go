@@ -66,6 +66,7 @@ func main() {
 	var extExclusions arrayFlags
 	jobRun := flag.String("job", "", "Job ID to execute")
 	retryAttempts := flag.String("retry", "", "Current attempt number")
+	webRun := flag.Bool("web", false, "Job executed from Web UI")
 	flag.Var(&extExclusions, "skip", "Extra exclusions")
 	flag.Parse()
 
@@ -147,7 +148,7 @@ func main() {
 
 		arrExtExc := []string(extExclusions)
 
-		op, err := backup.RunBackup(ctx, jobTask, storeInstance, true, &arrExtExc)
+		op, err := backup.RunBackup(ctx, jobTask, storeInstance, true, *webRun, &arrExtExc)
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
 

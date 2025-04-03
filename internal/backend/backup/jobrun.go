@@ -75,6 +75,7 @@ func RunBackup(
 	job types.Job,
 	storeInstance *store.Store,
 	skipCheck bool,
+	web bool,
 	extraExclusions *[]string,
 ) (*BackupOperation, error) {
 	var err error
@@ -112,7 +113,7 @@ func RunBackup(
 		close(errorMonitorDone)
 	}
 
-	queueTask, err := proxmox.GenerateQueuedTask(job)
+	queueTask, err := proxmox.GenerateQueuedTask(job, web)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
 	} else {
