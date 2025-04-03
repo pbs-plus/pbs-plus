@@ -27,6 +27,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/plus"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/targets"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/tokens"
+	rpclocker "github.com/pbs-plus/pbs-plus/internal/proxy/locker"
 	mw "github.com/pbs-plus/pbs-plus/internal/proxy/middlewares"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/proxy/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -330,8 +331,22 @@ func main() {
 				syslog.L.Error(rpcCtx.Err()).WithMessage("rpc server cancelled")
 				return
 			default:
-				if err := rpcmount.StartRPCServer(constants.MountSocketPath, storeInstance); err != nil {
+				if err := rpcmount.RunRPCServer(rpcCtx, constants.MountSocketPath, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("rpc server failed, restarting")
+				}
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-rpcCtx.Done():
+				syslog.L.Error(rpcCtx.Err()).WithMessage("locker server cancelled")
+				return
+			default:
+				if err := rpclocker.RunLockerServer(rpcCtx, constants.LockSocketPath); err != nil {
+					syslog.L.Error(err).WithMessage("locker server failed, restarting")
 				}
 			}
 		}

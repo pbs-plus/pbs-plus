@@ -10,6 +10,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/arpc"
+	rpclocker "github.com/pbs-plus/pbs-plus/internal/proxy/locker"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/sqlite"
@@ -27,14 +28,20 @@ type Store struct {
 	Database           *sqlite.Database
 	ARPCSessionManager *arpc.SessionManager
 	arpcFS             *safemap.Map[string, *arpcfs.ARPCFS]
+	Locker             *rpclocker.LockerClient
 }
 
 func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	sqlitePath := ""
+	lockerPath := constants.LockSocketPath
 	if paths != nil {
 		sqlitePathTmp, ok := paths["sqlite"]
 		if ok {
 			sqlitePath = sqlitePathTmp
+		}
+		lockPathTmp, ok := paths["locker"]
+		if ok {
+			lockerPath = lockPathTmp
 		}
 	}
 
@@ -48,12 +55,18 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		return nil, fmt.Errorf("Initialize: error initializing database -> %w", err)
 	}
 
+	locker, err := rpclocker.NewLockerClient(lockerPath)
+	if err != nil {
+		return nil, err
+	}
+
 	store := &Store{
 		Ctx:                ctx,
 		LegacyDatabase:     legacy,
 		Database:           db,
 		arpcFS:             safemap.New[string, *arpcfs.ARPCFS](),
 		ARPCSessionManager: arpc.NewSessionManager(),
+		Locker:             locker,
 	}
 
 	return store, nil
