@@ -225,10 +225,13 @@ func StartRPCServer(watcher chan struct{}, ctx context.Context, socketPath strin
 	}
 
 	// Start accepting connections.
+	ready := make(chan struct{})
+
 	go func() {
 		if watcher != nil {
 			defer close(watcher)
 		}
+		close(ready)
 		rpc.Accept(listener)
 	}()
 
@@ -236,6 +239,8 @@ func StartRPCServer(watcher chan struct{}, ctx context.Context, socketPath strin
 		WithMessage("RPC server listening").
 		WithField("socket", socketPath).
 		Write()
+
+	<-ready
 
 	return nil
 }
