@@ -83,18 +83,18 @@ func CmdBackup() {
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid server URL: %v", err)
-		return
+		os.Exit(1)
 	}
 	uri, err := url.Parse(serverUrl.Value)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid server URL: %v", err)
-		return
+		os.Exit(1)
 	}
 
 	tlsConfig, err := agent.GetTLSConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to get TLS config for ARPC client: %v", err)
-		return
+		os.Exit(1)
 	}
 
 	headers := http.Header{}
@@ -103,7 +103,7 @@ func CmdBackup() {
 	rpcSess, err := arpc.ConnectToServer(context.Background(), false, uri.Host, headers, tlsConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to connect to server: %v", err)
-		return
+		os.Exit(1)
 	}
 	rpcSess.SetRouter(arpc.NewRouter())
 
@@ -144,6 +144,8 @@ func CmdBackup() {
 
 	// Block here until the background RPC goroutine ends.
 	wg.Wait()
+
+	os.Exit(0)
 }
 
 func ExecBackup(sourceMode string, drive string, jobId string) (string, int, error) {
