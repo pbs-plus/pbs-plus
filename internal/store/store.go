@@ -33,10 +33,15 @@ type Store struct {
 
 func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	sqlitePath := ""
+	lockerPath := constants.LockSocketPath
 	if paths != nil {
 		sqlitePathTmp, ok := paths["sqlite"]
 		if ok {
 			sqlitePath = sqlitePathTmp
+		}
+		lockPathTmp, ok := paths["locker"]
+		if ok {
+			lockerPath = lockPathTmp
 		}
 	}
 
@@ -50,7 +55,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		return nil, fmt.Errorf("Initialize: error initializing database -> %w", err)
 	}
 
-	locker, err := rpclocker.NewLockerClient(constants.LockSocketPath)
+	locker, err := rpclocker.NewLockerClient(lockerPath)
 	if err != nil {
 		return nil, err
 	}

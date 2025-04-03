@@ -54,6 +54,7 @@ func setupTestStore(t *testing.T) *Store {
 	// Create test directories
 	paths := map[string]string{
 		"sqlite": testDbPath,
+		"locker": testLockerPath,
 	}
 
 	for _, path := range paths {
