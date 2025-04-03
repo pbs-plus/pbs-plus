@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	rpclocker "github.com/pbs-plus/pbs-plus/internal/proxy/locker"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,6 +45,10 @@ func TestMain(m *testing.M) {
 
 // setupTestStore creates a new store instance with temporary paths
 func setupTestStore(t *testing.T) *Store {
+	go func() {
+		rpclocker.StartLockerServer(t.Context())
+	}()
+
 	// Create test directories
 	paths := map[string]string{
 		"sqlite": testDbPath,
