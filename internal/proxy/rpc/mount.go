@@ -207,6 +207,8 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 func StartRPCServer(ctx context.Context, socketPath string, storeInstance *store.Store) error {
 	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
+	_ = os.MkdirAll(filepath.Dir(socketPath), os.ModeDir)
+
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %v", socketPath, err)

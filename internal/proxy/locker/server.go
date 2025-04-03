@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -113,6 +114,8 @@ func (s *LockerRPC) Unlock(args *Args, reply *Reply) error {
 
 func StartLockerServer(ctx context.Context) error {
 	_ = os.RemoveAll(constants.LockSocketPath)
+	_ = os.MkdirAll(filepath.Dir(constants.LockSocketPath), os.ModeDir)
+
 	listener, err := net.Listen("unix", constants.LockSocketPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %v", constants.LockSocketPath, err)
