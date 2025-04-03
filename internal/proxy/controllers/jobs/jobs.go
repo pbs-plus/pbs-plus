@@ -4,7 +4,6 @@ package jobs
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -87,7 +86,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		cmd := exec.Command(execPath, fmt.Sprintf("-job=\"%s\"", job.ID))
+		cmd := exec.Command(execPath, "-job", job.ID)
 		cmd.Env = os.Environ()
 		err = cmd.Start()
 		if err != nil {
