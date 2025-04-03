@@ -1,5 +1,28 @@
 Ext.define('PBS.PlusUtils', {
   singleton: true,
+  
+  parse_task_status: function(status) {
+    if (status === 'OK') {
+        return 'ok';
+    }
+
+    if (status === 'unknown') {
+        return 'unknown';
+    }
+
+    let match = status.match(/^WARNINGS: (.*)$/);
+    if (match) {
+        return 'warning';
+    }
+
+    let match = status.match(/^QUEUED: (.*)$/);
+    if (match) {
+        return 'queued';
+    }
+
+    return 'error';
+  },
+
   render_task_status: function(value, metadata, record, rowIndex, colIndex, store) {
 	  if (
 	    !record.data['last-run-upid'] &&
@@ -15,7 +38,7 @@ Ext.define('PBS.PlusUtils', {
 	    return '';
 	  }
 
-	  let parsed = Proxmox.Utils.parse_task_status(value);
+	  let parsed = this.parse_task_status(value);
 	  let text = value;
 	  let icon = '';
 	  switch (parsed) {
@@ -33,6 +56,9 @@ Ext.define('PBS.PlusUtils', {
 	    case 'ok':
 	      icon = 'check good';
 	      text = gettext("OK");
+	    case 'queued':
+	      icon = 'tasks good';
+	      break;
 	  }
 
     return `<i class="fa fa-${icon}"></i> ${text}`;

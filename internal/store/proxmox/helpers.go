@@ -151,7 +151,7 @@ func GenerateQueuedTask(job types.Job) (Task, error) {
 
 	timestamp := time.Now().Format(time.RFC3339)
 
-	statusLine := fmt.Sprintf("%s: %s has been queued up for backup\n", timestamp, job.ID)
+	statusLine := fmt.Sprintf("%s: TASK QUEUED: waiting to be processed\n", timestamp)
 	if _, err := file.WriteString(statusLine); err != nil {
 		return Task{}, fmt.Errorf("failed to write status line: %w", err)
 	}
