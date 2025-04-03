@@ -34,6 +34,15 @@ type BackupReply struct {
 	BackupMode string
 }
 
+type StatusArgs struct {
+	JobId          string
+	TargetHostname string
+}
+
+type StatusReply struct {
+	Connected bool
+}
+
 type CleanupArgs struct {
 	JobId          string
 	TargetHostname string
@@ -201,6 +210,32 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 		WithField("jobId", args.JobId).
 		Write()
 
+	return nil
+}
+
+func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
+	syslog.L.Info().
+		WithMessage("Received status request").
+		WithFields(map[string]interface{}{
+			"jobId":  args.JobId,
+			"target": args.TargetHostname,
+		}).Write()
+
+	// Retrieve the ARPC session for the target.
+	_, exists := s.Store.ARPCSessionManager.GetSession(args.TargetHostname)
+	if !exists {
+		reply.Connected = false
+		return nil
+	}
+
+	childKey := args.TargetHostname + "|" + args.JobId
+	_, exists = s.Store.ARPCSessionManager.GetSession(childKey)
+	if !exists {
+		reply.Connected = false
+		return nil
+	}
+
+	reply.Connected = true
 	return nil
 }
 
