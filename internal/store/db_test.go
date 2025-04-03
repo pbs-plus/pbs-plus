@@ -36,6 +36,15 @@ func TestMain(m *testing.M) {
 	testDbPath = filepath.Join(testBasePath, "test.db")
 	testLockerPath = filepath.Join(testBasePath, "test.lock")
 
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		err := rpclocker.StartLockerServer(ctx, testLockerPath)
+		if err != nil {
+			fmt.Printf("Failed to start test locker server: %v\n", err)
+		}
+	}()
+	defer cancel()
+
 	// Run tests
 	code := m.Run()
 
@@ -47,10 +56,6 @@ func TestMain(m *testing.M) {
 
 // setupTestStore creates a new store instance with temporary paths
 func setupTestStore(t *testing.T) *Store {
-	go func() {
-		rpclocker.StartLockerServer(t.Context(), testLockerPath)
-	}()
-
 	// Create test directories
 	paths := map[string]string{
 		"sqlite": testDbPath,
