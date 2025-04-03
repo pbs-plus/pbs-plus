@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -47,6 +46,7 @@ type CleanupReply struct {
 }
 
 type MountRPCService struct {
+	ctx   context.Context
 	Store *store.Store
 }
 
@@ -68,7 +68,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	}
 
 	// Create a context with a 2-minute timeout.
-	ctx, cancel := context.WithTimeout(s.Store.Ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 	defer cancel()
 
 	// Retrieve the ARPC session for the target.
@@ -118,7 +118,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		reply.Message = "MountHandler: Failed to send backup request to target -> unable to reach child target"
 		return errors.New(reply.Message)
 	}
-	arpcFS := arpcfs.NewARPCFS(s.Store.Ctx, arpcFSRPC, args.TargetHostname, job, backupMode)
+	arpcFS := arpcfs.NewARPCFS(s.ctx, arpcFSRPC, args.TargetHostname, job, backupMode)
 	if arpcFS == nil {
 		reply.Status = 500
 		reply.Message = "MountHandler: Failed to send create ARPCFS"
@@ -163,7 +163,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 		}).Write()
 
 	// Create a 30-second timeout context.
-	ctx, cancel := context.WithTimeout(s.Store.Ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 	defer cancel()
 
 	// Try to acquire an ARPC session for the target.
@@ -204,7 +204,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	return nil
 }
 
-func StartRPCServer(socketPath string, storeInstance *store.Store) error {
+func StartRPCServer(ctx context.Context, socketPath string, storeInstance *store.Store) error {
 	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
 	listener, err := net.Listen("unix", socketPath)
@@ -213,6 +213,7 @@ func StartRPCServer(socketPath string, storeInstance *store.Store) error {
 	}
 
 	service := &MountRPCService{
+		ctx:   ctx,
 		Store: storeInstance,
 	}
 
@@ -222,10 +223,7 @@ func StartRPCServer(socketPath string, storeInstance *store.Store) error {
 	}
 
 	// Start accepting connections.
-	var wg sync.WaitGroup
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		rpc.Accept(listener)
 	}()
 
@@ -234,6 +232,7 @@ func StartRPCServer(socketPath string, storeInstance *store.Store) error {
 		WithField("socket", socketPath).
 		Write()
 
-	wg.Wait()
+	<-ctx.Done()
+
 	return nil
 }
