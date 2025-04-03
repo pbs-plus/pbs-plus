@@ -38,7 +38,7 @@ func isJunkLog(line string) bool {
 	return false
 }
 
-func processPBSProxyLogs(upid string, clientLogFile *syslog.BackupLogger) (bool, bool, int, string, error) {
+func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.BackupLogger) (bool, bool, int, string, error) {
 	logFilePath := utils.GetTaskLogPath(upid)
 	inFile, err := os.Open(logFilePath)
 	if err != nil {
@@ -201,13 +201,18 @@ func processPBSProxyLogs(upid string, clientLogFile *syslog.BackupLogger) (bool,
 		sb.WriteString(": TASK ERROR: Job cancelled")
 		cancelled = true
 	} else {
+		succeeded = true
 		if warningsNum > 0 {
 			sb.WriteString(": TASK WARNINGS: ")
 			sb.WriteString(strconv.Itoa(warningsNum))
 		} else {
-			sb.WriteString(": TASK OK")
+			if isGraceful {
+				sb.WriteString(": TASK OK")
+			} else {
+				succeeded = false
+				sb.WriteString(": TASK ERROR: Agent crashed unexpectedly")
+			}
 		}
-		succeeded = true
 	}
 	sb.WriteString("\n")
 

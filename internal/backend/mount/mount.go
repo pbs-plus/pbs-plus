@@ -109,6 +109,27 @@ checkLoop:
 	return agentMount, nil
 }
 
+func (a *AgentMount) IsConnected() bool {
+	args := &rpcmount.StatusArgs{
+		JobId:          a.JobId,
+		TargetHostname: a.Hostname,
+	}
+	var reply rpcmount.StatusReply
+
+	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
+	if err != nil {
+		return false
+	}
+	rpcClient := rpc.NewClient(conn)
+	err = rpcClient.Call("MountRPCService.Status", args, &reply)
+	rpcClient.Close()
+	if err != nil {
+		return false
+	}
+
+	return reply.Connected
+}
+
 func (a *AgentMount) Unmount() {
 	if a.Path == "" {
 		return
