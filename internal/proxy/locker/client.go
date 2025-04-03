@@ -18,8 +18,8 @@ type LockerClient struct {
 }
 
 // NewLockerClient creates a new client connected to the RPC lock server.
-func NewLockerClient() (*LockerClient, error) {
-	conn, err := net.DialTimeout("unix", constants.LockSocketPath, 2*time.Second)
+func NewLockerClient(socketPath string) (*LockerClient, error) {
+	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to lock server at %s: %w", constants.LockSocketPath, err)
 	}

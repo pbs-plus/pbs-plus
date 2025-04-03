@@ -50,7 +50,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		return nil, fmt.Errorf("Initialize: error initializing database -> %w", err)
 	}
 
-	locker, err := rpclocker.NewLockerClient()
+	locker, err := rpclocker.NewLockerClient(constants.LockSocketPath)
 	if err != nil {
 		return nil, err
 	}
