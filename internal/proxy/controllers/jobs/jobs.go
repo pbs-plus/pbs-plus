@@ -86,7 +86,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		cmd := exec.Command(execPath, "-job", job.ID)
+		cmd := exec.Command(execPath, "-job", job.ID, "-web")
 		cmd.Env = os.Environ()
 		err = cmd.Start()
 		if err != nil {

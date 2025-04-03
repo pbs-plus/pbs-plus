@@ -91,7 +91,7 @@ func getPStart() int {
 	return int(pstart.Add(1))
 }
 
-func GenerateQueuedTask(job types.Job) (Task, error) {
+func GenerateQueuedTask(job types.Job, web bool) (Task, error) {
 	if Session.APIToken == nil {
 		return Task{}, errors.New("session api token is missing")
 	}
@@ -150,8 +150,13 @@ func GenerateQueuedTask(job types.Job) (Task, error) {
 	defer file.Close()
 
 	timestamp := time.Now().Format(time.RFC3339)
+	statusLine := fmt.Sprintf("%s: TASK QUEUED: ", timestamp)
+	if web {
+		statusLine += "job started from web UI\n"
+	} else {
+		statusLine += "job started from schedule\n"
+	}
 
-	statusLine := fmt.Sprintf("%s: TASK QUEUED: waiting to be processed\n", timestamp)
 	if _, err := file.WriteString(statusLine); err != nil {
 		return Task{}, fmt.Errorf("failed to write status line: %w", err)
 	}
