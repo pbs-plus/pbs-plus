@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/backend/mount"
+	rpclocker "github.com/pbs-plus/pbs-plus/internal/proxy/locker"
 	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -75,6 +77,16 @@ func RunBackup(
 	skipCheck bool,
 	extraExclusions *[]string,
 ) (*BackupOperation, error) {
+	var err error
+
+	if storeInstance.Locker == nil {
+		storeInstance.Locker, err = rpclocker.NewLockerClient(constants.LockSocketPath)
+		if err != nil {
+			syslog.L.Error(err).WithMessage("locker server failed, restarting")
+			return nil, err
+		}
+	}
+
 	if locked, err := storeInstance.Locker.TryLock("BackupJob-" + job.ID); err != nil || !locked {
 		return nil, ErrOneInstance
 	}

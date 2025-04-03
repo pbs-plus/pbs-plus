@@ -321,17 +321,14 @@ func main() {
 		syslog.L.Error(err).WithMessage("failed to recreate directory").Write()
 	}
 
-	rpcCtx, rpcCancel := context.WithCancel(context.Background())
-	defer rpcCancel()
-
 	go func() {
 		for {
 			select {
-			case <-rpcCtx.Done():
-				syslog.L.Error(rpcCtx.Err()).WithMessage("rpc server cancelled")
+			case <-mainCtx.Done():
+				syslog.L.Error(mainCtx.Err()).WithMessage("rpc server cancelled")
 				return
 			default:
-				if err := rpcmount.RunRPCServer(rpcCtx, constants.MountSocketPath, storeInstance); err != nil {
+				if err := rpcmount.RunRPCServer(mainCtx, constants.MountSocketPath, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("rpc server failed, restarting")
 				}
 			}
@@ -341,11 +338,11 @@ func main() {
 	go func() {
 		for {
 			select {
-			case <-rpcCtx.Done():
-				syslog.L.Error(rpcCtx.Err()).WithMessage("locker server cancelled")
+			case <-mainCtx.Done():
+				syslog.L.Error(mainCtx.Err()).WithMessage("locker server cancelled")
 				return
 			default:
-				if err := rpclocker.RunLockerServer(rpcCtx, constants.LockSocketPath); err != nil {
+				if err := rpclocker.RunLockerServer(mainCtx, constants.LockSocketPath); err != nil {
 					syslog.L.Error(err).WithMessage("locker server failed, restarting")
 				}
 			}
