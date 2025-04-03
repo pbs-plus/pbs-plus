@@ -17,7 +17,7 @@ Ext.define("PBS.D2DManagement.BackupWindow", {
 
   title: gettext("Backup"),
   url: pbsPlusBaseUrl + `/api2/extjs/d2d/backup`,
-  showProgress: true,
+  showProgress: false,
   submitUrl: function (url, values) {
     let id = values.id;
     delete values.id;

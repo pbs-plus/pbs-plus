@@ -112,6 +112,20 @@ func RunBackup(
 		close(errorMonitorDone)
 	}
 
+	queueTask, err := proxmox.GenerateQueuedTask(job)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
+	} else {
+		queueTaskLogPath, err := proxmox.GetLogPath(queueTask.UPID)
+		if err == nil {
+			defer os.Remove(queueTaskLogPath)
+		}
+
+		if err := updateJobStatus(false, 0, job, queueTask, storeInstance); err != nil {
+			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
+		}
+	}
+
 	if err := storeInstance.Locker.Lock("BackupJobInitializing"); err != nil {
 		errCleanUp()
 		return nil, fmt.Errorf("%w: %v", ErrBackupMutexLock, err)
