@@ -5,9 +5,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -23,13 +21,13 @@ import (
 var (
 	testDbPath     string
 	testLockerPath string
-	testBasePath   string
 )
 
 // TestMain handles setup and teardown for all tests
 func TestMain(m *testing.M) {
+	// Create temporary test directory
 	var err error
-	testBasePath, err = os.MkdirTemp("", "pbs-plus-test-*")
+	testBasePath, err := os.MkdirTemp("", "pbs-plus-test-*")
 	if err != nil {
 		fmt.Printf("Failed to create temp directory: %v\n", err)
 		os.Exit(1)
@@ -38,90 +36,35 @@ func TestMain(m *testing.M) {
 	testDbPath = filepath.Join(testBasePath, "test.db")
 	testLockerPath = filepath.Join(testBasePath, "test.lock")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	var serverErr error
-	var serverWg sync.WaitGroup // Use WaitGroup to wait for server shutdown
-	serverWg.Add(1)
-
-	go func() {
-		defer serverWg.Done()
-		fmt.Printf("Attempting to start locker server at %s...\n", testLockerPath)
-		serverErr = rpclocker.StartLockerServer(ctx, testLockerPath)
-		if serverErr != nil && !errors.Is(serverErr, context.Canceled) && !errors.Is(serverErr, net.ErrClosed) {
-			fmt.Printf("Locker server exited with error: %v\n", serverErr)
-		} else {
-			fmt.Println("Locker server shut down.")
-		}
-	}()
-
-	const serverStartTimeout = 5 * time.Second
-	const pollInterval = 50 * time.Millisecond
-	startTime := time.Now()
-
-	fmt.Printf("Waiting up to %v for locker socket at %s...\n", serverStartTimeout, testLockerPath)
-	socketReady := false
-	for time.Since(startTime) < serverStartTimeout {
-		_, statErr := os.Stat(testLockerPath)
-		if statErr == nil {
-			conn, dialErr := net.DialTimeout("unix", testLockerPath, 50*time.Millisecond)
-			if dialErr == nil {
-				_ = conn.Close() // Close the test connection immediately
-				fmt.Printf("Locker socket found and connectable after %v.\n", time.Since(startTime))
-				socketReady = true
-				break // Socket exists and is connectable
-			}
-		} else if !os.IsNotExist(statErr) {
-			fmt.Printf("Error checking for socket file %s: %v\n", testLockerPath, statErr)
-			cancel()        // Signal server to stop
-			serverWg.Wait() // Wait for server goroutine to finish
-			os.RemoveAll(testBasePath)
-			os.Exit(1)
-		}
-
-		if serverErr != nil {
-			fmt.Printf("Server failed to start while waiting for socket: %v\n", serverErr)
-			cancel()
-			serverWg.Wait()
-			os.RemoveAll(testBasePath)
-			os.Exit(1)
-		}
-
-		time.Sleep(pollInterval)
+	err = rpclocker.StartLockerServer(nil, testLockerPath)
+	if err != nil {
+		fmt.Printf("Failed to create temp locker: %v\n", err)
+		os.Exit(1)
 	}
 
-	if !socketReady {
-		fmt.Printf("Timed out waiting for locker socket file %s after %v\n", testLockerPath, serverStartTimeout)
-		cancel()        // Signal server to stop
-		serverWg.Wait() // Wait for server goroutine to finish
-		if serverErr != nil {
-			fmt.Printf("Server may have failed during startup: %v\n", serverErr)
-		}
-		os.RemoveAll(testBasePath)
-		os.Exit(1) // Exit test suite
-	}
-
-	fmt.Println("Locker server ready. Running tests...")
+	// Run tests
 	code := m.Run()
 
-	fmt.Println("Tests finished. Cleaning up...")
-	cancel() // Signal server to stop
-	fmt.Println("Waiting for locker server to shut down...")
-	serverWg.Wait()            // Wait for the server goroutine to fully exit
-	os.RemoveAll(testBasePath) // Remove temp directory
+	// Cleanup
+	os.RemoveAll(testBasePath)
 
 	os.Exit(code)
 }
 
 // setupTestStore creates a new store instance with temporary paths
 func setupTestStore(t *testing.T) *Store {
+	// Create test directories
 	paths := map[string]string{
 		"sqlite": testDbPath,
-		"locker": testLockerPath, // Use the same locker path
+		"locker": testLockerPath,
 	}
 
-	err := os.RemoveAll(paths["sqlite"])
-	require.NoError(t, err)
+	for _, path := range paths {
+		err := os.RemoveAll(path)
+		require.NoError(t, err)
+	}
 
+	// Create store with temporary paths
 	store, err := Initialize(t.Context(), paths)
 	require.NoError(t, err)
 

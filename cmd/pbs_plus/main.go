@@ -331,7 +331,7 @@ func main() {
 				syslog.L.Error(rpcCtx.Err()).WithMessage("rpc server cancelled")
 				return
 			default:
-				if err := rpcmount.StartRPCServer(rpcCtx, constants.MountSocketPath, storeInstance); err != nil {
+				if err := rpcmount.RunRPCServer(rpcCtx, constants.MountSocketPath, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("rpc server failed, restarting")
 				}
 			}
@@ -345,7 +345,7 @@ func main() {
 				syslog.L.Error(rpcCtx.Err()).WithMessage("locker server cancelled")
 				return
 			default:
-				if err := rpclocker.StartLockerServer(rpcCtx, constants.LockSocketPath); err != nil {
+				if err := rpclocker.RunLockerServer(rpcCtx, constants.LockSocketPath); err != nil {
 					syslog.L.Error(err).WithMessage("locker server failed, restarting")
 				}
 			}

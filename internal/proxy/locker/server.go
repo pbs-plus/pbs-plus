@@ -35,8 +35,10 @@ type LockerRPC struct {
 }
 
 // getOrCreateMutex retrieves the mutex for a key, creating it if necessary.
-// NOTE: This function assumes mapMutex is already held.
 func (s *LockerRPC) getOrCreateMutex(key string) *sync.Mutex {
+	s.mapMutex.Lock()
+	defer s.mapMutex.Unlock()
+
 	mu, ok := s.locks[key]
 	if !ok {
 		mu = &sync.Mutex{}
@@ -52,9 +54,7 @@ func (s *LockerRPC) Lock(args *Args, reply *Reply) error {
 		return errors.New("lock key cannot be empty")
 	}
 
-	s.mapMutex.Lock()
 	keyMutex := s.getOrCreateMutex(args.Key)
-	s.mapMutex.Unlock()
 
 	keyMutex.Lock()
 
@@ -69,9 +69,7 @@ func (s *LockerRPC) TryLock(args *Args, reply *Reply) error {
 		return errors.New("lock key cannot be empty")
 	}
 
-	s.mapMutex.Lock()
 	keyMutex := s.getOrCreateMutex(args.Key)
-	s.mapMutex.Unlock()
 
 	acquired := keyMutex.TryLock()
 
@@ -106,13 +104,17 @@ func (s *LockerRPC) Unlock(args *Args, reply *Reply) error {
 
 	keyMutex.Unlock()
 
+	s.mapMutex.Lock()
+	delete(s.locks, args.Key)
+	s.mapMutex.Unlock()
+
 	reply.Success = true
 	syslog.L.Info().WithMessage("lock released").WithField("key", args.Key).Write()
 	return nil
 }
 
-func StartLockerServer(ctx context.Context, socketPath string) error {
-	_ = os.RemoveAll(socketPath)
+func StartLockerServer(watcher chan struct{}, socketPath string) error {
+	_ = os.Remove(socketPath)
 	_ = os.MkdirAll(filepath.Dir(socketPath), os.ModeDir)
 
 	listener, err := net.Listen("unix", socketPath)
@@ -135,10 +137,26 @@ func StartLockerServer(ctx context.Context, socketPath string) error {
 		Write()
 
 	go func() {
+		if watcher != nil {
+			defer close(watcher)
+		}
 		rpc.Accept(listener)
 	}()
 
-	<-ctx.Done()
+	return nil
+}
+
+func RunLockerServer(ctx context.Context, socketPath string) error {
+	watcher := make(chan struct{}, 1)
+	err := StartLockerServer(watcher, socketPath)
+	if err != nil {
+		return err
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-watcher:
+	}
 
 	return nil
 }

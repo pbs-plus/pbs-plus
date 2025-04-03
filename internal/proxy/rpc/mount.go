@@ -204,7 +204,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	return nil
 }
 
-func StartRPCServer(ctx context.Context, socketPath string, storeInstance *store.Store) error {
+func StartRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, storeInstance *store.Store) error {
 	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
 	_ = os.MkdirAll(filepath.Dir(socketPath), os.ModeDir)
@@ -226,6 +226,9 @@ func StartRPCServer(ctx context.Context, socketPath string, storeInstance *store
 
 	// Start accepting connections.
 	go func() {
+		if watcher != nil {
+			defer close(watcher)
+		}
 		rpc.Accept(listener)
 	}()
 
@@ -234,7 +237,20 @@ func StartRPCServer(ctx context.Context, socketPath string, storeInstance *store
 		WithField("socket", socketPath).
 		Write()
 
-	<-ctx.Done()
+	return nil
+}
+
+func RunRPCServer(ctx context.Context, socketPath string, storeInstance *store.Store) error {
+	watcher := make(chan struct{}, 1)
+	err := StartRPCServer(watcher, ctx, socketPath, storeInstance)
+	if err != nil {
+		return err
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-watcher:
+	}
 
 	return nil
 }
