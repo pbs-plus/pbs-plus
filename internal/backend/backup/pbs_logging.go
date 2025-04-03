@@ -112,6 +112,8 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	var errorPath string
 	pbsWarnings := 0
 
+	pbsWarningRawCount := 0
+
 	// Process status info while streaming the logs to avoid storing everything in memory
 	processLogFile := func(path string) error {
 		file, err := os.Open(path)
@@ -123,6 +125,10 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			line := scanner.Text()
+
+			if strings.Contains(line, "warning: ") {
+				pbsWarningRawCount++
+			}
 
 			skipLine := false
 			// Check for indicators before writing the line
@@ -189,7 +195,12 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 
 	succeeded := false
 	cancelled := false
-	warningsNum := pbsWarnings + int(clientLogFile.Count.Load())
+	warningsNum := int(clientLogFile.Count.Load())
+	if pbsWarnings == 0 {
+		warningsNum += pbsWarnings
+	} else {
+		warningsNum += pbsWarningRawCount
+	}
 
 	// Build and write final status line
 	var sb strings.Builder
