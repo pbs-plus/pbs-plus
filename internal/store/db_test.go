@@ -12,13 +12,15 @@ import (
 	"testing"
 	"time"
 
+	rpclocker "github.com/pbs-plus/pbs-plus/internal/proxy/locker"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 var (
-	testDbPath string
+	testDbPath     string
+	testLockerPath string
 )
 
 // TestMain handles setup and teardown for all tests
@@ -32,6 +34,13 @@ func TestMain(m *testing.M) {
 	}
 
 	testDbPath = filepath.Join(testBasePath, "test.db")
+	testLockerPath = filepath.Join(testBasePath, "test.lock")
+
+	err = rpclocker.StartLockerServer(nil, testLockerPath)
+	if err != nil {
+		fmt.Printf("Failed to create temp locker: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Run tests
 	code := m.Run()
@@ -44,14 +53,13 @@ func TestMain(m *testing.M) {
 
 // setupTestStore creates a new store instance with temporary paths
 func setupTestStore(t *testing.T) *Store {
+	err := os.RemoveAll(testDbPath)
+	require.NoError(t, err)
+
 	// Create test directories
 	paths := map[string]string{
 		"sqlite": testDbPath,
-	}
-
-	for _, path := range paths {
-		err := os.RemoveAll(path)
-		require.NoError(t, err)
+		"locker": testLockerPath,
 	}
 
 	// Create store with temporary paths

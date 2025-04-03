@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofrs/flock"
 	"github.com/pbs-plus/pbs-plus/internal/backend/mount"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
@@ -76,10 +75,7 @@ func RunBackup(
 	skipCheck bool,
 	extraExclusions *[]string,
 ) (*BackupOperation, error) {
-	jobInstanceMutex := flock.New(
-		fmt.Sprintf("/tmp/pbs-plus-mutex-job-%s", job.ID),
-	)
-	if locked, err := jobInstanceMutex.TryLock(); err != nil || !locked {
+	if locked, err := storeInstance.Locker.TryLock("BackupJob-" + job.ID); err != nil || !locked {
 		return nil, ErrOneInstance
 	}
 
@@ -93,7 +89,7 @@ func RunBackup(
 		utils.ClearIOStats(job.CurrentPID)
 		job.CurrentPID = 0
 
-		_ = jobInstanceMutex.Close()
+		storeInstance.Locker.Unlock("BackupJob-" + job.ID)
 		if agentMount != nil {
 			agentMount.Unmount()
 			agentMount.CloseMount()
@@ -104,16 +100,11 @@ func RunBackup(
 		close(errorMonitorDone)
 	}
 
-	backupMutex := flock.New("/tmp/pbs-plus-mutex-lock")
-	defer func() {
-		backupMutex.Close()
-		_ = os.RemoveAll(backupMutex.Path())
-	}()
-
-	if err := backupMutex.Lock(); err != nil {
+	if err := storeInstance.Locker.Lock("BackupJobInitializing"); err != nil {
 		errCleanUp()
 		return nil, fmt.Errorf("%w: %v", ErrBackupMutexLock, err)
 	}
+	defer storeInstance.Locker.Unlock("BackupJobInitializing")
 
 	if proxmox.Session.APIToken == nil {
 		errCleanUp()
@@ -281,8 +272,7 @@ func RunBackup(
 	go func() {
 		defer wg.Done()
 		defer func() {
-			jobInstanceMutex.Close()
-			_ = os.RemoveAll(jobInstanceMutex.Path())
+			storeInstance.Locker.Unlock("BackupJob-" + job.ID)
 		}()
 
 		if err := cmd.Wait(); err != nil {
