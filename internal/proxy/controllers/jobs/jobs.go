@@ -3,20 +3,18 @@
 package jobs
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -83,46 +81,22 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		system.RemoveAllRetrySchedules(job)
 
-		extExclusion := []string{}
-
-		op, err := backup.RunBackup(context.Background(), job, storeInstance, false, &extExclusion)
+		execPath, err := os.Executable()
 		if err != nil {
-			syslog.L.Error(err).WithField("jobId", job.ID).Write()
-
-			if !errors.Is(err, backup.ErrOneInstance) {
-				if task, err := proxmox.GenerateTaskErrorFile(job, err, []string{"Error handling from a web job run request", "Job ID: " + job.ID, "Source Mode: " + job.SourceMode}); err != nil {
-					syslog.L.Error(err).WithField("jobId", job.ID).Write()
-				} else {
-					// Update job status
-					latestJob, err := storeInstance.Database.GetJob(job.ID)
-					if err != nil {
-						latestJob = job
-					}
-
-					latestJob.LastRunUpid = task.UPID
-					latestJob.LastRunState = task.Status
-					latestJob.LastRunEndtime = task.EndTime
-
-					err = storeInstance.Database.UpdateJob(nil, latestJob)
-					if err != nil {
-						syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
-					}
-				}
-
-				if err := system.SetRetrySchedule(job, extExclusion); err != nil {
-					syslog.L.Error(err).WithField("jobId", job.ID).Write()
-				}
-			}
-
 			controllers.WriteErrorResponse(w, err)
 			return
 		}
 
-		task := op.Task
+		cmd := exec.Command(execPath, fmt.Sprintf("-job=\"%s\"", job.ID))
+		cmd.Env = os.Environ()
+		err = cmd.Start()
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 
-		response.Data = task.UPID
 		response.Status = http.StatusOK
 		response.Success = true
 		json.NewEncoder(w).Encode(response)
