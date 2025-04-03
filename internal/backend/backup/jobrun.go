@@ -300,7 +300,17 @@ func RunBackup(
 			syslog.L.Warn().WithJob(job.ID).WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", extraExclusion))
 		}
 
-		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(task.UPID, clientLogFile)
+		// Agent mount must still be connected after proxmox-backup-client terminates
+		// If not, then the client side process crashed
+		gracefulEnd := true
+		if agentMount != nil {
+			mountConnected := agentMount.IsConnected()
+			if !mountConnected {
+				gracefulEnd = false
+			}
+		}
+
+		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, task.UPID, clientLogFile)
 		if err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed to process logs").
