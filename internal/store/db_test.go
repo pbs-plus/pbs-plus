@@ -53,15 +53,13 @@ func TestMain(m *testing.M) {
 
 // setupTestStore creates a new store instance with temporary paths
 func setupTestStore(t *testing.T) *Store {
+	err := os.RemoveAll(testDbPath)
+	require.NoError(t, err)
+
 	// Create test directories
 	paths := map[string]string{
 		"sqlite": testDbPath,
 		"locker": testLockerPath,
-	}
-
-	for _, path := range paths {
-		err := os.RemoveAll(path)
-		require.NoError(t, err)
 	}
 
 	// Create store with temporary paths
