@@ -91,6 +91,76 @@ func getPStart() int {
 	return int(pstart.Add(1))
 }
 
+func GenerateQueuedTask(job types.Job) (Task, error) {
+	if Session.APIToken == nil {
+		return Task{}, errors.New("session api token is missing")
+	}
+
+	authId := Session.APIToken.TokenId
+
+	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
+	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
+	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostnameBytes, err := os.ReadFile("/etc/hostname")
+		if err != nil {
+			hostname = "localhost"
+		}
+		hostname = strings.TrimSpace(string(hostnameBytes))
+	}
+
+	wtype := "backup"
+	node := hostname
+
+	task := Task{
+		Node:       node,
+		PID:        os.Getpid(),
+		PStart:     getPStart(),
+		StartTime:  time.Now().Unix(),
+		WorkerType: wtype,
+		WID:        wid,
+		User:       authId,
+	}
+
+	pid := fmt.Sprintf("%08X", task.PID)
+	pstart := fmt.Sprintf("%08X", task.PStart)
+	taskID := fmt.Sprintf("%08X", rand.Uint32())
+
+	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, authId)
+
+	task.UPID = upid
+
+	path, err := GetLogPath(upid)
+	if err != nil {
+		return Task{}, err
+	}
+
+	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	_ = os.Chown(filepath.Dir(path), 34, 34)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return Task{}, err
+	}
+
+	err = file.Chown(34, 34)
+	if err != nil {
+		return Task{}, err
+	}
+	defer file.Close()
+
+	timestamp := time.Now().Format(time.RFC3339)
+
+	statusLine := fmt.Sprintf("%s: %s has been queued up for backup\n", timestamp, job.ID)
+	if _, err := file.WriteString(statusLine); err != nil {
+		return Task{}, fmt.Errorf("failed to write status line: %w", err)
+	}
+
+	task.Status = "running"
+
+	return task, nil
+}
+
 func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []string) (Task, error) {
 	if Session.APIToken == nil {
 		return Task{}, errors.New("session api token is missing")
