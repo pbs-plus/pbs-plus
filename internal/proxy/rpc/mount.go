@@ -54,6 +54,14 @@ type CleanupReply struct {
 	Message string
 }
 
+type WarnCountArgs struct {
+	JobId string
+}
+
+type WarnCountReply struct {
+	Count int
+}
+
 type MountRPCService struct {
 	ctx   context.Context
 	Store *store.Store
@@ -203,6 +211,10 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	reply.Status = cleanupResp.Status
 	reply.Message = "Cleanup successful"
 
+	if logger := syslog.GetExistingBackupLogger(args.JobId); logger != nil {
+		_ = logger.Close()
+	}
+
 	arpcSess.Close()
 
 	syslog.L.Info().
@@ -236,6 +248,13 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 	}
 
 	reply.Connected = true
+	return nil
+}
+
+func (s *MountRPCService) GetJobWarnCount(args *WarnCountArgs, reply *WarnCountReply) error {
+	if logger := syslog.GetExistingBackupLogger(args.JobId); logger != nil {
+		reply.Count = int(logger.Count.Load())
+	}
 	return nil
 }
 
