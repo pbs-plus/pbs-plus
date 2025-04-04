@@ -14,6 +14,7 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/pbs-plus/pbs-plus/internal/auth/token"
+	rpclocker "github.com/pbs-plus/pbs-plus/internal/proxy/locker"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -26,6 +27,7 @@ type Database struct {
 	readDb       *sql.DB
 	writeDb      *sql.DB
 	writeMu      sync.Mutex
+	writeLocker  *rpclocker.LockerClient
 	dbPath       string
 	TokenManager *token.Manager
 }
@@ -61,10 +63,16 @@ func Initialize(dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("Initialize: error DB: %w", err)
 	}
 
+	locker, err := rpclocker.NewLockerClient(constants.LockSocketPath)
+	if err != nil {
+		locker = nil
+	}
+
 	database := &Database{
-		dbPath:  dbPath,
-		readDb:  readDb,
-		writeDb: writeDb,
+		dbPath:      dbPath,
+		readDb:      readDb,
+		writeDb:     writeDb,
+		writeLocker: locker,
 	}
 
 	// Auto migrate on initialization
@@ -91,6 +99,24 @@ func Initialize(dbPath string) (*Database, error) {
 		_ = tx.Commit()
 	}
 	return database, nil
+}
+
+func (d *Database) writeLock() {
+	if d.writeLocker != nil {
+		d.writeLocker.Lock("sqlite-db-write")
+		return
+	}
+
+	d.writeMu.Lock()
+}
+
+func (d *Database) writeUnlock() {
+	if d.writeLocker != nil {
+		d.writeLocker.Unlock("sqlite-db-write")
+		return
+	}
+
+	d.writeMu.Unlock()
 }
 
 func (d *Database) NewTransaction() (*sql.Tx, error) {
