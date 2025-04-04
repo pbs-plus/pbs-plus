@@ -152,6 +152,10 @@ func (a *AgentMount) CloseMount() {
 	}
 	var reply rpcmount.CleanupReply
 
+	if logger := syslog.GetExistingBackupLogger(a.JobId); logger != nil {
+		_ = logger.Close()
+	}
+
 	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
 	if err != nil {
 		return
