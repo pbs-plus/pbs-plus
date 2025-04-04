@@ -88,18 +88,16 @@ func (s *LockerRPC) Unlock(args *Args, reply *Reply) error {
 
 	s.mapMutex.Lock()
 	keyMutex, ok := s.locks[args.Key]
+	s.mapMutex.Unlock() // Release map lock quickly
+
 	if !ok {
-		s.mapMutex.Unlock()
 		reply.Success = false
 		syslog.L.Warn().
-			WithMessage("unlock attempted on non-existent key").
+			WithMessage("unlock attempted on non-existent or already unlocked key").
 			WithField("key", args.Key).
 			Write()
-		return fmt.Errorf("key '%s' not found for unlock", args.Key)
+		return nil // Or return specific error
 	}
-
-	delete(s.locks, args.Key)
-	s.mapMutex.Unlock()
 
 	keyMutex.Unlock()
 
