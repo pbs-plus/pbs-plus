@@ -92,7 +92,7 @@ func RunBackup(
 		return nil, ErrOneInstance
 	}
 
-	clientLogFile := syslog.GetOrCreateBackupLogger(job.ID)
+	clientLogFile := syslog.GetOrCreateBackupLoggerStatic(job.ID)
 
 	errorMonitorDone := make(chan struct{})
 
@@ -312,7 +312,7 @@ func RunBackup(
 		close(errorMonitorDone)
 
 		for _, extraExclusion := range *extraExclusions {
-			syslog.L.Warn().WithJob(job.ID).WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", extraExclusion))
+			syslog.L.Warn().WithJob(job.ID).WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", extraExclusion)).Write()
 		}
 
 		// Agent mount must still be connected after proxmox-backup-client terminates
