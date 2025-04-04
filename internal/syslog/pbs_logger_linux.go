@@ -5,6 +5,7 @@ package syslog
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
@@ -22,16 +23,20 @@ type BackupLogger struct {
 
 var backupLoggers = xsync.NewMapOf[string, *BackupLogger]()
 
-func GetOrCreateBackupLogger(jobId string) *BackupLogger {
+func GetOrCreateBackupLoggerStatic(jobId string) *BackupLogger {
 	logger, _ := backupLoggers.LoadOrCompute(jobId, func() *BackupLogger {
-		clientLogFile, err := os.CreateTemp("", fmt.Sprintf("backup-%s-stdout-*", jobId))
+		tempDir := os.TempDir()
+		fileName := fmt.Sprintf("backup-%s-stdout", jobId)
+		filePath := filepath.Join(tempDir, fileName)
+
+		clientLogFile, err := os.Create(filePath)
 		if err != nil {
 			return nil
 		}
-		clientLogPath := clientLogFile.Name()
+
 		return &BackupLogger{
 			File:  clientLogFile,
-			Path:  clientLogPath,
+			Path:  filePath,
 			jobId: jobId,
 		}
 	})
@@ -40,7 +45,25 @@ func GetOrCreateBackupLogger(jobId string) *BackupLogger {
 }
 
 func GetExistingBackupLogger(jobId string) *BackupLogger {
-	logger, _ := backupLoggers.Load(jobId)
+	logger, _ := backupLoggers.LoadOrCompute(jobId, func() *BackupLogger {
+		tempDir := os.TempDir()
+		fileName := fmt.Sprintf("backup-%s-stdout", jobId)
+		filePath := filepath.Join(tempDir, fileName)
+
+		flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
+		perm := os.FileMode(0666)
+
+		clientLogFile, err := os.OpenFile(filePath, flags, perm)
+		if err != nil {
+			return nil
+		}
+
+		return &BackupLogger{
+			File:  clientLogFile,
+			Path:  filePath,
+			jobId: jobId,
+		}
+	})
 	return logger
 }
 
