@@ -54,8 +54,8 @@ func (database *Database) generateUniqueJobID(job types.Job) (string, error) {
 // CreateJob creates a new job record and adds any associated exclusions.
 func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
 	if tx == nil {
-		database.writeMu.Lock()
-		defer database.writeMu.Unlock()
+		database.writeLock()
+		defer database.writeUnlock()
 
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
@@ -200,8 +200,8 @@ func (database *Database) getJobExtras(job *types.Job) {
 // UpdateJob updates an existing job and its exclusions.
 func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
 	if tx == nil {
-		database.writeMu.Lock()
-		defer database.writeMu.Unlock()
+		database.writeLock()
+		defer database.writeUnlock()
 
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
@@ -344,8 +344,8 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 // DeleteJob deletes a job and any related exclusions.
 func (database *Database) DeleteJob(tx *sql.Tx, id string) error {
 	if tx == nil {
-		database.writeMu.Lock()
-		defer database.writeMu.Unlock()
+		database.writeLock()
+		defer database.writeUnlock()
 
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})

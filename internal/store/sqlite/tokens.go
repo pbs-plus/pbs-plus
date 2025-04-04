@@ -13,8 +13,8 @@ import (
 
 // CreateToken generates a new token using the manager and stores it.
 func (database *Database) CreateToken(comment string) error {
-	database.writeMu.Lock()
-	defer database.writeMu.Unlock()
+	database.writeLock()
+	defer database.writeUnlock()
 
 	tokenStr, err := database.TokenManager.GenerateToken()
 	if err != nil {
@@ -75,8 +75,8 @@ func (database *Database) GetAllTokens() ([]types.AgentToken, error) {
 
 // RevokeToken marks a token as revoked.
 func (database *Database) RevokeToken(tokenData types.AgentToken) error {
-	database.writeMu.Lock()
-	defer database.writeMu.Unlock()
+	database.writeLock()
+	defer database.writeUnlock()
 
 	if tokenData.Revoked {
 		return nil
