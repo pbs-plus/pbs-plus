@@ -130,6 +130,26 @@ func (a *AgentMount) IsConnected() bool {
 	return reply.Connected
 }
 
+func (a *AgentMount) GetServerWarnLogCount() int {
+	args := &rpcmount.WarnCountArgs{
+		JobId: a.JobId,
+	}
+	var reply rpcmount.WarnCountReply
+
+	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
+	if err != nil {
+		return 0
+	}
+	rpcClient := rpc.NewClient(conn)
+	err = rpcClient.Call("MountRPCService.GetJobWarnCount", args, &reply)
+	rpcClient.Close()
+	if err != nil {
+		return 0
+	}
+
+	return reply.Count
+}
+
 func (a *AgentMount) Unmount() {
 	if a.Path == "" {
 		return
@@ -151,10 +171,6 @@ func (a *AgentMount) CloseMount() {
 		Drive:          a.Drive,
 	}
 	var reply rpcmount.CleanupReply
-
-	if logger := syslog.GetExistingBackupLogger(a.JobId); logger != nil {
-		_ = logger.Close()
-	}
 
 	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
 	if err != nil {

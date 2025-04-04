@@ -325,7 +325,7 @@ func RunBackup(
 			}
 		}
 
-		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, task.UPID, clientLogFile)
+		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, task.UPID, clientLogFile, agentMount.GetServerWarnLogCount())
 		if err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed to process logs").
