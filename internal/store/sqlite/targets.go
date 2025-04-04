@@ -16,8 +16,8 @@ import (
 // CreateTarget inserts a new target.
 func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) error {
 	if tx == nil {
-		database.writeMu.Lock()
-		defer database.writeMu.Unlock()
+		database.writeLock()
+		defer database.writeUnlock()
 
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
@@ -57,8 +57,8 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) error {
 // UpdateTarget updates an existing target.
 func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) error {
 	if tx == nil {
-		database.writeMu.Lock()
-		defer database.writeMu.Unlock()
+		database.writeLock()
+		defer database.writeUnlock()
 
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
@@ -97,8 +97,8 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) error {
 // DeleteTarget removes a target.
 func (database *Database) DeleteTarget(tx *sql.Tx, name string) error {
 	if tx == nil {
-		database.writeMu.Lock()
-		defer database.writeMu.Unlock()
+		database.writeLock()
+		defer database.writeUnlock()
 
 		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
