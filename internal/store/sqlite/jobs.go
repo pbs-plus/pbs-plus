@@ -35,16 +35,17 @@ func (database *Database) generateUniqueJobID(job types.Job) (string, error) {
 		} else {
 			newID = fmt.Sprintf("%s-%d", baseID, idx)
 		}
-		var count int
+		var exists int
 		err := database.readDb.
-			QueryRow("SELECT COUNT(*) FROM jobs WHERE id = ?", newID).
-			Scan(&count)
+			QueryRow("SELECT 1 FROM jobs WHERE id = ? LIMIT 1", newID).
+			Scan(&exists)
+
+		if errors.Is(err, sql.ErrNoRows) {
+			return newID, nil
+		}
 		if err != nil {
 			return "", fmt.Errorf(
-				"generateUniqueJobID: error querying job: %w", err)
-		}
-		if count == 0 {
-			return newID, nil
+				"generateUniqueJobID: error checking job existence: %w", err)
 		}
 	}
 	return "", fmt.Errorf("failed to generate a unique job ID after %d attempts",
@@ -52,17 +53,36 @@ func (database *Database) generateUniqueJobID(job types.Job) (string, error) {
 }
 
 // CreateJob creates a new job record and adds any associated exclusions.
-func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
+func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
+	var commitNeeded bool = false
 	if tx == nil {
 		database.writeLock()
 		defer database.writeUnlock()
 
-		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
-			return err
+			return fmt.Errorf("CreateJob: failed to begin transaction: %w", err)
 		}
-		defer tx.Commit()
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback() // Rollback on panic
+				panic(p)          // Re-panic after rollback
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("CreateJob: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("CreateJob: failed to commit transaction: %w", cErr) // Assign commit error back
+					syslog.L.Error(err).Write()
+				}
+			} else {
+				// Rollback if commit isn't explicitly needed (e.g., early return without error)
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("CreateJob: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			}
+		}()
 	}
 
 	if job.ID == "" {
@@ -76,15 +96,12 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
 	if job.Target == "" {
 		return errors.New("target is empty")
 	}
-
 	if job.Store == "" {
 		return errors.New("datastore is empty")
 	}
-
 	if !utils.IsValidID(job.ID) && job.ID != "" {
 		return fmt.Errorf("CreateJob: invalid id string -> %s", job.ID)
 	}
-
 	if !utils.IsValidNamespace(job.Namespace) && job.Namespace != "" {
 		return fmt.Errorf("invalid namespace string: %s", job.Namespace)
 	}
@@ -94,8 +111,6 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
 	if !utils.IsValidPathString(job.Subpath) {
 		return fmt.Errorf("invalid subpath string: %s", job.Subpath)
 	}
-
-	// Ensure retry parameters are sane.
 	if job.RetryInterval <= 0 {
 		job.RetryInterval = 1
 	}
@@ -106,8 +121,7 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
 		job.MaxDirEntries = 1048576
 	}
 
-	// Insert the job.
-	_, err := tx.Exec(`
+	_, err = tx.Exec(`
         INSERT INTO jobs (
             id, store, mode, source_mode, target, subpath, schedule, comment,
             notification_mode, namespace, current_pid, last_run_upid, last_successful_upid, retry,
@@ -121,59 +135,108 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) error {
 		return fmt.Errorf("CreateJob: error inserting job: %w", err)
 	}
 
-	// Handle any job-specific exclusions.
 	for _, exclusion := range job.Exclusions {
 		if exclusion.JobID == "" {
 			exclusion.JobID = job.ID
 		}
-		if err := database.CreateExclusion(tx, exclusion); err != nil {
-			syslog.L.Error(err).WithField("id", job.ID).Write()
-			continue
+		// Assuming CreateExclusion uses the provided tx
+		if err = database.CreateExclusion(tx, exclusion); err != nil {
+			syslog.L.Error(fmt.Errorf("CreateJob: failed to create exclusion: %w", err)).
+				WithField("job_id", job.ID).
+				WithField("path", exclusion.Path).
+				Write()
+			// Return the first error encountered during exclusion creation
+			return fmt.Errorf("CreateJob: failed to create exclusion '%s': %w", exclusion.Path, err)
 		}
 	}
 
-	if err := system.SetSchedule(job); err != nil {
-		syslog.L.Error(err).WithField("id", job.ID).Write()
+	if err = system.SetSchedule(job); err != nil {
+		syslog.L.Error(fmt.Errorf("CreateJob: failed to set schedule: %w", err)).
+			WithField("id", job.ID).
+			Write()
+		// Decide if schedule setting failure should rollback the DB transaction
+		// return fmt.Errorf("CreateJob: failed to set schedule: %w", err) // Uncomment to rollback
 	}
 
+	commitNeeded = true
 	return nil
 }
 
 // GetJob retrieves a job by id and assembles its exclusions.
 func (database *Database) GetJob(id string) (types.Job, error) {
-	row := database.readDb.QueryRow(`
-        SELECT id, store, mode, source_mode, target, subpath, schedule, comment,
-               notification_mode, namespace, current_pid, last_run_upid, last_successful_upid,
-							 retry, retry_interval, max_dir_entries
-        FROM jobs WHERE id = ?
-    `, id)
+	query := `
+        SELECT
+            j.id, j.store, j.mode, j.source_mode, j.target, j.subpath, j.schedule, j.comment,
+            j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
+            j.retry, j.retry_interval, j.max_dir_entries,
+            e.path,
+            t.drive_used_bytes
+        FROM jobs j
+        LEFT JOIN exclusions e ON j.id = e.job_id
+        LEFT JOIN targets t ON j.target = t.name
+        WHERE j.id = ?
+    `
+	rows, err := database.readDb.Query(query, id)
+	if err != nil {
+		return types.Job{}, fmt.Errorf("GetJob: error querying job data: %w", err)
+	}
+	defer rows.Close()
 
 	var job types.Job
-	err := row.Scan(&job.ID, &job.Store, &job.Mode, &job.SourceMode,
-		&job.Target, &job.Subpath, &job.Schedule, &job.Comment,
-		&job.NotificationMode, &job.Namespace, &job.CurrentPID, &job.LastRunUpid,
-		&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval, &job.MaxDirEntries)
-	if err != nil {
-		return types.Job{}, fmt.Errorf("GetJob: error fetching job: %w", err)
+	var exclusionPaths []string
+	var found bool = false
+
+	for rows.Next() {
+		found = true
+		var exclusionPath sql.NullString
+		var driveUsedBytes sql.NullInt64
+		err := rows.Scan(
+			&job.ID, &job.Store, &job.Mode, &job.SourceMode,
+			&job.Target, &job.Subpath, &job.Schedule, &job.Comment,
+			&job.NotificationMode, &job.Namespace, &job.CurrentPID, &job.LastRunUpid,
+			&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval, &job.MaxDirEntries,
+			&exclusionPath, &driveUsedBytes,
+		)
+		if err != nil {
+			syslog.L.Error(fmt.Errorf("GetJob: error scanning job data: %w", err)).
+				WithField("id", id).
+				Write()
+			return types.Job{}, fmt.Errorf("GetJob: error scanning job data for id %s: %w", id, err)
+		}
+
+		if exclusionPath.Valid && exclusionPath.String != "" {
+			exclusionPaths = append(exclusionPaths, exclusionPath.String)
+		}
+		// Only set ExpectedSize once from the first row (or any row) where it's valid
+		if driveUsedBytes.Valid && job.ExpectedSize == 0 {
+			job.ExpectedSize = int(driveUsedBytes.Int64)
+		}
 	}
 
-	database.getJobExtras(&job)
+	if err = rows.Err(); err != nil {
+		return types.Job{}, fmt.Errorf("GetJob: error iterating job results: %w", err)
+	}
+
+	if !found {
+		return types.Job{}, sql.ErrNoRows
+	}
+
+	job.Exclusions = make([]types.Exclusion, 0, len(exclusionPaths))
+	for _, path := range exclusionPaths {
+		job.Exclusions = append(job.Exclusions, types.Exclusion{
+			JobID: job.ID,
+			Path:  path,
+		})
+	}
+	job.RawExclusions = strings.Join(exclusionPaths, "\n")
+
+	database.populateJobExtras(&job)
 
 	return job, nil
 }
 
-func (database *Database) getJobExtras(job *types.Job) {
-	// Retrieve and attach exclusions.
-	exclusions, err := database.GetAllJobExclusions(job.ID)
-	if err == nil && exclusions != nil {
-		job.Exclusions = exclusions
-		pathSlice := []string{}
-		for _, exclusion := range exclusions {
-			pathSlice = append(pathSlice, exclusion.Path)
-		}
-		job.RawExclusions = strings.Join(pathSlice, "\n")
-	}
-
+// populateJobExtras fills in details not directly from the database tables.
+func (database *Database) populateJobExtras(job *types.Job) {
 	if job.LastRunUpid != "" {
 		task, err := proxmox.Session.GetTaskByUPID(job.LastRunUpid)
 		if err == nil {
@@ -181,7 +244,7 @@ func (database *Database) getJobExtras(job *types.Job) {
 			if task.Status == "stopped" {
 				job.LastRunState = task.ExitStatus
 				job.Duration = task.EndTime - task.StartTime
-			} else {
+			} else if task.StartTime > 0 {
 				job.Duration = time.Now().Unix() - task.StartTime
 			}
 		}
@@ -198,31 +261,46 @@ func (database *Database) getJobExtras(job *types.Job) {
 }
 
 // UpdateJob updates an existing job and its exclusions.
-func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
+func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
+	var commitNeeded bool = false
 	if tx == nil {
 		database.writeLock()
 		defer database.writeUnlock()
 
-		var err error
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
-			return err
+			return fmt.Errorf("UpdateJob: failed to begin transaction: %w", err)
 		}
-		defer tx.Commit()
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("UpdateJob: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("UpdateJob: failed to commit transaction: %w", cErr)
+					syslog.L.Error(err).Write()
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("UpdateJob: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			}
+		}()
 	}
 
 	if !utils.IsValidID(job.ID) && job.ID != "" {
 		return fmt.Errorf("UpdateJob: invalid id string -> %s", job.ID)
 	}
-
 	if job.Target == "" {
 		return errors.New("target is empty")
 	}
-
 	if job.Store == "" {
 		return errors.New("datastore is empty")
 	}
-
 	if job.RetryInterval <= 0 {
 		job.RetryInterval = 1
 	}
@@ -239,12 +317,12 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
 		return fmt.Errorf("invalid subpath string: %s", job.Subpath)
 	}
 
-	_, err := tx.Exec(`
+	_, err = tx.Exec(`
         UPDATE jobs SET store = ?, mode = ?, source_mode = ?, target = ?,
             subpath = ?, schedule = ?, comment = ?, notification_mode = ?,
             namespace = ?, current_pid = ?, last_run_upid = ?, retry = ?,
             retry_interval = ?, last_successful_upid = ?,
-						max_dir_entries = ?
+            max_dir_entries = ?
         WHERE id = ?
     `, job.Store, job.Mode, job.SourceMode, job.Target, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace,
@@ -254,127 +332,252 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) error {
 		return fmt.Errorf("UpdateJob: error updating job: %w", err)
 	}
 
-	// Remove old exclusions and insert updated ones.
-	if _, err := tx.Exec(`
-        DELETE FROM exclusions WHERE job_id = ?
-    `, job.ID); err != nil {
-		return fmt.Errorf("UpdateJob: error removing old exclusions: %w", err)
+	_, err = tx.Exec(`DELETE FROM exclusions WHERE job_id = ?`, job.ID)
+	if err != nil {
+		return fmt.Errorf("UpdateJob: error removing old exclusions for job %s: %w", job.ID, err)
 	}
 
 	for _, exclusion := range job.Exclusions {
-		// Only update those belonging to the job.
-		if exclusion.JobID != job.ID {
-			continue
-		}
-		if err := database.CreateExclusion(tx, exclusion); err != nil {
-			syslog.L.Error(err).WithField("id", job.ID).Write()
-			continue
+		exclusion.JobID = job.ID // Ensure correct JobID
+		if err = database.CreateExclusion(tx, exclusion); err != nil {
+			syslog.L.Error(fmt.Errorf("UpdateJob: failed to create exclusion: %w", err)).
+				WithField("job_id", job.ID).
+				WithField("path", exclusion.Path).
+				Write()
+			return fmt.Errorf("UpdateJob: failed to create exclusion '%s': %w", exclusion.Path, err)
 		}
 	}
 
-	if err := system.SetSchedule(job); err != nil {
-		syslog.L.Error(err).WithField("id", job.ID).Write()
+	if err = system.SetSchedule(job); err != nil {
+		syslog.L.Error(fmt.Errorf("UpdateJob: failed to set schedule: %w", err)).
+			WithField("id", job.ID).
+			Write()
+		// Decide if schedule setting failure should rollback the DB transaction
+		// return fmt.Errorf("UpdateJob: failed to set schedule: %w", err) // Uncomment to rollback
 	}
 
 	if job.LastRunUpid != "" {
-		go func() {
-			jobLogsPath := filepath.Join(constants.JobLogsBasePath, job.ID)
-			if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
-				syslog.L.Error(err).WithField("id", job.ID).Write()
+		go database.linkJobLog(job.ID, job.LastRunUpid)
+	}
+
+	commitNeeded = true
+	return nil
+}
+
+// linkJobLog handles the asynchronous log linking.
+func (database *Database) linkJobLog(jobID, upid string) {
+	jobLogsPath := filepath.Join(constants.JobLogsBasePath, jobID)
+	if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
+		syslog.L.Error(fmt.Errorf("linkJobLog: failed to create log dir: %w", err)).
+			WithField("id", jobID).
+			Write()
+		return
+	}
+
+	jobLogPath := filepath.Join(jobLogsPath, upid)
+	if _, err := os.Lstat(jobLogPath); !os.IsNotExist(err) {
+		syslog.L.Error(fmt.Errorf("linkJobLog: failed to stat potential symlink: %w", err)).
+			WithField("path", jobLogPath).
+			Write()
+		return
+	}
+
+	origLogPath, err := proxmox.GetLogPath(upid)
+	if err != nil {
+		syslog.L.Error(fmt.Errorf("linkJobLog: failed to get original log path: %w", err)).
+			WithField("id", jobID).
+			WithField("upid", upid).
+			Write()
+		return
+	}
+
+	if _, err := os.Stat(origLogPath); err != nil {
+		syslog.L.Error(fmt.Errorf("linkJobLog: original log path does not exist or error stating: %w", err)).
+			WithField("orig_path", origLogPath).
+			WithField("id", jobID).
+			Write()
+		return
+	}
+
+	err = os.Symlink(origLogPath, jobLogPath)
+	if err != nil {
+		syslog.L.Error(fmt.Errorf("linkJobLog: failed to create symlink: %w", err)).
+			WithField("id", jobID).
+			WithField("source", origLogPath).
+			WithField("link", jobLogPath).
+			Write()
+	}
+}
+
+// GetAllJobs returns all job records.
+func (database *Database) GetAllJobs() ([]types.Job, error) {
+	query := `
+        SELECT
+            j.id, j.store, j.mode, j.source_mode, j.target, j.subpath, j.schedule, j.comment,
+            j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
+            j.retry, j.retry_interval, j.max_dir_entries,
+            e.path,
+            t.drive_used_bytes
+        FROM jobs j
+        LEFT JOIN exclusions e ON j.id = e.job_id
+        LEFT JOIN targets t ON j.target = t.name
+        ORDER BY j.id
+    `
+	rows, err := database.readDb.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("GetAllJobs: error querying jobs: %w", err)
+	}
+	defer rows.Close()
+
+	jobsMap := make(map[string]*types.Job)
+	var jobOrder []string
+
+	for rows.Next() {
+		var jobID, store, mode, sourceMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
+		var retry, maxDirEntries int
+		var retryInterval int
+		var currentPID int
+		var exclusionPath sql.NullString
+		var driveUsedBytes sql.NullInt64
+
+		err := rows.Scan(
+			&jobID, &store, &mode, &sourceMode, &target, &subpath, &schedule, &comment,
+			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
+			&retry, &retryInterval, &maxDirEntries,
+			&exclusionPath, &driveUsedBytes,
+		)
+		if err != nil {
+			syslog.L.Error(fmt.Errorf("GetAllJobs: error scanning row: %w", err)).Write()
+			continue
+		}
+
+		job, exists := jobsMap[jobID]
+		if !exists {
+			job = &types.Job{
+				ID:                 jobID,
+				Store:              store,
+				Mode:               mode,
+				SourceMode:         sourceMode,
+				Target:             target,
+				Subpath:            subpath,
+				Schedule:           schedule,
+				Comment:            comment,
+				NotificationMode:   notificationMode,
+				Namespace:          namespace,
+				CurrentPID:         currentPID,
+				LastRunUpid:        lastRunUpid,
+				LastSuccessfulUpid: lastSuccessfulUpid,
+				Retry:              retry,
+				RetryInterval:      retryInterval,
+				MaxDirEntries:      maxDirEntries,
+				Exclusions:         make([]types.Exclusion, 0),
+			}
+			if driveUsedBytes.Valid {
+				job.ExpectedSize = int(driveUsedBytes.Int64)
+			}
+			jobsMap[jobID] = job
+			jobOrder = append(jobOrder, jobID)
+			database.populateJobExtras(job) // Populate non-SQL extras once per job
+		}
+
+		if exclusionPath.Valid && exclusionPath.String != "" {
+			job.Exclusions = append(job.Exclusions, types.Exclusion{
+				JobID: jobID,
+				Path:  exclusionPath.String,
+			})
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetAllJobs: error iterating job results: %w", err)
+	}
+
+	jobs := make([]types.Job, len(jobOrder))
+	for i, jobID := range jobOrder {
+		job := jobsMap[jobID]
+		pathSlice := make([]string, len(job.Exclusions))
+		for k, exclusion := range job.Exclusions {
+			pathSlice[k] = exclusion.Path
+		}
+		job.RawExclusions = strings.Join(pathSlice, "\n")
+		jobs[i] = *job
+	}
+
+	return jobs, nil
+}
+
+// DeleteJob deletes a job and any related exclusions.
+func (database *Database) DeleteJob(tx *sql.Tx, id string) (err error) {
+	var commitNeeded bool = false
+	if tx == nil {
+		database.writeLock()
+		defer database.writeUnlock()
+
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return fmt.Errorf("DeleteJob: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("DeleteJob: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("DeleteJob: failed to commit transaction: %w", cErr)
+					syslog.L.Error(err).Write()
+				}
 			} else {
-				jobLogPath := filepath.Join(jobLogsPath, job.LastRunUpid)
-				if _, err := os.Lstat(jobLogPath); err != nil {
-					origLogPath, err := proxmox.GetLogPath(job.LastRunUpid)
-					if err != nil {
-						syslog.L.Error(err).WithField("id", job.ID).Write()
-					}
-					err = os.Symlink(origLogPath, jobLogPath)
-					if err != nil {
-						syslog.L.Error(err).WithField("id", job.ID).Write()
-					}
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("DeleteJob: failed to rollback transaction: %w", rbErr)).Write()
 				}
 			}
 		}()
 	}
 
-	return nil
-}
-
-// GetAllJobs returns all job records.
-func (database *Database) GetAllJobs() ([]types.Job, error) {
-	rows, err := database.readDb.Query(`
-			SELECT id, store, mode, source_mode, target, subpath, schedule, comment,
-						 notification_mode, namespace, current_pid, last_run_upid, last_successful_upid,
-						 retry, retry_interval, max_dir_entries
-			FROM jobs
-  `)
+	// Delete associated exclusions first (or rely on ON DELETE CASCADE)
+	_, err = tx.Exec("DELETE FROM exclusions WHERE job_id = ?", id)
 	if err != nil {
-		return nil, fmt.Errorf("GetJob: error fetching job: %w", err)
-	}
-	defer rows.Close()
-
-	var jobs []types.Job
-	for rows.Next() {
-		var job types.Job
-		err := rows.Scan(&job.ID, &job.Store, &job.Mode, &job.SourceMode,
-			&job.Target, &job.Subpath, &job.Schedule, &job.Comment,
-			&job.NotificationMode, &job.Namespace, &job.CurrentPID, &job.LastRunUpid,
-			&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval,
-			&job.MaxDirEntries)
-		if err != nil {
-			continue
-		}
-
-		database.getJobExtras(&job)
-
-		var driveUsedBytes int
-		targetRow := database.readDb.QueryRow(`
-        SELECT drive_used_bytes FROM targets WHERE name = ?
-    `, job.Target)
-		err = targetRow.Scan(&driveUsedBytes)
-		if err == nil {
-			job.ExpectedSize = driveUsedBytes
-		}
-
-		jobs = append(jobs, job)
-	}
-	return jobs, nil
-}
-
-// DeleteJob deletes a job and any related exclusions.
-func (database *Database) DeleteJob(tx *sql.Tx, id string) error {
-	if tx == nil {
-		database.writeLock()
-		defer database.writeUnlock()
-
-		var err error
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
-		if err != nil {
-			return err
-		}
-		defer tx.Commit()
+		syslog.L.Error(fmt.Errorf("DeleteJob: error deleting exclusions: %w", err)).
+			WithField("id", id).
+			Write()
+		// Return error if exclusions deletion fails
+		return fmt.Errorf("DeleteJob: error deleting exclusions for job %s: %w", id, err)
 	}
 
-	_, err := tx.Exec("DELETE FROM jobs WHERE id = ?", id)
+	// Delete the job itself
+	res, err := tx.Exec("DELETE FROM jobs WHERE id = ?", id)
 	if err != nil {
-		return fmt.Errorf("DeleteJob: error deleting job: %w", err)
+		return fmt.Errorf("DeleteJob: error deleting job %s: %w", id, err)
 	}
 
-	// Delete associated exclusions.
-	if _, err := tx.Exec("DELETE FROM exclusions WHERE job_id = ?", id); err != nil {
-		syslog.L.Error(err).WithField("id", id).Write()
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
 	}
 
+	// Filesystem and system operations outside transaction
 	jobLogsPath := filepath.Join(constants.JobLogsBasePath, id)
 	if err := os.RemoveAll(jobLogsPath); err != nil {
 		if !os.IsNotExist(err) {
-			syslog.L.Error(err).WithField("id", id).Write()
+			syslog.L.Error(fmt.Errorf("DeleteJob: failed removing job logs: %w", err)).
+				WithField("id", id).
+				Write()
+			// Decide if this failure should prevent commit (if tx was passed in)
+			// or just be logged. Currently just logged.
 		}
 	}
 
 	if err := system.DeleteSchedule(id); err != nil {
-		syslog.L.Error(err).WithField("id", id).Write()
+		syslog.L.Error(fmt.Errorf("DeleteJob: failed deleting schedule: %w", err)).
+			WithField("id", id).
+			Write()
+		// Decide if this failure should prevent commit or just be logged.
 	}
 
+	commitNeeded = true
 	return nil
 }
