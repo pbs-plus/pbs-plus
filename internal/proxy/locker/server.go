@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/puzpuzpuz/xsync/v3"
 )
 
 type Args struct {
@@ -24,19 +25,11 @@ type Reply struct {
 }
 
 type LockerRPC struct {
-	mapMutex sync.Mutex
-	locks    map[string]*sync.Mutex
+	locks *xsync.MapOf[string, *sync.Mutex]
 }
 
 func (s *LockerRPC) getOrCreateMutex(key string) *sync.Mutex {
-	s.mapMutex.Lock()
-	defer s.mapMutex.Unlock()
-
-	mu, ok := s.locks[key]
-	if !ok {
-		mu = &sync.Mutex{}
-		s.locks[key] = mu
-	}
+	mu, _ := s.locks.LoadOrStore(key, new(sync.Mutex))
 	return mu
 }
 
@@ -51,7 +44,6 @@ func (s *LockerRPC) Lock(args *Args, reply *Reply) error {
 	keyMutex.Lock()
 
 	reply.Success = true
-	syslog.L.Info().WithMessage("lock acquired").WithField("key", args.Key).Write()
 	return nil
 }
 
@@ -66,17 +58,6 @@ func (s *LockerRPC) TryLock(args *Args, reply *Reply) error {
 	acquired := keyMutex.TryLock()
 
 	reply.Success = acquired
-	if acquired {
-		syslog.L.Info().
-			WithMessage("trylock succeeded").
-			WithField("key", args.Key).
-			Write()
-	} else {
-		syslog.L.Info().
-			WithMessage("trylock failed").
-			WithField("key", args.Key).
-			Write()
-	}
 	return nil
 }
 
@@ -86,23 +67,16 @@ func (s *LockerRPC) Unlock(args *Args, reply *Reply) error {
 		return errors.New("lock key cannot be empty")
 	}
 
-	s.mapMutex.Lock()
-	keyMutex, ok := s.locks[args.Key]
-	s.mapMutex.Unlock() // Release map lock quickly
+	keyMutex, ok := s.locks.Load(args.Key)
 
 	if !ok {
 		reply.Success = false
-		syslog.L.Warn().
-			WithMessage("unlock attempted on non-existent or already unlocked key").
-			WithField("key", args.Key).
-			Write()
 		return nil // Or return specific error
 	}
 
 	keyMutex.Unlock()
 
 	reply.Success = true
-	syslog.L.Info().WithMessage("lock released").WithField("key", args.Key).Write()
 	return nil
 }
 
@@ -114,7 +88,7 @@ func StartLockerServer(watcher chan struct{}, socketPath string) error {
 	}
 
 	service := &LockerRPC{
-		locks: make(map[string]*sync.Mutex),
+		locks: xsync.NewMapOf[string, *sync.Mutex](),
 	}
 
 	if err := rpc.Register(service); err != nil {
