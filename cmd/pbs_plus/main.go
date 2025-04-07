@@ -326,11 +326,11 @@ func main() {
 		for {
 			select {
 			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("rpc server cancelled")
+				syslog.L.Error(mainCtx.Err()).WithMessage("mount rpc server cancelled")
 				return
 			default:
 				if err := rpcmount.RunRPCServer(mainCtx, constants.MountSocketPath, storeInstance); err != nil {
-					syslog.L.Error(err).WithMessage("rpc server failed, restarting")
+					syslog.L.Error(err).WithMessage("mount rpc server failed, restarting")
 				}
 			}
 		}
@@ -340,11 +340,25 @@ func main() {
 		for {
 			select {
 			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("locker server cancelled")
+				syslog.L.Error(mainCtx.Err()).WithMessage("locker rpc server cancelled")
 				return
 			default:
 				if err := rpclocker.RunLockerServer(mainCtx, constants.LockSocketPath); err != nil {
-					syslog.L.Error(err).WithMessage("locker server failed, restarting")
+					syslog.L.Error(err).WithMessage("locker rpc server failed, restarting")
+				}
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-mainCtx.Done():
+				syslog.L.Error(mainCtx.Err()).WithMessage("job rpc server cancelled")
+				return
+			default:
+				if err := rpcmount.RunJobRPCServer(mainCtx, constants.JobMutateSocketPath, storeInstance); err != nil {
+					syslog.L.Error(err).WithMessage("job rpc server failed, restarting")
 				}
 			}
 		}
