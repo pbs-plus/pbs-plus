@@ -1,7 +1,7 @@
 //go:build linux
 // +build linux
 
-package rpcmount
+package jobrpc
 
 import (
 	"context"
@@ -10,35 +10,45 @@ import (
 	"net/rpc"
 	"os"
 
+	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-type UpdateArgs struct {
-	Job types.Job
+type QueueArgs struct {
+	Job             types.Job
+	SkipCheck       bool
+	Web             bool
+	ExtraExclusions []string
 }
 
-type UpdateReply struct {
+type QueueReply struct {
 	Status  int
 	Message string
 }
 
 type JobRPCService struct {
-	ctx   context.Context
-	Store *store.Store
+	ctx     context.Context
+	Store   *store.Store
+	Manager *backup.Manager
 }
 
-func (s *JobRPCService) Update(args *UpdateArgs, reply *UpdateReply) error {
-	if err := s.Store.Database.UpdateJob(nil, args.Job); err != nil {
+func (s *JobRPCService) Queue(args *QueueArgs, reply *QueueReply) error {
+	job, err := backup.NewJob(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
+	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
+		return nil
 	}
+
+	s.Manager.Enqueue(*job)
+	reply.Status = 200
 
 	return nil
 }
 
-func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, storeInstance *store.Store) error {
+func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, manager *backup.Manager, storeInstance *store.Store) error {
 	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
 	listener, err := net.Listen("unix", socketPath)
@@ -47,8 +57,9 @@ func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath st
 	}
 
 	service := &JobRPCService{
-		ctx:   ctx,
-		Store: storeInstance,
+		ctx:     ctx,
+		Store:   storeInstance,
+		Manager: manager,
 	}
 
 	// Register the RPC service.
@@ -77,9 +88,9 @@ func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath st
 	return nil
 }
 
-func RunJobRPCServer(ctx context.Context, socketPath string, storeInstance *store.Store) error {
+func RunJobRPCServer(ctx context.Context, socketPath string, manager *backup.Manager, storeInstance *store.Store) error {
 	watcher := make(chan struct{}, 1)
-	err := StartJobRPCServer(watcher, ctx, socketPath, storeInstance)
+	err := StartJobRPCServer(watcher, ctx, socketPath, manager, storeInstance)
 	if err != nil {
 		return err
 	}

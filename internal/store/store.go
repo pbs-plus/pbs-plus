@@ -10,7 +10,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/arpc"
-	rpclocker "github.com/pbs-plus/pbs-plus/internal/proxy/locker"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/sqlite"
@@ -28,7 +27,6 @@ type Store struct {
 	Database           *sqlite.Database
 	ARPCSessionManager *arpc.SessionManager
 	arpcFS             *safemap.Map[string, *arpcfs.ARPCFS]
-	Locker             *rpclocker.LockerClient
 }
 
 func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {

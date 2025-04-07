@@ -14,9 +14,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/backend/mount"
-	rpclocker "github.com/pbs-plus/pbs-plus/internal/proxy/locker"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -60,6 +58,13 @@ type BackupOperation struct {
 	Task      proxmox.Task
 	waitGroup *sync.WaitGroup
 	err       error
+
+	job             types.Job
+	storeInstance   *store.Store
+	skipCheck       bool
+	web             bool
+	extraExclusions []string
+	lock            *sync.Mutex
 }
 
 // Wait blocks until the backup operation is complete.
@@ -70,39 +75,38 @@ func (b *BackupOperation) Wait() error {
 	return b.err
 }
 
-func RunBackup(
-	ctx context.Context,
+func NewJob(
 	job types.Job,
 	storeInstance *store.Store,
 	skipCheck bool,
 	web bool,
-	extraExclusions *[]string,
+	extraExclusions []string,
 ) (*BackupOperation, error) {
+	return &BackupOperation{
+		job:             job,
+		storeInstance:   storeInstance,
+		skipCheck:       skipCheck,
+		web:             web,
+		extraExclusions: extraExclusions,
+	}, nil
+}
+
+func (op *BackupOperation) Execute(ctx context.Context) error {
 	var err error
 
-	if storeInstance.Locker == nil {
-		storeInstance.Locker, err = rpclocker.NewLockerClient(constants.LockSocketPath)
-		if err != nil {
-			syslog.L.Error(err).WithMessage("locker server failed, restarting")
-			return nil, err
-		}
-	}
-
-	if locked, err := storeInstance.Locker.TryLock("BackupJob-" + job.ID); err != nil || !locked {
-		return nil, ErrOneInstance
-	}
-
-	clientLogFile := syslog.CreateBackupLogger(job.ID)
+	clientLogFile := syslog.CreateBackupLogger(op.job.ID)
 
 	errorMonitorDone := make(chan struct{})
 
 	var agentMount *mount.AgentMount
 
 	errCleanUp := func() {
-		utils.ClearIOStats(job.CurrentPID)
-		job.CurrentPID = 0
+		utils.ClearIOStats(op.job.CurrentPID)
+		op.job.CurrentPID = 0
 
-		storeInstance.Locker.Unlock("BackupJob-" + job.ID)
+		if op.lock != nil {
+			op.lock.Unlock()
+		}
 		if agentMount != nil {
 			agentMount.Unmount()
 			agentMount.CloseMount()
@@ -113,78 +117,58 @@ func RunBackup(
 		close(errorMonitorDone)
 	}
 
-	queueTask, err := proxmox.GenerateQueuedTask(job, web)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
-	} else {
-		queueTaskLogPath, err := proxmox.GetLogPath(queueTask.UPID)
-		if err == nil {
-			defer os.Remove(queueTaskLogPath)
-		}
-
-		if err := updateJobStatus(false, 0, job, queueTask, storeInstance); err != nil {
-			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
-		}
-	}
-
-	if err := storeInstance.Locker.Lock("BackupJobInitializing"); err != nil {
-		errCleanUp()
-		return nil, fmt.Errorf("%w: %v", ErrBackupMutexLock, err)
-	}
-	defer storeInstance.Locker.Unlock("BackupJobInitializing")
-
 	if proxmox.Session.APIToken == nil {
 		errCleanUp()
-		return nil, ErrAPITokenRequired
+		return ErrAPITokenRequired
 	}
 
-	target, err := storeInstance.Database.GetTarget(job.Target)
+	target, err := op.storeInstance.Database.GetTarget(op.job.Target)
 	if err != nil {
 		errCleanUp()
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrTargetNotFound, job.Target)
+			return fmt.Errorf("%w: %s", ErrTargetNotFound, op.job.Target)
 		}
-		return nil, fmt.Errorf("%w: %v", ErrTargetGet, err)
+		return fmt.Errorf("%w: %v", ErrTargetGet, err)
 	}
 
 	isAgent := strings.HasPrefix(target.Path, "agent://")
 
-	if !skipCheck && isAgent {
+	if !op.skipCheck && isAgent {
 		targetSplit := strings.Split(target.Name, " - ")
-		_, exists := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
+		_, exists := op.storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
 		if !exists {
 			errCleanUp()
-			return nil, fmt.Errorf("%w: %s", ErrTargetUnreachable, job.Target)
+			return fmt.Errorf("%w: %s", ErrTargetUnreachable, op.job.Target)
 		}
-	} else if !skipCheck && !isAgent {
+	} else if !op.skipCheck && !isAgent {
 		_, err := os.Stat(target.Path)
 		if err != nil {
 			errCleanUp()
-			return nil, fmt.Errorf("%w: %s (%v)", ErrTargetUnreachable, job.Target, err)
+			return fmt.Errorf("%w: %s (%v)", ErrTargetUnreachable, op.job.Target, err)
 		}
 	}
 
 	srcPath := target.Path
 	if isAgent {
-		agentMount, err = mount.Mount(storeInstance, job, target)
+		agentMount, err = mount.Mount(op.storeInstance, op.job, target)
 		if err != nil {
 			errCleanUp()
-			return nil, fmt.Errorf("%w: %v", ErrMountInitialization, err)
+			return fmt.Errorf("%w: %v", ErrMountInitialization, err)
 		}
 		srcPath = agentMount.Path
 
 		// In case mount updates the job.
-		latestAgent, err := storeInstance.Database.GetJob(job.ID)
+		latestAgent, err := op.storeInstance.Database.GetJob(op.job.ID)
 		if err == nil {
-			job = latestAgent
+			op.job = latestAgent
 		}
 	}
-	srcPath = filepath.Join(srcPath, job.Subpath)
+	srcPath = filepath.Join(srcPath, op.job.Subpath)
 
-	cmd, err := prepareBackupCommand(ctx, job, storeInstance, srcPath, isAgent, *extraExclusions)
+	cmd, err := prepareBackupCommand(ctx, op.job, op.storeInstance, srcPath, isAgent, op.extraExclusions)
 	if err != nil {
 		errCleanUp()
-		return nil, fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
+		return fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
 	}
 
 	readyChan := make(chan struct{})
@@ -197,7 +181,7 @@ func RunBackup(
 	syslog.L.Info().WithMessage("starting monitor goroutine").Write()
 	go func() {
 		defer syslog.L.Info().WithMessage("monitor goroutine closing").Write()
-		task, err := proxmox.Session.GetJobTask(monitorCtx, readyChan, job, target)
+		task, err := proxmox.Session.GetJobTask(monitorCtx, readyChan, op.job, target)
 		if err != nil {
 			syslog.L.Error(err).WithMessage("found error in getjobtask return").Write()
 
@@ -221,14 +205,14 @@ func RunBackup(
 	case err := <-taskErrorChan:
 		monitorCancel()
 		errCleanUp()
-		return nil, fmt.Errorf("%w: %v", ErrTaskMonitoringInitializationFailed, err)
+		return fmt.Errorf("%w: %v", ErrTaskMonitoringInitializationFailed, err)
 	case <-monitorCtx.Done():
 		errCleanUp()
-		return nil, fmt.Errorf("%w: %v", ErrTaskMonitoringTimedOut, monitorCtx.Err())
+		return fmt.Errorf("%w: %v", ErrTaskMonitoringTimedOut, monitorCtx.Err())
 	}
 
-	currOwner, _ := GetCurrentOwner(job, storeInstance)
-	_ = FixDatastore(job, storeInstance)
+	currOwner, _ := GetCurrentOwner(op.job, op.storeInstance)
+	_ = FixDatastore(op.job, op.storeInstance)
 
 	stdoutWriter := io.MultiWriter(clientLogFile.File, os.Stdout)
 	cmd.Stdout = stdoutWriter
@@ -238,15 +222,15 @@ func RunBackup(
 	if err := cmd.Start(); err != nil {
 		monitorCancel()
 		if currOwner != "" {
-			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+			_ = SetDatastoreOwner(op.job, op.storeInstance, currOwner)
 		}
 		errCleanUp()
-		return nil, fmt.Errorf("%w (%s): %v",
+		return fmt.Errorf("%w (%s): %v",
 			ErrProxmoxBackupClientStart, cmd.String(), err)
 	}
 
 	if cmd.Process != nil {
-		job.CurrentPID = cmd.Process.Pid
+		op.job.CurrentPID = cmd.Process.Pid
 	}
 
 	go monitorPBSClientLogs(clientLogFile.Path, cmd, errorMonitorDone)
@@ -262,57 +246,57 @@ func RunBackup(
 		}
 		errCleanUp()
 		if currOwner != "" {
-			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+			_ = SetDatastoreOwner(op.job, op.storeInstance, currOwner)
 		}
 		if os.IsNotExist(err) {
-			return nil, ErrNilTask
+			return ErrNilTask
 		}
-		return nil, fmt.Errorf("%w: %v", ErrTaskDetectionFailed, err)
+		return fmt.Errorf("%w: %v", ErrTaskDetectionFailed, err)
 	case <-monitorCtx.Done():
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
 		errCleanUp()
 		if currOwner != "" {
-			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+			_ = SetDatastoreOwner(op.job, op.storeInstance, currOwner)
 		}
-		return nil, fmt.Errorf("%w: %v", ErrTaskDetectionTimedOut, monitorCtx.Err())
+		return fmt.Errorf("%w: %v", ErrTaskDetectionTimedOut, monitorCtx.Err())
 	}
 
-	if err := updateJobStatus(false, 0, job, task, storeInstance); err != nil {
+	if err := updateJobStatus(false, 0, op.job, task, op.storeInstance); err != nil {
 		errCleanUp()
 		if currOwner != "" {
-			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+			_ = SetDatastoreOwner(op.job, op.storeInstance, currOwner)
 		}
-		return nil, fmt.Errorf("%w: %v", ErrJobStatusUpdateFailed, err)
+		return fmt.Errorf("%w: %v", ErrJobStatusUpdateFailed, err)
 	}
 
 	syslog.L.Info().WithMessage("task monitoring finished").WithField("task", task.UPID).Write()
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
-	operation := &BackupOperation{
-		Task:      task,
-		waitGroup: wg,
-	}
+	op.Task = task
+	op.waitGroup = wg
 
 	go func() {
 		defer wg.Done()
 		defer func() {
-			storeInstance.Locker.Unlock("BackupJob-" + job.ID)
+			if op.lock != nil {
+				op.lock.Unlock()
+			}
 		}()
 
 		if err := cmd.Wait(); err != nil {
-			operation.err = err
+			op.err = err
 		}
 
-		utils.ClearIOStats(job.CurrentPID)
-		job.CurrentPID = 0
+		utils.ClearIOStats(op.job.CurrentPID)
+		op.job.CurrentPID = 0
 
 		close(errorMonitorDone)
 
-		for _, extraExclusion := range *extraExclusions {
-			syslog.L.Warn().WithJob(job.ID).WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", extraExclusion)).Write()
+		for _, extraExclusion := range op.extraExclusions {
+			syslog.L.Warn().WithJob(op.job.ID).WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", extraExclusion)).Write()
 		}
 
 		// Agent mount must still be connected after proxmox-backup-client terminates
@@ -333,27 +317,27 @@ func RunBackup(
 		}
 
 		if errorPath != "" {
-			*extraExclusions = append(*extraExclusions, errorPath)
+			op.extraExclusions = append(op.extraExclusions, errorPath)
 		}
 
 		_ = clientLogFile.Close()
 
-		if err := updateJobStatus(succeeded, warningsNum, job, task, storeInstance); err != nil {
+		if err := updateJobStatus(succeeded, warningsNum, op.job, task, op.storeInstance); err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed to update job status - post cmd.Wait").
 				Write()
 		}
 
 		if succeeded || cancelled {
-			system.RemoveAllRetrySchedules(job)
+			system.RemoveAllRetrySchedules(op.job)
 		} else {
-			if err := system.SetRetrySchedule(job, *extraExclusions); err != nil {
-				syslog.L.Error(err).WithField("jobId", job.ID).Write()
+			if err := system.SetRetrySchedule(op.job, op.extraExclusions); err != nil {
+				syslog.L.Error(err).WithField("jobId", op.job.ID).Write()
 			}
 		}
 
 		if currOwner != "" {
-			_ = SetDatastoreOwner(job, storeInstance, currOwner)
+			_ = SetDatastoreOwner(op.job, op.storeInstance, currOwner)
 		}
 
 		if agentMount != nil {
@@ -362,5 +346,5 @@ func RunBackup(
 		}
 	}()
 
-	return operation, nil
+	return nil
 }
