@@ -309,7 +309,12 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			}
 		}
 
-		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, task.UPID, clientLogFile, agentMount.GetServerWarnLogCount())
+		serverWarnLogCount := 0
+		if agentMount != nil {
+			serverWarnLogCount = agentMount.GetServerWarnLogCount()
+		}
+
+		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, task.UPID, clientLogFile, serverWarnLogCount)
 		if err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed to process logs").
