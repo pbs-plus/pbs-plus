@@ -27,7 +27,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/plus"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/targets"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/tokens"
-	rpclocker "github.com/pbs-plus/pbs-plus/internal/proxy/locker"
 	mw "github.com/pbs-plus/pbs-plus/internal/proxy/middlewares"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/proxy/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -340,11 +339,11 @@ func main() {
 		for {
 			select {
 			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("locker server cancelled")
+				syslog.L.Error(mainCtx.Err()).WithMessage("rpc server cancelled")
 				return
 			default:
-				if err := rpclocker.RunLockerServer(mainCtx, constants.LockSocketPath); err != nil {
-					syslog.L.Error(err).WithMessage("locker server failed, restarting")
+				if err := rpcmount.RunJobRPCServer(mainCtx, constants.JobMutateSocketPath, storeInstance); err != nil {
+					syslog.L.Error(err).WithMessage("rpc server failed, restarting")
 				}
 			}
 		}
