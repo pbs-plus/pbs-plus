@@ -4,11 +4,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/rpc"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -27,9 +28,9 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/plus"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/targets"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/tokens"
-	rpclocker "github.com/pbs-plus/pbs-plus/internal/proxy/locker"
 	mw "github.com/pbs-plus/pbs-plus/internal/proxy/middlewares"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/proxy/rpc"
+	jobrpc "github.com/pbs-plus/pbs-plus/internal/proxy/rpc/job"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
@@ -139,46 +140,36 @@ func main() {
 			return
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
 		if retryAttempts == nil || *retryAttempts == "" {
 			system.RemoveAllRetrySchedules(jobTask)
 		}
 
 		arrExtExc := []string(extExclusions)
 
-		op, err := backup.RunBackup(ctx, jobTask, storeInstance, true, *webRun, &arrExtExc)
-		if err != nil {
-			syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
-
-			if !errors.Is(err, backup.ErrOneInstance) {
-				if task, err := proxmox.GenerateTaskErrorFile(jobTask, err, []string{"Error handling from a scheduled job run request", "Job ID: " + jobTask.ID, "Source Mode: " + jobTask.SourceMode}); err != nil {
-					syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
-				} else {
-					// Update job status
-					latestJob, err := storeInstance.Database.GetJob(jobTask.ID)
-					if err != nil {
-						latestJob = jobTask
-					}
-
-					latestJob.LastRunUpid = task.UPID
-					latestJob.LastRunState = task.Status
-					latestJob.LastRunEndtime = task.EndTime
-
-					err = storeInstance.Database.UpdateJob(nil, latestJob)
-					if err != nil {
-						syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
-					}
-				}
-				if err := system.SetRetrySchedule(jobTask, extExclusions); err != nil {
-					syslog.L.Error(err).WithField("jobId", jobTask.ID).Write()
-				}
-			}
+		args := &jobrpc.QueueArgs{
+			Job:             jobTask,
+			SkipCheck:       true,
+			Web:             *webRun,
+			ExtraExclusions: arrExtExc,
 		}
+		var reply jobrpc.QueueReply
 
-		if waitErr := op.Wait(); waitErr != nil {
-			syslog.L.Error(waitErr).Write()
+		conn, err := net.DialTimeout("unix", constants.JobMutateSocketPath, 5*time.Minute)
+		if err != nil {
+			syslog.L.Error(err).WithField("jobId", *jobRun).Write()
+			return
+		} else {
+			rpcClient := rpc.NewClient(conn)
+			err = rpcClient.Call("JobRPCService.Queue", args, &reply)
+			rpcClient.Close()
+			if err != nil {
+				syslog.L.Error(err).WithField("jobId", *jobRun).Write()
+				return
+			}
+			if reply.Status != 200 {
+				syslog.L.Error(err).WithField("jobId", *jobRun).Write()
+				return
+			}
 		}
 
 		return
@@ -336,19 +327,7 @@ func main() {
 		}
 	}()
 
-	go func() {
-		for {
-			select {
-			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("locker rpc server cancelled")
-				return
-			default:
-				if err := rpclocker.RunLockerServer(mainCtx, constants.LockSocketPath); err != nil {
-					syslog.L.Error(err).WithMessage("locker rpc server failed, restarting")
-				}
-			}
-		}
-	}()
+	backupManager := backup.NewManager(mainCtx, 512)
 
 	go func() {
 		for {
@@ -357,7 +336,7 @@ func main() {
 				syslog.L.Error(mainCtx.Err()).WithMessage("job rpc server cancelled")
 				return
 			default:
-				if err := rpcmount.RunJobRPCServer(mainCtx, constants.JobMutateSocketPath, storeInstance); err != nil {
+				if err := jobrpc.RunJobRPCServer(mainCtx, constants.JobMutateSocketPath, backupManager, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("job rpc server failed, restarting")
 				}
 			}
