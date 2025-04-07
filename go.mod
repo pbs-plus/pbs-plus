@@ -1,6 +1,7 @@
 module github.com/pbs-plus/pbs-plus
 
 go 1.24.0
+
 require (
 	github.com/KimMachineGun/automemlimit v0.7.1
 	github.com/Microsoft/go-winio v0.6.2
@@ -20,9 +21,9 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/xtaci/smux v1.5.34
 	github.com/zeebo/xxh3 v1.0.2
-	golang.org/x/crypto v0.36.0
+	golang.org/x/crypto v0.37.0
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
-	golang.org/x/sys v0.31.0
+	golang.org/x/sys v0.32.0
 	golang.org/x/time v0.11.0
 	modernc.org/sqlite v1.37.0
 )
