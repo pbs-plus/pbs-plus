@@ -19,9 +19,6 @@ import (
 func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
-		database.writeLock()
-		defer database.writeUnlock()
-
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("CreateTarget: failed to begin transaction: %w", err)
@@ -85,9 +82,6 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err err
 func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
-		database.writeLock()
-		defer database.writeUnlock()
-
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("UpdateTarget: failed to begin transaction: %w", err)
@@ -145,9 +139,6 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
-		database.writeLock()
-		defer database.writeUnlock()
-
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("DeleteTarget: failed to begin transaction: %w", err)

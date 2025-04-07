@@ -56,9 +56,6 @@ func (database *Database) generateUniqueJobID(job types.Job) (string, error) {
 func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
-		database.writeLock()
-		defer database.writeUnlock()
-
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("CreateJob: failed to begin transaction: %w", err)
@@ -264,9 +261,6 @@ func (database *Database) populateJobExtras(job *types.Job) {
 func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
-		database.writeLock()
-		defer database.writeUnlock()
-
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("UpdateJob: failed to begin transaction: %w", err)
@@ -510,9 +504,6 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 func (database *Database) DeleteJob(tx *sql.Tx, id string) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
-		database.writeLock()
-		defer database.writeUnlock()
-
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("DeleteJob: failed to begin transaction: %w", err)

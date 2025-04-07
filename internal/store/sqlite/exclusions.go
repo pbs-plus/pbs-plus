@@ -19,9 +19,6 @@ import (
 func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
-		database.writeLock()
-		defer database.writeUnlock()
-
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("CreateExclusion: failed to begin transaction: %w", err)
@@ -175,9 +172,6 @@ func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
 func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
-		database.writeLock()
-		defer database.writeUnlock()
-
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("UpdateExclusion: failed to begin transaction: %w", err)
@@ -246,9 +240,6 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 func (database *Database) DeleteExclusion(tx *sql.Tx, path string) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
-		database.writeLock()
-		defer database.writeUnlock()
-
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("DeleteExclusion: failed to begin transaction: %w", err)
