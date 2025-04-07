@@ -23,22 +23,22 @@ type BackupLogger struct {
 
 var backupLoggers = xsync.NewMapOf[string, *BackupLogger]()
 
-func GetOrCreateBackupLoggerStatic(jobId string) *BackupLogger {
-	logger, _ := backupLoggers.LoadOrCompute(jobId, func() *BackupLogger {
+func CreateBackupLogger(jobId string) *BackupLogger {
+	logger, _ := backupLoggers.Compute(jobId, func(_ *BackupLogger, _ bool) (*BackupLogger, bool) {
 		tempDir := os.TempDir()
 		fileName := fmt.Sprintf("backup-%s-stdout", jobId)
 		filePath := filepath.Join(tempDir, fileName)
 
 		clientLogFile, err := os.Create(filePath)
 		if err != nil {
-			return nil
+			return nil, true
 		}
 
 		return &BackupLogger{
 			File:  clientLogFile,
 			Path:  filePath,
 			jobId: jobId,
-		}
+		}, false
 	})
 
 	return logger
