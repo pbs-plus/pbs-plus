@@ -92,7 +92,7 @@ func RunBackup(
 		return nil, ErrOneInstance
 	}
 
-	clientLogFile := syslog.GetOrCreateBackupLoggerStatic(job.ID)
+	clientLogFile := syslog.CreateBackupLogger(job.ID)
 
 	errorMonitorDone := make(chan struct{})
 
