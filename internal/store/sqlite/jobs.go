@@ -511,7 +511,7 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
         FROM jobs j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
-				WHERE j.last_run_upid LIKE "%pbsplusgen%"
+				WHERE j.last_run_upid LIKE "%pbsplusgen-queue%"
         ORDER BY j.id
     `
 	rows, err := database.readDb.Query(query)
