@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 
@@ -72,15 +71,12 @@ func (jq *Manager) Enqueue(job *BackupOperation) {
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
 	} else {
-		queueTaskLogPath, err := proxmox.GetLogPath(queueTask.UPID)
-		if err == nil {
-			defer os.Remove(queueTaskLogPath)
-		}
-
-		if err := updateJobStatus(false, 0, job.job, queueTask, job.storeInstance); err != nil {
+		if err := updateJobStatus(false, 0, job.job, queueTask.Task, job.storeInstance); err != nil {
 			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
 		}
 	}
+
+	job.queueTask = &queueTask
 
 	select {
 	case jq.jobs <- job:
@@ -110,6 +106,8 @@ func (jq *Manager) worker() {
 
 				jq.runningJobs.Add(1)
 				defer jq.runningJobs.Add(-1)
+
+				defer opToRun.queueTask.Close()
 
 				err := opToRun.Execute(jq.ctx)
 				if err != nil {
