@@ -185,16 +185,12 @@ func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (Task, error) {
 		resp.ExitStatus = strings.TrimPrefix(lastLog, "TASK ERROR: ")
 	}
 
-	if strings.HasPrefix(lastLog, "TASK QUEUED: ") {
-		resp.EndTime = resp.StartTime
-	} else {
-		endTime, err := proxmoxSess.GetTaskEndTime(resp)
-		if err != nil {
-			return Task{}, fmt.Errorf("GetTaskByUPID: error getting task end time -> %w", err)
-		}
-
-		resp.EndTime = endTime
+	endTime, err := proxmoxSess.GetTaskEndTime(resp)
+	if err != nil {
+		return Task{}, fmt.Errorf("GetTaskByUPID: error getting task end time -> %w", err)
 	}
+
+	resp.EndTime = endTime
 
 	taskCache.Set(upid, TaskCache{task: resp, timestamp: time.Now()})
 
