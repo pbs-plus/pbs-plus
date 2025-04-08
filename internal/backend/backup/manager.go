@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
@@ -16,21 +17,31 @@ import (
 )
 
 type Manager struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	jobs   chan *BackupOperation
-	mu     sync.Mutex
-	locks  *xsync.MapOf[string, *sync.Mutex]
+	ctx         context.Context
+	cancel      context.CancelFunc
+	jobs        chan *BackupOperation
+	mu          sync.Mutex
+	locks       *xsync.MapOf[string, *sync.Mutex]
+	runningJobs atomic.Int32
+
+	maxConcurrentJobs int
+	semaphore         chan struct{}
 }
 
-func NewManager(ctx context.Context, size int) *Manager {
+func NewManager(ctx context.Context, size int, maxConcurrent int) *Manager {
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1 // Ensure at least one job can run
+	}
+
 	newCtx, cancel := context.WithCancel(ctx)
 	jq := &Manager{
-		ctx:    newCtx,
-		cancel: cancel,
-		jobs:   make(chan *BackupOperation, size),
-		mu:     sync.Mutex{},
-		locks:  xsync.NewMapOf[string, *sync.Mutex](),
+		ctx:               newCtx,
+		cancel:            cancel,
+		jobs:              make(chan *BackupOperation, size),
+		mu:                sync.Mutex{},
+		locks:             xsync.NewMapOf[string, *sync.Mutex](),
+		maxConcurrentJobs: maxConcurrent,
+		semaphore:         make(chan struct{}, maxConcurrent),
 	}
 
 	go jq.worker()
@@ -82,13 +93,31 @@ func (jq *Manager) Enqueue(job *BackupOperation) {
 func (jq *Manager) worker() {
 	for {
 		select {
-		case op := <-jq.jobs:
-			err := op.Execute(jq.ctx)
-			if err != nil {
-				jq.CreateError(op, err)
-			}
 		case <-jq.ctx.Done():
 			return
+		case op := <-jq.jobs:
+			go func(opToRun *BackupOperation) {
+				select {
+				case <-jq.ctx.Done():
+					opToRun.lock.Unlock()
+					return
+				case jq.semaphore <- struct{}{}:
+				}
+
+				defer func() {
+					<-jq.semaphore
+				}()
+
+				jq.runningJobs.Add(1)
+				defer jq.runningJobs.Add(-1)
+
+				err := opToRun.Execute(jq.ctx)
+				if err != nil {
+					jq.CreateError(opToRun, err)
+				} else {
+					opToRun.Wait()
+				}
+			}(op)
 		}
 	}
 }
