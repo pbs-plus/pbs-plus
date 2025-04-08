@@ -42,7 +42,7 @@ func (s *JobRPCService) Queue(args *QueueArgs, reply *QueueReply) error {
 		return nil
 	}
 
-	s.Manager.Enqueue(*job)
+	s.Manager.Enqueue(job)
 	reply.Status = 200
 
 	return nil
