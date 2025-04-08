@@ -185,6 +185,34 @@ func main() {
 		return
 	}
 
+	// cleanup previously queued jobs
+	queuedJobs, err := storeInstance.Database.GetAllQueuedJobs()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to get all queued jobs").Write()
+	}
+
+	tx, err := storeInstance.Database.NewTransaction()
+	if err == nil {
+		for _, queuedJob := range queuedJobs {
+			task, err := proxmox.GenerateTaskErrorFile(queuedJob, fmt.Errorf("server was restarted before job started during queue"), nil)
+			if err != nil {
+				continue
+			}
+
+			queueTaskPath, err := proxmox.GetLogPath(queuedJob.LastRunUpid)
+			if err == nil {
+				os.Remove(queueTaskPath)
+			}
+
+			queuedJob.LastRunUpid = task.UPID
+			err = storeInstance.Database.UpdateJob(tx, queuedJob)
+			if err != nil {
+				continue
+			}
+		}
+		tx.Commit()
+	}
+
 	certOpts := certificates.DefaultOptions()
 	generator, err := certificates.NewGenerator(certOpts)
 	if err != nil {
