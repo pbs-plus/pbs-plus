@@ -1,3 +1,5 @@
+//go:build linux
+
 package backup
 
 import (
@@ -36,12 +38,12 @@ func NewManager(ctx context.Context, size int) *Manager {
 	return jq
 }
 
-func (jq *Manager) Enqueue(job BackupOperation) {
+func (jq *Manager) Enqueue(job *BackupOperation) {
 	jq.mu.Lock()
 	defer jq.mu.Unlock()
 
 	if jq.ctx.Err() != nil {
-		jq.CreateError(&job, fmt.Errorf("Attempt to enqueue on closed queue"))
+		jq.CreateError(job, fmt.Errorf("Attempt to enqueue on closed queue"))
 		return
 	}
 
@@ -49,7 +51,7 @@ func (jq *Manager) Enqueue(job BackupOperation) {
 	lock, _ := jq.locks.LoadOrStore(job.job.ID, &sync.Mutex{})
 
 	if locked := lock.TryLock(); !locked {
-		jq.CreateError(&job, ErrOneInstance)
+		jq.CreateError(job, ErrOneInstance)
 		return
 	}
 
@@ -70,9 +72,10 @@ func (jq *Manager) Enqueue(job BackupOperation) {
 	}
 
 	select {
-	case jq.jobs <- &job:
+	case jq.jobs <- job:
 	default:
-		jq.CreateError(&job, fmt.Errorf("Queue is full. Job rejected."))
+		jq.CreateError(job, fmt.Errorf("Queue is full. Job rejected."))
+		job.lock.Unlock()
 	}
 }
 

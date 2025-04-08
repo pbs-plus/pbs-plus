@@ -369,7 +369,7 @@ func (database *Database) linkJobLog(jobID, upid string) {
 	}
 
 	jobLogPath := filepath.Join(jobLogsPath, upid)
-	if _, err := os.Lstat(jobLogPath); !os.IsNotExist(err) {
+	if _, err := os.Lstat(jobLogPath); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(fmt.Errorf("linkJobLog: failed to stat potential symlink: %w", err)).
 			WithField("path", jobLogPath).
 			Write()
