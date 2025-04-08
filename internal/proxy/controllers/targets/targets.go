@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers"
@@ -120,13 +121,6 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			controllers.WriteErrorResponse(w, err)
 		}
 
-		err = storeInstance.Database.DeleteTargetsByIP(tx, clientIP)
-		if err != nil {
-			tx.Rollback()
-			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
-		}
-
 		var driveLetters = make([]string, len(reqParsed.Drives))
 		for i, parsedDrive := range reqParsed.Drives {
 			driveLetters[i] = parsedDrive.Letter
@@ -148,9 +142,15 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			})
 		}
 
+		for _, target := range existingTargets {
+			targetDrive := strings.Split(target.Path, "/")[3]
+			if !slices.Contains(driveLetters, targetDrive) {
+				_ = storeInstance.Database.DeleteTarget(tx, target.Name)
+			}
+		}
+
 		err = tx.Commit()
 		if err != nil {
-			tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
 			return
