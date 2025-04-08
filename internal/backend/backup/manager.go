@@ -103,8 +103,6 @@ func (jq *Manager) worker() {
 
 				defer func() {
 					<-jq.semaphore
-					opToRun.lock.Unlock()
-					opToRun.queueTask.Close()
 					jq.runningJobs.Add(-1)
 				}()
 
