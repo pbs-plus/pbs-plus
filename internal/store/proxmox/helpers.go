@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -91,9 +92,16 @@ func getPStart() int {
 	return int(pstart.Add(1))
 }
 
-func GenerateQueuedTask(job types.Job, web bool) (Task, error) {
+type QueuedTask struct {
+	Task
+	sync.Mutex
+	closed atomic.Bool
+	path   string
+}
+
+func GenerateQueuedTask(job types.Job, web bool) (QueuedTask, error) {
 	if Session.APIToken == nil {
-		return Task{}, errors.New("session api token is missing")
+		return QueuedTask{}, errors.New("session api token is missing")
 	}
 
 	authId := Session.APIToken.TokenId
@@ -125,19 +133,19 @@ func GenerateQueuedTask(job types.Job, web bool) (Task, error) {
 
 	path, err := GetLogPath(upid)
 	if err != nil {
-		return Task{}, err
+		return QueuedTask{}, err
 	}
 
 	_ = os.MkdirAll(filepath.Dir(path), 0755)
 	_ = os.Chown(filepath.Dir(path), 34, 34)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return Task{}, err
+		return QueuedTask{}, err
 	}
 
 	err = file.Chown(34, 34)
 	if err != nil {
-		return Task{}, err
+		return QueuedTask{}, err
 	}
 	defer file.Close()
 
@@ -150,12 +158,45 @@ func GenerateQueuedTask(job types.Job, web bool) (Task, error) {
 	}
 
 	if _, err := file.WriteString(statusLine); err != nil {
-		return Task{}, fmt.Errorf("failed to write status line: %w", err)
+		return QueuedTask{}, fmt.Errorf("failed to write status line: %w", err)
 	}
 
 	task.Status = "running"
 
-	return task, nil
+	return QueuedTask{Task: task, path: path}, nil
+}
+
+func (task *QueuedTask) UpdateDescription(desc string) error {
+	if task.closed.Load() {
+		return nil
+	}
+
+	task.Lock()
+	defer task.Unlock()
+
+	file, err := os.OpenFile(task.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	timestamp := time.Now().Format(time.RFC3339)
+	statusLine := fmt.Sprintf("%s: TASK QUEUED: ", timestamp)
+	statusLine += desc + "\n"
+
+	if _, err := file.WriteString(statusLine); err != nil {
+		return fmt.Errorf("failed to write status line: %w", err)
+	}
+
+	return nil
+}
+
+func (task *QueuedTask) Close() {
+	task.Lock()
+	defer task.Unlock()
+
+	_ = os.Remove(task.path)
+	task.closed.Store(true)
 }
 
 func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []string) (Task, error) {

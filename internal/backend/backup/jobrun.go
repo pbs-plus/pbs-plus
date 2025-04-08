@@ -56,6 +56,7 @@ var (
 // BackupOperation encapsulates a backup operation.
 type BackupOperation struct {
 	Task      proxmox.Task
+	queueTask *proxmox.QueuedTask
 	waitGroup *sync.WaitGroup
 	err       error
 
@@ -148,8 +149,14 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		}
 	}
 
+	op.queueTask.UpdateDescription("mounting target to server")
+
 	srcPath := target.Path
 	if isAgent {
+		if op.job.SourceMode == "snapshot" {
+			op.queueTask.UpdateDescription("waiting for agent to finish snapshot")
+		}
+
 		agentMount, err = mount.Mount(op.storeInstance, op.job, target)
 		if err != nil {
 			errCleanUp()
@@ -164,6 +171,8 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		}
 	}
 	srcPath = filepath.Join(srcPath, op.job.Subpath)
+
+	op.queueTask.UpdateDescription("waiting for proxmox-backup-client to start")
 
 	cmd, err := prepareBackupCommand(ctx, op.job, op.storeInstance, srcPath, isAgent, op.extraExclusions)
 	if err != nil {
