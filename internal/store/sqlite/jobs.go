@@ -500,6 +500,103 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 	return jobs, nil
 }
 
+func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
+	query := `
+        SELECT
+            j.id, j.store, j.mode, j.source_mode, j.target, j.subpath, j.schedule, j.comment,
+            j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
+            j.retry, j.retry_interval, j.max_dir_entries,
+            e.path,
+            t.drive_used_bytes
+        FROM jobs j
+        LEFT JOIN exclusions e ON j.id = e.job_id
+        LEFT JOIN targets t ON j.target = t.name
+				WHERE j.last_run_upid LIKE "%pbsplusgen-queue%"
+        ORDER BY j.id
+    `
+	rows, err := database.readDb.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("GetAllQueuedJobs: error querying jobs: %w", err)
+	}
+	defer rows.Close()
+
+	jobsMap := make(map[string]*types.Job)
+	var jobOrder []string
+
+	for rows.Next() {
+		var jobID, store, mode, sourceMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
+		var retry, maxDirEntries int
+		var retryInterval int
+		var currentPID int
+		var exclusionPath sql.NullString
+		var driveUsedBytes sql.NullInt64
+
+		err := rows.Scan(
+			&jobID, &store, &mode, &sourceMode, &target, &subpath, &schedule, &comment,
+			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
+			&retry, &retryInterval, &maxDirEntries,
+			&exclusionPath, &driveUsedBytes,
+		)
+		if err != nil {
+			syslog.L.Error(fmt.Errorf("GetAllQueuedJobs: error scanning row: %w", err)).Write()
+			continue
+		}
+
+		job, exists := jobsMap[jobID]
+		if !exists {
+			job = &types.Job{
+				ID:                 jobID,
+				Store:              store,
+				Mode:               mode,
+				SourceMode:         sourceMode,
+				Target:             target,
+				Subpath:            subpath,
+				Schedule:           schedule,
+				Comment:            comment,
+				NotificationMode:   notificationMode,
+				Namespace:          namespace,
+				CurrentPID:         currentPID,
+				LastRunUpid:        lastRunUpid,
+				LastSuccessfulUpid: lastSuccessfulUpid,
+				Retry:              retry,
+				RetryInterval:      retryInterval,
+				MaxDirEntries:      maxDirEntries,
+				Exclusions:         make([]types.Exclusion, 0),
+			}
+			if driveUsedBytes.Valid {
+				job.ExpectedSize = int(driveUsedBytes.Int64)
+			}
+			jobsMap[jobID] = job
+			jobOrder = append(jobOrder, jobID)
+			database.populateJobExtras(job) // Populate non-SQL extras once per job
+		}
+
+		if exclusionPath.Valid && exclusionPath.String != "" {
+			job.Exclusions = append(job.Exclusions, types.Exclusion{
+				JobID: jobID,
+				Path:  exclusionPath.String,
+			})
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetAllQueuedJobs: error iterating job results: %w", err)
+	}
+
+	jobs := make([]types.Job, len(jobOrder))
+	for i, jobID := range jobOrder {
+		job := jobsMap[jobID]
+		pathSlice := make([]string, len(job.Exclusions))
+		for k, exclusion := range job.Exclusions {
+			pathSlice[k] = exclusion.Path
+		}
+		job.RawExclusions = strings.Join(pathSlice, "\n")
+		jobs[i] = *job
+	}
+
+	return jobs, nil
+}
+
 // DeleteJob deletes a job and any related exclusions.
 func (database *Database) DeleteJob(tx *sql.Tx, id string) (err error) {
 	var commitNeeded bool = false

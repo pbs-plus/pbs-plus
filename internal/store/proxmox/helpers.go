@@ -111,7 +111,7 @@ func GenerateQueuedTask(job types.Job, web bool) (QueuedTask, error) {
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
 	wtype := "backup"
-	node := "pbsplusgen"
+	node := "pbsplusgen-queue"
 
 	task := Task{
 		Node:       node,
@@ -211,7 +211,7 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
 	wtype := "backup"
-	node := "pbsplusgen"
+	node := "pbsplusgen-error"
 
 	task := Task{
 		Node:       node,
