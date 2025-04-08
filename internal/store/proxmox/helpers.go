@@ -101,17 +101,9 @@ func GenerateQueuedTask(job types.Job, web bool) (Task, error) {
 	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostnameBytes, err := os.ReadFile("/etc/hostname")
-		if err != nil {
-			hostname = "localhost"
-		}
-		hostname = strings.TrimSpace(string(hostnameBytes))
-	}
 
 	wtype := "backup"
-	node := hostname
+	node := "pbsplusgen"
 
 	task := Task{
 		Node:       node,
@@ -176,17 +168,9 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostnameBytes, err := os.ReadFile("/etc/hostname")
-		if err != nil {
-			hostname = "localhost"
-		}
-		hostname = strings.TrimSpace(string(hostnameBytes))
-	}
 
 	wtype := "backup"
-	node := hostname
+	node := "pbsplusgen"
 
 	task := Task{
 		Node:       node,

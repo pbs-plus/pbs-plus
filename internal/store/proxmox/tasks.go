@@ -36,7 +36,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 
 	// Helper function to check if a file matches our search criteria
 	checkFile := func(filePath string, searchString string) (Task, error) {
-		if !strings.Contains(filePath, ".tmp_") && strings.Contains(filePath, searchString) {
+		if !strings.Contains(filePath, ".tmp_") && strings.Contains(filePath, searchString) && !strings.Contains(filePath, "pbsplusgen") {
 			syslog.L.Info().WithMessage(fmt.Sprintf("Proceeding: %s contains %s\n", filePath, searchString)).Write()
 			fileName := filepath.Base(filePath)
 			syslog.L.Info().WithMessage(fmt.Sprintf("Getting UPID: %s\n", fileName)).Write()
