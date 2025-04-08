@@ -179,6 +179,52 @@ func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
 	return nil
 }
 
+func (database *Database) DeleteTargetsByIP(tx *sql.Tx, ip string) (err error) {
+	var commitNeeded bool = false
+	if tx == nil {
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return fmt.Errorf("DeleteTargetsByIP: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("DeleteTargetsByIP: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("DeleteTargetsByIP: failed to commit transaction: %w", cErr)
+					syslog.L.Error(err).Write()
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("DeleteTargetsByIP: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			}
+		}()
+	}
+
+	res, err := tx.Exec(`
+		DELETE FROM targets
+		WHERE path LIKE ?
+	`, fmt.Sprintf("agent://%s%%", ip))
+	if err != nil {
+		return fmt.Errorf("DeleteTargetsByIP: error deleting target: %w", err)
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		// Return sql.ErrNoRows if the target wasn't found
+		return sql.ErrNoRows
+	}
+
+	commitNeeded = true
+	return nil
+}
+
 // GetTarget retrieves a target by name along with its associated job count.
 func (database *Database) GetTarget(name string) (types.Target, error) {
 	row := database.readDb.QueryRow(`
