@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers"
@@ -77,57 +76,73 @@ type NewAgentHostnameRequest struct {
 func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
 		var reqParsed NewAgentHostnameRequest
 		err := json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			w.WriteHeader(http.StatusBadRequest)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to parse request body: %w", err))
+			return
+		}
+
+		if reqParsed.Hostname == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Hostname is required in request body"))
 			return
 		}
 
 		clientIP := r.RemoteAddr
-
 		forwarded := r.Header.Get("X-FORWARDED-FOR")
 		if forwarded != "" {
-			clientIP = forwarded
+			ips := strings.Split(forwarded, ",")
+			clientIP = strings.TrimSpace(ips[0])
 		}
 
-		clientIP = strings.Split(clientIP, ":")[0]
+		if strings.Contains(clientIP, ":") {
+			clientIP = strings.Split(clientIP, ":")[0]
+		}
 
 		existingTargets, err := storeInstance.Database.GetAllTargetsByIP(clientIP)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to get existing targets: %w", err))
 			return
 		}
 
-		if len(existingTargets) == 0 {
-			w.WriteHeader(http.StatusNotFound)
-			controllers.WriteErrorResponse(w, fmt.Errorf("No targets found."))
-			return
+		var targetTemplate types.Target
+		if len(existingTargets) > 0 {
+			targetTemplate = existingTargets[0]
 		}
-
-		targetTemplate := existingTargets[0]
-
-		hostname := r.Header.Get("X-PBS-Agent")
 
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to start transaction: %w", err))
+			return
+		}
+		defer func() {
+			_ = tx.Rollback()
+		}()
+
+		existingTargetsMap := make(map[string]types.Target)
+		for _, target := range existingTargets {
+			existingTargetsMap[target.Name] = target
 		}
 
-		var driveLetters = make([]string, len(reqParsed.Drives))
-		for i, parsedDrive := range reqParsed.Drives {
-			driveLetters[i] = parsedDrive.Letter
+		processedTargetNames := make(map[string]bool)
 
-			_ = storeInstance.Database.CreateTarget(tx, types.Target{
-				Name:            hostname + " - " + parsedDrive.Letter,
-				Path:            "agent://" + clientIP + "/" + parsedDrive.Letter,
+		for _, parsedDrive := range reqParsed.Drives {
+			driveLetter := parsedDrive.Letter
+			targetName := reqParsed.Hostname + " - " + driveLetter
+			targetPath := "agent://" + clientIP + "/" + driveLetter
+			processedTargetNames[targetName] = true
+
+			targetData := types.Target{
+				Name:            targetName,
+				Path:            targetPath,
 				Auth:            targetTemplate.Auth,
 				TokenUsed:       targetTemplate.TokenUsed,
 				DriveType:       parsedDrive.Type,
@@ -139,20 +154,45 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				DriveFree:       parsedDrive.Free,
 				DriveUsed:       parsedDrive.Used,
 				DriveTotal:      parsedDrive.Total,
-			})
+			}
+
+			if _, found := existingTargetsMap[targetName]; found {
+				err = storeInstance.Database.UpdateTarget(tx, targetData)
+				if err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to update target %s: %w", targetName, err))
+					return
+				}
+			} else {
+				err = storeInstance.Database.CreateTarget(tx, targetData)
+				if err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to create target %s: %w", targetName, err))
+					return
+				}
+			}
 		}
 
-		for _, target := range existingTargets {
-			targetDrive := strings.Split(target.Path, "/")[3]
-			if !slices.Contains(driveLetters, targetDrive) {
-				_ = storeInstance.Database.DeleteTarget(tx, target.Name)
+		for _, existingTarget := range existingTargets {
+			if _, processed := processedTargetNames[existingTarget.Name]; !processed {
+				// Only delete if the target name matches the hostname from the request
+				// This prevents deleting targets from other hosts sharing the same IP
+				expectedPrefix := reqParsed.Hostname + " - "
+				if strings.HasPrefix(existingTarget.Name, expectedPrefix) {
+					err = storeInstance.Database.DeleteTarget(tx, existingTarget.Name)
+					if err != nil {
+						w.WriteHeader(http.StatusInternalServerError)
+						controllers.WriteErrorResponse(w, fmt.Errorf("Failed to delete target %s: %w", existingTarget.Name, err))
+						return
+					}
+				}
 			}
 		}
 
 		err = tx.Commit()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to commit transaction: %w", err))
 			return
 		}
 
@@ -162,9 +202,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		})
 
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
-			return
+			fmt.Printf("Error encoding success response: %v\n", err)
 		}
 	}
 }
