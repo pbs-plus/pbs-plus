@@ -20,6 +20,7 @@ type Manager struct {
 	cancel      context.CancelFunc
 	jobs        chan *BackupOperation
 	mu          sync.Mutex
+	executeMu   sync.Mutex
 	locks       *xsync.MapOf[string, *sync.Mutex]
 	runningJobs atomic.Int32
 
@@ -102,14 +103,19 @@ func (jq *Manager) worker() {
 
 				defer func() {
 					<-jq.semaphore
+					opToRun.lock.Unlock()
+					opToRun.queueTask.Close()
+					jq.runningJobs.Add(-1)
 				}()
 
 				jq.runningJobs.Add(1)
-				defer jq.runningJobs.Add(-1)
 
-				defer opToRun.queueTask.Close()
-
+				// Acquire lock for sequential execution
+				jq.executeMu.Lock()
 				err := opToRun.Execute(jq.ctx)
+				// Release lock immediately after Execute finishes
+				jq.executeMu.Unlock()
+
 				if err != nil {
 					jq.CreateError(opToRun, err)
 				} else {
