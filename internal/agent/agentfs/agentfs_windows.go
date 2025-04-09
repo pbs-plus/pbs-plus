@@ -419,14 +419,21 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	buffer := make([]byte, payload.Length)
 	var bytesRead uint32
 	err = windows.ReadFile(fh.handle, buffer, &bytesRead, &overlapped)
+	if err != nil && err != windows.ERROR_IO_PENDING {
+		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile (OVERLAPPED fallback - initial call)")
+	}
+
+	err = windows.GetOverlappedResult(fh.handle, &overlapped, &bytesRead, true)
 	if err != nil {
-		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile (OVERLAPPED fallback)")
+		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile (OVERLAPPED fallback - GetOverlappedResult)")
 	}
 
 	reader := bytes.NewReader(buffer[:bytesRead])
 	streamCallback := func(stream *smux.Stream) {
 		if err := binarystream.SendDataFromReader(reader, int(bytesRead), stream); err != nil {
-			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
+			syslog.L.Error(err).
+				WithMessage("failed sending data from reader via binary stream (OVERLAPPED fallback)").
+				Write()
 		}
 	}
 
