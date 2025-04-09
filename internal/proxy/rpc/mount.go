@@ -251,13 +251,6 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 	return nil
 }
 
-func (s *MountRPCService) GetJobWarnCount(args *WarnCountArgs, reply *WarnCountReply) error {
-	if logger := syslog.GetExistingBackupLogger(args.JobId); logger != nil {
-		reply.Count = int(logger.Count.Load())
-	}
-	return nil
-}
-
 func StartRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, storeInstance *store.Store) error {
 	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
