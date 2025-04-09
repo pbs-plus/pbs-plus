@@ -38,7 +38,7 @@ func isJunkLog(line string) bool {
 	return false
 }
 
-func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.BackupLogger, serverLogCount int) (bool, bool, int, string, error) {
+func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.BackupLogger) (bool, bool, int, string, error) {
 	logFilePath := utils.GetTaskLogPath(upid)
 	inFile, err := os.Open(logFilePath)
 	if err != nil {
@@ -195,7 +195,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 
 	succeeded := false
 	cancelled := false
-	warningsNum := int(clientLogFile.Count.Load()) + serverLogCount
+	warningsNum := int(clientLogFile.Count.Load())
 	if pbsWarnings > 0 {
 		warningsNum += pbsWarnings
 	} else {
