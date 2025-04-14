@@ -77,10 +77,21 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 
 	buf, bytesRead, err := f.fs.session.CallBinary(f.fs.ctx, f.jobId+"/ReadAt", &req)
 	if err != nil {
-		syslog.L.Error(err).WithJob(f.jobId).WithMessage("failed to handle read request").WithField("path", f.name).Write()
-		return 0, syscall.ENOENT
+		syslog.L.Error(err).WithJob(f.jobId).
+			WithMessage("failed to handle read request, replace failed reads with zeroes, likely corrupted").
+			WithField("path", f.name).
+			WithField("offset", f.offset).
+			WithField("length", len(p)).
+			Write()
+
+		for i := range p {
+			p[i] = 0
+		}
+
+		bytesRead = len(p)
+	} else {
+		copy(p, buf)
 	}
-	copy(p, buf)
 
 	atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
 
