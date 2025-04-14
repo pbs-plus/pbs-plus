@@ -84,14 +84,9 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 			WithField("length", len(p)).
 			Write()
 
-		for i := range p {
-			p[i] = 0
-		}
-
-		bytesRead = len(p)
-	} else {
-		copy(p, buf)
+		return 0, io.EOF
 	}
+	copy(p, buf)
 
 	atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
 
