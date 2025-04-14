@@ -127,7 +127,7 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		windows.FILE_SHARE_READ,
 		nil,
 		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN|windows.FILE_FLAG_OVERLAPPED,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN,
 		0,
 	)
 	if err != nil {
@@ -413,28 +413,24 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		}
 	}
 
-	// Fallback to using the OVERLAPPED ReadFile method.
-	var overlapped windows.Overlapped
-	overlapped.Offset = uint32(payload.Offset & 0xFFFFFFFF)
-	overlapped.OffsetHigh = uint32(payload.Offset >> 32)
+	_, err := windows.Seek(fh.handle, payload.Offset, io.SeekStart)
+	if err != nil {
+		return arpc.Response{}, mapWinError(err, "handleReadAt Seek (sync fallback)")
+	}
 
 	buffer := make([]byte, payload.Length)
 	var bytesRead uint32
-	err := windows.ReadFile(fh.handle, buffer, &bytesRead, &overlapped)
-	if err != nil && err != windows.ERROR_IO_PENDING {
-		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile (OVERLAPPED fallback - initial call)")
-	}
 
-	err = windows.GetOverlappedResult(fh.handle, &overlapped, &bytesRead, true)
+	err = windows.ReadFile(fh.handle, buffer, &bytesRead, nil)
 	if err != nil {
-		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile (OVERLAPPED fallback - GetOverlappedResult)")
+		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile (sync fallback)")
 	}
 
 	reader := bytes.NewReader(buffer[:bytesRead])
 	streamCallback := func(stream *smux.Stream) {
 		if err := binarystream.SendDataFromReader(reader, int(bytesRead), stream); err != nil {
 			syslog.L.Error(err).
-				WithMessage("failed sending data from reader via binary stream (OVERLAPPED fallback)").
+				WithMessage("failed sending data from reader via binary stream (sync fallback)").
 				Write()
 		}
 	}
