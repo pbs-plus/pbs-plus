@@ -32,6 +32,8 @@ func (e *LogEntry) Write() {
 		if backupLogger != nil {
 			var sb strings.Builder
 
+			sb.WriteString("warning: ")
+
 			if e.Level == "error" {
 				sb.WriteString("[non-fatal " + e.Level + "]")
 			} else {
