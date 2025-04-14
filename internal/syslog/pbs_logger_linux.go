@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 
 	"github.com/puzpuzpuz/xsync/v3"
 )
@@ -16,7 +15,6 @@ type BackupLogger struct {
 	*os.File
 	Path  string
 	jobId string
-	Count atomic.Uint32
 
 	sync.RWMutex
 }
@@ -75,7 +73,6 @@ func (b *BackupLogger) Write(message string) {
 	if err != nil {
 		fmt.Printf("Failed to write to log: %v\n", err)
 	}
-	b.Count.Add(1)
 }
 
 func (b *BackupLogger) Close() error {
