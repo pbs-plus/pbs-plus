@@ -101,6 +101,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		Drive:      args.Drive,
 		JobId:      args.JobId,
 		SourceMode: job.SourceMode,
+		ReadMode:   job.ReadMode,
 	}
 
 	// Call the target's backup method via ARPC.

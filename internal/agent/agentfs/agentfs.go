@@ -23,9 +23,10 @@ type AgentFSServer struct {
 	arpcRouter       *arpc.Router
 	statFs           types.StatFS
 	allocGranularity uint32
+	readMode         string
 }
 
-func NewAgentFSServer(jobId string, snapshot snapshots.Snapshot) *AgentFSServer {
+func NewAgentFSServer(jobId string, readMode string, snapshot snapshots.Snapshot) *AgentFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	allocGranularity := GetAllocGranularity()
@@ -41,6 +42,7 @@ func NewAgentFSServer(jobId string, snapshot snapshots.Snapshot) *AgentFSServer 
 		ctxCancel:        cancel,
 		handleIdGen:      idgen.NewIDGenerator(),
 		allocGranularity: uint32(allocGranularity),
+		readMode:         readMode,
 	}
 
 	if err := s.initializeStatFS(); err != nil && syslog.L != nil {

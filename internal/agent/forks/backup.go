@@ -64,7 +64,8 @@ func (s *backupSession) Close() {
 func CmdBackup() {
 	// Define and parse flags.
 	cmdMode := flag.String("cmdMode", "", "Cmd Mode")
-	sourceMode := flag.String("sourceMode", "", "Backup source mode (e.g., direct or snapshot)")
+	sourceMode := flag.String("sourceMode", "", "Backup source mode (direct or snapshot)")
+	readMode := flag.String("readMode", "", "File read mode (standard or mmap)")
 	drive := flag.String("drive", "", "Drive or path for backup")
 	jobId := flag.String("jobId", "", "Unique job identifier for the backup")
 	flag.Parse()
@@ -74,8 +75,8 @@ func CmdBackup() {
 	}
 
 	// Validate required flags.
-	if *sourceMode == "" || *drive == "" || *jobId == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, drive, and jobId are required")
+	if *sourceMode == "" || *drive == "" || *jobId == "" || *readMode == "" {
+		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and jobId are required")
 		os.Exit(1)
 	}
 
@@ -121,7 +122,7 @@ func CmdBackup() {
 	}()
 
 	// Call the Backup function.
-	backupMode, err := Backup(rpcSess, *sourceMode, *drive, *jobId)
+	backupMode, err := Backup(rpcSess, *sourceMode, *readMode, *drive, *jobId)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -148,7 +149,7 @@ func CmdBackup() {
 	os.Exit(0)
 }
 
-func ExecBackup(sourceMode string, drive string, jobId string) (string, int, error) {
+func ExecBackup(sourceMode string, readMode string, drive string, jobId string) (string, int, error) {
 	execCmd, err := os.Executable()
 	if err != nil {
 		return "", -1, err
@@ -162,6 +163,7 @@ func ExecBackup(sourceMode string, drive string, jobId string) (string, int, err
 	args := []string{
 		"--cmdMode=backup",
 		"--sourceMode=" + sourceMode,
+		"--readMode=" + readMode,
 		"--drive=" + drive,
 		"--jobId=" + jobId,
 	}
@@ -211,7 +213,7 @@ func ExecBackup(sourceMode string, drive string, jobId string) (string, int, err
 	return strings.TrimSpace(backupMode), cmd.Process.Pid, nil
 }
 
-func Backup(rpcSess *arpc.Session, sourceMode string, drive string, jobId string) (string, error) {
+func Backup(rpcSess *arpc.Session, sourceMode string, readMode string, drive string, jobId string) (string, error) {
 	store, err := agent.NewBackupStore()
 	if err != nil {
 		return "", err
@@ -282,7 +284,7 @@ func Backup(rpcSess *arpc.Session, sourceMode string, drive string, jobId string
 
 	session.snapshot = snapshot
 
-	fs := agentfs.NewAgentFSServer(jobId, snapshot)
+	fs := agentfs.NewAgentFSServer(jobId, readMode, snapshot)
 	if fs == nil {
 		session.Close()
 		return "", fmt.Errorf("fs is nil")

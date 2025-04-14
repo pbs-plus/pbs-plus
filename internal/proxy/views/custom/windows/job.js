@@ -15,6 +15,14 @@ var sourceModes = Ext.create("Ext.data.Store", {
   ],
 });
 
+var readModes = Ext.create("Ext.data.Store", {
+  fields: ["display", "value"],
+  data: [
+    { display: "Standard", value: "standard" },
+    { display: "Memory Mapping", value: "mmap" },
+  ],
+});
+
 Ext.define("PBS.D2DManagement.BackupJobEdit", {
   extend: "Proxmox.window.Edit",
   alias: "widget.pbsDiskBackupJobEdit",
@@ -43,6 +51,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
     me.scheduleValue = id ? null : "";
     me.backupModeValue = id ? null : "metadata";
     me.sourceModeValue = id ? null : "snapshot";
+    me.readModeValue = id ? null : "standard";
     me.authid = id ? null : Proxmox.UserName;
     me.editDatastore = me.datastore === undefined && me.isCreate;
     return {};
@@ -195,6 +204,22 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             allowBlank: true,
             cbind: {
               value: "{sourceModeValue}",
+            },
+          },
+          {
+            xtype: "combo",
+            fieldLabel: gettext("File Read Mode"),
+            name: "readmode",
+            queryMode: "local",
+            store: readModes,
+            displayField: "display",
+            valueField: "value",
+            editable: false,
+            anyMatch: true,
+            forceSelection: true,
+            allowBlank: true,
+            cbind: {
+              value: "{readModeValue}",
             },
           },
         ],
