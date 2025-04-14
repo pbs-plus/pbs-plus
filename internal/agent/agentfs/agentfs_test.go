@@ -171,7 +171,7 @@ func TestAgentFSServer(t *testing.T) {
 
 	// Start the server with the latency-wrapped connection.
 	serverRouter := arpc.NewRouter()
-	agentFsServer := NewAgentFSServer("agentFs", snapshots.Snapshot{Path: testDir, SourcePath: ""})
+	agentFsServer := NewAgentFSServer("agentFs", "standard", snapshots.Snapshot{Path: testDir, SourcePath: ""})
 	agentFsServer.RegisterHandlers(&serverRouter)
 
 	serverSession, err := arpc.NewServerSession(serverConn, nil)
