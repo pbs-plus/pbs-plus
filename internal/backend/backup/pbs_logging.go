@@ -31,7 +31,7 @@ var JunkSubstrings = []string{
 
 func isJunkLog(line string) bool {
 	for _, junk := range JunkSubstrings {
-		if strings.Contains(line, junk) && !strings.Contains(line, "warn") && !strings.Contains(line, "error") {
+		if strings.Contains(line, junk) {
 			return true
 		}
 	}
@@ -110,7 +110,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	disconnected := false
 	var errorString string
 	var errorPath string
-	pbsWarnings := 0
 	pbsWarningRawCount := 0
 
 	// Process status info while streaming the logs to avoid storing everything in memory
@@ -146,21 +145,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 				errorString = line
 				hasError = true
 				skipLine = true
-			} else if strings.Contains(line, "TASK WARNINGS:") {
-				skipLine = true
-				re := regexp.MustCompile(`\d+`)
-				matches := re.FindAllString(line, -1)
-				if len(matches) == 0 {
-					skipLine = false
-				} else {
-					lastIntStr := matches[len(matches)-1]
-					lastInt, err := strconv.Atoi(lastIntStr)
-					if err != nil {
-						skipLine = false
-					} else {
-						pbsWarnings = lastInt
-					}
-				}
 			}
 
 			if skipLine {
@@ -194,12 +178,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 
 	succeeded := false
 	cancelled := false
-	warningsNum := int(clientLogFile.Count.Load())
-	if pbsWarnings > 0 {
-		warningsNum += pbsWarnings
-	} else {
-		warningsNum += pbsWarningRawCount
-	}
+	warningsNum := pbsWarningRawCount
 
 	// Build and write final status line
 	var sb strings.Builder
