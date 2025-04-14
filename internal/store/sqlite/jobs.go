@@ -120,11 +120,11 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
 
 	_, err = tx.Exec(`
         INSERT INTO jobs (
-            id, store, mode, source_mode, target, subpath, schedule, comment,
+            id, store, mode, source_mode, read_mode, target, subpath, schedule, comment,
             notification_mode, namespace, current_pid, last_run_upid, last_successful_upid, retry,
             retry_interval, max_dir_entries
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, job.ID, job.Store, job.Mode, job.SourceMode, job.Target, job.Subpath,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, job.ID, job.Store, job.Mode, job.SourceMode, job.ReadMode, job.Target, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace, job.CurrentPID,
 		job.LastRunUpid, job.LastSuccessfulUpid, job.Retry, job.RetryInterval,
 		job.MaxDirEntries)
@@ -163,7 +163,7 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
 func (database *Database) GetJob(id string) (types.Job, error) {
 	query := `
         SELECT
-            j.id, j.store, j.mode, j.source_mode, j.target, j.subpath, j.schedule, j.comment,
+            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries,
             e.path,
@@ -188,7 +188,7 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 		var exclusionPath sql.NullString
 		var driveUsedBytes sql.NullInt64
 		err := rows.Scan(
-			&job.ID, &job.Store, &job.Mode, &job.SourceMode,
+			&job.ID, &job.Store, &job.Mode, &job.SourceMode, &job.ReadMode,
 			&job.Target, &job.Subpath, &job.Schedule, &job.Comment,
 			&job.NotificationMode, &job.Namespace, &job.CurrentPID, &job.LastRunUpid,
 			&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval, &job.MaxDirEntries,
@@ -312,13 +312,13 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
 	}
 
 	_, err = tx.Exec(`
-        UPDATE jobs SET store = ?, mode = ?, source_mode = ?, target = ?,
+        UPDATE jobs SET store = ?, mode = ?, source_mode = ?, read_mode = ?, target = ?,
             subpath = ?, schedule = ?, comment = ?, notification_mode = ?,
             namespace = ?, current_pid = ?, last_run_upid = ?, retry = ?,
             retry_interval = ?, last_successful_upid = ?,
             max_dir_entries = ?
         WHERE id = ?
-    `, job.Store, job.Mode, job.SourceMode, job.Target, job.Subpath,
+    `, job.Store, job.Mode, job.SourceMode, job.ReadMode, job.Target, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace,
 		job.CurrentPID, job.LastRunUpid, job.Retry, job.RetryInterval,
 		job.LastSuccessfulUpid, job.MaxDirEntries, job.ID)
@@ -407,7 +407,7 @@ func (database *Database) linkJobLog(jobID, upid string) {
 func (database *Database) GetAllJobs() ([]types.Job, error) {
 	query := `
         SELECT
-            j.id, j.store, j.mode, j.source_mode, j.target, j.subpath, j.schedule, j.comment,
+            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries,
             e.path,
@@ -427,7 +427,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 	var jobOrder []string
 
 	for rows.Next() {
-		var jobID, store, mode, sourceMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
+		var jobID, store, mode, sourceMode, readMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
 		var retry, maxDirEntries int
 		var retryInterval int
 		var currentPID int
@@ -435,7 +435,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 		var driveUsedBytes sql.NullInt64
 
 		err := rows.Scan(
-			&jobID, &store, &mode, &sourceMode, &target, &subpath, &schedule, &comment,
+			&jobID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
 			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval, &maxDirEntries,
 			&exclusionPath, &driveUsedBytes,
@@ -452,6 +452,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 				Store:              store,
 				Mode:               mode,
 				SourceMode:         sourceMode,
+				ReadMode:           readMode,
 				Target:             target,
 				Subpath:            subpath,
 				Schedule:           schedule,
@@ -503,7 +504,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 	query := `
         SELECT
-            j.id, j.store, j.mode, j.source_mode, j.target, j.subpath, j.schedule, j.comment,
+            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries,
             e.path,
@@ -524,7 +525,7 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 	var jobOrder []string
 
 	for rows.Next() {
-		var jobID, store, mode, sourceMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
+		var jobID, store, mode, sourceMode, readMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
 		var retry, maxDirEntries int
 		var retryInterval int
 		var currentPID int
@@ -532,7 +533,7 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 		var driveUsedBytes sql.NullInt64
 
 		err := rows.Scan(
-			&jobID, &store, &mode, &sourceMode, &target, &subpath, &schedule, &comment,
+			&jobID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
 			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval, &maxDirEntries,
 			&exclusionPath, &driveUsedBytes,
@@ -549,6 +550,7 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 				Store:              store,
 				Mode:               mode,
 				SourceMode:         sourceMode,
+				ReadMode:           readMode,
 				Target:             target,
 				Subpath:            subpath,
 				Schedule:           schedule,

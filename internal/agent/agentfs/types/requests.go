@@ -216,11 +216,12 @@ type BackupReq struct {
 	JobId      string
 	Drive      string
 	SourceMode string
+	ReadMode   string
 	Extras     string
 }
 
 func (req *BackupReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(req.JobId) + len(req.Drive) + len(req.SourceMode) + len(req.Extras))
+	enc := arpcdata.NewEncoderWithSize(len(req.JobId) + len(req.Drive) + len(req.SourceMode) + len(req.ReadMode) + len(req.Extras))
 	if err := enc.WriteString(req.JobId); err != nil {
 		return nil, err
 	}
@@ -228,6 +229,9 @@ func (req *BackupReq) Encode() ([]byte, error) {
 		return nil, err
 	}
 	if err := enc.WriteString(req.SourceMode); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteString(req.ReadMode); err != nil {
 		return nil, err
 	}
 	if err := enc.WriteString(req.Extras); err != nil {
@@ -256,6 +260,11 @@ func (req *BackupReq) Decode(buf []byte) error {
 		return err
 	}
 	req.SourceMode = sourceMode
+	readMode, err := dec.ReadString()
+	if err != nil {
+		return err
+	}
+	req.ReadMode = readMode
 	extras, err := dec.ReadString()
 	if err != nil {
 		return err

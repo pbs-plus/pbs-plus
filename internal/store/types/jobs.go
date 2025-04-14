@@ -4,6 +4,7 @@ type Job struct {
 	ID                    string      `json:"id"`
 	Store                 string      `config:"type=string,required" json:"store"`
 	SourceMode            string      `config:"key=source_mode,type=string" json:"sourcemode"`
+	ReadMode              string      `json:"readmode"`
 	Mode                  string      `config:"type=string" json:"mode"`
 	Target                string      `config:"type=string,required" json:"target"`
 	Subpath               string      `config:"type=string" json:"subpath"`
