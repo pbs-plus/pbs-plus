@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"unsafe"
 
 	"github.com/Microsoft/go-winio"
@@ -22,6 +23,7 @@ import (
 )
 
 type FileHandle struct {
+	sync.Mutex
 	handle   windows.Handle
 	fileSize int64
 	isDir    bool
@@ -58,7 +60,9 @@ func (s *AgentFSServer) absUNC(filename string) (string, error) {
 
 func (s *AgentFSServer) closeFileHandles() {
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
+		fh.Lock()
 		windows.CloseHandle(fh.handle)
+		fh.Unlock()
 
 		return true
 	})
@@ -338,6 +342,9 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
+	fh.Lock()
+	defer fh.Unlock()
+
 	// If the requested offset is at or beyond EOF, stream nothing.
 	if payload.Offset >= fh.fileSize {
 		emptyReader := bytes.NewReader([]byte{})
@@ -413,7 +420,9 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		}
 	}
 
-	_, err := windows.Seek(fh.handle, payload.Offset, io.SeekStart)
+	lowOffset := int32(payload.Offset & 0xFFFFFFFF)
+	highOffset := int32(payload.Offset >> 32)
+	_, err := windows.SetFilePointer(fh.handle, lowOffset, &highOffset, windows.FILE_BEGIN)
 	if err != nil {
 		return arpc.Response{}, mapWinError(err, "handleReadAt Seek (sync fallback)")
 	}
@@ -464,6 +473,9 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	if fh.isDir {
 		return arpc.Response{}, os.ErrInvalid
 	}
+
+	fh.Lock()
+	defer fh.Unlock()
 
 	// Query the file size
 	fileSize, err := getFileSize(fh.handle)
@@ -542,6 +554,9 @@ func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	if !exists {
 		return arpc.Response{}, os.ErrNotExist
 	}
+
+	handle.Lock()
+	defer handle.Unlock()
 
 	// Close the Windows handle directly
 	windows.CloseHandle(handle.handle)
