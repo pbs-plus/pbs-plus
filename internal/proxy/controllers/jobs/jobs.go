@@ -133,6 +133,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
 			SourceMode:       r.FormValue("sourcemode"),
+			ReadMode:         r.FormValue("readmode"),
 			Mode:             r.FormValue("mode"),
 			Target:           r.FormValue("target"),
 			Subpath:          r.FormValue("subpath"),
@@ -203,6 +204,9 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("sourcemode") != "" {
 				job.SourceMode = r.FormValue("sourcemode")
 			}
+			if r.FormValue("readmode") != "" {
+				job.ReadMode = r.FormValue("readmode")
+			}
 			if r.FormValue("target") != "" {
 				job.Target = r.FormValue("target")
 			}
@@ -253,6 +257,8 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						job.Mode = ""
 					case "sourcemode":
 						job.SourceMode = ""
+					case "readmode":
+						job.ReadMode = ""
 					case "target":
 						job.Target = ""
 					case "subpath":
