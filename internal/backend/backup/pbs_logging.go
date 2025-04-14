@@ -31,7 +31,7 @@ var JunkSubstrings = []string{
 
 func isJunkLog(line string) bool {
 	for _, junk := range JunkSubstrings {
-		if strings.Contains(line, junk) {
+		if strings.Contains(line, junk) && !strings.Contains(line, "warn") && !strings.Contains(line, "error") {
 			return true
 		}
 	}
@@ -111,7 +111,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	var errorString string
 	var errorPath string
 	pbsWarnings := 0
-
 	pbsWarningRawCount := 0
 
 	// Process status info while streaming the logs to avoid storing everything in memory
