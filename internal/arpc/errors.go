@@ -47,6 +47,8 @@ func WrapError(err error) *SerializableError {
 			serErr.ErrorType = "os.ErrNotExist"
 		} else if errors.Is(pathErr.Err, os.ErrPermission) {
 			serErr.ErrorType = "os.ErrPermission"
+		} else if errors.Is(pathErr.Err, os.ErrProcessDone) {
+			serErr.ErrorType = "os.ErrProcessDone"
 		} else {
 			serErr.ErrorType = "os.PathError"
 		}
@@ -62,6 +64,8 @@ func WrapError(err error) *SerializableError {
 		serErr.ErrorType = "os.ErrTimeout"
 	} else if errors.Is(err, os.ErrClosed) {
 		serErr.ErrorType = "os.ErrClosed"
+	} else if errors.Is(err, os.ErrProcessDone) {
+		serErr.ErrorType = "os.ErrProcessDone"
 	}
 	// Add more error types as needed
 
@@ -99,6 +103,8 @@ func UnwrapError(serErr SerializableError) error {
 		return os.ErrDeadlineExceeded
 	case "os.ErrClosed":
 		return os.ErrClosed
+	case "os.ErrProcessDone":
+		return os.ErrProcessDone
 	default:
 		// Return a simple error with the original message
 		return errors.New(serErr.Message)
