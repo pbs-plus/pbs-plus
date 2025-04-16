@@ -5,6 +5,7 @@ package arpcfs
 import (
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ type DirStream struct {
 	path          string
 	handleId      types.FileHandleId
 	closed        atomic.Bool
+	lastRespMu    sync.Mutex
 	lastResp      types.ReadDirEntries
 	curIdx        atomic.Uint64
 	totalReturned atomic.Uint64
@@ -61,7 +63,9 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	err = s.lastResp.Decode(buf[:bytesRead])
+	var entries types.ReadDirEntries
+
+	err = entries.Decode(buf[:bytesRead])
 	if err != nil {
 		syslog.L.Error(err).
 			WithField("path", s.path).
@@ -69,6 +73,11 @@ func (s *DirStream) HasNext() bool {
 			Write()
 		return false
 	}
+
+	s.lastRespMu.Lock()
+	defer s.lastRespMu.Unlock()
+
+	s.lastResp = entries
 
 	s.curIdx.Store(0)
 
@@ -79,6 +88,9 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	if s.closed.Load() {
 		return fuse.DirEntry{}, syscall.EINVAL
 	}
+
+	s.lastRespMu.Lock()
+	defer s.lastRespMu.Unlock()
 
 	curr := s.lastResp.Entries[s.curIdx.Load()]
 
