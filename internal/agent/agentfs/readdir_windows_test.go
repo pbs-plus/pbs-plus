@@ -84,7 +84,13 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 
 	// Call readDirBulk
-	entriesBytes, err := readDirNT(tempDir)
+	dirReader, err := NewDirReaderNT(tempDir)
+	if err != nil {
+		t.Fatalf("dirReader failed: %v", err)
+	}
+	defer dirReader.Close()
+
+	entriesBytes, err := dirReader.NextBatch()
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -111,8 +117,13 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 		t.Fatalf("Failed to create empty directory: %v", err)
 	}
 
-	// Call readDirBulk
-	entriesBytes, err := readDirNT(emptyDir)
+	dirReader, err := NewDirReaderNT(emptyDir)
+	if err != nil {
+		t.Fatalf("dirReader failed: %v", err)
+	}
+	defer dirReader.Close()
+
+	entriesBytes, err := dirReader.NextBatch()
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -123,8 +134,8 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 		t.Fatalf("Failed to decode directory entries: %v", err)
 	}
 
-	if len(entries) != 0 {
-		t.Errorf("Expected 0 entries, got %d", len(entries))
+	if len(entries.Entries) != 0 {
+		t.Errorf("Expected 0 entries, got %d", len(entries.Entries))
 	}
 }
 
@@ -142,20 +153,34 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 		}
 	}
 
-	// Call readDirBulk
-	entriesBytes, err := readDirNT(largeDir)
+	dirReader, err := NewDirReaderNT(largeDir)
 	if err != nil {
-		t.Fatalf("readDirBulk failed: %v", err)
+		t.Fatalf("dirReader failed: %v", err)
+	}
+	defer dirReader.Close()
+
+	totalEntries := 0
+	for {
+		entriesBytes, err := dirReader.NextBatch()
+		if err != nil {
+			t.Fatalf("readDirBulk failed: %v", err)
+		}
+
+		// Decode and verify results
+		var entries types.ReadDirEntries
+		if err := entries.Decode(entriesBytes); err != nil {
+			t.Fatalf("Failed to decode directory entries: %v", err)
+		}
+
+		totalEntries += len(entries.Entries)
+
+		if !entries.HasMore {
+			break
+		}
 	}
 
-	// Decode and verify results
-	var entries types.ReadDirEntries
-	if err := entries.Decode(entriesBytes); err != nil {
-		t.Fatalf("Failed to decode directory entries: %v", err)
-	}
-
-	if len(entries) != 10000 {
-		t.Errorf("Expected 10000 entries, got %d", len(entries))
+	if totalEntries != 10000 {
+		t.Errorf("Expected 10000 entries, got %d", totalEntries)
 	}
 }
 
@@ -174,21 +199,35 @@ func testFileAttributes(t *testing.T, tempDir string) {
 		t.Fatalf("Failed to set hidden attribute: %v", err)
 	}
 
-	// Call readDirBulk
-	entriesBytes, err := readDirNT(tempDir)
+	dirReader, err := NewDirReaderNT(tempDir)
 	if err != nil {
-		t.Fatalf("readDirBulk failed: %v", err)
+		t.Fatalf("dirReader failed: %v", err)
 	}
+	defer dirReader.Close()
 
-	// Decode and verify results
-	var entries types.ReadDirEntries
-	if err := entries.Decode(entriesBytes); err != nil {
-		t.Fatalf("Failed to decode directory entries: %v", err)
+	allEntries := []types.AgentDirEntry{}
+	for {
+		entriesBytes, err := dirReader.NextBatch()
+		if err != nil {
+			t.Fatalf("readDirBulk failed: %v", err)
+		}
+
+		// Decode and verify results
+		var entries types.ReadDirEntries
+		if err := entries.Decode(entriesBytes); err != nil {
+			t.Fatalf("Failed to decode directory entries: %v", err)
+		}
+
+		allEntries = append(allEntries, entries.Entries...)
+
+		if !entries.HasMore {
+			break
+		}
 	}
 
 	// Hidden files should be excluded
 	hiddenFound := false
-	for _, entry := range entries {
+	for _, entry := range allEntries {
 		if entry.Name == "hidden.txt" {
 			hiddenFound = true
 			break
@@ -197,17 +236,18 @@ func testFileAttributes(t *testing.T, tempDir string) {
 	if !hiddenFound {
 		t.Errorf("Hidden file should be included in results")
 	}
+
 }
 
 // Add similar test cases for symbolic links, error handling, Unicode file names, special characters, and file name lengths...
 
 // Helper function to verify entries
 func verifyEntries(t *testing.T, entries types.ReadDirEntries, expected map[string]os.FileMode) {
-	if len(entries) != len(expected) {
-		t.Fatalf("Expected %d entries, got %d", len(expected), len(entries))
+	if len(entries.Entries) != len(expected) {
+		t.Fatalf("Expected %d entries, got %d", len(expected), len(entries.Entries))
 	}
 
-	for _, entry := range entries {
+	for _, entry := range entries.Entries {
 		expectedMode, ok := expected[entry.Name]
 		if !ok {
 			t.Errorf("Unexpected entry: %s", entry.Name)
@@ -236,20 +276,33 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 		t.Fatalf("Failed to create symbolic link: %v", err)
 	}
 
-	// Call readDirBulk
-	entriesBytes, err := readDirNT(tempDir)
+	dirReader, err := NewDirReaderNT(tempDir)
 	if err != nil {
-		t.Fatalf("readDirBulk failed: %v", err)
+		t.Fatalf("dirReader failed: %v", err)
+	}
+	defer dirReader.Close()
+
+	allEntries := []types.AgentDirEntry{}
+	for {
+		entriesBytes, err := dirReader.NextBatch()
+		if err != nil {
+			t.Fatalf("readDirBulk failed: %v", err)
+		}
+
+		// Decode and verify results
+		var entries types.ReadDirEntries
+		if err := entries.Decode(entriesBytes); err != nil {
+			t.Fatalf("Failed to decode directory entries: %v", err)
+		}
+
+		allEntries = append(allEntries, entries.Entries...)
+
+		if !entries.HasMore {
+			break
+		}
 	}
 
-	// Decode and verify results
-	var entries types.ReadDirEntries
-	if err := entries.Decode(entriesBytes); err != nil {
-		t.Fatalf("Failed to decode directory entries: %v", err)
-	}
-
-	// Verify that the symlink is included
-	for _, entry := range entries {
+	for _, entry := range allEntries {
 		if entry.Name == "symlink.txt" {
 			t.Errorf("Symlink should not be included in results")
 		}
@@ -266,22 +319,36 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 		}
 	}
 
-	// Call readDirBulk
-	entriesBytes, err := readDirNT(tempDir)
+	dirReader, err := NewDirReaderNT(tempDir)
 	if err != nil {
-		t.Fatalf("readDirBulk failed: %v", err)
+		t.Fatalf("dirReader failed: %v", err)
+	}
+	defer dirReader.Close()
+
+	allEntries := []types.AgentDirEntry{}
+
+	for {
+		entriesBytes, err := dirReader.NextBatch()
+		if err != nil {
+			t.Fatalf("readDirBulk failed: %v", err)
+		}
+
+		// Decode and verify results
+		var entries types.ReadDirEntries
+		if err := entries.Decode(entriesBytes); err != nil {
+			t.Fatalf("Failed to decode directory entries: %v", err)
+		}
+
+		allEntries = append(allEntries, entries.Entries...)
+
+		if !entries.HasMore {
+			break
+		}
 	}
 
-	// Decode and verify results
-	var entries types.ReadDirEntries
-	if err := entries.Decode(entriesBytes); err != nil {
-		t.Fatalf("Failed to decode directory entries: %v", err)
-	}
-
-	// Verify that all Unicode files are included
 	for _, name := range unicodeFiles {
 		found := false
-		for _, entry := range entries {
+		for _, entry := range allEntries {
 			if entry.Name == name {
 				found = true
 				break
@@ -291,6 +358,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 			t.Errorf("Unicode file %s not found in directory entries", name)
 		}
 	}
+
 }
 
 func testSpecialCharacters(t *testing.T, tempDir string) {
@@ -303,22 +371,36 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 		}
 	}
 
-	// Call readDirBulk
-	entriesBytes, err := readDirNT(tempDir)
+	dirReader, err := NewDirReaderNT(tempDir)
 	if err != nil {
-		t.Fatalf("readDirBulk failed: %v", err)
+		t.Fatalf("dirReader failed: %v", err)
+	}
+	defer dirReader.Close()
+
+	allEntries := []types.AgentDirEntry{}
+
+	for {
+		entriesBytes, err := dirReader.NextBatch()
+		if err != nil {
+			t.Fatalf("readDirBulk failed: %v", err)
+		}
+
+		// Decode and verify results
+		var entries types.ReadDirEntries
+		if err := entries.Decode(entriesBytes); err != nil {
+			t.Fatalf("Failed to decode directory entries: %v", err)
+		}
+
+		allEntries = append(allEntries, entries.Entries...)
+
+		if !entries.HasMore {
+			break
+		}
 	}
 
-	// Decode and verify results
-	var entries types.ReadDirEntries
-	if err := entries.Decode(entriesBytes); err != nil {
-		t.Fatalf("Failed to decode directory entries: %v", err)
-	}
-
-	// Verify that all special character files are included
 	for _, name := range specialFiles {
 		found := false
-		for _, entry := range entries {
+		for _, entry := range allEntries {
 			if entry.Name == name {
 				found = true
 				break
