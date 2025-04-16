@@ -32,7 +32,7 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if s.totalReturned.Load() > uint64(s.fs.Job.MaxDirEntries) {
+	if s.totalReturned.Load() > uint64(s.fs.Job.MaxDirEntries)-1 {
 		lastPath := ""
 
 		if int(s.curIdx.Load()) < len(s.lastResp) {

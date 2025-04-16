@@ -129,6 +129,26 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
+		retryInterval, err := strconv.Atoi(r.FormValue("retry-interval"))
+		if err != nil {
+			if r.FormValue("retry-interval") == "" {
+				retryInterval = 1
+			} else {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+		}
+
+		maxDirEntries, err := strconv.Atoi(r.FormValue("max-dir-entries"))
+		if err != nil {
+			if r.FormValue("max-dir-entries") == "" {
+				maxDirEntries = 1048576
+			} else {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+		}
+
 		newJob := types.Job{
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
@@ -140,8 +160,10 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			Schedule:         r.FormValue("schedule"),
 			Comment:          r.FormValue("comment"),
 			Namespace:        r.FormValue("ns"),
+			MaxDirEntries:    maxDirEntries,
 			NotificationMode: r.FormValue("notification-mode"),
 			Retry:            retry,
+			RetryInterval:    retryInterval,
 			Exclusions:       []types.Exclusion{},
 		}
 
@@ -225,7 +247,19 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				retry = 0
 			}
 
+			retryInterval, err := strconv.Atoi(r.FormValue("retry-interval"))
+			if err != nil {
+				retryInterval = 1
+			}
+
+			maxDirEntries, err := strconv.Atoi(r.FormValue("max-dir-entries"))
+			if err != nil {
+				maxDirEntries = 1048576
+			}
+
 			job.Retry = retry
+			job.RetryInterval = retryInterval
+			job.MaxDirEntries = maxDirEntries
 
 			job.Subpath = r.FormValue("subpath")
 			job.Namespace = r.FormValue("ns")
@@ -271,6 +305,10 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						job.Namespace = ""
 					case "retry":
 						job.Retry = 0
+					case "retry-interval":
+						job.RetryInterval = 1
+					case "max-dir-entries":
+						job.MaxDirEntries = 1048576
 					case "notification-mode":
 						job.NotificationMode = ""
 					case "rawexclusions":
