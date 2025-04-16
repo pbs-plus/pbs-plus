@@ -51,13 +51,11 @@ func readDirBulk(dirPath string) ([]byte, error) {
 		mode := entry.Mode()
 
 		// Append the entry to the result
-		resultEntries.Entries = append(resultEntries.Entries, types.AgentDirEntry{
+		resultEntries = append(resultEntries, types.AgentDirEntry{
 			Name: entry.Name(),
 			Mode: uint32(mode),
 		})
 	}
-
-	resultEntries.HasMore = false
 
 	// Encode the result entries
 	return resultEntries.Encode()

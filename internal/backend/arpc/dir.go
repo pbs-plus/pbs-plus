@@ -3,6 +3,7 @@
 package arpcfs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -34,8 +35,8 @@ func (s *DirStream) HasNext() bool {
 	if s.totalReturned.Load() > uint64(s.fs.Job.MaxDirEntries) {
 		lastPath := ""
 
-		if int(s.curIdx.Load()) < len(s.lastResp.Entries) {
-			lastEntry := s.lastResp.Entries[s.curIdx.Load()-1]
+		if int(s.curIdx.Load()) < len(s.lastResp) {
+			lastEntry := s.lastResp[s.curIdx.Load()-1]
 			lastPath = lastEntry.Name
 		}
 
@@ -48,7 +49,7 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if int(s.curIdx.Load()) < len(s.lastResp.Entries)-1 {
+	if int(s.curIdx.Load()) < len(s.lastResp)-1 {
 		return true
 	}
 
@@ -56,6 +57,10 @@ func (s *DirStream) HasNext() bool {
 
 	buf, bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req)
 	if err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			return false
+		}
+
 		syslog.L.Error(err).
 			WithField("path", s.path).
 			WithJob(s.fs.Job.ID).
@@ -81,7 +86,7 @@ func (s *DirStream) HasNext() bool {
 
 	s.curIdx.Store(0)
 
-	return s.lastResp.HasMore
+	return len(s.lastResp) > 0
 }
 
 func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
@@ -92,7 +97,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	s.lastRespMu.Lock()
 	defer s.lastRespMu.Unlock()
 
-	curr := s.lastResp.Entries[s.curIdx.Load()]
+	curr := s.lastResp[s.curIdx.Load()]
 
 	mode := os.FileMode(curr.Mode)
 	modeBits := uint32(0)

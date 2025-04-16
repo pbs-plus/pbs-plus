@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -24,10 +25,11 @@ import (
 
 type FileHandle struct {
 	sync.Mutex
-	file     *os.File
-	dirPath  string
-	fileSize int64
-	isDir    bool
+	file        *os.File
+	dirPath     string
+	fileSize    int64
+	isDir       bool
+	dirReturned atomic.Bool
 }
 
 func (s *AgentFSServer) abs(filename string) (string, error) {
@@ -306,10 +308,16 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	fh.Lock()
 	defer fh.Unlock()
 
+	if fh.dirReturned.Load() {
+		return arpc.Response{}, os.ErrProcessDone
+	}
+
 	entries, err := readDirBulk(fh.dirPath)
 	if err != nil {
 		return arpc.Response{}, err
 	}
+
+	fh.dirReturned.Store(true)
 
 	reader := bytes.NewReader(entries)
 	streamCallback := func(stream *smux.Stream) {

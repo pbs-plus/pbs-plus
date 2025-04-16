@@ -3,6 +3,7 @@
 package agentfs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -134,8 +135,8 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 		t.Fatalf("Failed to decode directory entries: %v", err)
 	}
 
-	if len(entries.Entries) != 0 {
-		t.Errorf("Expected 0 entries, got %d", len(entries.Entries))
+	if len(entries) != 0 {
+		t.Errorf("Expected 0 entries, got %d", len(entries))
 	}
 }
 
@@ -163,6 +164,9 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 	for {
 		entriesBytes, err := dirReader.NextBatch()
 		if err != nil {
+			if errors.Is(err, os.ErrProcessDone) {
+				break
+			}
 			t.Fatalf("readDirBulk failed: %v", err)
 		}
 
@@ -172,11 +176,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
-		totalEntries += len(entries.Entries)
-
-		if !entries.HasMore {
-			break
-		}
+		totalEntries += len(entries)
 	}
 
 	if totalEntries != 10000 {
@@ -209,6 +209,9 @@ func testFileAttributes(t *testing.T, tempDir string) {
 	for {
 		entriesBytes, err := dirReader.NextBatch()
 		if err != nil {
+			if errors.Is(err, os.ErrProcessDone) {
+				break
+			}
 			t.Fatalf("readDirBulk failed: %v", err)
 		}
 
@@ -218,11 +221,7 @@ func testFileAttributes(t *testing.T, tempDir string) {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
-		allEntries = append(allEntries, entries.Entries...)
-
-		if !entries.HasMore {
-			break
-		}
+		allEntries = append(allEntries, entries...)
 	}
 
 	// Hidden files should be excluded
@@ -243,11 +242,11 @@ func testFileAttributes(t *testing.T, tempDir string) {
 
 // Helper function to verify entries
 func verifyEntries(t *testing.T, entries types.ReadDirEntries, expected map[string]os.FileMode) {
-	if len(entries.Entries) != len(expected) {
-		t.Fatalf("Expected %d entries, got %d", len(expected), len(entries.Entries))
+	if len(entries) != len(expected) {
+		t.Fatalf("Expected %d entries, got %d", len(expected), len(entries))
 	}
 
-	for _, entry := range entries.Entries {
+	for _, entry := range entries {
 		expectedMode, ok := expected[entry.Name]
 		if !ok {
 			t.Errorf("Unexpected entry: %s", entry.Name)
@@ -286,6 +285,9 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 	for {
 		entriesBytes, err := dirReader.NextBatch()
 		if err != nil {
+			if errors.Is(err, os.ErrProcessDone) {
+				break
+			}
 			t.Fatalf("readDirBulk failed: %v", err)
 		}
 
@@ -295,11 +297,7 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
-		allEntries = append(allEntries, entries.Entries...)
-
-		if !entries.HasMore {
-			break
-		}
+		allEntries = append(allEntries, entries...)
 	}
 
 	for _, entry := range allEntries {
@@ -330,6 +328,9 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 	for {
 		entriesBytes, err := dirReader.NextBatch()
 		if err != nil {
+			if errors.Is(err, os.ErrProcessDone) {
+				break
+			}
 			t.Fatalf("readDirBulk failed: %v", err)
 		}
 
@@ -339,11 +340,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
-		allEntries = append(allEntries, entries.Entries...)
-
-		if !entries.HasMore {
-			break
-		}
+		allEntries = append(allEntries, entries...)
 	}
 
 	for _, name := range unicodeFiles {
@@ -382,6 +379,9 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 	for {
 		entriesBytes, err := dirReader.NextBatch()
 		if err != nil {
+			if errors.Is(err, os.ErrProcessDone) {
+				break
+			}
 			t.Fatalf("readDirBulk failed: %v", err)
 		}
 
@@ -391,11 +391,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
-		allEntries = append(allEntries, entries.Entries...)
-
-		if !entries.HasMore {
-			break
-		}
+		allEntries = append(allEntries, entries...)
 	}
 
 	for _, name := range specialFiles {
