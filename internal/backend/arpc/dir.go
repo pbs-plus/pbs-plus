@@ -3,6 +3,7 @@
 package arpcfs
 
 import (
+	"fmt"
 	"os"
 	"sync/atomic"
 	"syscall"
@@ -14,16 +15,34 @@ import (
 )
 
 type DirStream struct {
-	fs       *ARPCFS
-	path     string
-	handleId types.FileHandleId
-	closed   atomic.Bool
-	lastResp types.ReadDirEntries
-	curIdx   atomic.Uint64
+	fs            *ARPCFS
+	path          string
+	handleId      types.FileHandleId
+	closed        atomic.Bool
+	lastResp      types.ReadDirEntries
+	curIdx        atomic.Uint64
+	totalReturned atomic.Uint64
 }
 
 func (s *DirStream) HasNext() bool {
 	if s.closed.Load() {
+		return false
+	}
+
+	if s.totalReturned.Load() > uint64(s.fs.Job.MaxDirEntries) {
+		lastPath := ""
+
+		if int(s.curIdx.Load()) < len(s.lastResp.Entries) {
+			lastEntry := s.lastResp.Entries[s.curIdx.Load()-1]
+			lastPath = lastEntry.Name
+		}
+
+		syslog.L.Error(fmt.Errorf("maximum directory entries reached: %d", s.fs.Job.MaxDirEntries)).
+			WithField("path", s.path).
+			WithField("lastFile", lastPath).
+			WithJob(s.fs.Job.ID).
+			Write()
+
 		return false
 	}
 
@@ -77,6 +96,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	}
 
 	s.curIdx.Add(1)
+	s.totalReturned.Add(1)
 
 	return fuse.DirEntry{
 		Name: curr.Name,

@@ -297,9 +297,6 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	if !exists {
 		return arpc.Response{}, os.ErrNotExist
 	}
-	if fh.isDir {
-		return arpc.Response{}, os.ErrInvalid
-	}
 
 	fullDirPath, err := s.abs(fh.dirPath)
 	if err != nil {
