@@ -306,12 +306,7 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	fh.Lock()
 	defer fh.Unlock()
 
-	fullDirPath, err := s.abs(fh.dirPath)
-	if err != nil {
-		return arpc.Response{}, err
-	}
-
-	entries, err := readDirBulk(fullDirPath)
+	entries, err := readDirBulk(fh.dirPath)
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -430,7 +425,10 @@ func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	handle.Lock()
 	defer handle.Unlock()
 
-	handle.file.Close()
+	if handle.file != nil {
+		handle.file.Close()
+	}
+
 	s.handles.Del(uint64(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")
