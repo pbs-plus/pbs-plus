@@ -24,9 +24,10 @@ import (
 
 type FileHandle struct {
 	sync.Mutex
-	handle   windows.Handle
-	fileSize int64
-	isDir    bool
+	handle    windows.Handle
+	fileSize  int64
+	isDir     bool
+	dirReader *DirReaderNT
 }
 
 type FileStandardInfo struct {
@@ -125,38 +126,62 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, err
 	}
 
-	handle, err := windows.CreateFile(
-		windows.StringToUTF16Ptr(path),
-		windows.GENERIC_READ,
-		windows.FILE_SHARE_READ,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN,
-		0,
-	)
-	if err != nil {
-		return arpc.Response{}, err
-	}
-
-	fileSize, err := getFileSize(handle)
-	if err != nil {
-		windows.CloseHandle(handle)
-		return arpc.Response{}, err
-	}
-
 	handleId := s.handleIdGen.NextID()
-	fh := &FileHandle{
-		handle:   handle,
-		fileSize: fileSize,
-		isDir:    stat.IsDir(),
+
+	var fh *FileHandle
+
+	if !stat.IsDir() {
+		handle, err := windows.CreateFile(
+			windows.StringToUTF16Ptr(path),
+			windows.GENERIC_READ,
+			windows.FILE_SHARE_READ,
+			nil,
+			windows.OPEN_EXISTING,
+			windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN,
+			0,
+		)
+		if err != nil {
+			return arpc.Response{}, err
+		}
+
+		fileSize, err := getFileSize(handle)
+		if err != nil {
+			windows.CloseHandle(handle)
+			return arpc.Response{}, err
+		}
+		fh = &FileHandle{
+			handle:   handle,
+			fileSize: fileSize,
+			isDir:    false,
+		}
+	} else {
+		dirPath, err := s.abs(payload.Path)
+		if err != nil {
+			return arpc.Response{}, err
+		}
+
+		reader, err := NewDirReaderNT(dirPath)
+		if err != nil {
+			return arpc.Response{}, err
+		}
+
+		fh = &FileHandle{
+			dirReader: reader,
+			isDir:     true,
+		}
 	}
+
 	s.handles.Set(handleId, fh)
 
 	// Return the handle ID to the client.
 	fhId := types.FileHandleId(handleId)
 	dataBytes, err := fhId.Encode()
 	if err != nil {
-		windows.CloseHandle(handle)
+		if !fh.isDir {
+			windows.CloseHandle(fh.handle)
+		} else {
+			fh.dirReader.Close()
+		}
 		return arpc.Response{}, err
 	}
 
@@ -292,24 +317,23 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	fullDirPath, err := s.abs(payload.Path)
+	fh, exists := s.handles.Get(uint64(payload.HandleID))
+	if !exists {
+		return arpc.Response{}, os.ErrNotExist
+	}
+
+	fh.Lock()
+	defer fh.Unlock()
+
+	encodedBatch, err := fh.dirReader.NextBatch()
 	if err != nil {
+		syslog.L.Error(err).WithMessage("error reading batch").Write()
 		return arpc.Response{}, err
 	}
 
-	// If the payload is empty (or "."), use the root.
-	if payload.Path == "." || payload.Path == "" {
-		fullDirPath = s.snapshot.Path
-	}
-
-	entries, err := readDirNT(fullDirPath)
-	if err != nil {
-		return arpc.Response{}, err
-	}
-
-	reader := bytes.NewReader(entries)
+	byteReader := bytes.NewReader(encodedBatch)
 	streamCallback := func(stream *smux.Stream) {
-		if err := binarystream.SendDataFromReader(reader, int(len(entries)), stream); err != nil {
+		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
 			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 		}
 	}
@@ -559,7 +583,12 @@ func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	defer handle.Unlock()
 
 	// Close the Windows handle directly
-	windows.CloseHandle(handle.handle)
+	if !handle.isDir {
+		windows.CloseHandle(handle.handle)
+	} else {
+		handle.dirReader.Close()
+	}
+
 	s.handles.Del(uint64(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")
