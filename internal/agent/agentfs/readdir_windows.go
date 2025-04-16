@@ -4,6 +4,7 @@ package agentfs
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -170,7 +171,7 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 // The returned []byte contains the encoded data for the current batch only.
 func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 	if r.noMoreFiles {
-		return nil, nil
+		return nil, os.ErrProcessDone
 	}
 
 	defer func() {
@@ -200,13 +201,8 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 
 	if status == STATUS_NO_MORE_FILES {
 		r.noMoreFiles = true
-		entries.HasMore = false
 
-		encodedBatch, err = entries.Encode()
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
-		}
-		return encodedBatch, nil
+		return nil, os.ErrProcessDone
 	}
 
 	if status != 0 {
@@ -215,8 +211,6 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 			status,
 		)
 	}
-
-	entries.HasMore = true
 
 	offset := 0
 	for {
@@ -248,7 +242,7 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 
 			if name != "." && name != ".." {
 				mode := windowsAttributesToFileMode(entry.FileAttributes)
-				entries.Entries = append(entries.Entries, types.AgentDirEntry{
+				entries = append(entries, types.AgentDirEntry{
 					Name: name,
 					Mode: mode,
 				})

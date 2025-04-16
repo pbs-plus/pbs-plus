@@ -255,12 +255,12 @@ func TestAgentFSServer(t *testing.T) {
 		assert.NoError(t, err)
 		t.Logf("Result: %v", raw)
 		t.Logf("Result Size: %v", readSize)
-		assert.GreaterOrEqual(t, len(result.Entries), 3) // Should have at least test1.txt, test2.txt, and subdir
+		assert.GreaterOrEqual(t, len(result), 3) // Should have at least test1.txt, test2.txt, and subdir
 
 		// Verify we can find our test files
 		foundTest1 := false
 		foundSubdir := false
-		for _, entry := range result.Entries {
+		for _, entry := range result {
 			name := (entry.Name)
 			if name == "test1.txt" {
 				foundTest1 = true
