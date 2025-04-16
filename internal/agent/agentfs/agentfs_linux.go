@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -22,7 +23,9 @@ import (
 )
 
 type FileHandle struct {
+	sync.Mutex
 	file     *os.File
+	dirPath  string
 	fileSize int64
 	isDir    bool
 }
@@ -38,7 +41,10 @@ func (s *AgentFSServer) abs(filename string) (string, error) {
 
 func (s *AgentFSServer) closeFileHandles() {
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
+		fh.Lock()
 		fh.file.Close()
+		fh.Unlock()
+
 		return true
 	})
 
@@ -125,24 +131,37 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, err
 	}
 
-	file, err := os.Open(path)
-	if err != nil {
-		return arpc.Response{}, err
+	handleId := s.handleIdGen.NextID()
+
+	var fh *FileHandle
+
+	if !stat.IsDir() {
+		file, err := os.Open(path)
+		if err != nil {
+			return arpc.Response{}, err
+		}
+
+		fh = &FileHandle{
+			file:     file,
+			fileSize: stat.Size(),
+			isDir:    false,
+		}
+	} else {
+		fh = &FileHandle{
+			dirPath: path,
+			isDir:   true,
+		}
 	}
 
-	handleId := s.handleIdGen.NextID()
-	fh := &FileHandle{
-		file:     file,
-		fileSize: stat.Size(),
-		isDir:    stat.IsDir(),
-	}
 	s.handles.Set(handleId, fh)
 
 	// Return the handle ID to the client.
 	fhId := types.FileHandleId(handleId)
 	dataBytes, err := fhId.Encode()
 	if err != nil {
-		file.Close()
+		if !fh.isDir {
+			fh.file.Close()
+		}
 		return arpc.Response{}, err
 	}
 
@@ -279,12 +298,15 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	fullDirPath, err := s.abs(payload.Path)
-	if err != nil {
-		return arpc.Response{}, err
+	fh, exists := s.handles.Get(uint64(payload.HandleID))
+	if !exists {
+		return arpc.Response{}, os.ErrNotExist
 	}
 
-	entries, err := readDirBulk(fullDirPath)
+	fh.Lock()
+	defer fh.Unlock()
+
+	entries, err := readDirBulk(fh.dirPath)
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -316,6 +338,9 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
+	fh.Lock()
+	defer fh.Unlock()
+
 	reader := io.NewSectionReader(fh.file, payload.Offset, int64(payload.Length))
 
 	streamCallback := func(stream *smux.Stream) {
@@ -344,6 +369,9 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	if fh.isDir {
 		return arpc.Response{}, os.ErrInvalid
 	}
+
+	fh.Lock()
+	defer fh.Unlock()
 
 	// Handle SEEK_HOLE and SEEK_DATA explicitly
 	// TODO: linux implementation
@@ -394,7 +422,13 @@ func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrNotExist
 	}
 
-	handle.file.Close()
+	handle.Lock()
+	defer handle.Unlock()
+
+	if handle.file != nil {
+		handle.file.Close()
+	}
+
 	s.handles.Del(uint64(payload.HandleID))
 
 	closed := arpc.StringMsg("closed")

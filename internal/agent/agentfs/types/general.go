@@ -31,19 +31,22 @@ func (id *FileHandleId) Decode(buf []byte) error {
 }
 
 // ReadDirEntries is a slice of AgentDirEntry
-type ReadDirEntries []AgentDirEntry
+type ReadDirEntries struct {
+	Entries []AgentDirEntry
+	HasMore bool
+}
 
 func (entries *ReadDirEntries) Encode() ([]byte, error) {
 	// Create an encoder with an estimated size
 	enc := arpcdata.NewEncoder()
 
 	// Write the number of entries as a uint32
-	if err := enc.WriteUint32(uint32(len(*entries))); err != nil {
+	if err := enc.WriteUint32(uint32(len(entries.Entries))); err != nil {
 		return nil, err
 	}
 
 	// Encode each entry and append it to the encoder
-	for _, entry := range *entries {
+	for _, entry := range entries.Entries {
 		entryBytes, err := entry.Encode()
 		if err != nil {
 			return nil, err
@@ -51,6 +54,10 @@ func (entries *ReadDirEntries) Encode() ([]byte, error) {
 		if err := enc.WriteBytes(entryBytes); err != nil {
 			return nil, err
 		}
+	}
+
+	if err := enc.WriteBool(entries.HasMore); err != nil {
+		return nil, err
 	}
 
 	return enc.Bytes(), nil
@@ -70,7 +77,7 @@ func (entries *ReadDirEntries) Decode(buf []byte) error {
 	}
 
 	// Decode each entry
-	*entries = make([]AgentDirEntry, count)
+	entries.Entries = make([]AgentDirEntry, count)
 	for i := uint32(0); i < count; i++ {
 		entryBytes, err := dec.ReadBytes()
 		if err != nil {
@@ -80,7 +87,12 @@ func (entries *ReadDirEntries) Decode(buf []byte) error {
 		if err := entry.Decode(entryBytes); err != nil {
 			return err
 		}
-		(*entries)[i] = entry
+		entries.Entries[i] = entry
+	}
+
+	entries.HasMore, err = dec.ReadBool()
+	if err != nil {
+		return err
 	}
 
 	arpcdata.ReleaseDecoder(dec)

@@ -239,18 +239,28 @@ func TestAgentFSServer(t *testing.T) {
 	})
 
 	t.Run("ReadDir", func(t *testing.T) {
-		payload := types.ReadDirReq{Path: ("/")}
+		openPayload := types.OpenFileReq{Path: "/"}
+		var openResult types.FileHandleId
+		raw, err := clientSession.CallMsg(ctx, "agentFs/OpenFile", &openPayload)
+		require.NoError(t, err, "OpenFile should succeed")
+		openResult.Decode(raw)
+
+		t.Logf("Handle ID: %d", openResult)
+
+		payload := types.ReadDirReq{HandleID: openResult}
 		var result types.ReadDirEntries
 		raw, readSize, err := clientSession.CallBinary(ctx, "agentFs/ReadDir", &payload)
 		assert.NoError(t, err)
 		result.Decode(raw[:readSize])
 		assert.NoError(t, err)
-		assert.GreaterOrEqual(t, len(result), 3) // Should have at least test1.txt, test2.txt, and subdir
+		t.Logf("Result: %v", raw)
+		t.Logf("Result Size: %v", readSize)
+		assert.GreaterOrEqual(t, len(result.Entries), 3) // Should have at least test1.txt, test2.txt, and subdir
 
 		// Verify we can find our test files
 		foundTest1 := false
 		foundSubdir := false
-		for _, entry := range result {
+		for _, entry := range result.Entries {
 			name := (entry.Name)
 			if name == "test1.txt" {
 				foundTest1 = true
@@ -261,6 +271,14 @@ func TestAgentFSServer(t *testing.T) {
 		}
 		assert.True(t, foundTest1, "test1.txt should be found in directory listing")
 		assert.True(t, foundSubdir, "subdir should be found in directory listing")
+
+		closePayload := types.CloseReq{HandleID: openResult}
+		resp, err := clientSession.Call("agentFs/Close", &closePayload)
+		if err != nil {
+			t.Logf("Close error: %v - Current handle map: %s", err, dumpHandleMap(agentFsServer))
+			t.FailNow()
+		}
+		assert.Equal(t, 200, resp.Status)
 	})
 
 	t.Run("OpenFile_ReadAt_Close", func(t *testing.T) {

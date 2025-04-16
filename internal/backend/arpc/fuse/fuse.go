@@ -5,7 +5,6 @@ package fuse
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -16,9 +15,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var nodePool = &sync.Pool{
@@ -395,41 +392,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 		return nil, fs.ToErrno(err)
 	}
 
-	if entries == nil {
-		entries = types.ReadDirEntries{}
-	}
-
-	result := make([]fuse.DirEntry, 0, min(n.fs.Job.MaxDirEntries, len(entries)))
-	for i, e := range entries {
-		if i >= n.fs.Job.MaxDirEntries {
-			syslog.L.Warn().
-				WithJob(n.fs.Job.ID).
-				WithMessage(fmt.Sprintf("max dir entries reached (%d) for %s. skipping %s", n.fs.Job.MaxDirEntries, n.getPath(), e.Name)).
-				Write()
-			continue
-		}
-
-		mode := os.FileMode(e.Mode)
-		modeBits := uint32(0)
-
-		// Determine the file type using fuse.S_IF* constants
-		switch {
-		case mode.IsDir():
-			modeBits = fuse.S_IFDIR
-		case mode&os.ModeSymlink != 0:
-			modeBits = fuse.S_IFLNK
-		default:
-			modeBits = fuse.S_IFREG
-		}
-
-		// Create a DirEntry with Name, Mode, and Ino
-		result = append(result, fuse.DirEntry{
-			Name: e.Name,
-			Mode: modeBits,
-		})
-	}
-
-	return fs.NewListDirStream(result), 0
+	return &entries, 0
 }
 
 // Open implements NodeOpener
