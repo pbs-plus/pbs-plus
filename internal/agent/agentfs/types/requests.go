@@ -78,12 +78,12 @@ func (req *StatReq) Decode(buf []byte) error {
 
 // ReadDirReq represents a request to read a directory
 type ReadDirReq struct {
-	Path string
+	HandleID FileHandleId
 }
 
 func (req *ReadDirReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(req.Path))
-	if err := enc.WriteString(req.Path); err != nil {
+	enc := arpcdata.NewEncoderWithSize(8)
+	if err := enc.WriteUint64(uint64(req.HandleID)); err != nil {
 		return nil, err
 	}
 	return enc.Bytes(), nil
@@ -94,11 +94,11 @@ func (req *ReadDirReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	path, err := dec.ReadString()
+	handleId, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
-	req.Path = path
+	req.HandleID = FileHandleId(handleId)
 	arpcdata.ReleaseDecoder(dec)
 	return nil
 }

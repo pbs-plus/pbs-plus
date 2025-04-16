@@ -23,6 +23,7 @@ import (
 
 type FileHandle struct {
 	file     *os.File
+	dirPath  string
 	fileSize int64
 	isDir    bool
 }
@@ -125,24 +126,37 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, err
 	}
 
-	file, err := os.Open(path)
-	if err != nil {
-		return arpc.Response{}, err
+	handleId := s.handleIdGen.NextID()
+
+	var fh *FileHandle
+
+	if !stat.IsDir() {
+		file, err := os.Open(path)
+		if err != nil {
+			return arpc.Response{}, err
+		}
+
+		fh = &FileHandle{
+			file:     file,
+			fileSize: stat.Size(),
+			isDir:    false,
+		}
+	} else {
+		fh = &FileHandle{
+			dirPath: path,
+			isDir:   true,
+		}
 	}
 
-	handleId := s.handleIdGen.NextID()
-	fh := &FileHandle{
-		file:     file,
-		fileSize: stat.Size(),
-		isDir:    stat.IsDir(),
-	}
 	s.handles.Set(handleId, fh)
 
 	// Return the handle ID to the client.
 	fhId := types.FileHandleId(handleId)
 	dataBytes, err := fhId.Encode()
 	if err != nil {
-		file.Close()
+		if !fh.isDir {
+			fh.file.Close()
+		}
 		return arpc.Response{}, err
 	}
 
@@ -279,7 +293,15 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	fullDirPath, err := s.abs(payload.Path)
+	fh, exists := s.handles.Get(uint64(payload.HandleID))
+	if !exists {
+		return arpc.Response{}, os.ErrNotExist
+	}
+	if fh.isDir {
+		return arpc.Response{}, os.ErrInvalid
+	}
+
+	fullDirPath, err := s.abs(fh.dirPath)
 	if err != nil {
 		return arpc.Response{}, err
 	}

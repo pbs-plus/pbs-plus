@@ -3,300 +3,292 @@
 package agentfs
 
 import (
-	"os"
+	"fmt"
+	"strings"
 	"sync"
+	"syscall"
 	"unicode/utf16"
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"golang.org/x/sys/windows"
-)
-
-// FILE_ID_BOTH_DIR_INFO corresponds to:
-//
-//	typedef struct _FILE_ID_BOTH_DIR_INFO {
-//	  DWORD         NextEntryOffset;        // 4 bytes
-//	  DWORD         FileIndex;              // 4 bytes
-//	  LARGE_INTEGER CreationTime;           // 8 bytes
-//	  LARGE_INTEGER LastAccessTime;         // 8 bytes
-//	  LARGE_INTEGER LastWriteTime;          // 8 bytes
-//	  LARGE_INTEGER ChangeTime;             // 8 bytes
-//	  LARGE_INTEGER EndOfFile;              // 8 bytes
-//	  LARGE_INTEGER AllocationSize;         // 8 bytes
-//	  DWORD         FileAttributes;         // 4 bytes
-//	  DWORD         FileNameLength;         // 4 bytes
-//	  DWORD         EaSize;                 // 4 bytes
-//	  CCHAR         ShortNameLength;        // 1 byte
-//	  // 3 bytes padding to get to offset 72
-//	  WCHAR         ShortName[12];          // 24 bytes (12 WCHAR's)
-//	  LARGE_INTEGER FileId;                 // 8 bytes
-//	  WCHAR         FileName[1];            // flexible array member
-//	} FILE_ID_BOTH_DIR_INFO;
-type FILE_ID_BOTH_DIR_INFO struct {
-	NextEntryOffset uint32     // 0   4
-	FileIndex       uint32     // 4   4
-	CreationTime    [8]byte    // 8   8
-	LastAccessTime  [8]byte    // 16  8
-	LastWriteTime   [8]byte    // 24  8
-	ChangeTime      [8]byte    // 32  8
-	EndOfFile       [8]byte    // 40  8
-	AllocationSize  [8]byte    // 48  8
-	FileAttributes  uint32     // 56  4
-	FileNameLength  uint32     // 60  4
-	EaSize          uint32     // 64  4
-	ShortNameLength byte       // 68  1
-	_               [3]byte    // 69-71: 3 bytes padding
-	ShortName       [12]uint16 // 72  24 bytes (12 * 2)
-	FileId          [8]byte    // 96  8 bytes
-	// Fixed size total: 104 bytes.
-}
-
-// FILE_FULL_DIR_INFO corresponds to:
-//
-//	typedef struct _FILE_FULL_DIR_INFO {
-//	  ULONG         NextEntryOffset;       // 4 bytes
-//	  ULONG         FileIndex;             // 4 bytes
-//	  LARGE_INTEGER CreationTime;          // 8 bytes
-//	  LARGE_INTEGER LastAccessTime;        // 8 bytes
-//	  LARGE_INTEGER LastWriteTime;         // 8 bytes
-//	  LARGE_INTEGER ChangeTime;            // 8 bytes
-//	  LARGE_INTEGER EndOfFile;             // 8 bytes
-//	  LARGE_INTEGER AllocationSize;        // 8 bytes
-//	  ULONG         FileAttributes;        // 4 bytes
-//	  ULONG         FileNameLength;        // 4 bytes
-//	  ULONG         EaSize;                // 4 bytes
-//	  WCHAR         FileName[1];           // flexible array member
-//	} FILE_FULL_DIR_INFO;
-type FILE_FULL_DIR_INFO struct {
-	NextEntryOffset uint32  // 0   4
-	FileIndex       uint32  // 4   4
-	CreationTime    [8]byte // 8   8
-	LastAccessTime  [8]byte // 16  8
-	LastWriteTime   [8]byte // 24  8
-	ChangeTime      [8]byte // 32  8
-	EndOfFile       [8]byte // 40  8
-	AllocationSize  [8]byte // 48  8
-	FileAttributes  uint32  // 56  4
-	FileNameLength  uint32  // 60  4
-	EaSize          uint32  // 64  4
-	_               [4]byte // 68-71: 4 bytes padding
-	// Fixed size total: 72 bytes.
-}
-
-// For FILE_ID_BOTH_DIR_INFO, the filename data begins at offset 104.
-func fileNamePtrIdBoth(info *FILE_ID_BOTH_DIR_INFO) *uint16 {
-	return (*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(info)) + 104))
-}
-
-// For FILE_FULL_DIR_INFO, the filename data begins at offset 72.
-func fileNamePtrFull(info *FILE_FULL_DIR_INFO) *uint16 {
-	return (*uint16)(unsafe.Pointer(uintptr(unsafe.Pointer(info)) + 72))
-}
-
-const (
-	FILE_ATTRIBUTE_UNPINNED = 0x00100000
-	FILE_ATTRIBUTE_PINNED   = 0x00080000
 )
 
 const (
-	excludedAttrs = windows.FILE_ATTRIBUTE_REPARSE_POINT |
-		windows.FILE_ATTRIBUTE_DEVICE |
-		windows.FILE_ATTRIBUTE_OFFLINE |
-		windows.FILE_ATTRIBUTE_VIRTUAL |
-		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN |
-		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS |
-		windows.FILE_ATTRIBUTE_ENCRYPTED |
-		FILE_ATTRIBUTE_UNPINNED | FILE_ATTRIBUTE_PINNED
+	FILE_LIST_DIRECTORY          = 0x0001
+	FILE_SHARE_READ              = 0x00000001
+	FILE_SHARE_WRITE             = 0x00000002
+	FILE_SHARE_DELETE            = 0x00000004
+	OPEN_EXISTING                = 3
+	FILE_DIRECTORY_FILE          = 0x00000001
+	FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020
+	OBJ_CASE_INSENSITIVE         = 0x00000040
+	STATUS_NO_MORE_FILES         = 0x80000006
 )
 
-// windowsAttributesToFileMode converts Windows file attributes to Go's os.FileMode
-func windowsAttributesToFileMode(attrs uint32) uint32 {
-	var mode os.FileMode = 0
-
-	// Check for directory
-	if attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		mode |= os.ModeDir
-	}
-
-	// Check for symlink (reparse point)
-	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		mode |= os.ModeSymlink
-	}
-
-	// Check for device file
-	if attrs&windows.FILE_ATTRIBUTE_DEVICE != 0 {
-		mode |= os.ModeDevice
-	}
-
-	// Set regular file permissions (approximation on Windows)
-	if mode == 0 {
-		// It's a regular file
-		mode |= 0644 // Default permission for files
-	} else if mode&os.ModeDir != 0 {
-		// It's a directory
-		mode |= 0755 // Default permission for directories
-	}
-
-	return uint32(mode)
+type UnicodeString struct {
+	Length        uint16
+	MaximumLength uint16
+	Buffer        *uint16
 }
 
-var bufPool = sync.Pool{
+type ObjectAttributes struct {
+	Length                   uint32
+	RootDirectory            uintptr
+	ObjectName               *UnicodeString
+	Attributes               uint32
+	SecurityDescriptor       uintptr
+	SecurityQualityOfService uintptr
+}
+
+type IoStatusBlock struct {
+	Status      int32
+	Information uintptr
+}
+
+type FileDirectoryInformation struct {
+	NextEntryOffset uint32
+	FileIndex       uint32
+	CreationTime    int64
+	LastAccessTime  int64
+	LastWriteTime   int64
+	ChangeTime      int64
+	EndOfFile       int64
+	AllocationSize  int64
+	FileAttributes  uint32
+	FileNameLength  uint32
+	FileName        uint16
+}
+
+var (
+	ntdll                = syscall.NewLazyDLL("ntdll.dll")
+	ntCreateFile         = ntdll.NewProc("NtCreateFile")
+	ntQueryDirectoryFile = ntdll.NewProc("NtQueryDirectoryFile")
+	ntClose              = ntdll.NewProc("NtClose")
+	ntWriteFile          = ntdll.NewProc("NtWriteFile")
+	rtlInitUnicodeString = ntdll.NewProc("RtlInitUnicodeString")
+)
+
+func convertToNTPath(path string) string {
+	if len(path) >= 4 && path[:4] == "\\??\\" {
+		return path
+	}
+
+	if len(path) >= 2 && path[1] == ':' {
+		return "\\??\\" + path
+	}
+	return "\\??\\" + path
+}
+
+var fileInfoPool = sync.Pool{
 	New: func() interface{} {
-		b := make([]byte, 1024*1024)
-		return &b
+		return make([]byte, 1024*1024)
 	},
 }
 
-func readDirBulk(dirPath string) ([]byte, error) {
-	extendedPath := `\\?\` + dirPath
+func boolToInt(b bool) uint32 {
+	if b {
+		return 1
+	}
+	return 0
+}
 
-	pDir, err := windows.UTF16PtrFromString(extendedPath)
-	if err != nil {
-		return nil, mapWinError(err, "readDirBulk UTF16PtrFromString")
+type DirReaderNT struct {
+	handle      uintptr
+	ioStatus    IoStatusBlock
+	buffer      []byte
+	restartScan bool
+	noMoreFiles bool
+	path        string
+	pool        *sync.Pool
+}
+
+func NewDirReaderNT(path string) (*DirReaderNT, error) {
+	ntPath := convertToNTPath(path)
+	if !strings.HasSuffix(ntPath, "\\") {
+		ntPath += "\\"
 	}
 
-	handle, err := windows.CreateFile(
-		pDir,
-		windows.GENERIC_READ,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS,
+	pathUTF16 := utf16.Encode([]rune(ntPath))
+	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
+		pathUTF16 = append(pathUTF16, 0)
+	}
+
+	var unicodeString UnicodeString
+	rtlInitUnicodeString.Call(
+		uintptr(unsafe.Pointer(&unicodeString)),
+		uintptr(unsafe.Pointer(&pathUTF16[0])),
+	)
+
+	var objectAttributes ObjectAttributes
+	objectAttributes.Length = uint32(unsafe.Sizeof(objectAttributes))
+	objectAttributes.ObjectName = &unicodeString
+	objectAttributes.Attributes = OBJ_CASE_INSENSITIVE
+
+	var handle uintptr
+	var ioStatusBlock IoStatusBlock
+
+	status, _, _ := ntCreateFile.Call(
+		uintptr(unsafe.Pointer(&handle)),
+		FILE_LIST_DIRECTORY|syscall.SYNCHRONIZE,
+		uintptr(unsafe.Pointer(&objectAttributes)),
+		uintptr(unsafe.Pointer(&ioStatusBlock)),
+		0,
+		0,
+		FILE_SHARE_READ|FILE_SHARE_WRITE,
+		OPEN_EXISTING,
+		FILE_DIRECTORY_FILE|FILE_SYNCHRONOUS_IO_NONALERT,
+		0,
 		0,
 	)
-	if err != nil {
-		return nil, mapWinError(err, "readDirBulk CreateFile")
-	}
-	defer windows.CloseHandle(handle)
 
-	bufPtr := bufPool.Get().(*[]byte)
-	buf := *bufPtr
+	if status != 0 {
+		return nil, fmt.Errorf(
+			"NtCreateFile failed with status: %x, path: %s",
+			status,
+			ntPath,
+		)
+	}
+
+	// Get initial buffer from pool
+	bufInterface := fileInfoPool.Get()
+	buffer := bufInterface.([]byte)
+
+	return &DirReaderNT{
+		handle:      handle,
+		ioStatus:    ioStatusBlock,
+		buffer:      buffer,
+		restartScan: true,
+		noMoreFiles: false,
+		path:        path,
+		pool:        &fileInfoPool,
+	}, nil
+}
+
+// NextBatch retrieves the next batch of directory entries.
+// It returns the encoded batch, a boolean indicating if more entries might exist, and an error.
+// When hasMore is false and error is nil, iteration is complete.
+// The returned []byte contains the encoded data for the current batch only.
+func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
+	if r.noMoreFiles {
+		return nil, nil
+	}
+
 	defer func() {
-		if cap(buf) <= 1024*1024 {
-			*bufPtr = buf
-			bufPool.Put(bufPtr)
+		if r.buffer != nil {
+			r.pool.Put(r.buffer)
+			r.buffer = r.pool.Get().([]byte)
 		}
 	}()
 
-	initialCapacity := 128
-
-	var dirInfo windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(handle, &dirInfo); err == nil {
-		if dirInfo.NumberOfLinks > 2 {
-			initialCapacity = int(dirInfo.NumberOfLinks - 2)
-			initialCapacity = min(initialCapacity, 10000)
-		}
-	}
+	status, _, _ := ntQueryDirectoryFile.Call(
+		r.handle,
+		0,
+		0,
+		0,
+		uintptr(unsafe.Pointer(&r.ioStatus)),
+		uintptr(unsafe.Pointer(&r.buffer[0])),
+		uintptr(len(r.buffer)),
+		uintptr(1), // FileInformationClass: FileDirectoryInformation
+		uintptr(0), // ReturnSingleEntry: FALSE
+		0,          // FileName: NULL
+		uintptr(boolToInt(r.restartScan)),
+	)
 
 	var entries types.ReadDirEntries
-	entries = make([]types.AgentDirEntry, 0, initialCapacity)
 
-	usingFull := false
-	infoClass := windows.FileIdBothDirectoryInfo
+	r.restartScan = false
 
-	var lastDataSize uint32
+	if status == STATUS_NO_MORE_FILES {
+		r.noMoreFiles = true
+		entries.HasMore = false
 
-	for {
-		err = windows.GetFileInformationByHandleEx(
-			handle,
-			uint32(infoClass),
-			&buf[0],
-			uint32(len(buf)),
-		)
+		encodedBatch, err = entries.Encode()
 		if err != nil {
-			if err == windows.ERROR_MORE_DATA {
-				newSize := len(buf)
+			return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
+		}
+		return encodedBatch, nil
+	}
 
-				if lastDataSize > 0 {
-					estimatedSize := int(float64(len(buf)) * 1.2)
+	if status != 0 {
+		return nil, fmt.Errorf(
+			"NtQueryDirectoryFile failed with status: %x",
+			status,
+		)
+	}
 
-					if newSize < 4*1024*1024 {
-						newSize *= 2
-					} else if newSize < 16*1024*1024 {
-						newSize += 4 * 1024 * 1024
-					} else {
-						newSize += 8 * 1024 * 1024
-					}
+	entries.HasMore = true
 
-					if estimatedSize > newSize {
-						newSize = estimatedSize
-					}
-				} else {
-					if newSize < 4*1024*1024 {
-						newSize *= 2
-					} else {
-						newSize += newSize / 4
-					}
-				}
-
-				newBuf := make([]byte, newSize)
-				buf = newBuf
-				continue
-			}
-			if err == windows.ERROR_INVALID_PARAMETER && !usingFull {
-				infoClass = windows.FileFullDirectoryInfo
-				usingFull = true
-				continue
-			}
-			if err == windows.ERROR_NO_MORE_FILES {
-				break
-			}
-			return nil, mapWinError(err, "readDirBulk GetFileInformationByHandleEx")
+	offset := 0
+	for {
+		if offset >= len(r.buffer) {
+			return nil, fmt.Errorf("offset exceeded buffer length")
 		}
 
-		offset := 0
-		for {
-			var nextOffset int
-			var name string
-			var attrs uint32
+		entry := (*FileDirectoryInformation)(
+			unsafe.Pointer(&r.buffer[offset]),
+		)
 
-			if usingFull {
-				fullInfo := (*FILE_FULL_DIR_INFO)(unsafe.Pointer(&buf[offset]))
-				nextOffset = int(fullInfo.NextEntryOffset)
-				nameLen := int(fullInfo.FileNameLength) / 2
-				attrs = fullInfo.FileAttributes
+		if entry.FileAttributes&excludedAttrs == 0 {
+			fileNameLen := entry.FileNameLength / 2 // Length in uint16
+			fileNamePtr := unsafe.Pointer(
+				uintptr(unsafe.Pointer(entry)) +
+					unsafe.Offsetof(entry.FileName),
+			)
 
-				if nameLen > 0 && (attrs&excludedAttrs) == 0 {
-					filenamePtr := fileNamePtrFull(fullInfo)
-					nameSlice := unsafe.Slice(filenamePtr, nameLen)
-
-					if !(nameLen == 1 && nameSlice[0] == '.') &&
-						!(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.') {
-						name = string(utf16.Decode(nameSlice))
-					}
-				}
-			} else {
-				bothInfo := (*FILE_ID_BOTH_DIR_INFO)(unsafe.Pointer(&buf[offset]))
-				nextOffset = int(bothInfo.NextEntryOffset)
-				nameLen := int(bothInfo.FileNameLength) / 2
-				attrs = bothInfo.FileAttributes
-
-				if nameLen > 0 && (attrs&excludedAttrs) == 0 {
-					filenamePtr := fileNamePtrIdBoth(bothInfo)
-					nameSlice := unsafe.Slice(filenamePtr, nameLen)
-
-					if !(nameLen == 1 && nameSlice[0] == '.') &&
-						!(nameLen == 2 && nameSlice[0] == '.' && nameSlice[1] == '.') {
-						name = string(utf16.Decode(nameSlice))
-					}
-				}
+			if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) > uintptr(unsafe.Pointer(&r.buffer[0]))+uintptr(len(r.buffer)) {
+				return nil, fmt.Errorf("filename data exceeds buffer bounds")
 			}
 
-			if name != "" {
-				mode := windowsAttributesToFileMode(attrs)
-				entries = append(entries, types.AgentDirEntry{
+			fileNameSlice := unsafe.Slice(
+				(*uint16)(fileNamePtr),
+				fileNameLen,
+			)
+			fileName := utf16.Decode(fileNameSlice)
+			name := string(fileName)
+
+			if name != "." && name != ".." {
+				mode := windowsAttributesToFileMode(entry.FileAttributes)
+				entries.Entries = append(entries.Entries, types.AgentDirEntry{
 					Name: name,
 					Mode: mode,
 				})
 			}
-
-			if nextOffset == 0 {
-				lastDataSize = uint32(offset + 1)
-				break
-			}
-			offset += nextOffset
 		}
+
+		if entry.NextEntryOffset == 0 {
+			break
+		}
+		nextOffset := offset + int(entry.NextEntryOffset)
+		if nextOffset <= offset || nextOffset > len(r.buffer) {
+			return nil, fmt.Errorf(
+				"invalid NextEntryOffset: %d from offset %d",
+				entry.NextEntryOffset,
+				offset,
+			)
+		}
+		offset = nextOffset
 	}
 
-	return entries.Encode()
+	encodedBatch, err = entries.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
+	}
+
+	return encodedBatch, nil
+}
+
+// Close releases the resources used by the directory reader.
+// It must be called when done iterating.
+func (r *DirReaderNT) Close() error {
+	status, _, _ := ntClose.Call(r.handle)
+
+	if r.buffer != nil {
+		r.pool.Put(r.buffer)
+		r.buffer = nil
+	}
+
+	if status != 0 {
+		return fmt.Errorf("NtClose failed for path '%s' with status: 0x%x", r.path, status)
+	}
+	return nil
 }

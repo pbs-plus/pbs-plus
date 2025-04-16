@@ -76,7 +76,9 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 	})
 
 	t.Run("ReadDirReq", func(t *testing.T) {
-		original := &ReadDirReq{Path: "/path/to/dir"}
+		original := &ReadDirReq{
+			HandleID: FileHandleId(12345),
+		}
 		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
 			return &ReadDirReq{}
 		})
@@ -133,8 +135,10 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 
 	t.Run("ReadDirEntries", func(t *testing.T) {
 		original := ReadDirEntries{
-			{Name: "file1.txt", Mode: 0644},
-			{Name: "file2.txt", Mode: 0755},
+			Entries: []AgentDirEntry{
+				{Name: "file1.txt", Mode: 0644},
+				{Name: "file2.txt", Mode: 0755},
+			},
 		}
 		validateEncodeDecodeConcurrency(t, &original, func() arpcdata.Encodable {
 			return &ReadDirEntries{}
@@ -200,11 +204,11 @@ func deepCompare(a, b arpcdata.Encodable) bool {
 		if !ok {
 			return false
 		}
-		if len(*objA) != len(*objB) {
+		if len(objA.Entries) != len(objB.Entries) {
 			return false
 		}
-		for i := range *objA {
-			if (*objA)[i] != (*objB)[i] {
+		for i := range objA.Entries {
+			if objA.Entries[i] != objB.Entries[i] {
 				return false
 			}
 		}
