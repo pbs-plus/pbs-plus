@@ -32,13 +32,15 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if s.totalReturned.Load() > uint64(s.fs.Job.MaxDirEntries)-1 {
+	if s.totalReturned.Load() >= uint64(s.fs.Job.MaxDirEntries) {
 		lastPath := ""
-
-		if int(s.curIdx.Load()) < len(s.lastResp) {
-			lastEntry := s.lastResp[s.curIdx.Load()-1]
+		s.lastRespMu.Lock()
+		curIdxVal := s.curIdx.Load()
+		if curIdxVal > 0 && int(curIdxVal) <= len(s.lastResp) {
+			lastEntry := s.lastResp[curIdxVal-1]
 			lastPath = lastEntry.Name
 		}
+		s.lastRespMu.Unlock()
 
 		syslog.L.Error(fmt.Errorf("maximum directory entries reached: %d", s.fs.Job.MaxDirEntries)).
 			WithField("path", s.path).
@@ -49,7 +51,11 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if int(s.curIdx.Load()) < len(s.lastResp)-1 {
+	s.lastRespMu.Lock()
+	hasCurrentEntry := int(s.curIdx.Load()) < len(s.lastResp)
+	s.lastRespMu.Unlock()
+
+	if hasCurrentEntry {
 		return true
 	}
 
@@ -58,6 +64,7 @@ func (s *DirStream) HasNext() bool {
 	buf, bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req)
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
+			s.closed.Store(true)
 			return false
 		}
 
@@ -65,6 +72,11 @@ func (s *DirStream) HasNext() bool {
 			WithField("path", s.path).
 			WithJob(s.fs.Job.ID).
 			Write()
+		return false
+	}
+
+	if bytesRead == 0 {
+		s.closed.Store(true)
 		return false
 	}
 
@@ -83,7 +95,6 @@ func (s *DirStream) HasNext() bool {
 	defer s.lastRespMu.Unlock()
 
 	s.lastResp = entries
-
 	s.curIdx.Store(0)
 
 	return len(s.lastResp) > 0
@@ -97,12 +108,23 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	s.lastRespMu.Lock()
 	defer s.lastRespMu.Unlock()
 
-	curr := s.lastResp[s.curIdx.Load()]
+	curIdxVal := s.curIdx.Load()
+
+	if int(curIdxVal) >= len(s.lastResp) {
+		syslog.L.Error(fmt.Errorf("internal state error: index out of bounds in Next")).
+			WithField("path", s.path).
+			WithField("curIdx", curIdxVal).
+			WithField("lastRespLen", len(s.lastResp)).
+			WithJob(s.fs.Job.ID).
+			Write()
+		return fuse.DirEntry{}, syscall.ENOENT
+	}
+
+	curr := s.lastResp[curIdxVal]
 
 	mode := os.FileMode(curr.Mode)
 	modeBits := uint32(0)
 
-	// Determine the file type using fuse.S_IF* constants
 	switch {
 	case mode.IsDir():
 		modeBits = fuse.S_IFDIR
@@ -122,13 +144,17 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 }
 
 func (s *DirStream) Close() {
+	if s.closed.Swap(true) {
+		return
+	}
+
 	closeReq := types.CloseReq{HandleID: s.handleId}
 	_, err := s.fs.session.CallMsgWithTimeout(1*time.Minute, s.fs.Job.ID+"/Close", &closeReq)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithField("path", s.path).
+			WithField("handleId", s.handleId).
 			WithJob(s.fs.Job.ID).
 			Write()
 	}
-	s.closed.Store(true)
 }
