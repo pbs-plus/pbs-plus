@@ -82,7 +82,8 @@ func convertToNTPath(path string) string {
 
 var fileInfoPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 1024*1024)
+		b := make([]byte, 1024*1024)
+		return &b
 	},
 }
 
@@ -96,7 +97,7 @@ func boolToInt(b bool) uint32 {
 type DirReaderNT struct {
 	handle      uintptr
 	ioStatus    IoStatusBlock
-	buffer      []byte
+	buffer      *[]byte
 	restartScan bool
 	noMoreFiles bool
 	path        string
@@ -150,14 +151,12 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 		)
 	}
 
-	// Get initial buffer from pool
-	bufInterface := fileInfoPool.Get()
-	buffer := bufInterface.([]byte)
+	bufPtr := fileInfoPool.Get().(*[]byte)
 
 	return &DirReaderNT{
 		handle:      handle,
 		ioStatus:    ioStatusBlock,
-		buffer:      buffer,
+		buffer:      bufPtr,
 		restartScan: true,
 		noMoreFiles: false,
 		path:        path,
@@ -173,13 +172,11 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 	if r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
+	if r.buffer == nil {
+		return nil, fmt.Errorf("buffer is nil for path '%s'", r.path)
+	}
 
-	defer func() {
-		if r.buffer != nil {
-			r.pool.Put(r.buffer)
-			r.buffer = r.pool.Get().([]byte)
-		}
-	}()
+	buffer := *r.buffer
 
 	status, _, _ := ntQueryDirectoryFile.Call(
 		r.handle,
@@ -187,8 +184,8 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 		0,
 		0,
 		uintptr(unsafe.Pointer(&r.ioStatus)),
-		uintptr(unsafe.Pointer(&r.buffer[0])),
-		uintptr(len(r.buffer)),
+		uintptr(unsafe.Pointer(&buffer[0])),
+		uintptr(len(buffer)),
 		uintptr(1), // FileInformationClass: FileDirectoryInformation
 		uintptr(0), // ReturnSingleEntry: FALSE
 		0,          // FileName: NULL
@@ -214,12 +211,12 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 
 	offset := 0
 	for {
-		if offset >= len(r.buffer) {
+		if offset >= len(buffer) {
 			return nil, fmt.Errorf("offset exceeded buffer length")
 		}
 
 		entry := (*FileDirectoryInformation)(
-			unsafe.Pointer(&r.buffer[offset]),
+			unsafe.Pointer(&buffer[offset]),
 		)
 
 		if entry.FileAttributes&excludedAttrs == 0 {
@@ -229,7 +226,7 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 					unsafe.Offsetof(entry.FileName),
 			)
 
-			if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) > uintptr(unsafe.Pointer(&r.buffer[0]))+uintptr(len(r.buffer)) {
+			if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) > uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
 				return nil, fmt.Errorf("filename data exceeds buffer bounds")
 			}
 
@@ -253,7 +250,7 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 			break
 		}
 		nextOffset := offset + int(entry.NextEntryOffset)
-		if nextOffset <= offset || nextOffset > len(r.buffer) {
+		if nextOffset <= offset || nextOffset > len(buffer) {
 			return nil, fmt.Errorf(
 				"invalid NextEntryOffset: %d from offset %d",
 				entry.NextEntryOffset,
