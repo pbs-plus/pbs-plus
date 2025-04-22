@@ -80,12 +80,7 @@ func convertToNTPath(path string) string {
 	return "\\??\\" + path
 }
 
-var fileInfoPool = sync.Pool{
-	New: func() interface{} {
-		b := make([]byte, 1024*1024)
-		return &b
-	},
-}
+const BUF_SIZE = 1024 * 1024
 
 func boolToInt(b bool) uint32 {
 	if b {
@@ -97,7 +92,6 @@ func boolToInt(b bool) uint32 {
 type DirReaderNT struct {
 	handle      uintptr
 	ioStatus    IoStatusBlock
-	buffer      *[]byte
 	restartScan bool
 	noMoreFiles bool
 	path        string
@@ -151,16 +145,12 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 		)
 	}
 
-	bufPtr := fileInfoPool.Get().(*[]byte)
-
 	return &DirReaderNT{
 		handle:      handle,
 		ioStatus:    ioStatusBlock,
-		buffer:      bufPtr,
 		restartScan: true,
 		noMoreFiles: false,
 		path:        path,
-		pool:        &fileInfoPool,
 	}, nil
 }
 
@@ -172,11 +162,8 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 	if r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
-	if r.buffer == nil {
-		return nil, fmt.Errorf("buffer is nil for path '%s'", r.path)
-	}
 
-	buffer := *r.buffer
+	buffer := make([]byte, BUF_SIZE)
 
 	status, _, _ := ntQueryDirectoryFile.Call(
 		r.handle,
@@ -272,11 +259,6 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 // It must be called when done iterating.
 func (r *DirReaderNT) Close() error {
 	status, _, _ := ntClose.Call(r.handle)
-
-	if r.buffer != nil {
-		r.pool.Put(r.buffer)
-		r.buffer = nil
-	}
 
 	if status != 0 {
 		return fmt.Errorf("NtClose failed for path '%s' with status: 0x%x", r.path, status)
