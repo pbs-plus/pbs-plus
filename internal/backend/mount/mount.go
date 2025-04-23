@@ -46,7 +46,7 @@ func Mount(storeInstance *store.Store, job types.Job, target types.Target) (*Age
 	err := os.MkdirAll(agentMount.Path, 0700)
 	if err != nil {
 		agentMount.CloseMount()
-		return nil, fmt.Errorf("Mount: error creating directory \"%s\" -> %w", agentMount.Path, err)
+		return nil, fmt.Errorf("error creating directory \"%s\" -> %w", agentMount.Path, err)
 	}
 
 	agentMount.Unmount() // Ensure clean mount point
@@ -70,18 +70,18 @@ func Mount(storeInstance *store.Store, job types.Job, target types.Target) (*Age
 	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
 	if err != nil {
 		errCleanup()
-		return nil, fmt.Errorf("failed to dial RPC server: %w", err)
+		return nil, fmt.Errorf("failed to reach backup RPC: %w", err)
 	} else {
 		rpcClient := rpc.NewClient(conn)
 		err = rpcClient.Call("MountRPCService.Backup", args, &reply)
 		rpcClient.Close()
 		if err != nil {
 			errCleanup()
-			return nil, fmt.Errorf("failed to call backup RPC: %w", err)
+			return nil, fmt.Errorf("backup failed: %w", err)
 		}
 		if reply.Status != 200 {
 			errCleanup()
-			return nil, fmt.Errorf("backup RPC returned an error %d: %s", reply.Status, reply.Message)
+			return nil, fmt.Errorf("backup returned an error %d: %s", reply.Status, reply.Message)
 		}
 	}
 
@@ -104,7 +104,7 @@ checkLoop:
 	}
 	if !isAccessible {
 		errCleanup()
-		return nil, fmt.Errorf("Mount: mounted directory not accessible after timeout")
+		return nil, fmt.Errorf("mounted directory not accessible after timeout")
 	}
 	return agentMount, nil
 }

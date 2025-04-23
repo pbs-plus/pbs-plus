@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/Microsoft/go-winio"
@@ -131,8 +132,13 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 	var fh *FileHandle
 
 	if !stat.IsDir() {
+		pathUTF16 := utf16.Encode([]rune(path))
+		if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
+			pathUTF16 = append(pathUTF16, 0)
+		}
+
 		handle, err := windows.CreateFile(
-			windows.StringToUTF16Ptr(path),
+			&pathUTF16[0],
 			windows.GENERIC_READ,
 			windows.FILE_SHARE_READ,
 			nil,
@@ -264,12 +270,12 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 
 	// Use windows.GetFileAttributesEx to retrieve Win32FileAttributeData directly
 	var fileAttrData windows.Win32FileAttributeData
-	utf16, err := windows.UTF16FromString(fullPath)
-	if err != nil {
-		return arpc.Response{}, mapWinError(err, "handleXattr")
+	pathUTF16 := utf16.Encode([]rune(fullPath))
+	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
+		pathUTF16 = append(pathUTF16, 0)
 	}
 
-	err = windows.GetFileAttributesEx(&utf16[0], windows.GetFileExInfoStandard, (*byte)(unsafe.Pointer(&fileAttrData)))
+	err = windows.GetFileAttributesEx(&pathUTF16[0], windows.GetFileExInfoStandard, (*byte)(unsafe.Pointer(&fileAttrData)))
 	if err != nil {
 		return arpc.Response{}, errors.Wrap(err, "failed to get file attributes")
 	}

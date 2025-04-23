@@ -5,6 +5,7 @@ package agentfs
 import (
 	"fmt"
 	"strings"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -33,10 +34,11 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 
 	var sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters uint32
 
-	rootPathPtr, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return types.StatFS{}, fmt.Errorf("failed to convert path to UTF16: %w", err)
+	rootPath := utf16.Encode([]rune(path))
+	if len(rootPath) == 0 || rootPath[len(rootPath)-1] != 0 {
+		rootPath = append(rootPath, 0)
 	}
+	rootPathPtr := &rootPath[0]
 
 	ret, _, err := procGetDiskFreeSpace.Call(
 		uintptr(unsafe.Pointer(rootPathPtr)),
