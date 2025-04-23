@@ -5,6 +5,7 @@ package agentfs
 import (
 	"fmt"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -27,10 +28,11 @@ var (
 // GetFileSecurityDescriptor retrieves a file security descriptor
 // (in self-relative format) using GetFileSecurityW.
 func GetFileSecurityDescriptor(filePath string, secInfo uint32) ([]uint16, error) {
-	pathPtr, err := syscall.UTF16PtrFromString(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("UTF16 conversion error: %v", err)
+	pathUtf16 := utf16.Encode([]rune(filePath))
+	if len(pathUtf16) == 0 || pathUtf16[len(pathUtf16)-1] != 0 {
+		pathUtf16 = append(pathUtf16, 0)
 	}
+	pathPtr := &pathUtf16[0]
 
 	var bufSize uint32 = 0
 	// First call to obtain buffer size.
