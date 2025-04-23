@@ -290,7 +290,10 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	owner := ""
 	group := ""
 	var acls []types.WinACL
-	owner, group, acls, _ = GetWinACLs(fullPath)
+	owner, group, acls, err = GetWinACLs(fullPath)
+	if err != nil {
+		return arpc.Response{}, err
+	}
 
 	// Populate AgentFileInfo
 	info := types.AgentFileInfo{
