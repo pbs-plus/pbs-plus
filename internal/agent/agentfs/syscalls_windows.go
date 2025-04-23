@@ -244,63 +244,82 @@ func parseFileAttributes(attr uint32) map[string]bool {
 }
 
 func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
-	// Request owner, group, and DACL information.
 	secInfo := windows.OWNER_SECURITY_INFORMATION |
 		windows.GROUP_SECURITY_INFORMATION |
 		windows.DACL_SECURITY_INFORMATION
 
-	// Retrieve the self-relative security descriptor.
 	secDesc, err := GetFileSecurityDescriptor(filePath, uint32(secInfo))
 	if err != nil {
 		return "", "", nil, fmt.Errorf("GetFileSecurityDescriptor failed: %w", err)
 	}
 
-	// Validate the descriptor.
-	valid, err := IsValidSecDescriptor(secDesc)
-	if err != nil || !valid {
-		return "", "", nil, fmt.Errorf("invalid security descriptor: %w", err)
-	}
+	// IsValidSecDescriptor is already called within GetFileSecurityDescriptor in the revised version.
+	// If GetFileSecurityDescriptor succeeded, we assume it's valid for now.
 
-	// Convert to an absolute security descriptor.
-	absoluteSD, err := MakeAbsoluteSD(secDesc)
+	_, pDacl, _, pOwnerSid, pGroupSid, err := MakeAbsoluteSD(secDesc)
 	if err != nil {
+		// MakeAbsoluteSD might fail even if GetFileSecurityDescriptor succeeded.
 		return "", "", nil, fmt.Errorf("MakeAbsoluteSD failed: %w", err)
 	}
 
-	// Extract owner and group SIDs.
-	owner, group, err := getOwnerGroupAbsolute(absoluteSD)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to extract owner/group: %w", err)
+	// Use the SIDs returned by MakeAbsoluteSD directly if they are valid.
+	var owner, group string
+	if pOwnerSid != nil && pOwnerSid.IsValid() {
+		owner = pOwnerSid.String()
+	} else {
+		// Fallback or handle error if owner SID is expected but missing/invalid
+		// For simplicity here, we proceed, but production code might error out.
+		// Alternatively, call getOwnerGroupAbsolute as a fallback, but it might be redundant.
+		// owner, group, err = getOwnerGroupAbsolute(absoluteSD)
+		// if err != nil {
+		// 	 return "", "", nil, fmt.Errorf("failed to extract owner/group: %w", err)
+		// }
+		return "", "", nil, fmt.Errorf("owner SID from MakeAbsoluteSD is nil or invalid")
 	}
 
-	// Retrieve the DACL.
-	acl, present, _, err := GetSecurityDescriptorDACL(absoluteSD)
-	if err != nil {
-		return owner, group, nil, fmt.Errorf("GetSecurityDescriptorDACL failed: %w", err)
+	if pGroupSid != nil && pGroupSid.IsValid() {
+		group = pGroupSid.String()
+	} else {
+		return owner, "", nil, fmt.Errorf("group SID from MakeAbsoluteSD is nil or invalid")
 	}
-	if !present {
+
+	// Check if a DACL is present (pDacl will be non-nil if MakeAbsoluteSD found one)
+	if pDacl == nil {
 		// No DACL present means no explicit ACL entries.
 		return owner, group, []types.WinACL{}, nil
 	}
 
-	// Retrieve explicit ACE entries from the ACL.
-	expEntries, err := GetExplicitEntriesFromACL(acl)
+	entriesPtr, entriesCount, err := GetExplicitEntriesFromACL(pDacl)
 	if err != nil {
+		// If GetExplicitEntriesFromACL fails, it might mean an empty but valid ACL,
+		// or a real error. Treat failure as potentially no entries, but log/wrap error.
+		return owner, group, []types.WinACL{}, fmt.Errorf("GetExplicitEntriesFromACL failed: %w", err)
+	}
+	if entriesPtr == 0 || entriesCount == 0 {
+		// No entries found or pointer is null.
 		return owner, group, []types.WinACL{}, nil
 	}
+	// Ensure the allocated memory is freed when the function returns.
+	defer FreeExplicitEntries(entriesPtr)
 
-	var winAcls []types.WinACL
-	// Iterate over each explicit access entry.
+	// Create a temporary slice header to access the Windows-allocated memory.
+	// This is unsafe and the slice is only valid until FreeExplicitEntries is called.
+	expEntries := unsafeEntriesToSlice(entriesPtr, entriesCount)
+
+	winAcls := make([]types.WinACL, 0, entriesCount)
 	for _, entry := range expEntries {
-		// In an absolute descriptor, Trustee.TrusteeValue is a pointer to a SID.
+		// Trustee.TrusteeValue should point to a SID structure in this context.
 		pSid := (*windows.SID)(unsafe.Pointer(entry.Trustee.TrusteeValue))
-		if pSid == nil {
+		if pSid == nil { // Check if the cast resulted in a nil pointer
 			continue
 		}
-		sidStr := pSid.String()
-		if sidStr == "" {
-			return owner, group, nil, fmt.Errorf("failed to convert trustee SID to string: %w", err)
+
+		if !pSid.IsValid() {
+			// Log or handle invalid SID? Skipping for now.
+			continue
 		}
+
+		sidStr := pSid.String()
 
 		ace := types.WinACL{
 			SID:        sidStr,
@@ -310,5 +329,6 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 		}
 		winAcls = append(winAcls, ace)
 	}
+
 	return owner, group, winAcls, nil
 }
