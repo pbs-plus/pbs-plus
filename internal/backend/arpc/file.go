@@ -45,14 +45,14 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 	respBytes, err := f.fs.session.CallMsgWithTimeout(1*time.Minute, f.jobId+"/Lseek", &req)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).WithMessage("lseek call failed").WithField("path", f.name).Write()
-		return 0, syscall.ENOENT
+		return 0, syscall.EOPNOTSUPP
 	}
 
 	// Parse the response
 	var resp types.LseekResp
 	if err := resp.Decode(respBytes); err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).WithMessage("failed to handle lseek request").WithField("path", f.name).Write()
-		return 0, syscall.ENOENT
+		return 0, syscall.EOPNOTSUPP
 	}
 
 	return uint64(resp.NewOffset), nil
