@@ -250,7 +250,7 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
 	fi, err := n.fs.Xattr(n.getPath())
 	if err != nil {
-		return 0, syscall.EOPNOTSUPP
+		return 0, syscall.ENODATA
 	}
 
 	var data []byte
@@ -268,24 +268,24 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 	case "user.fileattributes":
 		data, err = json.Marshal(fi.FileAttributes)
 		if err != nil {
-			return 0, syscall.EOPNOTSUPP
+			return 0, syscall.ENODATA
 		}
 	case "user.acls":
 		if fi.PosixACLs != nil {
 			data, err = json.Marshal(fi.PosixACLs)
 			if err != nil {
-				return 0, syscall.EOPNOTSUPP
+				return 0, syscall.ENODATA
 			}
 		} else if fi.WinACLs != nil {
 			data, err = json.Marshal(fi.WinACLs)
 			if err != nil {
-				return 0, syscall.EOPNOTSUPP
+				return 0, syscall.ENODATA
 			}
 		} else {
-			return 0, syscall.EOPNOTSUPP
+			return 0, syscall.ENODATA
 		}
 	default:
-		return 0, syscall.EOPNOTSUPP
+		return 0, syscall.ENODATA
 	}
 
 	length := uint32(len(data))
@@ -449,7 +449,7 @@ func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse
 func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uint64, syscall.Errno) {
 	n, err := fh.file.Lseek(int64(off), int(whence))
 	if err != nil && err != io.EOF {
-		return 0, syscall.EOPNOTSUPP
+		return 0, syscall.EBADF
 	}
 
 	return n, 0
