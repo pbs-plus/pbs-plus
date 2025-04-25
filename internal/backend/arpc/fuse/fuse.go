@@ -306,7 +306,7 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 	// Retrieve extended attribute information for the node.
 	fi, err := n.fs.Xattr(n.getPath())
 	if err != nil {
-		return 0, fs.ToErrno(err)
+		return 0, syscall.ENOTSUP
 	}
 
 	// Build our list of supported attribute keys.
