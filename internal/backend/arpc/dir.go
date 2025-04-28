@@ -102,7 +102,7 @@ func (s *DirStream) HasNext() bool {
 
 func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	if s.closed.Load() {
-		return fuse.DirEntry{}, syscall.EINVAL
+		return fuse.DirEntry{}, syscall.EBADF
 	}
 
 	s.lastRespMu.Lock()
@@ -117,7 +117,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 			WithField("lastRespLen", len(s.lastResp)).
 			WithJob(s.fs.Job.ID).
 			Write()
-		return fuse.DirEntry{}, syscall.ENOENT
+		return fuse.DirEntry{}, syscall.EBADF
 	}
 
 	curr := s.lastResp[curIdxVal]
