@@ -11,7 +11,7 @@ require (
 	github.com/gobwas/glob v0.2.3
 	github.com/gofrs/flock v0.12.1
 	github.com/golang-jwt/jwt v3.2.2+incompatible
-	github.com/golang-migrate/migrate/v4 v4.18.2
+	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/hanwen/go-fuse/v2 v2.7.2
 	github.com/kardianos/service v1.2.2
 	github.com/mxk/go-vss v1.2.0
