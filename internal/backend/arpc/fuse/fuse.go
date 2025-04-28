@@ -389,7 +389,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(n.getPath())
 	if err != nil {
-		return nil, syscall.ENOENT
+		return nil, syscall.EBADF
 	}
 
 	return &entries, 0
@@ -399,7 +399,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	file, err := n.fs.OpenFile(n.getPath(), int(flags), 0)
 	if err != nil {
-		return nil, 0, syscall.ENOENT
+		return nil, 0, syscall.EACCES
 	}
 
 	return &FileHandle{
