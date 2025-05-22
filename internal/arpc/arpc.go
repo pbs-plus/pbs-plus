@@ -102,6 +102,9 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 // defaultSmuxConfig returns a default smux configuration
 func defaultSmuxConfig() *smux.Config {
 	defaults := smux.DefaultConfig()
+	defaults.Version = 2
+	defaults.MaxReceiveBuffer = 4194304
+	defaults.MaxStreamBuffer = 2097152
 	return defaults
 }
 

@@ -58,7 +58,7 @@ func CreateEntry(entry *RegistryEntry) error {
 
 	value := entry.Value
 	if entry.IsSecret {
-		encrypted, err := dpapi.Encrypt(value)
+		encrypted, err := dpapi.EncryptMachineLocal(value)
 		if err != nil {
 			return fmt.Errorf("CreateEntry error encrypting: %w", err)
 		}
