@@ -126,7 +126,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			err = utils.UpdateScriptContentToFile(scriptValue, script.Path)
+			err = utils.UpdateScriptContentToFile(script.Path, scriptValue)
 			if err != nil {
 				controllers.WriteErrorResponse(w, fmt.Errorf("failed to save script to file: %w", err))
 				return
