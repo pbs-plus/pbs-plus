@@ -37,5 +37,11 @@ Ext.define("PBS.D2DManagement", {
       itemId: "exclusions",
       iconCls: "fa fa-ban",
     },
+    {
+      xtype: "pbsDiskScriptPanel",
+      title: "Scripts",
+      itemId: "scripts",
+      iconCls: "fa fa-file-code-o",
+    },
   ],
 });

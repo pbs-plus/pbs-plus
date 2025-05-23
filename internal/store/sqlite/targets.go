@@ -53,13 +53,13 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err err
 
 	_, err = tx.Exec(`
         INSERT INTO targets (name, path, auth, token_used, drive_type, drive_name, drive_fs, drive_total_bytes,
-					drive_used_bytes, drive_free_bytes, drive_total, drive_used, drive_free)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					drive_used_bytes, drive_free_bytes, drive_total, drive_used, drive_free, mount_script)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
 		target.Name, target.Path, target.Auth, target.TokenUsed,
 		target.DriveType, target.DriveName, target.DriveFS,
 		target.DriveTotalBytes, target.DriveUsedBytes, target.DriveFreeBytes,
-		target.DriveTotal, target.DriveUsed, target.DriveFree,
+		target.DriveTotal, target.DriveUsed, target.DriveFree, target.MountScript,
 	)
 	if err != nil {
 		// Use specific error check if possible, otherwise string contains is fallback
@@ -119,13 +119,14 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 					path = ?, auth = ?, token_used = ?, drive_type = ?,
 					drive_name = ?, drive_fs = ?, drive_total_bytes = ?,
 					drive_used_bytes = ?, drive_free_bytes = ?, drive_total = ?,
-					drive_used = ?, drive_free = ?
+					drive_used = ?, drive_free = ?, mount_script = ?
         WHERE name = ?
     `,
 		target.Path, target.Auth, target.TokenUsed,
 		target.DriveType, target.DriveName, target.DriveFS,
 		target.DriveTotalBytes, target.DriveUsedBytes, target.DriveFreeBytes,
-		target.DriveTotal, target.DriveUsed, target.DriveFree, target.Name,
+		target.DriveTotal, target.DriveUsed, target.DriveFree, target.MountScript,
+		target.Name,
 	)
 	if err != nil {
 		return fmt.Errorf("UpdateTarget: error updating target: %w", err)
@@ -185,7 +186,7 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
         SELECT
             t.name, t.path, t.auth, t.token_used, t.drive_type, t.drive_name,
             t.drive_fs, t.drive_total_bytes, t.drive_used_bytes, t.drive_free_bytes,
-            t.drive_total, t.drive_used, t.drive_free,
+            t.drive_total, t.drive_used, t.drive_free, t.mount_script,
             COUNT(j.id) as job_count
         FROM targets t
         LEFT JOIN jobs j ON t.name = j.target
@@ -199,7 +200,7 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 		&target.Name, &target.Path, &target.Auth, &target.TokenUsed,
 		&target.DriveType, &target.DriveName, &target.DriveFS,
 		&target.DriveTotalBytes, &target.DriveUsedBytes, &target.DriveFreeBytes,
-		&target.DriveTotal, &target.DriveUsed, &target.DriveFree,
+		&target.DriveTotal, &target.DriveUsed, &target.DriveFree, &target.MountScript,
 		&jobCount,
 	)
 	if err != nil {
@@ -222,13 +223,13 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
         SELECT
             t.name, t.path, t.auth, t.token_used, t.drive_type, t.drive_name,
             t.drive_fs, t.drive_total_bytes, t.drive_used_bytes, t.drive_free_bytes,
-            t.drive_total, t.drive_used, t.drive_free,
+            t.drive_total, t.drive_used, t.drive_free, t.mount_script,
             COUNT(j.id) as job_count
         FROM targets t
         LEFT JOIN jobs j ON t.name = j.target
         GROUP BY t.name, t.path, t.auth, t.token_used, t.drive_type, t.drive_name,
                  t.drive_fs, t.drive_total_bytes, t.drive_used_bytes, t.drive_free_bytes,
-                 t.drive_total, t.drive_used, t.drive_free
+                 t.drive_total, t.drive_used, t.drive_free, t.mount_script
         ORDER BY t.name
     `) // Group by all non-aggregated columns
 	if err != nil {
@@ -244,7 +245,7 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 			&target.Name, &target.Path, &target.Auth, &target.TokenUsed,
 			&target.DriveType, &target.DriveName, &target.DriveFS,
 			&target.DriveTotalBytes, &target.DriveUsedBytes, &target.DriveFreeBytes,
-			&target.DriveTotal, &target.DriveUsed, &target.DriveFree,
+			&target.DriveTotal, &target.DriveUsed, &target.DriveFree, &target.MountScript,
 			&jobCount,
 		)
 		if err != nil {
@@ -270,7 +271,7 @@ func (database *Database) GetAllTargetsByIP(clientIP string) ([]types.Target, er
 	// This query doesn't need job count, so no JOIN needed here.
 	rows, err := database.readDb.Query(`
 		SELECT name, path, auth, token_used, drive_type, drive_name, drive_fs, drive_total_bytes,
-			drive_used_bytes, drive_free_bytes, drive_total, drive_used, drive_free FROM targets
+			drive_used_bytes, drive_free_bytes, drive_total, drive_used, drive_free, mount_script FROM targets
 		WHERE path LIKE ?
 		ORDER BY name
 		`, fmt.Sprintf("agent://%s%%", clientIP)) // Ensure clientIP is properly escaped if needed
@@ -286,7 +287,7 @@ func (database *Database) GetAllTargetsByIP(clientIP string) ([]types.Target, er
 			&target.Name, &target.Path, &target.Auth, &target.TokenUsed,
 			&target.DriveType, &target.DriveName, &target.DriveFS,
 			&target.DriveTotalBytes, &target.DriveUsedBytes, &target.DriveFreeBytes,
-			&target.DriveTotal, &target.DriveUsed, &target.DriveFree,
+			&target.DriveTotal, &target.DriveUsed, &target.DriveFree, &target.MountScript,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllTargetsByIP: error scanning target row: %w", err)).Write()

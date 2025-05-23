@@ -4,6 +4,7 @@ type Target struct {
 	Name             string `json:"name"`
 	Path             string `config:"type=string,required" json:"path"`
 	IsAgent          bool   `json:"is_agent"`
+	MountScript      string `json:"mount-script"`
 	AgentVersion     string `json:"agent_version"`
 	ConnectionStatus bool   `json:"connection_status"`
 	Auth             string `config:"type=string" json:"auth"`

@@ -42,5 +42,10 @@ Ext.define("PBS.D2DManagement.TargetEditWindow", {
         editable: "{isCreate}",
       },
     },
+    {
+      xtype: "pbsD2DScriptSelector",
+      fieldLabel: "Mount Script",
+      name: "mount_script",
+    },
   ],
 });

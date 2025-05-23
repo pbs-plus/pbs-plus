@@ -122,12 +122,12 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
         INSERT INTO jobs (
             id, store, mode, source_mode, read_mode, target, subpath, schedule, comment,
             notification_mode, namespace, current_pid, last_run_upid, last_successful_upid, retry,
-            retry_interval, max_dir_entries
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            retry_interval, max_dir_entries, pre_script, post_script
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, job.ID, job.Store, job.Mode, job.SourceMode, job.ReadMode, job.Target, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace, job.CurrentPID,
 		job.LastRunUpid, job.LastSuccessfulUpid, job.Retry, job.RetryInterval,
-		job.MaxDirEntries)
+		job.MaxDirEntries, job.PreScript, job.PostScript)
 	if err != nil {
 		return fmt.Errorf("CreateJob: error inserting job: %w", err)
 	}
@@ -165,9 +165,9 @@ func (database *Database) GetJob(id string) (types.Job, error) {
         SELECT
             j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval, j.max_dir_entries,
+            j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes
+            t.drive_used_bytes, t.mount_script
         FROM jobs j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
@@ -187,18 +187,28 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 		found = true
 		var exclusionPath sql.NullString
 		var driveUsedBytes sql.NullInt64
+		var mountScript sql.NullString
+
 		err := rows.Scan(
 			&job.ID, &job.Store, &job.Mode, &job.SourceMode, &job.ReadMode,
 			&job.Target, &job.Subpath, &job.Schedule, &job.Comment,
 			&job.NotificationMode, &job.Namespace, &job.CurrentPID, &job.LastRunUpid,
 			&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval, &job.MaxDirEntries,
-			&exclusionPath, &driveUsedBytes,
+			&job.PreScript, &job.PostScript, &exclusionPath, &driveUsedBytes,
+			&mountScript,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetJob: error scanning job data: %w", err)).
 				WithField("id", id).
 				Write()
 			return types.Job{}, fmt.Errorf("GetJob: error scanning job data for id %s: %w", id, err)
+		}
+
+		if mountScript.Valid {
+			job.TargetMountScript = mountScript.String
+		} else {
+			// Optionally, handle the NULL case, e.g., set to an empty string
+			job.TargetMountScript = ""
 		}
 
 		if exclusionPath.Valid && exclusionPath.String != "" {
@@ -315,13 +325,13 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
         UPDATE jobs SET store = ?, mode = ?, source_mode = ?, read_mode = ?, target = ?,
             subpath = ?, schedule = ?, comment = ?, notification_mode = ?,
             namespace = ?, current_pid = ?, last_run_upid = ?, retry = ?,
-            retry_interval = ?, last_successful_upid = ?,
+            retry_interval = ?, last_successful_upid = ?, pre_script = ?, post_script = ?,
             max_dir_entries = ?
         WHERE id = ?
     `, job.Store, job.Mode, job.SourceMode, job.ReadMode, job.Target, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace,
 		job.CurrentPID, job.LastRunUpid, job.Retry, job.RetryInterval,
-		job.LastSuccessfulUpid, job.MaxDirEntries, job.ID)
+		job.LastSuccessfulUpid, job.PreScript, job.PostScript, job.MaxDirEntries, job.ID)
 	if err != nil {
 		return fmt.Errorf("UpdateJob: error updating job: %w", err)
 	}
@@ -409,9 +419,9 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
         SELECT
             j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval, j.max_dir_entries,
+            j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes
+            t.drive_used_bytes, t.mount_script
         FROM jobs j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
@@ -428,17 +438,19 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 
 	for rows.Next() {
 		var jobID, store, mode, sourceMode, readMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
+		var preScript, postScript string
 		var retry, maxDirEntries int
 		var retryInterval int
 		var currentPID int
 		var exclusionPath sql.NullString
 		var driveUsedBytes sql.NullInt64
+		var mountScript sql.NullString
 
 		err := rows.Scan(
 			&jobID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
 			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
-			&retry, &retryInterval, &maxDirEntries,
-			&exclusionPath, &driveUsedBytes,
+			&retry, &retryInterval, &maxDirEntries, &preScript, &postScript,
+			&exclusionPath, &driveUsedBytes, &mountScript,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllJobs: error scanning row: %w", err)).Write()
@@ -466,6 +478,8 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 				RetryInterval:      retryInterval,
 				MaxDirEntries:      maxDirEntries,
 				Exclusions:         make([]types.Exclusion, 0),
+				PreScript:          preScript,
+				PostScript:         postScript,
 			}
 			if driveUsedBytes.Valid {
 				job.ExpectedSize = int(driveUsedBytes.Int64)
@@ -473,6 +487,12 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 			jobsMap[jobID] = job
 			jobOrder = append(jobOrder, jobID)
 			database.populateJobExtras(job) // Populate non-SQL extras once per job
+		}
+
+		if mountScript.Valid {
+			job.TargetMountScript = mountScript.String
+		} else {
+			job.TargetMountScript = ""
 		}
 
 		if exclusionPath.Valid && exclusionPath.String != "" {
@@ -506,9 +526,9 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
         SELECT
             j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval, j.max_dir_entries,
+            j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes
+            t.drive_used_bytes, t.mount_script
         FROM jobs j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
@@ -526,17 +546,19 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 
 	for rows.Next() {
 		var jobID, store, mode, sourceMode, readMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
+		var preScript, postScript string
 		var retry, maxDirEntries int
 		var retryInterval int
 		var currentPID int
 		var exclusionPath sql.NullString
 		var driveUsedBytes sql.NullInt64
+		var mountScript sql.NullString
 
 		err := rows.Scan(
 			&jobID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
 			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
-			&retry, &retryInterval, &maxDirEntries,
-			&exclusionPath, &driveUsedBytes,
+			&retry, &retryInterval, &maxDirEntries, &preScript, &postScript,
+			&exclusionPath, &driveUsedBytes, &mountScript,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllQueuedJobs: error scanning row: %w", err)).Write()
@@ -564,6 +586,8 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 				RetryInterval:      retryInterval,
 				MaxDirEntries:      maxDirEntries,
 				Exclusions:         make([]types.Exclusion, 0),
+				PreScript:          preScript,
+				PostScript:         postScript,
 			}
 			if driveUsedBytes.Valid {
 				job.ExpectedSize = int(driveUsedBytes.Int64)
@@ -571,6 +595,12 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 			jobsMap[jobID] = job
 			jobOrder = append(jobOrder, jobID)
 			database.populateJobExtras(job) // Populate non-SQL extras once per job
+		}
+
+		if mountScript.Valid {
+			job.TargetMountScript = mountScript.String
+		} else {
+			job.TargetMountScript = ""
 		}
 
 		if exclusionPath.Valid && exclusionPath.String != "" {
