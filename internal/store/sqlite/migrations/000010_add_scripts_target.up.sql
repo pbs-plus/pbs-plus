@@ -1,1 +1,1 @@
-ALTER TABLE targets ADD COLUMN mount_script TEXT;
+ALTER TABLE targets ADD COLUMN mount_script TEXT NOT NULL DEFAULT '';
