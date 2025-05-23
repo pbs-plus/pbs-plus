@@ -122,7 +122,7 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
         INSERT INTO jobs (
             id, store, mode, source_mode, read_mode, target, subpath, schedule, comment,
             notification_mode, namespace, current_pid, last_run_upid, last_successful_upid, retry,
-            retry_interval, max_dir_entries, pre_backup, post_backup
+            retry_interval, max_dir_entries, pre_script, post_script
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, job.ID, job.Store, job.Mode, job.SourceMode, job.ReadMode, job.Target, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace, job.CurrentPID,
