@@ -132,9 +132,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			if r.FormValue("description") != "" {
-				script.Description = r.FormValue("description")
-			}
+			script.Description = r.FormValue("description")
 
 			if delArr, ok := r.Form["delete"]; ok {
 				for _, attr := range delArr {
