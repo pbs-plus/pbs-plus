@@ -42,14 +42,14 @@ func Mount(storeInstance *store.Store, job types.Job, target types.Target) (*Age
 
 	// Setup mount path
 	agentMount.Path = filepath.Join(constants.AgentMountBasePath, job.ID)
+	agentMount.Unmount() // Ensure clean mount point
+
 	// Create mount directory if it doesn't exist
 	err := os.MkdirAll(agentMount.Path, 0700)
 	if err != nil {
 		agentMount.CloseMount()
 		return nil, fmt.Errorf("error creating directory \"%s\" -> %w", agentMount.Path, err)
 	}
-
-	agentMount.Unmount() // Ensure clean mount point
 
 	// Try mounting with retries
 	const maxRetries = 3
