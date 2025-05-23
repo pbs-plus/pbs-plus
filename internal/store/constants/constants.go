@@ -11,6 +11,7 @@ const (
 	LogsBasePath        = "/var/log/proxmox-backup"
 	TaskLogsBasePath    = LogsBasePath + "/tasks"
 	JobLogsBasePath     = "/var/log/pbs-plus"
+	ScriptsBasePath     = "/var/lib/pbs-plus/scripts"
 	MountSocketPath     = "/var/run/pbs_agent_mount.sock"
 	JobMutateSocketPath = "/var/run/pbs_agent_job_mutate.sock"
 	LockSocketPath      = "/var/run/pbs_plus_locker.sock"

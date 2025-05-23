@@ -26,6 +26,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/exclusions"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/plus"
+	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/scripts"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/targets"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/tokens"
 	mw "github.com/pbs-plus/pbs-plus/internal/proxy/middlewares"
@@ -381,6 +382,7 @@ func main() {
 	mux.HandleFunc("/api2/json/plus/binary/checksum", mw.AgentOrServer(storeInstance, mw.CORS(storeInstance, plus.DownloadChecksum(storeInstance, Version))))
 	mux.HandleFunc("/api2/json/d2d/backup", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, jobs.D2DJobHandler(storeInstance))))
 	mux.HandleFunc("/api2/json/d2d/target", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, targets.D2DTargetHandler(storeInstance))))
+	mux.HandleFunc("/api2/json/d2d/script", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, scripts.D2DScriptHandler(storeInstance))))
 	mux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, mw.CORS(storeInstance, targets.D2DTargetAgentHandler(storeInstance))))
 	mux.HandleFunc("/api2/json/d2d/token", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, tokens.D2DTokenHandler(storeInstance))))
 	mux.HandleFunc("/api2/json/d2d/exclusion", mw.AgentOrServer(storeInstance, mw.CORS(storeInstance, exclusions.D2DExclusionHandler(storeInstance))))
@@ -390,6 +392,8 @@ func main() {
 	mux.HandleFunc("/api2/extjs/d2d/backup/{job}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, jobs.ExtJsJobRunHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/d2d-target", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, targets.ExtJsTargetHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/d2d-target/{target}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance))))
+	mux.HandleFunc("/api2/extjs/config/d2d-script", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, scripts.ExtJsScriptHandler(storeInstance))))
+	mux.HandleFunc("/api2/extjs/config/d2d-script/{target}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, scripts.ExtJsScriptSingleHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/d2d-token", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, tokens.ExtJsTokenHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/d2d-token/{token}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, tokens.ExtJsTokenSingleHandler(storeInstance))))
 	mux.HandleFunc("/api2/extjs/config/d2d-exclusion", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, exclusions.ExtJsExclusionHandler(storeInstance))))

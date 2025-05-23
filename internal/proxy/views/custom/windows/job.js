@@ -243,6 +243,16 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
               "Newline delimited list of exclusions following the .pxarexclude patterns.",
             ),
           },
+          {
+            xtype: "pbsD2DScriptSelector",
+            fieldLabel: "Pre-Backup Script",
+            name: "pre_script",
+          },
+          {
+            xtype: "pbsD2DScriptSelector",
+            fieldLabel: "Post-Backup Script",
+            name: "post_script",
+          },
         ],
       },
     ],
