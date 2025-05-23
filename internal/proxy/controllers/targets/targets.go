@@ -280,9 +280,8 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("path") != "" {
 				target.Path = r.FormValue("path")
 			}
-			if r.FormValue("mount_script") != "" {
-				target.MountScript = r.FormValue("mount_script")
-			}
+
+			target.MountScript = r.FormValue("mount_script")
 
 			if delArr, ok := r.Form["delete"]; ok {
 				for _, attr := range delArr {

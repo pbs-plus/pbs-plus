@@ -243,12 +243,9 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("notification-mode") != "" {
 				job.NotificationMode = r.FormValue("notification-mode")
 			}
-			if r.FormValue("pre_script") != "" {
-				job.PreScript = r.FormValue("pre_script")
-			}
-			if r.FormValue("post_script") != "" {
-				job.PostScript = r.FormValue("post_script")
-			}
+
+			job.PreScript = r.FormValue("pre_script")
+			job.PostScript = r.FormValue("post_script")
 
 			retry, err := strconv.Atoi(r.FormValue("retry"))
 			if err != nil {
