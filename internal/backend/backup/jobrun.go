@@ -101,6 +101,23 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 
 	var agentMount *mount.AgentMount
 
+	postScriptExecute := func() {
+		if op.job.PostScript != "" {
+			op.queueTask.UpdateDescription("running post-backup script")
+
+			envVars, err := utils.StructToEnvVars(op.job)
+			if err != nil {
+				envVars = []string{}
+			}
+
+			scriptOut, _, err := utils.RunShellScript(op.job.PostScript, envVars)
+			if err != nil {
+				syslog.L.Error(err).WithMessage("error encountered while running job post-backup script").Write()
+			}
+			syslog.L.Info().WithMessage(scriptOut).WithField("script", op.job.PostScript).Write()
+		}
+	}
+
 	errCleanUp := func() {
 		utils.ClearIOStats(op.job.CurrentPID)
 		op.job.CurrentPID = 0
@@ -115,6 +132,8 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		if clientLogFile != nil {
 			_ = clientLogFile.Close()
 		}
+
+		postScriptExecute()
 		close(errorMonitorDone)
 	}
 
@@ -130,6 +149,21 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			return fmt.Errorf("%w: %s", ErrTargetNotFound, op.job.Target)
 		}
 		return fmt.Errorf("%w: %v", ErrTargetGet, err)
+	}
+
+	if target.MountScript != "" {
+		op.queueTask.UpdateDescription("running target mount script")
+
+		envVars, err := utils.StructToEnvVars(target)
+		if err != nil {
+			envVars = []string{}
+		}
+
+		scriptOut, _, err := utils.RunShellScript(target.MountScript, envVars)
+		if err != nil {
+			syslog.L.Error(err).WithMessage("error encountered while running mount script").Write()
+		}
+		syslog.L.Info().WithMessage(scriptOut).WithField("script", target.MountScript).Write()
 	}
 
 	isAgent := strings.HasPrefix(target.Path, "agent://")
@@ -171,6 +205,33 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		}
 	}
 	srcPath = filepath.Join(srcPath, op.job.Subpath)
+
+	if op.job.PreScript != "" {
+		op.queueTask.UpdateDescription("running pre-backup script")
+
+		envVars, err := utils.StructToEnvVars(op.job)
+		if err != nil {
+			envVars = []string{}
+		}
+
+		scriptOut, modEnvVars, err := utils.RunShellScript(op.job.PreScript, envVars)
+		if err != nil {
+			syslog.L.Error(err).WithMessage("error encountered while running job pre-backup script").Write()
+		}
+		syslog.L.Info().WithMessage(scriptOut).WithField("script", op.job.PreScript).Write()
+
+		if newNs, ok := modEnvVars["PBS_PLUS__NAMESPACE"]; ok {
+			latestJob, err := op.storeInstance.Database.GetJob(op.job.ID)
+			if err == nil {
+				op.job = latestJob
+			}
+			op.job.Namespace = newNs
+			err = op.storeInstance.Database.UpdateJob(nil, op.job)
+			if err != nil {
+				syslog.L.Error(err).WithMessage("error encountered while running job pre-backup script update").Write()
+			}
+		}
+	}
 
 	op.queueTask.UpdateDescription("waiting for proxmox-backup-client to start")
 
@@ -353,6 +414,8 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			agentMount.Unmount()
 			agentMount.CloseMount()
 		}
+
+		postScriptExecute()
 	}()
 
 	return nil

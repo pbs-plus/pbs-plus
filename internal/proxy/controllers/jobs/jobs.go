@@ -165,6 +165,8 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			Retry:            retry,
 			RetryInterval:    retryInterval,
 			Exclusions:       []types.Exclusion{},
+			PreScript:        r.FormValue("pre_script"),
+			PostScript:       r.FormValue("post_script"),
 		}
 
 		rawExclusions := r.FormValue("rawexclusions")
@@ -241,6 +243,12 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("notification-mode") != "" {
 				job.NotificationMode = r.FormValue("notification-mode")
 			}
+			if r.FormValue("pre_script") != "" {
+				job.PreScript = r.FormValue("pre_script")
+			}
+			if r.FormValue("post_script-mode") != "" {
+				job.PostScript = r.FormValue("post_script")
+			}
 
 			retry, err := strconv.Atoi(r.FormValue("retry"))
 			if err != nil {
@@ -311,6 +319,10 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						job.MaxDirEntries = 1048576
 					case "notification-mode":
 						job.NotificationMode = ""
+					case "pre_script":
+						job.PreScript = ""
+					case "post_script":
+						job.PostScript = ""
 					case "rawexclusions":
 						job.Exclusions = []types.Exclusion{}
 					}
