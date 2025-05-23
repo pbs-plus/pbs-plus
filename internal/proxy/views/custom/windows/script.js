@@ -3,6 +3,8 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
   alias: "widget.pbsScriptEditWindow",
   mixins: ["Proxmox.Mixin.CBind"],
 
+  width: "80%",
+
   isCreate: true,
   isAdd: true,
   subject: "Script",
@@ -28,6 +30,9 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
       xtype: "pmxDisplayEditField",
       renderer: Ext.htmlEncode,
       allowBlank: true,
+      cbind: {
+        editable: true,
+      },
     },
     {
       fieldLabel: gettext("Script Content"),
