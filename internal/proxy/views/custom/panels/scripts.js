@@ -27,7 +27,7 @@ Ext.define("PBS.D2DManagement.ScriptPanel", {
         return;
       }
       Ext.create("PBS.D2DManagement.ScriptEditWindow", {
-        contentid: selection[0].data.name,
+        contentid: selection[0].data.path,
         autoLoad: true,
         listeners: {
           destroy: () => me.reload(),
@@ -70,7 +70,7 @@ Ext.define("PBS.D2DManagement.ScriptPanel", {
         url: pbsPlusBaseUrl + "/api2/json/d2d/script",
       },
     },
-    sorters: "name",
+    sorters: "path",
   },
 
   features: [
