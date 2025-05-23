@@ -5,4 +5,5 @@ type Script struct {
 	Description string `json:"name"`
 	JobCount    int    `json:"job_count"`
 	TargetCount int    `json:"target_count"`
+	Script      string `json:"script"`
 }

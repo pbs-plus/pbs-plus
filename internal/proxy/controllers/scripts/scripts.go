@@ -165,6 +165,14 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
+			scriptContent, err := utils.ReadScriptContentFromFile(currentPath)
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			script.Script = scriptContent
+
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = script
