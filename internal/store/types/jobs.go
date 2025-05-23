@@ -11,6 +11,9 @@ type Job struct {
 	Schedule              string      `config:"type=string" json:"schedule"`
 	Comment               string      `config:"type=string" json:"comment"`
 	NotificationMode      string      `config:"key=notification_mode,type=string" json:"notification-mode"`
+	PreScript             string      `json:"pre_script"`
+	PostScript            string      `json:"post_script"`
+	TargetMountScript     string      `json:"mount_script"`
 	Namespace             string      `config:"type=string" json:"ns"`
 	NextRun               int64       `json:"next-run"`
 	Retry                 int         `config:"type=int" json:"retry"`

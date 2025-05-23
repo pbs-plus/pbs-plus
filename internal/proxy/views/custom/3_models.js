@@ -16,6 +16,8 @@ Ext.define("pbs-disk-backup-job-status", {
     "current_file_count",
     "current_files_speed",
     "current_folder_count",
+    "pre_script",
+    "post_script",
     "expected_size",
     "next-run",
     "last-run-upid",
@@ -52,6 +54,7 @@ Ext.define("pbs-model-targets", {
     "drive_total",
     "drive_used",
     "drive_free",
+    "mount_script",
   ],
   idProperty: "name",
 });
@@ -67,3 +70,15 @@ Ext.define("pbs-model-exclusions", {
   fields: ["path", "comment"],
   idProperty: "path",
 });
+
+Ext.define("pbs-model-scripts", {
+  extend: "Ext.data.Model",
+  fields: [
+    "path",
+    "description",
+    "job_count",
+    "target_count",
+  ],
+  idProperty: "path",
+});
+

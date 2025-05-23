@@ -1,0 +1,2 @@
+ALTER TABLE jobs ADD COLUMN pre_script TEXT;
+ALTER TABLE jobs ADD COLUMN post_script TEXT;
