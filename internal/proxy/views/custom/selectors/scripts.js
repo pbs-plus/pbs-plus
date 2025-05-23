@@ -2,11 +2,11 @@ Ext.define("PBS.form.D2DScriptSelector", {
   extend: "Proxmox.form.ComboGrid",
   alias: "widget.pbsD2DScriptSelector",
 
-  allowBlank: false,
+  allowBlank: true,
   autoSelect: false,
 
-  displayField: "name",
-  valueField: "name",
+  displayField: "path",
+  valueField: "path",
   value: null,
 
   store: {
@@ -15,7 +15,7 @@ Ext.define("PBS.form.D2DScriptSelector", {
       url: pbsPlusBaseUrl + "/api2/json/d2d/script",
     },
     autoLoad: true,
-    sorters: "name",
+    sorters: "path",
   },
 
   listConfig: {
