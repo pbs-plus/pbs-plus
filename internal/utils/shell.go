@@ -132,9 +132,21 @@ func SaveScriptToFile(scriptContent string) (string, error) {
 }
 
 func UpdateScriptContentToFile(filePath string, newScriptContent string) error {
-	err := os.WriteFile(filePath, []byte(newScriptContent), 0644)
+	// Resolve the absolute path of the file
+	absPath, err := filepath.Abs(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to update file %s: %w", filePath, err)
+		return fmt.Errorf("failed to resolve absolute path for %s: %w", filePath, err)
+	}
+
+	// Ensure the file is within the safe directory
+	if !strings.HasPrefix(absPath, constants.ScriptsBasePath) {
+		return fmt.Errorf("invalid file path: %s is outside the allowed directory", absPath)
+	}
+
+	// Write the new script content to the file
+	err = os.WriteFile(absPath, []byte(newScriptContent), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to update file %s: %w", absPath, err)
 	}
 	return nil
 }
