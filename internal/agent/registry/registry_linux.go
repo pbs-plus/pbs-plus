@@ -31,18 +31,60 @@ type registryData struct {
 	Values map[string]string `json:"values"`
 }
 
+func init() {
+	_ = ensureRegistryDir()
+}
+
+// isPEMData checks if the value contains PEM-encoded data
+func isPEMData(value string) bool {
+	return strings.Contains(value, "-----BEGIN") && strings.Contains(value, "-----END")
+}
+
+// normalizePEMData normalizes PEM certificate data for consistent storage
+func normalizePEMData(pemData string) string {
+	// Convert all line endings to Unix style (\n)
+	pemData = strings.ReplaceAll(pemData, "\r\n", "\n")
+	pemData = strings.ReplaceAll(pemData, "\r", "\n")
+
+	// Split into lines and normalize each line
+	lines := strings.Split(pemData, "\n")
+	var normalizedLines []string
+
+	for _, line := range lines {
+		// Trim whitespace from each line but preserve PEM structure
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			normalizedLines = append(normalizedLines, trimmed)
+		}
+	}
+
+	// Rejoin with consistent line endings
+	result := strings.Join(normalizedLines, "\n")
+
+	// Ensure proper ending
+	if !strings.HasSuffix(result, "\n") {
+		result += "\n"
+	}
+
+	return result
+}
+
+// preprocessValue handles value preprocessing before storage (normalization, etc.)
+func preprocessValue(value string, isSecret bool) string {
+	// If it's a secret and contains PEM data, normalize it
+	if isSecret && isPEMData(value) {
+		return normalizePEMData(value)
+	}
+	return value
+}
+
 // ensureRegistryDir creates the registry directory if it doesn't exist
 func ensureRegistryDir() error {
 	return os.MkdirAll(registryBasePath, 0755)
 }
 
-func init() {
-	_ = ensureRegistryDir()
-}
-
 // getRegistryFilePath converts a Windows registry path to a Linux file path
 func getRegistryFilePath(path string) string {
-	// Convert Windows registry path to file path with all directories lowercase
 	cleanPath := strings.ReplaceAll(path, "\\", "/")
 	cleanPath = strings.ToLower(cleanPath)
 	return filepath.Join(registryBasePath, cleanPath+".json")
@@ -54,18 +96,15 @@ func getEncryptionKey() ([]byte, error) {
 		return nil, err
 	}
 
-	// Try to read existing key
 	if keyData, err := os.ReadFile(keyFile); err == nil {
 		return keyData, nil
 	}
 
-	// Generate new key
-	key := make([]byte, 32) // 256-bit key
+	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("failed to generate encryption key: %w", err)
 	}
 
-	// Save key with restricted permissions
 	if err := os.WriteFile(keyFile, key, 0600); err != nil {
 		return nil, fmt.Errorf("failed to save encryption key: %w", err)
 	}
@@ -157,7 +196,6 @@ func loadRegistryFile(filePath string) (*registryData, error) {
 
 // saveRegistryFile saves registry data to file
 func saveRegistryFile(filePath string, data *registryData) error {
-	// Ensure all directory components are lowercase
 	dir := filepath.Dir(filePath)
 	dirParts := strings.Split(dir, "/")
 	for i, part := range dirParts {
@@ -214,7 +252,9 @@ func CreateEntry(entry *RegistryEntry) error {
 		return fmt.Errorf("CreateEntry error: %w", err)
 	}
 
-	value := entry.Value
+	// Preprocess the value (includes PEM normalization for secrets)
+	value := preprocessValue(entry.Value, entry.IsSecret)
+
 	if entry.IsSecret {
 		encrypted, err := encrypt(value)
 		if err != nil {
@@ -232,27 +272,25 @@ func CreateEntry(entry *RegistryEntry) error {
 	return nil
 }
 
-func CreateEntryIfNotExists(entry *RegistryEntry) error {
-	// Check if the entry already exists
-	_, err := GetEntry(entry.Path, entry.Key, entry.IsSecret)
-	if err == nil {
-		// Entry exists, don't create/update
-		return fmt.Errorf("CreateEntryIfNotExists error: entry already exists")
-	}
-
-	// Entry doesn't exist, create it
-	return CreateEntry(entry)
-}
-
 // UpdateEntry updates an existing registry entry
 func UpdateEntry(entry *RegistryEntry) error {
-	// First check if the entry exists
 	_, err := GetEntry(entry.Path, entry.Key, entry.IsSecret)
 	if err != nil {
 		return fmt.Errorf("UpdateEntry error: entry does not exist: %w", err)
 	}
 
-	// Reuse CreateEntry logic for the update
+	// Reuse CreateEntry logic which includes preprocessing
+	return CreateEntry(entry)
+}
+
+// CreateEntryIfNotExists creates a new registry entry only if it doesn't already exist
+func CreateEntryIfNotExists(entry *RegistryEntry) error {
+	_, err := GetEntry(entry.Path, entry.Key, entry.IsSecret)
+	if err == nil {
+		return fmt.Errorf("CreateEntryIfNotExists error: entry already exists")
+	}
+
+	// Use CreateEntry which includes preprocessing
 	return CreateEntry(entry)
 }
 
