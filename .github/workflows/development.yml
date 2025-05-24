@@ -1,7 +1,9 @@
+name: Development Build
+
 on:
- push:
-   branches:
-     - main
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -11,139 +13,68 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
         with:
           go-version: '1.24'
           cache: true
-      - run: go mod download
-      - name: Run Linux tests
-        shell: bash
-        if: matrix.os == 'ubuntu-latest'
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
         run: GODEBUG=gctrace=1 go test -v -race ./... -count=1 -timeout 1m
 
-  dev-build-linux-amd64:
-    name: dev build linux/amd64
+  dev-build:
     runs-on: ubuntu-latest
     needs: test
     steps:
-    - uses: actions/checkout@v4
-    - uses: wangyoucao577/go-release-action@v1
-      id: go_build
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: linux
-        goarch: amd64
-        compress_assets: false
-        executable_compression: upx
-        project_path: ./cmd/pbs_plus
-        overwrite: true
-        release_tag: dev
-    - name: pre-packaging script
-      env:
-        BINARY_PATH: ${{ steps.go_build.outputs.release_asset_dir }}
-      run: ./build/package/server/pre-packaging.sh
-    - uses: jiro4989/build-deb-action@v3
-      with:
-        package: ${{ github.event.repository.name }}
-        package_root: build/package/server/debian
-        maintainer: Son Roy Almerol <github@snry.me>
-        version: 'refs/tags/v0.0.0'
-        arch: 'amd64'
-        depends: 'proxmox-backup-server (>= 3.2), proxmox-backup-client (>= 3.2.5), fuse3'
-        desc: 'PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution'
-        homepage: 'https://github.com/${{ github.repository }}'
-    - name: Pre-release dev build
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: dev
-        files: ./*.deb
-        prerelease: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-  dev-build-linux-amd64-agent:
-    name: dev build agent linux/amd64
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-    - uses: actions/checkout@v4
-    - uses: wangyoucao577/go-release-action@v1
-      id: go_build
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: linux
-        goarch: amd64
-        compress_assets: false
-        executable_compression: upx
-        binary_name: pbs-plus-agent
-        project_path: ./cmd/linux_agent
-        overwrite: true
-        release_tag: dev
-    - name: pre-packaging script
-      env:
-        BINARY_PATH: ${{ steps.go_build.outputs.release_asset_dir }}
-      run: ./build/package/linux_agent/pre-packaging.sh
-    - uses: jiro4989/build-deb-action@v3
-      with:
-        package: pbs-plus-agent
-        package_root: build/package/linux_agent/debian
-        maintainer: Son Roy Almerol <github@snry.me>
-        version: 'refs/tags/v0.0.0'
-        arch: 'amd64'
-        desc: 'An agent for PBS Plus: project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution'
-        homepage: 'https://github.com/${{ github.repository }}'
-    - name: Pre-release dev build
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: dev
-        files: ./*.deb
-        prerelease: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.24"
 
-  dev-build-windows-amd64-agent:
-    name: dev build agent windows/amd64
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-    - uses: actions/checkout@v4
-    - uses: wangyoucao577/go-release-action@v1
-      id: go_build
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: windows
-        goarch: amd64
-        compress_assets: false
-        executable_compression: upx
-        binary_name: pbs-plus-agent
-        project_path: ./cmd/windows_agent
-        ldflags: -H=windowsgui
-        overwrite: true
-        release_tag: dev
+      - name: Install UPX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx
 
-  dev-build-windows-amd64-updater:
-    name: dev build updater windows/amd64
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-    - uses: actions/checkout@v4
-    - uses: wangyoucao577/go-release-action@v1
-      id: go_build_updater
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: windows
-        goarch: amd64
-        compress_assets: false
-        executable_compression: upx
-        binary_name: pbs-plus-updater
-        project_path: ./cmd/windows_updater
-        ldflags: -H=windowsgui
-        overwrite: true
-        release_tag: dev
+      - name: Set environment variables
+        run: |
+          echo "GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}" >> $GITHUB_ENV
+          echo "GITHUB_REPOSITORY_NAME=${{ github.event.repository.name }}" >> $GITHUB_ENV
+          echo "GITHUB_REPOSITORY=${{ github.repository }}" >> $GITHUB_ENV
 
-  dev-build-docker-agent:
-    name: dev build agent docker
+      - name: Prepare packaging files
+        run: |
+          chmod 755 ./build/package/server/debian/DEBIAN/postinst
+          # Uncomment if you have linux agent
+          # chmod 755 ./build/package/linux_agent/debian/DEBIAN/postinst
+
+      - name: Delete existing dev tag
+        continue-on-error: true
+        run: |
+          git tag -d dev || true
+          git push origin :refs/tags/dev || true
+
+      - name: Run GoReleaser (Dev)
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --config .goreleaser.dev.yaml --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker-build:
     runs-on: ubuntu-latest
     needs: test
     steps:
@@ -170,12 +101,13 @@ jobs:
           images: |
             ghcr.io/pbs-plus/pbs-plus-agent
           tags: |
-            tags: type=raw,value=dev
+            type=raw,value=dev
           flavor: latest=false
 
       - name: Docker - Build / Push
-        id: docker_build
         uses: docker/build-push-action@v5
         with:
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
