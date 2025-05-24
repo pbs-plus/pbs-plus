@@ -145,7 +145,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				newTarget.Name = fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter)
 				newTarget.Path = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
 			default:
-				newTarget.Name = fmt.Sprintf("%s", reqParsed.Hostname)
+				newTarget.Name = fmt.Sprintf("%s - Root", reqParsed.Hostname)
 				newTarget.Path = fmt.Sprintf("agent://%s/root", clientIP)
 			}
 
@@ -193,7 +193,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		existingTargetName := reqParsed.Hostname
+		existingTargetName := reqParsed.Hostname + " - Root"
 		if reqParsed.Drives[0].OperatingSystem == "windows" {
 			existingTargetName = reqParsed.Hostname + " - C"
 		}
