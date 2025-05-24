@@ -135,14 +135,8 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		processedTargetNames := make(map[string]bool)
 
 		for _, parsedDrive := range reqParsed.Drives {
-			driveLetter := parsedDrive.Letter
-			targetName := reqParsed.Hostname + " - " + driveLetter
-			targetPath := "agent://" + clientIP + "/" + driveLetter
-			processedTargetNames[targetName] = true
-
+			targetName := reqParsed.Hostname
 			targetData := types.Target{
-				Name:            targetName,
-				Path:            targetPath,
 				Auth:            targetTemplate.Auth,
 				TokenUsed:       targetTemplate.TokenUsed,
 				DriveType:       parsedDrive.Type,
@@ -154,6 +148,24 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				DriveFree:       parsedDrive.Free,
 				DriveUsed:       parsedDrive.Used,
 				DriveTotal:      parsedDrive.Total,
+				OperatingSystem: parsedDrive.OperatingSystem,
+			}
+
+			switch parsedDrive.OperatingSystem {
+			case "windows":
+				driveLetter := parsedDrive.Letter
+				targetName = targetName + " - " + driveLetter
+				targetPath := "agent://" + clientIP + "/" + driveLetter
+				processedTargetNames[targetName] = true
+
+				targetData.Name = targetName
+				targetData.Path = targetPath
+			default:
+				targetPath := "agent://" + clientIP + "/"
+				processedTargetNames[targetName] = true
+
+				targetData.Name = targetName
+				targetData.Path = targetPath
 			}
 
 			if _, found := existingTargetsMap[targetName]; found {
@@ -178,6 +190,9 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				// Only delete if the target name matches the hostname from the request
 				// This prevents deleting targets from other hosts sharing the same IP
 				expectedPrefix := reqParsed.Hostname + " - "
+				if existingTarget.OperatingSystem != "windows" {
+					expectedPrefix = reqParsed.Hostname
+				}
 				if strings.HasPrefix(existingTarget.Name, expectedPrefix) {
 					err = storeInstance.Database.DeleteTarget(tx, existingTarget.Name)
 					if err != nil {
