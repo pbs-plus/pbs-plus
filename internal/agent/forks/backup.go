@@ -248,6 +248,10 @@ func Backup(rpcSess *arpc.Session, sourceMode string, readMode string, drive str
 
 	backupMode := sourceMode
 
+	if runtime.GOOS == "linux" {
+		sourceMode = "direct"
+	}
+
 	switch sourceMode {
 	case "direct":
 		path := drive
