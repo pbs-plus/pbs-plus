@@ -49,6 +49,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		authHeader := r.Header.Get("Authorization")
@@ -56,6 +57,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if len(authHeaderSplit) != 2 || authHeaderSplit[0] != "Bearer" {
 			w.WriteHeader(http.StatusUnauthorized)
 			controllers.WriteErrorResponse(w, fmt.Errorf("[%s]: unauthorized bearer access: %s", r.RemoteAddr, authHeader))
+			syslog.L.Error(fmt.Errorf("[%s]: unauthorized bearer access: %s", r.RemoteAddr, authHeader)).Write()
 			return
 		}
 
@@ -64,12 +66,14 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			controllers.WriteErrorResponse(w, fmt.Errorf("[%s]: token not found", r.RemoteAddr))
+			syslog.L.Error(fmt.Errorf("[%s]: token not found", r.RemoteAddr)).Write()
 			return
 		}
 
 		if token.Revoked {
 			w.WriteHeader(http.StatusUnauthorized)
 			controllers.WriteErrorResponse(w, fmt.Errorf("[%s]: token already revoked", r.RemoteAddr))
+			syslog.L.Error(fmt.Errorf("[%s]: token already revoked", r.RemoteAddr)).Write()
 			return
 		}
 
@@ -78,6 +82,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 
@@ -85,6 +90,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 
@@ -92,6 +98,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 
@@ -112,6 +119,8 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
+			return
 		}
 
 		for _, drive := range reqParsed.Drives {
@@ -144,6 +153,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				controllers.WriteErrorResponse(w, err)
+				syslog.L.Error(err).Write()
 				return
 			}
 		}
@@ -152,6 +162,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 
@@ -160,6 +171,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 	}
@@ -169,6 +181,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		var reqParsed BootstrapRequest
@@ -176,6 +189,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 
@@ -183,6 +197,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 
@@ -190,6 +205,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 
@@ -197,6 +213,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 
@@ -216,6 +233,8 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
+			return
 		}
 
 		for _, drive := range reqParsed.Drives {
@@ -246,6 +265,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				controllers.WriteErrorResponse(w, err)
+				syslog.L.Error(err).Write()
 				return
 			}
 		}
@@ -254,6 +274,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 
@@ -262,6 +283,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
 			return
 		}
 	}
