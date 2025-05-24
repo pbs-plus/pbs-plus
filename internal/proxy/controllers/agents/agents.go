@@ -115,8 +115,6 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, drive := range reqParsed.Drives {
 			newTarget := types.Target{
-				Name:            fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter),
-				Path:            fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter),
 				Auth:            encodedCert,
 				TokenUsed:       tokenStr,
 				DriveType:       drive.Type,
@@ -127,6 +125,16 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				DriveFree:       drive.Free,
 				DriveUsed:       drive.Used,
 				DriveTotal:      drive.Total,
+				OperatingSystem: drive.OperatingSystem,
+			}
+
+			switch drive.OperatingSystem {
+			case "windows":
+				newTarget.Name = fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter)
+				newTarget.Path = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
+			default:
+				newTarget.Name = fmt.Sprintf("%s", reqParsed.Hostname)
+				newTarget.Path = fmt.Sprintf("agent://%s/", clientIP)
 			}
 
 			err := storeInstance.Database.CreateTarget(tx, newTarget)
@@ -209,8 +217,6 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, drive := range reqParsed.Drives {
 			newTarget := types.Target{
-				Name:            fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter),
-				Path:            fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter),
 				Auth:            encodedCert,
 				TokenUsed:       existingTarget.TokenUsed,
 				DriveType:       drive.Type,
@@ -221,6 +227,16 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				DriveFree:       drive.Free,
 				DriveUsed:       drive.Used,
 				DriveTotal:      drive.Total,
+				OperatingSystem: drive.OperatingSystem,
+			}
+
+			switch drive.OperatingSystem {
+			case "windows":
+				newTarget.Name = fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter)
+				newTarget.Path = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
+			default:
+				newTarget.Name = fmt.Sprintf("%s", reqParsed.Hostname)
+				newTarget.Path = fmt.Sprintf("agent://%s/", clientIP)
 			}
 
 			err := storeInstance.Database.CreateTarget(tx, newTarget)
