@@ -110,6 +110,8 @@ release:
   github:
     owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
     name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
+  tag: dev
+  make_latest: false
   name_template: "Dev Build - {{ .Date }}"
   draft: false
   prerelease: true
