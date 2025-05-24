@@ -16,7 +16,7 @@ builds:
     goarch:
       - amd64
     ldflags:
-      - -X 'main.Version={{.Version}}'
+      - -X 'main.Version=v{{.Version}}'
     hooks:
       post:
         - upx "{{ .Path }}"
@@ -30,7 +30,7 @@ builds:
     goarch:
       - amd64
     ldflags:
-      - -X 'main.Version={{.Version}}'
+      - -X 'main.Version=v{{.Version}}'
     hooks:
       post:
         - upx "{{ .Path }}"
@@ -45,7 +45,7 @@ builds:
       - amd64
     ldflags:
       - -H=windowsgui
-      - -X 'main.Version={{.Version}}'
+      - -X 'main.Version=v{{.Version}}'
     hooks:
       post:
         - upx "{{ .Path }}"

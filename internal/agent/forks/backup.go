@@ -177,13 +177,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 
 	// Create the command with proper process group handling
 	cmd := exec.Command(execCmd, args...)
-
-	// On Unix systems, create a new process group
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setpgid: true,
-		}
-	}
+	setProcAttributes(cmd)
 
 	// Use a pipe to read stdout.
 	stdoutPipe, err := cmd.StdoutPipe()
