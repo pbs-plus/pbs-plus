@@ -107,6 +107,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		clientIP = strings.Split(clientIP, ":")[0]
 
+		syslog.L.Info().WithMessage("bootstrapping target").WithFields(map[string]interface{}{"target": reqParsed.Hostname}).Write()
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -114,6 +115,8 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for _, drive := range reqParsed.Drives {
+			syslog.L.Info().WithMessage("bootstrapping drive").WithFields(map[string]interface{}{"drive": drive}).Write()
+
 			newTarget := types.Target{
 				Auth:            encodedCert,
 				TokenUsed:       tokenStr,
