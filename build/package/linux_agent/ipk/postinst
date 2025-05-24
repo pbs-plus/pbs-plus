@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+chmod +x /usr/bin/pbs-plus-agent
+
+# Create run directory if it doesn't exist
+mkdir -p /run/proxmox-backup
+
+# Enable the service to start on boot
+/etc/init.d/pbs-plus-agent enable
+
+# Start the service
+/etc/init.d/pbs-plus-agent start
+
+exit 0
