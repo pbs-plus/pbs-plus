@@ -97,22 +97,29 @@ func (p *agentService) Stop() error {
 }
 
 func (p *agentService) run() {
+	syslog.L.Info().WithMessage("checking server URL config").Write()
 	if err := p.waitForServerURL(); err != nil {
 		syslog.L.Error(err).WithMessage("failed waiting for server url").Write()
 		return
 	}
 
+	syslog.L.Info().WithMessage("checking if bootstrap required from config").Write()
 	if err := p.waitForBootstrap(); err != nil {
 		syslog.L.Error(err).WithMessage("failed waiting for bootstrap").Write()
 		return
 	}
 
-	if err := p.initializeDrives(); err != nil {
-		syslog.L.Error(err).WithMessage("failed to initialize drives").Write()
-		return
-	}
+	go func() {
+		syslog.L.Info().WithMessage("initializing drives status").Write()
+		if err := p.initializeDrives(); err != nil {
+			syslog.L.Error(err).WithMessage("failed to initializing drives").Write()
+			return
+		}
+	}()
 
+	syslog.L.Info().WithMessage("attempting to connect via aRPC").Write()
 	if err := p.connectARPC(); err != nil {
+		syslog.L.Error(err).WithMessage("failed to connect via aRPC").Write()
 		return
 	}
 
@@ -228,18 +235,18 @@ func (p *agentService) connectARPC() error {
 
 	tlsConfig, err := agent.GetTLSConfig()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to get TLS config for ARPC client").Write()
+		syslog.L.Error(err).WithMessage("failed to get tls config error for arpc client").Write()
 		return err
 	}
 
-	clientID, err := os.Hostname()
+	clientId, err := os.Hostname()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to retrieve machine hostname").Write()
 		return err
 	}
 
 	headers := http.Header{}
-	headers.Add("X-PBS-Agent", clientID)
+	headers.Add("X-PBS-Agent", clientId)
 	headers.Add("X-PBS-Plus-Version", Version)
 
 	session, err := arpc.ConnectToServer(p.ctx, true, uri.Host, headers, tlsConfig)
@@ -249,7 +256,7 @@ func (p *agentService) connectARPC() error {
 
 	router := arpc.NewRouter()
 	router.Handle("ping", func(req arpc.Request) (arpc.Response, error) {
-		resp := arpc.MapStringStringMsg{"version": Version, "hostname": clientID}
+		resp := arpc.MapStringStringMsg{"version": Version, "hostname": clientId}
 		b, err := resp.Encode()
 		if err != nil {
 			return arpc.Response{}, err
@@ -270,7 +277,7 @@ func (p *agentService) connectARPC() error {
 			case <-p.ctx.Done():
 				return
 			default:
-				syslog.L.Info().WithMessage("connecting ARPC endpoint from /plus/arpc").Write()
+				syslog.L.Info().WithMessage("connecting arpc endpoing from /plus/arpc").Write()
 				if err := session.Serve(); err != nil {
 					store, err := agent.NewBackupStore()
 					if err != nil {
