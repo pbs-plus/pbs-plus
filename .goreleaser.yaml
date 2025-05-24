@@ -66,22 +66,25 @@ builds:
 
 archives:
   - id: server
-    builds:
+    ids:
       - server
     name_template: "{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
-    format: binary
+    formats:
+      - binary
 
   - id: windows-agent
-    builds:
+    ids:
       - windows-agent
     name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
-    format: binary
+    formats:
+      - binary
 
   - id: windows-updater
-    builds:
+    ids:
       - windows-updater
     name_template: "{{ .ProjectName }}-updater-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
-    format: binary
+    formats:
+      - binary
 
 checksum:
   name_template: "{{ .ArtifactName }}.{{ .Algorithm }}"
@@ -90,7 +93,7 @@ checksum:
 
 nfpms:
   - id: server-deb
-    builds:
+    ids:
       - server
     package_name: "{{ .ProjectName }}"
     vendor: Son Roy Almerol
@@ -116,7 +119,7 @@ nfpms:
       deb:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
   #- id: linux-agent-deb
-  #  builds:
+  #  ids:
   #    - linux-agent
   #  package_name: "{{ .ProjectName }}"
   #  vendor: Son Roy Almerol
@@ -142,7 +145,7 @@ release:
   github:
     owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
     name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
-  name_template: "{{ .ProjectName }} {{ .Version }}"
+  name_template: "PBS Plus {{ .Version }}"
   draft: false
   prerelease: auto
   mode: replace
