@@ -41,6 +41,22 @@ type agentService struct {
 func (p *agentService) Start() error {
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 
+	serverUrlConfigDefault := registry.RegistryEntry{
+		Path:     registry.CONFIG,
+		Key:      "ServerURL",
+		Value:    "",
+		IsSecret: false,
+	}
+	_ = registry.CreateEntryIfNotExists(&serverUrlConfigDefault)
+
+	bootstrapTokenConfigDefault := registry.RegistryEntry{
+		Path:     registry.CONFIG,
+		Key:      "BootstrapToken",
+		Value:    "",
+		IsSecret: false,
+	}
+	_ = registry.CreateEntryIfNotExists(&bootstrapTokenConfigDefault)
+
 	p.wg.Add(2)
 	go func() {
 		defer p.wg.Done()
@@ -277,8 +293,6 @@ func main() {
 	constants.Version = Version
 
 	prg := &agentService{}
-
-	os.MkdirAll("/etc/pbs-plus-agent", os.ModeDir)
 
 	if err := prg.Start(); err != nil {
 		syslog.L.Error(err).WithMessage("failed to start service").Write()
