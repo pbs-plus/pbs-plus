@@ -278,6 +278,8 @@ func main() {
 
 	prg := &agentService{}
 
+	os.MkdirAll("/etc/pbs-plus-agent", os.ModeDir)
+
 	if err := prg.Start(); err != nil {
 		syslog.L.Error(err).WithMessage("failed to start service").Write()
 		os.Exit(1)
