@@ -29,6 +29,8 @@ builds:
       - linux
     goarch:
       - amd64
+      - arm64
+      - arm
     ldflags:
       - -X 'main.Version=v{{.Version}}'
     hooks:
@@ -43,6 +45,7 @@ builds:
       - windows
     goarch:
       - amd64
+      - arm64
     ldflags:
       - -H=windowsgui
       - -X 'main.Version=v{{.Version}}'
