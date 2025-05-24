@@ -3,15 +3,21 @@
 package registry
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
-	"encoding/hex"
-	"errors"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+)
 
-	"golang.org/x/crypto/nacl/secretbox"
+const (
+	registryBasePath = "/etc/pbs-plus-agent/registry"
+	keyFile          = "/etc/pbs-plus-agent/registry/.key"
 )
 
 type RegistryEntry struct {
@@ -21,56 +27,169 @@ type RegistryEntry struct {
 	IsSecret bool
 }
 
-const (
-	baseRegistryPath = "/etc/pbs-plus-agent/registry" // Base directory for the "registry"
-	secretKeyFile    = "secret.key"                   // File to store the secret key
-)
-
-func normalizePath(path string) string {
-	return strings.ReplaceAll(path, "\\", "/")
+type registryData struct {
+	Values map[string]string `json:"values"`
 }
 
-var secretKey [32]byte // Global secret key for encryption/decryption
+// ensureRegistryDir creates the registry directory if it doesn't exist
+func ensureRegistryDir() error {
+	return os.MkdirAll(registryBasePath, 0755)
+}
 
-// Initialize ensures the base registry path exists and loads or generates the secret key
-func init() {
-	// Ensure the base registry path exists
-	if err := os.MkdirAll(baseRegistryPath, 0755); err != nil {
-		return
+// getRegistryFilePath converts a Windows registry path to a Linux file path
+func getRegistryFilePath(path string) string {
+	// Convert Windows registry path to file path with all directories lowercase
+	cleanPath := strings.ReplaceAll(path, "\\", "/")
+	cleanPath = strings.ToLower(cleanPath)
+	return filepath.Join(registryBasePath, cleanPath+".json")
+}
+
+// getEncryptionKey gets or creates an encryption key for secrets
+func getEncryptionKey() ([]byte, error) {
+	if err := ensureRegistryDir(); err != nil {
+		return nil, err
 	}
 
-	// Load or generate the secret key
-	keyPath := filepath.Join(baseRegistryPath, secretKeyFile)
-	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
-		// Generate a new secret key
-		if err := generateAndStoreSecretKey(keyPath); err != nil {
-			return
-		}
-	} else {
-		// Load the existing secret key
-		if err := loadSecretKey(keyPath); err != nil {
-			return
-		}
+	// Try to read existing key
+	if keyData, err := os.ReadFile(keyFile); err == nil {
+		return keyData, nil
 	}
 
-	return
+	// Generate new key
+	key := make([]byte, 32) // 256-bit key
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("failed to generate encryption key: %w", err)
+	}
+
+	// Save key with restricted permissions
+	if err := os.WriteFile(keyFile, key, 0600); err != nil {
+		return nil, fmt.Errorf("failed to save encryption key: %w", err)
+	}
+
+	return key, nil
+}
+
+// encrypt encrypts a value using AES-GCM
+func encrypt(plaintext string) (string, error) {
+	key, err := getEncryptionKey()
+	if err != nil {
+		return "", err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+// decrypt decrypts a value using AES-GCM
+func decrypt(ciphertext string) (string, error) {
+	key, err := getEncryptionKey()
+	if err != nil {
+		return "", err
+	}
+
+	data, err := base64.StdEncoding.DecodeString(ciphertext)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return "", fmt.Errorf("ciphertext too short")
+	}
+
+	nonce, ciphertext_bytes := data[:nonceSize], data[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext_bytes, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
+}
+
+// loadRegistryFile loads registry data from file
+func loadRegistryFile(filePath string) (*registryData, error) {
+	data := &registryData{Values: make(map[string]string)}
+
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return data, nil
+	}
+
+	fileData, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal(fileData, data); err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+// saveRegistryFile saves registry data to file
+func saveRegistryFile(filePath string, data *registryData) error {
+	// Ensure all directory components are lowercase
+	dir := filepath.Dir(filePath)
+	dirParts := strings.Split(dir, "/")
+	for i, part := range dirParts {
+		dirParts[i] = strings.ToLower(part)
+	}
+	lowercaseDir := strings.Join(dirParts, "/")
+
+	if err := os.MkdirAll(lowercaseDir, 0755); err != nil {
+		return err
+	}
+
+	fileData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(filePath, fileData, 0644)
 }
 
 // GetEntry retrieves a registry entry
 func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
-	path = normalizePath(path)
-	fullPath := filepath.Join(baseRegistryPath, path, key)
-
-	data, err := os.ReadFile(fullPath)
+	filePath := getRegistryFilePath(path)
+	data, err := loadRegistryFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("GetEntry error: %w", err)
 	}
 
-	value := strings.TrimSpace(string(data))
+	value, exists := data.Values[key]
+	if !exists {
+		return nil, fmt.Errorf("GetEntry error: key not found")
+	}
+
 	if isSecret {
 		decrypted, err := decrypt(value)
 		if err != nil {
-			return nil, fmt.Errorf("GetEntry error decrypting: %w", err)
+			return nil, fmt.Errorf("GetEntry error: %w", err)
 		}
 		value = decrypted
 	}
@@ -85,9 +204,10 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 
 // CreateEntry creates a new registry entry
 func CreateEntry(entry *RegistryEntry) error {
-	fullPath := filepath.Join(baseRegistryPath, normalizePath(entry.Path))
-	if err := os.MkdirAll(fullPath, 0755); err != nil {
-		return fmt.Errorf("CreateEntry error creating path: %w", err)
+	filePath := getRegistryFilePath(entry.Path)
+	data, err := loadRegistryFile(filePath)
+	if err != nil {
+		return fmt.Errorf("CreateEntry error: %w", err)
 	}
 
 	value := entry.Value
@@ -99,9 +219,10 @@ func CreateEntry(entry *RegistryEntry) error {
 		value = encrypted
 	}
 
-	filePath := filepath.Join(fullPath, entry.Key)
-	if err := os.WriteFile(filePath, []byte(value), 0644); err != nil {
-		return fmt.Errorf("CreateEntry error writing file: %w", err)
+	data.Values[entry.Key] = value
+
+	if err := saveRegistryFile(filePath, data); err != nil {
+		return fmt.Errorf("CreateEntry error saving: %w", err)
 	}
 
 	return nil
@@ -110,7 +231,7 @@ func CreateEntry(entry *RegistryEntry) error {
 // UpdateEntry updates an existing registry entry
 func UpdateEntry(entry *RegistryEntry) error {
 	// First check if the entry exists
-	_, err := GetEntry(normalizePath(entry.Path), entry.Key, entry.IsSecret)
+	_, err := GetEntry(entry.Path, entry.Key, entry.IsSecret)
 	if err != nil {
 		return fmt.Errorf("UpdateEntry error: entry does not exist: %w", err)
 	}
@@ -121,10 +242,20 @@ func UpdateEntry(entry *RegistryEntry) error {
 
 // DeleteEntry deletes a registry entry
 func DeleteEntry(path string, key string) error {
-	path = normalizePath(path)
-	filePath := filepath.Join(baseRegistryPath, path, key)
-	if err := os.Remove(filePath); err != nil {
-		return fmt.Errorf("DeleteEntry error deleting file: %w", err)
+	filePath := getRegistryFilePath(path)
+	data, err := loadRegistryFile(filePath)
+	if err != nil {
+		return fmt.Errorf("DeleteEntry error: %w", err)
+	}
+
+	if _, exists := data.Values[key]; !exists {
+		return fmt.Errorf("DeleteEntry error: key not found")
+	}
+
+	delete(data.Values, key)
+
+	if err := saveRegistryFile(filePath, data); err != nil {
+		return fmt.Errorf("DeleteEntry error saving: %w", err)
 	}
 
 	return nil
@@ -132,9 +263,8 @@ func DeleteEntry(path string, key string) error {
 
 // DeleteKey deletes an entire registry key and all its values
 func DeleteKey(path string) error {
-	path = normalizePath(path)
-	fullPath := filepath.Join(baseRegistryPath, path)
-	if err := os.RemoveAll(fullPath); err != nil {
+	filePath := getRegistryFilePath(path)
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("DeleteKey error: %w", err)
 	}
 	return nil
@@ -142,88 +272,16 @@ func DeleteKey(path string) error {
 
 // ListEntries lists all values in a registry key
 func ListEntries(path string) ([]string, error) {
-	path = normalizePath(path)
-	fullPath := filepath.Join(baseRegistryPath, path)
-	files, err := os.ReadDir(fullPath)
+	filePath := getRegistryFilePath(path)
+	data, err := loadRegistryFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("ListEntries error reading directory: %w", err)
+		return nil, fmt.Errorf("ListEntries error: %w", err)
 	}
 
-	var valueNames []string
-	for _, file := range files {
-		if !file.IsDir() {
-			valueNames = append(valueNames, file.Name())
-		}
+	var keys []string
+	for key := range data.Values {
+		keys = append(keys, key)
 	}
 
-	return valueNames, nil
-}
-
-// Helper functions for encryption and decryption
-
-func encrypt(value string) (string, error) {
-	var nonce [24]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	encrypted := secretbox.Seal(nonce[:], []byte(value), &nonce, &secretKey)
-	return hex.EncodeToString(encrypted), nil
-}
-
-func decrypt(value string) (string, error) {
-	data, err := hex.DecodeString(value)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode encrypted value: %w", err)
-	}
-
-	if len(data) < 24 {
-		return "", errors.New("invalid encrypted value")
-	}
-
-	var nonce [24]byte
-	copy(nonce[:], data[:24])
-
-	decrypted, ok := secretbox.Open(nil, data[24:], &nonce, &secretKey)
-	if !ok {
-		return "", errors.New("decryption failed")
-	}
-
-	return string(decrypted), nil
-}
-
-// Secret key management
-
-func generateAndStoreSecretKey(keyPath string) error {
-	var key [32]byte
-	if _, err := rand.Read(key[:]); err != nil {
-		return fmt.Errorf("failed to generate secret key: %w", err)
-	}
-
-	keyHex := hex.EncodeToString(key[:])
-	if err := os.WriteFile(keyPath, []byte(keyHex), 0600); err != nil {
-		return fmt.Errorf("failed to store secret key: %w", err)
-	}
-
-	secretKey = key
-	return nil
-}
-
-func loadSecretKey(keyPath string) error {
-	data, err := os.ReadFile(keyPath)
-	if err != nil {
-		return fmt.Errorf("failed to read secret key: %w", err)
-	}
-
-	keyBytes, err := hex.DecodeString(strings.TrimSpace(string(data)))
-	if err != nil {
-		return fmt.Errorf("failed to decode secret key: %w", err)
-	}
-
-	if len(keyBytes) != 32 {
-		return errors.New("invalid secret key length")
-	}
-
-	copy(secretKey[:], keyBytes)
-	return nil
+	return keys, nil
 }
