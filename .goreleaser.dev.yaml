@@ -130,9 +130,6 @@ nfpms:
   #       file_name_template: "{{ .PackageName }}_dev_{{ .Arch }}"
 
 release:
-  github:
-    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
-    name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
   name_template: "Dev Build - {{ .Date }}"
   tag_name: dev
   target_commitish: "{{ .Env.GITHUB_SHA }}"

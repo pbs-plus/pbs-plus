@@ -70,7 +70,7 @@ nfpms:
       - server
     package_name: "{{ .ProjectName }}"
     vendor: Son Roy Almerol
-    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    homepage: https://github.com/{{ .Env.GITHUB_REPOSITORY }}
     maintainer: Son Roy Almerol <github@snry.me>
     description: >
       PBS Plus is a project focused on extending Proxmox Backup Server (PBS) 
@@ -93,13 +93,10 @@ nfpms:
         file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
 
 release:
-  github:
-    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
-    name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
-  name_template: "{{ .ProjectName }} {{ .Version }}"
   draft: false
   prerelease: auto
   mode: replace
+  name_template: "{{ .ProjectName }} {{ .Version }}"
 
 changelog:
   sort: asc
