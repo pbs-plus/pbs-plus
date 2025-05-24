@@ -248,41 +248,43 @@ func Backup(rpcSess *arpc.Session, sourceMode string, readMode string, drive str
 
 	backupMode := sourceMode
 
-	if runtime.GOOS == "linux" {
-		sourceMode = "direct"
-	}
-
-	switch sourceMode {
-	case "direct":
-		path := drive
-		if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" {
+		switch sourceMode {
+		case "direct":
+			path := drive
 			volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
 			path = volName + "\\"
-		}
-		snapshot = snapshots.Snapshot{
-			Path:        path,
-			TimeStarted: time.Now(),
-			SourcePath:  drive,
-			Direct:      true,
-		}
-	default:
-		var err error
-		snapshot, err = snapshots.Manager.CreateSnapshot(jobId, drive)
-		if err != nil && snapshot == (snapshots.Snapshot{}) {
-			syslog.L.Error(err).WithMessage("Warning: VSS snapshot failed and has switched to direct backup mode.").Write()
-			backupMode = "direct"
-
-			path := drive
-			if runtime.GOOS == "windows" {
-				volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
-				path = volName + "\\"
-			}
 			snapshot = snapshots.Snapshot{
 				Path:        path,
 				TimeStarted: time.Now(),
 				SourcePath:  drive,
 				Direct:      true,
 			}
+		default:
+			var err error
+			snapshot, err = snapshots.Manager.CreateSnapshot(jobId, drive)
+			if err != nil && snapshot == (snapshots.Snapshot{}) {
+				syslog.L.Error(err).WithMessage("Warning: VSS snapshot failed and has switched to direct backup mode.").Write()
+				backupMode = "direct"
+
+				path := drive
+				volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
+				path = volName + "\\"
+
+				snapshot = snapshots.Snapshot{
+					Path:        path,
+					TimeStarted: time.Now(),
+					SourcePath:  drive,
+					Direct:      true,
+				}
+			}
+		}
+	} else {
+		snapshot = snapshots.Snapshot{
+			Path:        "/",
+			TimeStarted: time.Now(),
+			SourcePath:  "/",
+			Direct:      true,
 		}
 	}
 

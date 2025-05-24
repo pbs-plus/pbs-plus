@@ -161,7 +161,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				targetData.Name = targetName
 				targetData.Path = targetPath
 			default:
-				targetPath := "agent://" + clientIP + "/"
+				targetPath := "agent://" + clientIP + "/root"
 				processedTargetNames[targetName] = true
 
 				targetData.Name = targetName

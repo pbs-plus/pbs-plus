@@ -146,7 +146,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				newTarget.Path = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
 			default:
 				newTarget.Name = fmt.Sprintf("%s", reqParsed.Hostname)
-				newTarget.Path = fmt.Sprintf("agent://%s/", clientIP)
+				newTarget.Path = fmt.Sprintf("agent://%s/root", clientIP)
 			}
 
 			err := storeInstance.Database.CreateTarget(tx, newTarget)
@@ -193,7 +193,12 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		existingTarget, err := storeInstance.Database.GetTarget(reqParsed.Hostname + " - C")
+		existingTargetName := reqParsed.Hostname
+		if reqParsed.Drives[0].OperatingSystem == "windows" {
+			existingTargetName = reqParsed.Hostname + " - C"
+		}
+
+		existingTarget, err := storeInstance.Database.GetTarget(existingTargetName)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			controllers.WriteErrorResponse(w, err)
@@ -258,7 +263,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				newTarget.Path = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
 			default:
 				newTarget.Name = fmt.Sprintf("%s", reqParsed.Hostname)
-				newTarget.Path = fmt.Sprintf("agent://%s/", clientIP)
+				newTarget.Path = fmt.Sprintf("agent://%s/root", clientIP)
 			}
 
 			err := storeInstance.Database.CreateTarget(tx, newTarget)
