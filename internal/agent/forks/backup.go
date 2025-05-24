@@ -131,21 +131,28 @@ func CmdBackup() {
 	fmt.Println(backupMode)
 
 	done := make(chan os.Signal, 1)
-
-	signal.Notify(done, syscall.SIGINT)
+	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 	winquit.SimulateSigTermOnQuit(done)
 
 	go func() {
-		<-done
+		sig := <-done
+		syslog.L.Info().WithMessage(fmt.Sprintf("Received signal %v, shutting down gracefully", sig)).Write()
+
+		// Close RPC session first
 		rpcSess.Close()
+
+		// Clean up session
 		if session, ok := activeSessions.Get(*jobId); ok {
 			session.Close()
 		}
+
+		// Give some time for cleanup
+		time.Sleep(100 * time.Millisecond)
+		os.Exit(0)
 	}()
 
 	// Block here until the background RPC goroutine ends.
 	wg.Wait()
-
 	os.Exit(0)
 }
 
@@ -168,8 +175,15 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 		"--jobId=" + jobId,
 	}
 
-	// Create the command.
+	// Create the command with proper process group handling
 	cmd := exec.Command(execCmd, args...)
+
+	// On Unix systems, create a new process group
+	if runtime.GOOS != "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setpgid: true,
+		}
+	}
 
 	// Use a pipe to read stdout.
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -195,18 +209,16 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 		backupMode = scanner.Text()
 	} else {
 		if errScanner.Scan() {
+			// Clean up before returning error
+			cmd.Process.Kill()
 			return "", cmd.Process.Pid, fmt.Errorf("error from child process: %v", errScanner.Text())
 		}
+		cmd.Process.Kill()
 		return "", cmd.Process.Pid, fmt.Errorf("failed to read backup mode from child process")
 	}
 
-	// Optionally you could check for scanner.Err() here.
 	if err := scanner.Err(); err != nil {
-		return "", cmd.Process.Pid, err
-	}
-
-	// Detach from the child process so that ExecBackup doesn't wait for it to complete.
-	if err := cmd.Process.Release(); err != nil {
+		cmd.Process.Kill()
 		return "", cmd.Process.Pid, err
 	}
 
