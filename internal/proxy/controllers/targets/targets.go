@@ -161,6 +161,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				targetData.Name = targetName
 				targetData.Path = targetPath
 			default:
+				targetName = targetName + " - Root"
 				targetPath := "agent://" + clientIP + "/root"
 				processedTargetNames[targetName] = true
 
@@ -190,9 +191,6 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				// Only delete if the target name matches the hostname from the request
 				// This prevents deleting targets from other hosts sharing the same IP
 				expectedPrefix := reqParsed.Hostname + " - "
-				if existingTarget.OperatingSystem != "windows" {
-					expectedPrefix = reqParsed.Hostname
-				}
 				if strings.HasPrefix(existingTarget.Name, expectedPrefix) {
 					err = storeInstance.Database.DeleteTarget(tx, existingTarget.Name)
 					if err != nil {

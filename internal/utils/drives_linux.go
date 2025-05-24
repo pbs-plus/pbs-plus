@@ -56,7 +56,7 @@ func GetLocalDrives() ([]DriveInfo, error) {
 
 	// Create a single drive representing the entire Linux filesystem
 	drive := DriveInfo{
-		Letter:          "/",
+		Letter:          "Root",
 		Type:            "Fixed",
 		VolumeName:      "Root",
 		FileSystem:      "Linux Filesystem",
