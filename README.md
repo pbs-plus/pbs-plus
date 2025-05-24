@@ -28,12 +28,12 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 - [ ] File restore to bare-metal workstations with agent
 - [x] File-level exclusions for backups with agent
 - [x] Windows agent support for workstations
-- [ ] Linux agent support for workstations
+- [x] Linux agent support for workstations
 - [ ] Containerized agent support for Docker/Kubernetes
 - [ ] Mac agent support for workstations 
-- [ ] MySQL database backup/restore support
-- [ ] PostgreSQL database backup/restore support
-- [ ] Active Directory/LDAP backup/restore support
+- [x] MySQL database backup/restore support (use pre-backup hook scripts to dump databases)
+- [x] PostgreSQL database backup/restore support (use pre-backup hook scripts to dump databases)
+- [x] Active Directory/LDAP backup/restore support (use pre-backup hook scripts to dump databases)
 
 ## Installation
 To install PBS Plus:
@@ -49,6 +49,14 @@ To install PBS Plus:
 - If you're not seeing the `Deploy With Token` button, try doing hard refresh (shift + refresh button on Chromium-based browsers) as it's probably using a cached version of the page.
 - As soon as the script finishes, you should be able to see the client as "Reachable" in the `Targets` tab. If so, then you should be good to go.
 
+### Linux Agent
+- Install one of the pbs-plus-agent Linux package in the release and install it in your machine.
+- In the `Agent Bootstrap` menu under `Disk Backup`, click on an existing valid token or generate a new one.
+- Click on `Copy Token` while the valid token is selected. That should give you the token you need for the agent to establish connection.
+- In your target machine, modify `/etc/pbs-plus-agent/registry/software/pbsplus/config.json`.
+- In the `config.json` file, place the copied token under `BootstrapToken` and place your server URL under `ServerURL` with port `8008`. (e.g. `https://10.1.0.2:8008`)
+- Do a restart of the `pbs-plus-agent` service (`systemctl restart pbs-plus-agent` if you're using systemd).
+
 ## Usage
 PBS Plus currently consists of two main components: the server and the agent. The server should be installed on the PBS machine, while agents are installed on client workstations.
 
@@ -57,7 +65,8 @@ PBS Plus currently consists of two main components: the server and the agent. Th
 - All new features, including remote file-level backups, can be managed through the "Disk Backup" page.
 
 ### Agent
-- Currently, only Windows agents are supported.
+- Currently, Windows and Linux agents are supported.
+- Linux agents **do not** support snapshots on backup yet.
 - The agent registers with the server on initialization, exchanging public keys for communication.
 - The agent acts as a service, using a custom RPC (`aRPC`/Agent RPC) using [smux](https://github.com/xtaci/smux) with mTLS to communicate with the server. For backups, the server communicates with the agent over `aRPC` to deploy a `FUSE`-based filesystem, mounts the volume to PBS, and runs `proxmox-backup-client` on the server side to perform the actual backup.
 
