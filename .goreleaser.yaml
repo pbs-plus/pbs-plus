@@ -21,6 +21,20 @@ builds:
       post:
         - upx "{{ .Path }}"
 
+  # Linux Agent
+  # - id: linux-agent
+  #   main: ./cmd/linux_agent
+  #   binary: pbs-plus-agent
+  #   goos:
+  #     - linux
+  #   goarch:
+  #     - amd64
+  #   ldflags:
+  #     - -X 'main.Version={{.Version}}'
+  #   hooks:
+  #     post:
+  #       - upx "{{ .Path }}"
+
   # Windows Agent
   - id: windows-agent
     main: ./cmd/windows_agent
@@ -91,6 +105,28 @@ nfpms:
     overrides:
       deb:
         file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+  #- id: linux-agent-deb
+  #  builds:
+  #    - linux-agent
+  #  package_name: "{{ .ProjectName }}"
+  #  vendor: Son Roy Almerol
+  #  homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+  #  maintainer: Son Roy Almerol <github@snry.me>
+  #  description: >
+  #    PBS Plus is a project focused on extending Proxmox Backup Server (PBS) 
+  #    with advanced features to create a more competitive backup solution
+  #  license: MIT
+  #  formats:
+  #    - deb
+  #  contents:
+  #    - src: ./build/package/linux_agent/debian/lib/systemd/system/pbs-plus-agent.service
+  #      dst: /lib/systemd/system/pbs-plus-agent.service
+  #      type: config
+  #  scripts:
+  #    postinstall: ./build/package/linux_agent/debian/DEBIAN/postinst
+  #  overrides:
+  #    deb:
+  #      file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
 
 release:
   github:
