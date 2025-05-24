@@ -117,11 +117,11 @@ nfpms:
       - proxmox-backup-client (>= 3.2.5)
       - fuse3
     contents:
-      - src: ./build/package/server/debian/lib/systemd/system/pbs-plus.service
+      - src: ./build/package/server/pbs-plus.service
         dst: /lib/systemd/system/pbs-plus.service
         type: config
     scripts:
-      postinstall: ./build/package/server/debian/DEBIAN/postinst
+      postinstall: ./build/package/server/postinst
     overrides:
       deb:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
