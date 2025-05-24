@@ -67,9 +67,17 @@ func checkAgentAuth(store *store.Store, r *http.Request) error {
 		return fmt.Errorf("CheckAgentAuth: missing certificate subject common name")
 	}
 
+	isWindows := true
 	trustedCert, err := loadTrustedCert(store, agentHostname+" - C")
 	if err != nil {
-		return fmt.Errorf("CheckAgentAuth: certificate not trusted")
+		isWindows = false
+	}
+
+	if !isWindows {
+		trustedCert, err = loadTrustedCert(store, agentHostname+" - Root")
+		if err != nil {
+			return fmt.Errorf("CheckAgentAuth: certificate not trusted")
+		}
 	}
 
 	if !clientCert.Equal(trustedCert) {
