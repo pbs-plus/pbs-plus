@@ -125,28 +125,98 @@ nfpms:
     overrides:
       deb:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
+
   - id: linux-agent-deb
     ids:
       - linux-agent
-    package_name: "{{ .ProjectName }}"
+    package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
     maintainer: Son Roy Almerol <github@snry.me>
     description: >
-      PBS Plus is a project focused on extending Proxmox Backup Server (PBS) 
-      with advanced features to create a more competitive backup solution
+      PBS Plus Agent - Linux agent for PBS Plus backup solution
     license: MIT
     formats:
       - deb
     contents:
-      - src: ./build/package/linux_agent/debian/lib/systemd/system/pbs-plus-agent.service
+      - src: ./build/package/linux_agent/deb/pbs-plus-agent.service
         dst: /lib/systemd/system/pbs-plus-agent.service
         type: config
     scripts:
-      postinstall: ./build/package/linux_agent/debian/DEBIAN/postinst
+      postinstall: ./build/package/linux_agent/deb/postinst
     overrides:
       deb:
-        file_name_template: "{{ .PackageName }}-agent-v{{ .Version }}-{{ .Arch }}"
+        file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
+
+  - id: linux-agent-rpm
+    ids:
+      - linux-agent
+    package_name: "{{ .ProjectName }}-agent"
+    vendor: Son Roy Almerol
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    maintainer: Son Roy Almerol <github@snry.me>
+    description: >
+      PBS Plus Agent - Linux agent for PBS Plus backup solution
+    license: MIT
+    formats:
+      - rpm
+    contents:
+      - src: ./build/package/linux_agent/rpm/pbs-plus-agent.service
+        dst: /usr/lib/systemd/system/pbs-plus-agent.service
+        type: config
+    scripts:
+      postinstall: ./build/package/linux_agent/rpm/postinst
+    overrides:
+      rpm:
+        file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
+
+  - id: linux-agent-apk
+    ids:
+      - linux-agent
+    package_name: "{{ .ProjectName }}-agent"
+    vendor: Son Roy Almerol
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    maintainer: Son Roy Almerol <github@snry.me>
+    description: >
+      PBS Plus Agent - Linux agent for PBS Plus backup solution
+    license: MIT
+    formats:
+      - apk
+    contents:
+      - src: ./build/package/linux_agent/apk/pbs-plus-agent
+        dst: /etc/init.d/pbs-plus-agent
+        type: config
+        file_info:
+          mode: 0755
+    scripts:
+      postinstall: ./build/package/linux_agent/apk/postinst
+    overrides:
+      apk:
+        file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
+
+  - id: linux-agent-ipk
+    ids:
+      - linux-agent
+    package_name: "{{ .ProjectName }}-agent"
+    vendor: Son Roy Almerol
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    maintainer: Son Roy Almerol <github@snry.me>
+    description: >
+      PBS Plus Agent - Linux agent for PBS Plus backup solution
+    license: MIT
+    formats:
+      - ipk
+    contents:
+      - src: ./build/package/linux_agent/ipk/pbs-plus-agent
+        dst: /etc/init.d/pbs-plus-agent
+        type: config
+        file_info:
+          mode: 0755
+    scripts:
+      postinstall: ./build/package/linux_agent/ipk/postinst
+    overrides:
+      ipk:
+        file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
 
 release:
   github:

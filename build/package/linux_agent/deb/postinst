@@ -3,6 +3,9 @@ set -e
 
 chmod +x /usr/bin/pbs-plus-agent
 
+# Create run directory if it doesn't exist
+mkdir -p /run/proxmox-backup
+
 systemctl daemon-reload
 
 # Enable the service to start on boot
