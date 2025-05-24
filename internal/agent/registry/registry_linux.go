@@ -66,7 +66,7 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 		return nil, fmt.Errorf("GetEntry error: %w", err)
 	}
 
-	value := string(data)
+	value := strings.TrimSpace(string(data))
 	if isSecret {
 		decrypted, err := decrypt(value)
 		if err != nil {
