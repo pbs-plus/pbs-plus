@@ -12,12 +12,14 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
+	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -297,6 +299,24 @@ func (p *agentService) connectARPC() error {
 }
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("Panic occurred: %v\nStack trace:\n%s", r, debug.Stack())
+
+			logFile, err := os.OpenFile("panic.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err == nil {
+				defer logFile.Close()
+				logFile.WriteString(msg)
+			} else {
+				fmt.Println("Error opening log file:", err)
+			}
+
+			os.Exit(1)
+		}
+	}()
+
+	forks.CmdBackup()
+
 	constants.Version = Version
 
 	prg := &agentService{}
