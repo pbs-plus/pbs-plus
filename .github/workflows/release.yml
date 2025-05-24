@@ -29,6 +29,8 @@ jobs:
 
       - name: Set environment variables
         run: |
+          echo "GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}" >> $GITHUB_ENV
+          echo "GITHUB_REPOSITORY_NAME=${{ github.event.repository.name }}" >> $GITHUB_ENV
           echo "GITHUB_REPOSITORY=${{ github.repository }}" >> $GITHUB_ENV
 
       - name: Prepare packaging files

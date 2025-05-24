@@ -70,7 +70,7 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: release --config .goreleaser.dev.yaml --clean
+          args: release --tag=dev --config .goreleaser.dev.yaml --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
