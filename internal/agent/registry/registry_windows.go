@@ -73,6 +73,18 @@ func CreateEntry(entry *RegistryEntry) error {
 	return nil
 }
 
+func CreateEntryIfNotExists(entry *RegistryEntry) error {
+	// Check if the entry already exists
+	_, err := GetEntry(entry.Path, entry.Key, entry.IsSecret)
+	if err == nil {
+		// Entry exists, don't create/update
+		return fmt.Errorf("CreateEntryIfNotExists error: entry already exists")
+	}
+
+	// Entry doesn't exist, create it
+	return CreateEntry(entry)
+}
+
 // UpdateEntry updates an existing registry entry
 func UpdateEntry(entry *RegistryEntry) error {
 	// First check if the entry exists

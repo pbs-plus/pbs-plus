@@ -36,6 +36,10 @@ func ensureRegistryDir() error {
 	return os.MkdirAll(registryBasePath, 0755)
 }
 
+func init() {
+	_ = ensureRegistryDir()
+}
+
 // getRegistryFilePath converts a Windows registry path to a Linux file path
 func getRegistryFilePath(path string) string {
 	// Convert Windows registry path to file path with all directories lowercase
@@ -226,6 +230,18 @@ func CreateEntry(entry *RegistryEntry) error {
 	}
 
 	return nil
+}
+
+func CreateEntryIfNotExists(entry *RegistryEntry) error {
+	// Check if the entry already exists
+	_, err := GetEntry(entry.Path, entry.Key, entry.IsSecret)
+	if err == nil {
+		// Entry exists, don't create/update
+		return fmt.Errorf("CreateEntryIfNotExists error: entry already exists")
+	}
+
+	// Entry doesn't exist, create it
+	return CreateEntry(entry)
 }
 
 // UpdateEntry updates an existing registry entry
