@@ -68,15 +68,25 @@ archives:
   - id: server
     builds:
       - server
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
+    name_template: "{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    format: binary
 
-  - id: windows-binaries
+  - id: windows-agent
     builds:
       - windows-agent
+    name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    format: binary
+
+  - id: windows-updater
+    builds:
       - windows-updater
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: zip
+    name_template: "{{ .ProjectName }}-updater-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    format: binary
+
+checksum:
+  name_template: "{{ .ArtifactName }}.{{ .Algorithm }}"
+  algorithm: md5
+  split: true
 
 nfpms:
   - id: server-deb
@@ -104,7 +114,7 @@ nfpms:
       postinstall: ./build/package/server/debian/DEBIAN/postinst
     overrides:
       deb:
-        file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+        file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
   #- id: linux-agent-deb
   #  builds:
   #    - linux-agent
