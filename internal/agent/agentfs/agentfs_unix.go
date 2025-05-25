@@ -81,11 +81,11 @@ func getStatFS(path string) (types.StatFS, error) {
 	// Map the unix.Statfs_t fields to the types.StatFS structure
 	stat := types.StatFS{
 		Bsize:   uint64(statfs.Bsize),   // Block size
-		Blocks:  statfs.Blocks,          // Total number of blocks
-		Bfree:   statfs.Bfree,           // Free blocks
-		Bavail:  statfs.Bavail,          // Available blocks to unprivileged users
-		Files:   statfs.Files,           // Total number of inodes
-		Ffree:   statfs.Ffree,           // Free inodes
+		Blocks:  uint64(statfs.Blocks),  // Total number of blocks
+		Bfree:   uint64(statfs.Bfree),   // Free blocks
+		Bavail:  uint64(statfs.Bavail),  // Available blocks to unprivileged users
+		Files:   uint64(statfs.Files),   // Total number of inodes
+		Ffree:   uint64(statfs.Ffree),   // Free inodes
 		NameLen: uint64(statfs.Namelen), // Maximum filename length
 	}
 
