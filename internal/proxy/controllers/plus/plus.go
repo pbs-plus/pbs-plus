@@ -95,6 +95,70 @@ func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc
 
 const PBS_DOWNLOAD_BASE = "https://github.com/pbs-plus/pbs-plus/releases/download/"
 
+type PlatformInfo struct {
+	OS     string
+	Arch   string
+	Format string
+	Ext    string
+}
+
+func parsePlatformParams(r *http.Request) PlatformInfo {
+	// Default to Windows
+	platform := PlatformInfo{
+		OS:     "windows",
+		Arch:   "amd64",
+		Format: "binary",
+		Ext:    ".exe",
+	}
+
+	// Parse query parameters
+	format := r.URL.Query().Get("format")
+	arch := r.URL.Query().Get("arch")
+
+	if arch != "" {
+		platform.Arch = arch
+	}
+
+	if format != "" {
+		platform.Format = format
+		switch format {
+		case "deb":
+			platform.OS = "linux"
+			platform.Ext = ".deb"
+		case "rpm":
+			platform.OS = "linux"
+			platform.Ext = ".rpm"
+		case "apk":
+			platform.OS = "linux"
+			platform.Ext = ".apk"
+		case "ipk":
+			platform.OS = "linux"
+			platform.Ext = ".ipk"
+		case "binary":
+			// Check if we should use Linux binary instead of Windows
+			if r.URL.Query().Get("os") == "linux" {
+				platform.OS = "linux"
+				platform.Ext = ""
+			}
+		}
+	}
+
+	return platform
+}
+
+func buildFilename(component, version string, platform PlatformInfo) string {
+	if platform.Format == "binary" {
+		if platform.OS == "linux" {
+			return fmt.Sprintf("%s-%s-%s-%s", component, version, platform.OS, platform.Arch)
+		}
+		// Windows binary
+		return fmt.Sprintf("%s-%s-%s-%s%s", component, version, platform.OS, platform.Arch, platform.Ext)
+	}
+
+	// Package formats
+	return fmt.Sprintf("%s-%s-%s-%s%s", component, version, platform.OS, platform.Arch, platform.Ext)
+}
+
 func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -106,8 +170,11 @@ func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc
 			version = "dev"
 		}
 
+		platform := parsePlatformParams(r)
+		filename := buildFilename("pbs-plus-agent", version, platform)
+
 		// Construct the passthrough URL
-		targetURL := fmt.Sprintf("%s%s/pbs-plus-agent-%s-windows-amd64.exe", PBS_DOWNLOAD_BASE, version, version)
+		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 
 		proxyUrl(targetURL, w, r)
 	}
@@ -124,8 +191,11 @@ func DownloadUpdater(storeInstance *store.Store, version string) http.HandlerFun
 			version = "dev"
 		}
 
+		platform := parsePlatformParams(r)
+		filename := buildFilename("pbs-plus-updater", version, platform)
+
 		// Construct the passthrough URL
-		targetURL := fmt.Sprintf("%s%s/pbs-plus-updater-%s-windows-amd64.exe", PBS_DOWNLOAD_BASE, version, version)
+		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 
 		proxyUrl(targetURL, w, r)
 	}
@@ -142,8 +212,11 @@ func DownloadChecksum(storeInstance *store.Store, version string) http.HandlerFu
 			version = "dev"
 		}
 
-		// Construct the passthrough URL
-		targetURL := fmt.Sprintf("%s%s/pbs-plus-agent-%s-windows-amd64.exe.md5", PBS_DOWNLOAD_BASE, version, version)
+		platform := parsePlatformParams(r)
+		filename := buildFilename("pbs-plus-agent", version, platform)
+
+		// Construct the passthrough URL for checksum
+		targetURL := fmt.Sprintf("%s%s/%s.md5", PBS_DOWNLOAD_BASE, version, filename)
 
 		proxyUrl(targetURL, w, r)
 	}

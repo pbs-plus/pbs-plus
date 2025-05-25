@@ -1,4 +1,4 @@
-//go:build windows
+//go:build unix
 
 package main
 
@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,14 +15,11 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"golang.org/x/sys/windows"
 )
 
 type UpdaterService struct {
-	svc    service.Service
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -34,12 +32,11 @@ type VersionResp struct {
 const updateCheckInterval = 2 * time.Minute
 
 var (
-	mutex  sync.Mutex
-	handle windows.Handle
+	mutex    sync.Mutex
+	lockFile *os.File
 )
 
-func (u *UpdaterService) Start(s service.Service) error {
-	u.svc = s
+func (u *UpdaterService) Start() error {
 	u.ctx, u.cancel = context.WithCancel(context.Background())
 
 	u.wg.Add(1)
@@ -51,7 +48,7 @@ func (u *UpdaterService) Start(s service.Service) error {
 	return nil
 }
 
-func (u *UpdaterService) Stop(s service.Service) error {
+func (u *UpdaterService) Stop() error {
 	u.cancel()
 	u.wg.Wait()
 	return nil
@@ -129,53 +126,43 @@ func (u *UpdaterService) checkForNewVersion() (string, error) {
 }
 
 func main() {
-	svcConfig := &service.Config{
-		Name:        "PBSPlusUpdater",
-		DisplayName: "PBS Plus Updater Service",
-		Description: "Handles automatic updates for PBS Plus Agent",
-	}
-
-	updater := &UpdaterService{}
-	s, err := service.New(updater, svcConfig)
-	if err != nil {
-		fmt.Printf("Failed to initialize service: %v\n", err)
-		return
-	}
-
-	if err := createMutex(); err != nil {
+	if err := createLockFile(); err != nil {
 		syslog.L.Error(err).Write()
 		os.Exit(1)
 	}
-	defer releaseMutex()
+	defer releaseLockFile()
 
-	if len(os.Args) > 1 {
-		err = service.Control(s, os.Args[1])
-		if err != nil {
-			fmt.Printf("Failed to execute command %s: %v\n", os.Args[1], err)
-			return
-		}
-		return
+	updater := &UpdaterService{}
+
+	if err := updater.Start(); err != nil {
+		fmt.Printf("Failed to start updater: %v\n", err)
+		os.Exit(1)
 	}
 
-	err = s.Run()
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to run service").Write()
+	// Wait for interrupt signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	<-sigChan
+	syslog.L.Info().WithMessage("received shutdown signal").Write()
+
+	if err := updater.Stop(); err != nil {
+		syslog.L.Error(err).WithMessage("failed to stop updater").Write()
 	}
 }
 
 func (u *UpdaterService) readVersionFromFile() (string, error) {
-	ex, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("failed to get executable path: %w", err)
+	if err := os.MkdirAll("/etc/pbs-plus-agent", 0755); err != nil {
+		return "", err
 	}
 
-	versionLockPath := filepath.Join(filepath.Dir(ex), "version.lock")
+	versionLockPath := filepath.Join("/etc/pbs-plus-agent", "version.lock")
 	mutex := flock.New(versionLockPath)
 
 	mutex.RLock()
 	defer mutex.Close()
 
-	versionFile := filepath.Join(filepath.Dir(ex), "version.txt")
+	versionFile := filepath.Join("/etc/pbs-plus-agent", "version.txt")
 	data, err := os.ReadFile(versionFile)
 	if err != nil {
 		return "", fmt.Errorf("failed to read version file: %w", err)
@@ -189,7 +176,7 @@ func (u *UpdaterService) readVersionFromFile() (string, error) {
 	return version, nil
 }
 
-func createMutex() error {
+func createLockFile() error {
 	mutex.Lock()
 	defer mutex.Unlock()
 
@@ -197,24 +184,32 @@ func createMutex() error {
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %v", err)
 	}
-	mutexName := filepath.Base(execPath)
 
-	h, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr(mutexName))
+	lockPath := filepath.Join("/var/lock", filepath.Base(execPath)+".lock")
+
+	// Try to create lock file
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to create mutex: %v", err)
+		if os.IsExist(err) {
+			return fmt.Errorf("another instance is already running")
+		}
+		return fmt.Errorf("failed to create lock file: %v", err)
 	}
 
-	if windows.GetLastError() == syscall.ERROR_ALREADY_EXISTS {
-		windows.CloseHandle(h)
-		return fmt.Errorf("another instance is already running")
+	// Write PID to lock file
+	if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
+		file.Close()
+		os.Remove(lockPath)
+		return fmt.Errorf("failed to write PID to lock file: %v", err)
 	}
 
-	handle = h
+	lockFile = file
 	return nil
 }
 
-func releaseMutex() {
-	if handle != 0 {
-		windows.CloseHandle(handle)
+func releaseLockFile() {
+	if lockFile != nil {
+		lockFile.Close()
+		os.Remove(lockFile.Name())
 	}
 }

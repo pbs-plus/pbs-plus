@@ -1,0 +1,16 @@
+[Unit]
+Description=PBS Plus Agent Updater
+Wants=network-online.target
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pbs-plus-updater
+ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/run/proxmox-backup/pbs-plus-updater.pid
+Restart=on-failure
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

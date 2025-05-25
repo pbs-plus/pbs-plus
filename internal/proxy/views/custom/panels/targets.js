@@ -8,18 +8,18 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
   controller: {
     xclass: "Ext.app.ViewController",
 
-    onAdd: function () {
+    onAdd: function() {
       let me = this;
       Ext.create("PBS.D2DManagement.TargetEditWindow", {
         listeners: {
-          destroy: function () {
+          destroy: function() {
             me.reload();
           },
         },
       }).show();
     },
 
-    addJob: function () {
+    addJob: function() {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -34,14 +34,14 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
         autoShow: true,
         jobData: { target: targetName },
         listeners: {
-          destroy: function () {
+          destroy: function() {
             me.reload();
           },
         },
       }).show();
     },
 
-    onEdit: function () {
+    onEdit: function() {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -57,19 +57,19 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }).show();
     },
 
-    reload: function () {
+    reload: function() {
       this.getView().getStore().rstore.load();
     },
 
-    stopStore: function () {
+    stopStore: function() {
       this.getView().getStore().rstore.stopUpdate();
     },
 
-    startStore: function () {
+    startStore: function() {
       this.getView().getStore().rstore.startUpdate();
     },
 
-    render_status: function (value) {
+    render_status: function(value) {
       if (value.toString() == "true") {
         icon = "check good";
         text = "Reachable";
@@ -81,14 +81,14 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       return `<i class="fa fa-${icon}"></i> ${text}`;
     },
 
-    init: function (view) {
+    init: function(view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
 
       // Apply custom grouper for "ns" on initialization
       const store = view.getStore();
       store.setGrouper({
         property: "path",
-        groupFn: function (record) {
+        groupFn: function(record) {
           let ns = record.get("path");
           let name = record.get("name");
           if (ns.startsWith("agent://")) {
@@ -129,7 +129,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       groupers: [
         {
           property: "path",
-          groupFn: function (record) {
+          groupFn: function(record) {
             let ns = record.get("path");
             let name = record.get("name");
             if (ns.startsWith("agent://")) {
@@ -143,7 +143,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       groupHeaderTpl: [
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
-          formatNS: function (group) {
+          formatNS: function(group) {
             return group || "Unassigned";
           },
         },
@@ -214,7 +214,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     {
       text: gettext("Used Size"),
       dataIndex: "drive_used_bytes",
-      renderer: function (value) {
+      renderer: function(value) {
         if (!value && value !== 0) {
           return "-";
         }
@@ -225,7 +225,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     {
       text: gettext("Total Size"),
       dataIndex: "drive_total_bytes",
-      renderer: function (value) {
+      renderer: function(value) {
         if (!value && value !== 0) {
           return "-";
         }
@@ -237,6 +237,11 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       header: gettext("Status"),
       dataIndex: "connection_status",
       renderer: "render_status",
+      flex: 1,
+    },
+    {
+      text: gettext("Agent OS"),
+      dataIndex: "os",
       flex: 1,
     },
     {

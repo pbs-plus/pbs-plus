@@ -59,6 +59,19 @@ builds:
       post:
         - upx "{{ .Path }}"
 
+  # Linux Updater
+  - id: linux-updater
+    main: ./cmd/unix_updater
+    binary: pbs-plus-updater
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    hooks:
+      post:
+        - upx "{{ .Path }}"
+
   # BSD Agent
   - id: freebsd-agent
     main: ./cmd/unix_agent
@@ -112,6 +125,13 @@ archives:
     ids:
       - linux-agent
     name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
+  - id: linux-updater
+    ids:
+      - linux-updater
+    name_template: "{{ .ProjectName }}-updater-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
 
@@ -185,6 +205,7 @@ nfpms:
   - id: linux-agent-deb
     ids:
       - linux-agent
+      - linux-updater
     package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -198,6 +219,9 @@ nfpms:
       - src: ./build/package/linux_agent/deb/pbs-plus-agent.service
         dst: /lib/systemd/system/pbs-plus-agent.service
         type: config
+      - src: ./build/package/linux_agent/deb/pbs-plus-updater.service
+        dst: /lib/systemd/system/pbs-plus-updater.service
+        type: config
     scripts:
       postinstall: ./build/package/linux_agent/deb/postinst
     overrides:
@@ -207,6 +231,7 @@ nfpms:
   - id: linux-agent-rpm
     ids:
       - linux-agent
+      - linux-updater
     package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -220,6 +245,9 @@ nfpms:
       - src: ./build/package/linux_agent/rpm/pbs-plus-agent.service
         dst: /usr/lib/systemd/system/pbs-plus-agent.service
         type: config
+      - src: ./build/package/linux_agent/rpm/pbs-plus-updater.service
+        dst: /usr/lib/systemd/system/pbs-plus-updater.service
+        type: config
     scripts:
       postinstall: ./build/package/linux_agent/rpm/postinst
     overrides:
@@ -229,6 +257,7 @@ nfpms:
   - id: linux-agent-apk
     ids:
       - linux-agent
+      - linux-updater
     package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -244,6 +273,11 @@ nfpms:
         type: config
         file_info:
           mode: 0755
+      - src: ./build/package/linux_agent/apk/pbs-plus-updater
+        dst: /etc/init.d/pbs-plus-updater
+        type: config
+        file_info:
+          mode: 0755
     scripts:
       postinstall: ./build/package/linux_agent/apk/postinst
     overrides:
@@ -253,6 +287,7 @@ nfpms:
   - id: linux-agent-ipk
     ids:
       - linux-agent
+      - linux-updater
     package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -265,6 +300,11 @@ nfpms:
     contents:
       - src: ./build/package/linux_agent/ipk/pbs-plus-agent
         dst: /etc/init.d/pbs-plus-agent
+        type: config
+        file_info:
+          mode: 0755
+      - src: ./build/package/linux_agent/ipk/pbs-plus-updater
+        dst: /etc/init.d/pbs-plus-updater
         type: config
         file_info:
           mode: 0755

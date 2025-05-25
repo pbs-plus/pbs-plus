@@ -12,11 +12,13 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
@@ -298,6 +300,26 @@ func (p *agentService) connectARPC() error {
 	return nil
 }
 
+func (p *agentService) writeVersionToFile() error {
+	if err := os.MkdirAll("/etc/pbs-plus-agent", 0755); err != nil {
+		return err
+	}
+
+	versionLockPath := filepath.Join("/etc/pbs-plus-agent", "version.lock")
+	mutex := flock.New(versionLockPath)
+
+	mutex.Lock()
+	defer mutex.Close()
+
+	versionFile := filepath.Join("/etc/pbs-plus-agent", "version.txt")
+	err := os.WriteFile(versionFile, []byte(Version), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write version file: %w", err)
+	}
+
+	return nil
+}
+
 func main() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -320,6 +342,12 @@ func main() {
 	constants.Version = Version
 
 	prg := &agentService{}
+
+	err := prg.writeVersionToFile()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to write version to file").Write()
+		return
+	}
 
 	if err := prg.Start(); err != nil {
 		syslog.L.Error(err).WithMessage("failed to start service").Write()
