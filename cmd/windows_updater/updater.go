@@ -33,14 +33,14 @@ func (u *UpdaterService) getMainServiceVersion() (string, error) {
 	return version, nil
 }
 
-func (u *UpdaterService) isServiceStopped() (bool, error) {
-	cmd := exec.Command("sc", "query", "PBSPlusAgent")
-	output, err := cmd.Output()
-	if err != nil {
-		return false, fmt.Errorf("failed to query service status: %w", err)
-	}
-	return strings.Contains(string(output), "STOPPED"), nil
-}
+// func (u *UpdaterService) isServiceStopped() (bool, error) {
+// 	cmd := exec.Command("sc", "query", "PBSPlusAgent")
+// 	output, err := cmd.Output()
+// 	if err != nil {
+// 		return false, fmt.Errorf("failed to query service status: %w", err)
+// 	}
+// 	return strings.Contains(string(output), "STOPPED"), nil
+// }
 
 func (p *UpdaterService) getMainBinaryPath() (string, error) {
 	ex, err := os.Executable()
