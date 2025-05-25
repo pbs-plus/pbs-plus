@@ -34,6 +34,9 @@ ReadOnlyPaths=/
 # Override with read-write access for specific directories
 ReadWritePaths=/var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/proxmox-backup /etc/pbs-plus-agent /tmp /var/tmp
 
+# Ensure binary directories are executable
+ExecPaths=/usr/bin /usr/sbin /bin /sbin
+
 # Device access for block-level backups
 DevicePolicy=closed
 DeviceAllow=/dev/null rw
