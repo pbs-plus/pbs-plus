@@ -11,8 +11,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	"github.com/pbs-plus/pbs-plus/internal/store/database"
-	"github.com/pbs-plus/pbs-plus/internal/store/sqlite"
+	sqlite "github.com/pbs-plus/pbs-plus/internal/store/database"
+	database "github.com/pbs-plus/pbs-plus/internal/store/legacy_database"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 

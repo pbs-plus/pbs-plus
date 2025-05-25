@@ -1,270 +1,287 @@
 //go:build linux
 
-package database
+package sqlite
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
-	configLib "github.com/pbs-plus/pbs-plus/internal/config"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pattern"
+	_ "modernc.org/sqlite"
 )
 
-func (database *Database) RegisterExclusionPlugin() {
-	plugin := &configLib.SectionPlugin[types.Exclusion]{
-		TypeName:   "exclusion",
-		FolderPath: database.paths["exclusions"],
-		Validate: func(config types.Exclusion) error {
-			if !pattern.IsValidPattern(config.Path) {
-				return fmt.Errorf("invalid exclusion pattern: %s", config.Path)
+// CreateExclusion inserts a new exclusion into the database.
+func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion) (err error) {
+	var commitNeeded bool = false
+	if tx == nil {
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return fmt.Errorf("CreateExclusion: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("CreateExclusion: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("CreateExclusion: failed to commit transaction: %w", cErr)
+					syslog.L.Error(err).Write()
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("CreateExclusion: failed to rollback transaction: %w", rbErr)).Write()
+				}
 			}
-			return nil
-		},
+		}()
 	}
 
-	database.exclusionsConfig = configLib.NewSectionConfig(plugin)
-}
+	if exclusion.Path == "" {
+		return errors.New("path is empty")
+	}
 
-func (database *Database) CreateExclusion(exclusion types.Exclusion) error {
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
-
 	if !pattern.IsValidPattern(exclusion.Path) {
 		return fmt.Errorf("CreateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
-	filename := "global"
-	if exclusion.JobID != "" {
-		filename = utils.EncodePath(exclusion.JobID)
+	_, err = tx.Exec(`
+        INSERT INTO exclusions (job_id, path, comment)
+        VALUES (?, ?, ?)
+    `, exclusion.JobID, exclusion.Path, exclusion.Comment)
+	if err != nil {
+		// Consider checking for specific constraint errors if needed
+		return fmt.Errorf("CreateExclusion: error inserting exclusion: %w", err)
 	}
 
-	configPath := filepath.Join(database.paths["exclusions"], filename+".cfg")
-
-	// Read existing exclusions
-	var configData *configLib.ConfigData[types.Exclusion]
-	existing, err := database.exclusionsConfig.Parse(configPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("CreateExclusion: error reading existing config: %w", err)
-	}
-
-	if existing != nil {
-		configData = existing
-	} else {
-		configData = &configLib.ConfigData[types.Exclusion]{
-			Sections: make(map[string]*configLib.Section[types.Exclusion]),
-			Order:    make([]string, 0),
-			FilePath: configPath,
-		}
-	}
-
-	// Add new exclusion
-	sectionID := fmt.Sprintf("excl-%s", exclusion.Path)
-	configData.Sections[sectionID] = &configLib.Section[types.Exclusion]{
-		Type:       "exclusion",
-		ID:         sectionID,
-		Properties: exclusion,
-	}
-	configData.Order = append(configData.Order, sectionID)
-
-	if err := database.exclusionsConfig.Write(configData); err != nil {
-		return fmt.Errorf("CreateExclusion: error writing config: %w", err)
-	}
-
+	commitNeeded = true
 	return nil
 }
 
+// GetAllJobExclusions returns all exclusions associated with a job.
+// Assumes an index exists on exclusions.job_id.
 func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, error) {
-	configPath := filepath.Join(database.paths["exclusions"], utils.EncodePath(jobId)+".cfg")
-	configData, err := database.exclusionsConfig.Parse(configPath)
+	rows, err := database.readDb.Query(`
+        SELECT job_id, path, comment FROM exclusions
+        WHERE job_id = ?
+    `, jobId)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []types.Exclusion{}, err
-		}
-		return nil, fmt.Errorf("GetAllJobExclusions: error reading config: %w", err)
+		return nil, fmt.Errorf("GetAllJobExclusions: error querying exclusions: %w", err)
 	}
+	defer rows.Close()
 
 	var exclusions []types.Exclusion
+	// Using a map for deduplication based on path as per original logic.
+	// If (job_id, path) is unique in DB, this map is unnecessary.
 	seenPaths := make(map[string]bool)
 
-	for _, sectionID := range configData.Order {
-		section := configData.Sections[sectionID]
-		if seenPaths[section.Properties.Path] {
-			continue // Skip duplicates
+	for rows.Next() {
+		var excl types.Exclusion
+		if err := rows.Scan(&excl.JobID, &excl.Path, &excl.Comment); err != nil {
+			syslog.L.Error(fmt.Errorf("GetAllJobExclusions: error scanning row: %w", err)).Write()
+			continue
 		}
-		seenPaths[section.Properties.Path] = true
-
-		exclusions = append(exclusions, section.Properties)
+		// Deduplicate based on path within this job's exclusions
+		if seenPaths[excl.Path] {
+			continue
+		}
+		seenPaths[excl.Path] = true
+		exclusions = append(exclusions, excl)
 	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetAllJobExclusions: error iterating exclusion rows: %w", err)
+	}
+
 	return exclusions, nil
 }
 
+// GetAllGlobalExclusions returns all exclusions that are not tied to any job.
+// Assumes an index exists on exclusions.job_id or handles NULL checks efficiently.
 func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
-	configPath := filepath.Join(database.paths["exclusions"], "global.cfg")
-	configData, err := database.exclusionsConfig.Parse(configPath)
+	rows, err := database.readDb.Query(`
+        SELECT job_id, path, comment FROM exclusions
+        WHERE job_id IS NULL OR job_id = ''
+    `)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []types.Exclusion{}, err
-		}
-		return nil, fmt.Errorf("GetAllGlobalExclusions: error reading config: %w", err)
+		return nil, fmt.Errorf("GetAllGlobalExclusions: error querying exclusions: %w", err)
 	}
+	defer rows.Close()
 
 	var exclusions []types.Exclusion
+	// Using a map for deduplication based on path as per original logic.
+	// If path is unique for global exclusions, this map is unnecessary.
 	seenPaths := make(map[string]bool)
 
-	for _, sectionID := range configData.Order {
-		section := configData.Sections[sectionID]
-		if seenPaths[section.Properties.Path] {
-			continue // Skip duplicates
+	for rows.Next() {
+		var excl types.Exclusion
+		// Scan into NullString for job_id if it can truly be NULL
+		var jobID sql.NullString
+		if err := rows.Scan(&jobID, &excl.Path, &excl.Comment); err != nil {
+			syslog.L.Error(fmt.Errorf("GetAllGlobalExclusions: error scanning row: %w", err)).Write()
+			continue
 		}
-		seenPaths[section.Properties.Path] = true
+		excl.JobID = jobID.String // Assign empty string if NULL
 
-		exclusions = append(exclusions, section.Properties)
+		// Deduplicate based on path within global exclusions
+		if seenPaths[excl.Path] {
+			continue
+		}
+		seenPaths[excl.Path] = true
+		exclusions = append(exclusions, excl)
 	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetAllGlobalExclusions: error iterating exclusion rows: %w", err)
+	}
+
 	return exclusions, nil
 }
 
+// GetExclusion retrieves a single exclusion by its path.
+// Assumes an index exists on exclusions.path.
 func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
-	// Check global exclusions first
-	globalPath := filepath.Join(database.paths["exclusions"], "global.cfg")
-	if configData, err := database.exclusionsConfig.Parse(globalPath); err == nil {
-		sectionID := fmt.Sprintf("excl-%s", path)
-		if section, exists := configData.Sections[sectionID]; exists {
-			return &section.Properties, nil
-		}
-	}
+	row := database.readDb.QueryRow(`
+        SELECT job_id, path, comment FROM exclusions WHERE path = ? LIMIT 1
+    `, path) // Added LIMIT 1 as path is expected to be unique for this operation
 
-	// Check job-specific exclusions
-	files, err := os.ReadDir(database.paths["exclusions"])
+	var excl types.Exclusion
+	var jobID sql.NullString // Handle potentially NULL job_id
+	err := row.Scan(&jobID, &excl.Path, &excl.Comment)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, err
+		// Return sql.ErrNoRows directly if not found
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
 		}
-		return nil, fmt.Errorf("GetExclusion: error reading directory: %w", err)
+		return nil, fmt.Errorf("GetExclusion: error fetching exclusion for path %s: %w", path, err)
 	}
-
-	for _, file := range files {
-		if file.Name() == "global" {
-			continue
-		}
-		configPath := filepath.Join(database.paths["exclusions"], file.Name())
-		configData, err := database.exclusionsConfig.Parse(configPath)
-		if err != nil {
-			continue
-		}
-
-		sectionID := fmt.Sprintf("excl-%s", path)
-		if section, exists := configData.Sections[sectionID]; exists {
-			return &section.Properties, nil
-		}
-	}
-
-	return nil, fmt.Errorf("GetExclusion: exclusion not found for path: %s", path)
+	excl.JobID = jobID.String // Assign empty string if NULL
+	return &excl, nil
 }
 
-func (database *Database) UpdateExclusion(exclusion types.Exclusion) error {
+// UpdateExclusion updates an existing exclusion identified by its path.
+// Assumes an index exists on exclusions.path.
+func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion) (err error) {
+	var commitNeeded bool = false
+	if tx == nil {
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return fmt.Errorf("UpdateExclusion: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("UpdateExclusion: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("UpdateExclusion: failed to commit transaction: %w", cErr)
+					syslog.L.Error(err).Write()
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("UpdateExclusion: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			}
+		}()
+	}
+
+	if exclusion.Path == "" {
+		return errors.New("path is empty")
+	}
+
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
 	if !pattern.IsValidPattern(exclusion.Path) {
 		return fmt.Errorf("UpdateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
-	configPath := filepath.Join(database.paths["exclusions"], "global.cfg")
-	if exclusion.JobID != "" {
-		configPath = filepath.Join(database.paths["exclusions"], utils.EncodePath(exclusion.JobID)+".cfg")
+	// Handle NULL job_id correctly
+	var jobIDArg any
+	if exclusion.JobID == "" {
+		jobIDArg = nil
+	} else {
+		jobIDArg = exclusion.JobID
 	}
 
-	configData, err := database.exclusionsConfig.Parse(configPath)
+	res, err := tx.Exec(`
+        UPDATE exclusions SET job_id = ?, comment = ? WHERE path = ?
+    `, jobIDArg, exclusion.Comment, exclusion.Path)
 	if err != nil {
-		return fmt.Errorf("UpdateExclusion: error reading config: %w", err)
+		return fmt.Errorf("UpdateExclusion: error updating exclusion: %w", err)
 	}
 
-	sectionID := fmt.Sprintf("excl-%s", exclusion.Path)
-	_, exists := configData.Sections[sectionID]
-	if !exists {
-		return fmt.Errorf("UpdateExclusion: exclusion not found for path: %s", exclusion.Path)
+	affected, err := res.RowsAffected()
+	if err != nil {
+		// Log error getting rows affected but proceed to check count
+		syslog.L.Error(fmt.Errorf("UpdateExclusion: error getting rows affected: %w", err)).Write()
+	}
+	if affected == 0 {
+		// Return sql.ErrNoRows if the exclusion wasn't found to update
+		return sql.ErrNoRows
 	}
 
-	// Update properties
-	configData.Sections[sectionID].Properties = exclusion
-	return database.exclusionsConfig.Write(configData)
+	commitNeeded = true
+	return nil
 }
 
-func (database *Database) DeleteExclusion(path string) error {
-	path = strings.ReplaceAll(path, "\\", "/")
-	sectionID := fmt.Sprintf("excl-%s", path)
-
-	// Try job-specific exclusions first
-	files, err := os.ReadDir(database.paths["exclusions"])
-	if err != nil {
-		return fmt.Errorf("DeleteExclusion: error reading directory: %w", err)
-	}
-
-	for _, file := range files {
-		if file.Name() == "global" {
-			continue
-		}
-		configPath := filepath.Join(database.paths["exclusions"], file.Name())
-		configData, err := database.exclusionsConfig.Parse(configPath)
+// DeleteExclusion removes an exclusion from the database by its path.
+// Assumes an index exists on exclusions.path.
+func (database *Database) DeleteExclusion(tx *sql.Tx, path string) (err error) {
+	var commitNeeded bool = false
+	if tx == nil {
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
 		if err != nil {
-			continue
+			return fmt.Errorf("DeleteExclusion: failed to begin transaction: %w", err)
 		}
-
-		if _, exists := configData.Sections[sectionID]; exists {
-			delete(configData.Sections, sectionID)
-			newOrder := make([]string, 0)
-			for _, id := range configData.Order {
-				if id != sectionID {
-					newOrder = append(newOrder, id)
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("DeleteExclusion: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("DeleteExclusion: failed to commit transaction: %w", cErr)
+					syslog.L.Error(err).Write()
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("DeleteExclusion: failed to rollback transaction: %w", rbErr)).Write()
 				}
 			}
-			configData.Order = newOrder
-
-			// If the config is empty after deletion, remove the file
-			if len(configData.Sections) == 0 {
-				if err := os.Remove(configPath); err != nil {
-					return fmt.Errorf("DeleteExclusion: error removing empty config file: %w", err)
-				}
-				return nil
-			}
-
-			// Otherwise write the updated config
-			if err := database.exclusionsConfig.Write(configData); err != nil {
-				return fmt.Errorf("DeleteExclusion: error writing config: %w", err)
-			}
-			return nil
-		}
+		}()
 	}
 
-	// Try global exclusion
-	globalPath := filepath.Join(database.paths["exclusions"], "global.cfg")
-	if configData, err := database.exclusionsConfig.Parse(globalPath); err == nil {
-		if _, exists := configData.Sections[sectionID]; exists {
-			delete(configData.Sections, sectionID)
-			newOrder := make([]string, 0)
-			for _, id := range configData.Order {
-				if id != sectionID {
-					newOrder = append(newOrder, id)
-				}
-			}
-			configData.Order = newOrder
-
-			// If the global config is empty after deletion, remove the file
-			if len(configData.Sections) == 0 {
-				if err := os.Remove(globalPath); err != nil {
-					return fmt.Errorf("DeleteExclusion: error removing empty global config file: %w", err)
-				}
-				return nil
-			}
-
-			// Otherwise write the updated config
-			if err := database.exclusionsConfig.Write(configData); err != nil {
-				return fmt.Errorf("DeleteExclusion: error writing global config: %w", err)
-			}
-			return nil
-		}
+	path = strings.ReplaceAll(path, "\\", "/")
+	res, err := tx.Exec(`
+        DELETE FROM exclusions WHERE path = ?
+    `, path)
+	if err != nil {
+		return fmt.Errorf("DeleteExclusion: error deleting exclusion: %w", err)
 	}
 
-	return fmt.Errorf("DeleteExclusion: exclusion not found for path: %s", path)
+	affected, err := res.RowsAffected()
+	if err != nil {
+		syslog.L.Error(fmt.Errorf("DeleteExclusion: error getting rows affected: %w", err)).Write()
+	}
+	if affected == 0 {
+		// Return sql.ErrNoRows if the exclusion wasn't found to delete
+		return sql.ErrNoRows
+	}
+
+	commitNeeded = true
+	return nil
 }
