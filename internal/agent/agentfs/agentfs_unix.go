@@ -75,21 +75,35 @@ func getStatFS(path string) (types.StatFS, error) {
 	var statfs unix.Statfs_t
 	err := unix.Statfs(path, &statfs)
 	if err != nil {
-		return types.StatFS{}, fmt.Errorf("failed to get filesystem stats for path %s: %w", path, err)
+		return types.StatFS{}, fmt.Errorf(
+			"failed to get filesystem stats for path %s: %w",
+			path,
+			err,
+		)
 	}
 
 	// Map the unix.Statfs_t fields to the types.StatFS structure
+	// Use explicit type conversions to handle different field types across Unix systems
 	stat := types.StatFS{
-		Bsize:   uint64(statfs.Bsize),   // Block size
-		Blocks:  uint64(statfs.Blocks),  // Total number of blocks
-		Bfree:   uint64(statfs.Bfree),   // Free blocks
-		Bavail:  uint64(statfs.Bavail),  // Available blocks to unprivileged users
-		Files:   uint64(statfs.Files),   // Total number of inodes
-		Ffree:   uint64(statfs.Ffree),   // Free inodes
-		NameLen: uint64(statfs.Namelen), // Maximum filename length
+		Bsize:  uint64(statfs.Bsize),  // Block size
+		Blocks: uint64(statfs.Blocks), // Total number of blocks
+		Bfree:  uint64(statfs.Bfree),  // Free blocks
+		Bavail: uint64(statfs.Bavail), // Available blocks to unprivileged users
+		Files:  uint64(statfs.Files),  // Total number of inodes
+		Ffree:  uint64(statfs.Ffree),  // Free inodes
 	}
 
+	// Handle NameLen field which varies across Unix systems
+	// Linux: Namelen, FreeBSD: doesn't exist, macOS: varies
+	stat.NameLen = getNameLen(statfs)
+
 	return stat, nil
+}
+
+// getNameLen extracts the maximum filename length in a cross-platform way
+func getNameLen(statfs unix.Statfs_t) uint64 {
+	// Use build tags or runtime detection for different systems
+	return getNameLenPlatform(statfs)
 }
 
 func (s *AgentFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
