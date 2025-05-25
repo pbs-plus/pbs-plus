@@ -1,5 +1,5 @@
-//go:build !windows
-// +build !windows
+//go:build unix
+// +build unix
 
 package forks
 
