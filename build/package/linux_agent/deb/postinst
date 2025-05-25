@@ -23,10 +23,10 @@ mkdir -p /run/proxmox-backup
 mkdir -p /etc/pbs-plus-agent
 
 # Set ownership and permissions
-chown pbsplus:pbsplus /var/lib/pbs-plus-agent
-chown pbsplus:pbsplus /var/log/pbs-plus-agent
-chown pbsplus:pbsplus /run/proxmox-backup
-chown pbsplus:pbsplus /etc/pbs-plus-agent
+chown -R pbsplus:pbsplus /var/lib/pbs-plus-agent
+chown -R pbsplus:pbsplus /var/log/pbs-plus-agent
+chown -R pbsplus:pbsplus /run/proxmox-backup
+chown -R pbsplus:pbsplus /etc/pbs-plus-agent
 
 chmod 750 /var/lib/pbs-plus-agent
 chmod 750 /var/log/pbs-plus-agent
