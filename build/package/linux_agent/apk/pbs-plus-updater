@@ -1,0 +1,29 @@
+#!/sbin/openrc-run
+
+name="PBS Plus Agent Updater"
+description="PBS Plus Agent Updater for backup operations"
+
+command="/usr/bin/pbs-plus-updater"
+command_user="root:root"
+pidfile="/run/proxmox-backup/pbs-plus-updater.pid"
+command_background="yes"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    # Create run directory if it doesn't exist
+    checkpath --directory --owner root:root --mode 0755 /run/proxmox-backup
+}
+
+reload() {
+    ebegin "Reloading $name"
+    if [ -f "$pidfile" ]; then
+        kill -HUP $(cat "$pidfile")
+        eend $?
+    else
+        eend 1 "PID file not found"
+    fi
+}
