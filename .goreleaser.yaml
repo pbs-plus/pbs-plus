@@ -5,14 +5,14 @@ project_name: pbs-plus
 before:
   hooks:
     - go mod tidy
-    - |
-      # Generate UpgradeCode (should be consistent across versions)
-      if [ -z "$UPGRADE_CODE" ]; then
-        export UPGRADE_CODE=$(echo "pbs-plus-agent-upgrade" | sha256sum | cut -c1-32 | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
-      fi
-    - |
-      # Generate ProductCode (should be unique per version)
-      export PRODUCT_CODE=$(echo "pbs-plus-agent-{{.Version}}" | sha256sum | cut -c1-32 | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+#    - |
+#      # Generate UpgradeCode (should be consistent across versions)
+#      if [ -z "$UPGRADE_CODE" ]; then
+#        export UPGRADE_CODE=$(echo "pbs-plus-agent-upgrade" | sha256sum | cut -c1-32 | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+#      fi
+#    - |
+#      # Generate ProductCode (should be unique per version)
+#      export PRODUCT_CODE=$(echo "pbs-plus-agent-{{.Version}}" | sha256sum | cut -c1-32 | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
 
 builds:
   # Server build (Linux)
@@ -130,18 +130,18 @@ checksum:
   algorithm: md5
   split: true
 
-msi:
-  - id: windows-agent-msi
-    ids:
-      - windows-agent
-      - windows-updater
-    name: "PBS Plus Agent"
-    wxs: "./build/package/windows_agent/agent.wxs"
-    extra_files:
-      - source: "./build/package/windows_agent/install.ps1"
-        target: "install.ps1"
-      - source: "./build/package/windows_agent/uninstall.ps1"
-        target: "uninstall.ps1"
+#msi:
+#  - id: windows-agent-msi
+#    ids:
+#      - windows-agent
+#      - windows-updater
+#    name: "PBS Plus Agent"
+#    wxs: "./build/package/windows_agent/agent.wxs"
+#    extra_files:
+#      - source: "./build/package/windows_agent/install.ps1"
+#        target: "install.ps1"
+#      - source: "./build/package/windows_agent/uninstall.ps1"
+#        target: "uninstall.ps1"
 
 nfpms:
   - id: server-deb
