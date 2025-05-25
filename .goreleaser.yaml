@@ -45,12 +45,11 @@ builds:
         - upx "{{ .Path }}"
 
   # BSD Agent
-  - id: bsd-agent
+  - id: freebsd-agent
     main: ./cmd/unix_agent
     binary: pbs-plus-agent
     goos:
       - freebsd
-      - openbsd
     goarch:
       - amd64
       - arm64
@@ -101,9 +100,9 @@ archives:
     formats:
       - binary
 
-  - id: bsd-agent
+  - id: freebsd-agent
     ids:
-      - bsd-agent
+      - freebsd-agent
     name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
