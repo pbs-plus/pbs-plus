@@ -23,10 +23,10 @@ jobs:
         with:
           go-version: "1.24"
 
-      - name: Install UPX
+      - name: Import GPG key
         run: |
-          sudo apt-get update
-          sudo apt-get install -y upx
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          echo "GPG_FINGERPRINT=${{ secrets.GPG_FINGERPRINT }}" >> $GITHUB_ENV
 
       - name: Set environment variables
         run: |
