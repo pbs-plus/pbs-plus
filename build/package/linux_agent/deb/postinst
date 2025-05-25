@@ -2,14 +2,14 @@
 set -e
 
 # Create dedicated user and group if they don't exist
-if ! getent group pbs-plus >/dev/null 2>&1; then
-    groupadd -r pbs-plus
+if ! getent group pbsplus >/dev/null 2>&1; then
+    groupadd -r pbsplus
 fi
 
-if ! getent passwd pbs-plus >/dev/null 2>&1; then
-    useradd -r -g pbs-plus -s /bin/false \
+if ! getent passwd pbsplus >/dev/null 2>&1; then
+    useradd -r -g pbsplus -s /bin/false \
         -d /var/lib/pbs-plus-agent \
-        -c "PBS Plus Agent" pbs-plus
+        -c "PBS Plus Agent" pbsplus
 fi
 
 # Set executable permissions
@@ -23,10 +23,10 @@ mkdir -p /run/proxmox-backup
 mkdir -p /etc/pbs-plus-agent
 
 # Set ownership and permissions
-chown pbs-plus:pbs-plus /var/lib/pbs-plus-agent
-chown pbs-plus:pbs-plus /var/log/pbs-plus-agent
-chown pbs-plus:pbs-plus /run/proxmox-backup
-chown pbs-plus:pbs-plus /etc/pbs-plus-agent
+chown pbsplus:pbsplus /var/lib/pbs-plus-agent
+chown pbsplus:pbsplus /var/log/pbs-plus-agent
+chown pbsplus:pbsplus /run/proxmox-backup
+chown pbsplus:pbsplus /etc/pbs-plus-agent
 
 chmod 750 /var/lib/pbs-plus-agent
 chmod 750 /var/log/pbs-plus-agent
@@ -34,14 +34,14 @@ chmod 755 /run/proxmox-backup
 chmod 750 /etc/pbs-plus-agent
 
 # Set binary ownership
-chown root:pbs-plus /usr/bin/pbs-plus-agent
-chown root:pbs-plus /usr/bin/pbs-plus-updater
+chown root:pbsplus /usr/bin/pbs-plus-agent
+chown root:pbsplus /usr/bin/pbs-plus-updater
 chmod 755 /usr/bin/pbs-plus-agent
 chmod 755 /usr/bin/pbs-plus-updater
 
 # Add pbs-plus to backup group if it exists
 if getent group backup >/dev/null 2>&1; then
-    usermod -a -G backup pbs-plus
+    usermod -a -G backup pbsplus
 fi
 
 # Set file capabilities instead of using sudo
