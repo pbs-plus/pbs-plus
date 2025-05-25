@@ -23,10 +23,6 @@ ProtectSystem=false
 ProtectHome=true
 ReadWritePaths=/etc/pbs-plus-agent /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/proxmox-backup /tmp /usr/bin
 
-# Capabilities for update operations
-AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID CAP_SYS_ADMIN
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID CAP_SYS_ADMIN
-
 # Environment
 Environment=HOME=/var/lib/pbs-plus-agent
 Environment=USER=pbsplus
