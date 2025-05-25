@@ -1,15 +1,64 @@
 #!/bin/sh
 set -e
 
+# Create dedicated user and group if they don't exist
+if ! getent group pbsplus >/dev/null 2>&1; then
+    addgroup -S pbsplus
+fi
+
+if ! getent passwd pbsplus >/dev/null 2>&1; then
+    adduser -S -D -H -s /sbin/nologin \
+        -h /var/lib/pbs-plus-agent \
+        -G pbsplus \
+        -g "PBS Plus Agent" pbsplus
+fi
+
+# Set executable permissions
 chmod +x /usr/bin/pbs-plus-agent
+chmod +x /usr/bin/pbs-plus-updater
 
-# Create run directory if it doesn't exist
+# Create necessary directories with proper ownership
+mkdir -p /var/lib/pbs-plus-agent
+mkdir -p /var/log/pbs-plus-agent
 mkdir -p /run/proxmox-backup
+mkdir -p /etc/pbs-plus-agent
 
-# Add the service to the default runlevel
+# Set ownership and permissions
+chown pbsplus:pbsplus /var/lib/pbs-plus-agent
+chown pbsplus:pbsplus /var/log/pbs-plus-agent
+chown pbsplus:pbsplus /run/proxmox-backup
+chown pbsplus:pbsplus /etc/pbs-plus-agent
+
+chmod 750 /var/lib/pbs-plus-agent
+chmod 750 /var/log/pbs-plus-agent
+chmod 755 /run/proxmox-backup
+chmod 750 /etc/pbs-plus-agent
+
+# Set binary ownership
+chown root:pbsplus /usr/bin/pbs-plus-agent
+chown root:pbsplus /usr/bin/pbs-plus-updater
+chmod 755 /usr/bin/pbs-plus-agent
+chmod 755 /usr/bin/pbs-plus-updater
+
+# Add pbsplus to backup group if it exists
+if getent group backup >/dev/null 2>&1; then
+    adduser pbsplus backup
+fi
+
+# Set file capabilities (Alpine has libcap by default)
+if command -v setcap >/dev/null 2>&1; then
+    setcap 'cap_dac_read_search,cap_fowner,cap_dac_override+ep' /usr/bin/pbs-plus-agent
+    setcap 'cap_dac_read_search,cap_fowner,cap_dac_override,cap_setuid,cap_setgid,cap_sys_admin+ep' /usr/bin/pbs-plus-updater
+else
+    echo "Warning: setcap not available, services will run with limited capabilities"
+fi
+
+# Add the services to the default runlevel
 rc-update add pbs-plus-agent default
+rc-update add pbs-plus-updater default
 
-# Start the service
+# Start the services
 rc-service pbs-plus-agent start
+rc-service pbs-plus-updater start
 
 exit 0
