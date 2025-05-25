@@ -18,10 +18,34 @@ WorkingDirectory=/var/lib/pbs-plus-agent
 
 # Security settings
 NoNewPrivileges=false
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/etc/pbs-plus-agent /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/proxmox-backup
+PrivateTmp=false
+ProtectSystem=false
+ProtectHome=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RemoveIPC=false
+PrivateDevices=false
+
+# Make entire filesystem read-only by default
+ReadOnlyPaths=/
+
+# Override with read-write access for specific directories
+ReadWritePaths=/var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/proxmox-backup /etc/pbs-plus-agent /tmp /var/tmp
+
+# Device access for block-level backups
+DevicePolicy=closed
+DeviceAllow=/dev/null rw
+DeviceAllow=/dev/zero rw
+DeviceAllow=/dev/urandom r
+DeviceAllow=/dev/random r
+DeviceAllow=block-* r
+DeviceAllow=char-* r
+
+# Preserve necessary capabilities
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_FOWNER CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_FOWNER CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_SYS_RAWIO
 
 # Environment
 Environment=HOME=/var/lib/pbs-plus-agent
