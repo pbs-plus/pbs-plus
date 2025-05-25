@@ -9,9 +9,32 @@ ExecStart=/usr/bin/pbs-plus-updater
 ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/run/proxmox-backup/pbs-plus-updater.pid
 Restart=on-failure
-User=root
-Group=root
+RestartSec=30
+User=pbsplus
+Group=pbsplus
+
+# Working directory
+WorkingDirectory=/var/lib/pbs-plus-agent
+
+# Security settings - updater needs more privileges
+NoNewPrivileges=false
+PrivateTmp=false
+ProtectSystem=false
+ProtectHome=true
+ReadWritePaths=/var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/proxmox-backup /tmp /usr/bin
+
+# Capabilities for update operations
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID CAP_SYS_ADMIN
+
+# Environment
+Environment=HOME=/var/lib/pbs-plus-agent
+Environment=USER=pbsplus
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pbs-plus-updater
 
 [Install]
 WantedBy=multi-user.target
-

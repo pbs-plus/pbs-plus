@@ -284,36 +284,6 @@ nfpms:
       apk:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
 
-  - id: linux-agent-ipk
-    ids:
-      - linux-agent
-      - linux-updater
-    package_name: "{{ .ProjectName }}-agent"
-    vendor: Son Roy Almerol
-    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
-    maintainer: Son Roy Almerol <github@snry.me>
-    description: >
-      PBS Plus Agent - Linux agent for PBS Plus backup solution
-    license: MIT
-    formats:
-      - ipk
-    contents:
-      - src: ./build/package/linux_agent/ipk/pbs-plus-agent
-        dst: /etc/init.d/pbs-plus-agent
-        type: config
-        file_info:
-          mode: 0755
-      - src: ./build/package/linux_agent/ipk/pbs-plus-updater
-        dst: /etc/init.d/pbs-plus-updater
-        type: config
-        file_info:
-          mode: 0755
-    scripts:
-      postinstall: ./build/package/linux_agent/ipk/postinst
-    overrides:
-      ipk:
-        file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
-
 release:
   github:
     owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"

@@ -1,17 +1,66 @@
 #!/bin/bash
 set -e
 
+# Create dedicated user and group if they don't exist
+if ! getent group pbsplus >/dev/null 2>&1; then
+    groupadd -r pbsplus
+fi
+
+if ! getent passwd pbsplus >/dev/null 2>&1; then
+    useradd -r -g pbsplus -s /sbin/nologin \
+        -d /var/lib/pbs-plus-agent \
+        -c "PBS Plus Agent" pbsplus
+fi
+
+# Set executable permissions
 chmod +x /usr/bin/pbs-plus-agent
+chmod +x /usr/bin/pbs-plus-updater
 
-# Create run directory if it doesn't exist
+# Create necessary directories with proper ownership
+mkdir -p /var/lib/pbs-plus-agent
+mkdir -p /var/log/pbs-plus-agent
 mkdir -p /run/proxmox-backup
+mkdir -p /etc/pbs-plus-agent
 
+# Set ownership and permissions
+chown pbsplus:pbsplus /var/lib/pbs-plus-agent
+chown pbsplus:pbsplus /var/log/pbs-plus-agent
+chown pbsplus:pbsplus /run/proxmox-backup
+chown pbsplus:pbsplus /etc/pbs-plus-agent
+
+chmod 750 /var/lib/pbs-plus-agent
+chmod 750 /var/log/pbs-plus-agent
+chmod 755 /run/proxmox-backup
+chmod 750 /etc/pbs-plus-agent
+
+# Set binary ownership
+chown root:pbsplus /usr/bin/pbs-plus-agent
+chown root:pbsplus /usr/bin/pbs-plus-updater
+chmod 755 /usr/bin/pbs-plus-agent
+chmod 755 /usr/bin/pbs-plus-updater
+
+# Add pbsplus to backup group if it exists (common on RHEL/CentOS)
+if getent group backup >/dev/null 2>&1; then
+    usermod -a -G backup pbsplus
+fi
+
+# Set file capabilities (check if setcap is available)
+if command -v setcap >/dev/null 2>&1; then
+    setcap 'cap_dac_read_search,cap_fowner,cap_dac_override+ep' /usr/bin/pbs-plus-agent
+    setcap 'cap_dac_read_search,cap_fowner,cap_dac_override,cap_setuid,cap_setgid,cap_sys_admin+ep' /usr/bin/pbs-plus-updater
+else
+    echo "Warning: setcap not available, services will run with limited capabilities"
+fi
+
+# Reload systemd and enable services
 systemctl daemon-reload
 
-# Enable the service to start on boot
+# Enable the services to start on boot
 systemctl enable pbs-plus-agent.service
+systemctl enable pbs-plus-updater.service
 
-# Start the service
+# Start the services
 systemctl restart pbs-plus-agent.service
+systemctl restart pbs-plus-updater.service
 
 exit 0

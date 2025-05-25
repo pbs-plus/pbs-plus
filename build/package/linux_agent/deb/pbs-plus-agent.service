@@ -9,9 +9,32 @@ ExecStart=/usr/bin/pbs-plus-agent
 ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/run/proxmox-backup/pbs-plus-agent.pid
 Restart=on-failure
-User=root
-Group=root
+RestartSec=10
+User=pbsplus
+Group=pbsplus
+
+# Working directory
+WorkingDirectory=/var/lib/pbs-plus-agent
+
+# Security settings
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/proxmox-backup /tmp
+
+# Capabilities for backup operations
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID
+
+# Environment
+Environment=HOME=/var/lib/pbs-plus-agent
+Environment=USER=pbsplus
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pbs-plus-agent
 
 [Install]
 WantedBy=multi-user.target
-
