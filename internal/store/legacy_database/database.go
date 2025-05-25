@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/pbs-plus/pbs-plus/internal/auth/token"
-	configLib "github.com/pbs-plus/pbs-plus/internal/config"
+	configLib "github.com/pbs-plus/pbs-plus/internal/legacy_config"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"

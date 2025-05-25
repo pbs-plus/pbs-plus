@@ -1,131 +1,87 @@
 //go:build linux
 
-package database
+package sqlite
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
-	configLib "github.com/pbs-plus/pbs-plus/internal/config"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
+	_ "modernc.org/sqlite"
 )
 
-func (database *Database) RegisterTokenPlugin() {
-	plugin := &configLib.SectionPlugin[types.AgentToken]{
-		TypeName:   "token",
-		FolderPath: database.paths["tokens"],
-	}
-
-	database.tokensConfig = configLib.NewSectionConfig(plugin)
-}
-
+// CreateToken generates a new token using the manager and stores it.
 func (database *Database) CreateToken(comment string) error {
-	token, err := database.TokenManager.GenerateToken()
+	tokenStr, err := database.TokenManager.GenerateToken()
 	if err != nil {
 		return fmt.Errorf("CreateToken: error generating token: %w", err)
 	}
-
-	configData := &configLib.ConfigData[types.AgentToken]{
-		Sections: map[string]*configLib.Section[types.AgentToken]{
-			token: {
-				Type: "token",
-				ID:   token,
-				Properties: types.AgentToken{
-					Token:     token,
-					Comment:   comment,
-					CreatedAt: int(time.Now().Unix()),
-					Revoked:   false,
-				},
-			},
-		},
-		Order: []string{token},
+	now := time.Now().Unix()
+	_, err = database.writeDb.Exec(`
+        INSERT INTO tokens (token, comment, created_at, revoked)
+        VALUES (?, ?, ?, ?)
+    `, tokenStr, comment, now, false)
+	if err != nil {
+		return fmt.Errorf("CreateToken: error inserting token: %w", err)
 	}
-
-	if err := database.tokensConfig.Write(configData); err != nil {
-		return fmt.Errorf("CreateToken: error writing config: %w", err)
-	}
-
 	return nil
 }
 
-func (database *Database) GetToken(token string) (types.AgentToken, error) {
-	configPath := filepath.Join(database.paths["tokens"], utils.EncodePath(token)+".cfg")
-	configData, err := database.tokensConfig.Parse(configPath)
+// GetToken retrieves a token’s entry and double-checks its validity.
+func (database *Database) GetToken(tokenStr string) (types.AgentToken, error) {
+	row := database.readDb.QueryRow(`
+        SELECT token, comment, created_at, revoked FROM tokens WHERE token = ?
+    `, tokenStr)
+	var tokenProp types.AgentToken
+	err := row.Scan(&tokenProp.Token, &tokenProp.Comment, &tokenProp.CreatedAt,
+		&tokenProp.Revoked)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return types.AgentToken{}, err
-		}
-		return types.AgentToken{}, fmt.Errorf("GetToken: error reading config: %w", err)
+		return types.AgentToken{}, fmt.Errorf("GetToken: error fetching token: %w", err)
 	}
-
-	section, exists := configData.Sections[token]
-	if !exists {
-		return types.AgentToken{}, fmt.Errorf("GetToken: section %s does not exist", token)
+	// Validate the token using the token manager.
+	if err := database.TokenManager.ValidateToken(tokenStr); err != nil {
+		tokenProp.Revoked = true
 	}
-
-	tokenProp := section.Properties
-	revoked := tokenProp.Revoked
-
-	// Double-check token validity
-	if err := database.TokenManager.ValidateToken(token); err != nil {
-		revoked = true
-	}
-
-	tokenProp.Revoked = revoked
-
 	return tokenProp, nil
 }
 
+// GetAllTokens returns all token entries.
 func (database *Database) GetAllTokens() ([]types.AgentToken, error) {
-	files, err := os.ReadDir(database.paths["tokens"])
+	rows, err := database.readDb.Query("SELECT token FROM tokens")
 	if err != nil {
-		return nil, fmt.Errorf("GetAllTokens: error reading directory: %w", err)
+		return nil, fmt.Errorf("GetAllTokens: error querying tokens: %w", err)
 	}
+	defer rows.Close()
 
 	var tokens []types.AgentToken
-	for _, file := range files {
-		if file.IsDir() {
+	for rows.Next() {
+		var tokenStr string
+		if err := rows.Scan(&tokenStr); err != nil {
 			continue
 		}
-
-		token, err := database.GetToken(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
+		tokenProp, err := database.GetToken(tokenStr)
 		if err != nil {
-			syslog.L.Error(err).WithField("id", file.Name())
+			syslog.L.Error(err).WithField("id", tokenStr).Write()
 			continue
 		}
-
-		tokens = append(tokens, token)
+		tokens = append(tokens, tokenProp)
 	}
-
 	return tokens, nil
 }
 
-func (database *Database) RevokeToken(token types.AgentToken) error {
-	if token.Revoked {
+// RevokeToken marks a token as revoked.
+func (database *Database) RevokeToken(tokenData types.AgentToken) error {
+	if tokenData.Revoked {
 		return nil
 	}
 
-	token.Revoked = true
-
-	configData := &configLib.ConfigData[types.AgentToken]{
-		Sections: map[string]*configLib.Section[types.AgentToken]{
-			token.Token: {
-				Type:       "token",
-				ID:         token.Token,
-				Properties: token,
-			},
-		},
-		Order: []string{token.Token},
+	tokenData.Revoked = true
+	_, err := database.writeDb.Exec(`
+        UPDATE tokens SET revoked = ? WHERE token = ?
+    `, true, tokenData.Token)
+	if err != nil {
+		return fmt.Errorf("RevokeToken: error updating token: %w", err)
 	}
-
-	if err := database.tokensConfig.Write(configData); err != nil {
-		return fmt.Errorf("RevokeToken: error writing config: %w", err)
-	}
-
 	return nil
 }
