@@ -40,17 +40,22 @@ chown root:pbsplus /usr/bin/pbs-plus-updater
 chmod 755 /usr/bin/pbs-plus-agent
 chmod 755 /usr/bin/pbs-plus-updater
 
-# Add pbsplus to backup group if it exists
-if getent group backup >/dev/null 2>&1; then
-    adduser pbsplus backup
-fi
+alpine_groups="wheel disk adm sys tty audio video netdev kvm qemu docker lp dialout"
+
+for group in $alpine_groups; do
+    if getent group "$group" >/dev/null 2>&1; then
+        adduser pbsplus "$group" 2>/dev/null || true
+        echo "Added pbsplus to group: $group"
+    fi
+done
 
 # Set file capabilities (Alpine has libcap by default)
 if command -v setcap >/dev/null 2>&1; then
-    setcap 'cap_dac_read_search,cap_fowner,cap_dac_override+ep' /usr/bin/pbs-plus-agent
-    setcap 'cap_dac_read_search,cap_fowner,cap_dac_override,cap_setuid,cap_setgid,cap_sys_admin+ep' /usr/bin/pbs-plus-updater
+    setcap 'cap_dac_read_search,cap_dac_override,cap_fowner,cap_sys_admin,cap_sys_ptrace,cap_sys_rawio,cap_mknod+ep' /usr/bin/pbs-plus-agent
+    setcap 'cap_dac_read_search,cap_dac_override,cap_fowner,cap_setuid,cap_setgid,cap_sys_admin,cap_sys_ptrace,cap_sys_rawio,cap_mknod+ep' /usr/bin/pbs-plus-updater
+    echo "Capabilities set successfully"
 else
-    echo "Warning: setcap not available, services will run with limited capabilities"
+    echo "Warning: libcap not available, capabilities not set"
 fi
 
 # Add the services to the default runlevel
