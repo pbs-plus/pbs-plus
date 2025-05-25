@@ -391,4 +391,3 @@ Write-Host "Cleaning up temporary files..." -ForegroundColor Cyan
 Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "Installation completed successfully." -ForegroundColor Green
-Read-Host -Prompt "Press Enter to exit"

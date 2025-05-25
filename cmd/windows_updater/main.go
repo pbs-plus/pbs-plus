@@ -62,21 +62,21 @@ func (u *UpdaterService) runUpdateCheck() {
 	defer ticker.Stop()
 
 	checkAndUpdate := func() {
-		hasActiveBackups, err := u.checkForActiveBackups()
-		if err != nil {
-			syslog.L.Error(err).WithMessage("failed to check backup status").Write()
-			return
-		}
+		// hasActiveBackups, err := u.checkForActiveBackups()
+		// if err != nil {
+		// 	syslog.L.Error(err).WithMessage("failed to check backup status").Write()
+		// 	return
+		// }
 
-		agentStopped, err := u.isServiceStopped()
-		if err != nil {
-			syslog.L.Error(err).WithMessage("failed to check service status").Write()
-			agentStopped = false
-		}
+		// agentStopped, err := u.isServiceStopped()
+		// if err != nil {
+		// 	syslog.L.Error(err).WithMessage("failed to check service status").Write()
+		// 	agentStopped = false
+		// }
 
-		if hasActiveBackups && !agentStopped {
-			return
-		}
+		// if hasActiveBackups && !agentStopped {
+		// 	return
+		// }
 
 		newVersion, err := u.checkForNewVersion()
 		if err != nil {
@@ -95,11 +95,11 @@ func (u *UpdaterService) runUpdateCheck() {
 				Write()
 
 			// Double-check before updating
-			hasActiveBackups, _ = u.checkForActiveBackups()
-			if hasActiveBackups {
-				syslog.L.Info().WithMessage("postponing update due to started backup").Write()
-				return
-			}
+			// hasActiveBackups, _ = u.checkForActiveBackups()
+			// if hasActiveBackups {
+			// 	syslog.L.Info().WithMessage("postponing update due to started backup").Write()
+			// 	return
+			// }
 
 			if err := u.performUpdate(); err != nil {
 				syslog.L.Error(err).WithMessage("failed to update").Write()
@@ -128,13 +128,13 @@ func (u *UpdaterService) runUpdateCheck() {
 	}
 }
 
-func (u *UpdaterService) checkForActiveBackups() (bool, error) {
-	store, err := agent.NewBackupStore()
-	if err != nil {
-		return true, err
-	}
-	return store.HasActiveBackups()
-}
+// func (u *UpdaterService) checkForActiveBackups() (bool, error) {
+// 	store, err := agent.NewBackupStore()
+// 	if err != nil {
+// 		return true, err
+// 	}
+// 	return store.HasActiveBackups()
+// }
 
 func (u *UpdaterService) checkForNewVersion() (string, error) {
 	var versionResp VersionResp
