@@ -15,7 +15,19 @@ before:
 #      export PRODUCT_CODE=$(echo "pbs-plus-agent-{{.Version}}" | sha256sum | cut -c1-32 | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
 
 binary_signs:
-  - {}
+  - id: gpg-sign
+    cmd: gpg
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+    artifacts: binary
+    signature: "${artifact}.sig"
+    output: true
 
 builds:
   # Server build (Linux)
