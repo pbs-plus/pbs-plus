@@ -56,9 +56,6 @@ builds:
       - arm64
     ldflags:
       - -X 'main.Version=v{{.Version}}'
-    hooks:
-      post:
-        - upx "{{ .Path }}"
 
   # Windows Agent
   - id: windows-agent
