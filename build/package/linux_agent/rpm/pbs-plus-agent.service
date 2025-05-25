@@ -21,7 +21,11 @@ NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/proxmox-backup
+ReadWritePaths=/etc/pbs-plus-agent /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/proxmox-backup
+
+# Capabilities for backup operations
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID
 
 # Environment
 Environment=HOME=/var/lib/pbs-plus-agent

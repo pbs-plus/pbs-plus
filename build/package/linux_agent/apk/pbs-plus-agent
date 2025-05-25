@@ -29,6 +29,9 @@ start_pre() {
     
     # Ensure working directory exists
     checkpath --directory --owner pbsplus:pbsplus --mode 0750 /var/lib/pbs-plus-agent
+
+    # Ensure config directory exists
+    checkpath --directory --owner pbsplus:pbsplus --mode 0750 /etc/pbs-plus-agent
 }
 
 reload() {
