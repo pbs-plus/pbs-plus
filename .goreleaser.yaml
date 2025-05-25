@@ -23,14 +23,29 @@ builds:
 
   # Linux Agent
   - id: linux-agent
-    main: ./cmd/linux_agent
+    main: ./cmd/unix_agent
     binary: pbs-plus-agent
     goos:
       - linux
     goarch:
       - amd64
       - arm64
-      - arm
+    ldflags:
+      - -X 'main.Version=v{{.Version}}'
+    hooks:
+      post:
+        - upx "{{ .Path }}"
+
+  # BSD Agent
+  - id: bsd-agent
+    main: ./cmd/unix_agent
+    binary: pbs-plus-agent
+    goos:
+      - freebsd
+      - openbsd
+    goarch:
+      - amd64
+      - arm64
     ldflags:
       - -X 'main.Version=v{{.Version}}'
     hooks:
@@ -77,6 +92,13 @@ archives:
   - id: linux-agent
     ids:
       - linux-agent
+    name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
+  - id: bsd-agent
+    ids:
+      - bsd-agent
     name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
