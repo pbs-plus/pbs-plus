@@ -105,6 +105,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 	if isAgent {
 		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
 	}
+	backupId = NormalizeHostname(backupId)
 
 	searchString := fmt.Sprintf(":backup:%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
 
