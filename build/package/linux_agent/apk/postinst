@@ -20,18 +20,18 @@ chmod +x /usr/bin/pbs-plus-updater
 # Create necessary directories with proper ownership
 mkdir -p /var/lib/pbs-plus-agent
 mkdir -p /var/log/pbs-plus-agent
-mkdir -p /run/proxmox-backup
+mkdir -p /run/pbs-plus-agent
 mkdir -p /etc/pbs-plus-agent
 
 # Set ownership and permissions
 chown -R pbsplus:pbsplus /var/lib/pbs-plus-agent
 chown -R pbsplus:pbsplus /var/log/pbs-plus-agent
-chown -R pbsplus:pbsplus /run/proxmox-backup
+chown -R pbsplus:pbsplus /run/pbs-plus-agent
 chown -R pbsplus:pbsplus /etc/pbs-plus-agent
 
 chmod 750 /var/lib/pbs-plus-agent
 chmod 750 /var/log/pbs-plus-agent
-chmod 755 /run/proxmox-backup
+chmod 755 /run/pbs-plus-agent
 chmod 750 /etc/pbs-plus-agent
 
 # Set binary ownership

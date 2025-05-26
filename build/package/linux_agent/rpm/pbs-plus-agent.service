@@ -7,7 +7,7 @@ After=network.target
 Type=simple
 ExecStart=/usr/bin/pbs-plus-agent
 ExecReload=/bin/kill -HUP $MAINPID
-PIDFile=/run/proxmox-backup/pbs-plus-agent.pid
+PIDFile=/run/pbs-plus-agent/pbs-plus-agent.pid
 Restart=on-failure
 RestartSec=10
 User=pbsplus
@@ -32,7 +32,7 @@ PrivateDevices=false
 ReadOnlyPaths=/
 
 # Override with read-write access for specific directories
-ReadWritePaths=/var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/proxmox-backup /etc/pbs-plus-agent /tmp /var/tmp
+ReadWritePaths=/var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/pbs-plus-agent /etc/pbs-plus-agent /tmp /var/tmp
 
 # Ensure binary directories are executable
 ExecPaths=/usr/bin /usr/sbin /bin /sbin

@@ -5,7 +5,7 @@ description="PBS Plus Agent Updater for backup operations"
 
 command="/usr/bin/pbs-plus-updater"
 command_user="pbsplus:pbsplus"
-pidfile="/run/proxmox-backup/pbs-plus-updater.pid"
+pidfile="/run/pbs-plus-agent/pbs-plus-updater.pid"
 command_background="yes"
 
 # Working directory
@@ -28,7 +28,7 @@ depend() {
 
 start_pre() {
     # Create run directory if it doesn't exist
-    checkpath --directory --owner pbsplus:pbsplus --mode 0755 /run/proxmox-backup
+    checkpath --directory --owner pbsplus:pbsplus --mode 0755 /run/pbs-plus-agent
     
     # Ensure log directory exists
     checkpath --directory --owner pbsplus:pbsplus --mode 0750 /var/log/pbs-plus-agent
