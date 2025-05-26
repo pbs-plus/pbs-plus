@@ -52,31 +52,12 @@ builds:
       - linux
     goarch:
       - amd64
-    env:
-      - CGO_ENABLED=1
-    ldflags:
-      - -X 'main.Version=v{{.Version}}'
-      - -linkmode external
-      - -extldflags "-static-libgcc -static-libstdc++"
-    flags:
-      - -tags=netgo
-      - -installsuffix=netgo
-    hooks:
-      post:
-        - upx "{{ .Path }}"
-
-  # Linux Agent ARM64 (pure Go, no external linking)
-  - id: linux-agent-arm64
-    main: ./cmd/unix_agent
-    binary: pbs-plus-agent
-    goos:
-      - linux
-    goarch:
       - arm64
     env:
       - CGO_ENABLED=0
     ldflags:
       - -X 'main.Version=v{{.Version}}'
+      - -extld gcc
       - -extldflags "-static"
     flags:
       - -tags=netgo,osusergo
@@ -93,29 +74,11 @@ builds:
       - linux
     goarch:
       - amd64
-    env:
-      - CGO_ENABLED=1
-    ldflags:
-      - -linkmode external
-      - -extldflags "-static-libgcc -static-libstdc++"
-    flags:
-      - -tags=netgo
-      - -installsuffix=netgo
-    hooks:
-      post:
-        - upx "{{ .Path }}"
-
-  # Linux Updater ARM64 (pure Go, no external linking)
-  - id: linux-updater-arm64
-    main: ./cmd/unix_updater
-    binary: pbs-plus-updater
-    goos:
-      - linux
-    goarch:
       - arm64
     env:
       - CGO_ENABLED=0
     ldflags:
+      - -extld gcc
       - -extldflags "-static"
     flags:
       - -tags=netgo,osusergo
@@ -176,7 +139,6 @@ archives:
   - id: linux-agent
     ids:
       - linux-agent
-      - linux-agent-arm64
     name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
@@ -184,7 +146,6 @@ archives:
   - id: linux-updater
     ids:
       - linux-updater
-      - linux-updater-arm64
     name_template: "{{ .ProjectName }}-updater-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
@@ -259,9 +220,7 @@ nfpms:
   - id: linux-agent-deb
     ids:
       - linux-agent
-      - linux-agent-arm64
       - linux-updater
-      - linux-updater-arm64
     package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -287,9 +246,7 @@ nfpms:
   - id: linux-agent-rpm
     ids:
       - linux-agent
-      - linux-agent-arm64
       - linux-updater
-      - linux-updater-arm64
     package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -315,9 +272,7 @@ nfpms:
   - id: linux-agent-apk
     ids:
       - linux-agent
-      - linux-agent-arm64
       - linux-updater
-      - linux-updater-arm64
     package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
