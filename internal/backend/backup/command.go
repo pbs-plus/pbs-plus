@@ -25,6 +25,8 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 		return nil, fmt.Errorf("RunBackup: failed to get backup ID: %w", err)
 	}
 
+	backupId = proxmox.NormalizeHostname(backupId)
+
 	jobStore := fmt.Sprintf("%s@localhost:%s", proxmox.Session.APIToken.TokenId, job.Store)
 	if jobStore == "@localhost:" {
 		return nil, fmt.Errorf("RunBackup: invalid job store configuration")

@@ -159,6 +159,7 @@ func SetDatastoreOwner(job types.Job, storeInstance *store.Store, owner string) 
 	if isAgent {
 		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
 	}
+	backupId = proxmox.NormalizeHostname(backupId)
 
 	cmdArgs := []string{
 		"change-owner",
