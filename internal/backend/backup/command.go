@@ -15,6 +15,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 )
 
+func normalizeHostname(hostname string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(hostname, ".", "_"), " ", "-")
+}
+
 func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
@@ -76,11 +80,11 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 		"--nofile=1024:1024",
 		"/usr/bin/proxmox-backup-client",
 		"backup",
-		fmt.Sprintf("%s.pxar:%s", strings.ReplaceAll(job.Target, " ", "-"), srcPath),
+		fmt.Sprintf("%s.pxar:%s", normalizeHostname(job.Target), srcPath),
 		"--repository", jobStore,
 		detectionMode,
 		"--entries-max", fmt.Sprintf("%d", job.MaxDirEntries),
-		"--backup-id", backupId,
+		"--backup-id", normalizeHostname(backupId),
 		"--crypt-mode=none",
 	}
 
