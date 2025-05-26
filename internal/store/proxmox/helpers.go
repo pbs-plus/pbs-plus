@@ -23,6 +23,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
+func NormalizeHostname(hostname string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(hostname, ".", "_"), " ", "-")
+}
+
 // ParseUPID parses a Proxmox Backup Server UPID string and returns a Task struct.
 func ParseUPID(upid string) (Task, error) {
 	// Define the regex pattern for the UPID.
