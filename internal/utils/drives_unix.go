@@ -59,7 +59,7 @@ func GetLocalDrives() ([]DriveInfo, error) {
 		Letter:          "Root",
 		Type:            "Fixed",
 		VolumeName:      "Root",
-		FileSystem:      "Linux Filesystem",
+		FileSystem:      "Root Filesystem",
 		TotalBytes:      totalBytes,
 		UsedBytes:       usedBytes,
 		FreeBytes:       freeBytes,

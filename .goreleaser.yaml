@@ -53,8 +53,15 @@ builds:
     goarch:
       - amd64
       - arm64
+    env:
+      - CGO_ENABLED=1
     ldflags:
       - -X 'main.Version=v{{.Version}}'
+      - -linkmode external
+      - -extldflags "-static-libgcc -static-libstdc++"
+    flags:
+      - -tags=netgo
+      - -installsuffix=netgo
     hooks:
       post:
         - upx "{{ .Path }}"
@@ -68,6 +75,14 @@ builds:
     goarch:
       - amd64
       - arm64
+    env:
+      - CGO_ENABLED=1
+    ldflags:
+      - -linkmode external
+      - -extldflags "-static-libgcc -static-libstdc++"
+    flags:
+      - -tags=netgo
+      - -installsuffix=netgo
     hooks:
       post:
         - upx "{{ .Path }}"
