@@ -1,5 +1,3 @@
-//go:build linux
-
 package esxi
 
 import (
@@ -8,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // detectVMwareCommands finds the correct VMware command paths
@@ -92,10 +92,29 @@ func (g *GhettoVCB) createWorkDir() error {
 	return err
 }
 
+func (g *GhettoVCB) mountNFS() error {
+	g.logger.Info(fmt.Sprintf("Mounting NFS: %s:%s to %s", g.config.NFSServer, g.config.NFSMount, g.getLocalMountPath()))
+
+	_, err := g.executeCommand(fmt.Sprintf("%s hostsvc/datastore/nas_create %s %s %s 0 %s", g.vmwareCmd, g.config.NFSLocalName, g.config.NFSVersion, g.config.NFSMount, g.config.NFSServer))
+	return err
+}
+
+func (g *GhettoVCB) unmountNFS() error {
+	g.logger.Debug("Sleeping for 30seconds before unmounting NFS volume")
+	time.Sleep(30 * time.Second)
+
+	_, err := g.executeCommand(fmt.Sprintf("%s hostsvc/datastore/destroy %s", g.vmwareCmd, g.config.NFSLocalName))
+	return err
+}
+
+func (g *GhettoVCB) getLocalMountPath() string {
+	return fmt.Sprintf("/vmfs/volume/%s", g.config.NFSLocalName)
+}
+
 // createBackupDirectory creates the backup directory for a VM
 func (g *GhettoVCB) createBackupDirectory(vm *VMInfo) (string, error) {
-	baseDir := filepath.Join(g.config.VMBackupVolume, vm.Name)
-	backupDir := filepath.Join(baseDir, fmt.Sprintf("%s-%s", vm.Name, g.config.VMBackupDirNamingConv))
+	baseDir := filepath.Join(g.getLocalMountPath(), vm.Name)
+	backupDir := filepath.Join(baseDir, fmt.Sprintf("%s", vm.Name))
 
 	_, err := g.executeCommand(fmt.Sprintf("mkdir -p '%s'", backupDir))
 	if err != nil {
@@ -109,4 +128,13 @@ func (g *GhettoVCB) createBackupDirectory(vm *VMInfo) (string, error) {
 func (g *GhettoVCB) copyVMXFile(vm *VMInfo, backupDir string) error {
 	_, err := g.executeCommand(fmt.Sprintf("cp '%s' '%s/'", vm.VMXPath, backupDir))
 	return err
+}
+
+// getHostname gets the hostname
+func (g *GhettoVCB) getHostname() string {
+	output, err := g.executeCommand("hostname -s")
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(output)
 }

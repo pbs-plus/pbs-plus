@@ -1,5 +1,3 @@
-//go:build linux
-
 package esxi
 
 import (
@@ -15,15 +13,12 @@ import (
 // BackupConfig holds all configuration parameters for ghettoVCB
 type BackupConfig struct {
 	// Basic configuration
-	VMBackupVolume          string
 	DiskBackupFormat        string
-	VMBackupRotationCount   int
 	PowerVMDownBeforeBackup bool
 	EnableHardPowerOff      bool
 	IterToWaitShutdown      int
 	PowerDownTimeout        int
 	SnapshotTimeout         int
-	EnableCompression       bool
 	VMSnapshotMemory        bool
 	VMSnapshotQuiesce       bool
 	AllowVMsWithSnapshots   bool
@@ -31,62 +26,45 @@ type BackupConfig struct {
 	BackupFilesChmod        string
 
 	// NFS configuration
-	EnableNonPersistentNFS bool
-	UnmountNFS             bool
-	NFSServer              string
-	NFSVersion             string
-	NFSMount               string
-	NFSLocalName           string
-	NFSVMBackupDir         string
-
-	// Email configuration
-	EmailAlert         bool
-	EmailLog           bool
-	EmailDelayInterval int
-	EmailServer        string
-	EmailServerPort    int
-	EmailUserName      string
-	EmailUserPassword  string
-	EmailFrom          string
-	EmailTo            string
-	EmailErrorsTo      string
+	NFSServer      string
+	NFSVersion     string
+	NFSMount       string
+	NFSLocalName   string
+	NFSVMBackupDir string
 
 	// VM ordering
 	VMShutdownOrder string
 	VMStartupOrder  string
 
 	// Advanced options
-	RSyncLink              bool
-	WorkdirDebug           bool
-	NFSIOHackLoopMax       int
-	NFSIOHackSleepTimer    int
-	NFSBackupDelay         int
-	EnableNFSIOHack        bool
-	AdditionalRotationPath string
-	VMBackupDirNamingConv  string
+	RSyncLink           bool
+	WorkdirDebug        bool
+	NFSIOHackLoopMax    int
+	NFSIOHackSleepTimer int
+	NFSBackupDelay      int
+	EnableNFSIOHack     bool
 }
 
 // SSHConfig holds SSH connection parameters for remote execution
 type SSHConfig struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	KeyFile  string
-	Timeout  time.Duration
+	Host          string
+	Port          int
+	Username      string
+	Password      string
+	KeyFile       string
+	KeyPassphrase string
+	Timeout       time.Duration
 }
 
 // BackupJob represents a single backup operation
 type BackupJob struct {
 	VMNames    []string
 	ExcludeVMs []string
-	JobName    string
 	BackupAll  bool
 	DryRun     bool
 	LogLevel   string
 	WorkDir    string
 	ConfigDir  string
-	GlobalConf string
 }
 
 // BackupResult contains the results of a backup operation
