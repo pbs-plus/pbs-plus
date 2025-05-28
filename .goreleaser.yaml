@@ -44,6 +44,28 @@ builds:
       post:
         - upx "{{ .Path }}"
 
+  # ESXi NFS Backup
+  - id: esxi-nfs-backup
+    main: ./cmd/esxi_nfs_backup
+    binary: esxi-nfs-backup
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -X 'main.Version=v{{.Version}}'
+      - -extld gcc
+      - -extldflags "-static"
+    flags:
+      - -tags=netgo,osusergo
+      - -installsuffix=netgo
+    hooks:
+      post:
+        - upx "{{ .Path }}"
+
   # Linux Agent
   - id: linux-agent
     main: ./cmd/unix_agent
@@ -136,6 +158,13 @@ archives:
     formats:
       - binary
 
+  - id: esxi-nfs-backup
+    ids:
+      - esxi-nfs-backup
+    name_template: "esxi-nfs-backup-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
   - id: linux-agent
     ids:
       - linux-agent
@@ -193,6 +222,7 @@ nfpms:
   - id: server-deb
     ids:
       - server
+      - esxi-nfs-backup
     package_name: "{{ .ProjectName }}"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
