@@ -37,9 +37,10 @@ func CreateBackupLogger(jobId string) *BackupLogger {
 		}
 
 		return &BackupLogger{
-			File:  clientLogFile,
-			Path:  filePath,
-			jobId: jobId,
+			File:   clientLogFile,
+			Path:   filePath,
+			jobId:  jobId,
+			Writer: bufio.NewWriter(clientLogFile),
 		}, false
 	})
 
