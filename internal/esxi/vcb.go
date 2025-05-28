@@ -20,7 +20,7 @@ func DefaultConfig() *BackupConfig {
 		VMSnapshotQuiesce:       false,
 		AllowVMsWithSnapshots:   false,
 		VMDKFilesToBackup:       "all",
-		NFSVersion:              "nfs",
+		NFSVersion:              "nfsv41",
 		RSyncLink:               false,
 		WorkdirDebug:            false,
 		NFSIOHackLoopMax:        10,
@@ -40,7 +40,7 @@ func NewGhettoVCB(config *BackupConfig, sshConfig *SSHConfig) (*GhettoVCB, error
 		config:    config,
 		sshConfig: sshConfig,
 		logger:    NewLogger("info", os.Stdout),
-		workDir:   "/tmp/pbs-ghettoVCB.work",
+		workDir:   "/tmp/pbs-plus-ghetto-vcb.work",
 	}
 
 	if err := g.connectSSH(); err != nil {
@@ -85,8 +85,6 @@ func (g *GhettoVCB) BackupVMs(ctx context.Context, job *BackupJob) (*BackupResul
 		Status:    "RUNNING",
 	}
 
-	g.logger.Info("============================== ghettoVCB LOG START ==============================")
-
 	// Set up logging
 	if job.LogLevel != "" {
 		g.logger.level = job.LogLevel
@@ -94,6 +92,14 @@ func (g *GhettoVCB) BackupVMs(ctx context.Context, job *BackupJob) (*BackupResul
 
 	// Get list of VMs to backup
 	vms, err := g.getVMsToBackup(job)
+	if err != nil {
+		result.Success = false
+		result.ErrorMessage = err.Error()
+		result.Status = "ERROR"
+		return result, err
+	}
+
+	err = g.mountNFS()
 	if err != nil {
 		result.Success = false
 		result.ErrorMessage = err.Error()
@@ -116,7 +122,7 @@ func (g *GhettoVCB) Close() error {
 		g.executeCommand(fmt.Sprintf("rm -rf %s", g.workDir))
 	}
 
-	_ = g.unmountNFS()
+	g.unmountNFS()
 
 	// Close SSH connection
 	if g.sshClient != nil {

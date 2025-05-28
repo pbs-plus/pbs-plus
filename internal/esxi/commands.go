@@ -3,7 +3,6 @@ package esxi
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -78,14 +77,26 @@ func (g *GhettoVCB) detectESXVersion() error {
 		return fmt.Errorf("invalid major version: %s", matches[1])
 	}
 
+	minorVersion, err := strconv.Atoi(matches[2])
+	if err != nil {
+		return fmt.Errorf("invalid minor version: %s", matches[2])
+	}
+
+	patchVersion, err := strconv.Atoi(matches[3])
+	if err != nil {
+		return fmt.Errorf("invalid patch version: %s", matches[3])
+	}
+
 	g.version = majorVersion
+	g.minorVersion = minorVersion
+	g.patchVersion = patchVersion
 	return nil
 }
 
 // createWorkDir creates the working directory
 func (g *GhettoVCB) createWorkDir() error {
 	if g.workDir == "" {
-		g.workDir = fmt.Sprintf("/tmp/ghettoVCB.work.%d", os.Getpid())
+		g.workDir = fmt.Sprintf("/tmp/pbs-plus-ghetto-vcb.work.%d", os.Getpid())
 	}
 
 	_, err := g.executeCommand(fmt.Sprintf("mkdir -p %s", g.workDir))
@@ -95,33 +106,31 @@ func (g *GhettoVCB) createWorkDir() error {
 func (g *GhettoVCB) mountNFS() error {
 	g.logger.Info(fmt.Sprintf("Mounting NFS: %s:%s to %s", g.config.NFSServer, g.config.NFSMount, g.getLocalMountPath()))
 
-	_, err := g.executeCommand(fmt.Sprintf("%s hostsvc/datastore/nas_create %s %s %s 0 %s", g.vmwareCmd, g.config.NFSLocalName, g.config.NFSVersion, g.config.NFSMount, g.config.NFSServer))
+	command := fmt.Sprintf("%s hostsvc/datastore/nas_create %s %s %s 0 %s", g.vmwareCmd, g.config.NFSLocalName, g.config.NFSVersion, g.config.NFSMount, g.config.NFSServer)
+
+	if g.version < 5 || (g.version == 5 && g.minorVersion == 0) {
+		command = fmt.Sprintf("%s hostsvc/datastore/nas_create %s %s %s 0", g.vmwareCmd, g.config.NFSLocalName, g.config.NFSServer, g.config.NFSMount)
+	}
+
+	_, err := g.executeCommand(command)
 	return err
 }
 
-func (g *GhettoVCB) unmountNFS() error {
-	g.logger.Debug("Sleeping for 30seconds before unmounting NFS volume")
+func (g *GhettoVCB) unmountNFS() {
+	g.logger.Info("Sleeping for 30 seconds before unmounting NFS volume to let async operations finish")
 	time.Sleep(30 * time.Second)
 
-	_, err := g.executeCommand(fmt.Sprintf("%s hostsvc/datastore/destroy %s", g.vmwareCmd, g.config.NFSLocalName))
-	return err
+	output, err := g.executeCommand(fmt.Sprintf("%s hostsvc/datastore/destroy %s", g.vmwareCmd, g.config.NFSLocalName))
+	if err != nil {
+		g.logger.Info(err.Error())
+		g.logger.Info(output)
+	}
+
+	return
 }
 
 func (g *GhettoVCB) getLocalMountPath() string {
-	return fmt.Sprintf("/vmfs/volume/%s", g.config.NFSLocalName)
-}
-
-// createBackupDirectory creates the backup directory for a VM
-func (g *GhettoVCB) createBackupDirectory(vm *VMInfo) (string, error) {
-	baseDir := filepath.Join(g.getLocalMountPath(), vm.Name)
-	backupDir := filepath.Join(baseDir, fmt.Sprintf("%s", vm.Name))
-
-	_, err := g.executeCommand(fmt.Sprintf("mkdir -p '%s'", backupDir))
-	if err != nil {
-		return "", err
-	}
-
-	return backupDir, nil
+	return fmt.Sprintf("/vmfs/volumes/%s", g.config.NFSLocalName)
 }
 
 // copyVMXFile copies the VMX file to the backup directory

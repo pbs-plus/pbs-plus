@@ -1,8 +1,11 @@
 package esxi
 
 import (
+	"bufio"
 	"fmt"
+	"log"
 	"os"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -109,4 +112,88 @@ func (g *GhettoVCB) executeCommand(cmd string) (string, error) {
 
 	output, err := session.CombinedOutput(cmd)
 	return string(output), err
+}
+
+func (g *GhettoVCB) executeCommandStream(cmd string) (<-chan string, func() error, error) {
+	if g.sshClient == nil {
+		return nil, nil, fmt.Errorf("SSH client not connected")
+	}
+
+	session, err := g.sshClient.NewSession()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create session: %w", err)
+	}
+	// Note: session.Close() is handled carefully in the goroutine below
+
+	stdoutPipe, err := session.StdoutPipe()
+	if err != nil {
+		session.Close() // Close session if pipe creation fails
+		return nil, nil, fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+
+	stderrPipe, err := session.StderrPipe()
+	if err != nil {
+		session.Close() // Close session if pipe creation fails
+		return nil, nil, fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
+
+	outputChan := make(chan string, 100) // Buffered channel
+	var cmdErr error
+	var wg sync.WaitGroup
+
+	// Start the command
+	if err := session.Start(cmd); err != nil {
+		session.Close() // Close session if start fails
+		return nil, nil, fmt.Errorf("failed to start command: %w", err)
+	}
+
+	// Goroutine to read from stdout
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stdoutPipe)
+		for scanner.Scan() {
+			outputChan <- scanner.Text()
+		}
+		if err := scanner.Err(); err != nil {
+			log.Printf("Error scanning stdout: %v", err)
+		}
+	}()
+
+	// Goroutine to read from stderr
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			outputChan <- "[STDERR] " + scanner.Text()
+		}
+		if err := scanner.Err(); err != nil {
+			log.Printf("Error scanning stderr: %v", err)
+		}
+	}()
+
+	var finalErrorMu sync.Mutex
+	var finalError error
+
+	go func() {
+		cmdErr = session.Wait()
+		finalErrorMu.Lock()
+		finalError = cmdErr
+		finalErrorMu.Unlock()
+
+		wg.Wait()
+
+		session.Close()
+
+		close(outputChan)
+	}()
+
+	getFinalError := func() error {
+		finalErrorMu.Lock()
+		defer finalErrorMu.Unlock()
+		return finalError
+	}
+
+	return outputChan, getFinalError, nil
 }
