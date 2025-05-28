@@ -3,6 +3,7 @@ package esxi
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -25,12 +26,7 @@ func (g *GhettoVCB) backupSingleVM(ctx context.Context, vm *VMInfo) (bool, bool)
 		}
 	}
 
-	// Create backup directory
-	backupDir, err := g.createBackupDirectory(vm)
-	if err != nil {
-		g.logger.Info(fmt.Sprintf("Failed to create backup directory for %s: %v", vm.Name, err))
-		return false, false
-	}
+	backupDir := filepath.ToSlash(filepath.Join(g.getLocalMountPath(), vm.Name))
 
 	// Copy VMX file
 	if err := g.copyVMXFile(vm, backupDir); err != nil {
@@ -56,7 +52,7 @@ func (g *GhettoVCB) backupSingleVM(ctx context.Context, vm *VMInfo) (bool, bool)
 	// Create snapshot for powered-on VMs
 	var snapshotName string
 	if !g.config.PowerVMDownBeforeBackup && originalPowerState == "Powered on" {
-		snapshotName = fmt.Sprintf("ghettoVCB-snapshot-%s", time.Now().Format("2006-01-02"))
+		snapshotName = fmt.Sprintf("pbs-plus-snapshot-%s", time.Now().Format("2006-01-02"))
 		if err := g.createSnapshot(vm, snapshotName); err != nil {
 			g.logger.Info(fmt.Sprintf("Failed to create snapshot for %s: %v", vm.Name, err))
 			return false, false
@@ -163,6 +159,106 @@ func (g *GhettoVCB) powerOnVM(vm *VMInfo) error {
 	return err
 }
 
+// parseSnapshotField extracts key and value from a snapshot detail line.
+// Example: "--Snapshot Name        : My Snapshot" -> ("Snapshot Name", "My Snapshot", true)
+// It handles varying leading hyphens.
+func parseSnapshotField(line string) (key string, value string, found bool) {
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) == 2 {
+		rawKey := strings.TrimSpace(parts[0])
+		// Remove all leading hyphens
+		processedKey := rawKey
+		for strings.HasPrefix(processedKey, "-") {
+			processedKey = strings.TrimPrefix(processedKey, "-")
+		}
+		// The actual key name might still have leading/trailing spaces if not part of hyphens
+		key = strings.TrimSpace(processedKey)
+
+		value = strings.TrimSpace(parts[1])
+		return key, value, true
+	}
+	return "", "", false
+}
+
+// getSnapshotIDByName retrieves the ID of a snapshot given its name for a specific VM.
+func (g *GhettoVCB) getSnapshotIDByName(vmID string, targetSnapshotName string) (string, error) {
+	cmd := fmt.Sprintf("%s vmsvc/snapshot.get %s", g.vmwareCmd, vmID)
+	output, err := g.executeCommand(cmd)
+	if err != nil {
+		return "", fmt.Errorf(
+			"failed to execute snapshot.get for VMID %s: %w",
+			vmID,
+			err,
+		)
+	}
+
+	lines := strings.Split(output, "\n")
+	var currentParsedName string
+	// inPotentialSnapshotBlock is true if we've parsed a "Snapshot Name"
+	// and are expecting its related fields, particularly "Snapshot Id".
+	var inPotentialSnapshotBlock bool
+
+	for _, line := range lines {
+		key, value, ok := parseSnapshotField(line)
+		if !ok {
+			// Line is not a key-value field (e.g., "Get Snapshot:", "|-ROOT", empty lines)
+			continue
+		}
+
+		g.logger.Debug(
+			fmt.Sprintf("Parsed snapshot field: Key='%s', Value='%s'", key, value),
+		)
+
+		if key == "Snapshot Name" {
+			currentParsedName = value
+			inPotentialSnapshotBlock = true // We've found a name, now look for its ID.
+			g.logger.Debug(
+				fmt.Sprintf("Found Snapshot Name: '%s'", currentParsedName),
+			)
+		} else if key == "Snapshot Id" && inPotentialSnapshotBlock {
+			// This ID belongs to the 'currentParsedName' we just read.
+			g.logger.Debug(fmt.Sprintf(
+				"Found Snapshot Id: '%s' for Name: '%s'",
+				value,
+				currentParsedName,
+			))
+			if currentParsedName == targetSnapshotName {
+				g.logger.Info(fmt.Sprintf(
+					"Target snapshot '%s' found with ID '%s' for VMID '%s'",
+					targetSnapshotName,
+					value,
+					vmID,
+				))
+				return value, nil // Target found
+			}
+			// Reset: this ID has been processed (matched or not).
+			// We are no longer looking for an ID for *this* specific currentParsedName.
+			inPotentialSnapshotBlock = false
+			currentParsedName = ""
+		} else if inPotentialSnapshotBlock {
+			// We are in a snapshot block (e.g. reading "Snapshot Desciption", "Snapshot Created On")
+			// These fields belong to currentParsedName, but are not the ID itself.
+			// We continue, waiting for "Snapshot Id" or a new "Snapshot Name".
+			g.logger.Debug(fmt.Sprintf(
+				"Other field '%s' for current snapshot name '%s'",
+				key,
+				currentParsedName,
+			))
+		}
+	}
+
+	g.logger.Info(fmt.Sprintf(
+		"Snapshot with name '%s' not found for VMID '%s'",
+		targetSnapshotName,
+		vmID,
+	))
+	return "", fmt.Errorf(
+		"snapshot named '%s' not found for VMID %s",
+		targetSnapshotName,
+		vmID,
+	)
+}
+
 // createSnapshot creates a snapshot of a virtual machine
 func (g *GhettoVCB) createSnapshot(vm *VMInfo, snapshotName string) error {
 	g.logger.Info(fmt.Sprintf("Creating snapshot '%s' for %s", snapshotName, vm.Name))
@@ -177,9 +273,10 @@ func (g *GhettoVCB) createSnapshot(vm *VMInfo, snapshotName string) error {
 		quiesce = "1"
 	}
 
-	_, err := g.executeCommand(fmt.Sprintf("%s vmsvc/snapshot.create %s '%s' '%s' %s %s",
+	output, err := g.executeCommand(fmt.Sprintf("%s vmsvc/snapshot.create %s '%s' '%s' %s %s",
 		g.vmwareCmd, vm.ID, snapshotName, snapshotName, memory, quiesce))
 	if err != nil {
+		g.logger.Info(output)
 		return err
 	}
 
@@ -210,14 +307,18 @@ func (g *GhettoVCB) removeSnapshot(vm *VMInfo, snapshotName string) error {
 	g.logger.Info(fmt.Sprintf("Removing snapshot from %s", vm.Name))
 
 	// Get snapshot ID
-	_, err := g.executeCommand(fmt.Sprintf("%s vmsvc/snapshot.get %s", g.vmwareCmd, vm.ID))
+	snapshotID, err := g.getSnapshotIDByName(vm.ID, snapshotName)
 	if err != nil {
+		g.logger.Info(snapshotID)
 		return err
 	}
 
+	command := fmt.Sprintf("%s vmsvc/snapshot.remove %s %s", g.vmwareCmd, vm.ID, snapshotID)
+
 	// Parse snapshot ID (this is a simplified version)
-	_, err = g.executeCommand(fmt.Sprintf("%s vmsvc/snapshot.remove %s", g.vmwareCmd, vm.ID))
+	output, err := g.executeCommand(command)
 	if err != nil {
+		g.logger.Info(output)
 		return err
 	}
 

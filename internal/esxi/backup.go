@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // performBackup performs the actual backup operation
@@ -78,8 +80,6 @@ func (g *GhettoVCB) performBackup(ctx context.Context, vms []*VMInfo, result *Ba
 		result.Status = "ERROR"
 	}
 
-	g.logger.Info("============================== ghettoVCB LOG END ==============================")
-
 	return result, nil
 }
 
@@ -96,12 +96,6 @@ func (g *GhettoVCB) backupVMDK(vm *VMInfo, vmdk VMDKInfo, backupDir string) erro
 			dsUUID := parts[3]
 			vmdkName := filepath.Base(vmdk.Path)
 			destDir := filepath.Join(backupDir, dsUUID)
-
-			_, err := g.executeCommand(fmt.Sprintf("mkdir -p '%s'", destDir))
-			if err != nil {
-				return err
-			}
-
 			destPath = filepath.Join(destDir, vmdkName)
 		} else {
 			destPath = filepath.Join(backupDir, filepath.Base(vmdk.Path))
@@ -110,8 +104,16 @@ func (g *GhettoVCB) backupVMDK(vm *VMInfo, vmdk VMDKInfo, backupDir string) erro
 		destPath = filepath.Join(backupDir, filepath.Base(vmdk.Path))
 	}
 
+	destPath = filepath.ToSlash(destPath)
+
+	mkdirCmd := fmt.Sprintf("mkdir -p '%s'", filepath.ToSlash(filepath.Dir(destPath)))
+	output, err := g.executeCommand(mkdirCmd)
+	if err != nil {
+		return err
+	}
+
 	// Check if it's a physical RDM
-	output, err := g.executeCommand(fmt.Sprintf("grep 'vmfsPassthroughRawDeviceMap' '%s'", vmdk.Path))
+	output, err = g.executeCommand(fmt.Sprintf("grep 'vmfsPassthroughRawDeviceMap' '%s'", vmdk.Path))
 	if err == nil && strings.TrimSpace(output) != "" {
 		g.logger.Info(fmt.Sprintf("WARNING: Physical RDM '%s' found for %s, which will not be backed up", vmdk.Path, vm.Name))
 		return fmt.Errorf("physical RDM cannot be backed up")
@@ -145,11 +147,29 @@ func (g *GhettoVCB) backupVMDK(vm *VMInfo, vmdk VMDKInfo, backupDir string) erro
 
 	// Execute vmkfstools
 	cmd := fmt.Sprintf("%s -i '%s' %s %s '%s'", g.vmkfstools, vmdk.Path, adapterFormat, formatOption, destPath)
-	g.logger.Debug(fmt.Sprintf("Executing: %s", cmd))
+	g.logger.Info(fmt.Sprintf("Executing: %s", cmd))
 
-	_, err = g.executeCommand(cmd)
+	outputChan, getCmdErr, err := g.executeCommandStream(cmd)
 	if err != nil {
 		return fmt.Errorf("vmkfstools failed: %w", err)
+	}
+
+	for line := range outputChan {
+		g.logger.Info(fmt.Sprintf("vmkfstools > %s", line))
+	}
+
+	// After the channel is closed, get the final command error
+	cmdErr := getCmdErr()
+	if cmdErr != nil {
+		if exitErr, ok := cmdErr.(*ssh.ExitError); ok {
+			g.logger.Info(fmt.Sprintf(
+				"Command finished with error. Exit status: %d. Error: %v",
+				exitErr.ExitStatus(),
+				cmdErr,
+			))
+		} else {
+			g.logger.Info(fmt.Sprintf("Command finished with error: %v", cmdErr))
+		}
 	}
 
 	return nil

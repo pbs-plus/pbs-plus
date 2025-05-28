@@ -102,15 +102,17 @@ type VMDKInfo struct {
 
 // GhettoVCB is the main backup client
 type GhettoVCB struct {
-	config     *BackupConfig
-	sshConfig  *SSHConfig
-	sshClient  *ssh.Client
-	logger     *Logger
-	workDir    string
-	vmwareCmd  string
-	vmkfstools string
-	version    int
-	mutex      sync.RWMutex
+	config       *BackupConfig
+	sshConfig    *SSHConfig
+	sshClient    *ssh.Client
+	logger       *Logger
+	workDir      string
+	vmwareCmd    string
+	vmkfstools   string
+	version      int
+	minorVersion int
+	patchVersion int
+	mutex        sync.RWMutex
 }
 
 // Logger handles logging with different levels
