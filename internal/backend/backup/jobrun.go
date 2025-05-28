@@ -291,7 +291,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 	currOwner, _ := GetCurrentOwner(op.job, op.storeInstance)
 	_ = FixDatastore(op.job, op.storeInstance)
 
-	stdoutWriter := io.MultiWriter(op.logger, os.Stdout)
+	stdoutWriter := io.MultiWriter(op.logger.File, os.Stdout)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stdoutWriter
 
