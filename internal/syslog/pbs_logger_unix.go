@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,12 +67,22 @@ func GetExistingBackupLogger(jobId string) *BackupLogger {
 	return logger
 }
 
-func (b *BackupLogger) Write(message []byte) (n int, err error) {
+func (b *BackupLogger) Write(in []byte) (n int, err error) {
 	b.RLock()
 	defer b.RUnlock()
 
-	timestamp := time.Now().Format(time.RFC3339)
-	return b.File.Write([]byte(fmt.Sprintf("%s: %s\n", timestamp, string(message))))
+	message := string(in)
+
+	for _, line := range strings.Split(message, "\n") {
+		timestamp := time.Now().Format(time.RFC3339)
+		m, err := b.File.Write([]byte(fmt.Sprintf("%s: %s\n", timestamp, line)))
+		if err != nil {
+			return n, err
+		}
+
+		n += m
+	}
+	return n, err
 }
 
 func (b *BackupLogger) Close() error {
