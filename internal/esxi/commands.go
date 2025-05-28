@@ -117,8 +117,8 @@ func (g *GhettoVCB) mountNFS() error {
 }
 
 func (g *GhettoVCB) unmountNFS() {
-	g.logger.Info("Sleeping for 30 seconds before unmounting NFS volume to let async operations finish")
-	time.Sleep(30 * time.Second)
+	g.logger.Info(fmt.Sprintf("Sleeping for %d seconds before unmounting NFS volume to let async operations finish", g.config.NFSUnmountWait))
+	time.Sleep(time.Duration(g.config.NFSUnmountWait) * time.Second)
 
 	output, err := g.executeCommand(fmt.Sprintf("%s hostsvc/datastore/destroy %s", g.vmwareCmd, g.config.NFSLocalName))
 	if err != nil {

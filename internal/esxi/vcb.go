@@ -27,6 +27,7 @@ func DefaultConfig() *BackupConfig {
 		NFSIOHackSleepTimer:     60,
 		NFSBackupDelay:          0,
 		EnableNFSIOHack:         false,
+		NFSUnmountWait:          30,
 	}
 }
 
