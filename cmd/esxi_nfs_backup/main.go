@@ -37,7 +37,7 @@ var (
 	nfsVersion              string
 	nfsMount                string
 	nfsLocalName            string
-	nfsVMBackupDir          string
+	nfsUnmountWait          int
 	vmShutdownOrder         string
 	vmStartupOrder          string
 	rsyncLink               bool
@@ -53,8 +53,6 @@ var (
 	backupAll  bool
 	dryRun     bool
 	logLevel   string
-	workDir    string
-	configDir  string
 )
 
 var rootCmd = &cobra.Command{
@@ -98,7 +96,7 @@ var backupCmd = &cobra.Command{
 		backupConfig.NFSVersion = nfsVersion
 		backupConfig.NFSMount = nfsMount
 		backupConfig.NFSLocalName = nfsLocalName
-		backupConfig.NFSVMBackupDir = nfsVMBackupDir
+		backupConfig.NFSUnmountWait = nfsUnmountWait
 		backupConfig.VMShutdownOrder = vmShutdownOrder
 		backupConfig.VMStartupOrder = vmStartupOrder
 		backupConfig.RSyncLink = rsyncLink
@@ -121,8 +119,6 @@ var backupCmd = &cobra.Command{
 			BackupAll:  backupAll,
 			DryRun:     dryRun,
 			LogLevel:   logLevel,
-			WorkDir:    workDir,   // Note: The provided code seems to manage its own workDir internally based on a hardcoded path and the config.WorkdirDebug flag. You might need to adjust this part depending on how you want the user-provided WorkDir to interact.
-			ConfigDir:  configDir, // Note: The provided code doesn't seem to use a ConfigDir in BackupJob or GhettoVCB. You might need to add functionality for this if you intend to use it.
 		}
 
 		ctx := context.Background() // Use a context for cancellation/timeout if needed
@@ -181,7 +177,7 @@ func init() {
 	backupCmd.PersistentFlags().StringVar(&nfsVersion, "nfs-version", "nfsv41", "NFS version (nfsv3, nfsv41)")
 	backupCmd.PersistentFlags().StringVar(&nfsMount, "nfs-mount", "", "NFS mount path on the server (e.g., /mnt/backups)")
 	backupCmd.PersistentFlags().StringVar(&nfsLocalName, "nfs-local-name", "", "Local name for the NFS mount on ESXi (e.g., datastore_backup)")
-	backupCmd.PersistentFlags().StringVar(&nfsVMBackupDir, "nfs-vm-backup-dir", "", "Directory on the NFS share for VM backups (e.g., my_vm_backups)")
+	backupCmd.PersistentFlags().IntVar(&nfsUnmountWait, "nfs-unmount-wait", 30, "Delay in seconds before ESXi unmounts the NFS mount.")
 
 	// Define VM Ordering flags
 	backupCmd.PersistentFlags().StringVar(&vmShutdownOrder, "vm-shutdown-order", "", "Comma-separated list of VM names for shutdown order")
@@ -201,7 +197,6 @@ func init() {
 	backupCmd.Flags().BoolVarP(&backupAll, "all", "a", false, "Backup all VMs")
 	backupCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Perform a dry run without actually backing up")
 	backupCmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
-	backupCmd.Flags().StringVar(&workDir, "work-dir", "", "Specify a work directory on ESXi (overrides default)")
 }
 
 func main() {
