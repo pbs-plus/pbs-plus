@@ -146,21 +146,34 @@ func (b *BackupLogger) Close() error {
 	b.Lock()
 	defer b.Unlock()
 
-	err := b.Writer.Flush() // Ensure anything remaining in the buffer is written
-	if err != nil {
-		// Handle flush error, but still attempt to close the file
-		backupLoggers.Delete(b.jobId)
-		closeErr := b.File.Close()
-		if closeErr != nil {
-			os.RemoveAll(b.File.Name())
-			return fmt.Errorf("flush error: %w, close error: %v", err, closeErr)
+	var multiError []string
+
+	if b.Writer != nil {
+		if err := b.Writer.Flush(); err != nil {
+			multiError = append(multiError, fmt.Sprintf("flush error: %v", err))
 		}
-		os.RemoveAll(b.File.Name())
-		return fmt.Errorf("flush error: %w", err)
 	}
 
-	_ = b.File.Close()
+	if b.File != nil {
+		if err := b.File.Close(); err != nil {
+			multiError = append(multiError, fmt.Sprintf("file close error: %v", err))
+		}
+		// Mark as nil so subsequent calls to Write/Flush/Close on this instance might fail clearly
+		b.File = nil
+		b.Writer = nil
+	}
 
+	// Always try to remove from map and delete file
 	backupLoggers.Delete(b.jobId)
-	return os.RemoveAll(b.File.Name())
+
+	if b.Path != "" {
+		if err := os.RemoveAll(b.Path); err != nil {
+			multiError = append(multiError, fmt.Sprintf("file remove error (%s): %v", b.Path, err))
+		}
+	}
+
+	if len(multiError) > 0 {
+		return fmt.Errorf(strings.Join(multiError, "; "))
+	}
+	return nil
 }
