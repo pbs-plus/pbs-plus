@@ -52,7 +52,7 @@ func (e *LogEntry) Write() {
 				sb.WriteString(fmt.Sprintf(" (debug values: %v)", e.Fields))
 			}
 
-			backupLogger.Write(sb.String())
+			backupLogger.Write([]byte(sb.String()))
 
 			sb.Reset()
 		}
