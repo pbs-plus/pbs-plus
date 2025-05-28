@@ -3,6 +3,7 @@
 package syslog
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,8 +16,9 @@ import (
 
 type BackupLogger struct {
 	*os.File
-	Path  string
-	jobId string
+	Path   string
+	jobId  string
+	Writer *bufio.Writer
 
 	sync.Mutex
 }
@@ -59,9 +61,10 @@ func GetExistingBackupLogger(jobId string) *BackupLogger {
 		}
 
 		return &BackupLogger{
-			File:  clientLogFile,
-			Path:  filePath,
-			jobId: jobId,
+			File:   clientLogFile,
+			Path:   filePath,
+			jobId:  jobId,
+			Writer: bufio.NewWriter(clientLogFile),
 		}
 	})
 	return logger
@@ -72,24 +75,56 @@ func (b *BackupLogger) Write(in []byte) (n int, err error) {
 	defer b.Unlock()
 
 	message := string(in)
+	var stringBuilder strings.Builder
 
 	for _, line := range strings.Split(message, "\n") {
 		timestamp := time.Now().Format(time.RFC3339)
-		m, err := b.File.Write([]byte(fmt.Sprintf("%s: %s\n", timestamp, line)))
-		if err != nil {
-			return n, err
+		_, formatErr := fmt.Fprintf(&stringBuilder, "%s: %s\n", timestamp, line)
+		if formatErr != nil {
+			return 0, fmt.Errorf("error formatting log line: %w", formatErr)
 		}
-
-		n += m
 	}
-	return n, err
+	formattedLogMessage := stringBuilder.String()
+
+	bytesWrittenToBuffer, writeErr := b.Writer.WriteString(formattedLogMessage)
+	if writeErr != nil {
+		_ = b.Writer.Flush()
+		return 0, fmt.Errorf(
+			"error writing formatted message to logger's internal buffer: %w",
+			writeErr,
+		)
+	}
+
+	flushErr := b.Writer.Flush()
+	if flushErr != nil {
+		return bytesWrittenToBuffer, fmt.Errorf(
+			"error flushing logger buffer to file: %w",
+			flushErr,
+		)
+	}
+
+	return bytesWrittenToBuffer, nil
 }
 
 func (b *BackupLogger) Close() error {
 	b.Lock()
 	defer b.Unlock()
 
-	backupLoggers.Delete(b.jobId)
+	err := b.Writer.Flush() // Ensure anything remaining in the buffer is written
+	if err != nil {
+		// Handle flush error, but still attempt to close the file
+		backupLoggers.Delete(b.jobId)
+		closeErr := b.File.Close()
+		if closeErr != nil {
+			os.RemoveAll(b.File.Name())
+			return fmt.Errorf("flush error: %w, close error: %v", err, closeErr)
+		}
+		os.RemoveAll(b.File.Name())
+		return fmt.Errorf("flush error: %w", err)
+	}
+
 	_ = b.File.Close()
+
+	backupLoggers.Delete(b.jobId)
 	return os.RemoveAll(b.File.Name())
 }
