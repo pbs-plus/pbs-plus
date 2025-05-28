@@ -5,6 +5,7 @@ package syslog
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -176,7 +177,7 @@ func (b *BackupLogger) Close() error {
 	}
 
 	if len(multiError) > 0 {
-		return fmt.Errorf(strings.Join(multiError, "; "))
+		return errors.New(strings.Join(multiError, "; "))
 	}
 	return nil
 }
