@@ -401,6 +401,10 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			op.extraExclusions = append(op.extraExclusions, errorPath)
 		}
 
+		if newUpid, err := proxmox.ChangeUPIDStartTime(task.UPID, op.logger.StartTime); err == nil {
+			task.UPID = newUpid
+		}
+
 		if err := updateJobStatus(succeeded, warningsNum, op.job, task, op.storeInstance); err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed to update job status - post cmd.Wait").

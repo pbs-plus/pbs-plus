@@ -171,6 +171,42 @@ func GenerateQueuedTask(job types.Job, web bool) (QueuedTask, error) {
 	return QueuedTask{Task: task, job: job, path: path}, nil
 }
 
+func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
+	if !strings.HasPrefix(upid, "UPID:") || !strings.HasSuffix(upid, ":") {
+		return "", fmt.Errorf("invalid UPID format: must start with 'UPID:' and end with ':'")
+	}
+
+	path, err := GetLogPath(upid)
+	if err != nil {
+		return "", err
+	}
+
+	pathDir := filepath.Dir(path)
+
+	parts := strings.Split(upid, ":")
+
+	// Expected number of parts:
+	// "UPID", node, pid, pstart, taskID, startTime, wtype, wid, authId, "" (empty string due to trailing colon)
+	// So, 10 parts in total.
+	if len(parts) != 10 {
+		return "", fmt.Errorf("invalid UPID format: expected 10 parts, got %d from '%s'", len(parts), upid)
+	}
+
+	startTimeEnc := fmt.Sprintf("%08X", uint32(startTime.Unix()))
+
+	parts[5] = startTimeEnc
+
+	newUpid := strings.Join(parts, ":")
+	newPath := filepath.Join(pathDir, newUpid)
+
+	err = os.Rename(path, newPath)
+	if err != nil {
+		return "", err
+	}
+
+	return newPath, nil
+}
+
 func (task *QueuedTask) UpdateDescription(desc string) error {
 	if task.closed.Load() {
 		return nil
