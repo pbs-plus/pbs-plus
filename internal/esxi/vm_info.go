@@ -70,9 +70,8 @@ func (g *GhettoVCB) getAllVMs() ([]*VMInfo, error) {
 	// Group 2: Name
 	// Group 3: Datastore (without brackets)
 	// Group 4: VMX Path relative to datastore
-	// Group 5: Guest OS
-	// Group 6: Rest of the line (Version, Annotation) - Optional
-	vmLineRegex := regexp.MustCompile(`^(\d+)\s+(.+?)\s+\[([^\]]+)\]\s+(.+?)\s+([^\s]+)(\s+.*)?$`)
+	// Group 5: Rest of the line (Guest OS, Version, Annotation) - Optional
+	vmLineRegex := regexp.MustCompile(`^(\d+)\s+(.+?)\s+\[([^\]]+)\]\s+(.+?\.vmx)\s+(.*)$`)
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -110,10 +109,7 @@ func (g *GhettoVCB) getAllVMs() ([]*VMInfo, error) {
 			g.logger.Debug(fmt.Sprintf("Group 4 (VMXPathRaw): '%s'", matches[4]))
 		}
 		if len(matches) > 5 {
-			g.logger.Debug(fmt.Sprintf("Group 5 (GuestOS): '%s'", matches[5]))
-		}
-		if len(matches) > 6 {
-			g.logger.Debug(fmt.Sprintf("Group 6 (Rest): '%s'", matches[6]))
+			g.logger.Debug(fmt.Sprintf("Group 5 (Rest): '%s'", matches[5]))
 		}
 
 		// We need at least up to Group 5 (GuestOS) for our core fields.
