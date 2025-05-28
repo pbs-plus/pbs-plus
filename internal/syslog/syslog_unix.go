@@ -32,10 +32,10 @@ func (e *LogEntry) Write() {
 		if backupLogger != nil {
 			var sb strings.Builder
 
-			sb.WriteString("pbs-plus warning: ")
+			sb.WriteString("pbs-plus: ")
 
 			if e.Level == "error" {
-				sb.WriteString("[non-fatal " + e.Level + "]")
+				sb.WriteString("warning: [non-fatal " + e.Level + "]")
 			} else {
 				sb.WriteString("[" + e.Level + "]")
 			}
