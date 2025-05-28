@@ -107,6 +107,13 @@ func (b *BackupLogger) Write(in []byte) (n int, err error) {
 	return bytesWrittenToBuffer, nil
 }
 
+func (b *BackupLogger) Flush() error {
+	b.Lock()
+	defer b.Unlock()
+
+	return b.Writer.Flush()
+}
+
 func (b *BackupLogger) Close() error {
 	b.Lock()
 	defer b.Unlock()
