@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/puzpuzpuz/xsync/v3"
 )
@@ -69,7 +70,8 @@ func (b *BackupLogger) Write(message string) {
 	b.RLock()
 	defer b.RUnlock()
 
-	_, err := b.File.Write([]byte(message + "\n"))
+	timestamp := time.Now().Format(time.RFC3339)
+	_, err := b.File.Write([]byte(fmt.Sprintf("%s: %s\n", timestamp, message)))
 	if err != nil {
 		fmt.Printf("Failed to write to log: %v\n", err)
 	}

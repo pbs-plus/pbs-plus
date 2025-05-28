@@ -30,7 +30,6 @@ type BackupConfig struct {
 	NFSVersion     string
 	NFSMount       string
 	NFSLocalName   string
-	NFSVMBackupDir string
 	NFSUnmountWait int
 
 	// VM ordering

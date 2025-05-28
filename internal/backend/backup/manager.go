@@ -79,6 +79,9 @@ func (jq *Manager) Enqueue(job *BackupOperation) {
 
 	job.queueTask = &queueTask
 
+	err = job.PreScript(jq.ctx)
+	syslog.L.Error(err).WithJob(job.job.ID).WithMessage("error occurred during prescript execution, proceeding to backup queue").Write()
+
 	select {
 	case jq.jobs <- job:
 	default:

@@ -60,6 +60,8 @@ type BackupOperation struct {
 	waitGroup *sync.WaitGroup
 	err       error
 
+	logger *syslog.BackupLogger
+
 	job             types.Job
 	storeInstance   *store.Store
 	skipCheck       bool
@@ -88,14 +90,44 @@ func NewJob(
 		storeInstance:   storeInstance,
 		skipCheck:       skipCheck,
 		web:             web,
+		logger:          syslog.CreateBackupLogger(job.ID),
 		extraExclusions: extraExclusions,
 	}, nil
 }
 
+func (op *BackupOperation) PreScript(ctx context.Context) error {
+	if op.job.PreScript != "" {
+		op.queueTask.UpdateDescription("running pre-backup script")
+
+		envVars, err := utils.StructToEnvVars(op.job)
+		if err != nil {
+			envVars = []string{}
+		}
+
+		scriptOut, modEnvVars, err := utils.RunShellScript(op.job.PreScript, envVars)
+		if err != nil {
+			syslog.L.Error(err).WithJob(op.job.ID).WithMessage("error encountered while running job pre-backup script").Write()
+		}
+		syslog.L.Info().WithJob(op.job.ID).WithMessage(scriptOut).WithField("script", op.job.PreScript).Write()
+
+		if newNs, ok := modEnvVars["PBS_PLUS__NAMESPACE"]; ok {
+			latestJob, err := op.storeInstance.Database.GetJob(op.job.ID)
+			if err == nil {
+				op.job = latestJob
+			}
+			op.job.Namespace = newNs
+			err = op.storeInstance.Database.UpdateJob(nil, op.job)
+			if err != nil {
+				syslog.L.Error(err).WithJob(op.job.ID).WithMessage("error encountered while running job pre-backup script update").Write()
+			}
+		}
+	}
+
+	return nil
+}
+
 func (op *BackupOperation) Execute(ctx context.Context) error {
 	var err error
-
-	clientLogFile := syslog.CreateBackupLogger(op.job.ID)
 
 	errorMonitorDone := make(chan struct{})
 
@@ -129,8 +161,8 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			agentMount.Unmount()
 			agentMount.CloseMount()
 		}
-		if clientLogFile != nil {
-			_ = clientLogFile.Close()
+		if op.logger != nil {
+			_ = op.logger.Close()
 		}
 
 		postScriptExecute()
@@ -206,33 +238,6 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 	}
 	srcPath = filepath.Join(srcPath, op.job.Subpath)
 
-	if op.job.PreScript != "" {
-		op.queueTask.UpdateDescription("running pre-backup script")
-
-		envVars, err := utils.StructToEnvVars(op.job)
-		if err != nil {
-			envVars = []string{}
-		}
-
-		scriptOut, modEnvVars, err := utils.RunShellScript(op.job.PreScript, envVars)
-		if err != nil {
-			syslog.L.Error(err).WithMessage("error encountered while running job pre-backup script").Write()
-		}
-		syslog.L.Info().WithMessage(scriptOut).WithField("script", op.job.PreScript).Write()
-
-		if newNs, ok := modEnvVars["PBS_PLUS__NAMESPACE"]; ok {
-			latestJob, err := op.storeInstance.Database.GetJob(op.job.ID)
-			if err == nil {
-				op.job = latestJob
-			}
-			op.job.Namespace = newNs
-			err = op.storeInstance.Database.UpdateJob(nil, op.job)
-			if err != nil {
-				syslog.L.Error(err).WithMessage("error encountered while running job pre-backup script update").Write()
-			}
-		}
-	}
-
 	op.queueTask.UpdateDescription("waiting for proxmox-backup-client to start")
 
 	cmd, err := prepareBackupCommand(ctx, op.job, op.storeInstance, srcPath, isAgent, op.extraExclusions)
@@ -284,7 +289,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 	currOwner, _ := GetCurrentOwner(op.job, op.storeInstance)
 	_ = FixDatastore(op.job, op.storeInstance)
 
-	stdoutWriter := io.MultiWriter(clientLogFile.File, os.Stdout)
+	stdoutWriter := io.MultiWriter(op.logger.File, os.Stdout)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stdoutWriter
 
@@ -303,7 +308,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		op.job.CurrentPID = cmd.Process.Pid
 	}
 
-	go monitorPBSClientLogs(clientLogFile.Path, cmd, errorMonitorDone)
+	go monitorPBSClientLogs(op.logger.Path, cmd, errorMonitorDone)
 
 	syslog.L.Info().WithMessage("waiting for task monitoring results").Write()
 	var task proxmox.Task
@@ -379,7 +384,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			}
 		}
 
-		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, task.UPID, clientLogFile)
+		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, task.UPID, op.logger)
 		if err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed to process logs").
@@ -390,7 +395,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			op.extraExclusions = append(op.extraExclusions, errorPath)
 		}
 
-		_ = clientLogFile.Close()
+		_ = op.logger.Close()
 
 		if err := updateJobStatus(succeeded, warningsNum, op.job, task, op.storeInstance); err != nil {
 			syslog.L.Error(err).
