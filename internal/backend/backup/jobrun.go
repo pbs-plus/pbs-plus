@@ -96,30 +96,32 @@ func NewJob(
 }
 
 func (op *BackupOperation) PreScript(ctx context.Context) error {
-	if op.job.PreScript != "" {
-		op.queueTask.UpdateDescription("running pre-backup script")
+	if strings.TrimSpace(op.job.PreScript) == "" {
+		return nil
+	}
 
-		envVars, err := utils.StructToEnvVars(op.job)
-		if err != nil {
-			envVars = []string{}
+	op.queueTask.UpdateDescription("running pre-backup script")
+
+	envVars, err := utils.StructToEnvVars(op.job)
+	if err != nil {
+		envVars = []string{}
+	}
+
+	scriptOut, modEnvVars, err := utils.RunShellScript(op.job.PreScript, envVars)
+	if err != nil {
+		syslog.L.Error(err).WithJob(op.job.ID).WithMessage("error encountered while running job pre-backup script").Write()
+	}
+	syslog.L.Info().WithJob(op.job.ID).WithMessage(scriptOut).WithField("script", op.job.PreScript).Write()
+
+	if newNs, ok := modEnvVars["PBS_PLUS__NAMESPACE"]; ok {
+		latestJob, err := op.storeInstance.Database.GetJob(op.job.ID)
+		if err == nil {
+			op.job = latestJob
 		}
-
-		scriptOut, modEnvVars, err := utils.RunShellScript(op.job.PreScript, envVars)
+		op.job.Namespace = newNs
+		err = op.storeInstance.Database.UpdateJob(nil, op.job)
 		if err != nil {
-			syslog.L.Error(err).WithJob(op.job.ID).WithMessage("error encountered while running job pre-backup script").Write()
-		}
-		syslog.L.Info().WithJob(op.job.ID).WithMessage(scriptOut).WithField("script", op.job.PreScript).Write()
-
-		if newNs, ok := modEnvVars["PBS_PLUS__NAMESPACE"]; ok {
-			latestJob, err := op.storeInstance.Database.GetJob(op.job.ID)
-			if err == nil {
-				op.job = latestJob
-			}
-			op.job.Namespace = newNs
-			err = op.storeInstance.Database.UpdateJob(nil, op.job)
-			if err != nil {
-				syslog.L.Error(err).WithJob(op.job.ID).WithMessage("error encountered while running job pre-backup script update").Write()
-			}
+			syslog.L.Error(err).WithJob(op.job.ID).WithMessage("error encountered while running job pre-backup script update").Write()
 		}
 	}
 
