@@ -12,6 +12,7 @@ type Task struct {
 	PStart     int    `json:"pstart"`
 	StartTime  int64  `json:"starttime"`
 	EndTime    int64  `json:"endtime"`
+	TaskId     string `json:"task_id"`
 	UPID       string `json:"upid"`
 	User       string `json:"user"`
 	WorkerType string `json:"worker_type"`
