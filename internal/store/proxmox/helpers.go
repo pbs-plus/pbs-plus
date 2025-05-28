@@ -80,6 +80,8 @@ func ParseUPID(upid string) (Task, error) {
 			task.StartTime = startTime
 		case "wtype":
 			task.WorkerType = matches[i]
+		case "task_id":
+			task.TaskId = matches[i]
 		case "wid":
 			task.WID = matches[i]
 		case "authid":
@@ -88,6 +90,26 @@ func ParseUPID(upid string) (Task, error) {
 	}
 
 	return task, nil
+}
+
+func (task *Task) GenerateUPID() string {
+	// Format the parts into the UPID string structure:
+	// UPID:<node>:<pid>:<pstart>:<task_id>:<starttime>:<wtype>:<wid>:<authid>:
+	// PID, PStart, and StartTime are formatted as 8-character zero-padded hex.
+	// task_id (Task.ID) is included as is (assuming it's the correct hex format).
+	// The format strings align with the structure parsed by ParseUPID.
+	upid := fmt.Sprintf(
+		"UPID:%s:%08x:%08x:%s:%08x:%s:%s:%s:",
+		task.Node,
+		task.PID,
+		task.PStart,
+		task.TaskId,
+		task.StartTime,
+		task.WorkerType,
+		task.WID,
+		task.User,
+	)
+	return upid
 }
 
 var pstart = atomic.Int32{}
@@ -176,6 +198,11 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 		return "", fmt.Errorf("invalid UPID format: must start with 'UPID:' and end with ':'")
 	}
 
+	parsedTask, err := ParseUPID(upid)
+	if err != nil {
+		return "", err
+	}
+
 	path, err := GetLogPath(upid)
 	if err != nil {
 		return "", err
@@ -183,26 +210,16 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 
 	pathDir := filepath.Dir(path)
 
-	parts := strings.Split(upid, ":")
+	parsedTask.StartTime = startTime.Unix()
 
-	// Expected number of parts:
-	// "UPID", node, pid, pstart, taskID, startTime, wtype, wid, authId, "" (empty string due to trailing colon)
-	// So, 10 parts in total.
-	if len(parts) != 10 {
-		return "", fmt.Errorf("invalid UPID format: expected 10 parts, got %d from '%s'", len(parts), upid)
-	}
-
-	startTimeEnc := fmt.Sprintf("%08X", uint32(startTime.Unix()))
-
-	parts[5] = startTimeEnc
-
-	newUpid := strings.Join(parts, ":")
+	newUpid := parsedTask.GenerateUPID()
 	newPath := filepath.Join(pathDir, newUpid)
 
 	err = os.Rename(path, newPath)
 	if err != nil {
 		return "", err
 	}
+	syslog.L.Info().WithFields(map[string]interface{}{"original": upid, "new": newUpid}).WithMessage("updated UPID start time").Write()
 
 	return newPath, nil
 }
