@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -50,12 +51,26 @@ func (g *GhettoVCB) connectSSH() error {
 		return fmt.Errorf("no authentication methods configured")
 	}
 
+	// Define the allowed host key algorithms
+	allowedHostKeyAlgos := map[string]bool{
+		ssh.KeyAlgoECDSA256:  true,
+		ssh.KeyAlgoECDSA384:  true,
+		ssh.KeyAlgoECDSA521:  true,
+		ssh.KeyAlgoRSASHA256: true,
+		ssh.KeyAlgoRSASHA512: true,
+	}
+
 	config := &ssh.ClientConfig{
-		User:            g.sshConfig.Username,
-		Auth:            auth,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         g.sshConfig.Timeout,
-		// Match the algorithms that worked in your SSH session
+		User: g.sshConfig.Username,
+		Auth: auth,
+		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			// Check if the host key algorithm is in the allowed list
+			if _, ok := allowedHostKeyAlgos[key.Type()]; !ok {
+				return fmt.Errorf("ssh: server presented unsupported host key algorithm: %s", key.Type())
+			}
+			return nil
+		},
+		Timeout: g.sshConfig.Timeout,
 		Config: ssh.Config{
 			KeyExchanges: []string{
 				"ecdh-sha2-nistp256",

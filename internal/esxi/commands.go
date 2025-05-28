@@ -3,6 +3,7 @@ package esxi
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -103,6 +104,40 @@ func (g *GhettoVCB) createWorkDir() error {
 	return err
 }
 
+func (g *GhettoVCB) waitNFSMount() error {
+	nfsIoHackCounter := 0
+	nfsIoHackStatus := 0 // 0 for failure, 1 for success
+	nfsIoHackFilecheck := filepath.ToSlash(filepath.Join(g.getLocalMountPath(), "nfs_io.check"))
+
+	for nfsIoHackStatus == 0 && nfsIoHackCounter < g.config.NFSIOHackLoopMax {
+		// Attempt to touch the file
+		_, err := g.executeCommand(fmt.Sprintf("touch %s", nfsIoHackFilecheck))
+		if err != nil {
+			// Error occurred, likely NFS I/O error
+			time.Sleep(time.Duration(g.config.NFSIOHackSleepTimer) * time.Second)
+			nfsIoHackCounter++
+		} else {
+			// Touch successful
+			nfsIoHackStatus = 1
+		}
+	}
+
+	nfsIoHackSleepTime := time.Duration(nfsIoHackCounter) * time.Duration(g.config.NFSIOHackSleepTimer) * time.Second
+
+	// Clean up the check file
+	_, _ = g.executeCommand(fmt.Sprintf("rm -f %s", nfsIoHackFilecheck))
+
+	if nfsIoHackSleepTime > 0 {
+		if nfsIoHackStatus == 1 {
+			g.logger.Info(fmt.Sprintf("Slept %s to work around NFS I/O error", nfsIoHackSleepTime))
+		} else {
+			return fmt.Errorf("Slept %s but failed work around for NFS I/O error", nfsIoHackSleepTime)
+		}
+	}
+
+	return nil
+}
+
 func (g *GhettoVCB) mountNFS() error {
 	g.logger.Info(fmt.Sprintf("Mounting NFS: %s:%s to %s", g.config.NFSServer, g.config.NFSMount, g.getLocalMountPath()))
 
@@ -113,7 +148,11 @@ func (g *GhettoVCB) mountNFS() error {
 	}
 
 	_, err := g.executeCommand(command)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return g.waitNFSMount()
 }
 
 func (g *GhettoVCB) unmountNFS() {
@@ -135,8 +174,12 @@ func (g *GhettoVCB) getLocalMountPath() string {
 
 // copyVMXFile copies the VMX file to the backup directory
 func (g *GhettoVCB) copyVMXFile(vm *VMInfo, backupDir string) error {
-	_, err := g.executeCommand(fmt.Sprintf("cp '%s' '%s/'", vm.VMXPath, backupDir))
-	return err
+	command := fmt.Sprintf("mkdir -p '%s' && cp '%s' '%s/'", backupDir, vm.VMXPath, backupDir)
+	output, err := g.executeCommand(command)
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, output)
+	}
+	return nil
 }
 
 // getHostname gets the hostname

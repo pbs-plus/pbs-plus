@@ -101,6 +101,7 @@ type QueuedTask struct {
 	sync.Mutex
 	closed atomic.Bool
 	path   string
+	job    types.Job
 }
 
 func GenerateQueuedTask(job types.Job, web bool) (QueuedTask, error) {
@@ -167,7 +168,7 @@ func GenerateQueuedTask(job types.Job, web bool) (QueuedTask, error) {
 
 	task.Status = "running"
 
-	return QueuedTask{Task: task, path: path}, nil
+	return QueuedTask{Task: task, job: job, path: path}, nil
 }
 
 func (task *QueuedTask) UpdateDescription(desc string) error {
@@ -191,6 +192,8 @@ func (task *QueuedTask) UpdateDescription(desc string) error {
 	if _, err := file.WriteString(statusLine); err != nil {
 		return fmt.Errorf("failed to write status line: %w", err)
 	}
+
+	syslog.L.Info().WithJob(task.job.ID).WithMessage(desc).Write()
 
 	return nil
 }
