@@ -386,6 +386,8 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			}
 		}
 
+		_ = op.logger.Close()
+
 		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, task.UPID, op.logger)
 		if err != nil {
 			syslog.L.Error(err).
@@ -396,8 +398,6 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		if errorPath != "" {
 			op.extraExclusions = append(op.extraExclusions, errorPath)
 		}
-
-		_ = op.logger.Close()
 
 		if err := updateJobStatus(succeeded, warningsNum, op.job, task, op.storeInstance); err != nil {
 			syslog.L.Error(err).
