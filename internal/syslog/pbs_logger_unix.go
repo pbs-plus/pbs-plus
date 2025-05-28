@@ -17,9 +17,10 @@ import (
 
 type BackupLogger struct {
 	*os.File
-	Path   string
-	jobId  string
-	Writer *bufio.Writer
+	Path      string
+	jobId     string
+	Writer    *bufio.Writer
+	StartTime time.Time
 
 	sync.Mutex
 }
@@ -38,10 +39,11 @@ func CreateBackupLogger(jobId string) *BackupLogger {
 		}
 
 		return &BackupLogger{
-			File:   clientLogFile,
-			Path:   filePath,
-			jobId:  jobId,
-			Writer: bufio.NewWriter(clientLogFile),
+			File:      clientLogFile,
+			Path:      filePath,
+			jobId:     jobId,
+			Writer:    bufio.NewWriter(clientLogFile),
+			StartTime: time.Now(),
 		}, false
 	})
 
@@ -63,10 +65,11 @@ func GetExistingBackupLogger(jobId string) *BackupLogger {
 		}
 
 		return &BackupLogger{
-			File:   clientLogFile,
-			Path:   filePath,
-			jobId:  jobId,
-			Writer: bufio.NewWriter(clientLogFile),
+			File:      clientLogFile,
+			Path:      filePath,
+			jobId:     jobId,
+			Writer:    bufio.NewWriter(clientLogFile),
+			StartTime: time.Now(),
 		}
 	})
 	return logger
