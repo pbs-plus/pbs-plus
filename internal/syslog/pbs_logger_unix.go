@@ -18,7 +18,7 @@ type BackupLogger struct {
 	Path  string
 	jobId string
 
-	sync.RWMutex
+	sync.Mutex
 }
 
 var backupLoggers = xsync.NewMapOf[string, *BackupLogger]()
@@ -68,8 +68,8 @@ func GetExistingBackupLogger(jobId string) *BackupLogger {
 }
 
 func (b *BackupLogger) Write(in []byte) (n int, err error) {
-	b.RLock()
-	defer b.RUnlock()
+	b.Lock()
+	defer b.Unlock()
 
 	message := string(in)
 
