@@ -66,15 +66,12 @@ func GetExistingBackupLogger(jobId string) *BackupLogger {
 	return logger
 }
 
-func (b *BackupLogger) Write(message string) {
+func (b *BackupLogger) Write(message []byte) (n int, err error) {
 	b.RLock()
 	defer b.RUnlock()
 
 	timestamp := time.Now().Format(time.RFC3339)
-	_, err := b.File.Write([]byte(fmt.Sprintf("%s: %s\n", timestamp, message)))
-	if err != nil {
-		fmt.Printf("Failed to write to log: %v\n", err)
-	}
+	return b.File.Write([]byte(fmt.Sprintf("%s: %s\n", timestamp, string(message))))
 }
 
 func (b *BackupLogger) Close() error {
