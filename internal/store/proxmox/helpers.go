@@ -99,7 +99,7 @@ func (task *Task) GenerateUPID() string {
 	// task_id (Task.ID) is included as is (assuming it's the correct hex format).
 	// The format strings align with the structure parsed by ParseUPID.
 	upid := fmt.Sprintf(
-		"UPID:%s:%08x:%08x:%s:%08x:%s:%s:%s:",
+		"UPID:%s:%08X:%08X:%s:%08X:%s:%s:%s:",
 		task.Node,
 		task.PID,
 		task.PStart,
