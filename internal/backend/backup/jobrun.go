@@ -386,7 +386,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			}
 		}
 
-		_ = op.logger.Close()
+		_ = op.logger.Flush()
 
 		succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, task.UPID, op.logger)
 		if err != nil {
@@ -394,6 +394,8 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 				WithMessage("failed to process logs").
 				Write()
 		}
+
+		_ = op.logger.Close()
 
 		if errorPath != "" {
 			op.extraExclusions = append(op.extraExclusions, errorPath)
