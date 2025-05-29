@@ -403,6 +403,8 @@ func (database *Database) linkJobLog(jobID, upid string) {
 		return
 	}
 
+	_ = os.Remove(jobLogPath)
+
 	err = os.Symlink(origLogPath, jobLogPath)
 	if err != nil {
 		syslog.L.Error(fmt.Errorf("linkJobLog: failed to create symlink: %w", err)).
