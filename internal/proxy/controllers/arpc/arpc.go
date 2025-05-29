@@ -3,6 +3,8 @@
 package arpc
 
 import (
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -36,7 +38,9 @@ func ARPCHandler(store *s.Store) http.HandlerFunc {
 		defer syslog.L.Info().WithMessage("agent disconnected").WithField("hostname", agentHostname).Write()
 
 		if err := session.Serve(); err != nil {
-			syslog.L.Error(err).WithMessage("error occurred while serving session").WithField("hostname", agentHostname).Write()
+			if !errors.Is(err, io.ErrClosedPipe) && !errors.Is(err, io.EOF) {
+				syslog.L.Error(err).WithMessage("error occurred while serving session").WithField("hostname", agentHostname).Write()
+			}
 		}
 	}
 }
