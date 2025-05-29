@@ -208,12 +208,14 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 		return "", err
 	}
 
-	pathDir := filepath.Dir(path)
-
 	parsedTask.StartTime = startTime.Unix()
 
 	newUpid := parsedTask.GenerateUPID()
-	newPath := filepath.Join(pathDir, newUpid)
+
+	newPath, err := GetLogPath(newUpid)
+	if err != nil {
+		return "", err
+	}
 
 	err = os.Rename(path, newPath)
 	if err != nil {
@@ -221,7 +223,7 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 	}
 	syslog.L.Info().WithFields(map[string]interface{}{"original": upid, "new": newUpid}).WithMessage("updated UPID start time").Write()
 
-	return newPath, nil
+	return newUpid, nil
 }
 
 func (task *QueuedTask) UpdateDescription(desc string) error {
