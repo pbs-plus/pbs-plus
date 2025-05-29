@@ -121,7 +121,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				if isDir(event.Name) {
 					err = watcher.Add(event.Name)
-					if err != nil {
+					if err != nil && !os.IsNotExist(err) {
 						syslog.L.Error(err).Write()
 					}
 

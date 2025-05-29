@@ -446,15 +446,19 @@ func (u *UpdaterService) performUpdate() error {
 		return fmt.Errorf("failed to detect package info: %w", err)
 	}
 
+	errors := []error{}
+
 	for retry := 0; retry < maxUpdateRetries; retry++ {
 		if retry > 0 {
 			time.Sleep(updateRetryDelay)
 		}
 		if err := u.tryUpdate(pkgInfo); err == nil {
 			return nil
+		} else {
+			errors = append(errors, err)
 		}
 	}
-	return fmt.Errorf("all update attempts failed")
+	return fmt.Errorf("all update attempts failed: %v", errors)
 }
 
 func (u *UpdaterService) tryUpdate(pkgInfo *PackageInfo) error {

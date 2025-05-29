@@ -10,22 +10,18 @@ ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/run/pbs-plus-agent/pbs-plus-updater.pid
 Restart=on-failure
 RestartSec=30
-User=pbsplus
-Group=pbsplus
 
 # Working directory
 WorkingDirectory=/var/lib/pbs-plus-agent
 
 # Security settings - updater needs more privileges
-NoNewPrivileges=false
-PrivateTmp=false
-ProtectSystem=false
-ProtectHome=true
-ReadWritePaths=/etc/pbs-plus-agent /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/pbs-plus-agent /usr/bin
+NoNewPrivileges=false # Allows the process to gain new privileges (necessary for root)
+PrivateTmp=false      # Package managers might need access to the global /tmp
+ProtectSystem=false   # Allows rpm/yum/dnf to write to system directories
+ProtectHome=true      # Generally safe; package managers usually don't modify /home.
 
 # Environment
-Environment=HOME=/var/lib/pbs-plus-agent
-Environment=USER=pbsplus
+Environment=HOME=/root # Standard home directory for root processes
 
 # Logging
 StandardOutput=journal
