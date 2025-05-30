@@ -46,6 +46,7 @@ var (
 	nfsioHackSleepTimer     int
 	nfsBackupDelay          int
 	enableNFSIOHack         bool
+	convertToQCOW2          bool
 
 	// Job configuration flags
 	vmNames    []string
@@ -105,6 +106,7 @@ var backupCmd = &cobra.Command{
 		backupConfig.NFSIOHackSleepTimer = nfsioHackSleepTimer
 		backupConfig.NFSBackupDelay = nfsBackupDelay
 		backupConfig.EnableNFSIOHack = enableNFSIOHack
+		backupConfig.ConvertToQCOW2 = convertToQCOW2
 
 		gvc, err := esxi.NewGhettoVCB(backupConfig, sshConfig)
 		if err != nil {
@@ -190,6 +192,7 @@ func init() {
 	backupCmd.PersistentFlags().IntVar(&nfsioHackSleepTimer, "nfsio-hack-sleep", 60, "Sleep timer in seconds for NFS I/O hack")
 	backupCmd.PersistentFlags().IntVar(&nfsBackupDelay, "nfs-backup-delay", 0, "Delay in seconds before starting NFS backup")
 	backupCmd.PersistentFlags().BoolVar(&enableNFSIOHack, "enable-nfsio-hack", false, "Enable NFS I/O hack")
+	backupCmd.PersistentFlags().BoolVar(&convertToQCOW2, "qcow2", false, "Attempt to convert .vmdk to .qcow2 (requires qemu-img)")
 
 	// Define Job flags
 	backupCmd.Flags().StringSliceVarP(&vmNames, "vm", "v", []string{}, "Name(s) of the VM(s) to backup (comma-separated)")

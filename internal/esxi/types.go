@@ -43,6 +43,8 @@ type BackupConfig struct {
 	NFSIOHackSleepTimer int
 	NFSBackupDelay      int
 	EnableNFSIOHack     bool
+
+	ConvertToQCOW2 bool
 }
 
 // SSHConfig holds SSH connection parameters for remote execution
