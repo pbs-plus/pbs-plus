@@ -135,13 +135,19 @@ func (a *AgentMount) Unmount() {
 		return
 	}
 
-	// First try a clean unmount
-	umount := exec.Command("umount", "-lf", a.Path)
+	umount := exec.Command("fusermount", "-uz", a.Path)
 	umount.Env = os.Environ()
 	err := umount.Run()
-	if err == nil {
-		_ = os.RemoveAll(a.Path)
+	if err != nil {
+		umount = exec.Command("umount", "-lf", a.Path)
+		umount.Env = os.Environ()
+		err = umount.Run()
+		if err != nil {
+			return
+		}
 	}
+
+	_ = os.RemoveAll(a.Path)
 }
 
 func (a *AgentMount) CloseMount() {
