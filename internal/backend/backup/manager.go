@@ -50,15 +50,6 @@ func NewManager(ctx context.Context, size int, maxConcurrent int) *Manager {
 }
 
 func (jq *Manager) Enqueue(job *BackupOperation) {
-	jq.mu.Lock()
-	defer jq.mu.Unlock()
-
-	if jq.ctx.Err() != nil {
-		jq.CreateError(job, fmt.Errorf("Attempt to enqueue on closed queue"))
-		return
-	}
-
-	var err error
 	lock, _ := jq.locks.LoadOrStore(job.job.ID, &sync.Mutex{})
 
 	if locked := lock.TryLock(); !locked {
@@ -82,6 +73,14 @@ func (jq *Manager) Enqueue(job *BackupOperation) {
 	err = job.PreScript(jq.ctx)
 	if err != nil {
 		syslog.L.Error(err).WithJob(job.job.ID).WithMessage("error occurred during prescript execution, proceeding to backup queue").Write()
+	}
+
+	jq.mu.Lock()
+	defer jq.mu.Unlock()
+
+	if jq.ctx.Err() != nil {
+		jq.CreateError(job, fmt.Errorf("Attempt to enqueue on closed queue"))
+		return
 	}
 
 	select {
