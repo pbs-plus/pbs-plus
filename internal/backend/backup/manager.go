@@ -70,11 +70,6 @@ func (jq *Manager) Enqueue(job *BackupOperation) {
 
 	job.queueTask = &queueTask
 
-	err = job.PreScript(jq.ctx)
-	if err != nil {
-		syslog.L.Error(err).WithJob(job.job.ID).WithMessage("error occurred during prescript execution, proceeding to backup queue").Write()
-	}
-
 	jq.mu.Lock()
 	defer jq.mu.Unlock()
 
@@ -98,6 +93,11 @@ func (jq *Manager) worker() {
 			return
 		case op := <-jq.jobs:
 			go func(opToRun *BackupOperation) {
+				err := opToRun.PreScript(jq.ctx)
+				if err != nil {
+					syslog.L.Error(err).WithJob(opToRun.job.ID).WithMessage("error occurred during prescript execution, proceeding to backup operation").Write()
+				}
+
 				select {
 				case <-jq.ctx.Done():
 					opToRun.lock.Unlock()
@@ -115,7 +115,7 @@ func (jq *Manager) worker() {
 
 				// Acquire lock for sequential execution
 				jq.executeMu.Lock()
-				err := opToRun.Execute(jq.ctx)
+				err = opToRun.Execute(jq.ctx)
 				// Release lock immediately after Execute finishes
 				jq.executeMu.Unlock()
 
