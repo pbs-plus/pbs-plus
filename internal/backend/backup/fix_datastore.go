@@ -5,7 +5,6 @@ package backup
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -68,7 +67,7 @@ func CreateNamespace(namespace string, job types.Job, storeInstance *store.Store
 	return nil
 }
 
-func GetCurrentOwner(job types.Job, storeInstance *store.Store) (string, error) {
+func GetOwnerFilePath(job types.Job, storeInstance *store.Store) (string, error) {
 	if storeInstance == nil {
 		return "", fmt.Errorf("GetCurrentOwner: store is required")
 	}
@@ -106,85 +105,47 @@ func GetCurrentOwner(job types.Job, storeInstance *store.Store) (string, error) 
 	}
 
 	ownerFilePath := filepath.Join(fullNamespacePath, "host", backupId)
-	ownerBytes, err := os.ReadFile(ownerFilePath)
+
+	return ownerFilePath, nil
+}
+
+func GetCurrentOwner(job types.Job, storeInstance *store.Store) (string, error) {
+	filePath, err := GetOwnerFilePath(job, storeInstance)
 	if err != nil {
-		return "", fmt.Errorf("GetCurrentOwner: failed to read file: %w", err)
+		return "", err
 	}
 
-	return strings.TrimSpace(string(ownerBytes)), nil
+	owner, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(owner)), nil
 }
 
 func SetDatastoreOwner(job types.Job, storeInstance *store.Store, owner string) error {
-	if storeInstance == nil {
-		return fmt.Errorf("SetDatastoreOwner: store is required")
-	}
-
-	target, err := storeInstance.Database.GetTarget(job.Target)
+	filePath, err := GetOwnerFilePath(job, storeInstance)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("SetDatastoreOwner: Target '%s' does not exist.", job.Target)
-		}
-		return fmt.Errorf("SetDatastoreOwner -> %w", err)
+		return err
 	}
 
-	if !target.ConnectionStatus {
-		return fmt.Errorf("SetDatastoreOwner: Target '%s' is unreachable or does not exist.", job.Target)
-	}
+	dirPath := filepath.Dir(filePath)
 
-	jobStore := fmt.Sprintf(
-		"%s@localhost:%s",
-		proxmox.AUTH_ID,
-		job.Store,
-	)
+	_ = os.MkdirAll(dirPath, os.FileMode(0755))
 
-	hostname, err := os.Hostname()
+	err = os.WriteFile(filePath, []byte(owner), os.FileMode(0644))
 	if err != nil {
-		hostnameFile, err := os.ReadFile("/etc/hostname")
-		if err != nil {
-			hostname = "localhost"
-		}
-
-		hostname = strings.TrimSpace(string(hostnameFile))
+		return fmt.Errorf("SetDatastoreOwner: failed to write owner file -> %w", err)
 	}
 
-	isAgent := strings.HasPrefix(target.Path, "agent://")
-	backupId := hostname
-	if isAgent {
-		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
-	}
-	backupId = proxmox.NormalizeHostname(backupId)
-
-	cmdArgs := []string{
-		"change-owner",
-		fmt.Sprintf("host/%s", backupId),
-		owner,
-		"--repository",
-		jobStore,
-	}
-
-	if job.Namespace != "" {
-		cmdArgs = append(cmdArgs, "--ns")
-		cmdArgs = append(cmdArgs, job.Namespace)
-	} else if isAgent && job.Namespace == "" {
-		cmdArgs = append(cmdArgs, "--ns")
-		cmdArgs = append(cmdArgs, strings.ReplaceAll(job.Target, " - ", "/"))
-	}
-
-	cmd := exec.Command("/usr/bin/proxmox-backup-client", cmdArgs...)
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_PASSWORD=%s", proxmox.GetToken()))
-
-	pbsStatus, err := proxmox.GetProxmoxCertInfo()
-	if err == nil {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_FINGERPRINT=%s", pbsStatus.FingerprintSHA256))
-	}
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	err = cmd.Run()
+	err = os.Chown(dirPath, 34, 34)
 	if err != nil {
-		return fmt.Errorf("SetDatastoreOwner: proxmox-backup-client change-owner error (%s) -> %w", cmd.String(), err)
+		return fmt.Errorf("SetDatastoreOwner: error changing filesystem owner -> %w", err)
+	}
+
+	err = os.Chown(filePath, 34, 34)
+	if err != nil {
+		return fmt.Errorf("SetDatastoreOwner: error changing filesystem owner -> %w", err)
 	}
 
 	return nil
