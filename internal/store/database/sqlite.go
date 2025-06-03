@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -40,7 +41,7 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		dbPath = "/etc/proxmox-backup/pbs-plus/plus.db"
 	}
 
-	_ = os.MkdirAll(dbPath, 0755)
+	_ = os.MkdirAll(filepath.Dir(dbPath), 0755)
 
 	initialized := false
 	_, err := os.Stat(dbPath)
