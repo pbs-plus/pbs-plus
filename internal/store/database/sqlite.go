@@ -40,6 +40,8 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		dbPath = "/etc/proxmox-backup/pbs-plus/plus.db"
 	}
 
+	_ = os.MkdirAll(dbPath, 0755)
+
 	initialized := false
 	_, err := os.Stat(dbPath)
 	if err == nil {
