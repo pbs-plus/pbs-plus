@@ -37,6 +37,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 
 	"net/http/pprof"
 
@@ -62,8 +63,6 @@ func (i *arrayFlags) Set(value string) error {
 func main() {
 	mainCtx, mainCancel := context.WithCancel(context.Background())
 	defer mainCancel()
-
-	proxmox.InitializeProxmox()
 
 	var extExclusions arrayFlags
 	jobRun := flag.String("job", "", "Job ID to execute")
@@ -123,18 +122,8 @@ func main() {
 		return
 	}
 
-	apiToken, err := proxmox.GetAPITokenFromFile()
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to get token from file").Write()
-	}
-	proxmox.Session.APIToken = apiToken
-
 	// Handle single job execution
 	if *jobRun != "" {
-		if proxmox.Session.APIToken == nil {
-			return
-		}
-
 		jobTask, err := storeInstance.Database.GetJob(*jobRun)
 		if err != nil {
 			syslog.L.Error(err).WithField("jobId", *jobRun).Write()
@@ -221,9 +210,18 @@ func main() {
 		return
 	}
 
-	csrfKey, err := os.ReadFile("/etc/proxmox-backup/csrf.key")
+	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
+
+	if _, err := os.Lstat(secKeyPath); err != nil {
+		key, err := utils.GenerateSecretKey(48)
+		if err == nil {
+			_ = os.WriteFile(secKeyPath, []byte(key), 0640)
+		}
+	}
+
+	secKey, err := os.ReadFile(secKeyPath)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to read csrf.key").Write()
+		syslog.L.Error(err).WithMessage("failed to read .key").Write()
 		return
 	}
 
@@ -232,7 +230,7 @@ func main() {
 	serverConfig.KeyFile = filepath.Join(certOpts.OutputDir, "server.key")
 	serverConfig.CAFile = filepath.Join(certOpts.OutputDir, "ca.crt")
 	serverConfig.CAKey = filepath.Join(certOpts.OutputDir, "ca.key")
-	serverConfig.TokenSecret = string(csrfKey)
+	serverConfig.TokenSecret = string(secKey)
 
 	if err := generator.ValidateExistingCerts(); err != nil {
 		if err := generator.GenerateCA(); err != nil {
@@ -375,7 +373,6 @@ func main() {
 	mux := http.NewServeMux()
 
 	// API routes
-	mux.HandleFunc("/plus/token", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, plus.TokenHandler(storeInstance))))
 	mux.HandleFunc("/api2/json/plus/version", mw.AgentOrServer(storeInstance, mw.CORS(storeInstance, plus.VersionHandler(storeInstance, Version))))
 	mux.HandleFunc("/api2/json/plus/binary", mw.CORS(storeInstance, plus.DownloadBinary(storeInstance, Version)))
 	mux.HandleFunc("/api2/json/plus/updater-binary", mw.CORS(storeInstance, plus.DownloadUpdater(storeInstance, Version)))

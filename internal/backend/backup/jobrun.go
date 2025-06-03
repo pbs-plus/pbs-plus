@@ -171,11 +171,6 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		close(errorMonitorDone)
 	}
 
-	if proxmox.Session.APIToken == nil {
-		errCleanUp()
-		return ErrAPITokenRequired
-	}
-
 	target, err := op.storeInstance.Database.GetTarget(op.job.Target)
 	if err != nil {
 		errCleanUp()
@@ -258,7 +253,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 	syslog.L.Info().WithMessage("starting monitor goroutine").Write()
 	go func() {
 		defer syslog.L.Info().WithMessage("monitor goroutine closing").Write()
-		task, err := proxmox.Session.GetJobTask(monitorCtx, readyChan, op.job, target)
+		task, err := proxmox.GetJobTask(monitorCtx, readyChan, op.job, target)
 		if err != nil {
 			syslog.L.Error(err).WithMessage("found error in getjobtask return").Write()
 

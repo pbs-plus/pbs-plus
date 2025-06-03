@@ -4,7 +4,6 @@ package proxmox
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"log"
 	"math/rand/v2"
@@ -127,12 +126,6 @@ type QueuedTask struct {
 }
 
 func GenerateQueuedTask(job types.Job, web bool) (QueuedTask, error) {
-	if Session.APIToken == nil {
-		return QueuedTask{}, errors.New("session api token is missing")
-	}
-
-	authId := Session.APIToken.TokenId
-
 	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
@@ -147,14 +140,14 @@ func GenerateQueuedTask(job types.Job, web bool) (QueuedTask, error) {
 		StartTime:  time.Now().Unix(),
 		WorkerType: wtype,
 		WID:        wid,
-		User:       authId,
+		User:       AUTH_ID,
 	}
 
 	pid := fmt.Sprintf("%08X", task.PID)
 	pstart := fmt.Sprintf("%08X", task.PStart)
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
 
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, authId)
+	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, AUTH_ID)
 
 	task.UPID = upid
 
@@ -223,6 +216,8 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 	}
 	syslog.L.Info().WithFields(map[string]interface{}{"original": upid, "new": newUpid}).WithMessage("updated UPID start time").Write()
 
+	_ = os.Symlink(newPath, path)
+
 	return newUpid, nil
 }
 
@@ -262,12 +257,6 @@ func (task *QueuedTask) Close() {
 }
 
 func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []string) (Task, error) {
-	if Session.APIToken == nil {
-		return Task{}, errors.New("session api token is missing")
-	}
-
-	authId := Session.APIToken.TokenId
-
 	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
@@ -282,14 +271,14 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 		StartTime:  time.Now().Unix(),
 		WorkerType: wtype,
 		WID:        wid,
-		User:       authId,
+		User:       AUTH_ID,
 	}
 
 	pid := fmt.Sprintf("%08X", task.PID)
 	pstart := fmt.Sprintf("%08X", task.PStart)
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
 
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, authId)
+	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, AUTH_ID)
 
 	task.UPID = upid
 

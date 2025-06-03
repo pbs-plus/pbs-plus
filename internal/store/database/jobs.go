@@ -245,7 +245,7 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 // populateJobExtras fills in details not directly from the database tables.
 func (database *Database) populateJobExtras(job *types.Job) {
 	if job.LastRunUpid != "" {
-		task, err := proxmox.Session.GetTaskByUPID(job.LastRunUpid)
+		task, err := proxmox.GetTaskByUPID(job.LastRunUpid)
 		if err == nil {
 			job.LastRunEndtime = task.EndTime
 			if task.Status == "stopped" {
@@ -257,7 +257,7 @@ func (database *Database) populateJobExtras(job *types.Job) {
 		}
 	}
 	if job.LastSuccessfulUpid != "" {
-		if successTask, err := proxmox.Session.GetTaskByUPID(job.LastSuccessfulUpid); err == nil {
+		if successTask, err := proxmox.GetTaskByUPID(job.LastSuccessfulUpid); err == nil {
 			job.LastSuccessfulEndtime = successTask.EndTime
 		}
 	}

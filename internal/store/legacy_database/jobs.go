@@ -211,7 +211,7 @@ func (database *Database) getJob(id string) (types.Job, error) {
 	}
 
 	if job.LastRunUpid != "" {
-		task, err := proxmox.Session.GetTaskByUPID(job.LastRunUpid)
+		task, err := proxmox.GetTaskByUPID(job.LastRunUpid)
 		if err != nil {
 			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
 		} else {
@@ -228,7 +228,7 @@ func (database *Database) getJob(id string) (types.Job, error) {
 	}
 
 	if job.LastSuccessfulUpid != "" {
-		successTask, err := proxmox.Session.GetTaskByUPID(job.LastSuccessfulUpid)
+		successTask, err := proxmox.GetTaskByUPID(job.LastSuccessfulUpid)
 		if err != nil {
 			log.Printf("GetJob: error getting task by UPID -> %v\n", err)
 		} else {

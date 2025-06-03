@@ -27,7 +27,7 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 
 	backupId = proxmox.NormalizeHostname(backupId)
 
-	jobStore := fmt.Sprintf("%s@localhost:%s", proxmox.Session.APIToken.TokenId, job.Store)
+	jobStore := fmt.Sprintf("%s@localhost:%s", proxmox.AUTH_ID, job.Store)
 	if jobStore == "@localhost:" {
 		return nil, fmt.Errorf("RunBackup: invalid job store configuration")
 	}
@@ -130,18 +130,15 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 }
 
 func buildCommandEnv(storeInstance *store.Store) []string {
-	if storeInstance == nil || proxmox.Session.APIToken == nil {
+	if storeInstance == nil {
 		return os.Environ()
 	}
 
 	env := append(os.Environ(),
-		fmt.Sprintf("PBS_PASSWORD=%s", proxmox.Session.APIToken.Value))
+		fmt.Sprintf("PBS_PASSWORD=%s", proxmox.GetToken()))
 
-	// Add fingerprint if available
-	if pbsStatus, err := proxmox.Session.GetPBSStatus(); err == nil {
-		if fingerprint, ok := pbsStatus.Info["fingerprint"]; ok {
-			env = append(env, fmt.Sprintf("PBS_FINGERPRINT=%s", fingerprint))
-		}
+	if pbsStatus, err := proxmox.GetProxmoxCertInfo(); err == nil {
+		env = append(env, fmt.Sprintf("PBS_FINGERPRINT=%s", pbsStatus.FingerprintSHA256))
 	}
 
 	return env
