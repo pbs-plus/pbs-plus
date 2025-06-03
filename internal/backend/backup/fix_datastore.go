@@ -100,7 +100,7 @@ func GetOwnerFilePath(job types.Job, storeInstance *store.Store) (string, error)
 		fullNamespacePath = filepath.Join(fullNamespacePath, "ns", ns)
 	}
 
-	ownerFilePath := filepath.Join(fullNamespacePath, "host", backupId)
+	ownerFilePath := filepath.Join(fullNamespacePath, "host", backupId, "owner")
 
 	return ownerFilePath, nil
 }
