@@ -54,7 +54,10 @@ const AUTH_TOKEN = "server"
 const AUTH_ID = AUTH_USER + "!" + AUTH_TOKEN
 
 func init() {
-	createAPIToken()
+	token, err := createAPIToken()
+	if err == nil {
+		token.saveToFile()
+	}
 }
 
 func runCommandAndIgnoreExists(cmd *exec.Cmd, alreadyExistsKeywords []string) error {
@@ -258,6 +261,8 @@ func (token *APIToken) saveToFile() error {
 	if token == nil {
 		return nil
 	}
+
+	_ = os.MkdirAll(constants.DbBasePath, os.FileMode(0755))
 
 	tokenFileContent, _ := json.Marshal(token)
 	file, err := os.OpenFile(filepath.Join(constants.DbBasePath, "pbs-plus-token.json"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
