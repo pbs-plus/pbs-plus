@@ -80,10 +80,6 @@ func GetOwnerFilePath(job types.Job, storeInstance *store.Store) (string, error)
 		return "", fmt.Errorf("GetCurrentOwner -> %w", err)
 	}
 
-	if !target.ConnectionStatus {
-		return "", fmt.Errorf("GetCurrentOwner: Target '%s' is unreachable or does not exist.", job.Target)
-	}
-
 	isAgent := strings.HasPrefix(target.Path, "agent://")
 	backupId, err := getBackupId(isAgent, job.Target)
 	if err != nil {
