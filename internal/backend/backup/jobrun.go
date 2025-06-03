@@ -283,8 +283,15 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		return fmt.Errorf("%w: %v", ErrTaskMonitoringTimedOut, monitorCtx.Err())
 	}
 
-	currOwner, _ := GetCurrentOwner(op.job, op.storeInstance)
-	_ = FixDatastore(op.job, op.storeInstance)
+	currOwner, err := GetCurrentOwner(op.job, op.storeInstance)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
+
+	err = FixDatastore(op.job, op.storeInstance)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	stdoutWriter := io.MultiWriter(op.logger, os.Stdout)
 	cmd.Stdout = stdoutWriter
