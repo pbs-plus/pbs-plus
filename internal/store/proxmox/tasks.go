@@ -16,7 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
-func (proxmoxSess *ProxmoxSession) GetJobTask(
+func GetJobTask(
 	ctx context.Context,
 	readyChan chan struct{},
 	job types.Job,
@@ -40,7 +40,7 @@ func (proxmoxSess *ProxmoxSession) GetJobTask(
 			syslog.L.Info().WithMessage(fmt.Sprintf("Proceeding: %s contains %s\n", filePath, searchString)).Write()
 			fileName := filepath.Base(filePath)
 			syslog.L.Info().WithMessage(fmt.Sprintf("Getting UPID: %s\n", fileName)).Write()
-			newTask, err := proxmoxSess.GetTaskByUPID(fileName)
+			newTask, err := GetTaskByUPID(fileName)
 			if err != nil {
 				return Task{}, fmt.Errorf("GetJobTask: error getting task: %v\n", err)
 			}
@@ -155,7 +155,7 @@ type TaskCache struct {
 
 var taskCache = safemap.New[string, TaskCache]()
 
-func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (Task, error) {
+func GetTaskByUPID(upid string) (Task, error) {
 	task, ok := taskCache.Get(upid)
 	if ok && time.Now().Sub(task.timestamp) <= 5*time.Second {
 		return task.task, nil
@@ -186,7 +186,7 @@ func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (Task, error) {
 		resp.ExitStatus = strings.TrimPrefix(lastLog, "TASK ERROR: ")
 	}
 
-	endTime, err := proxmoxSess.GetTaskEndTime(resp)
+	endTime, err := GetTaskEndTime(resp)
 	if err != nil {
 		return Task{}, fmt.Errorf("GetTaskByUPID: error getting task end time -> %w", err)
 	}
@@ -198,11 +198,7 @@ func (proxmoxSess *ProxmoxSession) GetTaskByUPID(upid string) (Task, error) {
 	return resp, nil
 }
 
-func (proxmoxSess *ProxmoxSession) GetTaskEndTime(task Task) (int64, error) {
-	if proxmoxSess.APIToken == nil {
-		return -1, fmt.Errorf("GetTaskEndTime: token is required")
-	}
-
+func GetTaskEndTime(task Task) (int64, error) {
 	logPath, err := GetLogPath(task.UPID)
 	if err != nil {
 		return -1, fmt.Errorf("GetTaskEndTime: error getting log path (%s) -> %w", logPath, err)

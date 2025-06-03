@@ -3,13 +3,10 @@
 package backup
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -35,43 +32,35 @@ func CreateNamespace(namespace string, job types.Job, storeInstance *store.Store
 		return fmt.Errorf("CreateNamespace: store is required")
 	}
 
-	if proxmox.Session.APIToken == nil {
-		return fmt.Errorf("CreateNamespace: api token is required")
+	datastoreInfo, err := proxmox.GetDatastoreInfo(job.Store)
+	if err != nil {
+		return fmt.Errorf("CreateNamespace: failed to get datastore; %w", err)
 	}
 
 	namespaceSplit := strings.Split(namespace, "/")
 
+	fullNamespacePath := datastoreInfo.Path
+	parentNamespacePath := datastoreInfo.Path
+
 	for i, ns := range namespaceSplit {
-		var reqBody []byte
-		var err error
-
+		fullNamespacePath = filepath.Join(fullNamespacePath, "ns", ns)
 		if i == 0 {
-			reqBody, err = json.Marshal(&NamespaceReq{
-				Name: ns,
-			})
-			if err != nil {
-				return fmt.Errorf("CreateNamespace: error creating req body -> %w", err)
-			}
-		} else {
-			reqBody, err = json.Marshal(&NamespaceReq{
-				Name:   ns,
-				Parent: strings.Join(namespaceSplit[:i], "/"),
-			})
-			if err != nil {
-				return fmt.Errorf("CreateNamespace: error creating req body -> %w", err)
-			}
+			parentNamespacePath = filepath.Join(parentNamespacePath, "ns", ns)
 		}
+	}
 
-		_ = proxmox.Session.ProxmoxHTTPRequest(
-			http.MethodPost,
-			fmt.Sprintf("/api2/json/admin/datastore/%s/namespace", job.Store),
-			bytes.NewBuffer(reqBody),
-			nil,
-		)
+	err = os.MkdirAll(fullNamespacePath, os.FileMode(0755))
+	if err != nil {
+		return fmt.Errorf("CreateNamespace: error creating namespace -> %w", err)
+	}
+
+	err = os.Chown(parentNamespacePath, 34, 34)
+	if err != nil {
+		return fmt.Errorf("CreateNamespace: error changing filesystem owner -> %w", err)
 	}
 
 	job.Namespace = namespace
-	err := storeInstance.Database.UpdateJob(nil, job)
+	err = storeInstance.Database.UpdateJob(nil, job)
 	if err != nil {
 		return fmt.Errorf("CreateNamespace: error updating job to namespace -> %w", err)
 	}
@@ -82,10 +71,6 @@ func CreateNamespace(namespace string, job types.Job, storeInstance *store.Store
 func GetCurrentOwner(job types.Job, storeInstance *store.Store) (string, error) {
 	if storeInstance == nil {
 		return "", fmt.Errorf("GetCurrentOwner: store is required")
-	}
-
-	if proxmox.Session.APIToken == nil {
-		return "", fmt.Errorf("GetCurrentOwner: api token is required")
 	}
 
 	target, err := storeInstance.Database.GetTarget(job.Target)
@@ -100,30 +85,38 @@ func GetCurrentOwner(job types.Job, storeInstance *store.Store) (string, error) 
 		return "", fmt.Errorf("GetCurrentOwner: Target '%s' is unreachable or does not exist.", job.Target)
 	}
 
-	params := url.Values{}
-	params.Add("ns", job.Namespace)
-
-	groupsResp := PBSStoreGroupsResponse{}
-	err = proxmox.Session.ProxmoxHTTPRequest(
-		http.MethodGet,
-		fmt.Sprintf("/api2/json/admin/datastore/%s/groups?%s", job.Store, params.Encode()),
-		nil,
-		&groupsResp,
-	)
+	isAgent := strings.HasPrefix(target.Path, "agent://")
+	backupId, err := getBackupId(isAgent, job.Target)
 	if err != nil {
-		return "", fmt.Errorf("GetCurrentOwner: error creating http request -> %w", err)
+		return "", fmt.Errorf("GetCurrentOwner: failed to get backup ID: %w", err)
+	}
+	backupId = proxmox.NormalizeHostname(backupId)
+
+	datastoreInfo, err := proxmox.GetDatastoreInfo(job.Store)
+	if err != nil {
+		return "", fmt.Errorf("GetCurrentOwner: failed to get datastore; %w", err)
 	}
 
-	return groupsResp.Data.Owner, nil
+	namespaceSplit := strings.Split(job.Namespace, "/")
+
+	fullNamespacePath := datastoreInfo.Path
+
+	for _, ns := range namespaceSplit {
+		fullNamespacePath = filepath.Join(fullNamespacePath, "ns", ns)
+	}
+
+	ownerFilePath := filepath.Join(fullNamespacePath, "host", backupId)
+	ownerBytes, err := os.ReadFile(ownerFilePath)
+	if err != nil {
+		return "", fmt.Errorf("GetCurrentOwner: failed to read file: %w", err)
+	}
+
+	return strings.TrimSpace(string(ownerBytes)), nil
 }
 
 func SetDatastoreOwner(job types.Job, storeInstance *store.Store, owner string) error {
 	if storeInstance == nil {
 		return fmt.Errorf("SetDatastoreOwner: store is required")
-	}
-
-	if proxmox.Session.APIToken == nil {
-		return fmt.Errorf("SetDatastoreOwner: api token is required")
 	}
 
 	target, err := storeInstance.Database.GetTarget(job.Target)
@@ -140,7 +133,7 @@ func SetDatastoreOwner(job types.Job, storeInstance *store.Store, owner string) 
 
 	jobStore := fmt.Sprintf(
 		"%s@localhost:%s",
-		proxmox.Session.APIToken.TokenId,
+		proxmox.AUTH_ID,
 		job.Store,
 	)
 
@@ -179,13 +172,11 @@ func SetDatastoreOwner(job types.Job, storeInstance *store.Store, owner string) 
 
 	cmd := exec.Command("/usr/bin/proxmox-backup-client", cmdArgs...)
 	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_PASSWORD=%s", proxmox.Session.APIToken.Value))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_PASSWORD=%s", proxmox.GetToken()))
 
-	pbsStatus, err := proxmox.Session.GetPBSStatus()
+	pbsStatus, err := proxmox.GetProxmoxCertInfo()
 	if err == nil {
-		if fingerprint, ok := pbsStatus.Info["fingerprint"]; ok {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_FINGERPRINT=%s", fingerprint))
-		}
+		cmd.Env = append(cmd.Env, fmt.Sprintf("PBS_FINGERPRINT=%s", pbsStatus.FingerprintSHA256))
 	}
 
 	cmd.Stdout = os.Stdout
@@ -200,10 +191,5 @@ func SetDatastoreOwner(job types.Job, storeInstance *store.Store, owner string) 
 }
 
 func FixDatastore(job types.Job, storeInstance *store.Store) error {
-	newOwner := ""
-	if proxmox.Session.APIToken != nil {
-		newOwner = proxmox.Session.APIToken.TokenId
-	}
-
-	return SetDatastoreOwner(job, storeInstance, newOwner)
+	return SetDatastoreOwner(job, storeInstance, proxmox.AUTH_ID)
 }
