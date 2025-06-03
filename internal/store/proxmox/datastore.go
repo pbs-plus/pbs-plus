@@ -16,12 +16,13 @@ type DatastoreInfo struct {
 	Comment          string
 	GcSchedule       string
 	NotificationMode string
+	Tuning           string
 }
 
 func parseDatastoreOutput(output string) (DatastoreInfo, error) {
 	info := DatastoreInfo{}
 	lines := strings.Split(output, "\n")
-	dataLineRegex := regexp.MustCompile(`^│\s*([^│]+?)\s*│\s*([^│]+?)\s*│$`)
+	dataLineRegex := regexp.MustCompile(`^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$`)
 
 	for _, line := range lines {
 		matches := dataLineRegex.FindStringSubmatch(line)
@@ -40,11 +41,13 @@ func parseDatastoreOutput(output string) (DatastoreInfo, error) {
 				info.GcSchedule = value
 			case "notification-mode":
 				info.NotificationMode = value
+			case "tuning":
+				info.Tuning = value
 			}
 		}
 	}
 
-	if info.Name == "" && info.Path == "" {
+	if info.Name == "" && info.Path == "" && info.Tuning == "" {
 		return info, fmt.Errorf("failed to parse any valid data")
 	}
 
