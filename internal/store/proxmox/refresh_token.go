@@ -140,6 +140,7 @@ func createAPIToken() (*APIToken, error) {
 		"--auth-id",
 		AUTH_USER,
 		"--propagate",
+		"true",
 	)
 	if err := runCommandAndIgnoreExists(cmdAclUser, []string{"entry '" + AUTH_USER + "' already exists"}); err != nil {
 		return nil, err
@@ -243,6 +244,7 @@ func createAPIToken() (*APIToken, error) {
 		"--auth-id",
 		AUTH_ID,
 		"--propagate",
+		"true",
 	)
 	if err := runCommandAndIgnoreExists(cmdAclToken, []string{"entry '" + AUTH_ID + "' already exists"}); err != nil {
 		return nil, err
