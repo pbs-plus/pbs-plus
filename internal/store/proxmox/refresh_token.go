@@ -54,10 +54,7 @@ const AUTH_TOKEN = "server"
 const AUTH_ID = AUTH_USER + "!" + AUTH_TOKEN
 
 func init() {
-	token, err := createAPIToken()
-	if err == nil {
-		token.saveToFile()
-	}
+	_ = GetToken()
 }
 
 func runCommandAndIgnoreExists(cmd *exec.Cmd, alreadyExistsKeywords []string) error {
