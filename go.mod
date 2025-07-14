@@ -24,7 +24,7 @@ require (
 	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/crypto v0.38.0
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
-	golang.org/x/sys v0.33.0
+	golang.org/x/sys v0.34.0
 	golang.org/x/time v0.11.0
 	modernc.org/sqlite v1.37.0
 )
