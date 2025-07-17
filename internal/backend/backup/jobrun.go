@@ -55,6 +55,9 @@ var (
 
 // BackupOperation encapsulates a backup operation.
 type BackupOperation struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	Task      proxmox.Task
 	queueTask *proxmox.QueuedTask
 	waitGroup *sync.WaitGroup
@@ -107,7 +110,7 @@ func (op *BackupOperation) PreScript(ctx context.Context) error {
 		envVars = []string{}
 	}
 
-	scriptOut, modEnvVars, err := utils.RunShellScript(op.job.PreScript, envVars)
+	scriptOut, modEnvVars, err := utils.RunShellScript(ctx, op.job.PreScript, envVars)
 	if err != nil {
 		syslog.L.Error(err).WithJob(op.job.ID).WithMessage("error encountered while running job pre-backup script").Write()
 	}
@@ -144,7 +147,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 				envVars = []string{}
 			}
 
-			scriptOut, _, err := utils.RunShellScript(op.job.PostScript, envVars)
+			scriptOut, _, err := utils.RunShellScript(ctx, op.job.PostScript, envVars)
 			if err != nil {
 				syslog.L.Error(err).WithMessage("error encountered while running job post-backup script").Write()
 			}
@@ -188,7 +191,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			envVars = []string{}
 		}
 
-		scriptOut, _, err := utils.RunShellScript(target.MountScript, envVars)
+		scriptOut, _, err := utils.RunShellScript(ctx, target.MountScript, envVars)
 		if err != nil {
 			syslog.L.Error(err).WithMessage("error encountered while running mount script").Write()
 		}

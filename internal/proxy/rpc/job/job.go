@@ -20,6 +20,7 @@ type QueueArgs struct {
 	Job             types.Job
 	SkipCheck       bool
 	Web             bool
+	Stop            bool
 	ExtraExclusions []string
 }
 
@@ -35,6 +36,18 @@ type JobRPCService struct {
 }
 
 func (s *JobRPCService) Queue(args *QueueArgs, reply *QueueReply) error {
+	if args.Stop {
+		err := s.Manager.StopJob(args.Job.ID)
+		if err != nil {
+			reply.Status = 500
+			reply.Message = err.Error()
+			return nil
+		}
+
+		reply.Status = 200
+		return nil
+	}
+
 	job, err := backup.NewJob(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
 	if err != nil {
 		reply.Status = 500
