@@ -3,71 +3,33 @@
 package proxmox
 
 import (
+	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	"regexp"
-	"strings"
 )
 
 type DatastoreInfo struct {
-	Name             string
-	Path             string
-	Comment          string
-	GcSchedule       string
-	NotificationMode string
-	Tuning           string
-}
-
-func parseDatastoreOutput(output string) (DatastoreInfo, error) {
-	info := DatastoreInfo{}
-	lines := strings.Split(output, "\n")
-	dataLineRegex := regexp.MustCompile(`^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$`)
-
-	for _, line := range lines {
-		matches := dataLineRegex.FindStringSubmatch(line)
-		if len(matches) == 3 {
-			key := strings.TrimSpace(matches[1])
-			value := strings.TrimSpace(matches[2])
-
-			switch key {
-			case "name":
-				info.Name = value
-			case "path":
-				info.Path = value
-			case "comment":
-				info.Comment = value
-			case "gc-schedule":
-				info.GcSchedule = value
-			case "notification-mode":
-				info.NotificationMode = value
-			case "tuning":
-				info.Tuning = value
-			}
-		}
-	}
-
-	if info.Name == "" && info.Path == "" && info.Tuning == "" {
-		return info, fmt.Errorf("failed to parse any valid data")
-	}
-
-	return info, nil
+	Name             string `json:"name"`
+	Path             string `json:"path"`
+	Comment          string `json:"comment"`
+	NotificationMode string `json:"notification-mode"`
+	Tuning           string `json:"tuning"`
 }
 
 func GetDatastoreInfo(datastoreName string) (DatastoreInfo, error) {
 	cmd := exec.Command(
 		"proxmox-backup-manager",
-		"datastore",
-		"show",
+		"datastore", "show",
 		datastoreName,
+		"--output-format", "json",
 	)
-	cmd.Env = os.Environ()
-
-	outputBytes, err := cmd.CombinedOutput()
-	outputStr := string(outputBytes)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return DatastoreInfo{}, fmt.Errorf("%w: %s", err, outputStr)
+		return DatastoreInfo{}, fmt.Errorf("%w: %s", err, output)
 	}
-
-	return parseDatastoreOutput(outputStr)
+	var info DatastoreInfo
+	if err := json.Unmarshal(output, &info); err != nil {
+		return DatastoreInfo{}, err
+	}
+	return info, nil
 }

@@ -117,13 +117,30 @@ Ext.define("PBS.config.DiskBackupJobView", {
       if (selection.length < 1) return;
 
       let upid = selection[0].data["last-run-upid"];
-      if (upid === "") return;
+      let state = selection[0].data["last-run-state"] || "";
+
+      let hasPlusJob = false;
+      let hasPBSTask = false;
+
+      if (upid !== "") {
+        hasPBSTask = true;
+      }
+
+      if (state.startsWith("QUEUED:")) {
+        hasPlusJob = true;
+      }
+
+      if (!hasPBSTask && !hasPlusJob) {
+        return;
+      }
 
       let id = selection[0].data.id;
 
       Ext.create("PBS.D2DManagement.StopBackupWindow", {
         id,
         upid: upid,
+        hasPlusJob: hasPlusJob,
+        hasPBSTask: hasPBSTask,
         listeners: {
           destroy: function () {
             me.reload();
@@ -396,8 +413,11 @@ Ext.define("PBS.config.DiskBackupJobView", {
       text: gettext("Stop Job"),
       handler: "stopJob",
       reference: "d2dBackupStop",
-      enableFn: (rec) =>
-        !!rec.data["last-run-upid"] && !rec.data["last-run-state"],
+      enableFn: (rec) => {
+        const upid  = rec.get('last-run-upid');
+        const state = rec.get('last-run-state') || "";
+        return !!upid && (state === '' || state.startsWith("QUEUED:"));
+      },
       disabled: true,
     },
     "-",
