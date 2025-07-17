@@ -187,7 +187,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	if hasError {
 		sb.WriteString(": ")
 		sb.WriteString(errorString)
-	} else if incomplete && disconnected {
+	} else if incomplete || disconnected {
 		sb.WriteString(": TASK ERROR: task aborted")
 		cancelled = true
 	} else {
