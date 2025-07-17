@@ -116,8 +116,6 @@ func (jq *Manager) worker() {
 			}
 
 			go func(opToRun *BackupOperation) {
-				defer opToRun.lock.Unlock()
-
 				err := opToRun.PreScript(opToRun.ctx)
 				if err != nil {
 					if errors.Is(err, context.Canceled) {
