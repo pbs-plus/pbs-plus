@@ -150,7 +150,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 				continue
 			}
 
-			if strings.Contains(line, "connection failed") {
+			if strings.Contains(line, "connection failed") || strings.Contains(line, "connection error: not connected") {
 				disconnected = true
 			}
 			if strings.Contains(line, "End Time:") {
@@ -188,7 +188,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 		sb.WriteString(": ")
 		sb.WriteString(errorString)
 	} else if incomplete && disconnected {
-		sb.WriteString(": TASK ERROR: Job cancelled")
+		sb.WriteString(": TASK ERROR: task aborted")
 		cancelled = true
 	} else {
 		succeeded = true
