@@ -119,6 +119,7 @@ func (jq *Manager) worker() {
 				err := opToRun.PreScript(opToRun.ctx)
 				if err != nil {
 					if errors.Is(err, context.Canceled) {
+						jq.CreateError(opToRun, errors.New("task aborted"))
 						return
 					}
 					syslog.L.Error(err).WithJob(opToRun.job.ID).WithMessage("error occurred during prescript execution, proceeding to backup operation").Write()
