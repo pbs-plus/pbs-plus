@@ -234,6 +234,7 @@ func main() {
 	serverConfig.CAFile = filepath.Join(certOpts.OutputDir, "ca.crt")
 	serverConfig.CAKey = filepath.Join(certOpts.OutputDir, "ca.key")
 	serverConfig.TokenSecret = string(secKey)
+	serverConfig.Unmount()
 
 	if err := generator.ValidateExistingCerts(); err != nil {
 		if err := generator.GenerateCA(); err != nil {
