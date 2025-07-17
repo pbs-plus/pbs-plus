@@ -24,6 +24,7 @@ type Config struct {
 
 	// Server configuration
 	Address        string
+	AgentAddress   string
 	ReadTimeout    time.Duration
 	IdleTimeout    time.Duration
 	WriteTimeout   time.Duration
@@ -34,10 +35,14 @@ type Config struct {
 	RateBurst int     // Maximum burst size
 }
 
+const ProxyCert = "/etc/proxmox-backup/proxy.pem"
+const ProxyKey = "/etc/proxmox-backup/proxy.key"
+
 // DefaultConfig returns a default server configuration
 func DefaultConfig() *Config {
 	return &Config{
-		Address:        ":8008",
+		Address:        ":8017",
+		AgentAddress:   ":8008",
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   5 * time.Minute,
 		IdleTimeout:    5 * time.Minute,

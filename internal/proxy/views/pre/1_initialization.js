@@ -1,6 +1,6 @@
 const pbsFullUrl = window.location.href;
 const pbsUrl = new URL(pbsFullUrl);
-const pbsPlusBaseUrl = `${pbsUrl.protocol}//${pbsUrl.hostname}:8008`;
+const pbsPlusBaseUrl = `${pbsUrl.protocol}//${pbsUrl.hostname}:8017`;
 
 function getCookie(cName) {
 	const name = cName + "=";
