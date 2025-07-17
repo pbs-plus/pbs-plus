@@ -20,9 +20,10 @@ import (
 )
 
 type UpdaterService struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	hostname string
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 }
 
 type VersionResp struct {
@@ -38,6 +39,10 @@ var (
 
 func (u *UpdaterService) Start() error {
 	u.ctx, u.cancel = context.WithCancel(context.Background())
+	hostname, err := os.Hostname()
+	if err == nil {
+		u.hostname = hostname
+	}
 
 	u.wg.Add(1)
 	go func() {
@@ -61,31 +66,32 @@ func (u *UpdaterService) runUpdateCheck() {
 	checkAndUpdate := func() {
 		newVersion, err := u.checkForNewVersion()
 		if err != nil {
-			syslog.L.Error(err).WithMessage("failed to check version").Write()
+			syslog.L.Error(err).WithMessage("failed to check version").WithField("hostname", u.hostname).Write()
 			return
 		}
 
 		if newVersion != "" {
 			mainVersion, err := u.getMainServiceVersion()
 			if err != nil {
-				syslog.L.Error(err).WithMessage("failed to get main version").Write()
+				syslog.L.Error(err).WithMessage("failed to get main version").WithField("hostname", u.hostname).Write()
 				return
 			}
 			syslog.L.Info().WithMessage("new version available").
 				WithFields(map[string]interface{}{"new": newVersion, "current": mainVersion}).
+				WithField("hostname", u.hostname).
 				Write()
 
 			if err := u.performUpdate(); err != nil {
-				syslog.L.Error(err).WithMessage("failed to update").Write()
+				syslog.L.Error(err).WithMessage("failed to update").WithField("hostname", u.hostname).Write()
 				return
 			}
 
-			syslog.L.Info().WithMessage("updated to version").WithField("version", newVersion).Write()
+			syslog.L.Info().WithMessage("updated to version").WithField("version", newVersion).WithField("hostname", u.hostname).Write()
 		}
 
 		// Perform cleanup after update check
 		if err := u.cleanupOldUpdates(); err != nil {
-			syslog.L.Error(err).WithMessage("failed to clean up old updates").Write()
+			syslog.L.Error(err).WithMessage("failed to clean up old updates").WithField("hostname", u.hostname).Write()
 		}
 	}
 
