@@ -67,11 +67,6 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := JobRunResponse{}
-		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
-
 		job, err := storeInstance.Database.GetJob(utils.DecodePath(r.PathValue("job")))
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
@@ -86,19 +81,39 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		cmd := exec.Command(execPath, "-job", job.ID, "-web")
-		cmd.Env = os.Environ()
-		err = cmd.Start()
-		if err != nil {
-			controllers.WriteErrorResponse(w, err)
+		if r.Method == http.MethodPost {
+			cmd := exec.Command(execPath, "-job", job.ID, "-web")
+			cmd.Env = os.Environ()
+			err = cmd.Start()
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+
+			response.Status = http.StatusOK
+			response.Success = true
+			json.NewEncoder(w).Encode(response)
+			return
+		} else if r.Method == http.MethodDelete {
+			cmd := exec.Command(execPath, "-job", job.ID, "-web", "-stop")
+			cmd.Env = os.Environ()
+			err = cmd.Start()
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+
+			response.Status = http.StatusOK
+			response.Success = true
+			json.NewEncoder(w).Encode(response)
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-
-		response.Status = http.StatusOK
-		response.Success = true
-		json.NewEncoder(w).Encode(response)
+		http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		return
 	}
 }

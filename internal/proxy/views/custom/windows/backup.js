@@ -94,6 +94,10 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
   url: '/api2/extjs/nodes',
   isCreate: true,
   showProgress: false,
+  submitPlusUrl: function () {
+    let me = this;
+    return `${pbsPlusBaseUrl}/api2/extjs/d2d/backup/${encodeURIComponent(me.id)}`
+  },
   submitUrl: function (url) {
 	  let me = this;
     let task = Proxmox.Utils.parse_task_upid(me.upid);
@@ -106,15 +110,37 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
         ? me.submitUrl(me.url)
         : me.submitUrl || me.url;
 
-    Proxmox.Utils.API2Request({
-      url: url,
-      waitMsgTarget: me,
-      method: 'DELETE',
-      failure: response => Ext.Msg.alert(gettext('Error'), response.htmlStatus),
-      success: function(response, options) {
-        me.close();
-      }
-    });
+    let plusUrl = Ext.isFunction(me.submitPlusUrl)
+        ? me.submitPlusUrl()
+        : me.submitPlusUrl || "";
+
+    const callTaskUrl = () =>
+      new Promise((resolve, reject) => {
+        Proxmox.Utils.API2Request({
+          url: url, method: 'DELETE', waitMsgTarget: me,
+          success: () => resolve(),
+          failure: (resp) => reject(resp),
+        });
+      });
+
+    const callPlusUrl = () =>
+      new Promise((resolve) => {
+        Proxmox.Utils.API2Request({
+          url: plusUrl, method: 'DELETE', waitMsgTarget: me,
+          failure: () => resolve(),
+          success: () => resolve(),
+        });
+      });
+
+    if (me.hasPlusJob) {
+      callPlusUrl().then(callTaskUrl).then(() => me.close());
+    } else {
+      callPlusUrl().then(callTaskUrl).then(() => me.close()).catch(
+        response => {
+          Ext.Msg.alert(gettext('Error'), response.htmlStatus);
+        }
+      );
+    }
   },
 
   submitOptions: {

@@ -68,6 +68,7 @@ func main() {
 	jobRun := flag.String("job", "", "Job ID to execute")
 	retryAttempts := flag.String("retry", "", "Current attempt number")
 	webRun := flag.Bool("web", false, "Job executed from Web UI")
+	stop := flag.Bool("stop", false, "Stop Job ID instead of executing")
 	flag.Var(&extExclusions, "skip", "Extra exclusions")
 	flag.Parse()
 
@@ -139,6 +140,7 @@ func main() {
 		args := &jobrpc.QueueArgs{
 			Job:             jobTask,
 			SkipCheck:       true,
+			Stop:            *stop,
 			Web:             *webRun,
 			ExtraExclusions: arrExtExc,
 		}
