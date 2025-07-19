@@ -34,81 +34,136 @@ Ext.define("PBS.config.DiskBackupJobView", {
       }
     },
 
-    // bulk run
     runJobs: function () {
-      let me   = this;
-      let recs = me.getView().getSelection();
-      if (!recs || recs.length === 0) return;
+      const me   = this;
+      const view = me.getView();
+      const recs = view.getSelection();
+      if (!recs.length) return;
 
-      // collect all selected IDs
-      let ids = Ext.Array.pluck(
-        recs.map(r => r.data),
-        'id',
-      );
+      const ids  = recs.map((r) => r.getId());
+      const list = ids.map(Ext.String.htmlEncode).join("', '");
 
-      Ext.create('PBS.D2DManagement.BackupWindow', {
-        ids: ids,
-        autoShow: true,
-        listeners: { destroy: () => me.reload() },
-      }).show();
-    },
+      const msg =
+        ids.length > 1
+          ? Ext.String.format(gettext("Start backup jobs '{0}'?"), list)
+          : Ext.String.format(gettext("Start backup job '{0}'?"), list);
 
-    // bulk stop
-    stopJobs: function () {
-      let me   = this;
-      let recs = me.getView().getSelection();
-      if (!recs || recs.length === 0) return;
+      Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
+        if (btn !== "yes") return;
 
-      // build an array of job‐objects for those we can actually stop
-      let jobs = [];
-      Ext.Array.each(recs, (rec) => {
-        const data  = rec.data;
-        const upid  = data['last-run-upid'] || '';
-        const state = data['last-run-state'] || '';
-        const hasPlusJob = state.startsWith('QUEUED:');
-        const hasPBSTask = !!upid;
-        if (hasPlusJob || hasPBSTask) {
-          jobs.push({
-            id: data.id,
-            upid,
-            hasPlusJob,
-            hasPBSTask,
+        ids.forEach((id) => {
+          Proxmox.Utils.API2Request({
+            url:
+              pbsPlusBaseUrl +
+              "/api2/extjs/d2d/backup/" +
+              encodeURIComponent(id),
+            method: "POST",
+            waitMsgTarget: view,
+            success: () => { me.reload(); },
+            failure: (resp) => {
+              Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
+            },
           });
-        }
+        });
       });
-      if (jobs.length === 0) return;
-
-      Ext.create('PBS.D2DManagement.StopBackupWindow', {
-        jobs: jobs,
-        autoShow: true,
-        listeners: { destroy: () => me.reload() },
-      }).show();
     },
 
-    // bulk remove
-    removeJobs: function () {
-      let me = this;
-      let recs = me.getView().getSelection();
-      if (!recs || recs.length === 0) return;
+    stopJobs: function () {
+      const me   = this;
+      const view = me.getView();
+      const recs = view.getSelection();
+      if (!recs.length) return;
 
-      Ext.Msg.confirm(
-        gettext("Confirm"),
-        gettext("Remove selected entries?"),
-        function (btn) {
-          if (btn !== "yes") return;
-          Ext.Array.each(recs, (rec) => {
-            let url = pbsPlusBaseUrl +
-              "/api2/extjs/config/disk-backup-job/" +
-              encodeURIComponent(encodePathValue(rec.getId()));
+      const jobs = recs
+        .map((r) => {
+          const d          = r.data;
+          const upid       = d["last-run-upid"] || "";
+          const hasPlus    = (d["last-run-state"] || "").startsWith("QUEUED:");
+          const hasPBSTask = !!upid;
+          return hasPlus || hasPBSTask
+            ? { id: r.getId(), upid, hasPlus, hasPBSTask }
+            : null;
+        })
+        .filter(Boolean);
+      if (!jobs.length) return;
+
+      const ids  = jobs.map((j) => j.id);
+      const list = ids.map(Ext.String.htmlEncode).join("', '");
+
+      const msg =
+        jobs.length > 1
+          ? Ext.String.format(gettext("Stop backup jobs '{0}'?"), list)
+          : Ext.String.format(gettext("Stop backup job '{0}'?"), list);
+
+      Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
+        if (btn !== "yes") return;
+
+        jobs.forEach((job) => {
+          // 1) delete the “Plus” queue entry if needed
+          if (job.hasPlus) {
             Proxmox.Utils.API2Request({
-              url,
+              url:
+                pbsPlusBaseUrl +
+                "/api2/extjs/d2d/backup/" +
+                encodeURIComponent(job.id),
               method: "DELETE",
+              waitMsgTarget: view,
+              success: () => {
+                if (!job.hasPBSTask) {
+                  me.reload();
+                }
+              },
+              failure: () => {
+                // ignore, but still attempt PBSTask below
+              },
+            });
+          }
+
+          // 2) delete the PBS-side task if needed
+          if (job.hasPBSTask) {
+            const task = Proxmox.Utils.parse_task_upid(job.upid);
+            Proxmox.Utils.API2Request({
+              url:
+                "/api2/extjs/nodes/" +
+                task.node +
+                "/tasks/" +
+                encodeURIComponent(job.upid),
+              method: "DELETE",
+              waitMsgTarget: view,
+              success: () => { me.reload(); },
               failure: (resp) => {
                 Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
               },
             });
+          }
+        });
+      });
+    },
+
+    removeJobs: function () {
+      const me   = this;
+      const view = me.getView();
+      const recs = view.getSelection();
+      if (!recs.length) return;
+
+      Ext.Msg.confirm(
+        gettext("Confirm"),
+        gettext("Remove selected entries?"),
+        (btn) => {
+          if (btn !== "yes") return;
+          recs.forEach((rec) => {
+            Proxmox.Utils.API2Request({
+              url:
+                pbsPlusBaseUrl +
+                "/api2/extjs/config/disk-backup-job/" +
+                encodeURIComponent(encodePathValue(rec.getId())),
+              method: "DELETE",
+              waitMsgTarget: view,
+              failure: (resp) =>
+                Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+              success: () => me.reload(),
+            });
           });
-          me.reload();
         }
       );
     },
@@ -400,13 +455,13 @@ Ext.define("PBS.config.DiskBackupJobView", {
   tbar: [
     {
       xtype: "proxmoxButton",
-      text: gettext("Add"),
+      text: gettext("Add Job"),
       selModel: false,
       handler: "addJob",
     },
     {
       xtype: "proxmoxButton",
-      text: gettext("Duplicate"),
+      text: gettext("Duplicate Job"),
       handler: "duplicateJob",
       enableFn: function () {
         let recs = this.up("grid").getSelection();
@@ -416,7 +471,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
     },
     {
       xtype: "proxmoxButton",
-      text: gettext("Edit"),
+      text: gettext("Edit Job"),
       handler: "editJob",
       enableFn: function () {
         let recs = this.up("grid").getSelection();
