@@ -100,7 +100,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
             let url = pbsPlusBaseUrl +
               "/api2/extjs/config/disk-backup-job/" +
               encodeURIComponent(encodePathValue(rec.getId()));
-            PBS.Utils.API2Request({
+            Proxmox.Utils.API2Request({
               url,
               method: "DELETE",
               failure: (resp) => {

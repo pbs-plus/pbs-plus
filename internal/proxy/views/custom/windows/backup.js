@@ -2,10 +2,10 @@ Ext.define("PBS.D2DManagement.BackupWindow", {
   extend: "Proxmox.window.Edit",
   mixins: ["Proxmox.Mixin.CBind"],
 
-  ids: undefined, // array of IDs to start
+  ids: undefined, // array of job IDs
 
   cbindData(config) {
-    let me = this;
+    let me  = this;
     let ids = me.ids || (me.id ? [me.id] : []);
     let list = ids.map(Ext.String.htmlEncode).join("', '");
     let warning =
@@ -23,21 +23,31 @@ Ext.define("PBS.D2DManagement.BackupWindow", {
 
   title: gettext("Backup"),
   url: pbsPlusBaseUrl + "/api2/extjs/d2d/backup",
+  submitText: undefined,
+  method:     undefined,
   showProgress: false,
-  method: "POST",
   submitOptions: { timeout: 120000 },
 
+  // clear the default buttons
+  buttons: [],
+
+  // our own bottom bar
   bbar: [
     "->",
     {
       text: gettext("Cancel"),
-      handler: "close",
+      handler: function (btn) {
+        btn.up("window").close();
+      },
     },
     {
       text: gettext("Start Backup"),
-      handler: "submit",
+      // always enabled
       formBind: false,
       disabled: false,
+      handler: function (btn) {
+        btn.up("window").submit();
+      },
     },
   ],
 
@@ -53,22 +63,21 @@ Ext.define("PBS.D2DManagement.BackupWindow", {
       ],
     },
     {
-      xtype: "displayfield",
+      xtype: "component",
       flex: 1,
-      cbind: { value: "{warning}" },
-      // allow wrapping of long text
-      fieldStyle: "white-space: normal; word-break: break-word;",
+      cbind: { html: "{warning}" },
+      style: "white-space: normal; word-wrap: break-word;",
     },
   ],
 
   submit() {
-    let me = this;
+    let me  = this;
     let ids = me.ids || [];
     let calls = ids.map((id) => {
       let url = me.submitUrl(me.url, { id });
       return new Promise((res, rej) => {
         Proxmox.Utils.API2Request({
-          url,
+          url: url,
           method: "POST",
           waitMsgTarget: me,
           success: () => res(),
@@ -92,9 +101,9 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
   jobs: undefined, // array of {id, upid, hasPlusJob, hasPBSTask}
 
   cbindData(config) {
-    let me = this;
+    let me   = this;
     let jobs = me.jobs || [];
-    let ids = jobs.map((j) => Ext.String.htmlEncode(j.id)).join("', '");
+    let ids  = jobs.map((j) => Ext.String.htmlEncode(j.id)).join("', '");
     let warning =
       jobs.length > 1
         ? Ext.String.format(
@@ -110,21 +119,29 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
 
   title: gettext("Stopping Backup Job(s)"),
   url: "/api2/extjs/nodes",
+  submitText: undefined,
+  method:     undefined,
   showProgress: false,
-  method: "DELETE",
   submitOptions: { timeout: 120000 },
+
+  // clear default buttons
+  buttons: [],
 
   bbar: [
     "->",
     {
       text: gettext("Cancel"),
-      handler: "close",
+      handler: function (btn) {
+        btn.up("window").close();
+      },
     },
     {
       text: gettext("Stop Backup"),
-      handler: "submit",
       formBind: false,
       disabled: false,
+      handler: function (btn) {
+        btn.up("window").submit();
+      },
     },
   ],
 
@@ -140,10 +157,10 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
       ],
     },
     {
-      xtype: "displayfield",
+      xtype: "component",
       flex: 1,
-      cbind: { value: "{warning}" },
-      fieldStyle: "white-space: normal; word-break: break-word;",
+      cbind: { html: "{warning}" },
+      style: "white-space: normal; word-wrap: break-word;",
     },
   ],
 
@@ -167,10 +184,10 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
   },
 
   submit() {
-    let me = this;
+    let me   = this;
     let jobs = me.jobs || [];
     let calls = jobs.map((job) => {
-      // first remove the “plus” queued item
+      // first delete the “plus” queue entry
       let plusCall = () =>
         !job.hasPlusJob
           ? Promise.resolve()
@@ -184,7 +201,7 @@ Ext.define("PBS.D2DManagement.StopBackupWindow", {
               });
             });
 
-      // then remove the PBS task
+      // then delete the PBS task
       let taskCall = () =>
         !job.hasPBSTask
           ? Promise.resolve()
