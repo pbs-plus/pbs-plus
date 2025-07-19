@@ -1,70 +1,82 @@
-Ext.define("PBS.D2DManagement.BackupWindow", {
-  extend: "Proxmox.window.Edit",
-  mixins: ["Proxmox.Mixin.CBind"],
+Ext.define('PBS.D2DManagement.BackupWindow', {
+  extend: 'Proxmox.window.Edit',
+  mixins: ['Proxmox.Mixin.CBind'],
 
-  id: undefined,
+  // NEW: array of job‐IDs to start
+  ids: undefined,
 
   cbindData: function (config) {
-    let me = this;
-    return {
-      warning: Ext.String.format(
-        gettext("Manually start backup job '{0}'?"),
-        me.id,
-      ),
-      id: me.id,
-    };
+    let me  = this;
+    let ids = me.ids || (me.id ? [me.id] : []);
+    let list = ids.map(Ext.String.htmlEncode).join("', '");
+    let warning =
+      ids.length > 1
+        ? Ext.String.format(
+            gettext("Manually start backup jobs '{0}'?"),
+            list,
+          )
+        : Ext.String.format(
+            gettext("Manually start backup job '{0}'?"),
+            list,
+          );
+    return { warning: warning };
   },
 
-  title: gettext("Backup"),
-  url: pbsPlusBaseUrl + `/api2/extjs/d2d/backup`,
+  title: gettext('Backup'),
+  url: pbsPlusBaseUrl + '/api2/extjs/d2d/backup',
   showProgress: false,
-  submitUrl: function (url, values) {
-    let id = values.id;
-    delete values.id;
-    return `${url}/${encodePathValue(id)}`;
-  },
-  submitOptions: {
-    timeout: 120000,
+  method: 'POST',
+  submitText: gettext('Start Backup'),
+  submitOptions: { timeout: 120000 },
+
+  submit: function () {
+    let me  = this;
+    let ids = me.ids || [];
+
+    // build an array of Promises
+    let promises = ids.map((id) => {
+      let url = me.submitUrl(me.url, { id: id });
+      return new Promise((resolve, reject) => {
+        Proxmox.Utils.API2Request({
+          url: url,
+          method: 'POST',
+          waitMsgTarget: me,
+          success: () => resolve(),
+          failure: (resp) => reject(resp),
+        });
+      });
+    });
+
+    Promise.all(promises)
+      .then(() => me.close())
+      .catch((resp) => {
+        Ext.Msg.alert(gettext('Error'), resp.htmlStatus);
+      });
   },
 
-  layout: "hbox",
+  layout: 'hbox',
   width: 400,
-  method: "POST",
-  isCreate: true,
-  submitText: gettext("Start Backup"),
   items: [
     {
-      xtype: "container",
+      xtype: 'container',
       padding: 0,
-      layout: {
-        type: "hbox",
-        align: "stretch",
-      },
+      layout: { type: 'hbox', align: 'stretch' },
       items: [
         {
-          xtype: "component",
+          xtype: 'component',
           cls: [
-            Ext.baseCSSPrefix + "message-box-icon",
-            Ext.baseCSSPrefix + "message-box-question",
-            Ext.baseCSSPrefix + "dlg-icon",
+            Ext.baseCSSPrefix + 'message-box-icon',
+            Ext.baseCSSPrefix + 'message-box-question',
+            Ext.baseCSSPrefix + 'dlg-icon',
           ],
         },
         {
-          xtype: "container",
+          xtype: 'container',
           flex: 1,
           items: [
             {
-              xtype: "displayfield",
-              cbind: {
-                value: "{warning}",
-              },
-            },
-            {
-              xtype: "hidden",
-              name: "id",
-              cbind: {
-                value: "{id}",
-              },
+              xtype: 'displayfield',
+              cbind: { value: '{warning}' },
             },
           ],
         },
@@ -73,117 +85,123 @@ Ext.define("PBS.D2DManagement.BackupWindow", {
   ],
 });
 
-Ext.define("PBS.D2DManagement.StopBackupWindow", {
-  extend: "Proxmox.window.Edit",
-  mixins: ["Proxmox.Mixin.CBind"],
+Ext.define('PBS.D2DManagement.StopBackupWindow', {
+  extend: 'Proxmox.window.Edit',
+  mixins: ['Proxmox.Mixin.CBind'],
 
-  id: undefined,
+  // NEW: array of jobs to stop
+  jobs: undefined,
 
   cbindData: function (config) {
-    let me = this;
-    return {
-      warning: Ext.String.format(
-        gettext("Stop backup job '{0}'?"),
-        me.id,
-      ),
-      id: me.id,
-    };
+    let me   = this;
+    let jobs = me.jobs || [];
+    let ids  = jobs.map((j) => Ext.String.htmlEncode(j.id)).join("', '");
+    let warning =
+      jobs.length > 1
+        ? Ext.String.format(
+            gettext("Stop backup jobs '{0}'?"),
+            ids,
+          )
+        : Ext.String.format(
+            gettext("Stop backup job '{0}'?"),
+            ids,
+          );
+    return { warning: warning };
   },
 
-  title: gettext("Stopping Backup Job"),
+  title: gettext('Stopping Backup Job(s)'),
   url: '/api2/extjs/nodes',
-  isCreate: true,
   showProgress: false,
-  submitPlusUrl: function () {
-    let me = this;
-    return `${pbsPlusBaseUrl}/api2/extjs/d2d/backup/${encodeURIComponent(me.id)}`
+  method: 'DELETE',
+  submitText: gettext('Stop Backup'),
+  submitOptions: { timeout: 120000 },
+
+  // per‐job URL builders
+  submitPlusUrl: function (job) {
+    return (
+      pbsPlusBaseUrl +
+      '/api2/extjs/d2d/backup/' +
+      encodeURIComponent(job.id)
+    );
   },
-  submitUrl: function (url) {
-	  let me = this;
-    let task = Proxmox.Utils.parse_task_upid(me.upid);
-    return `${url}/${task.node}/tasks/${encodeURIComponent(me.upid)}`
+  submitUrl: function (base, job) {
+    let task = Proxmox.Utils.parse_task_upid(job.upid);
+    return (
+      base +
+      '/' +
+      task.node +
+      '/tasks/' +
+      encodeURIComponent(job.upid)
+    );
   },
-  submit: function() {
-    let me = this;
 
-    let url = Ext.isFunction(me.submitUrl)
-        ? me.submitUrl(me.url)
-        : me.submitUrl || me.url;
+  submit: function () {
+    let me   = this;
+    let jobs = me.jobs || [];
 
-    let plusUrl = Ext.isFunction(me.submitPlusUrl)
-        ? me.submitPlusUrl()
-        : me.submitPlusUrl || "";
+    let promises = jobs.map((job) => {
+      // first delete the “Plus” queued item if present
+      const plusCall = () =>
+        !job.hasPlusJob
+          ? Promise.resolve()
+          : new Promise((resolve) => {
+              Proxmox.Utils.API2Request({
+                url: me.submitPlusUrl(job),
+                method: 'DELETE',
+                waitMsgTarget: me,
+                // on both success _and_ failure we proceed
+                success: () => resolve(),
+                failure: () => resolve(),
+              });
+            });
 
-    const callTaskUrl = () =>
-      new Promise((resolve, reject) => {
-        Proxmox.Utils.API2Request({
-          url: url, method: 'DELETE', waitMsgTarget: me,
-          success: () => resolve(),
-          failure: (resp) => reject(resp),
-        });
+      // then delete the PBS-side task if present
+      const taskCall = () =>
+        !job.hasPBSTask
+          ? Promise.resolve()
+          : new Promise((resolve, reject) => {
+              Proxmox.Utils.API2Request({
+                url: me.submitUrl(me.url, job),
+                method: 'DELETE',
+                waitMsgTarget: me,
+                success: () => resolve(),
+                failure: (resp) => reject(resp),
+              });
+            });
+
+      return plusCall().then(taskCall);
+    });
+
+    Promise.all(promises)
+      .then(() => me.close())
+      .catch((resp) => {
+        Ext.Msg.alert(gettext('Error'), resp.htmlStatus);
       });
-
-    const callPlusUrl = () =>
-      new Promise((resolve) => {
-        Proxmox.Utils.API2Request({
-          url: plusUrl, method: 'DELETE', waitMsgTarget: me,
-          failure: () => resolve(),
-          success: () => resolve(),
-        });
-      });
-
-    if (me.hasPlusJob) {
-      callPlusUrl().then(callTaskUrl).then(() => me.close());
-    } else {
-      callPlusUrl().then(callTaskUrl).then(() => me.close()).catch(
-        response => {
-          Ext.Msg.alert(gettext('Error'), response.htmlStatus);
-        }
-      );
-    }
   },
 
-  submitOptions: {
-    timeout: 120000,
-  },
-
-  layout: "hbox",
+  layout: 'hbox',
   width: 400,
-  method: "DELETE",
-  submitText: gettext("Stop Backup"),
   items: [
     {
-      xtype: "container",
+      xtype: 'container',
       padding: 0,
-      layout: {
-        type: "hbox",
-        align: "stretch",
-      },
+      layout: { type: 'hbox', align: 'stretch' },
       items: [
         {
-          xtype: "component",
+          xtype: 'component',
           cls: [
-            Ext.baseCSSPrefix + "message-box-icon",
-            Ext.baseCSSPrefix + "message-box-question",
-            Ext.baseCSSPrefix + "dlg-icon",
+            Ext.baseCSSPrefix + 'message-box-icon',
+            Ext.baseCSSPrefix + 'message-box-question',
+            Ext.baseCSSPrefix + 'dlg-icon',
           ],
         },
         {
-          xtype: "container",
+          xtype: 'container',
           flex: 1,
           items: [
             {
-              xtype: "displayfield",
-              cbind: {
-                value: "{warning}",
-              },
-            },
-            {
-              xtype: "hidden",
-              name: "id",
-              cbind: {
-                value: "{id}",
-              },
+              xtype: 'displayfield',
+              cbind: { value: '{warning}' },
             },
           ],
         },
