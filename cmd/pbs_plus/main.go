@@ -267,9 +267,9 @@ func main() {
 		return
 	}
 
-	proxy := exec.Command("/usr/bin/systemctl", "restart", "proxmox-backup-proxy")
-	proxy.Env = os.Environ()
-	_ = proxy.Run()
+	proxyExec := exec.Command("/usr/bin/systemctl", "restart", "proxmox-backup-proxy")
+	proxyExec.Env = os.Environ()
+	_ = proxyExec.Run()
 
 	// Initialize token manager
 	tokenManager, err := token.NewManager(token.Config{
@@ -433,18 +433,12 @@ func main() {
 	var endpointsWg sync.WaitGroup
 
 	endpointsWg.Add(1)
-	go func() {
-		defer endpointsWg.Done()
-		syslog.L.Info().WithMessage(fmt.Sprintf("starting api endpoint on %s", serverConfig.Address)).Write()
-		if err := apiServer.ListenAndServeTLS(server.ProxyCert, server.ProxyKey); err != nil {
-			syslog.L.Error(err).WithMessage("http api server failed")
-		}
-	}()
+	go proxy.WatchAndServe(apiServer, server.ProxyCert, server.ProxyKey, []string{server.ProxyCert, server.ProxyKey}, &endpointsWg)
 
 	endpointsWg.Add(1)
 	go func() {
 		defer endpointsWg.Done()
-		syslog.L.Info().WithMessage(fmt.Sprintf("starting agent endpoint on %s", serverConfig.AgentAddress)).Write()
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", serverConfig.AgentAddress)).Write()
 		if err := agentServer.ListenAndServeTLS(serverConfig.CertFile, serverConfig.KeyFile); err != nil {
 			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
 		}
