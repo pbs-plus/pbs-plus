@@ -1,120 +1,151 @@
-Ext.define('PBS.D2DManagement.BackupWindow', {
-  extend: 'Proxmox.window.Edit',
-  mixins: ['Proxmox.Mixin.CBind'],
+Ext.define("PBS.D2DManagement.BackupWindow", {
+  extend: "Proxmox.window.Edit",
+  mixins: ["Proxmox.Mixin.CBind"],
 
-  // NEW: array of job‐IDs to start
-  ids: undefined,
+  ids: undefined, // array of IDs to start
 
-  cbindData: function (config) {
-    let me  = this;
+  cbindData(config) {
+    let me = this;
     let ids = me.ids || (me.id ? [me.id] : []);
     let list = ids.map(Ext.String.htmlEncode).join("', '");
     let warning =
       ids.length > 1
         ? Ext.String.format(
             gettext("Manually start backup jobs '{0}'?"),
-            list,
+            list
           )
         : Ext.String.format(
             gettext("Manually start backup job '{0}'?"),
-            list,
+            list
           );
-    return { warning: warning };
+    return { warning };
   },
 
-  title: gettext('Backup'),
-  url: pbsPlusBaseUrl + '/api2/extjs/d2d/backup',
+  title: gettext("Backup"),
+  url: pbsPlusBaseUrl + "/api2/extjs/d2d/backup",
   showProgress: false,
-  method: 'POST',
-  submitText: gettext('Start Backup'),
+  method: "POST",
   submitOptions: { timeout: 120000 },
 
-  submit: function () {
-    let me  = this;
-    let ids = me.ids || [];
+  bbar: [
+    "->",
+    {
+      text: gettext("Cancel"),
+      handler: "close",
+    },
+    {
+      text: gettext("Start Backup"),
+      handler: "submit",
+      formBind: false,
+      disabled: false,
+    },
+  ],
 
-    // build an array of Promises
-    let promises = ids.map((id) => {
-      let url = me.submitUrl(me.url, { id: id });
-      return new Promise((resolve, reject) => {
+  layout: "hbox",
+  width: 400,
+  items: [
+    {
+      xtype: "component",
+      cls: [
+        Ext.baseCSSPrefix + "message-box-icon",
+        Ext.baseCSSPrefix + "message-box-question",
+        Ext.baseCSSPrefix + "dlg-icon",
+      ],
+    },
+    {
+      xtype: "displayfield",
+      flex: 1,
+      cbind: { value: "{warning}" },
+      // allow wrapping of long text
+      fieldStyle: "white-space: normal; word-break: break-word;",
+    },
+  ],
+
+  submit() {
+    let me = this;
+    let ids = me.ids || [];
+    let calls = ids.map((id) => {
+      let url = me.submitUrl(me.url, { id });
+      return new Promise((res, rej) => {
         Proxmox.Utils.API2Request({
-          url: url,
-          method: 'POST',
+          url,
+          method: "POST",
           waitMsgTarget: me,
-          success: () => resolve(),
-          failure: (resp) => reject(resp),
+          success: () => res(),
+          failure: (resp) => rej(resp),
         });
       });
     });
 
-    Promise.all(promises)
+    Promise.all(calls)
       .then(() => me.close())
       .catch((resp) => {
-        Ext.Msg.alert(gettext('Error'), resp.htmlStatus);
+        Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
       });
   },
-
-  layout: 'hbox',
-  width: 400,
-  items: [
-    {
-      xtype: 'container',
-      padding: 0,
-      layout: { type: 'hbox', align: 'stretch' },
-      items: [
-        {
-          xtype: 'component',
-          cls: [
-            Ext.baseCSSPrefix + 'message-box-icon',
-            Ext.baseCSSPrefix + 'message-box-question',
-            Ext.baseCSSPrefix + 'dlg-icon',
-          ],
-        },
-        {
-          xtype: 'container',
-          flex: 1,
-          items: [
-            {
-              xtype: 'displayfield',
-              cbind: { value: '{warning}' },
-            },
-          ],
-        },
-      ],
-    },
-  ],
 });
 
-Ext.define('PBS.D2DManagement.StopBackupWindow', {
-  extend: 'Proxmox.window.Edit',
-  mixins: ['Proxmox.Mixin.CBind'],
+Ext.define("PBS.D2DManagement.StopBackupWindow", {
+  extend: "Proxmox.window.Edit",
+  mixins: ["Proxmox.Mixin.CBind"],
 
-  // NEW: array of jobs to stop
-  jobs: undefined,
+  jobs: undefined, // array of {id, upid, hasPlusJob, hasPBSTask}
 
-  cbindData: function (config) {
-    let me   = this;
+  cbindData(config) {
+    let me = this;
     let jobs = me.jobs || [];
-    let ids  = jobs.map((j) => Ext.String.htmlEncode(j.id)).join("', '");
+    let ids = jobs.map((j) => Ext.String.htmlEncode(j.id)).join("', '");
     let warning =
       jobs.length > 1
         ? Ext.String.format(
             gettext("Stop backup jobs '{0}'?"),
-            ids,
+            ids
           )
         : Ext.String.format(
             gettext("Stop backup job '{0}'?"),
-            ids,
+            ids
           );
-    return { warning: warning };
+    return { warning };
   },
 
-  title: gettext('Stopping Backup Job(s)'),
-  url: '/api2/extjs/nodes',
+  title: gettext("Stopping Backup Job(s)"),
+  url: "/api2/extjs/nodes",
   showProgress: false,
-  method: 'DELETE',
-  submitText: gettext('Stop Backup'),
+  method: "DELETE",
   submitOptions: { timeout: 120000 },
+
+  bbar: [
+    "->",
+    {
+      text: gettext("Cancel"),
+      handler: "close",
+    },
+    {
+      text: gettext("Stop Backup"),
+      handler: "submit",
+      formBind: false,
+      disabled: false,
+    },
+  ],
+
+  layout: "hbox",
+  width: 400,
+  items: [
+    {
+      xtype: "component",
+      cls: [
+        Ext.baseCSSPrefix + "message-box-icon",
+        Ext.baseCSSPrefix + "message-box-question",
+        Ext.baseCSSPrefix + "dlg-icon",
+      ],
+    },
+    {
+      xtype: "displayfield",
+      flex: 1,
+      cbind: { value: "{warning}" },
+      fieldStyle: "white-space: normal; word-break: break-word;",
+    },
+  ],
 
   // per‐job URL builders
   submitPlusUrl: function (job) {
@@ -135,77 +166,45 @@ Ext.define('PBS.D2DManagement.StopBackupWindow', {
     );
   },
 
-  submit: function () {
-    let me   = this;
+  submit() {
+    let me = this;
     let jobs = me.jobs || [];
-
-    let promises = jobs.map((job) => {
-      // first delete the “Plus” queued item if present
-      const plusCall = () =>
+    let calls = jobs.map((job) => {
+      // first remove the “plus” queued item
+      let plusCall = () =>
         !job.hasPlusJob
           ? Promise.resolve()
-          : new Promise((resolve) => {
+          : new Promise((res) => {
               Proxmox.Utils.API2Request({
                 url: me.submitPlusUrl(job),
-                method: 'DELETE',
+                method: "DELETE",
                 waitMsgTarget: me,
-                // on both success _and_ failure we proceed
-                success: () => resolve(),
-                failure: () => resolve(),
+                success: () => res(),
+                failure: () => res(),
               });
             });
 
-      // then delete the PBS-side task if present
-      const taskCall = () =>
+      // then remove the PBS task
+      let taskCall = () =>
         !job.hasPBSTask
           ? Promise.resolve()
-          : new Promise((resolve, reject) => {
+          : new Promise((res, rej) => {
               Proxmox.Utils.API2Request({
                 url: me.submitUrl(me.url, job),
-                method: 'DELETE',
+                method: "DELETE",
                 waitMsgTarget: me,
-                success: () => resolve(),
-                failure: (resp) => reject(resp),
+                success: () => res(),
+                failure: (resp) => rej(resp),
               });
             });
 
       return plusCall().then(taskCall);
     });
 
-    Promise.all(promises)
+    Promise.all(calls)
       .then(() => me.close())
       .catch((resp) => {
-        Ext.Msg.alert(gettext('Error'), resp.htmlStatus);
+        Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
       });
   },
-
-  layout: 'hbox',
-  width: 400,
-  items: [
-    {
-      xtype: 'container',
-      padding: 0,
-      layout: { type: 'hbox', align: 'stretch' },
-      items: [
-        {
-          xtype: 'component',
-          cls: [
-            Ext.baseCSSPrefix + 'message-box-icon',
-            Ext.baseCSSPrefix + 'message-box-question',
-            Ext.baseCSSPrefix + 'dlg-icon',
-          ],
-        },
-        {
-          xtype: 'container',
-          flex: 1,
-          items: [
-            {
-              xtype: 'displayfield',
-              cbind: { value: '{warning}' },
-            },
-          ],
-        },
-      ],
-    },
-  ],
 });
