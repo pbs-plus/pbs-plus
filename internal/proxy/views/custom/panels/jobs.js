@@ -408,26 +408,43 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Duplicate"),
       handler: "duplicateJob",
+      // only enable when exactly one row is selected
+      enableFn: (recs) => {
+        let sel = Ext.Array.from(recs);
+        return sel.length === 1;
+      },
       disabled: true,
     },
     {
       xtype: "proxmoxButton",
       text: gettext("Edit"),
       handler: "editJob",
-      enableFn: (rec) =>
-        !rec.data["last-run-upid"] || !!rec.data["last-run-state"],
+      enableFn: (recs) => {
+        let sel = Ext.Array.from(recs);
+        if (sel.length !== 1) return false;
+        let data = sel[0].data;
+        return !data["last-run-upid"] || !!data["last-run-state"];
+      },
       disabled: true,
     },
     {
-      xtype: "proxmoxButton",
-      text: gettext("Remove Job(s)"),
-      handler: "removeJobs",
-      enableFn: (recs) =>
-        recs.length > 0 &&
-        recs.every(
-          (r) =>
-            !r.data["last-run-upid"] || !!r.data["last-run-state"]
-        ),
+      xtype: "proxmoxStdRemoveButton",
+      text: gettext("Remove"),
+      baseurl: pbsPlusBaseUrl + "/api2/extjs/config/disk-backup-job",
+      getUrl: (rec) =>
+        pbsPlusBaseUrl +
+        `/api2/extjs/config/disk-backup-job/${encodeURIComponent(
+          encodePathValue(rec.getId()),
+        )}`,
+      confirmMsg: gettext("Remove entry?"),
+      callback: "reload",
+      // single‐select only
+      enableFn: (recs) => {
+        let sel = Ext.Array.from(recs);
+        if (sel.length !== 1) return false;
+        let data = sel[0].data;
+        return !data["last-run-upid"] || !!data["last-run-state"];
+      },
       disabled: true,
     },
     "-",
@@ -435,14 +452,20 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Show Log"),
       handler: "openTaskLog",
-      enableFn: (rec) => !!rec.data["last-run-upid"],
+      enableFn: (recs) => {
+        let sel = Ext.Array.from(recs);
+        return sel.length === 1 && !!sel[0].data["last-run-upid"];
+      },
       disabled: true,
     },
     {
       xtype: "proxmoxButton",
       text: gettext("Show last success log"),
       handler: "openSuccessTaskLog",
-      enableFn: (rec) => !!rec.data["last-successful-upid"],
+      enableFn: (recs) => {
+        let sel = Ext.Array.from(recs);
+        return sel.length === 1 && !!sel[0].data["last-successful-upid"];
+      },
       disabled: true,
     },
     "-",
@@ -450,26 +473,34 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Run Job(s)"),
       handler: "runJobs",
-      // enable if at least one record and each is allowed to run:
-      enableFn: (recs) =>
-        recs.length > 0 &&
-        recs.every(
-          (r) =>
-            !r.data["last-run-upid"] || !!r.data["last-run-state"]
-        ),
+      // any non-empty selection, all must be runnable
+      enableFn: (recs) => {
+        let sel = Ext.Array.from(recs);
+        return (
+          sel.length > 0 &&
+          sel.every(
+            (r) =>
+              !r.data["last-run-upid"] || !!r.data["last-run-state"],
+          )
+        );
+      },
       disabled: true,
     },
     {
       xtype: "proxmoxButton",
       text: gettext("Stop Job(s)"),
       handler: "stopJobs",
-      enableFn: (recs) =>
-        recs.length > 0 &&
-        recs.every((r) => {
-          const u = r.data["last-run-upid"];
-          const s = r.data["last-run-state"] || "";
-          return !!u && (s === "" || s.startsWith("QUEUED:"));
-        }),
+      enableFn: (recs) => {
+        let sel = Ext.Array.from(recs);
+        return (
+          sel.length > 0 &&
+          sel.every((r) => {
+            const u = r.data["last-run-upid"];
+            const s = r.data["last-run-state"] || "";
+            return !!u && (s === "" || s.startsWith("QUEUED:"));
+          })
+        );
+      },
       disabled: true,
     },
     "-",
@@ -479,18 +510,15 @@ Ext.define("PBS.config.DiskBackupJobView", {
       handler: "exportCSV",
       selModel: false,
     },
-    '->',
+    "->",
     {
-      xtype: 'textfield',
-      reference: 'searchField',
-      emptyText: gettext('Search...'),
+      xtype: "textfield",
+      reference: "searchField",
+      emptyText: gettext("Search..."),
       width: 200,
       enableKeyEvents: true,
       listeners: {
-        keyup: {
-          fn: 'onSearchKeyUp',
-          buffer: 300,
-        },
+        keyup: { fn: "onSearchKeyUp", buffer: 300 },
       },
     },
   ],
