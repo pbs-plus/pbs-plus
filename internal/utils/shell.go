@@ -3,6 +3,7 @@ package utils
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,25 +18,22 @@ func RunShellScript(
 	scriptFilePath string,
 	envVars []string,
 ) (string, map[string]string, error) {
-	// Make the file executable
 	if err := os.Chmod(scriptFilePath, 0755); err != nil {
 		return "", nil, fmt.Errorf(
 			"failed to make script file executable: %w", err,
 		)
 	}
 
-	// Determine interpreter from shebang (fallback to sh)
 	interpreter, err := getInterpreterFromShebang(scriptFilePath)
 	if err != nil {
 		fmt.Fprintf(
 			os.Stderr,
-			"Warning: could not get shebang, defaulting to sh: %v\n",
+			"warning: could not read shebang, defaulting to sh: %v\n",
 			err,
 		)
 		interpreter = "sh"
 	}
 
-	// Create temp file for the script to dump its env into
 	envFile, err := os.CreateTemp("", "script_env_*.txt")
 	if err != nil {
 		return "", nil, fmt.Errorf(
@@ -46,28 +44,38 @@ func RunShellScript(
 	envFile.Close()
 	defer os.Remove(envFilePath)
 
-	// Build the command with context
-	cmd := exec.CommandContext(
-		ctx,
-		interpreter,
-		scriptFilePath,
-		envFilePath,
-	)
+	cmd := exec.CommandContext(ctx, interpreter, scriptFilePath, envFilePath)
 	cmd.Env = append(os.Environ(), envVars...)
 
 	var outBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &outBuf
 
-	// Run the command (will kill it if ctx is done)
-	err = cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return "", nil, fmt.Errorf("failed to start script: %w", err)
+	}
 
-	// Read whatever envs the script wrote
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	var runErr error
+	select {
+	case <-ctx.Done():
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-done
+		runErr = ctx.Err()
+	case runErr = <-done:
+	}
+
 	envContent, readErr := os.ReadFile(envFilePath)
 	if readErr != nil {
 		fmt.Fprintf(
 			os.Stderr,
-			"Warning: failed to read env file %s: %v\n",
+			"warning: failed to read env file %s: %v\n",
 			envFilePath,
 			readErr,
 		)
@@ -84,11 +92,13 @@ func RunShellScript(
 		}
 	}
 
-	// Wrap and return
-	if err != nil {
+	if runErr != nil {
+		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+			return outBuf.String(), resultEnvs, runErr
+		}
 		return outBuf.String(), resultEnvs, fmt.Errorf(
 			"script failed: %w; output=\n%s",
-			err, outBuf.String(),
+			runErr, outBuf.String(),
 		)
 	}
 	return outBuf.String(), resultEnvs, nil
