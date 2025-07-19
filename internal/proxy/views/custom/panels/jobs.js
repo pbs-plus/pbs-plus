@@ -408,10 +408,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Duplicate"),
       handler: "duplicateJob",
-      // only enable when exactly one row is selected
-      enableFn: (recs) => {
-        let sel = Ext.Array.from(recs);
-        return sel.length === 1;
+      enableFn: function () {
+        let recs = this.up("grid").getSelection();
+        return recs.length === 1;
       },
       disabled: true,
     },
@@ -419,31 +418,29 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Edit"),
       handler: "editJob",
-      enableFn: (recs) => {
-        let sel = Ext.Array.from(recs);
-        if (sel.length !== 1) return false;
-        let data = sel[0].data;
-        return !data["last-run-upid"] || !!data["last-run-state"];
+      enableFn: function () {
+        let recs = this.up("grid").getSelection();
+        if (recs.length !== 1) return false;
+        let d = recs[0].data;
+        return !d["last-run-upid"] || !!d["last-run-state"];
       },
       disabled: true,
     },
     {
-      xtype: "proxmoxStdRemoveButton",
-      text: gettext("Remove"),
-      baseurl: pbsPlusBaseUrl + "/api2/extjs/config/disk-backup-job",
-      getUrl: (rec) =>
-        pbsPlusBaseUrl +
-        `/api2/extjs/config/disk-backup-job/${encodeURIComponent(
-          encodePathValue(rec.getId()),
-        )}`,
-      confirmMsg: gettext("Remove entry?"),
-      callback: "reload",
-      // single‐select only
-      enableFn: (recs) => {
-        let sel = Ext.Array.from(recs);
-        if (sel.length !== 1) return false;
-        let data = sel[0].data;
-        return !data["last-run-upid"] || !!data["last-run-state"];
+      xtype: "proxmoxButton",
+      text: gettext("Remove Job(s)"),
+      handler: "removeJobs",
+      enableFn: function () {
+        let recs = this.up("grid").getSelection();
+        // at least one selected, and none currently running
+        return (
+          recs.length > 0 &&
+          recs.every((r) => {
+            const upid = r.data["last-run-upid"];
+            const state = r.data["last-run-state"] || "";
+            return !upid || !!state;
+          })
+        );
       },
       disabled: true,
     },
@@ -452,9 +449,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Show Log"),
       handler: "openTaskLog",
-      enableFn: (recs) => {
-        let sel = Ext.Array.from(recs);
-        return sel.length === 1 && !!sel[0].data["last-run-upid"];
+      enableFn: function () {
+        let recs = this.up("grid").getSelection();
+        return recs.length === 1 && !!recs[0].data["last-run-upid"];
       },
       disabled: true,
     },
@@ -462,9 +459,12 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Show last success log"),
       handler: "openSuccessTaskLog",
-      enableFn: (recs) => {
-        let sel = Ext.Array.from(recs);
-        return sel.length === 1 && !!sel[0].data["last-successful-upid"];
+      enableFn: function () {
+        let recs = this.up("grid").getSelection();
+        return (
+          recs.length === 1 &&
+          !!recs[0].data["last-successful-upid"]
+        );
       },
       disabled: true,
     },
@@ -473,14 +473,14 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Run Job(s)"),
       handler: "runJobs",
-      // any non-empty selection, all must be runnable
-      enableFn: (recs) => {
-        let sel = Ext.Array.from(recs);
+      enableFn: function () {
+        let recs = this.up("grid").getSelection();
         return (
-          sel.length > 0 &&
-          sel.every(
+          recs.length > 0 &&
+          recs.every(
             (r) =>
-              !r.data["last-run-upid"] || !!r.data["last-run-state"],
+              !r.data["last-run-upid"] ||
+              !!r.data["last-run-state"]
           )
         );
       },
@@ -490,11 +490,11 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Stop Job(s)"),
       handler: "stopJobs",
-      enableFn: (recs) => {
-        let sel = Ext.Array.from(recs);
+      enableFn: function () {
+        let recs = this.up("grid").getSelection();
         return (
-          sel.length > 0 &&
-          sel.every((r) => {
+          recs.length > 0 &&
+          recs.every((r) => {
             const u = r.data["last-run-upid"];
             const s = r.data["last-run-state"] || "";
             return !!u && (s === "" || s.startsWith("QUEUED:"));
