@@ -2,6 +2,13 @@ Ext.define("PBS.form.D2DTargetSelector", {
   extend: "Proxmox.form.ComboGrid",
   alias: "widget.pbsD2DTargetSelector",
 
+  editable: true,
+  forceSelection: true,
+  queryMode: "local",
+  minChars: 1,
+  filterPickList: true,
+  typeAhead: false,
+
   allowBlank: false,
   autoSelect: false,
 

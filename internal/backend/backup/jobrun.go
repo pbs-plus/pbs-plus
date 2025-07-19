@@ -112,6 +112,13 @@ func (op *BackupOperation) PreScript(ctx context.Context) error {
 
 	scriptOut, modEnvVars, err := utils.RunShellScript(ctx, op.job.PreScript, envVars)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			syslog.L.Info().
+				WithJob(op.job.ID).
+				WithMessage("pre-backup script canceled").
+				Write()
+			return err
+		}
 		syslog.L.Error(err).WithJob(op.job.ID).WithMessage("error encountered while running job pre-backup script").Write()
 	}
 	syslog.L.Info().WithJob(op.job.ID).WithMessage(scriptOut).WithField("script", op.job.PreScript).Write()
