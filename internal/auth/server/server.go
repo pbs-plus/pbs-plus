@@ -1,11 +1,12 @@
 package server
 
 import (
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"os"
 	"time"
+
+	tls "github.com/secure-for-ai/goktls"
 
 	authErrors "github.com/pbs-plus/pbs-plus/internal/auth/errors"
 )

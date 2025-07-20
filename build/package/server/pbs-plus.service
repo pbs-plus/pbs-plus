@@ -13,6 +13,7 @@ ExecStopPost=/usr/bin/umount -lf /usr/share/javascript/proxmox-backup/js/proxmox
 ExecStopPost=/usr/bin/umount -lf /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
 ExecStopPost=/usr/bin/umount -lf /etc/proxmox-backup/proxy.pem
 ExecStopPost=/usr/bin/umount -lf /etc/proxmox-backup/proxy.key
+Environment="GOKTLS=1"
 PIDFile=/run/proxmox-backup/pbs-plus.pid
 Restart=on-failure
 User=root

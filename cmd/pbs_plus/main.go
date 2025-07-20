@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	tls "github.com/secure-for-ai/goktls"
+
 	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
 	"github.com/pbs-plus/pbs-plus/internal/auth/server"
 	"github.com/pbs-plus/pbs-plus/internal/auth/token"
@@ -423,7 +425,6 @@ func main() {
 	agentServer := &http.Server{
 		Addr:           serverConfig.AgentAddress,
 		Handler:        agentMux,
-		TLSConfig:      tlsConfig,
 		ReadTimeout:    serverConfig.ReadTimeout,
 		WriteTimeout:   serverConfig.WriteTimeout,
 		IdleTimeout:    serverConfig.IdleTimeout,
@@ -438,8 +439,17 @@ func main() {
 	endpointsWg.Add(1)
 	go func() {
 		defer endpointsWg.Done()
+
+		ln, err := tls.Listen("tcp", serverConfig.AgentAddress, tlsConfig)
+		if err != nil {
+			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
+		}
+		defer ln.Close()
+
 		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", serverConfig.AgentAddress)).Write()
-		if err := agentServer.ListenAndServeTLS(serverConfig.CertFile, serverConfig.KeyFile); err != nil {
+
+		err = agentServer.Serve(ln)
+		if err != nil {
 			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
 		}
 	}()

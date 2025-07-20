@@ -5,7 +5,6 @@ package auth
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"net"
@@ -16,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	tls "github.com/secure-for-ai/goktls"
 
 	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
 	serverLib "github.com/pbs-plus/pbs-plus/internal/auth/server"
