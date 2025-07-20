@@ -5,6 +5,7 @@ project_name: pbs-plus
 before:
   hooks:
     - go mod tidy
+    - go install golang.org/dl/go1.25rc2@latest
 #    - |
 #      # Generate UpgradeCode (should be consistent across versions)
 #      if [ -z "$UPGRADE_CODE" ]; then
@@ -34,6 +35,9 @@ builds:
   - id: server
     main: ./cmd/pbs_plus
     binary: pbs-plus
+    tool: "go1.25rc2"
+    env:
+      - GOEXPERIMENT=greenteagc
     goos:
       - linux
     goarch:
@@ -48,6 +52,7 @@ builds:
   - id: esxi-nfs-backup
     main: ./cmd/esxi_nfs_backup
     binary: esxi-nfs-backup
+    tool: "go1.25rc2"
     goos:
       - linux
     goarch:
@@ -55,6 +60,7 @@ builds:
       - arm64
     env:
       - CGO_ENABLED=0
+      - GOEXPERIMENT=greenteagc
     ldflags:
       - -X 'main.Version=v{{.Version}}'
       - -extld gcc
@@ -70,6 +76,7 @@ builds:
   - id: linux-agent
     main: ./cmd/unix_agent
     binary: pbs-plus-agent
+    tool: "go1.25rc2"
     goos:
       - linux
     goarch:
@@ -77,6 +84,7 @@ builds:
       - arm64
     env:
       - CGO_ENABLED=0
+      - GOEXPERIMENT=greenteagc
     ldflags:
       - -X 'main.Version=v{{.Version}}'
       - -extld gcc
@@ -92,6 +100,7 @@ builds:
   - id: linux-updater
     main: ./cmd/unix_updater
     binary: pbs-plus-updater
+    tool: "go1.25rc2"
     goos:
       - linux
     goarch:
@@ -99,6 +108,7 @@ builds:
       - arm64
     env:
       - CGO_ENABLED=0
+      - GOEXPERIMENT=greenteagc
     ldflags:
       - -extld gcc
       - -extldflags "-static"
@@ -113,6 +123,9 @@ builds:
   - id: freebsd-agent
     main: ./cmd/unix_agent
     binary: pbs-plus-agent
+    tool: "go1.25rc2"
+    env:
+      - GOEXPERIMENT=greenteagc
     goos:
       - freebsd
     goarch:
@@ -125,6 +138,9 @@ builds:
   - id: windows-agent
     main: ./cmd/windows_agent
     binary: pbs-plus-agent
+    tool: "go1.25rc2"
+    env:
+      - GOEXPERIMENT=greenteagc
     goos:
       - windows
     goarch:
@@ -140,6 +156,9 @@ builds:
   - id: windows-updater
     main: ./cmd/windows_updater
     binary: pbs-plus-updater
+    tool: "go1.25rc2"
+    env:
+      - GOEXPERIMENT=greenteagc
     goos:
       - windows
     goarch:
