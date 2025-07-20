@@ -71,6 +71,82 @@ PBS Plus currently consists of two main components: the server and the agent. Th
 - The agent registers with the server on initialization, exchanging public keys for communication.
 - The agent acts as a service, using a custom RPC (`aRPC`/Agent RPC) using [smux](https://github.com/xtaci/smux) with mTLS to communicate with the server. For backups, the server communicates with the agent over `aRPC` to deploy a `FUSE`-based filesystem, mounts the volume to PBS, and runs `proxmox-backup-client` on the server side to perform the actual backup.
 
+## Hook scripts (Pre/Post scripts)
+
+### Overview
+
+- **PreScript**: runs before the backup. Can inspect job fields and emit overrides (e.g. namespace).
+- **PostScript**: runs after the backup. Can perform cleanup or external calls using data set during PreScript.
+- **Communication**: via environment variables and a temporary “env file” whose path is passed as the first argument to every script.
+
+### Environment Variables
+
+#### Input to Scripts
+
+All job fields are exposed as `PBS_PLUS__<FieldName>`:
+
+- `PBS_PLUS__JOB_ID`  
+- `PBS_PLUS__COMMENT`  
+- `PBS_PLUS__SOURCE_MODE`  
+- `PBS_PLUS__TARGET`  
+- …and more.
+
+#### Output from Scripts
+
+Scripts write to the temp-env file one `KEY=VALUE` per line. Common override:
+
+- `PBS_PLUS__NAMESPACE` — changes where the manager updates the job’s namespace.
+
+### Sample PreScript
+
+```bash
+#!/usr/bin/env bash
+#
+# Pre-backup hook: override the job’s namespace
+# $1 = path to temp-env file
+
+ENV_FILE="$1"
+
+# Read the comment field; default to "N/A"
+JOB_COMMENT="${PBS_PLUS__COMMENT:-N/A}"
+
+# Build namespace (e.g. "Comment/Hello-World")
+SAFE_COMMENT="${JOB_COMMENT// /_}"       # replace spaces with underscores
+NSPACE="Comment/${SAFE_COMMENT}"
+
+# Optionally, stamp a timestamp:
+TS="$(date +%Y%m%d%H%M%S)"
+NSPACE="${NSPACE}/${TS}"
+
+# Emit override
+echo "PBS_PLUS__NAMESPACE=${NSPACE}" > "$ENV_FILE"
+
+exit 0
+```
+
+### Sample PostScript
+
+```bash
+#!/usr/bin/env bash
+#
+# Post-backup hook: log completion
+# $1 = path to temp-env file (ignored here)
+
+LOG_DIR="/var/log/pbs-plus"
+mkdir -p "$LOG_DIR"
+
+# Read vars set by Go
+JOB_ID="${PBS_PLUS__JOB_ID:-unknown}"
+NSPACE="${PBS_PLUS__NAMESPACE:-not-set}"
+END_TS="$(date '+%Y-%m-%d %H:%M:%S')"
+
+# Append to log
+echo "${END_TS}: job ${JOB_ID} finished in namespace ${NSPACE}" \
+    >> "${LOG_DIR}/backup.log"
+
+exit 0
+```
+
 ## Contributing
 Contributions are welcome! Please fork the repository and create a pull request with your changes. Ensure code style consistency and include tests for any new features or bug fixes.
 
