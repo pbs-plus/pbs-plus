@@ -5,7 +5,6 @@ go 1.24.0
 require (
 	github.com/KimMachineGun/automemlimit v0.7.2
 	github.com/Microsoft/go-winio v0.6.2
-	github.com/billgraziano/dpapi v0.5.0
 	github.com/containers/winquit v1.1.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gobwas/glob v0.2.3
@@ -21,6 +20,7 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
 	github.com/xtaci/smux v1.5.34
+	github.com/zalando/go-keyring v0.2.6
 	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/crypto v0.38.0
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
@@ -30,9 +30,12 @@ require (
 )
 
 require (
+	al.essio.dev/pkg/shellescape v1.5.1 // indirect
+	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
