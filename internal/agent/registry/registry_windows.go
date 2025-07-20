@@ -3,15 +3,18 @@
 package registry
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
 
 	"github.com/billgraziano/dpapi"
-	"github.com/zalando/go-keyring"
+	"golang.org/x/crypto/nacl/secretbox"
 	"golang.org/x/sys/windows/registry"
-)
-
-const (
-	keyringService = "PBSPlusAgent"
 )
 
 type RegistryEntry struct {
@@ -21,71 +24,155 @@ type RegistryEntry struct {
 	IsSecret bool
 }
 
-// GetEntry retrieves a registry entry or secret (auto-migrates if needed)
+var (
+	secretFilePath string
+	secretKey      = getOrCreateSecretKey()
+	secretsMu      sync.Mutex
+)
+
+func init() {
+	ex, err := os.Executable()
+	if err != nil {
+		return
+	}
+
+	secretFilePath = filepath.Join(ex, "secret.json")
+}
+
+func getOrCreateSecretKey() *[32]byte {
+	ex, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+
+	keyPath := filepath.Join(ex, "secret.key")
+	var key [32]byte
+	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 {
+		copy(key[:], data)
+		return &key
+	}
+	_, _ = rand.Read(key[:])
+	_ = os.MkdirAll(filepath.Dir(keyPath), 0700)
+	_ = os.WriteFile(keyPath, key[:], 0600)
+	return &key
+}
+
+func loadSecrets() (map[string]string, error) {
+	secretsMu.Lock()
+	defer secretsMu.Unlock()
+	m := make(map[string]string)
+	data, err := os.ReadFile(secretFilePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return m, nil
+		}
+		return nil, err
+	}
+	return m, json.Unmarshal(data, &m)
+}
+
+func saveSecrets(m map[string]string) error {
+	secretsMu.Lock()
+	defer secretsMu.Unlock()
+	_ = os.MkdirAll(filepath.Dir(secretFilePath), 0700)
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(secretFilePath, data, 0600)
+}
+
+func secretKeyFor(path, key string) string {
+	return base64.StdEncoding.EncodeToString([]byte(path + "|" + key))
+}
+
+func encryptSecret(plaintext string) (string, error) {
+	var nonce [24]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", err
+	}
+	encrypted := secretbox.Seal(nonce[:], []byte(plaintext), &nonce, secretKey)
+	return base64.StdEncoding.EncodeToString(encrypted), nil
+}
+
+func decryptSecret(ciphertext string) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(ciphertext)
+	if err != nil || len(data) < 24 {
+		return "", errors.New("invalid ciphertext")
+	}
+	var nonce [24]byte
+	copy(nonce[:], data[:24])
+	plaintext, ok := secretbox.Open(nil, data[24:], &nonce, secretKey)
+	if !ok {
+		return "", errors.New("decryption failed")
+	}
+	return string(plaintext), nil
+}
+
 func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 	if isSecret {
-		// 1. Try keyring first
-		value, err := keyring.Get(keyringService, path+"|"+key)
-		if err == nil {
-			return &RegistryEntry{
-				Path:     path,
-				Key:      key,
-				Value:    value,
-				IsSecret: true,
-			}, nil
+		// Try new file-based secret store first
+		secrets, err := loadSecrets()
+		if err != nil {
+			return nil, fmt.Errorf("GetEntry error loading secrets: %w", err)
+		}
+		sk := secretKeyFor(path, key)
+		if enc, ok := secrets[sk]; ok {
+			val, err := decryptSecret(enc)
+			if err != nil {
+				return nil, fmt.Errorf("GetEntry error decrypting secret: %w", err)
+			}
+			return &RegistryEntry{Path: path, Key: key, Value: val, IsSecret: true}, nil
 		}
 
-		// 2. Fallback: try registry (old DPAPI way)
+		// Fallback: try to migrate from registry (old DPAPI)
 		baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
 		if err == nil {
 			defer baseKey.Close()
-			regValue, _, regErr := baseKey.GetStringValue(key)
-			if regErr == nil {
-				// Decrypt using DPAPI
-				decrypted, dpapiErr := dpapi.Decrypt(regValue)
-				if dpapiErr != nil {
-					return nil, fmt.Errorf("GetEntry error: DPAPI decrypt failed: %w", dpapiErr)
+			if val, _, err := baseKey.GetStringValue(key); err == nil {
+				// Try DPAPI decrypt
+				plain, err := dpapi.Decrypt(val)
+				if err == nil {
+					// Migrate to new store
+					enc, _ := encryptSecret(plain)
+					secrets[sk] = enc
+					_ = saveSecrets(secrets)
+					_ = baseKey.DeleteValue(key)
+					return &RegistryEntry{Path: path, Key: key, Value: plain, IsSecret: true}, nil
 				}
-				// Migrate: store in keyring, then delete from registry
-				_ = keyring.Set(keyringService, path+"|"+key, decrypted)
-				_ = baseKey.DeleteValue(key)
-				return &RegistryEntry{
-					Path:     path,
-					Key:      key,
-					Value:    decrypted,
-					IsSecret: true,
-				}, nil
 			}
 		}
 		return nil, fmt.Errorf("GetEntry error: secret not found")
 	}
 
-	// Non-secret: regular registry
+	// Non-secret: registry as before
 	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
 	if err != nil {
 		return nil, fmt.Errorf("GetEntry error: %w", err)
 	}
 	defer baseKey.Close()
-
 	value, _, err := baseKey.GetStringValue(key)
 	if err != nil {
 		return nil, fmt.Errorf("GetEntry error: %w", err)
 	}
-
-	return &RegistryEntry{
-		Path:     path,
-		Key:      key,
-		Value:    value,
-		IsSecret: false,
-	}, nil
+	return &RegistryEntry{Path: path, Key: key, Value: value, IsSecret: false}, nil
 }
 
-// CreateEntry creates a new registry entry or secret
 func CreateEntry(entry *RegistryEntry) error {
 	if entry.IsSecret {
-		return keyring.Set(keyringService, entry.Path+"|"+entry.Key, entry.Value)
+		secrets, err := loadSecrets()
+		if err != nil {
+			return fmt.Errorf("CreateEntry error loading secrets: %w", err)
+		}
+		enc, err := encryptSecret(entry.Value)
+		if err != nil {
+			return fmt.Errorf("CreateEntry error encrypting: %w", err)
+		}
+		secrets[secretKeyFor(entry.Path, entry.Key)] = enc
+		return saveSecrets(secrets)
 	}
 
+	// Non-secret: registry as before
 	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, entry.Path, registry.SET_VALUE)
 	if err != nil {
 		baseKey, _, err = registry.CreateKey(registry.LOCAL_MACHINE, entry.Path, registry.SET_VALUE)
@@ -94,12 +181,7 @@ func CreateEntry(entry *RegistryEntry) error {
 		}
 	}
 	defer baseKey.Close()
-
-	err = baseKey.SetStringValue(entry.Key, entry.Value)
-	if err != nil {
-		return fmt.Errorf("CreateEntry error setting value: %w", err)
-	}
-	return nil
+	return baseKey.SetStringValue(entry.Key, entry.Value)
 }
 
 func CreateEntryIfNotExists(entry *RegistryEntry) error {
@@ -119,19 +201,38 @@ func UpdateEntry(entry *RegistryEntry) error {
 }
 
 func DeleteEntry(path string, key string) error {
-	// Try both keyring and registry
-	_ = keyring.Delete(keyringService, path+"|"+key)
+	// Try both stores
+	secrets, err := loadSecrets()
+	if err == nil {
+		sk := secretKeyFor(path, key)
+		if _, ok := secrets[sk]; ok {
+			delete(secrets, sk)
+			return saveSecrets(secrets)
+		}
+	}
 	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.SET_VALUE)
 	if err != nil {
-		return nil // If not found, treat as deleted
+		return fmt.Errorf("DeleteEntry error opening key: %w", err)
 	}
 	defer baseKey.Close()
-	_ = baseKey.DeleteValue(key)
-	return nil
+	return baseKey.DeleteValue(key)
 }
 
 func DeleteKey(path string) error {
-	// No keyring equivalent for deleting all secrets under a path, so just delete registry key
+	// Remove all secrets for this path
+	secrets, err := loadSecrets()
+	if err == nil {
+		changed := false
+		for k := range secrets {
+			if len(k) > 0 && string(k[:len(path)]) == path {
+				delete(secrets, k)
+				changed = true
+			}
+		}
+		if changed {
+			_ = saveSecrets(secrets)
+		}
+	}
 	return registry.DeleteKey(registry.LOCAL_MACHINE, path)
 }
 
@@ -141,10 +242,5 @@ func ListEntries(path string) ([]string, error) {
 		return nil, fmt.Errorf("ListEntries error opening key: %w", err)
 	}
 	defer baseKey.Close()
-
-	valueNames, err := baseKey.ReadValueNames(0)
-	if err != nil {
-		return nil, fmt.Errorf("ListEntries error reading values: %w", err)
-	}
-	return valueNames, nil
+	return baseKey.ReadValueNames(0)
 }
