@@ -16,12 +16,15 @@ import (
 )
 
 type Manager struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	jobs        chan *BackupOperation
-	mu          sync.Mutex
-	executeMu   sync.Mutex
-	locks       *xsync.MapOf[string, *sync.Mutex]
+	ctx           context.Context
+	cancel        context.CancelFunc
+	jobs          chan *BackupOperation
+	mu            sync.Mutex
+	executeMu     sync.Mutex
+	locks         *xsync.MapOf[string, *sync.Mutex]
+	jobCancels    *xsync.MapOf[string, context.CancelFunc]
+	cancelledJobs *xsync.MapOf[string, struct{}]
+
 	runningJobs atomic.Int32
 
 	maxConcurrentJobs int
@@ -40,6 +43,8 @@ func NewManager(ctx context.Context, size int, maxConcurrent int) *Manager {
 		jobs:              make(chan *BackupOperation, size),
 		mu:                sync.Mutex{},
 		locks:             xsync.NewMapOf[string, *sync.Mutex](),
+		jobCancels:        xsync.NewMapOf[string, context.CancelFunc](),
+		cancelledJobs:     xsync.NewMapOf[string, struct{}](),
 		maxConcurrentJobs: maxConcurrent,
 		semaphore:         make(chan struct{}, maxConcurrent),
 	}
@@ -50,6 +55,11 @@ func NewManager(ctx context.Context, size int, maxConcurrent int) *Manager {
 }
 
 func (jq *Manager) Enqueue(job *BackupOperation) {
+	ctx, cancel := context.WithCancel(jq.ctx)
+	job.ctx = ctx
+	job.cancel = cancel
+	jq.jobCancels.Store(job.job.ID, cancel)
+
 	lock, _ := jq.locks.LoadOrStore(job.job.ID, &sync.Mutex{})
 
 	if locked := lock.TryLock(); !locked {
@@ -74,6 +84,8 @@ func (jq *Manager) Enqueue(job *BackupOperation) {
 	defer jq.mu.Unlock()
 
 	if jq.ctx.Err() != nil {
+		job.cancel()
+		jq.jobCancels.Delete(job.job.ID)
 		jq.CreateError(job, fmt.Errorf("Attempt to enqueue on closed queue"))
 		return
 	}
@@ -81,6 +93,8 @@ func (jq *Manager) Enqueue(job *BackupOperation) {
 	select {
 	case jq.jobs <- job:
 	default:
+		job.cancel()
+		jq.jobCancels.Delete(job.job.ID)
 		jq.CreateError(job, fmt.Errorf("Queue is full. Job rejected."))
 		job.lock.Unlock()
 	}
@@ -92,9 +106,22 @@ func (jq *Manager) worker() {
 		case <-jq.ctx.Done():
 			return
 		case op := <-jq.jobs:
+			// If user canceled while it was still queued:
+			if _, canceled := jq.cancelledJobs.Load(op.job.ID); canceled {
+				op.queueTask.Close()
+				op.lock.Unlock()
+				jq.cancelledJobs.Delete(op.job.ID)
+				jq.jobCancels.Delete(op.job.ID)
+				continue
+			}
+
 			go func(opToRun *BackupOperation) {
-				err := opToRun.PreScript(jq.ctx)
+				err := opToRun.PreScript(opToRun.ctx)
 				if err != nil {
+					if errors.Is(err, context.Canceled) {
+						jq.CreateError(opToRun, errors.New("task aborted"))
+						return
+					}
 					syslog.L.Error(err).WithJob(opToRun.job.ID).WithMessage("error occurred during prescript execution, proceeding to backup operation").Write()
 				}
 
@@ -109,24 +136,45 @@ func (jq *Manager) worker() {
 					<-jq.semaphore
 					opToRun.queueTask.Close()
 					jq.runningJobs.Add(-1)
+					jq.jobCancels.Delete(opToRun.job.ID)
+					jq.cancelledJobs.Delete(opToRun.job.ID)
 				}()
 
 				jq.runningJobs.Add(1)
 
 				// Acquire lock for sequential execution
 				jq.executeMu.Lock()
-				err = opToRun.Execute(jq.ctx)
+				err = opToRun.Execute(opToRun.ctx)
 				// Release lock immediately after Execute finishes
 				jq.executeMu.Unlock()
 
 				if err != nil {
-					jq.CreateError(opToRun, err)
+					if errors.Is(err, context.Canceled) {
+						syslog.L.Info().
+							WithJob(opToRun.job.ID).
+							WithMessage("job canceled by user").
+							Write()
+					} else {
+						jq.CreateError(opToRun, err)
+					}
 				} else {
 					opToRun.Wait()
 				}
 			}(op)
 		}
 	}
+}
+
+func (jq *Manager) StopJob(jobID string) error {
+	// mark it canceled (so queued ones are dropped)
+	jq.cancelledJobs.Store(jobID, struct{}{})
+
+	cancelFunc, ok := jq.jobCancels.Load(jobID)
+	if !ok {
+		return fmt.Errorf("no such job: %s", jobID)
+	}
+	cancelFunc()
+	return nil
 }
 
 func (jq *Manager) CreateError(op *BackupOperation, err error) {

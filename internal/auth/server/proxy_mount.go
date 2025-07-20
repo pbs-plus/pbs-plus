@@ -5,6 +5,7 @@ package server
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 
@@ -70,10 +71,18 @@ func (c *Config) Mount() error {
 func (c *Config) Unmount() error {
 	// Unmount the file
 	if err := syscall.Unmount(proxyCert, 0); err != nil {
-		return fmt.Errorf("failed to unmount file: %w", err)
 	}
 	if err := syscall.Unmount(proxyKey, 0); err != nil {
-		return fmt.Errorf("failed to unmount file: %w", err)
+	}
+
+	umount := exec.Command("umount", "-lf", proxyCert)
+	umount.Env = os.Environ()
+	if err := umount.Run(); err != nil {
+	}
+
+	umount = exec.Command("umount", "-lf", proxyKey)
+	umount.Env = os.Environ()
+	if err := umount.Run(); err != nil {
 	}
 
 	return nil

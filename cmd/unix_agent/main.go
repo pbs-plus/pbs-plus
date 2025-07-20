@@ -281,7 +281,7 @@ func (p *agentService) connectARPC() error {
 			case <-p.ctx.Done():
 				return
 			default:
-				syslog.L.Info().WithMessage("connecting arpc endpoing from /plus/arpc").Write()
+				syslog.L.Info().WithMessage("connecting arpc endpoint from /plus/arpc").WithField("hostname", clientId).Write()
 				if err := session.Serve(); err != nil {
 					store, err := agent.NewBackupStore()
 					if err != nil {

@@ -236,7 +236,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
           {
             xtype: "textarea",
             name: "rawexclusions",
-            height: "100%",
+            height: 150,
             fieldLabel: gettext("Exclusions"),
             value: "",
             emptyText: gettext(

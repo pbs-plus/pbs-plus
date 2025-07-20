@@ -2,6 +2,8 @@ package utils
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,72 +13,95 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 )
 
-func RunShellScript(scriptFilePath string, envVars []string) (string, map[string]string, error) {
-	// Make the file executable
+func RunShellScript(
+	ctx context.Context,
+	scriptFilePath string,
+	envVars []string,
+) (string, map[string]string, error) {
 	if err := os.Chmod(scriptFilePath, 0755); err != nil {
-		return "", nil, fmt.Errorf("failed to make script file executable: %w", err)
+		return "", nil, fmt.Errorf(
+			"failed to make script file executable: %w", err,
+		)
 	}
 
-	// Get the shebang line to determine the interpreter (more robust handling)
 	interpreter, err := getInterpreterFromShebang(scriptFilePath)
 	if err != nil {
-		// If shebang is missing or invalid, you might default or return an error
-		fmt.Fprintf(os.Stderr, "Warning: Could not determine interpreter from shebang for %s, defaulting to sh: %v\n", scriptFilePath, err)
-		interpreter = "sh" // Default to sh if shebang is problematic
+		fmt.Fprintf(
+			os.Stderr,
+			"warning: could not read shebang, defaulting to sh: %v\n",
+			err,
+		)
+		interpreter = "sh"
 	}
 
-	// Create a temporary file to capture environment variables
 	envFile, err := os.CreateTemp("", "script_env_*.txt")
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to create temporary env file: %w", err)
+		return "", nil, fmt.Errorf(
+			"failed to create temporary env file: %w", err,
+		)
 	}
 	envFilePath := envFile.Name()
-	envFile.Close() // Close the file handle, the script will open and write to it
-
-	// Ensure the temporary file is removed afterwards
+	envFile.Close()
 	defer os.Remove(envFilePath)
 
-	// Execute the script, passing the temporary file path as the first argument
-	cmd := exec.Command(interpreter, scriptFilePath, envFilePath)
+	cmd := exec.CommandContext(ctx, interpreter, scriptFilePath, envFilePath)
+	cmd.Env = append(os.Environ(), envVars...)
 
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, envVars...)
+	var outBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
 
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out // Capture both stdout and stderr
-
-	err = cmd.Run()
-
-	// Read the environment variables from the temporary file
-	envContent, readErr := os.ReadFile(envFilePath)
-	if readErr != nil {
-		// Log the error but proceed with potential script execution error
-		fmt.Fprintf(os.Stderr, "Warning: Failed to read environment file %s: %v\n", envFilePath, readErr)
+	if err := cmd.Start(); err != nil {
+		return "", nil, fmt.Errorf("failed to start script: %w", err)
 	}
 
-	// Parse the environment variables from the file content
-	envVarsMap := make(map[string]string)
-	if len(envContent) > 0 {
-		envLines := strings.Split(string(envContent), "\n")
-		for _, line := range envLines {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") { // Ignore empty lines and comments
-				continue
-			}
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) == 2 {
-				envVarsMap[parts[0]] = parts[1]
-			}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	var runErr error
+	select {
+	case <-ctx.Done():
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-done
+		runErr = ctx.Err()
+	case runErr = <-done:
+	}
+
+	envContent, readErr := os.ReadFile(envFilePath)
+	if readErr != nil {
+		fmt.Fprintf(
+			os.Stderr,
+			"warning: failed to read env file %s: %v\n",
+			envFilePath,
+			readErr,
+		)
+	}
+	resultEnvs := make(map[string]string)
+	for line := range strings.SplitSeq(string(envContent), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			resultEnvs[parts[0]] = parts[1]
 		}
 	}
 
-	if err != nil {
-		// Return the captured output, the potentially incomplete environment, and the error
-		return out.String(), envVarsMap, fmt.Errorf("failed to run script %s: %w, output: %s", scriptFilePath, err, out.String())
+	if runErr != nil {
+		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+			return outBuf.String(), resultEnvs, runErr
+		}
+		return outBuf.String(), resultEnvs, fmt.Errorf(
+			"script failed: %w; output=\n%s",
+			runErr, outBuf.String(),
+		)
 	}
-
-	return out.String(), envVarsMap, nil
+	return outBuf.String(), resultEnvs, nil
 }
 
 // Helper function to extract interpreter from shebang

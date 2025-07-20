@@ -3,18 +3,48 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+	"os/exec"
 	"strings"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
+
+// listTasksJSON shells out to the CLI and unmarshals into []Task.
+func listTasksJSON(ctx context.Context) ([]Task, error) {
+	cmd := exec.CommandContext(
+		ctx,
+		"proxmox-backup-manager",
+		"task", "list",
+		"--output-format=json",
+	)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf(
+			"listTasksJSON: command failed: %w, output=%q",
+			err, out.String(),
+		)
+	}
+
+	var tasks []Task
+	if err := json.Unmarshal(out.Bytes(), &tasks); err != nil {
+		return nil, fmt.Errorf(
+			"listTasksJSON: unmarshal failed: %w, data=%q",
+			err, out.String(),
+		)
+	}
+	return tasks, nil
+}
 
 func GetJobTask(
 	ctx context.Context,
@@ -22,74 +52,6 @@ func GetJobTask(
 	job types.Job,
 	target types.Target,
 ) (Task, error) {
-	tasksParentPath := "/var/log/proxmox-backup/tasks"
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return Task{}, fmt.Errorf("failed to create watcher: %w", err)
-	}
-	defer watcher.Close()
-
-	err = watcher.Add(tasksParentPath)
-	if err != nil {
-		return Task{}, fmt.Errorf("failed to add folder to watcher: %w", err)
-	}
-
-	// Helper function to check if a file matches our search criteria
-	checkFile := func(filePath string, searchString string) (Task, error) {
-		if !strings.Contains(filePath, ".tmp_") && strings.Contains(filePath, searchString) && !strings.Contains(filePath, "pbsplusgen") {
-			syslog.L.Info().WithMessage(fmt.Sprintf("Proceeding: %s contains %s\n", filePath, searchString)).Write()
-			fileName := filepath.Base(filePath)
-			syslog.L.Info().WithMessage(fmt.Sprintf("Getting UPID: %s\n", fileName)).Write()
-			newTask, err := GetTaskByUPID(fileName)
-			if err != nil {
-				return Task{}, fmt.Errorf("GetJobTask: error getting task: %v\n", err)
-			}
-			syslog.L.Info().WithMessage(fmt.Sprintf("Sending UPID: %s\n", fileName)).Write()
-			return newTask, nil
-		}
-		return Task{}, os.ErrNotExist
-	}
-
-	// Helper function to scan directory for matching files
-	scanDirectory := func(dirPath string, searchString string) (Task, error) {
-		files, err := os.ReadDir(dirPath)
-		if err != nil {
-			syslog.L.Error(err).Write()
-			return Task{}, os.ErrNotExist
-		}
-
-		for _, file := range files {
-			if !file.IsDir() {
-				filePath := filepath.Join(dirPath, file.Name())
-				task, err := checkFile(filePath, searchString)
-				if err == nil {
-					return task, nil
-				}
-				if !os.IsNotExist(err) {
-					return Task{}, err
-				}
-			}
-		}
-		return Task{}, os.ErrNotExist
-	}
-
-	err = filepath.WalkDir(tasksParentPath, func(path string, info os.DirEntry, err error) error {
-		if err != nil {
-			syslog.L.Error(err).Write()
-			return nil // Continue walking the tree
-		}
-		if info.IsDir() {
-			err = watcher.Add(path)
-			if err != nil {
-				syslog.L.Error(err).Write()
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return Task{}, fmt.Errorf("failed to walk folder: %w", err)
-	}
-
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostnameFile, err := os.ReadFile("/etc/hostname")
@@ -112,38 +74,26 @@ func GetJobTask(
 	syslog.L.Info().WithMessage("ready to start backup").Write()
 	close(readyChan)
 
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return Task{}, fmt.Errorf("watcher events channel closed")
-			}
-			if event.Op&fsnotify.Create == fsnotify.Create {
-				if isDir(event.Name) {
-					err = watcher.Add(event.Name)
-					if err != nil && !os.IsNotExist(err) {
-						syslog.L.Error(err).Write()
-					}
-
-					task, err := scanDirectory(event.Name, searchString)
-					if err == nil {
-						return task, nil
-					}
-					if !os.IsNotExist(err) {
-						return Task{}, err
-					}
-				} else {
-					task, err := checkFile(event.Name, searchString)
-					if err == nil {
-						return task, nil
-					}
-					if !os.IsNotExist(err) {
-						return Task{}, err
-					}
-				}
-			}
 		case <-ctx.Done():
 			return Task{}, ctx.Err()
+
+		case <-ticker.C:
+			tasks, err := listTasksJSON(ctx)
+			if err != nil {
+				syslog.L.Error(err).Write()
+				continue
+			}
+
+			for _, t := range tasks {
+				if t.WorkerType == "backup" && strings.Contains(t.UPID, searchString) {
+					return GetTaskByUPID(t.UPID)
+				}
+			}
 		}
 	}
 }
