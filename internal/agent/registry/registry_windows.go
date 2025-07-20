@@ -36,7 +36,7 @@ func init() {
 		return
 	}
 
-	secretFilePath = filepath.Join(ex, "secret.json")
+	secretFilePath = filepath.Join(filepath.Dir(ex), "secret.json")
 }
 
 func getOrCreateSecretKey() *[32]byte {
@@ -45,7 +45,7 @@ func getOrCreateSecretKey() *[32]byte {
 		return nil
 	}
 
-	keyPath := filepath.Join(ex, "secret.key")
+	keyPath := filepath.Join(filepath.Dir(ex), "secret.key")
 	var key [32]byte
 	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 {
 		copy(key[:], data)
