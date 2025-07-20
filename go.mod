@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/KimMachineGun/automemlimit v0.7.2
 	github.com/Microsoft/go-winio v0.6.2
+	github.com/billgraziano/dpapi v0.5.0
 	github.com/containers/winquit v1.1.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gobwas/glob v0.2.3

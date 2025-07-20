@@ -5,6 +5,7 @@ package registry
 import (
 	"fmt"
 
+	"github.com/billgraziano/dpapi"
 	"github.com/zalando/go-keyring"
 	"golang.org/x/sys/windows/registry"
 )
@@ -23,7 +24,7 @@ type RegistryEntry struct {
 // GetEntry retrieves a registry entry or secret (auto-migrates if needed)
 func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 	if isSecret {
-		// Try to get from keyring first
+		// 1. Try keyring first
 		value, err := keyring.Get(keyringService, path+"|"+key)
 		if err == nil {
 			return &RegistryEntry{
@@ -34,19 +35,24 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 			}, nil
 		}
 
-		// Fallback: try to get from registry (old DPAPI way)
+		// 2. Fallback: try registry (old DPAPI way)
 		baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
 		if err == nil {
 			defer baseKey.Close()
 			regValue, _, regErr := baseKey.GetStringValue(key)
 			if regErr == nil {
+				// Decrypt using DPAPI
+				decrypted, dpapiErr := dpapi.Decrypt(regValue)
+				if dpapiErr != nil {
+					return nil, fmt.Errorf("GetEntry error: DPAPI decrypt failed: %w", dpapiErr)
+				}
 				// Migrate: store in keyring, then delete from registry
-				_ = keyring.Set(keyringService, path+"|"+key, regValue)
+				_ = keyring.Set(keyringService, path+"|"+key, decrypted)
 				_ = baseKey.DeleteValue(key)
 				return &RegistryEntry{
 					Path:     path,
 					Key:      key,
-					Value:    regValue,
+					Value:    decrypted,
 					IsSecret: true,
 				}, nil
 			}
