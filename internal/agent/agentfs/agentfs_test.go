@@ -182,7 +182,7 @@ func TestAgentFSServer(t *testing.T) {
 	go func() {
 		err := serverSession.Serve()
 		// Ignore "closed pipe" errors during shutdown.
-		if err != nil && ctx.Err() == nil && err != io.EOF && !strings.Contains(err.Error(), "closed pipe") {
+		if err != nil && ctx.Err() == nil && err != io.EOF && !strings.Contains(err.Error(), "closed pipe") && !strings.Contains(err.Error(), "session shutdown") {
 			t.Errorf("Server error: %v", err)
 		}
 	}()
