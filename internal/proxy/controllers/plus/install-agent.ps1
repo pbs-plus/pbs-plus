@@ -267,7 +267,13 @@ foreach ($location in $potentialLocations) {
     if (Test-Path -Path $location) {
         $nfsLock = Join-Path -Path $location -ChildPath "nfssessions.lock"
         $nfsJson = Join-Path -Path $location -ChildPath "nfssessions.json"
+
+        $backupSessions = Join-Path -Path $location -ChildPath "backup_sessions.json"
+        $backupSessionsLock = Join-Path -Path $location -ChildPath "backup_sessions.lock"
         
+        $secretKey = Join-Path -Path $location -ChildPath "secret.key"
+        $secretJson = Join-Path -Path $location -ChildPath "secret.json"
+
         if (Test-Path -Path $nfsLock) {
             Write-Host "Removing nfssessions.lock from $location" -ForegroundColor Cyan
             Remove-Item -Path $nfsLock -Force -ErrorAction SilentlyContinue
@@ -276,6 +282,26 @@ foreach ($location in $potentialLocations) {
         if (Test-Path -Path $nfsJson) {
             Write-Host "Removing nfssessions.json from $location" -ForegroundColor Cyan
             Remove-Item -Path $nfsJson -Force -ErrorAction SilentlyContinue
+        }
+
+        if (Test-Path -Path $backupSessions) {
+            Write-Host "Removing backup_sessions.json from $location" -ForegroundColor Cyan
+            Remove-Item -Path $backupSessions -Force -ErrorAction SilentlyContinue
+        }
+
+        if (Test-Path -Path $backupSessionsLock) {
+            Write-Host "Removing backup_sessions.lock from $location" -ForegroundColor Cyan
+            Remove-Item -Path $backupSessionsLock -Force -ErrorAction SilentlyContinue
+        }
+
+        if (Test-Path -Path $secretKey) {
+            Write-Host "Removing secret.key from $location" -ForegroundColor Cyan
+            Remove-Item -Path $secretKey -Force -ErrorAction SilentlyContinue
+        }
+
+        if (Test-Path -Path $secretJson) {
+            Write-Host "Removing secret.json from $location" -ForegroundColor Cyan
+            Remove-Item -Path $secretJson -Force -ErrorAction SilentlyContinue
         }
     }
 }
