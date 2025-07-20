@@ -4,8 +4,8 @@ project_name: pbs-plus
 
 before:
   hooks:
-    - go mod tidy
     - go install golang.org/dl/go1.25rc2@latest
+    - go1.25rc2 mod tidy
 #    - |
 #      # Generate UpgradeCode (should be consistent across versions)
 #      if [ -z "$UPGRADE_CODE" ]; then
