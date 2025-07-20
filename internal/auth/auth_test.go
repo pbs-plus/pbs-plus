@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	tls "github.com/secure-for-ai/goktls"
+	ctls "crypto/tls"
 
 	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
 	serverLib "github.com/pbs-plus/pbs-plus/internal/auth/server"
@@ -184,7 +184,7 @@ func TestEndToEnd(t *testing.T) {
 	// Test invalid requests
 	t.Run("InvalidRequests", func(t *testing.T) {
 		// Load client certificate for invalid token test
-		cert, err := tls.LoadX509KeyPair(
+		cert, err := ctls.LoadX509KeyPair(
 			filepath.Join(certsDir, "agent.crt"),
 			filepath.Join(certsDir, "agent.key"),
 		)
@@ -205,8 +205,8 @@ func TestEndToEnd(t *testing.T) {
 		// Create client with valid certificates but invalid token
 		client := &http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					Certificates: []tls.Certificate{cert},
+				TLSClientConfig: &ctls.Config{
+					Certificates: []ctls.Certificate{cert},
 					RootCAs:      caCertPool,
 				},
 			},
