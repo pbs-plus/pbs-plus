@@ -22,7 +22,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/xtaci/smux v1.5.34
 	github.com/zeebo/xxh3 v1.0.2
-	golang.org/x/crypto v0.38.0
+	golang.org/x/crypto v0.40.0
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
 	golang.org/x/sys v0.34.0
 	golang.org/x/time v0.12.0
