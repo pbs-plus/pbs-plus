@@ -3,7 +3,10 @@ package testhelpers
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
+
+	tls "github.com/secure-for-ai/goktls"
 
 	authErrors "github.com/pbs-plus/pbs-plus/internal/auth/errors"
 	serverLib "github.com/pbs-plus/pbs-plus/internal/auth/server"
@@ -13,10 +16,11 @@ import (
 
 // Server represents the authentication server
 type Server struct {
-	config  *serverLib.Config
-	limiter *rate.Limiter
-	tokens  *token.Manager
-	server  *http.Server
+	config   *serverLib.Config
+	limiter  *rate.Limiter
+	tokens   *token.Manager
+	server   *http.Server
+	listener net.Listener
 }
 
 // New creates a new Server instance with the provided configuration
@@ -49,6 +53,11 @@ func NewServer(config *serverLib.Config) (*Server, error) {
 		return nil, err
 	}
 
+	ln, err := tls.Listen("tcp", config.Address, tlsConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/bootstrap", s.withMiddleware(s.handleBootstrap))
 	mux.HandleFunc("/secure", s.withMiddleware(s.handleSecure))
@@ -56,18 +65,19 @@ func NewServer(config *serverLib.Config) (*Server, error) {
 	s.server = &http.Server{
 		Addr:           config.Address,
 		Handler:        mux,
-		TLSConfig:      tlsConfig,
 		ReadTimeout:    config.ReadTimeout,
 		WriteTimeout:   config.WriteTimeout,
 		MaxHeaderBytes: config.MaxHeaderBytes,
 	}
+
+	s.listener = ln
 
 	return s, nil
 }
 
 // Start starts the server
 func (s *Server) Start() error {
-	return s.server.ListenAndServeTLS(s.config.CertFile, s.config.KeyFile)
+	return s.server.Serve(s.listener)
 }
 
 // Stop gracefully stops the server
