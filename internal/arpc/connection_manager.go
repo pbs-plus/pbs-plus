@@ -7,7 +7,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/xtaci/smux"
+	"github.com/hashicorp/yamux"
 )
 
 // ConnectionState represents the current connection state.
@@ -118,7 +118,7 @@ func dialWithBackoff(
 }
 
 // openStreamWithReconnect opens a stream with reconnection support.
-func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream, error) {
+func openStreamWithReconnect(s *Session, curSession *yamux.Session) (*yamux.Stream, error) {
 	stream, err := curSession.OpenStream()
 	if err == nil {
 		return stream, nil

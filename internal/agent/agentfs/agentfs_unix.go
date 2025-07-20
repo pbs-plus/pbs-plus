@@ -14,12 +14,12 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/hashicorp/yamux"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
-	"github.com/xtaci/smux"
 	"golang.org/x/sys/unix"
 )
 
@@ -334,7 +334,7 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	fh.dirReturned.Store(true)
 
 	reader := bytes.NewReader(entries)
-	streamCallback := func(stream *smux.Stream) {
+	streamCallback := func(stream *yamux.Stream) {
 		if err := binarystream.SendDataFromReader(reader, int(len(entries)), stream); err != nil {
 			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 		}
@@ -365,7 +365,7 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 
 	reader := io.NewSectionReader(fh.file, payload.Offset, int64(payload.Length))
 
-	streamCallback := func(stream *smux.Stream) {
+	streamCallback := func(stream *yamux.Stream) {
 		err := binarystream.SendDataFromReader(reader, payload.Length, stream)
 		if err != nil {
 			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()

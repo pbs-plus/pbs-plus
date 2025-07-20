@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/hashicorp/yamux"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
-	"github.com/xtaci/smux"
 )
 
 // Buffer pool for reusing buffers across requests and responses.
@@ -42,7 +42,7 @@ func (r *Router) CloseHandle(method string) {
 
 // ServeStream reads a single RPC request from the stream, routes it to the correct handler,
 // and writes back the Response. In case of errors, an error response is sent.
-func (r *Router) ServeStream(stream *smux.Stream) {
+func (r *Router) ServeStream(stream *yamux.Stream) {
 	defer stream.Close()
 
 	// Get a buffer from the pool for the request

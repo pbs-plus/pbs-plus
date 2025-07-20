@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/yamux"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
-	"github.com/xtaci/smux"
 )
 
 type latencyConn struct {
@@ -99,14 +99,14 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	// Create smux sessions for server and client.
-	serverSession, err := smux.Server(serverConn, nil)
+	// Create yamux sessions for server and client.
+	serverSession, err := yamux.Server(serverConn, nil)
 	if err != nil {
-		t.Fatalf("failed to create smux server session: %v", err)
+		t.Fatalf("failed to create yamux server session: %v", err)
 	}
-	clientSession, err := smux.Client(clientConn, nil)
+	clientSession, err := yamux.Client(clientConn, nil)
 	if err != nil {
-		t.Fatalf("failed to create smux client session: %v", err)
+		t.Fatalf("failed to create yamux client session: %v", err)
 	}
 
 	// Create the router and register an "echo" handler.
@@ -567,7 +567,7 @@ func TestCallBinary_Concurrency(t *testing.T) {
 		// Return a response with status 213 and a streaming callback.
 		return Response{
 			Status: 213,
-			RawStream: func(stream *smux.Stream) {
+			RawStream: func(stream *yamux.Stream) {
 				// Send the binary data to the client.
 				r := bytes.NewReader(binaryData)
 				if err := binarystream.SendDataFromReader(r, len(binaryData), stream); err != nil {

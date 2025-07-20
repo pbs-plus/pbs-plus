@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/xtaci/smux"
+	"github.com/hashicorp/yamux"
 )
 
 // HijackUpgradeHTTP helps a server upgrade an HTTP connection.
-func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, version string, mgr *SessionManager, config *smux.Config) (*Session, error) {
+func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, version string, mgr *SessionManager, config *yamux.Config) (*Session, error) {
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		return nil, fmt.Errorf("response writer does not support hijacking")
@@ -36,7 +36,7 @@ func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, 
 }
 
 // upgradeHTTPClient helps a client upgrade an HTTP connection.
-func upgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Header, config *smux.Config) (*Session, error) {
+func upgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Header, config *yamux.Config) (*Session, error) {
 	reqLines := []string{
 		fmt.Sprintf("GET %s HTTP/1.1", requestPath),
 		fmt.Sprintf("Host: %s", host),

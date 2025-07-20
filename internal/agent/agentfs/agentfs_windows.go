@@ -13,13 +13,13 @@ import (
 	"unsafe"
 
 	"github.com/Microsoft/go-winio"
+	"github.com/hashicorp/yamux"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
 	"github.com/pkg/errors"
-	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
 )
 
@@ -343,7 +343,7 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	}
 
 	byteReader := bytes.NewReader(encodedBatch)
-	streamCallback := func(stream *smux.Stream) {
+	streamCallback := func(stream *yamux.Stream) {
 		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
 			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 		}
@@ -383,7 +383,7 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	// If the requested offset is at or beyond EOF, stream nothing.
 	if payload.Offset >= fh.fileSize {
 		emptyReader := bytes.NewReader([]byte{})
-		streamCallback := func(stream *smux.Stream) {
+		streamCallback := func(stream *yamux.Stream) {
 			if err := binarystream.SendDataFromReader(emptyReader, payload.Length, stream); err != nil {
 				syslog.L.Error(err).
 					WithMessage("failed sending empty reader via binary stream").Write()
@@ -434,7 +434,7 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 				result := data[offsetDiff : offsetDiff+payload.Length]
 				reader := bytes.NewReader(result)
 
-				streamCallback := func(stream *smux.Stream) {
+				streamCallback := func(stream *yamux.Stream) {
 					// Ensure we free up resources once streaming is done.
 					defer func() {
 						windows.UnmapViewOfFile(addr)
@@ -471,7 +471,7 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 
 	reader := bytes.NewReader(buffer[:bytesRead])
-	streamCallback := func(stream *smux.Stream) {
+	streamCallback := func(stream *yamux.Stream) {
 		if err := binarystream.SendDataFromReader(reader, int(bytesRead), stream); err != nil {
 			syslog.L.Error(err).
 				WithMessage("failed sending data from reader via binary stream (sync fallback)").

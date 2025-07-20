@@ -1,8 +1,8 @@
 package arpc
 
 import (
+	"github.com/hashicorp/yamux"
 	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
-	"github.com/xtaci/smux"
 )
 
 type Request struct {
@@ -44,7 +44,7 @@ type Response struct {
 	Status    int
 	Message   string
 	Data      []byte
-	RawStream func(*smux.Stream)
+	RawStream func(*yamux.Stream)
 }
 
 func (resp *Response) Encode() ([]byte, error) {

@@ -33,13 +33,13 @@ func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload 
 }
 
 // CallContext performs an RPC call over a new stream.
-// It applies any context deadlines to the smux stream.
+// It applies any context deadlines to the yamux stream.
 func (s *Session) CallContext(ctx context.Context, method string, payload arpcdata.Encodable) (Response, error) {
-	// Grab the current smux session
+	// Grab the current yamux session
 	curSession := s.muxSess.Load()
 
 	// Open a new stream. (Note: while stream reuse might reduce overhead,
-	// with smux the recommended pattern is one stream per RPC call to avoid
+	// with yamux the recommended pattern is one stream per RPC call to avoid
 	// interleaved messages. If your protocol allows reuse, you might pool streams.)
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {

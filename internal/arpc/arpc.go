@@ -11,13 +11,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/xtaci/smux"
+	"github.com/hashicorp/yamux"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// Session wraps an underlying smux.Session with improved connection management.
+// Session wraps an underlying yamux.Session with improved connection management.
 type Session struct {
-	// muxSess holds a *smux.Session.
-	muxSess atomic.Pointer[smux.Session]
+	// muxSess holds a *yamux.Session.
+	muxSess atomic.Pointer[yamux.Session]
 	router  atomic.Pointer[Router]
 
 	// Connection state management
@@ -52,12 +53,12 @@ func (s *Session) GetVersion() string {
 }
 
 // NewServerSession creates a new Session for a server connection.
-func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
+func NewServerSession(conn net.Conn, config *yamux.Config) (*Session, error) {
 	if config == nil {
-		config = defaultSmuxConfig()
+		config = defaultYamuxConfig()
 	}
 
-	s, err := smux.Server(conn, config)
+	s, err := yamux.Server(conn, config)
 	if err != nil {
 		return nil, err
 	}
@@ -76,12 +77,12 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 }
 
 // NewClientSession creates a new Session for a client connection.
-func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
+func NewClientSession(conn net.Conn, config *yamux.Config) (*Session, error) {
 	if config == nil {
-		config = defaultSmuxConfig()
+		config = defaultYamuxConfig()
 	}
 
-	s, err := smux.Client(conn, config)
+	s, err := yamux.Client(conn, config)
 	if err != nil {
 		return nil, err
 	}
@@ -99,13 +100,18 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	return session, nil
 }
 
-// defaultSmuxConfig returns a default smux configuration
-func defaultSmuxConfig() *smux.Config {
-	defaults := smux.DefaultConfig()
-	defaults.Version = 2
-	defaults.MaxReceiveBuffer = 4194304
-	defaults.MaxStreamBuffer = 2097152
-	return defaults
+// defaultYamuxConfig returns a default yamux configuration
+func defaultYamuxConfig() *yamux.Config {
+	return &yamux.Config{
+		AcceptBacklog:          1024,             // Allow many concurrent streams
+		EnableKeepAlive:        true,             // Detect dead peers
+		KeepAliveInterval:      10 * time.Second, // More frequent keepalives
+		ConnectionWriteTimeout: 30 * time.Second, // Allow for large writes
+		MaxStreamWindowSize:    32 * 1024 * 1024, // 32 MiB window per stream
+		StreamOpenTimeout:      60 * time.Second, // Allow time for slow opens
+		StreamCloseTimeout:     2 * time.Minute,  // Allow time for slow closes
+		Logger:                 &YamuxLoggerAdapter{Underlying: syslog.L},
+	}
 }
 
 // If a stream accept fails and auto‑reconnect is enabled, it attempts to reconnect.

@@ -6,7 +6,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/xtaci/smux"
+	"github.com/hashicorp/yamux"
 )
 
 type BufferPool struct {
@@ -51,7 +51,7 @@ func selectBufferPool(totalLength int) (pool *sync.Pool, poolSize int) {
 	return last.Pool, last.Size
 }
 
-func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
+func SendDataFromReader(r io.Reader, length int, stream *yamux.Stream) error {
 	if stream == nil {
 		return fmt.Errorf("stream is nil")
 	}
@@ -120,7 +120,7 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	return nil
 }
 
-func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
+func ReceiveData(stream *yamux.Stream) ([]byte, int, error) {
 	var totalLength uint64
 	if err := binary.Read(stream, binary.LittleEndian, &totalLength); err != nil {
 		// Check for EOF specifically, might indicate clean closure before data

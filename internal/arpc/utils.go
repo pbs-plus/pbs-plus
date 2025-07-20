@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xtaci/smux"
+	"github.com/hashicorp/yamux"
 )
 
 var (
@@ -29,7 +29,7 @@ func getJitteredBackoff(d time.Duration, jitterFactor float64) time.Duration {
 }
 
 // writeErrorResponse sends an error response over the stream.
-func writeErrorResponse(stream *smux.Stream, status int, err error) {
+func writeErrorResponse(stream *yamux.Stream, status int, err error) {
 	// Wrap the error in a SerializableError
 	serErr := WrapError(err)
 
