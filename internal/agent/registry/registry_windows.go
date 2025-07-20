@@ -130,7 +130,6 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 		if err == nil {
 			defer baseKey.Close()
 			if val, _, err := baseKey.GetStringValue(key); err == nil {
-				// Try DPAPI decrypt
 				plain, err := dpapi.Decrypt(val)
 				if err == nil {
 					// Migrate to new store
