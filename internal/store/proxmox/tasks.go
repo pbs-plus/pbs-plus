@@ -24,6 +24,7 @@ func listTasksJSON(ctx context.Context) ([]Task, error) {
 		"proxmox-backup-manager",
 		"task", "list",
 		"--output-format=json",
+		"--all",
 	)
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -74,11 +75,11 @@ func GetJobTask(
 	initialUPIDs := make(map[string]struct{})
 	tasks, err := listTasksJSON(ctx)
 	if err != nil {
-		syslog.L.Error(err).Write()
-	} else {
-		for _, t := range tasks {
-			initialUPIDs[t.UPID] = struct{}{}
-		}
+		return Task{}, err
+	}
+
+	for _, t := range tasks {
+		initialUPIDs[t.UPID] = struct{}{}
 	}
 
 	syslog.L.Info().WithMessage("ready to start backup").Write()
