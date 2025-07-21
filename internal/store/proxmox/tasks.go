@@ -71,6 +71,16 @@ func GetJobTask(
 
 	searchString := fmt.Sprintf(":backup:%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
 
+	initialUPIDs := make(map[string]struct{})
+	tasks, err := listTasksJSON(ctx)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	} else {
+		for _, t := range tasks {
+			initialUPIDs[t.UPID] = struct{}{}
+		}
+	}
+
 	syslog.L.Info().WithMessage("ready to start backup").Write()
 	close(readyChan)
 
@@ -91,6 +101,9 @@ func GetJobTask(
 
 			for _, t := range tasks {
 				if t.WorkerType == "backup" && strings.Contains(t.UPID, searchString) {
+					if _, seen := initialUPIDs[t.UPID]; seen {
+						continue // skip tasks in the initial set
+					}
 					return GetTaskByUPID(t.UPID)
 				}
 			}
