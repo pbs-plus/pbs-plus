@@ -51,19 +51,17 @@ Ext.define("PBS.config.DiskBackupJobView", {
       Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
         if (btn !== "yes") return;
 
-        ids.forEach((id) => {
-          Proxmox.Utils.API2Request({
-            url:
-              pbsPlusBaseUrl +
-              "/api2/extjs/d2d/backup/" +
-              encodeURIComponent(id),
-            method: "POST",
-            waitMsgTarget: view,
-            success: () => { me.reload(); },
-            failure: (resp) => {
-              Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
-            },
-          });
+        // Build query string: job=id1&job=id2...
+        const params = ids.map(id => "job=" + encodeURIComponent(encodePathValue(id))).join("&");
+
+        Proxmox.Utils.API2Request({
+          url: pbsPlusBaseUrl + "/api2/extjs/d2d/backup?" + params,
+          method: "POST",
+          waitMsgTarget: view,
+          success: () => { me.reload(); },
+          failure: (resp) => {
+            Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
+          },
         });
       });
     },
@@ -98,28 +96,28 @@ Ext.define("PBS.config.DiskBackupJobView", {
       Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
         if (btn !== "yes") return;
 
-        jobs.forEach((job) => {
-          // 1) delete the “Plus” queue entry if needed
-          if (job.hasPlus) {
-            Proxmox.Utils.API2Request({
-              url:
-                pbsPlusBaseUrl +
-                "/api2/extjs/d2d/backup/" +
-                encodeURIComponent(job.id),
-              method: "DELETE",
-              waitMsgTarget: view,
-              success: () => {
-                if (!job.hasPBSTask) {
+        // 1) delete the “Plus” queue entry for all jobs in one request
+        const plusJobs = jobs.filter(j => j.hasPlus);
+        if (plusJobs.length > 0) {
+          const plusIds = plusJobs.map(j => "job=" + encodeURIComponent(encodePathValue(j.id))).join("&");
+          Proxmox.Utils.API2Request({
+            url: pbsPlusBaseUrl + "/api2/extjs/d2d/backup?" + plusIds,
+            method: "DELETE",
+            waitMsgTarget: view,
+            success: () => {
+              // Only reload if there are no PBSTasks to stop
+              if (!jobs.some(j => j.hasPBSTask)) {
                   me.reload();
-                }
-              },
-              failure: () => {
-                // ignore, but still attempt PBSTask below
-              },
-            });
-          }
+              }
+            },
+            failure: () => {
+              // ignore, but still attempt PBSTask below
+            },
+          });
+        }
 
-          // 2) delete the PBS-side task if needed
+        // 2) delete the PBS-side task for each job as before (no batch API for this)
+        jobs.forEach((job) => {
           if (job.hasPBSTask) {
             const task = Proxmox.Utils.parse_task_upid(job.upid);
             Proxmox.Utils.API2Request({

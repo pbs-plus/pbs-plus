@@ -66,14 +66,29 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 
 func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		response := JobRunResponse{}
-		job, err := storeInstance.Database.GetJob(utils.DecodePath(r.PathValue("job")))
-		if err != nil {
-			controllers.WriteErrorResponse(w, err)
+		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
 
-		system.RemoveAllRetrySchedules(job)
+		var response JobRunResponse
+
+		// Get all job IDs from query parameters: ?job=job1&job=job2
+		jobIDs := r.URL.Query()["job"]
+		if len(jobIDs) == 0 {
+			http.Error(w, "Missing job parameter(s)", http.StatusBadRequest)
+			return
+		}
+
+		for _, jobID := range jobIDs {
+			jobIDDecoded := utils.DecodePath(jobID)
+			job, err := storeInstance.Database.GetJob(jobIDDecoded)
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+			system.RemoveAllRetrySchedules(job)
+		}
 
 		execPath, err := os.Executable()
 		if err != nil {
@@ -81,40 +96,30 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if r.Method == http.MethodPost {
-			cmd := exec.Command(execPath, "-job", job.ID, "-web")
-			cmd.Env = os.Environ()
-			err = cmd.Start()
-			if err != nil {
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-
-			response.Status = http.StatusOK
-			response.Success = true
-			json.NewEncoder(w).Encode(response)
-			return
-		} else if r.Method == http.MethodDelete {
-			cmd := exec.Command(execPath, "-job", job.ID, "-web", "-stop")
-			cmd.Env = os.Environ()
-			err = cmd.Start()
-			if err != nil {
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-
-			response.Status = http.StatusOK
-			response.Success = true
-			json.NewEncoder(w).Encode(response)
+		args := []string{}
+		for _, jobId := range jobIDs {
+			args = append(args, "-job", jobId)
+		}
+		args = append(args, "-web")
+		if r.Method == http.MethodDelete {
+			args = append(args, "-stop")
+		} else if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
 
-		http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-		return
+		cmd := exec.Command(execPath, args...)
+		cmd.Env = os.Environ()
+		err = cmd.Start()
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		response.Status = http.StatusOK
+		response.Success = true
+		json.NewEncoder(w).Encode(response)
 	}
 }
 
@@ -185,7 +190,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		rawExclusions := r.FormValue("rawexclusions")
-		for _, exclusion := range strings.Split(rawExclusions, "\n") {
+		for exclusion := range strings.SplitSeq(rawExclusions, "\n") {
 			exclusion = strings.TrimSpace(exclusion)
 			if exclusion == "" {
 				continue

@@ -66,7 +66,8 @@ func main() {
 	defer mainCancel()
 
 	var extExclusions arrayFlags
-	jobRun := flag.String("job", "", "Job ID to execute")
+	var jobsRun arrayFlags
+	flag.Var(&jobsRun, "job", "Job ID/s to execute")
 	retryAttempts := flag.String("retry", "", "Current attempt number")
 	webRun := flag.Bool("web", false, "Job executed from Web UI")
 	stop := flag.Bool("stop", false, "Stop Job ID instead of executing")
@@ -125,46 +126,47 @@ func main() {
 	}
 
 	// Handle single job execution
-	if *jobRun != "" {
-		jobTask, err := storeInstance.Database.GetJob(*jobRun)
-		if err != nil {
-			syslog.L.Error(err).WithField("jobId", *jobRun).Write()
-			return
-		}
-
-		if retryAttempts == nil || *retryAttempts == "" {
-			system.RemoveAllRetrySchedules(jobTask)
-		}
-
-		arrExtExc := []string(extExclusions)
-
-		args := &jobrpc.QueueArgs{
-			Job:             jobTask,
-			SkipCheck:       true,
-			Stop:            *stop,
-			Web:             *webRun,
-			ExtraExclusions: arrExtExc,
-		}
-		var reply jobrpc.QueueReply
-
-		conn, err := net.DialTimeout("unix", constants.JobMutateSocketPath, 5*time.Minute)
-		if err != nil {
-			syslog.L.Error(err).WithField("jobId", *jobRun).Write()
-			return
-		} else {
-			rpcClient := rpc.NewClient(conn)
-			err = rpcClient.Call("JobRPCService.Queue", args, &reply)
-			rpcClient.Close()
+	if len(jobsRun) > 0 {
+		for _, jobRun := range jobsRun {
+			jobTask, err := storeInstance.Database.GetJob(jobRun)
 			if err != nil {
-				syslog.L.Error(err).WithField("jobId", *jobRun).Write()
+				syslog.L.Error(err).WithField("jobId", jobRun).Write()
 				return
 			}
-			if reply.Status != 200 {
-				syslog.L.Error(err).WithField("jobId", *jobRun).Write()
+
+			if retryAttempts == nil || *retryAttempts == "" {
+				system.RemoveAllRetrySchedules(jobTask)
+			}
+
+			arrExtExc := []string(extExclusions)
+
+			args := &jobrpc.QueueArgs{
+				Job:             jobTask,
+				SkipCheck:       true,
+				Stop:            *stop,
+				Web:             *webRun,
+				ExtraExclusions: arrExtExc,
+			}
+			var reply jobrpc.QueueReply
+
+			conn, err := net.DialTimeout("unix", constants.JobMutateSocketPath, 5*time.Minute)
+			if err != nil {
+				syslog.L.Error(err).WithField("jobId", jobRun).Write()
 				return
+			} else {
+				rpcClient := rpc.NewClient(conn)
+				err = rpcClient.Call("JobRPCService.Queue", args, &reply)
+				rpcClient.Close()
+				if err != nil {
+					syslog.L.Error(err).WithField("jobId", jobRun).Write()
+					return
+				}
+				if reply.Status != 200 {
+					syslog.L.Error(err).WithField("jobId", jobRun).Write()
+					return
+				}
 			}
 		}
-
 		return
 	}
 
@@ -376,7 +378,7 @@ func main() {
 	apiMux.HandleFunc("/api2/json/d2d/exclusion", mw.AgentOrServer(storeInstance, mw.CORS(storeInstance, exclusions.D2DExclusionHandler(storeInstance))))
 
 	// ExtJS routes with path parameters
-	apiMux.HandleFunc("/api2/extjs/d2d/backup/{job}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, jobs.ExtJsJobRunHandler(storeInstance))))
+	apiMux.HandleFunc("/api2/extjs/d2d/backup", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, jobs.ExtJsJobRunHandler(storeInstance))))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, targets.ExtJsTargetHandler(storeInstance))))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance))))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-script", mw.ServerOnly(storeInstance, mw.CORS(storeInstance, scripts.ExtJsScriptHandler(storeInstance))))
