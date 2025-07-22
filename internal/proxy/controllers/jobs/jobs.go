@@ -4,6 +4,7 @@ package jobs
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -80,8 +81,13 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		decodedJobIDs := []string{}
+
 		for _, jobID := range jobIDs {
-			job, err := storeInstance.Database.GetJob(utils.DecodePath(jobID))
+			decoded := utils.DecodePath(jobID)
+			decodedJobIDs = append(decodedJobIDs, decoded)
+
+			job, err := storeInstance.Database.GetJob(decoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -96,8 +102,8 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		args := []string{}
-		for _, jobId := range jobIDs {
-			args = append(args, "-job", jobId)
+		for _, jobId := range decodedJobIDs {
+			args = append(args, fmt.Sprintf("-job=\"%s\"", jobId))
 		}
 		args = append(args, "-web")
 		if r.Method == http.MethodDelete {
