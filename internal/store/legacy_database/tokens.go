@@ -93,7 +93,13 @@ func (database *Database) GetAllTokens() ([]types.AgentToken, error) {
 			continue
 		}
 
-		token, err := database.GetToken(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
+		decoded, err := utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg"))
+		if err != nil {
+			syslog.L.Error(err).WithField("id", file.Name())
+			continue
+		}
+
+		token, err := database.GetToken(decoded)
 		if err != nil {
 			syslog.L.Error(err).WithField("id", file.Name())
 			continue

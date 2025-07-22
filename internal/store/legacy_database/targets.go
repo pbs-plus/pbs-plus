@@ -124,7 +124,13 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 			continue
 		}
 
-		target, err := database.GetTarget(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
+		decoded, err := utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg"))
+		if err != nil {
+			syslog.L.Error(err).WithField("id", file.Name()).Write()
+			continue
+		}
+
+		target, err := database.GetTarget(decoded)
 		if err != nil {
 			syslog.L.Error(err).WithField("id", file.Name()).Write()
 			continue
@@ -147,7 +153,13 @@ func (database *Database) GetAllTargetsByIP(clientIP string) ([]types.Target, er
 			continue
 		}
 
-		target, err := database.GetTarget(utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg")))
+		decoded, err := utils.DecodePath(strings.TrimSuffix(file.Name(), ".cfg"))
+		if err != nil {
+			syslog.L.Error(err).WithField("id", file.Name()).Write()
+			continue
+		}
+
+		target, err := database.GetTarget(decoded)
 		if err != nil {
 			syslog.L.Error(err).WithField("id", file.Name()).Write()
 			continue
