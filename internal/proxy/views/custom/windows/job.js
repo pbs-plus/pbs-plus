@@ -45,7 +45,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
     let id = initialConfig.id;
 
     me.isCreate = !id;
-    me.url = id ? `${baseurl}/${encodePathValue(id)}` : baseurl;
+    me.url = id ? `${baseurl}/${encodeURIComponent(encodePathValue(id))}` : baseurl;
     me.method = id ? "PUT" : "POST";
     me.autoLoad = !!id;
     me.scheduleValue = id ? null : "";

@@ -81,7 +81,12 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for _, jobID := range jobIDs {
-			jobIDDecoded := utils.DecodePath(jobID)
+			jobIDDecoded, err := utils.DecodePath(jobID)
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
 			job, err := storeInstance.Database.GetJob(jobIDDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
