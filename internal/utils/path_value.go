@@ -14,10 +14,10 @@ func EncodePath(path string) string {
 	return encoded
 }
 
-func DecodePath(encoded string) (string, error) {
+func DecodePath(encoded string) string {
 	decoded, err := url.QueryUnescape(encoded)
 	if err != nil {
-		return "", err
+		return encoded
 	}
 
 	decoded = strings.ReplaceAll(decoded, "-", "+")
@@ -32,8 +32,8 @@ func DecodePath(encoded string) (string, error) {
 
 	data, err := base64.StdEncoding.DecodeString(decoded)
 	if err != nil {
-		return "", err
+		return encoded
 	}
 
-	return string(data), nil
+	return string(data)
 }
