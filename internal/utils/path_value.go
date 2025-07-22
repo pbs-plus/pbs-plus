@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/base64"
+	"net/url"
 	"strings"
 )
 
@@ -13,18 +14,26 @@ func EncodePath(path string) string {
 	return encoded
 }
 
-func DecodePath(orig string) string {
-	encoded := strings.ReplaceAll(orig, "-", "+")
-	encoded = strings.ReplaceAll(orig, "_", "/")
-
-	padding := len(encoded) % 4
-	if padding != 0 {
-		encoded += strings.Repeat("=", 4-padding)
-	}
-
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
+func DecodePath(encoded string) (string, error) {
+	decoded, err := url.QueryUnescape(encoded)
 	if err != nil {
-		return orig
+		return "", err
 	}
-	return string(decoded)
+
+	decoded = strings.ReplaceAll(decoded, "-", "+")
+	decoded = strings.ReplaceAll(decoded, "_", "/")
+
+	switch len(decoded) % 4 {
+	case 2:
+		decoded += "=="
+	case 3:
+		decoded += "="
+	}
+
+	data, err := base64.StdEncoding.DecodeString(decoded)
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
 }
