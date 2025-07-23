@@ -45,6 +45,8 @@ func (bs *BackupStore) updateSessions(fn func(map[string]*BackupSessionData)) er
 }
 
 func (bs *BackupStore) StartBackup(jobId string) error {
+	enableWakeLockSystem()
+
 	return bs.updateSessions(func(sessions map[string]*BackupSessionData) {
 		sessions[jobId] = &BackupSessionData{
 			JobId:     jobId,
@@ -54,6 +56,11 @@ func (bs *BackupStore) StartBackup(jobId string) error {
 }
 
 func (bs *BackupStore) EndBackup(jobId string) error {
+	hasActive, err := bs.HasActiveBackups()
+	if err == nil && !hasActive {
+		disableWakeLock()
+	}
+
 	return bs.updateSessions(func(sessions map[string]*BackupSessionData) {
 		delete(sessions, jobId)
 	})
@@ -102,6 +109,8 @@ func (bs *BackupStore) HasActiveBackupForJob(job string) (bool, error) {
 }
 
 func (bs *BackupStore) ClearAll() error {
+	disableWakeLock()
+
 	return bs.updateSessions(func(sessions map[string]*BackupSessionData) {
 		for job := range sessions {
 			delete(sessions, job)
