@@ -2,12 +2,11 @@ package utils
 
 import (
 	"crypto/tls"
+	"log"
 	"net"
 	"net/http"
 	"runtime"
 	"time"
-
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const MaxStreamBuffer = 8 * 1024 * 1024
@@ -21,12 +20,20 @@ func init() {
 		return
 	}
 
-	smuxMemoryBudget := sysMem.Available / 16
+	ratio := 16
+	for MaxReceiveBuffer < MaxStreamBuffer {
+		if ratio <= 2 {
+			MaxReceiveBuffer = MaxStreamBuffer * 2
+			break
+		}
 
-	MaxReceiveBuffer = int(smuxMemoryBudget)
-	MaxConcurrentClients = int(smuxMemoryBudget) / MaxStreamBuffer
+		MaxReceiveBuffer = int(sysMem.Available) / ratio
+		ratio /= 2
+	}
 
-	syslog.L.Info().WithFields(map[string]interface{}{"MaxReceiveBuffer": MaxReceiveBuffer, "MaxStreamBuffer": MaxStreamBuffer, "MaxConcurrentClients": MaxConcurrentClients}).WithMessage("initialized aRPC buffer configurations").Write()
+	MaxConcurrentClients = MaxReceiveBuffer / MaxStreamBuffer
+
+	log.Printf("initialized aRPC buffer configurations with MaxReceiveBuffer: %d, MaxStreamBuffer: %d, MaxConcurrentClients: %d", MaxReceiveBuffer, MaxStreamBuffer, MaxConcurrentClients)
 }
 
 type sysMem struct {
