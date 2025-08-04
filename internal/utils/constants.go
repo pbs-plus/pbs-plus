@@ -2,12 +2,53 @@ package utils
 
 import (
 	"crypto/tls"
+	"log"
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/pbnjay/memory"
 )
 
-const MAX_CONCURRENT_CLIENTS = 64
+const MaxStreamBuffer = 8 * 1024 * 1024
+
+var MaxConcurrentClients = 64
+var MaxReceiveBuffer = MaxStreamBuffer * MaxConcurrentClients
+
+func init() {
+	sysMem, err := getSysMem()
+	if err != nil {
+		return
+	}
+
+	ratio := 16
+	for MaxReceiveBuffer < MaxStreamBuffer {
+		if ratio <= 2 {
+			MaxReceiveBuffer = MaxStreamBuffer * 2
+			break
+		}
+
+		MaxReceiveBuffer = int(sysMem.Available) / ratio
+		ratio /= 2
+	}
+
+	MaxConcurrentClients = max(MaxReceiveBuffer/MaxStreamBuffer, 128)
+
+	log.Printf("initialized aRPC buffer configurations with MaxReceiveBuffer: %d, MaxStreamBuffer: %d, MaxConcurrentClients: %d", MaxReceiveBuffer, MaxStreamBuffer, MaxConcurrentClients)
+}
+
+type sysMem struct {
+	Total     uint64 // Total system memory in bytes
+	Available uint64 // Available memory in bytes
+	Free      uint64 // Free memory in bytes
+}
+
+func getSysMem() (*sysMem, error) {
+	return &sysMem{
+		Total:     memory.TotalMemory(),
+		Available: memory.FreeMemory(),
+	}, nil
+}
 
 var BaseTransport = &http.Transport{
 	MaxIdleConns:        200,              // Max idle connections across all hosts
