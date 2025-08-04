@@ -351,7 +351,7 @@ func main() {
 		}
 	}()
 
-	backupManager := backup.NewManager(mainCtx, 512, utils.MAX_CONCURRENT_CLIENTS)
+	backupManager := backup.NewManager(mainCtx, 512)
 
 	go func() {
 		for {

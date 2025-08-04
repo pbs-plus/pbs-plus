@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/arpc/shared"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/xtaci/smux"
 )
 
@@ -104,8 +104,8 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 func defaultSmuxConfig() *smux.Config {
 	defaults := smux.DefaultConfig()
 	defaults.Version = 2
-	defaults.MaxReceiveBuffer = shared.MaxReceiveBuffer
-	defaults.MaxStreamBuffer = shared.MaxStreamBuffer
+	defaults.MaxReceiveBuffer = utils.MaxReceiveBuffer
+	defaults.MaxStreamBuffer = utils.MaxStreamBuffer
 
 	return defaults
 }

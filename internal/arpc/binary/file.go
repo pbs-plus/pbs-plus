@@ -6,13 +6,13 @@ import (
 	"io"
 	"sync"
 
-	"github.com/pbs-plus/pbs-plus/internal/arpc/shared"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/xtaci/smux"
 )
 
 var bufferPool = &sync.Pool{
 	New: func() interface{} {
-		return make([]byte, shared.MaxStreamBuffer)
+		return make([]byte, utils.MaxStreamBuffer)
 	},
 }
 
@@ -35,7 +35,7 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	}
 
 	chunkBuf := bufferPool.Get().([]byte)
-	chunkBuf = chunkBuf[:shared.MaxStreamBuffer]
+	chunkBuf = chunkBuf[:utils.MaxStreamBuffer]
 	defer bufferPool.Put(chunkBuf)
 
 	totalSent := 0
