@@ -106,6 +106,7 @@ func defaultSmuxConfig() *smux.Config {
 	defaults.Version = 2
 	defaults.MaxReceiveBuffer = utils.MaxReceiveBuffer
 	defaults.MaxStreamBuffer = utils.MaxStreamBuffer
+	defaults.MaxFrameSize = 65535
 
 	return defaults
 }
