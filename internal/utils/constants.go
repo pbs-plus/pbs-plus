@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const MAX_CONCURRENT_CLIENTS = 64
+
 var BaseTransport = &http.Transport{
 	MaxIdleConns:        200,              // Max idle connections across all hosts
 	MaxIdleConnsPerHost: 20,               // Max idle connections per host

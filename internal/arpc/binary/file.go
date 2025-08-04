@@ -6,49 +6,14 @@ import (
 	"io"
 	"sync"
 
+	"github.com/pbs-plus/pbs-plus/internal/arpc/shared"
 	"github.com/xtaci/smux"
 )
 
-type BufferPool struct {
-	Size int
-	Pool *sync.Pool
-}
-
-var bufferPools = []BufferPool{
-	{
-		Size: 4096,
-		Pool: &sync.Pool{
-			New: func() interface{} {
-				return make([]byte, 4096)
-			},
-		},
+var bufferPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, shared.MaxStreamBuffer)
 	},
-	{
-		Size: 16384,
-		Pool: &sync.Pool{
-			New: func() interface{} {
-				return make([]byte, 16384)
-			},
-		},
-	},
-	{
-		Size: 32768,
-		Pool: &sync.Pool{
-			New: func() interface{} {
-				return make([]byte, 32768)
-			},
-		},
-	},
-}
-
-func selectBufferPool(totalLength int) (pool *sync.Pool, poolSize int) {
-	for _, bp := range bufferPools {
-		if totalLength <= bp.Size {
-			return bp.Pool, bp.Size
-		}
-	}
-	last := bufferPools[len(bufferPools)-1]
-	return last.Pool, last.Size
 }
 
 func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
@@ -69,10 +34,9 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 		return nil
 	}
 
-	pool, poolSize := selectBufferPool(length)
-	chunkBuf := pool.Get().([]byte)
-	chunkBuf = chunkBuf[:poolSize]
-	defer pool.Put(chunkBuf)
+	chunkBuf := bufferPool.Get().([]byte)
+	chunkBuf = chunkBuf[:shared.MaxStreamBuffer]
+	defer bufferPool.Put(chunkBuf)
 
 	totalSent := 0
 
