@@ -3,7 +3,7 @@ module github.com/pbs-plus/pbs-plus
 go 1.24.0
 
 require (
-	github.com/KimMachineGun/automemlimit v0.7.2
+	github.com/KimMachineGun/automemlimit v0.7.4
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/billgraziano/dpapi v0.5.0
 	github.com/containers/winquit v1.1.0
