@@ -31,7 +31,7 @@ func init() {
 		ratio /= 2
 	}
 
-	MaxConcurrentClients = MaxReceiveBuffer / MaxStreamBuffer
+	MaxConcurrentClients = max(MaxReceiveBuffer/MaxStreamBuffer, 128)
 
 	log.Printf("initialized aRPC buffer configurations with MaxReceiveBuffer: %d, MaxStreamBuffer: %d, MaxConcurrentClients: %d", MaxReceiveBuffer, MaxStreamBuffer, MaxConcurrentClients)
 }
