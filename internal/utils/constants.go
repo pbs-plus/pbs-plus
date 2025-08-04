@@ -10,7 +10,7 @@ import (
 	"github.com/pbnjay/memory"
 )
 
-const MaxStreamBuffer = 8 * 1024 * 1024
+const MaxStreamBuffer = 4 * 1024 * 1024
 
 var MaxConcurrentClients = 64
 var MaxReceiveBuffer = MaxStreamBuffer * MaxConcurrentClients
