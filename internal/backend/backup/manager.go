@@ -12,6 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
@@ -31,11 +32,7 @@ type Manager struct {
 	semaphore         chan struct{}
 }
 
-func NewManager(ctx context.Context, size int, maxConcurrent int) *Manager {
-	if maxConcurrent <= 0 {
-		maxConcurrent = 1 // Ensure at least one job can run
-	}
-
+func NewManager(ctx context.Context, size int) *Manager {
 	newCtx, cancel := context.WithCancel(ctx)
 	jq := &Manager{
 		ctx:               newCtx,
@@ -45,8 +42,8 @@ func NewManager(ctx context.Context, size int, maxConcurrent int) *Manager {
 		locks:             xsync.NewMapOf[string, *sync.Mutex](),
 		jobCancels:        xsync.NewMapOf[string, context.CancelFunc](),
 		cancelledJobs:     xsync.NewMapOf[string, struct{}](),
-		maxConcurrentJobs: maxConcurrent,
-		semaphore:         make(chan struct{}, maxConcurrent),
+		maxConcurrentJobs: utils.MaxConcurrentClients,
+		semaphore:         make(chan struct{}, utils.MaxConcurrentClients),
 	}
 
 	go jq.worker()
