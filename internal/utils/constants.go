@@ -5,8 +5,9 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"runtime"
 	"time"
+
+	"github.com/pbnjay/memory"
 )
 
 const MaxStreamBuffer = 8 * 1024 * 1024
@@ -43,15 +44,9 @@ type sysMem struct {
 }
 
 func getSysMem() (*sysMem, error) {
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-
-	estimated := memStats.Sys * 4 // Conservative estimate
-
 	return &sysMem{
-		Total:     estimated,
-		Available: estimated / 2, // Very conservative
-		Free:      estimated / 4,
+		Total:     memory.TotalMemory(),
+		Available: memory.FreeMemory(),
 	}, nil
 }
 
