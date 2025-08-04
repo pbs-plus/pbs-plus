@@ -27,9 +27,8 @@ func init() {
 	smuxMemoryBudget := availableForApp - reservedMemory
 
 	// Calculate per-stream buffer size
-	// Ensure each stream gets at least 1MB, but scale with available memory
-	minStreamBuffer := 1 * 1024 * 1024  // 1MB minimum
-	maxStreamBuffer := 16 * 1024 * 1024 // 16MB maximum
+	minStreamBuffer := 128 * 1024      // 128KB
+	maxStreamBuffer := 1 * 1024 * 1024 // 1MB
 
 	perStreamBuffer := int(smuxMemoryBudget / uint64(utils.MAX_CONCURRENT_CLIENTS))
 	if perStreamBuffer < minStreamBuffer {
