@@ -40,7 +40,6 @@ func init() {
 type sysMem struct {
 	Total     uint64 // Total system memory in bytes
 	Available uint64 // Available memory in bytes
-	Free      uint64 // Free memory in bytes
 }
 
 func getSysMem() (*sysMem, error) {
