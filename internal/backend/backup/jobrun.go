@@ -145,13 +145,19 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 
 	var agentMount *mount.AgentMount
 
-	postScriptExecute := func() {
+	postScriptExecute := func(success bool) {
 		if op.job.PostScript != "" {
 			op.queueTask.UpdateDescription("running post-backup script")
 
 			envVars, err := utils.StructToEnvVars(op.job)
 			if err != nil {
 				envVars = []string{}
+			}
+
+			if success {
+				envVars = append(envVars, "PBS_PLUS__JOB_SUCCESS=true")
+			} else {
+				envVars = append(envVars, "PBS_PLUS__JOB_SUCCESS=false")
 			}
 
 			scriptOut, _, err := utils.RunShellScript(ctx, op.job.PostScript, envVars)
@@ -177,7 +183,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			_ = op.logger.Close()
 		}
 
-		postScriptExecute()
+		postScriptExecute(false)
 		close(errorMonitorDone)
 	}
 
@@ -440,7 +446,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			agentMount.CloseMount()
 		}
 
-		postScriptExecute()
+		postScriptExecute(true)
 	}()
 
 	return nil
