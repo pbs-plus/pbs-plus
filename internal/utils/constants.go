@@ -10,6 +10,11 @@ import (
 	"github.com/pbnjay/memory"
 )
 
+<<<<<<< Updated upstream
+=======
+<<<<<<< Updated upstream
+=======
+>>>>>>> Stashed changes
 const MaxStreamBuffer = 8 * 1024 * 1024
 
 var MaxConcurrentClients = 64
@@ -40,7 +45,10 @@ func init() {
 type sysMem struct {
 	Total     uint64 // Total system memory in bytes
 	Available uint64 // Available memory in bytes
+<<<<<<< Updated upstream
 	Free      uint64 // Free memory in bytes
+=======
+>>>>>>> Stashed changes
 }
 
 func getSysMem() (*sysMem, error) {
@@ -50,6 +58,10 @@ func getSysMem() (*sysMem, error) {
 	}, nil
 }
 
+<<<<<<< Updated upstream
+=======
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
 var BaseTransport = &http.Transport{
 	MaxIdleConns:        200,              // Max idle connections across all hosts
 	MaxIdleConnsPerHost: 20,               // Max idle connections per host
