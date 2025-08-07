@@ -393,7 +393,9 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 
 	// Clamp length if the requested region goes beyond EOF.
-	if payload.Offset+int64(payload.Length) > fh.fileSize {
+	if payload.Offset >= fh.fileSize {
+		payload.Length = 0
+	} else if payload.Offset+int64(payload.Length) > fh.fileSize {
 		payload.Length = int(fh.fileSize - payload.Offset)
 	}
 
