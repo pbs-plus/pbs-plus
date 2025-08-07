@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"net/http"
 	_ "net/http/pprof"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lesismal/nbio"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/xtaci/smux"
 )
@@ -713,4 +715,47 @@ func BenchmarkSessionCall(b *testing.B) {
 		wg.Wait()
 	}
 	b.StopTimer() // Stop the timer after the benchmark is complete.
+}
+
+func TestConnectToServer_NBIO(t *testing.T) {
+	eng := nbio.NewEngine(nbio.Config{
+		Network: "tcp",
+		Addrs:   []string{":0"},
+	})
+	eng.OnData(func(c *nbio.Conn, data []byte) {
+		// minimal HTTP 101 upgrade handshake
+		if string(data) == "GET /plus/arpc HTTP/1.1\r\n\r\n" {
+			c.Write([]byte("HTTP/1.1 101 Switching Protocols\r\n\r\n"))
+			return
+		}
+	})
+	if err := eng.Start(); err != nil {
+		t.Fatalf("failed to start engine: %v", err)
+	}
+	defer eng.Stop()
+
+	addr := eng.Addrs[0]
+
+	sess, err := ConnectToServer(
+		context.Background(),
+		false,
+		addr,
+		http.Header{},
+		nil, // no TLS
+	)
+	if err != nil {
+		t.Fatalf("ConnectToServer failed: %v", err)
+	}
+	defer sess.Close()
+
+	router := NewRouter()
+	router.Handle("ping", func(req Request) (Response, error) {
+		return Response{Status: 200}, nil
+	})
+	sess.SetRouter(router)
+
+	resp, err := sess.CallWithTimeout(2*time.Second, "ping", nil)
+	if err != nil || resp.Status != 200 {
+		t.Fatalf("unexpected response: %+v, err=%v", resp, err)
+	}
 }
