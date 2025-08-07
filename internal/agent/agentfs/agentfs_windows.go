@@ -377,9 +377,6 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	fh.Lock()
-	defer fh.Unlock()
-
 	// If the requested offset is at or beyond EOF, stream nothing.
 	if payload.Offset >= fh.fileSize {
 		emptyReader := bytes.NewReader([]byte{})
