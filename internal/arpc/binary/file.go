@@ -16,7 +16,7 @@ var bufferPool = &sync.Pool{
 	},
 }
 
-func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
+func OldSendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	if stream == nil {
 		return fmt.Errorf("stream is nil")
 	}
@@ -84,7 +84,7 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	return nil
 }
 
-func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
+func OldReceiveData(stream *smux.Stream) ([]byte, int, error) {
 	var totalLength uint64
 	if err := binary.Read(stream, binary.LittleEndian, &totalLength); err != nil {
 		// Check for EOF specifically, might indicate clean closure before data
