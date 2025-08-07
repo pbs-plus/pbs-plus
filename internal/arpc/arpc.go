@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lesismal/nbio"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/xtaci/smux"
 )
@@ -137,7 +138,18 @@ func (s *Session) Serve() error {
 
 func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
 	dialFunc := func() (net.Conn, error) {
-		return tls.Dial("tcp", serverAddr, tlsConfig)
+		raw, err := nbio.Dial("tcp", serverAddr)
+		if err != nil {
+			return nil, err
+		}
+
+		if _, err := getEngine().AddConn(raw); err != nil {
+			_ = raw.Close()
+			return nil, err
+		}
+
+		tlsConn := tls.Client(raw, tlsConfig)
+		return tlsConn, nil
 	}
 
 	upgradeFunc := func(conn net.Conn) (*Session, error) {

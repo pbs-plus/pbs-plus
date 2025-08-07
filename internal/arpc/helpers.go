@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/lesismal/nbio"
 	"github.com/xtaci/smux"
 )
 
@@ -17,22 +18,32 @@ func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, 
 		return nil, fmt.Errorf("response writer does not support hijacking")
 	}
 
-	conn, rw, err := hijacker.Hijack()
+	stdConn, rw, err := hijacker.Hijack()
 	if err != nil {
 		return nil, err
 	}
 
 	_, err = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\n\r\n")
 	if err != nil {
-		conn.Close()
+		stdConn.Close()
 		return nil, err
 	}
 	if err = rw.Flush(); err != nil {
-		conn.Close()
+		stdConn.Close()
 		return nil, err
 	}
 
-	return mgr.GetOrCreateSession(hostname, version, conn)
+	n, err := nbio.NBConn(stdConn)
+	if err != nil {
+		stdConn.Close()
+		return nil, err
+	}
+	if _, err = getEngine().AddConn(n); err != nil {
+		n.Close()
+		return nil, err
+	}
+
+	return mgr.GetOrCreateSession(hostname, version, n)
 }
 
 // upgradeHTTPClient helps a client upgrade an HTTP connection.
@@ -41,11 +52,9 @@ func upgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Hea
 		fmt.Sprintf("GET %s HTTP/1.1", requestPath),
 		fmt.Sprintf("Host: %s", host),
 	}
-	if headers != nil {
-		for key, values := range headers {
-			for _, value := range values {
-				reqLines = append(reqLines, fmt.Sprintf("%s: %s", key, value))
-			}
+	for key, values := range headers {
+		for _, value := range values {
+			reqLines = append(reqLines, fmt.Sprintf("%s: %s", key, value))
 		}
 	}
 	reqLines = append(reqLines,
