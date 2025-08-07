@@ -455,19 +455,15 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		}
 	}
 
-	lowOffset := int32(payload.Offset & 0xFFFFFFFF)
-	highOffset := int32(payload.Offset >> 32)
-	_, err := windows.SetFilePointer(fh.handle, lowOffset, &highOffset, windows.FILE_BEGIN)
-	if err != nil {
-		return arpc.Response{}, mapWinError(err, "handleReadAt Seek (sync fallback)")
-	}
-
 	buffer := make([]byte, payload.Length)
 	var bytesRead uint32
+	overlapped := new(windows.Overlapped)
+	overlapped.Offset = uint32(payload.Offset & 0xFFFFFFFF)
+	overlapped.OffsetHigh = uint32(payload.Offset >> 32)
 
-	err = windows.ReadFile(fh.handle, buffer, &bytesRead, nil)
-	if err != nil {
-		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile (sync fallback)")
+	err := windows.ReadFile(fh.handle, buffer, &bytesRead, overlapped)
+	if err != nil && err != io.EOF {
+		return arpc.Response{}, fmt.Errorf("handleReadAt ReadFile (OVERLAPPED): %w", err)
 	}
 
 	reader := bytes.NewReader(buffer[:bytesRead])
