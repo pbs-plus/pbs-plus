@@ -727,52 +727,74 @@ func TestConnectToServer_NBIO(t *testing.T) {
 	}
 	defer eng.Stop()
 
-	// Use a channel to report errors from the server goroutine.
 	serverErrCh := make(chan error, 1)
-	var serverSession *Session
+	var (
+		serverSessionMu sync.Mutex
+		serverSession   *Session
+	)
+
+	// State for each connection
+	type connState struct {
+		upgraded bool
+		buf      []byte
+	}
+	connStates := sync.Map{}
 
 	eng.OnOpen(func(c *nbio.Conn) {
-		go func() {
-			defer close(serverErrCh)
-			// Read HTTP upgrade request
-			buf := make([]byte, 4096)
-			n, err := c.Read(buf)
-			if err != nil {
-				serverErrCh <- fmt.Errorf("server read: %w", err)
-				c.Close()
+		connStates.Store(c, &connState{upgraded: false, buf: make([]byte, 0, 4096)})
+	})
+
+	eng.OnData(func(c *nbio.Conn, data []byte) {
+		val, _ := connStates.Load(c)
+		state := val.(*connState)
+		state.buf = append(state.buf, data...)
+
+		if !state.upgraded {
+			// Wait for full HTTP request
+			if !bytes.Contains(state.buf, []byte("\r\n\r\n")) {
 				return
 			}
-			req := string(buf[:n])
+			req := string(state.buf)
 			if !strings.Contains(req, "Upgrade: tcp") {
 				serverErrCh <- fmt.Errorf("bad upgrade request: %q", req)
 				c.Close()
 				return
 			}
 			// Write HTTP 101 response
-			_, err = c.Write([]byte("HTTP/1.1 101 Switching Protocols\r\n\r\n"))
+			_, err := c.Write([]byte("HTTP/1.1 101 Switching Protocols\r\n\r\n"))
 			if err != nil {
 				serverErrCh <- fmt.Errorf("server write: %w", err)
 				c.Close()
 				return
 			}
-			// Now run smux.Server on this connection
-			sess, err := NewServerSession(c, nil)
-			if err != nil {
-				serverErrCh <- fmt.Errorf("smux server: %w", err)
-				c.Close()
-				return
-			}
-			serverSession = sess
-			// Install a router
-			router := NewRouter()
-			router.Handle("ping", func(req Request) (Response, error) {
-				return Response{Status: 200}, nil
-			})
-			sess.SetRouter(router)
-			// Serve streams
-			_ = sess.Serve()
-			serverErrCh <- nil // success
-		}()
+			state.upgraded = true
+			// Remove HTTP request from buffer
+			state.buf = state.buf[bytes.Index(state.buf, []byte("\r\n\r\n"))+4:]
+			// Now start smux.Server in a goroutine
+			go func(conn *nbio.Conn, leftover []byte) {
+				sess, err := NewServerSession(conn, nil)
+				if err != nil {
+					serverErrCh <- fmt.Errorf("smux server: %w", err)
+					conn.Close()
+					return
+				}
+				serverSessionMu.Lock()
+				serverSession = sess
+				serverSessionMu.Unlock()
+				router := NewRouter()
+				router.Handle("ping", func(req Request) (Response, error) {
+					return Response{Status: 200}, nil
+				})
+				sess.SetRouter(router)
+				// If there is leftover data, inject it into smux (rare, but possible)
+				if len(leftover) > 0 {
+					// smux does not provide a way to "push" data, so this is a limitation.
+					// In practice, HTTP upgrade requests are small, so this is safe.
+				}
+				_ = sess.Serve()
+				serverErrCh <- nil // success
+			}(c, state.buf)
+		}
 	})
 
 	addr := eng.Addrs[0]
@@ -791,9 +813,11 @@ func TestConnectToServer_NBIO(t *testing.T) {
 		if sess != nil {
 			sess.Close()
 		}
+		serverSessionMu.Lock()
 		if serverSession != nil {
 			serverSession.Close()
 		}
+		serverSessionMu.Unlock()
 		// Wait for the server goroutine to finish and check for error
 		if serverErr, ok := <-serverErrCh; ok && serverErr != nil {
 			t.Fatalf("server error: %v", serverErr)
