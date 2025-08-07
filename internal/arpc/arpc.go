@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,10 +39,16 @@ type Session struct {
 	cancelFunc context.CancelFunc
 
 	version string
+
+	// Worker pool for stream processing
+	streamChan  chan *smux.Stream
+	workerCount int
+	workersWg   sync.WaitGroup
+	done        chan struct{}
 }
 
 func (s *Session) SetRouter(router Router) {
-	s.router.Store(&router) // Store a pointer to the value
+	s.router.Store(&router)
 }
 
 func (s *Session) GetRouter() *Router {
@@ -50,6 +57,23 @@ func (s *Session) GetRouter() *Router {
 
 func (s *Session) GetVersion() string {
 	return s.version
+}
+
+// calculateWorkerCount determines optimal number of workers based on CPU count
+func calculateWorkerCount() int {
+	cpuCount := runtime.NumCPU()
+
+	// Scale based on CPU count with reasonable bounds
+	switch {
+	case cpuCount <= 2:
+		return 2 // Minimum 2 workers for responsiveness
+	case cpuCount <= 4:
+		return cpuCount
+	case cpuCount <= 8:
+		return cpuCount + 1 // Slight oversubscription for I/O bound work
+	default:
+		return cpuCount + 2 // More oversubscription for high-core systems
+	}
 }
 
 // NewServerSession creates a new Session for a server connection.
@@ -64,14 +88,22 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	workerCount := calculateWorkerCount()
+
 	session := &Session{
 		reconnectConfig: ReconnectConfig{},
-		reconnectChan:   make(chan struct{}, 1), // Buffer of 1 to prevent blocking
+		reconnectChan:   make(chan struct{}, 1),
 		ctx:             ctx,
 		cancelFunc:      cancel,
+		streamChan:      make(chan *smux.Stream, workerCount*10), // Buffer based on worker count
+		workerCount:     workerCount,
+		done:            make(chan struct{}),
 	}
 	session.muxSess.Store(s)
 	session.state.Store(int32(StateConnected))
+
+	// Start worker pool
+	session.startWorkerPool()
 
 	return session, nil
 }
@@ -88,16 +120,68 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	workerCount := calculateWorkerCount()
+
 	session := &Session{
 		reconnectConfig: ReconnectConfig{},
-		reconnectChan:   make(chan struct{}, 1), // Buffer of 1 to prevent blocking
+		reconnectChan:   make(chan struct{}, 1),
 		ctx:             ctx,
 		cancelFunc:      cancel,
+		streamChan:      make(chan *smux.Stream, workerCount*10), // Buffer based on worker count
+		workerCount:     workerCount,
+		done:            make(chan struct{}),
 	}
 	session.muxSess.Store(s)
 	session.state.Store(int32(StateConnected))
 
+	// Start worker pool
+	session.startWorkerPool()
+
 	return session, nil
+}
+
+// startWorkerPool starts the configured number of worker goroutines
+func (s *Session) startWorkerPool() {
+	s.workersWg.Add(s.workerCount)
+
+	for i := 0; i < s.workerCount; i++ {
+		go s.streamWorker()
+	}
+
+	// Start a goroutine to wait for all workers to finish
+	go func() {
+		s.workersWg.Wait()
+		close(s.done)
+	}()
+}
+
+// streamWorker is a worker goroutine that processes streams
+func (s *Session) streamWorker() {
+	defer s.workersWg.Done()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case stream := <-s.streamChan:
+			if stream == nil {
+				return // Channel closed
+			}
+			s.handleStream(stream)
+		}
+	}
+}
+
+// handleStream processes a single stream
+func (s *Session) handleStream(stream *smux.Stream) {
+	router := s.GetRouter()
+	if router == nil {
+		stream.Close()
+		return
+	}
+
+	// Use the existing router logic
+	router.ServeStream(stream)
 }
 
 // defaultSmuxConfig returns a default smux configuration
@@ -111,7 +195,7 @@ func defaultSmuxConfig() *smux.Config {
 	return defaults
 }
 
-// If a stream accept fails and auto‑reconnect is enabled, it attempts to reconnect.
+// Serve distributes streams across the worker pool
 func (s *Session) Serve() error {
 	for {
 		curSession := s.muxSess.Load()
@@ -128,11 +212,33 @@ func (s *Session) Serve() error {
 			}
 			return err
 		}
-		router := s.GetRouter()
-		if router != nil {
-			go router.ServeStream(stream)
+
+		// Distribute stream to worker pool
+		select {
+		case s.streamChan <- stream:
+			// Stream queued successfully
+		case <-s.ctx.Done():
+			stream.Close()
+			return s.ctx.Err()
+		default:
+			// Channel full - block until space is available
+			select {
+			case s.streamChan <- stream:
+			case <-s.ctx.Done():
+				stream.Close()
+				return s.ctx.Err()
+			}
 		}
 	}
+}
+
+// GetWorkerCount returns the current number of workers (useful for monitoring)
+func (s *Session) GetWorkerCount() int {
+	return s.workerCount
+}
+
+func (s *Session) GetStreamQueueLength() int {
+	return len(s.streamChan)
 }
 
 func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
@@ -147,13 +253,12 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 	var session *Session
 	var err error
 	if autoReconnect {
-		// Use DialWithBackoff for the initial connection
 		session, err = dialWithBackoff(
 			ctx,
 			dialFunc,
 			upgradeFunc,
-			100*time.Millisecond, // Initial backoff
-			30*time.Second,       // Max backoff
+			100*time.Millisecond,
+			30*time.Second,
 		)
 	} else {
 		conn, err := dialWithProbe(ctx, dialFunc)
@@ -171,7 +276,6 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 	}
 
 	if autoReconnect {
-		// Configure auto-reconnect with the same parameters
 		session.EnableAutoReconnect(ReconnectConfig{
 			AutoReconnect:    true,
 			DialFunc:         dialFunc,
@@ -187,9 +291,15 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 	return session, nil
 }
 
-// Close closes the session and stops the reconnection monitor
+// Close closes the session and stops all workers
 func (s *Session) Close() error {
-	s.cancelFunc() // Stop the connection monitor
+	s.cancelFunc() // Signal shutdown to all workers
+
+	// Close the stream channel to stop workers
+	close(s.streamChan)
+
+	// Wait for all workers to finish
+	<-s.done
 
 	sess := s.muxSess.Load()
 	if sess != nil {
