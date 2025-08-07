@@ -88,11 +88,6 @@ func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
 		total += int(sizes[i])
 	}
 	buf := make([]byte, total)
-	if cap(buf) < total {
-		buf = make([]byte, total)
-	} else {
-		buf = buf[:total]
-	}
 	offset := 0
 	for i := 0; i < int(N); i++ {
 		n, err := io.ReadFull(stream, buf[offset:offset+int(sizes[i])])

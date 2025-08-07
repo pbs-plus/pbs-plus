@@ -360,13 +360,15 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	fh.Lock()
-	defer fh.Unlock()
+	buf := make([]byte, payload.Length)
+	n, err := fh.file.ReadAt(buf, payload.Offset)
+	if err != nil && err != io.EOF {
+		return arpc.Response{}, err
+	}
 
-	reader := io.NewSectionReader(fh.file, payload.Offset, int64(payload.Length))
-
+	reader := bytes.NewReader(buf[:n])
 	streamCallback := func(stream *smux.Stream) {
-		err := binarystream.SendDataFromReader(reader, payload.Length, stream)
+		err := binarystream.SendDataFromReader(reader, n, stream)
 		if err != nil {
 			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 		}
