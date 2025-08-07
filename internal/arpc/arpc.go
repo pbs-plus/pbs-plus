@@ -66,13 +66,13 @@ func calculateWorkerCount() int {
 	// Scale based on CPU count with reasonable bounds
 	switch {
 	case cpuCount <= 2:
-		return 4
+		return 2 // Minimum 2 workers for responsiveness
 	case cpuCount <= 4:
-		return cpuCount * 2
+		return cpuCount
 	case cpuCount <= 8:
-		return cpuCount*2 + 2
+		return cpuCount + 1 // Slight oversubscription for I/O bound work
 	default:
-		return cpuCount*2 + 4
+		return cpuCount + 2 // More oversubscription for high-core systems
 	}
 }
 
@@ -232,7 +232,6 @@ func (s *Session) Serve() error {
 	}
 }
 
-// GetWorkerCount returns the current number of workers (useful for monitoring)
 func (s *Session) GetWorkerCount() int {
 	return s.workerCount
 }
