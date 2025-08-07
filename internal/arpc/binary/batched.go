@@ -87,7 +87,7 @@ func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
 		}
 		total += int(sizes[i])
 	}
-	buf := bufferPool.Get().([]byte)
+	buf := make([]byte, total)
 	if cap(buf) < total {
 		buf = make([]byte, total)
 	} else {
@@ -102,8 +102,5 @@ func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
 		offset += n
 	}
 
-	if cap(buf) == utils.MaxStreamBuffer {
-		bufferPool.Put(buf)
-	}
 	return buf, offset, nil
 }
