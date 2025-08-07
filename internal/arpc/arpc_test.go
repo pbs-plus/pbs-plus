@@ -727,39 +727,38 @@ func TestConnectToServer_NBIO(t *testing.T) {
 	}
 	defer eng.Stop()
 
-	var (
-		serverSession *Session
-		acceptErr     error
-		readyCh       = make(chan struct{})
-	)
+	// Use a channel to report errors from the server goroutine.
+	serverErrCh := make(chan error, 1)
+	var serverSession *Session
+
 	eng.OnOpen(func(c *nbio.Conn) {
 		go func() {
-			defer close(readyCh)
+			defer close(serverErrCh)
 			// Read HTTP upgrade request
 			buf := make([]byte, 4096)
 			n, err := c.Read(buf)
 			if err != nil {
-				acceptErr = fmt.Errorf("server read: %w", err)
+				serverErrCh <- fmt.Errorf("server read: %w", err)
 				c.Close()
 				return
 			}
 			req := string(buf[:n])
 			if !strings.Contains(req, "Upgrade: tcp") {
-				acceptErr = fmt.Errorf("bad upgrade request: %q", req)
+				serverErrCh <- fmt.Errorf("bad upgrade request: %q", req)
 				c.Close()
 				return
 			}
 			// Write HTTP 101 response
 			_, err = c.Write([]byte("HTTP/1.1 101 Switching Protocols\r\n\r\n"))
 			if err != nil {
-				acceptErr = fmt.Errorf("server write: %w", err)
+				serverErrCh <- fmt.Errorf("server write: %w", err)
 				c.Close()
 				return
 			}
 			// Now run smux.Server on this connection
 			sess, err := NewServerSession(c, nil)
 			if err != nil {
-				acceptErr = fmt.Errorf("smux server: %w", err)
+				serverErrCh <- fmt.Errorf("smux server: %w", err)
 				c.Close()
 				return
 			}
@@ -772,6 +771,7 @@ func TestConnectToServer_NBIO(t *testing.T) {
 			sess.SetRouter(router)
 			// Serve streams
 			_ = sess.Serve()
+			serverErrCh <- nil // success
 		}()
 	})
 
@@ -791,16 +791,15 @@ func TestConnectToServer_NBIO(t *testing.T) {
 		if sess != nil {
 			sess.Close()
 		}
-		<-readyCh // wait for server goroutine to finish
 		if serverSession != nil {
 			serverSession.Close()
 		}
-		if acceptErr != nil {
-			t.Fatalf("server error: %v", acceptErr)
+		// Wait for the server goroutine to finish and check for error
+		if serverErr, ok := <-serverErrCh; ok && serverErr != nil {
+			t.Fatalf("server error: %v", serverErr)
 		}
 	}()
 
-	// 4. Call "ping" and expect a 200 response
 	resp, err := sess.CallWithTimeout(2*time.Second, "ping", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
