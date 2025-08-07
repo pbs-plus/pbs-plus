@@ -14,7 +14,6 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/hanwen/go-fuse/v2 v2.7.2
 	github.com/kardianos/service v1.2.2
-	github.com/lesismal/nbio v1.6.6
 	github.com/mxk/go-vss v1.2.0
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/pkg/errors v0.9.1
@@ -22,7 +21,6 @@ require (
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
-	github.com/xtaci/gaio v1.2.26
 	github.com/xtaci/smux v1.5.34
 	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/crypto v0.38.0
