@@ -722,17 +722,58 @@ func TestConnectToServer_NBIO(t *testing.T) {
 		Network: "tcp",
 		Addrs:   []string{":0"},
 	})
-	eng.OnData(func(c *nbio.Conn, data []byte) {
-		// minimal HTTP 101 upgrade handshake
-		if string(data) == "GET /plus/arpc HTTP/1.1\r\n\r\n" {
-			c.Write([]byte("HTTP/1.1 101 Switching Protocols\r\n\r\n"))
-			return
-		}
-	})
 	if err := eng.Start(); err != nil {
 		t.Fatalf("failed to start engine: %v", err)
 	}
 	defer eng.Stop()
+
+	var (
+		serverSession *Session
+		acceptErr     error
+		readyCh       = make(chan struct{})
+	)
+	eng.OnOpen(func(c *nbio.Conn) {
+		go func() {
+			defer close(readyCh)
+			// Read HTTP upgrade request
+			buf := make([]byte, 4096)
+			n, err := c.Read(buf)
+			if err != nil {
+				acceptErr = fmt.Errorf("server read: %w", err)
+				c.Close()
+				return
+			}
+			req := string(buf[:n])
+			if !strings.Contains(req, "Upgrade: tcp") {
+				acceptErr = fmt.Errorf("bad upgrade request: %q", req)
+				c.Close()
+				return
+			}
+			// Write HTTP 101 response
+			_, err = c.Write([]byte("HTTP/1.1 101 Switching Protocols\r\n\r\n"))
+			if err != nil {
+				acceptErr = fmt.Errorf("server write: %w", err)
+				c.Close()
+				return
+			}
+			// Now run smux.Server on this connection
+			sess, err := NewServerSession(c, nil)
+			if err != nil {
+				acceptErr = fmt.Errorf("smux server: %w", err)
+				c.Close()
+				return
+			}
+			serverSession = sess
+			// Install a router
+			router := NewRouter()
+			router.Handle("ping", func(req Request) (Response, error) {
+				return Response{Status: 200}, nil
+			})
+			sess.SetRouter(router)
+			// Serve streams
+			_ = sess.Serve()
+		}()
+	})
 
 	addr := eng.Addrs[0]
 
@@ -746,16 +787,25 @@ func TestConnectToServer_NBIO(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConnectToServer failed: %v", err)
 	}
-	defer sess.Close()
+	defer func() {
+		if sess != nil {
+			sess.Close()
+		}
+		<-readyCh // wait for server goroutine to finish
+		if serverSession != nil {
+			serverSession.Close()
+		}
+		if acceptErr != nil {
+			t.Fatalf("server error: %v", acceptErr)
+		}
+	}()
 
-	router := NewRouter()
-	router.Handle("ping", func(req Request) (Response, error) {
-		return Response{Status: 200}, nil
-	})
-	sess.SetRouter(router)
-
+	// 4. Call "ping" and expect a 200 response
 	resp, err := sess.CallWithTimeout(2*time.Second, "ping", nil)
-	if err != nil || resp.Status != 200 {
-		t.Fatalf("unexpected response: %+v, err=%v", resp, err)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Status != 200 {
+		t.Fatalf("unexpected status: %d", resp.Status)
 	}
 }
