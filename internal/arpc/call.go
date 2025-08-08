@@ -148,11 +148,11 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 
 // CallBinary performs an RPC call for file I/O-style operations in which the server
 // first sends metadata about a binary transfer and then writes the payload directly.
-func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdata.Encodable) ([]byte, int, error) {
+func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdata.Encodable, dst []byte) (int, error) {
 	curSession := s.muxSess.Load()
 	stream, err := openStreamWithReconnect(s, curSession)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to open stream: %w", err)
+		return 0, fmt.Errorf("failed to open stream: %w", err)
 	}
 	defer stream.Close()
 
@@ -166,7 +166,7 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 	if payload != nil {
 		payloadBytes, err = payload.Encode()
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to encode payload: %w", err)
+			return 0, fmt.Errorf("failed to encode payload: %w", err)
 		}
 	}
 
@@ -179,11 +179,11 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 	// Encode and send the request
 	reqBytes, err := req.Encode()
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to encode request: %w", err)
+		return 0, fmt.Errorf("failed to encode request: %w", err)
 	}
 
 	if _, err := stream.Write(reqBytes); err != nil {
-		return nil, 0, fmt.Errorf("failed to write request: %w", err)
+		return 0, fmt.Errorf("failed to write request: %w", err)
 	}
 
 	// Read the response
@@ -191,11 +191,11 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 	defer headerPool.Put(headerPrefix)
 
 	if _, err := io.ReadFull(stream, headerPrefix); err != nil {
-		return nil, 0, fmt.Errorf("failed to read header length prefix: %w", err)
+		return 0, fmt.Errorf("failed to read header length prefix: %w", err)
 	}
 	headerTotalLength := binary.LittleEndian.Uint32(headerPrefix)
 	if headerTotalLength < 4 {
-		return nil, 0, fmt.Errorf("invalid header length %d", headerTotalLength)
+		return 0, fmt.Errorf("invalid header length %d", headerTotalLength)
 	}
 
 	// Allocate header buffer.
@@ -205,23 +205,23 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 	copy(headerBuf, headerPrefix)
 	// Read the remainder of the header.
 	if _, err := io.ReadFull(stream, headerBuf[4:]); err != nil {
-		return nil, 0, fmt.Errorf("failed to read full header: %w", err)
+		return 0, fmt.Errorf("failed to read full header: %w", err)
 	}
 
 	// Decode the header.
 	var resp Response
 	if err := resp.Decode(headerBuf); err != nil {
-		return nil, 0, fmt.Errorf("failed to decode response: %w", err)
+		return 0, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	// Handle error responses
 	if resp.Status != 213 {
 		var serErr SerializableError
 		if err := serErr.Decode(resp.Data); err == nil {
-			return nil, 0, UnwrapError(serErr)
+			return 0, UnwrapError(serErr)
 		}
-		return nil, 0, fmt.Errorf("RPC error: status %d", resp.Status)
+		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
-	return binarystream.ReceiveData(stream)
+	return binarystream.ReceiveDataInto(stream, dst)
 }

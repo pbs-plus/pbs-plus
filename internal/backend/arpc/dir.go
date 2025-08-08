@@ -61,7 +61,8 @@ func (s *DirStream) HasNext() bool {
 
 	req := types.ReadDirReq{HandleID: s.handleId}
 
-	buf, bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req)
+	var buf []byte
+	bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, buf)
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			s.closed.Store(true)
