@@ -30,26 +30,22 @@ func (req *OpenFileReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	path, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
 	req.Path = path
-
 	flag, err := dec.ReadUint32()
 	if err != nil {
 		return err
 	}
 	req.Flag = int(flag)
-
 	perm, err := dec.ReadUint32()
 	if err != nil {
 		return err
 	}
 	req.Perm = int(perm)
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -71,14 +67,12 @@ func (req *StatReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	path, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
 	req.Path = path
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -100,14 +94,12 @@ func (req *ReadDirReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	handleId, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	req.HandleID = FileHandleId(handleId)
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -133,20 +125,17 @@ func (req *ReadReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	handleID, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	req.HandleID = FileHandleId(handleID)
-
 	length, err := dec.ReadUint32()
 	if err != nil {
 		return err
 	}
 	req.Length = int(length)
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -176,26 +165,22 @@ func (req *ReadAtReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	handleID, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	req.HandleID = FileHandleId(handleID)
-
 	offset, err := dec.ReadInt64()
 	if err != nil {
 		return err
 	}
 	req.Offset = offset
-
 	length, err := dec.ReadUint32()
 	if err != nil {
 		return err
 	}
 	req.Length = int(length)
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -217,14 +202,12 @@ func (req *CloseReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	handleID, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	req.HandleID = FileHandleId(handleID)
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -262,38 +245,32 @@ func (req *BackupReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	jobId, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
 	req.JobId = jobId
-
 	drive, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
 	req.Drive = drive
-
 	sourceMode, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
 	req.SourceMode = sourceMode
-
 	readMode, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
 	req.ReadMode = readMode
-
 	extras, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
 	req.Extras = extras
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -323,25 +300,21 @@ func (req *LseekReq) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	handleID, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	req.HandleID = FileHandleId(handleID)
-
 	offset, err := dec.ReadInt64()
 	if err != nil {
 		return err
 	}
 	req.Offset = offset
-
 	whence, err := dec.ReadUint32()
 	if err != nil {
 		return err
 	}
 	req.Whence = int(whence)
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }

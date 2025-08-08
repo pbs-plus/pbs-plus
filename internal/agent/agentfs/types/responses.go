@@ -25,14 +25,12 @@ func (resp *LseekResp) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	newOffset, err := dec.ReadInt64()
 	if err != nil {
 		return err
 	}
 	resp.NewOffset = newOffset
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -44,15 +42,10 @@ type WinACL struct {
 	Flags      uint8
 }
 
-func (acl *WinACL) Reset() {
-	acl.SID = ""
-	acl.AccessMask = 0
-	acl.Type = 0
-	acl.Flags = 0
-}
-
+// Encode encodes a single WinACL into a byte slice
 func (acl *WinACL) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(acl.SID) + 4 + 1 + 1)
+
 	if err := enc.WriteString(acl.SID); err != nil {
 		return nil, err
 	}
@@ -65,15 +58,16 @@ func (acl *WinACL) Encode() ([]byte, error) {
 	if err := enc.WriteUint8(acl.Flags); err != nil {
 		return nil, err
 	}
+
 	return enc.Bytes(), nil
 }
 
+// Decode decodes a byte slice into a single WinACL
 func (acl *WinACL) Decode(buf []byte) error {
 	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
 
 	sid, err := dec.ReadString()
 	if err != nil {
@@ -99,18 +93,22 @@ func (acl *WinACL) Decode(buf []byte) error {
 	}
 	acl.Flags = flags
 
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
 type WinACLArray []WinACL
 
+// Encode encodes an array of WinACLs into a byte slice
 func (acls *WinACLArray) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoder()
 
+	// Write the number of WinACLs
 	if err := enc.WriteUint32(uint32(len(*acls))); err != nil {
 		return nil, err
 	}
 
+	// Encode each WinACL and append it to the encoder
 	for _, acl := range *acls {
 		aclBytes, err := acl.Encode()
 		if err != nil {
@@ -124,39 +122,34 @@ func (acls *WinACLArray) Encode() ([]byte, error) {
 	return enc.Bytes(), nil
 }
 
+// Decode decodes a byte slice into an array of WinACLs
 func (acls *WinACLArray) Decode(buf []byte) error {
 	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
 
+	// Read the number of WinACLs
 	count, err := dec.ReadUint32()
 	if err != nil {
 		return err
 	}
 
-	// Reuse existing slice capacity if possible
-	if cap(*acls) >= int(count) {
-		*acls = (*acls)[:count]
-		// Reset existing entries
-		for i := range *acls {
-			(*acls)[i].Reset()
-		}
-	} else {
-		*acls = make([]WinACL, count)
-	}
-
+	// Decode each WinACL
+	*acls = make([]WinACL, count)
 	for i := uint32(0); i < count; i++ {
 		aclBytes, err := dec.ReadBytes()
 		if err != nil {
 			return err
 		}
-		if err := (*acls)[i].Decode(aclBytes); err != nil {
+		var acl WinACL
+		if err := acl.Decode(aclBytes); err != nil {
 			return err
 		}
+		(*acls)[i] = acl
 	}
 
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -166,14 +159,9 @@ type PosixACL struct {
 	Perms uint8
 }
 
-func (entry *PosixACL) Reset() {
-	entry.Tag = ""
-	entry.ID = 0
-	entry.Perms = 0
-}
-
 func (entry *PosixACL) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(entry.Tag) + 4 + 1)
+
 	if err := enc.WriteString(entry.Tag); err != nil {
 		return nil, err
 	}
@@ -183,15 +171,16 @@ func (entry *PosixACL) Encode() ([]byte, error) {
 	if err := enc.WriteByte(entry.Perms); err != nil {
 		return nil, err
 	}
+
 	return enc.Bytes(), nil
 }
 
+// Decode deserializes a byte slice into a PosixACL.
 func (entry *PosixACL) Decode(buf []byte) error {
 	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
 
 	tag, err := dec.ReadString()
 	if err != nil {
@@ -211,18 +200,22 @@ func (entry *PosixACL) Decode(buf []byte) error {
 	}
 	entry.Perms = perms
 
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
 type PosixACLArray []PosixACL
 
+// Encode encodes an array of WinACLs into a byte slice
 func (acls *PosixACLArray) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoder()
 
+	// Write the number of WinACLs
 	if err := enc.WriteUint32(uint32(len(*acls))); err != nil {
 		return nil, err
 	}
 
+	// Encode each WinACL and append it to the encoder
 	for _, acl := range *acls {
 		aclBytes, err := acl.Encode()
 		if err != nil {
@@ -236,39 +229,34 @@ func (acls *PosixACLArray) Encode() ([]byte, error) {
 	return enc.Bytes(), nil
 }
 
+// Decode decodes a byte slice into an array of WinACLs
 func (acls *PosixACLArray) Decode(buf []byte) error {
 	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
 
+	// Read the number of WinACLs
 	count, err := dec.ReadUint32()
 	if err != nil {
 		return err
 	}
 
-	// Reuse existing slice capacity if possible
-	if cap(*acls) >= int(count) {
-		*acls = (*acls)[:count]
-		// Reset existing entries
-		for i := range *acls {
-			(*acls)[i].Reset()
-		}
-	} else {
-		*acls = make([]PosixACL, count)
-	}
-
+	// Decode each WinACL
+	*acls = make([]PosixACL, count)
 	for i := uint32(0); i < count; i++ {
 		aclBytes, err := dec.ReadBytes()
 		if err != nil {
 			return err
 		}
-		if err := (*acls)[i].Decode(aclBytes); err != nil {
+		var acl PosixACL
+		if err := acl.Decode(aclBytes); err != nil {
 			return err
 		}
+		(*acls)[i] = acl
 	}
 
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -288,28 +276,6 @@ type AgentFileInfo struct {
 	Group          string
 	WinACLs        []WinACL
 	PosixACLs      []PosixACL
-}
-
-func (info *AgentFileInfo) Reset() {
-	info.Name = ""
-	info.Size = 0
-	info.Mode = 0
-	info.ModTime = time.Time{}
-	info.IsDir = false
-	info.Blocks = 0
-	info.CreationTime = 0
-	info.LastAccessTime = 0
-	info.LastWriteTime = 0
-	if info.FileAttributes != nil {
-		for k := range info.FileAttributes {
-			delete(info.FileAttributes, k)
-		}
-	}
-	info.Owner = ""
-	info.Group = ""
-	// Reset slices but keep capacity
-	info.WinACLs = info.WinACLs[:0]
-	info.PosixACLs = info.PosixACLs[:0]
 }
 
 func (info *AgentFileInfo) Encode() ([]byte, error) {
@@ -333,6 +299,7 @@ func (info *AgentFileInfo) Encode() ([]byte, error) {
 	if err := enc.WriteUint64(info.Blocks); err != nil {
 		return nil, err
 	}
+
 	if err := enc.WriteInt64(info.CreationTime); err != nil {
 		return nil, err
 	}
@@ -385,7 +352,6 @@ func (info *AgentFileInfo) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
 
 	name, err := dec.ReadString()
 	if err != nil {
@@ -467,7 +433,7 @@ func (info *AgentFileInfo) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	winAcls := WinACLArray(info.WinACLs)
+	var winAcls WinACLArray
 	if err := winAcls.Decode(winAclsBytes); err != nil {
 		return err
 	}
@@ -477,11 +443,13 @@ func (info *AgentFileInfo) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	posixAcls := PosixACLArray(info.PosixACLs)
+	var posixAcls PosixACLArray
 	if err := posixAcls.Decode(posixAclsBytes); err != nil {
 		return err
 	}
 	info.PosixACLs = posixAcls
+
+	arpcdata.ReleaseDecoder(dec)
 
 	return nil
 }
@@ -490,11 +458,6 @@ func (info *AgentFileInfo) Decode(buf []byte) error {
 type AgentDirEntry struct {
 	Name string
 	Mode uint32
-}
-
-func (entry *AgentDirEntry) Reset() {
-	entry.Name = ""
-	entry.Mode = 0
 }
 
 func (entry *AgentDirEntry) Encode() ([]byte, error) {
@@ -513,20 +476,17 @@ func (entry *AgentDirEntry) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	name, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
 	entry.Name = name
-
 	mode, err := dec.ReadUint32()
 	if err != nil {
 		return err
 	}
 	entry.Mode = mode
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -572,49 +532,41 @@ func (stat *StatFS) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	defer arpcdata.ReleaseDecoder(dec)
-
 	bsize, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	stat.Bsize = bsize
-
 	blocks, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	stat.Blocks = blocks
-
 	bfree, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	stat.Bfree = bfree
-
 	bavail, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	stat.Bavail = bavail
-
 	files, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	stat.Files = files
-
 	ffree, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	stat.Ffree = ffree
-
 	nameLen, err := dec.ReadUint64()
 	if err != nil {
 		return err
 	}
 	stat.NameLen = nameLen
-
+	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
