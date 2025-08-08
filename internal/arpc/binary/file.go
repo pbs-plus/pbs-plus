@@ -84,30 +84,38 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	return nil
 }
 
-func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
+func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 	var totalLength uint64
 	if err := binary.Read(stream, binary.LittleEndian, &totalLength); err != nil {
 		// Check for EOF specifically, might indicate clean closure before data
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			return nil, 0, fmt.Errorf(
+			return 0, fmt.Errorf(
 				"failed to read total length prefix (EOF/UnexpectedEOF): %w",
 				err,
 			)
 		}
-		return nil, 0, fmt.Errorf("failed to read total length prefix: %w", err)
+		return 0, fmt.Errorf("failed to read total length prefix: %w", err)
 	}
 
 	// Add a reasonable maximum length check to prevent OOM attacks
 	const maxLength = 1 << 30 // 1 GiB limit, adjust as needed
 	if totalLength > maxLength {
-		return nil, 0, fmt.Errorf(
+		return 0, fmt.Errorf(
 			"declared total length %d exceeds maximum allowed %d",
 			totalLength,
 			maxLength,
 		)
 	}
 
-	buffer := make([]byte, int(totalLength))
+	// Check if destination buffer is large enough
+	if int(totalLength) > len(dst) {
+		return 0, fmt.Errorf(
+			"destination buffer too small: need %d bytes, have %d",
+			totalLength,
+			len(dst),
+		)
+	}
+
 	totalRead := 0
 
 	for {
@@ -118,18 +126,18 @@ func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
 				// This case means totalLength=0 was sent, and then the stream closed before the sentinel(0)
 				// This might be acceptable depending on the sender logic, but indicates an incomplete transmission
 				// according to the current protocol (missing sentinel).
-				return buffer, totalRead, nil
+				return totalRead, nil
 			}
 			// If EOF happens *before* reading the expected amount, it's an error.
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				return buffer, totalRead, fmt.Errorf(
+				return totalRead, fmt.Errorf(
 					"failed to read chunk size (EOF/UnexpectedEOF before completion): expected %d, got %d: %w",
 					totalLength,
 					totalRead,
 					err,
 				)
 			}
-			return buffer, totalRead, fmt.Errorf("failed to read chunk size: %w", err)
+			return totalRead, fmt.Errorf("failed to read chunk size: %w", err)
 		}
 
 		if chunkSize == 0 {
@@ -145,7 +153,7 @@ func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
 			// Erroring out is safer as the stream state is inconsistent.
 			// Drain the specific chunk that overflows?
 			_, _ = io.CopyN(io.Discard, stream, int64(chunkLen))
-			return buffer, totalRead, fmt.Errorf(
+			return totalRead, fmt.Errorf(
 				"received chunk overflows declared total length: total %d, current %d, chunk %d",
 				totalLength,
 				totalRead,
@@ -153,19 +161,8 @@ func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
 			)
 		}
 
-		// Ensure buffer slice is correct (should be guaranteed by allocation/reslicing)
-		if expectedEnd > cap(buffer) {
-			// This should not happen if allocation logic is correct
-			return buffer, totalRead, fmt.Errorf(
-				"internal buffer error: required capacity %d, have %d",
-				expectedEnd,
-				cap(buffer),
-			)
-		}
-		// No need to reslice buffer here, as it was allocated/sliced to totalLength initially
-
-		n, err := io.ReadFull(stream, buffer[totalRead:expectedEnd])
-		// 'n' is implicitly added to totalRead outside the ReadFull call in this structure
+		// Read directly into the destination buffer
+		n, err := io.ReadFull(stream, dst[totalRead:expectedEnd])
 		totalRead += n // Keep track even if ReadFull returns an error partially
 		if err != nil {
 			// If ReadFull fails (e.g., EOF before chunk completion), report it
@@ -179,10 +176,9 @@ func ReceiveData(stream *smux.Stream) ([]byte, int, error) {
 			} else {
 				err = fmt.Errorf("failed to read chunk data: %w", err)
 			}
-			return buffer, totalRead, err // Return partially read buffer and error
+			return totalRead, err // Return bytes read and error
 		}
-		// totalRead is now expectedEnd after successful ReadFull
 	}
 
-	return buffer[:totalRead], totalRead, nil
+	return totalRead, nil
 }
