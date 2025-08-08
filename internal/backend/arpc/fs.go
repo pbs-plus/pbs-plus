@@ -290,7 +290,6 @@ func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 		fs:       fs,
 		path:     path,
 		handleId: handleId,
-		readBuf:  make([]byte, 1024*1024+128),
 	}, nil
 }
 

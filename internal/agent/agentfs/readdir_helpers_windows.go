@@ -2,7 +2,6 @@ package agentfs
 
 import (
 	"os"
-	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -134,11 +133,4 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 	}
 
 	return uint32(mode)
-}
-
-var bufPool = sync.Pool{
-	New: func() interface{} {
-		b := make([]byte, 1024*1024)
-		return &b
-	},
 }
