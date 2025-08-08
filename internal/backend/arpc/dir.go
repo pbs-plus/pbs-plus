@@ -90,9 +90,8 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	var entries types.ReadDirEntries
-
-	err = entries.Decode(readBuf[:bytesRead])
+	s.lastRespMu.Lock()
+	err = s.lastResp.Decode(readBuf[:bytesRead])
 	if err != nil {
 		syslog.L.Error(err).
 			WithField("path", s.path).
@@ -100,9 +99,6 @@ func (s *DirStream) HasNext() bool {
 			Write()
 		return false
 	}
-
-	s.lastRespMu.Lock()
-	s.lastResp = entries
 	atomic.StoreUint64(&s.curIdx, 0)
 	s.lastRespMu.Unlock()
 

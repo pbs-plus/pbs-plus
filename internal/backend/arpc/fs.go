@@ -290,6 +290,7 @@ func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 		fs:       fs,
 		path:     path,
 		handleId: handleId,
+		lastResp: types.ReadDirEntries{},
 	}, nil
 }
 
