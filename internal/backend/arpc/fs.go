@@ -286,16 +286,12 @@ func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 		return DirStream{}, syscall.ENOENT
 	}
 
-	stream := DirStream{
+	return DirStream{
 		fs:       fs,
 		path:     path,
 		handleId: handleId,
-		readBuf:  make([]byte, 1024*1024),
-	}
-
-	stream.initModeCache()
-
-	return stream, nil
+		readBuf:  make([]byte, 1024*1024+128),
+	}, nil
 }
 
 func (fs *ARPCFS) Root() string {
