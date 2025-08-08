@@ -44,7 +44,12 @@ func (s *AgentFSServer) abs(filename string) (string, error) {
 func (s *AgentFSServer) closeFileHandles() {
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
 		fh.Lock()
-		fh.file.Close()
+		if fh.file != nil {
+			fh.file.Close()
+		}
+		if fh.dirReader != nil {
+			fh.dirReader.Close()
+		}
 		fh.Unlock()
 
 		return true
@@ -522,6 +527,8 @@ func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 
 	if handle.file != nil {
 		handle.file.Close()
+	} else if handle.dirReader != nil {
+		handle.dirReader.Close()
 	}
 
 	s.handles.Del(uint64(payload.HandleID))
