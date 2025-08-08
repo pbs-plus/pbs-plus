@@ -5,12 +5,13 @@ package agentfs
 import (
 	"fmt"
 	"os"
+	"sync"
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 )
 
-const BUF_SIZE = 1024 * 1024 // 1MB buffer, same as Windows version
+const BUF_SIZE = 64 * 1024 // 64K buffer
 
 type DirReaderUnix struct {
 	fd          int
@@ -21,6 +22,12 @@ type DirReaderUnix struct {
 	path        string
 }
 
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, BUF_SIZE)
+	},
+}
+
 func NewDirReaderUnix(path string) (*DirReaderUnix, error) {
 	fd, err := syscall.Open(path, syscall.O_RDONLY, 0)
 	if err != nil {
@@ -29,7 +36,7 @@ func NewDirReaderUnix(path string) (*DirReaderUnix, error) {
 
 	return &DirReaderUnix{
 		fd:   fd,
-		buf:  make([]byte, BUF_SIZE),
+		buf:  bufferPool.Get().([]byte),
 		path: path,
 	}, nil
 }
@@ -44,10 +51,9 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 		return nil, os.ErrProcessDone
 	}
 
-	var entries types.ReadDirEntries
+	entries := make(types.ReadDirEntries, 0, 256)
 
 	for {
-		// If buffer is exhausted, refill
 		if r.bufPos >= r.bufEnd {
 			n, err := r.getdents()
 			if err != nil {
@@ -57,7 +63,6 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 				r.noMoreFiles = true
 				break
 			}
-			r.bufPos = 0
 			r.bufEnd = n
 		}
 
@@ -82,8 +87,7 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 			r.bufPos += reclen
 		}
 
-		// If we have entries or reached end of buffer, return batch
-		if len(entries) > 0 || r.bufPos >= r.bufEnd {
+		if len(entries) > 0 {
 			break
 		}
 	}
@@ -104,6 +108,12 @@ func (r *DirReaderUnix) Close() error {
 	if err := syscall.Close(r.fd); err != nil {
 		return fmt.Errorf("failed to close directory '%s': %w", r.path, err)
 	}
+
+	if r.buf != nil {
+		bufferPool.Put(r.buf)
+		r.buf = nil
+	}
+
 	return nil
 }
 
