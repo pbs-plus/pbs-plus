@@ -5,6 +5,7 @@ package agentfs
 import (
 	"math"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,13 +19,28 @@ func GetAllocGranularity() int {
 	return pageSize
 }
 
-// getPosixACL uses the "getfacl" command to obtain the ACL for path.
-// It returns a slice of PosixACLEntry. It ignores comment lines.
 func getPosixACL(path string) ([]types.PosixACL, error) {
-	out, err := exec.Command("getfacl", "-p", "-c", path).Output()
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "linux":
+		cmd = exec.Command("getfacl", "-p", "-c", path)
+		return parsePosixACL(cmd)
+	case "freebsd":
+		cmd = exec.Command("getfacl", "-q", path)
+		return parseNFSv4ACL(cmd)
+	default:
+		cmd = exec.Command("getfacl", path)
+		return parsePosixACL(cmd)
+	}
+}
+
+func parsePosixACL(cmd *exec.Cmd) ([]types.PosixACL, error) {
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
+
 	lines := strings.Split(string(out), "\n")
 	var entries []types.PosixACL
 	for _, line := range lines {
@@ -32,15 +48,16 @@ func getPosixACL(path string) ([]types.PosixACL, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Expected entry format: tag:qualifier:perms, e.g.,
-		// "user:1001:rwx" or "group::r-x"
+
 		parts := strings.Split(line, ":")
 		if len(parts) < 3 {
 			continue
 		}
+
 		tag := parts[0]
 		qualifier := parts[1]
 		permsStr := parts[2]
+
 		var id int32 = -1
 		if qualifier != "" {
 			if uid, err := strconv.ParseInt(qualifier, 10, 32); err == nil {
@@ -49,6 +66,7 @@ func getPosixACL(path string) ([]types.PosixACL, error) {
 				}
 			}
 		}
+
 		var perms uint8 = 0
 		if strings.Contains(permsStr, "r") {
 			perms |= 4
@@ -59,6 +77,75 @@ func getPosixACL(path string) ([]types.PosixACL, error) {
 		if strings.Contains(permsStr, "x") {
 			perms |= 1
 		}
+
+		entry := types.PosixACL{
+			Tag:   tag,
+			ID:    id,
+			Perms: perms,
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+func parseNFSv4ACL(cmd *exec.Cmd) ([]types.PosixACL, error) {
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(string(out), "\n")
+	var entries []types.PosixACL
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// NFSv4 format: who:permissions:flags:type
+		parts := strings.Split(line, ":")
+		if len(parts) < 4 {
+			continue
+		}
+
+		who := parts[0]      // "owner@", "group@", "everyone@"
+		permsStr := parts[1] // "rw-p--aARWcCos"
+		// flags := parts[2]      // "-------" (inheritance flags)
+		aclType := parts[3] // "allow" or "deny"
+
+		// Skip deny entries for simplicity
+		if aclType != "allow" {
+			continue
+		}
+
+		// Convert NFSv4 "who" to POSIX-like tag
+		var tag string
+		var id int32 = -1
+
+		switch who {
+		case "owner@":
+			tag = "user"
+		case "group@":
+			tag = "group"
+		case "everyone@":
+			tag = "other"
+		default:
+			// Handle specific user/group (if any)
+			tag = "user"
+		}
+
+		// Convert NFSv4 permissions to simple rwx
+		var perms uint8 = 0
+		if strings.Contains(permsStr, "r") {
+			perms |= 4 // read
+		}
+		if strings.Contains(permsStr, "w") || strings.Contains(permsStr, "W") {
+			perms |= 2 // write
+		}
+		if strings.Contains(permsStr, "x") {
+			perms |= 1 // execute
+		}
+
 		entry := types.PosixACL{
 			Tag:   tag,
 			ID:    id,
