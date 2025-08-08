@@ -7,14 +7,13 @@ import (
 	"os"
 	"sync"
 	"syscall"
-	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"golang.org/x/sys/unix"
 )
 
 const BUF_SIZE = 64 * 1024 // 64K buffer
 
+// DirReaderUnix reads directory entries in batches.
 type DirReaderUnix struct {
 	fd          int
 	buf         []byte
@@ -22,6 +21,7 @@ type DirReaderUnix struct {
 	bufEnd      int
 	noMoreFiles bool
 	path        string
+	basep       uintptr // only used on FreeBSD
 }
 
 var bufferPool = sync.Pool{
@@ -30,30 +30,30 @@ var bufferPool = sync.Pool{
 	},
 }
 
+// NewDirReaderUnix opens a directory for reading.
+// Uses syscall.Open so that we get a raw fd.
 func NewDirReaderUnix(path string) (*DirReaderUnix, error) {
 	fd, err := syscall.Open(path, syscall.O_RDONLY, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open directory '%s': %w", path, err)
 	}
-
 	return &DirReaderUnix{
-		fd:   fd,
-		buf:  bufferPool.Get().([]byte),
-		path: path,
+		fd:    fd,
+		buf:   bufferPool.Get().([]byte),
+		path:  path,
+		basep: 0,
 	}, nil
 }
 
-// Cross-platform getdents implementation
-func (r *DirReaderUnix) getdents() (int, error) {
-	return getdents(r.fd, r.buf)
-}
-
+// NextBatch returns the next encoded batch of directory entries.
+// It relies on platform‐specific r.getdents() and r.parseDirent().
 func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 	if r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
 
-	entries := make(types.ReadDirEntries, 0, 256)
+	var entries types.ReadDirEntries
+	entries = make(types.ReadDirEntries, 0, 256)
 
 	for {
 		if r.bufPos >= r.bufEnd {
@@ -69,7 +69,6 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 			r.bufEnd = n
 		}
 
-		// Parse entries from buffer
 		for r.bufPos < r.bufEnd {
 			name, typ, reclen, err := r.parseDirent()
 			if err != nil {
@@ -78,18 +77,14 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 			if reclen == 0 {
 				break
 			}
-
 			if name != "." && name != ".." {
-				mode := unixTypeToFileMode(typ)
 				entries = append(entries, types.AgentDirEntry{
 					Name: name,
-					Mode: uint32(mode),
+					Mode: uint32(unixTypeToFileMode(typ)),
 				})
 			}
-
 			r.bufPos += reclen
 		}
-
 		if len(entries) > 0 {
 			break
 		}
@@ -98,28 +93,26 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 	if len(entries) == 0 {
 		return nil, os.ErrProcessDone
 	}
-
-	encodedBatch, err := entries.Encode()
+	enc, err := entries.Encode()
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
 	}
-
-	return encodedBatch, nil
+	return enc, nil
 }
 
+// Close releases the directory fd and buffer.
 func (r *DirReaderUnix) Close() error {
 	if err := syscall.Close(r.fd); err != nil {
 		return fmt.Errorf("failed to close directory '%s': %w", r.path, err)
 	}
-
 	if r.buf != nil {
 		bufferPool.Put(r.buf)
 		r.buf = nil
 	}
-
 	return nil
 }
 
+// unixTypeToFileMode maps a DT_* byte to an os.FileMode.
 func unixTypeToFileMode(t byte) os.FileMode {
 	switch t {
 	case syscall.DT_DIR:
@@ -139,41 +132,4 @@ func unixTypeToFileMode(t byte) os.FileMode {
 	default:
 		return 0644
 	}
-}
-
-// unixDirent64 matches the Linux getdents64 struct
-type unixDirent64 struct {
-	Ino     uint64
-	Off     int64
-	Reclen  uint16
-	Type    byte
-	NameBuf [0]byte
-}
-
-func getdents(fd int, buf []byte) (int, error) {
-	return unix.Getdents(fd, buf)
-}
-
-func (r *DirReaderUnix) parseDirent() (name string, typ byte, reclen int, err error) {
-	if r.bufPos+19 > r.bufEnd { // Minimum dirent64 size
-		return "", 0, 0, nil
-	}
-
-	dirent := (*unixDirent64)(unsafe.Pointer(&r.buf[r.bufPos]))
-	if dirent.Reclen == 0 || r.bufPos+int(dirent.Reclen) > r.bufEnd {
-		return "", 0, 0, nil
-	}
-
-	nameBytes := unsafe.Slice(
-		(*byte)(unsafe.Add(unsafe.Pointer(dirent), unsafe.Offsetof(dirent.NameBuf))),
-		int(dirent.Reclen)-int(unsafe.Offsetof(dirent.NameBuf)),
-	)
-
-	// Find null terminator
-	nameLen := 0
-	for nameLen < len(nameBytes) && nameBytes[nameLen] != 0 {
-		nameLen++
-	}
-
-	return string(nameBytes[:nameLen]), dirent.Type, int(dirent.Reclen), nil
 }
