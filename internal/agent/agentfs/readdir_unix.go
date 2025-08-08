@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"syscall"
-	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 )
@@ -23,7 +22,7 @@ type DirReaderUnix struct {
 }
 
 func NewDirReaderUnix(path string) (*DirReaderUnix, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+	fd, err := syscall.Open(path, syscall.O_RDONLY, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open directory '%s': %w", path, err)
 	}
@@ -35,13 +34,9 @@ func NewDirReaderUnix(path string) (*DirReaderUnix, error) {
 	}, nil
 }
 
-// linuxDirent64 matches the Linux getdents64 struct
-type linuxDirent64 struct {
-	Ino     uint64
-	Off     int64
-	Reclen  uint16
-	Type    byte
-	NameBuf [0]byte // flexible array member
+// Cross-platform getdents implementation
+func (r *DirReaderUnix) getdents() (int, error) {
+	return getdents(r.fd, r.buf)
 }
 
 func (r *DirReaderUnix) NextBatch() ([]byte, error) {
@@ -54,50 +49,47 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 	for {
 		// If buffer is exhausted, refill
 		if r.bufPos >= r.bufEnd {
-			n, err := syscall.Getdents(r.fd, r.buf)
+			n, err := r.getdents()
 			if err != nil {
 				return nil, fmt.Errorf("getdents failed: %w", err)
 			}
 			if n == 0 {
 				r.noMoreFiles = true
-				return nil, os.ErrProcessDone
+				break
 			}
 			r.bufPos = 0
 			r.bufEnd = n
 		}
 
-		// Parse one entry
-		dirent := (*linuxDirent64)(unsafe.Pointer(&r.buf[r.bufPos]))
-		if dirent.Reclen == 0 {
-			return nil, fmt.Errorf("invalid dirent record length")
+		// Parse entries from buffer
+		for r.bufPos < r.bufEnd {
+			name, typ, reclen, err := r.parseDirent()
+			if err != nil {
+				return nil, err
+			}
+			if reclen == 0 {
+				break
+			}
+
+			if name != "." && name != ".." {
+				mode := unixTypeToFileMode(typ)
+				entries = append(entries, types.AgentDirEntry{
+					Name: name,
+					Mode: uint32(mode),
+				})
+			}
+
+			r.bufPos += reclen
 		}
 
-		nameBytes := unsafe.Slice(
-			(*byte)(unsafe.Add(unsafe.Pointer(dirent), unsafe.Offsetof(dirent.NameBuf))),
-			int(dirent.Reclen)-int(unsafe.Offsetof(dirent.NameBuf)),
-		)
-
-		// Null-terminated string
-		nameLen := 0
-		for nameLen < len(nameBytes) && nameBytes[nameLen] != 0 {
-			nameLen++
-		}
-		name := string(nameBytes[:nameLen])
-
-		if name != "." && name != ".." {
-			mode := unixTypeToFileMode(dirent.Type)
-			entries = append(entries, types.AgentDirEntry{
-				Name: name,
-				Mode: uint32(mode),
-			})
-		}
-
-		r.bufPos += int(dirent.Reclen)
-
-		// Return batch if buffer is consumed or enough entries collected
-		if r.bufPos >= r.bufEnd {
+		// If we have entries or reached end of buffer, return batch
+		if len(entries) > 0 || r.bufPos >= r.bufEnd {
 			break
 		}
+	}
+
+	if len(entries) == 0 {
+		return nil, os.ErrProcessDone
 	}
 
 	encodedBatch, err := entries.Encode()
@@ -123,7 +115,15 @@ func unixTypeToFileMode(t byte) os.FileMode {
 		return 0644
 	case syscall.DT_LNK:
 		return os.ModeSymlink | 0777
+	case syscall.DT_CHR:
+		return os.ModeDevice | os.ModeCharDevice | 0666
+	case syscall.DT_BLK:
+		return os.ModeDevice | 0666
+	case syscall.DT_FIFO:
+		return os.ModeNamedPipe | 0666
+	case syscall.DT_SOCK:
+		return os.ModeSocket | 0666
 	default:
-		return 0
+		return 0644
 	}
 }
