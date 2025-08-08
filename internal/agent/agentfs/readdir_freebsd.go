@@ -33,8 +33,8 @@ func getdents(fd int, buf []byte) (int, error) {
 }
 
 func (r *DirReaderUnix) parseDirent() (name string, typ byte, reclen int, err error) {
-	if r.bufPos+int(unsafe.Sizeof(uint16(0))) > r.bufEnd {
-		// Not enough data for even reclen field
+	// Need at least 2 bytes for reclen field
+	if r.bufPos+2 > r.bufEnd {
 		return "", 0, 0, nil
 	}
 
@@ -42,9 +42,11 @@ func (r *DirReaderUnix) parseDirent() (name string, typ byte, reclen int, err er
 	reclen = int(dirent.Reclen)
 
 	if reclen <= 0 || r.bufPos+reclen > r.bufEnd {
+		// Invalid or incomplete record
 		return "", 0, 0, nil
 	}
 
+	// Extract name
 	name = string(dirent.Name[:dirent.Namlen])
 	return name, dirent.Type, reclen, nil
 }
