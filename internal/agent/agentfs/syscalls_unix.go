@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 func GetAllocGranularity() int {
@@ -60,7 +61,7 @@ func getPosixACL(path string) ([]types.PosixACL, error) {
 			perms |= 1
 		}
 		entry := types.PosixACL{
-			Tag:   tag,
+			Tag:   utils.StringToBytes(tag),
 			ID:    id,
 			Perms: perms,
 		}

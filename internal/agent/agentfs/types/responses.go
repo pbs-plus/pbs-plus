@@ -36,7 +36,7 @@ func (resp *LseekResp) Decode(buf []byte) error {
 
 // WinACL represents an Access Control Entry
 type WinACL struct {
-	SID        string
+	SID        []byte
 	AccessMask uint32
 	Type       uint8
 	Flags      uint8
@@ -46,7 +46,7 @@ type WinACL struct {
 func (acl *WinACL) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(acl.SID) + 4 + 1 + 1)
 
-	if err := enc.WriteString(acl.SID); err != nil {
+	if err := enc.WriteBytes(acl.SID); err != nil {
 		return nil, err
 	}
 	if err := enc.WriteUint32(acl.AccessMask); err != nil {
@@ -69,7 +69,7 @@ func (acl *WinACL) Decode(buf []byte) error {
 		return err
 	}
 
-	sid, err := dec.ReadString()
+	sid, err := dec.ReadBytes()
 	if err != nil {
 		return err
 	}
@@ -154,7 +154,7 @@ func (acls *WinACLArray) Decode(buf []byte) error {
 }
 
 type PosixACL struct {
-	Tag   string
+	Tag   []byte
 	ID    int32
 	Perms uint8
 }
@@ -162,7 +162,7 @@ type PosixACL struct {
 func (entry *PosixACL) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(entry.Tag) + 4 + 1)
 
-	if err := enc.WriteString(entry.Tag); err != nil {
+	if err := enc.WriteBytes(entry.Tag); err != nil {
 		return nil, err
 	}
 	if err := enc.WriteUint32(uint32(entry.ID)); err != nil {
@@ -182,7 +182,7 @@ func (entry *PosixACL) Decode(buf []byte) error {
 		return err
 	}
 
-	tag, err := dec.ReadString()
+	tag, err := dec.ReadBytes()
 	if err != nil {
 		return err
 	}
@@ -262,7 +262,7 @@ func (acls *PosixACLArray) Decode(buf []byte) error {
 
 // AgentFileInfo represents file metadata
 type AgentFileInfo struct {
-	Name           string
+	Name           []byte
 	Size           int64
 	Mode           uint32
 	ModTime        time.Time
@@ -272,8 +272,8 @@ type AgentFileInfo struct {
 	LastAccessTime int64
 	LastWriteTime  int64
 	FileAttributes map[string]bool
-	Owner          string
-	Group          string
+	Owner          []byte
+	Group          []byte
 	WinACLs        []WinACL
 	PosixACLs      []PosixACL
 }
@@ -281,7 +281,7 @@ type AgentFileInfo struct {
 func (info *AgentFileInfo) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoder()
 
-	if err := enc.WriteString(info.Name); err != nil {
+	if err := enc.WriteBytes(info.Name); err != nil {
 		return nil, err
 	}
 	if err := enc.WriteInt64(info.Size); err != nil {
@@ -319,10 +319,10 @@ func (info *AgentFileInfo) Encode() ([]byte, error) {
 		return nil, err
 	}
 
-	if err := enc.WriteString(info.Owner); err != nil {
+	if err := enc.WriteBytes(info.Owner); err != nil {
 		return nil, err
 	}
-	if err := enc.WriteString(info.Group); err != nil {
+	if err := enc.WriteBytes(info.Group); err != nil {
 		return nil, err
 	}
 
@@ -353,7 +353,7 @@ func (info *AgentFileInfo) Decode(buf []byte) error {
 		return err
 	}
 
-	name, err := dec.ReadString()
+	name, err := dec.ReadBytes()
 	if err != nil {
 		return err
 	}
@@ -417,13 +417,13 @@ func (info *AgentFileInfo) Decode(buf []byte) error {
 	}
 	info.FileAttributes = fileAttributes
 
-	owner, err := dec.ReadString()
+	owner, err := dec.ReadBytes()
 	if err != nil {
 		return err
 	}
 	info.Owner = owner
 
-	group, err := dec.ReadString()
+	group, err := dec.ReadBytes()
 	if err != nil {
 		return err
 	}
@@ -456,13 +456,13 @@ func (info *AgentFileInfo) Decode(buf []byte) error {
 
 // AgentDirEntry represents a directory entry
 type AgentDirEntry struct {
-	Name string
+	Name []byte
 	Mode uint32
 }
 
 func (entry *AgentDirEntry) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(len(entry.Name) + 4)
-	if err := enc.WriteString(entry.Name); err != nil {
+	if err := enc.WriteBytes(entry.Name); err != nil {
 		return nil, err
 	}
 	if err := enc.WriteUint32(entry.Mode); err != nil {
@@ -476,7 +476,7 @@ func (entry *AgentDirEntry) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	name, err := dec.ReadString()
+	name, err := dec.ReadBytes()
 	if err != nil {
 		return err
 	}

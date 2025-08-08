@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/unix"
@@ -209,7 +210,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	}
 
 	info := types.AgentFileInfo{
-		Name:    rawInfo.Name(),
+		Name:    utils.StringToBytes(rawInfo.Name()),
 		Size:    rawInfo.Size(),
 		Mode:    uint32(rawInfo.Mode()),
 		ModTime: rawInfo.ModTime(),
@@ -283,7 +284,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	}
 
 	info := types.AgentFileInfo{
-		Name:           rawInfo.Name(),
+		Name:           utils.StringToBytes(rawInfo.Name()),
 		Size:           rawInfo.Size(),
 		Mode:           uint32(rawInfo.Mode()),
 		ModTime:        rawInfo.ModTime(),
@@ -293,8 +294,8 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		LastAccessTime: lastAccessTime,
 		LastWriteTime:  lastWriteTime,
 		FileAttributes: fileAttributes,
-		Owner:          owner,
-		Group:          group,
+		Owner:          utils.StringToBytes(owner),
+		Group:          utils.StringToBytes(group),
 		PosixACLs:      posixAcls,
 	}
 

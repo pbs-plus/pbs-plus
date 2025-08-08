@@ -3,6 +3,7 @@
 package agentfs
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -227,7 +228,7 @@ func testFileAttributes(t *testing.T, tempDir string) {
 	// Hidden files should be excluded
 	hiddenFound := false
 	for _, entry := range allEntries {
-		if entry.Name == "hidden.txt" {
+		if string(entry.Name) == "hidden.txt" {
 			hiddenFound = true
 			break
 		}
@@ -247,7 +248,7 @@ func verifyEntries(t *testing.T, entries types.ReadDirEntries, expected map[stri
 	}
 
 	for _, entry := range entries {
-		expectedMode, ok := expected[entry.Name]
+		expectedMode, ok := expected[string(entry.Name)]
 		if !ok {
 			t.Errorf("Unexpected entry: %s", entry.Name)
 			continue
@@ -255,7 +256,7 @@ func verifyEntries(t *testing.T, entries types.ReadDirEntries, expected map[stri
 		if entry.Mode != uint32(expectedMode) {
 			t.Errorf("Entry %s: expected mode %o, got %o", entry.Name, expectedMode, entry.Mode)
 		}
-		delete(expected, entry.Name)
+		delete(expected, string(entry.Name))
 	}
 
 	if len(expected) > 0 {
@@ -301,7 +302,7 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 	}
 
 	for _, entry := range allEntries {
-		if entry.Name == "symlink.txt" {
+		if bytes.Equal(entry.Name, []byte("symlink.txt")) {
 			t.Errorf("Symlink should not be included in results")
 		}
 	}
@@ -346,7 +347,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 	for _, name := range unicodeFiles {
 		found := false
 		for _, entry := range allEntries {
-			if entry.Name == name {
+			if string(entry.Name) == name {
 				found = true
 				break
 			}
@@ -397,7 +398,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 	for _, name := range specialFiles {
 		found := false
 		for _, entry := range allEntries {
-			if entry.Name == name {
+			if string(entry.Name) == name {
 				found = true
 				break
 			}

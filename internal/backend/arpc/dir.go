@@ -14,6 +14,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 type DirStream struct {
@@ -34,7 +35,7 @@ func (s *DirStream) HasNext() bool {
 	}
 
 	if atomic.LoadUint64(&s.totalReturned) >= uint64(s.fs.Job.MaxDirEntries) {
-		lastPath := ""
+		lastPath := []byte{}
 		s.lastRespMu.Lock()
 		curIdxVal := atomic.LoadUint64(&s.curIdx)
 		if curIdxVal > 0 && int(curIdxVal) <= len(s.lastResp) {
@@ -45,7 +46,7 @@ func (s *DirStream) HasNext() bool {
 
 		syslog.L.Error(fmt.Errorf("maximum directory entries reached: %d", s.fs.Job.MaxDirEntries)).
 			WithField("path", s.path).
-			WithField("lastFile", lastPath).
+			WithField("lastFile", utils.BytesToString(lastPath)).
 			WithJob(s.fs.Job.ID).
 			Write()
 
@@ -138,7 +139,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	atomic.AddUint64(&s.totalReturned, 1)
 
 	return fuse.DirEntry{
-		Name: curr.Name,
+		Name: string(curr.Name),
 		Mode: modeBits,
 	}, 0
 }

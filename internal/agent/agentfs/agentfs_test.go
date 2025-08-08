@@ -262,7 +262,7 @@ func TestAgentFSServer(t *testing.T) {
 		foundTest1 := false
 		foundSubdir := false
 		for _, entry := range result {
-			name := (entry.Name)
+			name := string(entry.Name)
 			if name == "test1.txt" {
 				foundTest1 = true
 			} else if name == "subdir" {

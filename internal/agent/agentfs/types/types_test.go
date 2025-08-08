@@ -20,7 +20,7 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 
 	t.Run("AgentFileInfo", func(t *testing.T) {
 		original := &AgentFileInfo{
-			Name:    "testfile.txt",
+			Name:    []byte("testfile.txt"),
 			Size:    1024,
 			Mode:    0644,
 			ModTime: time.Now(),
@@ -34,7 +34,7 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 
 	t.Run("AgentDirEntry", func(t *testing.T) {
 		original := &AgentDirEntry{
-			Name: "subdir",
+			Name: []byte("subdir"),
 			Mode: 0755,
 		}
 		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
@@ -135,8 +135,8 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 
 	t.Run("ReadDirEntries", func(t *testing.T) {
 		original := ReadDirEntries{
-			{Name: "file1.txt", Mode: 0644},
-			{Name: "file2.txt", Mode: 0755},
+			{Name: []byte("file1.txt"), Mode: 0644},
+			{Name: []byte("file2.txt"), Mode: 0755},
 		}
 		validateEncodeDecodeConcurrency(t, &original, func() arpcdata.Encodable {
 			return &ReadDirEntries{}
@@ -195,25 +195,6 @@ func validateEncodeDecodeConcurrency(t *testing.T, original arpcdata.Encodable, 
 
 // deepCompare performs a deep comparison of two Encodable objects.
 func deepCompare(a, b arpcdata.Encodable) bool {
-	// Perform a type-specific comparison for known types.
-	switch objA := a.(type) {
-	case *ReadDirEntries:
-		objB, ok := b.(*ReadDirEntries)
-		if !ok {
-			return false
-		}
-		if len(*objA) != len(*objB) {
-			return false
-		}
-		for i := range *objA {
-			if (*objA)[i] != (*objB)[i] {
-				return false
-			}
-		}
-		return true
-	}
-
-	// Fallback: Compare the encoded byte slices.
 	encodedA, errA := a.Encode()
 	encodedB, errB := b.Encode()
 

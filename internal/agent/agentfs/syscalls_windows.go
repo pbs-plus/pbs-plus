@@ -243,14 +243,14 @@ func parseFileAttributes(attr uint32) map[string]bool {
 	return attributes
 }
 
-func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
+func GetWinACLs(filePath string) ([]byte, []byte, []types.WinACL, error) {
 	secInfo := windows.OWNER_SECURITY_INFORMATION |
 		windows.GROUP_SECURITY_INFORMATION |
 		windows.DACL_SECURITY_INFORMATION
 
 	secDesc, err := GetFileSecurityDescriptor(filePath, uint32(secInfo))
 	if err != nil {
-		return "", "", nil, fmt.Errorf("GetFileSecurityDescriptor failed: %w", err)
+		return nil, nil, nil, fmt.Errorf("GetFileSecurityDescriptor failed: %w", err)
 	}
 
 	// IsValidSecDescriptor is already called within GetFileSecurityDescriptor in the revised version.
@@ -259,13 +259,18 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 	_, pDacl, _, pOwnerSid, pGroupSid, err := MakeAbsoluteSD(secDesc)
 	if err != nil {
 		// MakeAbsoluteSD might fail even if GetFileSecurityDescriptor succeeded.
-		return "", "", nil, fmt.Errorf("MakeAbsoluteSD failed: %w", err)
+		return nil, nil, nil, fmt.Errorf("MakeAbsoluteSD failed: %w", err)
 	}
 
 	// Use the SIDs returned by MakeAbsoluteSD directly if they are valid.
-	var owner, group string
+	var owner, group []byte
 	if pOwnerSid != nil && pOwnerSid.IsValid() {
-		owner = pOwnerSid.String()
+		var s *uint16
+		err := windows.ConvertSidToStringSid(pOwnerSid, &s)
+		if err == nil {
+			defer windows.LocalFree((windows.Handle)(unsafe.Pointer(s)))
+			owner = UTF16DecodeBytes((*[256]uint16)(unsafe.Pointer(s))[:])
+		}
 	} else {
 		// Fallback or handle error if owner SID is expected but missing/invalid
 		// For simplicity here, we proceed, but production code might error out.
@@ -274,13 +279,18 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 		// if err != nil {
 		// 	 return "", "", nil, fmt.Errorf("failed to extract owner/group: %w", err)
 		// }
-		return "", "", nil, fmt.Errorf("owner SID from MakeAbsoluteSD is nil or invalid")
+		return nil, nil, nil, fmt.Errorf("owner SID from MakeAbsoluteSD is nil or invalid")
 	}
 
 	if pGroupSid != nil && pGroupSid.IsValid() {
-		group = pGroupSid.String()
+		var s *uint16
+		err := windows.ConvertSidToStringSid(pGroupSid, &s)
+		if err == nil {
+			defer windows.LocalFree((windows.Handle)(unsafe.Pointer(s)))
+			group = UTF16DecodeBytes((*[256]uint16)(unsafe.Pointer(s))[:])
+		}
 	} else {
-		return owner, "", nil, fmt.Errorf("group SID from MakeAbsoluteSD is nil or invalid")
+		return owner, nil, nil, fmt.Errorf("group SID from MakeAbsoluteSD is nil or invalid")
 	}
 
 	// Check if a DACL is present (pDacl will be non-nil if MakeAbsoluteSD found one)
@@ -319,10 +329,16 @@ func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
 			continue
 		}
 
-		sidStr := pSid.String()
+		sid := []byte{}
+		var s *uint16
+		err := windows.ConvertSidToStringSid(pSid, &s)
+		if err == nil {
+			defer windows.LocalFree((windows.Handle)(unsafe.Pointer(s)))
+			sid = UTF16DecodeBytes((*[256]uint16)(unsafe.Pointer(s))[:])
+		}
 
 		ace := types.WinACL{
-			SID:        sidStr,
+			SID:        sid,
 			AccessMask: uint32(entry.AccessPermissions),
 			Type:       uint8(entry.AccessMode),
 			Flags:      uint8(entry.Inheritance),

@@ -1,11 +1,8 @@
 package arpcdata
 
 import (
-	"bytes"
-	"compress/zlib"
 	"encoding/binary"
 	"errors"
-	"io"
 	"math"
 	"sync"
 	"time"
@@ -21,20 +18,6 @@ var DecoderPool = sync.Pool{
 type Decoder struct {
 	buf []byte
 	pos int
-}
-
-func Decompress(compressedData []byte) ([]byte, error) {
-	zr, err := zlib.NewReader(bytes.NewReader(compressedData))
-	if err != nil {
-		return nil, err
-	}
-	defer zr.Close()
-
-	decompressedData, err := io.ReadAll(zr)
-	if err != nil {
-		return nil, err
-	}
-	return decompressedData, nil
 }
 
 // NewDecoder initializes a new Decoder with the given buffer

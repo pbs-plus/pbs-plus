@@ -1,8 +1,6 @@
 package arpcdata
 
 import (
-	"bytes"
-	"compress/zlib"
 	"encoding/binary"
 	"math"
 	"time"
@@ -188,20 +186,4 @@ func (e *Encoder) Bytes() []byte {
 	totalLength := uint32(e.pos)
 	binary.LittleEndian.PutUint32(e.buf[0:], totalLength)
 	return e.buf[:e.pos]
-}
-
-func (e *Encoder) CompressedBytes() ([]byte, error) {
-	uncompressedData := e.Bytes()
-
-	var compressedBuf bytes.Buffer
-	zw := zlib.NewWriter(&compressedBuf)
-	_, err := zw.Write(uncompressedData)
-	if err != nil {
-		return nil, err // Return error from zlib writer
-	}
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-
-	return compressedBuf.Bytes(), nil
 }

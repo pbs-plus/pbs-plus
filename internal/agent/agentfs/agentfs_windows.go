@@ -17,6 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
 	"github.com/pkg/errors"
 	"github.com/xtaci/smux"
@@ -236,7 +237,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	}
 
 	info := types.AgentFileInfo{
-		Name:    rawInfo.Name(),
+		Name:    utils.StringToBytes(rawInfo.Name()),
 		Size:    rawInfo.Size(),
 		Mode:    uint32(rawInfo.Mode()),
 		ModTime: rawInfo.ModTime(),
@@ -287,8 +288,8 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	fileAttributes := parseFileAttributes(fileAttrData.FileAttributes)
 
 	// Retrieve owner, group, and ACL info
-	owner := ""
-	group := ""
+	owner := []byte{}
+	group := []byte{}
 	var acls []types.WinACL
 	owner, group, acls, err = GetWinACLs(fullPath)
 	if err != nil {
@@ -297,7 +298,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 
 	// Populate AgentFileInfo
 	info := types.AgentFileInfo{
-		Name:           fullPath,
+		Name:           utils.StringToBytes(fullPath),
 		CreationTime:   creationTime,
 		LastAccessTime: lastAccessTime,
 		LastWriteTime:  lastWriteTime,

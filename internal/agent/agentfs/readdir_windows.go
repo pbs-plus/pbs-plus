@@ -3,6 +3,7 @@
 package agentfs
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -59,6 +60,9 @@ type FileDirectoryInformation struct {
 	FileNameLength  uint32
 	FileName        uint16
 }
+
+var DOT = []byte{'.'}
+var DOT_DOT = []byte{'.', '.'}
 
 var (
 	ntdll                = syscall.NewLazyDLL("ntdll.dll")
@@ -221,13 +225,12 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 				(*uint16)(fileNamePtr),
 				fileNameLen,
 			)
-			fileName := utf16.Decode(fileNameSlice)
-			name := string(fileName)
+			fileName := UTF16DecodeBytes(fileNameSlice)
 
-			if name != "." && name != ".." {
+			if !bytes.Equal(fileName, DOT) && !bytes.Equal(fileName, DOT_DOT) {
 				mode := windowsAttributesToFileMode(entry.FileAttributes)
 				entries = append(entries, types.AgentDirEntry{
-					Name: name,
+					Name: fileName,
 					Mode: mode,
 				})
 			}
