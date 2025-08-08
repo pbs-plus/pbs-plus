@@ -25,6 +25,7 @@ type DirStream struct {
 	lastResp      types.ReadDirEntries
 	curIdx        atomic.Uint64
 	totalReturned atomic.Uint64
+	readBuf       []byte
 }
 
 func (s *DirStream) HasNext() bool {
@@ -61,8 +62,7 @@ func (s *DirStream) HasNext() bool {
 
 	req := types.ReadDirReq{HandleID: s.handleId}
 
-	var buf []byte
-	bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, buf)
+	bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, s.readBuf)
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			s.closed.Store(true)
@@ -83,7 +83,7 @@ func (s *DirStream) HasNext() bool {
 
 	var entries types.ReadDirEntries
 
-	err = entries.Decode(buf[:bytesRead])
+	err = entries.Decode(s.readBuf[:bytesRead])
 	if err != nil {
 		syslog.L.Error(err).
 			WithField("path", s.path).
