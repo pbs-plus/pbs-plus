@@ -25,7 +25,12 @@ type DirStream struct {
 	lastResp      types.ReadDirEntries
 	curIdx        uint64
 	totalReturned uint64
-	readBuf       []byte
+}
+
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 1024*1024+64)
+	},
 }
 
 func (s *DirStream) HasNext() bool {
@@ -62,7 +67,10 @@ func (s *DirStream) HasNext() bool {
 
 	req := types.ReadDirReq{HandleID: s.handleId}
 
-	bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, s.readBuf)
+	readBuf := bufPool.Get().([]byte)
+	defer bufPool.Put(readBuf)
+
+	bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			atomic.StoreInt32(&s.closed, 1)
@@ -81,9 +89,8 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	var entries types.ReadDirEntries
-
-	err = entries.Decode(s.readBuf[:bytesRead])
+	s.lastRespMu.Lock()
+	err = s.lastResp.Decode(readBuf[:bytesRead])
 	if err != nil {
 		syslog.L.Error(err).
 			WithField("path", s.path).
@@ -92,8 +99,6 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	s.lastRespMu.Lock()
-	s.lastResp = entries
 	atomic.StoreUint64(&s.curIdx, 0)
 	s.lastRespMu.Unlock()
 
