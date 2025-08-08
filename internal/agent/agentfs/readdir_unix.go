@@ -63,6 +63,7 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 				r.noMoreFiles = true
 				break
 			}
+			r.bufPos = 0
 			r.bufEnd = n
 		}
 
