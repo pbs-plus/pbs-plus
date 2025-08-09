@@ -364,7 +364,6 @@ type FileHandle struct {
 
 var _ = (fs.FileReader)((*FileHandle)(nil))
 var _ = (fs.FileReleaser)((*FileHandle)(nil))
-var _ = (fs.FileLseeker)((*FileHandle)(nil))
 
 // Read implements FileReader
 func (fh *FileHandle) Read(
@@ -378,19 +377,6 @@ func (fh *FileHandle) Read(
 	}
 
 	return fuse.ReadResultData(dest[:n]), 0
-}
-
-func (fh *FileHandle) Lseek(
-	ctx context.Context,
-	off uint64,
-	whence uint32,
-) (uint64, syscall.Errno) {
-	n, err := fh.file.Lseek(int64(off), int(whence))
-	if err != nil && err != io.EOF {
-		return 0, s3ErrorToErrno(err)
-	}
-
-	return n, 0
 }
 
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
