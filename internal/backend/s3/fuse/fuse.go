@@ -53,7 +53,7 @@ func Mount(
 			FsName:             fsName,
 			Name:               "pbsagent",
 			AllowOther:         true,
-			DisableXAttrs:      false,
+			DisableXAttrs:      true,
 			DisableReadDirPlus: true,
 			Options: []string{
 				"ro",
