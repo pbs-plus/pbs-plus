@@ -25,7 +25,8 @@ func (f *S3File) ReadAt(p []byte, off int64) (int, error) {
 	defer f.mu.Unlock()
 
 	// Serve from buffer if possible
-	if f.buf != nil && off >= f.bufOffset && off+int64(len(p)) <= f.bufOffset+int64(len(f.buf)) {
+	if f.buf != nil && off >= f.bufOffset &&
+		off+int64(len(p)) <= f.bufOffset+int64(len(f.buf)) {
 		copy(p, f.buf[off-f.bufOffset:])
 		return len(p), nil
 	}
@@ -54,12 +55,18 @@ func (f *S3File) ReadAt(p []byte, off int64) (int, error) {
 	f.buf = buf.Bytes()
 	f.bufOffset = off
 
-	copy(p, f.buf[:len(p)])
+	// Ensure we don't copy more than what's available
+	copyLen := len(p)
+	if copyLen > len(f.buf) {
+		copyLen = len(f.buf)
+	}
+	copy(p, f.buf[:copyLen])
 	atomic.AddInt64(&f.fs.totalBytes, int64(n))
-	return len(p), nil
+	return copyLen, nil
 }
 
 func (f *S3File) Close() error { return nil }
+
 func (f *S3File) Lseek(off int64, _ int) (uint64, error) {
 	return uint64(off), nil
 }
