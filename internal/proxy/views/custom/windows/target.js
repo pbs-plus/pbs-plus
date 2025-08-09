@@ -75,7 +75,8 @@ Ext.define("PBS.D2DManagement.TargetS3Secret", {
     {
       fieldLabel: gettext("Secret Key"),
       name: "secret",
-      xtype: "password",
+      xtype: "proxmoxtextfield",
+      inputType: "password",
       allowBlank: false,
     },
   ],
