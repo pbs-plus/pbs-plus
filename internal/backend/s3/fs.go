@@ -99,12 +99,33 @@ func NewS3FS(
 
 // fullKey maps a fuse path "/foo/bar" → "<prefix>foo/bar"
 func (fs *S3FS) fullKey(fpath string) string {
+	// Handle root path specially
+	if fpath == "/" || fpath == "" {
+		return fs.prefix
+	}
+
 	p := strings.TrimPrefix(path.Clean(fpath), "/")
+	if p == "." || p == "" {
+		return fs.prefix
+	}
+
 	return fs.prefix + p
 }
 
 // Attr implements types.AgentFileInfo lookup with caching and merged detection.
 func (fs *S3FS) Attr(fpath string) (types.AgentFileInfo, error) {
+	// Handle root directory specially
+	if fpath == "/" || fpath == "" {
+		now := time.Now().Unix()
+		return types.AgentFileInfo{
+			IsDir:          true,
+			Mode:           uint32(os.ModeDir | 0555),
+			CreationTime:   now,
+			LastAccessTime: now,
+			LastWriteTime:  now,
+		}, nil
+	}
+
 	key := fs.fullKey(fpath)
 
 	// Check cache
@@ -190,10 +211,17 @@ func (fs *S3FS) StatFS() (types.StatFS, error) {
 
 // ReadDir returns a cached snapshot of the directory.
 func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
-	key := fs.fullKey(fpath)
-	prefix := key
-	if prefix != "" && !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
+	var prefix string
+
+	// Handle root directory
+	if fpath == "/" || fpath == "" {
+		prefix = fs.prefix
+	} else {
+		key := fs.fullKey(fpath)
+		prefix = key
+		if prefix != "" && !strings.HasSuffix(prefix, "/") {
+			prefix += "/"
+		}
 	}
 
 	// Check cache
