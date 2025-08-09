@@ -14,7 +14,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/hanwen/go-fuse/v2 v2.7.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/kardianos/service v1.2.2
+	github.com/kardianos/service v1.2.4
 	github.com/minio/minio-go/v7 v7.0.92
 	github.com/mxk/go-vss v1.2.0
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
@@ -27,7 +27,7 @@ require (
 	github.com/xtaci/smux v1.5.34
 	golang.org/x/crypto v0.39.0
 	golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476
-	golang.org/x/sys v0.33.0
+	golang.org/x/sys v0.34.0
 	golang.org/x/time v0.12.0
 	modernc.org/sqlite v1.37.0
 )
