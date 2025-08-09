@@ -9,12 +9,15 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/minio/minio-go/v7"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func s3ErrorToErrno(err error) syscall.Errno {
 	if err == nil {
 		return 0
 	}
+
+	syslog.L.Error(err).WithMessage("s3 error").Write()
 
 	// Handle MinIO specific errors
 	var minioErr minio.ErrorResponse
