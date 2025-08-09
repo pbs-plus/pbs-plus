@@ -12,12 +12,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/hanwen/go-fuse/v2/fs"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func s3ErrorToErrno(err error) syscall.Errno {
 	if err == nil {
 		return 0
 	}
+
+	syslog.L.Error(err).Write()
 
 	// Handle AWS SDK v2 specific errors
 	var ae smithy.APIError
@@ -157,22 +160,4 @@ func s3ErrorToErrno(err error) syscall.Errno {
 		}
 		return syscall.EIO
 	}
-}
-
-// Helper function to check if an error indicates the object/path doesn't exist
-func isNotFoundError(err error) bool {
-	errno := s3ErrorToErrno(err)
-	return errno == syscall.ENOENT
-}
-
-// Helper function to check if an error indicates access is denied
-func isAccessDeniedError(err error) bool {
-	errno := s3ErrorToErrno(err)
-	return errno == syscall.EACCES
-}
-
-// Helper function to check if an error is retryable
-func isRetryableError(err error) bool {
-	errno := s3ErrorToErrno(err)
-	return errno == syscall.EAGAIN || errno == syscall.ETIMEDOUT || errno == syscall.ECONNREFUSED
 }
