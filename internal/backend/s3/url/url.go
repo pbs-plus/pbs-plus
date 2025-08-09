@@ -30,6 +30,10 @@ func Parse(raw string) (*S3Url, error) {
 		return nil, fmt.Errorf("invalid S3 URL: missing scheme (got %q)", raw)
 	}
 
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("invalid S3 URL: invalid scheme (got %q)", u.Scheme)
+	}
+
 	// Must have a host
 	if u.Host == "" {
 		return nil, fmt.Errorf("invalid S3 URL: missing host/endpoint (got %q)", raw)
