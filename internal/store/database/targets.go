@@ -49,7 +49,9 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err err
 	if target.Path == "" {
 		return fmt.Errorf("target path empty")
 	}
-	if !utils.ValidateTargetPath(target.Path) {
+
+	_, s3Err := s3url.Parse(target.Path)
+	if !utils.ValidateTargetPath(target.Path) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -113,7 +115,9 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 	if target.Path == "" {
 		return fmt.Errorf("target path empty")
 	}
-	if !utils.ValidateTargetPath(target.Path) {
+
+	_, s3Err := s3url.Parse(target.Path)
+	if !utils.ValidateTargetPath(target.Path) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
