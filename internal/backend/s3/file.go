@@ -4,13 +4,11 @@ package s3fs
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/minio/minio-go/v7"
 )
 
 type S3File struct {
@@ -20,6 +18,7 @@ type S3File struct {
 	size   int64
 }
 
+// ReadAt reads len(buf) bytes from the file starting at byte offset off.
 func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	if len(buf) == 0 {
 		return 0, nil
@@ -32,29 +31,21 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	ctx, cancel := context.WithTimeout(f.fs.ctx, 30*time.Second)
 	defer cancel()
 
-	// Calculate read-ahead size based on buffer size and configured read-ahead
-	readAheadBytes := int64(len(buf))
-	if readAheadBytes < readAheadSize {
-		readAheadBytes = readAheadSize
-	}
-
-	// Use range request with read-ahead
-	rangeHeader := fmt.Sprintf("bytes=%d-%d", off, off+readAheadBytes-1)
-
-	getInput := &s3.GetObjectInput{
-		Bucket: aws.String(f.fs.bucket),
-		Key:    aws.String(f.key),
-		Range:  aws.String(rangeHeader),
-	}
-
-	result, err := f.fs.client.GetObject(ctx, getInput)
+	// Use range request for the specific offset and length
+	opts := minio.GetObjectOptions{}
+	err := opts.SetRange(off, off+int64(len(buf))-1)
 	if err != nil {
 		return 0, err
 	}
-	defer result.Body.Close()
 
-	// Read only what was requested into the buffer
-	n, err := io.ReadFull(result.Body, buf)
+	obj, err := f.fs.client.GetObject(ctx, f.fs.bucket, f.key, opts)
+	if err != nil {
+		return 0, err
+	}
+	defer obj.Close()
+
+	// Read the data
+	n, err := io.ReadFull(obj, buf)
 
 	// Handle partial reads at end of file
 	if err == io.ErrUnexpectedEOF {
@@ -73,6 +64,7 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	return n, nil
 }
 
+// Close closes the file.
 func (f *S3File) Close() error {
 	return nil
 }
