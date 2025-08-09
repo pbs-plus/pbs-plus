@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -238,7 +239,8 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if !utils.IsValid(r.FormValue("path")) {
+		_, s3Err := s3url.Parse(r.FormValue("path"))
+		if !utils.IsValid(r.FormValue("path")) && s3Err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", r.FormValue("path")))
 			return
 		}
