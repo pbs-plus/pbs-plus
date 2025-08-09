@@ -8,13 +8,14 @@ import (
 
 // S3Url represents a parsed S3-compatible URL
 type S3Url struct {
-	Scheme    string // https, http, s3
-	UseSSL    bool   // true if https, false if http
-	Endpoint  string // s3.amazonaws.com, minio.example.com, etc.
-	Region    string // optional
-	AccessKey string // optional (from user:pass@host)
-	Bucket    string
-	Key       string // object key / prefix
+	Scheme      string // https, http, s3
+	UseSSL      bool   // true if https, false if http
+	Endpoint    string // s3.amazonaws.com, minio.example.com, etc.
+	Region      string // optional
+	AccessKey   string // optional (from user:pass@host)
+	Bucket      string
+	Key         string // object key / prefix
+	IsPathStyle bool
 }
 
 // Parse parses an S3-compatible URL into an S3Url struct
@@ -114,6 +115,8 @@ func Parse(raw string) (*S3Url, error) {
 			}
 		}
 	}
+
+	s3.IsPathStyle = !isVirtualHost
 
 	return s3, nil
 }
