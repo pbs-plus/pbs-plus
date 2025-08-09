@@ -24,6 +24,16 @@ func Parse(raw string) (*S3Url, error) {
 		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
 
+	// Must have a scheme
+	if u.Scheme == "" {
+		return nil, fmt.Errorf("invalid S3 URL: missing scheme (got %q)", raw)
+	}
+
+	// Must have a host
+	if u.Host == "" {
+		return nil, fmt.Errorf("invalid S3 URL: missing host/endpoint (got %q)", raw)
+	}
+
 	s3 := &S3Url{
 		Scheme: strings.ToLower(u.Scheme),
 		UseSSL: strings.ToLower(u.Scheme) == "https",
@@ -54,6 +64,11 @@ func Parse(raw string) (*S3Url, error) {
 		if len(pathParts) > 1 {
 			s3.Key = strings.Join(pathParts[1:], "/")
 		}
+	}
+
+	// Must have a bucket
+	if s3.Bucket == "" {
+		return nil, fmt.Errorf("invalid S3 URL: missing bucket (got %q)", raw)
 	}
 
 	// Try to detect region from endpoint (optional)
