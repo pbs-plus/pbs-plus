@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/crypto/nacl/box"
 )
 
@@ -17,7 +18,7 @@ var privateKey *[32]byte
 
 func init() {
 	if err := loadOrCreateKey(); err != nil {
-		panic(err)
+		syslog.L.Error(err).WithMessage("failed to initialize database secret store").Write()
 	}
 }
 
