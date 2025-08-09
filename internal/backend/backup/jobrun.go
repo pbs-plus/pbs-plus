@@ -144,6 +144,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 	errorMonitorDone := make(chan struct{})
 
 	var agentMount *mount.AgentMount
+	var s3Mount *mount.S3Mount
 
 	postScriptExecute := func(success bool) {
 		if op.job.PostScript != "" {
@@ -179,6 +180,9 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			agentMount.Unmount()
 			agentMount.CloseMount()
 		}
+		if s3Mount != nil {
+			s3Mount.Unmount()
+		}
 		if op.logger != nil {
 			_ = op.logger.Close()
 		}
@@ -211,16 +215,14 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		syslog.L.Info().WithMessage(scriptOut).WithField("script", target.MountScript).Write()
 	}
 
-	isAgent := strings.HasPrefix(target.Path, "agent://")
-
-	if !op.skipCheck && isAgent {
+	if !op.skipCheck && target.IsAgent {
 		targetSplit := strings.Split(target.Name, " - ")
 		_, exists := op.storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
 		if !exists {
 			errCleanUp()
 			return fmt.Errorf("%w: %s", ErrTargetUnreachable, op.job.Target)
 		}
-	} else if !op.skipCheck && !isAgent {
+	} else if !op.skipCheck && !target.IsAgent && !target.IsS3 {
 		_, err := os.Stat(target.Path)
 		if err != nil {
 			errCleanUp()
@@ -231,12 +233,12 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 	op.queueTask.UpdateDescription("mounting target to server")
 
 	srcPath := target.Path
-	if isAgent {
+	if target.IsAgent {
 		if op.job.SourceMode == "snapshot" {
 			op.queueTask.UpdateDescription("waiting for agent to finish snapshot")
 		}
 
-		agentMount, err = mount.Mount(op.storeInstance, op.job, target)
+		agentMount, err = mount.AgentFSMount(op.storeInstance, op.job, target)
 		if err != nil {
 			errCleanUp()
 			return fmt.Errorf("%w: %v", ErrMountInitialization, err)
@@ -248,12 +250,28 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		if err == nil {
 			op.job = latestAgent
 		}
+	} else if target.IsS3 {
+		s3Mount, err = mount.S3FSMount(op.storeInstance, op.job, target)
+		if err != nil {
+			errCleanUp()
+			return fmt.Errorf("%w: %v", ErrMountInitialization, err)
+		}
+		srcPath = s3Mount.Path
+
+		// In case mount updates the job.
+		latestS3, err := op.storeInstance.Database.GetJob(op.job.ID)
+		if err == nil {
+			op.job = latestS3
+		}
 	}
-	srcPath = filepath.Join(srcPath, op.job.Subpath)
+
+	if !target.IsS3 {
+		srcPath = filepath.Join(srcPath, op.job.Subpath)
+	}
 
 	op.queueTask.UpdateDescription("waiting for proxmox-backup-client to start")
 
-	cmd, err := prepareBackupCommand(ctx, op.job, op.storeInstance, srcPath, isAgent, op.extraExclusions)
+	cmd, err := prepareBackupCommand(ctx, op.job, op.storeInstance, srcPath, target.IsAgent, op.extraExclusions)
 	if err != nil {
 		errCleanUp()
 		return fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
@@ -444,6 +462,10 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		if agentMount != nil {
 			agentMount.Unmount()
 			agentMount.CloseMount()
+		}
+
+		if s3Mount != nil {
+			s3Mount.Unmount()
 		}
 
 		postScriptExecute(true)

@@ -14,18 +14,12 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/zeebo/xxh3"
 )
 
 // accessMsg represents one file (or directory) access event.
 type accessMsg struct {
 	hash  uint64
 	isDir bool
-}
-
-// hashPath uses xxHash to obtain an unsigned 64-bit hash of the given path.
-func hashPath(path string) uint64 {
-	return xxh3.HashString(path)
 }
 
 // NewARPCFS creates an instance of ARPCFS and opens the bbolt DB.

@@ -17,6 +17,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/arpc/mount"
+	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/s3"
+	s3Mount "github.com/pbs-plus/pbs-plus/internal/backend/s3/mount"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -26,6 +28,19 @@ type BackupArgs struct {
 	JobId          string
 	TargetHostname string
 	Drive          string
+}
+
+type S3BackupArgs struct {
+	JobId        string
+	Endpoint     string
+	AccessKey    string
+	SecretKey    string
+	Bucket       string
+	Region       string
+	Prefix       string
+	UseSSL       bool
+	UsePathStyle bool
+	Path         string
 }
 
 type BackupReply struct {
@@ -166,6 +181,68 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 			"jobId":  args.JobId,
 			"mount":  mntPath,
 			"backup": backupMode,
+		}).Write()
+
+	return nil
+}
+
+func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
+	syslog.L.Info().
+		WithMessage("Received S3 backup request").
+		WithFields(map[string]interface{}{
+			"jobId":    args.JobId,
+			"endpoint": args.Endpoint,
+			"bucket":   args.Bucket,
+			"prefix":   args.Prefix,
+		}).Write()
+
+	// Retrieve the job from the database.
+	job, err := s.Store.Database.GetJob(args.JobId)
+	if err != nil {
+		reply.Status = 404
+		reply.Message = "S3MountHandler: Unable to get job from id"
+		return fmt.Errorf("backup: %w", err)
+	}
+
+	secretKey, err := s.Store.Database.GetS3Secret(job.Target)
+	if err != nil {
+		reply.Status = 404
+		reply.Message = "S3MountHandler: Unable to get secret key of target"
+		return fmt.Errorf("backup: %w", err)
+	}
+
+	childKey := args.Endpoint + "|" + args.JobId
+	s3FS, err := s3fs.NewS3FS(s.ctx, job, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
+	if err != nil {
+		reply.Status = 500
+		reply.Message = "S3MountHandler: Failed to send create S3FS"
+		return errors.New(reply.Message)
+	}
+
+	store.CreateS3Mount(childKey, s3FS)
+
+	// Set up the local mount path.
+	mntPath := filepath.Join(constants.AgentMountBasePath, args.JobId)
+
+	if err := s3Mount.Mount(s3FS, mntPath); err != nil {
+		syslog.L.Error(err).Write()
+		reply.Status = 500
+		reply.Message = fmt.Sprintf("S3MountHandler: Failed to create fuse connection for target -> %v", err)
+		return fmt.Errorf("backup: %w", err)
+	}
+
+	// Set the reply values.
+	reply.Status = 200
+	reply.Message = job.Namespace
+
+	syslog.L.Info().
+		WithMessage("Backup successful").
+		WithFields(map[string]interface{}{
+			"jobId":    args.JobId,
+			"mount":    mntPath,
+			"endpoint": args.Endpoint,
+			"bucket":   args.Bucket,
+			"prefix":   args.Prefix,
 		}).Write()
 
 	return nil
