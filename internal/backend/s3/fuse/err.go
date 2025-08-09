@@ -8,7 +8,6 @@ import (
 	"syscall"
 
 	gofs "github.com/hanwen/go-fuse/v2/fs"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/rclone/rclone/fs"
 )
 
@@ -16,8 +15,6 @@ func s3ErrorToErrno(err error) syscall.Errno {
 	if err == nil {
 		return 0
 	}
-
-	syslog.L.Error(err).Write()
 
 	// Handle rclone specific errors
 	if errors.Is(err, fs.ErrorObjectNotFound) {
