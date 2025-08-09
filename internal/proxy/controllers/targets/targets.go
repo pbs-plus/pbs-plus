@@ -400,6 +400,12 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		_, s3Err := s3url.Parse(target.Path)
+		if s3Err != nil {
+			controllers.WriteErrorResponse(w, errors.New("target is not a valid S3 path"))
+			return
+		}
+
 		if r.FormValue("secret") != "" {
 			controllers.WriteErrorResponse(w, errors.New("invalid empty secret"))
 			return
