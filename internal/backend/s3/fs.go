@@ -1,5 +1,3 @@
-//go:build linux
-
 package s3fs
 
 import (
@@ -7,21 +5,19 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
 )
 
-// Configurable cache TTLs
 const (
 	metaCacheTTL    = 30 * time.Second
 	dirCacheTTL     = 30 * time.Second
@@ -29,9 +25,8 @@ const (
 	maxCacheEntries = 2048
 )
 
-// cacheEntry wraps cached data with an expiration time
 type cacheEntry[T any] struct {
-	value     T
+	value     *T
 	expiresAt time.Time
 }
 
@@ -39,10 +34,9 @@ func (e cacheEntry[T]) expired() bool {
 	return time.Now().After(e.expiresAt)
 }
 
-// S3FS implements a read-only filesystem backed by an S3 bucket.
 type S3FS struct {
 	ctx    context.Context
-	client *s3.Client
+	client *minio.Client
 	Job    storeTypes.Job
 	bucket string
 	prefix string
@@ -61,53 +55,35 @@ type S3FS struct {
 	lastTotalBytes  int64
 }
 
-// NewS3FS constructs an S3FS with caching using AWS SDK v2.
+var seenNamesPool = sync.Pool{
+	New: func() any {
+		m := make(map[string]bool, 64)
+		return &m
+	},
+}
+
 func NewS3FS(
 	ctx context.Context,
 	job storeTypes.Job,
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
-	usePathStyle bool,
 ) (*S3FS, error) {
-	customResolver := aws.EndpointResolverWithOptionsFunc(
-		func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-			if service == s3.ServiceID {
-				return aws.Endpoint{
-					URL:           endpoint,
-					SigningRegion: region,
-				}, nil
-			}
-			return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-		},
-	)
-
-	// Load AWS config with static credentials and custom resolver
-	cfg, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion(region),
-		config.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
-		),
-		config.WithEndpointResolverWithOptions(customResolver),
-	)
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: useSSL,
+		Region: region,
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.UsePathStyle = true
-	})
 
 	prefix = strings.Trim(prefix, "/")
 	if prefix != "" {
 		prefix += "/"
 	}
 
-	metaCache, _ := lru.New[string, cacheEntry[agentTypes.AgentFileInfo]](
-		maxCacheEntries,
-	)
-	dirCache, _ := lru.New[string, cacheEntry[agentTypes.ReadDirEntries]](
-		maxCacheEntries,
-	)
+	metaCache, _ := lru.New[string, cacheEntry[agentTypes.AgentFileInfo]](maxCacheEntries)
+	dirCache, _ := lru.New[string, cacheEntry[agentTypes.ReadDirEntries]](maxCacheEntries)
 
 	return &S3FS{
 		ctx:       ctx,
@@ -120,25 +96,21 @@ func NewS3FS(
 	}, nil
 }
 
-// fullKey maps a fuse path "/foo/bar" → "<prefix>foo/bar"
 func (fs *S3FS) fullKey(fpath string) string {
 	if fpath == "/" || fpath == "" {
 		return fs.prefix
 	}
-
 	p := strings.TrimPrefix(path.Clean(fpath), "/")
 	if p == "." || p == "" {
 		return fs.prefix
 	}
-
 	return fs.prefix + p
 }
 
-// Attr implements agentTypes.AgentFileInfo lookup with caching and optimized detection.
 func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
-	// Handle root directory specially
+	now := time.Now().Unix()
+
 	if fpath == "/" || fpath == "" {
-		now := time.Now().Unix()
 		return agentTypes.AgentFileInfo{
 			IsDir:          true,
 			Mode:           uint32(os.ModeDir | 0555),
@@ -150,30 +122,21 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 
 	key := fs.fullKey(fpath)
 
-	// Check cache
 	if val, ok := fs.metaCache.Get(key); ok && !val.expired() {
-		return val.value, nil
+		return *val.value, nil
 	}
 
 	ctx, cancel := context.WithTimeout(fs.ctx, 5*time.Second)
 	defer cancel()
 
-	// First, try to get the object directly (most efficient for files)
-	headInput := &s3.HeadObjectInput{
-		Bucket: aws.String(fs.bucket),
-		Key:    aws.String(key),
-	}
-
-	headOutput, err := fs.client.HeadObject(ctx, headInput)
-	if err == nil {
-		// It's a file
-		mod := headOutput.LastModified.Unix()
-		size := headOutput.ContentLength
-		blocks := uint64((size + 511) / 512)
+	// Try to get object info directly (for files)
+	if objInfo, err := fs.client.StatObject(ctx, fs.bucket, key, minio.StatObjectOptions{}); err == nil {
+		mod := objInfo.LastModified.Unix()
+		blocks := uint64((objInfo.Size + 511) / 512)
 		result := agentTypes.AgentFileInfo{
 			IsDir:          false,
 			Mode:           0644,
-			Size:           size,
+			Size:           objInfo.Size,
 			Blocks:         blocks,
 			CreationTime:   mod,
 			LastAccessTime: mod,
@@ -181,35 +144,30 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 		}
 
 		fs.metaCache.Add(key, cacheEntry[agentTypes.AgentFileInfo]{
-			value:     result,
+			value:     &result,
 			expiresAt: time.Now().Add(metaCacheTTL),
 		})
 		atomic.AddInt64(&fs.fileCount, 1)
 		return result, nil
 	}
 
-	// If HeadObject failed, check if it's a directory using ListObjectsV2 with delimiter
+	// Check if it's a directory by listing with prefix
 	dirKey := key
 	if !strings.HasSuffix(dirKey, "/") {
 		dirKey += "/"
 	}
 
-	listInput := &s3.ListObjectsV2Input{
-		Bucket:    aws.String(fs.bucket),
-		Prefix:    aws.String(dirKey),
-		Delimiter: aws.String("/"), // Key optimization for directory detection
-		MaxKeys:   *aws.Int32(1),
+	opts := minio.ListObjectsOptions{
+		Prefix:    dirKey,
+		Recursive: false,
+		MaxKeys:   1,
 	}
 
-	listOutput, err := fs.client.ListObjectsV2(ctx, listInput)
-	if err != nil {
-		return agentTypes.AgentFileInfo{}, err
-	}
+	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
+		if obj.Err != nil {
+			return agentTypes.AgentFileInfo{}, obj.Err
+		}
 
-	// Check if any objects or common prefixes exist
-	if len(listOutput.Contents) > 0 || len(listOutput.CommonPrefixes) > 0 {
-		// It's a directory
-		now := time.Now().Unix()
 		result := agentTypes.AgentFileInfo{
 			IsDir:          true,
 			Mode:           uint32(os.ModeDir | 0555),
@@ -219,7 +177,7 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 		}
 
 		fs.metaCache.Add(key, cacheEntry[agentTypes.AgentFileInfo]{
-			value:     result,
+			value:     &result,
 			expiresAt: time.Now().Add(metaCacheTTL),
 		})
 		atomic.AddInt64(&fs.folderCount, 1)
@@ -241,11 +199,8 @@ func (fs *S3FS) StatFS() (agentTypes.StatFS, error) {
 	}, nil
 }
 
-// ReadDir returns a cached snapshot of the directory with delimiter optimization.
 func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 	var prefix string
-
-	// Handle root directory
 	if fpath == "/" || fpath == "" {
 		prefix = fs.prefix
 	} else {
@@ -256,69 +211,65 @@ func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 		}
 	}
 
-	// Check cache
 	if val, ok := fs.dirCache.Get(prefix); ok && !val.expired() {
-		return &S3DirStream{entries: val.value}, nil
+		return &S3DirStream{entries: *val.value}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(fs.ctx, 10*time.Second)
 	defer cancel()
 
-	// Use ListObjectsV2 with delimiter for efficient directory listing
-	listInput := &s3.ListObjectsV2Input{
-		Bucket:    aws.String(fs.bucket),
-		Prefix:    aws.String(prefix),
-		Delimiter: aws.String("/"), // Key optimization for directory handling
+	opts := minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: false,
 	}
 
-	entries := make(agentTypes.ReadDirEntries, 0)
-	seenNames := make(map[string]bool)
-
-	// Use paginator for large directories
-	paginator := s3.NewListObjectsV2Paginator(fs.client, listInput)
-
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		// Process regular objects (files)
-		for _, obj := range page.Contents {
-			name := strings.TrimPrefix(*obj.Key, prefix)
-			if name == "" || strings.Contains(name, "/") {
-				continue // Skip empty names or nested objects
-			}
-			if !seenNames[name] {
-				seenNames[name] = true
-				entries = append(entries, agentTypes.AgentDirEntry{
-					Name: name,
-					Mode: 0644,
-				})
-			}
-		}
-
-		// Process common prefixes (directories)
-		for _, commonPrefix := range page.CommonPrefixes {
-			name := strings.TrimPrefix(strings.TrimSuffix(*commonPrefix.Prefix, "/"), prefix)
-			if name != "" && !seenNames[name] {
-				seenNames[name] = true
-				entries = append(entries, agentTypes.AgentDirEntry{
-					Name: name,
-					Mode: uint32(os.ModeDir | 0555),
-				})
-			}
-		}
+	entries := make(agentTypes.ReadDirEntries, 0, 64)
+	seenNames := *(seenNamesPool.Get().(*map[string]bool))
+	for k := range seenNames {
+		delete(seenNames, k)
 	}
+
+	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
+		if obj.Err != nil {
+			seenNamesPool.Put(&seenNames)
+			return nil, obj.Err
+		}
+
+		name := strings.TrimPrefix(obj.Key, prefix)
+		if name == "" {
+			continue
+		}
+
+		isDir := strings.HasSuffix(name, "/")
+		if isDir {
+			name = strings.TrimSuffix(name, "/")
+		}
+
+		if seenNames[name] {
+			continue
+		}
+		seenNames[name] = true
+
+		mode := uint32(0644)
+		if isDir {
+			mode = uint32(os.ModeDir | 0555)
+		}
+
+		entries = append(entries, agentTypes.AgentDirEntry{
+			Name: name,
+			Mode: mode,
+		})
+	}
+
+	seenNamesPool.Put(&seenNames)
 
 	fs.dirCache.Add(prefix, cacheEntry[agentTypes.ReadDirEntries]{
-		value:     entries,
+		value:     &entries,
 		expiresAt: time.Now().Add(dirCacheTTL),
 	})
 	return &S3DirStream{entries: entries}, nil
 }
 
-// OpenFile only allows read-only
 func (fs *S3FS) OpenFile(
 	fpath string,
 	flag int,
@@ -330,7 +281,6 @@ func (fs *S3FS) OpenFile(
 
 	key := fs.fullKey(fpath)
 
-	// Get file info to initialize size
 	info, err := fs.Attr(fpath)
 	if err != nil {
 		return nil, err
