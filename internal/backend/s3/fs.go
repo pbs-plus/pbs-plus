@@ -23,10 +23,10 @@ import (
 
 // Configurable cache TTLs
 const (
-	metaCacheTTL    = 30 * time.Second // Increased from 10s
-	dirCacheTTL     = 30 * time.Second // Increased from 10s
-	readAheadSize   = 2 * 1024 * 1024  // 2MB read-ahead
-	maxCacheEntries = 2048             // Increased from 1024
+	metaCacheTTL    = 30 * time.Second
+	dirCacheTTL     = 30 * time.Second
+	readAheadSize   = 2 * 1024 * 1024
+	maxCacheEntries = 2048
 )
 
 // cacheEntry wraps cached data with an expiration time
@@ -67,34 +67,34 @@ func NewS3FS(
 	job storeTypes.Job,
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
+	usePathStyle bool,
 ) (*S3FS, error) {
-	// Create custom resolver for non-AWS endpoints
-	customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-		if service == s3.ServiceID {
-			return aws.Endpoint{
-				URL:               endpoint,
-				HostnameImmutable: true,
-				Source:            aws.EndpointSourceCustom,
-			}, nil
-		}
-		return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-	})
+	customResolver := aws.EndpointResolverWithOptionsFunc(
+		func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+			if service == s3.ServiceID {
+				return aws.Endpoint{
+					URL:           endpoint,
+					SigningRegion: region,
+				}, nil
+			}
+			return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+		},
+	)
 
-	// Load AWS config with custom credentials and endpoint
+	// Load AWS config with static credentials and custom resolver
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(region),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			accessKey, secretKey, "",
-		)),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+		),
 		config.WithEndpointResolverWithOptions(customResolver),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create S3 client with path-style addressing for non-AWS endpoints
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.UsePathStyle = true // Important for MinIO and other S3-compatible services
+		o.UsePathStyle = true
 	})
 
 	prefix = strings.Trim(prefix, "/")
@@ -197,13 +197,13 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 	listInput := &s3.ListObjectsV2Input{
 		Bucket:    aws.String(fs.bucket),
 		Prefix:    aws.String(dirKey),
-		Delimiter: aws.String("/"),
+		Delimiter: aws.String("/"), // Key optimization for directory detection
 		MaxKeys:   *aws.Int32(1),
 	}
 
 	listOutput, err := fs.client.ListObjectsV2(ctx, listInput)
 	if err != nil {
-		return agentTypes.AgentFileInfo{}, syscall.ENOENT
+		return agentTypes.AgentFileInfo{}, err
 	}
 
 	// Check if any objects or common prefixes exist
@@ -231,13 +231,13 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 
 func (fs *S3FS) StatFS() (agentTypes.StatFS, error) {
 	return agentTypes.StatFS{
-		Bsize:   4096,    // Block size
-		Blocks:  1 << 50, // Pretend we have a huge number of blocks
-		Bfree:   1 << 49, // Half "free"
-		Bavail:  1 << 49, // Available to unprivileged users
-		Files:   1 << 40, // Large number of files
-		Ffree:   1 << 39, // Many free file slots
-		NameLen: 1024,    // Max filename length
+		Bsize:   4096,
+		Blocks:  1 << 50,
+		Bfree:   1 << 49,
+		Bavail:  1 << 49,
+		Files:   1 << 40,
+		Ffree:   1 << 39,
+		NameLen: 1024,
 	}, nil
 }
 
@@ -268,7 +268,7 @@ func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 	listInput := &s3.ListObjectsV2Input{
 		Bucket:    aws.String(fs.bucket),
 		Prefix:    aws.String(prefix),
-		Delimiter: aws.String("/"),
+		Delimiter: aws.String("/"), // Key optimization for directory handling
 	}
 
 	entries := make(agentTypes.ReadDirEntries, 0)
@@ -327,10 +327,22 @@ func (fs *S3FS) OpenFile(
 	if flag&(os.O_WRONLY|os.O_RDWR) != 0 {
 		return nil, syscall.EROFS
 	}
+
 	key := fs.fullKey(fpath)
-	// Skip HeadObject — rely on Attr() cache
-	if _, err := fs.Attr(fpath); err != nil {
+
+	// Get file info to initialize size
+	info, err := fs.Attr(fpath)
+	if err != nil {
 		return nil, err
 	}
-	return &S3File{fs: fs, key: key}, nil
+
+	if info.IsDir {
+		return nil, syscall.EISDIR
+	}
+
+	return &S3File{
+		fs:   fs,
+		key:  key,
+		size: info.Size,
+	}, nil
 }
