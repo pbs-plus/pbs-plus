@@ -239,7 +239,7 @@ func (n *Node) Getattr(
 ) syscall.Errno {
 	fi, err := n.fs.Attr(n.getPath())
 	if err != nil {
-		return fs.ToErrno(err)
+		return s3ErrorToErrno(err)
 	}
 
 	mode := fi.Mode
@@ -279,7 +279,7 @@ func (n *Node) Lookup(
 	fi, err := childNode.fs.Attr(path)
 	if err != nil {
 		nodePool.Put(childNode) // Return to pool on error
-		return nil, fs.ToErrno(err)
+		return nil, s3ErrorToErrno(err)
 	}
 
 	mode := fi.Mode
@@ -313,7 +313,7 @@ func (n *Node) Lookup(
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(n.getPath())
 	if err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, s3ErrorToErrno(err)
 	}
 
 	return entries, 0
@@ -326,7 +326,7 @@ func (n *Node) Open(
 ) (fs.FileHandle, uint32, syscall.Errno) {
 	file, err := n.fs.OpenFile(n.getPath(), int(flags), 0)
 	if err != nil {
-		return nil, 0, fs.ToErrno(err)
+		return nil, 0, s3ErrorToErrno(err)
 	}
 
 	return &FileHandle{
@@ -341,7 +341,7 @@ func (n *Node) Statfs(
 ) syscall.Errno {
 	stat, err := n.fs.StatFS()
 	if err != nil {
-		return fs.ToErrno(err)
+		return s3ErrorToErrno(err)
 	}
 
 	out.Blocks = stat.Blocks
@@ -374,7 +374,7 @@ func (fh *FileHandle) Read(
 ) (fuse.ReadResult, syscall.Errno) {
 	n, err := fh.file.ReadAt(dest, offset)
 	if err != nil && err != io.EOF {
-		return nil, fs.ToErrno(err)
+		return nil, s3ErrorToErrno(err)
 	}
 
 	return fuse.ReadResultData(dest[:n]), 0
@@ -387,7 +387,7 @@ func (fh *FileHandle) Lseek(
 ) (uint64, syscall.Errno) {
 	n, err := fh.file.Lseek(int64(off), int(whence))
 	if err != nil && err != io.EOF {
-		return 0, fs.ToErrno(err)
+		return 0, s3ErrorToErrno(err)
 	}
 
 	return n, 0
@@ -395,5 +395,5 @@ func (fh *FileHandle) Lseek(
 
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
 	err := fh.file.Close()
-	return fs.ToErrno(err)
+	return s3ErrorToErrno(err)
 }
