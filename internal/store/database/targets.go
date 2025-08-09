@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
 	simplebox "github.com/pbs-plus/pbs-plus/internal/store/database/secrets"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -264,7 +265,10 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 
 	target.JobCount = jobCount
 	target.IsAgent = strings.HasPrefix(target.Path, "agent://")
-	target.IsS3 = strings.HasPrefix(target.Path, "s3://")
+	_, err = s3url.Parse(target.Path)
+	if err == nil {
+		target.IsS3 = true
+	}
 
 	return target, nil
 }
@@ -336,7 +340,10 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 
 		target.JobCount = jobCount
 		target.IsAgent = strings.HasPrefix(target.Path, "agent://")
-		target.IsS3 = strings.HasPrefix(target.Path, "s3://")
+		_, err = s3url.Parse(target.Path)
+		if err == nil {
+			target.IsS3 = true
+		}
 
 		targets = append(targets, target)
 	}
