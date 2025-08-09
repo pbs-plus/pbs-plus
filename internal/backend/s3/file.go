@@ -5,6 +5,7 @@ package s3fs
 import (
 	"context"
 	"io"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -49,6 +50,8 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 		return n, err
 	}
 
+	atomic.AddInt64(&f.fs.totalBytes, int64(n))
+
 	// If we read less than requested, it means we hit EOF
 	if n < len(buf) {
 		return n, io.EOF
@@ -61,4 +64,3 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 func (f *S3File) Close() error {
 	return nil
 }
-
