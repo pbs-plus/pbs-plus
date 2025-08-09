@@ -203,8 +203,14 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	// TODO: implement secret store for S3 secret key
-	s3FS, err := s3fs.NewS3FS(s.ctx, args.Endpoint, args.AccessKey, "", args.Bucket, args.Region, args.Prefix, args.UseSSL)
+	secretKey, err := s.Store.Database.GetS3Secret(job.Target)
+	if err != nil {
+		reply.Status = 404
+		reply.Message = "S3MountHandler: Unable to get secret key of target"
+		return fmt.Errorf("backup: %w", err)
+	}
+
+	s3FS, err := s3fs.NewS3FS(s.ctx, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = "S3MountHandler: Failed to send create S3FS"
