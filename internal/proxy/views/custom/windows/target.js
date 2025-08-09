@@ -65,7 +65,6 @@ Ext.define("PBS.D2DManagement.TargetS3Secret", {
     let contentid = initialConfig.contentid;
     let baseurl = pbsPlusBaseUrl + "/api2/extjs/config/d2d-target";
 
-    me.isCreate = !contentid;
     me.url = contentid
       ? `${baseurl}/${encodeURIComponent(encodePathValue(contentid))}/s3-secret`
       : baseurl;
