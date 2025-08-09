@@ -71,6 +71,12 @@ PBS Plus currently consists of two main components: the server and the agent. Th
 - The agent registers with the server on initialization, exchanging public keys for communication.
 - The agent acts as a service, using a custom RPC (`aRPC`/Agent RPC) using [smux](https://github.com/xtaci/smux) with mTLS to communicate with the server. For backups, the server communicates with the agent over `aRPC` to deploy a `FUSE`-based filesystem, mounts the volume to PBS, and runs `proxmox-backup-client` on the server side to perform the actual backup.
 
+### S3-compatible backup target
+> [!WARNING]  
+> This is a very early implementation of S3 as backup target.
+- It should be as simple as adding a target with the following format as path: `<scheme>://<access key>@<endpoint>/<bucket>`
+- Afterwards, you can set the secret key via the `Set S3 Secret Key` button while having the newly created target selected.
+
 ## Hook scripts (Pre/Post scripts)
 
 ### Overview
