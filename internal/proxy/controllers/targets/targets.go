@@ -4,6 +4,7 @@ package targets
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -371,5 +372,44 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			json.NewEncoder(w).Encode(response)
 			return
 		}
+	}
+}
+
+func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		response := TargetConfigResponse{}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		err := r.ParseForm()
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		if r.FormValue("secret") != "" {
+			controllers.WriteErrorResponse(w, errors.New("invalid empty secret"))
+			return
+		}
+
+		err = storeInstance.Database.AddS3Secret(nil, target.Name, r.FormValue("secret"))
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		response.Status = http.StatusOK
+		response.Success = true
+		json.NewEncoder(w).Encode(response)
 	}
 }

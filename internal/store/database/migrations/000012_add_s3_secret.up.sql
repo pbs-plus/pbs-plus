@@ -1,0 +1,1 @@
+ALTER TABLE targets ADD COLUMN secret_s3 TEXT NOT NULL DEFAULT '';
