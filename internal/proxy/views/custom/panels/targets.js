@@ -57,6 +57,22 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }).show();
     },
 
+    setS3Secret: function() {
+      let me = this;
+      let view = me.getView();
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
+      Ext.create("PBS.D2DManagement.TargetS3Secret", {
+        contentid: selection[0].data.name,
+        autoLoad: true,
+        listeners: {
+          destroy: () => me.reload(),
+        },
+      }).show();
+    },
+
     reload: function() {
       this.getView().getStore().rstore.load();
     },
@@ -169,6 +185,12 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       text: gettext("Edit"),
       xtype: "proxmoxButton",
       handler: "onEdit",
+      disabled: true,
+    },
+    {
+      text: gettext("Set S3 Secret Key"),
+      xtype: "proxmoxButton",
+      handler: "setS3Secret",
       disabled: true,
     },
     {

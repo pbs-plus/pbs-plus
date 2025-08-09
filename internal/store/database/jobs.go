@@ -423,7 +423,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes, t.mount_script
+            t.drive_used_bytes, t.mount_script, t.path
         FROM jobs j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
@@ -444,7 +444,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 		var retry, maxDirEntries int
 		var retryInterval int
 		var currentPID int
-		var exclusionPath sql.NullString
+		var targetPath, exclusionPath sql.NullString
 		var driveUsedBytes sql.NullInt64
 		var mountScript sql.NullString
 
@@ -452,7 +452,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 			&jobID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
 			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval, &maxDirEntries, &preScript, &postScript,
-			&exclusionPath, &driveUsedBytes, &mountScript,
+			&exclusionPath, &driveUsedBytes, &mountScript, &targetPath,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllJobs: error scanning row: %w", err)).Write()
@@ -489,6 +489,10 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 			jobsMap[jobID] = job
 			jobOrder = append(jobOrder, jobID)
 			database.populateJobExtras(job) // Populate non-SQL extras once per job
+		}
+
+		if targetPath.Valid {
+			job.TargetPath = targetPath.String
 		}
 
 		if mountScript.Valid {

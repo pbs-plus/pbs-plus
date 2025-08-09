@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 
+	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
+	simplebox "github.com/pbs-plus/pbs-plus/internal/store/database/secrets"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
@@ -47,7 +49,9 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err err
 	if target.Path == "" {
 		return fmt.Errorf("target path empty")
 	}
-	if !utils.ValidateTargetPath(target.Path) {
+
+	_, s3Err := s3url.Parse(target.Path)
+	if !utils.ValidateTargetPath(target.Path) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -111,7 +115,9 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 	if target.Path == "" {
 		return fmt.Errorf("target path empty")
 	}
-	if !utils.ValidateTargetPath(target.Path) {
+
+	_, s3Err := s3url.Parse(target.Path)
+	if !utils.ValidateTargetPath(target.Path) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -132,6 +138,53 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 	)
 	if err != nil {
 		return fmt.Errorf("UpdateTarget: error updating target: %w", err)
+	}
+
+	commitNeeded = true
+	return nil
+}
+
+func (database *Database) AddS3Secret(tx *sql.Tx, targetName, secret string) (err error) {
+	var commitNeeded bool = false
+	if tx == nil {
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return fmt.Errorf("AddSecret: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("AddSecret: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("AddSecret: failed to commit transaction: %w", cErr)
+					syslog.L.Error(err).Write()
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("AddSecret: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			}
+		}()
+	}
+
+	encrypted, err := simplebox.Encrypt(secret)
+	if err != nil {
+		return fmt.Errorf("AddSecret: error encrypting secret: %w", err)
+	}
+
+	_, err = tx.Exec(`
+        UPDATE targets SET secret_s3 = ? WHERE name = ?
+    `,
+		encrypted,
+		targetName,
+	)
+	if err != nil {
+		return fmt.Errorf("AddSecret: error adding secret to target: %w", err)
 	}
 
 	commitNeeded = true
@@ -216,8 +269,40 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 
 	target.JobCount = jobCount
 	target.IsAgent = strings.HasPrefix(target.Path, "agent://")
+	_, err = s3url.Parse(target.Path)
+	if err == nil {
+		target.IsS3 = true
+	}
 
 	return target, nil
+}
+
+func (database *Database) GetS3Secret(name string) (string, error) {
+	row := database.readDb.QueryRow(`
+        SELECT
+            t.secret_s3
+        FROM targets t
+        WHERE t.name = ?
+    `, name)
+
+	var encrypted string
+	err := row.Scan(
+		&encrypted,
+	)
+	if err != nil {
+		// Don't wrap sql.ErrNoRows, return it directly
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", sql.ErrNoRows
+		}
+		return "", fmt.Errorf("GetS3Secret: error fetching target: %w", err)
+	}
+
+	decrypted, err := simplebox.Decrypt(encrypted)
+	if err != nil {
+		return "", fmt.Errorf("GetS3Secret: failed to decrypt secret: %w", err)
+	}
+
+	return decrypted, nil
 }
 
 // GetAllTargets returns all targets along with their associated job counts.
@@ -259,6 +344,10 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 
 		target.JobCount = jobCount
 		target.IsAgent = strings.HasPrefix(target.Path, "agent://")
+		_, err = s3url.Parse(target.Path)
+		if err == nil {
+			target.IsS3 = true
+		}
 
 		targets = append(targets, target)
 	}

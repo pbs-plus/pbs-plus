@@ -4,11 +4,13 @@ package targets
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 
+	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -38,6 +40,9 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 					all[i].ConnectionStatus = true
 					all[i].AgentVersion = arpcSess.GetVersion()
 				}
+			} else if all[i].IsS3 {
+				all[i].ConnectionStatus = true
+				all[i].AgentVersion = "N/A (S3 target)"
 			} else {
 				all[i].AgentVersion = "N/A (local target)"
 
@@ -63,8 +68,6 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(toReturn)
-
-		return
 	}
 }
 
@@ -236,7 +239,8 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if !utils.IsValid(r.FormValue("path")) {
+		_, s3Err := s3url.Parse(r.FormValue("path"))
+		if !utils.IsValid(r.FormValue("path")) && s3Err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", r.FormValue("path")))
 			return
 		}
@@ -276,7 +280,8 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			if !utils.IsValid(r.FormValue("path")) {
+			_, s3Err := s3url.Parse(r.FormValue("path"))
+			if !utils.IsValid(r.FormValue("path")) && s3Err != nil {
 				controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", r.FormValue("path")))
 				return
 			}
@@ -336,6 +341,9 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					target.ConnectionStatus = true
 					target.AgentVersion = arpcSess.GetVersion()
 				}
+			} else if target.IsS3 {
+				target.ConnectionStatus = true
+				target.AgentVersion = "N/A (S3 target)"
 			} else {
 				target.AgentVersion = "N/A (local target)"
 
@@ -367,5 +375,50 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			json.NewEncoder(w).Encode(response)
 			return
 		}
+	}
+}
+
+func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		response := TargetConfigResponse{}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		err := r.ParseForm()
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		_, s3Err := s3url.Parse(target.Path)
+		if s3Err != nil {
+			controllers.WriteErrorResponse(w, errors.New("target is not a valid S3 path"))
+			return
+		}
+
+		if r.FormValue("secret") == "" {
+			controllers.WriteErrorResponse(w, errors.New("invalid empty secret"))
+			return
+		}
+
+		err = storeInstance.Database.AddS3Secret(nil, target.Name, r.FormValue("secret"))
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		response.Status = http.StatusOK
+		response.Success = true
+		json.NewEncoder(w).Encode(response)
 	}
 }
