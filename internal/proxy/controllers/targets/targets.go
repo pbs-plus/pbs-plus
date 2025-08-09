@@ -38,6 +38,9 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 					all[i].ConnectionStatus = true
 					all[i].AgentVersion = arpcSess.GetVersion()
 				}
+			} else if all[i].IsS3 {
+				all[i].ConnectionStatus = true
+				all[i].AgentVersion = "N/A (S3 target)"
 			} else {
 				all[i].AgentVersion = "N/A (local target)"
 
@@ -63,8 +66,6 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(toReturn)
-
-		return
 	}
 }
 
@@ -336,6 +337,9 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					target.ConnectionStatus = true
 					target.AgentVersion = arpcSess.GetVersion()
 				}
+			} else if target.IsS3 {
+				target.ConnectionStatus = true
+				target.AgentVersion = "N/A (S3 target)"
 			} else {
 				target.AgentVersion = "N/A (local target)"
 

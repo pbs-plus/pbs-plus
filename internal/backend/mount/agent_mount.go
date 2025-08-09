@@ -26,7 +26,7 @@ type AgentMount struct {
 	Path     string
 }
 
-func Mount(storeInstance *store.Store, job types.Job, target types.Target) (*AgentMount, error) {
+func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target) (*AgentMount, error) {
 	// Parse target information
 	splittedTargetName := strings.Split(target.Name, " - ")
 	targetHostname := splittedTargetName[0]

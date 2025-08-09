@@ -62,12 +62,13 @@ type S3FS struct {
 // NewS3FS constructs an S3FS with caching.
 func NewS3FS(
 	ctx context.Context,
-	endpoint, accessKey, secretKey, bucket, prefix string,
+	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
 ) (*S3FS, error) {
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure: useSSL,
+		Region: region,
 	})
 	if err != nil {
 		return nil, err
