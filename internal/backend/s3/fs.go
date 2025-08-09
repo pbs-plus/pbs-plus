@@ -62,6 +62,7 @@ type S3FS struct {
 // NewS3FS constructs an S3FS with caching.
 func NewS3FS(
 	ctx context.Context,
+	job storeTypes.Job,
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
 ) (*S3FS, error) {
@@ -78,11 +79,16 @@ func NewS3FS(
 		prefix += "/"
 	}
 
-	metaCache, _ := lru.New[string, cacheEntry[types.AgentFileInfo]](maxCacheEntries)
-	dirCache, _ := lru.New[string, cacheEntry[types.ReadDirEntries]](maxCacheEntries)
+	metaCache, _ := lru.New[string, cacheEntry[types.AgentFileInfo]](
+		maxCacheEntries,
+	)
+	dirCache, _ := lru.New[string, cacheEntry[types.ReadDirEntries]](
+		maxCacheEntries,
+	)
 
 	return &S3FS{
 		ctx:       ctx,
+		Job:       job,
 		client:    client,
 		bucket:    bucket,
 		prefix:    prefix,
@@ -160,12 +166,14 @@ func (fs *S3FS) Attr(fpath string) (types.AgentFileInfo, error) {
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
-	fs.metaCache.Add(key, cacheEntry[types.AgentFileInfo]{value: result, expiresAt: time.Now().Add(metaCacheTTL)})
+	fs.metaCache.Add(
+		key,
+		cacheEntry[types.AgentFileInfo]{
+			value:     result,
+			expiresAt: time.Now().Add(metaCacheTTL),
+		},
+	)
 	return result, nil
-}
-
-func (fs *S3FS) Xattr(filename string) (types.AgentFileInfo, error) {
-	return types.AgentFileInfo{}, syscall.ENODATA
 }
 
 func (fs *S3FS) StatFS() (types.StatFS, error) {
@@ -181,7 +189,7 @@ func (fs *S3FS) StatFS() (types.StatFS, error) {
 }
 
 // ReadDir returns a cached snapshot of the directory.
-func (fs *S3FS) ReadDir(fpath string) (S3DirStream, error) {
+func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 	key := fs.fullKey(fpath)
 	prefix := key
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
@@ -190,7 +198,7 @@ func (fs *S3FS) ReadDir(fpath string) (S3DirStream, error) {
 
 	// Check cache
 	if val, ok := fs.dirCache.Get(prefix); ok && !val.expired() {
-		return S3DirStream{entries: val.value}, nil
+		return &S3DirStream{entries: val.value}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(fs.ctx, 10*time.Second)
@@ -204,7 +212,7 @@ func (fs *S3FS) ReadDir(fpath string) (S3DirStream, error) {
 
 	for obj := range stream {
 		if obj.Err != nil {
-			return S3DirStream{}, obj.Err
+			return nil, obj.Err
 		}
 		name := strings.TrimPrefix(obj.Key, prefix)
 		if name == "" {
@@ -228,19 +236,29 @@ func (fs *S3FS) ReadDir(fpath string) (S3DirStream, error) {
 		entries = append(entries, types.AgentDirEntry{Name: name, Mode: mode})
 	}
 
-	fs.dirCache.Add(prefix, cacheEntry[types.ReadDirEntries]{value: entries, expiresAt: time.Now().Add(dirCacheTTL)})
-	return S3DirStream{entries: entries}, nil
+	fs.dirCache.Add(
+		prefix,
+		cacheEntry[types.ReadDirEntries]{
+			value:     entries,
+			expiresAt: time.Now().Add(dirCacheTTL),
+		},
+	)
+	return &S3DirStream{entries: entries}, nil
 }
 
 // OpenFile only allows read-only
-func (fs *S3FS) OpenFile(fpath string, flag int, _ os.FileMode) (S3File, error) {
+func (fs *S3FS) OpenFile(
+	fpath string,
+	flag int,
+	_ os.FileMode,
+) (*S3File, error) {
 	if flag&(os.O_WRONLY|os.O_RDWR) != 0 {
-		return S3File{}, syscall.EROFS
+		return nil, syscall.EROFS
 	}
 	key := fs.fullKey(fpath)
 	// Skip StatObject — rely on Attr() cache
 	if _, err := fs.Attr(fpath); err != nil {
-		return S3File{}, err
+		return nil, err
 	}
-	return S3File{fs: fs, key: key}, nil
+	return &S3File{fs: fs, key: key}, nil
 }
