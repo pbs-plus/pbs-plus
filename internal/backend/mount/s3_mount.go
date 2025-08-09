@@ -65,13 +65,14 @@ func S3FSMount(storeInstance *store.Store, job types.Job, target types.Target) (
 	}
 
 	args := &rpcmount.S3BackupArgs{
-		JobId:     job.ID,
-		Endpoint:  parsedS3.Endpoint,
-		AccessKey: parsedS3.AccessKey,
-		Bucket:    parsedS3.Bucket,
-		Region:    parsedS3.Region,
-		UseSSL:    parsedS3.UseSSL,
-		Prefix:    job.Subpath,
+		JobId:        job.ID,
+		Endpoint:     parsedS3.Endpoint,
+		AccessKey:    parsedS3.AccessKey,
+		Bucket:       parsedS3.Bucket,
+		Region:       parsedS3.Region,
+		UseSSL:       parsedS3.UseSSL,
+		UsePathStyle: parsedS3.IsPathStyle,
+		Prefix:       job.Subpath,
 	}
 	var reply rpcmount.BackupReply
 

@@ -31,15 +31,16 @@ type BackupArgs struct {
 }
 
 type S3BackupArgs struct {
-	JobId     string
-	Endpoint  string
-	AccessKey string
-	SecretKey string
-	Bucket    string
-	Region    string
-	Prefix    string
-	UseSSL    bool
-	Path      string
+	JobId        string
+	Endpoint     string
+	AccessKey    string
+	SecretKey    string
+	Bucket       string
+	Region       string
+	Prefix       string
+	UseSSL       bool
+	UsePathStyle bool
+	Path         string
 }
 
 type BackupReply struct {
@@ -210,7 +211,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	s3FS, err := s3fs.NewS3FS(s.ctx, job, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
+	s3FS, err := s3fs.NewS3FS(s.ctx, job, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL, args.UsePathStyle)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = "S3MountHandler: Failed to send create S3FS"
