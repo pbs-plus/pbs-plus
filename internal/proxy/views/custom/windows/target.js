@@ -51,35 +51,69 @@ Ext.define("PBS.D2DManagement.TargetEditWindow", {
 });
 
 Ext.define("PBS.D2DManagement.TargetS3Secret", {
-  extend: "Proxmox.window.Edit",
+  extend: "Proxmox.window.EditBase", // or Ext.window.Window
   alias: "widget.pbsTargetEditWindow",
   mixins: ["Proxmox.Mixin.CBind"],
 
-  isCreate: true,
-  autoLoad: false,
+  title: gettext("Set Target S3 Secret Key"),
+  width: 400,
+  modal: true,
+  layout: "fit",
 
-  subject: "Target S3 Secret Key",
   cbindData: function(initialConfig) {
     let me = this;
-
     let contentid = initialConfig.contentid;
     let baseurl = pbsPlusBaseUrl + "/api2/extjs/config/d2d-target";
 
-    me.url = contentid
+    me.submitUrl = contentid
       ? `${baseurl}/${encodeURIComponent(encodePathValue(contentid))}/s3-secret`
       : baseurl;
-    me.method = "POST";
 
     return {};
   },
 
   items: [
     {
-      fieldLabel: gettext("Secret Key"),
-      name: "secret",
-      xtype: "proxmoxtextfield",
-      inputType: "password",
-      allowBlank: false,
+      xtype: "form",
+      bodyPadding: 10,
+      border: false,
+      items: [
+        {
+          fieldLabel: gettext("Secret Key"),
+          name: "secret",
+          xtype: "proxmoxtextfield",
+          inputType: "password",
+          allowBlank: false,
+        },
+      ],
+      buttons: [
+        {
+          text: gettext("OK"),
+          handler: function(btn) {
+            let win = btn.up("window");
+            let form = win.down("form").getForm();
+            if (form.isValid()) {
+              Proxmox.Utils.API2Request({
+                url: win.submitUrl,
+                method: "POST",
+                params: form.getValues(),
+                success: function() {
+                  win.close();
+                },
+                failure: function(response) {
+                  Ext.Msg.alert(gettext("Error"), response.htmlStatus);
+                },
+              });
+            }
+          },
+        },
+        {
+          text: gettext("Cancel"),
+          handler: function(btn) {
+            btn.up("window").close();
+          },
+        },
+      ],
     },
   ],
 });
