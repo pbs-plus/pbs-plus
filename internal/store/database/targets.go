@@ -216,6 +216,7 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 
 	target.JobCount = jobCount
 	target.IsAgent = strings.HasPrefix(target.Path, "agent://")
+	target.IsS3 = strings.HasPrefix(target.Path, "s3://")
 
 	return target, nil
 }
@@ -259,6 +260,7 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 
 		target.JobCount = jobCount
 		target.IsAgent = strings.HasPrefix(target.Path, "agent://")
+		target.IsS3 = strings.HasPrefix(target.Path, "s3://")
 
 		targets = append(targets, target)
 	}
