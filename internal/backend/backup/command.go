@@ -87,15 +87,13 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 	}
 
 	// Add exclusions
-	if extraExclusions != nil {
-		for _, extraExclusion := range extraExclusions {
-			path := extraExclusion
-			if !strings.HasPrefix(extraExclusion, "/") && !strings.HasPrefix(extraExclusion, "!") && !strings.HasPrefix(extraExclusion, "**/") {
-				path = "**/" + path
-			}
-
-			cmdArgs = append(cmdArgs, "--exclude", path)
+	for _, extraExclusion := range extraExclusions {
+		path := extraExclusion
+		if !strings.HasPrefix(extraExclusion, "/") && !strings.HasPrefix(extraExclusion, "!") && !strings.HasPrefix(extraExclusion, "**/") {
+			path = "**/" + path
 		}
+
+		cmdArgs = append(cmdArgs, "--exclude", path)
 	}
 
 	for _, exclusion := range job.Exclusions {
