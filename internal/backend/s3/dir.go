@@ -19,6 +19,9 @@ func (s *S3DirStream) HasNext() bool {
 }
 
 func (s *S3DirStream) Next() (fuse.DirEntry, syscall.Errno) {
+	if !s.HasNext() {
+		return fuse.DirEntry{}, syscall.ENOENT
+	}
 	e := s.entries[s.idx]
 	s.idx++
 	return fuse.DirEntry{Name: e.Name, Mode: e.Mode}, 0
