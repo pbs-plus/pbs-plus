@@ -73,7 +73,7 @@ PBS Plus currently consists of two main components: the server and the agent. Th
 
 ### S3-compatible backup target
 > [!WARNING]  
-> This is a very early implementation of S3 as backup target.
+> This is a very early implementation of S3 as backup target. This has not been optimized to lessen access fees and has only been tested on local S3-compatible implementations (Ceph, MinIO, etc.)
 - It should be as simple as adding a target with the following format as path: `<scheme>://<access key>@<endpoint>/<bucket>`
 - Afterwards, you can set the secret key via the `Set S3 Secret Key` button while having the newly created target selected.
 
