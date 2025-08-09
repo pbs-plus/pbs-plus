@@ -3,70 +3,77 @@
 package s3fs
 
 import (
-	"bytes"
+	"context"
+	"fmt"
 	"io"
-	"sync"
-	"sync/atomic"
+	"syscall"
+	"time"
 
-	"github.com/minio/minio-go/v7"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// S3File with read-ahead buffer
 type S3File struct {
-	fs        *S3FS
-	key       string
-	buf       []byte
-	bufOffset int64
-	mu        sync.Mutex
+	fs     *S3FS
+	key    string
+	offset int64
+	size   int64
 }
 
-func (f *S3File) ReadAt(p []byte, off int64) (int, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	// Serve from buffer if possible
-	if f.buf != nil && off >= f.bufOffset &&
-		off+int64(len(p)) <= f.bufOffset+int64(len(f.buf)) {
-		copy(p, f.buf[off-f.bufOffset:])
-		return len(p), nil
+func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
+	if len(buf) == 0 {
+		return 0, nil
 	}
 
-	// Fetch with read-ahead
-	end := off + int64(len(p))
-	rangeEnd := off + readAheadSize - 1
-	if rangeEnd < end {
-		rangeEnd = end
+	if off < 0 {
+		return 0, syscall.EINVAL
 	}
 
-	opts := minio.GetObjectOptions{}
-	_ = opts.SetRange(off, rangeEnd)
-	obj, err := f.fs.client.GetObject(f.fs.ctx, f.fs.bucket, f.key, opts)
+	ctx, cancel := context.WithTimeout(f.fs.ctx, 30*time.Second)
+	defer cancel()
+
+	// Calculate read-ahead size based on buffer size and configured read-ahead
+	readAheadBytes := int64(len(buf))
+	if readAheadBytes < readAheadSize {
+		readAheadBytes = readAheadSize
+	}
+
+	// Use range request with read-ahead
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", off, off+readAheadBytes-1)
+
+	getInput := &s3.GetObjectInput{
+		Bucket: aws.String(f.fs.bucket),
+		Key:    aws.String(f.key),
+		Range:  aws.String(rangeHeader),
+	}
+
+	result, err := f.fs.client.GetObject(ctx, getInput)
 	if err != nil {
 		return 0, err
 	}
-	defer obj.Close()
+	defer result.Body.Close()
 
-	buf := new(bytes.Buffer)
-	n, err := io.Copy(buf, obj)
-	if err != nil && err != io.EOF {
-		return 0, err
+	// Read only what was requested into the buffer
+	n, err := io.ReadFull(result.Body, buf)
+
+	// Handle partial reads at end of file
+	if err == io.ErrUnexpectedEOF {
+		return n, io.EOF
 	}
 
-	f.buf = buf.Bytes()
-	f.bufOffset = off
-
-	// Ensure we don't copy more than what's available
-	copyLen := len(p)
-	if copyLen > len(f.buf) {
-		copyLen = len(f.buf)
+	if err != nil {
+		return n, err
 	}
-	copy(p, f.buf[:copyLen])
-	atomic.AddInt64(&f.fs.totalBytes, int64(n))
-	return copyLen, nil
+
+	// If we read less than requested, it means we hit EOF
+	if n < len(buf) {
+		return n, io.EOF
+	}
+
+	return n, nil
 }
 
-func (f *S3File) Close() error { return nil }
-
-func (f *S3File) Lseek(off int64, _ int) (uint64, error) {
-	return uint64(off), nil
+func (f *S3File) Close() error {
+	return nil
 }
+
