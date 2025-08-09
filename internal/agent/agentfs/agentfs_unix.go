@@ -4,6 +4,7 @@ package agentfs
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -25,11 +25,11 @@ import (
 
 type FileHandle struct {
 	sync.Mutex
-	file        *os.File
-	dirPath     string
-	fileSize    int64
-	isDir       bool
-	dirReturned atomic.Bool
+	file      *os.File
+	dirPath   string
+	fileSize  int64
+	isDir     bool
+	dirReader *DirReaderUnix
 }
 
 func (s *AgentFSServer) abs(filename string) (string, error) {
@@ -44,7 +44,12 @@ func (s *AgentFSServer) abs(filename string) (string, error) {
 func (s *AgentFSServer) closeFileHandles() {
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
 		fh.Lock()
-		fh.file.Close()
+		if fh.file != nil {
+			fh.file.Close()
+		}
+		if fh.dirReader != nil {
+			fh.dirReader.Close()
+		}
 		fh.Unlock()
 
 		return true
@@ -123,7 +128,7 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, err
 	}
 
-	// Disallow write operations.
+	// Disallow write operations
 	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		errStr := arpc.StringMsg("write operations not allowed")
 		errBytes, err := errStr.Encode()
@@ -141,42 +146,51 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, err
 	}
 
-	// Check file status to mark directories.
+	// Check file status to mark directories
 	stat, err := os.Stat(path)
 	if err != nil {
 		return arpc.Response{}, err
 	}
 
 	handleId := s.handleIdGen.NextID()
-
 	var fh *FileHandle
 
 	if !stat.IsDir() {
+		// Open file using os.Open (returns *os.File)
 		file, err := os.Open(path)
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("failed to open file '%s': %w", path, err)
+		}
+
+		fileSize := stat.Size()
+		fh = &FileHandle{
+			file:     file,
+			fileSize: fileSize,
+			isDir:    false,
+		}
+	} else {
+		// Open directory
+		reader, err := NewDirReaderUnix(path)
 		if err != nil {
 			return arpc.Response{}, err
 		}
 
 		fh = &FileHandle{
-			file:     file,
-			fileSize: stat.Size(),
-			isDir:    false,
-		}
-	} else {
-		fh = &FileHandle{
-			dirPath: path,
-			isDir:   true,
+			dirReader: reader,
+			isDir:     true,
 		}
 	}
 
 	s.handles.Set(handleId, fh)
 
-	// Return the handle ID to the client.
+	// Return the handle ID to the client
 	fhId := types.FileHandleId(handleId)
 	dataBytes, err := fhId.Encode()
 	if err != nil {
 		if !fh.isDir {
 			fh.file.Close()
+		} else {
+			fh.dirReader.Close()
 		}
 		return arpc.Response{}, err
 	}
@@ -322,20 +336,17 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	fh.Lock()
 	defer fh.Unlock()
 
-	if fh.dirReturned.Load() {
-		return arpc.Response{}, os.ErrProcessDone
-	}
-
-	entries, err := readDirBulk(fh.dirPath)
+	encodedBatch, err := fh.dirReader.NextBatch()
 	if err != nil {
+		if !errors.Is(err, os.ErrProcessDone) {
+			syslog.L.Error(err).WithMessage("error reading batch").Write()
+		}
 		return arpc.Response{}, err
 	}
 
-	fh.dirReturned.Store(true)
-
-	reader := bytes.NewReader(entries)
+	byteReader := bytes.NewReader(encodedBatch)
 	streamCallback := func(stream *smux.Stream) {
-		if err := binarystream.SendDataFromReader(reader, int(len(entries)), stream); err != nil {
+		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
 			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 		}
 	}
@@ -352,6 +363,11 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
+	if payload.Length < 0 {
+		return arpc.Response{}, fmt.Errorf("invalid negative length requested: %d", payload.Length)
+	}
+
+	// Retrieve the file handle
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
 		return arpc.Response{}, os.ErrNotExist
@@ -363,19 +379,81 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	fh.Lock()
 	defer fh.Unlock()
 
-	reader := io.NewSectionReader(fh.file, payload.Offset, int64(payload.Length))
+	// If offset >= EOF, send empty
+	if payload.Offset >= fh.fileSize {
+		emptyReader := bytes.NewReader(nil)
+		streamCallback := func(stream *smux.Stream) {
+			if err := binarystream.SendDataFromReader(emptyReader, payload.Length, stream); err != nil {
+				syslog.L.Error(err).
+					WithMessage("failed sending empty reader via binary stream").Write()
+			}
+		}
+		return arpc.Response{Status: 213, RawStream: streamCallback}, nil
+	}
 
+	// Clamp length if beyond EOF
+	if payload.Offset+int64(payload.Length) > fh.fileSize {
+		payload.Length = int(fh.fileSize - payload.Offset)
+	}
+
+	// Align offset for mmap
+	alignedOffset := payload.Offset - (payload.Offset % int64(s.allocGranularity))
+	offsetDiff := int(payload.Offset - alignedOffset)
+	viewSize := payload.Length + offsetDiff
+
+	if s.readMode == "mmap" {
+		// mmap the aligned region
+		data, err := unix.Mmap(
+			int(fh.file.Fd()),
+			alignedOffset,
+			viewSize,
+			unix.PROT_READ,
+			unix.MAP_SHARED,
+		)
+		if err == nil {
+			// Ensure bounds are valid
+			if offsetDiff+payload.Length > len(data) {
+				syslog.L.Error(fmt.Errorf(
+					"invalid slice bounds: offsetDiff=%d, payload.Length=%d, data len=%d",
+					offsetDiff, payload.Length, len(data)),
+				).WithMessage("invalid file mapping boundaries").Write()
+
+				unix.Munmap(data)
+				return arpc.Response{}, fmt.Errorf("invalid file mapping boundaries")
+			}
+
+			result := data[offsetDiff : offsetDiff+payload.Length]
+			reader := bytes.NewReader(result)
+
+			streamCallback := func(stream *smux.Stream) {
+				defer unix.Munmap(data)
+				if err := binarystream.SendDataFromReader(reader, payload.Length, stream); err != nil {
+					syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
+				}
+			}
+
+			return arpc.Response{Status: 213, RawStream: streamCallback}, nil
+		}
+		// mmap failed → fall back to pread
+	}
+
+	// Fallback: pread into buffer
+	buffer := make([]byte, payload.Length)
+	n, err := syscall.Pread(int(fh.file.Fd()), buffer, payload.Offset)
+	if err != nil {
+		return arpc.Response{}, fmt.Errorf("pread failed: %w", err)
+	}
+
+	reader := bytes.NewReader(buffer[:n])
 	streamCallback := func(stream *smux.Stream) {
-		err := binarystream.SendDataFromReader(reader, payload.Length, stream)
-		if err != nil {
-			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
+		if err := binarystream.SendDataFromReader(reader, n, stream); err != nil {
+			syslog.L.Error(err).
+				WithMessage("failed sending data from reader via binary stream (sync fallback)").
+				Write()
 		}
 	}
 
-	return arpc.Response{
-		Status:    213,
-		RawStream: streamCallback,
-	}, nil
+	return arpc.Response{Status: 213, RawStream: streamCallback}, nil
 }
 
 func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
@@ -449,6 +527,8 @@ func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 
 	if handle.file != nil {
 		handle.file.Close()
+	} else if handle.dirReader != nil {
+		handle.dirReader.Close()
 	}
 
 	s.handles.Del(uint64(payload.HandleID))

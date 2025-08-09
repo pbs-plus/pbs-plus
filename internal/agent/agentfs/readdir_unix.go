@@ -3,60 +3,133 @@
 package agentfs
 
 import (
-	"errors"
+	"fmt"
 	"os"
+	"sync"
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 )
 
-func readDirBulk(dirPath string) ([]byte, error) {
-	// Open the directory
-	dir, err := os.Open(dirPath)
+const BUF_SIZE = 64 * 1024 // 64K buffer
+
+// DirReaderUnix reads directory entries in batches.
+type DirReaderUnix struct {
+	fd          int
+	buf         []byte
+	bufPos      int
+	bufEnd      int
+	noMoreFiles bool
+	path        string
+	basep       uintptr // only used on FreeBSD
+}
+
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, BUF_SIZE)
+	},
+}
+
+// NewDirReaderUnix opens a directory for reading.
+// Uses syscall.Open so that we get a raw fd.
+func NewDirReaderUnix(path string) (*DirReaderUnix, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open directory '%s': %w", path, err)
 	}
-	defer dir.Close()
+	return &DirReaderUnix{
+		fd:    fd,
+		buf:   bufferPool.Get().([]byte),
+		path:  path,
+		basep: 0,
+	}, nil
+}
 
-	// Read all directory entries
-	entries, err := dir.Readdir(-1)
+// NextBatch returns the next encoded batch of directory entries.
+// It relies on platform‐specific r.getdents() and r.parseDirent().
+func (r *DirReaderUnix) NextBatch() ([]byte, error) {
+	if r.noMoreFiles {
+		return nil, os.ErrProcessDone
+	}
+
+	var entries types.ReadDirEntries
+	entries = make(types.ReadDirEntries, 0, 256)
+
+	for {
+		if r.bufPos >= r.bufEnd {
+			n, err := r.getdents()
+			if err != nil {
+				return nil, fmt.Errorf("getdents failed: %w", err)
+			}
+			if n == 0 {
+				r.noMoreFiles = true
+				break
+			}
+			r.bufPos = 0
+			r.bufEnd = n
+		}
+
+		for r.bufPos < r.bufEnd {
+			name, typ, reclen, err := r.parseDirent()
+			if err != nil {
+				return nil, err
+			}
+			if reclen == 0 {
+				break
+			}
+			if name != "." && name != ".." {
+				entries = append(entries, types.AgentDirEntry{
+					Name: name,
+					Mode: uint32(unixTypeToFileMode(typ)),
+				})
+			}
+			r.bufPos += reclen
+		}
+		if len(entries) > 0 {
+			break
+		}
+	}
+
+	if len(entries) == 0 {
+		return nil, os.ErrProcessDone
+	}
+	enc, err := entries.Encode()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
 	}
+	return enc, nil
+}
 
-	var resultEntries types.ReadDirEntries
-
-	for _, entry := range entries {
-		// Skip "." and ".."
-		if entry.Name() == "." || entry.Name() == ".." {
-			continue
-		}
-
-		// Get file attributes
-		stat, ok := entry.Sys().(*syscall.Stat_t)
-		if !ok {
-			return nil, errors.New("failed to retrieve file attributes")
-		}
-
-		// Filter out specific attributes (e.g., symlinks, devices, etc.)
-		if (stat.Mode&syscall.S_IFMT) == syscall.S_IFLNK || // Symlink
-			(stat.Mode&syscall.S_IFMT) == syscall.S_IFCHR || // Character device
-			(stat.Mode&syscall.S_IFMT) == syscall.S_IFBLK || // Block device
-			(stat.Mode&syscall.S_IFMT) == syscall.S_IFIFO || // FIFO
-			(stat.Mode&syscall.S_IFMT) == syscall.S_IFSOCK { // Socket
-			continue
-		}
-
-		// Convert file mode to os.FileMode
-		mode := entry.Mode()
-
-		// Append the entry to the result
-		resultEntries = append(resultEntries, types.AgentDirEntry{
-			Name: entry.Name(),
-			Mode: uint32(mode),
-		})
+// Close releases the directory fd and buffer.
+func (r *DirReaderUnix) Close() error {
+	if err := syscall.Close(r.fd); err != nil {
+		return fmt.Errorf("failed to close directory '%s': %w", r.path, err)
 	}
+	if r.buf != nil {
+		bufferPool.Put(r.buf)
+		r.buf = nil
+	}
+	return nil
+}
 
-	// Encode the result entries
-	return resultEntries.Encode()
+// unixTypeToFileMode maps a DT_* byte to an os.FileMode.
+func unixTypeToFileMode(t byte) os.FileMode {
+	switch t {
+	case syscall.DT_DIR:
+		return os.ModeDir | 0755
+	case syscall.DT_REG:
+		return 0644
+	case syscall.DT_LNK:
+		return os.ModeSymlink | 0777
+	case syscall.DT_CHR:
+		return os.ModeDevice | os.ModeCharDevice | 0666
+	case syscall.DT_BLK:
+		return os.ModeDevice | 0666
+	case syscall.DT_FIFO:
+		return os.ModeNamedPipe | 0666
+	case syscall.DT_SOCK:
+		return os.ModeSocket | 0666
+	default:
+		return 0644
+	}
 }
