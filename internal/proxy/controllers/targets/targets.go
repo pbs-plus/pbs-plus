@@ -406,7 +406,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if r.FormValue("secret") != "" {
+		if r.FormValue("secret") == "" {
 			controllers.WriteErrorResponse(w, errors.New("invalid empty secret"))
 			return
 		}
