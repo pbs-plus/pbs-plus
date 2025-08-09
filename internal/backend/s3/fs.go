@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -32,27 +31,6 @@ type cacheEntry[T any] struct {
 
 func (e cacheEntry[T]) expired() bool {
 	return time.Now().After(e.expiresAt)
-}
-
-type S3FS struct {
-	ctx    context.Context
-	client *minio.Client
-	Job    storeTypes.Job
-	bucket string
-	prefix string
-	Mount  *gofuse.Server
-
-	metaCache *lru.Cache[string, cacheEntry[agentTypes.AgentFileInfo]]
-	dirCache  *lru.Cache[string, cacheEntry[agentTypes.ReadDirEntries]]
-
-	fileCount       int64
-	folderCount     int64
-	totalBytes      int64
-	lastAccessTime  int64
-	lastFileCount   int64
-	lastFolderCount int64
-	lastBytesTime   int64
-	lastTotalBytes  int64
 }
 
 var seenNamesPool = sync.Pool{
@@ -94,6 +72,49 @@ func NewS3FS(
 		metaCache: metaCache,
 		dirCache:  dirCache,
 	}, nil
+}
+
+func (fs *S3FS) GetStats() Stats {
+	// Get the current time in nanoseconds.
+	currentTime := time.Now().UnixNano()
+
+	// Atomically load the current counters.
+	currentFileCount := atomic.LoadInt64(&fs.fileCount)
+	currentFolderCount := atomic.LoadInt64(&fs.folderCount)
+	totalAccessed := currentFileCount + currentFolderCount
+
+	// Swap out the previous access statistics.
+	lastATime := atomic.SwapInt64(&fs.lastAccessTime, currentTime)
+	lastFileCount := atomic.SwapInt64(&fs.lastFileCount, currentFileCount)
+	lastFolderCount := atomic.SwapInt64(&fs.lastFolderCount, currentFolderCount)
+
+	// Calculate the elapsed time in seconds.
+	elapsed := float64(currentTime-lastATime) / 1e9
+	var accessSpeed float64
+	if elapsed > 0 {
+		accessDelta := (currentFileCount + currentFolderCount) - (lastFileCount + lastFolderCount)
+		accessSpeed = float64(accessDelta) / elapsed
+	}
+
+	// Similarly, for byte counters (if you're tracking totalBytes elsewhere).
+	currentTotalBytes := atomic.LoadInt64(&fs.totalBytes)
+	lastBTime := atomic.SwapInt64(&fs.lastBytesTime, currentTime)
+	lastTotalBytes := atomic.SwapInt64(&fs.lastTotalBytes, currentTotalBytes)
+
+	secDiff := float64(currentTime-lastBTime) / 1e9
+	var bytesSpeed float64
+	if secDiff > 0 {
+		bytesSpeed = float64(currentTotalBytes-lastTotalBytes) / secDiff
+	}
+
+	return Stats{
+		FilesAccessed:   currentFileCount,
+		FoldersAccessed: currentFolderCount,
+		TotalAccessed:   totalAccessed,
+		FileAccessSpeed: accessSpeed,
+		TotalBytes:      uint64(currentTotalBytes),
+		ByteReadSpeed:   bytesSpeed,
+	}
 }
 
 func (fs *S3FS) fullKey(fpath string) string {
@@ -289,10 +310,20 @@ func (fs *S3FS) OpenFile(
 	if info.IsDir {
 		return nil, syscall.EISDIR
 	}
+	if info.IsDir {
+		atomic.AddInt64(&fs.folderCount, 1)
+	} else {
+		atomic.AddInt64(&fs.fileCount, 1)
+	}
 
-	return &S3File{
 		fs:   fs,
 		key:  key,
 		size: info.Size,
 	}, nil
+}
+
+func (fs *S3FS) Unmount() {
+	if fs.Mount != nil {
+		_ = fs.Mount.Unmount()
+	}
 }

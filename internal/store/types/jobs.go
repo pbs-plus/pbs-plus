@@ -7,6 +7,7 @@ type Job struct {
 	ReadMode              string      `json:"readmode"`
 	Mode                  string      `config:"type=string" json:"mode"`
 	Target                string      `config:"type=string,required" json:"target"`
+	TargetPath            string      `config:"type=string,required" json:"target-path"`
 	Subpath               string      `config:"type=string" json:"subpath"`
 	Schedule              string      `config:"type=string" json:"schedule"`
 	Comment               string      `config:"type=string" json:"comment"`

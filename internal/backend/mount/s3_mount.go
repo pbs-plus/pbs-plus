@@ -135,5 +135,8 @@ func (a *S3Mount) Unmount() {
 		}
 	}
 
+	childKey := a.Endpoint + "|" + a.JobId
+	store.RemoveS3Mount(childKey)
+
 	_ = os.RemoveAll(a.Path)
 }

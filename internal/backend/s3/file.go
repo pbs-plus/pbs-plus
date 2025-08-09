@@ -11,13 +11,6 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-type S3File struct {
-	fs     *S3FS
-	key    string
-	offset int64
-	size   int64
-}
-
 // ReadAt reads len(buf) bytes from the file starting at byte offset off.
 func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	if len(buf) == 0 {

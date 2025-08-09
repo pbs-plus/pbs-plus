@@ -423,7 +423,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes, t.mount_script
+            t.drive_used_bytes, t.mount_script, t.path
         FROM jobs j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
@@ -439,7 +439,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 	var jobOrder []string
 
 	for rows.Next() {
-		var jobID, store, mode, sourceMode, readMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
+		var jobID, store, mode, sourceMode, readMode, target, targetPath, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
 		var preScript, postScript string
 		var retry, maxDirEntries int
 		var retryInterval int
@@ -452,7 +452,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 			&jobID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
 			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval, &maxDirEntries, &preScript, &postScript,
-			&exclusionPath, &driveUsedBytes, &mountScript,
+			&exclusionPath, &driveUsedBytes, &mountScript, &targetPath,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllJobs: error scanning row: %w", err)).Write()
@@ -468,6 +468,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 				SourceMode:         sourceMode,
 				ReadMode:           readMode,
 				Target:             target,
+				TargetPath:         targetPath,
 				Subpath:            subpath,
 				Schedule:           schedule,
 				Comment:            comment,

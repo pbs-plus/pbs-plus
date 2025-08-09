@@ -464,6 +464,10 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			agentMount.CloseMount()
 		}
 
+		if s3Mount != nil {
+			s3Mount.Unmount()
+		}
+
 		postScriptExecute(true)
 	}()
 
