@@ -310,12 +310,8 @@ func (fs *S3FS) OpenFile(
 	if info.IsDir {
 		return nil, syscall.EISDIR
 	}
-	if info.IsDir {
-		atomic.AddInt64(&fs.folderCount, 1)
-	} else {
-		atomic.AddInt64(&fs.fileCount, 1)
-	}
 
+	return &S3File{
 		fs:   fs,
 		key:  key,
 		size: info.Size,
