@@ -256,7 +256,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			errCleanUp()
 			return fmt.Errorf("%w: %v", ErrMountInitialization, err)
 		}
-		srcPath = agentMount.Path
+		srcPath = s3Mount.Path
 
 		// In case mount updates the job.
 		latestS3, err := op.storeInstance.Database.GetJob(op.job.ID)
