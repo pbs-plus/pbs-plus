@@ -439,12 +439,12 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 	var jobOrder []string
 
 	for rows.Next() {
-		var jobID, store, mode, sourceMode, readMode, target, targetPath, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
+		var jobID, store, mode, sourceMode, readMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
 		var preScript, postScript string
 		var retry, maxDirEntries int
 		var retryInterval int
 		var currentPID int
-		var exclusionPath sql.NullString
+		var targetPath, exclusionPath sql.NullString
 		var driveUsedBytes sql.NullInt64
 		var mountScript sql.NullString
 
@@ -468,7 +468,6 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 				SourceMode:         sourceMode,
 				ReadMode:           readMode,
 				Target:             target,
-				TargetPath:         targetPath,
 				Subpath:            subpath,
 				Schedule:           schedule,
 				Comment:            comment,
@@ -490,6 +489,10 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 			jobsMap[jobID] = job
 			jobOrder = append(jobOrder, jobID)
 			database.populateJobExtras(job) // Populate non-SQL extras once per job
+		}
+
+		if targetPath.Valid {
+			job.TargetPath = targetPath.String
 		}
 
 		if mountScript.Valid {
