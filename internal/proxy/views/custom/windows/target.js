@@ -55,6 +55,9 @@ Ext.define("PBS.D2DManagement.TargetS3Secret", {
   alias: "widget.pbsTargetEditWindow",
   mixins: ["Proxmox.Mixin.CBind"],
 
+  isCreate: true,
+  isAdd: true,
+
   subject: "Target S3 Secret Key",
   cbindData: function(initialConfig) {
     let me = this;
