@@ -51,13 +51,15 @@ Ext.define("PBS.D2DManagement.TargetEditWindow", {
 });
 
 Ext.define("PBS.D2DManagement.TargetS3Secret", {
-  extend: "Proxmox.window.EditBase", // or Ext.window.Window
+  extend: "Ext.window.Window",
   alias: "widget.pbsTargetEditWindow",
   mixins: ["Proxmox.Mixin.CBind"],
 
   title: gettext("Set Target S3 Secret Key"),
   width: 400,
+  height: 200,
   modal: true,
+  resizable: false,
   layout: "fit",
 
   cbindData: function(initialConfig) {
@@ -77,11 +79,15 @@ Ext.define("PBS.D2DManagement.TargetS3Secret", {
       xtype: "form",
       bodyPadding: 10,
       border: false,
+      fieldDefaults: {
+        labelWidth: 120,
+        anchor: "100%",
+      },
       items: [
         {
           fieldLabel: gettext("Secret Key"),
           name: "secret",
-          xtype: "proxmoxtextfield",
+          xtype: "textfield", // Use standard textfield, not proxmoxtextfield
           inputType: "password",
           allowBlank: false,
         },
@@ -89,19 +95,25 @@ Ext.define("PBS.D2DManagement.TargetS3Secret", {
       buttons: [
         {
           text: gettext("OK"),
+          formBind: true,
           handler: function(btn) {
             let win = btn.up("window");
-            let form = win.down("form").getForm();
+            let form = btn.up("form").getForm();
+
             if (form.isValid()) {
-              Proxmox.Utils.API2Request({
+              form.submit({
                 url: win.submitUrl,
                 method: "POST",
-                params: form.getValues(),
-                success: function() {
+                waitMsg: gettext("Please wait..."),
+                success: function(form, action) {
                   win.close();
+                  // Add any success callback here
                 },
-                failure: function(response) {
-                  Ext.Msg.alert(gettext("Error"), response.htmlStatus);
+                failure: function(form, action) {
+                  Ext.Msg.alert(
+                    gettext("Error"),
+                    action.result?.message || gettext("Unknown error")
+                  );
                 },
               });
             }
