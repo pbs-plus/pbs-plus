@@ -211,12 +211,15 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return fmt.Errorf("backup: %w", err)
 	}
 
+	childKey := args.Endpoint + "|" + args.JobId
 	s3FS, err := s3fs.NewS3FS(s.ctx, job, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = "S3MountHandler: Failed to send create S3FS"
 		return errors.New(reply.Message)
 	}
+
+	store.CreateS3Mount(childKey, s3FS)
 
 	// Set up the local mount path.
 	mntPath := filepath.Join(constants.AgentMountBasePath, args.JobId)
