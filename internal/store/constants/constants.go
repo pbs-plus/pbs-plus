@@ -12,6 +12,7 @@ const (
 	TaskLogsBasePath    = LogsBasePath + "/tasks"
 	JobLogsBasePath     = "/var/log/pbs-plus"
 	ScriptsBasePath     = "/var/lib/pbs-plus/scripts"
+	SecretsKeyPath      = "/var/lib/pbs-plus/.secret.key"
 	MountSocketPath     = "/var/run/pbs_agent_mount.sock"
 	JobMutateSocketPath = "/var/run/pbs_agent_job_mutate.sock"
 	LockSocketPath      = "/var/run/pbs_plus_locker.sock"

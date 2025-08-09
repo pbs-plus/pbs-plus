@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	simplebox "github.com/pbs-plus/pbs-plus/internal/store/database/secrets"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
@@ -138,6 +139,53 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 	return nil
 }
 
+func (database *Database) AddS3Secret(tx *sql.Tx, targetName, secret string) (err error) {
+	var commitNeeded bool = false
+	if tx == nil {
+		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		if err != nil {
+			return fmt.Errorf("AddSecret: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("AddSecret: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("AddSecret: failed to commit transaction: %w", cErr)
+					syslog.L.Error(err).Write()
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("AddSecret: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			}
+		}()
+	}
+
+	encrypted, err := simplebox.Encrypt(secret)
+	if err != nil {
+		return fmt.Errorf("AddSecret: error encrypting secret: %w", err)
+	}
+
+	_, err = tx.Exec(`
+        UPDATE targets SET secret_s3 = ? WHERE name = ?
+    `,
+		encrypted,
+		targetName,
+	)
+	if err != nil {
+		return fmt.Errorf("AddSecret: error adding secret to target: %w", err)
+	}
+
+	commitNeeded = true
+	return nil
+}
+
 // DeleteTarget removes a target.
 func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
 	var commitNeeded bool = false
@@ -219,6 +267,34 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 	target.IsS3 = strings.HasPrefix(target.Path, "s3://")
 
 	return target, nil
+}
+
+func (database *Database) GetS3Secret(name string) (string, error) {
+	row := database.readDb.QueryRow(`
+        SELECT
+            t.secret_s3
+        FROM targets t
+        WHERE t.name = ?
+    `, name)
+
+	var encrypted string
+	err := row.Scan(
+		&encrypted,
+	)
+	if err != nil {
+		// Don't wrap sql.ErrNoRows, return it directly
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", sql.ErrNoRows
+		}
+		return "", fmt.Errorf("GetS3Secret: error fetching target: %w", err)
+	}
+
+	decrypted, err := simplebox.Decrypt(encrypted)
+	if err != nil {
+		return "", fmt.Errorf("GetS3Secret: failed to decrypt secret: %w", err)
+	}
+
+	return decrypted, nil
 }
 
 // GetAllTargets returns all targets along with their associated job counts.
