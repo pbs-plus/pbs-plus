@@ -56,6 +56,10 @@ func loadOrCreateKey() error {
 
 // Encrypt takes a plaintext string and returns a base64 ciphertext
 func Encrypt(plaintext string) (string, error) {
+	if privateKey == nil || publicKey == nil {
+		return "", errors.New("failed to acquire database private and public keys")
+	}
+
 	var nonce [24]byte
 	if _, err := io.ReadFull(rand.Reader, nonce[:]); err != nil {
 		return "", err
@@ -68,6 +72,10 @@ func Encrypt(plaintext string) (string, error) {
 }
 
 func Decrypt(ciphertext string) (string, error) {
+	if privateKey == nil || publicKey == nil {
+		return "", errors.New("failed to acquire database private and public keys")
+	}
+
 	data, err := base64.StdEncoding.DecodeString(ciphertext)
 	if err != nil {
 		return "", err
