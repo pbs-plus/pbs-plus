@@ -56,7 +56,7 @@ Ext.define("PBS.D2DManagement.TargetS3Secret", {
   mixins: ["Proxmox.Mixin.CBind"],
 
   isCreate: true,
-  isAdd: true,
+  autoLoad: false,
 
   subject: "Target S3 Secret Key",
   cbindData: function(initialConfig) {
