@@ -3,14 +3,86 @@
 package middlewares
 
 import (
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 )
+
+type PBSAuth struct {
+	privateKey *rsa.PrivateKey
+}
+
+func NewPBSAuth() (*PBSAuth, error) {
+	keyData, err := os.ReadFile(constants.PBSAuthKeyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	block, _ := pem.Decode(keyData)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PBSAuth{privateKey: privateKey}, nil
+}
+
+func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
+	parts := strings.Split(ticket, "::")
+	if len(parts) != 2 {
+		return false, fmt.Errorf("invalid ticket format")
+	}
+
+	ticketData := parts[0]
+	signature := parts[1]
+
+	sigBytes, err := base64.StdEncoding.DecodeString(signature)
+	if err != nil {
+		return false, err
+	}
+
+	hasher := sha1.New()
+	hasher.Write([]byte(ticketData))
+	hashed := hasher.Sum(nil)
+
+	err = rsa.VerifyPKCS1v15(&p.privateKey.PublicKey, crypto.SHA1, hashed, sigBytes)
+	return err == nil, err
+}
+
+func (p *PBSAuth) CreateTicket(username, realm string) (string, error) {
+	timestamp := time.Now().Unix()
+	ticketData := fmt.Sprintf("PBS:%s@%s:%s", username, realm, hex.EncodeToString([]byte(strconv.FormatInt(timestamp, 16))))
+
+	hasher := sha1.New()
+	hasher.Write([]byte(ticketData))
+	hashed := hasher.Sum(nil)
+
+	signature, err := rsa.SignPKCS1v15(nil, p.privateKey, crypto.SHA1, hashed)
+	if err != nil {
+		return "", err
+	}
+
+	encodedSig := base64.StdEncoding.EncodeToString(signature)
+
+	return fmt.Sprintf("%s::%s", ticketData, encodedSig), nil
+}
 
 func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -92,48 +164,26 @@ func checkProxyAuth(r *http.Request) error {
 	if agentHostname != "" {
 		return fmt.Errorf("CheckProxyAuth: agent unauthorized")
 	}
-	// checkEndpoint := "/api2/json/version"
-	// req, err := http.NewRequest(
-	// 	http.MethodGet,
-	// 	fmt.Sprintf(
-	// 		"%s%s",
-	// 		ProxyTargetURL,
-	// 		checkEndpoint,
-	// 	),
-	// 	nil,
-	// )
 
-	// if err != nil {
-	// 	return fmt.Errorf("CheckProxyAuth: error creating http request -> %w", err)
-	// }
+	auth, err := NewPBSAuth()
+	if err != nil {
+		return fmt.Errorf("CheckProxyAuth: failed to initialize PBS auth -> %w", err)
+	}
 
-	// for _, cookie := range r.Cookies() {
-	// 	req.AddCookie(cookie)
-	// }
+	cookie, err := r.Cookie("__Host-PBSAuthCookie")
+	if err != nil {
+		// Fallback to legacy cookie
+		cookie, err = r.Cookie("PBSAuthCookie")
+		if err != nil {
+			return fmt.Errorf("CheckProxyAuth: authentication required -> %w", err)
+		}
+	}
 
-	// if authHead := r.Header.Get("Authorization"); authHead != "" {
-	// 	req.Header.Set("Authorization", authHead)
-	// }
-
-	// if storeInstance.HTTPClient == nil {
-	// 	storeInstance.HTTPClient = &http.Client{
-	// 		Timeout:   time.Second * 30,
-	// 		Transport: utils.BaseTransport,
-	// 	}
-	// }
-
-	// resp, err := storeInstance.HTTPClient.Do(req)
-	// if err != nil {
-	// 	return fmt.Errorf("CheckProxyAuth: invalid auth -> %w", err)
-	// }
-	// defer func() {
-	// 	_, _ = io.Copy(io.Discard, resp.Body)
-	// 	resp.Body.Close()
-	// }()
-
-	// if resp.StatusCode > 299 || resp.StatusCode < 200 {
-	// 	return fmt.Errorf("CheckProxyAuth: invalid auth -> %w", err)
-	// }
+	// Verify the ticket
+	valid, err := auth.VerifyTicket(cookie.Value)
+	if err != nil || !valid {
+		return fmt.Errorf("CheckProxyAuth: authentication required -> %w", err)
+	}
 
 	return nil
 }
