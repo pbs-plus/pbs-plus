@@ -1,5 +1,5 @@
 Ext.define("PBS.D2DManagement.ScriptEditWindow", {
-  extend: "Proxmox.window.Edit",
+  extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsScriptEditWindow",
   mixins: ["Proxmox.Mixin.CBind"],
 
@@ -9,11 +9,11 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
   isCreate: true,
   isAdd: true,
   subject: "Script",
-  cbindData: function (initialConfig) {
+  cbindData: function(initialConfig) {
     let me = this;
 
     let contentid = initialConfig.contentid;
-    let baseurl = pbsPlusBaseUrl + "/api2/extjs/config/d2d-script";
+    let baseurl = "/api2/extjs/config/d2d-script";
 
     me.isCreate = !contentid;
     me.url = contentid
