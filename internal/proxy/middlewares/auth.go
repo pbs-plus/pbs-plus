@@ -4,6 +4,7 @@ package middlewares
 
 import (
 	"crypto"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/x509"
@@ -23,7 +24,8 @@ import (
 )
 
 type PBSAuth struct {
-	privateKey *rsa.PrivateKey
+	privateKey crypto.PrivateKey
+	keyType    string
 }
 
 func NewPBSAuth() (*PBSAuth, error) {
@@ -37,12 +39,26 @@ func NewPBSAuth() (*PBSAuth, error) {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}
 
-	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	// Try to parse as PKCS#8 first (supports Ed25519, RSA, etc.)
+	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return nil, err
+		// Fallback to PKCS#1 for legacy RSA keys
+		rsaKey, rsaErr := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if rsaErr != nil {
+			return nil, fmt.Errorf("failed to parse private key as PKCS#8 or PKCS#1: %v, %v", err, rsaErr)
+		}
+		return &PBSAuth{privateKey: rsaKey, keyType: "rsa"}, nil
 	}
 
-	return &PBSAuth{privateKey: privateKey}, nil
+	// Determine key type
+	switch key := privateKey.(type) {
+	case ed25519.PrivateKey:
+		return &PBSAuth{privateKey: key, keyType: "ed25519"}, nil
+	case *rsa.PrivateKey:
+		return &PBSAuth{privateKey: key, keyType: "rsa"}, nil
+	default:
+		return nil, fmt.Errorf("unsupported key type: %T", key)
+	}
 }
 
 func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
@@ -59,30 +75,62 @@ func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
 		return false, err
 	}
 
-	hasher := sha1.New()
-	hasher.Write([]byte(ticketData))
-	hashed := hasher.Sum(nil)
+	switch p.keyType {
+	case "ed25519":
+		ed25519Key := p.privateKey.(ed25519.PrivateKey)
+		publicKey := ed25519Key.Public().(ed25519.PublicKey)
 
-	err = rsa.VerifyPKCS1v15(&p.privateKey.PublicKey, crypto.SHA1, hashed, sigBytes)
-	return err == nil, err
+		// Ed25519 signs the raw message, not a hash
+		valid := ed25519.Verify(publicKey, []byte(ticketData), sigBytes)
+		return valid, nil
+
+	case "rsa":
+		rsaKey := p.privateKey.(*rsa.PrivateKey)
+
+		hasher := sha1.New()
+		hasher.Write([]byte(ticketData))
+		hashed := hasher.Sum(nil)
+
+		err = rsa.VerifyPKCS1v15(&rsaKey.PublicKey, crypto.SHA1, hashed, sigBytes)
+		return err == nil, err
+
+	default:
+		return false, fmt.Errorf("unsupported key type for verification: %s", p.keyType)
+	}
 }
 
 func (p *PBSAuth) CreateTicket(username, realm string) (string, error) {
 	timestamp := time.Now().Unix()
 	ticketData := fmt.Sprintf("PBS:%s@%s:%s", username, realm, hex.EncodeToString([]byte(strconv.FormatInt(timestamp, 16))))
 
-	hasher := sha1.New()
-	hasher.Write([]byte(ticketData))
-	hashed := hasher.Sum(nil)
+	switch p.keyType {
+	case "ed25519":
+		ed25519Key := p.privateKey.(ed25519.PrivateKey)
 
-	signature, err := rsa.SignPKCS1v15(nil, p.privateKey, crypto.SHA1, hashed)
-	if err != nil {
-		return "", err
+		// Ed25519 signs the raw message
+		signature := ed25519.Sign(ed25519Key, []byte(ticketData))
+		encodedSig := base64.StdEncoding.EncodeToString(signature)
+
+		return fmt.Sprintf("%s::%s", ticketData, encodedSig), nil
+
+	case "rsa":
+		rsaKey := p.privateKey.(*rsa.PrivateKey)
+
+		hasher := sha1.New()
+		hasher.Write([]byte(ticketData))
+		hashed := hasher.Sum(nil)
+
+		signature, err := rsa.SignPKCS1v15(nil, rsaKey, crypto.SHA1, hashed)
+		if err != nil {
+			return "", err
+		}
+
+		encodedSig := base64.StdEncoding.EncodeToString(signature)
+		return fmt.Sprintf("%s::%s", ticketData, encodedSig), nil
+
+	default:
+		return "", fmt.Errorf("unsupported key type for signing: %s", p.keyType)
 	}
-
-	encodedSig := base64.StdEncoding.EncodeToString(signature)
-
-	return fmt.Sprintf("%s::%s", ticketData, encodedSig), nil
 }
 
 func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
@@ -99,6 +147,7 @@ func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 func ServerOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkProxyAuth(r); err != nil {
+			syslog.L.Error(err).WithField("mode", "server_only").Write()
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
