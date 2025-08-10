@@ -114,7 +114,7 @@ Ext.define('PBS.plusWindow.TaskViewer', {
     me.on('destroy', statstore.stopUpdate, statstore);
 
     const stopTask = () => {
-      PBS.PlusUtils.API2Request({
+      Proxmox.Utils.API2Request({
         url: `/nodes/${task.node}/tasks/${encodeURIComponent(me.upid)}`,
         waitMsgTarget: me,
         method: 'DELETE',

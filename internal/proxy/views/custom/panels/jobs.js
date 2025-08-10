@@ -55,7 +55,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
         const params = ids.map(id => "job=" + encodeURIComponent(encodePathValue(id))).join("&");
 
         PBS.PlusUtils.API2Request({
-          url: pbsPlusBaseUrl + "/api2/extjs/d2d/backup?" + params,
+          url: "/api2/extjs/d2d/backup?" + params,
           method: "POST",
           waitMsgTarget: view,
           success: () => { me.reload(); },
@@ -101,7 +101,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
         if (plusJobs.length > 0) {
           const plusIds = plusJobs.map(j => "job=" + encodeURIComponent(encodePathValue(j.id))).join("&");
           PBS.PlusUtils.API2Request({
-            url: pbsPlusBaseUrl + "/api2/extjs/d2d/backup?" + plusIds,
+            url: "/api2/extjs/d2d/backup?" + plusIds,
             method: "DELETE",
             waitMsgTarget: view,
             success: () => {
@@ -152,7 +152,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
           recs.forEach((rec) => {
             PBS.PlusUtils.API2Request({
               url:
-                pbsPlusBaseUrl +
                 "/api2/extjs/config/disk-backup-job/" +
                 encodeURIComponent(encodePathValue(rec.getId())),
               method: "DELETE",

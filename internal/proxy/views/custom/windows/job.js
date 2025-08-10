@@ -38,7 +38,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
 
   bodyPadding: 0,
 
-  cbindData: function (initialConfig) {
+  cbindData: function(initialConfig) {
     let me = this;
 
     let baseurl = pbsPlusBaseUrl + "/api2/extjs/config/disk-backup-job";
@@ -67,14 +67,14 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       },
     },
 
-    storeChange: function (field, value) {
+    storeChange: function(field, value) {
       let me = this;
       let nsSelector = me.lookup("namespace");
       nsSelector.setDatastore(value);
     },
   },
 
-  initComponent: function () {
+  initComponent: function() {
     let me = this;
     me.callParent();
 
@@ -86,6 +86,40 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
     }
   },
 
+  submit: function() {
+    var me = this;
+    var form = me.down('form').getForm();
+
+    if (!form.isValid()) {
+      return;
+    }
+
+    var values = form.getValues();
+
+    Ext.Ajax.request({
+      url: me.url,
+      method: me.method,
+      cors: true,
+      withCredentials: true,
+      useDefaultXhrHeader: false,
+      params: values,
+      success: function(response) {
+        var result = Ext.decode(response.responseText);
+        if (result.success) {
+          me.close();
+          if (me.listeners && me.listeners.destroy) {
+            me.fireEvent('destroy');
+          }
+        } else {
+          Ext.Msg.alert(gettext("Error"), result.message || "Unknown error");
+        }
+      },
+      failure: function(response) {
+        Ext.Msg.alert(gettext("Error"), response.statusText || "Request failed");
+      }
+    });
+  },
+
   items: {
     xtype: "tabpanel",
     bodyPadding: 10,
@@ -94,7 +128,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       {
         title: gettext("Options"),
         xtype: "inputpanel",
-        onGetValues: function (values) {
+        onGetValues: function(values) {
           let me = this;
 
           if (me.isCreate) {
