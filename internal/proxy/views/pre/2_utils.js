@@ -2,17 +2,111 @@ Ext.define('PBS.PlusUtils', {
   singleton: true,
 
   API2Request: function(reqOpts) {
-    var enhancedOpts = Ext.apply({
+    var newopts = Ext.apply({
       withCredentials: true,
       cors: true,
-      useDefaultXhrHeader: false
+      useDefaultXhrHeader: false,
+      waitMsg: gettext('Please wait...'),
     }, reqOpts);
 
-    if (enhancedOpts.url && enhancedOpts.url.charAt(0) === '/') {
-      enhancedOpts.url = pbsPlusBaseUrl + enhancedOpts.url;
-    }
+    // default to enable if user isn't handling the failure already explicitly
+    let autoErrorAlert =
+      reqOpts.autoErrorAlert ??
+      (typeof reqOpts.failure !== 'function' && typeof reqOpts.callback !== 'function');
 
-    return Proxmox.Utils.API2Request(enhancedOpts);
+    if (!newopts.url.match(/^\/api2/) && !newopts.url.match(/^[a-z][a-z\d+\-.]*:/i)) {
+      newopts.url = '/api2/extjs' + newopts.url;
+    }
+    delete newopts.callback;
+    let unmask = (target) => {
+      if (target.waitMsgTargetCount === undefined || --target.waitMsgTargetCount <= 0) {
+        target.setLoading(false);
+        delete target.waitMsgTargetCount;
+      }
+    };
+
+    let createWrapper = function(successFn, callbackFn, failureFn) {
+      Ext.apply(newopts, {
+        success: function(response, options) {
+          if (options.waitMsgTarget) {
+            if (Proxmox.Utils.toolkit === 'touch') {
+              options.waitMsgTarget.setMasked(false);
+            } else {
+              unmask(options.waitMsgTarget);
+            }
+          }
+          let result = Ext.decode(response.responseText);
+          response.result = result;
+          if (!result.success) {
+            response.htmlStatus = Proxmox.Utils.extractRequestError(result, true);
+            Ext.callback(callbackFn, options.scope, [options, false, response]);
+            Ext.callback(failureFn, options.scope, [response, options]);
+            if (autoErrorAlert) {
+              Ext.Msg.alert(gettext('Error'), response.htmlStatus);
+            }
+            return;
+          }
+          Ext.callback(callbackFn, options.scope, [options, true, response]);
+          Ext.callback(successFn, options.scope, [response, options]);
+        },
+        failure: function(response, options) {
+          if (options.waitMsgTarget) {
+            if (Proxmox.Utils.toolkit === 'touch') {
+              options.waitMsgTarget.setMasked(false);
+            } else {
+              unmask(options.waitMsgTarget);
+            }
+          }
+          response.result = {};
+          try {
+            response.result = Ext.decode(response.responseText);
+          } catch (_e) {
+            // ignore
+          }
+          let msg = gettext('Connection error') + ' - server offline?';
+          if (response.aborted) {
+            msg = gettext('Connection error') + ' - aborted.';
+          } else if (response.timedout) {
+            msg = gettext('Connection error') + ' - Timeout.';
+          } else if (response.status && response.statusText) {
+            msg =
+              gettext('Connection error') +
+              ' ' +
+              response.status +
+              ': ' +
+              response.statusText;
+          }
+          response.htmlStatus = Ext.htmlEncode(msg);
+          Ext.callback(callbackFn, options.scope, [options, false, response]);
+          Ext.callback(failureFn, options.scope, [response, options]);
+        },
+      });
+    };
+
+    createWrapper(reqOpts.success, reqOpts.callback, reqOpts.failure);
+
+    let target = newopts.waitMsgTarget;
+    if (target) {
+      if (Proxmox.Utils.toolkit === 'touch') {
+        target.setMasked({ xtype: 'loadmask', message: newopts.waitMsg });
+      } else if (target.rendered) {
+        target.waitMsgTargetCount = (target.waitMsgTargetCount ?? 0) + 1;
+        target.setLoading(newopts.waitMsg);
+      } else {
+        target.waitMsgTargetCount = (target.waitMsgTargetCount ?? 0) + 1;
+        target.on(
+          'afterlayout',
+          function() {
+            if ((target.waitMsgTargetCount ?? 0) > 0) {
+              target.setLoading(newopts.waitMsg);
+            }
+          },
+          target,
+          { single: true },
+        );
+      }
+    }
+    Ext.Ajax.request(newopts);
   },
 
   render_task_status: function(value, metadata, record, rowIndex, colIndex, store) {
