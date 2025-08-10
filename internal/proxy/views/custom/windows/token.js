@@ -1,16 +1,16 @@
 Ext.define("PBS.D2DManagement.TokenEditWindow", {
-  extend: "Proxmox.window.Edit",
+  extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsTokenEditWindow",
   mixins: ["Proxmox.Mixin.CBind"],
 
   isCreate: true,
   isAdd: true,
   subject: "Agent Bootstrap Token",
-  cbindData: function (initialConfig) {
+  cbindData: function(initialConfig) {
     let me = this;
 
     let contentid = initialConfig.contentid;
-    let baseurl = pbsPlusBaseUrl + "/api2/extjs/config/d2d-token";
+    let baseurl = "/api2/extjs/config/d2d-token";
 
     me.isCreate = !contentid;
     me.url = contentid
