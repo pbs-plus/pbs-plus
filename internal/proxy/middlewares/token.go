@@ -15,7 +15,7 @@ func CORS(store *store.Store, next http.Handler) http.HandlerFunc {
 		if allowedOrigin != "" {
 			allowedHeaders := r.Header.Get("Access-Control-Request-Headers")
 			if allowedHeaders == "" {
-				allowedHeaders = "Content-Type, *"
+				allowedHeaders = "Content-Type, Authorization, CSRFPreventionToken, Cookie"
 			}
 
 			allowedMethods := r.Header.Get("Access-Control-Request-Method")

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type PBSAuth struct {
@@ -178,6 +179,8 @@ func checkProxyAuth(r *http.Request) error {
 			return fmt.Errorf("CheckProxyAuth: authentication required -> %w", err)
 		}
 	}
+
+	syslog.L.Info().WithField("cookie", cookie).WithMessage("API HTTP client cookie processed").Write()
 
 	// Verify the ticket
 	valid, err := auth.VerifyTicket(cookie.Value)
