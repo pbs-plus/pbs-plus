@@ -218,3 +218,136 @@ Ext.define(
     },
   }
 );
+
+Ext.define('PBS.plusWindow.Edit', {
+  extend: 'Proxmox.window.Edit',
+  alias: 'widget.pbsPlusWindowEdit',
+  submit: function() {
+    let me = this;
+
+    let form = me.formPanel.getForm();
+
+    let values = me.getValues();
+    Ext.Object.each(values, function(name, val) {
+      if (Object.hasOwn(values, name)) {
+        if (Ext.isArray(val) && !val.length) {
+          values[name] = '';
+        }
+      }
+    });
+
+    if (me.digest) {
+      values.digest = me.digest;
+    }
+
+    if (me.backgroundDelay) {
+      values.background_delay = me.backgroundDelay;
+    }
+
+    let url = Ext.isFunction(me.submitUrl)
+      ? me.submitUrl(me.url, values)
+      : me.submitUrl || me.url;
+    if (me.method === 'DELETE') {
+      url = url + '?' + Ext.Object.toQueryString(values);
+      values = undefined;
+    }
+
+    let requestOptions = Ext.apply(
+      {
+        url: url,
+        waitMsgTarget: me,
+        method: me.method || (me.backgroundDelay ? 'POST' : 'PUT'),
+        params: values,
+        failure: function(response, options) {
+          me.apiCallDone(false, response, options);
+
+          if (response.result && response.result.errors) {
+            form.markInvalid(response.result.errors);
+          }
+          Ext.Msg.alert(gettext('Error'), response.htmlStatus);
+        },
+        success: function(response, options) {
+          let hasProgressBar =
+            (me.backgroundDelay || me.showProgress || me.showTaskViewer) &&
+            response.result.data;
+
+          me.apiCallDone(true, response, options);
+
+          if (hasProgressBar) {
+            // only hide to allow delaying our close event until task is done
+            me.hide();
+
+            let upid = response.result.data;
+            let viewerClass = me.showTaskViewer ? 'Viewer' : 'Progress';
+            Ext.create('Proxmox.window.Task' + viewerClass, {
+              autoShow: true,
+              upid: upid,
+              taskDone: me.taskDone,
+              listeners: {
+                destroy: function() {
+                  me.close();
+                },
+              },
+            });
+          } else {
+            me.close();
+          }
+        },
+      },
+      me.submitOptions ?? {},
+    );
+    PBS.PlusUtils.API2Request(requestOptions);
+  },
+
+  load: function(options) {
+    let me = this;
+
+    let form = me.formPanel.getForm();
+
+    options = options || {};
+
+    let newopts = Ext.apply(
+      {
+        waitMsgTarget: me,
+      },
+      options,
+    );
+
+    if (Object.keys(me.extraRequestParams).length > 0) {
+      let params = newopts.params || {};
+      Ext.applyIf(params, me.extraRequestParams);
+      newopts.params = params;
+    }
+
+    let url = Ext.isFunction(me.loadUrl)
+      ? me.loadUrl(me.url, me.initialConfig)
+      : me.loadUrl || me.url;
+
+    let createWrapper = function(successFn) {
+      Ext.apply(newopts, {
+        url: url,
+        method: 'GET',
+        success: function(response, opts) {
+          form.clearInvalid();
+          me.digest = response.result?.digest || response.result?.data?.digest;
+          if (successFn) {
+            successFn(response, opts);
+          } else {
+            me.setValues(response.result.data);
+          }
+          // hack: fix ExtJS bug
+          Ext.Array.each(me.query('radiofield'), (f) => f.resetOriginalValue());
+        },
+        failure: function(response, opts) {
+          Ext.Msg.alert(gettext('Error'), response.htmlStatus, function() {
+            me.close();
+          });
+        },
+      });
+    };
+
+    createWrapper(options.success);
+
+    PBS.PlusUtils.API2Request(newopts);
+  },
+})
