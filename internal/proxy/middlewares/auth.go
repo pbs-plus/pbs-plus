@@ -229,14 +229,12 @@ func checkProxyAuth(r *http.Request) error {
 
 	cookie, err := r.Cookie("__Host-PBSAuthCookie")
 	if err != nil {
-		// Fallback to legacy cookie
 		cookie, err = r.Cookie("PBSAuthCookie")
 		if err != nil {
 			return fmt.Errorf("CheckProxyAuth: authentication required -> %w", err)
 		}
 	}
 
-	// URL decode the cookie value if needed
 	cookieValue := cookie.Value
 	if strings.Contains(cookieValue, "%") {
 		decoded, err := url.QueryUnescape(cookieValue)
@@ -246,9 +244,6 @@ func checkProxyAuth(r *http.Request) error {
 		cookieValue = decoded
 	}
 
-	syslog.L.Info().WithField("cookie_raw", cookie.Value).WithField("cookie_decoded", cookieValue).WithMessage("API HTTP client cookie processed").Write()
-
-	// Verify the ticket
 	valid, err := auth.VerifyTicket(cookieValue)
 	if err != nil || !valid {
 		return fmt.Errorf("CheckProxyAuth: authentication required -> %w", err)
