@@ -131,7 +131,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       storeid: "proxmox-disk-targets",
       model: "pbs-model-targets",
       proxy: {
-        type: "proxmox",
+        type: "pbsplus",
         url: pbsPlusBaseUrl + "/api2/json/d2d/target",
       },
     },

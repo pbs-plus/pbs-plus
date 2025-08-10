@@ -3,39 +3,168 @@
 package middlewares
 
 import (
+	"crypto"
+	"crypto/ed25519"
+	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
+type PBSAuth struct {
+	privateKey crypto.PrivateKey
+	keyType    string
+}
+
+func NewPBSAuth() (*PBSAuth, error) {
+	keyData, err := os.ReadFile(constants.PBSAuthKeyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	block, _ := pem.Decode(keyData)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+
+	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		rsaKey, rsaErr := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if rsaErr != nil {
+			return nil, fmt.Errorf("failed to parse private key as PKCS#8 or PKCS#1: %v, %v", err, rsaErr)
+		}
+		return &PBSAuth{privateKey: rsaKey, keyType: "rsa"}, nil
+	}
+
+	switch key := privateKey.(type) {
+	case ed25519.PrivateKey:
+		return &PBSAuth{privateKey: key, keyType: "ed25519"}, nil
+	case *rsa.PrivateKey:
+		return &PBSAuth{privateKey: key, keyType: "rsa"}, nil
+	default:
+		return nil, fmt.Errorf("unsupported key type: %T", key)
+	}
+}
+
+func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
+	parts := strings.Split(ticket, "::")
+	if len(parts) != 2 {
+		return false, fmt.Errorf("invalid ticket format")
+	}
+
+	ticketData := parts[0]
+	signature := parts[1]
+
+	for len(signature)%4 != 0 {
+		signature += "="
+	}
+
+	var sigBytes []byte
+	var err error
+
+	sigBytes, err = base64.StdEncoding.DecodeString(signature)
+	if err != nil {
+		sigBytes, err = base64.URLEncoding.DecodeString(signature)
+		if err != nil {
+			return false, fmt.Errorf("failed to decode signature: %w", err)
+		}
+	}
+
+	switch p.keyType {
+	case "ed25519":
+		ed25519Key := p.privateKey.(ed25519.PrivateKey)
+		publicKey := ed25519Key.Public().(ed25519.PublicKey)
+
+		valid := ed25519.Verify(publicKey, []byte(ticketData), sigBytes)
+		return valid, nil
+
+	case "rsa":
+		rsaKey := p.privateKey.(*rsa.PrivateKey)
+
+		hasher := sha1.New()
+		hasher.Write([]byte(ticketData))
+		hashed := hasher.Sum(nil)
+
+		err = rsa.VerifyPKCS1v15(&rsaKey.PublicKey, crypto.SHA1, hashed, sigBytes)
+		return err == nil, err
+
+	default:
+		return false, fmt.Errorf("unsupported key type for verification: %s", p.keyType)
+	}
+}
+
+func (p *PBSAuth) CreateTicket(username, realm string) (string, error) {
+	timestamp := time.Now().Unix()
+	ticketData := fmt.Sprintf("PBS:%s@%s:%s", username, realm, hex.EncodeToString([]byte(strconv.FormatInt(timestamp, 16))))
+
+	switch p.keyType {
+	case "ed25519":
+		ed25519Key := p.privateKey.(ed25519.PrivateKey)
+
+		// Ed25519 signs the raw message
+		signature := ed25519.Sign(ed25519Key, []byte(ticketData))
+		encodedSig := base64.StdEncoding.EncodeToString(signature)
+
+		return fmt.Sprintf("%s::%s", ticketData, encodedSig), nil
+
+	case "rsa":
+		rsaKey := p.privateKey.(*rsa.PrivateKey)
+
+		hasher := sha1.New()
+		hasher.Write([]byte(ticketData))
+		hashed := hasher.Sum(nil)
+
+		signature, err := rsa.SignPKCS1v15(nil, rsaKey, crypto.SHA1, hashed)
+		if err != nil {
+			return "", err
+		}
+
+		encodedSig := base64.StdEncoding.EncodeToString(signature)
+		return fmt.Sprintf("%s::%s", ticketData, encodedSig), nil
+
+	default:
+		return "", fmt.Errorf("unsupported key type for signing: %s", p.keyType)
+	}
+}
+
 func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkAgentAuth(store, r); err != nil {
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
 
 		next.ServeHTTP(w, r)
-	}
+	}))
 }
 
 func ServerOnly(store *store.Store, next http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkProxyAuth(r); err != nil {
+			syslog.L.Error(err).WithField("mode", "server_only").Write()
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
 
 		next.ServeHTTP(w, r)
-	}
+	}))
 }
 
 func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authenticated := false
 
 		if err := checkAgentAuth(store, r); err == nil {
@@ -52,7 +181,7 @@ func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
 		}
 
 		next.ServeHTTP(w, r)
-	}
+	}))
 }
 
 func checkAgentAuth(store *store.Store, r *http.Request) error {
@@ -92,48 +221,33 @@ func checkProxyAuth(r *http.Request) error {
 	if agentHostname != "" {
 		return fmt.Errorf("CheckProxyAuth: agent unauthorized")
 	}
-	// checkEndpoint := "/api2/json/version"
-	// req, err := http.NewRequest(
-	// 	http.MethodGet,
-	// 	fmt.Sprintf(
-	// 		"%s%s",
-	// 		ProxyTargetURL,
-	// 		checkEndpoint,
-	// 	),
-	// 	nil,
-	// )
 
-	// if err != nil {
-	// 	return fmt.Errorf("CheckProxyAuth: error creating http request -> %w", err)
-	// }
+	auth, err := NewPBSAuth()
+	if err != nil {
+		return fmt.Errorf("CheckProxyAuth: failed to initialize PBS auth -> %w", err)
+	}
 
-	// for _, cookie := range r.Cookies() {
-	// 	req.AddCookie(cookie)
-	// }
+	cookie, err := r.Cookie("__Host-PBSAuthCookie")
+	if err != nil {
+		cookie, err = r.Cookie("PBSAuthCookie")
+		if err != nil {
+			return fmt.Errorf("CheckProxyAuth: authentication required -> %w", err)
+		}
+	}
 
-	// if authHead := r.Header.Get("Authorization"); authHead != "" {
-	// 	req.Header.Set("Authorization", authHead)
-	// }
+	cookieValue := cookie.Value
+	if strings.Contains(cookieValue, "%") {
+		decoded, err := url.QueryUnescape(cookieValue)
+		if err != nil {
+			return fmt.Errorf("CheckProxyAuth: failed to decode cookie value -> %w", err)
+		}
+		cookieValue = decoded
+	}
 
-	// if storeInstance.HTTPClient == nil {
-	// 	storeInstance.HTTPClient = &http.Client{
-	// 		Timeout:   time.Second * 30,
-	// 		Transport: utils.BaseTransport,
-	// 	}
-	// }
-
-	// resp, err := storeInstance.HTTPClient.Do(req)
-	// if err != nil {
-	// 	return fmt.Errorf("CheckProxyAuth: invalid auth -> %w", err)
-	// }
-	// defer func() {
-	// 	_, _ = io.Copy(io.Discard, resp.Body)
-	// 	resp.Body.Close()
-	// }()
-
-	// if resp.StatusCode > 299 || resp.StatusCode < 200 {
-	// 	return fmt.Errorf("CheckProxyAuth: invalid auth -> %w", err)
-	// }
+	valid, err := auth.VerifyTicket(cookieValue)
+	if err != nil || !valid {
+		return fmt.Errorf("CheckProxyAuth: authentication required -> %w", err)
+	}
 
 	return nil
 }

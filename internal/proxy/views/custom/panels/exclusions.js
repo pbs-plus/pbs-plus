@@ -5,18 +5,18 @@ Ext.define("PBS.D2DManagement.ExclusionPanel", {
   controller: {
     xclass: "Ext.app.ViewController",
 
-    onAdd: function () {
+    onAdd: function() {
       let me = this;
       Ext.create("PBS.D2DManagement.ExclusionEditWindow", {
         listeners: {
-          destroy: function () {
+          destroy: function() {
             me.reload();
           },
         },
       }).show();
     },
 
-    onEdit: function () {
+    onEdit: function() {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -32,19 +32,19 @@ Ext.define("PBS.D2DManagement.ExclusionPanel", {
       }).show();
     },
 
-    reload: function () {
+    reload: function() {
       this.getView().getStore().rstore.load();
     },
 
-    stopStore: function () {
+    stopStore: function() {
       this.getView().getStore().rstore.stopUpdate();
     },
 
-    startStore: function () {
+    startStore: function() {
       this.getView().getStore().rstore.startUpdate();
     },
 
-    init: function (view) {
+    init: function(view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
     },
   },
@@ -63,8 +63,11 @@ Ext.define("PBS.D2DManagement.ExclusionPanel", {
       storeid: "proxmox-disk-exclusions",
       model: "pbs-model-exclusions",
       proxy: {
-        type: "proxmox",
+        type: "pbsplus",
         url: pbsPlusBaseUrl + "/api2/json/d2d/exclusion",
+        withCredentials: true,
+        cors: true,
+        useDefaultXhrHeader: false,
       },
     },
     sorters: "name",

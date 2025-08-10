@@ -1,16 +1,16 @@
 Ext.define("PBS.D2DManagement.ExclusionEditWindow", {
-  extend: "Proxmox.window.Edit",
+  extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsExclusionEditWindow",
   mixins: ["Proxmox.Mixin.CBind"],
 
   isCreate: true,
   isAdd: true,
   subject: "Disk Backup Global Path Exclusion",
-  cbindData: function (initialConfig) {
+  cbindData: function(initialConfig) {
     let me = this;
 
     let contentid = initialConfig.contentid;
-    let baseurl = pbsPlusBaseUrl + "/api2/extjs/config/d2d-exclusion";
+    let baseurl = "/api2/extjs/config/d2d-exclusion";
 
     me.isCreate = !contentid;
     me.url = contentid

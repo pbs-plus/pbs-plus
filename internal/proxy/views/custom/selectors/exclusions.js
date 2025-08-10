@@ -11,7 +11,7 @@ Ext.define("PBS.form.D2DExclusionSelector", {
 
   store: {
     proxy: {
-      type: "proxmox",
+      type: "pbsplus",
       url: pbsPlusBaseUrl + "/api2/json/d2d/exclusion",
     },
     autoLoad: true,
@@ -31,7 +31,7 @@ Ext.define("PBS.form.D2DExclusionSelector", {
     ],
   },
 
-  initComponent: function () {
+  initComponent: function() {
     let me = this;
 
     if (me.changer) {

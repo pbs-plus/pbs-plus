@@ -3,7 +3,7 @@ const pbsUrl = new URL(pbsFullUrl);
 const pbsPlusBaseUrl = `${pbsUrl.protocol}//${pbsUrl.hostname}:8017`;
 
 function getCookie(cName) {
-	const name = cName + "=";
+  const name = cName + "=";
   const cDecoded = decodeURIComponent(document.cookie);
   const cArr = cDecoded.split('; ');
   let res;
@@ -14,11 +14,11 @@ function getCookie(cName) {
 }
 
 var pbsPlusTokenHeaders = {
-	"Content-Type": "application/json",
+  "Content-Type": "application/json",
 };
 
 if (Proxmox.CSRFPreventionToken) {
-	pbsPlusTokenHeaders["Csrfpreventiontoken"] = Proxmox.CSRFPreventionToken;
+  pbsPlusTokenHeaders["Csrfpreventiontoken"] = Proxmox.CSRFPreventionToken;
 }
 
 function encodePathValue(path) {
@@ -63,3 +63,4 @@ function humanReadableSpeed(speed) {
     return `${speed.toFixed(2)} B/s`;
   }
 }
+

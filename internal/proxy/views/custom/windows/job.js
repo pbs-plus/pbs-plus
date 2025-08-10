@@ -24,7 +24,7 @@ var readModes = Ext.create("Ext.data.Store", {
 });
 
 Ext.define("PBS.D2DManagement.BackupJobEdit", {
-  extend: "Proxmox.window.Edit",
+  extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsDiskBackupJobEdit",
   mixins: ["Proxmox.Mixin.CBind"],
 
@@ -38,10 +38,10 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
 
   bodyPadding: 0,
 
-  cbindData: function (initialConfig) {
+  cbindData: function(initialConfig) {
     let me = this;
 
-    let baseurl = pbsPlusBaseUrl + "/api2/extjs/config/disk-backup-job";
+    let baseurl = "/api2/extjs/config/disk-backup-job";
     let id = initialConfig.id;
 
     me.isCreate = !id;
@@ -67,14 +67,14 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       },
     },
 
-    storeChange: function (field, value) {
+    storeChange: function(field, value) {
       let me = this;
       let nsSelector = me.lookup("namespace");
       nsSelector.setDatastore(value);
     },
   },
 
-  initComponent: function () {
+  initComponent: function() {
     let me = this;
     me.callParent();
 
@@ -94,7 +94,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       {
         title: gettext("Options"),
         xtype: "inputpanel",
-        onGetValues: function (values) {
+        onGetValues: function(values) {
           let me = this;
 
           if (me.isCreate) {
