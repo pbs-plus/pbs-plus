@@ -40,26 +40,28 @@ func NewPBSAuth() (*PBSAuth, error) {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}
 
-	// Try to parse as PKCS#8 first (supports Ed25519, RSA, etc.)
-	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	// Force RSA parsing - PBS still uses RSA for ticket signing
+	// even if the key file is in Ed25519 format
+	var privateKey *rsa.PrivateKey
+
+	// Try PKCS#1 first (legacy RSA format)
+	privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
-		// Fallback to PKCS#1 for legacy RSA keys
-		rsaKey, rsaErr := x509.ParsePKCS1PrivateKey(block.Bytes)
-		if rsaErr != nil {
-			return nil, fmt.Errorf("failed to parse private key as PKCS#8 or PKCS#1: %v, %v", err, rsaErr)
+		// Try PKCS#8 format
+		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse private key: %w", err)
 		}
-		return &PBSAuth{privateKey: rsaKey, keyType: "rsa"}, nil
+
+		// Extract RSA key from PKCS#8
+		var ok bool
+		privateKey, ok = key.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("key is not RSA format, got %T", key)
+		}
 	}
 
-	// Determine key type
-	switch key := privateKey.(type) {
-	case ed25519.PrivateKey:
-		return &PBSAuth{privateKey: key, keyType: "ed25519"}, nil
-	case *rsa.PrivateKey:
-		return &PBSAuth{privateKey: key, keyType: "rsa"}, nil
-	default:
-		return nil, fmt.Errorf("unsupported key type: %T", key)
-	}
+	return &PBSAuth{privateKey: privateKey}, nil
 }
 
 func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
@@ -71,9 +73,30 @@ func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
 	ticketData := parts[0]
 	signature := parts[1]
 
-	sigBytes, err := base64.StdEncoding.DecodeString(signature)
+	// Handle URL encoding issues with + characters
+	// In URLs, + can be encoded as %2B or spaces can become +
+	signature = strings.ReplaceAll(signature, " ", "+")
+
+	// Try different base64 decoding approaches
+	var sigBytes []byte
+	var err error
+
+	// First try standard base64
+	sigBytes, err = base64.StdEncoding.DecodeString(signature)
 	if err != nil {
-		return false, err
+		// Try URL-safe base64
+		sigBytes, err = base64.URLEncoding.DecodeString(signature)
+		if err != nil {
+			// Try with padding
+			signature = strings.TrimRight(signature, "=")
+			for len(signature)%4 != 0 {
+				signature += "="
+			}
+			sigBytes, err = base64.StdEncoding.DecodeString(signature)
+			if err != nil {
+				return false, fmt.Errorf("failed to decode signature: %w", err)
+			}
+		}
 	}
 
 	switch p.keyType {
