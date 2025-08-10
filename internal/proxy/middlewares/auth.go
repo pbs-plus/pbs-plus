@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -229,10 +230,20 @@ func checkProxyAuth(r *http.Request) error {
 		}
 	}
 
-	syslog.L.Info().WithField("cookie", cookie).WithMessage("API HTTP client cookie processed").Write()
+	// URL decode the cookie value if needed
+	cookieValue := cookie.Value
+	if strings.Contains(cookieValue, "%") {
+		decoded, err := url.QueryUnescape(cookieValue)
+		if err != nil {
+			return fmt.Errorf("CheckProxyAuth: failed to decode cookie value -> %w", err)
+		}
+		cookieValue = decoded
+	}
+
+	syslog.L.Info().WithField("cookie_raw", cookie.Value).WithField("cookie_decoded", cookieValue).WithMessage("API HTTP client cookie processed").Write()
 
 	// Verify the ticket
-	valid, err := auth.VerifyTicket(cookie.Value)
+	valid, err := auth.VerifyTicket(cookieValue)
 	if err != nil || !valid {
 		return fmt.Errorf("CheckProxyAuth: authentication required -> %w", err)
 	}
