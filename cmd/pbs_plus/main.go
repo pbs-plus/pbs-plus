@@ -175,7 +175,7 @@ func main() {
 		return
 	}
 
-	if err := proxy.ModifyPBSJavascript(); err != nil {
+	if err := proxy.ModifyPBSHandlebars("/usr/share/javascript/proxmox-backup/index.hbs", "/usr/share/javascript/proxmox-backup/js"); err != nil {
 		syslog.L.Error(err).WithMessage("failed to mount modified proxmox-backup-gui.js").Write()
 		return
 	}
