@@ -14,9 +14,12 @@ Ext.define('PBS.PlusUtils', {
       reqOpts.autoErrorAlert ??
       (typeof reqOpts.failure !== 'function' && typeof reqOpts.callback !== 'function');
 
-    if (!newopts.url.match(/^\/api2/) && !newopts.url.match(/^[a-z][a-z\d+\-.]*:/i)) {
+    if (!newopts.url.match(/^\/api2/)) {
       newopts.url = '/api2/extjs' + newopts.url;
     }
+
+    newopts.url = pbsPlusBaseUrl + newopts.url;
+
     delete newopts.callback;
     let unmask = (target) => {
       if (target.waitMsgTargetCount === undefined || --target.waitMsgTargetCount <= 0) {
