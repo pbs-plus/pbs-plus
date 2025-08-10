@@ -27,6 +27,7 @@ func CORS(store *store.Store, next http.Handler) http.HandlerFunc {
 			w.Header().Set("Access-Control-Allow-Methods", allowedMethods)
 			w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Expose-Headers", "Set-Cookie")
 		}
 
 		if r.Method == http.MethodOptions {
