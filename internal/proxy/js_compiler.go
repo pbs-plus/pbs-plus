@@ -27,13 +27,11 @@ var preJsFS embed.FS
 
 const backupDir = "/var/lib/pbs-plus/backups"
 
-// Legacy file paths from the old method
 var legacyJSPaths = []string{
 	"/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js",
 	"/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js",
 }
 
-// compileJS concatenates all JavaScript files found in the embedded FS
 func compileJS(embedded *embed.FS) []byte {
 	parts, err := sortedWalk(*embedded, ".")
 	if err != nil {
@@ -43,7 +41,6 @@ func compileJS(embedded *embed.FS) []byte {
 	return bytes.Join(parts, []byte("\n"))
 }
 
-// sortedWalk recursively collects file paths in embedded FS, globally sorted
 func sortedWalk(embedded fs.FS, root string) ([][]byte, error) {
 	var filePaths []string
 	err := fs.WalkDir(embedded, root, func(path string, d fs.DirEntry, err error) error {
@@ -70,24 +67,20 @@ func sortedWalk(embedded fs.FS, root string) ([][]byte, error) {
 	return results, nil
 }
 
-// restoreLegacyFiles restores any JavaScript files that were modified by the old method
 func restoreLegacyFiles() error {
 	var restoredAny bool
 
 	for _, jsPath := range legacyJSPaths {
 		backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.original", filepath.Base(jsPath)))
 
-		// Check if backup exists
 		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 			continue
 		}
 
-		// Check if the current file exists
 		if _, err := os.Stat(jsPath); os.IsNotExist(err) {
 			continue
 		}
 
-		// Read current file and backup to compare
 		currentContent, err := os.ReadFile(jsPath)
 		if err != nil {
 			syslog.L.Error(err).WithMessage(fmt.Sprintf("Failed to read current file %s", jsPath)).Write()
@@ -100,7 +93,6 @@ func restoreLegacyFiles() error {
 			continue
 		}
 
-		// If files are different, restore the original
 		if !bytes.Equal(currentContent, backupContent) {
 			if err := restoreBackup(jsPath, backupPath); err != nil {
 				syslog.L.Error(err).WithMessage(fmt.Sprintf("Failed to restore legacy file %s", jsPath)).Write()
@@ -123,13 +115,11 @@ func restoreLegacyFiles() error {
 	return nil
 }
 
-// writeJSFiles writes the compiled JS content to actual files
 func writeJSFiles(jsDir string) error {
 	if err := os.MkdirAll(jsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create JS directory: %w", err)
 	}
 
-	// Write pre JS file
 	preJS := compileJS(&preJsFS)
 	if len(preJS) > 0 {
 		preJSPath := filepath.Join(jsDir, "pbs-plus-pre.js")
@@ -141,7 +131,6 @@ func writeJSFiles(jsDir string) error {
 		).Write()
 	}
 
-	// Write custom JS file
 	customJS := compileJS(&customJsFS)
 	if len(customJS) > 0 {
 		customJSPath := filepath.Join(jsDir, "pbs-plus-custom.js")
@@ -156,11 +145,9 @@ func writeJSFiles(jsDir string) error {
 	return nil
 }
 
-// modifyHBS modifies the HBS template to include pre and custom JS file references
 func modifyHBS(original []byte) []byte {
 	content := string(original)
 
-	// Find the main PBS JS script line
 	mainScriptLine := `<script type="text/javascript" src="/js/proxmox-backup-gui.js"></script>`
 
 	if !strings.Contains(content, mainScriptLine) {
@@ -168,17 +155,14 @@ func modifyHBS(original []byte) []byte {
 		return original
 	}
 
-	// Check if our modifications are already present
 	if strings.Contains(content, "pbs-plus-pre.js") && strings.Contains(content, "pbs-plus-custom.js") {
 		syslog.L.Info().WithMessage("HBS template already contains PBS-Plus modifications").Write()
 		return original
 	}
 
-	// Create script tags for pre and custom JS files
 	preScriptTag := `<script type="text/javascript" src="/js/pbs-plus-pre.js"></script>`
 	customScriptTag := `<script type="text/javascript" src="/js/pbs-plus-custom.js"></script>`
 
-	// Replace the main script line with pre + main + custom
 	newScriptSection := fmt.Sprintf("%s\n%s\n%s", preScriptTag, mainScriptLine, customScriptTag)
 
 	modifiedContent := strings.Replace(content, mainScriptLine, newScriptSection, 1)
@@ -186,7 +170,6 @@ func modifyHBS(original []byte) []byte {
 	return []byte(modifiedContent)
 }
 
-// createOriginalBackup creates a backup that preserves the original file
 func createOriginalBackup(targetPath string, force bool) (string, error) {
 	backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.original", filepath.Base(targetPath)))
 
@@ -208,7 +191,6 @@ func createOriginalBackup(targetPath string, force bool) (string, error) {
 	return backupPath, nil
 }
 
-// atomicReplaceFile writes newContent to targetPath atomically
 func atomicReplaceFile(targetPath string, newContent []byte) error {
 	info, err := os.Stat(targetPath)
 	if err != nil {
@@ -242,7 +224,6 @@ func atomicReplaceFile(targetPath string, newContent []byte) error {
 	return nil
 }
 
-// restoreBackup restores targetPath from backupPath
 func restoreBackup(targetPath, backupPath string) error {
 	backupContent, err := os.ReadFile(backupPath)
 	if err != nil {
@@ -259,7 +240,6 @@ func restoreBackup(targetPath, backupPath string) error {
 	return nil
 }
 
-// cleanupJSFiles removes the generated JS files
 func cleanupJSFiles(jsDir string) {
 	preJSPath := filepath.Join(jsDir, "pbs-plus-pre.js")
 	customJSPath := filepath.Join(jsDir, "pbs-plus-custom.js")
@@ -282,29 +262,24 @@ func ModifyPBSHandlebars(hbsPath, jsDir string) error {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
 
-	// FIRST: Clean up any legacy JavaScript file modifications
 	syslog.L.Info().WithMessage("Checking for legacy JavaScript modifications to clean up...").Write()
 	if err := restoreLegacyFiles(); err != nil {
 		return fmt.Errorf("failed to restore legacy files: %w", err)
 	}
 
-	// Write JS files to the specified directory
 	if err := writeJSFiles(jsDir); err != nil {
 		return fmt.Errorf("failed to write JS files: %w", err)
 	}
 
-	// Create original backup of HBS file
 	originalBackup, err := createOriginalBackup(hbsPath, false)
 	if err != nil {
 		return fmt.Errorf("original backup error: %w", err)
 	}
 
-	// Watch and modify the HBS file
 	if err := watchAndReplaceHBS(hbsPath, modifyHBS); err != nil {
 		return err
 	}
 
-	// Set up signal handler for graceful termination
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -313,12 +288,10 @@ func ModifyPBSHandlebars(hbsPath, jsDir string) error {
 			fmt.Sprintf("Termination signal (%v) received. Cleaning up...", sig),
 		).Write()
 
-		// Restore HBS backup
 		if err := restoreBackup(hbsPath, originalBackup); err != nil {
 			syslog.L.Error(err).Write()
 		}
 
-		// Clean up JS files
 		cleanupJSFiles(jsDir)
 
 		os.Exit(0)
@@ -327,9 +300,7 @@ func ModifyPBSHandlebars(hbsPath, jsDir string) error {
 	return nil
 }
 
-// watchAndReplaceHBS watches HBS template file for changes and applies modifications
 func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error {
-	// Apply initial modification
 	content, err := os.ReadFile(targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to read target file: %w", err)
@@ -350,7 +321,6 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 		).Write()
 	}
 
-	// Set up file watcher
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("failed to create watcher: %w", err)
@@ -364,7 +334,6 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 		fmt.Sprintf("Watching HBS template: %s", targetPath),
 	).Write()
 
-	// Watch for changes
 	go func() {
 		for {
 			select {
