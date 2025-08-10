@@ -85,29 +85,29 @@ func (p *PBSAuth) CreateTicket(username, realm string) (string, error) {
 }
 
 func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkAgentAuth(store, r); err != nil {
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
 
 		next.ServeHTTP(w, r)
-	}
+	}))
 }
 
 func ServerOnly(store *store.Store, next http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkProxyAuth(r); err != nil {
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
 
 		next.ServeHTTP(w, r)
-	}
+	}))
 }
 
 func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authenticated := false
 
 		if err := checkAgentAuth(store, r); err == nil {
@@ -124,7 +124,7 @@ func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
 		}
 
 		next.ServeHTTP(w, r)
-	}
+	}))
 }
 
 func checkAgentAuth(store *store.Store, r *http.Request) error {
