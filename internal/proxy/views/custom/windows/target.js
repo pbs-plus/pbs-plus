@@ -1,5 +1,5 @@
 Ext.define("PBS.D2DManagement.TargetEditWindow", {
-  extend: "Proxmox.window.Edit",
+  extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsTargetEditWindow",
   mixins: ["Proxmox.Mixin.CBind"],
 
@@ -10,7 +10,7 @@ Ext.define("PBS.D2DManagement.TargetEditWindow", {
     let me = this;
 
     let contentid = initialConfig.contentid;
-    let baseurl = pbsPlusBaseUrl + "/api2/extjs/config/d2d-target";
+    let baseurl = "/api2/extjs/config/d2d-target";
 
     me.isCreate = !contentid;
     me.url = contentid

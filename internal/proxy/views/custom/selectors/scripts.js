@@ -11,7 +11,7 @@ Ext.define("PBS.form.D2DScriptSelector", {
 
   store: {
     proxy: {
-      type: "proxmox",
+      type: "pbsplus",
       url: pbsPlusBaseUrl + "/api2/json/d2d/script",
     },
     autoLoad: true,
@@ -38,7 +38,7 @@ Ext.define("PBS.form.D2DScriptSelector", {
     ],
   },
 
-  initComponent: function () {
+  initComponent: function() {
     let me = this;
 
     me.callParent();

@@ -16,4 +16,5 @@ const (
 	MountSocketPath     = "/var/run/pbs_agent_mount.sock"
 	JobMutateSocketPath = "/var/run/pbs_agent_job_mutate.sock"
 	LockSocketPath      = "/var/run/pbs_plus_locker.sock"
+	PBSAuthKeyPath      = "/etc/proxmox-backup/authkey.key"
 )
