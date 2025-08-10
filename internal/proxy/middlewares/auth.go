@@ -68,7 +68,9 @@ func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
 	ticketData := parts[0]
 	signature := parts[1]
 
-	signature = strings.ReplaceAll(signature, " ", "+")
+	for len(signature)%4 != 0 {
+		signature += "="
+	}
 
 	var sigBytes []byte
 	var err error
