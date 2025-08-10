@@ -120,7 +120,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
         jobs.forEach((job) => {
           if (job.hasPBSTask) {
             const task = Proxmox.Utils.parse_task_upid(job.upid);
-            PBS.PlusUtils.API2Request({
+            Proxmox.Utils.API2Request({
               url:
                 "/api2/extjs/nodes/" +
                 task.node +
