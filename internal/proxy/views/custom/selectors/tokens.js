@@ -11,7 +11,7 @@ Ext.define("PBS.form.D2DTokenSelector", {
 
   store: {
     proxy: {
-      type: "proxmox",
+      type: "pbsplus",
       url: pbsPlusBaseUrl + "/api2/json/d2d/token",
     },
     autoLoad: true,
@@ -38,7 +38,7 @@ Ext.define("PBS.form.D2DTokenSelector", {
     ],
   },
 
-  initComponent: function () {
+  initComponent: function() {
     let me = this;
 
     if (me.changer) {

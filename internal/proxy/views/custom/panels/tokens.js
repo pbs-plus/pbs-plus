@@ -5,18 +5,18 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
   controller: {
     xclass: "Ext.app.ViewController",
 
-    onAdd: function () {
+    onAdd: function() {
       let me = this;
       Ext.create("PBS.D2DManagement.TokenEditWindow", {
         listeners: {
-          destroy: function () {
+          destroy: function() {
             me.reload();
           },
         },
       }).show();
     },
 
-    onCopy: async function () {
+    onCopy: async function() {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -43,14 +43,14 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
           {
             xtype: "button",
             iconCls: "fa fa-clipboard",
-            handler: async function (b) {
+            handler: async function(b) {
               await navigator.clipboard.writeText(token);
             },
             text: gettext("Copy"),
           },
           {
             text: gettext("Ok"),
-            handler: function () {
+            handler: function() {
               this.up("window").close();
             },
           },
@@ -58,7 +58,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       }).show();
     },
 
-    onDeploy: async function () {
+    onDeploy: async function() {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -93,14 +93,14 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
           {
             xtype: "button",
             iconCls: "fa fa-clipboard",
-            handler: async function (b) {
+            handler: async function(b) {
               await navigator.clipboard.writeText(powershellCommand);
             },
             text: gettext("Copy"),
           },
           {
             text: gettext("Ok"),
-            handler: function () {
+            handler: function() {
               this.up("window").close();
             },
           },
@@ -108,19 +108,19 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       }).show();
     },
 
-    reload: function () {
+    reload: function() {
       this.getView().getStore().rstore.load();
     },
 
-    stopStore: function () {
+    stopStore: function() {
       this.getView().getStore().rstore.stopUpdate();
     },
 
-    startStore: function () {
+    startStore: function() {
       this.getView().getStore().rstore.startUpdate();
     },
 
-    render_valid: function (value) {
+    render_valid: function(value) {
       if (value.toString() == "false") {
         icon = "check good";
         text = "Valid";
@@ -132,7 +132,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       return `<i class="fa fa-${icon}"></i> ${text}`;
     },
 
-    init: function (view) {
+    init: function(view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
     },
   },
@@ -151,7 +151,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       storeid: "proxmox-agent-tokens",
       model: "pbs-model-tokens",
       proxy: {
-        type: "proxmox",
+        type: "pbsplus",
         url: pbsPlusBaseUrl + "/api2/json/d2d/token",
       },
     },

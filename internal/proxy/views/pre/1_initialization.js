@@ -64,19 +64,3 @@ function humanReadableSpeed(speed) {
   }
 }
 
-Ext.onReady(function() {
-  // Override the default API2Request to include credentials
-  Ext.override(Proxmox.Utils, {
-    API2Request: function(reqOpts) {
-      // Add withCredentials for cross-origin requests
-      if (reqOpts.url && reqOpts.url.indexOf(pbsPlusBaseUrl) === 0) {
-        reqOpts.withCredentials = true;
-        reqOpts.cors = true;
-        reqOpts.useDefaultXhrHeader = false;
-      }
-
-      // Call the original method
-      return this.callParent([reqOpts]);
-    }
-  });
-});
