@@ -108,6 +108,33 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       }).show();
     },
 
+    revokeTokens: function() {
+      const me = this;
+      const view = me.getView();
+      const recs = view.getSelection();
+      if (!recs.length) return;
+
+      Ext.Msg.confirm(
+        gettext("Confirm"),
+        gettext("Revoke selected tokens?"),
+        (btn) => {
+          if (btn !== "yes") return;
+          recs.forEach((rec) => {
+            PBS.PlusUtils.API2Request({
+              url:
+                "/api2/extjs/config/d2d-token/" +
+                encodeURIComponent(encodePathValue(rec.getId())),
+              method: "DELETE",
+              waitMsgTarget: view,
+              failure: (resp) =>
+                Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+              success: () => me.reload(),
+            });
+          });
+        }
+      );
+    },
+
     reload: function() {
       this.getView().getStore().rstore.load();
     },
@@ -181,13 +208,14 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       disabled: true,
     },
     {
+      xtype: "proxmoxButton",
       text: gettext("Revoke Token"),
-      xtype: "proxmoxStdRemoveButton",
-      baseurl: pbsPlusBaseUrl + "/api2/extjs/config/d2d-token",
-      getUrl: (rec) =>
-        pbsPlusBaseUrl +
-        `/api2/extjs/config/d2d-token/${encodeURIComponent(encodePathValue(rec.getId()))}`,
-      callback: "reload",
+      handler: "revokeTokens",
+      enableFn: function() {
+        let recs = this.up("grid").getSelection();
+        return recs.length > 0;
+      },
+      disabled: true,
     },
   ],
   columns: [
