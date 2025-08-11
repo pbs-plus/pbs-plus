@@ -41,6 +41,33 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }).show();
     },
 
+    removeTargets: function() {
+      const me = this;
+      const view = me.getView();
+      const recs = view.getSelection();
+      if (!recs.length) return;
+
+      Ext.Msg.confirm(
+        gettext("Confirm"),
+        gettext("Remove selected entries?"),
+        (btn) => {
+          if (btn !== "yes") return;
+          recs.forEach((rec) => {
+            PBS.PlusUtils.API2Request({
+              url:
+                "/api2/extjs/config/d2d-target/" +
+                encodeURIComponent(encodePathValue(rec.getId())),
+              method: "DELETE",
+              waitMsgTarget: view,
+              failure: (resp) =>
+                Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+              success: () => me.reload(),
+            });
+          });
+        }
+      );
+    },
+
     onEdit: function() {
       let me = this;
       let view = me.getView();
@@ -194,12 +221,14 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       disabled: true,
     },
     {
-      xtype: "proxmoxStdRemoveButton",
-      baseurl: pbsPlusBaseUrl + "/api2/extjs/config/d2d-target",
-      getUrl: (rec) =>
-        pbsPlusBaseUrl +
-        `/api2/extjs/config/d2d-target/${encodeURIComponent(encodePathValue(rec.getId()))}`,
-      callback: "reload",
+      xtype: "proxmoxButton",
+      text: gettext("Remove"),
+      handler: "removeTargets",
+      enableFn: function() {
+        let recs = this.up("grid").getSelection();
+        return recs.length > 0;
+      },
+      disabled: true,
     },
   ],
   columns: [
