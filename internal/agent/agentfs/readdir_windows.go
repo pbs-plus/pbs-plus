@@ -24,6 +24,7 @@ const (
 	FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020
 	OBJ_CASE_INSENSITIVE         = 0x00000040
 	STATUS_NO_MORE_FILES         = 0x80000006
+	STATUS_PENDING               = 0x00000103
 )
 
 type UnicodeString struct {
@@ -65,21 +66,21 @@ var (
 	ntCreateFile         = ntdll.NewProc("NtCreateFile")
 	ntQueryDirectoryFile = ntdll.NewProc("NtQueryDirectoryFile")
 	ntClose              = ntdll.NewProc("NtClose")
-	ntWriteFile          = ntdll.NewProc("NtWriteFile")
 	rtlInitUnicodeString = ntdll.NewProc("RtlInitUnicodeString")
 )
 
+// Prefer NT path prefix to avoid reparsing and keep long paths working.
 func convertToNTPath(path string) string {
 	if len(path) >= 4 && path[:4] == "\\??\\" {
 		return path
 	}
-
 	if len(path) >= 2 && path[1] == ':' {
 		return "\\??\\" + path
 	}
 	return "\\??\\" + path
 }
 
+// 1 MiB reusable buffer size. Tunable based on directory size / network latency.
 const BUF_SIZE = 1024 * 1024
 
 func boolToInt(b bool) uint32 {
@@ -98,6 +99,7 @@ type DirReaderNT struct {
 	pool        *sync.Pool
 }
 
+// NewDirReaderNT opens the directory handle and prepares a reusable buffer pool.
 func NewDirReaderNT(path string) (*DirReaderNT, error) {
 	ntPath := convertToNTPath(path)
 	if !strings.HasSuffix(ntPath, "\\") {
@@ -130,13 +132,12 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 		uintptr(unsafe.Pointer(&ioStatusBlock)),
 		0,
 		0,
-		FILE_SHARE_READ|FILE_SHARE_WRITE,
+		FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
 		OPEN_EXISTING,
 		FILE_DIRECTORY_FILE|FILE_SYNCHRONOUS_IO_NONALERT,
 		0,
 		0,
 	)
-
 	if status != 0 {
 		return nil, fmt.Errorf(
 			"NtCreateFile failed with status: %x, path: %s",
@@ -151,19 +152,23 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 		restartScan: true,
 		noMoreFiles: false,
 		path:        path,
+		pool: &sync.Pool{
+			New: func() any { return make([]byte, BUF_SIZE) },
+		},
 	}, nil
 }
 
 // NextBatch retrieves the next batch of directory entries.
-// It returns the encoded batch, a boolean indicating if more entries might exist, and an error.
-// When hasMore is false and error is nil, iteration is complete.
-// The returned []byte contains the encoded data for the current batch only.
-func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
+// It returns the encoded batch bytes or os.ErrProcessDone when enumeration is finished.
+func (r *DirReaderNT) NextBatch() ([]byte, error) {
 	if r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
 
-	buffer := make([]byte, BUF_SIZE)
+	// Reuse large buffer to avoid per-call allocation and GC churn.
+	bufAny := r.pool.Get()
+	buffer := bufAny.([]byte)
+	defer r.pool.Put(buffer)
 
 	status, _, _ := ntQueryDirectoryFile.Call(
 		r.handle,
@@ -174,55 +179,51 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 		uintptr(unsafe.Pointer(&buffer[0])),
 		uintptr(len(buffer)),
 		uintptr(1), // FileInformationClass: FileDirectoryInformation
-		uintptr(0), // ReturnSingleEntry: FALSE
+		uintptr(0), // ReturnSingleEntry: FALSE (batch)
 		0,          // FileName: NULL
 		uintptr(boolToInt(r.restartScan)),
 	)
 
-	var entries types.ReadDirEntries
-
 	r.restartScan = false
 
-	if status == STATUS_NO_MORE_FILES {
+	switch status {
+	case 0:
+		// success
+	case STATUS_NO_MORE_FILES:
 		r.noMoreFiles = true
-
 		return nil, os.ErrProcessDone
+	case STATUS_PENDING:
+		// Since we opened with synchronous I/O, this is unexpected but handle gracefully.
+		// Treat as retryable no-op; caller can call NextBatch again.
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("NtQueryDirectoryFile failed with status: %x", status)
 	}
 
-	if status != 0 {
-		return nil, fmt.Errorf(
-			"NtQueryDirectoryFile failed with status: %x",
-			status,
-		)
-	}
+	var entries types.ReadDirEntries
 
 	offset := 0
 	for {
-		if offset >= len(buffer) {
+		if offset+int(unsafe.Sizeof(FileDirectoryInformation{})) > len(buffer) {
 			return nil, fmt.Errorf("offset exceeded buffer length")
 		}
 
-		entry := (*FileDirectoryInformation)(
-			unsafe.Pointer(&buffer[offset]),
-		)
+		entry := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[offset]))
 
 		if entry.FileAttributes&excludedAttrs == 0 {
-			fileNameLen := entry.FileNameLength / 2 // Length in uint16
+			fileNameLen := entry.FileNameLength / 2 // length in uint16 code units
 			fileNamePtr := unsafe.Pointer(
-				uintptr(unsafe.Pointer(entry)) +
-					unsafe.Offsetof(entry.FileName),
+				uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName),
 			)
 
-			if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) > uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
+			// Bounds check filename region inside the buffer
+			if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) >
+				uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
 				return nil, fmt.Errorf("filename data exceeds buffer bounds")
 			}
 
-			fileNameSlice := unsafe.Slice(
-				(*uint16)(fileNamePtr),
-				fileNameLen,
-			)
-			fileName := utf16.Decode(fileNameSlice)
-			name := string(fileName)
+			fileNameSlice := unsafe.Slice((*uint16)(fileNamePtr), fileNameLen)
+			name := string(utf16.Decode(fileNameSlice))
 
 			if name != "." && name != ".." {
 				mode := windowsAttributesToFileMode(entry.FileAttributes)
@@ -247,19 +248,16 @@ func (r *DirReaderNT) NextBatch() (encodedBatch []byte, err error) {
 		offset = nextOffset
 	}
 
-	encodedBatch, err = entries.Encode()
+	encodedBatch, err := entries.Encode()
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
 	}
-
 	return encodedBatch, nil
 }
 
 // Close releases the resources used by the directory reader.
-// It must be called when done iterating.
 func (r *DirReaderNT) Close() error {
 	status, _, _ := ntClose.Call(r.handle)
-
 	if status != 0 {
 		return fmt.Errorf("NtClose failed for path '%s' with status: 0x%x", r.path, status)
 	}
