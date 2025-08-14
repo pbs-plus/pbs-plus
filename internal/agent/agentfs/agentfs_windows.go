@@ -71,7 +71,6 @@ type FileHandle struct {
 	isDir     bool
 	dirReader *DirReaderNT
 
-	// Cached mapping handle for mmap mode
 	mapping windows.Handle
 }
 
@@ -255,15 +254,13 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	// Prefer handle-based metadata (open minimal handle)
 	pathUTF16 := utf16.Encode([]rune(fullPath))
 	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
 		pathUTF16 = append(pathUTF16, 0)
 	}
-
 	h, err := windows.CreateFile(
 		&pathUTF16[0],
-		windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
+		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,
@@ -271,7 +268,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 		0,
 	)
 	if err != nil {
-		// Fallback to os.Stat
+		// Fallback to os.Stat (unchanged)
 		rawInfo, e := os.Stat(fullPath)
 		if e != nil {
 			return arpc.Response{}, e
@@ -309,21 +306,16 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	}
 	defer windows.CloseHandle(h)
 
-	var basic fileBasicInfo
-	var std fileStandardInfo
-	if err := getFileBasicInfoByHandle(h, &basic); err != nil {
-		return arpc.Response{}, err
-	}
-	if err := getFileStandardInfoByHandle(h, &std); err != nil {
+	var bhi windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &bhi); err != nil {
 		return arpc.Response{}, err
 	}
 
-	// Compute fields
+	isDir := (bhi.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
+	size := int64(bhi.FileSizeHigh)<<32 | int64(bhi.FileSizeLow)
+	modTime := windows.Filetime(bhi.LastWriteTime)
+	mode := fileModeFromAttrs(bhi.FileAttributes, isDir)
 	name := filepath.Base(filepath.Clean(fullPath))
-	size := std.EndOfFile
-	isDir := std.Directory != 0
-	mode := fileModeFromAttrs(basic.FileAttributes, isDir)
-	modTime := filetimeToTime(basic.LastWriteTime)
 
 	var blockSize uint64
 	if s.statFs != (types.StatFS{}) {
@@ -334,14 +326,21 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	}
 	blocks := uint64(0)
 	if !isDir {
-		blocks = uint64((std.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
+		// Reopen as *os.File for winio helper
+		f, e := os.Open(fullPath)
+		if e == nil {
+			defer f.Close()
+			if st, e2 := winio.GetFileStandardInfo(f); e2 == nil {
+				blocks = uint64((st.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
+			}
+		}
 	}
 
 	info := types.AgentFileInfo{
 		Name:    name,
 		Size:    size,
 		Mode:    mode,
-		ModTime: modTime,
+		ModTime: filetimeToTime(modTime),
 		IsDir:   isDir,
 		Blocks:  blocks,
 	}
@@ -352,8 +351,6 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
-// handleXattr populates extended file statistics including Windows-specific
-// creation time, last access time, group/owner and file attributes.
 func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	var payload types.StatReq
 	if err := payload.Decode(req.Payload); err != nil {
@@ -371,7 +368,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	}
 	h, err := windows.CreateFile(
 		&pathUTF16[0],
-		windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
+		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,
@@ -383,17 +380,16 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	}
 	defer windows.CloseHandle(h)
 
-	var basic fileBasicInfo
-	if err := getFileBasicInfoByHandle(h, &basic); err != nil {
+	var bhi windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &bhi); err != nil {
 		return arpc.Response{}, err
 	}
+	creationTime := filetimeToTime(bhi.CreationTime).UnixNano()
+	lastAccessTime := filetimeToTime(bhi.LastAccessTime).UnixNano()
+	lastWriteTime := filetimeToTime(bhi.LastWriteTime).UnixNano()
+	fileAttributes := parseFileAttributes(bhi.FileAttributes)
 
-	creationTime := filetimeToTime(basic.CreationTime)
-	lastAccessTime := filetimeToTime(basic.LastAccessTime)
-	lastWriteTime := filetimeToTime(basic.LastWriteTime)
-	fileAttributes := parseFileAttributes(basic.FileAttributes)
-
-	// Retrieve owner, group, and ACL info via handle (fallback to path if needed).
+	// ACLs via handle (uses SECURITY_DESCRIPTOR methods internally)
 	owner, group, acls, err := GetWinACLsHandle(h)
 	if err != nil {
 		return arpc.Response{}, err
@@ -401,9 +397,9 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 
 	info := types.AgentFileInfo{
 		Name:           fullPath,
-		CreationTime:   creationTime.UnixNano(),
-		LastAccessTime: lastAccessTime.UnixNano(),
-		LastWriteTime:  lastWriteTime.UnixNano(),
+		CreationTime:   creationTime,
+		LastAccessTime: lastAccessTime,
+		LastWriteTime:  lastWriteTime,
 		FileAttributes: fileAttributes,
 		Owner:          owner,
 		Group:          group,
