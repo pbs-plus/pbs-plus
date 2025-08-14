@@ -245,20 +245,6 @@ func parseFileAttributes(attr uint32) map[string]bool {
 	return attributes
 }
 
-func getFileBasicInfoByHandle(h windows.Handle, out *fileBasicInfo) error {
-	// BOOL GetFileInformationByHandleEx(
-	//   HANDLE hFile,
-	//   FILE_INFO_BY_HANDLE_CLASS FileInformationClass,
-	//   LPVOID lpFileInformation,
-	//   DWORD dwBufferSize
-	// );
-	// FileInformationClass = FileBasicInfo (0)
-	const fileBasicInfoClass = 0
-	size := uint32(unsafe.Sizeof(*out))
-	err := windows.GetFileInformationByHandleEx(h, fileBasicInfoClass, (*byte)(unsafe.Pointer(out)), size)
-	return err
-}
-
 func getFileStandardInfoByHandle(h windows.Handle, out *fileStandardInfo) error {
 	// FileInformationClass = FileStandardInfo (1)
 	const fileStandardInfoClass = 1
