@@ -4,7 +4,9 @@ package agentfs
 
 import (
 	"fmt"
+	"os"
 	"strings"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 
@@ -243,92 +245,132 @@ func parseFileAttributes(attr uint32) map[string]bool {
 	return attributes
 }
 
-func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
-	secInfo := windows.OWNER_SECURITY_INFORMATION |
-		windows.GROUP_SECURITY_INFORMATION |
-		windows.DACL_SECURITY_INFORMATION
+func getFileBasicInfoByHandle(h windows.Handle, out *fileBasicInfo) error {
+	// BOOL GetFileInformationByHandleEx(
+	//   HANDLE hFile,
+	//   FILE_INFO_BY_HANDLE_CLASS FileInformationClass,
+	//   LPVOID lpFileInformation,
+	//   DWORD dwBufferSize
+	// );
+	// FileInformationClass = FileBasicInfo (0)
+	const fileBasicInfoClass = 0
+	size := uint32(unsafe.Sizeof(*out))
+	err := windows.GetFileInformationByHandleEx(h, fileBasicInfoClass, (*byte)(unsafe.Pointer(out)), size)
+	return err
+}
 
-	secDesc, err := GetFileSecurityDescriptor(filePath, uint32(secInfo))
-	if err != nil {
-		return "", "", nil, fmt.Errorf("GetFileSecurityDescriptor failed: %w", err)
+func getFileStandardInfoByHandle(h windows.Handle, out *fileStandardInfo) error {
+	// FileInformationClass = FileStandardInfo (1)
+	const fileStandardInfoClass = 1
+	size := uint32(unsafe.Sizeof(*out))
+	err := windows.GetFileInformationByHandleEx(h, fileStandardInfoClass, (*byte)(unsafe.Pointer(out)), size)
+	return err
+}
+
+func filetimeToTime(ft windows.Filetime) time.Time {
+	// windows.NsecToFiletime is inverse; use Unix epoch conversion
+	return time.Unix(0, ft.Nanoseconds())
+}
+
+func fileModeFromAttrs(attrs uint32, isDir bool) uint32 {
+	mode := uint32(0)
+	if isDir {
+		mode |= uint32(os.ModeDir)
+	}
+	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		mode |= uint32(os.ModeSymlink) // best-effort mapping
+	}
+	return mode
+}
+
+// Sparse SEEK_DATA/SEEK_HOLE using FSCTL_QUERY_ALLOCATED_RANGES
+func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSize int64) (int64, error) {
+	if start < 0 {
+		return 0, os.ErrInvalid
+	}
+	if start >= fileSize {
+		return fileSize, nil
 	}
 
-	// IsValidSecDescriptor is already called within GetFileSecurityDescriptor in the revised version.
-	// If GetFileSecurityDescriptor succeeded, we assume it's valid for now.
-
-	_, pDacl, _, pOwnerSid, pGroupSid, err := MakeAbsoluteSD(secDesc)
-	if err != nil {
-		// MakeAbsoluteSD might fail even if GetFileSecurityDescriptor succeeded.
-		return "", "", nil, fmt.Errorf("MakeAbsoluteSD failed: %w", err)
+	in := fileAllocatedRangeBuffer{
+		FileOffset: start,
+		Length:     fileSize - start,
 	}
+	// buffer for a handful of ranges
+	out := make([]fileAllocatedRangeBuffer, 32)
+	var bytesReturned uint32
 
-	// Use the SIDs returned by MakeAbsoluteSD directly if they are valid.
-	var owner, group string
-	if pOwnerSid != nil && pOwnerSid.IsValid() {
-		owner = pOwnerSid.String()
-	} else {
-		// Fallback or handle error if owner SID is expected but missing/invalid
-		// For simplicity here, we proceed, but production code might error out.
-		// Alternatively, call getOwnerGroupAbsolute as a fallback, but it might be redundant.
-		// owner, group, err = getOwnerGroupAbsolute(absoluteSD)
-		// if err != nil {
-		// 	 return "", "", nil, fmt.Errorf("failed to extract owner/group: %w", err)
-		// }
-		return "", "", nil, fmt.Errorf("owner SID from MakeAbsoluteSD is nil or invalid")
-	}
+	err := windows.DeviceIoControl(
+		h,
+		windows.FSCTL_QUERY_ALLOCATED_RANGES,
+		(*byte)(unsafe.Pointer(&in)),
+		uint32(unsafe.Sizeof(in)),
+		(*byte)(unsafe.Pointer(&out[0])),
+		uint32(uintptr(len(out))*unsafe.Sizeof(out[0])),
+		&bytesReturned,
+		nil,
+	)
 
-	if pGroupSid != nil && pGroupSid.IsValid() {
-		group = pGroupSid.String()
-	} else {
-		return owner, "", nil, fmt.Errorf("group SID from MakeAbsoluteSD is nil or invalid")
-	}
-
-	// Check if a DACL is present (pDacl will be non-nil if MakeAbsoluteSD found one)
-	if pDacl == nil {
-		// No DACL present means no explicit ACL entries.
-		return owner, group, []types.WinACL{}, nil
-	}
-
-	entriesPtr, entriesCount, err := GetExplicitEntriesFromACL(pDacl)
-	if err != nil {
-		// If GetExplicitEntriesFromACL fails, it might mean an empty but valid ACL,
-		// or a real error. Treat failure as potentially no entries, but log/wrap error.
-		return owner, group, []types.WinACL{}, fmt.Errorf("GetExplicitEntriesFromACL failed: %w", err)
-	}
-	if entriesPtr == 0 || entriesCount == 0 {
-		// No entries found or pointer is null.
-		return owner, group, []types.WinACL{}, nil
-	}
-	// Ensure the allocated memory is freed when the function returns.
-	defer FreeExplicitEntries(entriesPtr)
-
-	// Create a temporary slice header to access the Windows-allocated memory.
-	// This is unsafe and the slice is only valid until FreeExplicitEntries is called.
-	expEntries := unsafeEntriesToSlice(entriesPtr, entriesCount)
-
-	winAcls := make([]types.WinACL, 0, entriesCount)
-	for _, entry := range expEntries {
-		// Trustee.TrusteeValue should point to a SID structure in this context.
-		pSid := (*windows.SID)(unsafe.Pointer(entry.Trustee.TrusteeValue))
-		if pSid == nil { // Check if the cast resulted in a nil pointer
-			continue
+	if err != nil && bytesReturned == 0 {
+		// Filesystem might not support it
+		if err == windows.ERROR_INVALID_FUNCTION {
+			if whence == SeekData {
+				return start, nil
+			}
+			return fileSize, nil
 		}
-
-		if !pSid.IsValid() {
-			// Log or handle invalid SID? Skipping for now.
-			continue
-		}
-
-		sidStr := pSid.String()
-
-		ace := types.WinACL{
-			SID:        sidStr,
-			AccessMask: uint32(entry.AccessPermissions),
-			Type:       uint8(entry.AccessMode),
-			Flags:      uint8(entry.Inheritance),
-		}
-		winAcls = append(winAcls, ace)
+		return 0, err
 	}
 
-	return owner, group, winAcls, nil
+	count := int(bytesReturned) / int(unsafe.Sizeof(out[0]))
+	if count == 0 {
+		// no allocated ranges after start
+		if whence == SeekData {
+			return fileSize, windows.ERROR_NO_MORE_FILES
+		}
+		return fileSize, nil
+	}
+
+	switch whence {
+	case SeekData:
+		// Find first range at or after start
+		for i := 0; i < count; i++ {
+			r := out[i]
+			if start < r.FileOffset {
+				return r.FileOffset, nil
+			}
+			if start >= r.FileOffset && start < r.FileOffset+r.Length {
+				return start, nil
+			}
+		}
+		return fileSize, windows.ERROR_NO_MORE_FILES
+	case SeekHole:
+		// If before first range, we're in a hole
+		first := out[0]
+		if start < first.FileOffset {
+			return start, nil
+		}
+		// If inside a range, hole begins at end of that range
+		for i := 0; i < count; i++ {
+			r := out[i]
+			if start >= r.FileOffset && start < r.FileOffset+r.Length {
+				return r.FileOffset + r.Length, nil
+			}
+			// Between ranges is a hole; if start lies there, return start
+			if i+1 < count {
+				next := out[i+1]
+				if start >= r.FileOffset+r.Length && start < next.FileOffset {
+					return start, nil
+				}
+			}
+		}
+		// After last range is a hole to EOF
+		last := out[count-1]
+		if start >= last.FileOffset+last.Length {
+			return start, nil
+		}
+		return last.FileOffset + last.Length, nil
+	default:
+		return 0, os.ErrInvalid
+	}
 }
