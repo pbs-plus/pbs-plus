@@ -406,36 +406,58 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Lock only to snapshot state needed for the operation.
+	// Snapshot mapping handle without holding lock during I/O
 	fh.Lock()
-	fileSize := fh.fileSize
 	mapping := fh.mapping
 	fh.Unlock()
+
+	// Refresh EOF from the handle to avoid stale size issues.
+	var std fileStandardInfo
+	if err := getFileStandardInfoByHandle(fh.handle, &std); err != nil {
+		return arpc.Response{}, err
+	}
+	fileSize := std.EndOfFile
 
 	if payload.Offset >= fileSize {
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
 			RawStream: func(stream *smux.Stream) {
-				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
-					syslog.L.Error(err).WithMessage("failed sending empty reader").Write()
-				}
+				_ = binarystream.SendDataFromReader(emptyReader, 0, stream)
 			},
 		}, nil
 	}
 
-	if payload.Offset+int64(payload.Length) > fileSize {
-		payload.Length = int(fileSize - payload.Offset)
+	// Clamp requested length to current EOF
+	reqLen := payload.Length
+	if payload.Offset+int64(reqLen) > fileSize {
+		reqLen = int(fileSize - payload.Offset)
+	}
+	if reqLen == 0 {
+		emptyReader := bytes.NewReader(nil)
+		return arpc.Response{
+			Status: 213,
+			RawStream: func(stream *smux.Stream) {
+				_ = binarystream.SendDataFromReader(emptyReader, 0, stream)
+			},
+		}, nil
 	}
 
-	// mmap path: create mapping once and reuse (mapping handle kept in fh.mapping).
+	// mmap fast path: ensure we don't map past EOF.
 	if s.readMode == "mmap" {
+		// Ensure we have/create mapping
 		var mh windows.Handle
 		if mapping == 0 {
-			// Need to set mapping on fh; lock briefly.
 			fh.Lock()
 			if fh.mapping == 0 {
-				if m, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, 0, 0, nil); err == nil {
+				if m, err := windows.CreateFileMapping(
+					fh.handle,
+					nil,
+					windows.PAGE_READONLY,
+					0,
+					0,
+					nil,
+				); err == nil {
 					fh.mapping = m
 					mh = m
 				}
@@ -448,10 +470,33 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		}
 
 		if mh != 0 {
-			alignedOffset := payload.Offset - (payload.Offset % int64(s.allocGranularity))
+			alloc := int64(s.allocGranularity)
+			alignedOffset := payload.Offset - (payload.Offset % alloc)
 			offsetDiff := int(payload.Offset - alignedOffset)
-			viewSize := uintptr(payload.Length + offsetDiff)
 
+			// Compute maximum view limited by EOF
+			maxAtEOF := fileSize - alignedOffset
+			if maxAtEOF < 0 {
+				maxAtEOF = 0
+			}
+			// We need at most reqLen+offsetDiff bytes in the view,
+			// but cannot exceed maxAtEOF.
+			maxView := int64(reqLen + offsetDiff)
+			if maxView > maxAtEOF {
+				maxView = maxAtEOF
+			}
+			if maxView <= int64(offsetDiff) {
+				// Nothing readable in this region
+				emptyReader := bytes.NewReader(nil)
+				return arpc.Response{
+					Status: 213,
+					RawStream: func(stream *smux.Stream) {
+						_ = binarystream.SendDataFromReader(emptyReader, 0, stream)
+					},
+				}, nil
+			}
+
+			viewSize := uintptr(maxView)
 			addr, err := windows.MapViewOfFile(
 				mh,
 				windows.FILE_MAP_READ,
@@ -462,35 +507,39 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 			if err == nil {
 				ptr := (*byte)(unsafe.Pointer(addr))
 				data := unsafe.Slice(ptr, viewSize)
-				if offsetDiff+payload.Length > len(data) {
-					syslog.L.Error(fmt.Errorf(
-						"invalid slice bounds: offsetDiff=%d, payload.Length=%d, data len=%d",
-						offsetDiff,
-						payload.Length,
-						len(data),
-					)).WithMessage("invalid file mapping boundaries").Write()
-					windows.UnmapViewOfFile(addr)
-					return arpc.Response{}, fmt.Errorf("invalid file mapping boundaries")
-				}
-				result := data[offsetDiff : offsetDiff+payload.Length]
-				reader := bytes.NewReader(result)
 
+				// Actual readable length from requested offset
+				avail := len(data) - offsetDiff
+				if avail < 0 {
+					avail = 0
+				}
+				resultLen := reqLen
+				if resultLen > avail {
+					resultLen = avail
+				}
+				if resultLen < 0 {
+					resultLen = 0
+				}
+
+				reader := bytes.NewReader(data[offsetDiff : offsetDiff+resultLen])
 				return arpc.Response{
 					Status: 213,
 					RawStream: func(stream *smux.Stream) {
 						defer windows.UnmapViewOfFile(addr)
-						if err := binarystream.SendDataFromReader(reader, payload.Length, stream); err != nil {
-							syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
+						if err := binarystream.SendDataFromReader(reader, resultLen, stream); err != nil {
+							syslog.L.Error(err).
+								WithMessage("failed sending data from reader via binary stream").
+								Write()
 						}
 					},
 				}, nil
 			}
-			// fall through if mapping fails
+			// fall through to overlapped if mapping fails
 		}
 	}
 
-	// OVERLAPPED fallback (no SetFilePointer). Do not hold fh lock during I/O.
-	buf := make([]byte, payload.Length)
+	// OVERLAPPED fallback: read up to reqLen bytes.
+	buf := make([]byte, reqLen)
 	ov := new(windows.Overlapped)
 	ov.Offset = uint32(payload.Offset & 0xffffffff)
 	ov.OffsetHigh = uint32(uint64(payload.Offset) >> 32)
@@ -506,6 +555,7 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		}
 	}
 
+	// Stream exactly the bytes we actually read.
 	reader := bytes.NewReader(buf[:n])
 	return arpc.Response{
 		Status: 213,
