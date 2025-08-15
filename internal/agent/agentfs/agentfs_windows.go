@@ -329,7 +329,6 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	}
 
 	info := types.AgentFileInfo{
-		Name:           fullPath,
 		CreationTime:   creationTime,
 		LastAccessTime: lastAccessTime,
 		LastWriteTime:  lastWriteTime,
