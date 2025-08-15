@@ -19,7 +19,6 @@ var readModes = Ext.create("Ext.data.Store", {
   fields: ["display", "value"],
   data: [
     { display: "Standard", value: "standard" },
-    { display: "Memory Mapping", value: "mmap" },
   ],
 });
 
