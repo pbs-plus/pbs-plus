@@ -67,19 +67,19 @@ func (p *PBSAuth) VerifyTicket(cookieVal string) (bool, error) {
 		return false, fmt.Errorf("invalid ticket format: %w", err)
 	}
 
-	// If we accidentally got a leading colon in sig (mis-split), strip one and note it.
 	if strings.HasPrefix(sigStr, ":") {
 		syslog.L.Warn().WithMessage("VerifyTicket: signature had unexpected leading colon").Write()
 		sigStr = sigStr[1:]
 	}
 
-	// Trim ASCII spaces/tabs only (defensive, shouldn’t be needed)
 	sigStr = strings.Trim(sigStr, " \t")
 
-	// Base64 decode: Proxmox uses STANDARD alphabet ( + / ), no padding.
+	if strings.Contains(sigStr, " ") {
+		sigStr = strings.ReplaceAll(sigStr, " ", "+")
+	}
+
 	sig, err := base64.RawStdEncoding.DecodeString(sigStr)
 	if err != nil {
-		// If it looks URL-safe (- or _ present, and +/ absent), try URL variant once.
 		if strings.ContainsAny(sigStr, "-_") && !strings.ContainsAny(sigStr, "+/") {
 			sig, err = base64.RawURLEncoding.DecodeString(sigStr)
 		}
@@ -96,7 +96,6 @@ func (p *PBSAuth) VerifyTicket(cookieVal string) (bool, error) {
 		}
 	}
 
-	// Verify
 	switch p.keyType {
 	case "ed25519":
 		pub := p.privateKey.(ed25519.PrivateKey).Public().(ed25519.PublicKey)
@@ -139,11 +138,8 @@ func splitPBS(raw string) (left, right string, usedDecoded bool, err error) {
 		return parts[0], parts[1], false, nil
 	}
 	if strings.Contains(raw, "%") {
-		if dec, e := url.QueryUnescape(raw); e == nil {
-			if parts := strings.SplitN(dec, "::", 2); len(parts) == 2 {
-				return parts[0], parts[1], true, nil
-			}
-			// Log only on error path in caller.
+		if parts := strings.SplitN(raw, "%3A%3A", 2); len(parts) == 2 {
+			return parts[0], parts[1], false, nil
 		}
 	}
 	return "", "", false, fmt.Errorf("missing '::' separator")
