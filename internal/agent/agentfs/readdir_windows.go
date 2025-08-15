@@ -17,6 +17,10 @@ import (
 // 1 MiB reusable buffer size. Tunable based on directory size / network latency.
 const BUF_SIZE = 1024 * 1024
 
+var dirBufPoolNT = sync.Pool{
+	New: func() any { return make([]byte, BUF_SIZE) },
+}
+
 // NewDirReaderNT opens the directory handle and prepares a reusable buffer pool.
 func NewDirReaderNT(path string) (*DirReaderNT, error) {
 	ntPath := convertToNTPath(path)
@@ -53,9 +57,6 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 		restartScan: true,
 		noMoreFiles: false,
 		path:        path,
-		pool: &sync.Pool{
-			New: func() any { return make([]byte, BUF_SIZE) },
-		},
 	}, nil
 }
 
@@ -67,9 +68,9 @@ func (r *DirReaderNT) NextBatch() ([]byte, error) {
 	}
 
 	// Reuse large buffer to avoid per-call allocation and GC churn.
-	bufAny := r.pool.Get()
+	bufAny := dirBufPoolNT.Get()
 	buffer := bufAny.([]byte)
-	defer r.pool.Put(buffer)
+	defer dirBufPoolNT.Put(buffer)
 
 	err := ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan)
 	r.restartScan = false

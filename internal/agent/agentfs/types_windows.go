@@ -33,7 +33,6 @@ type DirReaderNT struct {
 	restartScan bool
 	noMoreFiles bool
 	path        string
-	pool        *sync.Pool
 }
 
 type UnicodeString struct {
