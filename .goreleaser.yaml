@@ -36,6 +36,7 @@ builds:
     binary: pbs-plus
     env:
       - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     goos:
       - linux
     goarch:
@@ -58,6 +59,7 @@ builds:
     env:
       - CGO_ENABLED=0
       - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     ldflags:
       - -X 'main.Version=v{{.Version}}'
       - -extld gcc
@@ -81,6 +83,7 @@ builds:
     env:
       - CGO_ENABLED=0
       - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     ldflags:
       - -X 'main.Version=v{{.Version}}'
       - -extld gcc
@@ -104,6 +107,7 @@ builds:
     env:
       - CGO_ENABLED=0
       - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     ldflags:
       - -extld gcc
       - -extldflags "-static"
@@ -120,6 +124,7 @@ builds:
     binary: pbs-plus-agent
     env:
       - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     goos:
       - freebsd
     goarch:
@@ -134,6 +139,7 @@ builds:
     binary: pbs-plus-agent
     env:
       - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     goos:
       - windows
     goarch:
@@ -151,6 +157,7 @@ builds:
     binary: pbs-plus-updater
     env:
       - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     goos:
       - windows
     goarch:
