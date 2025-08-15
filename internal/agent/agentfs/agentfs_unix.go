@@ -31,6 +31,7 @@ type FileHandle struct {
 	isDir       bool
 	dirReader   *DirReaderUnix
 	cachedInode uint64
+	curOffset   int64
 }
 
 // small pooled buffers for ReadAt
@@ -446,44 +447,33 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	fh.Lock()
 	defer fh.Unlock()
 
-	// Treat SEEK_HOLE/DATA as unsupported (Linux only), consistent with prior behavior
+	// Unsupported
 	if payload.Whence == SeekHole || payload.Whence == SeekData {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Avoid actual lseek if we can answer from metadata
+	var newOffset int64
 	switch payload.Whence {
 	case io.SeekStart:
-		if payload.Offset > fh.fileSize {
-			return arpc.Response{}, fmt.Errorf("seeking beyond EOF is not allowed")
-		}
-		newOffset := payload.Offset
-		resp := types.LseekResp{NewOffset: newOffset}
-		respBytes, err := resp.Encode()
-		if err != nil {
-			return arpc.Response{}, err
-		}
-		return arpc.Response{Status: 200, Data: respBytes}, nil
+		newOffset = payload.Offset
 	case io.SeekCurrent:
-		// We don't track a current offset for pread-based reads; use the kernel for correctness.
+		newOffset = fh.curOffset + payload.Offset
 	case io.SeekEnd:
-		newOffset := fh.fileSize + payload.Offset
-		if newOffset < 0 {
-			newOffset = 0
-		}
-		resp := types.LseekResp{NewOffset: newOffset}
-		respBytes, err := resp.Encode()
-		if err != nil {
-			return arpc.Response{}, err
-		}
-		return arpc.Response{Status: 200, Data: respBytes}, nil
+		newOffset = fh.fileSize + payload.Offset
+	default:
+		return arpc.Response{}, fmt.Errorf("invalid whence: %d", payload.Whence)
 	}
 
-	// Fallback to kernel seek for SeekCurrent or other cases where we need kernel state
-	newOffset, err := fh.file.Seek(payload.Offset, payload.Whence)
-	if err != nil {
-		return arpc.Response{}, err
+	// disallow seeks outside [0, fileSize]
+	if newOffset < 0 {
+		return arpc.Response{}, fmt.Errorf("seeking before start is not allowed")
 	}
+	if newOffset > fh.fileSize {
+		return arpc.Response{}, fmt.Errorf("seeking beyond EOF is not allowed")
+	}
+
+	fh.curOffset = newOffset
+
 	resp := types.LseekResp{NewOffset: newOffset}
 	respBytes, err := resp.Encode()
 	if err != nil {
