@@ -111,6 +111,14 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 				continue
 			}
 
+			if typ == unix.DT_LNK {
+				continue
+			}
+
+			if typ == unix.DT_UNKNOWN {
+				continue
+			}
+
 			// Convert to string only for entries we keep
 			name := string(nameBytes)
 			mode := uint32(unixTypeToFileMode(typ))
