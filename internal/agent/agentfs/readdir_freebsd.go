@@ -8,29 +8,33 @@ import (
 )
 
 func (r *DirReaderUnix) getdents() (int, error) {
-	// FreeBSD’s native syscall: Getdirentries(fd, buf, *basep)
-	n, err := syscall.Getdirentries(r.fd, r.buf, &r.basep)
-	return n, err
+	for {
+		n, err := syscall.Getdirentries(r.fd, r.buf, &r.basep)
+		if err == syscall.EINTR || err == syscall.EAGAIN {
+			continue
+		}
+		return n, err
+	}
 }
 
-func (r *DirReaderUnix) parseDirent() (string, byte, int, error) {
-	// ensure at least up to Name field
-	nameOff := unsafe.Offsetof(syscall.Dirent{}.Name)
-	if r.bufPos+int(nameOff) > r.bufEnd {
-		return "", 0, 0, nil
+func (r *DirReaderUnix) parseDirent() ([]byte, byte, int, bool, error) {
+	nameOff := int(unsafe.Offsetof(syscall.Dirent{}.Name))
+	if r.bufPos+nameOff > r.bufEnd {
+		return nil, 0, 0, false, nil
 	}
-	dirent := (*syscall.Dirent)(unsafe.Pointer(&r.buf[r.bufPos]))
-	reclen := int(dirent.Reclen)
-	if reclen == 0 || r.bufPos+reclen > r.bufEnd {
-		return "", 0, 0, nil
+	de := (*syscall.Dirent)(unsafe.Pointer(&r.buf[r.bufPos]))
+	reclen := int(de.Reclen)
+	if reclen < nameOff || r.bufPos+reclen > r.bufEnd {
+		return nil, 0, 0, false, syscall.EBADF
 	}
 
-	// Namlen is the length of the name (no trailing NUL)
-	namelen := int(dirent.Namlen)
-	if namelen > len(dirent.Name) {
-		namelen = len(dirent.Name)
+	namelen := int(de.Namlen)
+	if namelen < 0 {
+		return nil, 0, 0, false, syscall.EBADF
 	}
-	// Dirent.Name is [256]int8
-	raw := (*[256]byte)(unsafe.Pointer(&dirent.Name[0]))
-	return string(raw[:namelen]), dirent.Type, reclen, nil
+	if namelen > len(de.Name) {
+		namelen = len(de.Name)
+	}
+	raw := (*[256]byte)(unsafe.Pointer(&de.Name[0]))[:namelen:namelen]
+	return raw, byte(de.Type), reclen, true, nil
 }
