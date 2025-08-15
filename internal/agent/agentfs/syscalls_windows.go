@@ -4,7 +4,10 @@ package agentfs
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 
@@ -72,85 +75,6 @@ type FileAllocatedRangeBuffer struct {
 	Length     int64 // Length of the range
 }
 
-func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocatedRangeBuffer, error) {
-	// Validate fileSize.
-	if fileSize < 0 {
-		return nil, fmt.Errorf("invalid fileSize: %d", fileSize)
-	}
-
-	// Handle edge case: zero file size.
-	if fileSize == 0 {
-		return nil, nil
-	}
-
-	// Define the input range for the query.
-	var inputRange FileAllocatedRangeBuffer
-	inputRange.FileOffset = 0
-	inputRange.Length = fileSize
-
-	// Constant for buffer size calculations.
-	rangeSize := int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
-	if rangeSize == 0 {
-		return nil, fmt.Errorf("computed rangeSize is 0, invalid FileAllocatedRangeBuffer")
-	}
-
-	// Start with a small buffer and dynamically resize if needed.
-	bufferSize := 1 // Start with space for 1 range.
-	var bytesReturned uint32
-
-	// Set an arbitrary maximum to avoid infinite allocation.
-	const maxBufferSize = 1 << 20 // for example, 1 million entries.
-	for {
-		if bufferSize > maxBufferSize {
-			return nil, fmt.Errorf("buffer size exceeded maximum threshold: %d", bufferSize)
-		}
-
-		// Allocate the output buffer.
-		outputBuffer := make([]FileAllocatedRangeBuffer, bufferSize)
-
-		// Call DeviceIoControl.
-		err := windows.DeviceIoControl(
-			handle,
-			windows.FSCTL_QUERY_ALLOCATED_RANGES,
-			(*byte)(unsafe.Pointer(&inputRange)),
-			uint32(unsafe.Sizeof(inputRange)),
-			(*byte)(unsafe.Pointer(&outputBuffer[0])),
-			uint32(bufferSize*rangeSize),
-			&bytesReturned,
-			nil,
-		)
-
-		if err == nil {
-			// Success: calculate the number of ranges returned.
-			if bytesReturned%uint32(rangeSize) != 0 {
-				return nil, fmt.Errorf("inconsistent number of bytes returned: %d", bytesReturned)
-			}
-			count := int(bytesReturned) / rangeSize
-			if count > len(outputBuffer) {
-				return nil, fmt.Errorf("invalid count computed: %d", count)
-			}
-			return outputBuffer[:count], nil
-		}
-
-		// If the buffer was too small, double the bufferSize and retry.
-		if err == windows.ERROR_MORE_DATA {
-			bufferSize *= 2
-			continue
-		}
-
-		// If the filesystem doesn't support FSCTL_QUERY_ALLOCATED_RANGES, return
-		// a single range covering the whole file.
-		if err == windows.ERROR_INVALID_FUNCTION {
-			return []FileAllocatedRangeBuffer{
-				{FileOffset: 0, Length: fileSize},
-			}, nil
-		}
-
-		// For any other error, return it wrapped.
-		return nil, fmt.Errorf("DeviceIoControl failed: %w", err)
-	}
-}
-
 func getFileSize(handle windows.Handle) (int64, error) {
 	var fileInfo windows.ByHandleFileInformation
 	err := windows.GetFileInformationByHandle(handle, &fileInfo)
@@ -184,17 +108,6 @@ func GetAllocGranularity() int {
 	// this cannot fail
 	procGetSystemInfo.Call(uintptr(unsafe.Pointer(&si)))
 	return int(si.AllocationGranularity)
-}
-
-// filetimeToUnix converts a Windows FILETIME to a Unix timestamp.
-// Windows file times are in 100-nanosecond intervals since January 1, 1601.
-func filetimeToUnix(ft windows.Filetime) int64 {
-	const (
-		winToUnixEpochDiff = 116444736000000000 // in 100-nanosecond units
-		hundredNano        = 10000000           // 100-ns units per second
-	)
-	t := (int64(ft.HighDateTime) << 32) | int64(ft.LowDateTime)
-	return (t - winToUnixEpochDiff) / hundredNano
 }
 
 // parseFileAttributes converts Windows file attribute flags into a map.
@@ -243,92 +156,212 @@ func parseFileAttributes(attr uint32) map[string]bool {
 	return attributes
 }
 
-func GetWinACLs(filePath string) (string, string, []types.WinACL, error) {
-	secInfo := windows.OWNER_SECURITY_INFORMATION |
-		windows.GROUP_SECURITY_INFORMATION |
-		windows.DACL_SECURITY_INFORMATION
+func getFileStandardInfoByHandle(h windows.Handle, out *fileStandardInfo) error {
+	// FileInformationClass = FileStandardInfo (1)
+	const fileStandardInfoClass = 1
+	size := uint32(unsafe.Sizeof(*out))
+	err := windows.GetFileInformationByHandleEx(h, fileStandardInfoClass, (*byte)(unsafe.Pointer(out)), size)
+	return err
+}
 
-	secDesc, err := GetFileSecurityDescriptor(filePath, uint32(secInfo))
-	if err != nil {
-		return "", "", nil, fmt.Errorf("GetFileSecurityDescriptor failed: %w", err)
+func filetimeToTime(ft windows.Filetime) time.Time {
+	// windows.NsecToFiletime is inverse; use Unix epoch conversion
+	return time.Unix(0, ft.Nanoseconds())
+}
+
+func fileModeFromAttrs(attrs uint32, isDir bool) uint32 {
+	mode := uint32(0)
+	if isDir {
+		mode |= uint32(os.ModeDir)
+	}
+	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		mode |= uint32(os.ModeSymlink) // best-effort mapping
+	}
+	return mode
+}
+
+// Sparse SEEK_DATA/SEEK_HOLE using FSCTL_QUERY_ALLOCATED_RANGES
+func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSize int64) (int64, error) {
+	if start < 0 {
+		return 0, os.ErrInvalid
+	}
+	if start >= fileSize {
+		return fileSize, nil
 	}
 
-	// IsValidSecDescriptor is already called within GetFileSecurityDescriptor in the revised version.
-	// If GetFileSecurityDescriptor succeeded, we assume it's valid for now.
-
-	_, pDacl, _, pOwnerSid, pGroupSid, err := MakeAbsoluteSD(secDesc)
-	if err != nil {
-		// MakeAbsoluteSD might fail even if GetFileSecurityDescriptor succeeded.
-		return "", "", nil, fmt.Errorf("MakeAbsoluteSD failed: %w", err)
+	in := fileAllocatedRangeBuffer{
+		FileOffset: start,
+		Length:     fileSize - start,
 	}
+	// buffer for a handful of ranges
+	out := make([]fileAllocatedRangeBuffer, 32)
+	var bytesReturned uint32
 
-	// Use the SIDs returned by MakeAbsoluteSD directly if they are valid.
-	var owner, group string
-	if pOwnerSid != nil && pOwnerSid.IsValid() {
-		owner = pOwnerSid.String()
-	} else {
-		// Fallback or handle error if owner SID is expected but missing/invalid
-		// For simplicity here, we proceed, but production code might error out.
-		// Alternatively, call getOwnerGroupAbsolute as a fallback, but it might be redundant.
-		// owner, group, err = getOwnerGroupAbsolute(absoluteSD)
-		// if err != nil {
-		// 	 return "", "", nil, fmt.Errorf("failed to extract owner/group: %w", err)
-		// }
-		return "", "", nil, fmt.Errorf("owner SID from MakeAbsoluteSD is nil or invalid")
-	}
+	err := windows.DeviceIoControl(
+		h,
+		windows.FSCTL_QUERY_ALLOCATED_RANGES,
+		(*byte)(unsafe.Pointer(&in)),
+		uint32(unsafe.Sizeof(in)),
+		(*byte)(unsafe.Pointer(&out[0])),
+		uint32(uintptr(len(out))*unsafe.Sizeof(out[0])),
+		&bytesReturned,
+		nil,
+	)
 
-	if pGroupSid != nil && pGroupSid.IsValid() {
-		group = pGroupSid.String()
-	} else {
-		return owner, "", nil, fmt.Errorf("group SID from MakeAbsoluteSD is nil or invalid")
-	}
-
-	// Check if a DACL is present (pDacl will be non-nil if MakeAbsoluteSD found one)
-	if pDacl == nil {
-		// No DACL present means no explicit ACL entries.
-		return owner, group, []types.WinACL{}, nil
-	}
-
-	entriesPtr, entriesCount, err := GetExplicitEntriesFromACL(pDacl)
-	if err != nil {
-		// If GetExplicitEntriesFromACL fails, it might mean an empty but valid ACL,
-		// or a real error. Treat failure as potentially no entries, but log/wrap error.
-		return owner, group, []types.WinACL{}, fmt.Errorf("GetExplicitEntriesFromACL failed: %w", err)
-	}
-	if entriesPtr == 0 || entriesCount == 0 {
-		// No entries found or pointer is null.
-		return owner, group, []types.WinACL{}, nil
-	}
-	// Ensure the allocated memory is freed when the function returns.
-	defer FreeExplicitEntries(entriesPtr)
-
-	// Create a temporary slice header to access the Windows-allocated memory.
-	// This is unsafe and the slice is only valid until FreeExplicitEntries is called.
-	expEntries := unsafeEntriesToSlice(entriesPtr, entriesCount)
-
-	winAcls := make([]types.WinACL, 0, entriesCount)
-	for _, entry := range expEntries {
-		// Trustee.TrusteeValue should point to a SID structure in this context.
-		pSid := (*windows.SID)(unsafe.Pointer(entry.Trustee.TrusteeValue))
-		if pSid == nil { // Check if the cast resulted in a nil pointer
-			continue
+	if err != nil && bytesReturned == 0 {
+		// Filesystem might not support it
+		if err == windows.ERROR_INVALID_FUNCTION {
+			if whence == SeekData {
+				return start, nil
+			}
+			return fileSize, nil
 		}
-
-		if !pSid.IsValid() {
-			// Log or handle invalid SID? Skipping for now.
-			continue
-		}
-
-		sidStr := pSid.String()
-
-		ace := types.WinACL{
-			SID:        sidStr,
-			AccessMask: uint32(entry.AccessPermissions),
-			Type:       uint8(entry.AccessMode),
-			Flags:      uint8(entry.Inheritance),
-		}
-		winAcls = append(winAcls, ace)
+		return 0, err
 	}
 
-	return owner, group, winAcls, nil
+	count := int(bytesReturned) / int(unsafe.Sizeof(out[0]))
+	if count == 0 {
+		// no allocated ranges after start
+		if whence == SeekData {
+			return fileSize, windows.ERROR_NO_MORE_FILES
+		}
+		return fileSize, nil
+	}
+
+	switch whence {
+	case SeekData:
+		// Find first range at or after start
+		for i := 0; i < count; i++ {
+			r := out[i]
+			if start < r.FileOffset {
+				return r.FileOffset, nil
+			}
+			if start >= r.FileOffset && start < r.FileOffset+r.Length {
+				return start, nil
+			}
+		}
+		return fileSize, windows.ERROR_NO_MORE_FILES
+	case SeekHole:
+		// If before first range, we're in a hole
+		first := out[0]
+		if start < first.FileOffset {
+			return start, nil
+		}
+		// If inside a range, hole begins at end of that range
+		for i := 0; i < count; i++ {
+			r := out[i]
+			if start >= r.FileOffset && start < r.FileOffset+r.Length {
+				return r.FileOffset + r.Length, nil
+			}
+			// Between ranges is a hole; if start lies there, return start
+			if i+1 < count {
+				next := out[i+1]
+				if start >= r.FileOffset+r.Length && start < next.FileOffset {
+					return start, nil
+				}
+			}
+		}
+		// After last range is a hole to EOF
+		last := out[count-1]
+		if start >= last.FileOffset+last.Length {
+			return start, nil
+		}
+		return last.FileOffset + last.Length, nil
+	default:
+		return 0, os.ErrInvalid
+	}
+}
+
+func readAtOverlapped(h windows.Handle, off int64, buf []byte) (int, error) {
+	var ov windows.Overlapped
+	ov.Offset = uint32(off & 0xffffffff)
+	ov.OffsetHigh = uint32(uint64(off) >> 32)
+
+	evt, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(evt)
+	ov.HEvent = evt
+
+	var n uint32
+	err = windows.ReadFile(h, buf, &n, &ov)
+	if err != nil {
+		if err == windows.ERROR_IO_PENDING {
+			_, werr := windows.WaitForSingleObject(evt, windows.INFINITE)
+			if werr != nil {
+				return int(n), werr
+			}
+			if gerr := windows.GetOverlappedResult(h, &ov, &n, false); gerr != nil {
+				// If EOF, return what we got (may be zero) as EOF.
+				if gerr == windows.ERROR_HANDLE_EOF {
+					return int(n), io.EOF
+				}
+				return int(n), gerr
+			}
+		} else if err == windows.ERROR_HANDLE_EOF {
+			return int(n), io.EOF
+		} else {
+			return int(n), err
+		}
+	}
+	return int(n), nil
+}
+
+type allocatedRange struct {
+	FileOffset int64
+	Length     int64
+}
+
+func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange, error) {
+	in := fileAllocatedRangeBuffer{FileOffset: off, Length: length}
+
+	// Start with a reasonable capacity.
+	out := make([]fileAllocatedRangeBuffer, 64)
+
+	call := func(dst []fileAllocatedRangeBuffer) (int, error) {
+		var br uint32
+		err := windows.DeviceIoControl(
+			h,
+			windows.FSCTL_QUERY_ALLOCATED_RANGES,
+			(*byte)(unsafe.Pointer(&in)),
+			uint32(unsafe.Sizeof(in)),
+			(*byte)(unsafe.Pointer(&dst[0])),
+			uint32(len(dst))*uint32(unsafe.Sizeof(dst[0])),
+			&br,
+			nil,
+		)
+		if err != nil {
+			// ERROR_INSUFFICIENT_BUFFER is not typical here; ERROR_MORE_DATA can occur.
+			if err == windows.ERROR_MORE_DATA {
+				return int(br), err
+			}
+			return 0, err
+		}
+		return int(br), nil
+	}
+
+	br, err := call(out)
+	if err == windows.ERROR_MORE_DATA {
+		need := br / int(unsafe.Sizeof(out[0]))
+		if need <= len(out) {
+			need = len(out) * 2
+		}
+		out = make([]fileAllocatedRangeBuffer, need)
+		// Second attempt
+		br, err = call(out)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	count := br / int(unsafe.Sizeof(out[0]))
+	res := make([]allocatedRange, 0, count)
+	for i := 0; i < count; i++ {
+		res = append(res, allocatedRange{
+			FileOffset: out[i].FileOffset,
+			Length:     out[i].Length,
+		})
+	}
+	return res, nil
 }
