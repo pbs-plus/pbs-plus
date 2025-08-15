@@ -96,5 +96,16 @@ func (c *Config) LoadTLSConfig() (*tls.Config, error) {
 		Certificates: []tls.Certificate{cert},
 		ClientCAs:    caCertPool,
 		ClientAuth:   tls.VerifyClientCertIfGiven,
+		MinVersion:   tls.VersionTLS12,
+		// TLS 1.3 ciphers are fixed; AES-GCM will be preferred on AES-NI.
+		// For TLS 1.2, force AES-GCM and prefer server order:
+		PreferServerCipherSuites: true,
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			// Omit ChaCha to ensure AES-GCM is chosen for TLS 1.2.
+		},
 	}, nil
 }
