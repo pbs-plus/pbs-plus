@@ -6,12 +6,10 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
-	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -58,66 +56,124 @@ func NewPBSAuth() (*PBSAuth, error) {
 	}
 }
 
-func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
-	if strings.Contains(ticket, "%") {
-		if dec, err := url.QueryUnescape(ticket); err == nil {
-			// Use decoded only if it now looks like a PBS ticket
-			if (strings.HasPrefix(dec, "PBS:") || strings.HasPrefix(dec, "PBSTERM:")) &&
-				strings.Contains(dec, "::") {
-				ticket = dec
-			}
-		}
-	}
-
-	parts := strings.SplitN(ticket, "::", 2)
-	if len(parts) != 2 {
-		return false, errors.New("invalid ticket format")
-	}
-
-	ticketData := parts[0]
-	sigB64 := parts[1]
-
-	if !strings.HasPrefix(ticketData, "PBS:") {
-		return false, errors.New("unexpected ticket prefix")
-	}
-
-	// PBS commonly uses URL-safe base64 without padding
-	sigBytes, err := base64.RawURLEncoding.DecodeString(sigB64)
+func (p *PBSAuth) VerifyTicket(cookieVal string) (bool, error) {
+	left, sigStr, usedDecoded, err := splitPBS(cookieVal)
 	if err != nil {
-		sigBytes, err = base64.RawStdEncoding.DecodeString(sigB64)
+		syslog.L.Error(err).
+			WithField("stage", "split").
+			WithField("cookie_len", len(cookieVal)).
+			WithField("has_percent", strings.Contains(cookieVal, "%")).
+			Write()
+		return false, fmt.Errorf("invalid ticket format: %w", err)
+	}
+
+	// If we accidentally got a leading colon in sig (mis-split), strip one and note it.
+	if strings.HasPrefix(sigStr, ":") {
+		syslog.L.Warn().WithMessage("VerifyTicket: signature had unexpected leading colon").Write()
+		sigStr = sigStr[1:]
+	}
+
+	// Trim ASCII spaces/tabs only (defensive, shouldn’t be needed)
+	sigStr = strings.Trim(sigStr, " \t")
+
+	// Base64 decode: Proxmox uses STANDARD alphabet ( + / ), no padding.
+	sig, err := base64.RawStdEncoding.DecodeString(sigStr)
+	if err != nil {
+		// If it looks URL-safe (- or _ present, and +/ absent), try URL variant once.
+		if strings.ContainsAny(sigStr, "-_") && !strings.ContainsAny(sigStr, "+/") {
+			sig, err = base64.RawURLEncoding.DecodeString(sigStr)
+		}
 		if err != nil {
-			return false, err
+			syslog.L.Error(fmt.Errorf("base64 decode failed: %w", err)).
+				WithField("stage", "b64decode").
+				WithField("used_decoded_cookie", usedDecoded).
+				WithField("sig_len", len(sigStr)).
+				WithField("sig_preview", preview(sigStr, 80)).
+				WithField("alphabet_hint",
+					alphabetHint(sigStr)).
+				Write()
+			return false, fmt.Errorf("signature base64 decode failed: %w", err)
 		}
 	}
 
+	// Verify
 	switch p.keyType {
 	case "ed25519":
 		pub := p.privateKey.(ed25519.PrivateKey).Public().(ed25519.PublicKey)
-		ok := ed25519.Verify(pub, []byte(ticketData), sigBytes)
-		if !ok {
-			return false, errors.New("ed25519 signature invalid")
+		if !ed25519.Verify(pub, []byte(left), sig) {
+			syslog.L.Error(fmt.Errorf("ed25519 signature invalid")).
+				WithField("stage", "verify").
+				WithField("msg_len", len(left)).
+				WithField("msg_prefix", preview(left, 32)).
+				WithField("used_decoded_cookie", usedDecoded).
+				Write()
+			return false, fmt.Errorf("ed25519 signature invalid")
 		}
 		return true, nil
 
 	case "rsa":
-		rsaKey := p.privateKey.(*rsa.PrivateKey)
-		pub := &rsaKey.PublicKey
-
-		hashed256 := sha256.Sum256([]byte(ticketData))
-		if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, hashed256[:], sigBytes); err == nil {
-			return true, nil
+		pub := &p.privateKey.(*rsa.PrivateKey).PublicKey
+		sum := sha256.Sum256([]byte(left))
+		if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, sum[:], sig); err != nil {
+			syslog.L.Error(fmt.Errorf("rsa verify failed: %w", err)).
+				WithField("stage", "verify").
+				WithField("hash", "sha256").
+				WithField("msg_len", len(left)).
+				WithField("msg_prefix", preview(left, 32)).
+				WithField("used_decoded_cookie", usedDecoded).
+				Write()
+			return false, fmt.Errorf("rsa signature invalid: %w", err)
 		}
-
-		// Fallback to SHA-1 for legacy setups
-		h1 := sha1.Sum([]byte(ticketData))
-		if err := rsa.VerifyPKCS1v15(pub, crypto.SHA1, h1[:], sigBytes); err == nil {
-			return true, nil
-		}
-		return false, errors.New("rsa signature invalid (sha256/sha1)")
+		return true, nil
 
 	default:
-		return false, errors.New("unsupported key type")
+		syslog.L.Error(fmt.Errorf("unsupported key type: %s", p.keyType)).
+			WithField("stage", "verify").
+			Write()
+		return false, fmt.Errorf("unsupported key type: %s", p.keyType)
 	}
+}
+
+func splitPBS(raw string) (left, right string, usedDecoded bool, err error) {
+	if parts := strings.SplitN(raw, "::", 2); len(parts) == 2 {
+		return parts[0], parts[1], false, nil
+	}
+	if strings.Contains(raw, "%") {
+		if dec, e := url.QueryUnescape(raw); e == nil {
+			if parts := strings.SplitN(dec, "::", 2); len(parts) == 2 {
+				return parts[0], parts[1], true, nil
+			}
+			// Log only on error path in caller.
+		}
+	}
+	return "", "", false, fmt.Errorf("missing '::' separator")
+}
+
+func preview(s string, n int) string {
+	if len(s) > n {
+		s = s[:n]
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 32 || c == 127 {
+			b.WriteString(fmt.Sprintf("\\x%02X", c))
+		} else {
+			b.WriteByte(c)
+		}
+	}
+	if len(s) == n {
+		b.WriteString("...")
+	}
+	return b.String()
+}
+
+func alphabetHint(s string) string {
+	hasPlus := strings.Contains(s, "+")
+	hasSlash := strings.Contains(s, "/")
+	hasDash := strings.Contains(s, "-")
+	hasUnderscore := strings.Contains(s, "_")
+	return fmt.Sprintf("+/=%t/%t, -_=%t/%t", hasPlus, hasSlash, hasDash, hasUnderscore)
 }
 
 func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
