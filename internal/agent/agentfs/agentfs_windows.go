@@ -241,21 +241,20 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	}
 	defer windows.CloseHandle(h)
 
-	var all fileAllInformation
-	if err := ntQueryFileAllInformation(h, &all); err != nil {
+	var nfo fileNetworkOpenInformation
+	if err := ntQueryFileNetworkOpenInformation(h, &nfo); err != nil {
 		return arpc.Response{}, err
 	}
 
-	isDir := all.StandardInformation.Directory != 0
-	size := all.StandardInformation.EndOfFile
+	isDir := (nfo.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
+	size := nfo.EndOfFile
 
-	// Convert LastWriteTime
 	modTime := filetimeToTime(windows.Filetime{
-		LowDateTime:  uint32(uint64(all.BasicInformation.LastWriteTime) & 0xFFFFFFFF),
-		HighDateTime: uint32(uint64(all.BasicInformation.LastWriteTime) >> 32),
+		LowDateTime:  uint32(uint64(nfo.LastWriteTime) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(nfo.LastWriteTime) >> 32),
 	})
 
-	mode := fileModeFromAttrs(all.BasicInformation.FileAttributes, isDir)
+	mode := fileModeFromAttrs(nfo.FileAttributes, isDir)
 	name := filepath.Base(filepath.Clean(fullPath))
 
 	blockSize := s.statFs.Bsize
@@ -265,7 +264,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 
 	var blocks uint64
 	if !isDir {
-		alloc := all.StandardInformation.AllocationSize
+		alloc := nfo.AllocationSize
 		if alloc < 0 {
 			alloc = 0
 		}
@@ -304,25 +303,25 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	}
 	defer windows.CloseHandle(h)
 
-	var all fileAllInformation
-	if err := ntQueryFileAllInformation(h, &all); err != nil {
+	var nfo fileNetworkOpenInformation
+	if err := ntQueryFileNetworkOpenInformation(h, &nfo); err != nil {
 		return arpc.Response{}, err
 	}
 
 	creationTime := filetimeToTime(windows.Filetime{
-		LowDateTime:  uint32(uint64(all.BasicInformation.CreationTime) & 0xFFFFFFFF),
-		HighDateTime: uint32(uint64(all.BasicInformation.CreationTime) >> 32),
+		LowDateTime:  uint32(uint64(nfo.CreationTime) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(nfo.CreationTime) >> 32),
 	}).UnixNano()
 	lastAccessTime := filetimeToTime(windows.Filetime{
-		LowDateTime:  uint32(uint64(all.BasicInformation.LastAccessTime) & 0xFFFFFFFF),
-		HighDateTime: uint32(uint64(all.BasicInformation.LastAccessTime) >> 32),
+		LowDateTime:  uint32(uint64(nfo.LastAccessTime) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(nfo.LastAccessTime) >> 32),
 	}).UnixNano()
 	lastWriteTime := filetimeToTime(windows.Filetime{
-		LowDateTime:  uint32(uint64(all.BasicInformation.LastWriteTime) & 0xFFFFFFFF),
-		HighDateTime: uint32(uint64(all.BasicInformation.LastWriteTime) >> 32),
+		LowDateTime:  uint32(uint64(nfo.LastWriteTime) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(nfo.LastWriteTime) >> 32),
 	}).UnixNano()
 
-	fileAttributes := parseFileAttributes(all.BasicInformation.FileAttributes)
+	fileAttributes := parseFileAttributes(nfo.FileAttributes)
 
 	owner, group, acls, err := GetWinACLsHandle(h)
 	if err != nil {
