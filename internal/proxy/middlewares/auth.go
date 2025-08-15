@@ -140,8 +140,8 @@ func splitPBS(raw string) (left, right string, usedDecoded bool, err error) {
 	if strings.Contains(raw, "%") {
 		if parts := strings.SplitN(raw, "%3A%3A", 2); len(parts) == 2 {
 			leftToVerify := parts[0]
-			if strings.Contains(left, "%") {
-				if decoded, decErr := url.QueryUnescape(left); decErr == nil {
+			if strings.Contains(leftToVerify, "%") {
+				if decoded, decErr := url.QueryUnescape(leftToVerify); decErr == nil {
 					leftToVerify = decoded
 				}
 			}
