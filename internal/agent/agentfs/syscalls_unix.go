@@ -13,7 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 )
 
-func GetAllocGranularity() int {
+func getAllocGranularity() int {
 	// On Linux, the allocation granularity is typically the page size
 	pageSize := syscall.Getpagesize()
 	return pageSize

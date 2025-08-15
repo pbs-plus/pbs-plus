@@ -3,101 +3,19 @@
 package agentfs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
-	"syscall"
 	"unicode/utf16"
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 )
 
-const (
-	FILE_LIST_DIRECTORY          = 0x0001
-	FILE_SHARE_READ              = 0x00000001
-	FILE_SHARE_WRITE             = 0x00000002
-	FILE_SHARE_DELETE            = 0x00000004
-	OPEN_EXISTING                = 3
-	FILE_DIRECTORY_FILE          = 0x00000001
-	FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020
-	OBJ_CASE_INSENSITIVE         = 0x00000040
-	STATUS_NO_MORE_FILES         = 0x80000006
-	STATUS_PENDING               = 0x00000103
-)
-
-type UnicodeString struct {
-	Length        uint16
-	MaximumLength uint16
-	Buffer        *uint16
-}
-
-type ObjectAttributes struct {
-	Length                   uint32
-	RootDirectory            uintptr
-	ObjectName               *UnicodeString
-	Attributes               uint32
-	SecurityDescriptor       uintptr
-	SecurityQualityOfService uintptr
-}
-
-type IoStatusBlock struct {
-	Status      int32
-	Information uintptr
-}
-
-type FileDirectoryInformation struct {
-	NextEntryOffset uint32
-	FileIndex       uint32
-	CreationTime    int64
-	LastAccessTime  int64
-	LastWriteTime   int64
-	ChangeTime      int64
-	EndOfFile       int64
-	AllocationSize  int64
-	FileAttributes  uint32
-	FileNameLength  uint32
-	FileName        uint16
-}
-
-var (
-	ntdll                = syscall.NewLazyDLL("ntdll.dll")
-	ntCreateFile         = ntdll.NewProc("NtCreateFile")
-	ntQueryDirectoryFile = ntdll.NewProc("NtQueryDirectoryFile")
-	ntClose              = ntdll.NewProc("NtClose")
-	rtlInitUnicodeString = ntdll.NewProc("RtlInitUnicodeString")
-)
-
-// Prefer NT path prefix to avoid reparsing and keep long paths working.
-func convertToNTPath(path string) string {
-	if len(path) >= 4 && path[:4] == "\\??\\" {
-		return path
-	}
-	if len(path) >= 2 && path[1] == ':' {
-		return "\\??\\" + path
-	}
-	return "\\??\\" + path
-}
-
 // 1 MiB reusable buffer size. Tunable based on directory size / network latency.
 const BUF_SIZE = 1024 * 1024
-
-func boolToInt(b bool) uint32 {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-type DirReaderNT struct {
-	handle      uintptr
-	ioStatus    IoStatusBlock
-	restartScan bool
-	noMoreFiles bool
-	path        string
-	pool        *sync.Pool
-}
 
 // NewDirReaderNT opens the directory handle and prepares a reusable buffer pool.
 func NewDirReaderNT(path string) (*DirReaderNT, error) {
@@ -125,25 +43,8 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 	var handle uintptr
 	var ioStatusBlock IoStatusBlock
 
-	status, _, _ := ntCreateFile.Call(
-		uintptr(unsafe.Pointer(&handle)),
-		FILE_LIST_DIRECTORY|syscall.SYNCHRONIZE,
-		uintptr(unsafe.Pointer(&objectAttributes)),
-		uintptr(unsafe.Pointer(&ioStatusBlock)),
-		0,
-		0,
-		FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
-		OPEN_EXISTING,
-		FILE_DIRECTORY_FILE|FILE_SYNCHRONOUS_IO_NONALERT,
-		0,
-		0,
-	)
-	if status != 0 {
-		return nil, fmt.Errorf(
-			"NtCreateFile failed with status: %x, path: %s",
-			status,
-			ntPath,
-		)
+	if err := ntCreateFileCall(&handle, &objectAttributes, &ioStatusBlock); err != nil {
+		return nil, err
 	}
 
 	return &DirReaderNT{
@@ -170,34 +71,19 @@ func (r *DirReaderNT) NextBatch() ([]byte, error) {
 	buffer := bufAny.([]byte)
 	defer r.pool.Put(buffer)
 
-	status, _, _ := ntQueryDirectoryFile.Call(
-		r.handle,
-		0,
-		0,
-		0,
-		uintptr(unsafe.Pointer(&r.ioStatus)),
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(len(buffer)),
-		uintptr(1), // FileInformationClass: FileDirectoryInformation
-		uintptr(0), // ReturnSingleEntry: FALSE (batch)
-		0,          // FileName: NULL
-		uintptr(boolToInt(r.restartScan)),
-	)
-
+	err := ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan)
 	r.restartScan = false
+	if err != nil {
+		if os.IsExist(err) {
+			// PENDING
+			return nil, nil
+		}
+		if errors.Is(err, os.ErrProcessDone) {
+			r.noMoreFiles = true
+			return nil, err
+		}
 
-	switch status {
-	case 0:
-		// success
-	case STATUS_NO_MORE_FILES:
-		r.noMoreFiles = true
-		return nil, os.ErrProcessDone
-	case STATUS_PENDING:
-		// Since we opened with synchronous I/O, this is unexpected but handle gracefully.
-		// Treat as retryable no-op; caller can call NextBatch again.
-		return nil, nil
-	default:
-		return nil, fmt.Errorf("NtQueryDirectoryFile failed with status: %x", status)
+		return nil, err
 	}
 
 	var entries types.ReadDirEntries
