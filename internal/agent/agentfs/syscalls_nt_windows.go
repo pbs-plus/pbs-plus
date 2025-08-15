@@ -92,7 +92,7 @@ func ntDirectoryCall(handle uintptr, ioStatusBlock *IoStatusBlock, buffer []byte
 		0,
 		0,
 		0,
-		uintptr(unsafe.Pointer(&ioStatusBlock)),
+		uintptr(unsafe.Pointer(ioStatusBlock)),
 		uintptr(unsafe.Pointer(&buffer[0])),
 		uintptr(len(buffer)),
 		uintptr(1), // FileInformationClass: FileDirectoryInformation

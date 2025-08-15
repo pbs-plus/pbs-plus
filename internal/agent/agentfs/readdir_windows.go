@@ -74,7 +74,7 @@ func (r *DirReaderNT) NextBatch() ([]byte, error) {
 	err := ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan)
 	r.restartScan = false
 	if err != nil {
-		if os.IsExist(err) {
+		if errors.Is(err, os.ErrExist) {
 			// PENDING
 			return nil, nil
 		}
