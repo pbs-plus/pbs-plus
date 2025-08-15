@@ -8,11 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/user"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -25,11 +24,22 @@ import (
 
 type FileHandle struct {
 	sync.Mutex
-	file      *os.File
-	dirPath   string
-	fileSize  int64
-	isDir     bool
-	dirReader *DirReaderUnix
+	file        *os.File
+	fd          int // raw fd for faster unix ops
+	dirPath     string
+	fileSize    int64
+	isDir       bool
+	dirReader   *DirReaderUnix
+	cachedInode uint64
+}
+
+// small pooled buffers for ReadAt
+var readBufPool = sync.Pool{
+	New: func() interface{} {
+		// Default chunk; many readAt requests are small. Adjust as needed.
+		b := make([]byte, 256*1024)
+		return &b
+	},
 }
 
 func (s *AgentFSServer) abs(filename string) (string, error) {
@@ -146,51 +156,59 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, err
 	}
 
-	// Check file status to mark directories
-	stat, err := os.Stat(path)
+	// Open with unix.Open to minimize overhead and then fstat
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return arpc.Response{}, err
+		return arpc.Response{}, fmt.Errorf("open failed '%s': %w", path, err)
+	}
+
+	// Determine if directory via fstat once
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		unix.Close(fd)
+		return arpc.Response{}, fmt.Errorf("fstat failed '%s': %w", path, err)
 	}
 
 	handleId := s.handleIdGen.NextID()
 	var fh *FileHandle
 
-	if !stat.IsDir() {
-		// Open file using os.Open (returns *os.File)
-		file, err := os.Open(path)
-		if err != nil {
-			return arpc.Response{}, fmt.Errorf("failed to open file '%s': %w", path, err)
-		}
-
-		fileSize := stat.Size()
-		fh = &FileHandle{
-			file:     file,
-			fileSize: fileSize,
-			isDir:    false,
-		}
-	} else {
-		// Open directory
+	if (st.Mode & unix.S_IFMT) == unix.S_IFDIR {
+		// Re-open with directory flags to support getdents cleanly
+		unix.Close(fd)
 		reader, err := NewDirReaderUnix(path)
 		if err != nil {
 			return arpc.Response{}, err
 		}
-
 		fh = &FileHandle{
 			dirReader: reader,
 			isDir:     true,
+		}
+	} else {
+		// Create *os.File from fd for compatibility with code using fh.file.
+		file := os.NewFile(uintptr(fd), path)
+		if file == nil {
+			unix.Close(fd)
+			return arpc.Response{}, fmt.Errorf("failed to wrap fd for '%s'", path)
+		}
+		fh = &FileHandle{
+			file:     file,
+			fd:       fd,
+			fileSize: st.Size,
+			isDir:    false,
 		}
 	}
 
 	s.handles.Set(handleId, fh)
 
-	// Return the handle ID to the client
 	fhId := types.FileHandleId(handleId)
 	dataBytes, err := fhId.Encode()
 	if err != nil {
-		if !fh.isDir {
-			fh.file.Close()
-		} else {
-			fh.dirReader.Close()
+		if fh != nil {
+			if fh.isDir && fh.dirReader != nil {
+				_ = fh.dirReader.Close()
+			} else if fh.fd != 0 {
+				_ = unix.Close(fh.fd)
+			}
 		}
 		return arpc.Response{}, err
 	}
@@ -212,22 +230,24 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	rawInfo, err := os.Stat(fullPath)
-	if err != nil {
+	// Prefer fstatat (no open) for path-based stat, and reuse fh if already open.
+	var st unix.Stat_t
+	// Try Fstatat without following symlinks
+	if err := unix.Fstatat(unix.AT_FDCWD, fullPath, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return arpc.Response{}, err
 	}
 
 	blocks := uint64(0)
-	if !rawInfo.IsDir() && s.statFs.Bsize != 0 {
-		blocks = uint64((rawInfo.Size() + int64(s.statFs.Bsize) - 1) / int64(s.statFs.Bsize))
+	if (st.Mode&unix.S_IFMT) != unix.S_IFDIR && s.statFs.Bsize != 0 {
+		blocks = uint64((st.Size + int64(s.statFs.Bsize) - 1) / int64(s.statFs.Bsize))
 	}
 
 	info := types.AgentFileInfo{
-		Name:    rawInfo.Name(),
-		Size:    rawInfo.Size(),
-		Mode:    uint32(rawInfo.Mode()),
-		ModTime: rawInfo.ModTime(),
-		IsDir:   rawInfo.IsDir(),
+		Name:    lastPathElem(fullPath),
+		Size:    st.Size,
+		Mode:    uint32(modeFromUnix(uint32(st.Mode))),
+		ModTime: time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)),
+		IsDir:   (st.Mode & unix.S_IFMT) == unix.S_IFDIR,
 		Blocks:  blocks,
 	}
 
@@ -235,10 +255,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	if err != nil {
 		return arpc.Response{}, err
 	}
-	return arpc.Response{
-		Status: 200,
-		Data:   data,
-	}, nil
+	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
@@ -252,57 +269,27 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	rawInfo, err := os.Stat(fullPath)
-	if err != nil {
+	var st unix.Stat_t
+	if err := unix.Fstatat(unix.AT_FDCWD, fullPath, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return arpc.Response{}, err
 	}
 
-	blocks := uint64(0)
-	if !rawInfo.IsDir() && s.statFs.Bsize != 0 {
-		blocks = uint64((rawInfo.Size() + int64(s.statFs.Bsize) - 1) / int64(s.statFs.Bsize))
-	}
-
-	// Initialize default values.
+	// Times: use st.Atim, st.Mtim, st.Ctim; Creation time often unavailable on Linux
 	creationTime := int64(0)
-	lastAccessTime := int64(0)
-	lastWriteTime := int64(0)
+	lastAccessTime := time.Unix(int64(st.Atim.Sec), int64(st.Atim.Nsec)).Unix()
+	lastWriteTime := time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)).Unix()
+
+	uidStr := strconv.Itoa(int(st.Uid))
+	gidStr := strconv.Itoa(int(st.Gid))
+
+	owner := uidStr
+	group := gidStr
+
 	fileAttributes := make(map[string]bool)
-	owner := ""
-	group := ""
 
-	if stat, ok := rawInfo.Sys().(*syscall.Stat_t); ok {
-		uidStr := strconv.Itoa(int(stat.Uid))
-		groupStr := strconv.Itoa(int(stat.Gid))
-		usr, err := user.LookupId(uidStr)
-		if err == nil {
-			owner = usr.Username
-		} else {
-			owner = uidStr
-		}
-		grp, err := user.LookupGroupId(groupStr)
-		if err == nil {
-			group = grp.Name
-		} else {
-			group = groupStr
-		}
-		// Use the file's modification time as a fallback.
-		lastAccessTime = rawInfo.ModTime().Unix()
-		lastWriteTime = rawInfo.ModTime().Unix()
-	}
-
-	// Get POSIX ACL entries.
-	posixAcls, err := getPosixACL(fullPath)
-	if err != nil {
-		// Optionally log the error and continue.
-	}
+	posixAcls, _ := getPosixACL(fullPath) // ignore error; optional
 
 	info := types.AgentFileInfo{
-		Name:           rawInfo.Name(),
-		Size:           rawInfo.Size(),
-		Mode:           uint32(rawInfo.Mode()),
-		ModTime:        rawInfo.ModTime(),
-		IsDir:          rawInfo.IsDir(),
-		Blocks:         blocks,
 		CreationTime:   creationTime,
 		LastAccessTime: lastAccessTime,
 		LastWriteTime:  lastWriteTime,
@@ -316,10 +303,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	if err != nil {
 		return arpc.Response{}, err
 	}
-	return arpc.Response{
-		Status: 200,
-		Data:   data,
-	}, nil
+	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
@@ -367,7 +351,6 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, fmt.Errorf("invalid negative length requested: %d", payload.Length)
 	}
 
-	// Retrieve the file handle
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
 		return arpc.Response{}, os.ErrNotExist
@@ -383,9 +366,8 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	if payload.Offset >= fh.fileSize {
 		emptyReader := bytes.NewReader(nil)
 		streamCallback := func(stream *smux.Stream) {
-			if err := binarystream.SendDataFromReader(emptyReader, payload.Length, stream); err != nil {
-				syslog.L.Error(err).
-					WithMessage("failed sending empty reader via binary stream").Write()
+			if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
+				syslog.L.Error(err).WithMessage("failed sending empty reader").Write()
 			}
 		}
 		return arpc.Response{Status: 213, RawStream: streamCallback}, nil
@@ -395,64 +377,55 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	if payload.Offset+int64(payload.Length) > fh.fileSize {
 		payload.Length = int(fh.fileSize - payload.Offset)
 	}
+	if payload.Length == 0 {
+		emptyReader := bytes.NewReader(nil)
+		streamCallback := func(stream *smux.Stream) {
+			_ = binarystream.SendDataFromReader(emptyReader, 0, stream)
+		}
+		return arpc.Response{Status: 213, RawStream: streamCallback}, nil
+	}
 
-	// Align offset for mmap
+	// Align and mmap if requested; else use pooled buffer + pread
 	alignedOffset := payload.Offset - (payload.Offset % int64(s.allocGranularity))
 	offsetDiff := int(payload.Offset - alignedOffset)
 	viewSize := payload.Length + offsetDiff
 
 	if s.readMode == "mmap" {
-		// mmap the aligned region
-		data, err := unix.Mmap(
-			int(fh.file.Fd()),
-			alignedOffset,
-			viewSize,
-			unix.PROT_READ,
-			unix.MAP_SHARED,
-		)
+		data, err := unix.Mmap(fh.fd, alignedOffset, viewSize, unix.PROT_READ, unix.MAP_SHARED)
 		if err == nil {
-			// Ensure bounds are valid
+			// bounds check
 			if offsetDiff+payload.Length > len(data) {
-				syslog.L.Error(fmt.Errorf(
-					"invalid slice bounds: offsetDiff=%d, payload.Length=%d, data len=%d",
-					offsetDiff, payload.Length, len(data)),
-				).WithMessage("invalid file mapping boundaries").Write()
-
 				unix.Munmap(data)
 				return arpc.Response{}, fmt.Errorf("invalid file mapping boundaries")
 			}
-
 			result := data[offsetDiff : offsetDiff+payload.Length]
 			reader := bytes.NewReader(result)
-
 			streamCallback := func(stream *smux.Stream) {
 				defer unix.Munmap(data)
-				if err := binarystream.SendDataFromReader(reader, payload.Length, stream); err != nil {
-					syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
-				}
+				_ = binarystream.SendDataFromReader(reader, len(result), stream)
 			}
-
 			return arpc.Response{Status: 213, RawStream: streamCallback}, nil
 		}
-		// mmap failed → fall back to pread
+		// fall through to pread on mmap failure
 	}
 
-	// Fallback: pread into buffer
-	buffer := make([]byte, payload.Length)
-	n, err := syscall.Pread(int(fh.file.Fd()), buffer, payload.Offset)
+	// pooled buffer
+	bptr := readBufPool.Get().(*[]byte)
+	buf := *bptr
+	if len(buf) < payload.Length {
+		buf = make([]byte, payload.Length)
+	}
+	n, err := unix.Pread(fh.fd, buf[:payload.Length], payload.Offset)
 	if err != nil {
+		readBufPool.Put(bptr)
 		return arpc.Response{}, fmt.Errorf("pread failed: %w", err)
 	}
-
-	reader := bytes.NewReader(buffer[:n])
+	// Capture n and buffer for the stream; return buffer to pool after send.
+	reader := bytes.NewReader(buf[:n])
 	streamCallback := func(stream *smux.Stream) {
-		if err := binarystream.SendDataFromReader(reader, n, stream); err != nil {
-			syslog.L.Error(err).
-				WithMessage("failed sending data from reader via binary stream (sync fallback)").
-				Write()
-		}
+		_ = binarystream.SendDataFromReader(reader, n, stream)
+		readBufPool.Put(bptr)
 	}
-
 	return arpc.Response{Status: 213, RawStream: streamCallback}, nil
 }
 
@@ -473,42 +446,50 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	fh.Lock()
 	defer fh.Unlock()
 
-	// Handle SEEK_HOLE and SEEK_DATA explicitly
-	// TODO: linux implementation
+	// Treat SEEK_HOLE/DATA as unsupported (Linux only), consistent with prior behavior
 	if payload.Whence == SeekHole || payload.Whence == SeekData {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Get the file size
-	fileInfo, err := fh.file.Stat()
-	if err != nil {
-		return arpc.Response{}, err
+	// Avoid actual lseek if we can answer from metadata
+	switch payload.Whence {
+	case io.SeekStart:
+		if payload.Offset > fh.fileSize {
+			return arpc.Response{}, fmt.Errorf("seeking beyond EOF is not allowed")
+		}
+		newOffset := payload.Offset
+		resp := types.LseekResp{NewOffset: newOffset}
+		respBytes, err := resp.Encode()
+		if err != nil {
+			return arpc.Response{}, err
+		}
+		return arpc.Response{Status: 200, Data: respBytes}, nil
+	case io.SeekCurrent:
+		// We don't track a current offset for pread-based reads; use the kernel for correctness.
+	case io.SeekEnd:
+		newOffset := fh.fileSize + payload.Offset
+		if newOffset < 0 {
+			newOffset = 0
+		}
+		resp := types.LseekResp{NewOffset: newOffset}
+		respBytes, err := resp.Encode()
+		if err != nil {
+			return arpc.Response{}, err
+		}
+		return arpc.Response{Status: 200, Data: respBytes}, nil
 	}
-	fileSize := fileInfo.Size()
 
-	// Validate seeking beyond EOF
-	if payload.Whence == io.SeekStart && payload.Offset > fileSize {
-		return arpc.Response{}, fmt.Errorf("seeking beyond EOF is not allowed")
-	}
-
-	// Perform the seek operation for other cases
+	// Fallback to kernel seek for SeekCurrent or other cases where we need kernel state
 	newOffset, err := fh.file.Seek(payload.Offset, payload.Whence)
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	resp := types.LseekResp{
-		NewOffset: newOffset,
-	}
+	resp := types.LseekResp{NewOffset: newOffset}
 	respBytes, err := resp.Encode()
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	return arpc.Response{
-		Status: 200,
-		Data:   respBytes,
-	}, nil
+	return arpc.Response{Status: 200, Data: respBytes}, nil
 }
 
 func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
