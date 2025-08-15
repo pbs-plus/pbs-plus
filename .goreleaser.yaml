@@ -4,9 +4,7 @@ project_name: pbs-plus
 
 before:
   hooks:
-    - go install golang.org/dl/go1.25rc3@latest
-    - go1.25rc3 download
-    - go1.25rc3 mod tidy
+    - go mod tidy
 #    - |
 #      # Generate UpgradeCode (should be consistent across versions)
 #      if [ -z "$UPGRADE_CODE" ]; then
@@ -36,7 +34,6 @@ builds:
   - id: server
     main: ./cmd/pbs_plus
     binary: pbs-plus
-    tool: "go1.25rc3"
     env:
       - GOEXPERIMENT=greenteagc
     goos:
@@ -53,7 +50,6 @@ builds:
   - id: esxi-nfs-backup
     main: ./cmd/esxi_nfs_backup
     binary: esxi-nfs-backup
-    tool: "go1.25rc3"
     goos:
       - linux
     goarch:
@@ -77,7 +73,6 @@ builds:
   - id: linux-agent
     main: ./cmd/unix_agent
     binary: pbs-plus-agent
-    tool: "go1.25rc3"
     goos:
       - linux
     goarch:
@@ -101,7 +96,6 @@ builds:
   - id: linux-updater
     main: ./cmd/unix_updater
     binary: pbs-plus-updater
-    tool: "go1.25rc3"
     goos:
       - linux
     goarch:
@@ -124,7 +118,6 @@ builds:
   - id: freebsd-agent
     main: ./cmd/unix_agent
     binary: pbs-plus-agent
-    tool: "go1.25rc3"
     env:
       - GOEXPERIMENT=greenteagc
     goos:
@@ -139,7 +132,6 @@ builds:
   - id: windows-agent
     main: ./cmd/windows_agent
     binary: pbs-plus-agent
-    tool: "go1.25rc3"
     env:
       - GOEXPERIMENT=greenteagc
     goos:
@@ -157,7 +149,6 @@ builds:
   - id: windows-updater
     main: ./cmd/windows_updater
     binary: pbs-plus-updater
-    tool: "go1.25rc3"
     env:
       - GOEXPERIMENT=greenteagc
     goos:
