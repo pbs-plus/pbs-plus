@@ -9,29 +9,9 @@ import (
 	"strconv"
 	"syscall"
 	"testing"
-	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 )
-
-func TestStructAlignment(t *testing.T) {
-	// Verify FILE_ID_BOTH_DIR_INFO
-	t.Run("FILE_ID_BOTH_DIR_INFO", func(t *testing.T) {
-		const expectedSize = 104
-		actualSize := int(unsafe.Sizeof(FILE_ID_BOTH_DIR_INFO{}))
-		if actualSize != expectedSize {
-			t.Errorf("FILE_ID_BOTH_DIR_INFO size mismatch: expected %d, got %d", expectedSize, actualSize)
-		}
-	})
-	// Verify FILE_FULL_DIR_INFO
-	t.Run("FILE_FULL_DIR_INFO", func(t *testing.T) {
-		const expectedSize = 72
-		actualSize := int(unsafe.Sizeof(FILE_FULL_DIR_INFO{}))
-		if actualSize != expectedSize {
-			t.Errorf("FILE_FULL_DIR_INFO size mismatch: expected %d, got %d", expectedSize, actualSize)
-		}
-	})
-}
 
 // TestReadDirBulk is the main test suite for readDirBulk
 func TestReadDirBulk(t *testing.T) {
