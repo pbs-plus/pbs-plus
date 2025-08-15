@@ -12,7 +12,6 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
-	"github.com/Microsoft/go-winio"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
@@ -25,19 +24,9 @@ import (
 
 // Win32 structures mirrored per Microsoft documentation.
 // References:
-// - FILE_BASIC_INFO: https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_basic_info
 // - FILE_STANDARD_INFO: https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_standard_info
 // - FILE_ID_INFO: https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_id_info
 // - FILETIME (in x/sys/windows: type Filetime struct { LowDateTime, HighDateTime uint32 })
-
-type fileBasicInfo struct {
-	CreationTime   windows.Filetime // 8 bytes
-	LastAccessTime windows.Filetime // 8 bytes
-	LastWriteTime  windows.Filetime // 8 bytes
-	ChangeTime     windows.Filetime // 8 bytes
-	FileAttributes uint32           // 4 bytes
-	_              uint32           // padding to 8-byte alignment (per SDK layout)
-}
 
 type fileStandardInfo struct {
 	AllocationSize int64  // LARGE_INTEGER
@@ -48,16 +37,6 @@ type fileStandardInfo struct {
 	_              [2]byte
 }
 
-type fileID128 struct {
-	// FILE_ID_128: 16 bytes
-	Identifier [16]byte
-}
-
-type fileIDInfo struct {
-	VolumeSerialNumber uint64 // ULONGLONG
-	FileId             fileID128
-}
-
 // Used for FSCTL_QUERY_ALLOCATED_RANGES
 type fileAllocatedRangeBuffer struct {
 	FileOffset int64
@@ -66,12 +45,12 @@ type fileAllocatedRangeBuffer struct {
 
 type FileHandle struct {
 	sync.Mutex
-	handle    windows.Handle
-	fileSize  int64
-	isDir     bool
-	dirReader *DirReaderNT
-
-	mapping windows.Handle
+	handle        windows.Handle
+	fileSize      int64
+	isDir         bool
+	dirReader     *DirReaderNT
+	mapping       windows.Handle
+	logicalOffset int64
 }
 
 type FileStandardInfo struct {
@@ -82,24 +61,19 @@ type FileStandardInfo struct {
 
 func (s *AgentFSServer) abs(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
-
 	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
 		return s.snapshot.Path, nil
 	}
-
 	path := pathjoin.Join(s.snapshot.Path, windowsDir)
 	return path, nil
 }
 
 func (s *AgentFSServer) absUNC(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
-
 	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
 		return "\\\\?\\" + s.snapshot.Path, nil
 	}
-
 	path := pathjoin.Join(s.snapshot.Path, windowsDir)
-
 	return "\\\\?\\" + path, nil
 }
 
@@ -119,7 +93,6 @@ func (s *AgentFSServer) closeFileHandles() {
 
 func (s *AgentFSServer) initializeStatFS() error {
 	var err error
-
 	if s.snapshot.SourcePath != "" {
 		driveLetter := s.snapshot.SourcePath[:1]
 		s.statFs, err = getStatFS(driveLetter)
@@ -127,7 +100,6 @@ func (s *AgentFSServer) initializeStatFS() error {
 			return err
 		}
 	}
-
 	return nil
 }
 
@@ -173,9 +145,12 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 	}
 
 	desiredAccess := uint32(windows.GENERIC_READ)
-	share := uint32(windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE)
-	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS)
-	// Sequential scan is a hint; keep if readMode says mmap (optional).
+	share := uint32(
+		windows.FILE_SHARE_READ |
+			windows.FILE_SHARE_WRITE |
+			windows.FILE_SHARE_DELETE,
+	)
+	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OVERLAPPED)
 	if s.readMode == "mmap" {
 		flags |= windows.FILE_FLAG_SEQUENTIAL_SCAN
 	}
@@ -201,12 +176,12 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 	}
 
 	fh := &FileHandle{
-		handle:   handle,
-		fileSize: std.EndOfFile,
-		isDir:    std.Directory != 0,
+		handle:        handle,
+		fileSize:      std.EndOfFile,
+		isDir:         std.Directory != 0,
+		logicalOffset: 0,
 	}
 
-	// If directory, keep your existing DirReaderNT
 	if fh.isDir {
 		dirPath, err := s.abs(payload.Path)
 		if err != nil {
@@ -258,6 +233,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
 		pathUTF16 = append(pathUTF16, 0)
 	}
+
 	h, err := windows.CreateFile(
 		&pathUTF16[0],
 		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
@@ -268,41 +244,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 		0,
 	)
 	if err != nil {
-		// Fallback to os.Stat (unchanged)
-		rawInfo, e := os.Stat(fullPath)
-		if e != nil {
-			return arpc.Response{}, e
-		}
-		blocks := uint64(0)
-		if !rawInfo.IsDir() {
-			file, e := os.Open(fullPath)
-			if e == nil {
-				defer file.Close()
-				var blockSize uint64
-				if s.statFs != (types.StatFS{}) {
-					blockSize = s.statFs.Bsize
-				}
-				if blockSize == 0 {
-					blockSize = 4096
-				}
-				if standardInfo, e2 := winio.GetFileStandardInfo(file); e2 == nil {
-					blocks = uint64((standardInfo.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
-				}
-			}
-		}
-		info := types.AgentFileInfo{
-			Name:    rawInfo.Name(),
-			Size:    rawInfo.Size(),
-			Mode:    uint32(rawInfo.Mode()),
-			ModTime: rawInfo.ModTime(),
-			IsDir:   rawInfo.IsDir(),
-			Blocks:  blocks,
-		}
-		data, e := info.Encode()
-		if e != nil {
-			return arpc.Response{}, e
-		}
-		return arpc.Response{Status: 200, Data: data}, nil
+		return arpc.Response{}, err
 	}
 	defer windows.CloseHandle(h)
 
@@ -313,34 +255,30 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 
 	isDir := (bhi.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
 	size := int64(bhi.FileSizeHigh)<<32 | int64(bhi.FileSizeLow)
-	modTime := windows.Filetime(bhi.LastWriteTime)
+	modTime := filetimeToTime(windows.Filetime(bhi.LastWriteTime))
 	mode := fileModeFromAttrs(bhi.FileAttributes, isDir)
 	name := filepath.Base(filepath.Clean(fullPath))
 
-	var blockSize uint64
-	if s.statFs != (types.StatFS{}) {
-		blockSize = s.statFs.Bsize
+	var std fileStandardInfo
+	if err := getFileStandardInfoByHandle(h, &std); err != nil {
+		return arpc.Response{}, err
 	}
+
+	blockSize := s.statFs.Bsize
 	if blockSize == 0 {
 		blockSize = 4096
 	}
-	blocks := uint64(0)
+
+	var blocks uint64
 	if !isDir {
-		// Reopen as *os.File for winio helper
-		f, e := os.Open(fullPath)
-		if e == nil {
-			defer f.Close()
-			if st, e2 := winio.GetFileStandardInfo(f); e2 == nil {
-				blocks = uint64((st.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
-			}
-		}
+		blocks = uint64((std.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
 	}
 
 	info := types.AgentFileInfo{
 		Name:    name,
 		Size:    size,
 		Mode:    mode,
-		ModTime: filetimeToTime(modTime),
+		ModTime: modTime,
 		IsDir:   isDir,
 		Blocks:  blocks,
 	}
@@ -366,6 +304,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
 		pathUTF16 = append(pathUTF16, 0)
 	}
+
 	h, err := windows.CreateFile(
 		&pathUTF16[0],
 		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
@@ -384,12 +323,12 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	if err := windows.GetFileInformationByHandle(h, &bhi); err != nil {
 		return arpc.Response{}, err
 	}
-	creationTime := filetimeToTime(bhi.CreationTime).UnixNano()
-	lastAccessTime := filetimeToTime(bhi.LastAccessTime).UnixNano()
-	lastWriteTime := filetimeToTime(bhi.LastWriteTime).UnixNano()
+
+	creationTime := filetimeToTime(windows.Filetime(bhi.CreationTime)).UnixNano()
+	lastAccessTime := filetimeToTime(windows.Filetime(bhi.LastAccessTime)).UnixNano()
+	lastWriteTime := filetimeToTime(windows.Filetime(bhi.LastWriteTime)).UnixNano()
 	fileAttributes := parseFileAttributes(bhi.FileAttributes)
 
-	// ACLs via handle (uses SECURITY_DESCRIPTOR methods internally)
 	owner, group, acls, err := GetWinACLsHandle(h)
 	if err != nil {
 		return arpc.Response{}, err
@@ -405,16 +344,11 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		Group:          group,
 		WinACLs:        acls,
 	}
-
 	data, err := info.Encode()
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	return arpc.Response{
-		Status: 200,
-		Data:   data,
-	}, nil
+	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 // handleReadDir first attempts to serve the directory listing from the cache.
@@ -454,20 +388,16 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
-// handleReadAt now duplicates the file handle, opens a backup reading session,
-// and then uses backupSeek to skip to the desired offset without copying bytes.
+// handleReadAt: mmap fast-path; OVERLAPPED fallback. No SetFilePointer.
 func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	var payload types.ReadAtReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
 	}
-
-	// Validate the payload parameters.
 	if payload.Length < 0 {
 		return arpc.Response{}, fmt.Errorf("invalid negative length requested: %d", payload.Length)
 	}
 
-	// Retrieve the file handle.
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
 		return arpc.Response{}, os.ErrNotExist
@@ -476,44 +406,54 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
+	// Lock only to snapshot state needed for the operation.
 	fh.Lock()
-	defer fh.Unlock()
+	fileSize := fh.fileSize
+	mapping := fh.mapping
+	fh.Unlock()
 
-	// If the requested offset is at or beyond EOF, stream nothing.
-	if payload.Offset >= fh.fileSize {
-		emptyReader := bytes.NewReader([]byte{})
-		streamCallback := func(stream *smux.Stream) {
-			if err := binarystream.SendDataFromReader(emptyReader, payload.Length, stream); err != nil {
-				syslog.L.Error(err).
-					WithMessage("failed sending empty reader via binary stream").Write()
-			}
-		}
+	if payload.Offset >= fileSize {
+		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
-			Status:    213,
-			RawStream: streamCallback,
+			Status: 213,
+			RawStream: func(stream *smux.Stream) {
+				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
+					syslog.L.Error(err).WithMessage("failed sending empty reader").Write()
+				}
+			},
 		}, nil
 	}
 
-	// Clamp length if the requested region goes beyond EOF.
-	if payload.Offset+int64(payload.Length) > fh.fileSize {
-		payload.Length = int(fh.fileSize - payload.Offset)
+	if payload.Offset+int64(payload.Length) > fileSize {
+		payload.Length = int(fileSize - payload.Offset)
 	}
 
+	// mmap path: create mapping once and reuse (mapping handle kept in fh.mapping).
 	if s.readMode == "mmap" {
-		// Create mapping once and reuse
-		if fh.mapping == 0 {
-			mh, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, 0, 0, nil)
-			if err == nil {
-				fh.mapping = mh
+		var mh windows.Handle
+		if mapping == 0 {
+			// Need to set mapping on fh; lock briefly.
+			fh.Lock()
+			if fh.mapping == 0 {
+				if m, err := windows.CreateFileMapping(fh.handle, nil, windows.PAGE_READONLY, 0, 0, nil); err == nil {
+					fh.mapping = m
+					mh = m
+				}
+			} else {
+				mh = fh.mapping
 			}
+			fh.Unlock()
+		} else {
+			mh = mapping
 		}
-		if fh.mapping != 0 {
+
+		if mh != 0 {
 			alignedOffset := payload.Offset - (payload.Offset % int64(s.allocGranularity))
 			offsetDiff := int(payload.Offset - alignedOffset)
 			viewSize := uintptr(payload.Length + offsetDiff)
 
 			addr, err := windows.MapViewOfFile(
-				fh.mapping,
+				mh,
 				windows.FILE_MAP_READ,
 				uint32(uint64(alignedOffset)>>32),
 				uint32(uint64(alignedOffset)&0xFFFFFFFF),
@@ -525,58 +465,57 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 				if offsetDiff+payload.Length > len(data) {
 					syslog.L.Error(fmt.Errorf(
 						"invalid slice bounds: offsetDiff=%d, payload.Length=%d, data len=%d",
-						offsetDiff, payload.Length, len(data)),
-					).WithMessage("invalid file mapping boundaries").Write()
-
+						offsetDiff,
+						payload.Length,
+						len(data),
+					)).WithMessage("invalid file mapping boundaries").Write()
 					windows.UnmapViewOfFile(addr)
 					return arpc.Response{}, fmt.Errorf("invalid file mapping boundaries")
 				}
 				result := data[offsetDiff : offsetDiff+payload.Length]
 				reader := bytes.NewReader(result)
 
-				streamCallback := func(stream *smux.Stream) {
-					defer windows.UnmapViewOfFile(addr)
-					if err := binarystream.SendDataFromReader(reader, payload.Length, stream); err != nil {
-						syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
-					}
-				}
-
 				return arpc.Response{
-					Status:    213,
-					RawStream: streamCallback,
+					Status: 213,
+					RawStream: func(stream *smux.Stream) {
+						defer windows.UnmapViewOfFile(addr)
+						if err := binarystream.SendDataFromReader(reader, payload.Length, stream); err != nil {
+							syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
+						}
+					},
 				}, nil
 			}
 			// fall through if mapping fails
 		}
 	}
 
-	lowOffset := int32(payload.Offset & 0xFFFFFFFF)
-	highOffset := int32(payload.Offset >> 32)
-	_, err := windows.SetFilePointer(fh.handle, lowOffset, &highOffset, windows.FILE_BEGIN)
-	if err != nil {
-		return arpc.Response{}, mapWinError(err, "handleReadAt Seek (sync fallback)")
+	// OVERLAPPED fallback (no SetFilePointer). Do not hold fh lock during I/O.
+	buf := make([]byte, payload.Length)
+	ov := new(windows.Overlapped)
+	ov.Offset = uint32(payload.Offset & 0xffffffff)
+	ov.OffsetHigh = uint32(uint64(payload.Offset) >> 32)
+
+	var n uint32
+	err := windows.ReadFile(fh.handle, buf, &n, ov)
+	if err != nil && err != windows.ERROR_IO_PENDING {
+		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile overlapped")
 	}
-
-	buffer := make([]byte, payload.Length)
-	var bytesRead uint32
-
-	err = windows.ReadFile(fh.handle, buffer, &bytesRead, nil)
-	if err != nil {
-		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile (sync fallback)")
-	}
-
-	reader := bytes.NewReader(buffer[:bytesRead])
-	streamCallback := func(stream *smux.Stream) {
-		if err := binarystream.SendDataFromReader(reader, int(bytesRead), stream); err != nil {
-			syslog.L.Error(err).
-				WithMessage("failed sending data from reader via binary stream (sync fallback)").
-				Write()
+	if err == windows.ERROR_IO_PENDING {
+		if err = windows.GetOverlappedResult(fh.handle, ov, &n, true); err != nil {
+			return arpc.Response{}, mapWinError(err, "handleReadAt GetOverlappedResult")
 		}
 	}
 
+	reader := bytes.NewReader(buf[:n])
 	return arpc.Response{
-		Status:    213,
-		RawStream: streamCallback,
+		Status: 213,
+		RawStream: func(stream *smux.Stream) {
+			if err := binarystream.SendDataFromReader(reader, int(n), stream); err != nil {
+				syslog.L.Error(err).
+					WithMessage("failed sending data from reader via binary stream (overlapped)").
+					Write()
+			}
+		},
 	}, nil
 }
 
@@ -586,7 +525,6 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	// Validate whence
 	if payload.Whence != io.SeekStart &&
 		payload.Whence != io.SeekCurrent &&
 		payload.Whence != io.SeekEnd &&
@@ -595,7 +533,6 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Retrieve the file handle
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
 		return arpc.Response{}, os.ErrNotExist
@@ -604,76 +541,66 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
+	// We will not touch the kernel file pointer; we only update fh.logicalOffset.
 	fh.Lock()
 	defer fh.Unlock()
 
-	// Query the file size via handle
 	var std fileStandardInfo
 	if err := getFileStandardInfoByHandle(fh.handle, &std); err != nil {
 		return arpc.Response{}, err
 	}
 	fileSize := std.EndOfFile
 
+	cur := fh.logicalOffset
 	var newOffset int64
 
-	// Handle sparse file operations
-	if payload.Whence == SeekData || payload.Whence == SeekHole {
-		no, err := sparseSeekAllocatedRanges(fh.handle, payload.Offset, payload.Whence, fileSize)
+	switch payload.Whence {
+	case io.SeekStart:
+		if payload.Offset < 0 {
+			return arpc.Response{}, os.ErrInvalid
+		}
+		newOffset = payload.Offset
+
+	case io.SeekCurrent:
+		if cur+payload.Offset < 0 {
+			return arpc.Response{}, os.ErrInvalid
+		}
+		newOffset = cur + payload.Offset
+
+	case io.SeekEnd:
+		if fileSize+payload.Offset < 0 {
+			return arpc.Response{}, os.ErrInvalid
+		}
+		newOffset = fileSize + payload.Offset
+
+	case SeekData, SeekHole:
+		no, err := sparseSeekAllocatedRanges(
+			fh.handle,
+			payload.Offset,
+			payload.Whence,
+			fileSize,
+		)
 		if err != nil {
 			return arpc.Response{}, err
 		}
 		newOffset = no
-	} else {
-		// Handle standard seek operations
-		switch payload.Whence {
-		case io.SeekStart:
-			if payload.Offset < 0 {
-				return arpc.Response{}, os.ErrInvalid
-			}
-			newOffset = payload.Offset
 
-		case io.SeekCurrent:
-			currentPos, err := windows.SetFilePointer(fh.handle, 0, nil, windows.FILE_CURRENT)
-			if err != nil {
-				return arpc.Response{}, mapWinError(err, "handleLseek SetFilePointer (FILE_CURRENT)")
-			}
-			newOffset = int64(currentPos) + payload.Offset
-			if newOffset < 0 {
-				return arpc.Response{}, os.ErrInvalid
-			}
-
-		case io.SeekEnd:
-			newOffset = fileSize + payload.Offset
-			if newOffset < 0 {
-				return arpc.Response{}, os.ErrInvalid
-			}
-		}
+	default:
+		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Validate the new offset
 	if newOffset > fileSize {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Set the new position
-	_, err := windows.SetFilePointer(fh.handle, int32(newOffset), nil, windows.FILE_BEGIN)
-	if err != nil {
-		return arpc.Response{}, mapWinError(err, "handleLseek SetFilePointer (FILE_BEGIN)")
-	}
+	fh.logicalOffset = newOffset
 
-	// Prepare the response
-	resp := types.LseekResp{
-		NewOffset: newOffset,
-	}
+	resp := types.LseekResp{NewOffset: newOffset}
 	respBytes, err := resp.Encode()
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	return arpc.Response{
-		Status: 200,
-		Data:   respBytes,
-	}, nil
+	return arpc.Response{Status: 200, Data: respBytes}, nil
 }
 
 func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
@@ -690,7 +617,6 @@ func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	handle.Lock()
 	defer handle.Unlock()
 
-	// Close the Windows handle directly
 	if handle.mapping != 0 {
 		windows.CloseHandle(handle.mapping)
 		handle.mapping = 0

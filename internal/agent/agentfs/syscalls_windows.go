@@ -188,17 +188,6 @@ func GetAllocGranularity() int {
 	return int(si.AllocationGranularity)
 }
 
-// filetimeToUnix converts a Windows FILETIME to a Unix timestamp.
-// Windows file times are in 100-nanosecond intervals since January 1, 1601.
-func filetimeToUnix(ft windows.Filetime) int64 {
-	const (
-		winToUnixEpochDiff = 116444736000000000 // in 100-nanosecond units
-		hundredNano        = 10000000           // 100-ns units per second
-	)
-	t := (int64(ft.HighDateTime) << 32) | int64(ft.LowDateTime)
-	return (t - winToUnixEpochDiff) / hundredNano
-}
-
 // parseFileAttributes converts Windows file attribute flags into a map.
 func parseFileAttributes(attr uint32) map[string]bool {
 	attributes := make(map[string]bool)
