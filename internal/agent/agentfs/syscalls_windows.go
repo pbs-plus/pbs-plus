@@ -318,7 +318,6 @@ func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange
 
 	// Start with a reasonable capacity.
 	out := make([]fileAllocatedRangeBuffer, 64)
-	var bytesReturned uint32
 
 	call := func(dst []fileAllocatedRangeBuffer) (int, error) {
 		var br uint32
