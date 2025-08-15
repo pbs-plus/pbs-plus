@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -58,6 +59,16 @@ func NewPBSAuth() (*PBSAuth, error) {
 }
 
 func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
+	if strings.Contains(ticket, "%") {
+		if dec, err := url.QueryUnescape(ticket); err == nil {
+			// Use decoded only if it now looks like a PBS ticket
+			if (strings.HasPrefix(dec, "PBS:") || strings.HasPrefix(dec, "PBSTERM:")) &&
+				strings.Contains(dec, "::") {
+				ticket = dec
+			}
+		}
+	}
+
 	parts := strings.SplitN(ticket, "::", 2)
 	if len(parts) != 2 {
 		return false, errors.New("invalid ticket format")
