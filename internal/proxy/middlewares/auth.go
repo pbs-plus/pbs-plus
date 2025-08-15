@@ -7,9 +7,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -57,49 +59,54 @@ func NewPBSAuth() (*PBSAuth, error) {
 }
 
 func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
-	decoded, err := url.QueryUnescape(ticket)
-	if err != nil {
-		return false, fmt.Errorf("CheckProxyAuth: failed to decode cookie value -> %w", err)
-	}
-
-	parts := strings.SplitN(decoded, "::", 2)
+	parts := strings.SplitN(ticket, "::", 2)
 	if len(parts) != 2 {
-		return false, fmt.Errorf("invalid ticket format")
+		return false, errors.New("invalid ticket format")
 	}
 
 	ticketData := parts[0]
-	signature := parts[1]
+	sigB64 := parts[1]
 
-	var sigBytes []byte
+	if !strings.HasPrefix(ticketData, "PBS:") {
+		return false, errors.New("unexpected ticket prefix")
+	}
 
-	sigBytes, err = base64.RawStdEncoding.DecodeString(signature)
+	// PBS commonly uses URL-safe base64 without padding
+	sigBytes, err := base64.RawURLEncoding.DecodeString(sigB64)
 	if err != nil {
-		sigBytes, err = base64.RawURLEncoding.DecodeString(signature)
+		sigBytes, err = base64.RawStdEncoding.DecodeString(sigB64)
 		if err != nil {
-			return false, fmt.Errorf("failed to decode signature: %w", err)
+			return false, err
 		}
 	}
 
 	switch p.keyType {
 	case "ed25519":
-		ed25519Key := p.privateKey.(ed25519.PrivateKey)
-		publicKey := ed25519Key.Public().(ed25519.PublicKey)
-
-		valid := ed25519.Verify(publicKey, []byte(ticketData), sigBytes)
-		return valid, nil
+		pub := p.privateKey.(ed25519.PrivateKey).Public().(ed25519.PublicKey)
+		ok := ed25519.Verify(pub, []byte(ticketData), sigBytes)
+		if !ok {
+			return false, errors.New("ed25519 signature invalid")
+		}
+		return true, nil
 
 	case "rsa":
 		rsaKey := p.privateKey.(*rsa.PrivateKey)
+		pub := &rsaKey.PublicKey
 
-		hasher := sha1.New()
-		hasher.Write([]byte(ticketData))
-		hashed := hasher.Sum(nil)
+		hashed256 := sha256.Sum256([]byte(ticketData))
+		if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, hashed256[:], sigBytes); err == nil {
+			return true, nil
+		}
 
-		err = rsa.VerifyPKCS1v15(&rsaKey.PublicKey, crypto.SHA1, hashed, sigBytes)
-		return err == nil, err
+		// Fallback to SHA-1 for legacy setups
+		h1 := sha1.Sum([]byte(ticketData))
+		if err := rsa.VerifyPKCS1v15(pub, crypto.SHA1, h1[:], sigBytes); err == nil {
+			return true, nil
+		}
+		return false, errors.New("rsa signature invalid (sha256/sha1)")
 
 	default:
-		return false, fmt.Errorf("unsupported key type for verification: %s", p.keyType)
+		return false, errors.New("unsupported key type")
 	}
 }
 
