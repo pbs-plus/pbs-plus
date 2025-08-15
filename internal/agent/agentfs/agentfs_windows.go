@@ -52,12 +52,6 @@ type FileHandle struct {
 	logicalOffset int64
 }
 
-type FileStandardInfo struct {
-	AllocationSize, EndOfFile int64
-	NumberOfLinks             uint32
-	DeletePending, Directory  bool
-}
-
 func (s *AgentFSServer) abs(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
 	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
