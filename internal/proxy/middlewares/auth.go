@@ -56,24 +56,23 @@ func NewPBSAuth() (*PBSAuth, error) {
 }
 
 func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
-	parts := strings.SplitN(ticket, "%3A%3A", 2)
+	parts := strings.SplitN(ticket, "::", 2)
 	if len(parts) != 2 {
-		return false, fmt.Errorf("invalid ticket format")
+		parts := strings.SplitN(ticket, "%3A%3A", 2)
+		if len(parts) != 2 {
+			return false, fmt.Errorf("invalid ticket format")
+		}
 	}
 
 	ticketData := parts[0]
 	signature := parts[1]
 
-	for len(signature)%4 != 0 {
-		signature += "="
-	}
-
 	var sigBytes []byte
 	var err error
 
-	sigBytes, err = base64.StdEncoding.DecodeString(signature)
+	sigBytes, err = base64.RawStdEncoding.DecodeString(signature)
 	if err != nil {
-		sigBytes, err = base64.URLEncoding.DecodeString(signature)
+		sigBytes, err = base64.RawURLEncoding.DecodeString(signature)
 		if err != nil {
 			return false, fmt.Errorf("failed to decode signature: %w", err)
 		}
