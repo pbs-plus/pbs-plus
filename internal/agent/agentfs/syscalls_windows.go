@@ -365,3 +365,28 @@ func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange
 	}
 	return res, nil
 }
+
+// FileBasicInfo contains file access time and file attributes information.
+type FileBasicInfo struct {
+	CreationTime, LastAccessTime, LastWriteTime, ChangeTime windows.Filetime
+	FileAttributes                                          uint32
+	_                                                       uint32 // padding
+}
+
+// alignedFileBasicInfo is a FileBasicInfo, but aligned to uint64 by containing
+// uint64 rather than windows.Filetime. Filetime contains two uint32s. uint64
+// alignment is necessary to pass this as FILE_BASIC_INFO.
+type alignedFileBasicInfo struct {
+	CreationTime, LastAccessTime, LastWriteTime, ChangeTime uint64
+	FileAttributes                                          uint32
+	_                                                       uint32 // padding
+}
+
+// FileStandardInfo contains extended information for the file.
+// FILE_STANDARD_INFO in WinBase.h
+// https://docs.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_standard_info
+type FileStandardInfo struct {
+	AllocationSize, EndOfFile int64
+	NumberOfLinks             uint32
+	DeletePending, Directory  bool
+}
