@@ -29,7 +29,7 @@ type AgentFSServer struct {
 func NewAgentFSServer(jobId string, readMode string, snapshot snapshots.Snapshot) *AgentFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	allocGranularity := GetAllocGranularity()
+	allocGranularity := getAllocGranularity()
 	if allocGranularity == 0 {
 		allocGranularity = 65536 // 64 KB usually
 	}

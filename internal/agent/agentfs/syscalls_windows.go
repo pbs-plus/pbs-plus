@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 	"unicode/utf16"
 	"unsafe"
 
@@ -20,6 +19,22 @@ var (
 	procGetDiskFreeSpace = modkernel32.NewProc("GetDiskFreeSpaceW")
 	procGetSystemInfo    = modkernel32.NewProc("GetSystemInfo")
 )
+
+func openForAttrs(path string) (windows.Handle, error) {
+	pathUTF16 := utf16.Encode([]rune(path))
+	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
+		pathUTF16 = append(pathUTF16, 0)
+	}
+	return windows.CreateFile(
+		&pathUTF16[0],
+		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+}
 
 func getStatFS(driveLetter string) (types.StatFS, error) {
 	driveLetter = strings.TrimSpace(driveLetter)
@@ -70,90 +85,11 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 	return stat, nil
 }
 
-type FileAllocatedRangeBuffer struct {
-	FileOffset int64 // Starting offset of the range
-	Length     int64 // Length of the range
-}
-
-func getFileSize(handle windows.Handle) (int64, error) {
-	var fileInfo windows.ByHandleFileInformation
-	err := windows.GetFileInformationByHandle(handle, &fileInfo)
-	if err != nil {
-		return 0, mapWinError(err, "getFileSize GetFileInformationByHandle")
-	}
-
-	// Combine the high and low parts of the file size
-	return int64(fileInfo.FileSizeHigh)<<32 + int64(fileInfo.FileSizeLow), nil
-}
-
-type systemInfo struct {
-	// This is the first member of the union
-	OemID uint32
-	// These are the second member of the union
-	//      ProcessorArchitecture uint16;
-	//      Reserved uint16;
-	PageSize                  uint32
-	MinimumApplicationAddress uintptr
-	MaximumApplicationAddress uintptr
-	ActiveProcessorMask       *uint32
-	NumberOfProcessors        uint32
-	ProcessorType             uint32
-	AllocationGranularity     uint32
-	ProcessorLevel            uint16
-	ProcessorRevision         uint16
-}
-
-func GetAllocGranularity() int {
+func getAllocGranularity() int {
 	var si systemInfo
 	// this cannot fail
 	procGetSystemInfo.Call(uintptr(unsafe.Pointer(&si)))
 	return int(si.AllocationGranularity)
-}
-
-// parseFileAttributes converts Windows file attribute flags into a map.
-func parseFileAttributes(attr uint32) map[string]bool {
-	attributes := make(map[string]bool)
-	// Attributes are defined in golang.org/x/sys/windows.
-	if attr&windows.FILE_ATTRIBUTE_READONLY != 0 {
-		attributes["readOnly"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_HIDDEN != 0 {
-		attributes["hidden"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_SYSTEM != 0 {
-		attributes["system"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		attributes["directory"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_ARCHIVE != 0 {
-		attributes["archive"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_NORMAL != 0 {
-		attributes["normal"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_TEMPORARY != 0 {
-		attributes["temporary"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_SPARSE_FILE != 0 {
-		attributes["sparseFile"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		attributes["reparsePoint"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_COMPRESSED != 0 {
-		attributes["compressed"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_OFFLINE != 0 {
-		attributes["offline"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_NOT_CONTENT_INDEXED != 0 {
-		attributes["notContentIndexed"] = true
-	}
-	if attr&windows.FILE_ATTRIBUTE_ENCRYPTED != 0 {
-		attributes["encrypted"] = true
-	}
-	return attributes
 }
 
 func getFileStandardInfoByHandle(h windows.Handle, out *fileStandardInfo) error {
@@ -162,22 +98,6 @@ func getFileStandardInfoByHandle(h windows.Handle, out *fileStandardInfo) error 
 	size := uint32(unsafe.Sizeof(*out))
 	err := windows.GetFileInformationByHandleEx(h, fileStandardInfoClass, (*byte)(unsafe.Pointer(out)), size)
 	return err
-}
-
-func filetimeToTime(ft windows.Filetime) time.Time {
-	// windows.NsecToFiletime is inverse; use Unix epoch conversion
-	return time.Unix(0, ft.Nanoseconds())
-}
-
-func fileModeFromAttrs(attrs uint32, isDir bool) uint32 {
-	mode := uint32(0)
-	if isDir {
-		mode |= uint32(os.ModeDir)
-	}
-	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		mode |= uint32(os.ModeSymlink) // best-effort mapping
-	}
-	return mode
 }
 
 // Sparse SEEK_DATA/SEEK_HOLE using FSCTL_QUERY_ALLOCATED_RANGES
@@ -189,12 +109,12 @@ func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSi
 		return fileSize, nil
 	}
 
-	in := fileAllocatedRangeBuffer{
+	in := allocatedRange{
 		FileOffset: start,
 		Length:     fileSize - start,
 	}
 	// buffer for a handful of ranges
-	out := make([]fileAllocatedRangeBuffer, 32)
+	out := make([]allocatedRange, 32)
 	var bytesReturned uint32
 
 	err := windows.DeviceIoControl(
@@ -308,18 +228,13 @@ func readAtOverlapped(h windows.Handle, off int64, buf []byte) (int, error) {
 	return int(n), nil
 }
 
-type allocatedRange struct {
-	FileOffset int64
-	Length     int64
-}
-
 func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange, error) {
-	in := fileAllocatedRangeBuffer{FileOffset: off, Length: length}
+	in := allocatedRange{FileOffset: off, Length: length}
 
 	// Start with a reasonable capacity.
-	out := make([]fileAllocatedRangeBuffer, 64)
+	out := make([]allocatedRange, 64)
 
-	call := func(dst []fileAllocatedRangeBuffer) (int, error) {
+	call := func(dst []allocatedRange) (int, error) {
 		var br uint32
 		err := windows.DeviceIoControl(
 			h,
@@ -347,7 +262,7 @@ func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange
 		if need <= len(out) {
 			need = len(out) * 2
 		}
-		out = make([]fileAllocatedRangeBuffer, need)
+		out = make([]allocatedRange, need)
 		// Second attempt
 		br, err = call(out)
 	}
