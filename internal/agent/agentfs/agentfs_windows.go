@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 	"unicode/utf16"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -20,37 +19,6 @@ import (
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
 )
-
-// Win32 structures mirrored per Microsoft documentation.
-// References:
-// - FILE_STANDARD_INFO: https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_standard_info
-// - FILE_ID_INFO: https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_id_info
-// - FILETIME (in x/sys/windows: type Filetime struct { LowDateTime, HighDateTime uint32 })
-
-type fileStandardInfo struct {
-	AllocationSize int64  // LARGE_INTEGER
-	EndOfFile      int64  // LARGE_INTEGER
-	NumberOfLinks  uint32 // DWORD
-	DeletePending  byte   // BOOLEAN
-	Directory      byte   // BOOLEAN
-	_              [2]byte
-}
-
-// Used for FSCTL_QUERY_ALLOCATED_RANGES
-type fileAllocatedRangeBuffer struct {
-	FileOffset int64
-	Length     int64
-}
-
-type FileHandle struct {
-	sync.Mutex
-	handle        windows.Handle
-	fileSize      int64
-	isDir         bool
-	dirReader     *DirReaderNT
-	mapping       windows.Handle
-	logicalOffset int64
-}
 
 func (s *AgentFSServer) abs(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
@@ -208,22 +176,6 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 	}, nil
 }
 
-func openForAttrs(path string) (windows.Handle, error) {
-	pathUTF16 := utf16.Encode([]rune(path))
-	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
-		pathUTF16 = append(pathUTF16, 0)
-	}
-	return windows.CreateFile(
-		&pathUTF16[0],
-		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
-		0,
-	)
-}
-
 func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	var payload types.StatReq
 	if err := payload.Decode(req.Payload); err != nil {
@@ -254,7 +206,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 		HighDateTime: uint32(uint64(nfo.LastWriteTime) >> 32),
 	})
 
-	mode := fileModeFromAttrs(nfo.FileAttributes, isDir)
+	mode := windowsAttributesToFileMode(nfo.FileAttributes)
 	name := filepath.Base(filepath.Clean(fullPath))
 
 	blockSize := s.statFs.Bsize
@@ -329,7 +281,6 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	}
 
 	info := types.AgentFileInfo{
-		Name:           fullPath,
 		CreationTime:   creationTime,
 		LastAccessTime: lastAccessTime,
 		LastWriteTime:  lastWriteTime,

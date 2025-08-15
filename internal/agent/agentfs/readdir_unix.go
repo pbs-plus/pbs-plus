@@ -3,15 +3,22 @@
 package agentfs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"golang.org/x/sys/unix"
 )
 
-const BUF_SIZE = 64 * 1024 // 64K buffer
+const (
+	// Larger pooled buffer to reduce getdents syscalls.
+	// Tuneable via env/constructor if needed.
+	defaultBufSize          = 256 * 1024 // 256 KiB
+	defaultTargetEncodedLen = 256 * 1024 // 256 KiB of encoded payload per batch
+)
 
 // DirReaderUnix reads directory entries in batches.
 type DirReaderUnix struct {
@@ -21,41 +28,56 @@ type DirReaderUnix struct {
 	bufEnd      int
 	noMoreFiles bool
 	path        string
-	basep       uintptr // only used on FreeBSD
+	basep       uintptr // used on FreeBSD
+
+	// targetEncoded is the target size for encoded batches to reduce round-trips.
+	targetEncoded int
 }
 
+// Large buffer pool reused across readers.
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, BUF_SIZE)
+		return make([]byte, defaultBufSize)
 	},
 }
 
 // NewDirReaderUnix opens a directory for reading.
-// Uses syscall.Open so that we get a raw fd.
+// Uses unix.Open to obtain a raw fd with directory-safe flags.
 func NewDirReaderUnix(path string) (*DirReaderUnix, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY, 0)
+	// Explicit directory flags improve safety on Linux and are fine elsewhere via x/sys/unix.
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open directory '%s': %w", path, err)
 	}
 	return &DirReaderUnix{
-		fd:    fd,
-		buf:   bufferPool.Get().([]byte),
-		path:  path,
-		basep: 0,
+		fd:            fd,
+		buf:           bufferPool.Get().([]byte),
+		path:          path,
+		basep:         0,
+		targetEncoded: defaultTargetEncodedLen,
 	}, nil
 }
 
 // NextBatch returns the next encoded batch of directory entries.
-// It relies on platform‐specific r.getdents() and r.parseDirent().
+// - Retries EINTR/EAGAIN around getdents/getdirentries
+// - Accumulates until reaching targetEncoded or buffer exhaustion
+// - Encodes directly while parsing to avoid large intermediate allocations
 func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 	if r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
 
-	var entries types.ReadDirEntries
-	entries = make(types.ReadDirEntries, 0, 256)
+	entries := make(types.ReadDirEntries, 0, 512)
+
+	target := r.targetEncoded
+	if target <= 0 {
+		target = defaultTargetEncodedLen
+	}
+
+	encodedSizeEstimate := 4 // u32 count header
 
 	for {
+		// Refill buffer if consumed
 		if r.bufPos >= r.bufEnd {
 			n, err := r.getdents()
 			if err != nil {
@@ -63,36 +85,72 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 			}
 			if n == 0 {
 				r.noMoreFiles = true
+				// Reached EOF from kernel
 				break
 			}
 			r.bufPos = 0
 			r.bufEnd = n
 		}
 
+		// Parse entries from current buffer window
 		for r.bufPos < r.bufEnd {
-			name, typ, reclen, err := r.parseDirent()
-			if err != nil {
-				return nil, err
+			nameBytes, typ, reclen, ok, perr := r.parseDirent()
+			if perr != nil {
+				// Malformed entry - abort for safety
+				return nil, fmt.Errorf("failed to parse dirent for '%s': %w", r.path, perr)
 			}
-			if reclen == 0 {
+			if !ok || reclen == 0 {
+				// Not enough data or padding; force a refill next loop
+				r.bufPos = r.bufEnd
 				break
 			}
-			if name != "." && name != ".." {
-				entries = append(entries, types.AgentDirEntry{
-					Name: name,
-					Mode: uint32(unixTypeToFileMode(typ)),
-				})
-			}
 			r.bufPos += reclen
+
+			// Skip "." and ".." without allocating strings
+			if isDot(nameBytes) || isDotDot(nameBytes) {
+				continue
+			}
+
+			// Convert to string only for entries we keep
+			name := string(nameBytes)
+			mode := uint32(unixTypeToFileMode(typ))
+			entries = append(entries, types.AgentDirEntry{
+				Name: name,
+				Mode: mode,
+			})
+
+			// Roughly estimate size added to encoded buffer:
+			// entry.Encode() typically: length-prefix + content. Assume ~fixed + name.
+			encodedSizeEstimate += 8 + len(name) // coarse but effective
+
+			// If we hit the target, encode and return immediately
+			if encodedSizeEstimate >= target {
+				enc, err := entries.Encode()
+				if err != nil {
+					return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
+				}
+				return enc, nil
+			}
 		}
+
+		// If we produced any entries in this iteration but haven't met the target,
+		// we can return to reduce latency rather than looping for more kernel reads.
 		if len(entries) > 0 {
-			break
+			enc, err := entries.Encode()
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
+			}
+			return enc, nil
 		}
+
+		// Otherwise, loop back to refill and continue.
 	}
 
+	// EOF path: if we have any remaining entries, send them; else signal done.
 	if len(entries) == 0 {
 		return nil, os.ErrProcessDone
 	}
+
 	enc, err := entries.Encode()
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
@@ -102,34 +160,16 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 
 // Close releases the directory fd and buffer.
 func (r *DirReaderUnix) Close() error {
-	if err := syscall.Close(r.fd); err != nil {
-		return fmt.Errorf("failed to close directory '%s': %w", r.path, err)
+	var firstErr error
+	if r.fd != 0 {
+		if err := unix.Close(r.fd); err != nil && !errors.Is(err, syscall.EBADF) {
+			firstErr = fmt.Errorf("failed to close directory '%s': %w", r.path, err)
+		}
+		r.fd = 0
 	}
 	if r.buf != nil {
 		bufferPool.Put(r.buf)
 		r.buf = nil
 	}
-	return nil
-}
-
-// unixTypeToFileMode maps a DT_* byte to an os.FileMode.
-func unixTypeToFileMode(t byte) os.FileMode {
-	switch t {
-	case syscall.DT_DIR:
-		return os.ModeDir | 0755
-	case syscall.DT_REG:
-		return 0644
-	case syscall.DT_LNK:
-		return os.ModeSymlink | 0777
-	case syscall.DT_CHR:
-		return os.ModeDevice | os.ModeCharDevice | 0666
-	case syscall.DT_BLK:
-		return os.ModeDevice | 0666
-	case syscall.DT_FIFO:
-		return os.ModeNamedPipe | 0666
-	case syscall.DT_SOCK:
-		return os.ModeSocket | 0666
-	default:
-		return 0644
-	}
+	return firstErr
 }
