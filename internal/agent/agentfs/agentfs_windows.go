@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sync"
 	"unicode/utf16"
-	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -388,12 +387,12 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
-// handleReadAt: mmap fast-path; OVERLAPPED fallback. No SetFilePointer.
 func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	var payload types.ReadAtReq
 	if err := payload.Decode(req.Payload); err != nil {
 		return arpc.Response{}, err
 	}
+
 	if payload.Length < 0 {
 		return arpc.Response{}, fmt.Errorf("invalid negative length requested: %d", payload.Length)
 	}
@@ -406,166 +405,146 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// Snapshot mapping handle without holding lock during I/O
 	fh.Lock()
-	mapping := fh.mapping
-	fh.Unlock()
+	defer fh.Unlock()
 
-	// Refresh EOF from the handle to avoid stale size issues.
-	var std fileStandardInfo
-	if err := getFileStandardInfoByHandle(fh.handle, &std); err != nil {
-		return arpc.Response{}, err
-	}
-	fileSize := std.EndOfFile
-
-	if payload.Offset >= fileSize {
+	if payload.Offset >= fh.fileSize {
+		// Nothing to send.
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
 			RawStream: func(stream *smux.Stream) {
-				_ = binarystream.SendDataFromReader(emptyReader, 0, stream)
+				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
+					syslog.L.Error(err).
+						WithMessage("failed sending empty reader via binary stream").Write()
+				}
 			},
 		}, nil
 	}
 
-	// Clamp requested length to current EOF
-	reqLen := payload.Length
-	if payload.Offset+int64(reqLen) > fileSize {
-		reqLen = int(fileSize - payload.Offset)
+	// Clamp to EOF.
+	maxEnd := fh.fileSize
+	reqEnd := payload.Offset + int64(payload.Length)
+	if reqEnd > maxEnd {
+		reqEnd = maxEnd
 	}
-	if reqLen == 0 {
+	if reqEnd <= payload.Offset {
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
 			RawStream: func(stream *smux.Stream) {
-				_ = binarystream.SendDataFromReader(emptyReader, 0, stream)
+				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
+					syslog.L.Error(err).
+						WithMessage("failed sending empty reader via binary stream").Write()
+				}
 			},
 		}, nil
 	}
+	reqLen := int(reqEnd - payload.Offset)
 
-	// mmap fast path: ensure we don't map past EOF.
-	if s.readMode == "mmap" {
-		// Ensure we have/create mapping
-		var mh windows.Handle
-		if mapping == 0 {
-			fh.Lock()
-			if fh.mapping == 0 {
-				if m, err := windows.CreateFileMapping(
-					fh.handle,
-					nil,
-					windows.PAGE_READONLY,
-					0,
-					0,
-					nil,
-				); err == nil {
-					fh.mapping = m
-					mh = m
-				}
-			} else {
-				mh = fh.mapping
-			}
-			fh.Unlock()
-		} else {
-			mh = mapping
-		}
+	const maxChunk = 512 * 1024
+	zeroBuf := make([]byte, maxChunk)
 
-		if mh != 0 {
-			alloc := int64(s.allocGranularity)
-			alignedOffset := payload.Offset - (payload.Offset % alloc)
-			offsetDiff := int(payload.Offset - alignedOffset)
-
-			// Compute maximum view limited by EOF
-			maxAtEOF := fileSize - alignedOffset
-			if maxAtEOF < 0 {
-				maxAtEOF = 0
-			}
-			// We need at most reqLen+offsetDiff bytes in the view,
-			// but cannot exceed maxAtEOF.
-			maxView := int64(reqLen + offsetDiff)
-			if maxView > maxAtEOF {
-				maxView = maxAtEOF
-			}
-			if maxView <= int64(offsetDiff) {
-				// Nothing readable in this region
-				emptyReader := bytes.NewReader(nil)
-				return arpc.Response{
-					Status: 213,
-					RawStream: func(stream *smux.Stream) {
-						_ = binarystream.SendDataFromReader(emptyReader, 0, stream)
-					},
-				}, nil
-			}
-
-			viewSize := uintptr(maxView)
-			addr, err := windows.MapViewOfFile(
-				mh,
-				windows.FILE_MAP_READ,
-				uint32(uint64(alignedOffset)>>32),
-				uint32(uint64(alignedOffset)&0xFFFFFFFF),
-				viewSize,
-			)
-			if err == nil {
-				ptr := (*byte)(unsafe.Pointer(addr))
-				data := unsafe.Slice(ptr, viewSize)
-
-				// Actual readable length from requested offset
-				avail := len(data) - offsetDiff
-				if avail < 0 {
-					avail = 0
-				}
-				resultLen := reqLen
-				if resultLen > avail {
-					resultLen = avail
-				}
-				if resultLen < 0 {
-					resultLen = 0
-				}
-
-				reader := bytes.NewReader(data[offsetDiff : offsetDiff+resultLen])
-				return arpc.Response{
-					Status: 213,
-					RawStream: func(stream *smux.Stream) {
-						defer windows.UnmapViewOfFile(addr)
-						if err := binarystream.SendDataFromReader(reader, resultLen, stream); err != nil {
-							syslog.L.Error(err).
-								WithMessage("failed sending data from reader via binary stream").
-								Write()
-						}
-					},
-				}, nil
-			}
-			// fall through to overlapped if mapping fails
-		}
+	// Try to fetch allocated ranges. If it fails, fall back to treating it as fully allocated.
+	ranges, err := queryAllocatedRanges(fh.handle, payload.Offset, int64(reqLen))
+	if err != nil || len(ranges) == 0 {
+		// Either non-sparse, or API not supported. Treat as contiguous allocation.
+		ranges = []allocatedRange{{FileOffset: payload.Offset, Length: int64(reqLen)}}
 	}
 
-	// OVERLAPPED fallback: read up to reqLen bytes.
-	buf := make([]byte, reqLen)
-	ov := new(windows.Overlapped)
-	ov.Offset = uint32(payload.Offset & 0xffffffff)
-	ov.OffsetHigh = uint32(uint64(payload.Offset) >> 32)
+	// Build a closure to stream data
+	streamFn := func(stream *smux.Stream) {
+		write := func(p []byte) error {
+			return binarystream.SendDataFromReader(bytes.NewReader(p), len(p), stream)
+		}
 
-	var n uint32
-	err := windows.ReadFile(fh.handle, buf, &n, ov)
-	if err != nil && err != windows.ERROR_IO_PENDING {
-		return arpc.Response{}, mapWinError(err, "handleReadAt ReadFile overlapped")
-	}
-	if err == windows.ERROR_IO_PENDING {
-		if err = windows.GetOverlappedResult(fh.handle, ov, &n, true); err != nil {
-			return arpc.Response{}, mapWinError(err, "handleReadAt GetOverlappedResult")
+		pos := payload.Offset
+		end := reqEnd
+
+		// Iterate each allocated range and fill gaps with zeros.
+		for _, r := range ranges {
+			// Clamp r to [pos, end)
+			rStart := r.FileOffset
+			rEnd := r.FileOffset + r.Length
+			if rEnd <= pos {
+				continue
+			}
+			if rStart < pos {
+				rStart = pos
+			}
+			if rEnd > end {
+				rEnd = end
+			}
+			if rStart >= rEnd {
+				continue
+			}
+
+			// Emit gap before this range.
+			if rStart > pos {
+				gap := rStart - pos
+				for gap > 0 {
+					ch := int64(maxChunk)
+					if gap < ch {
+						ch = gap
+					}
+					if err := write(zeroBuf[:ch]); err != nil {
+						syslog.L.Error(err).WithMessage("stream write gap").Write()
+						return
+					}
+					gap -= ch
+				}
+				pos = rStart
+			}
+
+			// Read and emit allocated bytes.
+			cur := rStart
+			for cur < rEnd {
+				ch := int64(maxChunk)
+				if rEnd-cur < ch {
+					ch = rEnd - cur
+				}
+				buf := make([]byte, ch)
+				n, rerr := readAtOverlapped(fh.handle, cur, buf)
+				if rerr != nil && rerr != io.EOF {
+					syslog.L.Error(rerr).
+						WithMessage("overlapped read error").Write()
+					return
+				}
+				if n > 0 {
+					if err := write(buf[:n]); err != nil {
+						syslog.L.Error(err).WithMessage("stream write data").Write()
+						return
+					}
+					cur += int64(n)
+				}
+				if rerr == io.EOF && n == 0 {
+					// Unexpected EOF inside an allocated range; stop early.
+					return
+				}
+			}
+			pos = rEnd
+		}
+
+		// Trailing gap to end.
+		if pos < end {
+			gap := end - pos
+			for gap > 0 {
+				ch := int64(maxChunk)
+				if gap < ch {
+					ch = gap
+				}
+				if err := write(zeroBuf[:ch]); err != nil {
+					syslog.L.Error(err).WithMessage("stream write tail gap").Write()
+					return
+				}
+				gap -= ch
+			}
 		}
 	}
 
-	// Stream exactly the bytes we actually read.
-	reader := bytes.NewReader(buf[:n])
 	return arpc.Response{
-		Status: 213,
-		RawStream: func(stream *smux.Stream) {
-			if err := binarystream.SendDataFromReader(reader, int(n), stream); err != nil {
-				syslog.L.Error(err).
-					WithMessage("failed sending data from reader via binary stream (overlapped)").
-					Write()
-			}
-		},
+		Status:    213,
+		RawStream: streamFn,
 	}, nil
 }
 
