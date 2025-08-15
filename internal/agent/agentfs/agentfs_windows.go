@@ -150,9 +150,6 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 			windows.FILE_SHARE_DELETE,
 	)
 	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OVERLAPPED)
-	if s.readMode == "mmap" {
-		flags |= windows.FILE_FLAG_SEQUENTIAL_SCAN
-	}
 
 	handle, err := windows.CreateFile(
 		&pathUTF16[0],
@@ -217,6 +214,22 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 	}, nil
 }
 
+func openForAttrs(path string) (windows.Handle, error) {
+	pathUTF16 := utf16.Encode([]rune(path))
+	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
+		pathUTF16 = append(pathUTF16, 0)
+	}
+	return windows.CreateFile(
+		&pathUTF16[0],
+		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+}
+
 func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	var payload types.StatReq
 	if err := payload.Decode(req.Payload); err != nil {
@@ -228,40 +241,28 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	pathUTF16 := utf16.Encode([]rune(fullPath))
-	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
-		pathUTF16 = append(pathUTF16, 0)
-	}
-
-	h, err := windows.CreateFile(
-		&pathUTF16[0],
-		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
-		0,
-	)
+	h, err := openForAttrs(fullPath)
 	if err != nil {
 		return arpc.Response{}, err
 	}
 	defer windows.CloseHandle(h)
 
-	var bhi windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(h, &bhi); err != nil {
+	var all fileAllInformation
+	if err := ntQueryFileAllInformation(h, &all); err != nil {
 		return arpc.Response{}, err
 	}
 
-	isDir := (bhi.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
-	size := int64(bhi.FileSizeHigh)<<32 | int64(bhi.FileSizeLow)
-	modTime := filetimeToTime(windows.Filetime(bhi.LastWriteTime))
-	mode := fileModeFromAttrs(bhi.FileAttributes, isDir)
+	isDir := all.StandardInformation.Directory != 0
+	size := all.StandardInformation.EndOfFile
+
+	// Convert LastWriteTime
+	modTime := filetimeToTime(windows.Filetime{
+		LowDateTime:  uint32(uint64(all.BasicInformation.LastWriteTime) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(all.BasicInformation.LastWriteTime) >> 32),
+	})
+
+	mode := fileModeFromAttrs(all.BasicInformation.FileAttributes, isDir)
 	name := filepath.Base(filepath.Clean(fullPath))
-
-	var std fileStandardInfo
-	if err := getFileStandardInfoByHandle(h, &std); err != nil {
-		return arpc.Response{}, err
-	}
 
 	blockSize := s.statFs.Bsize
 	if blockSize == 0 {
@@ -270,7 +271,11 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 
 	var blocks uint64
 	if !isDir {
-		blocks = uint64((std.AllocationSize + int64(blockSize) - 1) / int64(blockSize))
+		alloc := all.StandardInformation.AllocationSize
+		if alloc < 0 {
+			alloc = 0
+		}
+		blocks = uint64((alloc + int64(blockSize) - 1) / int64(blockSize))
 	}
 
 	info := types.AgentFileInfo{
@@ -299,34 +304,31 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	pathUTF16 := utf16.Encode([]rune(fullPath))
-	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
-		pathUTF16 = append(pathUTF16, 0)
-	}
-
-	h, err := windows.CreateFile(
-		&pathUTF16[0],
-		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
-		0,
-	)
+	h, err := openForAttrs(fullPath)
 	if err != nil {
 		return arpc.Response{}, err
 	}
 	defer windows.CloseHandle(h)
 
-	var bhi windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(h, &bhi); err != nil {
+	var all fileAllInformation
+	if err := ntQueryFileAllInformation(h, &all); err != nil {
 		return arpc.Response{}, err
 	}
 
-	creationTime := filetimeToTime(windows.Filetime(bhi.CreationTime)).UnixNano()
-	lastAccessTime := filetimeToTime(windows.Filetime(bhi.LastAccessTime)).UnixNano()
-	lastWriteTime := filetimeToTime(windows.Filetime(bhi.LastWriteTime)).UnixNano()
-	fileAttributes := parseFileAttributes(bhi.FileAttributes)
+	creationTime := filetimeToTime(windows.Filetime{
+		LowDateTime:  uint32(uint64(all.BasicInformation.CreationTime) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(all.BasicInformation.CreationTime) >> 32),
+	}).UnixNano()
+	lastAccessTime := filetimeToTime(windows.Filetime{
+		LowDateTime:  uint32(uint64(all.BasicInformation.LastAccessTime) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(all.BasicInformation.LastAccessTime) >> 32),
+	}).UnixNano()
+	lastWriteTime := filetimeToTime(windows.Filetime{
+		LowDateTime:  uint32(uint64(all.BasicInformation.LastWriteTime) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(all.BasicInformation.LastWriteTime) >> 32),
+	}).UnixNano()
+
+	fileAttributes := parseFileAttributes(all.BasicInformation.FileAttributes)
 
 	owner, group, acls, err := GetWinACLsHandle(h)
 	if err != nil {
