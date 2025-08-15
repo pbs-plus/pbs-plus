@@ -58,7 +58,7 @@ func NewPBSAuth() (*PBSAuth, error) {
 func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
 	parts := strings.SplitN(ticket, "::", 2)
 	if len(parts) != 2 {
-		parts := strings.SplitN(ticket, "%3A%3A", 2)
+		parts = strings.SplitN(ticket, "%3A%3A", 2)
 		if len(parts) != 2 {
 			return false, fmt.Errorf("invalid ticket format")
 		}
