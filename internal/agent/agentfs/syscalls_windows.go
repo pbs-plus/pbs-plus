@@ -4,6 +4,7 @@ package agentfs
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -72,85 +73,6 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 type FileAllocatedRangeBuffer struct {
 	FileOffset int64 // Starting offset of the range
 	Length     int64 // Length of the range
-}
-
-func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]FileAllocatedRangeBuffer, error) {
-	// Validate fileSize.
-	if fileSize < 0 {
-		return nil, fmt.Errorf("invalid fileSize: %d", fileSize)
-	}
-
-	// Handle edge case: zero file size.
-	if fileSize == 0 {
-		return nil, nil
-	}
-
-	// Define the input range for the query.
-	var inputRange FileAllocatedRangeBuffer
-	inputRange.FileOffset = 0
-	inputRange.Length = fileSize
-
-	// Constant for buffer size calculations.
-	rangeSize := int(unsafe.Sizeof(FileAllocatedRangeBuffer{}))
-	if rangeSize == 0 {
-		return nil, fmt.Errorf("computed rangeSize is 0, invalid FileAllocatedRangeBuffer")
-	}
-
-	// Start with a small buffer and dynamically resize if needed.
-	bufferSize := 1 // Start with space for 1 range.
-	var bytesReturned uint32
-
-	// Set an arbitrary maximum to avoid infinite allocation.
-	const maxBufferSize = 1 << 20 // for example, 1 million entries.
-	for {
-		if bufferSize > maxBufferSize {
-			return nil, fmt.Errorf("buffer size exceeded maximum threshold: %d", bufferSize)
-		}
-
-		// Allocate the output buffer.
-		outputBuffer := make([]FileAllocatedRangeBuffer, bufferSize)
-
-		// Call DeviceIoControl.
-		err := windows.DeviceIoControl(
-			handle,
-			windows.FSCTL_QUERY_ALLOCATED_RANGES,
-			(*byte)(unsafe.Pointer(&inputRange)),
-			uint32(unsafe.Sizeof(inputRange)),
-			(*byte)(unsafe.Pointer(&outputBuffer[0])),
-			uint32(bufferSize*rangeSize),
-			&bytesReturned,
-			nil,
-		)
-
-		if err == nil {
-			// Success: calculate the number of ranges returned.
-			if bytesReturned%uint32(rangeSize) != 0 {
-				return nil, fmt.Errorf("inconsistent number of bytes returned: %d", bytesReturned)
-			}
-			count := int(bytesReturned) / rangeSize
-			if count > len(outputBuffer) {
-				return nil, fmt.Errorf("invalid count computed: %d", count)
-			}
-			return outputBuffer[:count], nil
-		}
-
-		// If the buffer was too small, double the bufferSize and retry.
-		if err == windows.ERROR_MORE_DATA {
-			bufferSize *= 2
-			continue
-		}
-
-		// If the filesystem doesn't support FSCTL_QUERY_ALLOCATED_RANGES, return
-		// a single range covering the whole file.
-		if err == windows.ERROR_INVALID_FUNCTION {
-			return []FileAllocatedRangeBuffer{
-				{FileOffset: 0, Length: fileSize},
-			}, nil
-		}
-
-		// For any other error, return it wrapped.
-		return nil, fmt.Errorf("DeviceIoControl failed: %w", err)
-	}
 }
 
 func getFileSize(handle windows.Handle) (int64, error) {
@@ -348,4 +270,99 @@ func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSi
 	default:
 		return 0, os.ErrInvalid
 	}
+}
+
+func readAtOverlapped(h windows.Handle, off int64, buf []byte) (int, error) {
+	var ov windows.Overlapped
+	ov.Offset = uint32(off & 0xffffffff)
+	ov.OffsetHigh = uint32(uint64(off) >> 32)
+
+	evt, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(evt)
+	ov.HEvent = evt
+
+	var n uint32
+	err = windows.ReadFile(h, buf, &n, &ov)
+	if err != nil {
+		if err == windows.ERROR_IO_PENDING {
+			_, werr := windows.WaitForSingleObject(evt, windows.INFINITE)
+			if werr != nil {
+				return int(n), werr
+			}
+			if gerr := windows.GetOverlappedResult(h, &ov, &n, false); gerr != nil {
+				// If EOF, return what we got (may be zero) as EOF.
+				if gerr == windows.ERROR_HANDLE_EOF {
+					return int(n), io.EOF
+				}
+				return int(n), gerr
+			}
+		} else if err == windows.ERROR_HANDLE_EOF {
+			return int(n), io.EOF
+		} else {
+			return int(n), err
+		}
+	}
+	return int(n), nil
+}
+
+type allocatedRange struct {
+	FileOffset int64
+	Length     int64
+}
+
+func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange, error) {
+	in := fileAllocatedRangeBuffer{FileOffset: off, Length: length}
+
+	// Start with a reasonable capacity.
+	out := make([]fileAllocatedRangeBuffer, 64)
+	var bytesReturned uint32
+
+	call := func(dst []fileAllocatedRangeBuffer) (int, error) {
+		var br uint32
+		err := windows.DeviceIoControl(
+			h,
+			windows.FSCTL_QUERY_ALLOCATED_RANGES,
+			(*byte)(unsafe.Pointer(&in)),
+			uint32(unsafe.Sizeof(in)),
+			(*byte)(unsafe.Pointer(&dst[0])),
+			uint32(len(dst))*uint32(unsafe.Sizeof(dst[0])),
+			&br,
+			nil,
+		)
+		if err != nil {
+			// ERROR_INSUFFICIENT_BUFFER is not typical here; ERROR_MORE_DATA can occur.
+			if err == windows.ERROR_MORE_DATA {
+				return int(br), err
+			}
+			return 0, err
+		}
+		return int(br), nil
+	}
+
+	br, err := call(out)
+	if err == windows.ERROR_MORE_DATA {
+		need := br / int(unsafe.Sizeof(out[0]))
+		if need <= len(out) {
+			need = len(out) * 2
+		}
+		out = make([]fileAllocatedRangeBuffer, need)
+		// Second attempt
+		br, err = call(out)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	count := br / int(unsafe.Sizeof(out[0]))
+	res := make([]allocatedRange, 0, count)
+	for i := 0; i < count; i++ {
+		res = append(res, allocatedRange{
+			FileOffset: out[i].FileOffset,
+			Length:     out[i].Length,
+		})
+	}
+	return res, nil
 }
