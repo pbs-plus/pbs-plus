@@ -9,15 +9,12 @@ import (
 	"crypto/sha1"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -60,7 +57,12 @@ func NewPBSAuth() (*PBSAuth, error) {
 }
 
 func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
-	parts := strings.Split(ticket, "::")
+	decoded, err := url.QueryUnescape(ticket)
+	if err != nil {
+		return false, fmt.Errorf("CheckProxyAuth: failed to decode cookie value -> %w", err)
+	}
+
+	parts := strings.SplitN(decoded, "::", 2)
 	if len(parts) != 2 {
 		return false, fmt.Errorf("invalid ticket format")
 	}
@@ -68,16 +70,11 @@ func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
 	ticketData := parts[0]
 	signature := parts[1]
 
-	for len(signature)%4 != 0 {
-		signature += "="
-	}
-
 	var sigBytes []byte
-	var err error
 
-	sigBytes, err = base64.StdEncoding.DecodeString(signature)
+	sigBytes, err = base64.RawStdEncoding.DecodeString(signature)
 	if err != nil {
-		sigBytes, err = base64.URLEncoding.DecodeString(signature)
+		sigBytes, err = base64.RawURLEncoding.DecodeString(signature)
 		if err != nil {
 			return false, fmt.Errorf("failed to decode signature: %w", err)
 		}
@@ -103,40 +100,6 @@ func (p *PBSAuth) VerifyTicket(ticket string) (bool, error) {
 
 	default:
 		return false, fmt.Errorf("unsupported key type for verification: %s", p.keyType)
-	}
-}
-
-func (p *PBSAuth) CreateTicket(username, realm string) (string, error) {
-	timestamp := time.Now().Unix()
-	ticketData := fmt.Sprintf("PBS:%s@%s:%s", username, realm, hex.EncodeToString([]byte(strconv.FormatInt(timestamp, 16))))
-
-	switch p.keyType {
-	case "ed25519":
-		ed25519Key := p.privateKey.(ed25519.PrivateKey)
-
-		// Ed25519 signs the raw message
-		signature := ed25519.Sign(ed25519Key, []byte(ticketData))
-		encodedSig := base64.StdEncoding.EncodeToString(signature)
-
-		return fmt.Sprintf("%s::%s", ticketData, encodedSig), nil
-
-	case "rsa":
-		rsaKey := p.privateKey.(*rsa.PrivateKey)
-
-		hasher := sha1.New()
-		hasher.Write([]byte(ticketData))
-		hashed := hasher.Sum(nil)
-
-		signature, err := rsa.SignPKCS1v15(nil, rsaKey, crypto.SHA1, hashed)
-		if err != nil {
-			return "", err
-		}
-
-		encodedSig := base64.StdEncoding.EncodeToString(signature)
-		return fmt.Sprintf("%s::%s", ticketData, encodedSig), nil
-
-	default:
-		return "", fmt.Errorf("unsupported key type for signing: %s", p.keyType)
 	}
 }
 
@@ -235,18 +198,13 @@ func checkProxyAuth(r *http.Request) error {
 		}
 	}
 
-	cookieValue := cookie.Value
-	if strings.Contains(cookieValue, "%") {
-		decoded, err := url.QueryUnescape(cookieValue)
-		if err != nil {
-			return fmt.Errorf("CheckProxyAuth: failed to decode cookie value -> %w", err)
-		}
-		cookieValue = decoded
+	valid, err := auth.VerifyTicket(cookie.Value)
+	if err != nil {
+		return fmt.Errorf("CheckProxyAuth: authentication required -> %w", err)
 	}
 
-	valid, err := auth.VerifyTicket(cookieValue)
-	if err != nil || !valid {
-		return fmt.Errorf("CheckProxyAuth: authentication required -> %w", err)
+	if !valid {
+		return fmt.Errorf("CheckProxyAuth: auth token invalid -> %s", cookie.Value)
 	}
 
 	return nil
