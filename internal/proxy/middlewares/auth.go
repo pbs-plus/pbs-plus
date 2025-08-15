@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -138,7 +139,13 @@ func splitPBS(raw string) (left, right string, usedDecoded bool, err error) {
 	}
 	if strings.Contains(raw, "%") {
 		if parts := strings.SplitN(raw, "%3A%3A", 2); len(parts) == 2 {
-			return parts[0], parts[1], false, nil
+			leftToVerify := parts[0]
+			if strings.Contains(left, "%") {
+				if decoded, decErr := url.QueryUnescape(left); decErr == nil {
+					leftToVerify = decoded
+				}
+			}
+			return leftToVerify, parts[1], false, nil
 		}
 	}
 	return "", "", false, fmt.Errorf("missing '::' separator")
