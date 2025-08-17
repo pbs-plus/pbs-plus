@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"golang.org/x/sys/windows"
 )
 
 // 1 MiB reusable buffer size. Tunable based on directory size / network latency.
@@ -140,6 +141,145 @@ func (r *DirReaderNT) NextBatch() ([]byte, error) {
 		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
 	}
 	return encodedBatch, nil
+}
+
+func (r *DirReaderNT) NextBatchPlus(
+	includeACLs bool,
+	maxACLs uint32,
+	blockSize uint64,
+) (entries types.ReadDirPlusBatch, encoded []byte, err error) {
+	if r.noMoreFiles {
+		return nil, nil, os.ErrProcessDone
+	}
+
+	// Reuse large buffer
+	bufAny := dirBufPoolNT.Get()
+	buffer := bufAny.([]byte)
+	defer dirBufPoolNT.Put(buffer)
+
+	if err = ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			// STATUS_PENDING: tell caller to call again; no data
+			return nil, nil, nil
+		}
+		if errors.Is(err, os.ErrProcessDone) {
+			r.noMoreFiles = true
+			return nil, nil, err
+		}
+		return nil, nil, err
+	}
+	r.restartScan = false
+
+	if blockSize == 0 {
+		blockSize = 4096
+	}
+
+	// Enumerate entries
+	var plus types.ReadDirPlusBatch
+	var aclBudget = maxACLs
+	if aclBudget == 0 {
+		aclBudget = 0 // default 0 to avoid surprises; tune if you want a small default like 16
+	}
+
+	offset := 0
+	for {
+		if offset+int(unsafe.Sizeof(FileDirectoryInformation{})) > len(buffer) {
+			return nil, nil, fmt.Errorf("offset exceeded buffer length")
+		}
+		entry := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[offset]))
+
+		if entry.FileAttributes&excludedAttrs == 0 {
+			fileNameLen := entry.FileNameLength / 2
+			fileNamePtr := unsafe.Pointer(
+				uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName),
+			)
+			if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) >
+				uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
+				return nil, nil, fmt.Errorf("filename data exceeds buffer bounds")
+			}
+
+			fileNameSlice := unsafe.Slice((*uint16)(fileNamePtr), fileNameLen)
+			name := string(utf16.Decode(fileNameSlice))
+
+			if name != "." && name != ".." {
+				attrs := entry.FileAttributes
+				mode := windowsFileModeFromHandle(0, attrs)
+				isDir := (attrs & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
+
+				// FileDirectoryInformation does NOT include EndOfFile or AllocationSize.
+				// If you switch to FileFullDirectoryInformation, you can populate Size/Blocks precisely.
+				// For now, leave Size=0, Blocks=0 unless you change the enumeration struct.
+				size := int64(0)
+				var blocks uint64 = 0
+
+				// Times are present in FileDirectoryInformation
+				// ChangeTime is not separately required in your types; ModTime uses mtime
+				modTime := filetimeToTime(windows.Filetime{
+					LowDateTime:  uint32(uint64(entry.LastWriteTime) & 0xFFFFFFFF),
+					HighDateTime: uint32(uint64(entry.LastWriteTime) >> 32),
+				})
+				creation := filetimeToUnix(windows.Filetime{
+					LowDateTime:  uint32(uint64(entry.CreationTime) & 0xFFFFFFFF),
+					HighDateTime: uint32(uint64(entry.CreationTime) >> 32),
+				})
+				atime := filetimeToUnix(windows.Filetime{
+					LowDateTime:  uint32(uint64(entry.LastAccessTime) & 0xFFFFFFFF),
+					HighDateTime: uint32(uint64(entry.LastAccessTime) >> 32),
+				})
+				mtime := filetimeToUnix(windows.Filetime{
+					LowDateTime:  uint32(uint64(entry.LastWriteTime) & 0xFFFFFFFF),
+					HighDateTime: uint32(uint64(entry.LastWriteTime) >> 32),
+				})
+
+				e := types.AgentDirEntryPlus{
+					Name:           name,
+					Mode:           mode,
+					Size:           size,
+					ModTime:        modTime,
+					IsDir:          isDir,
+					Blocks:         blocks,
+					CreationTime:   creation,
+					LastAccessTime: atime,
+					LastWriteTime:  mtime,
+					FileAttributes: parseFileAttributes(attrs),
+					HasACL:         false,
+				}
+
+				// Optional ACL prefetch with small cap
+				if includeACLs {
+					fullPath := r.path
+					if !strings.HasSuffix(fullPath, "\\") {
+						fullPath += "\\"
+					}
+					fullPath += name
+					owner, group, win, aerr := GetWinACLsByPath(fullPath)
+					if aerr == nil {
+						e.HasACL = true
+						e.Owner = owner
+						e.Group = group
+						e.WinACLs = win
+					}
+				}
+
+				plus = append(plus, e)
+			}
+		}
+
+		if entry.NextEntryOffset == 0 {
+			break
+		}
+		nextOffset := offset + int(entry.NextEntryOffset)
+		if nextOffset <= offset || nextOffset > len(buffer) {
+			return nil, nil, fmt.Errorf("invalid NextEntryOffset: %d from %d", entry.NextEntryOffset, offset)
+		}
+		offset = nextOffset
+	}
+
+	encoded, err = plus.Encode()
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode ReadDirPlusBatch for '%s': %w", r.path, err)
+	}
+	return plus, encoded, nil
 }
 
 // Close releases the resources used by the directory reader.

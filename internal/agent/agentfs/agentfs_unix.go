@@ -342,6 +342,72 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
+func (s *AgentFSServer) handleReadDirPlus(req arpc.Request) (arpc.Response, error) {
+	var payload types.ReadDirPlusReq
+	if err := payload.Decode(req.Payload); err != nil {
+		return arpc.Response{}, err
+	}
+
+	fh, exists := s.handles.Get(uint64(payload.HandleID))
+	if !exists {
+		return arpc.Response{}, os.ErrNotExist
+	}
+
+	fh.Lock()
+	defer fh.Unlock()
+
+	// Helpers for NextBatchPlus
+	blockSize := s.statFs.Bsize
+	if blockSize == 0 {
+		blockSize = 4096
+	}
+	//_, encodedBatch, err := fh.dirReader.NextBatchPlus(
+	//	payload.IncludeACLs,
+	//	payload.MaxACLsPerBatch,
+	//	uint64(blockSize),
+	//)
+	//if err != nil {
+	//	if !errors.Is(err, os.ErrProcessDone) {
+	//		syslog.L.Error(err).WithMessage("readdir+ error").Write()
+	//	}
+	//	return arpc.Response{}, err
+	//}
+	//if len(encodedBatch) == 0 {
+	//	// STATUS_PENDING case (no data yet). Return an empty stream to keep client logic simple,
+	//	// or return a 204; here, we'll send an empty batch.
+	//	empty := types.ReadDirPlusBatch{}
+	//	enc, eerr := empty.Encode()
+	//	if eerr != nil {
+	//		return arpc.Response{}, eerr
+	//	}
+	//	br := bytes.NewReader(enc)
+	//	return arpc.Response{
+	//		Status: 213,
+	//		RawStream: func(stream *smux.Stream) {
+	//			if err := binarystream.SendDataFromReader(br, len(enc), stream); err != nil {
+	//				syslog.L.Error(err).WithMessage("send readdir+ empty").Write()
+	//			}
+	//		},
+	//	}, nil
+	//}
+
+	//br := bytes.NewReader(encodedBatch)
+	//return arpc.Response{
+	//	Status: 213,
+	//	RawStream: func(stream *smux.Stream) {
+	//		if err := binarystream.SendDataFromReader(br, len(encodedBatch), stream); err != nil {
+	//			syslog.L.Error(err).WithMessage("send readdir+ batch").Write()
+	//		}
+	//	},
+	//}, nil
+	return arpc.Response{
+		Status: 213,
+		RawStream: func(stream *smux.Stream) {
+			syslog.L.Error(errors.New("unsupported")).WithMessage("send readdir+ batch").Write()
+		},
+	}, nil
+}
+
 func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	var payload types.ReadAtReq
 	if err := payload.Decode(req.Payload); err != nil {
