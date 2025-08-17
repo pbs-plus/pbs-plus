@@ -120,6 +120,17 @@ func filetimeToTime(ft windows.Filetime) time.Time {
 	return time.Unix(0, ft.Nanoseconds())
 }
 
+// filetimeToUnix converts a Windows FILETIME to a Unix timestamp.
+// Windows file times are in 100-nanosecond intervals since January 1, 1601.
+func filetimeToUnix(ft windows.Filetime) int64 {
+	const (
+		winToUnixEpochDiff = 116444736000000000 // in 100-nanosecond units
+		hundredNano        = 10000000           // 100-ns units per second
+	)
+	t := (int64(ft.HighDateTime) << 32) | int64(ft.LowDateTime)
+	return (t - winToUnixEpochDiff) / hundredNano
+}
+
 // Prefer NT path prefix to avoid reparsing and keep long paths working.
 func convertToNTPath(path string) string {
 	if len(path) >= 4 && path[:4] == "\\??\\" {
