@@ -33,7 +33,7 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 	}
 
 	pOwnerSid, _, _ := sd.Owner()
-	pGroupSid, _, _ := sd.Owner()
+	pGroupSid, _, _ := sd.Group()
 
 	// Use the SIDs returned by MakeAbsoluteSD directly if they are valid.
 	if pOwnerSid != nil && pOwnerSid.IsValid() {
