@@ -26,6 +26,36 @@ const (
 		FILE_ATTRIBUTE_UNPINNED | FILE_ATTRIBUTE_PINNED
 )
 
+func windowsFileModeFromHandle(h windows.Handle, fileAttributes uint32) uint32 {
+	var m os.FileMode
+
+	// Base permissions from READONLY
+	if fileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
+		m |= 0444
+	} else {
+		m |= 0666
+	}
+
+	// Directory bit (no reparse-point exclusion needed here since caller excludes them)
+	if fileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		m |= os.ModeDir | 0111
+	}
+
+	// Special file types based on GetFileType(handle)
+	if h != 0 {
+		if ft, err := windows.GetFileType(h); err == nil {
+			switch ft {
+			case windows.FILE_TYPE_PIPE:
+				m |= os.ModeNamedPipe
+			case windows.FILE_TYPE_CHAR:
+				m |= os.ModeDevice | os.ModeCharDevice
+			}
+		}
+	}
+
+	return uint32(m)
+}
+
 // windowsAttributesToFileMode converts Windows file attributes to Go's os.FileMode
 func windowsAttributesToFileMode(attrs uint32) uint32 {
 	var mode os.FileMode = 0
