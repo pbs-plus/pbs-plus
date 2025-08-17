@@ -260,18 +260,18 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	creationTime := filetimeToTime(windows.Filetime{
+	creationTime := filetimeToUnix(windows.Filetime{
 		LowDateTime:  uint32(uint64(nfo.CreationTime) & 0xFFFFFFFF),
 		HighDateTime: uint32(uint64(nfo.CreationTime) >> 32),
-	}).UnixNano()
-	lastAccessTime := filetimeToTime(windows.Filetime{
+	})
+	lastAccessTime := filetimeToUnix(windows.Filetime{
 		LowDateTime:  uint32(uint64(nfo.LastAccessTime) & 0xFFFFFFFF),
 		HighDateTime: uint32(uint64(nfo.LastAccessTime) >> 32),
-	}).UnixNano()
-	lastWriteTime := filetimeToTime(windows.Filetime{
+	})
+	lastWriteTime := filetimeToUnix(windows.Filetime{
 		LowDateTime:  uint32(uint64(nfo.LastWriteTime) & 0xFFFFFFFF),
 		HighDateTime: uint32(uint64(nfo.LastWriteTime) >> 32),
-	}).UnixNano()
+	})
 
 	fileAttributes := parseFileAttributes(nfo.FileAttributes)
 
