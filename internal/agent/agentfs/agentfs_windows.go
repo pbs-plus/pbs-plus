@@ -206,7 +206,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 		HighDateTime: uint32(uint64(nfo.LastWriteTime) >> 32),
 	})
 
-	mode := windowsAttributesToFileMode(nfo.FileAttributes)
+	mode := windowsFileModeFromHandle(h, nfo.FileAttributes)
 	name := filepath.Base(filepath.Clean(fullPath))
 
 	blockSize := s.statFs.Bsize
