@@ -32,26 +32,27 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 		return "", "", nil, fmt.Errorf("GetSecurityInfo: %w", err)
 	}
 
-	// Owner
-	if pOwner, _, e := sd.Owner(); e == nil && pOwner != nil && pOwner.IsValid() {
-		if s, e2 := sidToString(pOwner); e2 == nil {
-			owner = s
-		} else {
-			return "", "", nil, fmt.Errorf("owner SID stringify: %w", e2)
-		}
-	} else if e != nil && !errors.Is(e, windows.ERROR_OBJECT_NOT_FOUND) {
-		return "", "", nil, fmt.Errorf("SECURITY_DESCRIPTOR.Owner: %w", e)
+	pOwnerSid, _, _ := sd.Owner()
+	pGroupSid, _, _ := sd.Owner()
+
+	// Use the SIDs returned by MakeAbsoluteSD directly if they are valid.
+	if pOwnerSid != nil && pOwnerSid.IsValid() {
+		owner = pOwnerSid.String()
+	} else {
+		// Fallback or handle error if owner SID is expected but missing/invalid
+		// For simplicity here, we proceed, but production code might error out.
+		// Alternatively, call getOwnerGroupAbsolute as a fallback, but it might be redundant.
+		// owner, group, err = getOwnerGroupAbsolute(absoluteSD)
+		// if err != nil {
+		// 	 return "", "", nil, fmt.Errorf("failed to extract owner/group: %w", err)
+		// }
+		return "", "", nil, fmt.Errorf("owner SID from MakeAbsoluteSD is nil or invalid")
 	}
 
-	// Group
-	if pGroup, _, e := sd.Group(); e == nil && pGroup != nil && pGroup.IsValid() {
-		if s, e2 := sidToString(pGroup); e2 == nil {
-			group = s
-		} else {
-			return "", "", nil, fmt.Errorf("group SID stringify: %w", e2)
-		}
-	} else if e != nil && !errors.Is(e, windows.ERROR_OBJECT_NOT_FOUND) {
-		return "", "", nil, fmt.Errorf("SECURITY_DESCRIPTOR.Group: %w", e)
+	if pGroupSid != nil && pGroupSid.IsValid() {
+		group = pGroupSid.String()
+	} else {
+		return owner, "", nil, fmt.Errorf("group SID from MakeAbsoluteSD is nil or invalid")
 	}
 
 	// DACL pointer
@@ -86,10 +87,8 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 		if pSid == nil || !pSid.IsValid() {
 			continue
 		}
-		sidStr, serr := sidToString(pSid)
-		if serr != nil {
-			continue
-		}
+
+		sidStr := pSid.String()
 
 		result = append(result, types.WinACL{
 			SID:        sidStr,
@@ -100,16 +99,6 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 	}
 
 	return owner, group, result, nil
-}
-
-// sidToString converts a SID to S-1-... via ConvertSidToStringSid and frees the buffer.
-func sidToString(pSid *windows.SID) (string, error) {
-	var str *uint16
-	if err := windows.ConvertSidToStringSid(pSid, &str); err != nil {
-		return "", err
-	}
-	defer windows.LocalFree(windows.Handle(unsafe.Pointer(str)))
-	return windows.UTF16PtrToString(str), nil
 }
 
 func GetExplicitEntriesFromACL(acl *windows.ACL) (uintptr, uint32, error) {
