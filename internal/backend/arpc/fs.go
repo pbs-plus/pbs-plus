@@ -39,6 +39,12 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 		readDirXAttrCache: safemap.New[string, types.AgentFileInfo](),
 	}
 
+	go func() {
+		<-ctxFs.Done()
+		fs.readDirAttrCache.Clear()
+		fs.readDirXAttrCache.Clear()
+	}()
+
 	return fs
 }
 
@@ -83,6 +89,7 @@ func (fs *ARPCFS) GetStats() Stats {
 		FileAccessSpeed: accessSpeed,
 		TotalBytes:      uint64(currentTotalBytes),
 		ByteReadSpeed:   bytesSpeed,
+		StatCacheHits:   atomic.LoadInt64(&fs.statCacheHits),
 	}
 }
 
@@ -151,7 +158,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 }
 
 // Attr retrieves file attributes via RPC and then tracks the access.
-func (fs *ARPCFS) Attr(filename string) (types.AgentFileInfo, error) {
+func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, error) {
 	var fi types.AgentFileInfo
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
@@ -161,12 +168,16 @@ func (fs *ARPCFS) Attr(filename string) (types.AgentFileInfo, error) {
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
-	cached, ok := fs.readDirAttrCache.GetAndDel(filename)
+	cached, ok := fs.readDirAttrCache.Get(filename)
 	if ok {
+		atomic.AddInt64(&fs.statCacheHits, 1)
 		if fi.IsDir {
 			atomic.AddInt64(&fs.folderCount, 1)
 		} else {
 			atomic.AddInt64(&fs.fileCount, 1)
+		}
+		if !isLookup {
+			fs.readDirAttrCache.Del(filename)
 		}
 		return cached, nil
 	}

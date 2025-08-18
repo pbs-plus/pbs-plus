@@ -37,6 +37,8 @@ type ARPCFS struct {
 
 	lastBytesTime  int64 // UnixNano timestamp
 	lastTotalBytes int64
+
+	statCacheHits int64
 }
 
 type Stats struct {
@@ -46,6 +48,7 @@ type Stats struct {
 	FileAccessSpeed float64 // (Unique accesses per second)
 	TotalBytes      uint64  // Total bytes read
 	ByteReadSpeed   float64 // (Bytes read per second)
+	StatCacheHits   int64
 }
 
 // ARPCFile implements billy.File for remote files
