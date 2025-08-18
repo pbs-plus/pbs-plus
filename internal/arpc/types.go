@@ -36,6 +36,19 @@ type MapStringIntMsg map[string]int
 
 func (msg *MapStringIntMsg) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoderWithSize(4)
+
+	// nil flag
+	if *msg == nil {
+		if err := enc.WriteUint8(0); err != nil {
+			return nil, err
+		}
+		return enc.Bytes(), nil
+	}
+	if err := enc.WriteUint8(1); err != nil {
+		return nil, err
+	}
+
+	// length + entries
 	if err := enc.WriteUint32(uint32(len(*msg))); err != nil {
 		return nil, err
 	}
@@ -55,7 +68,19 @@ func (msg *MapStringIntMsg) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
+	defer arpcdata.ReleaseDecoder(dec)
 
+	// nil flag
+	flag, err := dec.ReadUint8()
+	if err != nil {
+		return err
+	}
+	if flag == 0 {
+		*msg = nil
+		return nil
+	}
+
+	// length + entries
 	length, err := dec.ReadUint32()
 	if err != nil {
 		return err
@@ -72,7 +97,6 @@ func (msg *MapStringIntMsg) Decode(buf []byte) error {
 		}
 		(*msg)[key] = int(value)
 	}
-	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -81,6 +105,19 @@ type MapStringUint64Msg map[string]uint64
 
 func (msg *MapStringUint64Msg) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoder()
+
+	// nil flag
+	if *msg == nil {
+		if err := enc.WriteUint8(0); err != nil {
+			return nil, err
+		}
+		return enc.Bytes(), nil
+	}
+	if err := enc.WriteUint8(1); err != nil {
+		return nil, err
+	}
+
+	// length + entries
 	if err := enc.WriteUint32(uint32(len(*msg))); err != nil {
 		return nil, err
 	}
@@ -100,6 +137,19 @@ func (msg *MapStringUint64Msg) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
+	defer arpcdata.ReleaseDecoder(dec)
+
+	// nil flag
+	flag, err := dec.ReadUint8()
+	if err != nil {
+		return err
+	}
+	if flag == 0 {
+		*msg = nil
+		return nil
+	}
+
+	// length + entries
 	length, err := dec.ReadUint32()
 	if err != nil {
 		return err
@@ -116,7 +166,6 @@ func (msg *MapStringUint64Msg) Decode(buf []byte) error {
 		}
 		(*msg)[key] = value
 	}
-	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -125,6 +174,19 @@ type MapStringStringMsg map[string]string
 
 func (msg *MapStringStringMsg) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoder()
+
+	// nil flag
+	if *msg == nil {
+		if err := enc.WriteUint8(0); err != nil {
+			return nil, err
+		}
+		return enc.Bytes(), nil
+	}
+	if err := enc.WriteUint8(1); err != nil {
+		return nil, err
+	}
+
+	// length + entries
 	if err := enc.WriteUint32(uint32(len(*msg))); err != nil {
 		return nil, err
 	}
@@ -144,6 +206,19 @@ func (msg *MapStringStringMsg) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
+	defer arpcdata.ReleaseDecoder(dec)
+
+	// nil flag
+	flag, err := dec.ReadUint8()
+	if err != nil {
+		return err
+	}
+	if flag == 0 {
+		*msg = nil
+		return nil
+	}
+
+	// length + entries
 	length, err := dec.ReadUint32()
 	if err != nil {
 		return err
@@ -160,7 +235,6 @@ func (msg *MapStringStringMsg) Decode(buf []byte) error {
 		}
 		(*msg)[key] = value
 	}
-	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
 
@@ -168,6 +242,19 @@ type MapStringBoolMsg map[string]bool
 
 func (msg *MapStringBoolMsg) Encode() ([]byte, error) {
 	enc := arpcdata.NewEncoder()
+
+	// Write a flag: 0 = nil map, 1 = non-nil map
+	if *msg == nil {
+		if err := enc.WriteUint8(0); err != nil {
+			return nil, err
+		}
+		return enc.Bytes(), nil
+	}
+	if err := enc.WriteUint8(1); err != nil {
+		return nil, err
+	}
+
+	// Write length and entries
 	if err := enc.WriteUint32(uint32(len(*msg))); err != nil {
 		return nil, err
 	}
@@ -187,6 +274,19 @@ func (msg *MapStringBoolMsg) Decode(buf []byte) error {
 	if err != nil {
 		return err
 	}
+	defer arpcdata.ReleaseDecoder(dec)
+
+	// Read nil/non-nil flag
+	flag, err := dec.ReadUint8()
+	if err != nil {
+		return err
+	}
+	if flag == 0 {
+		*msg = nil
+		return nil
+	}
+
+	// Read length and entries
 	length, err := dec.ReadUint32()
 	if err != nil {
 		return err
@@ -203,6 +303,5 @@ func (msg *MapStringBoolMsg) Decode(buf []byte) error {
 		}
 		(*msg)[key] = value
 	}
-	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
