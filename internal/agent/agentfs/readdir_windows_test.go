@@ -83,9 +83,9 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 
 	expected := map[string]os.FileMode{
-		"file1.txt": 0644,
-		"file2.txt": 0644,
-		"subdir":    os.ModeDir | 0755,
+		"file1.txt": 0666,
+		"file2.txt": 0666,
+		"subdir":    os.ModeDir | 0777,
 	}
 
 	verifyEntries(t, entries, expected)
