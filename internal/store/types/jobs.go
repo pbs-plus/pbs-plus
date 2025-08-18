@@ -25,6 +25,7 @@ type Job struct {
 	CurrentFilesSpeed     int         `json:"current_files_speed,omitempty"`
 	CurrentBytesSpeed     int         `json:"current_bytes_speed,omitempty"`
 	CurrentBytesTotal     int         `json:"current_bytes_total,omitempty"`
+	StatCacheHits         int         `json:"stat_cache_hits,omitempty"`
 	CurrentPID            int         `config:"key=current_pid,type=int" json:"current_pid"`
 	LastRunUpid           string      `config:"key=last_run_upid,type=string" json:"last-run-upid"`
 	LastRunState          string      `json:"last-run-state"`
