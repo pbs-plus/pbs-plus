@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -137,6 +138,24 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		modeBits = fuse.S_IFLNK
 	default:
 		modeBits = fuse.S_IFREG
+	}
+
+	if curr.FileAttributes != nil {
+		fullPath := filepath.Join(s.path, curr.Name)
+		s.fs.readDirAttrCache.Set(fullPath, types.AgentFileInfo{
+			Name:    curr.Name,
+			Size:    curr.Size,
+			Mode:    curr.Mode,
+			ModTime: curr.ModTime,
+			IsDir:   curr.IsDir,
+		})
+
+		s.fs.readDirXAttrCache.Set(fullPath, types.AgentFileInfo{
+			CreationTime:   curr.CreationTime,
+			LastAccessTime: curr.LastAccessTime,
+			LastWriteTime:  curr.LastWriteTime,
+			FileAttributes: curr.FileAttributes,
+		})
 	}
 
 	atomic.AddUint64(&s.curIdx, 1)

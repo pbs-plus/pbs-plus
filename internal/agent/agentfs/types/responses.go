@@ -455,37 +455,146 @@ func (info *AgentFileInfo) Decode(buf []byte) error {
 }
 
 // AgentDirEntry represents a directory entry
+/*
+	NextEntryOffset uint32
+	FileIndex       uint32
+	CreationTime    int64
+	LastAccessTime  int64
+	LastWriteTime   int64
+	ChangeTime      int64
+	EndOfFile       int64
+	AllocationSize  int64
+	FileAttributes  uint32
+	FileNameLength  uint32
+	FileName        uint16
+*/
 type AgentDirEntry struct {
-	Name string
-	Mode uint32
+	Name           string
+	Size           int64
+	Mode           uint32
+	ModTime        time.Time
+	IsDir          bool
+	Blocks         uint64
+	CreationTime   int64
+	LastAccessTime int64
+	LastWriteTime  int64
+	FileAttributes map[string]bool
 }
 
-func (entry *AgentDirEntry) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(entry.Name) + 4)
-	if err := enc.WriteString(entry.Name); err != nil {
+func (info *AgentDirEntry) Encode() ([]byte, error) {
+	enc := arpcdata.NewEncoder()
+
+	if err := enc.WriteString(info.Name); err != nil {
 		return nil, err
 	}
-	if err := enc.WriteUint32(entry.Mode); err != nil {
+	if err := enc.WriteInt64(info.Size); err != nil {
 		return nil, err
 	}
+	if err := enc.WriteUint32(info.Mode); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteTime(info.ModTime); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteBool(info.IsDir); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteUint64(info.Blocks); err != nil {
+		return nil, err
+	}
+
+	if err := enc.WriteInt64(info.CreationTime); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteInt64(info.LastAccessTime); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteInt64(info.LastWriteTime); err != nil {
+		return nil, err
+	}
+
+	fileAttributes := arpc.MapStringBoolMsg(info.FileAttributes)
+	fileAttributesBytes, err := fileAttributes.Encode()
+	if err != nil {
+		return nil, err
+	}
+	if err := enc.WriteBytes(fileAttributesBytes); err != nil {
+		return nil, err
+	}
+
 	return enc.Bytes(), nil
 }
 
-func (entry *AgentDirEntry) Decode(buf []byte) error {
+func (info *AgentDirEntry) Decode(buf []byte) error {
 	dec, err := arpcdata.NewDecoder(buf)
 	if err != nil {
 		return err
 	}
+
 	name, err := dec.ReadString()
 	if err != nil {
 		return err
 	}
-	entry.Name = name
+	info.Name = name
+
+	size, err := dec.ReadInt64()
+	if err != nil {
+		return err
+	}
+	info.Size = size
+
 	mode, err := dec.ReadUint32()
 	if err != nil {
 		return err
 	}
-	entry.Mode = mode
+	info.Mode = mode
+
+	modTime, err := dec.ReadTime()
+	if err != nil {
+		return err
+	}
+	info.ModTime = modTime
+
+	isDir, err := dec.ReadBool()
+	if err != nil {
+		return err
+	}
+	info.IsDir = isDir
+
+	blocks, err := dec.ReadUint64()
+	if err != nil {
+		return err
+	}
+	info.Blocks = blocks
+
+	creationTime, err := dec.ReadInt64()
+	if err != nil {
+		return err
+	}
+	info.CreationTime = creationTime
+
+	lastAccessTime, err := dec.ReadInt64()
+	if err != nil {
+		return err
+	}
+	info.LastAccessTime = lastAccessTime
+
+	lastWriteTime, err := dec.ReadInt64()
+	if err != nil {
+		return err
+	}
+	info.LastWriteTime = lastWriteTime
+
+	fileAttributesBytes, err := dec.ReadBytes()
+	if err != nil {
+		return err
+	}
+	var fileAttributes arpc.MapStringBoolMsg
+	if err := fileAttributes.Decode(fileAttributesBytes); err != nil {
+		return err
+	}
+	info.FileAttributes = fileAttributes
+
 	arpcdata.ReleaseDecoder(dec)
 	return nil
 }

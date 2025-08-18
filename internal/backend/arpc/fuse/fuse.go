@@ -221,7 +221,7 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 
 // Getattr implements NodeGetattrer
 func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	fi, err := n.fs.Attr(n.getPath())
+	fi, err := n.fs.Attr(n.getPath(), false)
 	if err != nil {
 		return syscall.ENOENT
 	}
@@ -357,7 +357,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 	childNode.fullPathCache = ""
 
 	path := childNode.getPath()
-	fi, err := childNode.fs.Attr(path)
+	fi, err := childNode.fs.Attr(path, true)
 	if err != nil {
 		return nil, fs.ToErrno(err)
 	}

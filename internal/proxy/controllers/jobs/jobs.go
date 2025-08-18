@@ -55,6 +55,7 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				allJobs[i].CurrentBytesTotal = int(stats.TotalBytes)
 				allJobs[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
 				allJobs[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
+				allJobs[i].StatCacheHits = int(stats.StatCacheHits)
 			} else if isS3 {
 				childKey := s3Parsed.Endpoint + "|" + job.ID
 				s3fs := store.GetS3FS(childKey)

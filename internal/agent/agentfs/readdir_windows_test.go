@@ -71,7 +71,7 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	entriesBytes, err := dirReader.NextBatch()
+	entriesBytes, err := dirReader.NextBatch(0)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -83,9 +83,9 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 
 	expected := map[string]os.FileMode{
-		"file1.txt": 0644,
-		"file2.txt": 0644,
-		"subdir":    os.ModeDir | 0755,
+		"file1.txt": 0666,
+		"file2.txt": 0666,
+		"subdir":    os.ModeDir | 0777,
 	}
 
 	verifyEntries(t, entries, expected)
@@ -104,7 +104,7 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	entriesBytes, err := dirReader.NextBatch()
+	entriesBytes, err := dirReader.NextBatch(0)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -142,7 +142,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 
 	totalEntries := 0
 	for {
-		entriesBytes, err := dirReader.NextBatch()
+		entriesBytes, err := dirReader.NextBatch(0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -187,7 +187,7 @@ func testFileAttributes(t *testing.T, tempDir string) {
 
 	allEntries := []types.AgentDirEntry{}
 	for {
-		entriesBytes, err := dirReader.NextBatch()
+		entriesBytes, err := dirReader.NextBatch(0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -263,7 +263,7 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 
 	allEntries := []types.AgentDirEntry{}
 	for {
-		entriesBytes, err := dirReader.NextBatch()
+		entriesBytes, err := dirReader.NextBatch(0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -306,7 +306,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 	allEntries := []types.AgentDirEntry{}
 
 	for {
-		entriesBytes, err := dirReader.NextBatch()
+		entriesBytes, err := dirReader.NextBatch(0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -357,7 +357,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 	allEntries := []types.AgentDirEntry{}
 
 	for {
-		entriesBytes, err := dirReader.NextBatch()
+		entriesBytes, err := dirReader.NextBatch(0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
