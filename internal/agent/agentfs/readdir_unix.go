@@ -16,8 +16,8 @@ import (
 const (
 	// Larger pooled buffer to reduce getdents syscalls.
 	// Tuneable via env/constructor if needed.
-	defaultBufSize          = 256 * 1024 // 256 KiB
-	defaultTargetEncodedLen = 256 * 1024 // 256 KiB of encoded payload per batch
+	defaultBufSize          = 1024 * 1024 // 1 MiB
+	defaultTargetEncodedLen = 1024 * 1024 // 1 MiB of encoded payload per batch
 )
 
 // DirReaderUnix reads directory entries in batches.
