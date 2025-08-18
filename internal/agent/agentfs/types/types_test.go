@@ -195,25 +195,6 @@ func validateEncodeDecodeConcurrency(t *testing.T, original arpcdata.Encodable, 
 
 // deepCompare performs a deep comparison of two Encodable objects.
 func deepCompare(a, b arpcdata.Encodable) bool {
-	// Perform a type-specific comparison for known types.
-	switch objA := a.(type) {
-	case *ReadDirEntries:
-		objB, ok := b.(*ReadDirEntries)
-		if !ok {
-			return false
-		}
-		if len(*objA) != len(*objB) {
-			return false
-		}
-		for i := range *objA {
-			if (*objA)[i] != (*objB)[i] {
-				return false
-			}
-		}
-		return true
-	}
-
-	// Fallback: Compare the encoded byte slices.
 	encodedA, errA := a.Encode()
 	encodedB, errB := b.Encode()
 
