@@ -14,6 +14,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 // accessMsg represents one file (or directory) access event.
@@ -27,13 +28,15 @@ type accessMsg struct {
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
 	ctxFs, cancel := context.WithCancel(ctx)
 	fs := &ARPCFS{
-		basePath:   "/",
-		ctx:        ctxFs,
-		cancel:     cancel,
-		session:    session,
-		Job:        job,
-		Hostname:   hostname,
-		backupMode: backupMode,
+		basePath:          "/",
+		ctx:               ctxFs,
+		cancel:            cancel,
+		session:           session,
+		Job:               job,
+		Hostname:          hostname,
+		backupMode:        backupMode,
+		readDirAttrCache:  safemap.New[string, types.AgentFileInfo](),
+		readDirXAttrCache: safemap.New[string, types.AgentFileInfo](),
 	}
 
 	return fs
@@ -158,6 +161,16 @@ func (fs *ARPCFS) Attr(filename string) (types.AgentFileInfo, error) {
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
+	cached, ok := fs.readDirAttrCache.GetAndDel(filename)
+	if ok {
+		if fi.IsDir {
+			atomic.AddInt64(&fs.folderCount, 1)
+		} else {
+			atomic.AddInt64(&fs.fileCount, 1)
+		}
+		return cached, nil
+	}
+
 	req := types.StatReq{Path: filename}
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
 	if err != nil {
@@ -201,7 +214,13 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 		return types.AgentFileInfo{}, syscall.ENODATA
 	}
 
+	cached, hasCache := fs.readDirXAttrCache.GetAndDel(filename)
+
 	req := types.StatReq{Path: filename}
+	if hasCache {
+		req.AclOnly = true
+	}
+
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)
 	if err != nil {
 		if !strings.HasSuffix(req.Path, ".pxarexclude") {
@@ -222,6 +241,13 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 				Write()
 		}
 		return types.AgentFileInfo{}, syscall.ENODATA
+	}
+
+	if hasCache {
+		fi.CreationTime = cached.CreationTime
+		fi.LastWriteTime = cached.LastWriteTime
+		fi.LastAccessTime = cached.LastAccessTime
+		fi.FileAttributes = cached.FileAttributes
 	}
 
 	return fi, nil
