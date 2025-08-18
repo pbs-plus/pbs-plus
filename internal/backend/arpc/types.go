@@ -8,6 +8,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 // ARPCFS implements billy.Filesystem using aRPC calls
@@ -21,6 +22,9 @@ type ARPCFS struct {
 	basePath string
 
 	backupMode string
+
+	readDirAttrCache  *safemap.Map[string, types.AgentFileInfo]
+	readDirXAttrCache *safemap.Map[string, types.AgentFileInfo]
 
 	// Atomic counters for the number of unique file and folder accesses.
 	fileCount   int64

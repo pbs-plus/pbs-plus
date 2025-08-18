@@ -51,12 +51,16 @@ func (req *OpenFileReq) Decode(buf []byte) error {
 
 // StatReq represents a request to get file stats
 type StatReq struct {
-	Path string
+	Path    string
+	AclOnly bool
 }
 
 func (req *StatReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(req.Path))
+	enc := arpcdata.NewEncoderWithSize(len(req.Path) + 1)
 	if err := enc.WriteString(req.Path); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteBool(req.AclOnly); err != nil {
 		return nil, err
 	}
 	return enc.Bytes(), nil
@@ -72,6 +76,11 @@ func (req *StatReq) Decode(buf []byte) error {
 		return err
 	}
 	req.Path = path
+	aclOnly, err := dec.ReadBool()
+	if err != nil {
+		return err
+	}
+	req.AclOnly = aclOnly
 	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
