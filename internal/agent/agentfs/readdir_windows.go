@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"golang.org/x/sys/windows"
 )
 
 // 1 MiB reusable buffer size. Tunable based on directory size / network latency.
@@ -62,7 +63,7 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 
 // NextBatch retrieves the next batch of directory entries.
 // It returns the encoded batch bytes or os.ErrProcessDone when enumeration is finished.
-func (r *DirReaderNT) NextBatch() ([]byte, error) {
+func (r *DirReaderNT) NextBatch(blockSize uint64) ([]byte, error) {
 	if r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
@@ -113,10 +114,54 @@ func (r *DirReaderNT) NextBatch() ([]byte, error) {
 			name := string(utf16.Decode(fileNameSlice))
 
 			if name != "." && name != ".." {
-				mode := windowsAttributesToFileMode(entry.FileAttributes)
+				mode := windowsFileModeFromHandle(0, entry.FileAttributes)
+				isDir := (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
+				size := entry.EndOfFile
+
+				modTime := filetimeToTime(windows.Filetime{
+					LowDateTime:  uint32(uint64(entry.LastWriteTime) & 0xFFFFFFFF),
+					HighDateTime: uint32(uint64(entry.LastWriteTime) >> 32),
+				})
+
+				if blockSize == 0 {
+					blockSize = 4096
+				}
+
+				var blocks uint64
+				if !isDir {
+					alloc := entry.AllocationSize
+					if alloc < 0 {
+						alloc = 0
+					}
+					blocks = uint64((alloc + int64(blockSize) - 1) / int64(blockSize))
+				}
+
+				creationTime := filetimeToUnix(windows.Filetime{
+					LowDateTime:  uint32(uint64(entry.CreationTime) & 0xFFFFFFFF),
+					HighDateTime: uint32(uint64(entry.CreationTime) >> 32),
+				})
+				lastAccessTime := filetimeToUnix(windows.Filetime{
+					LowDateTime:  uint32(uint64(entry.LastAccessTime) & 0xFFFFFFFF),
+					HighDateTime: uint32(uint64(entry.LastAccessTime) >> 32),
+				})
+				lastWriteTime := filetimeToUnix(windows.Filetime{
+					LowDateTime:  uint32(uint64(entry.LastWriteTime) & 0xFFFFFFFF),
+					HighDateTime: uint32(uint64(entry.LastWriteTime) >> 32),
+				})
+
+				fileAttributes := parseFileAttributes(entry.FileAttributes)
+
 				entries = append(entries, types.AgentDirEntry{
-					Name: name,
-					Mode: mode,
+					Name:           name,
+					Mode:           mode,
+					IsDir:          isDir,
+					Size:           size,
+					ModTime:        modTime,
+					Blocks:         blocks,
+					CreationTime:   creationTime,
+					LastAccessTime: lastAccessTime,
+					LastWriteTime:  lastWriteTime,
+					FileAttributes: fileAttributes,
 				})
 			}
 		}

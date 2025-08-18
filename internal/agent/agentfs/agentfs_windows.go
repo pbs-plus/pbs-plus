@@ -255,26 +255,33 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	}
 	defer windows.CloseHandle(h)
 
-	var nfo fileNetworkOpenInformation
-	if err := ntQueryFileNetworkOpenInformation(h, &nfo); err != nil {
-		return arpc.Response{}, err
+	var creationTime int64
+	var lastAccessTime int64
+	var lastWriteTime int64
+	var fileAttributes map[string]bool
+
+	if !payload.AclOnly {
+		var nfo fileNetworkOpenInformation
+		if err := ntQueryFileNetworkOpenInformation(h, &nfo); err != nil {
+			return arpc.Response{}, err
+		}
+
+		creationTime = filetimeToUnix(windows.Filetime{
+			LowDateTime:  uint32(uint64(nfo.CreationTime) & 0xFFFFFFFF),
+			HighDateTime: uint32(uint64(nfo.CreationTime) >> 32),
+		})
+		lastAccessTime = filetimeToUnix(windows.Filetime{
+			LowDateTime:  uint32(uint64(nfo.LastAccessTime) & 0xFFFFFFFF),
+			HighDateTime: uint32(uint64(nfo.LastAccessTime) >> 32),
+		})
+		lastWriteTime = filetimeToUnix(windows.Filetime{
+			LowDateTime:  uint32(uint64(nfo.LastWriteTime) & 0xFFFFFFFF),
+			HighDateTime: uint32(uint64(nfo.LastWriteTime) >> 32),
+		})
+
+		fileAttributes = parseFileAttributes(nfo.FileAttributes)
+
 	}
-
-	creationTime := filetimeToUnix(windows.Filetime{
-		LowDateTime:  uint32(uint64(nfo.CreationTime) & 0xFFFFFFFF),
-		HighDateTime: uint32(uint64(nfo.CreationTime) >> 32),
-	})
-	lastAccessTime := filetimeToUnix(windows.Filetime{
-		LowDateTime:  uint32(uint64(nfo.LastAccessTime) & 0xFFFFFFFF),
-		HighDateTime: uint32(uint64(nfo.LastAccessTime) >> 32),
-	})
-	lastWriteTime := filetimeToUnix(windows.Filetime{
-		LowDateTime:  uint32(uint64(nfo.LastWriteTime) & 0xFFFFFFFF),
-		HighDateTime: uint32(uint64(nfo.LastWriteTime) >> 32),
-	})
-
-	fileAttributes := parseFileAttributes(nfo.FileAttributes)
-
 	owner, group, acls, err := GetWinACLsHandle(h)
 	if err != nil {
 		return arpc.Response{}, err
@@ -312,7 +319,7 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	fh.Lock()
 	defer fh.Unlock()
 
-	encodedBatch, err := fh.dirReader.NextBatch()
+	encodedBatch, err := fh.dirReader.NextBatch(s.statFs.Bsize)
 	if err != nil {
 		if !errors.Is(err, os.ErrProcessDone) {
 			syslog.L.Error(err).WithMessage("error reading batch").Write()

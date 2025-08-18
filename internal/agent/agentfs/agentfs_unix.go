@@ -38,7 +38,7 @@ type FileHandle struct {
 var readBufPool = sync.Pool{
 	New: func() interface{} {
 		// Default chunk; many readAt requests are small. Adjust as needed.
-		b := make([]byte, 256*1024)
+		b := make([]byte, 512*1024)
 		return &b
 	},
 }
