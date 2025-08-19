@@ -4,15 +4,17 @@ package arpcfs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/allegro/bigcache/v3"
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
@@ -24,58 +26,24 @@ type accessMsg struct {
 }
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
-	attrCacheConfig := bigcache.Config{
-		// number of shards (must be a power of 2)
-		Shards: 2048,
-
-		// time after which entry can be evicted
-		LifeWindow: 10 * time.Minute,
-
-		// Interval between removing expired entries (clean up).
-		// If set to <= 0 then no action is performed.
-		// Setting to < 1 second is counterproductive — bigcache has a one second resolution.
-		CleanWindow: 10 * time.Second,
-
-		// rps * lifeWindow, used only in initial memory allocation
-		MaxEntriesInWindow: job.MaxDirEntries / 2,
-
-		// max entry size in bytes, used only in initial memory allocation
-		MaxEntrySize: 256,
-
-		// prints information about additional memory allocation
-		Verbose:            false,
-		HardMaxCacheSize:   (job.MaxDirEntries * 512) / (1024 * 1024),
-		OnRemove:           nil,
-		OnRemoveWithReason: nil,
-	}
-
 	ctxFs, cancel := context.WithCancel(ctx)
 
-	readDirAttrCache, err := bigcache.New(ctxFs, attrCacheConfig)
-	if err != nil {
-		syslog.L.Error(err).WithField("hostname", hostname).WithField("job", job.ID).Write()
-		cancel()
-		return nil
-	}
-
-	readDirXAttrCache, err := bigcache.New(ctxFs, attrCacheConfig)
-	if err != nil {
-		syslog.L.Error(err).WithField("hostname", hostname).WithField("job", job.ID).Write()
-		cancel()
-		return nil
-	}
-
 	fs := &ARPCFS{
-		basePath:          "/",
-		ctx:               ctxFs,
-		cancel:            cancel,
-		session:           session,
-		Job:               job,
-		Hostname:          hostname,
-		backupMode:        backupMode,
-		readDirAttrCache:  readDirAttrCache,
-		readDirXAttrCache: readDirXAttrCache,
+		basePath:   "/",
+		ctx:        ctxFs,
+		cancel:     cancel,
+		session:    session,
+		Job:        job,
+		Hostname:   hostname,
+		backupMode: backupMode,
+		memcache:   memcache.New(fmt.Sprintf("unix://%s", constants.MemcachedSocketPath)),
 	}
+
+	go func() {
+		<-ctxFs.Done()
+		fs.memcache.DeleteAll()
+		fs.memcache.Close()
+	}()
 
 	return fs
 }
@@ -202,7 +170,8 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 
 	req := types.StatReq{Path: filename}
 
-	raw, err := fs.readDirAttrCache.Get(filename)
+	var raw []byte
+	cached, err := fs.memcache.Get("attr:" + filename)
 	if err == nil {
 		atomic.AddInt64(&fs.statCacheHits, 1)
 		if fi.IsDir {
@@ -211,8 +180,10 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 			atomic.AddInt64(&fs.fileCount, 1)
 		}
 		if !isLookup {
-			fs.readDirAttrCache.Delete(filename)
+			fs.memcache.Delete("attr:" + filename)
 		}
+		raw = cached.Value
+
 	} else {
 		raw, err = fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
 		if err != nil {
@@ -260,11 +231,11 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	var fiCached types.AgentFileInfo
 	req := types.StatReq{Path: filename}
 
-	rawCached, err := fs.readDirXAttrCache.Get(filename)
+	rawCached, err := fs.memcache.Get("xattr:" + filename)
 	if err == nil {
 		req.AclOnly = true
-		_ = fiCached.Decode(rawCached)
-		fs.readDirXAttrCache.Delete(filename)
+		_ = fiCached.Decode(rawCached.Value)
+		fs.memcache.Delete("xattr:" + filename)
 	}
 
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)

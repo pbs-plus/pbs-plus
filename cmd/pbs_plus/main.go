@@ -21,6 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/auth/server"
 	"github.com/pbs-plus/pbs-plus/internal/auth/token"
 	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
+	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/proxy"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/agents"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/arpc"
@@ -350,6 +351,17 @@ func main() {
 			}
 		}
 	}()
+
+	stopMemLocal, err := memlocal.StartMemcachedOnUnixSocket(mainCtx, memlocal.MemcachedConfig{
+		SocketPath:     constants.MemcachedSocketPath,
+		MemoryMB:       0,
+		MaxConnections: 0,
+		Threads:        -1,
+	})
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to run memcached server").Write()
+	}
+	defer stopMemLocal()
 
 	backupManager := backup.NewManager(mainCtx)
 
