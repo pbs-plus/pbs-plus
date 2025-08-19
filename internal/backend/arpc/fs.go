@@ -44,7 +44,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 
 		// prints information about additional memory allocation
 		Verbose:            false,
-		HardMaxCacheSize:   1024,
+		HardMaxCacheSize:   (job.MaxDirEntries * 512) / (1024 * 1024),
 		OnRemove:           nil,
 		OnRemoveWithReason: nil,
 	}
