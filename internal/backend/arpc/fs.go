@@ -26,7 +26,7 @@ type accessMsg struct {
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
 	attrCacheConfig := bigcache.Config{
 		// number of shards (must be a power of 2)
-		Shards: 4096,
+		Shards: 2048,
 
 		// time after which entry can be evicted
 		LifeWindow: 10 * time.Minute,
@@ -44,7 +44,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 
 		// prints information about additional memory allocation
 		Verbose:            false,
-		HardMaxCacheSize:   8192,
+		HardMaxCacheSize:   1024,
 		OnRemove:           nil,
 		OnRemoveWithReason: nil,
 	}
