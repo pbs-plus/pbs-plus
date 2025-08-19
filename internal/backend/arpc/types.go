@@ -4,11 +4,11 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/allegro/bigcache/v3"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 // ARPCFS implements billy.Filesystem using aRPC calls
@@ -23,8 +23,8 @@ type ARPCFS struct {
 
 	backupMode string
 
-	readDirAttrCache  *safemap.Map[string, types.AgentFileInfo]
-	readDirXAttrCache *safemap.Map[string, types.AgentFileInfo]
+	readDirAttrCache  *bigcache.BigCache
+	readDirXAttrCache *bigcache.BigCache
 
 	// Atomic counters for the number of unique file and folder accesses.
 	fileCount   int64
