@@ -37,10 +37,10 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 		CleanWindow: 1 * time.Minute,
 
 		// rps * lifeWindow, used only in initial memory allocation
-		MaxEntriesInWindow: job.MaxDirEntries,
+		MaxEntriesInWindow: job.MaxDirEntries / 2,
 
 		// max entry size in bytes, used only in initial memory allocation
-		MaxEntrySize: 512,
+		MaxEntrySize: 256,
 
 		// prints information about additional memory allocation
 		Verbose:            false,
