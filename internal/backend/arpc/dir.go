@@ -141,7 +141,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		modeBits = fuse.S_IFREG
 	}
 
-	if curr.FileAttributes != nil {
+	if !curr.ModTime.IsZero() {
 		fullPath := filepath.Join(s.path, curr.Name)
 		currAttr := types.AgentFileInfo{
 			Name:    curr.Name,
