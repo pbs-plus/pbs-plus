@@ -151,7 +151,7 @@ func (r *DirReaderNT) NextBatch(blockSize uint64) ([]byte, error) {
 
 				fileAttributes := parseFileAttributes(entry.FileAttributes)
 
-				entries = append(entries, types.AgentDirEntry{
+				entries = append(entries, types.AgentFileInfo{
 					Name:           name,
 					Mode:           mode,
 					IsDir:          isDir,
