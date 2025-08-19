@@ -276,7 +276,7 @@ func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 			mode = uint32(os.ModeDir | 0555)
 		}
 
-		entries = append(entries, agentTypes.AgentDirEntry{
+		entries = append(entries, agentTypes.AgentFileInfo{
 			Name: name,
 			Mode: mode,
 		})

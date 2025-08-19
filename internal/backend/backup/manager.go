@@ -7,206 +7,284 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
-	"github.com/puzpuzpuz/xsync/v3"
 )
 
-type Manager struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	jobs          chan *BackupOperation
-	mu            sync.Mutex
-	executeMu     sync.Mutex
-	locks         *xsync.MapOf[string, *sync.Mutex]
-	jobCancels    *xsync.MapOf[string, context.CancelFunc]
-	cancelledJobs *xsync.MapOf[string, struct{}]
-
-	runningJobs atomic.Int32
-
-	maxConcurrentJobs int
-	semaphore         chan struct{}
+// Unbounded queue for *BackupOperation using mutex + notify channel.
+type opQueue struct {
+	mu     sync.Mutex
+	buf    []*BackupOperation
+	head   int
+	notify chan struct{} // broadcast-ish via try-send; receivers loop
 }
 
-func NewManager(ctx context.Context, size int) *Manager {
-	newCtx, cancel := context.WithCancel(ctx)
-	jq := &Manager{
-		ctx:               newCtx,
-		cancel:            cancel,
-		jobs:              make(chan *BackupOperation, size),
-		mu:                sync.Mutex{},
-		locks:             xsync.NewMapOf[string, *sync.Mutex](),
-		jobCancels:        xsync.NewMapOf[string, context.CancelFunc](),
-		cancelledJobs:     xsync.NewMapOf[string, struct{}](),
-		maxConcurrentJobs: utils.MaxConcurrentClients,
-		semaphore:         make(chan struct{}, utils.MaxConcurrentClients),
+func newOpQueue() *opQueue {
+	return &opQueue{
+		buf:    make([]*BackupOperation, 0, 64),
+		notify: make(chan struct{}, 1),
 	}
-
-	go jq.worker()
-
-	return jq
 }
 
-func (jq *Manager) Enqueue(job *BackupOperation) {
-	ctx, cancel := context.WithCancel(jq.ctx)
-	job.ctx = ctx
-	job.cancel = cancel
-	jq.jobCancels.Store(job.job.ID, cancel)
-
-	lock, _ := jq.locks.LoadOrStore(job.job.ID, &sync.Mutex{})
-
-	if locked := lock.TryLock(); !locked {
-		jq.CreateError(job, ErrOneInstance)
-		return
+func (q *opQueue) push(op *BackupOperation) {
+	q.mu.Lock()
+	q.buf = append(q.buf, op)
+	q.mu.Unlock()
+	// Try to notify a waiter; drop if already signaled
+	select {
+	case q.notify <- struct{}{}:
+	default:
 	}
+}
 
-	job.lock = lock
+func (q *opQueue) pop(ctx context.Context) (*BackupOperation, bool) {
+	for {
+		q.mu.Lock()
+		if q.head < len(q.buf) {
+			op := q.buf[q.head]
+			q.head++
+			// occasional compaction
+			if q.head > 1024 && q.head*2 >= len(q.buf) {
+				q.buf = append([]*BackupOperation(nil), q.buf[q.head:]...)
+				q.head = 0
+			}
+			q.mu.Unlock()
+			return op, true
+		}
+		q.mu.Unlock()
 
-	queueTask, err := proxmox.GenerateQueuedTask(job.job, job.web)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
-	} else {
-		if err := updateJobStatus(false, 0, job.job, queueTask.Task, job.storeInstance); err != nil {
-			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
+		// Wait for either a push notification or context cancellation
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-q.notify:
+			// loop to recheck buffer under lock
 		}
 	}
+}
 
-	job.queueTask = &queueTask
+type Manager struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 
-	jq.mu.Lock()
-	defer jq.mu.Unlock()
+	// Unbounded admission queue
+	admitQ *opQueue
 
-	if jq.ctx.Err() != nil {
-		job.cancel()
-		jq.jobCancels.Delete(job.job.ID)
-		jq.CreateError(job, fmt.Errorf("Attempt to enqueue on closed queue"))
-		return
+	// Bounded inner run queue: capacity = MaxConcurrentClients
+	runQ chan *BackupOperation
+
+	// Only one Execute start at a time
+	executeMu sync.Mutex
+
+	// Limit concurrent Execute runs
+	sem chan struct{}
+
+	// Cancel registry by job ID
+	cancels sync.Map // map[string]context.CancelFunc
+
+	// Set of job IDs that are admitted (in runQ or running)
+	mu      sync.Mutex
+	present map[string]struct{}
+}
+
+func NewManager(ctx context.Context) *Manager {
+	newCtx, cancel := context.WithCancel(ctx)
+	cap := utils.MaxConcurrentClients
+
+	m := &Manager{
+		ctx:     newCtx,
+		cancel:  cancel,
+		admitQ:  newOpQueue(),
+		runQ:    make(chan *BackupOperation, cap),
+		sem:     make(chan struct{}, cap),
+		present: make(map[string]struct{}),
 	}
 
+	go m.admitter()
+	go m.runner()
+
+	return m
+}
+
+// Enqueue: push to unbounded admission queue; rejects only if closed.
+func (m *Manager) Enqueue(op *BackupOperation) {
 	select {
-	case jq.jobs <- job:
+	case <-m.ctx.Done():
+		m.CreateError(op, fmt.Errorf("attempt to enqueue on closed queue"))
+		return
 	default:
-		job.cancel()
-		jq.jobCancels.Delete(job.job.ID)
-		jq.CreateError(job, fmt.Errorf("Queue is full. Job rejected."))
-		job.lock.Unlock()
+	}
+	m.admitQ.push(op)
+}
+
+func (m *Manager) admitter() {
+	for {
+		op, ok := m.admitQ.pop(m.ctx)
+		if !ok {
+			return
+		}
+
+		// Enforce single instance per job ID
+		m.mu.Lock()
+		if _, dup := m.present[op.job.ID]; dup {
+			m.mu.Unlock()
+			m.CreateError(op, ErrOneInstance)
+			continue
+		}
+		m.present[op.job.ID] = struct{}{}
+		m.mu.Unlock()
+
+		// Prepare per-job context/cancel
+		ctx, cancel := context.WithCancel(m.ctx)
+		op.ctx = ctx
+		op.cancel = cancel
+		m.cancels.Store(op.job.ID, cancel)
+
+		// Best-effort queue task + status
+		queueTask, err := proxmox.GenerateQueuedTask(op.job, op.web)
+		if err != nil {
+			syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
+		} else {
+			if err := updateJobStatus(false, 0, op.job, queueTask.Task, op.storeInstance); err != nil {
+				syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
+			}
+		}
+		op.queueTask = &queueTask
+
+		// Forward to bounded run queue (size == MaxConcurrentClients)
+		select {
+		case <-m.ctx.Done():
+			cancel()
+			m.cancels.Delete(op.job.ID)
+			m.dropPresence(op.job.ID)
+			m.CreateError(op, fmt.Errorf("manager closed before scheduling"))
+		case m.runQ <- op:
+		}
 	}
 }
 
-func (jq *Manager) worker() {
+func (m *Manager) runner() {
 	for {
 		select {
-		case <-jq.ctx.Done():
+		case <-m.ctx.Done():
 			return
-		case op := <-jq.jobs:
-			// If user canceled while it was still queued:
-			if _, canceled := jq.cancelledJobs.Load(op.job.ID); canceled {
-				op.queueTask.Close()
-				op.lock.Unlock()
-				jq.cancelledJobs.Delete(op.job.ID)
-				jq.jobCancels.Delete(op.job.ID)
-				continue
-			}
-
-			go func(opToRun *BackupOperation) {
-				err := opToRun.PreScript(opToRun.ctx)
-				if err != nil {
-					if errors.Is(err, context.Canceled) {
-						jq.CreateError(opToRun, errors.New("task aborted"))
-						return
-					}
-					syslog.L.Error(err).WithJob(opToRun.job.ID).WithMessage("error occurred during prescript execution, proceeding to backup operation").Write()
-				}
-
-				select {
-				case <-jq.ctx.Done():
-					opToRun.lock.Unlock()
-					return
-				case jq.semaphore <- struct{}{}:
-				}
-
-				defer func() {
-					<-jq.semaphore
-					opToRun.queueTask.Close()
-					jq.runningJobs.Add(-1)
-					jq.jobCancels.Delete(opToRun.job.ID)
-					jq.cancelledJobs.Delete(opToRun.job.ID)
-				}()
-
-				jq.runningJobs.Add(1)
-
-				// Acquire lock for sequential execution
-				jq.executeMu.Lock()
-				err = opToRun.Execute(opToRun.ctx)
-				// Release lock immediately after Execute finishes
-				jq.executeMu.Unlock()
-
-				if err != nil {
-					if errors.Is(err, context.Canceled) {
-						syslog.L.Info().
-							WithJob(opToRun.job.ID).
-							WithMessage("job canceled by user").
-							Write()
-					} else {
-						jq.CreateError(opToRun, err)
-					}
-				} else {
-					opToRun.Wait()
-				}
-			}(op)
+		case op := <-m.runQ:
+			go m.runOne(op)
 		}
 	}
 }
 
-func (jq *Manager) StopJob(jobID string) error {
-	// mark it canceled (so queued ones are dropped)
-	jq.cancelledJobs.Store(jobID, struct{}{})
+func (m *Manager) runOne(op *BackupOperation) {
+	// If PreScript must be serialized too, move under executeMu.
+	if err := op.PreScript(op.ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			m.CreateError(op, errors.New("task aborted"))
+			m.cleanup(op)
+			return
+		}
+		syslog.L.Error(err).
+			WithJob(op.job.ID).
+			WithMessage("error in prescript; proceeding to Execute").
+			Write()
+	}
 
-	cancelFunc, ok := jq.jobCancels.Load(jobID)
+	// Acquire concurrency slot or abort
+	select {
+	case m.sem <- struct{}{}:
+	case <-m.ctx.Done():
+		m.cleanup(op)
+		return
+	case <-op.ctx.Done():
+		m.cleanup(op)
+		return
+	}
+	defer func() {
+		<-m.sem
+		m.cleanup(op)
+	}()
+
+	// Only one Execute at a time
+	m.executeMu.Lock()
+	err := op.Execute(op.ctx)
+	m.executeMu.Unlock()
+
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			syslog.L.Info().
+				WithJob(op.job.ID).
+				WithMessage("job canceled by user").
+				Write()
+			return
+		}
+		m.CreateError(op, err)
+		return
+	}
+
+	op.Wait()
+}
+
+func (m *Manager) StopJob(jobID string) error {
+	v, ok := m.cancels.Load(jobID)
 	if !ok {
 		return fmt.Errorf("no such job: %s", jobID)
 	}
-	cancelFunc()
+	cancel := v.(context.CancelFunc)
+	cancel()
 	return nil
 }
 
-func (jq *Manager) CreateError(op *BackupOperation, err error) {
+func (m *Manager) CreateError(op *BackupOperation, err error) {
 	syslog.L.Error(err).WithField("jobId", op.job.ID).Write()
 
 	if !errors.Is(err, ErrOneInstance) {
-		if task, err := proxmox.GenerateTaskErrorFile(op.job, err, []string{"Error handling from a scheduled job run request", "Job ID: " + op.job.ID, "Source Mode: " + op.job.SourceMode}); err != nil {
-			syslog.L.Error(err).WithField("jobId", op.job.ID).Write()
+		if task, terr := proxmox.GenerateTaskErrorFile(
+			op.job,
+			err,
+			[]string{
+				"Error handling from a scheduled job run request",
+				"Job ID: " + op.job.ID,
+				"Source Mode: " + op.job.SourceMode,
+			},
+		); terr != nil {
+			syslog.L.Error(terr).WithField("jobId", op.job.ID).Write()
 		} else {
-			// Update job status
-			latestJob, err := op.storeInstance.Database.GetJob(op.job.ID)
-			if err != nil {
-				latestJob = op.job
+			latest, gerr := op.storeInstance.Database.GetJob(op.job.ID)
+			if gerr != nil {
+				latest = op.job
 			}
-
-			latestJob.LastRunUpid = task.UPID
-			latestJob.LastRunState = task.Status
-			latestJob.LastRunEndtime = task.EndTime
-
-			err = op.storeInstance.Database.UpdateJob(nil, latestJob)
-			if err != nil {
-				syslog.L.Error(err).WithField("jobId", latestJob.ID).WithField("upid", task.UPID).Write()
+			latest.LastRunUpid = task.UPID
+			latest.LastRunState = task.Status
+			latest.LastRunEndtime = task.EndTime
+			if uerr := op.storeInstance.Database.UpdateJob(nil, latest); uerr != nil {
+				syslog.L.Error(uerr).
+					WithField("jobId", latest.ID).
+					WithField("upid", task.UPID).
+					Write()
 			}
 		}
-		if err := system.SetRetrySchedule(op.job, op.extraExclusions); err != nil {
-			syslog.L.Error(err).WithField("jobId", op.job.ID).Write()
+		if rerr := system.SetRetrySchedule(op.job, op.extraExclusions); rerr != nil {
+			syslog.L.Error(rerr).WithField("jobId", op.job.ID).Write()
 		}
 	}
 }
 
-// Close waits for the worker to finish and closes the job queue.
-func (jq *Manager) Close() {
-	jq.mu.Lock()
-	defer jq.mu.Unlock()
+func (m *Manager) cleanup(op *BackupOperation) {
+	if op.queueTask != nil {
+		op.queueTask.Close()
+	}
+	m.cancels.Delete(op.job.ID)
+	m.dropPresence(op.job.ID)
+}
 
-	jq.locks.Clear()
-	jq.cancel()
+func (m *Manager) dropPresence(jobID string) {
+	m.mu.Lock()
+	delete(m.present, jobID)
+	m.mu.Unlock()
+}
+
+func (m *Manager) Close() {
+	m.cancel()
 }

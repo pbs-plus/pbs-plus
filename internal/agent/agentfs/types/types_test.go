@@ -32,13 +32,13 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 		})
 	})
 
-	t.Run("AgentDirEntry", func(t *testing.T) {
-		original := &AgentDirEntry{
+	t.Run("AgentFileInfo", func(t *testing.T) {
+		original := &AgentFileInfo{
 			Name: "subdir",
 			Mode: 0755,
 		}
 		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
-			return &AgentDirEntry{}
+			return &AgentFileInfo{}
 		})
 	})
 
