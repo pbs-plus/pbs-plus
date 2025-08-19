@@ -255,6 +255,7 @@ nfpms:
       - proxmox-backup-server (>= 3.2)
       - proxmox-backup-client (>= 3.2.5)
       - fuse3
+      - memcached
     contents:
       - src: ./build/package/server/pbs-plus.service
         dst: /lib/systemd/system/pbs-plus.service
