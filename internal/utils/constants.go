@@ -16,7 +16,7 @@ var MaxConcurrentClients = 64
 var MaxReceiveBuffer = MaxStreamBuffer * MaxConcurrentClients
 
 func init() {
-	sysMem, err := getSysMem()
+	sysMem, err := GetSysMem()
 	if err != nil {
 		return
 	}
@@ -32,18 +32,18 @@ func init() {
 		ratio /= 2
 	}
 
-	MaxConcurrentClients = max(MaxReceiveBuffer/MaxStreamBuffer, 128)
+	MaxConcurrentClients = (int(sysMem.Available) / (1024 * 1024 * 1024)) * 2
 
 	log.Printf("initialized aRPC buffer configurations with MaxReceiveBuffer: %d, MaxStreamBuffer: %d, MaxConcurrentClients: %d", MaxReceiveBuffer, MaxStreamBuffer, MaxConcurrentClients)
 }
 
-type sysMem struct {
+type SysMem struct {
 	Total     uint64 // Total system memory in bytes
 	Available uint64 // Available memory in bytes
 }
 
-func getSysMem() (*sysMem, error) {
-	return &sysMem{
+func GetSysMem() (*SysMem, error) {
+	return &SysMem{
 		Total:     memory.TotalMemory(),
 		Available: memory.FreeMemory(),
 	}, nil
