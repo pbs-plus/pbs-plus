@@ -34,7 +34,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 		// Interval between removing expired entries (clean up).
 		// If set to <= 0 then no action is performed.
 		// Setting to < 1 second is counterproductive — bigcache has a one second resolution.
-		CleanWindow: 1 * time.Minute,
+		CleanWindow: 10 * time.Second,
 
 		// rps * lifeWindow, used only in initial memory allocation
 		MaxEntriesInWindow: job.MaxDirEntries / 2,
