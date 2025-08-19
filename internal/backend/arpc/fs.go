@@ -36,7 +36,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 		Job:        job,
 		Hostname:   hostname,
 		backupMode: backupMode,
-		memcache:   memcache.New(fmt.Sprintf("unix://%s", constants.MemcachedSocketPath)),
+		memcache:   memcache.New(constants.MemcachedSocketPath),
 	}
 
 	go func() {
