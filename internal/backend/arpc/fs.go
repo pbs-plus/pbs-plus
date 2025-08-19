@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/cespare/xxhash/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/memlocal"
@@ -187,10 +186,8 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 
 	req := types.StatReq{Path: filename}
 
-	hashkey := xxhash.Sum64String(filename)
-
 	var raw []byte
-	cached, err := fs.memcache.Get(fmt.Sprintf("attr:%d", hashkey))
+	cached, err := fs.memcache.Get("attr:" + filename)
 	if err == nil {
 		atomic.AddInt64(&fs.statCacheHits, 1)
 		if fi.IsDir {
@@ -199,13 +196,11 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 			atomic.AddInt64(&fs.fileCount, 1)
 		}
 		if !isLookup {
-			fs.memcache.Delete(fmt.Sprintf("attr:%d", hashkey))
+			fs.memcache.Delete("attr:" + filename)
 		}
 		raw = cached.Value
 
 	} else {
-		syslog.L.Error(err).WithField("filename", filename).Write()
-
 		raw, err = fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
 		if err != nil {
 			if !strings.HasSuffix(req.Path, ".pxarexclude") {
@@ -252,15 +247,11 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	var fiCached types.AgentFileInfo
 	req := types.StatReq{Path: filename}
 
-	hashkey := xxhash.Sum64String(filename)
-
-	rawCached, err := fs.memcache.Get(fmt.Sprintf("xattr:%d", hashkey))
+	rawCached, err := fs.memcache.Get("xattr:" + filename)
 	if err == nil {
 		req.AclOnly = true
 		_ = fiCached.Decode(rawCached.Value)
-		fs.memcache.Delete(fmt.Sprintf("xattr:%d", hashkey))
-	} else {
-		syslog.L.Error(err).WithField("filename", filename).Write()
+		fs.memcache.Delete("xattr:" + filename)
 	}
 
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)

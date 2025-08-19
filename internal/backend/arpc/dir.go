@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/cespare/xxhash/v2"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -152,14 +151,9 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 			IsDir:   curr.IsDir,
 		}
 
-		hashkey := xxhash.Sum64String(fullPath)
-
 		attrBytes, err := currAttr.Encode()
 		if err == nil {
-			err = s.fs.memcache.Set(&memcache.Item{Key: fmt.Sprintf("attr:%d", hashkey), Value: attrBytes, Expiration: 0})
-			if err != nil {
-				syslog.L.Error(err).WithField("path", fullPath).Write()
-			}
+			_ = s.fs.memcache.Set(&memcache.Item{Key: "attr:" + fullPath, Value: attrBytes, Expiration: 0})
 		}
 
 		currXAttr := types.AgentFileInfo{
@@ -171,10 +165,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		xattrBytes, err := currXAttr.Encode()
 		if err == nil {
-			err = s.fs.memcache.Set(&memcache.Item{Key: fmt.Sprintf("xattr:%d", hashkey), Value: xattrBytes, Expiration: 0})
-			if err != nil {
-				syslog.L.Error(err).WithField("path", fullPath).Write()
-			}
+			_ = s.fs.memcache.Set(&memcache.Item{Key: "xattr:" + fullPath, Value: xattrBytes, Expiration: 0})
 		}
 	}
 
