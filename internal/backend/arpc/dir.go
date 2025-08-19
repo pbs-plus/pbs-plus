@@ -31,7 +31,7 @@ type DirStream struct {
 
 var bufPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 1024*1024+64)
+		return make([]byte, 2*1024*1024+64)
 	},
 }
 
@@ -141,8 +141,8 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		modeBits = fuse.S_IFREG
 	}
 
+	fullPath := filepath.Join(s.path, curr.Name)
 	if !curr.ModTime.IsZero() {
-		fullPath := filepath.Join(s.path, curr.Name)
 		currAttr := types.AgentFileInfo{
 			Name:    curr.Name,
 			Size:    curr.Size,
@@ -155,7 +155,9 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		if err == nil {
 			_ = s.fs.memcache.Set(&memcache.Item{Key: "attr:" + fullPath, Value: attrBytes, Expiration: 0})
 		}
+	}
 
+	if curr.FileAttributes != nil {
 		currXAttr := types.AgentFileInfo{
 			CreationTime:   curr.CreationTime,
 			LastAccessTime: curr.LastAccessTime,
