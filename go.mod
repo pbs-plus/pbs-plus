@@ -6,6 +6,7 @@ require (
 	github.com/KimMachineGun/automemlimit v0.7.4
 	github.com/billgraziano/dpapi v0.5.0
 	github.com/bradfitz/gomemcache v0.0.0-20250403215159-8d39553ac7cf
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/containers/winquit v1.1.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gobwas/glob v0.2.3

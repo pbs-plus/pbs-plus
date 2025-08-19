@@ -352,17 +352,6 @@ func main() {
 		}
 	}()
 
-	stopMemLocal, err := memlocal.StartMemcachedOnUnixSocket(mainCtx, memlocal.MemcachedConfig{
-		SocketPath:     constants.MemcachedSocketPath,
-		MemoryMB:       0,
-		MaxConnections: 0,
-		Threads:        -1,
-	})
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to run memcached server").Write()
-	}
-	defer stopMemLocal()
-
 	backupManager := backup.NewManager(mainCtx)
 
 	go func() {
