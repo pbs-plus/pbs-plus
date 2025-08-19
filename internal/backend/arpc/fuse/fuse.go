@@ -149,7 +149,6 @@ func (n *Node) getPath() string {
 var _ = (fs.NodeGetattrer)((*Node)(nil))
 var _ = (fs.NodeListxattrer)((*Node)(nil))
 var _ = (fs.NodeGetxattrer)((*Node)(nil))
-var _ = (fs.NodeLookuper)((*Node)(nil))
 var _ = (fs.NodeReaddirer)((*Node)(nil))
 var _ = (fs.NodeOpener)((*Node)(nil))
 var _ = (fs.NodeStatfser)((*Node)(nil))
@@ -346,43 +345,6 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 	// Copy the extended attribute list into dest.
 	copy(dest, list)
 	return length, 0
-}
-
-// Lookup implements NodeLookuper
-func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	childNode := nodePool.Get().(*Node)
-	childNode.fs = n.fs
-	childNode.parent = n
-	childNode.name = name
-	childNode.fullPathCache = ""
-
-	path := childNode.getPath()
-	fi, err := childNode.fs.Attr(path, true)
-	if err != nil {
-		return nil, fs.ToErrno(err)
-	}
-
-	mode := fi.Mode
-	if fi.IsDir {
-		mode |= syscall.S_IFDIR
-	} else if os.FileMode(fi.Mode)&os.ModeSymlink != 0 {
-		mode |= syscall.S_IFLNK
-	} else {
-		mode |= syscall.S_IFREG
-	}
-
-	stable := fs.StableAttr{
-		Mode: mode,
-	}
-
-	child := n.NewInode(ctx, childNode, stable)
-
-	out.Mode = mode
-	out.Size = uint64(fi.Size)
-	mtime := fi.ModTime
-	out.SetTimes(nil, &mtime, nil)
-
-	return child, 0
 }
 
 // Readdir implements NodeReaddirer
