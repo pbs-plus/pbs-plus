@@ -185,6 +185,8 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 		raw = cached.Value
 
 	} else {
+		syslog.L.Error(err).WithField("filename", filename).Write()
+
 		raw, err = fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
 		if err != nil {
 			if !strings.HasSuffix(req.Path, ".pxarexclude") {
@@ -236,6 +238,8 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 		req.AclOnly = true
 		_ = fiCached.Decode(rawCached.Value)
 		fs.memcache.Delete("xattr:" + filename)
+	} else {
+		syslog.L.Error(err).WithField("filename", filename).Write()
 	}
 
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)

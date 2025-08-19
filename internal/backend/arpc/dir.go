@@ -153,7 +153,10 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		attrBytes, err := currAttr.Encode()
 		if err == nil {
-			s.fs.memcache.Set(&memcache.Item{Key: "attr:" + fullPath, Value: attrBytes, Expiration: 0})
+			err = s.fs.memcache.Set(&memcache.Item{Key: "attr:" + fullPath, Value: attrBytes, Expiration: 0})
+			if err != nil {
+				syslog.L.Error(err).WithField("path", fullPath).Write()
+			}
 		}
 
 		currXAttr := types.AgentFileInfo{
@@ -165,7 +168,10 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		xattrBytes, err := currXAttr.Encode()
 		if err == nil {
-			s.fs.memcache.Set(&memcache.Item{Key: "xattr:" + fullPath, Value: xattrBytes, Expiration: 0})
+			err = s.fs.memcache.Set(&memcache.Item{Key: "xattr:" + fullPath, Value: xattrBytes, Expiration: 0})
+			if err != nil {
+				syslog.L.Error(err).WithField("path", fullPath).Write()
+			}
 		}
 	}
 
