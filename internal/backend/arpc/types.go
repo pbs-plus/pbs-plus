@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/allegro/bigcache/v3"
+	"github.com/bradfitz/gomemcache/memcache"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -23,8 +23,7 @@ type ARPCFS struct {
 
 	backupMode string
 
-	readDirAttrCache  *bigcache.BigCache
-	readDirXAttrCache *bigcache.BigCache
+	memcache *memcache.Client
 
 	// Atomic counters for the number of unique file and folder accesses.
 	fileCount   int64
