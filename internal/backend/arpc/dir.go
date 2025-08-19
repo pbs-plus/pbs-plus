@@ -31,7 +31,7 @@ type DirStream struct {
 
 var bufPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 1024*1024+64)
+		return make([]byte, 2*1024*1024+64)
 	},
 }
 
