@@ -4,7 +4,6 @@ package arpcfs
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 	"sync/atomic"
