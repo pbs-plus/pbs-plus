@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -152,7 +153,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		attrBytes, err := currAttr.Encode()
 		if err == nil {
-			s.fs.readDirAttrCache.Set(fullPath, attrBytes)
+			s.fs.memcache.Set(&memcache.Item{Key: "attr:" + fullPath, Value: attrBytes, Expiration: 0})
 		}
 
 		currXAttr := types.AgentFileInfo{
@@ -164,7 +165,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		xattrBytes, err := currXAttr.Encode()
 		if err == nil {
-			s.fs.readDirXAttrCache.Set(fullPath, xattrBytes)
+			s.fs.memcache.Set(&memcache.Item{Key: "xattr:" + fullPath, Value: xattrBytes, Expiration: 0})
 		}
 	}
 
