@@ -82,6 +82,7 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 		"-a", "0700",
 		// Disable TCP to keep it Unix-socket only.
 		"-p", "0",
+		"-u", "root",
 	}
 
 	sysMem, err := utils.GetSysMem()
