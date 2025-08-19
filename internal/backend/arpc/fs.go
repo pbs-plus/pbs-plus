@@ -190,16 +190,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	cached, err := fs.memcache.Get("attr:" + filename)
 	if err == nil {
 		atomic.AddInt64(&fs.statCacheHits, 1)
-		if fi.IsDir {
-			atomic.AddInt64(&fs.folderCount, 1)
-		} else {
-			atomic.AddInt64(&fs.fileCount, 1)
-		}
-		if !isLookup {
-			fs.memcache.Delete("attr:" + filename)
-		}
 		raw = cached.Value
-
 	} else {
 		raw, err = fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
 		if err != nil {
@@ -210,6 +201,9 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 					Write()
 			}
 			return types.AgentFileInfo{}, syscall.ENOENT
+		}
+		if isLookup {
+			_ = fs.memcache.Set(&memcache.Item{Key: "attr:" + filename, Value: raw, Expiration: 0})
 		}
 	}
 
@@ -224,10 +218,13 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
-	if fi.IsDir {
-		atomic.AddInt64(&fs.folderCount, 1)
-	} else {
-		atomic.AddInt64(&fs.fileCount, 1)
+	if !isLookup {
+		if fi.IsDir {
+			atomic.AddInt64(&fs.folderCount, 1)
+		} else {
+			fs.memcache.Delete("attr:" + filename)
+			atomic.AddInt64(&fs.fileCount, 1)
+		}
 	}
 
 	return fi, nil
@@ -338,6 +335,8 @@ func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 	if err != nil {
 		return DirStream{}, syscall.ENOENT
 	}
+
+	fs.memcache.Delete("attr:" + path)
 
 	return DirStream{
 		fs:       fs,
