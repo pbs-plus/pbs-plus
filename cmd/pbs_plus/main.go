@@ -21,7 +21,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/auth/server"
 	"github.com/pbs-plus/pbs-plus/internal/auth/token"
 	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
-	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/proxy"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/agents"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/arpc"
