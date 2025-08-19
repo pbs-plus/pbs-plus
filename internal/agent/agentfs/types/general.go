@@ -31,7 +31,7 @@ func (id *FileHandleId) Decode(buf []byte) error {
 }
 
 // ReadDirEntries is a slice of AgentDirEntry
-type ReadDirEntries []AgentDirEntry
+type ReadDirEntries []AgentFileInfo
 
 func (entries *ReadDirEntries) Encode() ([]byte, error) {
 	// Create an encoder with an estimated size
@@ -70,13 +70,13 @@ func (entries *ReadDirEntries) Decode(buf []byte) error {
 	}
 
 	// Decode each entry
-	*entries = make([]AgentDirEntry, count)
+	*entries = make([]AgentFileInfo, count)
 	for i := uint32(0); i < count; i++ {
 		entryBytes, err := dec.ReadBytes()
 		if err != nil {
 			return err
 		}
-		var entry AgentDirEntry
+		var entry AgentFileInfo
 		if err := entry.Decode(entryBytes); err != nil {
 			return err
 		}

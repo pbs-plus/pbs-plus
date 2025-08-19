@@ -122,7 +122,7 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 			// Convert to string only for entries we keep
 			name := string(nameBytes)
 			mode := uint32(unixTypeToFileMode(typ))
-			entries = append(entries, types.AgentDirEntry{
+			entries = append(entries, types.AgentFileInfo{
 				Name: name,
 				Mode: mode,
 			})
