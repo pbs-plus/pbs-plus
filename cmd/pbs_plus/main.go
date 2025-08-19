@@ -351,7 +351,7 @@ func main() {
 		}
 	}()
 
-	backupManager := backup.NewManager(mainCtx, 512)
+	backupManager := backup.NewManager(mainCtx)
 
 	go func() {
 		for {
