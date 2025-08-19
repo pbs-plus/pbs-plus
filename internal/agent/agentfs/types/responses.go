@@ -279,7 +279,7 @@ type AgentFileInfo struct {
 }
 
 func (info *AgentFileInfo) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoder()
+	enc := arpcdata.NewEncoderWithSize(512)
 
 	if err := enc.WriteString(info.Name); err != nil {
 		return nil, err
