@@ -185,7 +185,7 @@ func testFileAttributes(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	allEntries := []types.AgentDirEntry{}
+	allEntries := []types.AgentFileInfo{}
 	for {
 		entriesBytes, err := dirReader.NextBatch(0)
 		if err != nil {
@@ -261,7 +261,7 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	allEntries := []types.AgentDirEntry{}
+	allEntries := []types.AgentFileInfo{}
 	for {
 		entriesBytes, err := dirReader.NextBatch(0)
 		if err != nil {
@@ -303,7 +303,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	allEntries := []types.AgentDirEntry{}
+	allEntries := []types.AgentFileInfo{}
 
 	for {
 		entriesBytes, err := dirReader.NextBatch(0)
@@ -354,7 +354,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	allEntries := []types.AgentDirEntry{}
+	allEntries := []types.AgentFileInfo{}
 
 	for {
 		entriesBytes, err := dirReader.NextBatch(0)

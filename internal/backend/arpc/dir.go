@@ -142,20 +142,30 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 	if curr.FileAttributes != nil {
 		fullPath := filepath.Join(s.path, curr.Name)
-		s.fs.readDirAttrCache.Set(fullPath, types.AgentFileInfo{
+		currAttr := types.AgentFileInfo{
 			Name:    curr.Name,
 			Size:    curr.Size,
 			Mode:    curr.Mode,
 			ModTime: curr.ModTime,
 			IsDir:   curr.IsDir,
-		})
+		}
 
-		s.fs.readDirXAttrCache.Set(fullPath, types.AgentFileInfo{
+		attrBytes, err := currAttr.Encode()
+		if err == nil {
+			s.fs.readDirAttrCache.Set(fullPath, attrBytes)
+		}
+
+		currXAttr := types.AgentFileInfo{
 			CreationTime:   curr.CreationTime,
 			LastAccessTime: curr.LastAccessTime,
 			LastWriteTime:  curr.LastWriteTime,
 			FileAttributes: curr.FileAttributes,
-		})
+		}
+
+		xattrBytes, err := currXAttr.Encode()
+		if err == nil {
+			s.fs.readDirXAttrCache.Set(fullPath, xattrBytes)
+		}
 	}
 
 	atomic.AddUint64(&s.curIdx, 1)
