@@ -4,15 +4,19 @@ package arpcfs
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/cespare/xxhash/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -27,6 +31,19 @@ type accessMsg struct {
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
 	ctxFs, cancel := context.WithCancel(ctx)
 
+	memcachePath := filepath.Join(constants.MemcachedSocketPath, fmt.Sprintf("%s.sock", job.ID))
+
+	stopMemLocal, err := memlocal.StartMemcachedOnUnixSocket(ctxFs, memlocal.MemcachedConfig{
+		SocketPath:     memcachePath,
+		MemoryMB:       1024,
+		MaxConnections: 0,
+	})
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to run memcached server").Write()
+		cancel()
+		return nil
+	}
+
 	fs := &ARPCFS{
 		basePath:   "/",
 		ctx:        ctxFs,
@@ -35,13 +52,14 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 		Job:        job,
 		Hostname:   hostname,
 		backupMode: backupMode,
-		memcache:   memcache.New(constants.MemcachedSocketPath),
+		memcache:   memcache.New(memcachePath),
 	}
 
 	go func() {
 		<-ctxFs.Done()
 		fs.memcache.DeleteAll()
 		fs.memcache.Close()
+		stopMemLocal()
 	}()
 
 	return fs
@@ -169,8 +187,10 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 
 	req := types.StatReq{Path: filename}
 
+	hashkey := xxhash.Sum64String(filename)
+
 	var raw []byte
-	cached, err := fs.memcache.Get("attr:" + filename)
+	cached, err := fs.memcache.Get(fmt.Sprintf("attr:%d", hashkey))
 	if err == nil {
 		atomic.AddInt64(&fs.statCacheHits, 1)
 		if fi.IsDir {
@@ -179,7 +199,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 			atomic.AddInt64(&fs.fileCount, 1)
 		}
 		if !isLookup {
-			fs.memcache.Delete("attr:" + filename)
+			fs.memcache.Delete(fmt.Sprintf("attr:%d", hashkey))
 		}
 		raw = cached.Value
 
@@ -232,11 +252,13 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	var fiCached types.AgentFileInfo
 	req := types.StatReq{Path: filename}
 
-	rawCached, err := fs.memcache.Get("xattr:" + filename)
+	hashkey := xxhash.Sum64String(filename)
+
+	rawCached, err := fs.memcache.Get(fmt.Sprintf("xattr:%d", hashkey))
 	if err == nil {
 		req.AclOnly = true
 		_ = fiCached.Decode(rawCached.Value)
-		fs.memcache.Delete("xattr:" + filename)
+		fs.memcache.Delete(fmt.Sprintf("xattr:%d", hashkey))
 	} else {
 		syslog.L.Error(err).WithField("filename", filename).Write()
 	}
