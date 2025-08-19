@@ -14,32 +14,35 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
-// Unbounded queue for *BackupOperation.
+// Unbounded queue for *BackupOperation using mutex + notify channel.
 type opQueue struct {
-	mu   sync.Mutex
-	cond *sync.Cond
-	buf  []*BackupOperation
-	head int
+	mu     sync.Mutex
+	buf    []*BackupOperation
+	head   int
+	notify chan struct{} // broadcast-ish via try-send; receivers loop
 }
 
 func newOpQueue() *opQueue {
-	q := &opQueue{
-		buf: make([]*BackupOperation, 0, 128),
+	return &opQueue{
+		buf:    make([]*BackupOperation, 0, 64),
+		notify: make(chan struct{}, 1),
 	}
-	q.cond = sync.NewCond(&q.mu)
-	return q
 }
 
 func (q *opQueue) push(op *BackupOperation) {
 	q.mu.Lock()
 	q.buf = append(q.buf, op)
-	q.cond.Signal()
 	q.mu.Unlock()
+	// Try to notify a waiter; drop if already signaled
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
 }
 
 func (q *opQueue) pop(ctx context.Context) (*BackupOperation, bool) {
-	q.mu.Lock()
 	for {
+		q.mu.Lock()
 		if q.head < len(q.buf) {
 			op := q.buf[q.head]
 			q.head++
@@ -51,17 +54,14 @@ func (q *opQueue) pop(ctx context.Context) (*BackupOperation, bool) {
 			q.mu.Unlock()
 			return op, true
 		}
-		done := make(chan struct{})
-		go func() {
-			q.cond.Wait()
-			close(done)
-		}()
 		q.mu.Unlock()
+
+		// Wait for either a push notification or context cancellation
 		select {
 		case <-ctx.Done():
 			return nil, false
-		case <-done:
-			q.mu.Lock()
+		case <-q.notify:
+			// loop to recheck buffer under lock
 		}
 	}
 }
