@@ -1,8 +1,8 @@
-Ext.define("PBS.D2DRestore", {
+Ext.define("PBS.D2DManagement", {
   extend: "Ext.tab.Panel",
   alias: "widget.pbsD2DManagement",
 
-  title: "Disk Restore",
+  title: "Disk Backup",
 
   tools: [],
 
