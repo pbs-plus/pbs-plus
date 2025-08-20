@@ -108,10 +108,12 @@ func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 	}
 
 	// Check if destination buffer is large enough
-	if cap(dst) < int(totalLength) {
-		dst = make([]byte, int(totalLength))
-	} else {
-		dst = dst[:int(totalLength)]
+	if int(totalLength) > len(dst) {
+		return 0, fmt.Errorf(
+			"destination buffer too small: need %d bytes, have %d",
+			totalLength,
+			len(dst),
+		)
 	}
 
 	totalRead := 0
