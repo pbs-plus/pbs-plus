@@ -9,7 +9,7 @@ Ext.onReady(function() {
     if (notesNode) {
       let index = root.indexOf(notesNode);
 
-      root.insertChild(index - 1, {
+      root.insertChild(index, {
         text: "Disk Backup",
         iconCls: "fa fa-hdd-o",
         id: "backup_targets",
@@ -17,14 +17,14 @@ Ext.onReady(function() {
         expanded: true,
         children: [],
       });
-      root.insertChild(index + 1, {
-        text: "Disk Restore",
-        iconCls: "fa fa-hdd-o",
-        id: "backup_restore",
-        path: "pbsD2DRestore",
-        expanded: true,
-        children: [],
-      });
+      //root.insertChild(index + 1, {
+      //  text: "Disk Restore",
+      //  iconCls: "fa fa-hdd-o",
+      //  id: "backup_restore",
+      //  path: "pbsD2DRestore",
+      //  expanded: true,
+      //  children: [],
+      //});
     }
   }
 });
