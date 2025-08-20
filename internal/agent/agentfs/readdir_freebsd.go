@@ -3,6 +3,7 @@
 package agentfs
 
 import (
+	"strconv"
 	"syscall"
 	"time"
 	"unsafe"
@@ -63,6 +64,18 @@ func (r *DirReaderUnix) fillAttrs(info *types.AgentFileInfo) error {
 			// st.Blocks in 512B units (POSIX)
 			info.Blocks = uint64(st.Blocks)
 		}
+
+		info.CreationTime = int64(0)
+		info.LastAccessTime = time.Unix(int64(st.Atimespec.Sec), int64(st.Atimespec.Nsec)).Unix()
+		info.LastWriteTime = time.Unix(int64(st.Mtimespec.Sec), int64(st.Mtimespec.Nsec)).Unix()
+
+		uidStr := strconv.Itoa(int(st.Uid))
+		gidStr := strconv.Itoa(int(st.Gid))
+
+		info.Owner = uidStr
+		info.Group = gidStr
+
+		info.FileAttributes = make(map[string]bool)
 	}
 	return nil
 }

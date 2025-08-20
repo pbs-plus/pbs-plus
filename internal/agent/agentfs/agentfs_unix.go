@@ -288,7 +288,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 
 	fileAttributes := make(map[string]bool)
 
-	posixAcls, _ := getPosixACL(fullPath) // ignore error; optional
+	// posixAcls, _ := getPosixACL(fullPath) // ignore error; optional
 
 	info := types.AgentFileInfo{
 		CreationTime:   creationTime,
@@ -297,7 +297,6 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		FileAttributes: fileAttributes,
 		Owner:          owner,
 		Group:          group,
-		PosixACLs:      posixAcls,
 	}
 
 	data, err := info.Encode()
