@@ -70,7 +70,12 @@ func (s *DirStream) HasNext() bool {
 	req := types.ReadDirReq{HandleID: s.handleId}
 
 	readBuf := bufPool.Get().([]byte)
-	defer bufPool.Put(readBuf)
+	defer func(b []byte) {
+		// Only put back if it's the standard size
+		if cap(b) >= 2*1024*1024+64 && cap(b) <= 2*1024*1024+64 {
+			bufPool.Put(b)
+		}
+	}(readBuf)
 
 	bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	if err != nil {
