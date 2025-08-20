@@ -31,7 +31,7 @@ type DirStream struct {
 
 var bufPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 2*1024*1024+64)
+		return make([]byte, 4*1024*1024)
 	},
 }
 
@@ -70,12 +70,7 @@ func (s *DirStream) HasNext() bool {
 	req := types.ReadDirReq{HandleID: s.handleId}
 
 	readBuf := bufPool.Get().([]byte)
-	defer func(b []byte) {
-		// Only put back if it's the standard size
-		if cap(b) >= 2*1024*1024+64 && cap(b) <= 2*1024*1024+64 {
-			bufPool.Put(b)
-		}
-	}(readBuf)
+	defer bufPool.Put(readBuf)
 
 	bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	if err != nil {
