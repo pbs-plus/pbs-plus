@@ -34,6 +34,54 @@ jobs:
           echo "GITHUB_REPOSITORY_NAME=${{ github.event.repository.name }}" >> $GITHUB_ENV
           echo "GITHUB_REPOSITORY=${{ github.repository }}" >> $GITHUB_ENV
 
+      - name: Delete RC tags for this version if final tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          PUSHED_TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TAG="$PUSHED_TAG"
+
+          # If it's an rc tag (e.g., v0.1.0-rc3), do nothing.
+          if [[ "$TAG" =~ -rc[0-9]+$ ]]; then
+            echo "Pushed tag '$TAG' is an RC tag; skipping RC deletion."
+            exit 0
+          fi
+
+          # Determine base version (supports tags like v1.2.3 or 1.2.3)
+          BASE="$TAG"
+          echo "Final tag detected: $TAG (base: $BASE)"
+
+          # Fetch all tags to ensure we see remote tags
+          git fetch --tags --prune --force
+
+          # Find rc tags matching the same base version (e.g., v0.1.0-rc*)
+          # Pattern allows both v-prefixed and non-prefixed to match strictly on the provided base.
+          # We’ll match exactly "${BASE}-rc*".
+          mapfile -t RC_TAGS < <(git tag -l "${BASE}-rc*")
+
+          if [[ ${#RC_TAGS[@]} -eq 0 ]]; then
+            echo "No RC tags found for base '${BASE}'."
+            exit 0
+          fi
+
+          echo "Found RC tags to delete for base '${BASE}':"
+          printf ' - %s\n' "${RC_TAGS[@]}"
+
+          # Delete locally and on remote
+          for t in "${RC_TAGS[@]}"; do
+            # Double-check safety: only delete tags that match the strict pattern
+            if [[ "$t" =~ ^${BASE}-rc[0-9]+$ ]]; then
+              echo "Deleting tag $t locally and on origin..."
+              git tag -d "$t" || true
+              git push origin ":refs/tags/$t"
+            else
+              echo "Skipping non-matching tag: $t"
+            fi
+          done
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
