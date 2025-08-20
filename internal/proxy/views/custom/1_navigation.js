@@ -9,7 +9,7 @@ Ext.onReady(function() {
     if (notesNode) {
       let index = root.indexOf(notesNode);
 
-      root.insertChild(index + 1, {
+      root.insertChild(index - 1, {
         text: "Disk Backup",
         iconCls: "fa fa-hdd-o",
         id: "backup_targets",
