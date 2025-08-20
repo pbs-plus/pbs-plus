@@ -34,11 +34,14 @@ jobs:
           echo "GITHUB_REPOSITORY_NAME=${{ github.event.repository.name }}" >> $GITHUB_ENV
           echo "GITHUB_REPOSITORY=${{ github.repository }}" >> $GITHUB_ENV
 
-      - name: Delete RC tags for this version if final tag
+      - name: Delete RC tags and releases for this version if final tag
         if: startsWith(github.ref, 'refs/tags/')
         env:
           PUSHED_TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_API: https://api.github.com
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
         run: |
           set -euo pipefail
 
@@ -50,16 +53,13 @@ jobs:
             exit 0
           fi
 
-          # Determine base version (supports tags like v1.2.3 or 1.2.3)
           BASE="$TAG"
           echo "Final tag detected: $TAG (base: $BASE)"
 
-          # Fetch all tags to ensure we see remote tags
+          # Ensure we have all tags
           git fetch --tags --prune --force
 
-          # Find rc tags matching the same base version (e.g., v0.1.0-rc*)
-          # Pattern allows both v-prefixed and non-prefixed to match strictly on the provided base.
-          # We’ll match exactly "${BASE}-rc*".
+          # Find rc tags matching this base
           mapfile -t RC_TAGS < <(git tag -l "${BASE}-rc*")
 
           if [[ ${#RC_TAGS[@]} -eq 0 ]]; then
@@ -67,14 +67,62 @@ jobs:
             exit 0
           fi
 
-          echo "Found RC tags to delete for base '${BASE}':"
+          echo "Found RC tags for deletion:"
           printf ' - %s\n' "${RC_TAGS[@]}"
 
-          # Delete locally and on remote
+          # Function to delete a GitHub Release by tag name if it exists
+          delete_release_by_tag() {
+            local tag_name="$1"
+            # List releases (paginate a bit to be safe) and find matching tag
+            # We use jq to filter; install if missing
+            if ! command -v jq >/dev/null 2>&1; then
+              sudo apt-get update -y
+              sudo apt-get install -y jq
+            fi
+
+            page=1
+            found_id=""
+            while : ; do
+              resp="$(curl -sfSL \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "$GH_API/repos/$OWNER/$REPO/releases?per_page=100&page=$page")" || break
+
+              id="$(echo "$resp" | jq -r --arg t "$tag_name" \
+                    '.[] | select(.tag_name == $t) | .id' | head -n1)"
+              if [[ -n "${id:-}" && "$id" != "null" ]]; then
+                found_id="$id"
+                break
+              fi
+
+              # Stop if fewer than 100 returned (last page)
+              count="$(echo "$resp" | jq 'length')"
+              if [[ "$count" -lt 100 ]]; then
+                break
+              fi
+              page=$((page+1))
+            done
+
+            if [[ -n "${found_id:-}" ]]; then
+              echo "Deleting GitHub Release for tag '$tag_name' (id: $found_id)"
+              curl -sfSL -X DELETE \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "$GH_API/repos/$OWNER/$REPO/releases/$found_id" >/dev/null
+            else
+              echo "No GitHub Release found for tag '$tag_name' (ok)."
+            fi
+          }
+
+          # Delete tags and their releases
           for t in "${RC_TAGS[@]}"; do
-            # Double-check safety: only delete tags that match the strict pattern
             if [[ "$t" =~ ^${BASE}-rc[0-9]+$ ]]; then
-              echo "Deleting tag $t locally and on origin..."
+              echo "Processing RC tag $t"
+
+              # 1) Delete GitHub Release (if any) for this rc tag
+              delete_release_by_tag "$t"
+
+              # 2) Delete the tag locally and on origin
               git tag -d "$t" || true
               git push origin ":refs/tags/$t"
             else
