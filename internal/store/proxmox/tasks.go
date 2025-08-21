@@ -17,8 +17,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
-// listTasksJSON shells out to the CLI and unmarshals into []Task.
-func listTasksJSON(ctx context.Context) ([]Task, error) {
+// ListTasksJSON shells out to the CLI and unmarshals into []Task.
+func ListTasksJSON(ctx context.Context) ([]Task, error) {
 	cmd := exec.CommandContext(
 		ctx,
 		"proxmox-backup-manager",
@@ -32,7 +32,7 @@ func listTasksJSON(ctx context.Context) ([]Task, error) {
 
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf(
-			"listTasksJSON: command failed: %w, output=%q",
+			"ListTasksJSON: command failed: %w, output=%q",
 			err, out.String(),
 		)
 	}
@@ -40,7 +40,7 @@ func listTasksJSON(ctx context.Context) ([]Task, error) {
 	var tasks []Task
 	if err := json.Unmarshal(out.Bytes(), &tasks); err != nil {
 		return nil, fmt.Errorf(
-			"listTasksJSON: unmarshal failed: %w, data=%q",
+			"ListTasksJSON: unmarshal failed: %w, data=%q",
 			err, out.String(),
 		)
 	}
@@ -73,7 +73,7 @@ func GetJobTask(
 	searchString := fmt.Sprintf(":backup:%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
 
 	initialUPIDs := make(map[string]struct{})
-	tasks, err := listTasksJSON(ctx)
+	tasks, err := ListTasksJSON(ctx)
 	if err != nil {
 		return Task{}, err
 	}
@@ -94,7 +94,7 @@ func GetJobTask(
 			return Task{}, ctx.Err()
 
 		case <-ticker.C:
-			tasks, err := listTasksJSON(ctx)
+			tasks, err := ListTasksJSON(ctx)
 			if err != nil {
 				syslog.L.Error(err).Write()
 				continue

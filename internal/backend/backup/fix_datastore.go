@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
@@ -149,4 +150,80 @@ func SetDatastoreOwner(job types.Job, storeInstance *store.Store, owner string) 
 
 func FixDatastore(job types.Job, storeInstance *store.Store) error {
 	return SetDatastoreOwner(job, storeInstance, proxmox.AUTH_ID)
+}
+
+func parseSnapshotTimestamp(input string) (time.Time, error) {
+	parsedTime, err := time.Parse(time.RFC3339, input)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsedTime, nil
+}
+
+func CleanUnfinishedSnapshot(job types.Job, backupId string) error {
+	if backupId == "" {
+		return fmt.Errorf("CleanUnfinishedSnapshot: backupId is required")
+	}
+
+	datastoreInfo, err := proxmox.GetDatastoreInfo(job.Store)
+	if err != nil {
+		return fmt.Errorf("CleanUnfinishedSnapshot: failed to get datastore; %w", err)
+	}
+
+	namespaceSplit := strings.Split(job.Namespace, "/")
+
+	fullNamespacePath := datastoreInfo.Path
+	parentNamespacePath := datastoreInfo.Path
+
+	for i, ns := range namespaceSplit {
+		fullNamespacePath = filepath.Join(fullNamespacePath, "ns", ns)
+		if i == 0 {
+			parentNamespacePath = filepath.Join(parentNamespacePath, "ns", ns)
+		}
+	}
+
+	pathWithBackupId := filepath.Join(fullNamespacePath, "host", backupId)
+
+	existingSnapshots, err := os.ReadDir(pathWithBackupId)
+	if len(existingSnapshots) == 0 || err != nil {
+		return nil
+	}
+
+	var latestSnapshot string
+	for i := len(existingSnapshots) - 1; i >= 0; i-- {
+		name := existingSnapshots[i].Name()
+		if name == "owner" {
+			continue
+		}
+		if _, err := parseSnapshotTimestamp(name); err == nil {
+			latestSnapshot = name
+			break
+		}
+	}
+
+	if latestSnapshot == "" {
+		return nil
+	}
+
+	snapshotPath := filepath.Join(pathWithBackupId, latestSnapshot)
+	entries, err := os.ReadDir(snapshotPath)
+	if err != nil {
+		return nil
+	}
+
+	expectedPxarName := proxmox.NormalizeHostname(job.Target)
+	tmpSuffixes := map[string]struct{}{
+		expectedPxarName + ".mpxar.tmp_didx": {},
+		expectedPxarName + ".ppxar.tmp_didx": {},
+		expectedPxarName + ".pxar.tmp_didx":  {},
+	}
+
+	for _, e := range entries {
+		if _, ok := tmpSuffixes[e.Name()]; ok {
+			_ = os.RemoveAll(snapshotPath)
+			break
+		}
+	}
+
+	return nil
 }
