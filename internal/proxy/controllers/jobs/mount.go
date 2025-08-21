@@ -118,9 +118,16 @@ func handleMount(w http.ResponseWriter, r *http.Request) {
 	}
 	args = append(args, groupPath, archive, mountPoint)
 
+	env := append(os.Environ(),
+		fmt.Sprintf("PBS_PASSWORD=%s", proxmox.GetToken()))
+
+	if pbsStatus, err := proxmox.GetProxmoxCertInfo(); err == nil {
+		env = append(env, fmt.Sprintf("PBS_FINGERPRINT=%s", pbsStatus.FingerprintSHA256))
+	}
+
 	cmd := exec.Command("/usr/bin/proxmox-backup-client", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	cmd.Env = os.Environ()
+	cmd.Env = env
 
 	syslog.L.Info().WithField("cmd", strings.Join(cmd.Args, " ")).WithField("jobStore", jobStore).WithMessage("mounting").Write()
 
@@ -147,7 +154,7 @@ func handleMount(w http.ResponseWriter, r *http.Request) {
 		// Recreate command for retry
 		cmd = exec.Command("/usr/bin/proxmox-backup-client", args...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		cmd.Env = os.Environ()
+		cmd.Env = env
 	}
 
 	// Track mount in memory

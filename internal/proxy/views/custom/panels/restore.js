@@ -413,112 +413,6 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       });
     },
 
-    forgetNamespace: function(data) {
-      let me = this;
-      let view = me.getView();
-      if (!view.namespace || view.namespace === '') {
-        console.warn('forgetNamespace called with root NS!');
-        return;
-      }
-      let nsParts = view.namespace.split('/');
-      let nsName = nsParts.pop();
-      let parentNS = nsParts.join('/');
-
-      Ext.create('PBS.window.NamespaceDelete', {
-        datastore: view.datastore,
-        namespace: view.namespace,
-        item: { id: nsName },
-        apiCallDone: (success) => {
-          if (success) {
-            view.namespace = parentNS; // move up before reload to avoid "ENOENT" error
-            me.reload();
-          }
-        },
-      });
-    },
-
-    forgetGroup: function(data) {
-      let me = this;
-      let view = me.getView();
-
-      let params = {
-        'backup-type': data.backup_type,
-        'backup-id': data.backup_id,
-      };
-      if (view.namespace && view.namespace !== '') {
-        params.ns = view.namespace;
-      }
-
-      Ext.create('Proxmox.window.SafeDestroy', {
-        url: `/admin/datastore/${view.datastore}/groups`,
-        params,
-        item: {
-          id: data.text,
-        },
-        autoShow: true,
-        taskName: 'forget-group',
-        listeners: {
-          destroy: () => me.reload(),
-        },
-      });
-    },
-
-    forgetSnapshot: function(data) {
-      let me = this;
-      let view = me.getView();
-
-      Ext.Msg.show({
-        title: gettext('Confirm'),
-        icon: Ext.Msg.WARNING,
-        message: Ext.String.format(
-          gettext('Are you sure you want to remove snapshot {0}'),
-          `'${data.text}'`,
-        ),
-        buttons: Ext.Msg.YESNO,
-        defaultFocus: 'no',
-        callback: function(btn) {
-          if (btn !== 'yes') {
-            return;
-          }
-          let params = {
-            'backup-type': data['backup-type'],
-            'backup-id': data['backup-id'],
-            'backup-time': (data['backup-time'].getTime() / 1000).toFixed(0),
-          };
-          if (view.namespace && view.namespace !== '') {
-            params.ns = view.namespace;
-          }
-
-          Proxmox.Utils.API2Request({
-            url: `/admin/datastore/${view.datastore}/snapshots`,
-            params,
-            method: 'DELETE',
-            waitMsgTarget: view,
-            failure: function(response, opts) {
-              Ext.Msg.alert(gettext('Error'), response.htmlStatus);
-            },
-            callback: me.reload.bind(me),
-          });
-        },
-      });
-    },
-
-    onForget: function(table, rI, cI, item, e, { data }) {
-      let me = this;
-      let view = this.getView();
-      if ((data.ty !== 'group' && data.ty !== 'dir' && data.ty !== 'ns') || !view.datastore) {
-        return;
-      }
-
-      if (data.ty === 'ns') {
-        me.forgetNamespace(data);
-      } else if (data.ty === 'dir') {
-        me.forgetSnapshot(data);
-      } else {
-        me.forgetGroup(data);
-      }
-    },
-
     downloadFile: function(tV, rI, cI, item, e, rec) {
       let me = this;
       let view = me.getView();
@@ -812,13 +706,11 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
         menu = Ext.create('PBS.datastore.GroupCmdMenu', {
           title: gettext('Group'),
           onCopy: createControllerCallback('onCopy'),
-          onForget: createControllerCallback('onForget'),
         });
       } else if (record.data.ty === 'dir') {
         menu = Ext.create('PBS.datastore.SnapshotCmdMenu', {
           title: gettext('Snapshot'),
           onCopy: createControllerCallback('onCopy'),
-          onForget: createControllerCallback('onForget'),
         });
       }
       if (menu) {
@@ -906,27 +798,6 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       dataIndex: 'text',
       width: 150,
       items: [
-        {
-          handler: 'onForget',
-          getTip: (v, m, { data }) => {
-            let tip = '{0}';
-            if (data.ty === 'ns') {
-              tip = gettext("Remove namespace '{0}'");
-            } else if (data.ty === 'dir') {
-              tip = gettext("Permanently forget snapshot '{0}'");
-            } else if (data.ty === 'group') {
-              tip = gettext("Permanently forget group '{0}'");
-            }
-            return Ext.String.format(tip, v);
-          },
-          getClass: (v, m, { data }) =>
-            (data.ty === 'ns' && !data.isRootNS && data.ns === undefined) ||
-              data.ty === 'group' ||
-              data.ty === 'dir'
-              ? 'fa critical fa-trash-o'
-              : 'pmx-hidden',
-          isActionDisabled: (v, r, c, i, { data }) => false,
-        },
         {
           handler: 'downloadFile',
           getTip: (v, m, rec) => Ext.String.format(gettext("Download '{0}'"), v),
