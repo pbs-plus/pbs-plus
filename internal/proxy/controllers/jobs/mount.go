@@ -15,6 +15,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
@@ -48,8 +49,7 @@ func snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName strin
 	return strings.Join(parts, "|")
 }
 
-// ExtJsMountHandler mounts/unmounts a pxar archive to a mount point.
-// POST mounts; DELETE unmounts. Mirrors the ExtJS client handler.
+// ExtJsMountHandler mounts a pxar archive to a generated mount point.
 func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -73,10 +73,9 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		backupID := strings.TrimSpace(r.FormValue("backup-id"))
 		backupTime := strings.TrimSpace(r.FormValue("backup-time"))
 		fileName := strings.TrimSpace(r.FormValue("file-name"))
-		mountPoint := strings.TrimSpace(r.FormValue("mount-point"))
 		ns := strings.TrimSpace(r.FormValue("ns"))
 
-		if backupType == "" || backupID == "" || backupTime == "" || fileName == "" || mountPoint == "" {
+		if backupType == "" || backupID == "" || backupTime == "" || fileName == "" {
 			http.Error(w, "missing required parameters", http.StatusBadRequest)
 			return
 		}
@@ -84,10 +83,14 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			http.Error(w, "file-name must end with .pxar.didx or .mpxar.didx", http.StatusBadRequest)
 			return
 		}
-		if !filepath.IsAbs(mountPoint) {
-			http.Error(w, "mount-point must be an absolute path", http.StatusBadRequest)
-			return
-		}
+
+		mountPoint := filepath.Join(
+			constants.RestoreMountBasePath,
+			datastore,
+			ns,
+			fmt.Sprintf("%s-%s", backupType, backupID),
+			backupTime,
+		)
 
 		// Prepare mount directory: lazy unmount, clean, recreate
 		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
@@ -122,7 +125,11 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		cmd.Env = env
 
-		syslog.L.Info().WithField("cmd", strings.Join(cmd.Args, " ")).WithField("jobStore", jobStore).WithMessage("mounting").Write()
+		syslog.L.Info().
+			WithField("cmd", strings.Join(cmd.Args, " ")).
+			WithField("jobStore", jobStore).
+			WithMessage("mounting").
+			Write()
 
 		// Retry loop until mounted or timeout
 		deadline := time.Now().Add(5 * time.Second)
@@ -136,7 +143,10 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			if time.Now().After(deadline) {
 				_ = os.RemoveAll(mountPoint)
-				syslog.L.Error(lastErr).WithField("cmd", strings.Join(cmd.Args, " ")).WithField("jobStore", jobStore).Write()
+				syslog.L.Error(lastErr).
+					WithField("cmd", strings.Join(cmd.Args, " ")).
+					WithField("jobStore", jobStore).
+					Write()
 				if lastErr == nil {
 					lastErr = errors.New("mount verification failed (timeout)")
 				}
@@ -175,7 +185,6 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		mountPoint := strings.TrimSpace(r.FormValue("mount-point"))
 		backupType := strings.TrimSpace(r.FormValue("backup-type"))
 		backupID := strings.TrimSpace(r.FormValue("backup-id"))
 		backupTime := strings.TrimSpace(r.FormValue("backup-time"))
@@ -184,46 +193,34 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		datastore := utils.DecodePath(r.PathValue("datastore"))
 
-		if mountPoint == "" && (backupType == "" || backupID == "" || backupTime == "" || fileName == "") {
-			controllers.WriteErrorResponse(w, fmt.Errorf("provide mount-point or snapshot identifiers to unmount"))
+		if backupType == "" || backupID == "" || backupTime == "" || fileName == "" {
+			controllers.WriteErrorResponse(w, fmt.Errorf("provide snapshot identifiers to unmount"))
 			return
 		}
 
-		targets := []string{}
+		// Always generate mount path internally
+		mountPoint := filepath.Join(
+			constants.RestoreMountBasePath,
+			datastore,
+			ns,
+			fmt.Sprintf("%s-%s", backupType, backupID),
+			backupTime,
+		)
 
 		mountMu.Lock()
-		if mountPoint != "" {
-			targets = append(targets, mountPoint)
-			// Remove from all keys
-			for k, v := range mountedPaths {
-				mountedPaths[k] = removeString(v, mountPoint)
-				if len(mountedPaths[k]) == 0 {
-					delete(mountedPaths, k)
-				}
-			}
-		} else {
-			key := snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName)
-			if paths, ok := mountedPaths[key]; ok {
-				targets = append(targets, paths...)
-				delete(mountedPaths, key)
+		// Remove from all keys
+		for k, v := range mountedPaths {
+			mountedPaths[k] = removeString(v, mountPoint)
+			if len(mountedPaths[k]) == 0 {
+				delete(mountedPaths, k)
 			}
 		}
 		mountMu.Unlock()
 
-		if len(targets) == 0 {
-			writeJSON(w, JobRunResponse{
-				Success: true,
-				Status:  http.StatusOK,
-				Message: "nothing to unmount",
-			})
-			return
-		}
-
-		for _, mp := range targets {
-			_ = exec.Command("umount", "-f", "-l", mp).Run()
-			_ = exec.Command("fusermount", "-uz", mp).Run()
-			_ = os.RemoveAll(mp)
-		}
+		// Perform unmount
+		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
+		_ = exec.Command("fusermount", "-uz", mountPoint).Run()
+		_ = os.RemoveAll(mountPoint)
 
 		writeJSON(w, JobRunResponse{
 			Success: true,
