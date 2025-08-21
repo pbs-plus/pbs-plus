@@ -564,6 +564,11 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       let snapshot = rec.parentNode.data;
       let file = rec.data.filename;
 
+      let isoTime = snapshot['backup-time'];
+      if (isoTime instanceof Date) {
+        isoTime = isoTime.toISOString(); // ensure ISO Z format
+      }
+
       // Prompt for mount path
       Ext.Msg.prompt(
         gettext('Mount Backup'),
@@ -578,7 +583,7 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
           let params = {
             'backup-id': snapshot['backup-id'],
             'backup-type': snapshot['backup-type'],
-            'backup-time': (snapshot['backup-time'].getTime() / 1000).toFixed(0),
+            'backup-time': isoTime,
             'file-name': file,
             'mount-point': mountPath,
           };
@@ -617,6 +622,11 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       let snapshot = rec && rec.parentNode ? rec.parentNode.data : null;
       let fileRec = rec && rec.data && rec.data.ty === 'file' ? rec.data : null;
 
+      let isoTime = snapshot['backup-time'];
+      if (isoTime instanceof Date) {
+        isoTime = isoTime.toISOString(); // ensure ISO Z format
+      }
+
       Ext.Msg.prompt(
         gettext('Unmount Backup'),
         gettext('Enter the mount path to unmount (leave empty to unmount by snapshot)'),
@@ -634,7 +644,7 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
             // Fallback: unmount any mounts tracked for this snapshot/file
             params['backup-id'] = snapshot['backup-id'];
             params['backup-type'] = snapshot['backup-type'];
-            params['backup-time'] = (snapshot['backup-time'].getTime() / 1000).toFixed(0);
+            params['backup-time'] = isoTime;
             params['file-name'] = fileRec.filename;
             if (view.namespace && view.namespace !== '') {
               params.ns = view.namespace;
