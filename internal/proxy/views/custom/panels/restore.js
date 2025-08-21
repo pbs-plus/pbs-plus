@@ -23,6 +23,8 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       this.store.on('load', this.onLoad, this);
 
       view.getStore().setSorters(['sortWeight', 'text', 'backup-time']);
+
+      this.reload();
     },
 
     control: {
@@ -551,6 +553,124 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       atag.click();
     },
 
+    mountBackup: function(tV, rI, cI, item, e, rec) {
+      let me = this;
+      let view = me.getView();
+
+      if (!rec || rec.data.ty !== 'file') {
+        return;
+      }
+
+      let snapshot = rec.parentNode.data;
+      let file = rec.data.filename;
+
+      // Prompt for mount path
+      Ext.Msg.prompt(
+        gettext('Mount Backup'),
+        gettext('Enter the local mount path (must exist on the server):'),
+        function(btn, mountPath) {
+          if (btn !== 'ok' || !mountPath || !mountPath.trim()) {
+            return;
+          }
+
+          mountPath = mountPath.trim();
+
+          let params = {
+            'backup-id': snapshot['backup-id'],
+            'backup-type': snapshot['backup-type'],
+            'backup-time': (snapshot['backup-time'].getTime() / 1000).toFixed(0),
+            'file-name': file,
+            'mount-point': mountPath,
+          };
+
+          if (view.namespace && view.namespace !== '') {
+            params.ns = view.namespace;
+          }
+
+          PBS.PlusUtils.API2Request({
+            url:
+              "/api2/extjs/config/d2d-mount/" +
+              encodeURIComponent(encodePathValue(view.datastore)),
+            method: 'POST',
+            params,
+            waitMsgTarget: view,
+            failure: function(resp) {
+              Ext.Msg.alert(gettext('Error'), resp.htmlStatus);
+            },
+            success: function(resp) {
+              me.reload()
+            },
+          });
+        },
+        this,
+        false,
+        '' // default value
+      );
+    },
+
+    unmountBackup: function(tV, rI, cI, item, e, rec) {
+      let me = this;
+      let view = me.getView();
+
+      // Optional: allow calling without a record to just unmount by path
+      // If called from action on a file node, we can use snapshot identifiers.
+      let snapshot = rec && rec.parentNode ? rec.parentNode.data : null;
+      let fileRec = rec && rec.data && rec.data.ty === 'file' ? rec.data : null;
+
+      Ext.Msg.prompt(
+        gettext('Unmount Backup'),
+        gettext('Enter the mount path to unmount (leave empty to unmount by snapshot)'),
+        function(btn, mountPath) {
+          if (btn !== 'ok') {
+            return;
+          }
+          mountPath = (mountPath || '').trim();
+
+          // Build params
+          let params = {};
+          if (mountPath) {
+            params['mount-point'] = mountPath;
+          } else if (snapshot && fileRec) {
+            // Fallback: unmount any mounts tracked for this snapshot/file
+            params['backup-id'] = snapshot['backup-id'];
+            params['backup-type'] = snapshot['backup-type'];
+            params['backup-time'] = (snapshot['backup-time'].getTime() / 1000).toFixed(0);
+            params['file-name'] = fileRec.filename;
+            if (view.namespace && view.namespace !== '') {
+              params.ns = view.namespace;
+            }
+          } else {
+            Ext.Msg.alert(
+              gettext('Error'),
+              gettext('Please select a file entry or provide a mount path.')
+            );
+            return;
+          }
+
+          PBS.PlusUtils.API2Request({
+            url:
+              "/api2/extjs/config/d2d-mount/" +
+              encodeURIComponent(encodePathValue(view.datastore)),
+            method: 'DELETE',
+            params,
+            waitMsgTarget: view,
+            failure: function(resp) {
+              Ext.Msg.alert(gettext('Error'), resp.htmlStatus);
+            },
+            success: function(resp) {
+              // Not a long-running task; just confirm and optionally reload
+              Ext.toast(gettext('Unmount request sent'));
+              // If your UI reflects mount state somewhere, refresh it here
+              // me.reload();
+            },
+          });
+        },
+        this,
+        false,
+        '' // default value
+      );
+    },
+
     // opens either a namespace or a pxar file-browser
     openBrowser: function(tv, rI, Ci, item, e, rec) {
       let me = this;
@@ -802,6 +922,22 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
           getTip: (v, m, rec) => Ext.String.format(gettext("Download '{0}'"), v),
           getClass: (v, m, { data }) =>
             data.ty === 'file' ? 'fa fa-download' : 'pmx-hidden',
+          isActionDisabled: (v, r, c, i, rec) =>
+            rec.data.ty !== 'file' || rec.data['crypt-mode'] > 2,
+        },
+        {
+          handler: 'mountBackup',
+          getTip: (v, m, rec) => Ext.String.format(gettext("Mount '{0}'"), v),
+          getClass: (v, m, { data }) =>
+            data.ty === 'file' ? 'fa fa-hdd-o' : 'pmx-hidden',
+          isActionDisabled: (v, r, c, i, rec) =>
+            rec.data.ty !== 'file' || rec.data['crypt-mode'] > 2,
+        },
+        {
+          handler: 'unmountBackup',
+          getTip: (v, m, rec) => Ext.String.format(gettext("Unmount '{0}'"), v),
+          getClass: (v, m, { data }) =>
+            data.ty === 'file' ? 'fa fa-eject' : 'pmx-hidden',
           isActionDisabled: (v, r, c, i, rec) =>
             rec.data.ty !== 'file' || rec.data['crypt-mode'] > 2,
         },

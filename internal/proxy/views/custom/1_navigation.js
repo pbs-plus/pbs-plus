@@ -19,7 +19,7 @@ Ext.onReady(function() {
       });
       root.insertChild(index + 1, {
         text: "Disk Restore",
-        iconCls: "fa fa-hdd-o",
+        iconCls: "fa fa-download",
         id: "backup_restore",
         path: "pbsD2DRestore",
         expanded: true,
