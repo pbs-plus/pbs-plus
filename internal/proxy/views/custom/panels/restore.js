@@ -413,40 +413,6 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       });
     },
 
-    downloadFile: function(tV, rI, cI, item, e, rec) {
-      let me = this;
-      let view = me.getView();
-      if (rec.data.ty !== 'file') {
-        return;
-      }
-
-      let snapshot = rec.parentNode.data;
-      let file = rec.data.filename;
-      let params = {
-        'backup-id': snapshot['backup-id'],
-        'backup-type': snapshot['backup-type'],
-        'backup-time': (snapshot['backup-time'].getTime() / 1000).toFixed(0),
-        'file-name': file,
-      };
-      if (view.namespace && view.namespace !== '') {
-        params.ns = view.namespace;
-      }
-
-      let idx = file.lastIndexOf('.');
-      let filename = file.slice(0, idx);
-      let atag = document.createElement('a');
-      atag.download = filename;
-      let url = new URL(
-        `/api2/json/admin/datastore/${view.datastore}/download-decoded`,
-        window.location.origin,
-      );
-      for (const [key, value] of Object.entries(params)) {
-        url.searchParams.append(key, value);
-      }
-      atag.href = url.href;
-      atag.click();
-    },
-
     mountBackup: function(tV, rI, cI, item, e, rec) {
       let me = this;
       let view = me.getView();
@@ -799,28 +765,48 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       width: 150,
       items: [
         {
-          handler: 'downloadFile',
-          getTip: (v, m, rec) => Ext.String.format(gettext("Download '{0}'"), v),
-          getClass: (v, m, { data }) =>
-            data.ty === 'file' ? 'fa fa-download' : 'pmx-hidden',
-          isActionDisabled: (v, r, c, i, rec) =>
-            rec.data.ty !== 'file' || rec.data['crypt-mode'] > 2,
-        },
-        {
           handler: 'mountBackup',
           getTip: (v, m, rec) => Ext.String.format(gettext("Mount '{0}'"), v),
-          getClass: (v, m, { data }) =>
-            data.ty === 'file' ? 'fa fa-hdd-o' : 'pmx-hidden',
-          isActionDisabled: (v, r, c, i, rec) =>
-            rec.data.ty !== 'file' || rec.data['crypt-mode'] > 2,
+          getClass: (v, m, { data }) => {
+            if (
+              (data.ty === 'file' &&
+                (data.filename.endsWith('.pxar.didx') ||
+                  data.filename.endsWith('.mpxar.didx'))) ||
+              (data.ty === 'ns' && !data.root)
+            ) {
+              return 'fa fa-hdd-o';
+            }
+            return 'pmx-hidden';
+          },
+          isActionDisabled: (v, r, c, i, { data }) =>
+            !(
+              data.ty === 'file' &&
+              (data.filename.endsWith('.pxar.didx') ||
+                data.filename.endsWith('.mpxar.didx')) &&
+              data['crypt-mode'] < 3
+            ) && data.ty !== 'ns',
         },
         {
           handler: 'unmountBackup',
           getTip: (v, m, rec) => Ext.String.format(gettext("Unmount '{0}'"), v),
-          getClass: (v, m, { data }) =>
-            data.ty === 'file' ? 'fa fa-eject' : 'pmx-hidden',
-          isActionDisabled: (v, r, c, i, rec) =>
-            rec.data.ty !== 'file' || rec.data['crypt-mode'] > 2,
+          getClass: (v, m, { data }) => {
+            if (
+              (data.ty === 'file' &&
+                (data.filename.endsWith('.pxar.didx') ||
+                  data.filename.endsWith('.mpxar.didx'))) ||
+              (data.ty === 'ns' && !data.root)
+            ) {
+              return 'fa fa-eject';
+            }
+            return 'pmx-hidden';
+          },
+          isActionDisabled: (v, r, c, i, { data }) =>
+            !(
+              data.ty === 'file' &&
+              (data.filename.endsWith('.pxar.didx') ||
+                data.filename.endsWith('.mpxar.didx')) &&
+              data['crypt-mode'] < 3
+            ) && data.ty !== 'ns',
         },
         {
           handler: 'openBrowser',
@@ -880,11 +866,6 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       width: 75,
       align: 'right',
       dataIndex: 'count',
-    },
-    {
-      header: gettext('Owner'),
-      sortable: true,
-      dataIndex: 'owner',
     },
     {
       header: gettext('Encrypted'),
