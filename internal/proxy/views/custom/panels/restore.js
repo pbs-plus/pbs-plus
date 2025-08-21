@@ -2,6 +2,7 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
   extend: 'Ext.tree.Panel',
   alias: 'widget.pbsPlusDatastorePanel',
   config: { datastore: null },
+  mixins: ['Proxmox.Mixin.CBind'],
 
   rootVisible: false,
 
@@ -376,156 +377,6 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       }
     },
 
-    onChangeOwner: function(table, rI, cI, item, e, { data }) {
-      let view = this.getView();
-
-      if (data.ty !== 'group' || !view.datastore) {
-        return;
-      }
-
-      let win = Ext.create('PBS.BackupGroupChangeOwner', {
-        datastore: view.datastore,
-        ns: view.namespace,
-        backup_type: data.backup_type,
-        backup_id: data.backup_id,
-        owner: data.owner,
-        autoShow: true,
-      });
-      // FIXME: don't reload all, use the record and query only its info, then update it
-      // directly in the tree
-      win.on('destroy', this.reload, this);
-    },
-
-    onPrune: function(table, rI, cI, item, e, rec) {
-      let me = this;
-      let view = me.getView();
-
-      if (rec.data.ty !== 'group' || !view.datastore) {
-        return;
-      }
-      let data = rec.data;
-      Ext.create('PBS.DataStorePrune', {
-        autoShow: true,
-        datastore: view.datastore,
-        ns: view.namespace,
-        backup_type: data.backup_type,
-        backup_id: data.backup_id,
-        listeners: {
-          // FIXME: don't reload all, use the record and query only its info, then update
-          // it directly in the tree
-          destroy: () => me.reload(),
-        },
-      });
-    },
-
-    verifyAll: function() {
-      let me = this;
-      let view = me.getView();
-
-      Ext.create('PBS.window.VerifyAll', {
-        taskDone: () => me.reload(),
-        autoShow: true,
-        datastore: view.datastore,
-        namespace: view.namespace,
-      });
-    },
-
-    pruneAll: function() {
-      let me = this;
-      let view = me.getView();
-
-      if (!view.datastore) {
-        return;
-      }
-
-      let ns = view.namespace;
-      let titleNS = ns && ns !== '' ? `Namespace '${ns}' on ` : '';
-
-      Ext.create('Proxmox.window.Edit', {
-        title: `Prune ${titleNS}Datastore '${view.datastore}'`,
-        onlineHelp: 'maintenance_pruning',
-        method: 'POST',
-        submitText: 'Prune',
-        autoShow: true,
-        isCreate: true,
-        showTaskViewer: true,
-        taskDone: () => me.reload(),
-        url: `/api2/extjs/admin/datastore/${view.datastore}/prune-datastore`,
-        items: [
-          {
-            xtype: 'pbsPruneInputPanel',
-            ns,
-            dryrun: true,
-            canRecurse: true,
-            isCreate: true,
-          },
-        ],
-      });
-    },
-
-    addNS: function() {
-      let me = this;
-      let view = me.getView();
-      if (!view.datastore) {
-        return;
-      }
-
-      Ext.create('PBS.window.NamespaceEdit', {
-        autoShow: true,
-        datastore: view.datastore,
-        namespace: view.namespace ?? '',
-        apiCallDone: (success) => {
-          if (success) {
-            view.down('pbsNamespaceSelector').store?.load();
-            me.reload();
-          }
-        },
-      });
-    },
-
-    onVerify: function(view, rI, cI, item, e, { data }) {
-      let me = this;
-      view = me.getView();
-
-      if ((data.ty !== 'group' && data.ty !== 'dir') || !view.datastore) {
-        return;
-      }
-
-      let params;
-      if (data.ty === 'dir') {
-        params = {
-          'backup-type': data['backup-type'],
-          'backup-id': data['backup-id'],
-          'backup-time': (data['backup-time'].getTime() / 1000).toFixed(0),
-          'ignore-verified': false, // always reverify single snapshots
-        };
-      } else {
-        params = {
-          'backup-type': data.backup_type,
-          'backup-id': data.backup_id,
-          'outdated-after': 29, // reverify after 29 days so match with the "old" display
-        };
-      }
-      if (view.namespace && view.namespace !== '') {
-        params.ns = view.namespace;
-      }
-
-      Proxmox.Utils.API2Request({
-        params: params,
-        url: `/admin/datastore/${view.datastore}/verify`,
-        method: 'POST',
-        failure: function(response) {
-          Ext.Msg.alert(gettext('Error'), response.htmlStatus);
-        },
-        success: function(response, options) {
-          Ext.create('Proxmox.window.TaskViewer', {
-            upid: response.result.data,
-            taskDone: () => me.reload(),
-          }).show();
-        },
-      });
-    },
-
     onCopy: async function(view, rI, cI, item, e, { data }) {
       await navigator.clipboard.writeText(data.text);
     },
@@ -646,60 +497,6 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
             },
             callback: me.reload.bind(me),
           });
-        },
-      });
-    },
-
-    onProtectionChange: function(view, rI, cI, item, e, rec) {
-      let me = this;
-      view = this.getView();
-
-      if (!(rec && rec.data)) {
-        return;
-      }
-      let data = rec.data;
-      if (!view.datastore) {
-        return;
-      }
-
-      let type = data['backup-type'];
-      let id = data['backup-id'];
-      let time = (data['backup-time'].getTime() / 1000).toFixed(0);
-
-      let params = {
-        'backup-type': type,
-        'backup-id': id,
-        'backup-time': time,
-      };
-      if (view.namespace && view.namespace !== '') {
-        params.ns = view.namespace;
-      }
-
-      let url = `/api2/extjs/admin/datastore/${view.datastore}/protected`;
-
-      Ext.create('Proxmox.window.Edit', {
-        subject: gettext('Protection') + ` - ${data.text}`,
-        width: 400,
-
-        method: 'PUT',
-        autoShow: true,
-        isCreate: false,
-        autoLoad: true,
-
-        url,
-        extraRequestParams: params,
-
-        items: [
-          {
-            xtype: 'proxmoxcheckbox',
-            fieldLabel: gettext('Protected'),
-            uncheckedValue: 0,
-            name: 'protected',
-            value: data.protected,
-          },
-        ],
-        listeners: {
-          destroy: () => me.reload(),
         },
       });
     },
@@ -885,17 +682,12 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
         menu = Ext.create('PBS.datastore.GroupCmdMenu', {
           title: gettext('Group'),
           onCopy: createControllerCallback('onCopy'),
-          onVerify: createControllerCallback('onVerify'),
-          onChangeOwner: createControllerCallback('onChangeOwner'),
-          onPrune: createControllerCallback('onPrune'),
           onForget: createControllerCallback('onForget'),
         });
       } else if (record.data.ty === 'dir') {
         menu = Ext.create('PBS.datastore.SnapshotCmdMenu', {
           title: gettext('Snapshot'),
           onCopy: createControllerCallback('onCopy'),
-          onVerify: createControllerCallback('onVerify'),
-          onProtectionChange: createControllerCallback('onProtectionChange'),
           onForget: createControllerCallback('onForget'),
         });
       }
@@ -984,42 +776,6 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       dataIndex: 'text',
       width: 150,
       items: [
-        {
-          handler: 'onVerify',
-          getTip: (v, m, rec) => Ext.String.format(gettext("Verify '{0}'"), v),
-          getClass: (v, m, { data }) =>
-            data.ty === 'group' || data.ty === 'dir'
-              ? 'pve-icon-verify-lettering'
-              : 'pmx-hidden',
-          isActionDisabled: (v, r, c, i, rec) => !!rec.data.leaf,
-        },
-        {
-          handler: 'onChangeOwner',
-          getClass: (v, m, { data }) =>
-            data.ty === 'group' ? 'fa fa-user' : 'pmx-hidden',
-          getTip: (v, m, rec) => Ext.String.format(gettext("Change owner of '{0}'"), v),
-          isActionDisabled: (v, r, c, i, { data }) => data.ty !== 'group',
-        },
-        {
-          handler: 'onPrune',
-          getTip: (v, m, rec) => Ext.String.format(gettext("Prune '{0}'"), v),
-          getClass: (v, m, { data }) =>
-            data.ty === 'group' ? 'fa fa-scissors' : 'pmx-hidden',
-          isActionDisabled: (v, r, c, i, { data }) => data.ty !== 'group',
-        },
-        {
-          handler: 'onProtectionChange',
-          getTip: (v, m, rec) =>
-            Ext.String.format(gettext("Change protection of '{0}'"), v),
-          getClass: (v, m, rec) => {
-            if (rec.data.ty === 'dir') {
-              let extraCls = rec.data.protected ? 'good' : 'faded';
-              return `fa fa-shield ${extraCls}`;
-            }
-            return 'pmx-hidden';
-          },
-          isActionDisabled: (v, r, c, i, rec) => rec.data.ty !== 'dir',
-        },
         {
           handler: 'onForget',
           getTip: (v, m, { data }) => {
@@ -1143,99 +899,6 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
         }
       },
     },
-    {
-      header: gettext('Verify State'),
-      sortable: true,
-      dataIndex: 'verification',
-      width: 120,
-      sorter: (arec, brec) => {
-        let a = arec.data.verification || { ok: 0, outdated: 0, failed: 0 };
-        let b = brec.data.verification || { ok: 0, outdated: 0, failed: 0 };
-        if (a.failed === b.failed) {
-          if (a.none === b.none) {
-            if (a.outdated === b.outdated) {
-              return b.ok - a.ok;
-            } else {
-              return b.outdated - a.outdated;
-            }
-          } else {
-            return b.none - a.none;
-          }
-        } else {
-          return b.failed - a.failed;
-        }
-      },
-      renderer: (v, meta, record) => {
-        if (record.data.ty === 'ns') {
-          return ''; // TODO: accumulate verify of all groups into root NS node?
-        }
-        let i = (cls, txt) => `<i class="fa fa-fw fa-${cls}"></i> ${txt}`;
-        if (v === undefined || v === null) {
-          return record.data.leaf ? '' : i('question-circle-o warning', gettext('None'));
-        }
-        let tip, iconCls, txt;
-        if (record.data.ty === 'group') {
-          if (v.failed === 0) {
-            if (v.none === 0) {
-              if (v.outdated > 0) {
-                tip =
-                  'All OK, but some snapshots were not verified in last 30 days';
-                iconCls = 'check warning';
-                txt = gettext('All OK (old)');
-              } else {
-                tip = 'All snapshots verified at least once in last 30 days';
-                iconCls = 'check good';
-                txt = gettext('All OK');
-              }
-            } else if (v.ok === 0) {
-              tip = `${v.none} not verified yet`;
-              iconCls = 'question-circle-o warning';
-              txt = gettext('None');
-            } else {
-              tip = `${v.ok} OK, ${v.none} not verified yet`;
-              iconCls = 'check faded';
-              txt = `${v.ok} OK`;
-            }
-          } else {
-            tip = `${v.ok} OK, ${v.failed} failed, ${v.none} not verified yet`;
-            iconCls = 'times critical';
-            txt =
-              v.ok === 0 && v.none === 0
-                ? gettext('All failed')
-                : `${v.failed} failed`;
-          }
-        } else if (!v.state) {
-          return record.data.leaf ? '' : gettext('None');
-        } else {
-          let verify_time = Proxmox.Utils.render_timestamp(v.lastTime);
-          tip = `Last verify task started on ${verify_time}`;
-          txt = v.state;
-          iconCls = 'times critical';
-          if (v.state === 'ok') {
-            iconCls = 'check good';
-            let now = Date.now() / 1000;
-            if (now - v.lastTime > 30 * 24 * 60 * 60) {
-              tip = `Last verify task over 30 days ago: ${verify_time}`;
-              iconCls = 'check warning';
-            }
-          }
-        }
-        return `<span data-qtip="${tip}">
-		    <i class="fa fa-fw fa-${iconCls}"></i> ${txt}
-		</span>`;
-      },
-      listeners: {
-        dblclick: function(view, el, row, col, ev, rec) {
-          let verify = rec?.data?.verification;
-          if (verify?.upid && rec.parentNode?.id !== 'root') {
-            Ext.create('Proxmox.window.TaskViewer', {
-              autoShow: true,
-              upid: verify.upid,
-            });
-          }
-        },
-      },
-    },
   ],
 
   initComponent: function() {
@@ -1276,19 +939,6 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
         },
       ],
     },
-    '-',
-    {
-      xtype: 'proxmoxButton',
-      text: gettext('Verify All'),
-      iconCls: 'pve-icon-verify-lettering',
-      handler: 'verifyAll',
-    },
-    {
-      xtype: 'proxmoxButton',
-      text: gettext('Prune All'),
-      iconCls: 'fa fa-scissors',
-      handler: 'pruneAll',
-    },
     '->',
     {
       xtype: 'tbtext',
@@ -1300,12 +950,6 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       cbind: {
         datastore: '{datastore}',
       },
-    },
-    {
-      xtype: 'proxmoxButton',
-      text: gettext('Add Namespace'),
-      iconCls: 'fa fa-plus-square',
-      handler: 'addNS',
     },
     '-',
     {
