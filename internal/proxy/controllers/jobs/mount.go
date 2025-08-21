@@ -136,10 +136,10 @@ func handleMount(w http.ResponseWriter, r *http.Request) {
 		}
 		if time.Now().After(deadline) {
 			_ = os.RemoveAll(mountPoint)
+			syslog.L.Error(lastErr).WithField("cmd", strings.Join(cmd.Args, " ")).WithField("jobStore", jobStore).Write()
 			if lastErr == nil {
 				lastErr = errors.New("mount verification failed (timeout)")
 			}
-			syslog.L.Error(lastErr).WithField("cmd", strings.Join(cmd.Args, " ")).WithField("jobStore", jobStore).Write()
 			controllers.WriteErrorResponse(w, lastErr)
 			return
 		}
