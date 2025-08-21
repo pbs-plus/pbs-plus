@@ -49,7 +49,7 @@ var (
 	ErrNilTask               = errors.New("received nil task")
 	ErrTaskDetectionFailed   = errors.New("task detection failed")
 	ErrTaskDetectionTimedOut = errors.New("task detection timed out")
-	ErrMountEmpty            = errors.New("mount is empty, pbs-client is not expected to run")
+	ErrMountEmpty            = errors.New("target directory is empty, skipping backup")
 
 	ErrJobStatusUpdateFailed = errors.New("failed to update job status")
 )
