@@ -28,6 +28,7 @@ type S3Mount struct {
 	Prefix    string
 	UseSSL    bool
 	Path      string
+	isEmpty   bool
 }
 
 func S3FSMount(storeInstance *store.Store, job types.Job, target types.Target) (*S3Mount, error) {
@@ -105,8 +106,9 @@ checkLoop:
 		case <-checkTimeout:
 			break checkLoop
 		case <-ticker.C:
-			if _, err := os.ReadDir(s3Mount.Path); err == nil {
+			if entries, err := os.ReadDir(s3Mount.Path); err == nil {
 				isAccessible = true
+				s3Mount.isEmpty = len(entries) == 0
 				break checkLoop
 			}
 		}
@@ -139,4 +141,8 @@ func (a *S3Mount) Unmount() {
 	store.RemoveS3Mount(childKey)
 
 	_ = os.RemoveAll(a.Path)
+}
+
+func (a *S3Mount) IsEmpty() bool {
+	return a.isEmpty
 }
