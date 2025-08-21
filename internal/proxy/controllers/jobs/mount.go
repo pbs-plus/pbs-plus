@@ -84,12 +84,19 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		parsedTime, err := time.Parse(time.RFC3339, backupTime)
+		if err != nil {
+			controllers.WriteErrorResponse(w, fmt.Errorf("invalid backup-time format: %w", err))
+			return
+		}
+		safeTime := parsedTime.Format("2006-01-02_15-04-05")
+
 		mountPoint := filepath.Join(
 			constants.RestoreMountBasePath,
 			datastore,
 			ns,
 			fmt.Sprintf("%s-%s", backupType, backupID),
-			backupTime,
+			safeTime,
 		)
 
 		// Prepare mount directory: lazy unmount, clean, recreate
@@ -198,13 +205,19 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// Always generate mount path internally
+		parsedTime, err := time.Parse(time.RFC3339, backupTime)
+		if err != nil {
+			controllers.WriteErrorResponse(w, fmt.Errorf("invalid backup-time format: %w", err))
+			return
+		}
+		safeTime := parsedTime.Format("2006-01-02_15-04-05")
+
 		mountPoint := filepath.Join(
 			constants.RestoreMountBasePath,
 			datastore,
 			ns,
 			fmt.Sprintf("%s-%s", backupType, backupID),
-			backupTime,
+			safeTime,
 		)
 
 		mountMu.Lock()
