@@ -30,7 +30,7 @@ Ext.define("PBS.D2DRestore", {
                 xtype: "pbsPlusDatastorePanel",
                 title: name,
                 itemId: "d2d-restore-" + name,
-                iconCls: "fa fa-floppy-o",
+                iconCls: "fa fa-archive",
                 datastore: name,
               });
             });
