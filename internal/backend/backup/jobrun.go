@@ -49,6 +49,7 @@ var (
 	ErrNilTask               = errors.New("received nil task")
 	ErrTaskDetectionFailed   = errors.New("task detection failed")
 	ErrTaskDetectionTimedOut = errors.New("task detection timed out")
+	ErrMountEmpty            = errors.New("target directory is empty, skipping backup")
 
 	ErrJobStatusUpdateFailed = errors.New("failed to update job status")
 )
@@ -250,6 +251,11 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		if err == nil {
 			op.job = latestAgent
 		}
+
+		if agentMount.IsEmpty() {
+			errCleanUp()
+			return ErrMountEmpty
+		}
 	} else if target.IsS3 {
 		s3Mount, err = mount.S3FSMount(op.storeInstance, op.job, target)
 		if err != nil {
@@ -262,6 +268,11 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		latestS3, err := op.storeInstance.Database.GetJob(op.job.ID)
 		if err == nil {
 			op.job = latestS3
+		}
+
+		if s3Mount.IsEmpty() {
+			errCleanUp()
+			return ErrMountEmpty
 		}
 	}
 
