@@ -13,6 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string) (*exec.Cmd, error) {
@@ -39,6 +40,11 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/prlimit", cmdArgs...)
 	cmd.Env = buildCommandEnv(storeInstance)
+
+	err = CleanUnfinishedSnapshot(job, backupId)
+	if err != nil {
+		syslog.L.Error(err).WithJob(job.ID).WithField("backupId", backupId).Write()
+	}
 
 	return cmd, nil
 }
