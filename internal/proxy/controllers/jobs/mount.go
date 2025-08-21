@@ -16,6 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -121,8 +122,10 @@ func handleMount(w http.ResponseWriter, r *http.Request) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Env = os.Environ()
 
+	syslog.L.Info().WithField("cmd", strings.Join(cmd.Args, " ")).WithField("jobStore", jobStore).WithMessage("mounting").Write()
+
 	// Retry loop until mounted or timeout
-	deadline := time.Now().Add(60 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	var lastErr error
 	for {
 		if err := cmd.Run(); err != nil {
@@ -136,6 +139,7 @@ func handleMount(w http.ResponseWriter, r *http.Request) {
 			if lastErr == nil {
 				lastErr = errors.New("mount verification failed (timeout)")
 			}
+			syslog.L.Error(lastErr).WithField("cmd", strings.Join(cmd.Args, " ")).WithField("jobStore", jobStore).Write()
 			controllers.WriteErrorResponse(w, lastErr)
 			return
 		}
