@@ -771,8 +771,7 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
             if (
               (data.ty === 'file' &&
                 (data.filename.endsWith('.pxar.didx') ||
-                  data.filename.endsWith('.mpxar.didx'))) ||
-              (data.ty === 'ns' && !data.root)
+                  data.filename.endsWith('.mpxar.didx')))
             ) {
               return 'fa fa-hdd-o';
             }
@@ -784,7 +783,7 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
               (data.filename.endsWith('.pxar.didx') ||
                 data.filename.endsWith('.mpxar.didx')) &&
               data['crypt-mode'] < 3
-            ) && data.ty !== 'ns',
+            ),
         },
         {
           handler: 'unmountBackup',
@@ -793,8 +792,7 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
             if (
               (data.ty === 'file' &&
                 (data.filename.endsWith('.pxar.didx') ||
-                  data.filename.endsWith('.mpxar.didx'))) ||
-              (data.ty === 'ns' && !data.root)
+                  data.filename.endsWith('.mpxar.didx')))
             ) {
               return 'fa fa-eject';
             }
@@ -806,7 +804,7 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
               (data.filename.endsWith('.pxar.didx') ||
                 data.filename.endsWith('.mpxar.didx')) &&
               data['crypt-mode'] < 3
-            ) && data.ty !== 'ns',
+            ),
         },
         {
           handler: 'openBrowser',
