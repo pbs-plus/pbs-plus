@@ -553,9 +553,9 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
 
           PBS.PlusUtils.API2Request({
             url:
-              "/api2/extjs/config/d2d-mount/" +
+              "/api2/extjs/config/d2d-unmount/" +
               encodeURIComponent(encodePathValue(view.datastore)),
-            method: 'DELETE',
+            method: 'POST',
             params,
             waitMsgTarget: view,
             failure: function(resp) {
