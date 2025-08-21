@@ -1,7 +1,7 @@
 Ext.define('PBS.D2DRestore.DatastorePanel', {
   extend: 'Ext.tree.Panel',
   alias: 'widget.pbsPlusDatastorePanel',
-  mixins: ['Proxmox.Mixin.CBind'],
+  config: { datastore: null },
 
   rootVisible: false,
 

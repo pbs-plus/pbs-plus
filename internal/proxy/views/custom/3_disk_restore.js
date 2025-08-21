@@ -3,44 +3,51 @@ Ext.define("PBS.D2DRestore", {
   alias: "widget.pbsD2DRestore",
 
   title: "Disk Restore",
-
   tools: [],
-
   border: true,
+
   defaults: {
     border: false,
     xtype: "panel",
   },
 
   initComponent: function() {
-    let me = this;
+    var me = this;
 
-    // Lookup datastore store
-    let store = Ext.data.StoreManager.lookup("pbs-datastore-list");
-
-    // Ensure store is loaded before creating tabs
-    store.load({
-      callback: function(records, operation, success) {
-        if (success) {
-          records.forEach((rec) => {
-            me.add({
-              xtype: "pbsPlusDatastorePanel",
-              title: rec.get("store"),
-              itemId: "d2d-restore-" + rec.get("store"),
-              iconCls: "fa fa-floppy-o",
-              cbind: {
-                datastore: rec.get("store"),
-              },
+    var store = Ext.data.StoreManager.lookup("pbs-datastore-list");
+    if (!store) {
+      Ext.log.warn(
+        "Store 'pbs-datastore-list' not found. Ensure it is created with a storeId before this component."
+      );
+    } else {
+      store.load({
+        callback: function(records, operation, success) {
+          if (success && records && records.length) {
+            var tabs = [];
+            Ext.Array.forEach(records, function(rec) {
+              var name = rec.get("store");
+              tabs.push({
+                xtype: "pbsPlusDatastorePanel",
+                title: name,
+                itemId: "d2d-restore-" + name,
+                iconCls: "fa fa-floppy-o",
+                datastore: name,
+              });
             });
-          });
 
-          // Activate the first tab automatically
-          if (me.items.length > 0) {
-            me.setActiveTab(0);
+            // Add all tabs at once to minimize relayouts
+            var added = me.add(tabs);
+
+            // Activate first tab safely
+            if (added && added.length) {
+              me.setActiveTab(added[0]);
+            } else if (me.items && me.items.getCount() > 0) {
+              me.setActiveTab(me.items.getAt(0));
+            }
           }
-        }
-      },
-    });
+        },
+      });
+    }
 
     me.callParent();
   },
