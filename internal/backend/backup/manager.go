@@ -219,6 +219,10 @@ func (m *Manager) runOne(op *BackupOperation) {
 				Write()
 			return
 		}
+		if errors.Is(err, ErrMountEmpty) {
+			m.CreateOK(op, err)
+			return
+		}
 		m.CreateError(op, err)
 		return
 	}
@@ -267,6 +271,34 @@ func (m *Manager) CreateError(op *BackupOperation, err error) {
 		}
 		if rerr := system.SetRetrySchedule(op.job, op.extraExclusions); rerr != nil {
 			syslog.L.Error(rerr).WithField("jobId", op.job.ID).Write()
+		}
+	}
+}
+
+func (m *Manager) CreateOK(op *BackupOperation, err error) {
+	if task, terr := proxmox.GenerateTaskOKFile(
+		op.job,
+		[]string{
+			"Done handling from a job run request",
+			"Job ID: " + op.job.ID,
+			"Source Mode: " + op.job.SourceMode,
+			"Response: " + err.Error(),
+		},
+	); terr != nil {
+		syslog.L.Error(terr).WithField("jobId", op.job.ID).Write()
+	} else {
+		latest, gerr := op.storeInstance.Database.GetJob(op.job.ID)
+		if gerr != nil {
+			latest = op.job
+		}
+		latest.LastRunUpid = task.UPID
+		latest.LastRunState = task.Status
+		latest.LastRunEndtime = task.EndTime
+		if uerr := op.storeInstance.Database.UpdateJob(nil, latest); uerr != nil {
+			syslog.L.Error(uerr).
+				WithField("jobId", latest.ID).
+				WithField("upid", task.UPID).
+				Write()
 		}
 	}
 }
