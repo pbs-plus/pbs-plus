@@ -24,6 +24,7 @@ type AgentMount struct {
 	Hostname string
 	Drive    string
 	Path     string
+	isEmpty  bool
 }
 
 func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target) (*AgentMount, error) {
@@ -96,8 +97,9 @@ checkLoop:
 		case <-checkTimeout:
 			break checkLoop
 		case <-ticker.C:
-			if _, err := os.ReadDir(agentMount.Path); err == nil {
+			if entries, err := os.ReadDir(agentMount.Path); err == nil {
 				isAccessible = true
+				agentMount.isEmpty = len(entries) == 0
 				break checkLoop
 			}
 		}
@@ -107,6 +109,10 @@ checkLoop:
 		return nil, fmt.Errorf("mounted directory not accessible after timeout")
 	}
 	return agentMount, nil
+}
+
+func (a *AgentMount) IsEmpty() bool {
+	return a.isEmpty
 }
 
 func (a *AgentMount) IsConnected() bool {
