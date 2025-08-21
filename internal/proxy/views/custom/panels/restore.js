@@ -566,7 +566,7 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
 
       let isoTime = snapshot['backup-time'];
       if (isoTime instanceof Date) {
-        isoTime = isoTime.toISOString(); // ensure ISO Z format
+        isoTime = isoTime.toISOString().replace(/\.\d{3}Z$/, 'Z'); // ensure ISO Z format
       }
 
       // Prompt for mount path
@@ -624,7 +624,7 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
 
       let isoTime = snapshot['backup-time'];
       if (isoTime instanceof Date) {
-        isoTime = isoTime.toISOString(); // ensure ISO Z format
+        isoTime = isoTime.toISOString().replace(/\.\d{3}Z$/, 'Z'); // ensure ISO Z format
       }
 
       Ext.Msg.prompt(
