@@ -49,20 +49,22 @@ type agentService struct {
 }
 
 func (p *agentService) Start(s service.Service) error {
-	syslog.L.SetServiceLogger(s)
+	syslog.L.Info().WithMessage("Start: wiring service logger").Write()
+	_ = syslog.L.SetServiceLogger(s)
+	syslog.L.Info().WithMessage("Start: service logger wired").Write()
 
-	if err := createMutex(); err != nil {
-		syslog.L.Error(err).Write()
+	t0 := time.Now()
+	err := createMutex()
+	syslog.L.Info().WithMessage("Start: createMutex done").WithField("ms", time.Since(t0).Milliseconds()).Write()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("Start: createMutex failed").Write()
 		return err
 	}
 
 	handle := windows.CurrentProcess()
-
-	const IDLE_PRIORITY_CLASS = 0x00000040
-	err := windows.SetPriorityClass(handle, uint32(IDLE_PRIORITY_CLASS))
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to set process priority").Write()
-	}
+	t1 := time.Now()
+	_ = windows.SetPriorityClass(handle, 0x00000040)
+	syslog.L.Info().WithMessage("Start: SetPriorityClass done").WithField("ms", time.Since(t1).Milliseconds()).Write()
 
 	p.svc = s
 	p.ctx, p.cancel = context.WithCancel(context.Background())
@@ -70,7 +72,9 @@ func (p *agentService) Start(s service.Service) error {
 	p.wg.Add(2)
 	go func() {
 		defer p.wg.Done()
+		syslog.L.Info().WithMessage("run: begin").Write()
 		p.run()
+		syslog.L.Info().WithMessage("run: end").Write()
 	}()
 	go func() {
 		defer p.wg.Done()
@@ -79,24 +83,27 @@ func (p *agentService) Start(s service.Service) error {
 			case <-p.ctx.Done():
 				return
 			case <-time.After(time.Hour):
-				err := agent.CheckAndRenewCertificate()
-				if err != nil {
-					syslog.L.Error(err).WithMessage("failed to check and renew certificate").Write()
+				if err := agent.CheckAndRenewCertificate(); err != nil {
+					syslog.L.Error(err).WithMessage("cert renew failed").Write()
 				}
 			}
 		}
 	}()
 
+	t2 := time.Now()
 	store, err := agent.NewBackupStore()
+	syslog.L.Info().WithMessage("Start: NewBackupStore done").WithField("ms", time.Since(t2).Milliseconds()).Write()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("error initializing backup store").Write()
+		syslog.L.Error(err).WithMessage("backup store init failed").Write()
 	} else {
+		t3 := time.Now()
 		err = store.ClearAll()
+		syslog.L.Info().WithMessage("Start: store.ClearAll done").WithField("ms", time.Since(t3).Milliseconds()).Write()
 		if err != nil {
-			syslog.L.Error(err).WithMessage("error clearing backup store").Write()
+			syslog.L.Error(err).WithMessage("backup store clear failed").Write()
 		}
 	}
-
+	syslog.L.Info().WithMessage("Start: exit").Write()
 	return nil
 }
 
@@ -108,7 +115,6 @@ func (p *agentService) Stop(s service.Service) error {
 }
 
 func (p *agentService) run() {
-	agent.SetStatus("Starting")
 	if err := p.waitForServerURL(); err != nil {
 		syslog.L.Error(err).WithMessage("failed waiting for server url").Write()
 		return
@@ -149,18 +155,20 @@ func (p *agentService) run() {
 func (p *agentService) waitForServerURL() error {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-
+	lastLog := time.Time{}
 	for {
 		entry, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 		if err == nil && entry != nil {
 			return nil
 		}
-
+		if time.Since(lastLog) >= 30*time.Second {
+			syslog.L.Info().WithMessage("waiting for ServerURL in registry").Write()
+			lastLog = time.Now()
+		}
 		select {
 		case <-p.ctx.Done():
 			return fmt.Errorf("context cancelled while waiting for server URL")
 		case <-ticker.C:
-			continue
 		}
 	}
 }
@@ -252,6 +260,8 @@ func (p *agentService) writeVersionToFile() error {
 }
 
 func (p *agentService) connectARPC() error {
+	syslog.L.Info().WithMessage("connectARPC: begin").Write()
+
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
 		return fmt.Errorf("invalid server URL: %v", err)
@@ -320,6 +330,8 @@ func (p *agentService) connectARPC() error {
 			}
 		}
 	}()
+
+	syslog.L.Info().WithMessage("connectARPC: connected, starting serve").Write()
 
 	return nil
 }
