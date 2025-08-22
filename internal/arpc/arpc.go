@@ -136,8 +136,12 @@ func (s *Session) Serve() error {
 }
 
 func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
 	dialFunc := func() (net.Conn, error) {
-		return tls.Dial("tcp", serverAddr, tlsConfig)
+		return tls.DialWithDialer(dialer, "tcp", serverAddr, tlsConfig)
 	}
 
 	upgradeFunc := func(conn net.Conn) (*Session, error) {
@@ -147,20 +151,18 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 	var session *Session
 	var err error
 	if autoReconnect {
-		// Use DialWithBackoff for the initial connection
 		session, err = dialWithBackoff(
 			ctx,
 			dialFunc,
 			upgradeFunc,
-			100*time.Millisecond, // Initial backoff
-			30*time.Second,       // Max backoff
+			100*time.Millisecond,
+			30*time.Second,
 		)
 	} else {
 		conn, err := dialWithProbe(ctx, dialFunc)
 		if err != nil {
 			return nil, errors.New("server not reachable")
 		}
-
 		session, err = upgradeFunc(conn)
 		if err != nil {
 			_ = conn.Close()
@@ -171,7 +173,6 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 	}
 
 	if autoReconnect {
-		// Configure auto-reconnect with the same parameters
 		session.EnableAutoReconnect(ReconnectConfig{
 			AutoReconnect:    true,
 			DialFunc:         dialFunc,

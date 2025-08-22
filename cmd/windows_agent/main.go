@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -58,6 +59,10 @@ func (w *watchdogService) Start(s service.Service) error {
 		for {
 			err := w.runWithRecovery(s)
 			if err != nil {
+				if err == ErrInstanceExists {
+					os.Exit(1)
+					return
+				}
 				syslog.L.Error(err).WithMessage("service failed and attempting to restart").Write()
 
 				w.restartCount++
@@ -195,6 +200,8 @@ func handleServiceCommands(s service.Service, cmd string) error {
 	return nil
 }
 
+var ErrInstanceExists = errors.New("another instance of pbs-plus-agent is already running")
+
 func createMutex() error {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -209,7 +216,7 @@ func createMutex() error {
 		return nil
 	case windows.ERROR_ALREADY_EXISTS:
 		windows.CloseHandle(h)
-		return fmt.Errorf("another instance of pbs-plus-agent is already running")
+		return ErrInstanceExists
 	default:
 		return fmt.Errorf("failed to create/open mutex: %w", err)
 	}

@@ -262,22 +262,32 @@ func (p *agentService) writeVersionToFile() error {
 func (p *agentService) connectARPC() error {
 	syslog.L.Info().WithMessage("connectARPC: begin").Write()
 
+	t := time.Now()
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
+	syslog.L.Info().WithMessage("connectARPC: got ServerURL").
+		WithField("ms", time.Since(t).Milliseconds()).Write()
 	if err != nil {
 		return fmt.Errorf("invalid server URL: %v", err)
 	}
+
 	uri, err := url.Parse(serverUrl.Value)
 	if err != nil {
 		return fmt.Errorf("invalid server URL: %v", err)
 	}
 
+	t = time.Now()
 	tlsConfig, err := agent.GetTLSConfig()
+	syslog.L.Info().WithMessage("connectARPC: tls config ready").
+		WithField("ms", time.Since(t).Milliseconds()).Write()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to get tls config error for arpc client").Write()
 		return err
 	}
 
+	t = time.Now()
 	clientId, err := os.Hostname()
+	syslog.L.Info().WithMessage("connectARPC: got hostname").
+		WithField("ms", time.Since(t).Milliseconds()).Write()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to retrieve machine hostname").Write()
 		return err
@@ -287,7 +297,16 @@ func (p *agentService) connectARPC() error {
 	headers.Add("X-PBS-Agent", clientId)
 	headers.Add("X-PBS-Plus-Version", Version)
 
-	session, err := arpc.ConnectToServer(p.ctx, true, uri.Host, headers, tlsConfig)
+	// Use a bounded timeout for the initial connect to avoid indefinite hangs
+	ctx, cancel := context.WithTimeout(p.ctx, 20*time.Second)
+	defer cancel()
+
+	syslog.L.Info().WithMessage("connectARPC: dialing server").
+		WithField("addr", uri.Host).Write()
+	t = time.Now()
+	session, err := arpc.ConnectToServer(ctx, true, uri.Host, headers, tlsConfig)
+	syslog.L.Info().WithMessage("connectARPC: dial finished").
+		WithField("ms", time.Since(t).Milliseconds()).Write()
 	if err != nil {
 		return err
 	}
@@ -315,14 +334,14 @@ func (p *agentService) connectARPC() error {
 			case <-p.ctx.Done():
 				return
 			default:
-				syslog.L.Info().WithMessage("connecting arpc endpoint from /plus/arpc").WithField("hostname", clientId).Write()
+				syslog.L.Info().WithMessage("connecting arpc endpoint from /plus/arpc").
+					WithField("hostname", clientId).Write()
 				if err := session.Serve(); err != nil {
 					store, err := agent.NewBackupStore()
 					if err != nil {
 						syslog.L.Error(err).WithMessage("error initializing backup store").Write()
 					} else {
-						err = store.ClearAll()
-						if err != nil {
+						if err = store.ClearAll(); err != nil {
 							syslog.L.Error(err).WithMessage("error clearing backup store").Write()
 						}
 					}
@@ -332,6 +351,5 @@ func (p *agentService) connectARPC() error {
 	}()
 
 	syslog.L.Info().WithMessage("connectARPC: connected, starting serve").Write()
-
 	return nil
 }
