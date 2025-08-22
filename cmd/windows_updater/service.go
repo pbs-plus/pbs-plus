@@ -35,6 +35,8 @@ func (u *UpdaterService) Start(s service.Service) error {
 	u.svc = s
 	u.ctx, u.cancel = context.WithCancel(context.Background())
 
+	syslog.L.SetServiceLogger(s)
+
 	if hostname, err := os.Hostname(); err == nil {
 		u.hostname = hostname
 	}
