@@ -24,12 +24,6 @@ func main() {
 		return
 	}
 
-	if err := createMutex(); err != nil {
-		syslog.L.Error(err).WithMessage("mutex creation failed").Write()
-		os.Exit(1)
-	}
-	defer releaseMutex()
-
 	// Allow control commands like install, start, stop, etc.
 	if len(os.Args) > 1 {
 		if err := service.Control(s, os.Args[1]); err != nil {
@@ -38,6 +32,16 @@ func main() {
 				Write()
 		}
 		return
+	}
+
+	if service.Interactive() {
+		setupConsoleSignals(func() {
+			if updater.cancel != nil {
+				updater.cancel()
+			}
+			updater.wg.Wait()
+			releaseMutex()
+		})
 	}
 
 	if err := s.Run(); err != nil {

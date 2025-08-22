@@ -51,6 +51,11 @@ type agentService struct {
 func (p *agentService) Start(s service.Service) error {
 	syslog.L.SetServiceLogger(s)
 
+	if err := createMutex(); err != nil {
+		syslog.L.Error(err).Write()
+		return err
+	}
+
 	handle := windows.CurrentProcess()
 
 	const IDLE_PRIORITY_CLASS = 0x00000040
@@ -98,6 +103,7 @@ func (p *agentService) Start(s service.Service) error {
 func (p *agentService) Stop(s service.Service) error {
 	p.cancel()
 	p.wg.Wait()
+	releaseMutex()
 	return nil
 }
 

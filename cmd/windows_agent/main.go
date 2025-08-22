@@ -5,8 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
+	"os/signal"
 	"runtime/debug"
 	"sync"
 	"syscall"
@@ -133,12 +132,6 @@ func main() {
 	}
 	prg.svc = s
 
-	if err := createMutex(); err != nil {
-		syslog.L.Error(err).Write()
-		os.Exit(1)
-	}
-	defer releaseMutex()
-
 	err = prg.writeVersionToFile()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to write version to file").Write()
@@ -154,20 +147,20 @@ func main() {
 		return
 	}
 
-	// Run the service
-	err = s.Run()
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to run service").Write()
-		// Instead of exiting, restart the service
-		if err := restartService(); err != nil {
-			syslog.L.Error(err).WithMessage("failed to restart service").Write()
-		}
+	if service.Interactive() {
+		setupConsoleSignals(func() {
+			if prg.cancel != nil {
+				prg.cancel()
+			}
+			prg.wg.Wait()
+			releaseMutex()
+		})
 	}
-}
 
-func restartService() error {
-	cmd := exec.Command("sc", "start", "PBSPlusAgent")
-	return cmd.Run()
+	// Run the service
+	if err := s.Run(); err != nil {
+		syslog.L.Error(err).WithMessage("failed to run service").Write()
+	}
 }
 
 func handleServiceCommands(s service.Service, cmd string) error {
@@ -206,12 +199,7 @@ func createMutex() error {
 	mutex.Lock()
 	defer mutex.Unlock()
 
-	// Create a unique mutex name based on the executable path
-	execPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %v", err)
-	}
-	mutexName := filepath.Base(execPath)
+	mutexName := "Global\\PBSPlusAgent"
 
 	// Try to create/acquire the named mutex
 	h, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr(mutexName))
@@ -222,7 +210,7 @@ func createMutex() error {
 	// Check if the mutex already exists
 	if windows.GetLastError() == syscall.ERROR_ALREADY_EXISTS {
 		windows.CloseHandle(h)
-		return fmt.Errorf("another instance is already running")
+		return fmt.Errorf("another instance of pbs-plus-agent is already running")
 	}
 
 	handle = h
@@ -230,7 +218,19 @@ func createMutex() error {
 }
 
 func releaseMutex() {
+	mutex.Lock()
+	defer mutex.Unlock()
 	if handle != 0 {
 		windows.CloseHandle(handle)
 	}
+}
+
+func setupConsoleSignals(onShutdown func()) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		onShutdown()
+		os.Exit(0)
+	}()
 }

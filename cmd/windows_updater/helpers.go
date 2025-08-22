@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,14 +22,11 @@ var (
 	handle windows.Handle
 )
 
-// Single-instance mutex using Windows named mutex
 func createMutex() error {
-	// Use executable basename as mutex name
-	execPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %v", err)
-	}
-	mutexName := filepath.Base(execPath)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	mutexName := "Global\\PBSPlusUpdater"
 
 	h, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr(mutexName))
 	if err != nil {
@@ -38,7 +35,7 @@ func createMutex() error {
 
 	if windows.GetLastError() == syscall.ERROR_ALREADY_EXISTS {
 		windows.CloseHandle(h)
-		return fmt.Errorf("another instance is already running")
+		return fmt.Errorf("another instance of pbs-plus-updater is already running")
 	}
 
 	handle = h
@@ -46,9 +43,22 @@ func createMutex() error {
 }
 
 func releaseMutex() {
+	mutex.Lock()
+	defer mutex.Unlock()
+
 	if handle != 0 {
 		_ = windows.CloseHandle(handle)
 	}
+}
+
+func setupConsoleSignals(onShutdown func()) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		onShutdown()
+		os.Exit(0)
+	}()
 }
 
 func isServiceInstalled(name string) (bool, error) {

@@ -32,6 +32,11 @@ type VersionResp struct {
 const updateCheckInterval = 2 * time.Minute
 
 func (u *UpdaterService) Start(s service.Service) error {
+	if err := createMutex(); err != nil {
+		syslog.L.Error(err).WithMessage("mutex creation failed").Write()
+		return err
+	}
+
 	u.svc = s
 	u.ctx, u.cancel = context.WithCancel(context.Background())
 
@@ -55,6 +60,7 @@ func (u *UpdaterService) Stop(service.Service) error {
 		u.cancel()
 	}
 	u.wg.Wait()
+	releaseMutex()
 	return nil
 }
 
