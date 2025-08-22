@@ -29,17 +29,16 @@ func createMutex() error {
 	mutexName := "Global\\PBSPlusUpdater"
 
 	h, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr(mutexName))
-	if err != nil {
-		return fmt.Errorf("failed to create mutex: %v", err)
-	}
-
-	if windows.GetLastError() == syscall.ERROR_ALREADY_EXISTS {
+	switch err {
+	case nil:
+		handle = h
+		return nil
+	case windows.ERROR_ALREADY_EXISTS:
 		windows.CloseHandle(h)
 		return fmt.Errorf("another instance of pbs-plus-updater is already running")
+	default:
+		return fmt.Errorf("failed to create/open mutex: %w", err)
 	}
-
-	handle = h
-	return nil
 }
 
 func releaseMutex() {
