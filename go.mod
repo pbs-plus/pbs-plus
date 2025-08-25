@@ -20,7 +20,7 @@ require (
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/pkg/errors v0.9.1
 	github.com/puzpuzpuz/xsync/v3 v3.5.1
-	github.com/rclone/rclone v1.70.3
+	github.com/rclone/rclone v1.71.0
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
@@ -57,6 +57,9 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/pflag v1.0.7 // indirect
 	github.com/tinylib/msgp v1.3.0 // indirect
+	github.com/zeebo/assert v1.3.1 // indirect
+	github.com/zeebo/blake3 v0.2.4 // indirect
+	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
