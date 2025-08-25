@@ -75,6 +75,30 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       this.store.load();
     },
 
+    unmountAll: function() {
+      let me = this;
+      let view = me.getView();
+
+      if (view.namespace && view.namespace !== "") {
+        params.ns = view.namespace;
+      }
+
+      PBS.PlusUtils.API2Request({
+        url:
+          "/api2/extjs/config/d2d-unmount-all/" +
+          encodeURIComponent(encodePathValue(view.datastore)),
+        method: "POST",
+        params,
+        waitMsgTarget: view,
+        failure: function(resp) {
+          Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
+        },
+        success: function(resp) {
+          Ext.toast(gettext("Unmount request sent"));
+        },
+      });
+    },
+
     s3Refresh: function() {
       let me = this;
       let view = me.getView();
@@ -885,6 +909,11 @@ Ext.define('PBS.D2DRestore.DatastorePanel', {
       text: gettext('Reload'),
       iconCls: 'fa fa-refresh',
       handler: 'reload',
+    },
+    {
+      text: gettext('Unmount All'),
+      iconCls: 'fa fa-eject',
+      handler: 'unmountAll',
     },
     {
       text: gettext('More'),

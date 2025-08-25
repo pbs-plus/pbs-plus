@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -47,6 +49,70 @@ func snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName strin
 		parts = append(parts, fileName)
 	}
 	return strings.Join(parts, "|")
+}
+
+func isPathWithin(base, p string) bool {
+	base = filepath.Clean(base)
+	p = filepath.Clean(p)
+	if base == p {
+		return true
+	}
+	rel, err := filepath.Rel(base, p)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func parseMountPoints() ([]string, error) {
+	f, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var mps []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		// mountinfo format (fields):
+		// 1: mount ID
+		// 2: parent ID
+		// 3: major:minor
+		// 4: root
+		// 5: mount point
+		// 6: mount options
+		// 7: optional fields... " - "
+		// 8+: fstype, source, super options
+		line := sc.Text()
+		parts := strings.Split(line, " - ")
+		if len(parts) != 2 {
+			continue
+		}
+		fields := strings.Fields(parts[0])
+		if len(fields) < 5 {
+			continue
+		}
+		mp := fields[4] // mount point field
+		mps = append(mps, mp)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return mps, nil
+}
+
+func isMounted(mp string) (bool, error) {
+	mps, err := parseMountPoints()
+	if err != nil {
+		return false, err
+	}
+	mp = filepath.Clean(mp)
+	for _, m := range mps {
+		if filepath.Clean(m) == mp {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ExtJsMountHandler mounts a pxar archive to a generated mount point.
@@ -239,6 +305,78 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			Success: true,
 			Status:  http.StatusOK,
 			Message: "unmounted",
+		})
+	}
+}
+
+func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		ns := strings.TrimSpace(r.FormValue("ns"))
+		datastore := utils.DecodePath(r.PathValue("datastore"))
+
+		mountPoint := filepath.Join(
+			constants.RestoreMountBasePath,
+			datastore,
+			ns,
+		)
+
+		allMPs, err := parseMountPoints()
+		if err != nil {
+			controllers.WriteErrorResponse(w, fmt.Errorf("read mounts: %w", err))
+			return
+		}
+
+		var targets []string
+		for _, mp := range allMPs {
+			if isPathWithin(mountPoint, mp) {
+				targets = append(targets, mp)
+			}
+		}
+
+		sort.Slice(targets, func(i, j int) bool {
+			di := strings.Count(filepath.Clean(targets[i]), string(filepath.Separator))
+			dj := strings.Count(filepath.Clean(targets[j]), string(filepath.Separator))
+			if di == dj {
+				return len(targets[i]) > len(targets[j])
+			}
+			return di > dj
+		})
+
+		mountMu.Lock()
+		for k, v := range mountedPaths {
+			var kept []string
+			for _, p := range v {
+				if !isPathWithin(mountPoint, p) {
+					kept = append(kept, p)
+				}
+			}
+			if len(kept) > 0 {
+				mountedPaths[k] = kept
+			} else {
+				delete(mountedPaths, k)
+			}
+		}
+		mountMu.Unlock()
+
+		for _, mp := range targets {
+			_ = exec.Command("umount", "-f", "-l", mp).Run()
+			_ = exec.Command("fusermount", "-uz", mp).Run()
+			_ = os.RemoveAll(mountPoint)
+		}
+
+		writeJSON(w, JobRunResponse{
+			Success: true,
+			Status:  http.StatusOK,
+			Message: "unmounted all within datastore",
 		})
 	}
 }
