@@ -11,7 +11,7 @@ require (
 	github.com/gobwas/glob v0.2.3
 	github.com/gofrs/flock v0.12.1
 	github.com/golang-jwt/jwt v3.2.2+incompatible
-	github.com/golang-migrate/migrate/v4 v4.18.3
+	github.com/golang-migrate/migrate/v4 v4.19.0
 	github.com/hanwen/go-fuse/v2 v2.8.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kardianos/service v1.2.4
@@ -45,6 +45,7 @@ require (
 	github.com/jzelinskie/whirlpool v0.0.0-20201016144138-0675e54bb004 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
@@ -57,7 +58,6 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/pflag v1.0.7 // indirect
 	github.com/tinylib/msgp v1.3.0 // indirect
-	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
