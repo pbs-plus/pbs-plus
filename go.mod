@@ -27,7 +27,7 @@ require (
 	github.com/xtaci/smux v1.5.34
 	golang.org/x/crypto v0.41.0
 	golang.org/x/exp v0.0.0-20250813145105-42675adae3e6
-	golang.org/x/sys v0.35.0
+	golang.org/x/sys v0.36.0
 	golang.org/x/time v0.12.0
 	modernc.org/sqlite v1.38.2
 )
