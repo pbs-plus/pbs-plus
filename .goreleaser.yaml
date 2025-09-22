@@ -43,9 +43,6 @@ builds:
       - amd64
     ldflags:
       - -X 'main.Version=v{{.Version}}'
-    hooks:
-      post:
-        - upx "{{ .Path }}"
 
   # ESXi NFS Backup
   - id: esxi-nfs-backup
@@ -67,9 +64,6 @@ builds:
     flags:
       - -tags=netgo,osusergo
       - -installsuffix=netgo
-    hooks:
-      post:
-        - upx "{{ .Path }}"
 
   # Linux Agent
   - id: linux-agent
@@ -91,9 +85,6 @@ builds:
     flags:
       - -tags=netgo,osusergo
       - -installsuffix=netgo
-    hooks:
-      post:
-        - upx "{{ .Path }}"
 
   # Linux Updater
   - id: linux-updater
@@ -114,9 +105,6 @@ builds:
     flags:
       - -tags=netgo,osusergo
       - -installsuffix=netgo
-    hooks:
-      post:
-        - upx "{{ .Path }}"
 
   # BSD Agent
   - id: freebsd-agent
@@ -147,9 +135,6 @@ builds:
     ldflags:
       - -H=windowsgui
       - -X 'main.Version=v{{.Version}}'
-    hooks:
-      post:
-        - upx "{{ .Path }}"
 
   # Windows Updater
   - id: windows-updater
@@ -164,9 +149,6 @@ builds:
       - amd64
     ldflags:
       - -H=windowsgui
-    hooks:
-      post:
-        - upx "{{ .Path }}"
 
 archives:
   - id: server
