@@ -16,6 +16,29 @@ import (
 var httpClient *http.Client
 
 func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) (io.ReadCloser, error) {
+	const maxRetries = 3
+	const retryDelay = time.Second * 2
+
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		result, err := proxmoxHTTPRequestAttempt(method, url, body, respBody)
+		if err == nil {
+			return result, nil
+		}
+
+		lastErr = err
+
+		// Don't retry on the last attempt
+		if attempt < maxRetries-1 {
+			time.Sleep(retryDelay * time.Duration(attempt+1)) // Exponential backoff
+		}
+	}
+
+	return nil, fmt.Errorf("ProxmoxHTTPRequest: failed after %d attempts -> %w", maxRetries, lastErr)
+}
+
+func proxmoxHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (io.ReadCloser, error) {
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
 		return nil, fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
