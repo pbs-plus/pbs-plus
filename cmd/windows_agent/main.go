@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/containers/winquit/pkg/winquit"
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -132,6 +134,15 @@ func main() {
 		return
 	}
 	prg.svc = s
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	winquit.SimulateSigTermOnQuit(sigChan)
+	go func() {
+		<-sigChan
+		releaseMutex()
+		os.Exit(0)
+	}()
 
 	if err := createMutex(); err != nil {
 		syslog.L.Error(err).Write()
