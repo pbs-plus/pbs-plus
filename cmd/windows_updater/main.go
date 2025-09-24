@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/containers/winquit/pkg/winquit"
 	"github.com/gofrs/flock"
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
@@ -148,6 +150,15 @@ func main() {
 		fmt.Printf("Failed to initialize service: %v\n", err)
 		return
 	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	winquit.SimulateSigTermOnQuit(sigChan)
+	go func() {
+		<-sigChan
+		releaseMutex()
+		os.Exit(0)
+	}()
 
 	if err := createMutex(); err != nil {
 		syslog.L.Error(err).Write()
