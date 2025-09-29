@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -42,6 +43,10 @@ func (p *pbsService) Start(s service.Service) error {
 	}
 
 	syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
+
+	if err := p.writeVersionFile(); err != nil {
+		syslog.L.Warn().WithMessage("Failed to write version file").WithField("error", err.Error()).Write()
+	}
 
 	handle := windows.CurrentProcess()
 	const IDLE_PRIORITY_CLASS = 0x00000040
@@ -387,6 +392,16 @@ func (p *pbsService) handlePing(req arpc.Request) (arpc.Response, error) {
 	}
 
 	return arpc.Response{Status: 200, Data: respData}, nil
+}
+
+func (p *pbsService) writeVersionFile() error {
+	ex, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	versionFile := filepath.Join(filepath.Dir(ex), "version.txt")
+	return os.WriteFile(versionFile, []byte(Version), 0644)
 }
 
 func main() {
