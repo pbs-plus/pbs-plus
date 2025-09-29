@@ -49,7 +49,7 @@ const (
 func (u *updaterService) Start(s service.Service) error {
 	if logger, err := s.Logger(nil); err == nil {
 		u.logger = logger
-		syslog.L.SetServiceLogger(s)
+		syslog.L.SetServiceLogger(logger)
 	}
 
 	u.logger.Info("Starting PBS Plus Updater ", Version)
