@@ -301,7 +301,12 @@ func Backup(rpcSess *arpc.Session, sourceMode string, readMode string, drive str
 		session.Close()
 		return "", fmt.Errorf("fs is nil")
 	}
-	fs.RegisterHandlers(rpcSess.GetRouter())
+	router := rpcSess.GetRouter()
+	if router == nil {
+		return "", fmt.Errorf("router is nil")
+	}
+
+	fs.RegisterHandlers(router)
 	session.fs = fs
 
 	return backupMode, nil
