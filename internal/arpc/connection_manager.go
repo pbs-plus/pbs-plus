@@ -10,7 +10,6 @@ import (
 	"github.com/xtaci/smux"
 )
 
-// ConnectionState represents the current connection state.
 type ConnectionState int32
 
 const (
@@ -20,7 +19,6 @@ const (
 	StateFailed
 )
 
-// ReconnectConfig holds the parameters for automatic reconnection.
 type ReconnectConfig struct {
 	AutoReconnect    bool
 	DialFunc         func() (net.Conn, error)
@@ -32,25 +30,30 @@ type ReconnectConfig struct {
 	CircuitBreakTime time.Duration
 }
 
-// dialResult is used by dialWithProbe to deliver dialing results.
 type dialResult struct {
 	conn net.Conn
 	err  error
 }
 
-// dialWithProbe wraps the DialFunc into a context-aware call.
 func dialWithProbe(ctx context.Context, dialFunc func() (net.Conn, error)) (net.Conn, error) {
+	if ctx == nil {
+		return nil, errors.New("context is nil")
+	}
+	if dialFunc == nil {
+		return nil, errors.New("dialFunc is nil")
+	}
+
 	resultCh := make(chan dialResult, 1)
 	go func() {
+		defer close(resultCh)
 		conn, err := dialFunc()
 		select {
 		case resultCh <- dialResult{conn, err}:
-		default:
+		case <-ctx.Done():
 			if conn != nil {
-				_ = conn.Close()
+				conn.Close()
 			}
 		}
-		close(resultCh)
 	}()
 
 	select {
@@ -61,7 +64,6 @@ func dialWithProbe(ctx context.Context, dialFunc func() (net.Conn, error)) (net.
 	}
 }
 
-// dialWithBackoff attempts to establish a connection with exponential backoff and jitter.
 func dialWithBackoff(
 	ctx context.Context,
 	dialFunc func() (net.Conn, error),
@@ -69,6 +71,16 @@ func dialWithBackoff(
 	initialBackoff time.Duration,
 	maxBackoff time.Duration,
 ) (*Session, error) {
+	if ctx == nil {
+		return nil, errors.New("context is nil")
+	}
+	if dialFunc == nil {
+		return nil, errors.New("dialFunc is nil")
+	}
+	if upgradeFunc == nil {
+		return nil, errors.New("upgradeFunc is nil")
+	}
+
 	if initialBackoff <= 0 {
 		initialBackoff = 100 * time.Millisecond
 	}
@@ -108,7 +120,7 @@ func dialWithBackoff(
 
 		session, err := upgradeFunc(conn)
 		if err != nil {
-			_ = conn.Close()
+			conn.Close()
 			backoff = min(backoff*2, maxBackoff)
 			continue
 		}
@@ -117,8 +129,14 @@ func dialWithBackoff(
 	}
 }
 
-// openStreamWithReconnect opens a stream with reconnection support.
 func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream, error) {
+	if s == nil {
+		return nil, errors.New("session is nil")
+	}
+	if curSession == nil {
+		return nil, errors.New("current session is nil")
+	}
+
 	stream, err := curSession.OpenStream()
 	if err == nil {
 		return stream, nil
@@ -142,17 +160,21 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 		s.circuitOpen.Store(false)
 	}
 
+	if s.reconnectConfig.DialFunc == nil {
+		s.Close()
+		return nil, errors.New("dialFunc not configured")
+	}
+
 	probeCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	conn, probeErr := dialWithProbe(probeCtx, s.reconnectConfig.DialFunc)
 	if probeErr != nil {
 		s.circuitOpen.Store(true)
 		s.circuitResetAt.Store(time.Now().Add(5 * time.Second).Unix())
-
 		s.Close()
 		return nil, errors.New("server not reachable")
 	}
-	_ = conn.Close()
+	conn.Close()
 
 	timeout := getJitteredBackoff(5*time.Second, 0.3)
 	if ConnectionState(s.state.Load()) == StateReconnecting {
@@ -166,7 +188,11 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 			return nil, s.ctx.Err()
 		}
 	} else {
-		go s.attemptReconnect()
+		go func() {
+			if err := s.attemptReconnect(); err != nil {
+				s.state.Store(int32(StateFailed))
+			}
+		}()
 		select {
 		case <-s.reconnectChan:
 		case <-time.After(timeout):
@@ -184,11 +210,18 @@ func openStreamWithReconnect(s *Session, curSession *smux.Session) (*smux.Stream
 	}
 
 	newSession := s.muxSess.Load()
+	if newSession == nil {
+		s.Close()
+		return nil, errors.New("new session is nil after reconnection")
+	}
 	return newSession.OpenStream()
 }
 
-// EnableAutoReconnect configures auto-reconnection and starts the connection monitor.
 func (s *Session) EnableAutoReconnect(rc ReconnectConfig) {
+	if s == nil {
+		return
+	}
+
 	if rc.InitialBackoff <= 0 {
 		rc.InitialBackoff = 100 * time.Millisecond
 	}
@@ -209,9 +242,8 @@ func (s *Session) EnableAutoReconnect(rc ReconnectConfig) {
 	go s.connectionMonitor()
 }
 
-// connectionMonitor periodically checks if reconnection is needed.
 func (s *Session) connectionMonitor() {
-	if !s.reconnectConfig.AutoReconnect {
+	if s == nil || !s.reconnectConfig.AutoReconnect {
 		return
 	}
 
@@ -229,7 +261,11 @@ func (s *Session) connectionMonitor() {
 				currentState := ConnectionState(s.state.Load())
 				if currentState != StateReconnecting {
 					if !s.circuitOpen.Load() {
-						go s.attemptReconnect()
+						go func() {
+							if err := s.attemptReconnect(); err != nil {
+								s.state.Store(int32(StateFailed))
+							}
+						}()
 					} else {
 						resetTime := s.circuitResetAt.Load()
 						if resetTime > 0 && time.Now().Unix() > resetTime {
@@ -237,10 +273,14 @@ func (s *Session) connectionMonitor() {
 							go func() {
 								probeCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 								defer cancel()
-								conn, err := dialWithProbe(probeCtx, s.reconnectConfig.DialFunc)
-								if err == nil && conn != nil {
-									_ = conn.Close()
-									s.attemptReconnect()
+								if s.reconnectConfig.DialFunc != nil {
+									conn, err := dialWithProbe(probeCtx, s.reconnectConfig.DialFunc)
+									if err == nil && conn != nil {
+										conn.Close()
+										if err := s.attemptReconnect(); err != nil {
+											s.state.Store(int32(StateFailed))
+										}
+									}
 								}
 							}()
 						}
@@ -252,8 +292,11 @@ func (s *Session) connectionMonitor() {
 	}
 }
 
-// attemptReconnect tries to reconnect using exponential backoff with jitter.
 func (s *Session) attemptReconnect() error {
+	if s == nil {
+		return errors.New("session is nil")
+	}
+
 	if !s.state.CompareAndSwap(int32(StateDisconnected), int32(StateReconnecting)) {
 		currentState := ConnectionState(s.state.Load())
 		if currentState == StateConnected {
@@ -281,6 +324,16 @@ func (s *Session) attemptReconnect() error {
 		return fmt.Errorf("auto reconnect not configured")
 	}
 
+	if s.reconnectConfig.DialFunc == nil {
+		s.state.Store(int32(StateDisconnected))
+		return fmt.Errorf("dialFunc not configured")
+	}
+
+	if s.reconnectConfig.UpgradeFunc == nil {
+		s.state.Store(int32(StateDisconnected))
+		return fmt.Errorf("upgradeFunc not configured")
+	}
+
 	probeCtx, cancel := context.WithTimeout(s.reconnectConfig.ReconnectCtx, 2*time.Second)
 	defer cancel()
 	conn, err := dialWithProbe(probeCtx, s.reconnectConfig.DialFunc)
@@ -290,7 +343,7 @@ func (s *Session) attemptReconnect() error {
 		s.state.Store(int32(StateDisconnected))
 		return fmt.Errorf("server not reachable: %w", err)
 	}
-	_ = conn.Close()
+	conn.Close()
 
 	newSession, err := dialWithBackoff(
 		s.reconnectConfig.ReconnectCtx,
@@ -306,14 +359,27 @@ func (s *Session) attemptReconnect() error {
 		return fmt.Errorf("reconnection failed: %w", err)
 	}
 
+	if newSession == nil {
+		s.state.Store(int32(StateFailed))
+		return fmt.Errorf("new session is nil")
+	}
+
+	newMuxSess := newSession.muxSess.Load()
+	if newMuxSess == nil {
+		s.state.Store(int32(StateFailed))
+		return fmt.Errorf("new mux session is nil")
+	}
+
 	s.reconnectMu.Lock()
-	s.muxSess.Store(newSession.muxSess.Load())
+	s.muxSess.Store(newMuxSess)
 	s.reconnectMu.Unlock()
 	s.state.Store(int32(StateConnected))
 	return nil
 }
 
-// GetState returns the current connection state.
 func (s *Session) GetState() ConnectionState {
+	if s == nil {
+		return StateDisconnected
+	}
 	return ConnectionState(s.state.Load())
 }
