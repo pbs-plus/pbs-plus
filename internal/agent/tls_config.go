@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
@@ -17,7 +18,28 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
+var (
+	tlsConfigCache *tls.Config
+	tlsConfigMutex sync.RWMutex
+	cacheExpiry    time.Time
+	cacheTTL       = 30 * time.Minute
+)
+
 func GetTLSConfig() (*tls.Config, error) {
+	tlsConfigMutex.RLock()
+	if tlsConfigCache != nil && time.Now().Before(cacheExpiry) {
+		defer tlsConfigMutex.RUnlock()
+		return tlsConfigCache, nil
+	}
+	tlsConfigMutex.RUnlock()
+
+	tlsConfigMutex.Lock()
+	defer tlsConfigMutex.Unlock()
+
+	if tlsConfigCache != nil && time.Now().Before(cacheExpiry) {
+		return tlsConfigCache, nil
+	}
+
 	serverCertReg, err := registry.GetEntry(registry.AUTH, "ServerCA", true)
 	if err != nil {
 		return nil, fmt.Errorf("GetTLSConfig: server cert not found -> %w", err)
@@ -25,7 +47,7 @@ func GetTLSConfig() (*tls.Config, error) {
 
 	rootCAs := x509.NewCertPool()
 	if ok := rootCAs.AppendCertsFromPEM([]byte(serverCertReg.Value)); !ok {
-		return nil, fmt.Errorf("failed to append CA certificate: %s", serverCertReg.Value)
+		return nil, fmt.Errorf("failed to append CA certificate")
 	}
 
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
@@ -41,13 +63,12 @@ func GetTLSConfig() (*tls.Config, error) {
 	certPEM := []byte(certReg.Value)
 	keyPEM := []byte(keyReg.Value)
 
-	// Configure TLS client
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load client certificate: %w\n%v\n%v", err, certPEM, keyPEM)
+		return nil, fmt.Errorf("failed to load client certificate: %w", err)
 	}
 
-	return &tls.Config{
+	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      rootCAs,
 		MinVersion:   tls.VersionTLS12,
@@ -57,11 +78,23 @@ func GetTLSConfig() (*tls.Config, error) {
 			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 		},
-	}, nil
+	}
+
+	tlsConfigCache = tlsConfig
+	cacheExpiry = time.Now().Add(cacheTTL)
+
+	return tlsConfig, nil
+}
+
+func invalidateTLSConfigCache() {
+	tlsConfigMutex.Lock()
+	defer tlsConfigMutex.Unlock()
+	tlsConfigCache = nil
+	cacheExpiry = time.Time{}
 }
 
 func CheckAndRenewCertificate() error {
-	const renewalWindow = 30 * 24 * time.Hour // Renew if certificate expires in less than 30 days
+	const renewalWindow = 30 * 24 * time.Hour
 
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
 	if err != nil {
@@ -83,10 +116,11 @@ func CheckAndRenewCertificate() error {
 
 	switch {
 	case cert.NotAfter.Before(now):
-		_ = registry.DeleteEntry(registry.AUTH, "Cert")
-		_ = registry.DeleteEntry(registry.AUTH, "Priv")
+		registry.DeleteEntry(registry.AUTH, "Cert")
+		registry.DeleteEntry(registry.AUTH, "Priv")
+		registry.DeleteEntry(registry.AUTH, "ServerCA")
 
-		return fmt.Errorf("Certificate has expired. This agent needs to be bootstrapped again.")
+		return fmt.Errorf("certificate has expired, agent needs to be bootstrapped again")
 	case timeUntilExpiry < renewalWindow:
 		fmt.Printf("Certificate expires in %v hours. Renewing...\n", timeUntilExpiry.Hours())
 		return renewCertificate()
@@ -97,18 +131,21 @@ func CheckAndRenewCertificate() error {
 }
 
 func renewCertificate() error {
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("renewCertificate: failed to get hostname - %w", err)
+	}
 
 	csr, privKey, err := certificates.GenerateCSR(hostname, 2048)
 	if err != nil {
-		return fmt.Errorf("Bootstrap: generating csr failed -> %w", err)
+		return fmt.Errorf("renewCertificate: generating csr failed -> %w", err)
 	}
 
 	encodedCSR := base64.StdEncoding.EncodeToString(csr)
 
 	drives, err := utils.GetLocalDrives()
 	if err != nil {
-		return fmt.Errorf("Bootstrap: failed to get local drives list: %w", err)
+		return fmt.Errorf("renewCertificate: failed to get local drives list: %w", err)
 	}
 
 	reqBody, err := json.Marshal(&BootstrapRequest{
@@ -117,24 +154,24 @@ func renewCertificate() error {
 		CSR:      encodedCSR,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to marshal bootstrap request: %w", err)
+		return fmt.Errorf("renewCertificate: failed to marshal bootstrap request: %w", err)
 	}
 
 	renewResp := &BootstrapResponse{}
 
-	_, err = ProxmoxHTTPRequest(http.MethodPost, "/plus/agent/renew", bytes.NewBuffer(reqBody), &renewResp)
+	_, err = ProxmoxHTTPRequest(http.MethodPost, "/plus/agent/renew", bytes.NewBuffer(reqBody), renewResp)
 	if err != nil {
-		return fmt.Errorf("failed to fetch renewed certificate: %w", err)
+		return fmt.Errorf("renewCertificate: failed to fetch renewed certificate: %w", err)
 	}
 
 	decodedCA, err := base64.StdEncoding.DecodeString(renewResp.CA)
 	if err != nil {
-		return fmt.Errorf("Renew: error decoding ca content (%s) -> %w", string(renewResp.CA), err)
+		return fmt.Errorf("renewCertificate: error decoding ca content -> %w", err)
 	}
 
 	decodedCert, err := base64.StdEncoding.DecodeString(renewResp.Cert)
 	if err != nil {
-		return fmt.Errorf("Renew: error decoding cert content (%s) -> %w", string(renewResp.Cert), err)
+		return fmt.Errorf("renewCertificate: error decoding cert content -> %w", err)
 	}
 
 	privKeyPEM := certificates.EncodeKeyPEM(privKey)
@@ -160,20 +197,19 @@ func renewCertificate() error {
 		IsSecret: true,
 	}
 
-	err = registry.CreateEntry(&caEntry)
-	if err != nil {
-		return fmt.Errorf("Renew: error storing ca to registry -> %w", err)
+	if err = registry.CreateEntry(&caEntry); err != nil {
+		return fmt.Errorf("renewCertificate: error storing ca to registry -> %w", err)
 	}
 
-	err = registry.CreateEntry(&certEntry)
-	if err != nil {
-		return fmt.Errorf("Renew: error storing cert to registry -> %w", err)
+	if err = registry.CreateEntry(&certEntry); err != nil {
+		return fmt.Errorf("renewCertificate: error storing cert to registry -> %w", err)
 	}
 
-	err = registry.CreateEntry(&privEntry)
-	if err != nil {
-		return fmt.Errorf("Renew: error storing priv to registry -> %w", err)
+	if err = registry.CreateEntry(&privEntry); err != nil {
+		return fmt.Errorf("renewCertificate: error storing priv to registry -> %w", err)
 	}
+
+	invalidateTLSConfigCache()
 
 	return nil
 }

@@ -3,8 +3,6 @@
 package syslog
 
 import (
-	"fmt"
-
 	"github.com/kardianos/service"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -21,17 +19,12 @@ func init() {
 }
 
 // SetServiceLogger configures the service logger for Windows Event Log integration.
-func (l *Logger) SetServiceLogger(s service.Service) error {
+func (l *Logger) SetServiceLogger(s service.Logger) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	logger, err := s.Logger(nil)
-	if err != nil {
-		return fmt.Errorf("failed to set service logger: %w", err)
-	}
-
 	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-		w.Out = &LogWriter{logger: logger}
+		w.Out = &LogWriter{logger: s}
 		w.NoColor = true
 	})).With().
 		CallerWithSkipFrameCount(3).
@@ -40,7 +33,7 @@ func (l *Logger) SetServiceLogger(s service.Service) error {
 
 	l.zlog = &zlogger
 
-	log.Info().Msg("Service logger successfully added for Windows Event Log")
+	l.zlog.Info().Msg("Service logger successfully added for Windows Event Log")
 	return nil
 }
 
