@@ -37,10 +37,7 @@ var (
 )
 
 func init() {
-	systemRoot := os.Getenv("SYSTEMROOT")
-	if systemRoot == "" {
-		systemRoot = "C:\\"
-	}
+	systemRoot := "C:\\"
 	serviceDataDir := filepath.Join(systemRoot, "PBS Plus Agent")
 	secretFilePath = filepath.Join(serviceDataDir, "secrets.json")
 	keyFilePath = filepath.Join(serviceDataDir, "master.key")
