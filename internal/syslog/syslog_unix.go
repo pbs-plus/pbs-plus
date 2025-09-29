@@ -5,6 +5,8 @@ package syslog
 import (
 	"fmt"
 	"log/syslog"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -15,9 +17,25 @@ func init() {
 	logger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
 		w.Out = &LogWriter{logger: sysWriter}
 		w.NoColor = true
+		w.FormatCaller = func(i interface{}) string {
+			var c string
+			if cc, ok := i.(string); ok {
+				c = cc
+			}
+			if c == "" {
+				return ""
+			}
+
+			parts := strings.Split(c, "/")
+			if len(parts) >= 2 {
+				return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
+			}
+			return filepath.Base(c)
+		}
 	})).With().Timestamp().CallerWithSkipFrameCount(3).Logger()
 
-	L = &Logger{zlog: &logger}
+	hostname, _ := os.Hostname()
+	L = &Logger{zlog: &logger, hostname: hostname}
 }
 
 // Write finalizes the LogEntry and writes it using the global zerolog logger.
@@ -26,6 +44,10 @@ func init() {
 func (e *LogEntry) Write() {
 	e.logger.mu.RLock()
 	defer e.logger.mu.RUnlock()
+
+	if _, ok := e.Fields["hostname"]; !ok {
+		e.Fields["hostname"] = e.logger.hostname
+	}
 
 	if e.JobID != "" {
 		backupLogger := GetExistingBackupLogger(e.JobID)
