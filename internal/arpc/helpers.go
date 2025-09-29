@@ -10,8 +10,17 @@ import (
 	"github.com/xtaci/smux"
 )
 
-// HijackUpgradeHTTP helps a server upgrade an HTTP connection.
 func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, version string, mgr *SessionManager, config *smux.Config) (*Session, error) {
+	if w == nil {
+		return nil, fmt.Errorf("response writer is nil")
+	}
+	if r == nil {
+		return nil, fmt.Errorf("request is nil")
+	}
+	if mgr == nil {
+		return nil, fmt.Errorf("session manager is nil")
+	}
+
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		return nil, fmt.Errorf("response writer does not support hijacking")
@@ -20,6 +29,15 @@ func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, 
 	conn, rw, err := hijacker.Hijack()
 	if err != nil {
 		return nil, err
+	}
+
+	if conn == nil {
+		return nil, fmt.Errorf("hijacked connection is nil")
+	}
+
+	if rw == nil {
+		conn.Close()
+		return nil, fmt.Errorf("hijacked readwriter is nil")
 	}
 
 	_, err = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\n\r\n")
@@ -32,17 +50,35 @@ func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, 
 		return nil, err
 	}
 
-	return mgr.GetOrCreateSession(hostname, version, conn)
+	session, err := mgr.GetOrCreateSession(hostname, version, conn)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	return session, nil
 }
 
-// upgradeHTTPClient helps a client upgrade an HTTP connection.
 func upgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Header, config *smux.Config) (*Session, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("connection is nil")
+	}
+	if requestPath == "" {
+		requestPath = "/"
+	}
+	if host == "" {
+		return nil, fmt.Errorf("host is required")
+	}
+
 	reqLines := []string{
 		fmt.Sprintf("GET %s HTTP/1.1", requestPath),
 		fmt.Sprintf("Host: %s", host),
 	}
 	if headers != nil {
 		for key, values := range headers {
+			if key == "" {
+				continue
+			}
 			for _, value := range values {
 				reqLines = append(reqLines, fmt.Sprintf("%s: %s", key, value))
 			}
@@ -54,27 +90,43 @@ func upgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Hea
 		"", "",
 	)
 	reqStr := strings.Join(reqLines, "\r\n")
+
 	if _, err := conn.Write([]byte(reqStr)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to write upgrade request: %w", err)
 	}
 
 	reader := bufio.NewReader(conn)
-	statusLine, err := reader.ReadString('\n')
-	if err != nil {
-		return nil, err
+	if reader == nil {
+		return nil, fmt.Errorf("failed to create reader")
 	}
-	if !strings.Contains(statusLine, "101") {
-		return nil, fmt.Errorf("expected status 101, got: %s", statusLine)
+
+	statusLine, _, err := reader.ReadLine()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read status line: %w", err)
+	}
+
+	statusStr := string(statusLine)
+	if !strings.Contains(statusStr, "101") {
+		return nil, fmt.Errorf("expected status 101, got: %s", statusStr)
 	}
 
 	for {
-		line, err := reader.ReadString('\n')
+		line, isPrefix, err := reader.ReadLine()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to read header line: %w", err)
 		}
-		if strings.TrimSpace(line) == "" {
+		if isPrefix {
+			return nil, fmt.Errorf("header line too long")
+		}
+		if len(line) == 0 {
 			break
 		}
 	}
-	return NewClientSession(conn, config)
+
+	session, err := NewClientSession(conn, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create client session: %w", err)
+	}
+
+	return session, nil
 }
