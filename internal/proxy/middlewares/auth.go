@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -303,15 +304,30 @@ func loadTrustedCert(store *store.Store, hostname string) (*x509.Certificate, er
 		}
 
 		block, _ := pem.Decode(decodedCert)
-		if block == nil {
-			lastErr = fmt.Errorf("auth %d: failed to decode PEM block", i+1)
+		if block != nil {
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				lastErr = fmt.Errorf("auth %d: failed to parse PEM certificate: %w", i+1, err)
+				continue
+			}
+
+			now := time.Now()
+			if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+				return nil, fmt.Errorf("certificate for hostname %s is expired or not yet valid", hostname)
+			}
+
+			return cert, nil
+		}
+
+		cert, err := x509.ParseCertificate(decodedCert)
+		if err != nil {
+			lastErr = fmt.Errorf("auth %d: failed to parse raw certificate: %w", i+1, err)
 			continue
 		}
 
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			lastErr = fmt.Errorf("auth %d: failed to parse certificate: %w", i+1, err)
-			continue
+		now := time.Now()
+		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+			return nil, fmt.Errorf("certificate for hostname %s is expired or not yet valid", hostname)
 		}
 
 		return cert, nil
