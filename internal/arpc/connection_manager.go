@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
 )
 
@@ -115,6 +116,7 @@ func dialWithBackoff(
 		conn, err := dialFunc()
 		if err != nil {
 			backoff = min(backoff*2, maxBackoff)
+			syslog.L.Error(err).WithField("attempt", attempt).WithField("stage", "dial").WithField("backoff", backoff).Write()
 			continue
 		}
 
@@ -122,6 +124,7 @@ func dialWithBackoff(
 		if err != nil {
 			conn.Close()
 			backoff = min(backoff*2, maxBackoff)
+			syslog.L.Error(err).WithField("attempt", attempt).WithField("stage", "upgrade").WithField("backoff", backoff).Write()
 			continue
 		}
 
