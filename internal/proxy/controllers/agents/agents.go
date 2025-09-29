@@ -19,7 +19,8 @@ import (
 func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
 		}
 
 		err := syslog.ParseAndLogWindowsEntry(r.Body)
@@ -48,7 +49,7 @@ type BootstrapRequest struct {
 func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -80,15 +81,22 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		var reqParsed BootstrapRequest
 		err = json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
 
+		if len(reqParsed.Drives) == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			controllers.WriteErrorResponse(w, fmt.Errorf("no drives provided"))
+			syslog.L.Error(fmt.Errorf("no drives provided")).Write()
+			return
+		}
+
 		decodedCSR, err := base64.StdEncoding.DecodeString(reqParsed.CSR)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
 			return
@@ -151,6 +159,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			err := storeInstance.Database.CreateTarget(tx, newTarget)
 			if err != nil {
+				tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
 				controllers.WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
@@ -160,6 +169,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		err = tx.Commit()
 		if err != nil {
+			tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
@@ -180,16 +190,23 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
 		var reqParsed BootstrapRequest
 		err := json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
+			return
+		}
+
+		if len(reqParsed.Drives) == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			controllers.WriteErrorResponse(w, fmt.Errorf("no drives provided"))
+			syslog.L.Error(fmt.Errorf("no drives provided")).Write()
 			return
 		}
 
@@ -208,7 +225,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		decodedCSR, err := base64.StdEncoding.DecodeString(reqParsed.CSR)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
 			return
@@ -262,12 +279,13 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				newTarget.Name = fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter)
 				newTarget.Path = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
 			default:
-				newTarget.Name = fmt.Sprintf("%s", reqParsed.Hostname)
+				newTarget.Name = fmt.Sprintf("%s - Root", reqParsed.Hostname)
 				newTarget.Path = fmt.Sprintf("agent://%s/root", clientIP)
 			}
 
 			err := storeInstance.Database.CreateTarget(tx, newTarget)
 			if err != nil {
+				tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
 				controllers.WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
@@ -277,6 +295,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		err = tx.Commit()
 		if err != nil {
+			tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()

@@ -39,7 +39,10 @@ func Bootstrap() error {
 		return fmt.Errorf("Bootstrap: server url not found -> %w", err)
 	}
 
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("Bootstrap: failed to get hostname -> %w", err)
+	}
 
 	csr, privKey, err := certificates.GenerateCSR(hostname, 2048)
 	if err != nil {
@@ -71,7 +74,6 @@ func Bootstrap() error {
 		),
 		bytes.NewBuffer(reqBody),
 	)
-
 	if err != nil {
 		return fmt.Errorf("Bootstrap: error creating http request -> %w", err)
 	}
@@ -100,6 +102,11 @@ func Bootstrap() error {
 		resp.Body.Close()
 	}()
 
+	if resp.StatusCode != http.StatusOK {
+		rawBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Bootstrap: server returned status %d: %s", resp.StatusCode, string(rawBody))
+	}
+
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("Bootstrap: error getting body content -> %w", err)
@@ -113,12 +120,12 @@ func Bootstrap() error {
 
 	decodedCA, err := base64.StdEncoding.DecodeString(bootstrapResp.CA)
 	if err != nil {
-		return fmt.Errorf("Bootstrap: error decoding ca content (%s) -> %w", string(bootstrapResp.CA), err)
+		return fmt.Errorf("Bootstrap: error decoding ca content (%s) -> %w", bootstrapResp.CA, err)
 	}
 
 	decodedCert, err := base64.StdEncoding.DecodeString(bootstrapResp.Cert)
 	if err != nil {
-		return fmt.Errorf("Bootstrap: error decoding cert content (%s) -> %w", string(bootstrapResp.Cert), err)
+		return fmt.Errorf("Bootstrap: error decoding cert content (%s) -> %w", bootstrapResp.Cert, err)
 	}
 
 	privKeyPEM := certificates.EncodeKeyPEM(privKey)

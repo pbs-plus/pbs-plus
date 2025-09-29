@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/xtaci/smux"
@@ -106,8 +107,36 @@ func upgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Hea
 	}
 
 	statusStr := string(statusLine)
-	if !strings.Contains(statusStr, "101") {
-		return nil, fmt.Errorf("expected status 101, got: %s", statusStr)
+	statusCode, statusText := parseHTTPStatus(statusStr)
+
+	if statusCode != 101 {
+		for {
+			line, isPrefix, err := reader.ReadLine()
+			if err != nil {
+				break
+			}
+			if isPrefix {
+				continue
+			}
+			if len(line) == 0 {
+				break
+			}
+		}
+
+		switch statusCode {
+		case 401:
+			return nil, fmt.Errorf("authentication required: %s", statusText)
+		case 403:
+			return nil, fmt.Errorf("forbidden: %s", statusText)
+		case 404:
+			return nil, fmt.Errorf("endpoint not found: %s", statusText)
+		case 426:
+			return nil, fmt.Errorf("upgrade required: %s", statusText)
+		case 500:
+			return nil, fmt.Errorf("server error: %s", statusText)
+		default:
+			return nil, fmt.Errorf("expected status 101 Switching Protocols, got %d: %s", statusCode, statusText)
+		}
 	}
 
 	for {
@@ -129,4 +158,23 @@ func upgradeHTTPClient(conn net.Conn, requestPath, host string, headers http.Hea
 	}
 
 	return session, nil
+}
+
+func parseHTTPStatus(statusLine string) (int, string) {
+	parts := strings.SplitN(statusLine, " ", 3)
+	if len(parts) < 2 {
+		return 0, statusLine
+	}
+
+	statusCode, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, statusLine
+	}
+
+	statusText := ""
+	if len(parts) >= 3 {
+		statusText = parts[2]
+	}
+
+	return statusCode, statusText
 }
