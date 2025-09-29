@@ -41,7 +41,7 @@ func (p *pbsService) Start(s service.Service) error {
 		syslog.L.SetServiceLogger(s)
 	}
 
-	p.logger.Info("Starting PBS Plus Agent v", Version)
+	p.logger.Info("Starting PBS Plus Agent ", Version)
 
 	handle := windows.CurrentProcess()
 	const IDLE_PRIORITY_CLASS = 0x00000040
@@ -87,25 +87,30 @@ func (p *pbsService) run() {
 	}()
 
 	agent.SetStatus("Starting")
+	p.logger.Info("Waiting for PBS Plus Agent config")
 
 	if err := p.waitForConfig(); err != nil {
 		p.logger.Error("Failed to get configuration: ", err)
 		return
 	}
 
+	p.logger.Info("Waiting for PBS Plus Agent bootstrap")
 	if err := p.waitForBootstrap(); err != nil {
 		p.logger.Error("Failed to bootstrap: ", err)
 		return
 	}
 
+	p.logger.Info("Waiting for PBS Plus Agent backup store")
 	if store, err := agent.NewBackupStore(); err != nil {
 		p.logger.Warning("Failed to initialize backup store: ", err)
 	} else if err := store.ClearAll(); err != nil {
 		p.logger.Warning("Failed to clear backup store: ", err)
 	}
 
+	p.logger.Info("Waiting for PBS Plus Agent background tasks to initiate")
 	p.startBackgroundTasks()
 
+	p.logger.Info("Connecting to ARPC")
 	if err := p.connectARPC(); err != nil {
 		p.logger.Error("Failed to connect ARPC: ", err)
 		return

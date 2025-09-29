@@ -52,7 +52,7 @@ func (u *updaterService) Start(s service.Service) error {
 		syslog.L.SetServiceLogger(s)
 	}
 
-	u.logger.Info("Starting PBS Plus Updater v", Version)
+	u.logger.Info("Starting PBS Plus Updater ", Version)
 
 	if hostname, err := os.Hostname(); err == nil {
 		u.hostname = hostname
