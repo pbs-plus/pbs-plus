@@ -181,6 +181,7 @@ func alphabetHint(s string) string {
 func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkAgentAuth(store, r); err != nil {
+			syslog.L.Error(err).WithField("mode", "server_only").Write()
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
@@ -204,16 +205,22 @@ func ServerOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
 	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authenticated := false
+		var lastErr error
 
 		if err := checkAgentAuth(store, r); err == nil {
 			authenticated = true
+		} else {
+			lastErr = err
 		}
 
 		if err := checkProxyAuth(r); err == nil {
 			authenticated = true
+		} else {
+			lastErr = err
 		}
 
 		if !authenticated {
+			syslog.L.Error(lastErr).WithField("mode", "agent_or_server").Write()
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
@@ -234,17 +241,9 @@ func checkAgentAuth(store *store.Store, r *http.Request) error {
 		return fmt.Errorf("CheckAgentAuth: missing certificate subject common name")
 	}
 
-	isWindows := true
-	trustedCert, err := loadTrustedCert(store, agentHostname+" - C")
+	trustedCert, err := loadTrustedCert(store, agentHostname)
 	if err != nil {
-		isWindows = false
-	}
-
-	if !isWindows {
-		trustedCert, err = loadTrustedCert(store, agentHostname+" - Root")
-		if err != nil {
-			return fmt.Errorf("CheckAgentAuth: certificate not trusted")
-		}
+		return fmt.Errorf("CheckAgentAuth: certificate not trusted")
 	}
 
 	if !clientCert.Equal(trustedCert) {
@@ -285,26 +284,38 @@ func checkProxyAuth(r *http.Request) error {
 	return nil
 }
 
-func loadTrustedCert(store *store.Store, targetName string) (*x509.Certificate, error) {
-	target, err := store.Database.GetTarget(targetName)
+func loadTrustedCert(store *store.Store, hostname string) (*x509.Certificate, error) {
+	authList, err := store.Database.GetUniqueAuthByHostname(hostname)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get target: %w", err)
+		return nil, fmt.Errorf("failed to get auth values for hostname %s: %w", hostname, err)
 	}
 
-	decodedCert, err := base64.StdEncoding.DecodeString(target.Auth)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get target cert: %w", err)
+	if len(authList) == 0 {
+		return nil, fmt.Errorf("no auth values found for hostname %s", hostname)
 	}
 
-	block, _ := pem.Decode(decodedCert)
-	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block")
+	var lastErr error
+	for i, authValue := range authList {
+		decodedCert, err := base64.StdEncoding.DecodeString(authValue)
+		if err != nil {
+			lastErr = fmt.Errorf("auth %d: failed to decode certificate: %w", i+1, err)
+			continue
+		}
+
+		block, _ := pem.Decode(decodedCert)
+		if block == nil {
+			lastErr = fmt.Errorf("auth %d: failed to decode PEM block", i+1)
+			continue
+		}
+
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			lastErr = fmt.Errorf("auth %d: failed to parse certificate: %w", i+1, err)
+			continue
+		}
+
+		return cert, nil
 	}
 
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse certificate: %v", err)
-	}
-
-	return cert, nil
+	return nil, fmt.Errorf("failed to load certificate from any auth value for hostname %s (tried %d): last error: %v", hostname, len(authList), lastErr)
 }
