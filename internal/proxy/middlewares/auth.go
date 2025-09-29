@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,6 +22,24 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
+
+func getClientInfo(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if ips := strings.Split(xff, ","); len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
 
 type PBSAuth struct {
 	privateKey crypto.PrivateKey
@@ -182,7 +201,10 @@ func alphabetHint(s string) string {
 func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkAgentAuth(store, r); err != nil {
-			syslog.L.Error(err).WithField("mode", "server_only").Write()
+			syslog.L.Error(err).
+				WithField("mode", "agent_only").
+				WithField("hostname", getClientInfo(r)).
+				Write()
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
@@ -194,7 +216,10 @@ func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 func ServerOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkProxyAuth(r); err != nil {
-			syslog.L.Error(err).WithField("mode", "server_only").Write()
+			syslog.L.Error(err).
+				WithField("mode", "server_only").
+				WithField("hostname", getClientInfo(r)).
+				Write()
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
@@ -221,7 +246,10 @@ func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
 		}
 
 		if !authenticated {
-			syslog.L.Error(lastErr).WithField("mode", "agent_or_server").Write()
+			syslog.L.Error(lastErr).
+				WithField("mode", "agent_or_server").
+				WithField("hostname", getClientInfo(r)).
+				Write()
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}

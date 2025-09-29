@@ -129,7 +129,9 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 		defer func() {
-			_ = tx.Rollback()
+			if tx != nil {
+				_ = tx.Rollback()
+			}
 		}()
 
 		existingTargetsMap := make(map[string]types.Target)
@@ -140,49 +142,59 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		processedTargetNames := make(map[string]bool)
 
 		for _, parsedDrive := range reqParsed.Drives {
-			targetName := reqParsed.Hostname
-			targetData := types.Target{
-				Auth:            targetTemplate.Auth,
-				TokenUsed:       targetTemplate.TokenUsed,
-				DriveType:       parsedDrive.Type,
-				DriveName:       parsedDrive.VolumeName,
-				DriveFS:         parsedDrive.FileSystem,
-				DriveFreeBytes:  int(parsedDrive.FreeBytes),
-				DriveUsedBytes:  int(parsedDrive.UsedBytes),
-				DriveTotalBytes: int(parsedDrive.TotalBytes),
-				DriveFree:       parsedDrive.Free,
-				DriveUsed:       parsedDrive.Used,
-				DriveTotal:      parsedDrive.Total,
-				OperatingSystem: parsedDrive.OperatingSystem,
-				IsAgent:         true,
-			}
+			var targetName string
+			var targetPath string
 
 			switch parsedDrive.OperatingSystem {
 			case "windows":
 				driveLetter := parsedDrive.Letter
-				targetName = targetName + " - " + driveLetter
-				targetPath := "agent://" + clientIP + "/" + driveLetter
-				processedTargetNames[targetName] = true
-
-				targetData.Name = targetName
-				targetData.Path = targetPath
+				targetName = reqParsed.Hostname + " - " + driveLetter
+				targetPath = "agent://" + clientIP + "/" + driveLetter
 			default:
-				targetName = targetName + " - Root"
-				targetPath := "agent://" + clientIP + "/root"
-				processedTargetNames[targetName] = true
-
-				targetData.Name = targetName
-				targetData.Path = targetPath
+				targetName = reqParsed.Hostname + " - Root"
+				targetPath = "agent://" + clientIP + "/root"
 			}
 
-			if _, found := existingTargetsMap[targetName]; found {
-				err = storeInstance.Database.UpdateTarget(tx, targetData)
+			processedTargetNames[targetName] = true
+
+			if existingTarget, found := existingTargetsMap[targetName]; found {
+				updatedTarget := existingTarget
+				updatedTarget.DriveType = parsedDrive.Type
+				updatedTarget.DriveName = parsedDrive.VolumeName
+				updatedTarget.DriveFS = parsedDrive.FileSystem
+				updatedTarget.DriveFreeBytes = int(parsedDrive.FreeBytes)
+				updatedTarget.DriveUsedBytes = int(parsedDrive.UsedBytes)
+				updatedTarget.DriveTotalBytes = int(parsedDrive.TotalBytes)
+				updatedTarget.DriveFree = parsedDrive.Free
+				updatedTarget.DriveUsed = parsedDrive.Used
+				updatedTarget.DriveTotal = parsedDrive.Total
+				updatedTarget.OperatingSystem = parsedDrive.OperatingSystem
+
+				err = storeInstance.Database.UpdateTarget(tx, updatedTarget)
 				if err != nil {
 					w.WriteHeader(http.StatusInternalServerError)
 					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to update target %s: %w", targetName, err))
 					return
 				}
 			} else {
+				targetData := types.Target{
+					Name:            targetName,
+					Path:            targetPath,
+					Auth:            targetTemplate.Auth,
+					TokenUsed:       targetTemplate.TokenUsed,
+					DriveType:       parsedDrive.Type,
+					DriveName:       parsedDrive.VolumeName,
+					DriveFS:         parsedDrive.FileSystem,
+					DriveFreeBytes:  int(parsedDrive.FreeBytes),
+					DriveUsedBytes:  int(parsedDrive.UsedBytes),
+					DriveTotalBytes: int(parsedDrive.TotalBytes),
+					DriveFree:       parsedDrive.Free,
+					DriveUsed:       parsedDrive.Used,
+					DriveTotal:      parsedDrive.Total,
+					OperatingSystem: parsedDrive.OperatingSystem,
+					IsAgent:         true,
+				}
+
 				err = storeInstance.Database.CreateTarget(tx, targetData)
 				if err != nil {
 					w.WriteHeader(http.StatusInternalServerError)
@@ -212,6 +224,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to commit transaction: %w", err))
 			return
 		}
+		tx = nil
 
 		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(map[string]bool{
