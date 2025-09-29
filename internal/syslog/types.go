@@ -7,8 +7,9 @@ import (
 )
 
 type Logger struct {
-	mu   sync.RWMutex
-	zlog *zerolog.Logger
+	mu       sync.RWMutex
+	zlog     *zerolog.Logger
+	hostname string
 }
 
 // LogEntry represents a structured log entry.
