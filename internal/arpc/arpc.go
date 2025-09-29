@@ -15,25 +15,19 @@ import (
 	"github.com/xtaci/smux"
 )
 
-// Session wraps an underlying smux.Session with improved connection management.
 type Session struct {
-	// muxSess holds a *smux.Session.
 	muxSess atomic.Pointer[smux.Session]
 	router  atomic.Pointer[Router]
 
-	// Connection state management
 	reconnectConfig ReconnectConfig
 	reconnectMu     sync.Mutex
 
-	// Connection state tracking
-	state atomic.Int32 // Stores ConnectionState
+	state atomic.Int32
 
-	// Circuit breaker and notification
 	circuitOpen    atomic.Bool
 	circuitResetAt atomic.Int64
-	reconnectChan  chan struct{} // Notifies waiters when reconnection completes
+	reconnectChan  chan struct{}
 
-	// Context for coordinating shutdown
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 
@@ -41,7 +35,7 @@ type Session struct {
 }
 
 func (s *Session) SetRouter(router Router) {
-	s.router.Store(&router) // Store a pointer to the value
+	s.router.Store(&router)
 }
 
 func (s *Session) GetRouter() *Router {
@@ -52,7 +46,6 @@ func (s *Session) GetVersion() string {
 	return s.version
 }
 
-// NewServerSession creates a new Session for a server connection.
 func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	if config == nil {
 		config = defaultSmuxConfig()
@@ -66,7 +59,7 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	session := &Session{
 		reconnectConfig: ReconnectConfig{},
-		reconnectChan:   make(chan struct{}, 1), // Buffer of 1 to prevent blocking
+		reconnectChan:   make(chan struct{}, 1),
 		ctx:             ctx,
 		cancelFunc:      cancel,
 	}
@@ -76,7 +69,6 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	return session, nil
 }
 
-// NewClientSession creates a new Session for a client connection.
 func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	if config == nil {
 		config = defaultSmuxConfig()
@@ -90,7 +82,7 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	session := &Session{
 		reconnectConfig: ReconnectConfig{},
-		reconnectChan:   make(chan struct{}, 1), // Buffer of 1 to prevent blocking
+		reconnectChan:   make(chan struct{}, 1),
 		ctx:             ctx,
 		cancelFunc:      cancel,
 	}
@@ -100,7 +92,6 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	return session, nil
 }
 
-// defaultSmuxConfig returns a default smux configuration
 func defaultSmuxConfig() *smux.Config {
 	defaults := smux.DefaultConfig()
 	defaults.Version = 2
@@ -111,10 +102,19 @@ func defaultSmuxConfig() *smux.Config {
 	return defaults
 }
 
-// If a stream accept fails and auto‑reconnect is enabled, it attempts to reconnect.
 func (s *Session) Serve() error {
 	for {
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		default:
+		}
+
 		curSession := s.muxSess.Load()
+		if curSession == nil {
+			return errors.New("session is nil")
+		}
+
 		rc := s.reconnectConfig
 
 		stream, err := curSession.AcceptStream()
@@ -129,13 +129,25 @@ func (s *Session) Serve() error {
 			return err
 		}
 		router := s.GetRouter()
-		if router != nil {
-			go router.ServeStream(stream)
+		if router == nil {
+			return fmt.Errorf("router is nil")
 		}
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					stream.Close()
+				}
+			}()
+			router.ServeStream(stream)
+		}()
 	}
 }
 
 func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	dialFunc := func() (net.Conn, error) {
 		return tls.Dial("tcp", serverAddr, tlsConfig)
 	}
@@ -147,13 +159,12 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 	var session *Session
 	var err error
 	if autoReconnect {
-		// Use DialWithBackoff for the initial connection
 		session, err = dialWithBackoff(
 			ctx,
 			dialFunc,
 			upgradeFunc,
-			100*time.Millisecond, // Initial backoff
-			30*time.Second,       // Max backoff
+			100*time.Millisecond,
+			30*time.Second,
 		)
 	} else {
 		conn, err := dialWithProbe(ctx, dialFunc)
@@ -163,7 +174,7 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 
 		session, err = upgradeFunc(conn)
 		if err != nil {
-			_ = conn.Close()
+			conn.Close()
 		}
 	}
 	if err != nil {
@@ -171,7 +182,6 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 	}
 
 	if autoReconnect {
-		// Configure auto-reconnect with the same parameters
 		session.EnableAutoReconnect(ReconnectConfig{
 			AutoReconnect:    true,
 			DialFunc:         dialFunc,
@@ -187,9 +197,8 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 	return session, nil
 }
 
-// Close closes the session and stops the reconnection monitor
 func (s *Session) Close() error {
-	s.cancelFunc() // Stop the connection monitor
+	s.cancelFunc()
 
 	sess := s.muxSess.Load()
 	if sess != nil {

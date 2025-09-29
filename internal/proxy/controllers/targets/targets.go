@@ -20,7 +20,7 @@ import (
 func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -33,12 +33,14 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		for i := range all {
 			if all[i].IsAgent {
 				targetSplit := strings.Split(all[i].Name, " - ")
-				hostname := targetSplit[0]
+				if len(targetSplit) > 0 {
+					hostname := targetSplit[0]
 
-				arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
-				if ok {
-					all[i].ConnectionStatus = true
-					all[i].AgentVersion = arpcSess.GetVersion()
+					arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
+					if ok {
+						all[i].ConnectionStatus = true
+						all[i].AgentVersion = arpcSess.GetVersion()
+					}
 				}
 			} else if all[i].IsS3 {
 				all[i].ConnectionStatus = true
@@ -152,6 +154,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				DriveUsed:       parsedDrive.Used,
 				DriveTotal:      parsedDrive.Total,
 				OperatingSystem: parsedDrive.OperatingSystem,
+				IsAgent:         true,
 			}
 
 			switch parsedDrive.OperatingSystem {
@@ -191,8 +194,6 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, existingTarget := range existingTargets {
 			if _, processed := processedTargetNames[existingTarget.Name]; !processed {
-				// Only delete if the target name matches the hostname from the request
-				// This prevents deleting targets from other hosts sharing the same IP
 				expectedPrefix := reqParsed.Hostname + " - "
 				if strings.HasPrefix(existingTarget.Name, expectedPrefix) {
 					err = storeInstance.Database.DeleteTarget(tx, existingTarget.Name)
@@ -227,7 +228,7 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -239,16 +240,18 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		_, s3Err := s3url.Parse(r.FormValue("path"))
-		if !utils.IsValid(r.FormValue("path")) && s3Err != nil {
-			controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", r.FormValue("path")))
+		path := r.FormValue("path")
+		_, s3Err := s3url.Parse(path)
+		if !utils.IsValid(path) && s3Err != nil {
+			controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", path))
 			return
 		}
 
 		newTarget := types.Target{
 			Name:        r.FormValue("name"),
-			Path:        r.FormValue("path"),
+			Path:        path,
 			MountScript: r.FormValue("mount_script"),
+			IsS3:        s3Err == nil,
 		}
 
 		err = storeInstance.Database.CreateTarget(nil, newTarget)
@@ -267,7 +270,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -280,10 +283,13 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			_, s3Err := s3url.Parse(r.FormValue("path"))
-			if !utils.IsValid(r.FormValue("path")) && s3Err != nil {
-				controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", r.FormValue("path")))
-				return
+			path := r.FormValue("path")
+			if path != "" {
+				_, s3Err := s3url.Parse(path)
+				if !utils.IsValid(path) && s3Err != nil {
+					controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", path))
+					return
+				}
 			}
 
 			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
@@ -295,8 +301,10 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("name") != "" {
 				target.Name = r.FormValue("name")
 			}
-			if r.FormValue("path") != "" {
-				target.Path = r.FormValue("path")
+			if path != "" {
+				target.Path = path
+				_, s3Err := s3url.Parse(path)
+				target.IsS3 = s3Err == nil
 			}
 
 			target.MountScript = r.FormValue("mount_script")
@@ -308,6 +316,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						target.Name = ""
 					case "path":
 						target.Path = ""
+						target.IsS3 = false
 					case "mount_script":
 						target.MountScript = ""
 					}
@@ -336,10 +345,12 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			if target.IsAgent {
 				targetSplit := strings.Split(target.Name, " - ")
-				arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
-				if ok {
-					target.ConnectionStatus = true
-					target.AgentVersion = arpcSess.GetVersion()
+				if len(targetSplit) > 0 {
+					arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
+					if ok {
+						target.ConnectionStatus = true
+						target.AgentVersion = arpcSess.GetVersion()
+					}
 				}
 			} else if target.IsS3 {
 				target.ConnectionStatus = true
@@ -382,7 +393,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 

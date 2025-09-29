@@ -277,6 +277,37 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 	return target, nil
 }
 
+func (database *Database) GetUniqueAuthByHostname(hostname string) ([]string, error) {
+	rows, err := database.readDb.Query(`
+        SELECT DISTINCT t.auth
+        FROM targets t
+        WHERE substr(t.name, 1, instr(t.name, ' - ') - 1) = ?
+        AND t.auth IS NOT NULL AND t.auth != ''
+        ORDER BY t.auth
+    `, hostname)
+	if err != nil {
+		return nil, fmt.Errorf("GetUniqueAuthByHostname: error querying auth values: %w", err)
+	}
+	defer rows.Close()
+
+	var authList []string
+	for rows.Next() {
+		var auth string
+		err := rows.Scan(&auth)
+		if err != nil {
+			return nil, fmt.Errorf("GetUniqueAuthByHostname: error scanning auth value: %w", err)
+		}
+		authList = append(authList, auth)
+	}
+
+	// Check for errors during iteration
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetUniqueAuthByHostname: error iterating rows: %w", err)
+	}
+
+	return authList, nil
+}
+
 func (database *Database) GetS3Secret(name string) (string, error) {
 	row := database.readDb.QueryRow(`
         SELECT
