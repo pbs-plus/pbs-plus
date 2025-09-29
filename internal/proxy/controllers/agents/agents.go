@@ -19,7 +19,8 @@ import (
 func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
 		}
 
 		err := syslog.ParseAndLogWindowsEntry(r.Body)
@@ -48,7 +49,7 @@ type BootstrapRequest struct {
 func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -80,15 +81,22 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		var reqParsed BootstrapRequest
 		err = json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
 
+		if len(reqParsed.Drives) == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			controllers.WriteErrorResponse(w, fmt.Errorf("no drives provided"))
+			syslog.L.Error(fmt.Errorf("no drives provided")).Write()
+			return
+		}
+
 		decodedCSR, err := base64.StdEncoding.DecodeString(reqParsed.CSR)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
 			return
@@ -138,6 +146,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				DriveUsed:       drive.Used,
 				DriveTotal:      drive.Total,
 				OperatingSystem: drive.OperatingSystem,
+				IsAgent:         true,
 			}
 
 			switch drive.OperatingSystem {
@@ -149,17 +158,46 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				newTarget.Path = fmt.Sprintf("agent://%s/root", clientIP)
 			}
 
-			err := storeInstance.Database.CreateTarget(tx, newTarget)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				controllers.WriteErrorResponse(w, err)
-				syslog.L.Error(err).Write()
-				return
+			existingTarget, err := storeInstance.Database.GetTarget(newTarget.Name)
+			if err == nil {
+				newTarget.JobCount = existingTarget.JobCount
+				newTarget.AgentVersion = existingTarget.AgentVersion
+				newTarget.ConnectionStatus = existingTarget.ConnectionStatus
+
+				err := storeInstance.Database.DeleteTarget(tx, newTarget.Name)
+				if err != nil {
+					tx.Rollback()
+					w.WriteHeader(http.StatusInternalServerError)
+					controllers.WriteErrorResponse(w, err)
+					syslog.L.Error(err).Write()
+					return
+				}
+
+				err = storeInstance.Database.CreateTarget(tx, newTarget)
+				if err != nil {
+					tx.Rollback()
+					w.WriteHeader(http.StatusInternalServerError)
+					controllers.WriteErrorResponse(w, err)
+					syslog.L.Error(err).Write()
+					return
+				}
+				syslog.L.Info().WithMessage("updated existing target auth").WithFields(map[string]interface{}{"target": newTarget.Name}).Write()
+			} else {
+				err := storeInstance.Database.CreateTarget(tx, newTarget)
+				if err != nil {
+					tx.Rollback()
+					w.WriteHeader(http.StatusInternalServerError)
+					controllers.WriteErrorResponse(w, err)
+					syslog.L.Error(err).Write()
+					return
+				}
+				syslog.L.Info().WithMessage("created new target").WithFields(map[string]interface{}{"target": newTarget.Name}).Write()
 			}
 		}
 
 		err = tx.Commit()
 		if err != nil {
+			tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
@@ -180,35 +218,29 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
 		var reqParsed BootstrapRequest
 		err := json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
 
-		existingTargetName := reqParsed.Hostname + " - Root"
-		if reqParsed.Drives[0].OperatingSystem == "windows" {
-			existingTargetName = reqParsed.Hostname + " - C"
-		}
-
-		existingTarget, err := storeInstance.Database.GetTarget(existingTargetName)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			controllers.WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+		if len(reqParsed.Drives) == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			controllers.WriteErrorResponse(w, fmt.Errorf("no drives provided"))
+			syslog.L.Error(fmt.Errorf("no drives provided")).Write()
 			return
 		}
 
 		decodedCSR, err := base64.StdEncoding.DecodeString(reqParsed.CSR)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
 			return
@@ -226,13 +258,13 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		encodedCA := base64.StdEncoding.EncodeToString(storeInstance.CertGenerator.GetCAPEM())
 
 		clientIP := r.RemoteAddr
-
 		forwarded := r.Header.Get("X-FORWARDED-FOR")
 		if forwarded != "" {
 			clientIP = forwarded
 		}
-
 		clientIP = strings.Split(clientIP, ":")[0]
+
+		syslog.L.Info().WithMessage("renewing target certificates").WithFields(map[string]interface{}{"target": reqParsed.Hostname}).Write()
 
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
@@ -243,7 +275,28 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for _, drive := range reqParsed.Drives {
-			newTarget := types.Target{
+			var targetName string
+			var targetPath string
+
+			switch drive.OperatingSystem {
+			case "windows":
+				targetName = fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter)
+				targetPath = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
+			default:
+				targetName = fmt.Sprintf("%s - Root", reqParsed.Hostname)
+				targetPath = fmt.Sprintf("agent://%s/root", clientIP)
+			}
+
+			existingTarget, err := storeInstance.Database.GetTarget(targetName)
+			if err != nil {
+				syslog.L.Warn().WithMessage("target not found during renewal, skipping").WithFields(map[string]interface{}{"target": targetName}).Write()
+				continue
+			}
+
+			updatedTarget := types.Target{
+				Name:            targetName,
+				Path:            targetPath,
+				IsAgent:         true,
 				Auth:            encodedCert,
 				TokenUsed:       existingTarget.TokenUsed,
 				DriveType:       drive.Type,
@@ -255,28 +308,39 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				DriveUsed:       drive.Used,
 				DriveTotal:      drive.Total,
 				OperatingSystem: drive.OperatingSystem,
+				// Preserve existing operational data
+				JobCount:         existingTarget.JobCount,
+				AgentVersion:     existingTarget.AgentVersion,
+				ConnectionStatus: existingTarget.ConnectionStatus,
+				MountScript:      existingTarget.MountScript,
+				IsS3:             existingTarget.IsS3,
+				DriveName:        existingTarget.DriveName,
 			}
 
-			switch drive.OperatingSystem {
-			case "windows":
-				newTarget.Name = fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter)
-				newTarget.Path = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
-			default:
-				newTarget.Name = fmt.Sprintf("%s", reqParsed.Hostname)
-				newTarget.Path = fmt.Sprintf("agent://%s/root", clientIP)
-			}
-
-			err := storeInstance.Database.CreateTarget(tx, newTarget)
+			err = storeInstance.Database.DeleteTarget(tx, targetName)
 			if err != nil {
+				tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
 				controllers.WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
 				return
 			}
+
+			err = storeInstance.Database.CreateTarget(tx, updatedTarget)
+			if err != nil {
+				tx.Rollback()
+				w.WriteHeader(http.StatusInternalServerError)
+				controllers.WriteErrorResponse(w, err)
+				syslog.L.Error(err).Write()
+				return
+			}
+
+			syslog.L.Info().WithMessage("renewed target certificate").WithFields(map[string]interface{}{"target": targetName}).Write()
 		}
 
 		err = tx.Commit()
 		if err != nil {
+			tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()

@@ -29,9 +29,8 @@ func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) (io.Re
 
 		lastErr = err
 
-		// Don't retry on the last attempt
 		if attempt < maxRetries-1 {
-			time.Sleep(retryDelay * time.Duration(attempt+1)) // Exponential backoff
+			time.Sleep(retryDelay * time.Duration(attempt+1))
 		}
 	}
 
@@ -41,7 +40,7 @@ func ProxmoxHTTPRequest(method, url string, body io.Reader, respBody any) (io.Re
 func proxmoxHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (io.ReadCloser, error) {
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
-		return nil, fmt.Errorf("ProxmoxHTTPRequest: server url not found -> %w", err)
+		return nil, fmt.Errorf("proxmoxHTTPRequestAttempt: server url not found -> %w", err)
 	}
 
 	req, err := http.NewRequest(
@@ -55,10 +54,13 @@ func proxmoxHTTPRequestAttempt(method, url string, body io.Reader, respBody any)
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("ProxmoxHTTPRequest: error creating http request -> %w", err)
+		return nil, fmt.Errorf("proxmoxHTTPRequestAttempt: error creating http request -> %w", err)
 	}
 
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil, fmt.Errorf("proxmoxHTTPRequestAttempt: failed to get hostname -> %w", err)
+	}
 
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("X-PBS-Agent", hostname)
@@ -66,7 +68,7 @@ func proxmoxHTTPRequestAttempt(method, url string, body io.Reader, respBody any)
 
 	tlsConfig, err := GetTLSConfig()
 	if err != nil {
-		return nil, fmt.Errorf("ProxmoxHTTPRequest: error getting tls config -> %w", err)
+		return nil, fmt.Errorf("proxmoxHTTPRequestAttempt: error getting tls config -> %w", err)
 	}
 
 	if httpClient == nil {
@@ -76,11 +78,15 @@ func proxmoxHTTPRequestAttempt(method, url string, body io.Reader, respBody any)
 				TLSClientConfig: tlsConfig,
 			},
 		}
+	} else {
+		if transport, ok := httpClient.Transport.(*http.Transport); ok {
+			transport.TLSClientConfig = tlsConfig
+		}
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("ProxmoxHTTPRequest: error executing http request -> %w", err)
+		return nil, fmt.Errorf("proxmoxHTTPRequestAttempt: error executing http request -> %w", err)
 	}
 
 	if respBody == nil {
@@ -94,12 +100,11 @@ func proxmoxHTTPRequestAttempt(method, url string, body io.Reader, respBody any)
 
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("ProxmoxHTTPRequest: error getting body content -> %w", err)
+		return nil, fmt.Errorf("proxmoxHTTPRequestAttempt: error getting body content -> %w", err)
 	}
 
-	err = json.Unmarshal(rawBody, respBody)
-	if err != nil {
-		return nil, fmt.Errorf("ProxmoxHTTPRequest: error json unmarshal body content (%s) -> %w", string(rawBody), err)
+	if err = json.Unmarshal(rawBody, respBody); err != nil {
+		return nil, fmt.Errorf("proxmoxHTTPRequestAttempt: error json unmarshal body content -> %w", err)
 	}
 
 	return nil, nil

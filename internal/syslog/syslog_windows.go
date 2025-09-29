@@ -4,6 +4,9 @@ package syslog
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/kardianos/service"
 	"github.com/rs/zerolog"
@@ -12,7 +15,24 @@ import (
 
 func init() {
 	// Configure zerolog to output via our EventLogWriter wrapped in a ConsoleWriter.
-	zlogger := zerolog.New(zerolog.NewConsoleWriter()).With().
+	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
+		w.NoColor = true
+		w.FormatCaller = func(i interface{}) string {
+			var c string
+			if cc, ok := i.(string); ok {
+				c = cc
+			}
+			if c == "" {
+				return ""
+			}
+
+			parts := strings.Split(c, "/")
+			if len(parts) >= 2 {
+				return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
+			}
+			return filepath.Base(c)
+		}
+	})).With().
 		CallerWithSkipFrameCount(3).
 		Timestamp().
 		Logger()
@@ -21,26 +41,37 @@ func init() {
 }
 
 // SetServiceLogger configures the service logger for Windows Event Log integration.
-func (l *Logger) SetServiceLogger(s service.Service) error {
+func (l *Logger) SetServiceLogger(s service.Logger) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	logger, err := s.Logger(nil)
-	if err != nil {
-		return fmt.Errorf("failed to set service logger: %w", err)
-	}
-
 	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-		w.Out = &LogWriter{logger: logger}
+		w.Out = &LogWriter{logger: s}
 		w.NoColor = true
+		w.FormatCaller = func(i interface{}) string {
+			var c string
+			if cc, ok := i.(string); ok {
+				c = cc
+			}
+			if c == "" {
+				return ""
+			}
+
+			parts := strings.Split(c, "/")
+			if len(parts) >= 2 {
+				return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
+			}
+			return filepath.Base(c)
+		}
 	})).With().
 		CallerWithSkipFrameCount(3).
 		Timestamp().
 		Logger()
 
 	l.zlog = &zlogger
+	l.hostname, _ = os.Hostname()
 
-	log.Info().Msg("Service logger successfully added for Windows Event Log")
+	l.zlog.Info().Msg("Service logger successfully added for Windows Event Log")
 	return nil
 }
 
@@ -55,6 +86,10 @@ func (e *LogEntry) Write() {
 
 	if e.JobID != "" {
 		e.Fields["jobId"] = e.JobID
+	}
+
+	if _, ok := e.Fields["hostname"]; !ok {
+		e.Fields["hostname"] = e.logger.hostname
 	}
 
 	// Produce a full JSON log entry.
