@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/xtaci/smux"
 )
@@ -148,11 +149,36 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 		ctx = context.Background()
 	}
 
+	if tlsConfig == nil || len(tlsConfig.Certificates) == 0 {
+		return nil, fmt.Errorf("TLS configuration must include client certificate")
+	}
+
 	dialFunc := func() (net.Conn, error) {
-		return tls.Dial("tcp", serverAddr, tlsConfig)
+		conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
+		if err != nil {
+			return nil, fmt.Errorf("TLS dial failed: %w", err)
+		}
+
+		if err := conn.Handshake(); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("TLS handshake failed: %w", err)
+		}
+
+		state := conn.ConnectionState()
+		syslog.L.Info().
+			WithField("tls_version", state.Version).
+			WithField("cipher_suite", state.CipherSuite).
+			WithField("peer_certs_count", len(state.PeerCertificates)).
+			WithMessage("TLS connection established").
+			Write()
+
+		return conn, nil
 	}
 
 	upgradeFunc := func(conn net.Conn) (*Session, error) {
+		conn.SetDeadline(time.Now().Add(10 * time.Second))
+		defer conn.SetDeadline(time.Time{})
+
 		return upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
 	}
 
