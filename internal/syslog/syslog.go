@@ -9,6 +9,18 @@ import (
 // Global logger instance.
 var L *Logger
 
+func (l *Logger) Disable() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.disabled = true
+}
+
+func (l *Logger) Enable() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.disabled = false
+}
+
 // Error creates a new error-level LogEntry.
 func (l *Logger) Error(err error) *LogEntry {
 	return &LogEntry{
