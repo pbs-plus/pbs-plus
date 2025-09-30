@@ -82,6 +82,10 @@ func (e *LogEntry) Write() {
 	e.logger.mu.RLock()
 	defer e.logger.mu.RUnlock()
 
+	if e.logger.disabled {
+		return
+	}
+
 	e.enqueueLog()
 
 	if e.JobID != "" {

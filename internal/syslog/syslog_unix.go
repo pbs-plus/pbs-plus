@@ -45,6 +45,10 @@ func (e *LogEntry) Write() {
 	e.logger.mu.RLock()
 	defer e.logger.mu.RUnlock()
 
+	if e.logger.disabled {
+		return
+	}
+
 	if _, ok := e.Fields["hostname"]; !ok {
 		e.Fields["hostname"] = e.logger.hostname
 	}

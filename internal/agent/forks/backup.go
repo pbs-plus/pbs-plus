@@ -62,6 +62,8 @@ func (s *backupSession) Close() {
 }
 
 func CmdBackup() {
+	syslog.L.Disable()
+
 	// Define and parse flags.
 	cmdMode := flag.String("cmdMode", "", "Cmd Mode")
 	sourceMode := flag.String("sourceMode", "", "Backup source mode (direct or snapshot)")
