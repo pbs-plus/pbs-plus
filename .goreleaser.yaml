@@ -231,16 +231,16 @@ archives:
     formats:
       - binary
 
-  - id: windows-agent-legacy
+  - id: windows-legacy-agent
     ids:
-      - windows-agent-legacy
+      - windows-legacy-agent
     name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-legacy-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
 
-  - id: windows-updater-legacy
+  - id: windows-legacy-updater
     ids:
-      - windows-updater-legacy
+      - windows-legacy-updater
     name_template: "{{ .ProjectName }}-updater-v{{ .Version }}-legacy-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
