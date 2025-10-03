@@ -150,6 +150,37 @@ builds:
     ldflags:
       - -H=windowsgui
 
+  # Windows Legacy Agent
+  - id: windows-legacy-agent
+    main: ./cmd/windows_agent
+    binary: pbs-plus-agent
+    tool: "{{ .Env.GO_LEGACY_ROOT }}/bin/go"
+    env:
+      - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
+    goos:
+      - windows
+    goarch:
+      - amd64
+    ldflags:
+      - -H=windowsgui
+      - -X 'main.Version=v{{.Version}}'
+
+  # Windows Legacy Updater
+  - id: windows-legacy-updater
+    main: ./cmd/windows_updater
+    binary: pbs-plus-updater
+    tool: "{{ .Env.GO_LEGACY_ROOT }}/bin/go"
+    env:
+      - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
+    goos:
+      - windows
+    goarch:
+      - amd64
+    ldflags:
+      - -H=windowsgui
+
 archives:
   - id: server
     ids:
@@ -197,6 +228,20 @@ archives:
     ids:
       - windows-updater
     name_template: "{{ .ProjectName }}-updater-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
+  - id: windows-agent-legacy
+    ids:
+      - windows-agent-legacy
+    name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-legacy-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
+  - id: windows-updater-legacy
+    ids:
+      - windows-updater-legacy
+    name_template: "{{ .ProjectName }}-updater-v{{ .Version }}-legacy-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
 
