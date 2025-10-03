@@ -147,3 +147,88 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GO_LEGACY_ROOT: ${{ env.GO_LEGACY_ROOT }}
+
+      - name: Build Windows MSI Installer
+        if: success()
+        shell: bash
+        run: |
+          set -e
+          
+          # Install dependencies
+          sudo apt-get update
+          sudo apt-get install -y wget unzip uuid-runtime
+          
+          # Download and setup WiX
+          mkdir -p ~/wix
+          cd ~/wix
+          wget https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip
+          unzip -q wix314-binaries.zip
+          
+          # Install Wine
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine wine32 wine64
+          
+          export WIX_PATH=~/wix
+          export PATH=$WIX_PATH:$PATH
+          
+          # Get version from tag
+          VERSION=${GITHUB_REF_NAME#v}
+          
+          # Function to generate deterministic UUID v5
+          generate_uuid5() {
+            local namespace="6ba7b810-9dad-11d1-80b4-00c04fd430c8"  # DNS namespace
+            local name="$1"
+            python3 -c "import uuid; print(str(uuid.uuid5(uuid.UUID('$namespace'), '$name')).upper())"
+          }
+          
+          # Generate stable GUIDs based on project name + purpose
+          # These will be the same every time for the same inputs
+          UPGRADE_CODE=$(generate_uuid5 "pbs-plus-agent-upgrade")
+          COMPONENT_GUID_1=$(generate_uuid5 "pbs-plus-agent-component-exe")
+          COMPONENT_GUID_2=$(generate_uuid5 "pbs-plus-agent-component-updater")
+          COMPONENT_GUID_3=$(generate_uuid5 "pbs-plus-agent-component-registry")
+          
+          echo "Generated GUIDs:"
+          echo "  UpgradeCode: $UPGRADE_CODE"
+          echo "  Component 1: $COMPONENT_GUID_1"
+          echo "  Component 2: $COMPONENT_GUID_2"
+          echo "  Component 3: $COMPONENT_GUID_3"
+          
+          # Create working directory
+          mkdir -p msi-build
+          cd msi-build
+          
+          # Copy binaries
+          cp ../dist/pbs-plus-agent_windows_amd64_v1/pbs-plus-agent.exe ./
+          cp ../dist/pbs-plus-updater_windows_amd64_v1/pbs-plus-updater.exe ./
+          
+          # Copy and process WiX template
+          cp ../build/package/windows_agent/agent.wxs.template ./agent.wxs
+          
+          # Replace placeholders
+          sed -i "s/__VERSION__/$VERSION/g" agent.wxs
+          sed -i "s/__UPGRADE_CODE__/$UPGRADE_CODE/g" agent.wxs
+          sed -i "s/__COMPONENT_GUID_1__/$COMPONENT_GUID_1/g" agent.wxs
+          sed -i "s/__COMPONENT_GUID_2__/$COMPONENT_GUID_2/g" agent.wxs
+          sed -i "s/__COMPONENT_GUID_3__/$COMPONENT_GUID_3/g" agent.wxs
+          
+          # Compile WiX
+          wine $WIX_PATH/candle.exe agent.wxs -out agent.wixobj
+          wine $WIX_PATH/light.exe agent.wixobj -out pbs-plus-agent-$VERSION.msi \
+            -ext WixUIExtension -sval
+          
+          # Move MSI to dist
+          mkdir -p ../dist/msi
+          cp pbs-plus-agent-$VERSION.msi ../dist/msi/
+          
+          echo "MSI installer created successfully!"
+
+      - name: Upload MSI to Release
+        if: success()
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/msi/*.msi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
