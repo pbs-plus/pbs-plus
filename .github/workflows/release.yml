@@ -27,8 +27,8 @@ jobs:
         run: |
           mkdir -p ~/go-legacy
           cd ~/go-legacy
-          wget https://github.com/thongtech/go-legacy-win7/releases/download/v1.25.1-2/go1.25.1-2.linux-amd64.tar.gz
-          tar -xzf go1.25.1-2.linux-amd64.tar.gz
+          wget https://github.com/thongtech/go-legacy-win7/releases/download/v1.25.1-2/go-legacy-win7-1.25.1-2.linux_amd64.tar.gz
+          tar -xzf go-legacy-win7-1.25.1-2.linux_amd64.tar.gz
           echo "GO_LEGACY_ROOT=$(pwd)/go-legacy-win7" >> $GITHUB_ENV
 
       - name: Import GPG key
