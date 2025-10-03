@@ -162,6 +162,7 @@ builds:
       - windows
     goarch:
       - amd64
+      - '386'
     ldflags:
       - -H=windowsgui
       - -X 'main.Version=v{{.Version}}'
@@ -178,6 +179,7 @@ builds:
       - windows
     goarch:
       - amd64
+      - '386'
     ldflags:
       - -H=windowsgui
 
