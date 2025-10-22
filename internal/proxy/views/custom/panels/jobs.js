@@ -10,6 +10,25 @@ Ext.define("PBS.config.DiskBackupJobView", {
   selType: "checkboxmodel",    // show checkboxes
   multiSelect: true,           // allow multi-row selection
 
+  viewConfig: {
+    getRowClass: function(record) {
+      const lastRunEndtime = record.get('last-run-endtime');
+
+      if (!lastRunEndtime) {
+        return '';
+      }
+
+      const now = Date.now() / 1000;
+      const sevenDaysAgo = now - (7 * 24 * 60 * 60);
+
+      if (lastRunEndtime < sevenDaysAgo) {
+        return 'pbs-row-warning-old-backup';
+      }
+
+      return '';
+    },
+  },
+
   controller: {
     xclass: "Ext.app.ViewController",
 
@@ -395,6 +414,27 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
     init: function(view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+
+      if (!document.getElementById('pbs-backup-job-styles')) {
+        const style = document.createElement('style');
+        style.id = 'pbs-backup-job-styles';
+        style.innerHTML = `
+      .pbs-row-warning-old-backup {
+        background-color: #fff3cd !important;
+      }
+      .pbs-row-warning-old-backup .x-grid-cell {
+        background-color: #fff3cd !important;
+      }
+      
+      @media (prefers-color-scheme: dark) {
+        .pbs-row-warning-old-backup,
+        .pbs-row-warning-old-backup .x-grid-cell {
+          background-color: rgba(255, 193, 7, 0.25) !important;
+        }
+      }
+    `;
+        document.head.appendChild(style);
+      }
 
       // Apply custom grouper for "ns" on initialization
       const store = view.getStore();
