@@ -192,7 +192,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 }
 
 // PrometheusMetricsHandler returns an HTTP handler that exposes Prometheus metrics
-func PrometheusMetricsHandler(storeInstance *store.Store) http.Handler {
+func PrometheusMetricsHandler(storeInstance *store.Store) http.HandlerFunc {
 	reg := prometheus.NewRegistry()
 	m := newMetrics(reg)
 
@@ -201,7 +201,7 @@ func PrometheusMetricsHandler(storeInstance *store.Store) http.Handler {
 	})
 
 	// Wrap with collector that updates metrics on each scrape
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		jobs, err := storeInstance.Database.GetAllJobs()
 		if err != nil {
 			syslog.L.Error(err).
@@ -300,5 +300,5 @@ func PrometheusMetricsHandler(storeInstance *store.Store) http.Handler {
 		m.jobsLastRunSuccessTotal.Set(float64(successCount))
 
 		handler.ServeHTTP(w, r)
-	})
+	}
 }
