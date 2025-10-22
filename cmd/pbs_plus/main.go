@@ -409,6 +409,7 @@ func main() {
 	agentMux.HandleFunc("/plus/agent/bootstrap", agents.AgentBootstrapHandler(storeInstance))
 	agentMux.HandleFunc("/plus/agent/renew", mw.AgentOnly(storeInstance, agents.AgentRenewHandler(storeInstance)))
 	agentMux.HandleFunc("/plus/agent/install/win", plus.AgentInstallScriptHandler(storeInstance, Version))
+	agentMux.HandleFunc("/plus/metrics", plus.PrometheusMetricsHandler(storeInstance))
 
 	// pprof routes
 	apiMux.HandleFunc("/debug/pprof/", pprof.Index)
