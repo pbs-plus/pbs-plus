@@ -10,6 +10,25 @@ Ext.define("PBS.config.DiskBackupJobView", {
   selType: "checkboxmodel",    // show checkboxes
   multiSelect: true,           // allow multi-row selection
 
+  viewConfig: {
+    getRowClass: function(record) {
+      const lastRunEndtime = record.get('last-run-endtime');
+
+      if (!lastRunEndtime) {
+        return '';
+      }
+
+      const now = Date.now() / 1000;
+      const sevenDaysAgo = now - (7 * 24 * 60 * 60);
+
+      if (lastRunEndtime < sevenDaysAgo) {
+        return 'pbs-row-warning-old-backup';
+      }
+
+      return '';
+    },
+  },
+
   controller: {
     xclass: "Ext.app.ViewController",
 
@@ -396,6 +415,29 @@ Ext.define("PBS.config.DiskBackupJobView", {
     init: function(view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
 
+      if (!document.getElementById('pbs-backup-job-styles')) {
+        const style = document.createElement('style');
+        style.id = 'pbs-backup-job-styles';
+        style.innerHTML = `
+          /* Default/Light mode */
+          .pbs-row-warning-old-backup {
+            background-color: #fff3cd !important;
+          }
+          .pbs-row-warning-old-backup .x-grid-cell {
+            background-color: #fff3cd !important;
+          }
+          
+          /* Dark mode - using color-scheme detection */
+          @media (prefers-color-scheme: dark) {
+            .pbs-row-warning-old-backup,
+            .pbs-row-warning-old-backup .x-grid-cell {
+              background-color: rgba(255, 193, 7, 0.25) !important;
+            }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+
       // Apply custom grouper for "ns" on initialization
       const store = view.getStore();
       store.setGrouper({
@@ -406,328 +448,327 @@ Ext.define("PBS.config.DiskBackupJobView", {
         },
       });
     },
-  },
 
-  listeners: {
-    activate: "startStore",
-    deactivate: "stopStore",
-    itemdblclick: "editJob",
-  },
-
-  store: {
-    type: "diff",
-    rstore: {
-      type: "update",
-      storeid: "pbs-disk-backup-job-status",
-      model: "pbs-disk-backup-job-status",
-      interval: 5000,
+    listeners: {
+      activate: "startStore",
+      deactivate: "stopStore",
+      itemdblclick: "editJob",
     },
-    sorters: "id",
-    groupField: "ns",
-  },
 
-  features: [
-    {
-      ftype: "grouping",
-      groupers: [
-        {
-          property: "ns",
-          groupFn: function(record) {
-            const ns = record.get("ns");
-            return ns ? "Namespace: " + ns.split("/")[0] : "Namespace: /";
+    store: {
+      type: "diff",
+      rstore: {
+        type: "update",
+        storeid: "pbs-disk-backup-job-status",
+        model: "pbs-disk-backup-job-status",
+        interval: 5000,
+      },
+      sorters: "id",
+      groupField: "ns",
+    },
+
+    features: [
+      {
+        ftype: "grouping",
+        groupers: [
+          {
+            property: "ns",
+            groupFn: function(record) {
+              const ns = record.get("ns");
+              return ns ? "Namespace: " + ns.split("/")[0] : "Namespace: /";
+            },
           },
-        },
-      ],
-      groupHeaderTpl: [
-        '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
-        {
-          formatNS: function(ns) {
-            return ns;
+        ],
+        groupHeaderTpl: [
+          '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
+          {
+            formatNS: function(ns) {
+              return ns;
+            },
           },
+        ],
+      },
+    ],
+
+    tbar: [
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Add Job"),
+        selModel: false,
+        handler: "addJob",
+      },
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Duplicate Job"),
+        handler: "duplicateJob",
+        enableFn: function() {
+          let recs = this.up("grid").getSelection();
+          return recs.length === 1;
         },
-      ],
-    },
-  ],
+        disabled: true,
+      },
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Edit Job"),
+        handler: "editJob",
+        enableFn: function() {
+          let recs = this.up("grid").getSelection();
+          if (recs.length !== 1) return false;
+          let d = recs[0].data;
+          return !d["last-run-upid"] || !!d["last-run-state"];
+        },
+        disabled: true,
+      },
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Remove Job(s)"),
+        handler: "removeJobs",
+        enableFn: function() {
+          let recs = this.up("grid").getSelection();
+          // at least one selected, and none currently running
+          return (
+            recs.length > 0 &&
+            recs.every((r) => {
+              const upid = r.data["last-run-upid"];
+              const state = r.data["last-run-state"] || "";
+              return !upid || !!state;
+            })
+          );
+        },
+        disabled: true,
+      },
+      "-",
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Show Log"),
+        handler: "openTaskLog",
+        enableFn: function() {
+          let recs = this.up("grid").getSelection();
+          return recs.length === 1 && !!recs[0].data["last-run-upid"];
+        },
+        disabled: true,
+      },
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Show last success log"),
+        handler: "openSuccessTaskLog",
+        enableFn: function() {
+          let recs = this.up("grid").getSelection();
+          return (
+            recs.length === 1 &&
+            !!recs[0].data["last-successful-upid"]
+          );
+        },
+        disabled: true,
+      },
+      "-",
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Run Job(s)"),
+        handler: "runJobs",
+        enableFn: function() {
+          let recs = this.up("grid").getSelection();
+          return (
+            recs.length > 0 &&
+            recs.every(
+              (r) =>
+                !r.data["last-run-upid"] ||
+                !!r.data["last-run-state"]
+            )
+          );
+        },
+        disabled: true,
+      },
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Stop Job(s)"),
+        handler: "stopJobs",
+        enableFn: function() {
+          let recs = this.up("grid").getSelection();
+          return (
+            recs.length > 0 &&
+            recs.every((r) => {
+              const u = r.data["last-run-upid"];
+              const s = r.data["last-run-state"] || "";
+              return !!u && (s === "" || s.startsWith("QUEUED:"));
+            })
+          );
+        },
+        disabled: true,
+      },
+      "-",
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Export CSV"),
+        handler: "exportCSV",
+        selModel: false,
+      },
+      "->",
+      {
+        xtype: "textfield",
+        reference: "searchField",
+        emptyText: gettext("Search..."),
+        width: 200,
+        enableKeyEvents: true,
+        listeners: {
+          keyup: { fn: "onSearchKeyUp", buffer: 300 },
+        },
+      },
+    ],
 
-  tbar: [
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Add Job"),
-      selModel: false,
-      handler: "addJob",
-    },
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Duplicate Job"),
-      handler: "duplicateJob",
-      enableFn: function() {
-        let recs = this.up("grid").getSelection();
-        return recs.length === 1;
+    columns: [
+      {
+        header: gettext("Job ID"),
+        dataIndex: "id",
+        renderer: Ext.String.htmlEncode,
+        maxWidth: 220,
+        minWidth: 75,
+        flex: 1,
+        sortable: true,
+        hidden: true,
       },
-      disabled: true,
-    },
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Edit Job"),
-      handler: "editJob",
-      enableFn: function() {
-        let recs = this.up("grid").getSelection();
-        if (recs.length !== 1) return false;
-        let d = recs[0].data;
-        return !d["last-run-upid"] || !!d["last-run-state"];
+      {
+        header: gettext("Target"),
+        dataIndex: "target",
+        width: 120,
+        sortable: true,
       },
-      disabled: true,
-    },
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Remove Job(s)"),
-      handler: "removeJobs",
-      enableFn: function() {
-        let recs = this.up("grid").getSelection();
-        // at least one selected, and none currently running
-        return (
-          recs.length > 0 &&
-          recs.every((r) => {
-            const upid = r.data["last-run-upid"];
-            const state = r.data["last-run-state"] || "";
-            return !upid || !!state;
-          })
-        );
+      {
+        header: gettext("Subpath"),
+        dataIndex: "subpath",
+        width: 120,
+        sortable: true,
       },
-      disabled: true,
-    },
-    "-",
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Show Log"),
-      handler: "openTaskLog",
-      enableFn: function() {
-        let recs = this.up("grid").getSelection();
-        return recs.length === 1 && !!recs[0].data["last-run-upid"];
+      {
+        header: gettext("Datastore"),
+        dataIndex: "store",
+        width: 120,
+        sortable: true,
+        hidden: true,
       },
-      disabled: true,
-    },
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Show last success log"),
-      handler: "openSuccessTaskLog",
-      enableFn: function() {
-        let recs = this.up("grid").getSelection();
-        return (
-          recs.length === 1 &&
-          !!recs[0].data["last-successful-upid"]
-        );
+      {
+        header: gettext("Namespace"),
+        dataIndex: "ns",
+        width: 120,
+        sortable: true,
       },
-      disabled: true,
-    },
-    "-",
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Run Job(s)"),
-      handler: "runJobs",
-      enableFn: function() {
-        let recs = this.up("grid").getSelection();
-        return (
-          recs.length > 0 &&
-          recs.every(
-            (r) =>
-              !r.data["last-run-upid"] ||
-              !!r.data["last-run-state"]
-          )
-        );
+      {
+        header: gettext("Schedule"),
+        dataIndex: "schedule",
+        maxWidth: 220,
+        minWidth: 80,
+        flex: 1,
+        sortable: true,
       },
-      disabled: true,
-    },
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Stop Job(s)"),
-      handler: "stopJobs",
-      enableFn: function() {
-        let recs = this.up("grid").getSelection();
-        return (
-          recs.length > 0 &&
-          recs.every((r) => {
-            const u = r.data["last-run-upid"];
-            const s = r.data["last-run-state"] || "";
-            return !!u && (s === "" || s.startsWith("QUEUED:"));
-          })
-        );
+      {
+        header: gettext("Last Success"),
+        dataIndex: "last-successful-endtime",
+        renderer: PBS.Utils.render_optional_timestamp,
+        width: 140,
+        sortable: true,
       },
-      disabled: true,
-    },
-    "-",
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Export CSV"),
-      handler: "exportCSV",
-      selModel: false,
-    },
-    "->",
-    {
-      xtype: "textfield",
-      reference: "searchField",
-      emptyText: gettext("Search..."),
-      width: 200,
-      enableKeyEvents: true,
-      listeners: {
-        keyup: { fn: "onSearchKeyUp", buffer: 300 },
+      {
+        header: gettext("Last Attempt"),
+        dataIndex: "last-run-endtime",
+        renderer: PBS.Utils.render_optional_timestamp,
+        width: 140,
+        sortable: true,
       },
-    },
-  ],
-
-  columns: [
-    {
-      header: gettext("Job ID"),
-      dataIndex: "id",
-      renderer: Ext.String.htmlEncode,
-      maxWidth: 220,
-      minWidth: 75,
-      flex: 1,
-      sortable: true,
-      hidden: true,
-    },
-    {
-      header: gettext("Target"),
-      dataIndex: "target",
-      width: 120,
-      sortable: true,
-    },
-    {
-      header: gettext("Subpath"),
-      dataIndex: "subpath",
-      width: 120,
-      sortable: true,
-    },
-    {
-      header: gettext("Datastore"),
-      dataIndex: "store",
-      width: 120,
-      sortable: true,
-      hidden: true,
-    },
-    {
-      header: gettext("Namespace"),
-      dataIndex: "ns",
-      width: 120,
-      sortable: true,
-    },
-    {
-      header: gettext("Schedule"),
-      dataIndex: "schedule",
-      maxWidth: 220,
-      minWidth: 80,
-      flex: 1,
-      sortable: true,
-    },
-    {
-      header: gettext("Last Success"),
-      dataIndex: "last-successful-endtime",
-      renderer: PBS.Utils.render_optional_timestamp,
-      width: 140,
-      sortable: true,
-    },
-    {
-      header: gettext("Last Attempt"),
-      dataIndex: "last-run-endtime",
-      renderer: PBS.Utils.render_optional_timestamp,
-      width: 140,
-      sortable: true,
-    },
-    {
-      text: gettext("Duration"),
-      dataIndex: "duration",
-      renderer: Proxmox.Utils.render_duration,
-      width: 60,
-    },
-    {
-      text: gettext("Read Speed"),
-      dataIndex: "current_bytes_speed",
-      renderer: function(value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableSpeed(value);
+      {
+        text: gettext("Duration"),
+        dataIndex: "duration",
+        renderer: Proxmox.Utils.render_duration,
+        width: 60,
       },
-      width: 60,
-    },
-    {
-      text: gettext("Read Total"),
-      dataIndex: "current_bytes_total",
-      renderer: function(value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableBytes(value);
+      {
+        text: gettext("Read Speed"),
+        dataIndex: "current_bytes_speed",
+        renderer: function(value) {
+          if (!value && value !== 0) {
+            return "-";
+          }
+          return humanReadableSpeed(value);
+        },
+        width: 60,
       },
-      width: 60,
-    },
-    {
-      text: gettext("Target Size"),
-      dataIndex: "expected_size",
-      renderer: function(value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableBytes(value);
+      {
+        text: gettext("Read Total"),
+        dataIndex: "current_bytes_total",
+        renderer: function(value) {
+          if (!value && value !== 0) {
+            return "-";
+          }
+          return humanReadableBytes(value);
+        },
+        width: 60,
       },
-      width: 60,
-    },
-    {
-      text: gettext("Processing Speed"),
-      dataIndex: "current_files_speed",
-      renderer: function(value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return `${value.toFixed(2)} files/s`;
+      {
+        text: gettext("Target Size"),
+        dataIndex: "expected_size",
+        renderer: function(value) {
+          if (!value && value !== 0) {
+            return "-";
+          }
+          return humanReadableBytes(value);
+        },
+        width: 60,
       },
-      width: 60,
-    },
-    {
-      text: gettext("Files Processed"),
-      dataIndex: "current_file_count",
-      renderer: function(value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return value.toLocaleString();
+      {
+        text: gettext("Processing Speed"),
+        dataIndex: "current_files_speed",
+        renderer: function(value) {
+          if (!value && value !== 0) {
+            return "-";
+          }
+          return `${value.toFixed(2)} files/s`;
+        },
+        width: 60,
       },
-      width: 60,
-      hidden: true,
-    },
-    {
-      text: gettext("Folders Processed"),
-      dataIndex: "current_folder_count",
-      renderer: function(value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return value.toLocaleString();
+      {
+        text: gettext("Files Processed"),
+        dataIndex: "current_file_count",
+        renderer: function(value) {
+          if (!value && value !== 0) {
+            return "-";
+          }
+          return value.toLocaleString();
+        },
+        width: 60,
+        hidden: true,
       },
-      width: 60,
-      hidden: true,
-    },
-    {
-      header: gettext("Status"),
-      dataIndex: "last-run-state",
-      renderer: PBS.PlusUtils.render_task_status,
-      flex: 1,
-    },
-    {
-      header: gettext("Next Run"),
-      dataIndex: "next-run",
-      renderer: PBS.Utils.render_next_task_run,
-      width: 150,
-      sortable: true,
-      hidden: true,
-    },
-    {
-      header: gettext("Comment"),
-      dataIndex: "comment",
-      renderer: Ext.String.htmlEncode,
-      flex: 2,
-      sortable: true,
-      hidden: true,
-    },
-  ],
-});
+      {
+        text: gettext("Folders Processed"),
+        dataIndex: "current_folder_count",
+        renderer: function(value) {
+          if (!value && value !== 0) {
+            return "-";
+          }
+          return value.toLocaleString();
+        },
+        width: 60,
+        hidden: true,
+      },
+      {
+        header: gettext("Status"),
+        dataIndex: "last-run-state",
+        renderer: PBS.PlusUtils.render_task_status,
+        flex: 1,
+      },
+      {
+        header: gettext("Next Run"),
+        dataIndex: "next-run",
+        renderer: PBS.Utils.render_next_task_run,
+        width: 150,
+        sortable: true,
+        hidden: true,
+      },
+      {
+        header: gettext("Comment"),
+        dataIndex: "comment",
+        renderer: Ext.String.htmlEncode,
+        flex: 2,
+        sortable: true,
+        hidden: true,
+      },
+    ],
+  });
