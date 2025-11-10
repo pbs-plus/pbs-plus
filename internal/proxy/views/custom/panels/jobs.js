@@ -12,7 +12,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
   viewConfig: {
     getRowClass: function(record) {
-      const lastRunEndtime = record.get('last-run-endtime');
+      const lastRunEndtime = record.get('last-successful-endtime');
 
       if (!lastRunEndtime) {
         return '';
@@ -419,20 +419,20 @@ Ext.define("PBS.config.DiskBackupJobView", {
         const style = document.createElement('style');
         style.id = 'pbs-backup-job-styles';
         style.innerHTML = `
-      .pbs-row-warning-old-backup {
-        background-color: #fff3cd !important;
-      }
-      .pbs-row-warning-old-backup .x-grid-cell {
-        background-color: #fff3cd !important;
-      }
-      
-      @media (prefers-color-scheme: dark) {
-        .pbs-row-warning-old-backup,
-        .pbs-row-warning-old-backup .x-grid-cell {
-          background-color: rgba(255, 193, 7, 0.25) !important;
-        }
-      }
-    `;
+          .pbs-row-warning-old-backup {
+            background-color: #ffc107 !important;
+          }
+          .pbs-row-warning-old-backup .x-grid-cell {
+            background-color: #ffc107 !important;
+          }
+          
+          @media (prefers-color-scheme: dark) {
+            .pbs-row-warning-old-backup,
+            .pbs-row-warning-old-backup .x-grid-cell {
+              background-color: rgba(255, 193, 7, 0.35) !important;
+            }
+          }
+        `;
         document.head.appendChild(style);
       }
 
