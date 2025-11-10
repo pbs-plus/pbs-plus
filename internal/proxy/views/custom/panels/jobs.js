@@ -15,7 +15,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       const lastRunEndtime = record.get('last-successful-endtime');
 
       if (!lastRunEndtime) {
-        return '';
+        return 'pbs-row-warning-old-backup';
       }
 
       const now = Date.now() / 1000;
