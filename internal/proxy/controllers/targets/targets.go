@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -35,11 +36,19 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				targetSplit := strings.Split(all[i].Name, " - ")
 				if len(targetSplit) > 0 {
 					hostname := targetSplit[0]
+					drive := targetSplit[1]
 
 					arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
 					if ok {
-						all[i].ConnectionStatus = true
 						all[i].AgentVersion = arpcSess.GetVersion()
+						all[i].ConnectionStatus = false
+
+						resp, err := arpcSess.CallContext(r.Context(), "target_status", &reqTypes.TargetStatusReq{Drive: drive})
+						if err == nil {
+							if resp.Message == "reachable" {
+								all[i].ConnectionStatus = true
+							}
+						}
 					}
 				}
 			} else if all[i].IsS3 {
@@ -361,8 +370,15 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				if len(targetSplit) > 0 {
 					arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
 					if ok {
-						target.ConnectionStatus = true
 						target.AgentVersion = arpcSess.GetVersion()
+						target.ConnectionStatus = false
+
+						resp, err := arpcSess.CallContext(r.Context(), "target_status", &reqTypes.TargetStatusReq{Drive: targetSplit[1]})
+						if err == nil {
+							if resp.Message == "reachable" {
+								target.ConnectionStatus = true
+							}
+						}
 					}
 				}
 			} else if target.IsS3 {
