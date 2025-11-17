@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -98,4 +100,32 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 	}
 
 	return arpc.Response{Status: 200, Message: "success"}, nil
+}
+
+func StatusHandler(req arpc.Request) (arpc.Response, error) {
+	var reqData types.TargetStatusReq
+	err := reqData.Decode(req.Payload)
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
+	syslog.L.Info().WithMessage("received target status request").WithField("drive", reqData.Drive).WithField("subpath", reqData.Subpath).Write()
+
+	prefix := reqData.Drive
+
+	if len(prefix) == 1 {
+		prefix += ":/"
+	}
+
+	if strings.ToLower(reqData.Drive) == "root" {
+		prefix = "/"
+	}
+
+	fullPath := filepath.Join(prefix, reqData.Subpath)
+
+	if _, err := os.Stat(fullPath); !os.IsNotExist(err) {
+		return arpc.Response{Status: 200, Message: "reachable"}, nil
+	} else {
+		return arpc.Response{}, err
+	}
 }
