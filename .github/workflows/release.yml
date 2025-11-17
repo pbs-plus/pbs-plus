@@ -44,42 +44,27 @@ jobs:
           REPO: ${{ github.event.repository.name }}
         run: |
           set -euo pipefail
-
           TAG="$PUSHED_TAG"
-
-          # If it's an rc tag (e.g., v0.1.0-rc3), do nothing.
           if [[ "$TAG" =~ -rc[0-9]+$ ]]; then
             echo "Pushed tag '$TAG' is an RC tag; skipping RC deletion."
             exit 0
           fi
-
           BASE="$TAG"
           echo "Final tag detected: $TAG (base: $BASE)"
-
-          # Ensure we have all tags
           git fetch --tags --prune --force
-
-          # Find rc tags matching this base
           mapfile -t RC_TAGS < <(git tag -l "${BASE}-rc*")
-
           if [[ ${#RC_TAGS[@]} -eq 0 ]]; then
             echo "No RC tags found for base '${BASE}'."
             exit 0
           fi
-
           echo "Found RC tags for deletion:"
           printf ' - %s\n' "${RC_TAGS[@]}"
-
-          # Function to delete a GitHub Release by tag name if it exists
           delete_release_by_tag() {
             local tag_name="$1"
-            # List releases (paginate a bit to be safe) and find matching tag
-            # We use jq to filter; install if missing
             if ! command -v jq >/dev/null 2>&1; then
               sudo apt-get update -y
               sudo apt-get install -y jq
             fi
-
             page=1
             found_id=""
             while : ; do
@@ -87,22 +72,18 @@ jobs:
                 -H "Authorization: Bearer $GH_TOKEN" \
                 -H "Accept: application/vnd.github+json" \
                 "$GH_API/repos/$OWNER/$REPO/releases?per_page=100&page=$page")" || break
-
               id="$(echo "$resp" | jq -r --arg t "$tag_name" \
                     '.[] | select(.tag_name == $t) | .id' | head -n1)"
               if [[ -n "${id:-}" && "$id" != "null" ]]; then
                 found_id="$id"
                 break
               fi
-
-              # Stop if fewer than 100 returned (last page)
               count="$(echo "$resp" | jq 'length')"
               if [[ "$count" -lt 100 ]]; then
                 break
               fi
               page=$((page+1))
             done
-
             if [[ -n "${found_id:-}" ]]; then
               echo "Deleting GitHub Release for tag '$tag_name' (id: $found_id)"
               curl -sfSL -X DELETE \
@@ -113,16 +94,10 @@ jobs:
               echo "No GitHub Release found for tag '$tag_name' (ok)."
             fi
           }
-
-          # Delete tags and their releases
           for t in "${RC_TAGS[@]}"; do
             if [[ "$t" =~ ^${BASE}-rc[0-9]+$ ]]; then
               echo "Processing RC tag $t"
-
-              # 1) Delete GitHub Release (if any) for this rc tag
               delete_release_by_tag "$t"
-
-              # 2) Delete the tag locally and on origin
               git tag -d "$t" || true
               git push origin ":refs/tags/$t"
             else
@@ -138,3 +113,49 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: goreleaser
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      #- name: Set up QEMU
+      #  uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            # Add "latest" only for final tags (not -rcN)
+            type=raw,value=latest,enable={{ !contains(github.ref_name, '-rc') }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
