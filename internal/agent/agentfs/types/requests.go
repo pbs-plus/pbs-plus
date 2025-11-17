@@ -327,3 +327,38 @@ func (req *LseekReq) Decode(buf []byte) error {
 	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
+
+type TargetStatusReq struct {
+	Drive   string
+	Subpath string
+}
+
+func (req *TargetStatusReq) Encode() ([]byte, error) {
+	enc := arpcdata.NewEncoderWithSize(len(req.Drive) + len(req.Subpath))
+	if err := enc.WriteString(req.Drive); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteString(req.Subpath); err != nil {
+		return nil, err
+	}
+	return enc.Bytes(), nil
+}
+
+func (req *TargetStatusReq) Decode(buf []byte) error {
+	dec, err := arpcdata.NewDecoder(buf)
+	if err != nil {
+		return err
+	}
+	drive, err := dec.ReadString()
+	if err != nil {
+		return err
+	}
+	req.Drive = drive
+	subpath, err := dec.ReadString()
+	if err != nil {
+		return err
+	}
+	req.Subpath = subpath
+	arpcdata.ReleaseDecoder(dec)
+	return nil
+}
