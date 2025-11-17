@@ -9,7 +9,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN GOOS=linux go build -o pbs-plus-agent ./cmd/linux_agent
+RUN GOOS=linux go build -o pbs-plus-agent ./cmd/unix_agent
 
 FROM debian:bookworm-slim
 
