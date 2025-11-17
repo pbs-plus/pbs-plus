@@ -270,6 +270,7 @@ func (p *agentService) connectARPC() error {
 	router.Handle("backup", func(req arpc.Request) (arpc.Response, error) {
 		return controllers.BackupStartHandler(req, session)
 	})
+	router.Handle("target_status", controllers.StatusHandler)
 	router.Handle("cleanup", controllers.BackupCloseHandler)
 
 	session.SetRouter(router)
