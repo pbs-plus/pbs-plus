@@ -13,6 +13,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+var (
+	globalRegistry *prometheus.Registry
+	globalMetrics  *metrics
+)
+
+func init() {
+	globalRegistry = prometheus.NewRegistry()
+	globalMetrics = newMetrics(globalRegistry)
+}
+
 type metrics struct {
 	jobsTotal                        prometheus.Gauge
 	jobLastRunSuccess                *prometheus.GaugeVec
@@ -49,6 +59,8 @@ type metrics struct {
 	targetHasFailedJobs              *prometheus.GaugeVec
 	targetFailedJobCount             *prometheus.GaugeVec
 	targetSuccessfulJobCount         *prometheus.GaugeVec
+	previousJobLabels                map[string]prometheus.Labels
+	previousTargetLabels             map[string]prometheus.Labels
 }
 
 func newMetrics(reg prometheus.Registerer) *metrics {
@@ -271,6 +283,8 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 			},
 			[]string{"target_name"},
 		),
+		previousJobLabels:    make(map[string]prometheus.Labels),
+		previousTargetLabels: make(map[string]prometheus.Labels),
 	}
 
 	reg.MustRegister(
@@ -316,243 +330,286 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 
 // PrometheusMetricsHandler returns an HTTP handler that exposes Prometheus metrics
 func PrometheusMetricsHandler(storeInstance *store.Store) http.HandlerFunc {
-	reg := prometheus.NewRegistry()
-	m := newMetrics(reg)
-
-	handler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{
-		Registry: reg,
+	handler := promhttp.HandlerFor(globalRegistry, promhttp.HandlerOpts{
+		Registry: globalRegistry,
 	})
 
 	// Wrap with collector that updates metrics on each scrape
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Collect job metrics
-		jobs, err := storeInstance.Database.GetAllJobs()
-		if err != nil {
-			syslog.L.Error(err).
-				WithField("handler", "prometheus_metrics").
-				WithMessage("failed to get jobs").Write()
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		m.jobsTotal.Set(float64(len(jobs)))
-
-		now := time.Now().Unix()
-		var runningCount, queuedCount, failedCount, successCount int
-
-		// Track per-target statistics
-		targetStats := make(map[string]struct {
-			lastSuccessfulTimestamp int64
-			failedCount             int
-			successfulCount         int
-		})
-
-		for _, job := range jobs {
-			labels := prometheus.Labels{
-				"job_id":   job.ID,
-				"target":   job.Target,
-				"store":    job.Store,
-				"mode":     job.Mode,
-				"schedule": job.Schedule,
-			}
-
-			// Last run success status
-			// Consider successful if LastRunEndtime == LastSuccessfulEndtime OR if LastRunState == "OK"
-			successValue := float64(-1)
-			isSuccess := false
-			if job.LastRunEndtime > 0 && job.LastSuccessfulEndtime > 0 && job.LastRunEndtime == job.LastSuccessfulEndtime {
-				successValue = 1
-				successCount++
-				isSuccess = true
-			} else if job.LastRunState == "OK" {
-				successValue = 1
-				successCount++
-				isSuccess = true
-			} else if job.LastRunEndtime > 0 || job.LastRunState != "" {
-				// If we have a last run but it's not successful, mark as failed
-				successValue = 0
-				failedCount++
-			}
-			m.jobLastRunSuccess.With(labels).Set(successValue)
-
-			// Update target statistics
-			stats := targetStats[job.Target]
-			if isSuccess {
-				stats.successfulCount++
-				// Track the most recent successful timestamp for this target
-				if job.LastSuccessfulEndtime > stats.lastSuccessfulTimestamp {
-					stats.lastSuccessfulTimestamp = job.LastSuccessfulEndtime
-				}
-			} else if successValue == 0 {
-				stats.failedCount++
-			}
-			targetStats[job.Target] = stats
-
-			// Timestamps
-			if job.LastRunEndtime > 0 {
-				m.jobLastRunTimestamp.With(labels).Set(float64(job.LastRunEndtime))
-			}
-			if job.LastSuccessfulEndtime > 0 {
-				m.jobLastSuccessfulTimestamp.With(labels).Set(float64(job.LastSuccessfulEndtime))
-				m.jobTimeSinceLastSuccess.With(labels).Set(float64(now - job.LastSuccessfulEndtime))
-			}
-			if job.NextRun > 0 {
-				m.jobNextRunTimestamp.With(labels).Set(float64(job.NextRun))
-			}
-
-			// Duration
-			if job.Duration > 0 {
-				m.jobDuration.With(labels).Set(float64(job.Duration))
-			}
-
-			// Running status
-			isRunning := float64(0)
-			if job.CurrentPID > 0 {
-				isRunning = 1
-				runningCount++
-			}
-			m.jobRunning.With(labels).Set(isRunning)
-
-			// Queued status
-			isQueued := float64(0)
-			if strings.Contains(job.LastRunUpid, "pbsplusgen-queue") {
-				isQueued = 1
-				queuedCount++
-			}
-			m.jobQueued.With(labels).Set(isQueued)
-
-			// Size metrics
-			if job.ExpectedSize > 0 {
-				m.jobExpectedSize.With(labels).Set(float64(job.ExpectedSize))
-			}
-			if job.CurrentBytesTotal > 0 {
-				m.jobCurrentBytesTotal.With(labels).Set(float64(job.CurrentBytesTotal))
-			}
-			if job.CurrentBytesSpeed > 0 {
-				m.jobCurrentBytesSpeed.With(labels).Set(float64(job.CurrentBytesSpeed))
-			}
-			if job.CurrentFilesSpeed > 0 {
-				m.jobCurrentFilesSpeed.With(labels).Set(float64(job.CurrentFilesSpeed))
-			}
-			if job.CurrentFileCount > 0 {
-				m.jobCurrentFileCount.With(labels).Set(float64(job.CurrentFileCount))
-			}
-			if job.CurrentFolderCount > 0 {
-				m.jobCurrentFolderCount.With(labels).Set(float64(job.CurrentFolderCount))
-			}
-			if job.LatestSnapshotSize > 0 {
-				m.jobLatestSnapshotSize.With(labels).Set(float64(job.LatestSnapshotSize))
-			}
-		}
-
-		// Aggregate job metrics
-		m.jobsRunningTotal.Set(float64(runningCount))
-		m.jobsQueuedTotal.Set(float64(queuedCount))
-		m.jobsLastRunFailedTotal.Set(float64(failedCount))
-		m.jobsLastRunSuccessTotal.Set(float64(successCount))
-
-		// Collect target metrics
-		targets, err := storeInstance.Database.GetAllTargets()
-		if err != nil {
-			syslog.L.Error(err).
-				WithField("handler", "prometheus_metrics").
-				WithMessage("failed to get targets").Write()
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		m.targetsTotal.Set(float64(len(targets)))
-
-		var agentCount, s3Count, localCount int
-
-		for _, target := range targets {
-			driveLabels := prometheus.Labels{
-				"target_name": target.Name,
-				"drive_name":  target.DriveName,
-				"drive_type":  target.DriveType,
-				"drive_fs":    target.DriveFS,
-				"os":          target.OperatingSystem,
-			}
-
-			// Drive capacity metrics
-			if target.DriveTotalBytes > 0 {
-				m.targetDriveTotalBytes.With(driveLabels).Set(float64(target.DriveTotalBytes))
-			}
-			if target.DriveUsedBytes > 0 {
-				m.targetDriveUsedBytes.With(driveLabels).Set(float64(target.DriveUsedBytes))
-			}
-			if target.DriveFreeBytes > 0 {
-				m.targetDriveFreeBytes.With(driveLabels).Set(float64(target.DriveFreeBytes))
-			}
-
-			// Calculate usage percentage
-			if target.DriveTotalBytes > 0 {
-				usagePercent := float64(target.DriveUsedBytes) / float64(target.DriveTotalBytes) * 100
-				m.targetDriveUsagePercent.With(driveLabels).Set(usagePercent)
-			}
-
-			// Job count
-			jobCountLabels := prometheus.Labels{
-				"target_name": target.Name,
-			}
-			m.targetJobCount.With(jobCountLabels).Set(float64(target.JobCount))
-
-			// Target-specific job statistics
-			if stats, exists := targetStats[target.Name]; exists {
-				if stats.lastSuccessfulTimestamp > 0 {
-					m.targetLastSuccessfulJobTimestamp.With(jobCountLabels).Set(float64(stats.lastSuccessfulTimestamp))
-					m.targetTimeSinceLastSuccessfulJob.With(jobCountLabels).Set(float64(now - stats.lastSuccessfulTimestamp))
-				}
-
-				m.targetFailedJobCount.With(jobCountLabels).Set(float64(stats.failedCount))
-				m.targetSuccessfulJobCount.With(jobCountLabels).Set(float64(stats.successfulCount))
-
-				hasFailedJobs := float64(0)
-				if stats.failedCount > 0 {
-					hasFailedJobs = 1
-				}
-				m.targetHasFailedJobs.With(jobCountLabels).Set(hasFailedJobs)
-			} else {
-				// Target has no jobs, set defaults
-				m.targetFailedJobCount.With(jobCountLabels).Set(0)
-				m.targetSuccessfulJobCount.With(jobCountLabels).Set(0)
-				m.targetHasFailedJobs.With(jobCountLabels).Set(0)
-			}
-
-			// Target info (metadata)
-			isAgent := "false"
-			if target.IsAgent {
-				isAgent = "true"
-				agentCount++
-			}
-			isS3 := "false"
-			if target.IsS3 {
-				isS3 = "true"
-				s3Count++
-			}
-			if !target.IsAgent && !target.IsS3 {
-				localCount++
-			}
-
-			infoLabels := prometheus.Labels{
-				"target_name": target.Name,
-				"path":        target.Path,
-				"auth":        target.Auth,
-				"drive_type":  target.DriveType,
-				"drive_name":  target.DriveName,
-				"drive_fs":    target.DriveFS,
-				"os":          target.OperatingSystem,
-				"is_agent":    isAgent,
-				"is_s3":       isS3,
-			}
-			m.targetInfo.With(infoLabels).Set(1)
-		}
-
-		// Aggregate target type metrics
-		m.targetsAgentTotal.Set(float64(agentCount))
-		m.targetsS3Total.Set(float64(s3Count))
-		m.targetsLocalTotal.Set(float64(localCount))
-
+		updateMetrics(globalMetrics, storeInstance, time.Now().Unix())
 		handler.ServeHTTP(w, r)
 	}
+}
+
+func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
+	currentJobLabels := make(map[string]prometheus.Labels)
+	currentTargetLabels := make(map[string]prometheus.Labels)
+
+	// Collect job metrics
+	jobs, err := storeInstance.Database.GetAllJobs()
+	if err != nil {
+		syslog.L.Error(err).
+			WithField("handler", "prometheus_metrics").
+			WithMessage("failed to get jobs").Write()
+		return
+	}
+
+	m.jobsTotal.Set(float64(len(jobs)))
+
+	var runningCount, queuedCount, failedCount, successCount int
+
+	// Track per-target statistics
+	targetStats := make(map[string]struct {
+		lastSuccessfulTimestamp int64
+		failedCount             int
+		successfulCount         int
+	})
+
+	for _, job := range jobs {
+		labels := prometheus.Labels{
+			"job_id":   job.ID,
+			"target":   job.Target,
+			"store":    job.Store,
+			"mode":     job.Mode,
+			"schedule": job.Schedule,
+		}
+		currentJobLabels[job.ID] = labels
+
+		// Last run success status
+		// Consider successful if LastRunEndtime == LastSuccessfulEndtime OR if LastRunState == "OK"
+		successValue := float64(-1)
+		isSuccess := false
+		if job.LastRunEndtime > 0 && job.LastSuccessfulEndtime > 0 && job.LastRunEndtime == job.LastSuccessfulEndtime {
+			successValue = 1
+			successCount++
+			isSuccess = true
+		} else if job.LastRunState == "OK" {
+			successValue = 1
+			successCount++
+			isSuccess = true
+		} else if job.LastRunEndtime > 0 || job.LastRunState != "" {
+			// If we have a last run but it's not successful, mark as failed
+			successValue = 0
+			failedCount++
+		}
+		m.jobLastRunSuccess.With(labels).Set(successValue)
+
+		// Update target statistics
+		stats := targetStats[job.Target]
+		if isSuccess {
+			stats.successfulCount++
+			// Track the most recent successful timestamp for this target
+			if job.LastSuccessfulEndtime > stats.lastSuccessfulTimestamp {
+				stats.lastSuccessfulTimestamp = job.LastSuccessfulEndtime
+			}
+		} else if successValue == 0 {
+			stats.failedCount++
+		}
+		targetStats[job.Target] = stats
+
+		// Timestamps
+		if job.LastRunEndtime > 0 {
+			m.jobLastRunTimestamp.With(labels).Set(float64(job.LastRunEndtime))
+		}
+		if job.LastSuccessfulEndtime > 0 {
+			m.jobLastSuccessfulTimestamp.With(labels).Set(float64(job.LastSuccessfulEndtime))
+			m.jobTimeSinceLastSuccess.With(labels).Set(float64(now - job.LastSuccessfulEndtime))
+		}
+		if job.NextRun > 0 {
+			m.jobNextRunTimestamp.With(labels).Set(float64(job.NextRun))
+		}
+
+		// Duration
+		if job.Duration > 0 {
+			m.jobDuration.With(labels).Set(float64(job.Duration))
+		}
+
+		// Running status
+		isRunning := float64(0)
+		if job.CurrentPID > 0 {
+			isRunning = 1
+			runningCount++
+		}
+		m.jobRunning.With(labels).Set(isRunning)
+
+		// Queued status
+		isQueued := float64(0)
+		if strings.Contains(job.LastRunUpid, "pbsplusgen-queue") {
+			isQueued = 1
+			queuedCount++
+		}
+		m.jobQueued.With(labels).Set(isQueued)
+
+		// Size metrics
+		if job.ExpectedSize > 0 {
+			m.jobExpectedSize.With(labels).Set(float64(job.ExpectedSize))
+		}
+		if job.CurrentBytesTotal > 0 {
+			m.jobCurrentBytesTotal.With(labels).Set(float64(job.CurrentBytesTotal))
+		}
+		if job.CurrentBytesSpeed > 0 {
+			m.jobCurrentBytesSpeed.With(labels).Set(float64(job.CurrentBytesSpeed))
+		}
+		if job.CurrentFilesSpeed > 0 {
+			m.jobCurrentFilesSpeed.With(labels).Set(float64(job.CurrentFilesSpeed))
+		}
+		if job.CurrentFileCount > 0 {
+			m.jobCurrentFileCount.With(labels).Set(float64(job.CurrentFileCount))
+		}
+		if job.CurrentFolderCount > 0 {
+			m.jobCurrentFolderCount.With(labels).Set(float64(job.CurrentFolderCount))
+		}
+		if job.LatestSnapshotSize > 0 {
+			m.jobLatestSnapshotSize.With(labels).Set(float64(job.LatestSnapshotSize))
+		}
+	}
+
+	// Delete metrics for jobs that no longer exist
+	for jobID, labels := range m.previousJobLabels {
+		if _, exists := currentJobLabels[jobID]; !exists {
+			m.jobLastRunSuccess.Delete(labels)
+			m.jobLastRunTimestamp.Delete(labels)
+			m.jobLastSuccessfulTimestamp.Delete(labels)
+			m.jobNextRunTimestamp.Delete(labels)
+			m.jobDuration.Delete(labels)
+			m.jobRunning.Delete(labels)
+			m.jobQueued.Delete(labels)
+			m.jobExpectedSize.Delete(labels)
+			m.jobCurrentBytesTotal.Delete(labels)
+			m.jobCurrentBytesSpeed.Delete(labels)
+			m.jobCurrentFilesSpeed.Delete(labels)
+			m.jobCurrentFileCount.Delete(labels)
+			m.jobCurrentFolderCount.Delete(labels)
+			m.jobTimeSinceLastSuccess.Delete(labels)
+			m.jobLatestSnapshotSize.Delete(labels)
+		}
+	}
+	m.previousJobLabels = currentJobLabels // Update for next run
+
+	// Aggregate job metrics
+	m.jobsRunningTotal.Set(float64(runningCount))
+	m.jobsQueuedTotal.Set(float64(queuedCount))
+	m.jobsLastRunFailedTotal.Set(float64(failedCount))
+	m.jobsLastRunSuccessTotal.Set(float64(successCount))
+
+	// Collect target metrics
+	targets, err := storeInstance.Database.GetAllTargets()
+	if err != nil {
+		syslog.L.Error(err).
+			WithField("handler", "prometheus_metrics").
+			WithMessage("failed to get targets").Write()
+		return
+	}
+
+	m.targetsTotal.Set(float64(len(targets)))
+
+	var agentCount, s3Count, localCount int
+
+	for _, target := range targets {
+		driveLabels := prometheus.Labels{
+			"target_name": target.Name,
+			"drive_name":  target.DriveName,
+			"drive_type":  target.DriveType,
+			"drive_fs":    target.DriveFS,
+			"os":          target.OperatingSystem,
+		}
+
+		currentTargetLabels[target.Name+"-"+target.DriveName] = driveLabels
+
+		// Drive capacity metrics
+		if target.DriveTotalBytes > 0 {
+			m.targetDriveTotalBytes.With(driveLabels).Set(float64(target.DriveTotalBytes))
+		}
+		if target.DriveUsedBytes > 0 {
+			m.targetDriveUsedBytes.With(driveLabels).Set(float64(target.DriveUsedBytes))
+		}
+		if target.DriveFreeBytes > 0 {
+			m.targetDriveFreeBytes.With(driveLabels).Set(float64(target.DriveFreeBytes))
+		}
+
+		// Calculate usage percentage
+		if target.DriveTotalBytes > 0 {
+			usagePercent := float64(target.DriveUsedBytes) / float64(target.DriveTotalBytes) * 100
+			m.targetDriveUsagePercent.With(driveLabels).Set(usagePercent)
+		}
+
+		// Job count
+		jobCountLabels := prometheus.Labels{
+			"target_name": target.Name,
+		}
+		m.targetJobCount.With(jobCountLabels).Set(float64(target.JobCount))
+
+		// Target-specific job statistics
+		if stats, exists := targetStats[target.Name]; exists {
+			if stats.lastSuccessfulTimestamp > 0 {
+				m.targetLastSuccessfulJobTimestamp.With(jobCountLabels).Set(float64(stats.lastSuccessfulTimestamp))
+				m.targetTimeSinceLastSuccessfulJob.With(jobCountLabels).Set(float64(now - stats.lastSuccessfulTimestamp))
+			}
+
+			m.targetFailedJobCount.With(jobCountLabels).Set(float64(stats.failedCount))
+			m.targetSuccessfulJobCount.With(jobCountLabels).Set(float64(stats.successfulCount))
+
+			hasFailedJobs := float64(0)
+			if stats.failedCount > 0 {
+				hasFailedJobs = 1
+			}
+			m.targetHasFailedJobs.With(jobCountLabels).Set(hasFailedJobs)
+		} else {
+			// Target has no jobs, set defaults
+			m.targetFailedJobCount.With(jobCountLabels).Set(0)
+			m.targetSuccessfulJobCount.With(jobCountLabels).Set(0)
+			m.targetHasFailedJobs.With(jobCountLabels).Set(0)
+		}
+
+		// Target info (metadata)
+		isAgent := "false"
+		if target.IsAgent {
+			isAgent = "true"
+			agentCount++
+		}
+		isS3 := "false"
+		if target.IsS3 {
+			isS3 = "true"
+			s3Count++
+		}
+		if !target.IsAgent && !target.IsS3 {
+			localCount++
+		}
+
+		infoLabels := prometheus.Labels{
+			"target_name": target.Name,
+			"path":        target.Path,
+			"auth":        target.Auth,
+			"drive_type":  target.DriveType,
+			"drive_name":  target.DriveName,
+			"drive_fs":    target.DriveFS,
+			"os":          target.OperatingSystem,
+			"is_agent":    isAgent,
+			"is_s3":       isS3,
+		}
+		m.targetInfo.With(infoLabels).Set(1)
+	}
+
+	// Delete metrics for targets that no longer exist
+	for targetID, labels := range m.previousTargetLabels {
+		if _, exists := currentTargetLabels[targetID]; !exists {
+			m.targetDriveTotalBytes.Delete(labels)
+			m.targetDriveUsedBytes.Delete(labels)
+			m.targetDriveFreeBytes.Delete(labels)
+			m.targetDriveUsagePercent.Delete(labels)
+			m.targetJobCount.Delete(prometheus.Labels{"target_name": labels["target_name"]}) // JobCount uses only target_name
+			m.targetInfo.Delete(labels)                                                      // targetInfo uses all these labels
+			m.targetLastSuccessfulJobTimestamp.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+			m.targetTimeSinceLastSuccessfulJob.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+			m.targetHasFailedJobs.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+			m.targetFailedJobCount.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+			m.targetSuccessfulJobCount.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+		}
+	}
+	m.previousTargetLabels = currentTargetLabels // Update for next run
+
+	// Aggregate target type metrics
+	m.targetsAgentTotal.Set(float64(agentCount))
+	m.targetsS3Total.Set(float64(s3Count))
+	m.targetsLocalTotal.Set(float64(localCount))
 }
