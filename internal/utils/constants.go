@@ -33,6 +33,9 @@ func init() {
 	}
 
 	MaxConcurrentClients = int(sysMem.Total) / (1024 * 1024 * 1024) * 2
+	if MaxConcurrentClients <= 0 {
+		MaxConcurrentClients = 1
+	}
 
 	log.Printf("initialized aRPC buffer configurations with MaxReceiveBuffer: %d, MaxStreamBuffer: %d, MaxConcurrentClients: %d", MaxReceiveBuffer, MaxStreamBuffer, MaxConcurrentClients)
 }
