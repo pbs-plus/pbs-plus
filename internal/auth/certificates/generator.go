@@ -1,6 +1,7 @@
 package certificates
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -8,7 +9,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 	"net"
 	"os"
@@ -160,8 +160,10 @@ func (g *Generator) GenerateCert(name string) error {
 		return authErrors.WrapError("generate_key", err)
 	}
 
+	serialNumber := big.NewInt(0).SetBytes(bytes.Repeat([]byte{0xFF}, 20))
+
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			Organization: []string{g.options.Organization},
 			CommonName:   name,
@@ -399,10 +401,7 @@ func (g *Generator) SignCSR(csr []byte) ([]byte, error) {
 		return nil, fmt.Errorf("CSR public key is nil")
 	}
 
-	serialNumber, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate serial number: %w", err)
-	}
+	serialNumber := big.NewInt(0).SetBytes(bytes.Repeat([]byte{0xFF}, 20))
 
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
