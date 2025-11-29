@@ -21,12 +21,12 @@ import (
 
 // Store holds the configuration system.
 type Store struct {
-	Ctx                context.Context
-	CertGenerator      *certificates.Generator
-	LegacyDatabase     *database.Database
-	Database           *sqlite.Database
-	ARPCSessionManager *arpc.SessionManager
-	arpcFS             *safemap.Map[string, *arpcfs.ARPCFS]
+	Ctx            context.Context
+	CertGenerator  *certificates.Generator
+	LegacyDatabase *database.Database
+	Database       *sqlite.Database
+	Node           *arpc.Node
+	arpcFS         *safemap.Map[string, *arpcfs.ARPCFS]
 }
 
 func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {

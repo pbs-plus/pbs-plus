@@ -1,13 +1,14 @@
 package arpc
 
 import (
+	"net"
+
 	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
-	"github.com/xtaci/smux"
 )
 
 type Request struct {
 	Method  string
-	Payload []byte // Serialized data of one of the other structs
+	Payload []byte
 }
 
 func (req *Request) Encode() ([]byte, error) {
@@ -44,7 +45,7 @@ type Response struct {
 	Status    int
 	Message   string
 	Data      []byte
-	RawStream func(*smux.Stream)
+	RawStream func(net.Conn)
 }
 
 func (resp *Response) Encode() ([]byte, error) {
@@ -81,7 +82,6 @@ func (resp *Response) Decode(buf []byte) error {
 		return err
 	}
 	resp.Data = dataField
-	// Note: RawStream is skipped
 	arpcdata.ReleaseDecoder(dec)
 	return nil
 }
@@ -138,7 +138,6 @@ func (errObj *SerializableError) Decode(buf []byte) error {
 		return err
 	}
 	errObj.Path = path
-	// Note: OriginalError is skipped
 	arpcdata.ReleaseDecoder(dec)
 	return nil
 }

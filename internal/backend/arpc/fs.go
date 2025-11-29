@@ -21,13 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// accessMsg represents one file (or directory) access event.
-type accessMsg struct {
-	hash  uint64
-	isDir bool
-}
-
-func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
+func NewARPCFS(ctx context.Context, peer *arpc.Peer, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
 	ctxFs, cancel := context.WithCancel(ctx)
 
 	memcachePath := filepath.Join(constants.MemcachedSocketPath, fmt.Sprintf("%s.sock", job.ID))
@@ -47,7 +41,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 		basePath:   "/",
 		ctx:        ctxFs,
 		cancel:     cancel,
-		session:    session,
+		peer:       peer,
 		Job:        job,
 		Hostname:   hostname,
 		backupMode: backupMode,
@@ -113,9 +107,7 @@ func (fs *ARPCFS) Unmount() {
 	if fs.Mount != nil {
 		_ = fs.Mount.Unmount()
 	}
-	if fs.session != nil {
-		_ = fs.session.Close()
-	}
+	// Don't close the peer here - it's managed by the Node
 	fs.cancel()
 }
 
@@ -128,9 +120,9 @@ func (fs *ARPCFS) Open(filename string) (ARPCFile, error) {
 }
 
 func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFile, error) {
-	if fs.session == nil {
+	if fs.peer == nil {
 		syslog.L.Error(os.ErrInvalid).
-			WithMessage("arpc session is nil").
+			WithMessage("arpc peer is nil").
 			WithJob(fs.Job.ID).
 			Write()
 		return ARPCFile{}, syscall.ENOENT
@@ -143,7 +135,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 		Perm: int(perm),
 	}
 
-	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &req)
+	raw, err := fs.peer.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &req)
 	if err != nil {
 		if !strings.HasSuffix(req.Path, ".pxarexclude") {
 			syslog.L.Error(err).
@@ -176,9 +168,9 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 // Attr retrieves file attributes via RPC and then tracks the access.
 func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, error) {
 	var fi types.AgentFileInfo
-	if fs.session == nil {
+	if fs.peer == nil {
 		syslog.L.Error(os.ErrInvalid).
-			WithMessage("arpc session is nil").
+			WithMessage("arpc peer is nil").
 			WithJob(fs.Job.ID).
 			Write()
 		return types.AgentFileInfo{}, syscall.ENOENT
@@ -192,7 +184,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 		atomic.AddInt64(&fs.statCacheHits, 1)
 		raw = cached.Value
 	} else {
-		raw, err = fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
+		raw, err = fs.peer.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
 		if err != nil {
 			if !strings.HasSuffix(req.Path, ".pxarexclude") {
 				syslog.L.Error(err).
@@ -233,9 +225,9 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 // Xattr retrieves extended attributes and logs the access similarly.
 func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	var fi types.AgentFileInfo
-	if fs.session == nil {
+	if fs.peer == nil {
 		syslog.L.Error(os.ErrInvalid).
-			WithMessage("arpc session is nil").
+			WithMessage("arpc peer is nil").
 			WithJob(fs.Job.ID).
 			Write()
 		return types.AgentFileInfo{}, syscall.ENODATA
@@ -251,7 +243,7 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 		fs.memcache.Delete("xattr:" + filename)
 	}
 
-	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)
+	raw, err := fs.peer.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)
 	if err != nil {
 		if !strings.HasSuffix(req.Path, ".pxarexclude") {
 			syslog.L.Error(err).
@@ -285,16 +277,16 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 
 // StatFS calls StatFS via RPC.
 func (fs *ARPCFS) StatFS() (types.StatFS, error) {
-	if fs.session == nil {
+	if fs.peer == nil {
 		syslog.L.Error(os.ErrInvalid).
-			WithMessage("arpc session is nil").
+			WithMessage("arpc peer is nil").
 			WithJob(fs.Job.ID).
 			Write()
 		return types.StatFS{}, syscall.ENOENT
 	}
 
 	var fsStat types.StatFS
-	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute,
+	raw, err := fs.peer.CallMsgWithTimeout(1*time.Minute,
 		fs.Job.ID+"/StatFS", nil)
 	if err != nil {
 		syslog.L.Error(err).
@@ -317,9 +309,9 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 
 // ReadDir calls ReadDir via RPC and logs directory accesses.
 func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
-	if fs.session == nil {
+	if fs.peer == nil {
 		syslog.L.Error(os.ErrInvalid).
-			WithMessage("arpc session is nil").
+			WithMessage("arpc peer is nil").
 			WithJob(fs.Job.ID).
 			Write()
 		return DirStream{}, syscall.ENOENT
@@ -327,7 +319,7 @@ func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 
 	var handleId types.FileHandleId
 	openReq := types.OpenFileReq{Path: path}
-	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &openReq)
+	raw, err := fs.peer.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &openReq)
 	if err != nil {
 		return DirStream{}, syscall.ENOENT
 	}

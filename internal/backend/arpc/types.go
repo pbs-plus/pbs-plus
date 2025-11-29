@@ -15,7 +15,7 @@ import (
 type ARPCFS struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
-	session  *arpc.Session
+	peer     *arpc.Peer
 	Job      storeTypes.Job
 	Hostname string
 	Mount    *gofuse.Server

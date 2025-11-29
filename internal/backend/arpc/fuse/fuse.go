@@ -24,12 +24,6 @@ var nodePool = &sync.Pool{
 	},
 }
 
-var pathBuilderPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]string, 128)
-	},
-}
-
 func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
 	rootNode := nodePool.Get().(*Node)
 	rootNode.fs = fs

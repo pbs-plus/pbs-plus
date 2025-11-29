@@ -19,13 +19,13 @@ func (f *ARPCFile) Close() error {
 		return nil
 	}
 
-	if f.fs.session == nil {
-		syslog.L.Error(os.ErrInvalid).WithJob(f.jobId).WithMessage("arpc session is nil").Write()
+	if f.fs.peer == nil {
+		syslog.L.Error(os.ErrInvalid).WithJob(f.jobId).WithMessage("arpc peer is nil").Write()
 		return syscall.ENOENT
 	}
 
 	req := types.CloseReq{HandleID: f.handleID}
-	_, err := f.fs.session.CallMsgWithTimeout(1*time.Minute, f.jobId+"/Close", &req)
+	_, err := f.fs.peer.CallMsgWithTimeout(1*time.Minute, f.jobId+"/Close", &req)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		syslog.L.Error(err).WithJob(f.jobId).WithMessage("failed to handle close request").WithField("path", f.name).Write()
 		return err
@@ -42,7 +42,7 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 		Whence:   whence,
 	}
 	// Send the request to the server
-	respBytes, err := f.fs.session.CallMsgWithTimeout(1*time.Minute, f.jobId+"/Lseek", &req)
+	respBytes, err := f.fs.peer.CallMsgWithTimeout(1*time.Minute, f.jobId+"/Lseek", &req)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).WithMessage("lseek call failed").WithField("path", f.name).Write()
 		return 0, syscall.EOPNOTSUPP
@@ -64,8 +64,8 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, syscall.ENOENT
 	}
 
-	if f.fs.session == nil {
-		syslog.L.Error(syscall.ENOENT).WithJob(f.jobId).WithMessage("fs session is nil").WithField("path", f.name).Write()
+	if f.fs.peer == nil {
+		syslog.L.Error(syscall.ENOENT).WithJob(f.jobId).WithMessage("fs peer is nil").WithField("path", f.name).Write()
 		return 0, syscall.ENOENT
 	}
 
@@ -75,7 +75,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		Length:   len(p),
 	}
 
-	bytesRead, err := f.fs.session.CallBinary(f.fs.ctx, f.jobId+"/ReadAt", &req, p)
+	bytesRead, err := f.fs.peer.CallBinary(f.fs.ctx, f.jobId+"/ReadAt", &req, p)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).
 			WithMessage("failed to handle read request, replace failed reads with zeroes, likely corrupted").

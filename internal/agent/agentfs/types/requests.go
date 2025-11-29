@@ -222,15 +222,16 @@ func (req *CloseReq) Decode(buf []byte) error {
 
 // BackupReq represents a request to back up a file
 type BackupReq struct {
-	JobId      string
-	Drive      string
-	SourceMode string
-	ReadMode   string
-	Extras     string
+	JobId        string
+	Drive        string
+	SourceMode   string
+	ReadMode     string
+	Extras       string
+	JobTunConfig string
 }
 
 func (req *BackupReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(req.JobId) + len(req.Drive) + len(req.SourceMode) + len(req.ReadMode) + len(req.Extras))
+	enc := arpcdata.NewEncoderWithSize(len(req.JobId) + len(req.Drive) + len(req.SourceMode) + len(req.ReadMode) + len(req.Extras) + len(req.JobTunConfig))
 	if err := enc.WriteString(req.JobId); err != nil {
 		return nil, err
 	}
@@ -244,6 +245,9 @@ func (req *BackupReq) Encode() ([]byte, error) {
 		return nil, err
 	}
 	if err := enc.WriteString(req.Extras); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteString(req.JobTunConfig); err != nil {
 		return nil, err
 	}
 	return enc.Bytes(), nil

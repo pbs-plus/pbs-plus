@@ -4,10 +4,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/utils"
-	"github.com/xtaci/smux"
 )
 
 var bufferPool = &sync.Pool{
@@ -16,19 +16,20 @@ var bufferPool = &sync.Pool{
 	},
 }
 
-func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
-	if stream == nil {
-		return fmt.Errorf("stream is nil")
+// SendDataFromReader sends data from a reader over a connection with length prefixes
+func SendDataFromReader(r io.Reader, length int, conn net.Conn) error {
+	if conn == nil {
+		return fmt.Errorf("connection is nil")
 	}
 
-	// Write the total expected length prefix (64-bit little-endian).
-	if err := binary.Write(stream, binary.LittleEndian, uint64(length)); err != nil {
+	// Write the total expected length prefix (64-bit little-endian)
+	if err := binary.Write(conn, binary.LittleEndian, uint64(length)); err != nil {
 		return fmt.Errorf("failed to write total length prefix: %w", err)
 	}
 
-	// If length is zero, write the sentinel and return.
+	// If length is zero, write the sentinel and return
 	if length == 0 || r == nil {
-		if err := binary.Write(stream, binary.LittleEndian, uint32(0)); err != nil {
+		if err := binary.Write(conn, binary.LittleEndian, uint32(0)); err != nil {
 			return fmt.Errorf("failed to write sentinel for zero length: %w", err)
 		}
 		return nil
@@ -44,30 +45,29 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 		remaining := length - totalSent
 		readSize := min(len(chunkBuf), remaining)
 		if readSize <= 0 {
-			break // Should not happen if length > 0 initially, but safe check
+			break
 		}
 
 		n, err := r.Read(chunkBuf[:readSize])
 		if err != nil && err != io.EOF {
-			_ = binary.Write(stream, binary.LittleEndian, uint32(0))
+			_ = binary.Write(conn, binary.LittleEndian, uint32(0))
 			return fmt.Errorf("read error: %w", err)
 		}
 		if n == 0 {
-			// EOF reached or reader behaving unexpectedly.
 			break
 		}
 
-		// Write the chunk's size prefix (32-bit little-endian).
-		if err := binary.Write(stream, binary.LittleEndian, uint32(n)); err != nil {
+		// Write the chunk's size prefix (32-bit little-endian)
+		if err := binary.Write(conn, binary.LittleEndian, uint32(n)); err != nil {
 			return fmt.Errorf("failed to write chunk size prefix: %w", err)
 		}
 
-		// Write the actual chunk data.
+		// Write the actual chunk data
 		written := 0
 		for written < n {
-			nw, err := stream.Write(chunkBuf[written:n])
+			nw, err := conn.Write(chunkBuf[written:n])
 			if err != nil {
-				_ = binary.Write(stream, binary.LittleEndian, uint32(0))
+				_ = binary.Write(conn, binary.LittleEndian, uint32(0))
 				return fmt.Errorf("failed to write chunk data: %w", err)
 			}
 			written += nw
@@ -76,23 +76,20 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 		totalSent += n
 	}
 
-	// Write sentinel (0) to signal there are no more chunks.
-	if err := binary.Write(stream, binary.LittleEndian, uint32(0)); err != nil {
+	// Write sentinel (0) to signal there are no more chunks
+	if err := binary.Write(conn, binary.LittleEndian, uint32(0)); err != nil {
 		return fmt.Errorf("failed to write sentinel: %w", err)
 	}
 
 	return nil
 }
 
-func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
+// ReceiveDataInto receives chunked data from a connection into a destination buffer
+func ReceiveDataInto(conn net.Conn, dst []byte) (int, error) {
 	var totalLength uint64
-	if err := binary.Read(stream, binary.LittleEndian, &totalLength); err != nil {
-		// Check for EOF specifically, might indicate clean closure before data
+	if err := binary.Read(conn, binary.LittleEndian, &totalLength); err != nil {
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			return 0, fmt.Errorf(
-				"failed to read total length prefix (EOF/UnexpectedEOF): %w",
-				err,
-			)
+			return 0, fmt.Errorf("failed to read total length prefix (EOF/UnexpectedEOF): %w", err)
 		}
 		return 0, fmt.Errorf("failed to read total length prefix: %w", err)
 	}
@@ -120,15 +117,10 @@ func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 
 	for {
 		var chunkSize uint32
-		if err := binary.Read(stream, binary.LittleEndian, &chunkSize); err != nil {
-			// If we expected 0 bytes total and read 0 bytes, EOF after total length is okay.
+		if err := binary.Read(conn, binary.LittleEndian, &chunkSize); err != nil {
 			if totalLength == 0 && totalRead == 0 && (err == io.EOF || err == io.ErrUnexpectedEOF) {
-				// This case means totalLength=0 was sent, and then the stream closed before the sentinel(0)
-				// This might be acceptable depending on the sender logic, but indicates an incomplete transmission
-				// according to the current protocol (missing sentinel).
 				return totalRead, nil
 			}
-			// If EOF happens *before* reading the expected amount, it's an error.
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return totalRead, fmt.Errorf(
 					"failed to read chunk size (EOF/UnexpectedEOF before completion): expected %d, got %d: %w",
@@ -141,7 +133,7 @@ func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 		}
 
 		if chunkSize == 0 {
-			// Sentinel found, break the loop to perform final check.
+			// Sentinel found, break the loop
 			break
 		}
 
@@ -149,10 +141,7 @@ func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 		expectedEnd := totalRead + chunkLen
 
 		if expectedEnd > int(totalLength) {
-			// Read the remaining unexpected data to clear the stream? Or just error out?
-			// Erroring out is safer as the stream state is inconsistent.
-			// Drain the specific chunk that overflows?
-			_, _ = io.CopyN(io.Discard, stream, int64(chunkLen))
+			_, _ = io.CopyN(io.Discard, conn, int64(chunkLen))
 			return totalRead, fmt.Errorf(
 				"received chunk overflows declared total length: total %d, current %d, chunk %d",
 				totalLength,
@@ -162,10 +151,9 @@ func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 		}
 
 		// Read directly into the destination buffer
-		n, err := io.ReadFull(stream, dst[totalRead:expectedEnd])
-		totalRead += n // Keep track even if ReadFull returns an error partially
+		n, err := io.ReadFull(conn, dst[totalRead:expectedEnd])
+		totalRead += n
 		if err != nil {
-			// If ReadFull fails (e.g., EOF before chunk completion), report it
 			if err == io.ErrUnexpectedEOF {
 				err = fmt.Errorf(
 					"unexpected EOF reading chunk data: expected %d bytes for chunk, got %d: %w",
@@ -176,7 +164,7 @@ func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 			} else {
 				err = fmt.Errorf("failed to read chunk data: %w", err)
 			}
-			return totalRead, err // Return bytes read and error
+			return totalRead, err
 		}
 	}
 

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/rpc"
 	"os"
 	"os/exec"
@@ -17,13 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
-	"github.com/pbs-plus/pbs-plus/internal/auth/server"
-	"github.com/pbs-plus/pbs-plus/internal/auth/token"
+	"github.com/pbs-plus/pbs-plus/internal/arpc/bootstrap"
 	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
 	"github.com/pbs-plus/pbs-plus/internal/proxy"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/agents"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/exclusions"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/plus"
@@ -125,7 +123,6 @@ func main() {
 		return
 	}
 
-	// Handle single job execution
 	if len(jobsRun) > 0 {
 		for _, jobRun := range jobsRun {
 			jobTask, err := storeInstance.Database.GetJob(jobRun)
@@ -208,12 +205,28 @@ func main() {
 		tx.Commit()
 	}
 
-	certOpts := certificates.DefaultOptions()
-	generator, err := certificates.NewGenerator(certOpts)
+	serverPublicIP := "0.0.0.0"
+	wgPort := 8018
+	networkPrefix := netip.MustParsePrefix("10.99.0.0/16")
+	bootstrapStateFile := "/etc/proxmox-backup/pbs-plus/bootstrap-state.json"
+
+	bootstrapServer, err := bootstrap.NewServerBootstrap(serverPublicIP, wgPort, networkPrefix, bootstrapStateFile)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to initialize certificate generator").Write()
+		syslog.L.Error(err).WithMessage("failed to initialize bootstrap server").Write()
 		return
 	}
+
+	// Build and store the aRPC node with WireGuard transport
+	arpcListenAddr := "10.99.0.1:8700" // Internal WireGuard address for aRPC
+	arpcNode, err := bootstrapServer.BuildServerNode(mainCtx, arpcListenAddr)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to build aRPC node").Write()
+		return
+	}
+	defer arpcNode.Close()
+	storeInstance.Node = arpcNode
+
+	arpcNode.Start()
 
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
 
@@ -223,94 +236,6 @@ func main() {
 			_ = os.WriteFile(secKeyPath, []byte(key), 0640)
 		}
 	}
-
-	secKey, err := os.ReadFile(secKeyPath)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to read .key").Write()
-		return
-	}
-
-	serverConfig := server.DefaultConfig()
-	serverConfig.CertFile = filepath.Join(certOpts.OutputDir, "server.crt")
-	serverConfig.KeyFile = filepath.Join(certOpts.OutputDir, "server.key")
-	serverConfig.CAFile = filepath.Join(certOpts.OutputDir, "ca.crt")
-	serverConfig.CAKey = filepath.Join(certOpts.OutputDir, "ca.key")
-	serverConfig.TokenSecret = string(secKey)
-	serverConfig.Unmount()
-
-	if err := generator.ValidateExistingCerts(); err != nil {
-		if err := generator.GenerateCA(); err != nil {
-			syslog.L.Error(err).WithMessage("failed to generate certificate").Write()
-			return
-		}
-
-		if err := generator.GenerateCert("server"); err != nil {
-			syslog.L.Error(err).WithMessage("failed to generate certificate").Write()
-			return
-		}
-	}
-
-	if err := serverConfig.Validate(); err != nil {
-		syslog.L.Error(err).WithMessage("failed to validate server config").Write()
-		return
-	}
-
-	storeInstance.CertGenerator = generator
-
-	err = os.Chown(serverConfig.KeyFile, 0, 34)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to change cert key permissions").Write()
-		return
-	}
-
-	err = os.Chown(serverConfig.CertFile, 0, 34)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to change cert permissions").Write()
-		return
-	}
-
-	proxyExec := exec.Command("/usr/bin/systemctl", "restart", "proxmox-backup-proxy")
-	proxyExec.Env = os.Environ()
-	_ = proxyExec.Run()
-
-	// Initialize token manager
-	tokenManager, err := token.NewManager(token.Config{
-		TokenExpiration: serverConfig.TokenExpiration,
-		SecretKey:       serverConfig.TokenSecret,
-	})
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to initialize token manager").Write()
-		return
-	}
-	storeInstance.Database.TokenManager = tokenManager
-
-	// Setup HTTP server
-	tlsConfig, err := serverConfig.LoadTLSConfig()
-	if err != nil {
-		return
-	}
-
-	caRenewalCtx, cancelRenewal := context.WithCancel(context.Background())
-	defer cancelRenewal()
-	go func() {
-		for {
-			select {
-			case <-caRenewalCtx.Done():
-				return
-			case <-time.After(time.Hour):
-				if err := generator.ValidateExistingCerts(); err != nil {
-					if err := generator.GenerateCA(); err != nil {
-						syslog.L.Error(err).WithMessage("failed to generate CA").Write()
-					}
-
-					if err := generator.GenerateCert("server"); err != nil {
-						syslog.L.Error(err).WithMessage("failed to generate server certificate").Write()
-					}
-				}
-
-			}
-		}
-	}()
 
 	// Unmount and remove all stale mount points
 	// Get all mount points under the base path
@@ -367,8 +292,8 @@ func main() {
 		}
 	}()
 
-	agentMux := http.NewServeMux()
-	apiMux := http.NewServeMux()
+	wgMux := http.NewServeMux()  // For WireGuard interface only
+	apiMux := http.NewServeMux() // For API interface
 
 	// API routes
 	apiMux.HandleFunc("/api2/json/d2d/backup", mw.ServerOnly(storeInstance, jobs.D2DJobHandler(storeInstance)))
@@ -394,22 +319,11 @@ func main() {
 	apiMux.HandleFunc("/api2/extjs/config/disk-backup-job", mw.ServerOnly(storeInstance, jobs.ExtJsJobHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", mw.ServerOnly(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance)))
 
-	// Agent routes
-	agentMux.HandleFunc("/api2/json/plus/version", mw.AgentOrServer(storeInstance, plus.VersionHandler(storeInstance, Version)))
-	agentMux.HandleFunc("/api2/json/plus/binary", plus.DownloadBinary(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/updater-binary", plus.DownloadUpdater(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/binary/checksum", mw.AgentOrServer(storeInstance, plus.DownloadChecksum(storeInstance, Version)))
-	agentMux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
-	agentMux.HandleFunc("/api2/json/d2d/agent-log", mw.AgentOnly(storeInstance, agents.AgentLogHandler(storeInstance)))
-
-	// aRPC route
-	agentMux.HandleFunc("/plus/arpc", mw.AgentOnly(storeInstance, arpc.ARPCHandler(storeInstance)))
-
-	// Agent auth routes
-	agentMux.HandleFunc("/plus/agent/bootstrap", agents.AgentBootstrapHandler(storeInstance))
-	agentMux.HandleFunc("/plus/agent/renew", mw.AgentOnly(storeInstance, agents.AgentRenewHandler(storeInstance)))
-	agentMux.HandleFunc("/plus/agent/install/win", plus.AgentInstallScriptHandler(storeInstance, Version))
-	agentMux.HandleFunc("/plus/metrics", plus.PrometheusMetricsHandler(storeInstance))
+	apiMux.HandleFunc("/plus/agent/bootstrap", agents.AgentBootstrapHandler(storeInstance, bootstrapServer))
+	apiMux.HandleFunc("/plus/agent/install/win", plus.AgentInstallScriptHandler(storeInstance, Version))
+	apiMux.HandleFunc("/api2/json/plus/binary", plus.DownloadBinary(storeInstance, Version))
+	apiMux.HandleFunc("/api2/json/plus/updater-binary", plus.DownloadUpdater(storeInstance, Version))
+	apiMux.HandleFunc("/plus/metrics", plus.PrometheusMetricsHandler(storeInstance))
 
 	// pprof routes
 	apiMux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -418,36 +332,51 @@ func main() {
 	apiMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
+	// WireGuard-only routes (agent communication after enrollment)
+	wgMux.HandleFunc("/api2/json/plus/version", mw.AgentOrServer(storeInstance, plus.VersionHandler(storeInstance, Version)))
+	wgMux.HandleFunc("/api2/json/plus/binary/checksum", mw.AgentOrServer(storeInstance, plus.DownloadChecksum(storeInstance, Version)))
+	wgMux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
+	wgMux.HandleFunc("/api2/json/d2d/agent-log", mw.AgentOnly(storeInstance, agents.AgentLogHandler(storeInstance)))
+	wgMux.HandleFunc("/api2/json/d2d/exclusion", mw.AgentOrServer(storeInstance, exclusions.D2DExclusionHandler(storeInstance)))
+
 	apiServer := &http.Server{
-		Addr:           serverConfig.Address,
+		Addr:           ":8017",
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   5 * time.Minute,
+		IdleTimeout:    5 * time.Minute,
+		MaxHeaderBytes: 1 << 20, // 1MB
 		Handler:        apiMux,
-		ReadTimeout:    serverConfig.ReadTimeout,
-		WriteTimeout:   serverConfig.WriteTimeout,
-		IdleTimeout:    serverConfig.IdleTimeout,
-		MaxHeaderBytes: serverConfig.MaxHeaderBytes,
 	}
 
-	agentServer := &http.Server{
-		Addr:           serverConfig.AgentAddress,
-		Handler:        agentMux,
-		TLSConfig:      tlsConfig,
-		ReadTimeout:    serverConfig.ReadTimeout,
-		WriteTimeout:   serverConfig.WriteTimeout,
-		IdleTimeout:    serverConfig.IdleTimeout,
-		MaxHeaderBytes: serverConfig.MaxHeaderBytes,
+	wgServerAddr := "10.99.0.1:8008"
+	wgListener, err := storeInstance.Node.AdditionalListener(wgServerAddr)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to create WireGuard listener").Write()
+		return
+	}
+
+	wgServer := &http.Server{
+		Handler:        wgMux,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   5 * time.Minute,
+		IdleTimeout:    5 * time.Minute,
+		MaxHeaderBytes: 1 << 20, // 1MB
 	}
 
 	var endpointsWg sync.WaitGroup
 
-	endpointsWg.Add(1)
-	go proxy.WatchAndServe(apiServer, server.ProxyCert, server.ProxyKey, []string{server.ProxyCert, server.ProxyKey}, &endpointsWg)
+	go func() {
+		endpointsWg.Add(1)
+		defer endpointsWg.Done()
+		proxy.WatchAndServe(apiServer, constants.CertFile, constants.KeyFile, []string{constants.CertFile, constants.KeyFile})
+	}()
 
 	endpointsWg.Add(1)
 	go func() {
 		defer endpointsWg.Done()
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", serverConfig.AgentAddress)).Write()
-		if err := agentServer.ListenAndServeTLS(serverConfig.CertFile, serverConfig.KeyFile); err != nil {
-			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting WireGuard-only agent endpoint on %s", wgServerAddr)).Write()
+		if err := wgServer.Serve(wgListener); err != nil {
+			syslog.L.Error(err).WithMessage("http wireguard endpoint server failed")
 		}
 	}()
 

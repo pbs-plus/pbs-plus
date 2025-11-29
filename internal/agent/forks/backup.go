@@ -5,7 +5,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -23,6 +22,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/arpc/bootstrap"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
@@ -42,6 +42,7 @@ type backupSession struct {
 	store    *agent.BackupStore
 	snapshot snapshots.Snapshot
 	fs       *agentfs.AgentFSServer
+	node     *arpc.Node
 	once     sync.Once
 }
 
@@ -55,6 +56,9 @@ func (s *backupSession) Close() {
 		}
 		if s.store != nil {
 			_ = s.store.EndBackup(s.jobId)
+		}
+		if s.node != nil {
+			s.node.Close()
 		}
 		activeSessions.Del(s.jobId)
 		s.cancel()
@@ -70,6 +74,7 @@ func CmdBackup() {
 	readMode := flag.String("readMode", "", "File read mode (standard or mmap)")
 	drive := flag.String("drive", "", "Drive or path for backup")
 	jobId := flag.String("jobId", "", "Unique job identifier for the backup")
+	tunConfigFile := flag.String("tunConfigFile", "", "Location of tun config file for job")
 	flag.Parse()
 
 	if *cmdMode != "backup" {
@@ -77,12 +82,21 @@ func CmdBackup() {
 	}
 
 	// Validate required flags.
-	if *sourceMode == "" || *drive == "" || *jobId == "" || *readMode == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and jobId are required")
+	if *sourceMode == "" || *drive == "" || *jobId == "" || *readMode == "" || *tunConfigFile == "" {
+		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, tunConfigFile and jobId are required")
 		os.Exit(1)
 	}
 
-	// Establish connection to the server.
+	// Load agent configuration
+	agentBootstrap := bootstrap.NewAgentBootstrap()
+	agentConfig, err := agentBootstrap.LoadConfig(*tunConfigFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load agent config: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Please run agent enrollment first")
+		os.Exit(1)
+	}
+
+	// Get server address from registry or config
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid server URL: %v", err)
@@ -94,37 +108,24 @@ func CmdBackup() {
 		os.Exit(1)
 	}
 
-	tlsConfig, err := agent.GetTLSConfig()
+	ctx := context.Background()
+
+	listenAddr := fmt.Sprintf("%s:0", agentConfig.AssignedIP)
+
+	node, err := agentBootstrap.BuildAgentNode(ctx, agentConfig, listenAddr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get TLS config for ARPC client: %v", err)
+		fmt.Fprintf(os.Stderr, "failed to create agent node: %v", err)
 		os.Exit(1)
 	}
+	defer node.Close()
 
-	headers := http.Header{}
-	headers.Add("X-PBS-Plus-JobId", *jobId)
-
-	rpcSess, err := arpc.ConnectToServer(context.Background(), false, uri.Host, headers, tlsConfig)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to connect to server: %v", err)
+	if err := node.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start node: %v", err)
 		os.Exit(1)
 	}
-	rpcSess.SetRouter(arpc.NewRouter())
-
-	// Start the long-running background RPC goroutine.
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer rpcSess.Close()
-		defer wg.Done()
-		if err := rpcSess.Serve(); err != nil {
-			if session, ok := activeSessions.Get(*jobId); ok {
-				session.Close()
-			}
-		}
-	}()
 
 	// Call the Backup function.
-	backupMode, err := Backup(rpcSess, *sourceMode, *readMode, *drive, *jobId)
+	backupMode, err := Backup(node, *sourceMode, *readMode, *drive, *jobId, uri.Host)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -136,29 +137,33 @@ func CmdBackup() {
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 	winquit.SimulateSigTermOnQuit(done)
 
-	go func() {
-		sig := <-done
-		syslog.L.Info().WithMessage(fmt.Sprintf("Received signal %v, shutting down gracefully", sig)).Write()
+	sig := <-done
+	syslog.L.Info().WithMessage(fmt.Sprintf("Received signal %v, shutting down gracefully", sig)).Write()
 
-		// Close RPC session first
-		rpcSess.Close()
+	// Clean up session
+	if session, ok := activeSessions.Get(*jobId); ok {
+		session.Close()
+	}
 
-		// Clean up session
-		if session, ok := activeSessions.Get(*jobId); ok {
-			session.Close()
-		}
-
-		// Give some time for cleanup
-		time.Sleep(100 * time.Millisecond)
-		os.Exit(0)
-	}()
-
-	// Block here until the background RPC goroutine ends.
-	wg.Wait()
+	time.Sleep(100 * time.Millisecond)
 	os.Exit(0)
 }
 
-func ExecBackup(sourceMode string, readMode string, drive string, jobId string) (string, int, error) {
+func ExecBackup(sourceMode string, readMode string, drive string, jobId string, tunConfig string) (string, int, error) {
+	tunConfigFile, err := os.CreateTemp("", fmt.Sprintf("%s-%s-*.txt", jobId, drive))
+	if err != nil {
+		return "", -1, err
+	}
+	defer os.Remove(tunConfigFile.Name())
+
+	_, err = tunConfigFile.WriteString(tunConfig)
+	if err != nil {
+		tunConfigFile.Close()
+		return "", -1, err
+	}
+
+	tunConfigFile.Close()
+
 	execCmd, err := os.Executable()
 	if err != nil {
 		return "", -1, err
@@ -175,6 +180,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 		"--readMode=" + readMode,
 		"--drive=" + drive,
 		"--jobId=" + jobId,
+		"--tunConfigFile=" + tunConfigFile.Name(),
 	}
 
 	// Create the command with proper process group handling
@@ -221,7 +227,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 	return strings.TrimSpace(backupMode), cmd.Process.Pid, nil
 }
 
-func Backup(rpcSess *arpc.Session, sourceMode string, readMode string, drive string, jobId string) (string, error) {
+func Backup(node *arpc.Node, sourceMode string, readMode string, drive string, jobId string, serverAddr string) (string, error) {
 	store, err := agent.NewBackupStore()
 	if err != nil {
 		return "", err
@@ -237,6 +243,7 @@ func Backup(rpcSess *arpc.Session, sourceMode string, readMode string, drive str
 		ctx:    sessionCtx,
 		cancel: cancel,
 		store:  store,
+		node:   node,
 	}
 	activeSessions.Set(jobId, session)
 
@@ -253,7 +260,6 @@ func Backup(rpcSess *arpc.Session, sourceMode string, readMode string, drive str
 	}
 
 	var snapshot snapshots.Snapshot
-
 	backupMode := sourceMode
 
 	if runtime.GOOS == "windows" {
@@ -303,13 +309,20 @@ func Backup(rpcSess *arpc.Session, sourceMode string, readMode string, drive str
 		session.Close()
 		return "", fmt.Errorf("fs is nil")
 	}
-	router := rpcSess.GetRouter()
-	if router == nil {
-		return "", fmt.Errorf("router is nil")
-	}
 
-	fs.RegisterHandlers(router)
+	// Register handlers on the node's router
+	fs.RegisterHandlers(&node.Router)
 	session.fs = fs
+
+	// Register a heartbeat or health check handler that the server can call
+	node.Handle(fmt.Sprintf("backup.%s.ping", jobId), func(req arpc.Request) (arpc.Response, error) {
+		msg := arpc.StringMsg("pong")
+		data, _ := msg.Encode()
+		return arpc.Response{
+			Status: 200,
+			Data:   data,
+		}, nil
+	})
 
 	return backupMode, nil
 }

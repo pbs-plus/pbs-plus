@@ -72,7 +72,7 @@ func (s *DirStream) HasNext() bool {
 	readBuf := bufPool.Get().([]byte)
 	defer bufPool.Put(readBuf)
 
-	bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
+	bytesRead, err := s.fs.peer.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			atomic.StoreInt32(&s.closed, 1)
@@ -186,7 +186,7 @@ func (s *DirStream) Close() {
 	}
 
 	closeReq := types.CloseReq{HandleID: s.handleId}
-	_, err := s.fs.session.CallMsgWithTimeout(1*time.Minute, s.fs.Job.ID+"/Close", &closeReq)
+	_, err := s.fs.peer.CallMsgWithTimeout(1*time.Minute, s.fs.Job.ID+"/Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithField("path", s.path).

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -18,7 +19,6 @@ import (
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
-	"github.com/xtaci/smux"
 	"golang.org/x/sys/unix"
 )
 
@@ -329,8 +329,8 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	}
 
 	byteReader := bytes.NewReader(encodedBatch)
-	streamCallback := func(stream *smux.Stream) {
-		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
+	streamCallback := func(conn net.Conn) { // Changed parameter type
+		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), conn); err != nil {
 			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 		}
 	}
@@ -365,8 +365,8 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	// If offset >= EOF, send empty
 	if payload.Offset >= fh.fileSize {
 		emptyReader := bytes.NewReader(nil)
-		streamCallback := func(stream *smux.Stream) {
-			if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
+		streamCallback := func(conn net.Conn) {
+			if err := binarystream.SendDataFromReader(emptyReader, 0, conn); err != nil {
 				syslog.L.Error(err).WithMessage("failed sending empty reader").Write()
 			}
 		}
@@ -379,8 +379,8 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 	if payload.Length == 0 {
 		emptyReader := bytes.NewReader(nil)
-		streamCallback := func(stream *smux.Stream) {
-			_ = binarystream.SendDataFromReader(emptyReader, 0, stream)
+		streamCallback := func(conn net.Conn) {
+			_ = binarystream.SendDataFromReader(emptyReader, 0, conn)
 		}
 		return arpc.Response{Status: 213, RawStream: streamCallback}, nil
 	}
@@ -400,9 +400,9 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 			}
 			result := data[offsetDiff : offsetDiff+payload.Length]
 			reader := bytes.NewReader(result)
-			streamCallback := func(stream *smux.Stream) {
+			streamCallback := func(conn net.Conn) {
 				defer unix.Munmap(data)
-				_ = binarystream.SendDataFromReader(reader, len(result), stream)
+				_ = binarystream.SendDataFromReader(reader, len(result), conn)
 			}
 			return arpc.Response{Status: 213, RawStream: streamCallback}, nil
 		}
@@ -422,8 +422,8 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 	// Capture n and buffer for the stream; return buffer to pool after send.
 	reader := bytes.NewReader(buf[:n])
-	streamCallback := func(stream *smux.Stream) {
-		_ = binarystream.SendDataFromReader(reader, n, stream)
+	streamCallback := func(conn net.Conn) {
+		_ = binarystream.SendDataFromReader(reader, n, conn)
 		readBufPool.Put(bptr)
 	}
 	return arpc.Response{Status: 213, RawStream: streamCallback}, nil

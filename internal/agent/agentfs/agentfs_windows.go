@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"unicode/utf16"
@@ -16,7 +17,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
 	"github.com/pkg/errors"
-	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
 )
 
@@ -328,8 +328,8 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	}
 
 	byteReader := bytes.NewReader(encodedBatch)
-	streamCallback := func(stream *smux.Stream) {
-		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
+	streamCallback := func(conn net.Conn) {
+		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), conn); err != nil {
 			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
 		}
 	}
@@ -366,8 +366,8 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
-			RawStream: func(stream *smux.Stream) {
-				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
+			RawStream: func(conn net.Conn) {
+				if err := binarystream.SendDataFromReader(emptyReader, 0, conn); err != nil {
 					syslog.L.Error(err).
 						WithMessage("failed sending empty reader via binary stream").Write()
 				}
@@ -385,8 +385,8 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
-			RawStream: func(stream *smux.Stream) {
-				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
+			RawStream: func(conn net.Conn) {
+				if err := binarystream.SendDataFromReader(emptyReader, 0, conn); err != nil {
 					syslog.L.Error(err).
 						WithMessage("failed sending empty reader via binary stream").Write()
 				}
@@ -406,9 +406,9 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}
 
 	// Build a closure to stream data
-	streamFn := func(stream *smux.Stream) {
+	streamFn := func(conn net.Conn) {
 		write := func(p []byte) error {
-			return binarystream.SendDataFromReader(bytes.NewReader(p), len(p), stream)
+			return binarystream.SendDataFromReader(bytes.NewReader(p), len(p), conn)
 		}
 
 		pos := payload.Offset
