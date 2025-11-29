@@ -253,6 +253,7 @@ func (p *agentService) connectARPC() error {
 	headers.Add("X-PBS-Agent", clientId)
 	headers.Add("X-PBS-Plus-Version", Version)
 
+	//TODO: fix
 	session, err := arpc.ConnectToServer(p.ctx, true, uri.Host, headers, tlsConfig)
 	if err != nil {
 		return err

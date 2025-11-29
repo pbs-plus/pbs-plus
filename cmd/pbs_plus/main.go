@@ -206,18 +206,18 @@ func main() {
 	}
 
 	serverPublicIP := "0.0.0.0"
-	wgPort := 8018
+	tunnelPort := 8018
 	networkPrefix := netip.MustParsePrefix("10.99.0.0/16")
 	bootstrapStateFile := "/etc/proxmox-backup/pbs-plus/bootstrap-state.json"
 
-	bootstrapServer, err := bootstrap.NewServerBootstrap(serverPublicIP, wgPort, networkPrefix, bootstrapStateFile)
+	bootstrapServer, err := bootstrap.NewServerBootstrap(serverPublicIP, tunnelPort, networkPrefix, bootstrapStateFile)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to initialize bootstrap server").Write()
 		return
 	}
 
-	// Build and store the aRPC node with WireGuard transport
-	arpcListenAddr := "10.99.0.1:8700" // Internal WireGuard address for aRPC
+	// Build and store the aRPC node with tunnel transport
+	arpcListenAddr := "10.99.0.1:8700" // Internal tunnel address for aRPC
 	arpcNode, err := bootstrapServer.BuildServerNode(mainCtx, arpcListenAddr)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to build aRPC node").Write()
@@ -292,8 +292,8 @@ func main() {
 		}
 	}()
 
-	wgMux := http.NewServeMux()  // For WireGuard interface only
-	apiMux := http.NewServeMux() // For API interface
+	tunnelMux := http.NewServeMux() // For tunnel interface only
+	apiMux := http.NewServeMux()    // For API interface
 
 	// API routes
 	apiMux.HandleFunc("/api2/json/d2d/backup", mw.ServerOnly(storeInstance, jobs.D2DJobHandler(storeInstance)))
@@ -332,12 +332,12 @@ func main() {
 	apiMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
-	// WireGuard-only routes (agent communication after enrollment)
-	wgMux.HandleFunc("/api2/json/plus/version", mw.AgentOrServer(storeInstance, plus.VersionHandler(storeInstance, Version)))
-	wgMux.HandleFunc("/api2/json/plus/binary/checksum", mw.AgentOrServer(storeInstance, plus.DownloadChecksum(storeInstance, Version)))
-	wgMux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
-	wgMux.HandleFunc("/api2/json/d2d/agent-log", mw.AgentOnly(storeInstance, agents.AgentLogHandler(storeInstance)))
-	wgMux.HandleFunc("/api2/json/d2d/exclusion", mw.AgentOrServer(storeInstance, exclusions.D2DExclusionHandler(storeInstance)))
+	// tunnel-only routes (agent communication after enrollment)
+	tunnelMux.HandleFunc("/api2/json/plus/version", mw.AgentOrServer(storeInstance, plus.VersionHandler(storeInstance, Version)))
+	tunnelMux.HandleFunc("/api2/json/plus/binary/checksum", mw.AgentOrServer(storeInstance, plus.DownloadChecksum(storeInstance, Version)))
+	tunnelMux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
+	tunnelMux.HandleFunc("/api2/json/d2d/agent-log", mw.AgentOnly(storeInstance, agents.AgentLogHandler(storeInstance)))
+	tunnelMux.HandleFunc("/api2/json/d2d/exclusion", mw.AgentOrServer(storeInstance, exclusions.D2DExclusionHandler(storeInstance)))
 
 	apiServer := &http.Server{
 		Addr:           ":8017",
@@ -348,37 +348,37 @@ func main() {
 		Handler:        apiMux,
 	}
 
-	wgServerAddr := "10.99.0.1:8008"
-	wgListener, err := storeInstance.Node.AdditionalListener(wgServerAddr)
+	tunnelServerAddr := "10.99.0.1:8008"
+	tunnelListener, err := storeInstance.Node.AdditionalListener(tunnelServerAddr)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create WireGuard listener").Write()
 		return
 	}
 
-	wgServer := &http.Server{
-		Handler:        wgMux,
+	tunnelServer := &http.Server{
+		Handler:        tunnelMux,
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   5 * time.Minute,
 		IdleTimeout:    5 * time.Minute,
 		MaxHeaderBytes: 1 << 20, // 1MB
 	}
 
-	var endpointsWg sync.WaitGroup
+	var endpointstunnel sync.WaitGroup
 
 	go func() {
-		endpointsWg.Add(1)
-		defer endpointsWg.Done()
+		endpointstunnel.Add(1)
+		defer endpointstunnel.Done()
 		proxy.WatchAndServe(apiServer, constants.CertFile, constants.KeyFile, []string{constants.CertFile, constants.KeyFile})
 	}()
 
-	endpointsWg.Add(1)
+	endpointstunnel.Add(1)
 	go func() {
-		defer endpointsWg.Done()
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting WireGuard-only agent endpoint on %s", wgServerAddr)).Write()
-		if err := wgServer.Serve(wgListener); err != nil {
+		defer endpointstunnel.Done()
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting WireGuard-only agent endpoint on %s", tunnelServerAddr)).Write()
+		if err := tunnelServer.Serve(tunnelListener); err != nil {
 			syslog.L.Error(err).WithMessage("http wireguard endpoint server failed")
 		}
 	}()
 
-	endpointsWg.Wait()
+	endpointstunnel.Wait()
 }
