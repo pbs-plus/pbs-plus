@@ -12,7 +12,6 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 var headerPool = &sync.Pool{
@@ -20,18 +19,6 @@ var headerPool = &sync.Pool{
 		return make([]byte, 4)
 	},
 }
-
-type cacheReq struct {
-	method  string
-	payload arpcdata.Encodable
-}
-
-type cacheResp struct {
-	response Response
-	error    error
-}
-
-var cache = safemap.New[cacheReq, cacheResp]()
 
 // Call initiates a request/response conversation on a new stream.
 func (s *Session) Call(method string, payload arpcdata.Encodable) (Response, error) {
@@ -123,27 +110,6 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 	}
 
 	return resp, nil
-}
-
-func (s *Session) CallContextWithCache(ctx context.Context, method string, payload arpcdata.Encodable) (Response, error) {
-	req := cacheReq{method: method, payload: payload}
-
-	cachedResp, ok := cache.Get(req)
-	if ok {
-		go func() {
-			asyncResp, asyncErr := s.CallWithTimeout(5*time.Second, method, payload)
-			cacheResp := cacheResp{response: asyncResp, error: asyncErr}
-			cache.Set(req, cacheResp)
-		}()
-		return cachedResp.response, cachedResp.error
-	}
-
-	response, err := s.CallContext(ctx, method, payload)
-	cacheResp := cacheResp{response: response, error: err}
-
-	cache.Set(req, cacheResp)
-
-	return response, err
 }
 
 // CallMsg performs an RPC call and unmarshals its Data into v on success,

@@ -43,10 +43,12 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 						all[i].AgentVersion = arpcSess.GetVersion()
 						all[i].ConnectionStatus = false
 
-						resp, err := arpcSess.CallContextWithCache(r.Context(), "target_status", &reqTypes.TargetStatusReq{Drive: drive})
-						if err == nil {
-							if resp.Message == "reachable" {
-								all[i].ConnectionStatus = true
+						if strings.ToLower(r.FormValue("status")) == "true" {
+							resp, err := arpcSess.CallContext(r.Context(), "target_status", &reqTypes.TargetStatusReq{Drive: drive})
+							if err == nil {
+								if resp.Message == "reachable" {
+									all[i].ConnectionStatus = true
+								}
 							}
 						}
 					}
@@ -373,10 +375,12 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						target.AgentVersion = arpcSess.GetVersion()
 						target.ConnectionStatus = false
 
-						resp, err := arpcSess.CallContextWithCache(r.Context(), "target_status", &reqTypes.TargetStatusReq{Drive: targetSplit[1]})
-						if err == nil {
-							if resp.Message == "reachable" {
-								target.ConnectionStatus = true
+						if strings.ToLower(r.FormValue("status")) == "true" {
+							resp, err := arpcSess.CallContext(r.Context(), "target_status", &reqTypes.TargetStatusReq{Drive: targetSplit[1]})
+							if err == nil {
+								if resp.Message == "reachable" {
+									target.ConnectionStatus = true
+								}
 							}
 						}
 					}

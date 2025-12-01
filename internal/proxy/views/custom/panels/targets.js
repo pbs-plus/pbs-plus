@@ -159,7 +159,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       model: "pbs-model-targets",
       proxy: {
         type: "pbsplus",
-        url: pbsPlusBaseUrl + "/api2/json/d2d/target",
+        url: pbsPlusBaseUrl + "/api2/json/d2d/target?status=true",
       },
     },
     sorters: "name",
