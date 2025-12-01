@@ -283,11 +283,6 @@ func checkAgentAuth(store *store.Store, r *http.Request) error {
 }
 
 func checkProxyAuth(r *http.Request) error {
-	agentHostname := r.Header.Get("X-PBS-Agent")
-	if agentHostname != "" {
-		return fmt.Errorf("CheckProxyAuth: agent unauthorized")
-	}
-
 	auth, err := NewPBSAuth()
 	if err != nil {
 		return fmt.Errorf("CheckProxyAuth: failed to initialize PBS auth -> %w", err)
