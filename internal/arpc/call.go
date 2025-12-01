@@ -26,7 +26,12 @@ type cacheReq struct {
 	payload arpcdata.Encodable
 }
 
-var cache = safemap.New[cacheReq, Response]()
+type cacheResp struct {
+	response Response
+	error    error
+}
+
+var cache = safemap.New[cacheReq, cacheResp]()
 
 // Call initiates a request/response conversation on a new stream.
 func (s *Session) Call(method string, payload arpcdata.Encodable) (Response, error) {
@@ -117,9 +122,6 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 		return Response{}, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	cacheRequest := cacheReq{method: method, payload: payload}
-	cache.Set(cacheRequest, resp)
-
 	return resp, nil
 }
 
@@ -128,8 +130,13 @@ func (s *Session) CallContextWithCache(ctx context.Context, method string, paylo
 
 	cachedResp, ok := cache.Get(req)
 	if ok {
-		go s.CallWithTimeout(5*time.Second, method, payload)
-		return cachedResp, nil
+		go func() {
+			asyncResp, asyncErr := s.CallWithTimeout(5*time.Second, method, payload)
+			cacheResp := cacheResp{response: asyncResp, error: asyncErr}
+			cacheRequest := cacheReq{method: method, payload: payload}
+			cache.Set(cacheRequest, cacheResp)
+		}()
+		return cachedResp.response, cachedResp.error
 	}
 
 	return s.CallContext(ctx, method, payload)
