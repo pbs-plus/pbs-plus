@@ -61,6 +61,7 @@ type metrics struct {
 	targetSuccessfulJobCount         *prometheus.GaugeVec
 	previousJobLabels                map[string]prometheus.Labels
 	previousTargetLabels             map[string]prometheus.Labels
+	previousTargetInfoLabels         map[string]prometheus.Labels
 }
 
 func newMetrics(reg prometheus.Registerer) *metrics {
@@ -283,8 +284,9 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 			},
 			[]string{"target_name"},
 		),
-		previousJobLabels:    make(map[string]prometheus.Labels),
-		previousTargetLabels: make(map[string]prometheus.Labels),
+		previousJobLabels:        make(map[string]prometheus.Labels),
+		previousTargetLabels:     make(map[string]prometheus.Labels),
+		previousTargetInfoLabels: make(map[string]prometheus.Labels),
 	}
 
 	reg.MustRegister(
@@ -344,6 +346,7 @@ func PrometheusMetricsHandler(storeInstance *store.Store) http.HandlerFunc {
 func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 	currentJobLabels := make(map[string]prometheus.Labels)
 	currentTargetLabels := make(map[string]prometheus.Labels)
+	currentTargetInfoLabels := make(map[string]prometheus.Labels)
 
 	// Collect job metrics
 	jobs, err := storeInstance.Database.GetAllJobs()
@@ -587,6 +590,8 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			"is_agent":    isAgent,
 			"is_s3":       isS3,
 		}
+
+		currentTargetInfoLabels[target.Name+"-"+target.DriveName] = infoLabels
 		m.targetInfo.With(infoLabels).Set(1)
 	}
 
@@ -598,7 +603,9 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			m.targetDriveFreeBytes.Delete(labels)
 			m.targetDriveUsagePercent.Delete(labels)
 			m.targetJobCount.Delete(prometheus.Labels{"target_name": labels["target_name"]}) // JobCount uses only target_name
-			m.targetInfo.Delete(labels)                                                      // targetInfo uses all these labels
+			if infoLabels, exists := m.previousTargetInfoLabels[targetID]; exists {
+				m.targetInfo.Delete(infoLabels)
+			}
 			m.targetLastSuccessfulJobTimestamp.Delete(prometheus.Labels{"target_name": labels["target_name"]})
 			m.targetTimeSinceLastSuccessfulJob.Delete(prometheus.Labels{"target_name": labels["target_name"]})
 			m.targetHasFailedJobs.Delete(prometheus.Labels{"target_name": labels["target_name"]})
@@ -606,7 +613,9 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			m.targetSuccessfulJobCount.Delete(prometheus.Labels{"target_name": labels["target_name"]})
 		}
 	}
+
 	m.previousTargetLabels = currentTargetLabels // Update for next run
+	m.previousTargetInfoLabels = currentTargetInfoLabels
 
 	// Aggregate target type metrics
 	m.targetsAgentTotal.Set(float64(agentCount))
