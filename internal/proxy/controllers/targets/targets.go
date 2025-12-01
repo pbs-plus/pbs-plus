@@ -21,105 +21,78 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
-type targetsCache struct {
-	mu           sync.RWMutex
-	data         []byte
-	lastModified time.Time
-	isRefreshing bool
-	cond         *sync.Cond
+type TargetStatusResult struct {
+	Index            int
+	AgentVersion     string
+	ConnectionStatus bool
+	Error            error
 }
 
-var (
-	d2dCache = &targetsCache{}
-)
-
-func init() {
-	d2dCache.cond = sync.NewCond(&d2dCache.mu)
-}
-
-func refreshD2DTargetsCache(
+func CheckTargetStatusBatch(
 	ctx context.Context,
 	storeInstance *store.Store,
+	targets []types.Target,
 	checkStatus bool,
-) {
-	d2dCache.mu.Lock()
-	if d2dCache.isRefreshing {
-		d2dCache.mu.Unlock()
-		return
-	}
-	d2dCache.isRefreshing = true
-	d2dCache.mu.Unlock()
+	timeout time.Duration,
+) []TargetStatusResult {
+	results := make([]TargetStatusResult, len(targets))
+	var wg sync.WaitGroup
 
-	defer func() {
-		d2dCache.mu.Lock()
-		d2dCache.isRefreshing = false
-		d2dCache.cond.Broadcast()
-		d2dCache.mu.Unlock()
-	}()
+	sem := make(chan struct{}, 20) // Max concurrent requests
 
-	all, err := storeInstance.Database.GetAllTargets()
-	if err != nil {
-		return
-	}
+	for i, target := range targets {
+		if !target.IsAgent {
+			continue
+		}
 
-	for i := range all {
-		if all[i].IsAgent {
-			targetSplit := strings.Split(all[i].Name, " - ")
-			if len(targetSplit) > 1 {
-				hostname := targetSplit[0]
-				drive := targetSplit[1]
+		wg.Add(1)
+		go func(idx int, tgt types.Target) {
+			defer wg.Done()
 
-				arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
-				if ok {
-					all[i].AgentVersion = arpcSess.GetVersion()
-					all[i].ConnectionStatus = false
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-					if checkStatus {
-						resp, err := arpcSess.CallContext(
-							ctx,
-							"target_status",
-							&reqTypes.TargetStatusReq{Drive: drive},
-						)
-						if err == nil && resp.Message == "reachable" {
-							all[i].ConnectionStatus = true
-						}
-					}
+			result := TargetStatusResult{Index: idx}
+
+			targetSplit := strings.Split(tgt.Name, " - ")
+			if len(targetSplit) < 2 {
+				return
+			}
+
+			hostname := targetSplit[0]
+			drive := targetSplit[1]
+
+			arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
+			if !ok {
+				return
+			}
+
+			result.AgentVersion = arpcSess.GetVersion()
+			result.ConnectionStatus = false
+
+			if checkStatus {
+				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+				defer cancel()
+
+				resp, err := arpcSess.CallContext(
+					timeoutCtx,
+					"target_status",
+					&reqTypes.TargetStatusReq{Drive: drive},
+				)
+
+				if err == nil && resp.Message == "reachable" {
+					result.ConnectionStatus = true
+				} else if err != nil {
+					result.Error = err
 				}
 			}
-		} else if all[i].IsS3 {
-			all[i].ConnectionStatus = true
-			all[i].AgentVersion = "N/A (S3 target)"
-		} else {
-			all[i].AgentVersion = "N/A (local target)"
 
-			_, err := os.Stat(all[i].Path)
-			if err != nil {
-				all[i].ConnectionStatus = false
-			} else {
-				all[i].ConnectionStatus = utils.IsValid(all[i].Path)
-			}
-		}
+			results[idx] = result
+		}(i, target)
 	}
 
-	digest, err := utils.CalculateDigest(all)
-	if err != nil {
-		return
-	}
-
-	toReturn := TargetsResponse{
-		Data:   all,
-		Digest: digest,
-	}
-
-	jsonData, err := json.Marshal(toReturn)
-	if err != nil {
-		return
-	}
-
-	d2dCache.mu.Lock()
-	d2dCache.data = jsonData
-	d2dCache.lastModified = time.Now()
-	d2dCache.mu.Unlock()
+	wg.Wait()
+	return results
 }
 
 func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -129,48 +102,60 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		all, err := storeInstance.Database.GetAllTargets()
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
 		checkStatus := strings.ToLower(r.FormValue("status")) == "true"
 
-		d2dCache.mu.RLock()
-		cachedData := d2dCache.data
-		lastMod := d2dCache.lastModified
-		isRefreshing := d2dCache.isRefreshing
-		d2dCache.mu.RUnlock()
-
-		if cachedData == nil {
-			d2dCache.mu.Lock()
-			if d2dCache.data == nil && !d2dCache.isRefreshing {
-				d2dCache.isRefreshing = true
-				d2dCache.mu.Unlock()
-				refreshD2DTargetsCache(r.Context(), storeInstance, checkStatus)
-				d2dCache.mu.Lock()
-			}
-
-			for d2dCache.data == nil && d2dCache.isRefreshing {
-				d2dCache.cond.Wait()
-			}
-
-			cachedData = d2dCache.data
-			lastMod = d2dCache.lastModified
-			d2dCache.mu.Unlock()
-
-			if cachedData == nil {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(TargetsResponse{
-					Data:   []types.Target{},
-					Digest: "",
-				})
-				return
-			}
-		} else {
-			if !isRefreshing {
-				go refreshD2DTargetsCache(context.Background(), storeInstance, checkStatus)
+		// Separate agent targets from others for batch processing
+		var agentIndices []int
+		for i := range all {
+			if all[i].IsAgent {
+				agentIndices = append(agentIndices, i)
+			} else if all[i].IsS3 {
+				all[i].ConnectionStatus = true
+				all[i].AgentVersion = "N/A (S3 target)"
+			} else {
+				all[i].AgentVersion = "N/A (local target)"
+				_, err := os.Stat(all[i].Path)
+				all[i].ConnectionStatus = err == nil && utils.IsValid(all[i].Path)
 			}
 		}
 
+		if len(agentIndices) > 0 {
+			timeout := 5 * time.Second
+			results := CheckTargetStatusBatch(
+				r.Context(),
+				storeInstance,
+				all,
+				checkStatus,
+				timeout,
+			)
+
+			for _, result := range results {
+				if result.Index > 0 || result.AgentVersion != "" {
+					all[result.Index].AgentVersion = result.AgentVersion
+					all[result.Index].ConnectionStatus = result.ConnectionStatus
+				}
+			}
+		}
+
+		digest, err := utils.CalculateDigest(all)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		toReturn := TargetsResponse{
+			Data:   all,
+			Digest: digest,
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Last-Modified", lastMod.UTC().Format(http.TimeFormat))
-		w.Write(cachedData)
+		json.NewEncoder(w).Encode(toReturn)
 	}
 }
 
@@ -190,19 +175,13 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		err := json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			controllers.WriteErrorResponse(
-				w,
-				fmt.Errorf("Failed to parse request body: %w", err),
-			)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to parse request body: %w", err))
 			return
 		}
 
 		if reqParsed.Hostname == "" {
 			w.WriteHeader(http.StatusBadRequest)
-			controllers.WriteErrorResponse(
-				w,
-				fmt.Errorf("Hostname is required in request body"),
-			)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Hostname is required in request body"))
 			return
 		}
 
@@ -220,10 +199,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		existingTargets, err := storeInstance.Database.GetAllTargetsByIP(clientIP)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(
-				w,
-				fmt.Errorf("Failed to get existing targets: %w", err),
-			)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to get existing targets: %w", err))
 			return
 		}
 
@@ -235,10 +211,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(
-				w,
-				fmt.Errorf("Failed to start transaction: %w", err),
-			)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to start transaction: %w", err))
 			return
 		}
 		defer func() {
@@ -286,10 +259,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				err = storeInstance.Database.UpdateTarget(tx, updatedTarget)
 				if err != nil {
 					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(
-						w,
-						fmt.Errorf("Failed to update target %s: %w", targetName, err),
-					)
+					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to update target %s: %w", targetName, err))
 					return
 				}
 			} else {
@@ -314,10 +284,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				err = storeInstance.Database.CreateTarget(tx, targetData)
 				if err != nil {
 					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(
-						w,
-						fmt.Errorf("Failed to create target %s: %w", targetName, err),
-					)
+					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to create target %s: %w", targetName, err))
 					return
 				}
 			}
@@ -330,10 +297,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 					err = storeInstance.Database.DeleteTarget(tx, existingTarget.Name)
 					if err != nil {
 						w.WriteHeader(http.StatusInternalServerError)
-						controllers.WriteErrorResponse(
-							w,
-							fmt.Errorf("Failed to delete target %s: %w", existingTarget.Name, err),
-						)
+						controllers.WriteErrorResponse(w, fmt.Errorf("Failed to delete target %s: %w", existingTarget.Name, err))
 						return
 					}
 				}
@@ -343,15 +307,10 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		err = tx.Commit()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(
-				w,
-				fmt.Errorf("Failed to commit transaction: %w", err),
-			)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to commit transaction: %w", err))
 			return
 		}
 		tx = nil
-
-		go refreshD2DTargetsCache(context.Background(), storeInstance, false)
 
 		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(map[string]bool{
@@ -400,8 +359,6 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		go refreshD2DTargetsCache(context.Background(), storeInstance, false)
-
 		response.Status = http.StatusOK
 		response.Success = true
 		json.NewEncoder(w).Encode(response)
@@ -411,8 +368,7 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
-		if r.Method != http.MethodPut && r.Method != http.MethodGet &&
-			r.Method != http.MethodDelete {
+		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
@@ -430,17 +386,12 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if path != "" {
 				_, s3Err := s3url.Parse(path)
 				if !utils.IsValid(path) && s3Err != nil {
-					controllers.WriteErrorResponse(
-						w,
-						fmt.Errorf("invalid path '%s'", path),
-					)
+					controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", path))
 					return
 				}
 			}
 
-			target, err := storeInstance.Database.GetTarget(
-				utils.DecodePath(r.PathValue("target")),
-			)
+			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -477,8 +428,6 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			go refreshD2DTargetsCache(context.Background(), storeInstance, false)
-
 			response.Status = http.StatusOK
 			response.Success = true
 			json.NewEncoder(w).Encode(response)
@@ -487,9 +436,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			target, err := storeInstance.Database.GetTarget(
-				utils.DecodePath(r.PathValue("target")),
-			)
+			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -497,20 +444,18 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			if target.IsAgent {
 				targetSplit := strings.Split(target.Name, " - ")
-				if len(targetSplit) > 1 {
+				if len(targetSplit) > 0 {
 					arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
 					if ok {
 						target.AgentVersion = arpcSess.GetVersion()
 						target.ConnectionStatus = false
 
 						if strings.ToLower(r.FormValue("status")) == "true" {
-							resp, err := arpcSess.CallContext(
-								r.Context(),
-								"target_status",
-								&reqTypes.TargetStatusReq{Drive: targetSplit[1]},
-							)
-							if err == nil && resp.Message == "reachable" {
-								target.ConnectionStatus = true
+							resp, err := arpcSess.CallContext(r.Context(), "target_status", &reqTypes.TargetStatusReq{Drive: targetSplit[1]})
+							if err == nil {
+								if resp.Message == "reachable" {
+									target.ConnectionStatus = true
+								}
 							}
 						}
 					}
@@ -538,16 +483,11 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.Database.DeleteTarget(
-				nil,
-				utils.DecodePath(r.PathValue("target")),
-			)
+			err := storeInstance.Database.DeleteTarget(nil, utils.DecodePath(r.PathValue("target")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-
-			go refreshD2DTargetsCache(context.Background(), storeInstance, false)
 
 			response.Status = http.StatusOK
 			response.Success = true
@@ -573,9 +513,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		target, err := storeInstance.Database.GetTarget(
-			utils.DecodePath(r.PathValue("target")),
-		)
+		target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -583,10 +521,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		_, s3Err := s3url.Parse(target.Path)
 		if s3Err != nil {
-			controllers.WriteErrorResponse(
-				w,
-				errors.New("target is not a valid S3 path"),
-			)
+			controllers.WriteErrorResponse(w, errors.New("target is not a valid S3 path"))
 			return
 		}
 
@@ -595,11 +530,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		err = storeInstance.Database.AddS3Secret(
-			nil,
-			target.Name,
-			r.FormValue("secret"),
-		)
+		err = storeInstance.Database.AddS3Secret(nil, target.Name, r.FormValue("secret"))
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
