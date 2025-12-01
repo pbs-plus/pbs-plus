@@ -129,7 +129,7 @@ func (s *Session) CallContextWithCache(ctx context.Context, method string, paylo
 	req := cacheReq{method: method, payload: payload}
 
 	cachedResp, ok := cache.Get(req)
-	if ok {
+	if !ok {
 		go func() {
 			asyncResp, asyncErr := s.CallWithTimeout(5*time.Second, method, payload)
 			cacheResp := cacheResp{response: asyncResp, error: asyncErr}
