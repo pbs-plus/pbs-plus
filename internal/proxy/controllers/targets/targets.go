@@ -3,12 +3,15 @@
 package targets
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
@@ -17,6 +20,78 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
+
+type TargetStatusResult struct {
+	Index            int
+	AgentVersion     string
+	ConnectionStatus bool
+	Error            error
+}
+
+func CheckTargetStatusBatch(
+	ctx context.Context,
+	storeInstance *store.Store,
+	targets []types.Target,
+	checkStatus bool,
+	timeout time.Duration,
+) []TargetStatusResult {
+	results := make([]TargetStatusResult, len(targets))
+	var wg sync.WaitGroup
+
+	sem := make(chan struct{}, 20) // Max concurrent requests
+
+	for i, target := range targets {
+		wg.Add(1)
+		go func(idx int, tgt types.Target) {
+			defer wg.Done()
+
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			result := TargetStatusResult{Index: idx}
+
+			targetSplit := strings.Split(tgt.Name, " - ")
+			if len(targetSplit) < 2 {
+				results[idx] = result
+				return
+			}
+
+			hostname := targetSplit[0]
+			drive := targetSplit[1]
+
+			arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
+			if !ok {
+				results[idx] = result
+				return
+			}
+
+			result.AgentVersion = arpcSess.GetVersion()
+			result.ConnectionStatus = false
+
+			if checkStatus {
+				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+				defer cancel()
+
+				resp, err := arpcSess.CallContext(
+					timeoutCtx,
+					"target_status",
+					&reqTypes.TargetStatusReq{Drive: drive},
+				)
+
+				if err == nil && resp.Message == "reachable" {
+					result.ConnectionStatus = true
+				} else if err != nil {
+					result.Error = err
+				}
+			}
+
+			results[idx] = result
+		}(i, target)
+	}
+
+	wg.Wait()
+	return results
+}
 
 func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -31,40 +106,40 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		checkStatus := strings.ToLower(r.FormValue("status")) == "true"
+
+		// Separate agent targets from others for batch processing
+		agentTargets := make([]types.Target, 0)
+		agentIndices := make([]int, 0)
+
 		for i := range all {
 			if all[i].IsAgent {
-				targetSplit := strings.Split(all[i].Name, " - ")
-				if len(targetSplit) > 0 {
-					hostname := targetSplit[0]
-					drive := targetSplit[1]
-
-					arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
-					if ok {
-						all[i].AgentVersion = arpcSess.GetVersion()
-						all[i].ConnectionStatus = false
-
-						if strings.ToLower(r.FormValue("status")) == "true" {
-							resp, err := arpcSess.CallContext(r.Context(), "target_status", &reqTypes.TargetStatusReq{Drive: drive})
-							if err == nil {
-								if resp.Message == "reachable" {
-									all[i].ConnectionStatus = true
-								}
-							}
-						}
-					}
-				}
+				agentTargets = append(agentTargets, all[i])
+				agentIndices = append(agentIndices, i)
 			} else if all[i].IsS3 {
 				all[i].ConnectionStatus = true
 				all[i].AgentVersion = "N/A (S3 target)"
 			} else {
 				all[i].AgentVersion = "N/A (local target)"
-
 				_, err := os.Stat(all[i].Path)
-				if err != nil {
-					all[i].ConnectionStatus = false
-				} else {
-					all[i].ConnectionStatus = utils.IsValid(all[i].Path)
-				}
+				all[i].ConnectionStatus = err == nil && utils.IsValid(all[i].Path)
+			}
+		}
+
+		if len(agentTargets) > 0 {
+			timeout := 5 * time.Second
+			results := CheckTargetStatusBatch(
+				r.Context(),
+				storeInstance,
+				agentTargets,
+				checkStatus,
+				timeout,
+			)
+
+			for i, result := range results {
+				originalIdx := agentIndices[i]
+				all[originalIdx].AgentVersion = result.AgentVersion
+				all[originalIdx].ConnectionStatus = result.ConnectionStatus
 			}
 		}
 
