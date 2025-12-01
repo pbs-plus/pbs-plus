@@ -129,17 +129,21 @@ func (s *Session) CallContextWithCache(ctx context.Context, method string, paylo
 	req := cacheReq{method: method, payload: payload}
 
 	cachedResp, ok := cache.Get(req)
-	if !ok {
+	if ok {
 		go func() {
 			asyncResp, asyncErr := s.CallWithTimeout(5*time.Second, method, payload)
 			cacheResp := cacheResp{response: asyncResp, error: asyncErr}
-			cacheRequest := cacheReq{method: method, payload: payload}
-			cache.Set(cacheRequest, cacheResp)
+			cache.Set(req, cacheResp)
 		}()
 		return cachedResp.response, cachedResp.error
 	}
 
-	return s.CallContext(ctx, method, payload)
+	response, err := s.CallContext(ctx, method, payload)
+	cacheResp := cacheResp{response: response, error: err}
+
+	cache.Set(req, cacheResp)
+
+	return response, err
 }
 
 // CallMsg performs an RPC call and unmarshals its Data into v on success,
