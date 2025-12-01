@@ -112,6 +112,7 @@ func (op *BackupOperation) PreScript(ctx context.Context) error {
 	}
 
 	scriptOut, modEnvVars, err := utils.RunShellScript(ctx, op.job.PreScript, envVars)
+	syslog.L.Info().WithJob(op.job.ID).WithMessage(scriptOut).WithField("script", op.job.PreScript).Write()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			syslog.L.Info().
@@ -121,8 +122,8 @@ func (op *BackupOperation) PreScript(ctx context.Context) error {
 			return err
 		}
 		syslog.L.Error(err).WithJob(op.job.ID).WithMessage("error encountered while running job pre-backup script").Write()
+		return err
 	}
-	syslog.L.Info().WithJob(op.job.ID).WithMessage(scriptOut).WithField("script", op.job.PreScript).Write()
 
 	if newNs, ok := modEnvVars["PBS_PLUS__NAMESPACE"]; ok {
 		latestJob, err := op.storeInstance.Database.GetJob(op.job.ID)
