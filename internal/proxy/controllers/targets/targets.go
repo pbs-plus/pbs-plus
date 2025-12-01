@@ -41,10 +41,6 @@ func CheckTargetStatusBatch(
 	sem := make(chan struct{}, 20) // Max concurrent requests
 
 	for i, target := range targets {
-		if !target.IsAgent {
-			continue
-		}
-
 		wg.Add(1)
 		go func(idx int, tgt types.Target) {
 			defer wg.Done()
@@ -56,6 +52,7 @@ func CheckTargetStatusBatch(
 
 			targetSplit := strings.Split(tgt.Name, " - ")
 			if len(targetSplit) < 2 {
+				results[idx] = result
 				return
 			}
 
@@ -64,6 +61,7 @@ func CheckTargetStatusBatch(
 
 			arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
 			if !ok {
+				results[idx] = result
 				return
 			}
 
@@ -111,9 +109,12 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		checkStatus := strings.ToLower(r.FormValue("status")) == "true"
 
 		// Separate agent targets from others for batch processing
-		var agentIndices []int
+		agentTargets := make([]types.Target, 0)
+		agentIndices := make([]int, 0)
+
 		for i := range all {
 			if all[i].IsAgent {
+				agentTargets = append(agentTargets, all[i])
 				agentIndices = append(agentIndices, i)
 			} else if all[i].IsS3 {
 				all[i].ConnectionStatus = true
@@ -125,21 +126,20 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
-		if len(agentIndices) > 0 {
+		if len(agentTargets) > 0 {
 			timeout := 5 * time.Second
 			results := CheckTargetStatusBatch(
 				r.Context(),
 				storeInstance,
-				all,
+				agentTargets,
 				checkStatus,
 				timeout,
 			)
 
-			for _, result := range results {
-				if result.Index > 0 || result.AgentVersion != "" {
-					all[result.Index].AgentVersion = result.AgentVersion
-					all[result.Index].ConnectionStatus = result.ConnectionStatus
-				}
+			for i, result := range results {
+				originalIdx := agentIndices[i]
+				all[originalIdx].AgentVersion = result.AgentVersion
+				all[originalIdx].ConnectionStatus = result.ConnectionStatus
 			}
 		}
 
