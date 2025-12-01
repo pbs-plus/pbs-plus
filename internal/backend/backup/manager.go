@@ -185,10 +185,10 @@ func (m *Manager) runOne(op *BackupOperation) {
 			m.cleanup(op)
 			return
 		}
-		syslog.L.Error(err).
-			WithJob(op.job.ID).
-			WithMessage("error in prescript; proceeding to Execute").
-			Write()
+
+		m.CreateError(op, err)
+		m.cleanup(op)
+		return
 	}
 
 	// Acquire concurrency slot or abort
