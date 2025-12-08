@@ -7,25 +7,40 @@ RUN go mod download
 
 COPY . .
 
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 ENV CGO_ENABLED=0
-RUN GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/pbs-plus-agent ./cmd/unix_agent
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH \
+  go build -trimpath -ldflags="-s -w" -o /out/pbs-plus-agent ./cmd/unix_agent
 
 FROM alpine:3.20
 
-ARG S6_OVERLAY_VERSION=v3.1.6.2
-ARG TARGETARCH=amd64
+ARG S6_OVERLAY_VERSION=v3.2.1.0
+ARG TARGETARCH
 ARG USER_NAME=pbsplus
 ARG USER_UID=1999
 ARG USER_GID=1999
 ARG BIN_PATH=/usr/bin/pbs-plus-agent
 
-RUN apk add --no-cache ca-certificates tzdata libcap shadow
-
-ADD https://github.com/just-containers/s6-overlay/releases/download/${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp/
-ADD https://github.com/just-containers/s6-overlay/releases/download/${S6_OVERLAY_VERSION}/s6-overlay-${TARGETARCH}.tar.xz /tmp/
-RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
-  tar -C / -Jxpf /tmp/s6-overlay-${TARGETARCH}.tar.xz && \
-  rm -f /tmp/s6-overlay-noarch.tar.xz /tmp/s6-overlay-${TARGETARCH}.tar.xz
+# Map Docker TARGETARCH -> s6-overlay archive arch
+# amd64 -> x86_64, arm64 -> aarch64, arm -> armhf, 386 -> i686
+# Default to x86_64 as a safe fallback
+RUN case "$TARGETARCH" in \
+  amd64)  S6_ARCH="x86_64" ;; \
+  arm64)  S6_ARCH="aarch64" ;; \
+  arm)    S6_ARCH="armhf" ;; \
+  386)    S6_ARCH="i686" ;; \
+  *)      S6_ARCH="x86_64" ;; \
+  esac && \
+  echo "Using s6-overlay arch: ${S6_ARCH}" && \
+  apk add --no-cache ca-certificates tzdata libcap shadow && \
+  wget -O /tmp/s6-overlay-noarch.tar.xz \
+  "https://github.com/just-containers/s6-overlay/releases/download/${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" && \
+  wget -O /tmp/s6-overlay-${S6_ARCH}.tar.xz \
+  "https://github.com/just-containers/s6-overlay/releases/download/${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" && \
+  tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
+  tar -C / -Jxpf /tmp/s6-overlay-${S6_ARCH}.tar.xz && \
+  rm -f /tmp/s6-overlay-noarch.tar.xz /tmp/s6-overlay-${S6_ARCH}.tar.xz
 
 RUN addgroup -g ${USER_GID} -S ${USER_NAME} && \
   adduser  -u ${USER_UID} -S -D -H -G ${USER_NAME} -s /sbin/nologin ${USER_NAME}
