@@ -5,7 +5,6 @@ package proxmox
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -423,15 +422,6 @@ func IsUPIDRunning(upid string) bool {
 
 	// If output is not empty, the UPID was found.
 	return strings.TrimSpace(string(output)) != ""
-}
-
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		log.Println("Error checking path:", err)
-		return false
-	}
-	return info.IsDir()
 }
 
 func encodeToHexEscapes(input string) string {

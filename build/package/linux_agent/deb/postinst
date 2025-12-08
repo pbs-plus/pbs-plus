@@ -14,7 +14,6 @@ fi
 
 # Set executable permissions
 chmod +x /usr/bin/pbs-plus-agent
-chmod +x /usr/bin/pbs-plus-updater
 
 # Create necessary directories with proper ownership
 mkdir -p /var/lib/pbs-plus-agent
@@ -35,9 +34,7 @@ chmod 750 /etc/pbs-plus-agent
 
 # Set binary ownership
 chown root:pbsplus /usr/bin/pbs-plus-agent
-chown root:pbsplus /usr/bin/pbs-plus-updater
 chmod 755 /usr/bin/pbs-plus-agent
-chmod 755 /usr/bin/pbs-plus-updater
 
 # Add to comprehensive list of groups for Debian
 debian_groups=(
@@ -55,7 +52,6 @@ done
 
 # Enhanced capabilities for comprehensive file access
 setcap 'cap_dac_read_search,cap_dac_override,cap_fowner,cap_sys_admin,cap_sys_ptrace,cap_sys_rawio+ep' /usr/bin/pbs-plus-agent
-setcap 'cap_dac_read_search,cap_dac_override,cap_fowner,cap_setuid,cap_setgid,cap_sys_admin,cap_sys_ptrace,cap_sys_rawio+ep' /usr/bin/pbs-plus-updater
 
 # Set PAM limits
 cat >> /etc/security/limits.conf << 'EOF'
@@ -74,14 +70,12 @@ fi
 if command -v aa-status >/dev/null 2>&1 && aa-status --enabled 2>/dev/null; then
     echo "AppArmor detected. You may need to create profiles for:"
     echo "  - /usr/bin/pbs-plus-agent"
-    echo "  - /usr/bin/pbs-plus-updater"
     echo "Or temporarily disable AppArmor for these binaries."
 fi
 
 # Verify capabilities were set correctly
 echo "Verifying capabilities:"
 getcap /usr/bin/pbs-plus-agent
-getcap /usr/bin/pbs-plus-updater
 
 # Show final group memberships
 echo "pbsplus user is member of groups:"
@@ -91,14 +85,11 @@ systemctl daemon-reload
 
 # Enable the services to start on boot
 systemctl enable pbs-plus-agent.service
-systemctl enable pbs-plus-updater.service
 
 # Start the services
 systemctl restart pbs-plus-agent.service
-systemctl restart pbs-plus-updater.service
 
 echo "Setup complete. Check service status with:"
 echo "  systemctl status pbs-plus-agent.service"
-echo "  systemctl status pbs-plus-updater.service"
 
 exit 0

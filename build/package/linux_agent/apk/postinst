@@ -15,7 +15,6 @@ fi
 
 # Set executable permissions
 chmod +x /usr/bin/pbs-plus-agent
-chmod +x /usr/bin/pbs-plus-updater
 
 # Create necessary directories with proper ownership
 mkdir -p /var/lib/pbs-plus-agent
@@ -36,9 +35,7 @@ chmod 750 /etc/pbs-plus-agent
 
 # Set binary ownership
 chown root:pbsplus /usr/bin/pbs-plus-agent
-chown root:pbsplus /usr/bin/pbs-plus-updater
 chmod 755 /usr/bin/pbs-plus-agent
-chmod 755 /usr/bin/pbs-plus-updater
 
 alpine_groups="wheel disk adm sys tty audio video netdev kvm qemu docker lp dialout"
 
@@ -52,7 +49,6 @@ done
 # Set file capabilities (Alpine has libcap by default)
 if command -v setcap >/dev/null 2>&1; then
     setcap 'cap_dac_read_search,cap_dac_override,cap_fowner,cap_sys_admin,cap_sys_ptrace,cap_sys_rawio,cap_mknod+ep' /usr/bin/pbs-plus-agent
-    setcap 'cap_dac_read_search,cap_dac_override,cap_fowner,cap_setuid,cap_setgid,cap_sys_admin,cap_sys_ptrace,cap_sys_rawio,cap_mknod+ep' /usr/bin/pbs-plus-updater
     echo "Capabilities set successfully"
 else
     echo "Warning: libcap not available, capabilities not set"
@@ -60,10 +56,8 @@ fi
 
 # Add the services to the default runlevel
 rc-update add pbs-plus-agent default
-rc-update add pbs-plus-updater default
 
 # Start the services
 rc-service pbs-plus-agent start
-rc-service pbs-plus-updater start
 
 exit 0

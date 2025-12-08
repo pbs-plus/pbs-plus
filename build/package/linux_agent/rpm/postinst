@@ -14,7 +14,6 @@ fi
 
 # Set executable permissions
 chmod +x /usr/bin/pbs-plus-agent
-chmod +x /usr/bin/pbs-plus-updater
 
 # Create necessary directories with proper ownership
 mkdir -p /var/lib/pbs-plus-agent
@@ -35,9 +34,7 @@ chmod 750 /etc/pbs-plus-agent
 
 # Set binary ownership
 chown root:pbsplus /usr/bin/pbs-plus-agent
-chown root:pbsplus /usr/bin/pbs-plus-updater
 chmod 755 /usr/bin/pbs-plus-agent
-chmod 755 /usr/bin/pbs-plus-updater
 
 # Add to RHEL-specific groups
 rhel_groups=(
@@ -55,7 +52,6 @@ done
 
 # Enhanced capabilities including sys_rawio for block device access
 setcap 'cap_dac_read_search,cap_dac_override,cap_fowner,cap_sys_admin,cap_sys_ptrace,cap_sys_rawio,cap_mknod+ep' /usr/bin/pbs-plus-agent
-setcap 'cap_dac_read_search,cap_dac_override,cap_fowner,cap_setuid,cap_setgid,cap_sys_admin,cap_sys_ptrace,cap_sys_rawio,cap_mknod+ep' /usr/bin/pbs-plus-updater
 
 # Set PAM limits
 cat >> /etc/security/limits.conf << 'EOF'
@@ -74,8 +70,6 @@ if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; t
     # Set SELinux context for binaries
     if command -v semanage >/dev/null 2>&1; then
         semanage fcontext -a -t admin_home_exec_t "/usr/bin/pbs-plus-agent" 2>/dev/null || true
-        semanage fcontext -a -t admin_home_exec_t "/usr/bin/pbs-plus-updater" 2>/dev/null || true
-        restorecon -v /usr/bin/pbs-plus-agent /usr/bin/pbs-plus-updater
         
         # Allow the binaries to access all files (permissive for backup operations)
         setsebool -P allow_execstack on 2>/dev/null || true
@@ -129,7 +123,6 @@ fi
 # Verify capabilities were set correctly
 echo "Verifying capabilities:"
 getcap /usr/bin/pbs-plus-agent
-getcap /usr/bin/pbs-plus-updater
 
 # Show final group memberships
 echo "pbsplus user is member of groups:"
@@ -139,16 +132,13 @@ systemctl daemon-reload
 
 # Enable the services to start on boot
 systemctl enable pbs-plus-agent.service
-systemctl enable pbs-plus-updater.service
 
 # Start the services
 systemctl restart pbs-plus-agent.service
-systemctl restart pbs-plus-updater.service
 
 echo "Setup complete for RHEL-based system."
 echo "Check service status with:"
 echo "  systemctl status pbs-plus-agent.service"
-echo "  systemctl status pbs-plus-updater.service"
 echo ""
 echo "Monitor SELinux denials with:"
 echo "  tail -f /var/log/audit/audit.log | grep denied"

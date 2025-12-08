@@ -1,10 +1,23 @@
 package constants
 
+import "time"
+
 const (
-	ProxyTargetURL       = "https://127.0.0.1:8007"        // The target server URL
-	ModifiedFilePath     = "/js/proxmox-backup-gui.js"     // The specific JS file to modify
-	CertFile             = "/etc/proxmox-backup/proxy.pem" // Path to generated SSL certificate
-	KeyFile              = "/etc/proxmox-backup/proxy.key" // Path to generated private key
+	ProxyTargetURL      = "https://127.0.0.1:8007"        // The target server URL
+	ModifiedFilePath    = "/js/proxmox-backup-gui.js"     // The specific JS file to modify
+	CertFile            = "/etc/proxmox-backup/proxy.pem" // Path to generated SSL certificate
+	KeyFile             = "/etc/proxmox-backup/proxy.key" // Path to generated private key
+	AgentTLSCACertFile  = "/etc/proxmox-backup/pbs-plus/certs/ca.crt"
+	AgentTLSCAKeyFile   = "/etc/proxmox-backup/pbs-plus/certs/ca.key"
+	AuthTokenExpiration = 24 * time.Hour
+
+	HTTPReadTimeout    = 10 * time.Second
+	HTTPWriteTimeout   = 5 * time.Minute
+	HTTPIdleTimeout    = 5 * time.Minute
+	HTTPMaxHeaderBytes = 1 << 20
+	HTTPRateLimit      = 100.0
+	HTTPRateBurst      = 200
+
 	TimerBasePath        = "/lib/systemd/system"
 	DbBasePath           = "/var/lib/proxmox-backup"
 	AgentMountBasePath   = "/mnt/pbs-plus-mounts"
