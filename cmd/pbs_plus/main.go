@@ -19,6 +19,12 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/store/system"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers/agents"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers/arpc"
@@ -31,12 +37,6 @@ import (
 	mw "github.com/pbs-plus/pbs-plus/internal/web/middlewares"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/web/rpc"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/web/rpc/job"
-	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/system"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 
 	"net/http/pprof"
 
@@ -168,7 +168,7 @@ func main() {
 		return
 	}
 
-	if err := proxy.ModifyPBSHandlebars("/usr/share/javascript/proxmox-backup/index.hbs", "/usr/share/javascript/proxmox-backup/js"); err != nil {
+	if err := web.ModifyPBSHandlebars("/usr/share/javascript/proxmox-backup/index.hbs", "/usr/share/javascript/proxmox-backup/js"); err != nil {
 		syslog.L.Error(err).WithMessage("failed to mount modified proxmox-backup-gui.js").Write()
 		return
 	}
@@ -367,7 +367,7 @@ func main() {
 	var endpointsWg sync.WaitGroup
 
 	endpointsWg.Add(1)
-	go proxy.WatchAndServe(apiServer, constants.CertFile, constants.KeyFile, []string{constants.CertFile, constants.KeyFile}, &endpointsWg)
+	go web.WatchAndServe(apiServer, constants.CertFile, constants.KeyFile, []string{constants.CertFile, constants.KeyFile}, &endpointsWg)
 
 	endpointsWg.Add(1)
 	go func() {
