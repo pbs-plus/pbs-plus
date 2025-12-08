@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -36,164 +37,27 @@ type AgentDrivesRequest struct {
 	Drives   []utils.DriveInfo `json:"drives"`
 }
 
-type agentService struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-}
-
-func (p *agentService) Start() error {
-	p.ctx, p.cancel = context.WithCancel(context.Background())
-
-	serverUrlConfigDefault := registry.RegistryEntry{
-		Path:     registry.CONFIG,
-		Key:      "ServerURL",
-		Value:    "",
-		IsSecret: false,
-	}
-	_ = registry.CreateEntryIfNotExists(&serverUrlConfigDefault)
-
-	bootstrapTokenConfigDefault := registry.RegistryEntry{
-		Path:     registry.CONFIG,
-		Key:      "BootstrapToken",
-		Value:    "",
-		IsSecret: false,
-	}
-	_ = registry.CreateEntryIfNotExists(&bootstrapTokenConfigDefault)
-
-	p.wg.Add(2)
-	go func() {
-		defer p.wg.Done()
-		p.run()
-	}()
-	go func() {
-		defer p.wg.Done()
-		for {
-			select {
-			case <-p.ctx.Done():
-				return
-			case <-time.After(time.Hour):
-				err := agent.CheckAndRenewCertificate()
-				if err != nil {
-					syslog.L.Error(err).WithMessage("failed to check and renew certificate").Write()
-				}
-			}
-		}
-	}()
-
-	store, err := agent.NewBackupStore()
-	if err != nil {
-		syslog.L.Error(err).WithMessage("error initializing backup store").Write()
-	} else {
-		err = store.ClearAll()
-		if err != nil {
-			syslog.L.Error(err).WithMessage("error clearing backup store").Write()
-		}
+func writeVersionToFile() error {
+	if err := os.MkdirAll("/etc/pbs-plus-agent", 0755); err != nil {
+		return err
 	}
 
+	versionLockPath := filepath.Join("/etc/pbs-plus-agent", "version.lock")
+	mutex := flock.New(versionLockPath)
+
+	mutex.Lock()
+	defer mutex.Close()
+
+	versionFile := filepath.Join("/etc/pbs-plus-agent", "version.txt")
+	if err := os.WriteFile(versionFile, []byte(Version), 0644); err != nil {
+		return fmt.Errorf("failed to write version file: %w", err)
+	}
 	return nil
 }
 
-func (p *agentService) Stop() error {
-	p.cancel()
-	p.wg.Wait()
-	return nil
-}
+func initializeDrives() error {
+	syslog.L.Info().WithMessage("Initializing backup store").Write()
 
-func (p *agentService) run() {
-	syslog.L.Info().WithMessage("checking server URL config").Write()
-	if err := p.waitForServerURL(); err != nil {
-		syslog.L.Error(err).WithMessage("failed waiting for server url").Write()
-		return
-	}
-
-	syslog.L.Info().WithMessage("checking if bootstrap required from config").Write()
-	if err := p.waitForBootstrap(); err != nil {
-		syslog.L.Error(err).WithMessage("failed waiting for bootstrap").Write()
-		return
-	}
-
-	go func() {
-		syslog.L.Info().WithMessage("initializing drives status").Write()
-		if err := p.initializeDrives(); err != nil {
-			syslog.L.Error(err).WithMessage("failed to initializing drives").Write()
-			return
-		}
-	}()
-
-	syslog.L.Info().WithMessage("attempting to connect via aRPC").Write()
-	if err := p.connectARPC(); err != nil {
-		syslog.L.Error(err).WithMessage("failed to connect via aRPC").Write()
-		return
-	}
-
-	go func() {
-		delay := utils.ComputeDelay()
-		for {
-			select {
-			case <-p.ctx.Done():
-				return
-			case <-time.After(delay):
-				_ = p.initializeDrives()
-				delay = utils.ComputeDelay()
-			}
-		}
-	}()
-
-	<-p.ctx.Done()
-}
-
-func (p *agentService) waitForServerURL() error {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		entry, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
-		if err == nil && entry != nil {
-			return nil
-		}
-
-		select {
-		case <-p.ctx.Done():
-			return fmt.Errorf("context cancelled while waiting for server URL")
-		case <-ticker.C:
-			continue
-		}
-	}
-}
-
-func (p *agentService) waitForBootstrap() error {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		serverCA, _ := registry.GetEntry(registry.AUTH, "ServerCA", true)
-		cert, _ := registry.GetEntry(registry.AUTH, "Cert", true)
-		priv, _ := registry.GetEntry(registry.AUTH, "Priv", true)
-
-		if serverCA != nil && cert != nil && priv != nil {
-			err := agent.CheckAndRenewCertificate()
-			if err == nil {
-				return nil
-			}
-			syslog.L.Error(err).WithMessage("error renewing certificate").Write()
-		} else {
-			err := agent.Bootstrap()
-			if err != nil {
-				syslog.L.Error(err).WithMessage("error bootstrapping agent").Write()
-			}
-		}
-
-		select {
-		case <-p.ctx.Done():
-			return fmt.Errorf("context cancelled while waiting for bootstrap")
-		case <-ticker.C:
-			continue
-		}
-	}
-}
-
-func (p *agentService) initializeDrives() error {
 	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		return fmt.Errorf("failed to get hostname: %w", err)
@@ -227,37 +91,120 @@ func (p *agentService) initializeDrives() error {
 	return nil
 }
 
-func (p *agentService) connectARPC() error {
+func waitForServerURL(ctx context.Context) error {
+	syslog.L.Info().WithMessage("Starting configuration wait loop").Write()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		syslog.L.Info().WithMessage("Checking for ServerURL configuration").Write()
+		entry, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
+		if err == nil && entry != nil {
+			syslog.L.Info().WithMessage("ServerURL configuration found").WithField("serverUrl", entry.Value).Write()
+			return nil
+		}
+		syslog.L.Info().WithMessage("ServerURL configuration not found, waiting").WithField("error", fmt.Sprintf("%v", err)).Write()
+
+		select {
+		case <-ctx.Done():
+			syslog.L.Info().WithMessage("Context cancelled while waiting for config").Write()
+			return fmt.Errorf("context cancelled while waiting for server URL")
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForBootstrap(ctx context.Context) error {
+	syslog.L.Info().WithMessage("Starting bootstrap wait loop").Write()
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		syslog.L.Info().WithMessage("Checking for authentication certificates").Write()
+		serverCA, serverCAErr := registry.GetEntry(registry.AUTH, "ServerCA", true)
+		cert, certErr := registry.GetEntry(registry.AUTH, "Cert", true)
+		priv, privErr := registry.GetEntry(registry.AUTH, "Priv", true)
+
+		syslog.L.Info().WithMessage("Certificate check results").
+			WithField("serverCA", serverCA != nil).
+			WithField("cert", cert != nil).
+			WithField("priv", priv != nil).
+			WithField("serverCAErr", fmt.Sprintf("%v", serverCAErr)).
+			WithField("certErr", fmt.Sprintf("%v", certErr)).
+			WithField("privErr", fmt.Sprintf("%v", privErr)).Write()
+
+		if serverCA != nil && cert != nil && priv != nil {
+			syslog.L.Info().WithMessage("All certificates found, checking validity").Write()
+			if err := agent.CheckAndRenewCertificate(); err == nil {
+				syslog.L.Info().WithMessage("Certificate validation successful").Write()
+				return nil
+			} else {
+				syslog.L.Warn().WithMessage("Certificate validation failed").WithField("error", err.Error()).Write()
+			}
+		} else {
+			syslog.L.Info().WithMessage("Missing certificates, attempting bootstrap").Write()
+			if err := agent.Bootstrap(); err != nil {
+				syslog.L.Warn().WithMessage("Bootstrap attempt failed").WithField("error", err.Error()).Write()
+			} else {
+				syslog.L.Info().WithMessage("Bootstrap attempt completed").Write()
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			syslog.L.Info().WithMessage("Context cancelled while waiting for bootstrap").Write()
+			return fmt.Errorf("context cancelled while waiting for bootstrap")
+		case <-ticker.C:
+		}
+	}
+}
+
+func connectARPC(ctx context.Context) error {
+	syslog.L.Info().WithMessage("Retrieving server URL for ARPC connection").Write()
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("Failed to retrieve server URL").Write()
 		return fmt.Errorf("invalid server URL: %v", err)
 	}
+
+	syslog.L.Info().WithMessage("Parsing server URL").Write()
 	uri, err := url.Parse(serverUrl.Value)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("Failed to parse server URL").Write()
 		return fmt.Errorf("invalid server URL: %v", err)
 	}
+	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Host).Write()
 
+	syslog.L.Info().WithMessage("Getting TLS configuration").Write()
 	tlsConfig, err := agent.GetTLSConfig()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to get tls config error for arpc client").Write()
+		syslog.L.Error(err).WithMessage("Failed to get TLS configuration").Write()
 		return err
 	}
+	syslog.L.Info().WithMessage("TLS configuration obtained successfully").Write()
 
+	syslog.L.Info().WithMessage("Getting hostname for ARPC headers").Write()
 	clientId, err := utils.GetAgentHostname()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to retrieve machine hostname").Write()
+		syslog.L.Error(err).WithMessage("Failed to get hostname").Write()
 		return err
 	}
+	syslog.L.Info().WithMessage("Hostname obtained").WithField("hostname", clientId).Write()
 
 	headers := http.Header{}
 	headers.Add("X-PBS-Agent", clientId)
 	headers.Add("X-PBS-Plus-Version", Version)
+	syslog.L.Info().WithMessage("ARPC headers prepared").WithField("version", Version).Write()
 
-	session, err := arpc.ConnectToServer(p.ctx, true, uri.Host, headers, tlsConfig)
+	syslog.L.Info().WithMessage("Attempting ARPC connection to server").Write()
+	session, err := arpc.ConnectToServer(ctx, true, uri.Host, headers, tlsConfig)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("Failed to connect to ARPC server").Write()
 		return err
 	}
+	syslog.L.Info().WithMessage("ARPC session established").Write()
 
+	syslog.L.Info().WithMessage("Setting up ARPC router and handlers").Write()
 	router := arpc.NewRouter()
 	router.Handle("ping", func(req arpc.Request) (arpc.Response, error) {
 		resp := arpc.MapStringStringMsg{"version": Version, "hostname": clientId}
@@ -272,51 +219,37 @@ func (p *agentService) connectARPC() error {
 	})
 	router.Handle("target_status", controllers.StatusHandler)
 	router.Handle("cleanup", controllers.BackupCloseHandler)
-
 	session.SetRouter(router)
+	syslog.L.Info().WithMessage("ARPC router configured successfully").Write()
 
+	syslog.L.Info().WithMessage("Starting ARPC session handler goroutine").Write()
 	go func() {
 		defer session.Close()
 		for {
 			select {
-			case <-p.ctx.Done():
+			case <-ctx.Done():
+				syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
 				return
 			default:
-				syslog.L.Info().WithMessage("connecting arpc endpoint from /plus/arpc").WithField("hostname", clientId).Write()
+				syslog.L.Info().
+					WithMessage("connecting arpc endpoint from /plus/arpc").
+					WithField("hostname", clientId).
+					Write()
 				if err := session.Serve(); err != nil {
+					syslog.L.Warn().WithMessage("ARPC connection error, retrying").WithField("error", err.Error()).Write()
 					store, err := agent.NewBackupStore()
 					if err != nil {
 						syslog.L.Error(err).WithMessage("error initializing backup store").Write()
 					} else {
-						err = store.ClearAll()
-						if err != nil {
+						if err := store.ClearAll(); err != nil {
 							syslog.L.Error(err).WithMessage("error clearing backup store").Write()
 						}
 					}
+					time.Sleep(5 * time.Second)
 				}
 			}
 		}
 	}()
-
-	return nil
-}
-
-func (p *agentService) writeVersionToFile() error {
-	if err := os.MkdirAll("/etc/pbs-plus-agent", 0755); err != nil {
-		return err
-	}
-
-	versionLockPath := filepath.Join("/etc/pbs-plus-agent", "version.lock")
-	mutex := flock.New(versionLockPath)
-
-	mutex.Lock()
-	defer mutex.Close()
-
-	versionFile := filepath.Join("/etc/pbs-plus-agent", "version.txt")
-	err := os.WriteFile(versionFile, []byte(Version), 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write version file: %w", err)
-	}
 
 	return nil
 }
@@ -329,7 +262,7 @@ func main() {
 			logFile, err := os.OpenFile("panic.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 			if err == nil {
 				defer logFile.Close()
-				logFile.WriteString(msg)
+				_, _ = logFile.WriteString(msg)
 			} else {
 				fmt.Println("Error opening log file:", err)
 			}
@@ -339,29 +272,139 @@ func main() {
 	}()
 
 	forks.CmdBackup()
-
 	constants.Version = Version
 
-	prg := &agentService{}
+	if err := syslog.L.SetServiceLogger(); err != nil {
+		log.Println(err)
+	}
 
-	err := prg.writeVersionToFile()
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to write version to file").Write()
+	syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
+
+	if err := writeVersionToFile(); err != nil {
+		syslog.L.Error(err).WithMessage("Failed to write version file").Write()
 		return
 	}
 
-	if err := prg.Start(); err != nil {
-		syslog.L.Error(err).WithMessage("failed to start service").Write()
-		os.Exit(1)
+	// Ensure registry defaults exist
+	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{
+		Path:     registry.CONFIG,
+		Key:      "ServerURL",
+		Value:    "",
+		IsSecret: false,
+	})
+	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{
+		Path:     registry.CONFIG,
+		Key:      "BootstrapToken",
+		Value:    "",
+		IsSecret: false,
+	})
+
+	// Context and lifecycle
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	// Background: cert renew hourly
+	syslog.L.Info().WithMessage("Starting certificate renewal background task").Write()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				syslog.L.Info().WithMessage("Certificate renewal task shutting down").Write()
+				return
+			case <-ticker.C:
+				syslog.L.Info().WithMessage("Running scheduled certificate renewal check").Write()
+				if err := agent.CheckAndRenewCertificate(); err != nil {
+					syslog.L.Warn().WithMessage("Certificate renewal failed").WithField("error", err.Error()).Write()
+				} else {
+					syslog.L.Info().WithMessage("Certificate renewal check completed successfully").Write()
+				}
+			}
+		}
+	}()
+
+	// Backup store clear on start
+	syslog.L.Info().WithMessage("Initializing backup store").Write()
+	if store, err := agent.NewBackupStore(); err != nil {
+		syslog.L.Warn().WithMessage("Failed to initialize backup store").WithField("error", err.Error()).Write()
+	} else if err := store.ClearAll(); err != nil {
+		syslog.L.Warn().WithMessage("Failed to clear backup store").WithField("error", err.Error()).Write()
+	} else {
+		syslog.L.Info().WithMessage("Backup store initialized and cleared successfully").Write()
 	}
 
-	// Wait for termination signal
+	// Run sequence
+	syslog.L.Info().WithMessage("Waiting for PBS Plus Agent config").Write()
+	if err := waitForServerURL(ctx); err != nil {
+		syslog.L.Error(err).WithMessage("Failed to get configuration").Write()
+		return
+	}
+	syslog.L.Info().WithMessage("Configuration acquired successfully").Write()
+
+	syslog.L.Info().WithMessage("Starting bootstrap process").Write()
+	if err := waitForBootstrap(ctx); err != nil {
+		syslog.L.Error(err).WithMessage("Failed to bootstrap").Write()
+		return
+	}
+	syslog.L.Info().WithMessage("Bootstrap completed successfully").Write()
+
+	// Initialize drives once (async)
+	syslog.L.Info().WithMessage("Starting drive update background task").Write()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		syslog.L.Info().WithMessage("Running initial drive update").Write()
+		if err := initializeDrives(); err != nil {
+			syslog.L.Warn().WithMessage("Initial drive update failed").WithField("error", err.Error()).Write()
+		} else {
+			syslog.L.Info().WithMessage("Initial drive update completed successfully").Write()
+		}
+	}()
+
+	// Connect ARPC
+	syslog.L.Info().WithMessage("Attempting to connect to ARPC").Write()
+	if err := connectARPC(ctx); err != nil {
+		syslog.L.Error(err).WithMessage("Failed to connect to ARPC").Write()
+		return
+	}
+	syslog.L.Info().WithMessage("ARPC connection established successfully").Write()
+
+	syslog.L.Info().WithMessage("PBS Plus Agent fully initialized and running").Write()
+
+	// Periodic drives init like original
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(utils.ComputeDelay())
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				syslog.L.Info().WithMessage("Drive update task shutting down").Write()
+				return
+			case <-ticker.C:
+				syslog.L.Info().WithMessage("Running scheduled drive update").Write()
+				if err := initializeDrives(); err != nil {
+					syslog.L.Warn().WithMessage("Scheduled drive update failed").WithField("error", err.Error()).Write()
+				} else {
+					syslog.L.Info().WithMessage("Scheduled drive update completed successfully").Write()
+				}
+				ticker.Reset(utils.ComputeDelay())
+			}
+		}
+	}()
+
+	// Wait for termination
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
-
-	if err := prg.Stop(); err != nil {
-		syslog.L.Error(err).WithMessage("failed to stop service").Write()
-		os.Exit(1)
-	}
+	syslog.L.Info().WithMessage("Context cancelled, shutting down").Write()
+	cancel()
+	wg.Wait()
+	syslog.L.Info().WithMessage("Service stopped gracefully").Write()
 }

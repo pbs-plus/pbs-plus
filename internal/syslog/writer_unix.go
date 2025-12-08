@@ -3,8 +3,8 @@
 package syslog
 
 import (
-	"log"
 	"log/syslog"
+	"os"
 	"strings"
 )
 
@@ -25,7 +25,7 @@ func (sw *LogWriter) Write(p []byte) (n int, err error) {
 			err = sw.logger.Info(message)
 		}
 	} else {
-		log.Print(message)
+		return os.Stdout.Write(p)
 	}
 	return len(p), err
 }

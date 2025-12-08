@@ -13,33 +13,6 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func init() {
-	// Configure zerolog to output via our EventLogWriter wrapped in a ConsoleWriter.
-	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-		w.NoColor = true
-		w.FormatCaller = func(i interface{}) string {
-			var c string
-			if cc, ok := i.(string); ok {
-				c = cc
-			}
-			if c == "" {
-				return ""
-			}
-
-			parts := strings.Split(c, "/")
-			if len(parts) >= 2 {
-				return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
-			}
-			return filepath.Base(c)
-		}
-	})).With().
-		CallerWithSkipFrameCount(3).
-		Timestamp().
-		Logger()
-
-	L = &Logger{zlog: &zlogger}
-}
-
 // SetServiceLogger configures the service logger for Windows Event Log integration.
 func (l *Logger) SetServiceLogger(s service.Logger) error {
 	l.mu.Lock()

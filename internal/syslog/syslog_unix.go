@@ -4,6 +4,7 @@ package syslog
 
 import (
 	"fmt"
+	"log"
 	"log/syslog"
 	"path/filepath"
 	"strings"
@@ -12,9 +13,17 @@ import (
 	"github.com/rs/zerolog"
 )
 
-func init() {
-	sysWriter, _ := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-plus")
-	logger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
+func (l *Logger) SetServiceLogger() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	sysWriter, err := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-plus")
+	if err != nil {
+		log.Println(sysWriter)
+		return err
+	}
+
+	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
 		w.Out = &LogWriter{logger: sysWriter}
 		w.NoColor = true
 		w.FormatCaller = func(i interface{}) string {
@@ -32,10 +41,16 @@ func init() {
 			}
 			return filepath.Base(c)
 		}
-	})).With().Timestamp().CallerWithSkipFrameCount(3).Logger()
+	})).With().
+		CallerWithSkipFrameCount(3).
+		Timestamp().
+		Logger()
 
-	hostname, _ := utils.GetAgentHostname()
-	L = &Logger{zlog: &logger, hostname: hostname}
+	l.zlog = &zlogger
+	l.hostname, _ = utils.GetAgentHostname()
+
+	l.zlog.Info().Msg("Service logger successfully added for syslog")
+	return nil
 }
 
 // Write finalizes the LogEntry and writes it using the global zerolog logger.
@@ -53,6 +68,28 @@ func (e *LogEntry) Write() {
 		e.Fields["hostname"] = e.logger.hostname
 	}
 
+	if e.logger.Server {
+		e.serverWrite()
+	} else {
+		if e.JobID != "" {
+			e.Fields["jobId"] = e.JobID
+		}
+	}
+
+	// Produce a full JSON log entry.
+	switch e.Level {
+	case "info":
+		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
+	case "warn":
+		e.logger.zlog.Warn().Fields(e.Fields).Msg(e.Message)
+	case "error":
+		e.logger.zlog.Error().Err(e.Err).Fields(e.Fields).Msg(e.Message)
+	default:
+		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
+	}
+}
+
+func (e *LogEntry) serverWrite() {
 	if e.JobID != "" {
 		backupLogger := GetExistingBackupLogger(e.JobID)
 		if backupLogger != nil {
@@ -83,17 +120,5 @@ func (e *LogEntry) Write() {
 			sb.Reset()
 		}
 		e.Fields["jobId"] = e.JobID
-	}
-
-	// Produce a full JSON log entry.
-	switch e.Level {
-	case "info":
-		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
-	case "warn":
-		e.logger.zlog.Warn().Fields(e.Fields).Msg(e.Message)
-	case "error":
-		e.logger.zlog.Error().Err(e.Err).Fields(e.Fields).Msg(e.Message)
-	default:
-		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
 	}
 }
