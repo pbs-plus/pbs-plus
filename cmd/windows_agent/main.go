@@ -265,7 +265,7 @@ func (p *pbsService) startBackgroundTasks() {
 }
 
 func (p *pbsService) updateDrives() error {
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		return err
 	}
@@ -325,7 +325,7 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("TLS configuration obtained successfully").Write()
 
 	syslog.L.Info().WithMessage("Getting hostname for ARPC headers").Write()
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to get hostname").Write()
 		return err
@@ -381,7 +381,7 @@ func (p *pbsService) connectARPC() error {
 }
 
 func (p *pbsService) handlePing(req arpc.Request) (arpc.Response, error) {
-	hostname, _ := os.Hostname()
+	hostname, _ := utils.GetAgentHostname()
 	resp := map[string]string{
 		"version":  Version,
 		"hostname": hostname,
