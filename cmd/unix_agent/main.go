@@ -194,7 +194,7 @@ func (p *agentService) waitForBootstrap() error {
 }
 
 func (p *agentService) initializeDrives() error {
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		return fmt.Errorf("failed to get hostname: %w", err)
 	}
@@ -243,7 +243,7 @@ func (p *agentService) connectARPC() error {
 		return err
 	}
 
-	clientId, err := os.Hostname()
+	clientId, err := utils.GetAgentHostname()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to retrieve machine hostname").Write()
 		return err

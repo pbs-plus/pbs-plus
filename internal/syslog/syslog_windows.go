@@ -4,11 +4,11 @@ package syslog
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/kardianos/service"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -69,7 +69,7 @@ func (l *Logger) SetServiceLogger(s service.Logger) error {
 		Logger()
 
 	l.zlog = &zlogger
-	l.hostname, _ = os.Hostname()
+	l.hostname, _ = utils.GetAgentHostname()
 
 	l.zlog.Info().Msg("Service logger successfully added for Windows Event Log")
 	return nil

@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/pbs-plus/pbs-plus/internal/auth/token"
+	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -29,7 +29,7 @@ type Database struct {
 	writeDb      *sql.DB
 	writeMu      sync.Mutex
 	dbPath       string
-	TokenManager *token.Manager
+	TokenManager *mtls.TokenManager
 }
 
 // Initialize opens (or creates) the SQLite database at dbPath,

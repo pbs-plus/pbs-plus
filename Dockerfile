@@ -1,27 +1,62 @@
-FROM golang:1.25 as builder
+FROM golang:1.25 AS builder
 
-# Set the working directory
 WORKDIR /app
 
-# Copy the Go modules and source code
 COPY go.mod go.sum ./
 RUN go mod download
+
 COPY . .
 
-# Build the application
-RUN GOOS=linux go build -o pbs-plus-agent ./cmd/unix_agent
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ENV CGO_ENABLED=0
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH \
+  go build -trimpath -ldflags="-s -w" -o /out/pbs-plus-agent ./cmd/unix_agent
 
-FROM debian:bookworm-slim
+FROM alpine:3.20
 
-# Create the sources.list file and enable contrib
-RUN apt-get update && \
-  apt-get install -y util-linux btrfs-progs lvm2 ca-certificates && \
-  rm -rf /var/lib/apt/lists/*
+ARG S6_OVERLAY_VERSION=v3.2.1.0
+ARG TARGETARCH
+ARG USER_NAME=pbsplus
+ARG USER_UID=1999
+ARG USER_GID=1999
+ARG BIN_PATH=/usr/bin/pbs-plus-agent
 
-# Copy the compiled binary from the builder stage
-COPY --from=builder /app/pbs-plus-agent /usr/local/bin/pbs-plus-agent
+# Map Docker TARGETARCH -> s6-overlay archive arch
+# amd64 -> x86_64, arm64 -> aarch64, arm -> armhf, 386 -> i686
+# Default to x86_64 as a safe fallback
+RUN case "$TARGETARCH" in \
+  amd64)  S6_ARCH="x86_64" ;; \
+  arm64)  S6_ARCH="aarch64" ;; \
+  arm)    S6_ARCH="armhf" ;; \
+  386)    S6_ARCH="i686" ;; \
+  *)      S6_ARCH="x86_64" ;; \
+  esac && \
+  echo "Using s6-overlay arch: ${S6_ARCH}" && \
+  apk add --no-cache ca-certificates tzdata libcap shadow && \
+  wget -O /tmp/s6-overlay-noarch.tar.xz \
+  "https://github.com/just-containers/s6-overlay/releases/download/${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" && \
+  wget -O /tmp/s6-overlay-${S6_ARCH}.tar.xz \
+  "https://github.com/just-containers/s6-overlay/releases/download/${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" && \
+  tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
+  tar -C / -Jxpf /tmp/s6-overlay-${S6_ARCH}.tar.xz && \
+  rm -f /tmp/s6-overlay-noarch.tar.xz /tmp/s6-overlay-${S6_ARCH}.tar.xz
 
-VOLUME [ "/etc/pbs-plus-agent" ]
+RUN addgroup -g ${USER_GID} -S ${USER_NAME} && \
+  adduser  -u ${USER_UID} -S -D -H -G ${USER_NAME} -s /sbin/nologin ${USER_NAME}
 
-# Set the entrypoint
-ENTRYPOINT ["/usr/local/bin/pbs-plus-agent"]
+RUN mkdir -p /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/pbs-plus-agent /etc/pbs-plus-agent && \
+  chown -R ${USER_NAME}:${USER_NAME} /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/pbs-plus-agent /etc/pbs-plus-agent && \
+  chmod 0750 /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /etc/pbs-plus-agent && \
+  chmod 0755 /run/pbs-plus-agent
+
+COPY --from=builder /out/pbs-plus-agent ${BIN_PATH}
+RUN chmod 0755 ${BIN_PATH} && chown root:${USER_NAME} ${BIN_PATH}
+
+COPY build/container/ /
+
+ENV HOME=/var/lib/pbs-plus-agent \
+  USER=${USER_NAME} \
+  S6_CMD_WAIT_FOR_SERVICES_MAXTIME=30000
+
+ENTRYPOINT ["/init"]

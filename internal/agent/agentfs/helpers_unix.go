@@ -5,7 +5,6 @@ package agentfs
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -43,28 +42,6 @@ func modeFromUnix(m uint32) uint32 {
 		mode |= uint32(os.ModeSocket)
 	}
 	return mode
-}
-
-// unixTypeToFileMode maps a DT_* byte to an os.FileMode.
-func unixTypeToFileMode(t byte) (m os.FileMode) {
-	switch t {
-	case syscall.DT_DIR:
-		return os.ModeDir | 0o755
-	case syscall.DT_REG:
-		return 0o644
-	case syscall.DT_LNK:
-		return os.ModeSymlink | 0o777
-	case syscall.DT_CHR:
-		return os.ModeDevice | os.ModeCharDevice | 0o666
-	case syscall.DT_BLK:
-		return os.ModeDevice | 0o666
-	case syscall.DT_FIFO:
-		return os.ModeNamedPipe | 0o666
-	case syscall.DT_SOCK:
-		return os.ModeSocket | 0o666
-	default:
-		return 0o644
-	}
 }
 
 func isDot(b []byte) bool {
