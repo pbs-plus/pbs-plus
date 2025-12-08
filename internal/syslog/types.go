@@ -10,6 +10,7 @@ type Logger struct {
 	mu       sync.RWMutex
 	zlog     *zerolog.Logger
 	hostname string
+	Server   bool
 	disabled bool
 }
 

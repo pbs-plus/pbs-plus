@@ -117,6 +117,11 @@ func main() {
 		return
 	}
 
+	syslog.L.Server = true
+	if err := syslog.L.SetServiceLogger(); err != nil {
+		log.Println(err)
+	}
+
 	storeInstance, err := store.Initialize(mainCtx, nil)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to initialize store").Write()

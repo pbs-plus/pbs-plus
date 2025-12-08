@@ -1,11 +1,21 @@
-#!/usr/bin/execlineb -P
-fdmove -c 2 1
+#!/command/with-contenv sh
+set -eu
 
-export HOME /var/lib/pbs-plus-agent
-export USER pbsplus
+exec 2>&1
 
-if { mkdir -p /run/pbs-plus-agent }
-if { chown pbsplus:pbsplus /run/pbs-plus-agent }
+# Environment
+HOME="/var/lib/pbs-plus-agent"; export HOME
+USER="pbsplus"; export USER
 
-# Drop privileges and exec agent
-s6-setuidgid pbsplus /usr/bin/pbs-plus-agent
+# Create required dirs with ownership
+mkdir -p /run/pbs-plus-agent \
+         /var/lib/pbs-plus-agent \
+         /var/log/pbs-plus-agent \
+         /etc/pbs-plus-agent
+
+chown pbsplus:pbsplus /run/pbs-plus-agent \
+                      /var/lib/pbs-plus-agent \
+                      /var/log/pbs-plus-agent \
+                      /etc/pbs-plus-agent
+
+exec /usr/bin/pbs-plus-agent
