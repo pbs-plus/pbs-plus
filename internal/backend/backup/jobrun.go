@@ -148,7 +148,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 	var agentMount *mount.AgentMount
 	var s3Mount *mount.S3Mount
 
-	postScriptExecute := func(success bool) {
+	postScriptExecute := func(success bool, warningsNum int) {
 		if op.job.PostScript != "" {
 			op.queueTask.UpdateDescription("running post-backup script")
 
@@ -162,6 +162,8 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			} else {
 				envVars = append(envVars, "PBS_PLUS__JOB_SUCCESS=false")
 			}
+
+			envVars = append(envVars, fmt.Sprintf("PBS_PLUS__JOB_WARNINGS=%d", warningsNum))
 
 			scriptOut, _, err := utils.RunShellScript(ctx, op.job.PostScript, envVars)
 			if err != nil {
@@ -189,7 +191,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			_ = op.logger.Close()
 		}
 
-		postScriptExecute(false)
+		postScriptExecute(false, 0)
 		close(errorMonitorDone)
 	}
 
@@ -480,7 +482,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			s3Mount.Unmount()
 		}
 
-		postScriptExecute(true)
+		postScriptExecute(true, warningsNum)
 	}()
 
 	return nil
