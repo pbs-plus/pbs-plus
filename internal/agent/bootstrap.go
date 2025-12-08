@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -39,7 +38,7 @@ func Bootstrap() error {
 		return fmt.Errorf("Bootstrap: server url not found -> %w", err)
 	}
 
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		return fmt.Errorf("Bootstrap: failed to get hostname -> %w", err)
 	}
