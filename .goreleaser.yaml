@@ -170,11 +170,11 @@ nfpms:
     formats:
       - deb
     contents:
-      - src: ./build/package/linux_agent/deb/pbs-plus-agent.service
+      - src: ./build/package/linux_agent/systemd/pbs-plus-agent.service
         dst: /lib/systemd/system/pbs-plus-agent.service
         type: config
     scripts:
-      postinstall: ./build/package/linux_agent/deb/postinst
+      postinstall: ./build/package/linux_agent/postinst
     overrides:
       deb:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
@@ -192,11 +192,11 @@ nfpms:
     formats:
       - rpm
     contents:
-      - src: ./build/package/linux_agent/rpm/pbs-plus-agent.service
+      - src: ./build/package/linux_agent/systemd/pbs-plus-agent.service
         dst: /usr/lib/systemd/system/pbs-plus-agent.service
         type: config
     scripts:
-      postinstall: ./build/package/linux_agent/rpm/postinst
+      postinstall: ./build/package/linux_agent/postinst
     overrides:
       rpm:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
@@ -214,13 +214,13 @@ nfpms:
     formats:
       - apk
     contents:
-      - src: ./build/package/linux_agent/apk/pbs-plus-agent
+      - src: ./build/package/linux_agent/openrc/pbs-plus-agent
         dst: /etc/init.d/pbs-plus-agent
         type: config
         file_info:
           mode: 0755
     scripts:
-      postinstall: ./build/package/linux_agent/apk/postinst
+      postinstall: ./build/package/linux_agent/postinst
     overrides:
       apk:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
