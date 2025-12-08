@@ -4,7 +4,6 @@ package syslog
 
 import (
 	"fmt"
-	"log"
 	"log/syslog"
 	"path/filepath"
 	"strings"
@@ -17,9 +16,10 @@ func (l *Logger) SetServiceLogger() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	l.hostname, _ = utils.GetAgentHostname()
+
 	sysWriter, err := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-plus")
 	if err != nil {
-		log.Println(sysWriter)
 		return err
 	}
 
@@ -47,7 +47,6 @@ func (l *Logger) SetServiceLogger() error {
 		Logger()
 
 	l.zlog = &zlogger
-	l.hostname, _ = utils.GetAgentHostname()
 
 	l.zlog.Info().Msg("Service logger successfully added for syslog")
 	return nil

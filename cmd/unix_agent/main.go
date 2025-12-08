@@ -289,13 +289,13 @@ func main() {
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{
 		Path:     registry.CONFIG,
 		Key:      "ServerURL",
-		Value:    "",
+		Value:    os.Getenv("PBS_PLUS_INIT_SERVER_URL"),
 		IsSecret: false,
 	})
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{
 		Path:     registry.CONFIG,
 		Key:      "BootstrapToken",
-		Value:    "",
+		Value:    os.Getenv("PBS_PLUS_INIT_BOOTSTRAP_TOKEN"),
 		IsSecret: false,
 	})
 
