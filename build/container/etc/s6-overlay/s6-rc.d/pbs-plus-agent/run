@@ -1,0 +1,11 @@
+#!/usr/bin/execlineb -P
+fdmove -c 2 1
+
+export HOME /var/lib/pbs-plus-agent
+export USER pbsplus
+
+if { mkdir -p /run/pbs-plus-agent }
+if { chown pbsplus:pbsplus /run/pbs-plus-agent }
+
+# Drop privileges and exec agent
+s6-setuidgid pbsplus /usr/bin/pbs-plus-agent

@@ -17,28 +17,26 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
-	"github.com/pbs-plus/pbs-plus/internal/auth/server"
-	"github.com/pbs-plus/pbs-plus/internal/auth/token"
 	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
-	"github.com/pbs-plus/pbs-plus/internal/proxy"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/agents"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/exclusions"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/plus"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/scripts"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/targets"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/tokens"
-	mw "github.com/pbs-plus/pbs-plus/internal/proxy/middlewares"
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/proxy/rpc"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/proxy/rpc/job"
+	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/web"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/agents"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/exclusions"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/plus"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/scripts"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/targets"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/tokens"
+	mw "github.com/pbs-plus/pbs-plus/internal/web/middlewares"
+	rpcmount "github.com/pbs-plus/pbs-plus/internal/web/rpc"
+	jobrpc "github.com/pbs-plus/pbs-plus/internal/web/rpc/job"
 
 	"net/http/pprof"
 
@@ -170,12 +168,7 @@ func main() {
 		return
 	}
 
-	if err = storeInstance.MigrateLegacyData(); err != nil {
-		syslog.L.Error(err).WithMessage("error migrating legacy database").Write()
-		return
-	}
-
-	if err := proxy.ModifyPBSHandlebars("/usr/share/javascript/proxmox-backup/index.hbs", "/usr/share/javascript/proxmox-backup/js"); err != nil {
+	if err := web.ModifyPBSHandlebars("/usr/share/javascript/proxmox-backup/index.hbs", "/usr/share/javascript/proxmox-backup/js"); err != nil {
 		syslog.L.Error(err).WithMessage("failed to mount modified proxmox-backup-gui.js").Write()
 		return
 	}
@@ -208,13 +201,6 @@ func main() {
 		tx.Commit()
 	}
 
-	certOpts := certificates.DefaultOptions()
-	generator, err := certificates.NewGenerator(certOpts)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to initialize certificate generator").Write()
-		return
-	}
-
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
 
 	if _, err := os.Lstat(secKeyPath); err != nil {
@@ -230,87 +216,28 @@ func main() {
 		return
 	}
 
-	serverConfig := server.DefaultConfig()
-	serverConfig.CertFile = filepath.Join(certOpts.OutputDir, "server.crt")
-	serverConfig.KeyFile = filepath.Join(certOpts.OutputDir, "server.key")
-	serverConfig.CAFile = filepath.Join(certOpts.OutputDir, "ca.crt")
-	serverConfig.CAKey = filepath.Join(certOpts.OutputDir, "ca.key")
-	serverConfig.TokenSecret = string(secKey)
-	serverConfig.Unmount()
-
-	if err := generator.ValidateExistingCerts(); err != nil {
-		if err := generator.GenerateCA(); err != nil {
-			syslog.L.Error(err).WithMessage("failed to generate certificate").Write()
-			return
-		}
-
-		if err := generator.GenerateCert("server"); err != nil {
-			syslog.L.Error(err).WithMessage("failed to generate certificate").Write()
-			return
-		}
-	}
-
-	if err := serverConfig.Validate(); err != nil {
-		syslog.L.Error(err).WithMessage("failed to validate server config").Write()
-		return
-	}
-
-	storeInstance.CertGenerator = generator
-
-	err = os.Chown(serverConfig.KeyFile, 0, 34)
+	err = storeInstance.ValidateServerCertificates()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to change cert key permissions").Write()
+		syslog.L.Error(err).WithMessage("failed to generate local CA and server cert").Write()
 		return
 	}
 
-	err = os.Chown(serverConfig.CertFile, 0, 34)
+	serverConfig, err := storeInstance.GetServerTLSConfig()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to change cert permissions").Write()
+		syslog.L.Error(err).WithMessage("failed to build server TLS config").Write()
 		return
 	}
-
-	proxyExec := exec.Command("/usr/bin/systemctl", "restart", "proxmox-backup-proxy")
-	proxyExec.Env = os.Environ()
-	_ = proxyExec.Run()
 
 	// Initialize token manager
-	tokenManager, err := token.NewManager(token.Config{
-		TokenExpiration: serverConfig.TokenExpiration,
-		SecretKey:       serverConfig.TokenSecret,
+	tokenManager, err := mtls.NewTokenManager(mtls.TokenConfig{
+		TokenExpiration: constants.AuthTokenExpiration,
+		SecretKey:       string(secKey),
 	})
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to initialize token manager").Write()
 		return
 	}
 	storeInstance.Database.TokenManager = tokenManager
-
-	// Setup HTTP server
-	tlsConfig, err := serverConfig.LoadTLSConfig()
-	if err != nil {
-		return
-	}
-
-	caRenewalCtx, cancelRenewal := context.WithCancel(context.Background())
-	defer cancelRenewal()
-	go func() {
-		for {
-			select {
-			case <-caRenewalCtx.Done():
-				return
-			case <-time.After(time.Hour):
-				if err := generator.ValidateExistingCerts(); err != nil {
-					if err := generator.GenerateCA(); err != nil {
-						syslog.L.Error(err).WithMessage("failed to generate CA").Write()
-					}
-
-					if err := generator.GenerateCert("server"); err != nil {
-						syslog.L.Error(err).WithMessage("failed to generate server certificate").Write()
-					}
-				}
-
-			}
-		}
-	}()
 
 	// Unmount and remove all stale mount points
 	// Get all mount points under the base path
@@ -419,34 +346,34 @@ func main() {
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	apiServer := &http.Server{
-		Addr:           serverConfig.Address,
+		Addr:           ":8017",
 		Handler:        apiMux,
-		ReadTimeout:    serverConfig.ReadTimeout,
-		WriteTimeout:   serverConfig.WriteTimeout,
-		IdleTimeout:    serverConfig.IdleTimeout,
-		MaxHeaderBytes: serverConfig.MaxHeaderBytes,
+		ReadTimeout:    constants.HTTPReadTimeout,
+		WriteTimeout:   constants.HTTPWriteTimeout,
+		IdleTimeout:    constants.HTTPIdleTimeout,
+		MaxHeaderBytes: constants.HTTPMaxHeaderBytes,
 	}
 
 	agentServer := &http.Server{
-		Addr:           serverConfig.AgentAddress,
+		Addr:           ":8008",
 		Handler:        agentMux,
-		TLSConfig:      tlsConfig,
-		ReadTimeout:    serverConfig.ReadTimeout,
-		WriteTimeout:   serverConfig.WriteTimeout,
-		IdleTimeout:    serverConfig.IdleTimeout,
-		MaxHeaderBytes: serverConfig.MaxHeaderBytes,
+		TLSConfig:      serverConfig,
+		ReadTimeout:    constants.HTTPReadTimeout,
+		WriteTimeout:   constants.HTTPWriteTimeout,
+		IdleTimeout:    constants.HTTPIdleTimeout,
+		MaxHeaderBytes: constants.HTTPMaxHeaderBytes,
 	}
 
 	var endpointsWg sync.WaitGroup
 
 	endpointsWg.Add(1)
-	go proxy.WatchAndServe(apiServer, server.ProxyCert, server.ProxyKey, []string{server.ProxyCert, server.ProxyKey}, &endpointsWg)
+	go web.WatchAndServe(apiServer, constants.CertFile, constants.KeyFile, []string{constants.CertFile, constants.KeyFile}, &endpointsWg)
 
 	endpointsWg.Add(1)
 	go func() {
 		defer endpointsWg.Done()
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", serverConfig.AgentAddress)).Write()
-		if err := agentServer.ListenAndServeTLS(serverConfig.CertFile, serverConfig.KeyFile); err != nil {
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", apiServer.Addr)).Write()
+		if err := storeInstance.ListenAndServeAgentEndpoint(agentServer); err != nil {
 			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
 		}
 	}()

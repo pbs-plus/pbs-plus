@@ -21,6 +21,7 @@ import (
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 var Version = "v0.0.0"
@@ -54,7 +55,7 @@ func (u *updaterService) Start(s service.Service) error {
 
 	syslog.L.Info().WithMessage(fmt.Sprintf("Starting PBS Plus Updater %s", Version)).Write()
 
-	if hostname, err := os.Hostname(); err == nil {
+	if hostname, err := utils.GetAgentHostname(); err == nil {
 		u.hostname = hostname
 		syslog.L.Info().WithMessage(fmt.Sprintf("Updater running on hostname: %s", hostname)).Write()
 	} else {

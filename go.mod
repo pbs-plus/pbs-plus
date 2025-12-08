@@ -26,9 +26,9 @@ require (
 	github.com/spf13/cobra v1.10.1
 	github.com/stretchr/testify v1.10.0
 	github.com/xtaci/smux v1.5.35
-	golang.org/x/crypto v0.42.0
+	golang.org/x/crypto v0.44.0
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621
-	golang.org/x/sys v0.36.0
+	golang.org/x/sys v0.38.0
 	golang.org/x/time v0.13.0
 	modernc.org/sqlite v1.39.0
 )
@@ -67,8 +67,12 @@ require (
 	github.com/tinylib/msgp v1.4.0 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
-	golang.org/x/net v0.44.0 // indirect
-	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/mod v0.30.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/sync v0.18.0 // indirect
+	golang.org/x/telemetry v0.0.0-20251111182119-bc8e575c7b54 // indirect
+	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/tools v0.39.0 // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.66.9 // indirect
@@ -79,3 +83,5 @@ require (
 replace github.com/hanwen/go-fuse/v2 v2.7.2 => github.com/pbs-plus/go-fuse/v2 v2.1.2
 
 replace github.com/xtaci/smux v1.5.35 => github.com/pbs-plus/smux v0.0.0-20250322005336-855507aa64bf
+
+tool golang.org/x/tools/cmd/deadcode

@@ -5,10 +5,10 @@ package syslog
 import (
 	"fmt"
 	"log/syslog"
-	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/rs/zerolog"
 )
 
@@ -34,7 +34,7 @@ func init() {
 		}
 	})).With().Timestamp().CallerWithSkipFrameCount(3).Logger()
 
-	hostname, _ := os.Hostname()
+	hostname, _ := utils.GetAgentHostname()
 	L = &Logger{zlog: &logger, hostname: hostname}
 }
 

@@ -1,0 +1,39 @@
+#!/sbin/openrc-run
+
+name="PBS Plus Agent"
+description="PBS Plus Agent for backup operations"
+
+command="/usr/bin/pbs-plus-agent"
+command_user="pbsplus:pbsplus"
+pidfile="/run/pbs-plus-agent/pbs-plus-agent.pid"
+command_background="yes"
+directory="/var/lib/pbs-plus-agent"
+
+output_log="/var/log/pbs-plus-agent/agent.log"
+error_log="/var/log/pbs-plus-agent/agent.error.log"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    checkpath --directory --owner pbsplus:pbsplus --mode 0755 /run/pbs-plus-agent
+    checkpath --directory --owner pbsplus:pbsplus --mode 0750 /var/log/pbs-plus-agent
+    checkpath --directory --owner pbsplus:pbsplus --mode 0750 /var/lib/pbs-plus-agent
+    checkpath --directory --owner pbsplus:pbsplus --mode 0750 /etc/pbs-plus-agent
+}
+
+reload() {
+    ebegin "Reloading ${name}"
+    if [ -f "${pidfile}" ]; then
+        kill -HUP "$(cat "${pidfile}")"
+        eend $?
+    else
+        eend 1 "PID file not found"
+    fi
+}
+
+stop_post() {
+    [ -f "${pidfile}" ] && rm -f "${pidfile}"
+}

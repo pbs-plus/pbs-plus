@@ -9,12 +9,11 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
-	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
+	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -45,11 +44,6 @@ func GetTLSConfig() (*tls.Config, error) {
 		return nil, fmt.Errorf("GetTLSConfig: server cert not found -> %w", err)
 	}
 
-	rootCAs := x509.NewCertPool()
-	if ok := rootCAs.AppendCertsFromPEM([]byte(serverCertReg.Value)); !ok {
-		return nil, fmt.Errorf("failed to append CA certificate")
-	}
-
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
 	if err != nil {
 		return nil, fmt.Errorf("GetTLSConfig: cert not found -> %w", err)
@@ -63,21 +57,9 @@ func GetTLSConfig() (*tls.Config, error) {
 	certPEM := []byte(certReg.Value)
 	keyPEM := []byte(keyReg.Value)
 
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	tlsConfig, err := mtls.BuildClientTLS(certPEM, keyPEM, []byte(serverCertReg.Value))
 	if err != nil {
-		return nil, fmt.Errorf("failed to load client certificate: %w", err)
-	}
-
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      rootCAs,
-		MinVersion:   tls.VersionTLS12,
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-		},
+		return nil, fmt.Errorf("GetTLSConfig: buildclienttls error -> %w", err)
 	}
 
 	tlsConfigCache = tlsConfig
@@ -131,12 +113,12 @@ func CheckAndRenewCertificate() error {
 }
 
 func renewCertificate() error {
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		return fmt.Errorf("renewCertificate: failed to get hostname - %w", err)
 	}
 
-	csr, privKey, err := certificates.GenerateCSR(hostname, 2048)
+	csr, privKey, err := mtls.GenerateCSR(hostname, 2048)
 	if err != nil {
 		return fmt.Errorf("renewCertificate: generating csr failed -> %w", err)
 	}
@@ -174,8 +156,6 @@ func renewCertificate() error {
 		return fmt.Errorf("renewCertificate: error decoding cert content -> %w", err)
 	}
 
-	privKeyPEM := certificates.EncodeKeyPEM(privKey)
-
 	caEntry := registry.RegistryEntry{
 		Key:      "ServerCA",
 		Value:    string(decodedCA),
@@ -192,7 +172,7 @@ func renewCertificate() error {
 
 	privEntry := registry.RegistryEntry{
 		Key:      "Priv",
-		Value:    string(privKeyPEM),
+		Value:    string(privKey),
 		Path:     registry.AUTH,
 		IsSecret: true,
 	}
