@@ -8,12 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
-	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
+	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -39,12 +38,12 @@ func Bootstrap() error {
 		return fmt.Errorf("Bootstrap: server url not found -> %w", err)
 	}
 
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		return fmt.Errorf("Bootstrap: failed to get hostname -> %w", err)
 	}
 
-	csr, privKey, err := certificates.GenerateCSR(hostname, 2048)
+	csr, privKey, err := mtls.GenerateCSR(hostname, 2048)
 	if err != nil {
 		return fmt.Errorf("Bootstrap: generating csr failed -> %w", err)
 	}
@@ -128,8 +127,6 @@ func Bootstrap() error {
 		return fmt.Errorf("Bootstrap: error decoding cert content (%s) -> %w", bootstrapResp.Cert, err)
 	}
 
-	privKeyPEM := certificates.EncodeKeyPEM(privKey)
-
 	caEntry := registry.RegistryEntry{
 		Key:      "ServerCA",
 		Value:    string(decodedCA),
@@ -146,7 +143,7 @@ func Bootstrap() error {
 
 	privEntry := registry.RegistryEntry{
 		Key:      "Priv",
-		Value:    string(privKeyPEM),
+		Value:    string(privKey),
 		Path:     registry.AUTH,
 		IsSecret: true,
 	}

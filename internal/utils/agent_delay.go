@@ -29,7 +29,7 @@ func ComputeDelay() time.Duration {
 	// Adjust extra seconds range if desired.
 	const extraRangeSeconds = 3600 // up to an extra 1 hour, so total range is 1-2 hours
 
-	hostname, err := os.Hostname()
+	hostname, err := GetAgentHostname()
 	if err != nil {
 		// Fall back to a random hostname if we can't get one.
 		hostname = RandomHostname()

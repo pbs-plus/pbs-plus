@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 var httpClient *http.Client
@@ -57,7 +57,7 @@ func proxmoxHTTPRequestAttempt(method, url string, body io.Reader, respBody any)
 		return nil, fmt.Errorf("proxmoxHTTPRequestAttempt: error creating http request -> %w", err)
 	}
 
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		return nil, fmt.Errorf("proxmoxHTTPRequestAttempt: failed to get hostname -> %w", err)
 	}

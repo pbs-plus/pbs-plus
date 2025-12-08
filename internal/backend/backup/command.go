@@ -5,7 +5,6 @@ package backup
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -146,19 +145,4 @@ func buildCommandEnv(storeInstance *store.Store) []string {
 	}
 
 	return env
-}
-
-func setupCommandPipes(cmd *exec.Cmd) (io.ReadCloser, io.ReadCloser, error) {
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, fmt.Errorf("error creating stdout pipe: %w", err)
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		stdout.Close() // Clean up stdout if stderr fails
-		return nil, nil, fmt.Errorf("error creating stderr pipe: %w", err)
-	}
-
-	return stdout, stderr, nil
 }

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/proxy/rpc"
+	rpcmount "github.com/pbs-plus/pbs-plus/internal/web/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
