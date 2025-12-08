@@ -9,7 +9,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -114,7 +113,7 @@ func CheckAndRenewCertificate() error {
 }
 
 func renewCertificate() error {
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		return fmt.Errorf("renewCertificate: failed to get hostname - %w", err)
 	}
