@@ -3,7 +3,7 @@
 package syslog
 
 import (
-	"log"
+	"os"
 	"strings"
 
 	"github.com/kardianos/service"
@@ -26,7 +26,7 @@ func (ew *LogWriter) Write(p []byte) (n int, err error) {
 			err = ew.logger.Info(message)
 		}
 	} else {
-		log.Print(message)
+		return os.Stdout.Write(p)
 	}
 	return len(p), err
 }

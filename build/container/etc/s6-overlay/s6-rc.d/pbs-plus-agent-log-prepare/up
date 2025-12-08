@@ -1,0 +1,3 @@
+if { mkdir -p /var/log/pbsplus }
+if { chown nobody:nogroup /var/log/pbsplus }
+chmod 02755 /var/log/pbsplus
