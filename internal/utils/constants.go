@@ -15,6 +15,8 @@ const MaxStreamBuffer = 4 * 1024 * 1024
 var MaxConcurrentClients = 64
 var MaxReceiveBuffer = MaxStreamBuffer * MaxConcurrentClients
 
+var IsServer = false
+
 func init() {
 	sysMem, err := GetSysMem()
 	if err != nil {
@@ -37,7 +39,9 @@ func init() {
 		MaxConcurrentClients = 1
 	}
 
-	log.Printf("initialized aRPC buffer configurations with MaxReceiveBuffer: %d, MaxStreamBuffer: %d, MaxConcurrentClients: %d", MaxReceiveBuffer, MaxStreamBuffer, MaxConcurrentClients)
+	if IsServer {
+		log.Printf("initialized aRPC buffer configurations with MaxReceiveBuffer: %d, MaxStreamBuffer: %d, MaxConcurrentClients: %d", MaxReceiveBuffer, MaxStreamBuffer, MaxConcurrentClients)
+	}
 }
 
 type SysMem struct {
