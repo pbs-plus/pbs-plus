@@ -30,7 +30,9 @@ jobs:
         uses: mlugg/setup-zig@v2
 
       - name: Install zigbuild
-        run: cargo install --locked cargo-zigbuild
+        run: |
+          cargo install --locked cargo-zigbuild
+          apt-get install pkg-config libssl-dev -y
 
       - name: Import GPG key
         run: |
