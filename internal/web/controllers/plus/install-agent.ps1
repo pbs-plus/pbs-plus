@@ -23,7 +23,6 @@ if (-not (Test-Path -Path $installDir)) {
     Write-Host "Installation directory created: $installDir" -ForegroundColor Green
 }
 
-# Configure SSL certificate validation bypass
 Write-Host "Configuring SSL certificate validation bypass..." -ForegroundColor Cyan
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
@@ -43,13 +42,13 @@ function Download-FileWithRetry {
     while (-not $success -and $retryCount -lt $MaxRetries) {
         try {
             Write-Host "Downloading $Url to $Destination" -ForegroundColor Cyan
-            
+
             if ($PSVersionTable.PSVersion.Major -ge 6) {
                 Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -SkipCertificateCheck
             } else {
                 Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
             }
-            
+
             if (Test-Path -Path $Destination) {
                 $success = $true
                 Write-Host "Downloaded successfully: $Destination" -ForegroundColor Green
@@ -73,7 +72,7 @@ function Download-FileWithRetry {
 # Function to force kill all PBS Plus processes
 function Stop-PBSPlusProcesses {
     Write-Host "Stopping all PBS Plus related processes..." -ForegroundColor Cyan
-    
+
     # Stop services first
     $servicesToStop = @("PBSPlusAgent", "PBSPlusUpdater")
     foreach ($serviceName in $servicesToStop) {
@@ -82,7 +81,7 @@ function Stop-PBSPlusProcesses {
             if ($service -and $service.Status -eq "Running") {
                 Write-Host "Stopping service: $serviceName" -ForegroundColor Cyan
                 Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
-                
+
                 # Wait for service to stop
                 $timeout = 30
                 do {
@@ -97,7 +96,7 @@ function Stop-PBSPlusProcesses {
         }
     }
 
-    # Kill processes by name patterns
+    # Kill processes by common name patterns
     $processPatterns = @("*pbs*plus*", "*pbsplus*", "pbs-plus-agent*", "pbs-plus-updater*")
     foreach ($pattern in $processPatterns) {
         Get-Process -Name $pattern -ErrorAction SilentlyContinue | ForEach-Object {
@@ -107,23 +106,22 @@ function Stop-PBSPlusProcesses {
     }
 
     # Kill processes by executable path in install directory
-    Get-Process | Where-Object { 
-        $_.Path -and $_.Path -like "$installDir*" 
+    Get-Process | Where-Object {
+        $_.Path -and $_.Path -like "$installDir*"
     } | ForEach-Object {
         Write-Host "Killing process from install directory: $($_.Name) (PID: $($_.Id))" -ForegroundColor Cyan
         Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
     }
 
-    # Give processes time to fully terminate
     Start-Sleep -Seconds 3
 }
 
 # Function to completely uninstall service
 function Uninstall-ServiceCompletely {
     param([string]$ServiceName)
-    
+
     Write-Host "Completely uninstalling $ServiceName service..." -ForegroundColor Cyan
-    
+
     try {
         $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
         if ($service) {
@@ -131,7 +129,7 @@ function Uninstall-ServiceCompletely {
             if ($service.Status -eq "Running") {
                 Write-Host "Stopping $ServiceName service..." -ForegroundColor Cyan
                 Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-                
+
                 # Wait for service to stop with timeout
                 $timeout = 30
                 do {
@@ -139,12 +137,12 @@ function Uninstall-ServiceCompletely {
                     $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
                     $timeout--
                 } while ($service -and $service.Status -eq "Running" -and $timeout -gt 0)
-                
+
                 if ($timeout -le 0) {
                     Write-Host "Warning: Service $ServiceName did not stop within timeout" -ForegroundColor Yellow
                 }
             }
-            
+
             # Kill any remaining processes associated with the service
             $serviceProcess = Get-WmiObject -Class Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
             if ($serviceProcess -and $serviceProcess.ProcessId -gt 0) {
@@ -152,11 +150,11 @@ function Uninstall-ServiceCompletely {
                 Stop-Process -Id $serviceProcess.ProcessId -Force -ErrorAction SilentlyContinue
                 Start-Sleep -Seconds 2
             }
-            
+
             # Delete the service
             Write-Host "Deleting $ServiceName service..." -ForegroundColor Cyan
             $result = & sc.exe delete $ServiceName 2>&1
-            
+
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "$ServiceName service deleted successfully" -ForegroundColor Green
             } elseif ($result -like "*marked for deletion*") {
@@ -179,30 +177,28 @@ function Install-AndStartService {
         [string]$ServiceName,
         [string]$ExecutablePath
     )
-    
+
     Write-Host "Installing $ServiceName service..." -ForegroundColor Cyan
-    
+
     try {
         # Install the service
         $installResult = & $ExecutablePath install 2>&1
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Warning: Service install returned exit code $LASTEXITCODE" -ForegroundColor Yellow
         }
-        
-        # Wait a moment for service to be registered
+
         Start-Sleep -Seconds 2
-        
+
         # Verify service was installed
         $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
         if (-not $service) {
             throw "Service $ServiceName was not installed successfully"
         }
-        
+
         # Start the service
         Write-Host "Starting $ServiceName service..." -ForegroundColor Cyan
         Start-Service -Name $ServiceName -ErrorAction Stop
-        
-        # Verify service is running
+
         Start-Sleep -Seconds 2
         $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
         if ($service -and $service.Status -eq "Running") {
@@ -217,51 +213,98 @@ function Install-AndStartService {
     }
 }
 
-# Function to clean up old files
+# Function to clean up old files from both versions
 function Remove-OldFiles {
-    Write-Host "Cleaning up old files..." -ForegroundColor Cyan
-    
-    # Files to remove from install directory and other potential locations
-    $filesToRemove = @(
-        "nfssessions.lock",
-        "nfssessions.json", 
-        "backup_sessions.json",
-        "backup_sessions.lock",
+    Write-Host "Cleaning up old files from both versions..." -ForegroundColor Cyan
+
+    # Files indicative of legacy file+secretbox version
+    $legacyFiles = @(
         "secret.key",
         "master.key",
         "secret.json",
+        "secrets.json",
+        "nfssessions.lock",
+        "nfssessions.json",
+        "backup_sessions.json",
+        "backup_sessions.lock",
         "*.backup"
     )
-    
-    # Locations to check
+
+    # Locations to check (both legacy and current)
     $locationsToCheck = @(
         $installDir,
         "C:\Program Files\PBS Plus Agent",
         "C:\Program Files (x86)\PBS Plus Agent",
         "C:\PBS Plus Agent",
-        "C:\PBS Plus"
+        "C:\PBS Plus",
+        $env:TEMP
     )
-    
+
     foreach ($location in $locationsToCheck) {
         if (Test-Path -Path $location) {
-            foreach ($pattern in $filesToRemove) {
-                $files = Get-ChildItem -Path $location -Name $pattern -ErrorAction SilentlyContinue
-                foreach ($file in $files) {
-                    $fullPath = Join-Path -Path $location -ChildPath $file
-                    if (Test-Path -Path $fullPath) {
-                        Write-Host "Removing: $fullPath" -ForegroundColor Cyan
-                        Remove-Item -Path $fullPath -Force -ErrorAction SilentlyContinue
-                    }
+            foreach ($pattern in $legacyFiles) {
+                Get-ChildItem -Path $location -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                    Write-Host "Removing file: $($_.FullName)" -ForegroundColor Cyan
+                    Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
                 }
             }
         }
     }
+
+    # Remove empty legacy directories if they exist
+    $legacyDirs = @(
+        "C:\PBS Plus Agent",
+        "C:\PBS Plus"
+    )
+    foreach ($d in $legacyDirs) {
+        if (Test-Path $d) {
+            try {
+                $items = Get-ChildItem -Path $d -Force -ErrorAction SilentlyContinue
+                if ($items.Count -eq 0) {
+                    Write-Host "Removing empty directory: $d" -ForegroundColor Cyan
+                    Remove-Item -Path $d -Force -ErrorAction SilentlyContinue
+                }
+            } catch { }
+        }
+    }
+}
+
+# Function to clean up registry for both versions
+function Cleanup-Registry {
+    Write-Host "Cleaning registry for both versions..." -ForegroundColor Cyan
+
+    # Remove legacy Auth keys entirely
+    Remove-Item -Path "HKLM:\SOFTWARE\PBSPlus\Auth" -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Ensure Config exists
+    if (-not (Test-Path -Path "HKLM:\SOFTWARE\PBSPlus\Config")) {
+        New-Item -Path "HKLM:\SOFTWARE\PBSPlus\Config" -Force | Out-Null
+    }
+
+    # Optionally remove stray legacy values in Config that are no longer used.
+    # Keep ServerURL and BootstrapToken. Remove known legacy leftovers.
+    $keepValues = @("ServerURL", "BootstrapToken")
+    $configPath = "HKLM:\SOFTWARE\PBSPlus\Config"
+
+    try {
+        $props = Get-ItemProperty -Path $configPath -ErrorAction SilentlyContinue
+        if ($props) {
+            $allNames = ($props.PSObject.Properties | Where-Object { $_.Name -notin @("PSPath","PSParentPath","PSChildName","PSDrive","PSProvider") }).Name
+            foreach ($name in $allNames) {
+                if ($keepValues -notcontains $name) {
+                    try {
+                        Remove-ItemProperty -Path $configPath -Name $name -Force -ErrorAction SilentlyContinue
+                    } catch { }
+                }
+            }
+        }
+    } catch { }
 }
 
 # Main installation process
 try {
     Write-Host "Starting PBS Plus Agent installation..." -ForegroundColor Green
-    
+
     # Download files
     $agentTempPath = Join-Path -Path $tempDir -ChildPath "pbs-plus-agent.exe"
     $updaterTempPath = Join-Path -Path $tempDir -ChildPath "pbs-plus-updater.exe"
@@ -276,17 +319,20 @@ try {
 
     # Stop all PBS Plus processes
     Stop-PBSPlusProcesses
-    
+
     # Always completely uninstall existing services
     Uninstall-ServiceCompletely -ServiceName "PBSPlusAgent"
     Uninstall-ServiceCompletely -ServiceName "PBSPlusUpdater"
-    
+
     # Wait a moment for services to be fully removed
     Start-Sleep -Seconds 3
-    
-    # Clean up old files
+
+    # Clean up old files from both versions
     Remove-OldFiles
-    
+
+    # Clean up registry from both versions
+    Cleanup-Registry
+
     # Copy new files to install directory
     $agentPath = Join-Path -Path $installDir -ChildPath "pbs-plus-agent.exe"
     $updaterPath = Join-Path -Path $installDir -ChildPath "pbs-plus-updater.exe"
@@ -301,16 +347,12 @@ try {
         throw "Failed to verify copied files"
     }
 
-    # Delete Auth registry keys (keep Config for server URL)
-    Write-Host "Cleaning registry..." -ForegroundColor Cyan
-    Remove-Item -Path "HKLM:\SOFTWARE\PBSPlus\Auth" -Recurse -Force -ErrorAction SilentlyContinue
-
     # Create and set registry values
     Write-Host "Creating registry settings..." -ForegroundColor Cyan
     if (-not (Test-Path -Path "HKLM:\SOFTWARE\PBSPlus\Config")) {
         New-Item -Path "HKLM:\SOFTWARE\PBSPlus\Config" -Force | Out-Null
     }
-    
+
     Set-ItemProperty -Path "HKLM:\SOFTWARE\PBSPlus\Config" -Name "ServerURL" -Value $serverUrl -Type String
     Set-ItemProperty -Path "HKLM:\SOFTWARE\PBSPlus\Config" -Name "BootstrapToken" -Value $bootstrapToken -Type String
     Write-Host "Registry settings created successfully" -ForegroundColor Green
