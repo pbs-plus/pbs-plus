@@ -48,6 +48,10 @@ import (
 
 var Version = "v0.0.0"
 
+func init() {
+	utils.IsServer = true
+}
+
 type arrayFlags []string
 
 func (i *arrayFlags) String() string {
@@ -119,7 +123,7 @@ func main() {
 
 	syslog.L.Server = true
 	if err := syslog.L.SetServiceLogger(); err != nil {
-		log.Println(err)
+		syslog.L.Error(err).Write()
 	}
 
 	storeInstance, err := store.Initialize(mainCtx, nil)
