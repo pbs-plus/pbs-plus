@@ -26,14 +26,6 @@ jobs:
       - name: Set up Rust
         uses: moonrepo/setup-rust@v1
 
-      - name: Set up Zig
-        uses: mlugg/setup-zig@v2
-
-      - name: Install zigbuild
-        run: |
-          cargo install --locked cargo-zigbuild
-          apt-get install pkg-config libssl-dev -y
-
       - name: Import GPG key
         run: |
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import

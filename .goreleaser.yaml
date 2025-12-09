@@ -24,6 +24,8 @@ builds:
   # Proxmox Backup PXAR Mount (Linux)
   - id: pxar-mount
     builder: rust
+    tool: cargo
+    command: build
     binary: proxmox-backup-pxar-mount
     targets:
       - x86_64-unknown-linux-gnu
