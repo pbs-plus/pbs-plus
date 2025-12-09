@@ -21,6 +21,16 @@ builds:
     ldflags:
       - -X 'main.Version=v{{.Version}}'
 
+  # Proxmox Backup PXAR Mount (Linux)
+  - id: pxar-mount
+    builder: rust
+    binary: proxmox-backup-pxar-mount
+    targets:
+      - x86_64-unknown-linux-gnu
+    dir: extras/proxmox-backup-pxar-mount
+    flags:
+      - --release
+
   # Linux Agent
   - id: linux-agent
     main: ./cmd/unix_agent
@@ -94,6 +104,13 @@ archives:
     formats:
       - binary
 
+  - id: pxar-mount
+    ids:
+      - pxar-mount
+    name_template: "proxmox-backup-pxar-mount-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
   - id: linux-agent
     ids:
       - linux-agent
@@ -131,7 +148,7 @@ nfpms:
   - id: server-deb
     ids:
       - server
-      - esxi-nfs-backup
+      - pxar-mount
     package_name: "{{ .ProjectName }}"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
