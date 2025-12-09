@@ -17,12 +17,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
 
 var (
@@ -82,7 +82,7 @@ func parseMountPoints() ([]string, error) {
 		if len(fields) < 5 {
 			continue
 		}
-		mp := fields[4] // mount point field
+		mp := fields[4]
 		mps = append(mps, mp)
 	}
 	if err := sc.Err(); err != nil {
@@ -105,8 +105,14 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		datastore := utils.DecodePath(r.PathValue("datastore"))
-		jobStore := fmt.Sprintf("%s@localhost:%s", proxmox.AUTH_ID, datastore)
-		if jobStore == "@localhost:" {
+		dsInfo, err := proxmox.GetDatastoreInfo(datastore)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		pbsStoreRoot := dsInfo.Path
+		if datastore == "" || pbsStoreRoot == "" {
 			controllers.WriteErrorResponse(w, fmt.Errorf("invalid datastore configuration"))
 			return
 		}
@@ -121,8 +127,10 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			http.Error(w, "missing required parameters", http.StatusBadRequest)
 			return
 		}
-		if !strings.HasSuffix(fileName, ".mpxar.didx") && !strings.HasSuffix(fileName, ".pxar.didx") {
-			http.Error(w, "file-name must end with .pxar.didx or .mpxar.didx", http.StatusBadRequest)
+		if !strings.HasSuffix(fileName, ".mpxar.didx") &&
+			!strings.HasSuffix(fileName, ".pxar.didx") &&
+			!strings.HasSuffix(fileName, ".ppxar.didx") {
+			http.Error(w, "file-name must end with .pxar.didx, .mpxar.didx, or .ppxar.didx", http.StatusBadRequest)
 			return
 		}
 
@@ -133,13 +141,13 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 		safeTime := parsedTime.Format("2006-01-02_15-04-05")
 
-		mountPoint := filepath.Join(
+		mountPoint := filepath.Clean(filepath.Join(
 			constants.RestoreMountBasePath,
 			datastore,
 			ns,
 			fmt.Sprintf("%s-%s", backupType, backupID),
 			safeTime,
-		)
+		))
 
 		// Prepare mount directory: lazy unmount, clean, recreate
 		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
@@ -150,69 +158,163 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// proxmox-backup-client mount [--ns NS] <groupPath> <archive> <target>
-		archive := strings.TrimSuffix(fileName, ".didx")
-		groupPath := fmt.Sprintf("%s/%s/%s", backupType, backupID, backupTime)
-
-		args := []string{
-			"mount",
-			"--repository", jobStore,
-		}
+		// Build paths to the dynamic index files inside datastore:
+		// Layout: <pbsStoreRoot>[/ns/<ns>]/<backupType>/<backupID>/<backupTime>/<fileName>
+		groupPath := filepath.Join(backupType, backupID, backupTime)
 		if ns != "" {
-			args = append(args, "--ns", ns)
+			groupPath = filepath.Join("ns", ns, groupPath)
 		}
-		args = append(args, groupPath, archive, mountPoint)
+		didxPath := filepath.Join(pbsStoreRoot, groupPath, fileName)
 
-		env := append(os.Environ(),
-			fmt.Sprintf("PBS_PASSWORD=%s", proxmox.GetToken()))
+		// Determine mode and arguments for proxmox-backup-pxar-mount
+		args := []string{}
+		var mode string
 
-		if pbsStatus, err := proxmox.GetProxmoxCertInfo(); err == nil {
-			env = append(env, fmt.Sprintf("PBS_FINGERPRINT=%s", pbsStatus.FingerprintSHA256))
-		}
-
-		cmd := exec.Command("/usr/bin/proxmox-backup-client", args...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		cmd.Env = env
-
-		syslog.L.Info().
-			WithField("cmd", strings.Join(cmd.Args, " ")).
-			WithField("jobStore", jobStore).
-			WithMessage("mounting").
-			Write()
-
-		// Retry loop until mounted or timeout
-		deadline := time.Now().Add(5 * time.Second)
-		var lastErr error
-		for {
-			if err := cmd.Run(); err != nil {
-				lastErr = err
+		switch {
+		case strings.HasSuffix(fileName, ".pxar.didx"):
+			// Unified pxar dynamic index: use --pxar-didx
+			mode = "unified"
+			args = []string{
+				"--pbs-store", pbsStoreRoot,
+				"--ppxar-didx", didxPath,
 			}
+
+		case strings.HasSuffix(fileName, ".mpxar.didx"):
+			// Split metadata (.mpxar.didx) requires corresponding .ppxar.didx
+			mode = "split"
+			ppxarName := strings.TrimSuffix(fileName, ".mpxar.didx") + ".ppxar.didx"
+			ppxarPath := filepath.Join(pbsStoreRoot, groupPath, ppxarName)
+			if _, err := os.Stat(ppxarPath); err != nil {
+				controllers.WriteErrorResponse(w, fmt.Errorf("payload index not found: %s", ppxarPath))
+				return
+			}
+			args = []string{
+				"--pbs-store", pbsStoreRoot,
+				"--mpxar-didx", didxPath,
+				"--ppxar-didx", ppxarPath,
+			}
+
+		case strings.HasSuffix(fileName, ".ppxar.didx"):
+			// Payload-only index provided; try to find sibling .mpxar.didx
+			mode = "split"
+			mpxarName := strings.TrimSuffix(fileName, ".ppxar.didx") + ".mpxar.didx"
+			mpxarPath := filepath.Join(pbsStoreRoot, groupPath, mpxarName)
+			if _, err := os.Stat(mpxarPath); err != nil {
+				controllers.WriteErrorResponse(w, fmt.Errorf("metadata index not found: %s", mpxarPath))
+				return
+			}
+			args = []string{
+				"--pbs-store", pbsStoreRoot,
+				"--mpxar-didx", mpxarPath,
+				"--ppxar-didx", didxPath,
+			}
+		}
+
+		args = append(args, "--options", "ro,default_permissions,allow_other")
+		args = append(args, mountPoint)
+
+		var (
+			cmd      *exec.Cmd
+			lastErr  error
+			proc     *os.Process
+			deadline = time.Now().Add(5 * time.Second)
+		)
+
+		start := func() error {
+			cmd = exec.Command("/usr/bin/proxmox-backup-pxar-mount", args...)
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				Setsid: true,
+			}
+			cmd.Stdout = nil
+			cmd.Stderr = nil
+			if err := cmd.Start(); err != nil {
+				return err
+			}
+			proc = cmd.Process
+			syslog.L.Info().
+				WithField("cmd", strings.Join(cmd.Args, " ")).
+				WithField("mode", mode).
+				WithField("pbsStoreRoot", pbsStoreRoot).
+				WithField("pid", proc.Pid).
+				WithMessage("mounting (foreground process started)").
+				Write()
+			return nil
+		}
+
+		killProc := func() {
+			if proc == nil {
+				return
+			}
+			_ = proc.Signal(syscall.SIGTERM)
+			waitCh := make(chan struct{}, 1)
+			go func(c *exec.Cmd) {
+				_ = c.Wait()
+				waitCh <- struct{}{}
+			}(cmd)
+			select {
+			case <-waitCh:
+			case <-time.After(1 * time.Second):
+				_ = proc.Kill()
+				_ = cmd.Wait()
+			}
+			proc = nil
+		}
+
+		// Start first attempt
+		if err := start(); err != nil {
+			controllers.WriteErrorResponse(w, fmt.Errorf("start mount: %w", err))
+			_ = os.RemoveAll(mountPoint)
+			return
+		}
+
+		for {
 			if utils.IsMounted(mountPoint) {
 				break
 			}
-			if time.Now().After(deadline) {
-				_ = os.RemoveAll(mountPoint)
-				syslog.L.Error(lastErr).
-					WithField("cmd", strings.Join(cmd.Args, " ")).
-					WithField("jobStore", jobStore).
-					Write()
-				if lastErr == nil {
-					lastErr = errors.New("mount verification failed (timeout)")
+
+			// if the process exited early and the mount isn't present, treat as failure
+			ps, _ := proc.Wait()
+			if ps != nil && ps.Exited() && !utils.IsMounted(mountPoint) {
+				lastErr = errors.New("pxar mount process exited before mount became ready")
+				if time.Now().After(deadline) {
+					break
 				}
-				controllers.WriteErrorResponse(w, lastErr)
-				return
+				time.Sleep(200 * time.Millisecond)
+				if err := start(); err != nil {
+					lastErr = err
+					break
+				}
+				continue
 			}
-			time.Sleep(200 * time.Millisecond)
-			// Recreate command for retry
-			cmd = exec.Command("/usr/bin/proxmox-backup-client", args...)
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-			cmd.Env = env
+
+			if time.Now().After(deadline) {
+				lastErr = errors.New("mount verification failed (timeout)")
+				break
+			}
+			time.Sleep(150 * time.Millisecond)
 		}
 
-		// Track mount in memory
+		if !utils.IsMounted(mountPoint) {
+			killProc()
+			_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
+			_ = exec.Command("fusermount", "-uz", mountPoint).Run()
+			_ = os.RemoveAll(mountPoint)
+
+			syslog.L.Error(lastErr).
+				WithField("pbsStoreRoot", pbsStoreRoot).
+				WithField("mountPoint", mountPoint).
+				Write()
+			if lastErr == nil {
+				lastErr = errors.New("mount failed")
+			}
+			controllers.WriteErrorResponse(w, lastErr)
+			return
+		}
+
+		// success: keep the foreground FUSE process running
 		key := snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName)
 		mountMu.Lock()
-		mountedPaths[key] = appendUnique(mountedPaths[key], mountPoint)
+		mountedPaths[key] = appendUnique(mountedPaths[key], filepath.Clean(mountPoint))
 		mountMu.Unlock()
 
 		writeJSON(w, JobRunResponse{
@@ -239,7 +341,6 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 		backupTime := strings.TrimSpace(r.FormValue("backup-time"))
 		fileName := strings.TrimSpace(r.FormValue("file-name"))
 		ns := strings.TrimSpace(r.FormValue("ns"))
-
 		datastore := utils.DecodePath(r.PathValue("datastore"))
 
 		if backupType == "" || backupID == "" || backupTime == "" || fileName == "" {
@@ -254,16 +355,15 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 		safeTime := parsedTime.Format("2006-01-02_15-04-05")
 
-		mountPoint := filepath.Join(
+		mountPoint := filepath.Clean(filepath.Join(
 			constants.RestoreMountBasePath,
 			datastore,
 			ns,
 			fmt.Sprintf("%s-%s", backupType, backupID),
 			safeTime,
-		)
+		))
 
 		mountMu.Lock()
-		// Remove from all keys
 		for k, v := range mountedPaths {
 			mountedPaths[k] = removeString(v, mountPoint)
 			if len(mountedPaths[k]) == 0 {
@@ -272,7 +372,7 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 		mountMu.Unlock()
 
-		// Perform unmount
+		// Unmount and remove the mount directory
 		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
 		_ = exec.Command("fusermount", "-uz", mountPoint).Run()
 		_ = os.RemoveAll(mountPoint)
@@ -299,11 +399,11 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 		ns := strings.TrimSpace(r.FormValue("ns"))
 		datastore := utils.DecodePath(r.PathValue("datastore"))
 
-		mountPoint := filepath.Join(
+		base := filepath.Clean(filepath.Join(
 			constants.RestoreMountBasePath,
 			datastore,
 			ns,
-		)
+		))
 
 		allMPs, err := parseMountPoints()
 		if err != nil {
@@ -313,11 +413,12 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		var targets []string
 		for _, mp := range allMPs {
-			if isPathWithin(mountPoint, mp) {
-				targets = append(targets, mp)
+			if isPathWithin(base, mp) {
+				targets = append(targets, filepath.Clean(mp))
 			}
 		}
 
+		// Unmount deeper paths first
 		sort.Slice(targets, func(i, j int) bool {
 			di := strings.Count(filepath.Clean(targets[i]), string(filepath.Separator))
 			dj := strings.Count(filepath.Clean(targets[j]), string(filepath.Separator))
@@ -327,11 +428,12 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			return di > dj
 		})
 
+		// Update in-memory tracking
 		mountMu.Lock()
 		for k, v := range mountedPaths {
 			var kept []string
 			for _, p := range v {
-				if !isPathWithin(mountPoint, p) {
+				if !isPathWithin(base, p) {
 					kept = append(kept, p)
 				}
 			}
@@ -346,7 +448,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 		for _, mp := range targets {
 			_ = exec.Command("umount", "-f", "-l", mp).Run()
 			_ = exec.Command("fusermount", "-uz", mp).Run()
-			_ = os.RemoveAll(mountPoint)
+			_ = os.RemoveAll(mp)
 		}
 
 		writeJSON(w, JobRunResponse{
