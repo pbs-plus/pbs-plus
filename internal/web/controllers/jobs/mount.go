@@ -176,7 +176,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			mode = "unified"
 			args = []string{
 				"--pbs-store", pbsStoreRoot,
-				"--pxar-didx", didxPath,
+				"--ppxar-didx", didxPath,
 			}
 
 		case strings.HasSuffix(fileName, ".mpxar.didx"):
@@ -223,9 +223,8 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		start := func() error {
 			cmd = exec.Command("/usr/bin/proxmox-backup-pxar-mount", args...)
 			cmd.SysProcAttr = &syscall.SysProcAttr{
-				Setsid: true, // new session; helps signal management
+				Setsid: true,
 			}
-			// detach stdio to prevent blocking on pipes
 			cmd.Stdout = nil
 			cmd.Stderr = nil
 			if err := cmd.Start(); err != nil {
@@ -246,7 +245,6 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			if proc == nil {
 				return
 			}
-			// try TERM, then KILL
 			_ = proc.Signal(syscall.SIGTERM)
 			waitCh := make(chan struct{}, 1)
 			go func(c *exec.Cmd) {
@@ -257,7 +255,6 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			case <-waitCh:
 			case <-time.After(1 * time.Second):
 				_ = proc.Kill()
-				// wait regardless after kill
 				_ = cmd.Wait()
 			}
 			proc = nil
@@ -271,21 +268,17 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for {
-			// Check if mounted
 			if utils.IsMounted(mountPoint) {
 				break
 			}
 
-			// Check if process exited prematurely; capture error from Wait non-blocking
-			state, err := proc.Wait()
-			if err == nil && state.Exited() && !utils.IsMounted(mountPoint) {
-				// process ended without mounting; record and retry
+			// if the process exited early and the mount isn't present, treat as failure
+			ps, _ := proc.Wait()
+			if ps != nil && ps.Exited() && !utils.IsMounted(mountPoint) {
 				lastErr = errors.New("pxar mount process exited before mount became ready")
-				// restart if time permits
 				if time.Now().After(deadline) {
 					break
 				}
-				// small backoff
 				time.Sleep(200 * time.Millisecond)
 				if err := start(); err != nil {
 					lastErr = err
@@ -294,17 +287,14 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 				continue
 			}
 
-			// timeout?
 			if time.Now().After(deadline) {
 				lastErr = errors.New("mount verification failed (timeout)")
 				break
 			}
-
 			time.Sleep(150 * time.Millisecond)
 		}
 
 		if !utils.IsMounted(mountPoint) {
-			// failed: clean up process and directory
 			killProc()
 			_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
 			_ = exec.Command("fusermount", "-uz", mountPoint).Run()
@@ -321,7 +311,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// success: keep foreground process running, do not Wait()
+		// success: keep the foreground FUSE process running
 		key := snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName)
 		mountMu.Lock()
 		mountedPaths[key] = appendUnique(mountedPaths[key], filepath.Clean(mountPoint))
@@ -382,7 +372,7 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 		mountMu.Unlock()
 
-		// Unmount and cleanup; this will make the foreground FUSE process exit
+		// Unmount and remove the mount directory
 		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
 		_ = exec.Command("fusermount", "-uz", mountPoint).Run()
 		_ = os.RemoveAll(mountPoint)
