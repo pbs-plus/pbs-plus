@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3"
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -54,6 +55,10 @@ type StatusArgs struct {
 
 type StatusReply struct {
 	Connected bool
+}
+
+type VFSStatusArgs struct {
+	Key string
 }
 
 type CleanupArgs struct {
@@ -243,6 +248,17 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 			"prefix":   args.Prefix,
 		}).Write()
 
+	return nil
+}
+
+func (s *MountRPCService) GetVFSStats(args *VFSStatusArgs, reply *vfs.Stats) error {
+	vfsSession := store.GetSessionFS(args.Key)
+	if vfsSession == nil {
+		return fmt.Errorf("vfs stats: unable to find %s", args.Key)
+	}
+
+	stats := vfsSession.GetStats()
+	*reply = stats
 	return nil
 }
 
