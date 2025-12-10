@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -318,8 +317,6 @@ func EnsureServerCertUsingExistingCA(outDir, org string, keySize, validDays int,
 	if ok {
 		if err := utils.ValidateHostname(userHostname); err == nil {
 			hostnames = append(hostnames, userHostname)
-		} else {
-			syslog.L.Error(err).WithMessage("failed to append PBS_PLUS_HOSTNAME").Write()
 		}
 	}
 
