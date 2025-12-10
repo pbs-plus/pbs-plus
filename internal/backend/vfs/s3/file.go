@@ -5,10 +5,12 @@ package s3fs
 import (
 	"context"
 	"io"
+	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/minio/minio-go/v7"
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -16,7 +18,6 @@ import (
 
 var _ vfs.FileHandle = (*S3File)(nil)
 
-// ReadAt reads len(buf) bytes from the file starting at byte offset off.
 func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	if len(buf) == 0 {
 		return 0, nil
@@ -26,10 +27,9 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 		return 0, syscall.EINVAL
 	}
 
-	ctx, cancel := context.WithTimeout(f.fs.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(f.fs.Ctx, 30*time.Second)
 	defer cancel()
 
-	// Use range request for the specific offset and length
 	opts := minio.GetObjectOptions{}
 	err := opts.SetRange(off, off+int64(len(buf))-1)
 	if err != nil {
@@ -54,10 +54,8 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	}
 	defer obj.Close()
 
-	// Read the data
 	n, err := io.ReadFull(obj, buf)
 
-	// Handle partial reads at end of file
 	if err == io.ErrUnexpectedEOF {
 		syslog.L.Error(err).WithJob(f.jobId).
 			WithMessage("unexpected eof handled from s3 file").
@@ -65,6 +63,9 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 			WithField("offset", f.offset).
 			WithField("length", len(buf)).
 			Write()
+		atomic.AddInt64(&f.fs.TotalBytes, int64(n))
+		tb := atomic.LoadInt64(&f.fs.TotalBytes)
+		_ = f.fs.Memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
 		return n, io.EOF
 	}
 
@@ -78,9 +79,10 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 		return n, err
 	}
 
-	atomic.AddInt64(&f.fs.totalBytes, int64(n))
+	atomic.AddInt64(&f.fs.TotalBytes, int64(n))
+	tb := atomic.LoadInt64(&f.fs.TotalBytes)
+	_ = f.fs.Memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
 
-	// If we read less than requested, it means we hit EOF
 	if n < len(buf) {
 		return n, io.EOF
 	}
@@ -92,7 +94,6 @@ func (f *S3File) Lseek(off int64, whence int) (uint64, error) {
 	return 0, syscall.EOPNOTSUPP
 }
 
-// Close closes the file.
 func (f *S3File) Close() error {
 	return nil
 }
