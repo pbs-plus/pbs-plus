@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
+	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	simplebox "github.com/pbs-plus/pbs-plus/internal/store/database/secrets"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
