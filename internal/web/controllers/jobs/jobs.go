@@ -33,10 +33,6 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for i, job := range allJobs {
-			if job.LastRunUpid != "" && job.LastRunState == "" {
-				continue
-			}
-
 			var childKey string
 			isS3 := false
 			isAgent := strings.HasPrefix(job.TargetPath, "agent://")
@@ -55,6 +51,10 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			session := store.GetSessionFS(childKey)
+			if session == nil {
+				continue
+			}
+
 			stats, err := session.GetStats()
 			if err != nil {
 				syslog.L.Error(err).WithField("childKey", childKey).Write()
