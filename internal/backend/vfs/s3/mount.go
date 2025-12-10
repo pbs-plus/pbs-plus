@@ -1,16 +1,15 @@
 //go:build linux
 
-package mount
+package s3fs
 
 import (
 	"os"
 	"os/exec"
 
-	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/backend/arpc/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs/fuse"
 )
 
-func Mount(f *arpcfs.ARPCFS, mountpoint string) error {
+func (f *S3FS) Mount(mountpoint string) error {
 	fsName := "pbs-plus://" + f.Job.ID
 
 	umount := exec.Command("umount", "-lf", mountpoint)
@@ -22,8 +21,16 @@ func Mount(f *arpcfs.ARPCFS, mountpoint string) error {
 		return err
 	}
 
-	f.Mount = server
+	f.Fuse = server
 
-	f.Mount.WaitMount()
+	f.Fuse.WaitMount()
 	return nil
 }
+
+func (fs *S3FS) Unmount() {
+	if fs.Fuse != nil {
+		_ = fs.Fuse.Unmount()
+	}
+	fs.cancel()
+}
+

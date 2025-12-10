@@ -157,7 +157,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 				incomplete = false
 			}
 
-			// Write each line with timestamp
 			if _, err := tmpWriter.WriteString(line + "\n"); err != nil {
 				return fmt.Errorf("failed to write log line: %w", err)
 			}
@@ -183,9 +182,11 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	var sb strings.Builder
 
 	timestamp := time.Now().Format(time.RFC3339)
-	sb.WriteString(timestamp)
+	if !hasError {
+		sb.WriteString(timestamp)
+	}
+
 	if hasError {
-		sb.WriteString(": ")
 		sb.WriteString(errorString)
 	} else if incomplete || disconnected {
 		sb.WriteString(": TASK ERROR: task aborted")

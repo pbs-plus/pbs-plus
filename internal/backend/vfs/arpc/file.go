@@ -11,8 +11,11 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
+
+var _ vfs.FileHandle = (*ARPCFile)(nil)
 
 func (f *ARPCFile) Close() error {
 	if f.isClosed.Load() {
