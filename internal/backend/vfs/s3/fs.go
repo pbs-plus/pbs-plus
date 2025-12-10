@@ -21,7 +21,17 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
+
+func (fs *S3FS) logError(fpath string, err error) {
+	if !strings.HasSuffix(fpath, ".pxarexclude") {
+		syslog.L.Error(err).
+			WithField("path", fpath).
+			WithJob(fs.Job.ID).
+			Write()
+	}
+}
 
 var _ vfs.FS = (*S3FS)(nil)
 
@@ -131,9 +141,10 @@ func (fs *S3FS) Open(filename string) (vfs.FileHandle, error) {
 }
 
 func (fs *S3FS) OpenFile(filename string, flag int, _ os.FileMode) (vfs.FileHandle, error) {
-	if flag&(os.O_WRONLY|os.O_RDWR) != 0 {
-		return nil, syscall.EROFS
-	}
+	defer func() {
+		key := fs.fullKey(filename)
+		fs.memcache.Delete("attr:" + key)
+	}()
 
 	info, err := fs.Attr(filename, false)
 	if err != nil {
@@ -144,9 +155,10 @@ func (fs *S3FS) OpenFile(filename string, flag int, _ os.FileMode) (vfs.FileHand
 	}
 
 	return &S3File{
-		fs:   fs,
-		key:  fs.fullKey(filename),
-		size: info.Size,
+		fs:    fs,
+		key:   fs.fullKey(filename),
+		size:  info.Size,
+		jobId: fs.Job.ID,
 	}, nil
 }
 
@@ -177,7 +189,6 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 				if cached.IsDir {
 					atomic.AddInt64(&fs.folderCount, 1)
 				} else {
-					fs.memcache.Delete("attr:" + key)
 					atomic.AddInt64(&fs.fileCount, 1)
 				}
 			}
@@ -205,7 +216,6 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 			_ = fs.memcache.Set(&memcache.Item{Key: "attr:" + key, Value: raw, Expiration: 0})
 		}
 		if !isLookup {
-			fs.memcache.Delete("attr:" + key)
 			atomic.AddInt64(&fs.fileCount, 1)
 		}
 		return fi, nil
@@ -225,6 +235,7 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 	foundDir := false
 	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
 		if obj.Err != nil {
+			fs.logError(fpath, obj.Err)
 			return agentTypes.AgentFileInfo{}, syscall.ENOENT
 		}
 		foundDir = true
@@ -249,6 +260,7 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 		return fi, nil
 	}
 
+	fs.logError(fpath, syscall.ENOENT)
 	return agentTypes.AgentFileInfo{}, syscall.ENOENT
 }
 
@@ -283,6 +295,8 @@ func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
 				FileAttributes: fiCached.FileAttributes,
 			}
 			return fi, nil
+		} else {
+			fs.logError(fpath, err)
 		}
 		// If object not found, treat as ENODATA
 		return agentTypes.AgentFileInfo{}, syscall.ENODATA
@@ -315,6 +329,7 @@ func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
 	}
 	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
 		if obj.Err != nil {
+			fs.logError(fpath, obj.Err)
 			return agentTypes.AgentFileInfo{}, syscall.ENODATA
 		}
 		now := time.Now().Unix()
@@ -330,6 +345,7 @@ func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
 		return fi, nil
 	}
 
+	fs.logError(fpath, syscall.ENODATA)
 	return agentTypes.AgentFileInfo{}, syscall.ENODATA
 }
 
@@ -377,6 +393,7 @@ func (fs *S3FS) ReadDir(fpath string) (vfs.DirStream, error) {
 
 	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
 		if obj.Err != nil {
+			fs.logError(fpath, obj.Err)
 			return nil, syscall.ENOENT
 		}
 

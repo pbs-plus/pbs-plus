@@ -40,4 +40,5 @@ type S3File struct {
 	key    string
 	offset int64
 	size   int64
+	jobId  string
 }
