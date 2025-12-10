@@ -38,7 +38,6 @@ var (
 	ErrTargetNotFound    = errors.New("target does not exist")
 	ErrTargetUnreachable = errors.New("target unreachable")
 
-	ErrMountInitialization  = errors.New("mount initialization error")
 	ErrPrepareBackupCommand = errors.New("failed to prepare backup command")
 
 	ErrTaskMonitoringInitializationFailed = errors.New("task monitoring initialization failed")
@@ -245,7 +244,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		agentMount, err = mount.AgentFSMount(op.storeInstance, op.job, target)
 		if err != nil {
 			errCleanUp()
-			return fmt.Errorf("%w: %v", ErrMountInitialization, err)
+			return err
 		}
 		srcPath = agentMount.Path
 
@@ -263,7 +262,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		s3Mount, err = mount.S3FSMount(op.storeInstance, op.job, target)
 		if err != nil {
 			errCleanUp()
-			return fmt.Errorf("%w: %v", ErrMountInitialization, err)
+			return err
 		}
 		srcPath = s3Mount.Path
 
@@ -387,7 +386,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		if currOwner != "" {
 			_ = SetDatastoreOwner(op.job, op.storeInstance, currOwner)
 		}
-		return fmt.Errorf("%w: %v", ErrTaskDetectionTimedOut, monitorCtx.Err())
+		return ErrTaskDetectionTimedOut
 	}
 
 	if err := updateJobStatus(false, 0, op.job, task, op.storeInstance); err != nil {
