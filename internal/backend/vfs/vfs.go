@@ -32,4 +32,5 @@ type FS interface {
 	ReadDir(path string) (DirStream, error)
 	StatFS() (agenttypes.StatFS, error)
 	Context() context.Context
+	GetMemcache() *memcache.Client
 }
