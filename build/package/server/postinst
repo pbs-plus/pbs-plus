@@ -24,7 +24,8 @@ if [ ! -f "${ENV_FILE}" ]; then
 # This file is sourced by systemd (EnvironmentFile).
 # Format: KEY=VALUE, no quotes unless needed for spaces.
 
-# PBS_PLUS_HOSTNAME=<hostname for server here>
+# Required variables:
+# PBS_PLUS_HOSTNAME=<hostname/fqdn for server here>
 EOF
 else
   # Ensure correct permissions if file already exists
