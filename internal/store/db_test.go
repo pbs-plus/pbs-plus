@@ -4,7 +4,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	sqlite "github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,7 +105,7 @@ func TestJobCRUD(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = store.Database.GetJob(job.ID)
-		assert.ErrorIs(t, err, sql.ErrNoRows)
+		assert.ErrorIs(t, err, sqlite.ErrJobNotFound)
 	})
 
 	t.Run("Concurrent Operations", func(t *testing.T) {
