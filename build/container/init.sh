@@ -10,9 +10,9 @@ REG_DIR_AGENT="$REG_BASE/software/pbsplus/config"
 REG_SERVER_URL_FILE="$REG_DIR_AGENT/serverurl.value"
 REG_BOOTSTRAP_TOKEN_FILE="$REG_DIR_AGENT/bootstraptoken.value"
 
-# Require AGENT_HOSTNAME
-if [ "${AGENT_HOSTNAME:-}" = "" ]; then
-  echo "ERROR: AGENT_HOSTNAME environment variable is required." >&2
+# Require PBS_PLUS_HOSTNAME
+if [ "${PBS_PLUS_HOSTNAME:-}" = "" ]; then
+  echo "ERROR: PBS_PLUS_HOSTNAME environment variable is required." >&2
   exit 1
 fi
 

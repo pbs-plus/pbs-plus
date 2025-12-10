@@ -41,7 +41,7 @@ func ValidateHostname(host string) error {
 }
 
 func GetAgentHostname() (string, error) {
-	host := os.Getenv("AGENT_HOSTNAME")
+	host := os.Getenv("PBS_PLUS_HOSTNAME")
 	if host == "" {
 		return os.Hostname()
 	}
