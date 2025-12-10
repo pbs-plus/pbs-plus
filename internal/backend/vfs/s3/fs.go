@@ -72,34 +72,32 @@ func NewS3FS(
 	}
 
 	fs := &S3FS{
-		basePath: "/",
-		ctx:      ctxFs,
-		cancel:   cancel,
-		Job:      job,
-		client:   client,
-		bucket:   bucket,
-		prefix:   prefix,
-		memcache: memcache.New(memcachePath),
+		VFSBase: &vfs.VFSBase{
+			BasePath: "/",
+			Ctx:      ctxFs,
+			Cancel:   cancel,
+			Job:      job,
+			Memcache: memcache.New(memcachePath),
+		},
+		client: client,
+		bucket: bucket,
+		prefix: prefix,
 	}
 
 	go func() {
 		<-ctxFs.Done()
-		fs.memcache.DeleteAll()
-		fs.memcache.Close()
+		fs.Memcache.DeleteAll()
+		fs.Memcache.Close()
 		stopMemLocal()
 	}()
 
 	return fs
 }
 
-func (fs *S3FS) GetMemcache() *memcache.Client {
-	return fs.memcache
-}
-
-func (fs *S3FS) Context() context.Context { return fs.ctx }
+func (fs *S3FS) Context() context.Context { return fs.Ctx }
 
 func (fs *S3FS) Root() string {
-	return fs.basePath
+	return fs.BasePath
 }
 
 func (fs *S3FS) Open(filename string) (vfs.FileHandle, error) {
@@ -109,7 +107,7 @@ func (fs *S3FS) Open(filename string) (vfs.FileHandle, error) {
 func (fs *S3FS) OpenFile(filename string, flag int, _ os.FileMode) (vfs.FileHandle, error) {
 	defer func() {
 		key := fs.fullKey(filename)
-		fs.memcache.Delete("attr:" + key)
+		fs.Memcache.Delete("attr:" + key)
 	}()
 
 	info, err := fs.Attr(filename, false)
@@ -140,8 +138,8 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 			LastWriteTime:  now,
 		}
 		if !isLookup {
-			atomic.AddInt64(&fs.folderCount, 1)
-			_ = fs.memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.folderCount), 10)), Expiration: 0})
+			atomic.AddInt64(&fs.FolderCount, 1)
+			_ = fs.Memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.FolderCount), 10)), Expiration: 0})
 		}
 		return fi, nil
 	}
@@ -149,24 +147,24 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 	key := fs.fullKey(fpath)
 
 	var cached agentTypes.AgentFileInfo
-	if it, err := fs.memcache.Get("attr:" + key); err == nil {
-		atomic.AddInt64(&fs.statCacheHits, 1)
-		_ = fs.memcache.Set(&memcache.Item{Key: "stats:statCacheHits", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.statCacheHits), 10)), Expiration: 0})
+	if it, err := fs.Memcache.Get("attr:" + key); err == nil {
+		atomic.AddInt64(&fs.StatCacheHits, 1)
+		_ = fs.Memcache.Set(&memcache.Item{Key: "stats:statCacheHits", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.StatCacheHits), 10)), Expiration: 0})
 		if err := cached.Decode(it.Value); err == nil {
 			if !isLookup {
 				if cached.IsDir {
-					atomic.AddInt64(&fs.folderCount, 1)
-					_ = fs.memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.folderCount), 10)), Expiration: 0})
+					atomic.AddInt64(&fs.FolderCount, 1)
+					_ = fs.Memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.FolderCount), 10)), Expiration: 0})
 				} else {
-					atomic.AddInt64(&fs.fileCount, 1)
-					_ = fs.memcache.Set(&memcache.Item{Key: "stats:filesAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.fileCount), 10)), Expiration: 0})
+					atomic.AddInt64(&fs.FileCount, 1)
+					_ = fs.Memcache.Set(&memcache.Item{Key: "stats:filesAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.FileCount), 10)), Expiration: 0})
 				}
 			}
 			return cached, nil
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(fs.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(fs.Ctx, 30*time.Second)
 	defer cancel()
 
 	if objInfo, err := fs.client.StatObject(ctx, fs.bucket, key, minio.StatObjectOptions{}); err == nil {
@@ -183,11 +181,11 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 		}
 		raw, _ := fi.Encode()
 		if isLookup {
-			_ = fs.memcache.Set(&memcache.Item{Key: "attr:" + key, Value: raw, Expiration: 0})
+			_ = fs.Memcache.Set(&memcache.Item{Key: "attr:" + key, Value: raw, Expiration: 0})
 		}
 		if !isLookup {
-			atomic.AddInt64(&fs.fileCount, 1)
-			_ = fs.memcache.Set(&memcache.Item{Key: "stats:filesAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.fileCount), 10)), Expiration: 0})
+			atomic.AddInt64(&fs.FileCount, 1)
+			_ = fs.Memcache.Set(&memcache.Item{Key: "stats:filesAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.FileCount), 10)), Expiration: 0})
 		}
 		return fi, nil
 	}
@@ -223,11 +221,11 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 		}
 		raw, _ := fi.Encode()
 		if isLookup {
-			_ = fs.memcache.Set(&memcache.Item{Key: "attr:" + key, Value: raw, Expiration: 0})
+			_ = fs.Memcache.Set(&memcache.Item{Key: "attr:" + key, Value: raw, Expiration: 0})
 		}
 		if !isLookup {
-			atomic.AddInt64(&fs.folderCount, 1)
-			_ = fs.memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.folderCount), 10)), Expiration: 0})
+			atomic.AddInt64(&fs.FolderCount, 1)
+			_ = fs.Memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.FolderCount), 10)), Expiration: 0})
 		}
 		return fi, nil
 	}
@@ -243,13 +241,13 @@ func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
 
 	var fiCached agentTypes.AgentFileInfo
 	reqAclOnly := false
-	if it, err := fs.memcache.Get("xattr:" + key); err == nil {
+	if it, err := fs.Memcache.Get("xattr:" + key); err == nil {
 		reqAclOnly = true
 		_ = fiCached.Decode(it.Value)
-		fs.memcache.Delete("xattr:" + key)
+		fs.Memcache.Delete("xattr:" + key)
 	}
 
-	ctx, cancel := context.WithTimeout(fs.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(fs.Ctx, 30*time.Second)
 	defer cancel()
 
 	if reqAclOnly {
@@ -283,7 +281,7 @@ func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
 			LastWriteTime:  mod,
 		}
 		raw, _ := fi.Encode()
-		_ = fs.memcache.Set(&memcache.Item{Key: "xattr:" + key, Value: raw, Expiration: 0})
+		_ = fs.Memcache.Set(&memcache.Item{Key: "xattr:" + key, Value: raw, Expiration: 0})
 		return fi, nil
 	}
 
@@ -310,7 +308,7 @@ func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
 			LastWriteTime:  now,
 		}
 		raw, _ := fi.Encode()
-		_ = fs.memcache.Set(&memcache.Item{Key: "xattr:" + key, Value: raw, Expiration: 0})
+		_ = fs.Memcache.Set(&memcache.Item{Key: "xattr:" + key, Value: raw, Expiration: 0})
 		return fi, nil
 	}
 
@@ -342,14 +340,14 @@ func (fs *S3FS) ReadDir(fpath string) (vfs.DirStream, error) {
 		}
 	}
 
-	if it, err := fs.memcache.Get("dir:" + prefix); err == nil {
+	if it, err := fs.Memcache.Get("dir:" + prefix); err == nil {
 		var cached agentTypes.ReadDirEntries
 		if err := cached.Decode(it.Value); err == nil {
 			return &S3DirStream{fs: fs, entries: cached}, nil
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(fs.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(fs.Ctx, 30*time.Second)
 	defer cancel()
 
 	opts := minio.ListObjectsOptions{
@@ -393,8 +391,8 @@ func (fs *S3FS) ReadDir(fpath string) (vfs.DirStream, error) {
 	}
 
 	raw, _ := entries.Encode()
-	_ = fs.memcache.Set(&memcache.Item{Key: "dir:" + prefix, Value: raw, Expiration: 0})
-	fs.memcache.Delete("attr:" + strings.TrimSuffix(prefix, "/"))
+	_ = fs.Memcache.Set(&memcache.Item{Key: "dir:" + prefix, Value: raw, Expiration: 0})
+	fs.Memcache.Delete("attr:" + strings.TrimSuffix(prefix, "/"))
 	return &S3DirStream{fs: fs, entries: entries}, nil
 }
 

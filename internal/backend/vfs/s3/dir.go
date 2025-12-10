@@ -34,7 +34,7 @@ func (s *S3DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	s.idx++
 	atomic.AddUint64(&s.total, 1)
 	tr := atomic.LoadUint64(&s.total)
-	_ = s.fs.memcache.Set(&memcache.Item{Key: "stats:dirEntriesReturned", Value: []byte(strconv.FormatUint(tr, 10)), Expiration: 0})
+	_ = s.fs.Memcache.Set(&memcache.Item{Key: "stats:dirEntriesReturned", Value: []byte(strconv.FormatUint(tr, 10)), Expiration: 0})
 	return fuse.DirEntry{Name: e.Name, Mode: e.Mode}, 0
 }
 
