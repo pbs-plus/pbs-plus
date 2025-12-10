@@ -3,10 +3,8 @@ package agent
 import (
 	"bytes"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"net/http"
 	"sync"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -44,6 +43,12 @@ func GetTLSConfig() (*tls.Config, error) {
 		return nil, fmt.Errorf("GetTLSConfig: server cert not found -> %w", err)
 	}
 
+	var legacyCertPEM []byte
+	legacyServerCertReg, err := registry.GetEntry(registry.AUTH, "LegacyServerCA", true)
+	if err == nil {
+		legacyCertPEM = []byte(legacyServerCertReg.Value)
+	}
+
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
 	if err != nil {
 		return nil, fmt.Errorf("GetTLSConfig: cert not found -> %w", err)
@@ -57,7 +62,7 @@ func GetTLSConfig() (*tls.Config, error) {
 	certPEM := []byte(certReg.Value)
 	keyPEM := []byte(keyReg.Value)
 
-	tlsConfig, err := mtls.BuildClientTLS(certPEM, keyPEM, []byte(serverCertReg.Value))
+	tlsConfig, err := mtls.BuildClientTLS(certPEM, keyPEM, []byte(serverCertReg.Value), legacyCertPEM)
 	if err != nil {
 		return nil, fmt.Errorf("GetTLSConfig: buildclienttls error -> %w", err)
 	}
@@ -76,34 +81,40 @@ func invalidateTLSConfigCache() {
 }
 
 func CheckAndRenewCertificate() error {
-	const renewalWindow = 30 * 24 * time.Hour
+	const renewalWindow = constants.TLSCARotationGraceDays * 24 * time.Hour
 
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
 	if err != nil {
 		return fmt.Errorf("CheckAndRenewCertificate: failed to retrieve certificate - %w", err)
 	}
 
-	block, _ := pem.Decode([]byte(certReg.Value))
-	if block == nil {
-		return fmt.Errorf("CheckAndRenewCertificate: failed to decode PEM block")
+	serverCAReg, err := registry.GetEntry(registry.AUTH, "ServerCA", true)
+	if err != nil {
+		return fmt.Errorf("CheckAndRenewCertificate: failed to retrieve server CA - %w", err)
 	}
 
-	cert, err := x509.ParseCertificate(block.Bytes)
+	cert, err := mtls.ParseCertInfo([]byte(certReg.Value))
 	if err != nil {
 		return fmt.Errorf("CheckAndRenewCertificate: failed to parse certificate - %w", err)
 	}
 
+	serverCA, err := mtls.ParseCertInfo([]byte(serverCAReg.Value))
+	if err != nil {
+		return fmt.Errorf("CheckAndRenewCertificate: failed to parse server CA - %w", err)
+	}
+
 	now := time.Now()
-	timeUntilExpiry := cert.NotAfter.Sub(now)
+	timeUntilExpiry := time.Until(cert.NotAfter)
+	caTimeUntilExpiry := time.Until(serverCA.NotAfter)
 
 	switch {
-	case cert.NotAfter.Before(now):
+	case cert.NotAfter.Before(now) || serverCA.NotAfter.Before(now):
 		registry.DeleteEntry(registry.AUTH, "Cert")
 		registry.DeleteEntry(registry.AUTH, "Priv")
 		registry.DeleteEntry(registry.AUTH, "ServerCA")
 
 		return fmt.Errorf("certificate has expired, agent needs to be bootstrapped again")
-	case timeUntilExpiry < renewalWindow:
+	case timeUntilExpiry < renewalWindow || caTimeUntilExpiry < renewalWindow:
 		fmt.Printf("Certificate expires in %v hours. Renewing...\n", timeUntilExpiry.Hours())
 		return renewCertificate()
 	default:
@@ -175,6 +186,14 @@ func renewCertificate() error {
 		Value:    string(privKey),
 		Path:     registry.AUTH,
 		IsSecret: true,
+	}
+
+	legacyServerCA, err := registry.GetEntry(registry.AUTH, "ServerCA", true)
+	if err == nil {
+		legacyServerCA.Key = "LegacyServerCA"
+		if err = registry.CreateEntry(legacyServerCA); err != nil {
+			return fmt.Errorf("renewCertificate: error storing ca to registry -> %w", err)
+		}
 	}
 
 	if err = registry.CreateEntry(&caEntry); err != nil {

@@ -51,3 +51,4 @@ func GetSysMem() (*SysMem, error) {
 		Available: memory.FreeMemory(),
 	}, nil
 }
+

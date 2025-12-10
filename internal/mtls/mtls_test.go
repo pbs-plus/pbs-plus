@@ -55,7 +55,7 @@ func makeBootstrapHandler(caCertFile, caKeyFile string, clientValidDays int) (ht
 }
 
 func startMTLSServer(addr, serverCertFile, serverKeyFile, caFile string, clientAuth tls.ClientAuthType, handler http.Handler) (*http.Server, error) {
-	tlsCfg, err := BuildServerTLS(serverCertFile, serverKeyFile, caFile, clientAuth)
+	tlsCfg, err := BuildServerTLS(serverCertFile, serverKeyFile, caFile, "", clientAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +192,7 @@ func TestEndToEndMTLSWithCSRBootstrap(t *testing.T) {
 		t.Fatalf("write client key: %v", err)
 	}
 
-	clientTLS, err := BuildClientTLS(signedClientCertPEM, keyPEM, caCertPEM)
+	clientTLS, err := BuildClientTLS(signedClientCertPEM, keyPEM, caCertPEM, nil)
 	if err != nil {
 		t.Fatalf("BuildClientTLS: %v", err)
 	}
