@@ -27,7 +27,7 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 		return 0, syscall.EINVAL
 	}
 
-	ctx, cancel := context.WithTimeout(f.fs.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(f.fs.Ctx, 30*time.Second)
 	defer cancel()
 
 	opts := minio.GetObjectOptions{}
@@ -63,9 +63,9 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 			WithField("offset", f.offset).
 			WithField("length", len(buf)).
 			Write()
-		atomic.AddInt64(&f.fs.totalBytes, int64(n))
-		tb := atomic.LoadInt64(&f.fs.totalBytes)
-		_ = f.fs.memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
+		atomic.AddInt64(&f.fs.TotalBytes, int64(n))
+		tb := atomic.LoadInt64(&f.fs.TotalBytes)
+		_ = f.fs.Memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
 		return n, io.EOF
 	}
 
@@ -79,9 +79,9 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 		return n, err
 	}
 
-	atomic.AddInt64(&f.fs.totalBytes, int64(n))
-	tb := atomic.LoadInt64(&f.fs.totalBytes)
-	_ = f.fs.memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
+	atomic.AddInt64(&f.fs.TotalBytes, int64(n))
+	tb := atomic.LoadInt64(&f.fs.TotalBytes)
+	_ = f.fs.Memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
 
 	if n < len(buf) {
 		return n, io.EOF

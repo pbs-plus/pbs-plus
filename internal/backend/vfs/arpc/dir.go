@@ -76,7 +76,7 @@ func (s *DirStream) HasNext() bool {
 	readBuf := bufPool.Get().([]byte)
 	defer bufPool.Put(readBuf)
 
-	bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
+	bytesRead, err := s.fs.session.CallBinary(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			atomic.StoreInt32(&s.closed, 1)
@@ -157,7 +157,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		attrBytes, err := currAttr.Encode()
 		if err == nil {
-			_ = s.fs.memcache.Set(&memcache.Item{Key: "attr:" + fullPath, Value: attrBytes, Expiration: 0})
+			_ = s.fs.Memcache.Set(&memcache.Item{Key: "attr:" + fullPath, Value: attrBytes, Expiration: 0})
 		}
 	}
 
@@ -171,7 +171,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		xattrBytes, err := currXAttr.Encode()
 		if err == nil {
-			_ = s.fs.memcache.Set(&memcache.Item{Key: "xattr:" + fullPath, Value: xattrBytes, Expiration: 0})
+			_ = s.fs.Memcache.Set(&memcache.Item{Key: "xattr:" + fullPath, Value: xattrBytes, Expiration: 0})
 		}
 	}
 
@@ -179,7 +179,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	atomic.AddUint64(&s.totalReturned, 1)
 
 	tr := atomic.LoadUint64(&s.totalReturned)
-	_ = s.fs.memcache.Set(&memcache.Item{Key: "stats:dirEntriesReturned", Value: []byte(strconv.FormatUint(tr, 10)), Expiration: 0})
+	_ = s.fs.Memcache.Set(&memcache.Item{Key: "stats:dirEntriesReturned", Value: []byte(strconv.FormatUint(tr, 10)), Expiration: 0})
 
 	return fuse.DirEntry{
 		Name: curr.Name,

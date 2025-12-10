@@ -12,11 +12,11 @@ import (
 	"path/filepath"
 	"time"
 
+	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
 	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/web/rpc"
 )
 
 type S3Mount struct {
