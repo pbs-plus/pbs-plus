@@ -22,6 +22,15 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
+func (fs *ARPCFS) logError(fpath string, err error) {
+	if !strings.HasSuffix(fpath, ".pxarexclude") {
+		syslog.L.Error(err).
+			WithField("path", fpath).
+			WithJob(fs.Job.ID).
+			Write()
+	}
+}
+
 var _ vfs.FS = (*ARPCFS)(nil)
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
@@ -134,23 +143,13 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (vfs.Fil
 
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &req)
 	if err != nil {
-		if !strings.HasSuffix(req.Path, ".pxarexclude") {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.Job.ID).
-				Write()
-		}
+		fs.logError(req.Path, err)
 		return nil, syscall.ENOENT
 	}
 
 	err = resp.Decode(raw)
 	if err != nil {
-		if !strings.HasSuffix(req.Path, ".pxarexclude") {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.Job.ID).
-				Write()
-		}
+		fs.logError(req.Path, err)
 		return nil, syscall.ENOENT
 	}
 
@@ -183,12 +182,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	} else {
 		raw, err = fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
 		if err != nil {
-			if !strings.HasSuffix(req.Path, ".pxarexclude") {
-				syslog.L.Error(err).
-					WithField("path", req.Path).
-					WithJob(fs.Job.ID).
-					Write()
-			}
+			fs.logError(req.Path, err)
 			return types.AgentFileInfo{}, syscall.ENOENT
 		}
 		if isLookup {
@@ -198,12 +192,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 
 	err = fi.Decode(raw)
 	if err != nil {
-		if !strings.HasSuffix(req.Path, ".pxarexclude") {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.Job.ID).
-				Write()
-		}
+		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
@@ -242,23 +231,13 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)
 	if err != nil {
-		if !strings.HasSuffix(req.Path, ".pxarexclude") {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.Job.ID).
-				Write()
-		}
+		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENODATA
 	}
 
 	err = fi.Decode(raw)
 	if err != nil {
-		if !strings.HasSuffix(req.Path, ".pxarexclude") {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.Job.ID).
-				Write()
-		}
+		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENODATA
 	}
 
