@@ -21,21 +21,10 @@ type FileHandle interface {
 	Lseek(off int64, whence int) (uint64, error)
 }
 
-type Stats struct {
-	FilesAccessed   int64
-	FoldersAccessed int64
-	TotalAccessed   int64
-	FileAccessSpeed float64
-	TotalBytes      uint64
-	ByteReadSpeed   float64
-	StatCacheHits   int64
-}
-
 type FS interface {
 	Root() string
 	Mount(mountpoint string) error
 	Unmount()
-	GetStats() Stats
 	Open(path string) (FileHandle, error)
 	OpenFile(path string, flags int, perm os.FileMode) (FileHandle, error)
 	Attr(path string, isLookup bool) (agenttypes.AgentFileInfo, error)

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3"
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -247,24 +246,6 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 			"bucket":   args.Bucket,
 			"prefix":   args.Prefix,
 		}).Write()
-
-	return nil
-}
-
-func (s *MountRPCService) GetVFSStats(args *VFSStatusArgs, reply *vfs.Stats) error {
-	vfsSession := store.GetSessionFS(args.Key)
-	if vfsSession == nil {
-		return fmt.Errorf("vfs stats: unable to find %s", args.Key)
-	}
-
-	stats := vfsSession.GetStats()
-	reply.ByteReadSpeed = stats.ByteReadSpeed
-	reply.FileAccessSpeed = stats.FileAccessSpeed
-	reply.FilesAccessed = stats.FilesAccessed
-	reply.FoldersAccessed = stats.FoldersAccessed
-	reply.TotalAccessed = stats.TotalAccessed
-	reply.TotalBytes = stats.TotalBytes
-	reply.StatCacheHits = stats.StatCacheHits
 
 	return nil
 }
