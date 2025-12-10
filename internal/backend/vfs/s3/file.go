@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/minio/minio-go/v7"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 )
+
+var _ vfs.FileHandle = (*S3File)(nil)
 
 // ReadAt reads len(buf) bytes from the file starting at byte offset off.
 func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
@@ -58,6 +61,10 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	}
 
 	return n, nil
+}
+
+func (f *S3File) Lseek(off int64, whence int) (uint64, error) {
+	return 0, syscall.EOPNOTSUPP
 }
 
 // Close closes the file.
