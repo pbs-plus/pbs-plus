@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -93,45 +94,6 @@ func NewS3FS(
 
 func (fs *S3FS) Context() context.Context { return fs.ctx }
 
-func (fs *S3FS) GetStats() vfs.Stats {
-	currentTime := time.Now().UnixNano()
-
-	currentFileCount := atomic.LoadInt64(&fs.fileCount)
-	currentFolderCount := atomic.LoadInt64(&fs.folderCount)
-	totalAccessed := currentFileCount + currentFolderCount
-
-	lastATime := atomic.SwapInt64(&fs.lastAccessTime, currentTime)
-	lastFileCount := atomic.SwapInt64(&fs.lastFileCount, currentFileCount)
-	lastFolderCount := atomic.SwapInt64(&fs.lastFolderCount, currentFolderCount)
-
-	elapsed := float64(currentTime-lastATime) / 1e9
-	var accessSpeed float64
-	if elapsed > 0 {
-		accessDelta := (currentFileCount + currentFolderCount) - (lastFileCount + lastFolderCount)
-		accessSpeed = float64(accessDelta) / elapsed
-	}
-
-	currentTotalBytes := atomic.LoadInt64(&fs.totalBytes)
-	lastBTime := atomic.SwapInt64(&fs.lastBytesTime, currentTime)
-	lastTotalBytes := atomic.SwapInt64(&fs.lastTotalBytes, currentTotalBytes)
-
-	secDiff := float64(currentTime-lastBTime) / 1e9
-	var bytesSpeed float64
-	if secDiff > 0 {
-		bytesSpeed = float64(currentTotalBytes-lastTotalBytes) / secDiff
-	}
-
-	return vfs.Stats{
-		FilesAccessed:   currentFileCount,
-		FoldersAccessed: currentFolderCount,
-		TotalAccessed:   totalAccessed,
-		FileAccessSpeed: accessSpeed,
-		TotalBytes:      uint64(currentTotalBytes),
-		ByteReadSpeed:   bytesSpeed,
-		StatCacheHits:   atomic.LoadInt64(&fs.statCacheHits),
-	}
-}
-
 func (fs *S3FS) Root() string {
 	return fs.basePath
 }
@@ -175,6 +137,7 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 		}
 		if !isLookup {
 			atomic.AddInt64(&fs.folderCount, 1)
+			_ = fs.memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.folderCount), 10)), Expiration: 0})
 		}
 		return fi, nil
 	}
@@ -184,12 +147,15 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 	var cached agentTypes.AgentFileInfo
 	if it, err := fs.memcache.Get("attr:" + key); err == nil {
 		atomic.AddInt64(&fs.statCacheHits, 1)
+		_ = fs.memcache.Set(&memcache.Item{Key: "stats:statCacheHits", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.statCacheHits), 10)), Expiration: 0})
 		if err := cached.Decode(it.Value); err == nil {
 			if !isLookup {
 				if cached.IsDir {
 					atomic.AddInt64(&fs.folderCount, 1)
+					_ = fs.memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.folderCount), 10)), Expiration: 0})
 				} else {
 					atomic.AddInt64(&fs.fileCount, 1)
+					_ = fs.memcache.Set(&memcache.Item{Key: "stats:filesAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.fileCount), 10)), Expiration: 0})
 				}
 			}
 			return cached, nil
@@ -217,6 +183,7 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 		}
 		if !isLookup {
 			atomic.AddInt64(&fs.fileCount, 1)
+			_ = fs.memcache.Set(&memcache.Item{Key: "stats:filesAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.fileCount), 10)), Expiration: 0})
 		}
 		return fi, nil
 	}
@@ -256,6 +223,7 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 		}
 		if !isLookup {
 			atomic.AddInt64(&fs.folderCount, 1)
+			_ = fs.memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.folderCount), 10)), Expiration: 0})
 		}
 		return fi, nil
 	}
@@ -281,8 +249,6 @@ func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
 	defer cancel()
 
 	if reqAclOnly {
-		// For S3, we simulate ACL-only by reusing cached basic times/attrs
-		// and only refreshing metadata via StatObject.
 		if objInfo, err := fs.client.StatObject(ctx, fs.bucket, key, minio.StatObjectOptions{}); err == nil {
 			fi = agentTypes.AgentFileInfo{
 				IsDir:          false,
@@ -298,7 +264,6 @@ func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
 		} else {
 			fs.logError(fpath, err)
 		}
-		// If object not found, treat as ENODATA
 		return agentTypes.AgentFileInfo{}, syscall.ENODATA
 	}
 
@@ -376,7 +341,7 @@ func (fs *S3FS) ReadDir(fpath string) (vfs.DirStream, error) {
 	if it, err := fs.memcache.Get("dir:" + prefix); err == nil {
 		var cached agentTypes.ReadDirEntries
 		if err := cached.Decode(it.Value); err == nil {
-			return &S3DirStream{entries: cached}, nil
+			return &S3DirStream{fs: fs, entries: cached}, nil
 		}
 	}
 
@@ -426,7 +391,7 @@ func (fs *S3FS) ReadDir(fpath string) (vfs.DirStream, error) {
 	raw, _ := entries.Encode()
 	_ = fs.memcache.Set(&memcache.Item{Key: "dir:" + prefix, Value: raw, Expiration: 0})
 	fs.memcache.Delete("attr:" + strings.TrimSuffix(prefix, "/"))
-	return &S3DirStream{entries: entries}, nil
+	return &S3DirStream{fs: fs, entries: entries}, nil
 }
 
 func (fs *S3FS) fullKey(fpath string) string {
