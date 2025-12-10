@@ -246,6 +246,11 @@ func EnsureLocalCAAndServerCert(outDir, org, caCN string, keySize, validDays int
 		hostnames = append(hostnames, hostname)
 	}
 
+	userHostname, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
+	if ok {
+		hostnames = append(hostnames, userHostname)
+	}
+
 	if outDir == "" {
 		outDir = "./certs"
 	}
