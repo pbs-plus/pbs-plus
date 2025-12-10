@@ -1,14 +1,43 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-chmod +x /usr/bin/pbs-plus
+SERVICE_NAME="pbs-plus.service"
+BIN_PATH="/usr/bin/pbs-plus"
+ENV_DIR="/etc/proxmox-backup/pbs-plus"
+ENV_FILE="${ENV_DIR}/pbs-plus.env"
 
-systemctl daemon-reload
+# Ensure binary is executable (idempotent)
+if [ -f "${BIN_PATH}" ]; then
+  chmod 0755 "${BIN_PATH}"
+fi
 
-# Enable the service to start on boot
-systemctl enable pbs-plus.service
+# Create env directory and file (first-install friendly)
+if [ ! -d "${ENV_DIR}" ]; then
+  install -d -m 0755 -o root -g root "${ENV_DIR}"
+fi
 
-# Start the service
-systemctl restart pbs-plus.service
+if [ ! -f "${ENV_FILE}" ]; then
+  # Create with sane defaults and comments; user can edit later
+  install -m 0644 -o root -g root /dev/null "${ENV_FILE}"
+  cat > "${ENV_FILE}" <<'EOF'
+# PBS Plus environment configuration
+# This file is sourced by systemd (EnvironmentFile).
+# Format: KEY=VALUE, no quotes unless needed for spaces.
+
+# PBS_PLUS_HOSTNAME=<hostname for server here>
+EOF
+else
+  # Ensure correct permissions if file already exists
+  chown root:root "${ENV_FILE}" || true
+  chmod 0644 "${ENV_FILE}" || true
+fi
+
+# Systemd integration
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+  systemctl enable "${SERVICE_NAME}" || true
+  # Restart to pick up any new EnvironmentFile and binary perms
+  systemctl restart "${SERVICE_NAME}" || true
+fi
 
 exit 0

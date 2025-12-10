@@ -225,7 +225,7 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 	}
 
 	if !found {
-		return types.Job{}, sql.ErrNoRows
+		return types.Job{}, ErrJobNotFound
 	}
 
 	job.Exclusions = make([]types.Exclusion, 0, len(exclusionPaths))
@@ -682,7 +682,7 @@ func (database *Database) DeleteJob(tx *sql.Tx, id string) (err error) {
 
 	rowsAffected, _ := res.RowsAffected()
 	if rowsAffected == 0 {
-		return sql.ErrNoRows
+		return ErrJobNotFound
 	}
 
 	// Filesystem and system operations outside transaction
