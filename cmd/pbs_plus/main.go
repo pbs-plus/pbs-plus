@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
+	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
+	jobrpc "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -35,8 +37,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers/targets"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers/tokens"
 	mw "github.com/pbs-plus/pbs-plus/internal/web/middlewares"
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/web/rpc"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/web/rpc/job"
 
 	"net/http/pprof"
 

@@ -31,6 +31,6 @@ func (fs *S3FS) Unmount() {
 	if fs.Fuse != nil {
 		_ = fs.Fuse.Unmount()
 	}
-	fs.cancel()
+	fs.Cancel()
 }
 

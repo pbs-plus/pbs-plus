@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -25,7 +26,7 @@ type DirStream struct {
 	fs            *ARPCFS
 	path          string
 	handleId      types.FileHandleId
-	closed        int32 // Use int32 for older Go compatibility
+	closed        int32
 	lastRespMu    sync.Mutex
 	lastResp      types.ReadDirEntries
 	curIdx        uint64
@@ -75,7 +76,7 @@ func (s *DirStream) HasNext() bool {
 	readBuf := bufPool.Get().([]byte)
 	defer bufPool.Put(readBuf)
 
-	bytesRead, err := s.fs.session.CallBinary(s.fs.ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
+	bytesRead, err := s.fs.session.CallBinary(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			atomic.StoreInt32(&s.closed, 1)
@@ -156,7 +157,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		attrBytes, err := currAttr.Encode()
 		if err == nil {
-			_ = s.fs.memcache.Set(&memcache.Item{Key: "attr:" + fullPath, Value: attrBytes, Expiration: 0})
+			_ = s.fs.Memcache.Set(&memcache.Item{Key: "attr:" + fullPath, Value: attrBytes, Expiration: 0})
 		}
 	}
 
@@ -170,12 +171,15 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		xattrBytes, err := currXAttr.Encode()
 		if err == nil {
-			_ = s.fs.memcache.Set(&memcache.Item{Key: "xattr:" + fullPath, Value: xattrBytes, Expiration: 0})
+			_ = s.fs.Memcache.Set(&memcache.Item{Key: "xattr:" + fullPath, Value: xattrBytes, Expiration: 0})
 		}
 	}
 
 	atomic.AddUint64(&s.curIdx, 1)
 	atomic.AddUint64(&s.totalReturned, 1)
+
+	tr := atomic.LoadUint64(&s.totalReturned)
+	_ = s.fs.Memcache.Set(&memcache.Item{Key: "stats:dirEntriesReturned", Value: []byte(strconv.FormatUint(tr, 10)), Expiration: 0})
 
 	return fuse.DirEntry{
 		Name: curr.Name,
