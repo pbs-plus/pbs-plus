@@ -116,7 +116,7 @@ func (s *Store) GetServerTLSConfig() (*tls.Config, error) {
 	s.mTLS.Lock()
 	defer s.mTLS.Unlock()
 
-	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, tls.VerifyClientCertIfGiven)
+	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, tls.VerifyClientCertIfGiven)
 	return conf, err
 }
 
