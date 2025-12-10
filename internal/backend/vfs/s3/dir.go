@@ -7,7 +7,10 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 )
+
+var _ vfs.DirStream = (*S3DirStream)(nil)
 
 type S3DirStream struct {
 	entries types.ReadDirEntries

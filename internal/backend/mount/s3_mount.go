@@ -3,6 +3,7 @@
 package mount
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/rpc"
@@ -11,11 +12,11 @@ import (
 	"path/filepath"
 	"time"
 
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/web/rpc"
+	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	rpcmount "github.com/pbs-plus/pbs-plus/internal/web/rpc"
 )
 
 type S3Mount struct {
@@ -87,11 +88,11 @@ func S3FSMount(storeInstance *store.Store, job types.Job, target types.Target) (
 		rpcClient.Close()
 		if err != nil {
 			errCleanup()
-			return nil, fmt.Errorf("backup failed: %w", err)
+			return nil, err
 		}
 		if reply.Status != 200 {
 			errCleanup()
-			return nil, fmt.Errorf("backup returned an error %d: %s", reply.Status, reply.Message)
+			return nil, errors.New(reply.Message)
 		}
 	}
 
@@ -138,7 +139,7 @@ func (a *S3Mount) Unmount() {
 	}
 
 	childKey := a.Endpoint + "|" + a.JobId
-	store.RemoveS3Mount(childKey)
+	store.DisconnectSession(childKey)
 
 	_ = os.RemoveAll(a.Path)
 }

@@ -7,12 +7,9 @@ After=proxmox-backup-proxy.service
 
 [Service]
 Type=simple
+EnvironmentFile=-/etc/proxmox-backup/pbs-plus/pbs-plus.env
 ExecStart=/usr/bin/pbs-plus
 ExecReload=/bin/kill -HUP $MAINPID
-ExecStopPost=/usr/bin/umount -lf /usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js
-ExecStopPost=/usr/bin/umount -lf /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
-ExecStopPost=/usr/bin/umount -lf /etc/proxmox-backup/proxy.pem
-ExecStopPost=/usr/bin/umount -lf /etc/proxmox-backup/proxy.key
 PIDFile=/run/proxmox-backup/pbs-plus.pid
 Restart=on-failure
 User=root
