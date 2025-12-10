@@ -14,11 +14,11 @@ import (
 	"time"
 
 	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
+	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
 
 type TargetStatusResult struct {

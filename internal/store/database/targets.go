@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
+	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	simplebox "github.com/pbs-plus/pbs-plus/internal/store/database/secrets"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -228,7 +228,7 @@ func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
 	rowsAffected, _ := res.RowsAffected()
 	if rowsAffected == 0 {
 		// Return sql.ErrNoRows if the target wasn't found
-		return sql.ErrNoRows
+		return ErrTargetNotFound
 	}
 
 	commitNeeded = true
@@ -262,7 +262,7 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 	if err != nil {
 		// Don't wrap sql.ErrNoRows, return it directly
 		if errors.Is(err, sql.ErrNoRows) {
-			return types.Target{}, sql.ErrNoRows
+			return types.Target{}, ErrTargetNotFound
 		}
 		return types.Target{}, fmt.Errorf("GetTarget: error fetching target: %w", err)
 	}
@@ -323,7 +323,7 @@ func (database *Database) GetS3Secret(name string) (string, error) {
 	if err != nil {
 		// Don't wrap sql.ErrNoRows, return it directly
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", sql.ErrNoRows
+			return "", ErrSecretNotFound
 		}
 		return "", fmt.Errorf("GetS3Secret: error fetching target: %w", err)
 	}

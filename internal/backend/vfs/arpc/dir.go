@@ -15,8 +15,11 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
+
+var _ vfs.DirStream = (*DirStream)(nil)
 
 type DirStream struct {
 	fs            *ARPCFS

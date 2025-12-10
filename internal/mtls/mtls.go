@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 func GenerateCSR(commonName string, keySize int) ([]byte, []byte, error) {
@@ -217,12 +219,77 @@ func ValidateExistingCert(certPEM, keyPEM, caPEM []byte, serverName string) erro
 	return nil
 }
 
-func EnsureLocalCAAndServerCert(outDir, org, caCN string, keySize, validDays int) (serverCert, serverKey, caCert, caKey string, err error) {
-	interfaces, err := net.Interfaces()
+func EnsureLocalCA(outDir, org, caCN string, keySize, validDays int) (caCertPath, caKeyPath string, err error) {
+	if outDir == "" {
+		outDir = "./certs"
+	}
+	if keySize <= 0 {
+		keySize = 2048
+	}
+	if validDays <= 0 {
+		validDays = 365
+	}
+	if err = os.MkdirAll(outDir, 0o755); err != nil {
+		return "", "", fmt.Errorf("mkdir: %w", err)
+	}
+
+	caCertPath = filepath.Join(outDir, "ca.crt")
+	caKeyPath = filepath.Join(outDir, "ca.key")
+
+	if fileExists(caCertPath) && fileExists(caKeyPath) {
+		caPEM, rErr := os.ReadFile(caCertPath)
+		keyPEM, kErr := os.ReadFile(caKeyPath)
+		if rErr == nil && kErr == nil {
+			_, _, vErr := parseCACreds(caPEM, keyPEM)
+			if vErr == nil {
+				return caCertPath, caKeyPath, nil
+			}
+		}
+	}
+
+	caDER, caPriv, _, err := genCA(org, caCN, validDays, keySize)
+	if err != nil {
+		return "", "", err
+	}
+	if err = writePEM(caCertPath, "CERTIFICATE", caDER, 0o644); err != nil {
+		return "", "", err
+	}
+	if err = writePEM(caKeyPath, "RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(caPriv), 0o600); err != nil {
+		return "", "", err
+	}
+
+	return caCertPath, caKeyPath, nil
+}
+
+func EnsureServerCertUsingExistingCA(outDir, org string, keySize, validDays int, caCertPath, caKeyPath string) (serverCertPath, serverKeyPath string, err error) {
+	if outDir == "" {
+		outDir = "./certs"
+	}
+	if keySize <= 0 {
+		keySize = 2048
+	}
+	if validDays <= 0 {
+		validDays = 365
+	}
+	if err = os.MkdirAll(outDir, 0o755); err != nil {
+		return "", "", fmt.Errorf("mkdir: %w", err)
+	}
+
+	if caCertPath == "" || caKeyPath == "" {
+		return "", "", errors.New("CA paths must be provided")
+	}
+	if err := mustExist(caCertPath, caKeyPath); err != nil {
+		return "", "", err
+	}
+
+	serverCertPath = filepath.Join(outDir, "server.crt")
+	serverKeyPath = filepath.Join(outDir, "server.key")
+
 	hostnames := []string{"localhost"}
 	ips := []net.IP{net.ParseIP("127.0.0.1")}
 
-	if err == nil {
+	interfaces, ifErr := net.Interfaces()
+	if ifErr == nil {
 		for _, i := range interfaces {
 			if i.Flags&net.FlagLoopback != 0 {
 				continue
@@ -248,74 +315,79 @@ func EnsureLocalCAAndServerCert(outDir, org, caCN string, keySize, validDays int
 
 	userHostname, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
 	if ok {
-		hostnames = append(hostnames, userHostname)
+		if err := utils.ValidateHostname(userHostname); err == nil {
+			hostnames = append(hostnames, userHostname)
+		}
 	}
 
-	if outDir == "" {
-		outDir = "./certs"
-	}
-	if keySize <= 0 {
-		keySize = 2048
-	}
-	if validDays <= 0 {
-		validDays = 365
-	}
-	if err = os.MkdirAll(outDir, 0o755); err != nil {
-		return "", "", "", "", fmt.Errorf("mkdir: %w", err)
-	}
-
-	caCertPath := filepath.Join(outDir, "ca.crt")
-	caKeyPath := filepath.Join(outDir, "ca.key")
-	serverCertPath := filepath.Join(outDir, "server.crt")
-	serverKeyPath := filepath.Join(outDir, "server.key")
-
-	if fileExists(serverCertPath) && fileExists(serverKeyPath) && fileExists(caCertPath) && fileExists(caKeyPath) {
+	if fileExists(serverCertPath) && fileExists(serverKeyPath) {
 		scPEM, sErr := os.ReadFile(serverCertPath)
 		skPEM, kErr := os.ReadFile(serverKeyPath)
 		caPEM, cErr := os.ReadFile(caCertPath)
 		if sErr == nil && kErr == nil && cErr == nil {
-			serverName := ""
-			if len(hostnames) > 0 {
-				serverName = hostnames[0]
-			}
+			serverName := os.Getenv("PBS_PLUS_HOSTNAME")
 			if vErr := ValidateExistingCert(scPEM, skPEM, caPEM, serverName); vErr == nil {
-				return serverCertPath, serverKeyPath, caCertPath, caKeyPath, nil
+				return serverCertPath, serverKeyPath, nil
 			}
 		}
 	}
 
-	// CA
-	caDER, caPriv, caX509, err := genCA(org, caCN, validDays, keySize)
+	caCertPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
-		return "", "", "", "", err
+		return "", "", fmt.Errorf("read CA cert: %w", err)
 	}
-	if err = writePEM(caCertPath, "CERTIFICATE", caDER, 0o644); err != nil {
-		return "", "", "", "", err
+	caKeyPEM, err := os.ReadFile(caKeyPath)
+	if err != nil {
+		return "", "", fmt.Errorf("read CA key: %w", err)
 	}
-	if err = writePEM(caKeyPath, "RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(caPriv), 0o600); err != nil {
-		return "", "", "", "", err
+	cb, _ := pem.Decode(caCertPEM)
+	if cb == nil || cb.Type != "CERTIFICATE" {
+		return "", "", errors.New("invalid CA cert PEM")
+	}
+	caX509, err := x509.ParseCertificate(cb.Bytes)
+	if err != nil {
+		return "", "", fmt.Errorf("parse CA x509: %w", err)
+	}
+	kb, _ := pem.Decode(caKeyPEM)
+	if kb == nil || kb.Type != "RSA PRIVATE KEY" {
+		return "", "", errors.New("invalid CA key PEM")
+	}
+	caKey, err := x509.ParsePKCS1PrivateKey(kb.Bytes)
+	if err != nil {
+		return "", "", fmt.Errorf("parse CA key: %w", err)
 	}
 
-	// Server
 	sk, err := rsa.GenerateKey(rand.Reader, keySize)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("server key: %w", err)
+		return "", "", fmt.Errorf("server key: %w", err)
 	}
-	srvDER, err := signLeaf(caX509, caPriv, sk.Public(), pkix.Name{
+	srvDER, err := signLeaf(caX509, caKey, sk.Public(), pkix.Name{
 		Organization: []string{org},
 		CommonName:   "server",
 	}, validDays, hostnames, ips, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
 	if err != nil {
-		return "", "", "", "", err
+		return "", "", err
 	}
 	if err = writePEM(serverCertPath, "CERTIFICATE", srvDER, 0o644); err != nil {
-		return "", "", "", "", err
+		return "", "", err
 	}
 	if err = writePEM(serverKeyPath, "RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(sk), 0o600); err != nil {
-		return "", "", "", "", err
+		return "", "", err
 	}
 
-	return serverCertPath, serverKeyPath, caCertPath, caKeyPath, nil
+	return serverCertPath, serverKeyPath, nil
+}
+
+func EnsureLocalCAAndServerCert(outDir, org, caCN string, keySize, validDays int) (serverCert, serverKey, caCert, caKey string, err error) {
+	caCert, caKey, err = EnsureLocalCA(outDir, org, caCN, keySize, validDays)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	serverCert, serverKey, err = EnsureServerCertUsingExistingCA(outDir, org, keySize, validDays, caCert, caKey)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	return serverCert, serverKey, caCert, caKey, nil
 }
 
 func genCA(org, cn string, validDays, keySize int) ([]byte, *rsa.PrivateKey, *x509.Certificate, error) {

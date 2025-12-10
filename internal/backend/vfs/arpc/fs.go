@@ -15,17 +15,23 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// accessMsg represents one file (or directory) access event.
-type accessMsg struct {
-	hash  uint64
-	isDir bool
+func (fs *ARPCFS) logError(fpath string, err error) {
+	if !strings.HasSuffix(fpath, ".pxarexclude") {
+		syslog.L.Error(err).
+			WithField("path", fpath).
+			WithJob(fs.Job.ID).
+			Write()
+	}
 }
+
+var _ vfs.FS = (*ARPCFS)(nil)
 
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
 	ctxFs, cancel := context.WithCancel(ctx)
@@ -64,8 +70,10 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 	return fs
 }
 
+func (fs *ARPCFS) Context() context.Context { return fs.ctx }
+
 // GetStats returns a snapshot of all access and byte-read statistics.
-func (fs *ARPCFS) GetStats() Stats {
+func (fs *ARPCFS) GetStats() vfs.Stats {
 	// Get the current time in nanoseconds.
 	currentTime := time.Now().UnixNano()
 
@@ -98,7 +106,7 @@ func (fs *ARPCFS) GetStats() Stats {
 		bytesSpeed = float64(currentTotalBytes-lastTotalBytes) / secDiff
 	}
 
-	return Stats{
+	return vfs.Stats{
 		FilesAccessed:   currentFileCount,
 		FoldersAccessed: currentFolderCount,
 		TotalAccessed:   totalAccessed,
@@ -109,31 +117,21 @@ func (fs *ARPCFS) GetStats() Stats {
 	}
 }
 
-func (fs *ARPCFS) Unmount() {
-	if fs.Mount != nil {
-		_ = fs.Mount.Unmount()
-	}
-	if fs.session != nil {
-		_ = fs.session.Close()
-	}
-	fs.cancel()
-}
-
 func (fs *ARPCFS) GetBackupMode() string {
 	return fs.backupMode
 }
 
-func (fs *ARPCFS) Open(filename string) (ARPCFile, error) {
+func (fs *ARPCFS) Open(filename string) (vfs.FileHandle, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
-func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFile, error) {
+func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (vfs.FileHandle, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
 			Write()
-		return ARPCFile{}, syscall.ENOENT
+		return nil, syscall.ENOENT
 	}
 
 	var resp types.FileHandleId
@@ -145,27 +143,17 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &req)
 	if err != nil {
-		if !strings.HasSuffix(req.Path, ".pxarexclude") {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.Job.ID).
-				Write()
-		}
-		return ARPCFile{}, syscall.ENOENT
+		fs.logError(req.Path, err)
+		return nil, syscall.ENOENT
 	}
 
 	err = resp.Decode(raw)
 	if err != nil {
-		if !strings.HasSuffix(req.Path, ".pxarexclude") {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.Job.ID).
-				Write()
-		}
-		return ARPCFile{}, syscall.ENOENT
+		fs.logError(req.Path, err)
+		return nil, syscall.ENOENT
 	}
 
-	return ARPCFile{
+	return &ARPCFile{
 		fs:       fs,
 		name:     filename,
 		handleID: resp,
@@ -194,12 +182,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	} else {
 		raw, err = fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
 		if err != nil {
-			if !strings.HasSuffix(req.Path, ".pxarexclude") {
-				syslog.L.Error(err).
-					WithField("path", req.Path).
-					WithJob(fs.Job.ID).
-					Write()
-			}
+			fs.logError(req.Path, err)
 			return types.AgentFileInfo{}, syscall.ENOENT
 		}
 		if isLookup {
@@ -209,12 +192,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 
 	err = fi.Decode(raw)
 	if err != nil {
-		if !strings.HasSuffix(req.Path, ".pxarexclude") {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.Job.ID).
-				Write()
-		}
+		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
@@ -253,23 +231,13 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)
 	if err != nil {
-		if !strings.HasSuffix(req.Path, ".pxarexclude") {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.Job.ID).
-				Write()
-		}
+		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENODATA
 	}
 
 	err = fi.Decode(raw)
 	if err != nil {
-		if !strings.HasSuffix(req.Path, ".pxarexclude") {
-			syslog.L.Error(err).
-				WithField("path", req.Path).
-				WithJob(fs.Job.ID).
-				Write()
-		}
+		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENODATA
 	}
 
@@ -316,29 +284,29 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 }
 
 // ReadDir calls ReadDir via RPC and logs directory accesses.
-func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
+func (fs *ARPCFS) ReadDir(path string) (vfs.DirStream, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
 			Write()
-		return DirStream{}, syscall.ENOENT
+		return nil, syscall.ENOENT
 	}
 
 	var handleId types.FileHandleId
 	openReq := types.OpenFileReq{Path: path}
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &openReq)
 	if err != nil {
-		return DirStream{}, syscall.ENOENT
+		return nil, syscall.ENOENT
 	}
 	err = handleId.Decode(raw)
 	if err != nil {
-		return DirStream{}, syscall.ENOENT
+		return nil, syscall.ENOENT
 	}
 
 	fs.memcache.Delete("attr:" + path)
 
-	return DirStream{
+	return &DirStream{
 		fs:       fs,
 		path:     path,
 		handleId: handleId,

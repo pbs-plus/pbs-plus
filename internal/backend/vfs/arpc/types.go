@@ -18,7 +18,7 @@ type ARPCFS struct {
 	session  *arpc.Session
 	Job      storeTypes.Job
 	Hostname string
-	Mount    *gofuse.Server
+	Fuse     *gofuse.Server
 	basePath string
 
 	backupMode string
@@ -38,16 +38,6 @@ type ARPCFS struct {
 	lastTotalBytes int64
 
 	statCacheHits int64
-}
-
-type Stats struct {
-	FilesAccessed   int64   // Unique file count
-	FoldersAccessed int64   // Unique folder count
-	TotalAccessed   int64   // Sum of unique file and folder counts
-	FileAccessSpeed float64 // (Unique accesses per second)
-	TotalBytes      uint64  // Total bytes read
-	ByteReadSpeed   float64 // (Bytes read per second)
-	StatCacheHits   int64
 }
 
 // ARPCFile implements billy.File for remote files

@@ -13,7 +13,7 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/arpc"
+	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	sqlite "github.com/pbs-plus/pbs-plus/internal/store/database"
