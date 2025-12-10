@@ -81,7 +81,7 @@ func invalidateTLSConfigCache() {
 }
 
 func CheckAndRenewCertificate() error {
-	const renewalWindow = constants.TLSCARotationGraceDays * 24 * time.Hour
+	const renewalWindow = max(constants.TLSCARotationGraceDays-1, 1) * 24 * time.Hour
 
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
 	if err != nil {
