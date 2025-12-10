@@ -90,16 +90,15 @@ func (s *Store) ValidateServerCertificates() error {
 
 	s.mTLS.Lock()
 	defer s.mTLS.Unlock()
-	s.mTLS = &TLSConfig{
-		ServerCertPEM:  serverCert,
-		ServerCertPath: serverCertPath,
-		ServerKeyPEM:   serverKey,
-		ServerKeyPath:  serverKeyPath,
-		CACertPEM:      caCert,
-		CACertPath:     caCertPath,
-		CAKeyPEM:       caKey,
-		CAKeyPath:      caKeyPath,
-	}
+
+	s.mTLS.ServerCertPEM = serverCert
+	s.mTLS.ServerCertPath = serverCertPath
+	s.mTLS.ServerKeyPEM = serverKey
+	s.mTLS.ServerKeyPath = serverKeyPath
+	s.mTLS.CACertPEM = caCert
+	s.mTLS.CACertPath = caCertPath
+	s.mTLS.CAKeyPEM = caKey
+	s.mTLS.CAKeyPath = caKeyPath
 
 	return nil
 }
@@ -140,6 +139,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		Database:           db,
 		arpcFS:             safemap.New[string, *arpcfs.ARPCFS](),
 		ARPCSessionManager: arpc.NewSessionManager(),
+		mTLS:               &TLSConfig{},
 	}
 
 	return store, nil
