@@ -41,9 +41,7 @@ func GetVFSStats(key string) (stats vfs.Stats) {
 	rpcClient := rpc.NewClient(conn)
 	defer rpcClient.Close()
 
-	if err := rpcClient.Call("MountRPCService.GetVFSStats", args, &stats); err != nil {
-		syslog.L.Error(err).WithFields(map[string]interface{}{"key": key}).Write()
-	}
+	_ = rpcClient.Call("MountRPCService.GetVFSStats", args, &stats)
 
 	return
 }
