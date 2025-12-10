@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -25,7 +26,7 @@ type DirStream struct {
 	fs            *ARPCFS
 	path          string
 	handleId      types.FileHandleId
-	closed        int32 // Use int32 for older Go compatibility
+	closed        int32
 	lastRespMu    sync.Mutex
 	lastResp      types.ReadDirEntries
 	curIdx        uint64
@@ -176,6 +177,9 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 	atomic.AddUint64(&s.curIdx, 1)
 	atomic.AddUint64(&s.totalReturned, 1)
+
+	tr := atomic.LoadUint64(&s.totalReturned)
+	_ = s.fs.memcache.Set(&memcache.Item{Key: "stats:dirEntriesReturned", Value: []byte(strconv.FormatUint(tr, 10)), Expiration: 0})
 
 	return fuse.DirEntry{
 		Name: curr.Name,

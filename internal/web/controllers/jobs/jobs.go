@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/backend/mount"
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -37,30 +35,31 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				continue
 			}
 
-			isS3 := false
-			isAgent := strings.HasPrefix(job.TargetPath, "agent://")
-			s3Parsed, err := s3url.Parse(job.TargetPath)
-			if err == nil {
-				isS3 = true
-			}
-			childKey := ""
-			if isAgent {
-				splittedTargetName := strings.Split(job.Target, " - ")
-				targetHostname := splittedTargetName[0]
-				childKey = targetHostname + "|" + job.ID
-			} else if isS3 {
-				childKey = s3Parsed.Endpoint + "|" + job.ID
-			} else {
-				continue
-			}
+			/*
+				isS3 := false
+				isAgent := strings.HasPrefix(job.TargetPath, "agent://")
+				s3Parsed, err := s3url.Parse(job.TargetPath)
+				if err == nil {
+					isS3 = true
+				}
+				if isAgent {
+					splittedTargetName := strings.Split(job.Target, " - ")
+					targetHostname := splittedTargetName[0]
+					childKey = targetHostname + "|" + job.ID
+				} else if isS3 {
+					childKey = s3Parsed.Endpoint + "|" + job.ID
+				} else {
+					continue
+				}
 
-			stats := mount.GetVFSStats(childKey)
-			allJobs[i].CurrentFileCount = int(stats.FilesAccessed)
-			allJobs[i].CurrentFolderCount = int(stats.FoldersAccessed)
-			allJobs[i].CurrentBytesTotal = int(stats.TotalBytes)
-			allJobs[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
-			allJobs[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
-			allJobs[i].StatCacheHits = int(stats.StatCacheHits)
+					stats := mount.GetVFSStats(childKey)
+					allJobs[i].CurrentFileCount = int(stats.FilesAccessed)
+					allJobs[i].CurrentFolderCount = int(stats.FoldersAccessed)
+					allJobs[i].CurrentBytesTotal = int(stats.TotalBytes)
+					allJobs[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
+					allJobs[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
+					allJobs[i].StatCacheHits = int(stats.StatCacheHits)
+			*/
 		}
 
 		digest, err := utils.CalculateDigest(allJobs)
