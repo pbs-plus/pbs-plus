@@ -11,6 +11,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var _ vfs.FileHandle = (*S3File)(nil)
@@ -32,11 +33,23 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	opts := minio.GetObjectOptions{}
 	err := opts.SetRange(off, off+int64(len(buf))-1)
 	if err != nil {
+		syslog.L.Error(err).WithJob(f.jobId).
+			WithMessage("failed to handle read request to s3").
+			WithField("path", f.key).
+			WithField("offset", f.offset).
+			WithField("length", len(buf)).
+			Write()
 		return 0, err
 	}
 
 	obj, err := f.fs.client.GetObject(ctx, f.fs.bucket, f.key, opts)
 	if err != nil {
+		syslog.L.Error(err).WithJob(f.jobId).
+			WithMessage("failed to handle read request to s3").
+			WithField("path", f.key).
+			WithField("offset", f.offset).
+			WithField("length", len(buf)).
+			Write()
 		return 0, err
 	}
 	defer obj.Close()
@@ -46,10 +59,22 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 
 	// Handle partial reads at end of file
 	if err == io.ErrUnexpectedEOF {
+		syslog.L.Error(err).WithJob(f.jobId).
+			WithMessage("unexpected eof handled from s3 file").
+			WithField("path", f.key).
+			WithField("offset", f.offset).
+			WithField("length", len(buf)).
+			Write()
 		return n, io.EOF
 	}
 
 	if err != nil {
+		syslog.L.Error(err).WithJob(f.jobId).
+			WithMessage("error occurred during s3 file reading operation").
+			WithField("path", f.key).
+			WithField("offset", f.offset).
+			WithField("length", len(buf)).
+			Write()
 		return n, err
 	}
 
