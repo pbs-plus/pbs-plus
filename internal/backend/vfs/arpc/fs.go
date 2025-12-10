@@ -77,6 +77,10 @@ func (fs *ARPCFS) GetBackupMode() string {
 	return fs.backupMode
 }
 
+func (fs *ARPCFS) GetMemcache() *memcache.Client {
+	return fs.memcache
+}
+
 func (fs *ARPCFS) Open(filename string) (vfs.FileHandle, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
