@@ -14,6 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 func GenerateCSR(commonName string, keySize int) ([]byte, []byte, error) {
@@ -149,9 +152,10 @@ func BuildClientTLS(clientCertPEM, clientKeyPEM, caPEM []byte) (*tls.Config, err
 	}
 
 	return &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      rootCAs,
+		MinVersion:         tls.VersionTLS12,
+		Certificates:       []tls.Certificate{cert},
+		RootCAs:            rootCAs,
+		InsecureSkipVerify: true,
 		CipherSuites: []uint16{
 			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
@@ -248,7 +252,11 @@ func EnsureLocalCAAndServerCert(outDir, org, caCN string, keySize, validDays int
 
 	userHostname, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
 	if ok {
-		hostnames = append(hostnames, userHostname)
+		if err := utils.ValidateHostname(userHostname); err == nil {
+			hostnames = append(hostnames, userHostname)
+		} else {
+			syslog.L.Error(err).WithMessage("failed to append PBS_PLUS_HOSTNAME").Write()
+		}
 	}
 
 	if outDir == "" {

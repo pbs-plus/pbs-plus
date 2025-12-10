@@ -19,7 +19,7 @@ func D2DTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		all, err := storeInstance.Database.GetAllTokens()
+		all, err := storeInstance.Database.GetAllTokens(false)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
