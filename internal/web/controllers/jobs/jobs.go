@@ -33,6 +33,10 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for i, job := range allJobs {
+			if job.LastRunUpid != "" && job.LastRunState == "" {
+				continue
+			}
+
 			isS3 := false
 			isAgent := strings.HasPrefix(job.TargetPath, "agent://")
 			s3Parsed, err := s3url.Parse(job.TargetPath)
@@ -46,6 +50,8 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				childKey = targetHostname + "|" + job.ID
 			} else if isS3 {
 				childKey = s3Parsed.Endpoint + "|" + job.ID
+			} else {
+				continue
 			}
 
 			stats := mount.GetVFSStats(childKey)

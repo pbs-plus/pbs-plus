@@ -161,8 +161,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return errors.New(reply.Message)
 	}
 
-	store.CreateFSMount(childKey, arpcFS)
-
 	// Set up the local mount path.
 	mntPath := filepath.Join(constants.AgentMountBasePath, args.JobId)
 
@@ -172,6 +170,8 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		reply.Message = fmt.Sprintf("failed to create fuse connection for target -> %v", err)
 		return fmt.Errorf("backup: %w", err)
 	}
+
+	store.CreateFSMount(childKey, arpcFS)
 
 	// Set the reply values.
 	reply.Status = 200
@@ -258,7 +258,14 @@ func (s *MountRPCService) GetVFSStats(args *VFSStatusArgs, reply *vfs.Stats) err
 	}
 
 	stats := vfsSession.GetStats()
-	*reply = stats
+	reply.ByteReadSpeed = stats.ByteReadSpeed
+	reply.FileAccessSpeed = stats.FileAccessSpeed
+	reply.FilesAccessed = stats.FilesAccessed
+	reply.FoldersAccessed = stats.FoldersAccessed
+	reply.TotalAccessed = stats.TotalAccessed
+	reply.TotalBytes = stats.TotalBytes
+	reply.StatCacheHits = stats.StatCacheHits
+
 	return nil
 }
 
