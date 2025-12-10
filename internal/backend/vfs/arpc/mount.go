@@ -34,6 +34,6 @@ func (fs *ARPCFS) Unmount() {
 	if fs.session != nil {
 		_ = fs.session.Close()
 	}
-	fs.cancel()
+	fs.Cancel()
 }
 

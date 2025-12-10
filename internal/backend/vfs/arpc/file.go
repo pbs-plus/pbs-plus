@@ -6,10 +6,12 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -44,14 +46,12 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 		Offset:   int64(off),
 		Whence:   whence,
 	}
-	// Send the request to the server
 	respBytes, err := f.fs.session.CallMsgWithTimeout(1*time.Minute, f.jobId+"/Lseek", &req)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).WithMessage("lseek call failed").WithField("path", f.name).Write()
 		return 0, syscall.EOPNOTSUPP
 	}
 
-	// Parse the response
 	var resp types.LseekResp
 	if err := resp.Decode(respBytes); err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).WithMessage("failed to handle lseek request").WithField("path", f.name).Write()
@@ -78,7 +78,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		Length:   len(p),
 	}
 
-	bytesRead, err := f.fs.session.CallBinary(f.fs.ctx, f.jobId+"/ReadAt", &req, p)
+	bytesRead, err := f.fs.session.CallBinary(f.fs.Ctx, f.jobId+"/ReadAt", &req, p)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).
 			WithMessage("failed to handle read request, replace failed reads with zeroes, likely corrupted").
@@ -90,9 +90,11 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, io.EOF
 	}
 
-	atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
+	atomic.AddInt64(&f.fs.TotalBytes, int64(bytesRead))
 
-	// If we read less than requested, it indicates EOF
+	tb := atomic.LoadInt64(&f.fs.TotalBytes)
+	_ = f.fs.Memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
+
 	if bytesRead < len(p) {
 		return bytesRead, io.EOF
 	}

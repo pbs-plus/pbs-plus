@@ -13,12 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
+	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/web/rpc"
 )
 
 type AgentMount struct {
@@ -27,23 +26,6 @@ type AgentMount struct {
 	Drive    string
 	Path     string
 	isEmpty  bool
-}
-
-func GetVFSStats(key string) (stats vfs.Stats) {
-	args := &rpcmount.VFSStatusArgs{
-		Key: key,
-	}
-
-	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
-	if err != nil {
-		return
-	}
-	rpcClient := rpc.NewClient(conn)
-	defer rpcClient.Close()
-
-	_ = rpcClient.Call("MountRPCService.GetVFSStats", args, &stats)
-
-	return
 }
 
 func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target) (*AgentMount, error) {

@@ -3,36 +3,16 @@
 package s3fs
 
 import (
-	"context"
-
-	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/minio/minio-go/v7"
-	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 )
 
 type S3FS struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	client   *minio.Client
-	Job      storeTypes.Job
-	bucket   string
-	prefix   string
-	Fuse     *fuse.Server
-	basePath string
+	*vfs.VFSBase
 
-	memcache *memcache.Client
-
-	fileCount       int64
-	folderCount     int64
-	totalBytes      int64
-	lastAccessTime  int64
-	lastFileCount   int64
-	lastFolderCount int64
-	lastBytesTime   int64
-	lastTotalBytes  int64
-
-	statCacheHits int64
+	client *minio.Client
+	bucket string
+	prefix string
 }
 
 type S3File struct {

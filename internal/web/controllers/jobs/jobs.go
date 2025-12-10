@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/backend/mount"
 	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
@@ -37,13 +37,13 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				continue
 			}
 
+			var childKey string
 			isS3 := false
 			isAgent := strings.HasPrefix(job.TargetPath, "agent://")
 			s3Parsed, err := s3url.Parse(job.TargetPath)
 			if err == nil {
 				isS3 = true
 			}
-			childKey := ""
 			if isAgent {
 				splittedTargetName := strings.Split(job.Target, " - ")
 				targetHostname := splittedTargetName[0]
@@ -54,7 +54,13 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				continue
 			}
 
-			stats := mount.GetVFSStats(childKey)
+			session := store.GetSessionFS(childKey)
+			stats, err := session.GetStats()
+			if err != nil {
+				syslog.L.Error(err).WithField("childKey", childKey).Write()
+				continue
+			}
+
 			allJobs[i].CurrentFileCount = int(stats.FilesAccessed)
 			allJobs[i].CurrentFolderCount = int(stats.FoldersAccessed)
 			allJobs[i].CurrentBytesTotal = int(stats.TotalBytes)
