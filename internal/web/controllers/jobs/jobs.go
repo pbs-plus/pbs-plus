@@ -10,12 +10,12 @@ import (
 	"strconv"
 	"strings"
 
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/s3/url"
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
+	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
 
 func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -39,38 +39,28 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				isS3 = true
 			}
 
+			childKey := ""
 			if isAgent {
 				splittedTargetName := strings.Split(job.Target, " - ")
 				targetHostname := splittedTargetName[0]
-				childKey := targetHostname + "|" + job.ID
-				arpcfs := store.GetSessionFS(childKey)
-				if arpcfs == nil {
-					continue
-				}
-
-				stats := arpcfs.GetStats()
-
-				allJobs[i].CurrentFileCount = int(stats.FilesAccessed)
-				allJobs[i].CurrentFolderCount = int(stats.FoldersAccessed)
-				allJobs[i].CurrentBytesTotal = int(stats.TotalBytes)
-				allJobs[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
-				allJobs[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
-				allJobs[i].StatCacheHits = int(stats.StatCacheHits)
+				childKey = targetHostname + "|" + job.ID
 			} else if isS3 {
-				childKey := s3Parsed.Endpoint + "|" + job.ID
-				s3fs := store.GetS3FS(childKey)
-				if s3fs == nil {
-					continue
-				}
-
-				stats := s3fs.GetStats()
-
-				allJobs[i].CurrentFileCount = int(stats.FilesAccessed)
-				allJobs[i].CurrentFolderCount = int(stats.FoldersAccessed)
-				allJobs[i].CurrentBytesTotal = int(stats.TotalBytes)
-				allJobs[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
-				allJobs[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
+				childKey = s3Parsed.Endpoint + "|" + job.ID
 			}
+
+			vfs := store.GetSessionFS(childKey)
+			if vfs == nil {
+				continue
+			}
+
+			stats := vfs.GetStats()
+
+			allJobs[i].CurrentFileCount = int(stats.FilesAccessed)
+			allJobs[i].CurrentFolderCount = int(stats.FoldersAccessed)
+			allJobs[i].CurrentBytesTotal = int(stats.TotalBytes)
+			allJobs[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
+			allJobs[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
+			allJobs[i].StatCacheHits = int(stats.StatCacheHits)
 		}
 
 		digest, err := utils.CalculateDigest(allJobs)
