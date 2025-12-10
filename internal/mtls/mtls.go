@@ -13,10 +13,63 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
+
+var currentTLSCert = atomic.Pointer[tls.Certificate]{}
+var currentTLSCAs = atomic.Pointer[x509.CertPool]{}
+var lastTLSTimestamp int64
+
+func updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile string) error {
+	if err := mustExist(serverCertFile, serverKeyFile, caFile); err != nil {
+		return err
+	}
+
+	invalidPrevCA := false
+	if prevCaFile != "" {
+		if _, err := os.Stat(prevCaFile); err != nil {
+			invalidPrevCA = true
+		}
+	}
+	cert, err := tls.LoadX509KeyPair(serverCertFile, serverKeyFile)
+	if err != nil {
+		return err
+	}
+	currentTLSCert.Store(&cert)
+
+	activeCA, err := os.ReadFile(caFile)
+	if err != nil {
+		return err
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(activeCA) {
+		return fmt.Errorf("certs failed to append")
+	}
+	if !invalidPrevCA {
+		prev, err := os.ReadFile(prevCaFile)
+		if err == nil {
+			_ = pool.AppendCertsFromPEM(prev)
+		}
+	}
+
+	currentTLSCAs.Store(pool)
+
+	return nil
+}
+
+func getCurrentServerTLSCerts(serverCertFile, serverKeyFile, caFile, prevCaFile string) (*tls.Certificate, *x509.CertPool) {
+	lastTLSTime := time.Unix(atomic.LoadInt64(&lastTLSTimestamp), 0)
+	if time.Since(lastTLSTime) > 12*time.Hour {
+		updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile)
+	}
+
+	return currentTLSCert.Load(), currentTLSCAs.Load()
+}
 
 func GenerateCSR(commonName string, keySize int) ([]byte, []byte, error) {
 	if keySize <= 0 {
@@ -88,14 +141,23 @@ func SignCSR(caCertPEM, caKeyPEM, csrPEM []byte, validDays int, extKeyUsages []x
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), nil
 }
 
-func parseCACreds(caCertPEM, caKeyPEM []byte) (*x509.Certificate, *rsa.PrivateKey, error) {
+func ParseCertInfo(caCertPEM []byte) (*x509.Certificate, error) {
 	cb, _ := pem.Decode(caCertPEM)
 	if cb == nil || cb.Type != "CERTIFICATE" {
-		return nil, nil, errors.New("invalid CA cert PEM")
+		return nil, errors.New("invalid CA cert PEM")
 	}
 	caCert, err := x509.ParseCertificate(cb.Bytes)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse CA cert: %w", err)
+		return nil, fmt.Errorf("parse CA cert: %w", err)
+	}
+
+	return caCert, nil
+}
+
+func parseCACreds(caCertPEM, caKeyPEM []byte) (*x509.Certificate, *rsa.PrivateKey, error) {
+	caCert, err := ParseCertInfo(caCertPEM)
+	if err != nil {
+		return nil, nil, err
 	}
 	kb, _ := pem.Decode(caKeyPEM)
 	if kb == nil || kb.Type != "RSA PRIVATE KEY" {
@@ -108,38 +170,32 @@ func parseCACreds(caCertPEM, caKeyPEM []byte) (*x509.Certificate, *rsa.PrivateKe
 	return caCert, caKey, nil
 }
 
-func BuildServerTLS(serverCertFile, serverKeyFile, caFile string, clientAuth tls.ClientAuthType) (*tls.Config, error) {
-	if err := mustExist(serverCertFile, serverKeyFile, caFile); err != nil {
+func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, clientAuth tls.ClientAuthType) (*tls.Config, error) {
+	if err := updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile); err != nil {
 		return nil, err
 	}
-	cert, err := tls.LoadX509KeyPair(serverCertFile, serverKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("load server keypair: %w", err)
-	}
-	caPEM, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("read CA: %w", err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, errors.New("append client CA failed")
-	}
+
 	return &tls.Config{
-		MinVersion:               tls.VersionTLS12,
-		Certificates:             []tls.Certificate{cert},
-		ClientCAs:                pool,
-		ClientAuth:               clientAuth,
-		PreferServerCipherSuites: true,
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		GetConfigForClient: func(_ *tls.ClientHelloInfo) (*tls.Config, error) {
+			currentCerts, currentCAs := getCurrentServerTLSCerts(serverCertFile, serverKeyFile, caFile, prevCaFile)
+			return &tls.Config{
+				MinVersion:               tls.VersionTLS12,
+				Certificates:             []tls.Certificate{*currentCerts},
+				ClientCAs:                currentCAs,
+				ClientAuth:               clientAuth,
+				PreferServerCipherSuites: true,
+				CipherSuites: []uint16{
+					tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+					tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				},
+			}, nil
 		},
 	}, nil
 }
 
-func BuildClientTLS(clientCertPEM, clientKeyPEM, caPEM []byte) (*tls.Config, error) {
+func BuildClientTLS(clientCertPEM, clientKeyPEM, caPEM []byte, legacyCaPEM []byte) (*tls.Config, error) {
 	cert, err := tls.X509KeyPair(clientCertPEM, clientKeyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load client certificate: %w", err)
@@ -147,7 +203,10 @@ func BuildClientTLS(clientCertPEM, clientKeyPEM, caPEM []byte) (*tls.Config, err
 
 	rootCAs := x509.NewCertPool()
 	if !rootCAs.AppendCertsFromPEM(caPEM) {
-		return nil, errors.New("append root CA failed")
+		return nil, errors.New("append active root CA failed")
+	}
+	if legacyCaPEM != nil {
+		_ = rootCAs.AppendCertsFromPEM(legacyCaPEM)
 	}
 
 	return &tls.Config{
@@ -233,15 +292,22 @@ func EnsureLocalCA(outDir, org, caCN string, keySize, validDays int) (caCertPath
 		return "", "", fmt.Errorf("mkdir: %w", err)
 	}
 
-	caCertPath = filepath.Join(outDir, "ca.crt")
-	caKeyPath = filepath.Join(outDir, "ca.key")
+	caCertPath = filepath.Join(outDir, filepath.Base(constants.AgentTLSCACertFile))
+	caKeyPath = filepath.Join(outDir, filepath.Base(constants.AgentTLSCAKeyFile))
+	prevCACert := filepath.Join(outDir, filepath.Base(constants.AgentTLSPrevCAKeyFile))
 
 	if fileExists(caCertPath) && fileExists(caKeyPath) {
 		caPEM, rErr := os.ReadFile(caCertPath)
 		keyPEM, kErr := os.ReadFile(caKeyPath)
 		if rErr == nil && kErr == nil {
-			_, _, vErr := parseCACreds(caPEM, keyPEM)
+			caCert, _, vErr := parseCACreds(caPEM, keyPEM)
 			if vErr == nil {
+				timeUntilExpiry := time.Until(caCert.NotAfter)
+				if timeUntilExpiry <= constants.TLSCARotationGraceDays*24*time.Hour {
+					if err := os.Rename(caCertPath, prevCACert); err != nil {
+						return "", "", fmt.Errorf("rotate: move current CA to previous: %w", err)
+					}
+				}
 				return caCertPath, caKeyPath, nil
 			}
 		}
