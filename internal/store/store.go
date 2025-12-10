@@ -61,7 +61,7 @@ func (s *Store) SignAgentCSR(csr []byte) (cert []byte, ca []byte, err error) {
 
 func (s *Store) ValidateServerCertificates() error {
 	serverCertPath, serverKeyPath, caCertPath, caKeyPath, err := mtls.EnsureLocalCAAndServerCert(
-		filepath.Base(constants.AgentTLSCACertFile),
+		filepath.Dir(constants.AgentTLSCACertFile),
 		"PBS Plus",
 		"PBS Plus CA",
 		2048,
