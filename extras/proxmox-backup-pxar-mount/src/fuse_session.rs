@@ -578,8 +578,14 @@ fn to_stat(inode: u64, entry: &pxar::Entry) -> Result<libc::stat, Error> {
     let mut stat: libc::stat = unsafe { std::mem::zeroed() };
     stat.st_ino = inode;
     stat.st_nlink = nlink;
-    stat.st_mode = u32::try_from(metadata.stat.mode)
+
+    let original_mode = u32::try_from(metadata.stat.mode)
         .map_err(|err| format_err!("mode does not fit into st_mode field: {}", err))?;
+    let file_type = original_mode & libc::S_IFMT;
+
+    let perms = if entry.is_dir() { 0o755 } else { 0o644 };
+    stat.st_mode = file_type | perms;
+
     stat.st_size = i64::try_from(entry.file_size().unwrap_or(0))
         .map_err(|err| format_err!("size does not fit into st_size field: {}", err))?;
     stat.st_uid = metadata.stat.uid;

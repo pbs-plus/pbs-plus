@@ -19,7 +19,7 @@ use crate::direct_dynamic_index::{DirectDynamicReader, DirectLocalDynamicReadAt}
 use crate::fuse_session::{Accessor, Reader, Session};
 use crate::local_chunk_store::LocalChunkStore;
 
-use pbs_datastore::dynamic_index::{BufferedDynamicReader, DynamicIndexReader, LocalDynamicReadAt};
+use pbs_datastore::dynamic_index::DynamicIndexReader;
 use pbs_key_config::load_and_decrypt_key;
 use pbs_tools::crypt_config::CryptConfig;
 
@@ -224,18 +224,18 @@ async fn main() -> Result<(), Error> {
         // Build metadata reader from mpxar.didx
         let meta_index = open_index(&args.mpxar_didx)?;
         let meta_store = LocalChunkStore::new(&args.pbs_store, crypt.clone(), args.verify_chunks);
-        let meta_buffered = BufferedDynamicReader::new(meta_index, meta_store);
+        let meta_buffered = DirectDynamicReader::new(meta_index, meta_store);
         let meta_size = meta_buffered.archive_size();
-        let meta_reader = LocalDynamicReadAt::new(meta_buffered);
+        let meta_reader = DirectLocalDynamicReadAt::new(meta_buffered);
         let meta_reader: Reader = std::sync::Arc::new(meta_reader);
 
         // Build payload reader from ppxar.didx
         let payload_index = open_index(&args.ppxar_didx)?;
         let payload_store =
             LocalChunkStore::new(&args.pbs_store, crypt.clone(), args.verify_chunks);
-        let payload_direct = DirectDynamicReader::new(payload_index, payload_store);
-        let payload_size = payload_direct.archive_size();
-        let payload_reader = DirectLocalDynamicReadAt::new(payload_direct);
+        let payload_buffered = DirectDynamicReader::new(payload_index, payload_store);
+        let payload_size = payload_buffered.archive_size();
+        let payload_reader = DirectLocalDynamicReadAt::new(payload_buffered);
         let payload_reader: Reader = std::sync::Arc::new(payload_reader);
 
         // Split pxar from two dynamic readers
