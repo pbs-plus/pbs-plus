@@ -92,6 +92,10 @@ func NewS3FS(
 	return fs
 }
 
+func (fs *S3FS) GetMemcache() *memcache.Client {
+	return fs.memcache
+}
+
 func (fs *S3FS) Context() context.Context { return fs.ctx }
 
 func (fs *S3FS) Root() string {
