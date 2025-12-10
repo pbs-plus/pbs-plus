@@ -194,7 +194,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 				"--ppxar-didx", didxPath,
 			}
 		}
-		args = append(args, "--options", "ro,default_permissions,allow_other")
+		args = append(args, "--options", "ro,allow_other")
 		args = append(args, mountPoint)
 
 		cmd := exec.Command("/usr/bin/proxmox-backup-pxar-mount", args...)
