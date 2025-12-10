@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
+	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/web/rpc"
 )
 
 type AgentMount struct {

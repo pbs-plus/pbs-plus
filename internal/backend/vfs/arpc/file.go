@@ -78,7 +78,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		Length:   len(p),
 	}
 
-	bytesRead, err := f.fs.session.CallBinary(f.fs.ctx, f.jobId+"/ReadAt", &req, p)
+	bytesRead, err := f.fs.session.CallBinary(f.fs.Ctx, f.jobId+"/ReadAt", &req, p)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).
 			WithMessage("failed to handle read request, replace failed reads with zeroes, likely corrupted").
@@ -90,10 +90,10 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, io.EOF
 	}
 
-	atomic.AddInt64(&f.fs.totalBytes, int64(bytesRead))
+	atomic.AddInt64(&f.fs.TotalBytes, int64(bytesRead))
 
-	tb := atomic.LoadInt64(&f.fs.totalBytes)
-	_ = f.fs.memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
+	tb := atomic.LoadInt64(&f.fs.TotalBytes)
+	_ = f.fs.Memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
 
 	if bytesRead < len(p) {
 		return bytesRead, io.EOF

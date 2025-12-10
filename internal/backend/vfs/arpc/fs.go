@@ -51,34 +51,32 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 	}
 
 	fs := &ARPCFS{
-		basePath:   "/",
-		ctx:        ctxFs,
-		cancel:     cancel,
+		VFSBase: &vfs.VFSBase{
+			BasePath: "/",
+			Ctx:      ctxFs,
+			Cancel:   cancel,
+			Job:      job,
+			Memcache: memcache.New(memcachePath),
+		},
 		session:    session,
-		Job:        job,
 		Hostname:   hostname,
 		backupMode: backupMode,
-		memcache:   memcache.New(memcachePath),
 	}
 
 	go func() {
 		<-ctxFs.Done()
-		fs.memcache.DeleteAll()
-		fs.memcache.Close()
+		fs.Memcache.DeleteAll()
+		fs.Memcache.Close()
 		stopMemLocal()
 	}()
 
 	return fs
 }
 
-func (fs *ARPCFS) Context() context.Context { return fs.ctx }
+func (fs *ARPCFS) Context() context.Context { return fs.Ctx }
 
 func (fs *ARPCFS) GetBackupMode() string {
 	return fs.backupMode
-}
-
-func (fs *ARPCFS) GetMemcache() *memcache.Client {
-	return fs.memcache
 }
 
 func (fs *ARPCFS) Open(filename string) (vfs.FileHandle, error) {
@@ -134,9 +132,10 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	req := types.StatReq{Path: filename}
 
 	var raw []byte
-	cached, err := fs.memcache.Get("attr:" + filename)
+	cached, err := fs.Memcache.Get("attr:" + filename)
 	if err == nil {
-		atomic.AddInt64(&fs.statCacheHits, 1)
+		atomic.AddInt64(&fs.StatCacheHits, 1)
+		_ = fs.Memcache.Set(&memcache.Item{Key: "stats:statCacheHits", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.StatCacheHits), 10)), Expiration: 0})
 		raw = cached.Value
 	} else {
 		raw, err = fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
@@ -145,7 +144,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 			return types.AgentFileInfo{}, syscall.ENOENT
 		}
 		if isLookup {
-			_ = fs.memcache.Set(&memcache.Item{Key: "attr:" + filename, Value: raw, Expiration: 0})
+			_ = fs.Memcache.Set(&memcache.Item{Key: "attr:" + filename, Value: raw, Expiration: 0})
 		}
 	}
 
@@ -157,12 +156,12 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 
 	if !isLookup {
 		if fi.IsDir {
-			atomic.AddInt64(&fs.folderCount, 1)
-			_ = fs.memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.folderCount), 10)), Expiration: 0})
+			atomic.AddInt64(&fs.FolderCount, 1)
+			_ = fs.Memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.FolderCount), 10)), Expiration: 0})
 		} else {
-			fs.memcache.Delete("attr:" + filename)
-			atomic.AddInt64(&fs.fileCount, 1)
-			_ = fs.memcache.Set(&memcache.Item{Key: "stats:filesAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.fileCount), 10)), Expiration: 0})
+			fs.Memcache.Delete("attr:" + filename)
+			atomic.AddInt64(&fs.FileCount, 1)
+			_ = fs.Memcache.Set(&memcache.Item{Key: "stats:filesAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.FileCount), 10)), Expiration: 0})
 		}
 	}
 
@@ -182,11 +181,11 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	var fiCached types.AgentFileInfo
 	req := types.StatReq{Path: filename}
 
-	rawCached, err := fs.memcache.Get("xattr:" + filename)
+	rawCached, err := fs.Memcache.Get("xattr:" + filename)
 	if err == nil {
 		req.AclOnly = true
 		_ = fiCached.Decode(rawCached.Value)
-		fs.memcache.Delete("xattr:" + filename)
+		fs.Memcache.Delete("xattr:" + filename)
 	}
 
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)
@@ -262,7 +261,7 @@ func (fs *ARPCFS) ReadDir(path string) (vfs.DirStream, error) {
 		return nil, syscall.ENOENT
 	}
 
-	fs.memcache.Delete("attr:" + path)
+	fs.Memcache.Delete("attr:" + path)
 
 	return &DirStream{
 		fs:       fs,
@@ -273,5 +272,5 @@ func (fs *ARPCFS) ReadDir(path string) (vfs.DirStream, error) {
 }
 
 func (fs *ARPCFS) Root() string {
-	return fs.basePath
+	return fs.BasePath
 }
