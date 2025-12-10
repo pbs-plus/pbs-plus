@@ -155,7 +155,7 @@ func BuildClientTLS(clientCertPEM, clientKeyPEM, caPEM []byte) (*tls.Config, err
 		MinVersion:         tls.VersionTLS12,
 		Certificates:       []tls.Certificate{cert},
 		RootCAs:            rootCAs,
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: os.Getenv("PBS_PLUS_VERIFY_SERVER_HOSTNAME") == "true",
 		CipherSuites: []uint16{
 			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
