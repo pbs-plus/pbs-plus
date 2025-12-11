@@ -9,9 +9,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 )
 
-// ARPCFS implements billy.Filesystem using aRPC calls
 type ARPCFS struct {
-	vfs.VFSBase
+	*vfs.VFSBase
 
 	session    *arpc.Session
 	Hostname   string
@@ -29,7 +28,6 @@ type DirStream struct {
 	totalReturned uint64
 }
 
-// ARPCFile implements billy.File for remote files
 type ARPCFile struct {
 	fs       *ARPCFS
 	name     string
