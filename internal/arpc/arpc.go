@@ -126,11 +126,7 @@ func (s *Session) Serve() error {
 }
 
 func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
-	d := &net.Dialer{
-		Timeout:   5 * time.Second,
-		KeepAlive: 15 * time.Second,
-	}
-	conn, err := tls.DialWithDialer(d, "tcp", serverAddr, tlsConfig)
+	conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
 	if err != nil {
 		return nil, fmt.Errorf("TLS dial failed: %w", err)
 	}
@@ -145,6 +141,7 @@ func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
 		WithField("peer_certs_count", len(state.PeerCertificates)).
 		WithMessage("TLS connection established").
 		Write()
+	conn.SetDeadline(time.Time{})
 	return conn, nil
 }
 
@@ -225,18 +222,9 @@ func (s *Session) GetState() ConnectionState {
 }
 
 func (s *Session) openStream() (*smux.Stream, error) {
-	tries := 0
-
 	cur := s.muxSess.Load()
-	for (cur == nil || cur.IsClosed()) && tries <= 3 {
-		tries++
-
-		syslog.L.Error(fmt.Errorf("session is closed, attempting to reconnect")).WithField("attempt", tries).WithField("function", "openStream").Write()
-		if err := s.Reconnect(); err != nil {
-			syslog.L.Error(err).WithField("attempt", tries).WithField("function", "openStream: reconnect").Write()
-			continue
-		}
-		cur = s.muxSess.Load()
+	if cur == nil || cur.IsClosed() {
+		return nil, fmt.Errorf("tls mux is closed")
 	}
 
 	return cur.OpenStream()
