@@ -138,8 +138,9 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			safeTime,
 		))
 
-		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
+		_ = exec.Command("fusermount3", "-uz", mountPoint).Run()
 		_ = exec.Command("fusermount", "-uz", mountPoint).Run()
+		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
 		_ = os.RemoveAll(mountPoint)
 		if err := os.MkdirAll(mountPoint, 0o755); err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("failed to create mount-point: %w", err))
@@ -239,8 +240,9 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 				_ = proc.Kill()
 				_ = cmd.Wait()
 			}
-			_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
+			_ = exec.Command("fusermount3", "-uz", mountPoint).Run()
 			_ = exec.Command("fusermount", "-uz", mountPoint).Run()
+			_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
 			_ = os.RemoveAll(mountPoint)
 			controllers.WriteErrorResponse(w, errors.New("mount failed"))
 			return
@@ -317,13 +319,19 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 		for _, pid := range pids {
 			_ = syscall.Kill(pid, syscall.SIGTERM)
 		}
-		time.Sleep(200 * time.Millisecond)
+
+		time.Sleep(600 * time.Millisecond)
+
 		for _, pid := range pids {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 
-		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
+		_ = exec.Command("fusermount3", "-uz", mountPoint).Run()
 		_ = exec.Command("fusermount", "-uz", mountPoint).Run()
+		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
+
+		_ = os.RemoveAll(mountPoint)
+		_ = os.MkdirAll(mountPoint, 0o755)
 		_ = os.RemoveAll(mountPoint)
 
 		writeJSON(w, JobRunResponse{
@@ -400,7 +408,6 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			datastoreK := parts[0]
 			nsK := ""
 			if len(parts) > 4 {
-				// datastore | type | id | time | ns | file
 				nsK = parts[4]
 			}
 			mpBase := filepath.Clean(filepath.Join(
@@ -418,14 +425,17 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 		for _, pid := range pidsToKill {
 			_ = syscall.Kill(pid, syscall.SIGTERM)
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(600 * time.Millisecond)
 		for _, pid := range pidsToKill {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 
 		for _, mp := range targets {
-			_ = exec.Command("umount", "-f", "-l", mp).Run()
+			_ = exec.Command("fusermount3", "-uz", mp).Run()
 			_ = exec.Command("fusermount", "-uz", mp).Run()
+			_ = exec.Command("umount", "-f", "-l", mp).Run()
+			_ = os.RemoveAll(mp)
+			_ = os.MkdirAll(mp, 0o755)
 			_ = os.RemoveAll(mp)
 		}
 
