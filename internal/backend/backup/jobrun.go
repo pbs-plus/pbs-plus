@@ -220,7 +220,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 
 	if !op.skipCheck && target.IsAgent {
 		targetSplit := strings.Split(target.Name, " - ")
-		_, exists := op.storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
+		_, exists := op.storeInstance.ARPCAgentsManager.GetSession(targetSplit[0])
 		if !exists {
 			errCleanUp()
 			return fmt.Errorf("%w: %s", ErrTargetUnreachable, op.job.Target)

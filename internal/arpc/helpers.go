@@ -11,7 +11,7 @@ import (
 	"github.com/xtaci/smux"
 )
 
-func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, version string, mgr *SessionManager, config *smux.Config) (*Session, error) {
+func HijackUpgradeHTTP(w http.ResponseWriter, r *http.Request, hostname string, version string, mgr *AgentsManager, config *smux.Config) (*Session, error) {
 	if w == nil {
 		return nil, fmt.Errorf("response writer is nil")
 	}

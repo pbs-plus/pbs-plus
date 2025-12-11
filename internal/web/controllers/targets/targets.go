@@ -59,7 +59,7 @@ func CheckTargetStatusBatch(
 			hostname := targetSplit[0]
 			drive := targetSplit[1]
 
-			arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
+			arpcSess, ok := storeInstance.ARPCAgentsManager.GetSession(hostname)
 			if !ok {
 				results[idx] = result
 				return
@@ -445,7 +445,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if target.IsAgent {
 				targetSplit := strings.Split(target.Name, " - ")
 				if len(targetSplit) > 0 {
-					arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
+					arpcSess, ok := storeInstance.ARPCAgentsManager.GetSession(targetSplit[0])
 					if ok {
 						target.AgentVersion = arpcSess.GetVersion()
 						target.ConnectionStatus = false

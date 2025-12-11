@@ -13,13 +13,12 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/gofrs/flock"
+	"github.com/jpillora/overseer"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
@@ -35,24 +34,6 @@ var Version = "v0.0.0"
 type AgentDrivesRequest struct {
 	Hostname string            `json:"hostname"`
 	Drives   []utils.DriveInfo `json:"drives"`
-}
-
-func writeVersionToFile() error {
-	if err := os.MkdirAll("/etc/pbs-plus-agent", 0755); err != nil {
-		return err
-	}
-
-	versionLockPath := filepath.Join("/etc/pbs-plus-agent", "version.lock")
-	mutex := flock.New(versionLockPath)
-
-	mutex.Lock()
-	defer mutex.Close()
-
-	versionFile := filepath.Join("/etc/pbs-plus-agent", "version.txt")
-	if err := os.WriteFile(versionFile, []byte(Version), 0644); err != nil {
-		return fmt.Errorf("failed to write version file: %w", err)
-	}
-	return nil
 }
 
 func initializeDrives() error {
@@ -254,36 +235,12 @@ func connectARPC(ctx context.Context) error {
 	return nil
 }
 
-func main() {
-	defer func() {
-		if r := recover(); r != nil {
-			msg := fmt.Sprintf("Panic occurred: %v\nStack trace:\n%s", r, debug.Stack())
-
-			logFile, err := os.OpenFile("panic.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-			if err == nil {
-				defer logFile.Close()
-				_, _ = logFile.WriteString(msg)
-			} else {
-				fmt.Println("Error opening log file:", err)
-			}
-
-			os.Exit(1)
-		}
-	}()
-
-	forks.CmdBackup()
-	constants.Version = Version
-
+func runForeground(_ overseer.State) {
 	if err := syslog.L.SetServiceLogger(); err != nil {
 		log.Println(err)
 	}
 
 	syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
-
-	if err := writeVersionToFile(); err != nil {
-		syslog.L.Error(err).WithMessage("Failed to write version file").Write()
-		return
-	}
 
 	// Ensure registry defaults exist
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{
@@ -407,4 +364,35 @@ func main() {
 	cancel()
 	wg.Wait()
 	syslog.L.Info().WithMessage("Service stopped gracefully").Write()
+}
+
+func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("Panic occurred: %v\nStack trace:\n%s", r, debug.Stack())
+
+			logFile, err := os.OpenFile("panic.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err == nil {
+				defer logFile.Close()
+				_, _ = logFile.WriteString(msg)
+			} else {
+				fmt.Println("Error opening log file:", err)
+			}
+
+			os.Exit(1)
+		}
+	}()
+
+	forks.CmdBackup()
+	constants.Version = Version
+
+	dockerEnv := os.Getenv("PBS_PLUS__I_AM_INSIDE_CONTAINER")
+	if dockerEnv != "true" {
+		overseer.Run(overseer.Config{
+			Program: runForeground,
+			Fetcher: &updateFetcher{},
+		})
+	} else {
+		runForeground(overseer.State{})
+	}
 }
