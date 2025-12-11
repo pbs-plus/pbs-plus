@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
 
@@ -24,6 +25,7 @@ var dirBufPoolNT = sync.Pool{
 
 // NewDirReaderNT opens the directory handle and prepares a reusable buffer pool.
 func NewDirReaderNT(path string) (*DirReaderNT, error) {
+	syslog.L.Debug().WithMessage("NewDirReaderNT: initializing NT directory reader").WithField("path", path).Write()
 	ntPath := convertToNTPath(path)
 	if !strings.HasSuffix(ntPath, "\\") {
 		ntPath += "\\"
@@ -49,9 +51,11 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 	var ioStatusBlock IoStatusBlock
 
 	if err := ntCreateFileCall(&handle, &objectAttributes, &ioStatusBlock); err != nil {
+		syslog.L.Error(err).WithMessage("NewDirReaderNT: ntCreateFileCall failed").WithField("path", path).Write()
 		return nil, err
 	}
 
+	syslog.L.Debug().WithMessage("NewDirReaderNT: directory handle opened").WithField("path", path).WithField("handle", handle).Write()
 	return &DirReaderNT{
 		handle:      handle,
 		ioStatus:    ioStatusBlock,
@@ -65,26 +69,33 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 // It returns the encoded batch bytes or os.ErrProcessDone when enumeration is finished.
 func (r *DirReaderNT) NextBatch(blockSize uint64) ([]byte, error) {
 	if r.noMoreFiles {
+		syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: no more files (cached)").WithField("path", r.path).Write()
 		return nil, os.ErrProcessDone
 	}
 
-	// Reuse large buffer to avoid per-call allocation and GC churn.
 	bufAny := dirBufPoolNT.Get()
 	buffer := bufAny.([]byte)
 	defer dirBufPoolNT.Put(buffer)
+
+	syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: querying directory batch").
+		WithField("path", r.path).
+		WithField("restart_scan", r.restartScan).
+		WithField("buffer_len", len(buffer)).
+		Write()
 
 	err := ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan)
 	r.restartScan = false
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			// PENDING
+			syslog.L.Warn().WithMessage("DirReaderNT.NextBatch: STATUS_PENDING, retry later").WithField("path", r.path).Write()
 			return nil, nil
 		}
 		if errors.Is(err, os.ErrProcessDone) {
+			syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: enumeration completed").WithField("path", r.path).Write()
 			r.noMoreFiles = true
 			return nil, err
 		}
-
+		syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: ntDirectoryCall failed").WithField("path", r.path).Write()
 		return nil, err
 	}
 
@@ -93,21 +104,24 @@ func (r *DirReaderNT) NextBatch(blockSize uint64) ([]byte, error) {
 	offset := 0
 	for {
 		if offset+int(unsafe.Sizeof(FileDirectoryInformation{})) > len(buffer) {
-			return nil, fmt.Errorf("offset exceeded buffer length")
+			err := fmt.Errorf("offset exceeded buffer length")
+			syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: buffer overflow guard").WithField("path", r.path).Write()
+			return nil, err
 		}
 
 		entry := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[offset]))
 
 		if entry.FileAttributes&excludedAttrs == 0 {
-			fileNameLen := entry.FileNameLength / 2 // length in uint16 code units
+			fileNameLen := entry.FileNameLength / 2
 			fileNamePtr := unsafe.Pointer(
 				uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName),
 			)
 
-			// Bounds check filename region inside the buffer
 			if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) >
 				uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
-				return nil, fmt.Errorf("filename data exceeds buffer bounds")
+				err := fmt.Errorf("filename data exceeds buffer bounds")
+				syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: filename bounds check failed").WithField("path", r.path).Write()
+				return nil, err
 			}
 
 			fileNameSlice := unsafe.Slice((*uint16)(fileNamePtr), fileNameLen)
@@ -171,27 +185,35 @@ func (r *DirReaderNT) NextBatch(blockSize uint64) ([]byte, error) {
 		}
 		nextOffset := offset + int(entry.NextEntryOffset)
 		if nextOffset <= offset || nextOffset > len(buffer) {
-			return nil, fmt.Errorf(
-				"invalid NextEntryOffset: %d from offset %d",
-				entry.NextEntryOffset,
-				offset,
-			)
+			err := fmt.Errorf("invalid NextEntryOffset: %d from offset %d", entry.NextEntryOffset, offset)
+			syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: invalid NextEntryOffset").WithField("path", r.path).Write()
+			return nil, err
 		}
 		offset = nextOffset
 	}
 
 	encodedBatch, err := entries.Encode()
 	if err != nil {
+		syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: encode failed").WithField("path", r.path).Write()
 		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
 	}
+	syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: batch encoded").
+		WithField("path", r.path).
+		WithField("entries", len(entries)).
+		WithField("bytes", len(encodedBatch)).
+		Write()
 	return encodedBatch, nil
 }
 
 // Close releases the resources used by the directory reader.
 func (r *DirReaderNT) Close() error {
+	syslog.L.Debug().WithMessage("DirReaderNT.Close: closing handle").WithField("path", r.path).WithField("handle", r.handle).Write()
 	status, _, _ := ntClose.Call(r.handle)
 	if status != 0 {
-		return fmt.Errorf("NtClose failed for path '%s' with status: 0x%x", r.path, status)
+		err := fmt.Errorf("NtClose failed for path '%s' with status: 0x%x", r.path, status)
+		syslog.L.Error(err).WithMessage("DirReaderNT.Close: NtClose failed").WithField("path", r.path).WithField("status_hex", fmt.Sprintf("0x%X", status)).Write()
+		return err
 	}
+	syslog.L.Debug().WithMessage("DirReaderNT.Close: success").WithField("path", r.path).Write()
 	return nil
 }
