@@ -79,6 +79,8 @@ func (e *LogEntry) Write() {
 	switch e.Level {
 	case "info":
 		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
+	case "debug":
+		e.logger.zlog.Debug().Fields(e.Fields).Msg(e.Message)
 	case "warn":
 		e.logger.zlog.Warn().Fields(e.Fields).Msg(e.Message)
 	case "error":
