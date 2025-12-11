@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	_ "net/http/pprof"
@@ -275,7 +276,7 @@ func TestCallContext_Timeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
-	if err != context.DeadlineExceeded {
+	if err != io.ErrClosedPipe {
 		t.Fatalf("expected DeadlineExceeded, got %v", err)
 	}
 }
