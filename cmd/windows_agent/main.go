@@ -40,6 +40,10 @@ type pbsService struct {
 
 func (p *pbsService) Start(s service.Service) error {
 	go func() {
+		if updateDisabled := os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE"); updateDisabled == "true" {
+			p.runForeground(s)(overseer.DisabledState)
+			return
+		}
 		overseer.Run(overseer.Config{
 			Program: p.runForeground(s),
 			Fetcher: &updater.UpdateFetcher{},
