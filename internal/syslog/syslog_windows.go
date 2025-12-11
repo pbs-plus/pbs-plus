@@ -4,14 +4,12 @@ package syslog
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 // SetServiceLogger configures the service logger for Windows Event Log integration.
@@ -60,10 +58,6 @@ func (e *LogEntry) Write() {
 		return
 	}
 
-	if e.Level != "debug" || os.Getenv("DEBUG") == "true" {
-		e.enqueueLog()
-	}
-
 	if e.JobID != "" {
 		e.Fields["jobId"] = e.JobID
 	}
@@ -84,15 +78,5 @@ func (e *LogEntry) Write() {
 		e.logger.zlog.Error().Err(e.Err).Fields(e.Fields).Msg(e.Message)
 	default:
 		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
-	}
-}
-
-// enqueueLog adds a log message to the logQueue for processing.
-func (e *LogEntry) enqueueLog() {
-	select {
-	case logQueue <- *e:
-		// Log enqueued successfully.
-	default:
-		log.Warn().Msg("Log queue is full, dropping log message")
 	}
 }
