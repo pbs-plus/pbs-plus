@@ -225,9 +225,19 @@ func (s *Session) GetState() ConnectionState {
 }
 
 func (s *Session) openStream() (*smux.Stream, error) {
+	tries := 0
+
 	cur := s.muxSess.Load()
-	if cur == nil || cur.IsClosed() {
-		return nil, errors.New("session not available")
+	for (cur == nil || cur.IsClosed()) && tries <= 3 {
+		tries++
+
+		syslog.L.Error(fmt.Errorf("session is closed, attempting to reconnect")).WithField("attempt", tries).WithField("function", "openStream").Write()
+		if err := s.Reconnect(); err != nil {
+			syslog.L.Error(err).WithField("attempt", tries).WithField("function", "openStream: reconnect").Write()
+			continue
+		}
+		cur = s.muxSess.Load()
 	}
+
 	return cur.OpenStream()
 }

@@ -37,7 +37,7 @@ type TLSConfig struct {
 type Store struct {
 	Ctx                context.Context
 	Database           *sqlite.Database
-	ARPCSessionManager *arpc.SessionManager
+	ARPCAgentsManager *arpc.AgentsManager
 	arpcFS             *safemap.Map[string, *arpcfs.ARPCFS]
 	mTLS               *TLSConfig
 }
@@ -138,7 +138,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		Ctx:                ctx,
 		Database:           db,
 		arpcFS:             safemap.New[string, *arpcfs.ARPCFS](),
-		ARPCSessionManager: arpc.NewSessionManager(),
+		ARPCAgentsManager: arpc.NewAgentsManager(),
 		mTLS:               &TLSConfig{},
 	}
 

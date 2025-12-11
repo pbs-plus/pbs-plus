@@ -12,10 +12,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/jpillora/overseer"
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
@@ -38,30 +38,34 @@ type pbsService struct {
 }
 
 func (p *pbsService) Start(s service.Service) error {
-	if logger, err := s.Logger(nil); err == nil {
-		p.logger = logger
-		syslog.L.SetServiceLogger(logger)
-	}
-
-	syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
-
-	if err := p.writeVersionFile(); err != nil {
-		syslog.L.Warn().WithMessage("Failed to write version file").WithField("error", err.Error()).Write()
-	}
-
-	handle := windows.CurrentProcess()
-	const IDLE_PRIORITY_CLASS = 0x00000040
-	if err := windows.SetPriorityClass(handle, uint32(IDLE_PRIORITY_CLASS)); err != nil {
-		syslog.L.Warn().WithMessage("Failed to set process priority").WithField("error", err.Error()).Write()
-	} else {
-		syslog.L.Info().WithMessage("Process priority set to idle successfully").Write()
-	}
-
-	p.ctx, p.cancel = context.WithCancel(context.Background())
-
-	go p.run()
-
+	overseer.Run(overseer.Config{
+		Program: p.runForeground(s),
+		Fetcher: &updateFetcher{},
+	})
 	return nil
+}
+
+func (p *pbsService) runForeground(s service.Service) func(overseer.State) {
+	return func(os overseer.State) {
+		if logger, err := s.Logger(nil); err == nil {
+			p.logger = logger
+			syslog.L.SetServiceLogger(logger)
+		}
+
+		syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
+
+		handle := windows.CurrentProcess()
+		const IDLE_PRIORITY_CLASS = 0x00000040
+		if err := windows.SetPriorityClass(handle, uint32(IDLE_PRIORITY_CLASS)); err != nil {
+			syslog.L.Warn().WithMessage("Failed to set process priority").WithField("error", err.Error()).Write()
+		} else {
+			syslog.L.Info().WithMessage("Process priority set to idle successfully").Write()
+		}
+
+		p.ctx, p.cancel = context.WithCancel(context.Background())
+
+		go p.runBackground()
+	}
 }
 
 func (p *pbsService) Stop(s service.Service) error {
@@ -87,7 +91,7 @@ func (p *pbsService) Stop(s service.Service) error {
 	return nil
 }
 
-func (p *pbsService) run() {
+func (p *pbsService) runBackground() {
 	defer func() {
 		if r := recover(); r != nil {
 			syslog.L.Error(fmt.Errorf("service panicked: %v", r)).WithMessage("Service encountered a panic").Write()
@@ -210,8 +214,7 @@ func (p *pbsService) waitForBootstrap() error {
 
 func (p *pbsService) startBackgroundTasks() {
 	syslog.L.Info().WithMessage("Starting certificate renewal background task").Write()
-	p.wg.Add(1)
-	go func() {
+	p.wg.Go(func() {
 		defer p.wg.Done()
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
@@ -230,11 +233,10 @@ func (p *pbsService) startBackgroundTasks() {
 				}
 			}
 		}
-	}()
+	})
 
 	syslog.L.Info().WithMessage("Starting drive update background task").Write()
-	p.wg.Add(1)
-	go func() {
+	p.wg.Go(func() {
 		defer p.wg.Done()
 
 		syslog.L.Info().WithMessage("Running initial drive update").Write()
@@ -262,7 +264,7 @@ func (p *pbsService) startBackgroundTasks() {
 				ticker.Reset(utils.ComputeDelay())
 			}
 		}
-	}()
+	})
 }
 
 func (p *pbsService) updateDrives() error {
@@ -421,16 +423,6 @@ func (p *pbsService) handlePing(req arpc.Request) (arpc.Response, error) {
 	}
 
 	return arpc.Response{Status: 200, Data: respData}, nil
-}
-
-func (p *pbsService) writeVersionFile() error {
-	ex, err := os.Executable()
-	if err != nil {
-		return err
-	}
-
-	versionFile := filepath.Join(filepath.Dir(ex), "version.txt")
-	return os.WriteFile(versionFile, []byte(Version), 0644)
 }
 
 func main() {

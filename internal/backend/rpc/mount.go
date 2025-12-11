@@ -108,7 +108,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	defer cancel()
 
 	// Retrieve the ARPC session for the target.
-	arpcSess, exists := s.Store.ARPCSessionManager.GetSession(args.TargetHostname)
+	arpcSess, exists := s.Store.ARPCAgentsManager.GetSession(args.TargetHostname)
 	if !exists {
 		reply.Status = 500
 		reply.Message = "unable to reach target"
@@ -149,7 +149,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	// Retrieve or initialize an ARPCFS instance.
 	// The child session key is "targetHostname|jobId".
 	childKey := args.TargetHostname + "|" + args.JobId
-	arpcFSRPC, exists := s.Store.ARPCSessionManager.GetSession(childKey)
+	arpcFSRPC, exists := s.Store.ARPCAgentsManager.GetSession(childKey)
 	if !exists {
 		reply.Status = 500
 		reply.Message = "unable to reach child target"
@@ -266,7 +266,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	defer cancel()
 
 	// Try to acquire an ARPC session for the target.
-	arpcSess, exists := s.Store.ARPCSessionManager.GetSession(args.TargetHostname)
+	arpcSess, exists := s.Store.ARPCAgentsManager.GetSession(args.TargetHostname)
 	if !exists {
 		reply.Status = 500
 		reply.Message = "failed to send closure request to target"
@@ -310,14 +310,14 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 		}).Write()
 
 	// Retrieve the ARPC session for the target.
-	_, exists := s.Store.ARPCSessionManager.GetSession(args.TargetHostname)
+	_, exists := s.Store.ARPCAgentsManager.GetSession(args.TargetHostname)
 	if !exists {
 		reply.Connected = false
 		return nil
 	}
 
 	childKey := args.TargetHostname + "|" + args.JobId
-	_, exists = s.Store.ARPCSessionManager.GetSession(childKey)
+	_, exists = s.Store.ARPCAgentsManager.GetSession(childKey)
 	if !exists {
 		reply.Connected = false
 		return nil
