@@ -6,19 +6,33 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"syscall"
 
-	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/rs/zerolog"
+	"golang.org/x/sys/windows/svc/eventlog"
 )
 
 // SetServiceLogger configures the service logger for Windows Event Log integration.
-func (l *Logger) SetServiceLogger(s service.Logger) error {
+func (l *Logger) SetServiceLogger() error {
+	sourceName := "PBSPlusAgent"
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	if err := eventlog.InstallAsEventCreate(sourceName,
+		eventlog.Info|eventlog.Warning|eventlog.Error); err != nil {
+		if errno, ok := err.(syscall.Errno); !ok || errno != syscall.ERROR_ALREADY_EXISTS {
+			return fmt.Errorf("failed to install event log source: %w", err)
+		}
+	}
+
+	evl, err := eventlog.Open(sourceName)
+	if err != nil {
+		return fmt.Errorf("failed to open event log: %w", err)
+	}
+
 	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-		w.Out = &LogWriter{logger: s}
+		w.Out = &LogWriter{logger: evl}
 		w.NoColor = true
 		w.FormatCaller = func(i interface{}) string {
 			var c string
