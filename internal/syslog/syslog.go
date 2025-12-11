@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -15,6 +16,11 @@ import (
 var L *Logger
 
 func init() {
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	if os.Getenv("DEBUG") == "true" {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	}
+
 	// Configure zerolog to output via our EventLogWriter wrapped in a ConsoleWriter.
 	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
 		w.NoColor = true
@@ -76,6 +82,14 @@ func (l *Logger) Warn() *LogEntry {
 func (l *Logger) Info() *LogEntry {
 	return &LogEntry{
 		Level:  "info",
+		Fields: make(map[string]interface{}),
+		logger: l,
+	}
+}
+
+func (l *Logger) Debug() *LogEntry {
+	return &LogEntry{
+		Level:  "debug",
 		Fields: make(map[string]interface{}),
 		logger: l,
 	}
@@ -152,6 +166,8 @@ func ParseAndLogWindowsEntry(body io.ReadCloser) error {
 		entry.logger.zlog.Warn().Fields(entry.Fields).Msg(entry.Message)
 	case "error":
 		entry.logger.zlog.Error().Err(entry.Err).Fields(entry.Fields).Msg(entry.Message)
+	case "debug":
+		entry.logger.zlog.Debug().Err(entry.Err).Fields(entry.Fields).Msg(entry.Message)
 	default:
 		entry.logger.zlog.Info().Fields(entry.Fields).Msg(entry.Message)
 	}
