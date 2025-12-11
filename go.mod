@@ -1,6 +1,6 @@
 module github.com/pbs-plus/pbs-plus
 
-go 1.25.0
+go 1.25.5
 
 require (
 	github.com/KimMachineGun/automemlimit v0.7.4
