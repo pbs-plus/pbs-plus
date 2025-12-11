@@ -4,6 +4,7 @@ package agentfs
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +16,6 @@ import (
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
-	"github.com/pkg/errors"
 	"github.com/xtaci/smux"
 	"golang.org/x/sys/windows"
 )
@@ -44,6 +44,10 @@ func (s *AgentFSServer) closeFileHandles() {
 		if fh.mapping != 0 {
 			windows.CloseHandle(fh.mapping)
 			fh.mapping = 0
+		}
+		if fh.ov != nil {
+			_ = fh.ov.Close()
+			fh.ov = nil
 		}
 		windows.CloseHandle(fh.handle)
 		fh.Unlock()
@@ -81,7 +85,6 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, err
 	}
 
-	// Disallow write operations.
 	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		errStr := arpc.StringMsg("write operations not allowed")
 		errBytes, err := errStr.Encode()
@@ -99,7 +102,6 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, err
 	}
 
-	// Open with CreateFileW; decide flags.
 	pathUTF16 := utf16.Encode([]rune(path))
 	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
 		pathUTF16 = append(pathUTF16, 0)
@@ -126,7 +128,6 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, err
 	}
 
-	// Query FileStandardInfo to get size and dir bit.
 	var std fileStandardInfo
 	if err := getFileStandardInfoByHandle(handle, &std); err != nil {
 		windows.CloseHandle(handle)
@@ -139,6 +140,7 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		isDir:         std.Directory != 0,
 		logicalOffset: 0,
 	}
+	fh.ov = newOverlapped(handle)
 
 	if fh.isDir {
 		dirPath, err := s.abs(payload.Path)
@@ -303,8 +305,6 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
-// handleReadDir first attempts to serve the directory listing from the cache.
-// It returns the cached DirEntries for that directory.
 func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	var payload types.ReadDirReq
 	if err := payload.Decode(req.Payload); err != nil {
@@ -362,7 +362,6 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	defer fh.Unlock()
 
 	if payload.Offset >= fh.fileSize {
-		// Nothing to send.
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
@@ -375,7 +374,6 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		}, nil
 	}
 
-	// Clamp to EOF.
 	maxEnd := fh.fileSize
 	reqEnd := payload.Offset + int64(payload.Length)
 	if reqEnd > maxEnd {
@@ -398,14 +396,11 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	const maxChunk = 512 * 1024
 	zeroBuf := make([]byte, maxChunk)
 
-	// Try to fetch allocated ranges. If it fails, fall back to treating it as fully allocated.
 	ranges, err := queryAllocatedRanges(fh.handle, payload.Offset, int64(reqLen))
 	if err != nil || len(ranges) == 0 {
-		// Either non-sparse, or API not supported. Treat as contiguous allocation.
 		ranges = []allocatedRange{{FileOffset: payload.Offset, Length: int64(reqLen)}}
 	}
 
-	// Build a closure to stream data
 	streamFn := func(stream *smux.Stream) {
 		write := func(p []byte) error {
 			return binarystream.SendDataFromReader(bytes.NewReader(p), len(p), stream)
@@ -414,9 +409,7 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		pos := payload.Offset
 		end := reqEnd
 
-		// Iterate each allocated range and fill gaps with zeros.
 		for _, r := range ranges {
-			// Clamp r to [pos, end)
 			rStart := r.FileOffset
 			rEnd := r.FileOffset + r.Length
 			if rEnd <= pos {
@@ -432,7 +425,6 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 				continue
 			}
 
-			// Emit gap before this range.
 			if rStart > pos {
 				gap := rStart - pos
 				for gap > 0 {
@@ -449,7 +441,6 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 				pos = rStart
 			}
 
-			// Read and emit allocated bytes.
 			cur := rStart
 			for cur < rEnd {
 				ch := int64(maxChunk)
@@ -457,7 +448,7 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 					ch = rEnd - cur
 				}
 				buf := make([]byte, ch)
-				n, rerr := readAtOverlapped(fh.handle, cur, buf)
+				n, rerr := fh.ov.ReadAt(buf, cur)
 				if rerr != nil && rerr != io.EOF {
 					syslog.L.Error(rerr).
 						WithMessage("overlapped read error").Write()
@@ -471,14 +462,12 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 					cur += int64(n)
 				}
 				if rerr == io.EOF && n == 0 {
-					// Unexpected EOF inside an allocated range; stop early.
 					return
 				}
 			}
 			pos = rEnd
 		}
 
-		// Trailing gap to end.
 		if pos < end {
 			gap := end - pos
 			for gap > 0 {
@@ -523,7 +512,6 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
-	// We will not touch the kernel file pointer; we only update fh.logicalOffset.
 	fh.Lock()
 	defer fh.Unlock()
 
@@ -604,9 +592,17 @@ func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 		handle.mapping = 0
 	}
 	if !handle.isDir {
+		if handle.ov != nil {
+			_ = handle.ov.Close()
+			handle.ov = nil
+		}
 		windows.CloseHandle(handle.handle)
 	} else {
 		handle.dirReader.Close()
+		if handle.ov != nil {
+			_ = handle.ov.Close()
+			handle.ov = nil
+		}
 		windows.CloseHandle(handle.handle)
 	}
 
