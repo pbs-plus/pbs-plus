@@ -32,7 +32,7 @@ func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload 
 }
 
 func (s *Session) CallContext(ctx context.Context, method string, payload arpcdata.Encodable) (Response, error) {
-	stream, err := s.openStream()
+	stream, err := s.openStream(ctx)
 	if err != nil {
 		return Response{}, err
 	}
@@ -131,7 +131,7 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 }
 
 func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdata.Encodable, dst []byte) (int, error) {
-	stream, err := s.openStream()
+	stream, err := s.openStream(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to open stream: %w", err)
 	}
