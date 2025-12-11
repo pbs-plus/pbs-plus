@@ -16,8 +16,11 @@ import (
 )
 
 type Session struct {
-	muxSess atomic.Pointer[smux.Session]
-	router  atomic.Pointer[Router]
+	serverAddr string
+	tlsConfig  *tls.Config
+	headers    http.Header
+	muxSess    atomic.Pointer[smux.Session]
+	router     atomic.Pointer[Router]
 
 	state atomic.Int32
 
@@ -122,6 +125,29 @@ func (s *Session) Serve() error {
 	}
 }
 
+func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
+	d := &net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 15 * time.Second,
+	}
+	conn, err := tls.DialWithDialer(d, "tcp", serverAddr, tlsConfig)
+	if err != nil {
+		return nil, fmt.Errorf("TLS dial failed: %w", err)
+	}
+	if err := conn.Handshake(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("TLS handshake failed: %w", err)
+	}
+	state := conn.ConnectionState()
+	syslog.L.Info().
+		WithField("tls_version", state.Version).
+		WithField("cipher_suite", state.CipherSuite).
+		WithField("peer_certs_count", len(state.PeerCertificates)).
+		WithMessage("TLS connection established").
+		Write()
+	return conn, nil
+}
+
 func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -130,30 +156,7 @@ func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers htt
 		return nil, fmt.Errorf("TLS configuration must include client certificate")
 	}
 
-	dialOnce := func() (net.Conn, error) {
-		d := &net.Dialer{
-			Timeout:   5 * time.Second,
-			KeepAlive: 15 * time.Second,
-		}
-		conn, err := tls.DialWithDialer(d, "tcp", serverAddr, tlsConfig)
-		if err != nil {
-			return nil, fmt.Errorf("TLS dial failed: %w", err)
-		}
-		if err := conn.Handshake(); err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("TLS handshake failed: %w", err)
-		}
-		state := conn.ConnectionState()
-		syslog.L.Info().
-			WithField("tls_version", state.Version).
-			WithField("cipher_suite", state.CipherSuite).
-			WithField("peer_certs_count", len(state.PeerCertificates)).
-			WithMessage("TLS connection established").
-			Write()
-		return conn, nil
-	}
-
-	conn, err := dialOnce()
+	conn, err := dialServer(serverAddr, tlsConfig)
 	if err != nil {
 		return nil, fmt.Errorf("server not reachable: %w", err)
 	}
@@ -166,9 +169,39 @@ func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers htt
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 
-	go maintainTLSTunnel(session.ctx, serverAddr, headers, tlsConfig, session)
+	session.tlsConfig = tlsConfig
+	session.serverAddr = serverAddr
+	session.headers = headers
 
 	return session, nil
+}
+
+func (s *Session) Reconnect() error {
+	if s.tlsConfig == nil {
+		return fmt.Errorf("reconnect: tls config missing")
+	}
+
+	if s.serverAddr == "" {
+		return fmt.Errorf("reconnect: server address missing")
+	}
+
+	conn, err := dialServer(s.serverAddr, s.tlsConfig)
+	if err != nil {
+		return fmt.Errorf("server not reachable: %w", err)
+	}
+
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	defer conn.SetDeadline(time.Time{})
+	session, err := upgradeHTTPClient(conn, "/plus/arpc", s.serverAddr, s.headers, nil)
+	if err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("failed to connect to server: %w", err)
+	}
+
+	newMuxSess := session.muxSess.Load()
+	s.muxSess.Store(newMuxSess)
+
+	return nil
 }
 
 func (s *Session) Close() error {
@@ -197,119 +230,4 @@ func (s *Session) openStream() (*smux.Stream, error) {
 		return nil, errors.New("session not available")
 	}
 	return cur.OpenStream()
-}
-
-func maintainTLSTunnel(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config, s *Session) {
-	dial := func() (net.Conn, error) {
-		d := &net.Dialer{
-			Timeout:   5 * time.Second,
-			KeepAlive: 15 * time.Second,
-		}
-		conn, err := tls.DialWithDialer(d, "tcp", serverAddr, tlsConfig)
-		if err != nil {
-			return nil, fmt.Errorf("TLS dial failed: %w", err)
-		}
-		if err := conn.Handshake(); err != nil {
-			_ = conn.Close()
-			return nil, fmt.Errorf("TLS handshake failed: %w", err)
-		}
-		return conn, nil
-	}
-
-	upgrade := func(conn net.Conn) (*Session, error) {
-		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-		newSess, err := upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
-		_ = conn.SetDeadline(time.Time{})
-		if err != nil {
-			_ = conn.Close()
-			return nil, fmt.Errorf("upgrade failed: %w", err)
-		}
-		return newSess, nil
-	}
-
-	maintainTLSTunnelWithDeps(ctx, s, dial, upgrade)
-}
-
-func maintainTLSTunnelWithDeps(
-	ctx context.Context,
-	s *Session,
-	dial func() (net.Conn, error),
-	upgrade func(net.Conn) (*Session, error),
-) {
-	base := 100 * time.Millisecond
-	max := 2 * time.Second
-	backoff := base
-	lastFail := time.Time{}
-
-	fastProbeUntil := time.Time{}
-	fastProbeInterval := 100 * time.Millisecond
-	idleCheck := 200 * time.Millisecond
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		cur := s.muxSess.Load()
-		if cur != nil && !cur.IsClosed() {
-			time.Sleep(idleCheck)
-			continue
-		}
-
-		now := time.Now()
-		if lastFail.IsZero() || now.Sub(lastFail) > 10*time.Second {
-			backoff = base
-		}
-
-		if fastProbeUntil.IsZero() || now.After(fastProbeUntil) {
-			fastProbeUntil = now.Add(3 * time.Second)
-		}
-
-		interval := backoff
-		if now.Before(fastProbeUntil) {
-			interval = fastProbeInterval
-		}
-
-		conn, err := dial()
-		if err != nil {
-			lastFail = now
-			time.Sleep(interval)
-			if interval == fastProbeInterval {
-				continue
-			}
-			if backoff < max {
-				backoff *= 2
-				if backoff > max {
-					backoff = max
-				}
-			}
-			continue
-		}
-
-		newSess, err := upgrade(conn)
-		if err != nil {
-			lastFail = now
-			time.Sleep(interval)
-			if interval == fastProbeInterval {
-				continue
-			}
-			if backoff < max {
-				backoff *= 2
-				if backoff > max {
-					backoff = max
-				}
-			}
-			continue
-		}
-
-		if prev := s.muxSess.Swap(newSess.muxSess.Load()); prev != nil && !prev.IsClosed() {
-			_ = prev.Close()
-		}
-		s.state.Store(int32(StateConnected))
-		backoff = base
-		lastFail = time.Time{}
-		fastProbeUntil = time.Time{}
-	}
 }
