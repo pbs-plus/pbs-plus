@@ -3,7 +3,6 @@ package arpc
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -552,46 +551,9 @@ func (f *fakeTLSConn) Close() error {
 	return f.Conn.Close()
 }
 
-type fakeTLSDialer struct {
-	mu     sync.Mutex
-	conns  []net.Conn
-	index  int
-	errors []error
-}
-
-func (d *fakeTLSDialer) next() (net.Conn, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.index < len(d.errors) && d.errors[d.index] != nil {
-		err := d.errors[d.index]
-		d.index++
-		return nil, err
-	}
-	if d.index >= len(d.conns) {
-		return nil, errors.New("no more conns")
-	}
-	c := d.conns[d.index]
-	d.index++
-	return c, nil
-}
-
 func TestMaintainTLSTunnel_ReconnectsOnDisconnect(t *testing.T) {
-	server1, client1 := net.Pipe()
-	server2, client2 := net.Pipe()
-
-	serverSess1, err := NewServerSession(server1, nil)
-	if err != nil {
-		t.Fatalf("failed to create server session 1: %v", err)
-	}
-	serverSess2, err := NewServerSession(server2, nil)
-	if err != nil {
-		t.Fatalf("failed to create server session 2: %v", err)
-	}
-
-	cliSess, err := NewClientSession(client1, nil)
-	if err != nil {
-		t.Fatalf("failed to create client session: %v", err)
-	}
+	s1c, s1s := net.Pipe()
+	s2c, s2s := net.Pipe()
 
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
@@ -599,68 +561,90 @@ func TestMaintainTLSTunnel_ReconnectsOnDisconnect(t *testing.T) {
 		pongBytes, _ := pong.Encode()
 		return Response{Status: 200, Data: pongBytes}, nil
 	})
+
+	serverSess1, err := NewServerSession(s1s, nil)
+	if err != nil {
+		t.Fatalf("server session 1: %v", err)
+	}
 	serverSess1.SetRouter(router)
-	serverSess2.SetRouter(router)
+	go func() { _ = serverSess1.Serve() }()
+
+	clientSess1, err := NewClientSession(s1c, nil)
+	if err != nil {
+		t.Fatalf("client session 1: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = serverSess1.Serve() }()
+	serverSess2, err := NewServerSession(s2s, nil)
+	if err != nil {
+		t.Fatalf("server session 2: %v", err)
+	}
+	serverSess2.SetRouter(router)
 	go func() { _ = serverSess2.Serve() }()
 
-	cliSess.state.Store(int32(StateConnected))
-
-	dialer := &fakeTLSDialer{
-		conns: []net.Conn{
-			&fakeTLSConn{Conn: client1},
-			&fakeTLSConn{Conn: client2},
-		},
-		errors: []error{nil, nil},
+	dialQueue := []net.Conn{&fakeTLSConn{Conn: s1c}, &fakeTLSConn{Conn: s2c}}
+	var dialIdx int
+	dial := func() (net.Conn, error) {
+		if dialIdx >= len(dialQueue) {
+			return nil, errors.New("no more conns")
+		}
+		c := dialQueue[dialIdx]
+		dialIdx++
+		return c, nil
 	}
 
-	origDial := tlsDialFunc
-	defer func() { tlsDialFunc = origDial }()
-	tlsDialFunc = func(network, addr string, config *tls.Config) (net.Conn, error) {
-		return dialer.next()
+	var firstReturned bool
+	upgrade := func(conn net.Conn) (*Session, error) {
+		if !firstReturned {
+			firstReturned = true
+			return clientSess1, nil
+		}
+		newClientSess, err := NewClientSession(conn, nil)
+		if err != nil {
+			return nil, err
+		}
+		return newClientSess, nil
 	}
 
-	headers := make(map[string][]string)
-
-	go maintainTLSTunnel(ctx, "unused:0", headers, &tls.Config{}, cliSess)
+	go maintainTLSTunnelWithDeps(ctx, clientSess1, dial, upgrade)
 
 	time.Sleep(50 * time.Millisecond)
 
-	_, _ = cliSess.Call("ping", nil)
+	if _, err := clientSess1.Call("ping", nil); err != nil {
+		t.Fatalf("initial call failed: %v", err)
+	}
 
-	first := cliSess.muxSess.Load()
+	first := clientSess1.muxSess.Load()
 	if first == nil {
 		t.Fatalf("expected initial session")
 	}
-
 	_ = first.Close()
 
 	deadline := time.Now().Add(2 * time.Second)
+	reconnected := false
 	for time.Now().Before(deadline) {
-		cur := cliSess.muxSess.Load()
+		cur := clientSess1.muxSess.Load()
 		if cur != nil && !cur.IsClosed() && cur != first {
+			reconnected = true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	cur := cliSess.muxSess.Load()
-	if cur == nil || cur.IsClosed() || cur == first {
+	if !reconnected {
 		t.Fatalf("expected session to be re-established")
 	}
 
-	resp, err := cliSess.Call("ping", nil)
+	resp, err := clientSess1.Call("ping", nil)
 	if err != nil {
 		t.Fatalf("call after reconnect failed: %v", err)
 	}
 	if resp.Status != 200 {
 		t.Fatalf("expected 200 after reconnect, got %d", resp.Status)
 	}
-}
 
-var tlsDialFunc = func(network, addr string, config *tls.Config) (net.Conn, error) {
-	return tls.Dial(network, addr, config)
+	_ = serverSess1.Close()
+	_ = serverSess2.Close()
+	_ = clientSess1.Close()
 }
