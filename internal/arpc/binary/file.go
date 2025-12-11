@@ -100,6 +100,8 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 		return err
 	}
 
+	_ = stream.Close()
+
 	syslog.L.Debug().WithMessage("SendDataFromReader: completed").
 		WithField("total_sent", totalSent).
 		Write()
