@@ -32,8 +32,6 @@ func (fs *ARPCFS) logError(fpath string, err error) {
 	}
 }
 
-var _ vfs.FS = (*ARPCFS)(nil)
-
 func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
 	ctxFs, cancel := context.WithCancel(ctx)
 
@@ -79,17 +77,17 @@ func (fs *ARPCFS) GetBackupMode() string {
 	return fs.backupMode
 }
 
-func (fs *ARPCFS) Open(filename string) (vfs.FileHandle, error) {
+func (fs *ARPCFS) Open(filename string) (ARPCFile, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
-func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (vfs.FileHandle, error) {
+func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFile, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
 			Write()
-		return nil, syscall.ENOENT
+		return ARPCFile{}, syscall.ENOENT
 	}
 
 	var resp types.FileHandleId
@@ -102,16 +100,16 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (vfs.Fil
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &req)
 	if err != nil {
 		fs.logError(req.Path, err)
-		return nil, syscall.ENOENT
+		return ARPCFile{}, syscall.ENOENT
 	}
 
 	err = resp.Decode(raw)
 	if err != nil {
 		fs.logError(req.Path, err)
-		return nil, syscall.ENOENT
+		return ARPCFile{}, syscall.ENOENT
 	}
 
-	return &ARPCFile{
+	return ARPCFile{
 		fs:       fs,
 		name:     filename,
 		handleID: resp,
@@ -241,29 +239,29 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	return fsStat, nil
 }
 
-func (fs *ARPCFS) ReadDir(path string) (vfs.DirStream, error) {
+func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
 			Write()
-		return nil, syscall.ENOENT
+		return DirStream{}, syscall.ENOENT
 	}
 
 	var handleId types.FileHandleId
 	openReq := types.OpenFileReq{Path: path}
 	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &openReq)
 	if err != nil {
-		return nil, syscall.ENOENT
+		return DirStream{}, syscall.ENOENT
 	}
 	err = handleId.Decode(raw)
 	if err != nil {
-		return nil, syscall.ENOENT
+		return DirStream{}, syscall.ENOENT
 	}
 
 	fs.Memcache.Delete("attr:" + path)
 
-	return &DirStream{
+	return DirStream{
 		fs:       fs,
 		path:     path,
 		handleId: handleId,
@@ -273,4 +271,14 @@ func (fs *ARPCFS) ReadDir(path string) (vfs.DirStream, error) {
 
 func (fs *ARPCFS) Root() string {
 	return fs.BasePath
+}
+
+func (fs *ARPCFS) Unmount() {
+	if fs.Fuse != nil {
+		_ = fs.Fuse.Unmount()
+	}
+	if fs.session != nil {
+		_ = fs.session.Close()
+	}
+	fs.Cancel()
 }

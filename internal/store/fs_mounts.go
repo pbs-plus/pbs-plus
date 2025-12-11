@@ -5,20 +5,30 @@ package store
 import (
 	"sync"
 
-	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
+	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
+	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 type FSMount struct {
 	sync.Mutex
-	fs vfs.FS
+	arpcfs *arpcfs.ARPCFS
+	s3fs   *s3fs.S3FS
 }
 
 var activeMounts = safemap.New[string, *FSMount]()
 
-func CreateFSMount(connId string, fs vfs.FS) {
+func CreateARPCFSMount(connId string, fs *arpcfs.ARPCFS) {
 	conn := &FSMount{
-		fs: fs,
+		arpcfs: fs,
+	}
+
+	activeMounts.Set(connId, conn)
+}
+
+func CreateS3FSMount(connId string, fs *s3fs.S3FS) {
+	conn := &FSMount{
+		s3fs: fs,
 	}
 
 	activeMounts.Set(connId, conn)
@@ -26,13 +36,26 @@ func CreateFSMount(connId string, fs vfs.FS) {
 
 func DisconnectSession(connId string) {
 	if fs, ok := activeMounts.GetAndDel(connId); ok {
-		fs.fs.Unmount()
+		if fs.arpcfs != nil {
+			fs.arpcfs.Unmount()
+		}
+		if fs.s3fs != nil {
+			fs.s3fs.Unmount()
+		}
 	}
 }
 
-func GetSessionFS(connId string) vfs.FS {
+func GetSessionARPCFS(connId string) *arpcfs.ARPCFS {
 	if conn, ok := activeMounts.Get(connId); ok {
-		return conn.fs
+		return conn.arpcfs
+	} else {
+		return nil
+	}
+}
+
+func GetSessionS3FS(connId string) *s3fs.S3FS {
+	if conn, ok := activeMounts.Get(connId); ok {
+		return conn.s3fs
 	} else {
 		return nil
 	}
