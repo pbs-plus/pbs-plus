@@ -22,6 +22,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 type BackupArgs struct {
@@ -82,8 +83,9 @@ type WarnCountReply struct {
 }
 
 type MountRPCService struct {
-	ctx   context.Context
-	Store *store.Store
+	ctx           context.Context
+	Store         *store.Store
+	jobCtxCancels *safemap.Map[string, context.CancelFunc]
 }
 
 func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
@@ -155,7 +157,11 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		reply.Message = "unable to reach child target"
 		return errors.New(reply.Message)
 	}
-	arpcFS := arpcfs.NewARPCFS(s.ctx, arpcFSRPC, args.TargetHostname, job, backupMode)
+
+	jobCtx, jobCancel := context.WithCancel(s.ctx)
+	s.jobCtxCancels.Set(args.JobId, jobCancel)
+
+	arpcFS := arpcfs.NewARPCFS(jobCtx, arpcFSRPC, args.TargetHostname, job, backupMode)
 	if arpcFS == nil {
 		reply.Status = 500
 		reply.Message = "failed to send create ARPCFS"
@@ -216,7 +222,11 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 	}
 
 	childKey := args.Endpoint + "|" + args.JobId
-	s3FS := s3fs.NewS3FS(s.ctx, job, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
+
+	jobCtx, jobCancel := context.WithCancel(s.ctx)
+	s.jobCtxCancels.Set(args.JobId, jobCancel)
+
+	s3FS := s3fs.NewS3FS(jobCtx, job, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
 	if s3FS == nil {
 		reply.Status = 500
 		reply.Message = "failed to send create S3FS"
@@ -279,6 +289,11 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 		JobId: args.JobId,
 	}
 
+	ctxCancel, ok := s.jobCtxCancels.GetAndDel(args.JobId)
+	if ok {
+		ctxCancel()
+	}
+
 	// Instruct the target to perform its cleanup.
 	cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", &cleanupReq)
 	if err != nil || cleanupResp.Status != 200 {
@@ -336,8 +351,9 @@ func StartRPCServer(watcher chan struct{}, ctx context.Context, socketPath strin
 	}
 
 	service := &MountRPCService{
-		ctx:   ctx,
-		Store: storeInstance,
+		ctx:           ctx,
+		Store:         storeInstance,
+		jobCtxCancels: safemap.New[string, context.CancelFunc](),
 	}
 
 	// Register the RPC service.
