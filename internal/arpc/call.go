@@ -135,12 +135,14 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 	if err != nil {
 		return 0, fmt.Errorf("failed to open stream: %w", err)
 	}
-	defer func() { _ = stream.Close() }()
+	defer stream.Close()
 
+	// Propagate context deadlines to the stream
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
 	}
 
+	// Serialize the payload
 	var payloadBytes []byte
 	if payload != nil {
 		payloadBytes, err = payload.Encode()
@@ -149,11 +151,13 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 		}
 	}
 
+	// Build the RPC request
 	req := Request{
 		Method:  method,
 		Payload: payloadBytes,
 	}
 
+	// Encode and send the request
 	reqBytes, err := req.Encode()
 	if err != nil {
 		return 0, fmt.Errorf("failed to encode request: %w", err)
@@ -163,46 +167,42 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 		return 0, fmt.Errorf("failed to write request: %w", err)
 	}
 
+	// Read the response
 	headerPrefix := headerPool.Get().([]byte)
 	defer headerPool.Put(headerPrefix)
 
 	if _, err := io.ReadFull(stream, headerPrefix); err != nil {
-		_ = stream.Close()
 		return 0, fmt.Errorf("failed to read header length prefix: %w", err)
 	}
 	headerTotalLength := binary.LittleEndian.Uint32(headerPrefix)
 	if headerTotalLength < 4 {
-		_ = stream.Close()
 		return 0, fmt.Errorf("invalid header length %d", headerTotalLength)
 	}
 
+	// Allocate header buffer.
 	headerBuf := make([]byte, headerTotalLength)
+
+	// Copy prefix into headerBuf.
 	copy(headerBuf, headerPrefix)
+	// Read the remainder of the header.
 	if _, err := io.ReadFull(stream, headerBuf[4:]); err != nil {
-		_ = stream.Close()
 		return 0, fmt.Errorf("failed to read full header: %w", err)
 	}
 
+	// Decode the header.
 	var resp Response
 	if err := resp.Decode(headerBuf); err != nil {
-		_ = stream.Close()
 		return 0, fmt.Errorf("failed to decode response: %w", err)
 	}
 
+	// Handle error responses
 	if resp.Status != 213 {
 		var serErr SerializableError
 		if err := serErr.Decode(resp.Data); err == nil {
-			_ = stream.Close()
 			return 0, UnwrapError(serErr)
 		}
-		_ = stream.Close()
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
-	n, err := binarystream.ReceiveDataInto(stream, dst)
-	if err != nil {
-		_ = stream.Close()
-		return n, err
-	}
-	return n, nil
+	return binarystream.ReceiveDataInto(stream, dst)
 }
