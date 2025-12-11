@@ -3,6 +3,7 @@ package forks
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -45,6 +46,8 @@ type backupSession struct {
 	once     sync.Once
 }
 
+const BACKUP_MODE_PREFIX = "pbs-plus--child-backup-mode:"
+
 func (s *backupSession) Close() {
 	s.once.Do(func() {
 		if s.fs != nil {
@@ -73,8 +76,6 @@ func CmdBackup() {
 	if *cmdMode != "backup" {
 		return
 	}
-
-	syslog.L.Disable()
 
 	// Validate required flags.
 	if *sourceMode == "" || *drive == "" || *jobId == "" || *readMode == "" {
@@ -130,7 +131,7 @@ func CmdBackup() {
 		os.Exit(1)
 	}
 
-	fmt.Println(backupMode)
+	fmt.Println(BACKUP_MODE_PREFIX + backupMode)
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
@@ -200,25 +201,35 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 
 	// Read only the first line that contains backupMode.
 	scanner := bufio.NewScanner(stdoutPipe)
-	var backupMode string
-	if scanner.Scan() {
-		backupMode = scanner.Text()
-	} else {
-		if errScanner.Scan() {
-			// Clean up before returning error
-			cmd.Process.Kill()
-			return "", cmd.Process.Pid, fmt.Errorf("error from child process: %v", errScanner.Text())
+
+	backupMode := make(chan string, 1)
+
+	go func() {
+		for scanner.Scan() {
+			line := scanner.Text()
+			if mode, found := strings.CutPrefix(line, BACKUP_MODE_PREFIX); found {
+				backupMode <- mode
+			} else {
+				syslog.L.Info().
+					WithField("drive", drive).
+					WithField("jobId", jobId).
+					WithField("forked", true).
+					WithMessage(line).Write()
+			}
 		}
-		cmd.Process.Kill()
-		return "", cmd.Process.Pid, fmt.Errorf("failed to read backup mode from child process")
-	}
+	}()
 
-	if err := scanner.Err(); err != nil {
-		cmd.Process.Kill()
-		return "", cmd.Process.Pid, err
-	}
+	go func() {
+		for errScanner.Scan() {
+			syslog.L.Error(errors.New(errScanner.Text())).
+				WithField("drive", drive).
+				WithField("jobId", jobId).
+				WithField("forked", true).
+				Write()
+		}
+	}()
 
-	return strings.TrimSpace(backupMode), cmd.Process.Pid, nil
+	return strings.TrimSpace(<-backupMode), cmd.Process.Pid, nil
 }
 
 func Backup(rpcSess *arpc.Session, sourceMode string, readMode string, drive string, jobId string) (string, error) {
