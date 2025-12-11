@@ -12,6 +12,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var headerPool = &sync.Pool{
@@ -32,20 +33,25 @@ func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload 
 }
 
 func (s *Session) CallContext(ctx context.Context, method string, payload arpcdata.Encodable) (Response, error) {
+	syslog.L.Debug().WithMessage("ARPC CallContext: begin").WithField("method", method).Write()
+
 	stream, err := s.openStream(ctx)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallContext: openStream failed").WithField("method", method).Write()
 		return Response{}, err
 	}
 	defer func() { _ = stream.Close() }()
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
+		syslog.L.Debug().WithMessage("ARPC CallContext: deadline set").WithField("deadline", deadline.String()).WithField("method", method).Write()
 	}
 
 	var payloadBytes []byte
 	if payload != nil {
 		payloadBytes, err = payload.Encode()
 		if err != nil {
+			syslog.L.Error(err).WithMessage("ARPC CallContext: payload encode failed").WithField("method", method).Write()
 			return Response{}, fmt.Errorf("failed to encode payload: %w", err)
 		}
 	}
@@ -56,10 +62,12 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 	}
 	reqBytes, err := req.Encode()
 	if err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallContext: request encode failed").WithField("method", method).Write()
 		return Response{}, fmt.Errorf("failed to encode request: %w", err)
 	}
 
 	if _, err := stream.Write(reqBytes); err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallContext: write request failed").WithField("method", method).Write()
 		return Response{}, fmt.Errorf("failed to write request: %w", err)
 	}
 
@@ -69,15 +77,19 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 	if _, err := io.ReadFull(stream, prefix); err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			_ = stream.Close()
+			syslog.L.Warn().WithMessage("ARPC CallContext: read length prefix timeout").WithField("method", method).Write()
 			return Response{}, context.DeadlineExceeded
 		}
 		_ = stream.Close()
+		syslog.L.Error(err).WithMessage("ARPC CallContext: read length prefix failed").WithField("method", method).Write()
 		return Response{}, fmt.Errorf("failed to read length prefix: %w", err)
 	}
 	totalLength := binary.LittleEndian.Uint32(prefix)
 	if totalLength < 4 {
 		_ = stream.Close()
-		return Response{}, fmt.Errorf("invalid total length %d", totalLength)
+		err := fmt.Errorf("invalid total length %d", totalLength)
+		syslog.L.Error(err).WithMessage("ARPC CallContext: invalid total length").WithField("method", method).Write()
+		return Response{}, err
 	}
 
 	buf := make([]byte, totalLength)
@@ -85,24 +97,30 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 	if _, err := io.ReadFull(stream, buf[4:]); err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			_ = stream.Close()
+			syslog.L.Warn().WithMessage("ARPC CallContext: read full response timeout").WithField("method", method).Write()
 			return Response{}, context.DeadlineExceeded
 		}
 		_ = stream.Close()
+		syslog.L.Error(err).WithMessage("ARPC CallContext: read full response failed").WithField("method", method).Write()
 		return Response{}, fmt.Errorf("failed to read full response: %w", err)
 	}
 
 	var resp Response
 	if err := resp.Decode(buf); err != nil {
 		_ = stream.Close()
+		syslog.L.Error(err).WithMessage("ARPC CallContext: decode response failed").WithField("method", method).Write()
 		return Response{}, fmt.Errorf("failed to decode response: %w", err)
 	}
 
+	syslog.L.Debug().WithMessage("ARPC CallContext: success").WithField("method", method).WithField("status", resp.Status).Write()
 	return resp, nil
 }
 
 func (s *Session) CallMsg(ctx context.Context, method string, payload arpcdata.Encodable) ([]byte, error) {
+	syslog.L.Debug().WithMessage("ARPC CallMsg: begin").WithField("method", method).Write()
 	resp, err := s.CallContext(ctx, method, payload)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallMsg: CallContext failed").WithField("method", method).Write()
 		return nil, err
 	}
 
@@ -110,16 +128,24 @@ func (s *Session) CallMsg(ctx context.Context, method string, payload arpcdata.E
 		if resp.Data != nil {
 			var serErr SerializableError
 			if err := serErr.Decode(resp.Data); err != nil {
-				return nil, fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+				err2 := fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+				syslog.L.Error(err2).WithMessage("ARPC CallMsg: non-OK status, decode failed").WithField("method", method).WithField("status", resp.Status).Write()
+				return nil, err2
 			}
-			return nil, UnwrapError(serErr)
+			err2 := UnwrapError(serErr)
+			syslog.L.Error(err2).WithMessage("ARPC CallMsg: non-OK status").WithField("method", method).WithField("status", resp.Status).Write()
+			return nil, err2
 		}
-		return nil, fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+		err2 := fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+		syslog.L.Error(err2).WithMessage("ARPC CallMsg: non-OK status, no data").WithField("method", method).WithField("status", resp.Status).Write()
+		return nil, err2
 	}
 
 	if resp.Data == nil {
+		syslog.L.Debug().WithMessage("ARPC CallMsg: success, no data").WithField("method", method).Write()
 		return nil, nil
 	}
+	syslog.L.Debug().WithMessage("ARPC CallMsg: success").WithField("method", method).WithField("bytes", len(resp.Data)).Write()
 	return resp.Data, nil
 }
 
@@ -131,78 +157,91 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 }
 
 func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdata.Encodable, dst []byte) (int, error) {
+	syslog.L.Debug().WithMessage("ARPC CallBinary: begin").WithField("method", method).Write()
+
 	stream, err := s.openStream(ctx)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallBinary: openStream failed").WithField("method", method).Write()
 		return 0, fmt.Errorf("failed to open stream: %w", err)
 	}
 	defer stream.Close()
 
-	// Propagate context deadlines to the stream
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
+		syslog.L.Debug().WithMessage("ARPC CallBinary: deadline set").WithField("deadline", deadline.String()).WithField("method", method).Write()
 	}
 
-	// Serialize the payload
 	var payloadBytes []byte
 	if payload != nil {
 		payloadBytes, err = payload.Encode()
 		if err != nil {
+			syslog.L.Error(err).WithMessage("ARPC CallBinary: payload encode failed").WithField("method", method).Write()
 			return 0, fmt.Errorf("failed to encode payload: %w", err)
 		}
 	}
 
-	// Build the RPC request
 	req := Request{
 		Method:  method,
 		Payload: payloadBytes,
 	}
 
-	// Encode and send the request
 	reqBytes, err := req.Encode()
 	if err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallBinary: request encode failed").WithField("method", method).Write()
 		return 0, fmt.Errorf("failed to encode request: %w", err)
 	}
 
 	if _, err := stream.Write(reqBytes); err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallBinary: write request failed").WithField("method", method).Write()
 		return 0, fmt.Errorf("failed to write request: %w", err)
 	}
 
-	// Read the response
 	headerPrefix := headerPool.Get().([]byte)
 	defer headerPool.Put(headerPrefix)
 
 	if _, err := io.ReadFull(stream, headerPrefix); err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallBinary: read header length prefix failed").WithField("method", method).Write()
 		return 0, fmt.Errorf("failed to read header length prefix: %w", err)
 	}
 	headerTotalLength := binary.LittleEndian.Uint32(headerPrefix)
 	if headerTotalLength < 4 {
-		return 0, fmt.Errorf("invalid header length %d", headerTotalLength)
+		err := fmt.Errorf("invalid header length %d", headerTotalLength)
+		syslog.L.Error(err).WithMessage("ARPC CallBinary: invalid header length").WithField("method", method).Write()
+		return 0, err
 	}
 
-	// Allocate header buffer.
 	headerBuf := make([]byte, headerTotalLength)
 
-	// Copy prefix into headerBuf.
 	copy(headerBuf, headerPrefix)
-	// Read the remainder of the header.
 	if _, err := io.ReadFull(stream, headerBuf[4:]); err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallBinary: read full header failed").WithField("method", method).Write()
 		return 0, fmt.Errorf("failed to read full header: %w", err)
 	}
 
-	// Decode the header.
 	var resp Response
 	if err := resp.Decode(headerBuf); err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallBinary: decode response failed").WithField("method", method).Write()
 		return 0, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Handle error responses
 	if resp.Status != 213 {
 		var serErr SerializableError
 		if err := serErr.Decode(resp.Data); err == nil {
-			return 0, UnwrapError(serErr)
+			uerr := UnwrapError(serErr)
+			syslog.L.Error(uerr).WithMessage("ARPC CallBinary: server returned error").WithField("method", method).WithField("status", resp.Status).Write()
+			return 0, uerr
 		}
-		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
+		err := fmt.Errorf("RPC error: status %d", resp.Status)
+		syslog.L.Error(err).WithMessage("ARPC CallBinary: non-streaming status").WithField("method", method).Write()
+		return 0, err
 	}
 
-	return binarystream.ReceiveDataInto(stream, dst)
+	n, err := binarystream.ReceiveDataInto(stream, dst)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("ARPC CallBinary: ReceiveDataInto failed").WithField("method", method).Write()
+		return n, err
+	}
+
+	syslog.L.Debug().WithMessage("ARPC CallBinary: success").WithField("method", method).WithField("bytes", n).Write()
+	return n, nil
 }
