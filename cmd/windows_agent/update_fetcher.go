@@ -7,11 +7,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/Masterminds/semver"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
@@ -87,6 +89,8 @@ func (u *updateFetcher) downloadUpdate() (io.Reader, error) {
 func (u *updateFetcher) checkForNewVersion() (string, error) {
 	var versionResp VersionResp
 
+	constraint, err := semver.NewConstraint(">= 0.52.0-rc1")
+
 	resp, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, nil)
 	if err != nil {
 		return "", err
@@ -103,6 +107,18 @@ func (u *updateFetcher) checkForNewVersion() (string, error) {
 	}
 
 	if versionResp.Version != u.currentVersion {
+		vs, err := semver.NewVersion(versionResp.Version)
+		if err != nil {
+			return "", err
+		}
+		if !constraint.Check(vs) {
+			syslog.L.Info().
+				WithMessage("new version does not have new update_fetcher").
+				WithField("current", u.currentVersion).
+				WithField("new", versionResp.Version).
+				Write()
+			return "", fmt.Errorf("new version does not have new update_fetcher")
+		}
 		return versionResp.Version, nil
 	}
 	return "", nil
