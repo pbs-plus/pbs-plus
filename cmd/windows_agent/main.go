@@ -41,79 +41,74 @@ type pbsService struct {
 func (p *pbsService) Start(s service.Service) error {
 	go func() {
 		if updateDisabled := os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE"); updateDisabled == "true" {
-			p.runForeground(s)(overseer.DisabledState)
+			p.runForeground(overseer.DisabledState)
 			return
 		}
 		overseer.Run(overseer.Config{
-			Program: p.runForeground(s),
+			Program: p.runForeground,
 			Fetcher: &updater.UpdateFetcher{},
 		})
 	}()
 	return nil
 }
 
-func (p *pbsService) runForeground(s service.Service) func(overseer.State) {
-	return func(os overseer.State) {
-		if logger, err := s.Logger(nil); err == nil {
-			p.logger = logger
-			syslog.L.SetServiceLogger(logger)
-		}
+func (p *pbsService) runForeground(_ overseer.State) {
+	syslog.L.SetServiceLogger()
 
-		syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
+	syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
 
-		handle := windows.CurrentProcess()
-		const IDLE_PRIORITY_CLASS = 0x00000040
-		if err := windows.SetPriorityClass(handle, uint32(IDLE_PRIORITY_CLASS)); err != nil {
-			syslog.L.Warn().WithMessage("Failed to set process priority").WithField("error", err.Error()).Write()
-		} else {
-			syslog.L.Info().WithMessage("Process priority set to idle successfully").Write()
-		}
-
-		p.ctx, p.cancel = context.WithCancel(context.Background())
-
-		agent.SetStatus("Starting")
-		syslog.L.Info().WithMessage("Waiting for PBS Plus Agent config").Write()
-
-		if err := p.waitForConfig(); err != nil {
-			syslog.L.Error(err).WithMessage("Failed to get configuration").Write()
-			return
-		}
-		syslog.L.Info().WithMessage("Configuration acquired successfully").Write()
-
-		syslog.L.Info().WithMessage("Starting bootstrap process").Write()
-		if err := p.waitForBootstrap(); err != nil {
-			syslog.L.Error(err).WithMessage("Failed to bootstrap").Write()
-			return
-		}
-		syslog.L.Info().WithMessage("Bootstrap completed successfully").Write()
-
-		syslog.L.Info().WithMessage("Initializing backup store").Write()
-		if store, err := agent.NewBackupStore(); err != nil {
-			syslog.L.Warn().WithMessage("Failed to initialize backup store").WithField("error", err.Error()).Write()
-		} else if err := store.ClearAll(); err != nil {
-			syslog.L.Warn().WithMessage("Failed to clear backup store").WithField("error", err.Error()).Write()
-		} else {
-			syslog.L.Info().WithMessage("Backup store initialized and cleared successfully").Write()
-		}
-
-		syslog.L.Info().WithMessage("Starting background tasks").Write()
-		p.startBackgroundTasks()
-		syslog.L.Info().WithMessage("Background tasks started successfully").Write()
-
-		syslog.L.Info().WithMessage("Attempting to connect to ARPC").Write()
-		if err := p.connectARPC(); err != nil {
-			syslog.L.Error(err).WithMessage("Failed to connect to ARPC").Write()
-			return
-		}
-		syslog.L.Info().WithMessage("ARPC connection established successfully").Write()
-
-		agent.SetStatus("Running")
-		syslog.L.Info().WithMessage("PBS Plus Agent fully initialized and running").Write()
-
-		<-p.ctx.Done()
-		agent.SetStatus("Stopping")
-		syslog.L.Info().WithMessage("Context cancelled, shutting down").Write()
+	handle := windows.CurrentProcess()
+	const IDLE_PRIORITY_CLASS = 0x00000040
+	if err := windows.SetPriorityClass(handle, uint32(IDLE_PRIORITY_CLASS)); err != nil {
+		syslog.L.Warn().WithMessage("Failed to set process priority").WithField("error", err.Error()).Write()
+	} else {
+		syslog.L.Info().WithMessage("Process priority set to idle successfully").Write()
 	}
+
+	p.ctx, p.cancel = context.WithCancel(context.Background())
+
+	agent.SetStatus("Starting")
+	syslog.L.Info().WithMessage("Waiting for PBS Plus Agent config").Write()
+
+	if err := p.waitForConfig(); err != nil {
+		syslog.L.Error(err).WithMessage("Failed to get configuration").Write()
+		return
+	}
+	syslog.L.Info().WithMessage("Configuration acquired successfully").Write()
+
+	syslog.L.Info().WithMessage("Starting bootstrap process").Write()
+	if err := p.waitForBootstrap(); err != nil {
+		syslog.L.Error(err).WithMessage("Failed to bootstrap").Write()
+		return
+	}
+	syslog.L.Info().WithMessage("Bootstrap completed successfully").Write()
+
+	syslog.L.Info().WithMessage("Initializing backup store").Write()
+	if store, err := agent.NewBackupStore(); err != nil {
+		syslog.L.Warn().WithMessage("Failed to initialize backup store").WithField("error", err.Error()).Write()
+	} else if err := store.ClearAll(); err != nil {
+		syslog.L.Warn().WithMessage("Failed to clear backup store").WithField("error", err.Error()).Write()
+	} else {
+		syslog.L.Info().WithMessage("Backup store initialized and cleared successfully").Write()
+	}
+
+	syslog.L.Info().WithMessage("Starting background tasks").Write()
+	p.startBackgroundTasks()
+	syslog.L.Info().WithMessage("Background tasks started successfully").Write()
+
+	syslog.L.Info().WithMessage("Attempting to connect to ARPC").Write()
+	if err := p.connectARPC(); err != nil {
+		syslog.L.Error(err).WithMessage("Failed to connect to ARPC").Write()
+		return
+	}
+	syslog.L.Info().WithMessage("ARPC connection established successfully").Write()
+
+	agent.SetStatus("Running")
+	syslog.L.Info().WithMessage("PBS Plus Agent fully initialized and running").Write()
+
+	<-p.ctx.Done()
+	agent.SetStatus("Stopping")
+	syslog.L.Info().WithMessage("Context cancelled, shutting down").Write()
 }
 
 func (p *pbsService) Stop(s service.Service) error {
