@@ -12,12 +12,22 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// IOCTL_STORAGE_QUERY_PROPERTY control code
+// CTL_CODE(IOCTL_STORAGE_BASE, 0x0500, METHOD_BUFFERED, FILE_ANY_ACCESS)
+// IOCTL_STORAGE_BASE = 0x2d
 const _IOCTL_STORAGE_QUERY_PROPERTY = uint32(0x2D1400)
 
+// STORAGE_PROPERTY_ID enum
 type _STORAGE_PROPERTY_ID int32
 
 const (
-	_StorageDevicePropertyPROPERTY_ID = 0 // From winioctl.h
+	_StorageDeviceProperty           _STORAGE_PROPERTY_ID = 0 // From winioctl.h
+	_StorageAdapterProperty          _STORAGE_PROPERTY_ID = 1
+	_StorageDeviceIdProperty         _STORAGE_PROPERTY_ID = 2
+	_StorageDeviceUniqueIdProperty   _STORAGE_PROPERTY_ID = 3 // See storduid.h for details
+	_StorageDeviceWriteCacheProperty _STORAGE_PROPERTY_ID = 4
+	_StorageMiniportProperty         _STORAGE_PROPERTY_ID = 5
+	_StorageAccessAlignmentProperty  _STORAGE_PROPERTY_ID = 6
 	// ... other values exist but are not needed here
 )
 
@@ -25,7 +35,10 @@ const (
 type _STORAGE_QUERY_TYPE int32
 
 const (
-	_PropertyStandardQuerySTORAGE_QUERY_TYPE = 0 // From winioctl.h
+	_PropertyStandardQuery   _STORAGE_QUERY_TYPE = 0 // From winioctl.h
+	_PropertyExistsQuery     _STORAGE_QUERY_TYPE = 1
+	_PropertyMaskQuery       _STORAGE_QUERY_TYPE = 2
+	_PropertyQueryMaxDefined _STORAGE_QUERY_TYPE = 3
 )
 
 // STORAGE_BUS_TYPE enum (subset relevant here)
@@ -35,9 +48,14 @@ type _STORAGE_BUS_TYPE uint32
 const (
 	_BusTypeUnknown _STORAGE_BUS_TYPE = 0x00
 	_BusTypeScsi    _STORAGE_BUS_TYPE = 0x01
+	_BusTypeAtapi   _STORAGE_BUS_TYPE = 0x02
 	_BusTypeAta     _STORAGE_BUS_TYPE = 0x03
+	_BusType1394    _STORAGE_BUS_TYPE = 0x04
+	_BusTypeSsa     _STORAGE_BUS_TYPE = 0x05
+	_BusTypeFibre   _STORAGE_BUS_TYPE = 0x06
 	_BusTypeUsb     _STORAGE_BUS_TYPE = 0x07
 	_BusTypeRAID    _STORAGE_BUS_TYPE = 0x08
+	_BusTypeiScsi   _STORAGE_BUS_TYPE = 0x09
 	_BusTypeSas     _STORAGE_BUS_TYPE = 0x0A
 	_BusTypeSata    _STORAGE_BUS_TYPE = 0x0B
 	_BusTypeSd      _STORAGE_BUS_TYPE = 0x0C
