@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
@@ -33,31 +34,42 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for i, job := range allJobs {
-			var childKey string
 			isS3 := false
 			isAgent := strings.HasPrefix(job.TargetPath, "agent://")
 			s3Parsed, err := s3url.Parse(job.TargetPath)
 			if err == nil {
 				isS3 = true
 			}
+
+			var stats vfs.VFSStats
+
 			if isAgent {
 				splittedTargetName := strings.Split(job.Target, " - ")
 				targetHostname := splittedTargetName[0]
-				childKey = targetHostname + "|" + job.ID
+				childKey := targetHostname + "|" + job.ID
+				session := store.GetSessionARPCFS(childKey)
+				if session == nil {
+					continue
+				}
+
+				stats, err = session.GetStats()
+				if err != nil {
+					syslog.L.Error(err).WithField("childKey", childKey).Write()
+					continue
+				}
 			} else if isS3 {
-				childKey = s3Parsed.Endpoint + "|" + job.ID
+				childKey := s3Parsed.Endpoint + "|" + job.ID
+				session := store.GetSessionS3FS(childKey)
+				if session == nil {
+					continue
+				}
+
+				stats, err = session.GetStats()
+				if err != nil {
+					syslog.L.Error(err).WithField("childKey", childKey).Write()
+					continue
+				}
 			} else {
-				continue
-			}
-
-			session := store.GetSessionFS(childKey)
-			if session == nil {
-				continue
-			}
-
-			stats, err := session.GetStats()
-			if err != nil {
-				syslog.L.Error(err).WithField("childKey", childKey).Write()
 				continue
 			}
 

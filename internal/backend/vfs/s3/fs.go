@@ -34,8 +34,6 @@ func (fs *S3FS) logError(fpath string, err error) {
 	}
 }
 
-var _ vfs.FS = (*S3FS)(nil)
-
 func NewS3FS(
 	ctx context.Context,
 	job storeTypes.Job,
@@ -100,11 +98,11 @@ func (fs *S3FS) Root() string {
 	return fs.BasePath
 }
 
-func (fs *S3FS) Open(filename string) (vfs.FileHandle, error) {
+func (fs *S3FS) Open(filename string) (S3File, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
-func (fs *S3FS) OpenFile(filename string, flag int, _ os.FileMode) (vfs.FileHandle, error) {
+func (fs *S3FS) OpenFile(filename string, flag int, _ os.FileMode) (S3File, error) {
 	defer func() {
 		key := fs.fullKey(filename)
 		fs.Memcache.Delete("attr:" + key)
@@ -112,13 +110,13 @@ func (fs *S3FS) OpenFile(filename string, flag int, _ os.FileMode) (vfs.FileHand
 
 	info, err := fs.Attr(filename, false)
 	if err != nil {
-		return nil, err
+		return S3File{}, err
 	}
 	if info.IsDir {
-		return nil, syscall.EISDIR
+		return S3File{}, syscall.EISDIR
 	}
 
-	return &S3File{
+	return S3File{
 		fs:    fs,
 		key:   fs.fullKey(filename),
 		size:  info.Size,
@@ -328,7 +326,7 @@ func (fs *S3FS) StatFS() (agentTypes.StatFS, error) {
 	}, nil
 }
 
-func (fs *S3FS) ReadDir(fpath string) (vfs.DirStream, error) {
+func (fs *S3FS) ReadDir(fpath string) (S3DirStream, error) {
 	var prefix string
 	if fpath == "/" || fpath == "" {
 		prefix = fs.prefix
@@ -343,7 +341,7 @@ func (fs *S3FS) ReadDir(fpath string) (vfs.DirStream, error) {
 	if it, err := fs.Memcache.Get("dir:" + prefix); err == nil {
 		var cached agentTypes.ReadDirEntries
 		if err := cached.Decode(it.Value); err == nil {
-			return &S3DirStream{fs: fs, entries: cached}, nil
+			return S3DirStream{fs: fs, entries: cached}, nil
 		}
 	}
 
@@ -361,7 +359,7 @@ func (fs *S3FS) ReadDir(fpath string) (vfs.DirStream, error) {
 	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
 		if obj.Err != nil {
 			fs.logError(fpath, obj.Err)
-			return nil, syscall.ENOENT
+			return S3DirStream{}, syscall.ENOENT
 		}
 
 		name := strings.TrimPrefix(obj.Key, prefix)
@@ -393,7 +391,7 @@ func (fs *S3FS) ReadDir(fpath string) (vfs.DirStream, error) {
 	raw, _ := entries.Encode()
 	_ = fs.Memcache.Set(&memcache.Item{Key: "dir:" + prefix, Value: raw, Expiration: 0})
 	fs.Memcache.Delete("attr:" + strings.TrimSuffix(prefix, "/"))
-	return &S3DirStream{fs: fs, entries: entries}, nil
+	return S3DirStream{fs: fs, entries: entries}, nil
 }
 
 func (fs *S3FS) fullKey(fpath string) string {
@@ -406,3 +404,11 @@ func (fs *S3FS) fullKey(fpath string) string {
 	}
 	return fs.prefix + p
 }
+
+func (fs *S3FS) Unmount() {
+	if fs.Fuse != nil {
+		_ = fs.Fuse.Unmount()
+	}
+	fs.Cancel()
+}
+

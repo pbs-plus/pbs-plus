@@ -12,11 +12,8 @@ import (
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/minio/minio-go/v7"
-	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
-
-var _ vfs.FileHandle = (*S3File)(nil)
 
 func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	if len(buf) == 0 {

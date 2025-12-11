@@ -9,18 +9,7 @@ import (
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 )
-
-var _ vfs.DirStream = (*S3DirStream)(nil)
-
-type S3DirStream struct {
-	fs      *S3FS
-	entries types.ReadDirEntries
-	idx     int
-	total   uint64
-}
 
 func (s *S3DirStream) HasNext() bool {
 	return s.idx < len(s.entries)
