@@ -179,71 +179,6 @@ func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers htt
 	return session, nil
 }
 
-func maintainTLSTunnel(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config, s *Session) {
-	base := 200 * time.Millisecond
-	max := 10 * time.Second
-	backoff := base
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		cur := s.muxSess.Load()
-		if cur != nil && !cur.IsClosed() {
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-
-		conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
-		if err != nil {
-			time.Sleep(backoff)
-			if backoff < max {
-				backoff *= 2
-				if backoff > max {
-					backoff = max
-				}
-			}
-			continue
-		}
-
-		if err := conn.Handshake(); err != nil {
-			_ = conn.Close()
-			time.Sleep(backoff)
-			if backoff < max {
-				backoff *= 2
-				if backoff > max {
-					backoff = max
-				}
-			}
-			continue
-		}
-
-		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-		newSess, err := upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
-		_ = conn.SetDeadline(time.Time{})
-		if err != nil {
-			_ = conn.Close()
-			time.Sleep(backoff)
-			if backoff < max {
-				backoff *= 2
-				if backoff > max {
-					backoff = max
-				}
-			}
-			continue
-		}
-
-		if prev := s.muxSess.Swap(newSess.muxSess.Load()); prev != nil && !prev.IsClosed() {
-			_ = prev.Close()
-		}
-		s.state.Store(int32(StateConnected))
-		backoff = base
-	}
-}
-
 func (s *Session) Close() error {
 	s.cancelFunc()
 	sess := s.muxSess.Load()
@@ -270,4 +205,86 @@ func (s *Session) openStream() (*smux.Stream, error) {
 		return nil, errors.New("session not available")
 	}
 	return cur.OpenStream()
+}
+
+func maintainTLSTunnel(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config, s *Session) {
+	dial := func() (net.Conn, error) {
+		conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
+		if err != nil {
+			return nil, fmt.Errorf("TLS dial failed: %w", err)
+		}
+		if err := conn.Handshake(); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("TLS handshake failed: %w", err)
+		}
+		return conn, nil
+	}
+
+	upgrade := func(conn net.Conn) (*Session, error) {
+		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+		newSess, err := upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
+		_ = conn.SetDeadline(time.Time{})
+		if err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("upgrade failed: %w", err)
+		}
+		return newSess, nil
+	}
+
+	maintainTLSTunnelWithDeps(ctx, s, dial, upgrade)
+}
+
+func maintainTLSTunnelWithDeps(
+	ctx context.Context,
+	s *Session,
+	dial func() (net.Conn, error),
+	upgrade func(net.Conn) (*Session, error),
+) {
+	base := 200 * time.Millisecond
+	max := 10 * time.Second
+	backoff := base
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		cur := s.muxSess.Load()
+		if cur != nil && !cur.IsClosed() {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		conn, err := dial()
+		if err != nil {
+			time.Sleep(backoff)
+			if backoff < max {
+				backoff *= 2
+				if backoff > max {
+					backoff = max
+				}
+			}
+			continue
+		}
+
+		newSess, err := upgrade(conn)
+		if err != nil {
+			time.Sleep(backoff)
+			if backoff < max {
+				backoff *= 2
+				if backoff > max {
+					backoff = max
+				}
+			}
+			continue
+		}
+
+		if prev := s.muxSess.Swap(newSess.muxSess.Load()); prev != nil && !prev.IsClosed() {
+			_ = prev.Close()
+		}
+		s.state.Store(int32(StateConnected))
+		backoff = base
+	}
 }
