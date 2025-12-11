@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -358,24 +359,51 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("ARPC router configured successfully").Write()
 
 	syslog.L.Info().WithMessage("Starting ARPC session handler goroutine").Write()
-	p.wg.Add(1)
-	go func() {
+
+	p.wg.Go(func() {
 		defer p.wg.Done()
 		defer session.Close()
+		defer func() {
+			syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
+		}()
+
+		base := 500 * time.Millisecond
+		maxWait := 30 * time.Second
+		factor := 2.0
+		jitter := 0.2
+
+		backoff := base
 
 		for {
 			select {
 			case <-p.ctx.Done():
-				syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
 				return
 			default:
 				if err := session.Serve(); err != nil {
-					syslog.L.Warn().WithMessage("ARPC connection error, retrying").WithField("error", err.Error()).Write()
-					time.Sleep(5 * time.Second)
+					mult := 1 + jitter*(2*rand.Float64()-1)
+					sleep := time.Duration(float64(backoff) * mult)
+					sleep = min(sleep, maxWait)
+
+					syslog.L.Warn().WithMessage(fmt.Sprintf("ARPC connection error, retrying after %v", sleep)).WithField("error", err.Error()).Write()
+
+					select {
+					case <-p.ctx.Done():
+						return
+					case <-time.After(sleep):
+					}
+
+					next := time.Duration(float64(backoff) * factor)
+					next = min(next, maxWait)
+
+					backoff = next
+
+					if err = session.Reconnect(); err != nil {
+						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
+					}
 				}
 			}
 		}
-	}()
+	})
 
 	return nil
 }
