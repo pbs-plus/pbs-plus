@@ -38,10 +38,12 @@ type pbsService struct {
 }
 
 func (p *pbsService) Start(s service.Service) error {
-	overseer.Run(overseer.Config{
-		Program: p.runForeground(s),
-		Fetcher: &updateFetcher{},
-	})
+	go func() {
+		overseer.Run(overseer.Config{
+			Program: p.runForeground(s),
+			Fetcher: &updateFetcher{},
+		})
+	}()
 	return nil
 }
 
