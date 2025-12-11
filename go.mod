@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/KimMachineGun/automemlimit v0.7.4
+	github.com/Masterminds/semver v1.5.0
 	github.com/billgraziano/dpapi v0.5.0
 	github.com/bradfitz/gomemcache v0.0.0-20250403215159-8d39553ac7cf
 	github.com/containers/winquit v1.1.0
@@ -13,6 +14,7 @@ require (
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang-migrate/migrate/v4 v4.19.0
 	github.com/hanwen/go-fuse/v2 v2.8.0
+	github.com/jpillora/overseer v1.1.6
 	github.com/kardianos/service v1.2.4
 	github.com/minio/minio-go/v7 v7.0.95
 	github.com/mxk/go-vss v1.2.0
@@ -21,7 +23,7 @@ require (
 	github.com/puzpuzpuz/xsync/v3 v3.5.1
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.10.0
-	github.com/xtaci/smux v1.5.35
+	github.com/xtaci/smux v1.5.46
 	golang.org/x/crypto v0.44.0
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621
 	golang.org/x/sys v0.38.0
@@ -29,7 +31,6 @@ require (
 )
 
 require (
-	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/StackExchange/wmi v0.0.0-20190523213315-cbe66965904d // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -41,7 +42,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
-	github.com/jpillora/overseer v1.1.6 // indirect
 	github.com/jpillora/s3 v1.1.4 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
@@ -77,7 +77,5 @@ require (
 )
 
 replace github.com/hanwen/go-fuse/v2 v2.7.2 => github.com/pbs-plus/go-fuse/v2 v2.1.2
-
-replace github.com/xtaci/smux v1.5.35 => github.com/pbs-plus/smux v0.0.0-20250322005336-855507aa64bf
 
 tool golang.org/x/tools/cmd/deadcode
