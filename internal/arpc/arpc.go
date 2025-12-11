@@ -221,11 +221,16 @@ func (s *Session) GetState() ConnectionState {
 	return StateConnected
 }
 
-func (s *Session) openStream(_ context.Context) (*smux.Stream, error) {
+func (s *Session) openStream(ctx context.Context) (*smux.Stream, error) {
 	cur := s.muxSess.Load()
 	if cur == nil || cur.IsClosed() {
 		return nil, fmt.Errorf("tls mux is closed")
 	}
+
+	go func() {
+		<-ctx.Done()
+		_ = cur.Close()
+	}()
 
 	return cur.OpenStream()
 }
