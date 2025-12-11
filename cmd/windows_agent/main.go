@@ -21,6 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -41,7 +42,7 @@ func (p *pbsService) Start(s service.Service) error {
 	go func() {
 		overseer.Run(overseer.Config{
 			Program: p.runForeground(s),
-			Fetcher: &updateFetcher{},
+			Fetcher: &updater.UpdateFetcher{},
 		})
 	}()
 	return nil
