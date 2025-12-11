@@ -24,13 +24,13 @@ func ARPCHandler(store *s.Store) http.HandlerFunc {
 			agentHostname = agentHostname + "|" + jobId
 		}
 
-		session, err := arpc.HijackUpgradeHTTP(w, r, agentHostname, agentVersion, store.ARPCSessionManager, nil)
+		session, err := arpc.HijackUpgradeHTTP(w, r, agentHostname, agentVersion, store.ARPCAgentsManager, nil)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer func() {
-			store.ARPCSessionManager.CloseSession(agentHostname)
+			store.ARPCAgentsManager.CloseSession(agentHostname)
 			s.DisconnectSession(agentHostname)
 		}()
 

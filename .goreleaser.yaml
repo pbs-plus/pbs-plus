@@ -84,20 +84,6 @@ builds:
       - -H=windowsgui
       - -X 'main.Version=v{{.Version}}'
 
-  # Windows Updater
-  - id: windows-updater
-    main: ./cmd/windows_updater
-    binary: pbs-plus-updater
-    env:
-      - GOEXPERIMENT=greenteagc
-      - GOFIPS140=latest
-    goos:
-      - windows
-    goarch:
-      - amd64
-    ldflags:
-      - -H=windowsgui
-
 archives:
   - id: server
     ids:
@@ -131,13 +117,6 @@ archives:
     ids:
       - windows-agent
     name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
-    formats:
-      - binary
-
-  - id: windows-updater
-    ids:
-      - windows-updater
-    name_template: "{{ .ProjectName }}-updater-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
 
