@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -15,11 +16,32 @@ import (
 	"github.com/xtaci/smux"
 )
 
+type Tunnel struct {
+	sync.Mutex
+	Conn *smux.Session
+}
+
+func (t *Tunnel) Set(s *smux.Session) {
+	t.Lock()
+	defer t.Unlock()
+	t.Conn = s
+}
+
+func (t *Tunnel) SetNoLock(s *smux.Session) {
+	t.Conn = s
+}
+
+func (t *Tunnel) Get() *smux.Session {
+	t.Lock()
+	defer t.Unlock()
+	return t.Conn
+}
+
 type Session struct {
 	serverAddr string
 	tlsConfig  *tls.Config
 	headers    http.Header
-	muxSess    atomic.Pointer[smux.Session]
+	tunnel     *Tunnel
 	router     atomic.Pointer[Router]
 
 	state atomic.Int32
@@ -62,7 +84,7 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 		ctx:        ctx,
 		cancelFunc: cancel,
 	}
-	session.muxSess.Store(s)
+	session.tunnel.Set(s)
 	session.state.Store(int32(StateConnected))
 	return session, nil
 }
@@ -80,7 +102,7 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 		ctx:        ctx,
 		cancelFunc: cancel,
 	}
-	session.muxSess.Store(s)
+	session.tunnel.Set(s)
 	session.state.Store(int32(StateConnected))
 	return session, nil
 }
@@ -101,11 +123,11 @@ func (s *Session) Serve() error {
 			return s.ctx.Err()
 		default:
 		}
-		curSession := s.muxSess.Load()
-		if curSession == nil {
-			return errors.New("session is nil")
+		tunnel := s.tunnel.Get()
+		if tunnel == nil {
+			return errors.New("tunnel is nil")
 		}
-		stream, err := curSession.AcceptStream()
+		stream, err := tunnel.AcceptStream()
 		if err != nil {
 			s.state.Store(int32(StateDisconnected))
 			return err
@@ -195,15 +217,15 @@ func (s *Session) Reconnect() error {
 		return fmt.Errorf("failed to connect to server: %w", err)
 	}
 
-	newMuxSess := session.muxSess.Load()
-	s.muxSess.Store(newMuxSess)
+	newMuxSess := session.tunnel.Get()
+	s.tunnel.Set(newMuxSess)
 
 	return nil
 }
 
 func (s *Session) Close() error {
 	s.cancelFunc()
-	sess := s.muxSess.Load()
+	sess := s.tunnel.Get()
 	if sess != nil {
 		return sess.Close()
 	}
@@ -214,7 +236,7 @@ func (s *Session) GetState() ConnectionState {
 	if s == nil {
 		return StateDisconnected
 	}
-	cur := s.muxSess.Load()
+	cur := s.tunnel.Get()
 	if cur == nil || cur.IsClosed() {
 		return StateDisconnected
 	}
@@ -222,7 +244,7 @@ func (s *Session) GetState() ConnectionState {
 }
 
 func (s *Session) openStream(ctx context.Context) (*smux.Stream, error) {
-	cur := s.muxSess.Load()
+	cur := s.tunnel.Get()
 	if cur == nil || cur.IsClosed() {
 		return nil, fmt.Errorf("tls mux is closed")
 	}
