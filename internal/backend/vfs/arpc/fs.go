@@ -48,7 +48,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 	}
 
 	fs := &ARPCFS{
-		VFSBase: vfs.VFSBase{
+		VFSBase: &vfs.VFSBase{
 			BasePath: "/",
 			Ctx:      ctxFs,
 			Cancel:   cancel,
