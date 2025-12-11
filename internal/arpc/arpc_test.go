@@ -3,6 +3,7 @@ package arpc
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -10,6 +11,7 @@ import (
 	_ "net/http/pprof"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -538,4 +540,127 @@ func BenchmarkSessionCall(b *testing.B) {
 		wg.Wait()
 	}
 	b.StopTimer()
+}
+
+type fakeTLSConn struct {
+	net.Conn
+	closed atomic.Bool
+}
+
+func (f *fakeTLSConn) Close() error {
+	f.closed.Store(true)
+	return f.Conn.Close()
+}
+
+type fakeTLSDialer struct {
+	mu     sync.Mutex
+	conns  []net.Conn
+	index  int
+	errors []error
+}
+
+func (d *fakeTLSDialer) next() (net.Conn, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.index < len(d.errors) && d.errors[d.index] != nil {
+		err := d.errors[d.index]
+		d.index++
+		return nil, err
+	}
+	if d.index >= len(d.conns) {
+		return nil, errors.New("no more conns")
+	}
+	c := d.conns[d.index]
+	d.index++
+	return c, nil
+}
+
+func TestMaintainTLSTunnel_ReconnectsOnDisconnect(t *testing.T) {
+	server1, client1 := net.Pipe()
+	server2, client2 := net.Pipe()
+
+	serverSess1, err := NewServerSession(server1, nil)
+	if err != nil {
+		t.Fatalf("failed to create server session 1: %v", err)
+	}
+	serverSess2, err := NewServerSession(server2, nil)
+	if err != nil {
+		t.Fatalf("failed to create server session 2: %v", err)
+	}
+
+	cliSess, err := NewClientSession(client1, nil)
+	if err != nil {
+		t.Fatalf("failed to create client session: %v", err)
+	}
+
+	router := NewRouter()
+	router.Handle("ping", func(req Request) (Response, error) {
+		var pong StringMsg = "pong"
+		pongBytes, _ := pong.Encode()
+		return Response{Status: 200, Data: pongBytes}, nil
+	})
+	serverSess1.SetRouter(router)
+	serverSess2.SetRouter(router)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = serverSess1.Serve() }()
+	go func() { _ = serverSess2.Serve() }()
+
+	cliSess.state.Store(int32(StateConnected))
+
+	dialer := &fakeTLSDialer{
+		conns: []net.Conn{
+			&fakeTLSConn{Conn: client1},
+			&fakeTLSConn{Conn: client2},
+		},
+		errors: []error{nil, nil},
+	}
+
+	origDial := tlsDialFunc
+	defer func() { tlsDialFunc = origDial }()
+	tlsDialFunc = func(network, addr string, config *tls.Config) (net.Conn, error) {
+		return dialer.next()
+	}
+
+	headers := make(map[string][]string)
+
+	go maintainTLSTunnel(ctx, "unused:0", headers, &tls.Config{}, cliSess)
+
+	time.Sleep(50 * time.Millisecond)
+
+	_, _ = cliSess.Call("ping", nil)
+
+	first := cliSess.muxSess.Load()
+	if first == nil {
+		t.Fatalf("expected initial session")
+	}
+
+	_ = first.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		cur := cliSess.muxSess.Load()
+		if cur != nil && !cur.IsClosed() && cur != first {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cur := cliSess.muxSess.Load()
+	if cur == nil || cur.IsClosed() || cur == first {
+		t.Fatalf("expected session to be re-established")
+	}
+
+	resp, err := cliSess.Call("ping", nil)
+	if err != nil {
+		t.Fatalf("call after reconnect failed: %v", err)
+	}
+	if resp.Status != 200 {
+		t.Fatalf("expected 200 after reconnect, got %d", resp.Status)
+	}
+}
+
+var tlsDialFunc = func(network, addr string, config *tls.Config) (net.Conn, error) {
+	return tls.Dial(network, addr, config)
 }
