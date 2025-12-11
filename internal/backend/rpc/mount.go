@@ -293,8 +293,6 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	reply.Status = cleanupResp.Status
 	reply.Message = "Cleanup successful"
 
-	arpcSess.Close()
-
 	syslog.L.Info().
 		WithMessage("Cleanup successful").
 		WithField("jobId", args.JobId).
