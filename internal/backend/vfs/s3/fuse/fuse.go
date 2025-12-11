@@ -1,6 +1,6 @@
 //go:build linux
 
-package fuse
+package s3fuse
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
+	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3"
 )
 
 var nodePool = &sync.Pool{
@@ -24,7 +24,7 @@ var nodePool = &sync.Pool{
 	},
 }
 
-func newRoot(fs vfs.FS) fs.InodeEmbedder {
+func newRoot(fs *s3fs.S3FS) fs.InodeEmbedder {
 	rootNode := nodePool.Get().(*Node)
 	rootNode.fs = fs
 	rootNode.fullPathCache = ""
@@ -34,8 +34,8 @@ func newRoot(fs vfs.FS) fs.InodeEmbedder {
 }
 
 // Mount mounts the billy filesystem at the specified mountpoint
-func Mount(mountpoint string, fsName string, vfs vfs.FS) (*fuse.Server, error) {
-	root := newRoot(vfs)
+func Mount(mountpoint string, fsName string, afs *s3fs.S3FS) (*fuse.Server, error) {
+	root := newRoot(afs)
 
 	timeout := 2 * time.Second
 
@@ -67,7 +67,7 @@ func Mount(mountpoint string, fsName string, vfs vfs.FS) (*fuse.Server, error) {
 // Node represents a file or directory in the filesystem
 type Node struct {
 	fs.Inode
-	fs            vfs.FS
+	fs            *s3fs.S3FS
 	name          string
 	fullPathCache string
 	parent        *Node
@@ -386,7 +386,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 		return nil, syscall.EBADF
 	}
 
-	return entries, 0
+	return &entries, 0
 }
 
 // Open implements NodeOpener
@@ -398,7 +398,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 
 	return &FileHandle{
 		fs:   n.fs,
-		file: file,
+		file: &file,
 	}, 0, 0
 }
 
@@ -422,8 +422,8 @@ func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 
 // FileHandle handles file operations
 type FileHandle struct {
-	fs   vfs.FS
-	file vfs.FileHandle
+	fs   *s3fs.S3FS
+	file *s3fs.S3File
 }
 
 var _ = (fs.FileReader)((*FileHandle)(nil))

@@ -1,6 +1,7 @@
 package arpcfs
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -15,6 +16,17 @@ type ARPCFS struct {
 	session    *arpc.Session
 	Hostname   string
 	backupMode string
+}
+
+type DirStream struct {
+	fs            *ARPCFS
+	path          string
+	handleId      types.FileHandleId
+	closed        int32
+	lastRespMu    sync.Mutex
+	lastResp      types.ReadDirEntries
+	curIdx        uint64
+	totalReturned uint64
 }
 
 // ARPCFile implements billy.File for remote files
