@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -49,7 +48,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 	}
 
 	fs := &ARPCFS{
-		VFSBase: &vfs.VFSBase{
+		VFSBase: vfs.VFSBase{
 			BasePath: "/",
 			Ctx:      ctxFs,
 			Cancel:   cancel,
@@ -133,7 +132,6 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	cached, err := fs.Memcache.Get("attr:" + filename)
 	if err == nil {
 		atomic.AddInt64(&fs.StatCacheHits, 1)
-		_ = fs.Memcache.Set(&memcache.Item{Key: "stats:statCacheHits", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.StatCacheHits), 10)), Expiration: 0})
 		raw = cached.Value
 	} else {
 		raw, err = fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
@@ -155,11 +153,9 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	if !isLookup {
 		if fi.IsDir {
 			atomic.AddInt64(&fs.FolderCount, 1)
-			_ = fs.Memcache.Set(&memcache.Item{Key: "stats:foldersAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.FolderCount), 10)), Expiration: 0})
 		} else {
 			fs.Memcache.Delete("attr:" + filename)
 			atomic.AddInt64(&fs.FileCount, 1)
-			_ = fs.Memcache.Set(&memcache.Item{Key: "stats:filesAccessed", Value: []byte(strconv.FormatInt(atomic.LoadInt64(&fs.FileCount), 10)), Expiration: 0})
 		}
 	}
 

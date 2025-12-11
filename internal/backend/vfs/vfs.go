@@ -2,8 +2,7 @@ package vfs
 
 import (
 	"context"
-	"fmt"
-	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -24,87 +23,56 @@ type VFSBase struct {
 	FolderCount   int64
 	TotalBytes    int64
 	StatCacheHits int64
+
+	lastAccessTime  int64
+	lastBytesTime   int64
+	lastFileCount   int64
+	lastFolderCount int64
+	lastTotalBytes  int64
 }
 
-func (v *VFSBase) GetStats() (VFSStats, error) {
-	var r VFSStats
+func (fs *VFSBase) GetStats() VFSStats {
+	// Get the current time in nanoseconds.
+	currentTime := time.Now().UnixNano()
 
-	if v.Memcache == nil {
-		return r, fmt.Errorf("memcache has not been initialized yet")
-	}
+	// Atomically load the current counters.
+	currentFileCount := atomic.LoadInt64(&fs.FileCount)
+	currentFolderCount := atomic.LoadInt64(&fs.FolderCount)
+	totalAccessed := currentFileCount + currentFolderCount
 
-	if it, err := v.Memcache.Get("stats:filesAccessed"); err == nil {
-		if v, e := strconv.ParseInt(string(it.Value), 10, 64); e == nil {
-			r.FilesAccessed = v
-		}
-	}
-	if it, err := v.Memcache.Get("stats:foldersAccessed"); err == nil {
-		if v, e := strconv.ParseInt(string(it.Value), 10, 64); e == nil {
-			r.FoldersAccessed = v
-		}
-	}
-	r.TotalAccessed = r.FilesAccessed + r.FoldersAccessed
+	// Swap out the previous access statistics.
+	lastATime := atomic.SwapInt64(&fs.lastAccessTime, currentTime)
+	lastFileCount := atomic.SwapInt64(&fs.lastFileCount, currentFileCount)
+	lastFolderCount := atomic.SwapInt64(&fs.lastFolderCount, currentFolderCount)
 
-	if it, err := v.Memcache.Get("stats:totalBytes"); err == nil {
-		if v, e := strconv.ParseUint(string(it.Value), 10, 64); e == nil {
-			r.TotalBytes = v
-		}
-	}
-	if it, err := v.Memcache.Get("stats:statCacheHits"); err == nil {
-		if v, e := strconv.ParseInt(string(it.Value), 10, 64); e == nil {
-			r.StatCacheHits = v
-		}
+	// Calculate the elapsed time in seconds.
+	elapsed := float64(currentTime-lastATime) / 1e9
+	var accessSpeed float64
+	if elapsed > 0 {
+		accessDelta := (currentFileCount + currentFolderCount) - (lastFileCount + lastFolderCount)
+		accessSpeed = float64(accessDelta) / elapsed
 	}
 
-	now := time.Now().UnixNano()
-	nowStr := strconv.FormatInt(now, 10)
+	// Similarly, for byte counters (if you're tracking totalBytes elsewhere).
+	currentTotalBytes := atomic.LoadInt64(&fs.TotalBytes)
+	lastBTime := atomic.SwapInt64(&fs.lastBytesTime, currentTime)
+	lastTotalBytes := atomic.SwapInt64(&fs.lastTotalBytes, currentTotalBytes)
 
-	var prevBytes uint64
-	if it, err := v.Memcache.Get("stats:totalBytes:prev"); err == nil {
-		if v, e := strconv.ParseUint(string(it.Value), 10, 64); e == nil {
-			prevBytes = v
-		}
-	}
-	var prevBytesTs int64
-	if it, err := v.Memcache.Get("stats:totalBytes:prev_ts"); err == nil {
-		if v, e := strconv.ParseInt(string(it.Value), 10, 64); e == nil {
-			prevBytesTs = v
-		}
+	secDiff := float64(currentTime-lastBTime) / 1e9
+	var bytesSpeed float64
+	if secDiff > 0 {
+		bytesSpeed = float64(currentTotalBytes-lastTotalBytes) / secDiff
 	}
 
-	var prevAccess int64
-	if it, err := v.Memcache.Get("stats:totalAccessed:prev"); err == nil {
-		if v, e := strconv.ParseInt(string(it.Value), 10, 64); e == nil {
-			prevAccess = v
-		}
+	return VFSStats{
+		FilesAccessed:   currentFileCount,
+		FoldersAccessed: currentFolderCount,
+		TotalAccessed:   totalAccessed,
+		FileAccessSpeed: accessSpeed,
+		TotalBytes:      uint64(currentTotalBytes),
+		ByteReadSpeed:   bytesSpeed,
+		StatCacheHits:   atomic.LoadInt64(&fs.StatCacheHits),
 	}
-	var prevAccessTs int64
-	if it, err := v.Memcache.Get("stats:totalAccessed:prev_ts"); err == nil {
-		if v, e := strconv.ParseInt(string(it.Value), 10, 64); e == nil {
-			prevAccessTs = v
-		}
-	}
-
-	_ = v.Memcache.Set(&memcache.Item{Key: "stats:totalBytes:prev", Value: []byte(strconv.FormatUint(r.TotalBytes, 10))})
-	_ = v.Memcache.Set(&memcache.Item{Key: "stats:totalBytes:prev_ts", Value: []byte(nowStr)})
-	_ = v.Memcache.Set(&memcache.Item{Key: "stats:totalAccessed:prev", Value: []byte(strconv.FormatInt(r.TotalAccessed, 10))})
-	_ = v.Memcache.Set(&memcache.Item{Key: "stats:totalAccessed:prev_ts", Value: []byte(nowStr)})
-
-	if prevBytesTs > 0 && now > prevBytesTs && r.TotalBytes >= prevBytes {
-		sec := float64(now-prevBytesTs) / 1e9
-		if sec > 0 {
-			r.ByteReadSpeed = float64(r.TotalBytes-prevBytes) / sec
-		}
-	}
-
-	if prevAccessTs > 0 && now > prevAccessTs && r.TotalAccessed >= prevAccess {
-		sec := float64(now-prevAccessTs) / 1e9
-		if sec > 0 {
-			r.FileAccessSpeed = float64(r.TotalAccessed-prevAccess) / sec
-		}
-	}
-
-	return r, nil
 }
 
 type VFSStats struct {

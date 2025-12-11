@@ -6,12 +6,10 @@ import (
 	"errors"
 	"io"
 	"os"
-	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
@@ -88,9 +86,6 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 	}
 
 	atomic.AddInt64(&f.fs.TotalBytes, int64(bytesRead))
-
-	tb := atomic.LoadInt64(&f.fs.TotalBytes)
-	_ = f.fs.Memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
 
 	if bytesRead < len(p) {
 		return bytesRead, io.EOF
