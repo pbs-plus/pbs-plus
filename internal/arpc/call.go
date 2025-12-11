@@ -40,12 +40,7 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 		syslog.L.Error(err).WithMessage("ARPC CallContext: openStream failed").WithField("method", method).Write()
 		return Response{}, err
 	}
-	defer func() { _ = stream.Close() }()
-
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = stream.SetDeadline(deadline)
-		syslog.L.Debug().WithMessage("ARPC CallContext: deadline set").WithField("deadline", deadline.String()).WithField("method", method).Write()
-	}
+	defer stream.Close()
 
 	var payloadBytes []byte
 	if payload != nil {
@@ -76,17 +71,14 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 
 	if _, err := io.ReadFull(stream, prefix); err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			_ = stream.Close()
 			syslog.L.Warn().WithMessage("ARPC CallContext: read length prefix timeout").WithField("method", method).Write()
 			return Response{}, context.DeadlineExceeded
 		}
-		_ = stream.Close()
 		syslog.L.Error(err).WithMessage("ARPC CallContext: read length prefix failed").WithField("method", method).Write()
 		return Response{}, fmt.Errorf("failed to read length prefix: %w", err)
 	}
 	totalLength := binary.LittleEndian.Uint32(prefix)
 	if totalLength < 4 {
-		_ = stream.Close()
 		err := fmt.Errorf("invalid total length %d", totalLength)
 		syslog.L.Error(err).WithMessage("ARPC CallContext: invalid total length").WithField("method", method).Write()
 		return Response{}, err
@@ -96,18 +88,15 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 	copy(buf, prefix)
 	if _, err := io.ReadFull(stream, buf[4:]); err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			_ = stream.Close()
 			syslog.L.Warn().WithMessage("ARPC CallContext: read full response timeout").WithField("method", method).Write()
 			return Response{}, context.DeadlineExceeded
 		}
-		_ = stream.Close()
 		syslog.L.Error(err).WithMessage("ARPC CallContext: read full response failed").WithField("method", method).Write()
 		return Response{}, fmt.Errorf("failed to read full response: %w", err)
 	}
 
 	var resp Response
 	if err := resp.Decode(buf); err != nil {
-		_ = stream.Close()
 		syslog.L.Error(err).WithMessage("ARPC CallContext: decode response failed").WithField("method", method).Write()
 		return Response{}, fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -165,11 +154,6 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 		return 0, fmt.Errorf("failed to open stream: %w", err)
 	}
 	defer stream.Close()
-
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = stream.SetDeadline(deadline)
-		syslog.L.Debug().WithMessage("ARPC CallBinary: deadline set").WithField("deadline", deadline.String()).WithField("method", method).Write()
-	}
 
 	var payloadBytes []byte
 	if payload != nil {
