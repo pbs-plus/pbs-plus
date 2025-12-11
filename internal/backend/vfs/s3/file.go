@@ -5,12 +5,10 @@ package s3fs
 import (
 	"context"
 	"io"
-	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/minio/minio-go/v7"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
@@ -61,8 +59,6 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 			WithField("length", len(buf)).
 			Write()
 		atomic.AddInt64(&f.fs.TotalBytes, int64(n))
-		tb := atomic.LoadInt64(&f.fs.TotalBytes)
-		_ = f.fs.Memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
 		return n, io.EOF
 	}
 
@@ -77,8 +73,6 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	}
 
 	atomic.AddInt64(&f.fs.TotalBytes, int64(n))
-	tb := atomic.LoadInt64(&f.fs.TotalBytes)
-	_ = f.fs.Memcache.Set(&memcache.Item{Key: "stats:totalBytes", Value: []byte(strconv.FormatInt(tb, 10)), Expiration: 0})
 
 	if n < len(buf) {
 		return n, io.EOF

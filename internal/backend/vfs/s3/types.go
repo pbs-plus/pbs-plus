@@ -9,7 +9,7 @@ import (
 )
 
 type S3FS struct {
-	*vfs.VFSBase
+	vfs.VFSBase
 
 	client *minio.Client
 	bucket string

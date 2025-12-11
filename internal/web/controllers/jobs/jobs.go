@@ -15,7 +15,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
@@ -42,7 +41,6 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			var stats vfs.VFSStats
-
 			if isAgent {
 				splittedTargetName := strings.Split(job.Target, " - ")
 				targetHostname := splittedTargetName[0]
@@ -52,11 +50,7 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 					continue
 				}
 
-				stats, err = session.GetStats()
-				if err != nil {
-					syslog.L.Error(err).WithField("childKey", childKey).Write()
-					continue
-				}
+				stats = session.GetStats()
 			} else if isS3 {
 				childKey := s3Parsed.Endpoint + "|" + job.ID
 				session := store.GetSessionS3FS(childKey)
@@ -64,11 +58,7 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 					continue
 				}
 
-				stats, err = session.GetStats()
-				if err != nil {
-					syslog.L.Error(err).WithField("childKey", childKey).Write()
-					continue
-				}
+				stats = session.GetStats()
 			} else {
 				continue
 			}
