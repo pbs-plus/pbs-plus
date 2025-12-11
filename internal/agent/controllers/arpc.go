@@ -77,6 +77,10 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 
 	pid, ok := activePids.Get(reqData.JobId)
 	if ok {
+		syslog.L.Info().WithMessage("killing child process").
+			WithField("id", reqData.JobId).
+			WithField("pid", pid).Write()
+
 		activePids.Del(reqData.JobId)
 		if runtime.GOOS == "windows" {
 			timeout := time.Second * 5
@@ -97,6 +101,10 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 				}
 			}
 		}
+	} else {
+		syslog.L.Info().WithMessage("no pid found to kill for cleanup").
+			WithField("id", reqData.JobId).
+			Write()
 	}
 
 	return arpc.Response{Status: 200, Message: "success"}, nil
