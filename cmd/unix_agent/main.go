@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -206,27 +208,43 @@ func connectARPC(ctx context.Context) error {
 	syslog.L.Info().WithMessage("Starting ARPC session handler goroutine").Write()
 	go func() {
 		defer session.Close()
+		defer func() {
+			syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
+		}()
+
+		base := 500 * time.Millisecond
+		maxWait := 30 * time.Second
+		factor := 2.0
+		jitter := 0.2
+
+		backoff := base
+
 		for {
 			select {
 			case <-ctx.Done():
-				syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
 				return
 			default:
-				syslog.L.Info().
-					WithMessage("connecting arpc endpoint from /plus/arpc").
-					WithField("hostname", clientId).
-					Write()
 				if err := session.Serve(); err != nil {
-					syslog.L.Warn().WithMessage("ARPC connection error, retrying").WithField("error", err.Error()).Write()
-					store, err := agent.NewBackupStore()
-					if err != nil {
-						syslog.L.Error(err).WithMessage("error initializing backup store").Write()
-					} else {
-						if err := store.ClearAll(); err != nil {
-							syslog.L.Error(err).WithMessage("error clearing backup store").Write()
-						}
+					mult := 1 + jitter*(2*rand.Float64()-1)
+					sleep := time.Duration(float64(backoff) * mult)
+					sleep = min(sleep, maxWait)
+
+					syslog.L.Warn().WithMessage(fmt.Sprintf("ARPC connection error, retrying after %v", sleep)).WithField("error", err.Error()).Write()
+
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(sleep):
 					}
-					time.Sleep(5 * time.Second)
+
+					next := time.Duration(float64(backoff) * factor)
+					next = min(next, maxWait)
+
+					backoff = next
+
+					if err = session.Reconnect(); err != nil {
+						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
+					}
 				}
 			}
 		}
@@ -390,7 +408,7 @@ func main() {
 	if dockerEnv != "true" {
 		overseer.Run(overseer.Config{
 			Program: runForeground,
-			Fetcher: &updateFetcher{},
+			Fetcher: &updater.UpdateFetcher{},
 		})
 	} else {
 		runForeground(overseer.State{})

@@ -1,18 +1,19 @@
-//go:build unix
-
-package main
+package updater
 
 import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/Masterminds/semver"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -20,19 +21,19 @@ type VersionResp struct {
 	Version string `json:"version"`
 }
 
-type updateFetcher struct {
+type UpdateFetcher struct {
 	currentVersion string
 	delay          bool
 }
 
-func (u *updateFetcher) Init() error {
+func (u *UpdateFetcher) Init() error {
 	if u.currentVersion == "" {
-		u.currentVersion = Version
+		u.currentVersion = constants.Version
 	}
 	return nil
 }
 
-func (u *updateFetcher) Fetch() (io.Reader, error) {
+func (u *UpdateFetcher) Fetch() (io.Reader, error) {
 	if u.delay {
 		time.Sleep(2 * time.Minute)
 	}
@@ -58,7 +59,7 @@ func (u *updateFetcher) Fetch() (io.Reader, error) {
 	return reader, err
 }
 
-func (u *updateFetcher) downloadUpdate() (io.Reader, error) {
+func (u *UpdateFetcher) downloadUpdate() (io.Reader, error) {
 	expected, err := u.downloadMD5()
 	if err != nil || expected == "" {
 		return nil, err
@@ -84,8 +85,10 @@ func (u *updateFetcher) downloadUpdate() (io.Reader, error) {
 	return agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary", nil, nil)
 }
 
-func (u *updateFetcher) checkForNewVersion() (string, error) {
+func (u *UpdateFetcher) checkForNewVersion() (string, error) {
 	var versionResp VersionResp
+
+	constraint, err := semver.NewConstraint(">= 0.52.0-rc1")
 
 	resp, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, nil)
 	if err != nil {
@@ -103,12 +106,24 @@ func (u *updateFetcher) checkForNewVersion() (string, error) {
 	}
 
 	if versionResp.Version != u.currentVersion {
+		vs, err := semver.NewVersion(versionResp.Version)
+		if err != nil {
+			return "", err
+		}
+		if !constraint.Check(vs) {
+			syslog.L.Info().
+				WithMessage("new version does not have new update_fetcher").
+				WithField("current", u.currentVersion).
+				WithField("new", versionResp.Version).
+				Write()
+			return "", fmt.Errorf("new version does not have new update_fetcher")
+		}
 		return versionResp.Version, nil
 	}
 	return "", nil
 }
 
-func (u *updateFetcher) downloadMD5() (string, error) {
+func (u *UpdateFetcher) downloadMD5() (string, error) {
 	resp, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary/checksum", nil, nil)
 	if err != nil {
 		return "", err
@@ -122,3 +137,4 @@ func (u *updateFetcher) downloadMD5() (string, error) {
 
 	return strings.TrimSpace(string(md5Bytes)), nil
 }
+
