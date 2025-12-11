@@ -3,10 +3,13 @@
 package agentfs
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync"
+	"syscall"
 	"unicode/utf16"
 	"unsafe"
 
@@ -192,42 +195,6 @@ func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSi
 	}
 }
 
-func readAtOverlapped(h windows.Handle, off int64, buf []byte) (int, error) {
-	var ov windows.Overlapped
-	ov.Offset = uint32(off & 0xffffffff)
-	ov.OffsetHigh = uint32(uint64(off) >> 32)
-
-	evt, err := windows.CreateEvent(nil, 1, 0, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer windows.CloseHandle(evt)
-	ov.HEvent = evt
-
-	var n uint32
-	err = windows.ReadFile(h, buf, &n, &ov)
-	if err != nil {
-		if err == windows.ERROR_IO_PENDING {
-			_, werr := windows.WaitForSingleObject(evt, windows.INFINITE)
-			if werr != nil {
-				return int(n), werr
-			}
-			if gerr := windows.GetOverlappedResult(h, &ov, &n, false); gerr != nil {
-				// If EOF, return what we got (may be zero) as EOF.
-				if gerr == windows.ERROR_HANDLE_EOF {
-					return int(n), io.EOF
-				}
-				return int(n), gerr
-			}
-		} else if err == windows.ERROR_HANDLE_EOF {
-			return int(n), io.EOF
-		} else {
-			return int(n), err
-		}
-	}
-	return int(n), nil
-}
-
 func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange, error) {
 	in := allocatedRange{FileOffset: off, Length: length}
 
@@ -279,4 +246,100 @@ func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange
 		})
 	}
 	return res, nil
+}
+
+type overlappedHandle struct {
+	h windows.Handle
+	m sync.Mutex
+	e []windows.Handle
+
+	DefaultTimeout int
+}
+
+func (f *overlappedHandle) getEvent() windows.Handle {
+	f.m.Lock()
+	if len(f.e) == 0 {
+		f.m.Unlock()
+		e, err := windows.CreateEvent(nil, 0, 0, nil)
+		if err != nil {
+			panic(err)
+		}
+		return e
+	}
+	e := f.e[len(f.e)-1]
+	f.e = f.e[:len(f.e)-1]
+	f.m.Unlock()
+	return e
+}
+
+func (f *overlappedHandle) putEvent(e windows.Handle) {
+	windows.ResetEvent(e)
+	f.m.Lock()
+	f.e = append(f.e, e)
+	f.m.Unlock()
+}
+
+func (f *overlappedHandle) asyncIo(fn func(windows.Handle, []byte, *uint32, *windows.Overlapped) error, b []byte, milliseconds int, o *windows.Overlapped) (uint32, error) {
+	var n uint32
+	err := fn(f.h, b, &n, o)
+
+	if err == windows.ERROR_IO_PENDING {
+		if milliseconds >= 0 {
+			if n, _ = windows.WaitForSingleObject(o.HEvent, uint32(milliseconds)); n != windows.WAIT_OBJECT_0 {
+				switch n {
+				case syscall.WAIT_ABANDONED:
+					err = os.NewSyscallError("WaitForSingleObject", fmt.Errorf("WAIT_ABANDONED"))
+				case syscall.WAIT_TIMEOUT:
+					err = os.NewSyscallError("WaitForSingleObject", windows.WAIT_TIMEOUT)
+				case syscall.WAIT_FAILED:
+					err = os.NewSyscallError("WaitForSingleObject", fmt.Errorf("WAIT_FAILED"))
+				default:
+					err = os.NewSyscallError("WaitForSingleObject", fmt.Errorf("UNKNOWN ERROR"))
+				}
+				return 0, err
+			}
+		}
+		if err = windows.GetOverlappedResult(f.h, o, &n, true); err != nil {
+			if err == windows.ERROR_HANDLE_EOF {
+				err = io.EOF
+				return n, err
+			}
+			err = os.NewSyscallError("GetOverlappedResult", err)
+			return 0, err
+		}
+	} else if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func (f *overlappedHandle) ReadAt(b []byte, off int64) (int, error) {
+	o := &windows.Overlapped{}
+	o.Offset = uint32(off)
+	o.OffsetHigh = uint32(uint64(off) >> 32)
+	e := f.getEvent()
+	defer f.putEvent(e)
+	o.HEvent = e
+
+	n, err := f.asyncIo(windows.ReadFile, b, f.DefaultTimeout, o)
+	err = os.NewSyscallError("readAt", err)
+	if errors.Is(err, io.EOF) || (err == nil && n == 0 && len(b) > 0) || (err == nil && len(b) > int(n)) {
+		err = io.EOF
+	}
+	return int(n), err
+}
+
+func (f *overlappedHandle) Close() error {
+	windows.CancelIoEx(f.h, nil)
+	windows.Close(f.h)
+	f.h = 0
+	for _, h := range f.e {
+		windows.Close(h)
+	}
+	f.e = nil
+	return nil
+}
+
+func newOverlapped(h windows.Handle) *overlappedHandle {
+	return &overlappedHandle{h: h, DefaultTimeout: -1}
 }
