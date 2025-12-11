@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,20 +19,20 @@ type Session struct {
 	muxSess atomic.Pointer[smux.Session]
 	router  atomic.Pointer[Router]
 
-	reconnectConfig ReconnectConfig
-	reconnectMu     sync.Mutex
-
 	state atomic.Int32
-
-	circuitOpen    atomic.Bool
-	circuitResetAt atomic.Int64
-	reconnectChan  chan struct{}
 
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 
 	version string
 }
+
+type ConnectionState int32
+
+const (
+	StateConnected ConnectionState = iota
+	StateDisconnected
+)
 
 func (s *Session) SetRouter(router Router) {
 	s.router.Store(&router)
@@ -59,10 +58,8 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	session := &Session{
-		reconnectConfig: ReconnectConfig{},
-		reconnectChan:   make(chan struct{}, 1),
-		ctx:             ctx,
-		cancelFunc:      cancel,
+		ctx:        ctx,
+		cancelFunc: cancel,
 	}
 	session.muxSess.Store(s)
 	session.state.Store(int32(StateConnected))
@@ -82,10 +79,8 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	session := &Session{
-		reconnectConfig: ReconnectConfig{},
-		reconnectChan:   make(chan struct{}, 1),
-		ctx:             ctx,
-		cancelFunc:      cancel,
+		ctx:        ctx,
+		cancelFunc: cancel,
 	}
 	session.muxSess.Store(s)
 	session.state.Store(int32(StateConnected))
@@ -99,7 +94,6 @@ func defaultSmuxConfig() *smux.Config {
 	defaults.MaxReceiveBuffer = utils.MaxReceiveBuffer
 	defaults.MaxStreamBuffer = utils.MaxStreamBuffer
 	defaults.MaxFrameSize = 65535
-
 	return defaults
 }
 
@@ -116,17 +110,9 @@ func (s *Session) Serve() error {
 			return errors.New("session is nil")
 		}
 
-		rc := s.reconnectConfig
-
 		stream, err := curSession.AcceptStream()
 		if err != nil {
 			s.state.Store(int32(StateDisconnected))
-			if rc.AutoReconnect {
-				if err2 := s.attemptReconnect(); err2 != nil {
-					return err2
-				}
-				continue
-			}
 			return err
 		}
 		router := s.GetRouter()
@@ -136,7 +122,7 @@ func (s *Session) Serve() error {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					stream.Close()
+					_ = stream.Close()
 				}
 			}()
 			router.ServeStream(stream)
@@ -144,7 +130,7 @@ func (s *Session) Serve() error {
 	}
 }
 
-func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
+func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -153,7 +139,7 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 		return nil, fmt.Errorf("TLS configuration must include client certificate")
 	}
 
-	dialFunc := func() (net.Conn, error) {
+	dialOnce := func() (net.Conn, error) {
 		conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
 		if err != nil {
 			return nil, fmt.Errorf("TLS dial failed: %w", err)
@@ -175,60 +161,113 @@ func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string,
 		return conn, nil
 	}
 
-	upgradeFunc := func(conn net.Conn) (*Session, error) {
-		conn.SetDeadline(time.Now().Add(10 * time.Second))
-		defer conn.SetDeadline(time.Time{})
-
-		return upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
-	}
-
-	var session *Session
-	var err error
-	if autoReconnect {
-		session, err = dialWithBackoff(
-			ctx,
-			dialFunc,
-			upgradeFunc,
-			100*time.Millisecond,
-			30*time.Second,
-		)
-	} else {
-		conn, err := dialWithProbe(ctx, dialFunc)
-		if err != nil {
-			return nil, errors.New("server not reachable")
-		}
-
-		session, err = upgradeFunc(conn)
-		if err != nil {
-			conn.Close()
-		}
-	}
+	conn, err := dialOnce()
 	if err != nil {
+		return nil, fmt.Errorf("server not reachable: %w", err)
+	}
+
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	defer conn.SetDeadline(time.Time{})
+	session, err := upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
+	if err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 
-	if autoReconnect {
-		session.EnableAutoReconnect(ReconnectConfig{
-			AutoReconnect:    true,
-			DialFunc:         dialFunc,
-			UpgradeFunc:      upgradeFunc,
-			InitialBackoff:   100 * time.Millisecond,
-			MaxBackoff:       30 * time.Second,
-			BackoffJitter:    0.2,
-			CircuitBreakTime: 60 * time.Second,
-			ReconnectCtx:     ctx,
-		})
-	}
+	go maintainTLSTunnel(session.ctx, serverAddr, headers, tlsConfig, session)
 
 	return session, nil
 }
 
+func maintainTLSTunnel(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config, s *Session) {
+	base := 200 * time.Millisecond
+	max := 10 * time.Second
+	backoff := base
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		cur := s.muxSess.Load()
+		if cur != nil && !cur.IsClosed() {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
+		if err != nil {
+			time.Sleep(backoff)
+			if backoff < max {
+				backoff *= 2
+				if backoff > max {
+					backoff = max
+				}
+			}
+			continue
+		}
+
+		if err := conn.Handshake(); err != nil {
+			_ = conn.Close()
+			time.Sleep(backoff)
+			if backoff < max {
+				backoff *= 2
+				if backoff > max {
+					backoff = max
+				}
+			}
+			continue
+		}
+
+		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+		newSess, err := upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
+		_ = conn.SetDeadline(time.Time{})
+		if err != nil {
+			_ = conn.Close()
+			time.Sleep(backoff)
+			if backoff < max {
+				backoff *= 2
+				if backoff > max {
+					backoff = max
+				}
+			}
+			continue
+		}
+
+		if prev := s.muxSess.Swap(newSess.muxSess.Load()); prev != nil && !prev.IsClosed() {
+			_ = prev.Close()
+		}
+		s.state.Store(int32(StateConnected))
+		backoff = base
+	}
+}
+
 func (s *Session) Close() error {
 	s.cancelFunc()
-
 	sess := s.muxSess.Load()
 	if sess != nil {
 		return sess.Close()
 	}
 	return nil
+}
+
+func (s *Session) GetState() ConnectionState {
+	if s == nil {
+		return StateDisconnected
+	}
+	cur := s.muxSess.Load()
+	if cur == nil || cur.IsClosed() {
+		return StateDisconnected
+	}
+	return StateConnected
+}
+
+func (s *Session) openStream() (*smux.Stream, error) {
+	cur := s.muxSess.Load()
+	if cur == nil || cur.IsClosed() {
+		return nil, errors.New("session not available")
+	}
+	return cur.OpenStream()
 }

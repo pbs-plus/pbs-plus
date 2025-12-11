@@ -32,15 +32,11 @@ func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload 
 }
 
 func (s *Session) CallContext(ctx context.Context, method string, payload arpcdata.Encodable) (Response, error) {
-	curSession := s.muxSess.Load()
-
-	stream, err := openStreamWithReconnect(s, curSession)
+	stream, err := s.openStream()
 	if err != nil {
 		return Response{}, err
 	}
-	defer func() {
-		_ = stream.Close()
-	}()
+	defer func() { _ = stream.Close() }()
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
@@ -135,14 +131,11 @@ func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, paylo
 }
 
 func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdata.Encodable, dst []byte) (int, error) {
-	curSession := s.muxSess.Load()
-	stream, err := openStreamWithReconnect(s, curSession)
+	stream, err := s.openStream()
 	if err != nil {
 		return 0, fmt.Errorf("failed to open stream: %w", err)
 	}
-	defer func() {
-		_ = stream.Close()
-	}()
+	defer func() { _ = stream.Close() }()
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)

@@ -10,7 +10,6 @@ import (
 	_ "net/http/pprof"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,21 +37,11 @@ func (l *latencyConn) Write(b []byte) (n int, err error) {
 	return l.Conn.Write(b)
 }
 
-// ---------------------------------------------------------------------
-// Helper: setupSessionWithRouter
-//
-// Creates a new pair of connected sessions (client/server) using net.Pipe.
-// The server session immediately begins serving on the provided router.
-// The function returns the client‑side session (which is used for calls)
-// plus a cleanup function to shut down both sessions.
-// ---------------------------------------------------------------------
 func setupSessionWithRouter(t *testing.T, router Router) (clientSession *Session, cleanup func()) {
 	t.Helper()
 
 	clientConn, serverConn := net.Pipe()
 
-	// Emulate network latency by wrapping the connections.
-	// For example, here we simulate a constant 100ms latency.
 	const simulatedLatency = 5 * time.Millisecond
 	serverConn = &latencyConn{Conn: serverConn, delay: simulatedLatency}
 	clientConn = &latencyConn{Conn: clientConn, delay: simulatedLatency}
@@ -71,7 +60,6 @@ func setupSessionWithRouter(t *testing.T, router Router) (clientSession *Session
 
 	done := make(chan struct{})
 
-	// Start the server session in a goroutine. Serve() continuously accepts streams.
 	go func() {
 		_ = serverSession.Serve()
 		close(done)
@@ -89,17 +77,11 @@ func setupSessionWithRouter(t *testing.T, router Router) (clientSession *Session
 	return clientSession, cleanup
 }
 
-// ---------------------------------------------------------------------
-// Test 1: Router.ServeStream working as expected (Echo handler).
-// We simulate a single request/response using a net.Pipe as the underlying stream.
-// ---------------------------------------------------------------------
 func TestRouterServeStream_Echo(t *testing.T) {
-	// Create an in‑memory connection pair.
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	// Create smux sessions for server and client.
 	serverSession, err := smux.Server(serverConn, nil)
 	if err != nil {
 		t.Fatalf("failed to create smux server session: %v", err)
@@ -109,17 +91,14 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		t.Fatalf("failed to create smux client session: %v", err)
 	}
 
-	// Create the router and register an "echo" handler.
 	router := NewRouter()
 	router.Handle("echo", func(req Request) (Response, error) {
-		// Echo back the payload.
 		return Response{
 			Status: 200,
 			Data:   req.Payload,
 		}, nil
 	})
 
-	// On the server side, accept a stream.
 	var (
 		wg     sync.WaitGroup
 		srvErr error
@@ -135,13 +114,11 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		router.ServeStream(stream)
 	}()
 
-	// On the client side, open a stream.
 	clientStream, err := clientSession.OpenStream()
 	if err != nil {
 		t.Fatalf("failed to open client stream: %v", err)
 	}
 
-	// Build and send a request.
 	payload := StringMsg("hello")
 	payloadBytes, err := payload.Encode()
 	if err != nil {
@@ -162,7 +139,6 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		t.Fatalf("failed to write request: %v", err)
 	}
 
-	// Read and decode the response.
 	respBuf := make([]byte, 1024)
 	n, err := clientStream.Read(respBuf)
 	if err != nil {
@@ -178,7 +154,6 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
 
-	// Extract the echoed payload.
 	var echoed StringMsg
 	if err := echoed.Decode(resp.Data); err != nil {
 		t.Fatalf("failed to decode echoed data: %v", err)
@@ -187,7 +162,6 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		t.Fatalf("expected data 'hello', got %q", echoed)
 	}
 
-	// Wait for the server goroutine to finish.
 	doneCh := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -204,14 +178,9 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------
-// Test 2: Session.Call (simple call).
-// Create connected client/server sessions and call a simple "ping" method.
-// ---------------------------------------------------------------------
 func TestSessionCall_Success(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
-		// Echo back "pong".
 		var pong StringMsg = "pong"
 		pongBytes, _ := pong.Encode()
 		return Response{
@@ -240,10 +209,6 @@ func TestSessionCall_Success(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------
-// Test 3: Concurrency test.
-// Spawn many concurrent goroutines making calls via the same session.
-// ---------------------------------------------------------------------
 func TestSessionCall_Concurrency(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
@@ -288,10 +253,6 @@ func TestSessionCall_Concurrency(t *testing.T) {
 	wg.Wait()
 }
 
-// ---------------------------------------------------------------------
-// Test 4: CallContext with timeout.
-// The server is deliberately slow. The client should abort the call.
-// ---------------------------------------------------------------------
 func TestCallContext_Timeout(t *testing.T) {
 	router := NewRouter()
 	router.Handle("slow", func(req Request) (Response, error) {
@@ -319,98 +280,11 @@ func TestCallContext_Timeout(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------
-// Test 5: Auto-reconnect.
-// Simulate a broken connection by closing the underlying session, and
-// verify that a subsequent call automatically triggers reconnection.
-// ---------------------------------------------------------------------
-func TestAutoReconnect(t *testing.T) {
-	router := NewRouter()
-	router.Handle("ping", func(req Request) (Response, error) {
-		var pong StringMsg = "pong"
-		pongBytes, _ := pong.Encode()
-		return Response{
-			Status: 200,
-			Data:   pongBytes,
-		}, nil
-	})
-
-	// Start an initial client/server session.
-	clientSession, cleanup := setupSessionWithRouter(t, router)
-	defer cleanup()
-
-	var dialCount int32
-
-	// Create a custom dial function that creates a new net.Pipe pair and
-	// immediately starts a new server session using the same router.
-	dialFunc := func() (net.Conn, error) {
-		atomic.AddInt32(&dialCount, 1)
-		serverConn, clientConn := net.Pipe()
-		go func() {
-			sess, err := NewServerSession(serverConn, nil)
-			if err != nil {
-				t.Logf("server session error: %v", err)
-				return
-			}
-			sess.SetRouter(router)
-			_ = sess.Serve()
-		}()
-		return clientConn, nil
-	}
-
-	upgradeFunc := func(conn net.Conn) (*Session, error) {
-		return NewClientSession(conn, nil)
-	}
-
-	// Enable auto‑reconnect on the client session.
-	rc := ReconnectConfig{
-		AutoReconnect:  true,
-		DialFunc:       dialFunc,
-		UpgradeFunc:    upgradeFunc,
-		InitialBackoff: 10 * time.Millisecond,
-		MaxBackoff:     50 * time.Millisecond,
-		ReconnectCtx:   context.Background(),
-	}
-	clientSession.EnableAutoReconnect(rc)
-
-	// Simulate network failure by closing the underlying session.
-	curMux := clientSession.muxSess.Load()
-	curMux.Close()
-
-	// Now call "ping" which should trigger auto‑reconnect.
-	resp, err := clientSession.Call("ping", nil)
-	if err != nil {
-		t.Fatalf("Call after disconnection failed: %v", err)
-	}
-	if resp.Status != 200 {
-		t.Fatalf("expected status 200, got %d", resp.Status)
-	}
-	var pong StringMsg
-	if err := pong.Decode(resp.Data); err != nil {
-		t.Fatalf("failed to decode pong: %v", err)
-	}
-	if pong != "pong" {
-		t.Fatalf("expected 'pong', got %q", pong)
-	}
-
-	if atomic.LoadInt32(&dialCount) == 0 {
-		t.Fatal("expected dial function to be called for reconnection")
-	}
-}
-
-// ---------------------------------------------------------------------
-// Test 6: CallBinary_Success
-//
-// Verifies that CallBinary correctly reads the metadata and then the
-// binary payload written by a custom server.
-// ---------------------------------------------------------------------
 func TestCallBinary_Success(t *testing.T) {
-	// Create an in-memory connection pair.
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	// Create server and client sessions.
 	serverSess, err := NewServerSession(serverConn, nil)
 	if err != nil {
 		t.Fatalf("failed to create server session: %v", err)
@@ -420,7 +294,6 @@ func TestCallBinary_Success(t *testing.T) {
 		t.Fatalf("failed to create client session: %v", err)
 	}
 
-	// Launch a goroutine to simulate a buffered-call handler on the server side.
 	go func() {
 		curSession := serverSess.muxSess.Load()
 		stream, err := curSession.AcceptStream()
@@ -430,7 +303,6 @@ func TestCallBinary_Success(t *testing.T) {
 		}
 		defer stream.Close()
 
-		// Read and decode the request.
 		reqBuf := make([]byte, 1024)
 		n, err := stream.Read(reqBuf)
 		if err != nil {
@@ -444,10 +316,8 @@ func TestCallBinary_Success(t *testing.T) {
 			return
 		}
 
-		// Prepare the binary payload
 		binaryData := []byte("hello world")
 
-		// Send the response
 		resp := Response{Status: 213}
 		respBytes, err := resp.Encode()
 		if err != nil {
@@ -467,7 +337,6 @@ func TestCallBinary_Success(t *testing.T) {
 		}
 	}()
 
-	// On the client side, use CallBinary to send a request.
 	buffer := make([]byte, 1024)
 	n, err := clientSess.CallBinary(context.Background(), "buffer", nil, buffer)
 	if err != nil {
@@ -484,23 +353,15 @@ func TestCallBinary_Success(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------
-// TestCallMsg_ErrorResponse verifies that when the server handler returns
-// an error, the client can correctly parse the error response from CallMsg.
-// ---------------------------------------------------------------------
 func TestCallMsg_ErrorResponse(t *testing.T) {
 	router := NewRouter()
-	// Register a handler that deliberately returns an error.
 	router.Handle("error", func(req Request) (Response, error) {
-		// Returning an error here will trigger writeErrorResponse,
-		// which wraps the error inside a Response with non‑200 status.
 		return Response{}, errors.New("test error")
 	})
 
 	clientSession, cleanup := setupSessionWithRouter(t, router)
 	defer cleanup()
 
-	// CallMsg should return an error since the handler produced one.
 	data, err := clientSession.CallMsg(context.Background(), "error", nil)
 	if err == nil {
 		t.Fatal("expected error response from CallMsg, got nil")
@@ -513,22 +374,15 @@ func TestCallMsg_ErrorResponse(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------
-// TestCallBinary_ErrorResponse verifies that when the server handler
-// returns an error during a buffered call, the client returns the expected error.
-// ---------------------------------------------------------------------
 func TestCallBinary_ErrorResponse(t *testing.T) {
 	router := NewRouter()
-	// Register a handler that simulates an error response.
 	router.Handle("buffer_error", func(req Request) (Response, error) {
-		// Trigger an error response; writeErrorResponse is used internally.
 		return Response{}, errors.New("buffer error occurred")
 	})
 
 	clientSession, cleanup := setupSessionWithRouter(t, router)
 	defer cleanup()
 
-	// Prepare a buffer for the expected binary payload.
 	buffer := make([]byte, 1024)
 	n, err := clientSession.CallBinary(context.Background(), "buffer_error", nil, buffer)
 	if err == nil {
@@ -537,21 +391,14 @@ func TestCallBinary_ErrorResponse(t *testing.T) {
 	if !strings.Contains(err.Error(), "buffer error occurred") {
 		t.Fatalf("expected error message to contain 'buffer error occurred', got: %v", err)
 	}
-	// When an error response is returned, no binary data is expected.
 	if n != 0 {
 		t.Fatalf("expected 0 bytes read on error response, got %d", n)
 	}
 }
 
-// TestCallBinary_Concurrency verifies that CallBinary works concurrently
-// with different sets of binary data. For each client call, a unique payload
-// (with an "id") is sent and the server replies with a binary message that
-// includes the id.
 func TestCallBinary_Concurrency(t *testing.T) {
-	// Create a router and register a handler for "binary_concurrent".
 	router := NewRouter()
 	router.Handle("binary_concurrent", func(req Request) (Response, error) {
-		// Decode the payload to extract the client ID.
 		var payload MapStringIntMsg
 		id := 0
 		if req.Payload != nil {
@@ -562,49 +409,35 @@ func TestCallBinary_Concurrency(t *testing.T) {
 			}
 		}
 
-		// Prepare binary data that is unique for this client.
 		dataStr := fmt.Sprintf("binary data for client %d", id)
 		binaryData := []byte(dataStr)
 
-		// Return a response with status 213 and a streaming callback.
 		return Response{
 			Status: 213,
 			RawStream: func(stream *smux.Stream) {
-				// Send the binary data to the client.
 				r := bytes.NewReader(binaryData)
-				if err := binarystream.SendDataFromReader(r, len(binaryData), stream); err != nil {
-					t.Logf("server: error sending binary data for client %d: %v", id, err)
-				}
+				_ = binarystream.SendDataFromReader(r, len(binaryData), stream)
 			},
 		}, nil
 	})
 
-	// Set up the client and server sessions with the router.
 	clientSession, cleanup := setupSessionWithRouter(t, router)
 	defer cleanup()
 
-	// Spawn multiple concurrent client calls.
 	const numClients = 50
 	var clientWg sync.WaitGroup
 	for i := 0; i < numClients; i++ {
 		clientWg.Add(1)
 		go func(id int) {
 			defer clientWg.Done()
-
-			// Prepare a payload with a unique client ID.
 			payload := MapStringIntMsg{"id": id}
-
-			// Allocate a buffer to hold the binary response.
-			expectedSize := len(fmt.Sprintf("binary data for client %d", id))
-			buffer := make([]byte, expectedSize+100)
+			expected := fmt.Sprintf("binary data for client %d", id)
+			buffer := make([]byte, len(expected)+100)
 			n, err := clientSession.CallBinary(context.Background(), "binary_concurrent", &payload, buffer)
 			if err != nil {
 				t.Errorf("client %d: CallBinary error: %v", id, err)
 				return
 			}
-
-			// Verify the response.
-			expected := fmt.Sprintf("binary data for client %d", id)
 			if n != len(expected) {
 				t.Errorf("client %d: expected %d bytes, got %d", id, len(expected), n)
 				return
@@ -636,7 +469,6 @@ func setupSessionWithRouterForBenchmark(b *testing.B, router Router) (clientSess
 
 	done := make(chan struct{})
 
-	// Start the server session in a goroutine. Serve() continuously accepts streams.
 	go func() {
 		_ = serverSession.Serve()
 		close(done)
@@ -654,19 +486,14 @@ func setupSessionWithRouterForBenchmark(b *testing.B, router Router) (clientSess
 	return clientSession, cleanup
 }
 
-// BenchmarkSessionCall benchmarks the performance of the Session.Call method
-// with a high number of concurrent requests.
 func BenchmarkSessionCall(b *testing.B) {
-	// Define the number of concurrent clients and requests per client.
 	const (
-		numClients        = 100 // Number of concurrent clients
-		requestsPerClient = 100 // Number of requests per client
+		numClients        = 100
+		requestsPerClient = 100
 	)
 
-	// Set up the router with a simple "ping" handler.
 	router := NewRouter()
 	router.Handle("ping", func(req Request) (Response, error) {
-		// Simulate minimal processing time.
 		var pong StringMsg = "pong"
 		pongBytes, _ := pong.Encode()
 		return Response{
@@ -675,25 +502,20 @@ func BenchmarkSessionCall(b *testing.B) {
 		}, nil
 	})
 
-	// Set up the client session and cleanup function.
 	clientSession, cleanup := setupSessionWithRouterForBenchmark(b, router)
 	defer cleanup()
 
-	// Report memory allocations.
 	b.ReportAllocs()
 
-	// Run the benchmark.
-	b.ResetTimer() // Reset the timer to exclude setup time.
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var wg sync.WaitGroup
 		wg.Add(numClients)
 
-		// Launch multiple clients in parallel.
 		for clientID := 0; clientID < numClients; clientID++ {
 			go func(clientID int) {
 				defer wg.Done()
 				for j := 0; j < requestsPerClient; j++ {
-					// Make a "ping" call.
 					resp, err := clientSession.Call("ping", nil)
 					if err != nil {
 						b.Errorf("Client %d: Call failed: %v", clientID, err)
@@ -713,8 +535,7 @@ func BenchmarkSessionCall(b *testing.B) {
 			}(clientID)
 		}
 
-		// Wait for all clients to finish.
 		wg.Wait()
 	}
-	b.StopTimer() // Stop the timer after the benchmark is complete.
+	b.StopTimer()
 }
