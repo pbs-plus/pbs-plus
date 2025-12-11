@@ -50,12 +50,10 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	if config == nil {
 		config = defaultSmuxConfig()
 	}
-
 	s, err := smux.Server(conn, config)
 	if err != nil {
 		return nil, err
 	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	session := &Session{
 		ctx:        ctx,
@@ -63,7 +61,6 @@ func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	}
 	session.muxSess.Store(s)
 	session.state.Store(int32(StateConnected))
-
 	return session, nil
 }
 
@@ -71,12 +68,10 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	if config == nil {
 		config = defaultSmuxConfig()
 	}
-
 	s, err := smux.Client(conn, config)
 	if err != nil {
 		return nil, err
 	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	session := &Session{
 		ctx:        ctx,
@@ -84,7 +79,6 @@ func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
 	}
 	session.muxSess.Store(s)
 	session.state.Store(int32(StateConnected))
-
 	return session, nil
 }
 
@@ -104,12 +98,10 @@ func (s *Session) Serve() error {
 			return s.ctx.Err()
 		default:
 		}
-
 		curSession := s.muxSess.Load()
 		if curSession == nil {
 			return errors.New("session is nil")
 		}
-
 		stream, err := curSession.AcceptStream()
 		if err != nil {
 			s.state.Store(int32(StateDisconnected))
@@ -134,22 +126,23 @@ func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers htt
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
 	if tlsConfig == nil || len(tlsConfig.Certificates) == 0 {
 		return nil, fmt.Errorf("TLS configuration must include client certificate")
 	}
 
 	dialOnce := func() (net.Conn, error) {
-		conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
+		d := &net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 15 * time.Second,
+		}
+		conn, err := tls.DialWithDialer(d, "tcp", serverAddr, tlsConfig)
 		if err != nil {
 			return nil, fmt.Errorf("TLS dial failed: %w", err)
 		}
-
 		if err := conn.Handshake(); err != nil {
 			conn.Close()
 			return nil, fmt.Errorf("TLS handshake failed: %w", err)
 		}
-
 		state := conn.ConnectionState()
 		syslog.L.Info().
 			WithField("tls_version", state.Version).
@@ -157,7 +150,6 @@ func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers htt
 			WithField("peer_certs_count", len(state.PeerCertificates)).
 			WithMessage("TLS connection established").
 			Write()
-
 		return conn, nil
 	}
 
@@ -209,7 +201,11 @@ func (s *Session) openStream() (*smux.Stream, error) {
 
 func maintainTLSTunnel(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config, s *Session) {
 	dial := func() (net.Conn, error) {
-		conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
+		d := &net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 15 * time.Second,
+		}
+		conn, err := tls.DialWithDialer(d, "tcp", serverAddr, tlsConfig)
 		if err != nil {
 			return nil, fmt.Errorf("TLS dial failed: %w", err)
 		}
@@ -240,9 +236,14 @@ func maintainTLSTunnelWithDeps(
 	dial func() (net.Conn, error),
 	upgrade func(net.Conn) (*Session, error),
 ) {
-	base := 200 * time.Millisecond
-	max := 10 * time.Second
+	base := 100 * time.Millisecond
+	max := 2 * time.Second
 	backoff := base
+	lastFail := time.Time{}
+
+	fastProbeUntil := time.Time{}
+	fastProbeInterval := 100 * time.Millisecond
+	idleCheck := 200 * time.Millisecond
 
 	for {
 		select {
@@ -253,13 +254,31 @@ func maintainTLSTunnelWithDeps(
 
 		cur := s.muxSess.Load()
 		if cur != nil && !cur.IsClosed() {
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(idleCheck)
 			continue
+		}
+
+		now := time.Now()
+		if lastFail.IsZero() || now.Sub(lastFail) > 10*time.Second {
+			backoff = base
+		}
+
+		if fastProbeUntil.IsZero() || now.After(fastProbeUntil) {
+			fastProbeUntil = now.Add(3 * time.Second)
+		}
+
+		interval := backoff
+		if now.Before(fastProbeUntil) {
+			interval = fastProbeInterval
 		}
 
 		conn, err := dial()
 		if err != nil {
-			time.Sleep(backoff)
+			lastFail = now
+			time.Sleep(interval)
+			if interval == fastProbeInterval {
+				continue
+			}
 			if backoff < max {
 				backoff *= 2
 				if backoff > max {
@@ -271,7 +290,11 @@ func maintainTLSTunnelWithDeps(
 
 		newSess, err := upgrade(conn)
 		if err != nil {
-			time.Sleep(backoff)
+			lastFail = now
+			time.Sleep(interval)
+			if interval == fastProbeInterval {
+				continue
+			}
 			if backoff < max {
 				backoff *= 2
 				if backoff > max {
@@ -286,5 +309,7 @@ func maintainTLSTunnelWithDeps(
 		}
 		s.state.Store(int32(StateConnected))
 		backoff = base
+		lastFail = time.Time{}
+		fastProbeUntil = time.Time{}
 	}
 }
