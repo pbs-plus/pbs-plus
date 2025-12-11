@@ -74,6 +74,10 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 			syslog.L.Warn().WithMessage("ARPC CallContext: read length prefix timeout").WithField("method", method).Write()
 			return Response{}, context.DeadlineExceeded
 		}
+		if ctx.Err() != nil {
+			syslog.L.Warn().WithMessage("ARPC CallContext: read full response timeout").WithField("method", method).Write()
+			return Response{}, context.DeadlineExceeded
+		}
 		syslog.L.Error(err).WithMessage("ARPC CallContext: read length prefix failed").WithField("method", method).Write()
 		return Response{}, fmt.Errorf("failed to read length prefix: %w", err)
 	}
@@ -88,6 +92,10 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 	copy(buf, prefix)
 	if _, err := io.ReadFull(stream, buf[4:]); err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			syslog.L.Warn().WithMessage("ARPC CallContext: read full response timeout").WithField("method", method).Write()
+			return Response{}, context.DeadlineExceeded
+		}
+		if ctx.Err() != nil {
 			syslog.L.Warn().WithMessage("ARPC CallContext: read full response timeout").WithField("method", method).Write()
 			return Response{}, context.DeadlineExceeded
 		}
@@ -184,6 +192,10 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 	defer headerPool.Put(headerPrefix)
 
 	if _, err := io.ReadFull(stream, headerPrefix); err != nil {
+		if ctx.Err() != nil {
+			syslog.L.Warn().WithMessage("ARPC CallBinary: read full response timeout").WithField("method", method).Write()
+			return 0, context.DeadlineExceeded
+		}
 		syslog.L.Error(err).WithMessage("ARPC CallBinary: read header length prefix failed").WithField("method", method).Write()
 		return 0, fmt.Errorf("failed to read header length prefix: %w", err)
 	}
@@ -198,6 +210,10 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 
 	copy(headerBuf, headerPrefix)
 	if _, err := io.ReadFull(stream, headerBuf[4:]); err != nil {
+		if ctx.Err() != nil {
+			syslog.L.Warn().WithMessage("ARPC CallBinary: read full response timeout").WithField("method", method).Write()
+			return 0, context.DeadlineExceeded
+		}
 		syslog.L.Error(err).WithMessage("ARPC CallBinary: read full header failed").WithField("method", method).Write()
 		return 0, fmt.Errorf("failed to read full header: %w", err)
 	}
