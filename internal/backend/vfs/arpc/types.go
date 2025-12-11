@@ -11,7 +11,7 @@ import (
 
 // ARPCFS implements billy.Filesystem using aRPC calls
 type ARPCFS struct {
-	*vfs.VFSBase
+	vfs.VFSBase
 
 	session    *arpc.Session
 	Hostname   string

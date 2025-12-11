@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -163,9 +162,6 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 	atomic.AddUint64(&s.curIdx, 1)
 	atomic.AddUint64(&s.totalReturned, 1)
-
-	tr := atomic.LoadUint64(&s.totalReturned)
-	_ = s.fs.Memcache.Set(&memcache.Item{Key: "stats:dirEntriesReturned", Value: []byte(strconv.FormatUint(tr, 10)), Expiration: 0})
 
 	return fuse.DirEntry{
 		Name: curr.Name,
