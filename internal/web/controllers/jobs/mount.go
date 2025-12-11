@@ -26,8 +26,9 @@ import (
 )
 
 var (
-	mountMu      sync.Mutex
-	mountedPaths = make(map[string][]string)
+	mountMu        sync.Mutex
+	mountedPaths   = make(map[string][]string)
+	mountProcesses = make(map[string][]int)
 )
 
 func snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName string) string {
@@ -64,17 +65,7 @@ func parseMountPoints() ([]string, error) {
 	var mps []string
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		// mountinfo format (fields):
-		// 1: mount ID
-		// 2: parent ID
-		// 3: major:minor
-		// 4: root
-		// 5: mount point
-		// 6: mount options
-		// 7: optional fields... " - "
-		// 8+: fstype, source, super options
-		line := sc.Text()
-		parts := strings.Split(line, " - ")
+		parts := strings.Split(sc.Text(), " - ")
 		if len(parts) != 2 {
 			continue
 		}
@@ -91,7 +82,6 @@ func parseMountPoints() ([]string, error) {
 	return mps, nil
 }
 
-// ExtJsMountHandler mounts a pxar archive to a generated mount point.
 func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -259,6 +249,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		key := snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName)
 		mountMu.Lock()
 		mountedPaths[key] = appendUnique(mountedPaths[key], filepath.Clean(mountPoint))
+		mountProcesses[key] = appendIntUnique(mountProcesses[key], proc.Pid)
 		mountMu.Unlock()
 
 		writeJSON(w, JobRunResponse{
@@ -307,6 +298,9 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			safeTime,
 		))
 
+		key := snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName)
+
+		var pids []int
 		mountMu.Lock()
 		for k, v := range mountedPaths {
 			mountedPaths[k] = removeString(v, mountPoint)
@@ -314,9 +308,20 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 				delete(mountedPaths, k)
 			}
 		}
+		if mp, ok := mountProcesses[key]; ok {
+			pids = append(pids, mp...)
+			delete(mountProcesses, key)
+		}
 		mountMu.Unlock()
 
-		// Unmount and remove the mount directory
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, syscall.SIGTERM)
+		}
+		time.Sleep(200 * time.Millisecond)
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+
 		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
 		_ = exec.Command("fusermount", "-uz", mountPoint).Run()
 		_ = os.RemoveAll(mountPoint)
@@ -357,27 +362,27 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		var targets []string
 		for _, mp := range allMPs {
-			if isPathWithin(base, mp) {
-				targets = append(targets, filepath.Clean(mp))
+			clean := filepath.Clean(mp)
+			if clean == base || isPathWithin(base, clean) {
+				targets = append(targets, clean)
 			}
 		}
 
-		// Unmount deeper paths first
 		sort.Slice(targets, func(i, j int) bool {
-			di := strings.Count(filepath.Clean(targets[i]), string(filepath.Separator))
-			dj := strings.Count(filepath.Clean(targets[j]), string(filepath.Separator))
+			di := strings.Count(targets[i], string(filepath.Separator))
+			dj := strings.Count(targets[j], string(filepath.Separator))
 			if di == dj {
 				return len(targets[i]) > len(targets[j])
 			}
 			return di > dj
 		})
 
-		// Update in-memory tracking
+		var pidsToKill []int
 		mountMu.Lock()
 		for k, v := range mountedPaths {
 			var kept []string
 			for _, p := range v {
-				if !isPathWithin(base, p) {
+				if !(p == base || isPathWithin(base, p)) {
 					kept = append(kept, p)
 				}
 			}
@@ -387,7 +392,36 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 				delete(mountedPaths, k)
 			}
 		}
+		for k, plist := range mountProcesses {
+			parts := strings.Split(k, "|")
+			if len(parts) < 4 {
+				continue
+			}
+			datastoreK := parts[0]
+			nsK := ""
+			if len(parts) > 4 {
+				// datastore | type | id | time | ns | file
+				nsK = parts[4]
+			}
+			mpBase := filepath.Clean(filepath.Join(
+				constants.RestoreMountBasePath,
+				datastoreK,
+				nsK,
+			))
+			if mpBase == base || isPathWithin(base, mpBase) || isPathWithin(mpBase, base) {
+				pidsToKill = append(pidsToKill, plist...)
+				delete(mountProcesses, k)
+			}
+		}
 		mountMu.Unlock()
+
+		for _, pid := range pidsToKill {
+			_ = syscall.Kill(pid, syscall.SIGTERM)
+		}
+		time.Sleep(200 * time.Millisecond)
+		for _, pid := range pidsToKill {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
 
 		for _, mp := range targets {
 			_ = exec.Command("umount", "-f", "-l", mp).Run()
@@ -409,6 +443,15 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func appendUnique(slice []string, item string) []string {
+	for _, s := range slice {
+		if s == item {
+			return slice
+		}
+	}
+	return append(slice, item)
+}
+
+func appendIntUnique(slice []int, item int) []int {
 	for _, s := range slice {
 		if s == item {
 			return slice
