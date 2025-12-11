@@ -53,7 +53,10 @@ func (p *pbsService) Start(s service.Service) error {
 }
 
 func (p *pbsService) runForeground(_ overseer.State) {
-	syslog.L.SetServiceLogger()
+	err := syslog.L.SetServiceLogger()
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
 
