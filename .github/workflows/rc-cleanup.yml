@@ -1,0 +1,93 @@
+name: Delete RC tags for a base version
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_version:
+        description: "Base version (e.g., 1.4.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Print what would be deleted without deleting"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: write
+
+jobs:
+  delete-rc-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (fetch all tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure all tags are fetched
+        run: |
+          git fetch --tags --prune --force
+
+      - name: Find matching RC tags
+        id: find
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="${{ inputs.base_version }}"
+          if [[ -z "$BASE" ]]; then
+            echo "Base version is required" >&2
+            exit 1
+          fi
+
+          # Accept tags with and without leading 'v'
+          # Examples matched: v1.4.0-rc1, v1.4.0-rc.2, 1.4.0-rc3, 1.4.0-rc.10
+          mapfile -t RC_TAGS < <(git tag -l | grep -E "^(v)?${BASE}-rc[0-9]+(\.[0-9]+)?$" || true)
+
+          if [[ ${#RC_TAGS[@]} -eq 0 ]]; then
+            echo "No RC tags found for base version ${BASE}"
+            echo "tags=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          printf "Found RC tags for %s:\n" "$BASE"
+          for t in "${RC_TAGS[@]}"; do
+            echo "  - $t"
+          done
+
+          # Join with newline for readability and space for iteration
+          TLIST=$(printf "%s " "${RC_TAGS[@]}")
+          echo "tags=${TLIST}" >> "$GITHUB_OUTPUT"
+
+      - name: Delete RC tags (dry run or real)
+        if: steps.find.outputs.tags != ''
+        env:
+          TAGS: ${{ steps.find.outputs.tags }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r -a TAG_ARR <<< "$TAGS"
+
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "Dry run enabled. The following tags would be deleted from origin:"
+            for t in "${TAG_ARR[@]}"; do
+              echo "  - $t"
+            done
+            exit 0
+          fi
+
+          echo "Deleting tags from origin:"
+          for t in "${TAG_ARR[@]}"; do
+            echo "  - $t"
+            # Delete remote tag
+            git push origin ":refs/tags/$t"
+            # Optionally delete local tag (harmless if it doesn't exist)
+            git tag -d "$t" || true
+          done
+
+          echo "Done."
