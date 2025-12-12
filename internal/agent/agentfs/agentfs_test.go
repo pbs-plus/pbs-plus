@@ -74,7 +74,7 @@ func newTestQUICServer(t *testing.T, router arpc.Router) (addr string, cleanup f
 
 	serverTLS = &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
-		NextProtos:   []string{"arpc"},
+		NextProtos:   []string{"h2", "http/1.1", "pbsarpc"},
 	}
 
 	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
@@ -132,7 +132,7 @@ func newTestClientTLS(t *testing.T) *tls.Config {
 	return &tls.Config{
 		Certificates:       []tls.Certificate{clientCert},
 		ServerName:         "localhost",
-		NextProtos:         []string{"arpc"},
+		NextProtos:         []string{"h2", "http/1.1", "pbsarpc"},
 		InsecureSkipVerify: true,
 	}
 }
