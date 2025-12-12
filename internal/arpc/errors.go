@@ -27,11 +27,6 @@ const (
 	quicErrRawReadySignalWrite quic.StreamErrorCode      = 0x1006
 	quicErrRPCStatus           quic.StreamErrorCode      = 0x1007
 	quicErrRawNotSupported     quic.StreamErrorCode      = 0x1008
-	quicErrDecodeRequest       quic.StreamErrorCode      = 0x1200
-	quicErrMissingMethod       quic.StreamErrorCode      = 0x1201
-	quicErrMethodNotFound      quic.StreamErrorCode      = 0x1202
-	quicErrHandlerError        quic.StreamErrorCode      = 0x1203
-	quicErrMarshalResponse     quic.StreamErrorCode      = 0x1204
 	quicErrWriteResponse       quic.StreamErrorCode      = 0x1205
 	quicErrRawHandshakeFail    quic.StreamErrorCode      = 0x1206
 )
