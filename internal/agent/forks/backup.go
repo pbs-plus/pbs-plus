@@ -274,7 +274,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 	return mode, cmd.Process.Pid, nil
 }
 
-func Backup(rpcSess *arpc.Session, sourceMode string, readMode string, drive string, jobId string) (string, error) {
+func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, jobId string) (string, error) {
 	syslog.L.Info().WithMessage("Backup: begin").
 		WithField("sourceMode", sourceMode).
 		WithField("readMode", readMode).

@@ -414,27 +414,34 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		}
 		syslog.L.Warn().WithMessage("handleReadAt: mmap failed, falling back to pread").WithField("handle_id", payload.HandleID).WithField("error", err.Error()).Write()
 	}
-	bptr := readBufPool.Get().(*[]byte)
-	buf := *bptr
-	if len(buf) < reqLen {
-		buf = make([]byte, reqLen)
+
+	var buf []byte
+	bptr := readBufPool.Get().(*[]byte) // This gets a pointer to a *slice*
+	if len(*bptr) < reqLen {
+		buf = make([]byte, reqLen) // Allocate a new slice
+	} else {
+		buf = *bptr // Use the slice from the pool
 	}
+
 	n, err := unix.Pread(fh.fd, buf[:reqLen], payload.Offset)
 	if err != nil {
-		readBufPool.Put(bptr)
+		if len(*bptr) >= reqLen { // Meaning, we used the pooled buffer
+			readBufPool.Put(bptr)
+		}
 		syslog.L.Error(err).WithMessage("handleReadAt: pread failed").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, fmt.Errorf("pread failed: %w", err)
 	}
+
 	reader := bytes.NewReader(buf[:n])
 	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", n).Write()
 	streamCallback := func(stream *quic.Stream) {
 		defer stream.Close()
+		readBufPool.Put(&buf)
+
 		if err := binarystream.SendDataFromReader(reader, n, stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed").WithField("handle_id", payload.HandleID).Write()
-			readBufPool.Put(bptr)
 			return
 		}
-		readBufPool.Put(bptr)
 		syslog.L.Debug().WithMessage("handleReadAt: stream completed").WithField("handle_id", payload.HandleID).WithField("bytes", n).Write()
 	}
 	return arpc.Response{Status: 213, RawStream: streamCallback}, nil

@@ -61,7 +61,7 @@ func (s *DirStream) HasNext() bool {
 	readBuf := bufPool.Get().([]byte)
 	defer bufPool.Put(readBuf)
 
-	bytesRead, err := s.fs.session.CallBinary(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
+	err := s.fs.session.Call(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			atomic.StoreInt32(&s.closed, 1)
@@ -74,6 +74,7 @@ func (s *DirStream) HasNext() bool {
 			Write()
 		return false
 	}
+	bytesRead := len(readBuf)
 
 	if bytesRead == 0 {
 		atomic.StoreInt32(&s.closed, 1)
