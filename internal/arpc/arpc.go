@@ -137,9 +137,27 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return nil, fmt.Errorf("failed to create pipe: %w", err)
 	}
 
+	if headers == nil {
+		headers = make(http.Header)
+	}
+
+	headers.Add("ARPCVersion", "2")
+
 	pipe.tlsConfig = arpcTls
 	pipe.serverAddr = serverAddr
 	pipe.headers = headers
+
+	ustream, uerr := pipe.OpenUniStream()
+	if uerr != nil {
+		return nil, fmt.Errorf("failed to initialize header pipe: %w", err)
+	}
+	if werr := writeHeadersFrame(ustream, headers); werr != nil {
+		_ = ustream.Close()
+		return nil, fmt.Errorf("failed to write headers: %w", err)
+	}
+	if cerr := ustream.Close(); cerr != nil {
+		return nil, fmt.Errorf("failed to close header pipe: %w", err)
+	}
 
 	return pipe, nil
 }
@@ -162,8 +180,8 @@ func (s *StreamPipe) GetState() ConnectionState {
 	return StateConnected
 }
 
-func (s *StreamPipe) openStream(ctx context.Context) (*quic.Stream, error) {
-	str, err := s.OpenStreamSync(ctx)
+func (s *StreamPipe) openStream(_ context.Context) (*quic.Stream, error) {
+	str, err := s.OpenStream()
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +224,16 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener,
 				return
 			}
 
-			pipe, id, err := agentsManager.GetOrCreateStreamPipe(c)
+			var reqHeaders http.Header
+			uh, uerr := c.AcceptUniStream(ctx)
+			if uerr == nil {
+				if hdrs, rerr := readHeadersFrame(uh); rerr == nil {
+					reqHeaders = hdrs
+				}
+				uh.CancelRead(0)
+			}
+
+			pipe, id, err := agentsManager.GetOrCreateStreamPipe(c, reqHeaders)
 			if err != nil {
 				_ = c.CloseWithError(0, fmt.Sprintf("init failed: %v", err))
 				return
@@ -256,5 +283,22 @@ func (s *StreamPipe) Reconnect(ctx context.Context) error {
 	}
 
 	s.Conn = conn
+
+	if s.headers == nil {
+		s.headers = make(http.Header)
+	}
+
+	ustream, uerr := s.OpenUniStream()
+	if uerr != nil {
+		return fmt.Errorf("failed to initialize header pipe: %w", err)
+	}
+	if werr := writeHeadersFrame(ustream, s.headers); werr != nil {
+		_ = ustream.Close()
+		return fmt.Errorf("failed to write headers: %w", err)
+	}
+	if cerr := ustream.Close(); cerr != nil {
+		return fmt.Errorf("failed to close header pipe: %w", err)
+	}
+
 	return nil
 }

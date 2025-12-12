@@ -2,6 +2,7 @@ package arpc
 
 import (
 	"errors"
+	"net/http"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
@@ -18,12 +19,17 @@ func NewAgentsManager() *AgentsManager {
 	}
 }
 
-func (sm *AgentsManager) GetOrCreateStreamPipe(conn *quic.Conn) (*StreamPipe, string, error) {
+func (sm *AgentsManager) GetOrCreateStreamPipe(conn *quic.Conn, headers http.Header) (*StreamPipe, string, error) {
 	clientID := conn.ConnectionState().TLS.ServerName
 
 	if len(conn.ConnectionState().TLS.PeerCertificates) > 0 {
 		clientCertificate := conn.ConnectionState().TLS.PeerCertificates[0]
 		clientID = clientCertificate.Subject.CommonName
+	}
+
+	jobIdHeader := headers.Get("X-PBS-Plus-JobId")
+	if jobIdHeader != "" {
+		clientID = clientID + "|" + jobIdHeader
 	}
 
 	if session, exists := sm.sessions.Get(clientID); exists {
