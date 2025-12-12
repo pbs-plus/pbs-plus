@@ -103,7 +103,8 @@ func dialServer(serverAddr string, tlsConfig *tls.Config) (*quic.Conn, error) {
 	}
 
 	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, &quic.Config{
-		KeepAlivePeriod: time.Second * 20,
+		KeepAlivePeriod:        time.Second * 20,
+		MaxStreamReceiveWindow: quicvarint.Max,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("QUIC dial failed: %w", err)
