@@ -336,7 +336,7 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("ARPC headers prepared").WithField("version", Version).Write()
 
 	syslog.L.Info().WithMessage("Attempting ARPC connection to server").Write()
-	session, err := arpc.ConnectToServer(p.ctx, true, uri.Host, headers, tlsConfig)
+	session, err := arpc.ConnectToServer(p.ctx, uri.Host, headers, tlsConfig)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to connect to ARPC server").Write()
 		return err
@@ -394,7 +394,7 @@ func (p *pbsService) connectARPC() error {
 
 					backoff = next
 
-					if err = session.Reconnect(); err != nil {
+					if err = session.Reconnect(p.ctx); err != nil {
 						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
 					}
 				}
