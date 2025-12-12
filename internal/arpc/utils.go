@@ -40,3 +40,16 @@ func writeErrorResponse(stream *quic.Stream, status int, err error) {
 	stream.CancelWrite(0)
 	stream.CancelRead(0)
 }
+
+func headerCloneMap(h http.Header) map[string][]string {
+	if h == nil {
+		return nil
+	}
+	out := make(map[string][]string, len(h))
+	for k, v := range h {
+		vv := make([]string, len(v))
+		copy(vv, v)
+		out[k] = vv
+	}
+	return out
+}
