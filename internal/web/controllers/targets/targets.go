@@ -14,7 +14,6 @@ import (
 	"time"
 
 	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -73,15 +72,17 @@ func CheckTargetStatusBatch(
 				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 				defer cancel()
 
-				var resp arpc.Response
-				err := arpcSess.Call(
+				respMsg, err := arpcSess.CallMessage(
 					timeoutCtx,
 					"target_status",
 					&reqTypes.TargetStatusReq{Drive: drive},
-					&resp,
 				)
-				if err == nil && resp.Message == "reachable" {
+				if err == nil && strings.HasPrefix(respMsg, "reachable") {
 					result.ConnectionStatus = true
+					splittedMsg := strings.Split(respMsg, "|")
+					if len(splittedMsg) > 1 {
+						result.AgentVersion = splittedMsg[1]
+					}
 				} else if err != nil {
 					result.Error = err
 				}
@@ -453,16 +454,16 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						target.ConnectionStatus = false
 
 						if strings.ToLower(r.FormValue("status")) == "true" {
-							var resp arpc.Response
-							err := arpcSess.Call(
+							respMsg, err := arpcSess.CallMessage(
 								r.Context(),
 								"target_status",
 								&reqTypes.TargetStatusReq{Drive: targetSplit[1]},
-								&resp,
 							)
-							if err == nil {
-								if resp.Message == "reachable" {
-									target.ConnectionStatus = true
+							if err == nil && strings.HasPrefix(respMsg, "reachable") {
+								target.ConnectionStatus = true
+								splittedMsg := strings.Split(respMsg, "|")
+								if len(splittedMsg) > 1 {
+									target.AgentVersion = splittedMsg[1]
 								}
 							}
 						}

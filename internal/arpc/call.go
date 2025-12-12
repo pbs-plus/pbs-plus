@@ -172,9 +172,6 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	case *[]byte:
 		*dst = append((*dst)[:0], resp.Data...)
 		return nil
-	case *Response:
-		*dst = resp
-		return nil
 	default:
 		return cborDecMode.Unmarshal(resp.Data, out)
 	}
@@ -186,7 +183,7 @@ func (s *StreamPipe) CallWithTimeout(timeout time.Duration, method string, paylo
 	return s.Call(ctx, method, payload, out)
 }
 
-func (s *StreamPipe) CallMsg(ctx context.Context, method string, payload any) ([]byte, error) {
+func (s *StreamPipe) CallData(ctx context.Context, method string, payload any) ([]byte, error) {
 	var out []byte
 	if err := s.Call(ctx, method, payload, &out); err != nil {
 		return nil, err
@@ -194,8 +191,85 @@ func (s *StreamPipe) CallMsg(ctx context.Context, method string, payload any) ([
 	return out, nil
 }
 
-func (s *StreamPipe) CallMsgWithTimeout(timeout time.Duration, method string, payload any) ([]byte, error) {
+func (s *StreamPipe) CallDataWithTimeout(timeout time.Duration, method string, payload any) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return s.CallMsg(ctx, method, payload)
+	return s.CallData(ctx, method, payload)
+}
+
+func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any) (string, error) {
+	stream, err := s.openStream(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	defer func() {
+		if stream != nil {
+			_ = stream.Close()
+		}
+	}()
+
+	var payloadBytes []byte
+	if payload != nil {
+		switch p := payload.(type) {
+		case []byte:
+			payloadBytes = p
+		case Encodable:
+			payloadBytes, err = p.Encode()
+			if err != nil {
+				return "", fmt.Errorf("encode payload: %w", err)
+			}
+		default:
+			payloadBytes, err = cborEncMode.Marshal(p)
+			if err != nil {
+				return "", fmt.Errorf("marshal payload: %w", err)
+			}
+		}
+	}
+
+	req := Request{Method: method, Payload: payloadBytes}
+	reqBytes, err := req.Encode()
+	if err != nil {
+		return "", fmt.Errorf("encode request: %w", err)
+	}
+	if _, err := stream.Write(reqBytes); err != nil {
+		_ = stream.Close()
+		stream.CancelWrite(0)
+		stream.CancelRead(0)
+		return "", fmt.Errorf("write request: %w", err)
+	}
+
+	dec := cbor.NewDecoder(stream)
+	var resp Response
+	if err := dec.Decode(&resp); err != nil {
+		_ = stream.Close()
+		stream.CancelRead(0)
+		stream.CancelWrite(0)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	if resp.Status == 213 {
+		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", resp.Status)
+	}
+
+	if resp.Status != http.StatusOK {
+		if len(resp.Data) > 0 {
+			var serErr SerializableError
+			if err := serErr.Decode(resp.Data); err == nil {
+				return "", UnwrapError(serErr)
+			}
+		}
+		return "", fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+	}
+
+	return resp.Message, nil
+}
+
+func (s *StreamPipe) CallMessageWithTimeout(timeout time.Duration, method string, payload any) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return s.CallMessage(ctx, method, payload)
 }
