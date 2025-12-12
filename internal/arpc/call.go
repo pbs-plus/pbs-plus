@@ -172,6 +172,9 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	case *[]byte:
 		*dst = append((*dst)[:0], resp.Data...)
 		return nil
+	case *Response:
+		*dst = resp
+		return nil
 	default:
 		return cborDecMode.Unmarshal(resp.Data, out)
 	}
@@ -189,16 +192,6 @@ func (s *StreamPipe) CallMsg(ctx context.Context, method string, payload any) ([
 		return nil, err
 	}
 	return out, nil
-}
-
-func (s *StreamPipe) CallMsgDecoded(ctx context.Context, method string, payload any) (Response, error) {
-	var out []byte
-	if err := s.Call(ctx, method, payload, &out); err != nil {
-		return Response{}, err
-	}
-	respData := Response{}
-	respData.Decode(out)
-	return respData, nil
 }
 
 func (s *StreamPipe) CallMsgWithTimeout(timeout time.Duration, method string, payload any) ([]byte, error) {
