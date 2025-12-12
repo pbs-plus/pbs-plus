@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
@@ -63,7 +65,7 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respon
 
 	activePids.Set(reqData.JobId, pid)
 
-		return arpc.Response{Status: 200, Message: backupMode}, nil
+	return arpc.Response{Status: 200, Message: backupMode}, nil
 }
 
 func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
@@ -132,7 +134,7 @@ func StatusHandler(req arpc.Request) (arpc.Response, error) {
 	fullPath := filepath.Join(prefix, reqData.Subpath)
 
 	if _, err := os.Stat(fullPath); !os.IsNotExist(err) {
-		return arpc.Response{Status: 200, Message: "reachable"}, nil
+		return arpc.Response{Status: 200, Message: fmt.Sprintf("reachable|%s", constants.Version)}, nil
 	} else {
 		return arpc.Response{}, err
 	}
