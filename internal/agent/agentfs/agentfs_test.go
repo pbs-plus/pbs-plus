@@ -392,8 +392,6 @@ func TestAgentFSServer(t *testing.T) {
 					return rerr
 				}
 			}
-			st.Close()
-			st.CancelRead(0)
 			return nil
 		})
 
@@ -473,8 +471,6 @@ func TestAgentFSServer(t *testing.T) {
 					return rerr
 				}
 			}
-			st.Close()
-			st.CancelRead(0)
 			return nil
 		})
 
@@ -538,8 +534,6 @@ func TestAgentFSServer(t *testing.T) {
 					return fmt.Errorf("read from stream failed: %w", err)
 				}
 				readAtBytes.Write(buf[:n])
-				st.Close()
-				st.CancelRead(0)
 				return nil
 			})
 
@@ -601,8 +595,6 @@ func TestAgentFSServer(t *testing.T) {
 					return rerr
 				}
 			}
-			st.Close()
-			st.CancelRead(0)
 			return nil
 		})
 
@@ -858,8 +850,6 @@ func TestAgentFSServer(t *testing.T) {
 						return fmt.Errorf("read from stream failed: %w", copyErr)
 					}
 					goroutineReadBytes.Write(buf[:n])
-					st.Close()
-					st.CancelRead(0)
 					return nil
 				})
 
@@ -972,8 +962,6 @@ func TestAgentFSServer(t *testing.T) {
 				return fmt.Errorf("read from stream failed: %w", copyErr)
 			}
 			buffer1.Write(buf[:n])
-			st.Close()
-			st.CancelRead(0)
 			return nil
 		})
 
@@ -985,8 +973,6 @@ func TestAgentFSServer(t *testing.T) {
 				return fmt.Errorf("read from stream failed: %w", copyErr)
 			}
 			buffer2.Write(buf[:n])
-			st.Close()
-			st.CancelRead(0)
 			return nil
 		})
 

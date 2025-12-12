@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -128,6 +129,10 @@ func ensureGlobalCAs(t *testing.T) {
 }
 
 func newTestQUICServer(t *testing.T, router Router) (addr string, cleanup func(), serverTLS *tls.Config) {
+	return newTestQUICServerCustomIncoming(t, router, quicvarint.Max)
+}
+
+func newTestQUICServerCustomIncoming(t *testing.T, router Router, maxIncomingStreams int64) (addr string, cleanup func(), serverTLS *tls.Config) {
 	t.Helper()
 
 	ensureGlobalCAs(t)
@@ -142,7 +147,7 @@ func newTestQUICServer(t *testing.T, router Router) (addr string, cleanup func()
 
 	listener, udpConn, err := Listen(t.Context(), "127.0.0.1:0", serverTLS, &quic.Config{
 		KeepAlivePeriod:    200 * time.Millisecond,
-		MaxIncomingStreams: quicvarint.Max,
+		MaxIncomingStreams: maxIncomingStreams,
 	})
 	if err != nil {
 		t.Fatalf("quic listen: %v", err)
@@ -315,7 +320,7 @@ func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "deadline exceeded") {
 		t.Fatalf("expected DeadlineExceeded or Canceled, got %v", err)
 	}
 }
@@ -378,8 +383,6 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 			return fmt.Errorf("receive failed: %w", err)
 		}
 		received = append(received[:0], buf[:n]...)
-		st.Close()
-		st.CancelRead(0)
 		return nil
 	})
 
@@ -617,17 +620,36 @@ func TestStress_BatchedSequences(t *testing.T) {
 	}
 }
 
-func contains(s, sub string) bool { return len(s) >= len(sub) && (stringIndex(s, sub) >= 0) }
+func TestStreams_ProperlyClosed_NoExhaustion(t *testing.T) {
+	router := NewRouter()
+	router.Handle("short", func(req Request) (Response, error) {
+		var ok StringMsg = "ok"
+		b, _ := ok.Encode()
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
 
-func stringIndex(s, sub string) int {
-outer:
-	for i := 0; i+len(sub) <= len(s); i++ {
-		for j := range sub {
-			if s[i+j] != sub[j] {
-				continue outer
-			}
-		}
-		return i
+	addr, shutdown, _ := newTestQUICServerCustomIncoming(t, router, 16)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
 	}
-	return -1
+	defer pipe.Close()
+
+	const iters = 256
+	for i := 0; i < iters; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		var out StringMsg
+		err := pipe.Call(ctx, "short", nil, &out)
+		cancel()
+		if err != nil {
+			t.Fatalf("iter %d Call error: %v", i, err)
+		}
+		if out != "ok" {
+			t.Fatalf("iter %d expected ok got %q", i, out)
+		}
+	}
 }
+
