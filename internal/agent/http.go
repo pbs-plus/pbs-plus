@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
@@ -50,8 +51,8 @@ func AgentHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (
 	req, err := http.NewRequest(
 		method,
 		fmt.Sprintf(
-			"https://%s%s/%s",
-			parsedServerUrl.Hostname(),
+			"https://%s%s%s",
+			strings.TrimSuffix(parsedServerUrl.Hostname(), ":"),
 			constants.AgentAPIPort,
 			url,
 		),
