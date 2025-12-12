@@ -34,8 +34,9 @@ type Encodable interface {
 }
 
 type Request struct {
-	Method  string `cbor:"method"`
-	Payload []byte `cbor:"payload"`
+	Method  string              `cbor:"method"`
+	Payload []byte              `cbor:"payload"`
+	Headers map[string][]string `cbor:"headers,omitempty"`
 }
 
 func (r *Request) Encode() ([]byte, error) {
@@ -113,7 +114,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	}
 
 	// Send request
-	req := Request{Method: method, Payload: payloadBytes}
+	req := Request{Method: method, Payload: payloadBytes, Headers: headerCloneMap(s.headers)}
 	reqBytes, err := req.Encode()
 	if err != nil {
 		return fmt.Errorf("encode request: %w", err)
