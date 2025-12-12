@@ -16,6 +16,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/quic-go/quic-go"
 )
@@ -65,12 +66,13 @@ func (s *DirStream) HasNext() bool {
 	bytesRead := 0
 
 	err := s.fs.session.Call(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(s *quic.Stream) error {
-		i, err := s.Read(readBuf)
+		n, err := binarystream.ReceiveDataInto(s, readBuf)
 		if err != nil {
 			return err
 		}
-		bytesRead = i
+		bytesRead = n
 
+		s.Close()
 		return nil
 	}))
 

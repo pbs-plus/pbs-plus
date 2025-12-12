@@ -378,6 +378,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 			return fmt.Errorf("receive failed: %w", err)
 		}
 		received = append(received[:0], buf[:n]...)
+		st.Close()
 		return nil
 	})
 
