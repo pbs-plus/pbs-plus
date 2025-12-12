@@ -37,34 +37,29 @@ func (r *Router) ServeStream(stream *quic.Stream) {
 	var req Request
 	if err := dec.Decode(&req); err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
-		stream.CancelWrite(quicErrDecodeRequest)
 		return
 	}
 
 	if req.Method == "" {
 		writeErrorResponse(stream, http.StatusBadRequest, errors.New("missing method field"))
-		stream.CancelWrite(quicErrMissingMethod)
 		return
 	}
 
 	handler, ok := r.handlers.Get(req.Method)
 	if !ok {
 		writeErrorResponse(stream, http.StatusNotFound, fmt.Errorf("method not found: %s", req.Method))
-		stream.CancelWrite(quicErrMethodNotFound)
 		return
 	}
 
 	resp, err := handler(req)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
-		stream.CancelWrite(quicErrHandlerError)
 		return
 	}
 
 	respBytes, err := cborEncMode.Marshal(&resp)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
-		stream.CancelWrite(quicErrMarshalResponse)
 		return
 	}
 
