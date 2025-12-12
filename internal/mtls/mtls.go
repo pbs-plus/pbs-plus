@@ -488,7 +488,7 @@ func genCA(org, cn string, validDays, keySize int) ([]byte, *rsa.PrivateKey, *x5
 	return der, key, ca, nil
 }
 
-func signLeaf(ca *x509.Certificate, caKey *rsa.PrivateKey, pub interface{}, subj pkix.Name, validDays int, dns []string, ips []net.IP, eku []x509.ExtKeyUsage) ([]byte, error) {
+func signLeaf(ca *x509.Certificate, caKey *rsa.PrivateKey, pub any, subj pkix.Name, validDays int, dns []string, ips []net.IP, eku []x509.ExtKeyUsage) ([]byte, error) {
 	now := time.Now()
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
 	if err != nil {

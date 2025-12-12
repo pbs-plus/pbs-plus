@@ -34,7 +34,7 @@ func (l *Logger) SetServiceLogger() error {
 	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
 		w.Out = &LogWriter{logger: evl}
 		w.NoColor = true
-		w.FormatCaller = func(i interface{}) string {
+		w.FormatCaller = func(i any) string {
 			var c string
 			if cc, ok := i.(string); ok {
 				c = cc

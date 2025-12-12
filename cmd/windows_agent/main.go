@@ -272,7 +272,7 @@ func (p *pbsService) updateDrives() error {
 		return err
 	}
 
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"hostname": hostname,
 		"drives":   drives,
 	}

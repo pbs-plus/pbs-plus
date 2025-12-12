@@ -122,7 +122,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		clientIP = strings.Split(clientIP, ":")[0]
 
-		syslog.L.Info().WithMessage("bootstrapping target").WithFields(map[string]interface{}{"target": reqParsed.Hostname}).Write()
+		syslog.L.Info().WithMessage("bootstrapping target").WithFields(map[string]any{"target": reqParsed.Hostname}).Write()
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -132,7 +132,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for _, drive := range reqParsed.Drives {
-			syslog.L.Info().WithMessage("bootstrapping drive").WithFields(map[string]interface{}{"drive": drive}).Write()
+			syslog.L.Info().WithMessage("bootstrapping drive").WithFields(map[string]any{"drive": drive}).Write()
 
 			newTarget := types.Target{
 				Auth:            encodedCert,
@@ -181,7 +181,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 					syslog.L.Error(err).Write()
 					return
 				}
-				syslog.L.Info().WithMessage("updated existing target auth").WithFields(map[string]interface{}{"target": newTarget.Name}).Write()
+				syslog.L.Info().WithMessage("updated existing target auth").WithFields(map[string]any{"target": newTarget.Name}).Write()
 			} else {
 				err := storeInstance.Database.CreateTarget(tx, newTarget)
 				if err != nil {
@@ -191,7 +191,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 					syslog.L.Error(err).Write()
 					return
 				}
-				syslog.L.Info().WithMessage("created new target").WithFields(map[string]interface{}{"target": newTarget.Name}).Write()
+				syslog.L.Info().WithMessage("created new target").WithFields(map[string]any{"target": newTarget.Name}).Write()
 			}
 		}
 
@@ -264,7 +264,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 		clientIP = strings.Split(clientIP, ":")[0]
 
-		syslog.L.Info().WithMessage("renewing target certificates").WithFields(map[string]interface{}{"target": reqParsed.Hostname}).Write()
+		syslog.L.Info().WithMessage("renewing target certificates").WithFields(map[string]any{"target": reqParsed.Hostname}).Write()
 
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
@@ -289,7 +289,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			existingTarget, err := storeInstance.Database.GetTarget(targetName)
 			if err != nil {
-				syslog.L.Warn().WithMessage("target not found during renewal, skipping").WithFields(map[string]interface{}{"target": targetName}).Write()
+				syslog.L.Warn().WithMessage("target not found during renewal, skipping").WithFields(map[string]any{"target": targetName}).Write()
 				continue
 			}
 
@@ -335,7 +335,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			syslog.L.Info().WithMessage("renewed target certificate").WithFields(map[string]interface{}{"target": targetName}).Write()
+			syslog.L.Info().WithMessage("renewed target certificate").WithFields(map[string]any{"target": targetName}).Write()
 		}
 
 		err = tx.Commit()

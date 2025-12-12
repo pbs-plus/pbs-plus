@@ -28,7 +28,7 @@ func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFile
 			select {
 			case event := <-watcher.Events:
 				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) != 0 {
-					syslog.L.Info().WithMessage("certificate file has changed").WithFields(map[string]interface{}{"name": event.Name, "operation": event.Op}).Write()
+					syslog.L.Info().WithMessage("certificate file has changed").WithFields(map[string]any{"name": event.Name, "operation": event.Op}).Write()
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					err := apiServer.Shutdown(ctx)
 					cancel()
