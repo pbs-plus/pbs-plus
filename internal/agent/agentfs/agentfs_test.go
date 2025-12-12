@@ -393,6 +393,7 @@ func TestAgentFSServer(t *testing.T) {
 				}
 			}
 			st.Close()
+			st.CancelRead(0)
 			return nil
 		})
 
@@ -473,6 +474,7 @@ func TestAgentFSServer(t *testing.T) {
 				}
 			}
 			st.Close()
+			st.CancelRead(0)
 			return nil
 		})
 
@@ -537,6 +539,7 @@ func TestAgentFSServer(t *testing.T) {
 				}
 				readAtBytes.Write(buf[:n])
 				st.Close()
+				st.CancelRead(0)
 				return nil
 			})
 
@@ -599,6 +602,7 @@ func TestAgentFSServer(t *testing.T) {
 				}
 			}
 			st.Close()
+			st.CancelRead(0)
 			return nil
 		})
 
@@ -639,7 +643,7 @@ func TestAgentFSServer(t *testing.T) {
 		}
 
 		t.Log("Current handle map before invalid ReadAt:", dumpHandleMap(agentFsServer))
-		err := clientPipe.Call(ctx, "agentFs/ReadAt", &readAtPayload, arpc.RawStreamHandler(func(st *quic.Stream) error { st.Close(); return nil }))
+		err := clientPipe.Call(ctx, "agentFs/ReadAt", &readAtPayload, arpc.RawStreamHandler(func(st *quic.Stream) error { st.Close(); st.CancelRead(0); return nil }))
 		assert.Error(t, err, "ReadAt with invalid handle should return an error")
 
 		closePayload := types.CloseReq{HandleID: 33123}
@@ -855,6 +859,7 @@ func TestAgentFSServer(t *testing.T) {
 					}
 					goroutineReadBytes.Write(buf[:n])
 					st.Close()
+					st.CancelRead(0)
 					return nil
 				})
 
@@ -968,6 +973,7 @@ func TestAgentFSServer(t *testing.T) {
 			}
 			buffer1.Write(buf[:n])
 			st.Close()
+			st.CancelRead(0)
 			return nil
 		})
 
@@ -980,6 +986,7 @@ func TestAgentFSServer(t *testing.T) {
 			}
 			buffer2.Write(buf[:n])
 			st.Close()
+			st.CancelRead(0)
 			return nil
 		})
 
