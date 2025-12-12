@@ -19,7 +19,7 @@ func NewAgentsManager() *AgentsManager {
 	}
 }
 
-func (sm *AgentsManager) GetOrCreateStreamPipe(conn *quic.Conn, headers http.Header) (*StreamPipe, string, error) {
+func (sm *AgentsManager) CreateStreamPipe(conn *quic.Conn, headers http.Header) (*StreamPipe, string, error) {
 	clientID := conn.ConnectionState().TLS.ServerName
 
 	if len(conn.ConnectionState().TLS.PeerCertificates) > 0 {
@@ -33,7 +33,7 @@ func (sm *AgentsManager) GetOrCreateStreamPipe(conn *quic.Conn, headers http.Hea
 	}
 
 	if session, exists := sm.sessions.Get(clientID); exists {
-		return session, "", nil
+		session.CloseWithError(0, "replaced with new client stream pipe")
 	}
 
 	session, err := NewStreamPipe(conn)
