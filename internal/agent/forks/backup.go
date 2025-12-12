@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -24,7 +23,9 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
@@ -104,7 +105,7 @@ func CmdBackup() {
 		syslog.L.Error(err).WithMessage("CmdBackup: GetEntry ServerURL failed").Write()
 		os.Exit(1)
 	}
-	uri, err := url.Parse(serverUrl.Value)
+	uri, err := utils.ParseURI(serverUrl.Value)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid server URL: %v", err)
 		syslog.L.Error(err).WithMessage("CmdBackup: url.Parse failed").Write()
@@ -121,8 +122,8 @@ func CmdBackup() {
 	headers := http.Header{}
 	headers.Add("X-PBS-Plus-JobId", *jobId)
 
-	syslog.L.Info().WithMessage("CmdBackup: connecting to server").WithField("host", uri.Host).WithField("jobId", *jobId).Write()
-	rpcSess, err := arpc.ConnectToServer(context.Background(), uri.Host, headers, tlsConfig)
+	syslog.L.Info().WithMessage("CmdBackup: connecting to server").WithField("host", uri.Hostname()).WithField("jobId", *jobId).Write()
+	rpcSess, err := arpc.ConnectToServer(context.Background(), fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort), headers, tlsConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to connect to server: %v", err)
 		syslog.L.Error(err).WithMessage("CmdBackup: ConnectToServer failed").Write()
