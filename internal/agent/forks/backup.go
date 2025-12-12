@@ -122,7 +122,7 @@ func CmdBackup() {
 	headers.Add("X-PBS-Plus-JobId", *jobId)
 
 	syslog.L.Info().WithMessage("CmdBackup: connecting to server").WithField("host", uri.Host).WithField("jobId", *jobId).Write()
-	rpcSess, err := arpc.ConnectToServer(context.Background(), false, uri.Host, headers, tlsConfig)
+	rpcSess, err := arpc.ConnectToServer(context.Background(), uri.Host, headers, tlsConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to connect to server: %v", err)
 		syslog.L.Error(err).WithMessage("CmdBackup: ConnectToServer failed").Write()
