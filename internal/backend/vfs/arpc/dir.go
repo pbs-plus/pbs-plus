@@ -72,8 +72,6 @@ func (s *DirStream) HasNext() bool {
 		}
 		bytesRead = n
 
-		s.Close()
-		s.CancelRead(0)
 		return nil
 	}))
 
