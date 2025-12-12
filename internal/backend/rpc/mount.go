@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
 	arpcmount "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc/mount"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3"
@@ -126,7 +127,8 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	}
 
 	// Call the target's backup method via ARPC.
-	backupResp, err := arpcSess.CallMsgDecoded(ctx, "backup", &backupReq)
+	var backupResp arpc.Response
+	err = arpcSess.Call(ctx, "backup", &backupReq, &backupResp)
 	if err != nil || backupResp.Status != 200 {
 		if err != nil {
 			syslog.L.Error(err).WithMessage(backupResp.Message).Write()
@@ -295,7 +297,8 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	}
 
 	// Instruct the target to perform its cleanup.
-	cleanupResp, err := arpcSess.CallMsgDecoded(ctx, "cleanup", &cleanupReq)
+	var cleanupResp arpc.Response
+	err := arpcSess.Call(ctx, "cleanup", &cleanupReq, &cleanupResp)
 	if err != nil || cleanupResp.Status != 200 {
 		if err != nil {
 			err = errors.New(cleanupResp.Message)
