@@ -25,7 +25,7 @@ func (f *ARPCFile) Close() error {
 	}
 
 	req := types.CloseReq{HandleID: f.handleID}
-	_, err := f.fs.session.CallMsgWithTimeout(1*time.Minute, f.jobId+"/Close", &req)
+	_, err := f.fs.session.CallDataWithTimeout(1*time.Minute, f.jobId+"/Close", &req)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		syslog.L.Error(err).WithJob(f.jobId).WithMessage("failed to handle close request").WithField("path", f.name).Write()
 		return err
@@ -41,7 +41,7 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 		Offset:   int64(off),
 		Whence:   whence,
 	}
-	respBytes, err := f.fs.session.CallMsgWithTimeout(1*time.Minute, f.jobId+"/Lseek", &req)
+	respBytes, err := f.fs.session.CallDataWithTimeout(1*time.Minute, f.jobId+"/Lseek", &req)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).WithMessage("lseek call failed").WithField("path", f.name).Write()
 		return 0, syscall.EOPNOTSUPP

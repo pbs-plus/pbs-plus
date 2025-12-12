@@ -176,7 +176,7 @@ func (s *DirStream) Close() {
 	}
 
 	closeReq := types.CloseReq{HandleID: s.handleId}
-	_, err := s.fs.session.CallMsgWithTimeout(1*time.Minute, s.fs.Job.ID+"/Close", &closeReq)
+	_, err := s.fs.session.CallDataWithTimeout(1*time.Minute, s.fs.Job.ID+"/Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithField("path", s.path).

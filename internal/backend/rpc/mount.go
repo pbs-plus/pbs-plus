@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
 	arpcmount "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc/mount"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3"
@@ -127,19 +126,16 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	}
 
 	// Call the target's backup method via ARPC.
-	var backupResp arpc.Response
-	err = arpcSess.Call(ctx, "backup", &backupReq, &backupResp)
-	if err != nil || backupResp.Status != 200 {
-		if err != nil {
-			syslog.L.Error(err).WithMessage(backupResp.Message).Write()
-		}
-		reply.Status = backupResp.Status
-		reply.Message = backupResp.Message
+	respMsg, err := arpcSess.CallMessage(ctx, "backup", &backupReq)
+	if err != nil {
+		syslog.L.Error(err).Write()
+		reply.Status = 500
+		reply.Message = err.Error()
 		return errors.New(reply.Message)
 	}
 
 	// Parse the backup response message (format: "backupMode|namespace").
-	backupRespSplit := strings.Split(backupResp.Message, "|")
+	backupRespSplit := strings.Split(respMsg, "|")
 	backupMode := backupRespSplit[0]
 
 	// If a namespace is provided in the backup response, update the job.
@@ -297,18 +293,15 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	}
 
 	// Instruct the target to perform its cleanup.
-	var cleanupResp arpc.Response
-	err := arpcSess.Call(ctx, "cleanup", &cleanupReq, &cleanupResp)
-	if err != nil || cleanupResp.Status != 200 {
-		if err != nil {
-			err = errors.New(cleanupResp.Message)
-		}
-		reply.Status = cleanupResp.Status
-		reply.Message = cleanupResp.Message
-		return fmt.Errorf("cleanup: %w", err)
+	_, err := arpcSess.CallMessage(ctx, "cleanup", &cleanupReq)
+	if err != nil {
+		syslog.L.Error(err).Write()
+		reply.Status = 500
+		reply.Message = err.Error()
+		return errors.New(reply.Message)
 	}
 
-	reply.Status = cleanupResp.Status
+	reply.Status = 200
 	reply.Message = "Cleanup successful"
 
 	syslog.L.Info().
