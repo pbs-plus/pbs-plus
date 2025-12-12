@@ -98,6 +98,11 @@ func newTestQUICServer(t *testing.T, router Router) (addr string, cleanup func()
 				return
 			}
 			go func(c *quic.Conn) {
+				if len(c.ConnectionState().TLS.PeerCertificates) == 0 {
+					_ = c.CloseWithError(1, "client certificate required")
+					return
+				}
+
 				pipe, id, err := agentsManager.GetOrCreateStreamPipe(c)
 				if err != nil {
 					return

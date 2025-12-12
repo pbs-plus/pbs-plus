@@ -195,9 +195,14 @@ func ListenAndServe(ctx context.Context, addr string, tlsConfig *tls.Config, rou
 			return nil, err
 		}
 		go func(c *quic.Conn) {
+			if len(c.ConnectionState().TLS.PeerCertificates) == 0 {
+				_ = c.CloseWithError(1, "client certificate required")
+				return
+			}
+
 			pipe, id, err := agentsManager.GetOrCreateStreamPipe(c)
 			if err != nil {
-				_ = c.CloseWithError(0, "init failed")
+				_ = c.CloseWithError(0, fmt.Sprintf("init failed: %v", err))
 				return
 			}
 			defer agentsManager.CloseStreamPipe(id)
