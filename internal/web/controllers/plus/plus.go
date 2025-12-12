@@ -34,14 +34,15 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 			scheme = "http"
 		}
 
-		hostname := r.URL.Hostname()
+		hostname := r.Host
 		if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
-			if hostWithoutPort, _, err := net.SplitHostPort(forwardedHost); err == nil {
-				hostname = hostWithoutPort
-			}
+			hostname = forwardedHost
+		}
+		if hostnameWithoutPort, _, err := net.SplitHostPort(hostname); err == nil && hostnameWithoutPort != "" {
+			hostname = hostnameWithoutPort
 		}
 
-		baseServerUrl := fmt.Sprintf("%s://%s:%s", scheme, hostname, constants.AgentAPIPort)
+		baseServerUrl := fmt.Sprintf("%s://%s%s", scheme, hostname, constants.AgentAPIPort)
 
 		config := ScriptConfig{
 			ServerUrl:  baseServerUrl,
