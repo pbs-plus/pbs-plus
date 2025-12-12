@@ -30,7 +30,13 @@ func (r *Router) CloseHandle(method string) {
 }
 
 func (r *Router) ServeStream(stream *quic.Stream) {
-	defer stream.Close()
+	handedOff := false
+	defer func() {
+		if !handedOff && stream != nil {
+			_ = stream.Close()
+		}
+	}()
+
 	dec := cbor.NewDecoder(stream)
 	var req Request
 	if err := dec.Decode(&req); err != nil {
@@ -62,14 +68,21 @@ func (r *Router) ServeStream(stream *quic.Stream) {
 	}
 
 	if _, err := stream.Write(respBytes); err != nil {
+		_ = stream.Close()
+		stream.CancelWrite(0)
+		stream.CancelRead(0)
 		return
 	}
 
 	if resp.Status == 213 && resp.RawStream != nil {
 		var b [1]byte
 		if _, err := io.ReadFull(stream, b[:]); err != nil || b[0] != 0x01 {
+			_ = stream.Close()
+			stream.CancelRead(0)
+			stream.CancelWrite(0)
 			return
 		}
+		handedOff = true
 		resp.RawStream(stream)
 		return
 	}
