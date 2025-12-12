@@ -363,7 +363,7 @@ func main() {
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	apiServer := &http.Server{
-		Addr:           ":8017",
+		Addr:           constants.ServerAPIExtPort,
 		Handler:        apiMux,
 		ReadTimeout:    constants.HTTPReadTimeout,
 		WriteTimeout:   constants.HTTPWriteTimeout,
@@ -372,7 +372,7 @@ func main() {
 	}
 
 	agentServer := &http.Server{
-		Addr:           ":8008",
+		Addr:           constants.AgentAPIPort,
 		Handler:        agentMux,
 		TLSConfig:      serverConfig,
 		ReadTimeout:    constants.HTTPReadTimeout,
@@ -395,7 +395,7 @@ func main() {
 	})
 
 	endpointsWg.Go(func() {
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC QUIC endpoint on UDP %s", agentServer.Addr)).Write()
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC QUIC endpoint on UDP %s", constants.ARPCServerPort)).Write()
 
 		router := arpc.NewRouter()
 		router.Handle("echo", func(req arpc.Request) (arpc.Response, error) {
@@ -410,7 +410,7 @@ func main() {
 			return arpc.Response{Status: 200, Data: data}, nil
 		})
 
-		if agentsManager, err := arpc.ListenAndServe(storeInstance.Ctx, agentServer.Addr, serverConfig, router); err != nil {
+		if agentsManager, err := arpc.ListenAndServe(storeInstance.Ctx, constants.ARPCServerPort, serverConfig, router); err != nil {
 			syslog.L.Error(err).WithMessage("quic agent endpoint server failed")
 		} else {
 			storeInstance.ARPCAgentsManager = agentsManager

@@ -10,7 +10,6 @@ import (
 	"log"
 	"math/rand/v2"
 	"net/http"
-	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -283,7 +282,7 @@ func (p *pbsService) updateDrives() error {
 		return err
 	}
 
-	resp, err := agent.ProxmoxHTTPRequest(
+	resp, err := agent.AgentHTTPRequest(
 		http.MethodPost,
 		"/api2/json/d2d/target/agent",
 		bytes.NewBuffer(reqJSON),
@@ -307,7 +306,7 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("Server URL retrieved").WithField("serverUrl", serverUrl.Value).Write()
 
 	syslog.L.Info().WithMessage("Parsing server URL").Write()
-	uri, err := url.Parse(serverUrl.Value)
+	uri, err := utils.ParseURI(serverUrl.Value)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to parse server URL").Write()
 		return err
@@ -336,7 +335,7 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("ARPC headers prepared").WithField("version", Version).Write()
 
 	syslog.L.Info().WithMessage("Attempting ARPC connection to server").Write()
-	session, err := arpc.ConnectToServer(p.ctx, uri.Host, headers, tlsConfig)
+	session, err := arpc.ConnectToServer(p.ctx, fmt.Sprintf("%s:%s", uri.Hostname(), constants.ARPCServerPort), headers, tlsConfig)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to connect to ARPC server").Write()
 		return err

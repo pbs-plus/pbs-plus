@@ -13,6 +13,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -64,11 +65,17 @@ func Bootstrap() error {
 		return fmt.Errorf("failed to marshal bootstrap request: %w", err)
 	}
 
+	parsedServerUrl, err := utils.ParseURI(serverUrl.Value)
+	if err != nil {
+		return fmt.Errorf("Bootstrap: server url is invalid -> %w", err)
+	}
+
 	req, err := http.NewRequest(
 		http.MethodPost,
 		fmt.Sprintf(
-			"%s%s",
-			strings.TrimSuffix(serverUrl.Value, "/"),
+			"https://%s:%s/%s",
+			parsedServerUrl.Hostname(),
+			constants.AgentAPIPort,
 			"/plus/agent/bootstrap",
 		),
 		bytes.NewBuffer(reqBody),

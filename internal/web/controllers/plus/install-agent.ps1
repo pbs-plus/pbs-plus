@@ -24,7 +24,7 @@ if (-not (Test-Path -Path $installDir)) {
 
 Write-Host "Configuring SSL certificate validation bypass..." -ForegroundColor Cyan
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls13
 
 # Function to download file with retry
 function Download-FileWithRetry {

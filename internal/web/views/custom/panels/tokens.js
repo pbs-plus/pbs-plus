@@ -5,18 +5,18 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
   controller: {
     xclass: "Ext.app.ViewController",
 
-    onAdd: function() {
+    onAdd: function () {
       let me = this;
       Ext.create("PBS.D2DManagement.TokenEditWindow", {
         listeners: {
-          destroy: function() {
+          destroy: function () {
             me.reload();
           },
         },
       }).show();
     },
 
-    onCopy: async function() {
+    onCopy: async function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -43,14 +43,14 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
           {
             xtype: "button",
             iconCls: "fa fa-clipboard",
-            handler: async function(b) {
+            handler: async function (b) {
               await navigator.clipboard.writeText(token);
             },
             text: gettext("Copy"),
           },
           {
             text: gettext("Ok"),
-            handler: function() {
+            handler: function () {
               this.up("window").close();
             },
           },
@@ -58,7 +58,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       }).show();
     },
 
-    onDeploy: async function() {
+    onDeploy: async function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -71,8 +71,8 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       const hostname = window.location.hostname;
       const powershellCommand =
         `[System.Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; ` +
-        `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; ` +
-        `iex(New-Object Net.WebClient).DownloadString("https://${hostname}:8008/plus/agent/install/win?t=${token}")`;
+        `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls13; ` +
+        `iex(New-Object Net.WebClient).DownloadString("https://${hostname}:8018/plus/agent/install/win?t=${token}")`;
 
       Ext.create("Ext.window.Window", {
         modal: true,
@@ -93,14 +93,14 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
           {
             xtype: "button",
             iconCls: "fa fa-clipboard",
-            handler: async function(b) {
+            handler: async function (b) {
               await navigator.clipboard.writeText(powershellCommand);
             },
             text: gettext("Copy"),
           },
           {
             text: gettext("Ok"),
-            handler: function() {
+            handler: function () {
               this.up("window").close();
             },
           },
@@ -108,7 +108,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       }).show();
     },
 
-    revokeTokens: function() {
+    revokeTokens: function () {
       const me = this;
       const view = me.getView();
       const recs = view.getSelection();
@@ -131,23 +131,23 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
               success: () => me.reload(),
             });
           });
-        }
+        },
       );
     },
 
-    reload: function() {
+    reload: function () {
       this.getView().getStore().rstore.load();
     },
 
-    stopStore: function() {
+    stopStore: function () {
       this.getView().getStore().rstore.stopUpdate();
     },
 
-    startStore: function() {
+    startStore: function () {
       this.getView().getStore().rstore.startUpdate();
     },
 
-    render_valid: function(value) {
+    render_valid: function (value) {
       if (value.toString() == "false") {
         icon = "check good";
         text = "Valid";
@@ -159,7 +159,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       return `<i class="fa fa-${icon}"></i> ${text}`;
     },
 
-    init: function(view) {
+    init: function (view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
     },
   },
@@ -211,7 +211,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       xtype: "proxmoxButton",
       text: gettext("Revoke Token"),
       handler: "revokeTokens",
-      enableFn: function() {
+      enableFn: function () {
         let recs = this.up("grid").getSelection();
         return recs.length > 0;
       },

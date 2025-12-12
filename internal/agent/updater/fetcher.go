@@ -65,7 +65,7 @@ func (u *UpdateFetcher) downloadUpdate() (io.Reader, error) {
 		return nil, err
 	}
 
-	resp, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary", nil, nil)
+	resp, err := agent.AgentHTTPRequest(http.MethodGet, "/api2/json/plus/binary", nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (u *UpdateFetcher) downloadUpdate() (io.Reader, error) {
 		return nil, errors.New("md5 mismatch")
 	}
 
-	return agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary", nil, nil)
+	return agent.AgentHTTPRequest(http.MethodGet, "/api2/json/plus/binary", nil, nil)
 }
 
 func (u *UpdateFetcher) checkForNewVersion() (string, error) {
@@ -90,7 +90,7 @@ func (u *UpdateFetcher) checkForNewVersion() (string, error) {
 
 	constraint, err := semver.NewConstraint(">= 0.52.0-rc1")
 
-	resp, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, nil)
+	resp, err := agent.AgentHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -124,7 +124,7 @@ func (u *UpdateFetcher) checkForNewVersion() (string, error) {
 }
 
 func (u *UpdateFetcher) downloadMD5() (string, error) {
-	resp, err := agent.ProxmoxHTTPRequest(http.MethodGet, "/api2/json/plus/binary/checksum", nil, nil)
+	resp, err := agent.AgentHTTPRequest(http.MethodGet, "/api2/json/plus/binary/checksum", nil, nil)
 	if err != nil {
 		return "", err
 	}
