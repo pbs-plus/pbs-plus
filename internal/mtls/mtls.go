@@ -170,7 +170,7 @@ func parseCACreds(caCertPEM, caKeyPEM []byte) (*x509.Certificate, *rsa.PrivateKe
 	return caCert, caKey, nil
 }
 
-func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, clientAuth tls.ClientAuthType) (*tls.Config, error) {
+func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, nextProtos []string, clientAuth tls.ClientAuthType) (*tls.Config, error) {
 	if err := updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile); err != nil {
 		return nil, err
 	}
@@ -190,6 +190,7 @@ func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, cl
 					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 				},
+				NextProtos: nextProtos,
 			}, nil
 		},
 	}, nil

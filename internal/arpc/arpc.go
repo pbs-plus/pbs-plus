@@ -162,8 +162,8 @@ func (s *StreamPipe) GetState() ConnectionState {
 	return StateConnected
 }
 
-func (s *StreamPipe) openStream(_ context.Context) (*quic.Stream, error) {
-	str, err := s.OpenStream()
+func (s *StreamPipe) openStream(ctx context.Context) (*quic.Stream, error) {
+	str, err := s.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, err
 	}
