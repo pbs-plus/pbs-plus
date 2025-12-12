@@ -15,7 +15,9 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/quic-go/quic-go"
 )
 
 var bufPool = sync.Pool{
@@ -60,8 +62,18 @@ func (s *DirStream) HasNext() bool {
 
 	readBuf := bufPool.Get().([]byte)
 	defer bufPool.Put(readBuf)
+	bytesRead := 0
 
-	err := s.fs.session.Call(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
+	err := s.fs.session.Call(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(s *quic.Stream) error {
+		i, err := s.Read(readBuf)
+		if err != nil {
+			return err
+		}
+		bytesRead = i
+
+		return nil
+	}))
+
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			atomic.StoreInt32(&s.closed, 1)
@@ -74,7 +86,6 @@ func (s *DirStream) HasNext() bool {
 			Write()
 		return false
 	}
-	bytesRead := len(readBuf)
 
 	if bytesRead == 0 {
 		atomic.StoreInt32(&s.closed, 1)

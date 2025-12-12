@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/quic-go/quic-go"
 )
 
 func (f *ARPCFile) Close() error {
@@ -73,7 +75,16 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		Length:   len(p),
 	}
 
-	err := f.fs.session.Call(f.fs.Ctx, f.jobId+"/ReadAt", &req, p)
+	bytesRead := 0
+	err := f.fs.session.Call(f.fs.Ctx, f.jobId+"/ReadAt", &req, arpc.RawStreamHandler(func(s *quic.Stream) error {
+		i, err := s.Read(p)
+		if err != nil {
+			return err
+		}
+		bytesRead = i
+
+		return nil
+	}))
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).
 			WithMessage("failed to handle read request, replace failed reads with zeroes, likely corrupted").
@@ -84,7 +95,6 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 
 		return 0, io.EOF
 	}
-	bytesRead := len(p)
 
 	atomic.AddInt64(&f.fs.TotalBytes, int64(bytesRead))
 
