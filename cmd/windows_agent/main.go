@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -335,7 +336,7 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("ARPC headers prepared").WithField("version", Version).Write()
 
 	syslog.L.Info().WithMessage("Attempting ARPC connection to server").Write()
-	session, err := arpc.ConnectToServer(p.ctx, fmt.Sprintf("%s%s", uri.Hostname(), constants.ARPCServerPort), headers, tlsConfig)
+	session, err := arpc.ConnectToServer(p.ctx, fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort), headers, tlsConfig)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to connect to ARPC server").Write()
 		return err
