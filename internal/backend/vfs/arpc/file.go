@@ -12,6 +12,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/quic-go/quic-go"
 )
@@ -77,12 +78,13 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 
 	bytesRead := 0
 	err := f.fs.session.Call(f.fs.Ctx, f.jobId+"/ReadAt", &req, arpc.RawStreamHandler(func(s *quic.Stream) error {
-		i, err := s.Read(p)
+		n, err := binarystream.ReceiveDataInto(s, p)
 		if err != nil {
 			return err
 		}
-		bytesRead = i
+		bytesRead = n
 
+		s.Close()
 		return nil
 	}))
 	if err != nil {
