@@ -312,7 +312,7 @@ func (p *pbsService) connectARPC() error {
 		syslog.L.Error(err).WithMessage("Failed to parse server URL").Write()
 		return err
 	}
-	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Host).Write()
+	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Hostname()).Write()
 
 	syslog.L.Info().WithMessage("Getting TLS configuration").Write()
 	tlsConfig, err := agent.GetTLSConfig()
