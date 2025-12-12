@@ -528,7 +528,7 @@ func TestAgentFSServer(t *testing.T) {
 
 		var receivedLargeFileBytes bytes.Buffer
 		readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
-			buf := make([]byte, 64*1024)
+			buf := make([]byte, 256*1024)
 			total := 0
 			for total < readSize {
 				n, rerr := binarystream.ReceiveDataInto(st, buf)

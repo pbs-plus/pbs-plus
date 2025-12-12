@@ -189,6 +189,16 @@ func (s *StreamPipe) CallMsg(ctx context.Context, method string, payload any) ([
 	return out, nil
 }
 
+func (s *StreamPipe) CallMsgDecoded(ctx context.Context, method string, payload any) (Response, error) {
+	var out []byte
+	if err := s.Call(ctx, method, payload, &out); err != nil {
+		return Response{}, err
+	}
+	respData := Response{}
+	respData.Decode(out)
+	return respData, nil
+}
+
 func (s *StreamPipe) CallMsgWithTimeout(timeout time.Duration, method string, payload any) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

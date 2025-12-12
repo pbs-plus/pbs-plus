@@ -110,7 +110,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	defer cancel()
 
 	// Retrieve the ARPC session for the target.
-	arpcSess, exists := s.Store.ARPCAgentsManager.GetSession(args.TargetHostname)
+	arpcSess, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
 	if !exists {
 		reply.Status = 500
 		reply.Message = "unable to reach target"
@@ -126,7 +126,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	}
 
 	// Call the target's backup method via ARPC.
-	backupResp, err := arpcSess.CallContext(ctx, "backup", &backupReq)
+	backupResp, err := arpcSess.CallMsgDecoded(ctx, "backup", &backupReq)
 	if err != nil || backupResp.Status != 200 {
 		if err != nil {
 			syslog.L.Error(err).WithMessage(backupResp.Message).Write()
@@ -151,7 +151,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	// Retrieve or initialize an ARPCFS instance.
 	// The child session key is "targetHostname|jobId".
 	childKey := args.TargetHostname + "|" + args.JobId
-	arpcFSRPC, exists := s.Store.ARPCAgentsManager.GetSession(childKey)
+	arpcFSRPC, exists := s.Store.ARPCAgentsManager.GetStreamPipe(childKey)
 	if !exists {
 		reply.Status = 500
 		reply.Message = "unable to reach child target"
@@ -276,7 +276,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	defer cancel()
 
 	// Try to acquire an ARPC session for the target.
-	arpcSess, exists := s.Store.ARPCAgentsManager.GetSession(args.TargetHostname)
+	arpcSess, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
 	if !exists {
 		reply.Status = 500
 		reply.Message = "failed to send closure request to target"
@@ -295,7 +295,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	}
 
 	// Instruct the target to perform its cleanup.
-	cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", &cleanupReq)
+	cleanupResp, err := arpcSess.CallMsgDecoded(ctx, "cleanup", &cleanupReq)
 	if err != nil || cleanupResp.Status != 200 {
 		if err != nil {
 			err = errors.New(cleanupResp.Message)
@@ -325,14 +325,14 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 		}).Write()
 
 	// Retrieve the ARPC session for the target.
-	_, exists := s.Store.ARPCAgentsManager.GetSession(args.TargetHostname)
+	_, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
 	if !exists {
 		reply.Connected = false
 		return nil
 	}
 
 	childKey := args.TargetHostname + "|" + args.JobId
-	_, exists = s.Store.ARPCAgentsManager.GetSession(childKey)
+	_, exists = s.Store.ARPCAgentsManager.GetStreamPipe(childKey)
 	if !exists {
 		reply.Connected = false
 		return nil
