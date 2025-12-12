@@ -63,7 +63,7 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respon
 
 	activePids.Set(reqData.JobId, pid)
 
-	return arpc.Response{Status: 200, Message: backupMode}, nil
+		return arpc.Response{Status: 200, Message: backupMode}, nil
 }
 
 func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
