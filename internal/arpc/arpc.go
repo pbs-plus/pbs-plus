@@ -233,7 +233,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener,
 				uh.CancelRead(0)
 			}
 
-			pipe, id, err := agentsManager.GetOrCreateStreamPipe(c, reqHeaders)
+			pipe, id, err := agentsManager.CreateStreamPipe(c, reqHeaders)
 			if err != nil {
 				_ = c.CloseWithError(0, fmt.Sprintf("init failed: %v", err))
 				return
