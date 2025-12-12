@@ -136,7 +136,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return nil, fmt.Errorf("failed to create pipe: %w", err)
 	}
 
-	pipe.tlsConfig = tlsConfig
+	pipe.tlsConfig = arpcTls
 	pipe.serverAddr = serverAddr
 	pipe.headers = headers
 
@@ -169,36 +169,35 @@ func (s *StreamPipe) openStream(_ context.Context) (*quic.Stream, error) {
 	return str, nil
 }
 
-func ListenAndServe(ctx context.Context, addr string, tlsConfig *tls.Config, router Router) (*AgentsManager, error) {
+func Listen(ctx context.Context, addr string, tlsConfig *tls.Config, quicConfig *quic.Config) (*quic.Listener, *net.UDPConn, error) {
 	if tlsConfig == nil {
-		return nil, fmt.Errorf("missing tls config")
+		return nil, nil, fmt.Errorf("missing tls config")
 	}
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("resolve addr failed: %w", err)
+		return nil, nil, fmt.Errorf("resolve addr failed: %w", err)
 	}
 	udpConn, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
-		return nil, fmt.Errorf("listen udp failed: %w", err)
+		return nil, nil, fmt.Errorf("listen udp failed: %w", err)
 	}
-	defer udpConn.Close()
 
 	arpcTls := tlsConfig.Clone()
 	arpcTls.NextProtos = []string{"pbsarpc"}
 
-	ql, err := quic.Listen(udpConn, arpcTls, &quic.Config{
-		KeepAlivePeriod:    time.Second * 20,
-		MaxIncomingStreams: quicvarint.Max,
-	})
+	ql, err := quic.Listen(udpConn, arpcTls, quicConfig)
 	if err != nil {
-		return nil, fmt.Errorf("quic listen failed: %w", err)
+		return nil, nil, fmt.Errorf("quic listen failed: %w", err)
 	}
 
-	agentsManager := NewAgentsManager()
+	return ql, udpConn, nil
+}
+
+func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener, router Router) error {
 	for {
 		conn, err := ql.Accept(ctx)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		go func(c *quic.Conn) {
 			if len(c.ConnectionState().TLS.PeerCertificates) == 0 {
@@ -217,6 +216,20 @@ func ListenAndServe(ctx context.Context, addr string, tlsConfig *tls.Config, rou
 			_ = pipe.Serve()
 		}(conn)
 	}
+}
+
+func ListenAndServe(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router) error {
+	quicConfig := &quic.Config{
+		KeepAlivePeriod:    time.Second * 20,
+		MaxIncomingStreams: quicvarint.Max,
+	}
+	ql, udpConn, err := Listen(ctx, addr, tlsConfig, quicConfig)
+	if err != nil {
+		return err
+	}
+	defer udpConn.Close()
+
+	return Serve(ctx, agentsManager, ql, router)
 }
 
 func (s *StreamPipe) Reconnect(ctx context.Context) error {

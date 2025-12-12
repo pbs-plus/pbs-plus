@@ -146,20 +146,10 @@ func newTestQUICServer(t *testing.T, router arpc.Router) (addr string, cleanup f
 		Certificates: []tls.Certificate{serverCert},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    clientCA.caPool,
-		NextProtos:   []string{"h2", "http/1.1", "pbsarpc"},
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("resolve udp: %v", err)
-	}
-	udpConn, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		t.Fatalf("listen udp: %v", err)
-	}
-
-	listener, err := quic.Listen(udpConn, serverTLS, &quic.Config{
+	listener, udpConn, err := arpc.Listen(t.Context(), "127.0.0.1:0", serverTLS, &quic.Config{
 		KeepAlivePeriod:    200 * time.Millisecond,
 		MaxIncomingStreams: quicvarint.Max,
 	})
@@ -167,24 +157,13 @@ func newTestQUICServer(t *testing.T, router arpc.Router) (addr string, cleanup f
 		t.Fatalf("quic listen: %v", err)
 	}
 
+	agentsManager := arpc.NewAgentsManager()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for {
-			conn, err := listener.Accept(context.Background())
-			if err != nil {
-				return
-			}
-			go func(c *quic.Conn) {
-				defer func() { _ = c.CloseWithError(0, "server shutdown") }()
-				pipe, err := arpc.NewStreamPipe(c)
-				if err != nil {
-					t.Errorf("NewStreamPipe for accepted connection: %v", err)
-					return
-				}
-				pipe.SetRouter(router)
-				_ = pipe.Serve()
-			}(conn)
+		err = arpc.Serve(t.Context(), agentsManager, listener, router)
+		if err != nil {
+			return
 		}
 	}()
 
@@ -203,11 +182,11 @@ func newTestClientTLS(t *testing.T) *tls.Config {
 	t.Helper()
 	ensureGlobalCAs(t)
 	clientCert := clientCA.issueCert(t, "client", true, nil, nil)
+
 	return &tls.Config{
 		Certificates: []tls.Certificate{clientCert},
 		RootCAs:      serverCA.caPool,
 		ServerName:   "localhost",
-		NextProtos:   []string{"h2", "http/1.1", "pbsarpc"},
 		MinVersion:   tls.VersionTLS13,
 	}
 }

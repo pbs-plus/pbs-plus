@@ -410,10 +410,8 @@ func main() {
 			return arpc.Response{Status: 200, Data: data}, nil
 		})
 
-		if agentsManager, err := arpc.ListenAndServe(storeInstance.Ctx, constants.ARPCServerPort, serverConfig, router); err != nil {
+		if err := arpc.ListenAndServe(storeInstance.Ctx, constants.ARPCServerPort, storeInstance.ARPCAgentsManager, serverConfig, router); err != nil {
 			syslog.L.Error(err).WithMessage("quic agent endpoint server failed")
-		} else {
-			storeInstance.ARPCAgentsManager = agentsManager
 		}
 	})
 
