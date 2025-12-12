@@ -112,11 +112,19 @@ func (s *Store) ListenAndServeAgentEndpoint(server *http.Server) error {
 	return server.ListenAndServeTLS(serverCert, serverKey)
 }
 
-func (s *Store) GetServerTLSConfig() (*tls.Config, error) {
+func (s *Store) GetAPIServerTLSConfig() (*tls.Config, error) {
 	s.mTLS.Lock()
 	defer s.mTLS.Unlock()
 
-	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, tls.VerifyClientCertIfGiven)
+	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, nil, tls.VerifyClientCertIfGiven)
+	return conf, err
+}
+
+func (s *Store) GetARPCServerTLSConfig() (*tls.Config, error) {
+	s.mTLS.Lock()
+	defer s.mTLS.Unlock()
+
+	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, []string{"pbsarpc"}, tls.VerifyClientCertIfGiven)
 	return conf, err
 }
 
