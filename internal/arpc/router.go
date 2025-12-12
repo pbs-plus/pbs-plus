@@ -30,61 +30,55 @@ func (r *Router) CloseHandle(method string) {
 }
 
 func (r *Router) ServeStream(stream *quic.Stream) {
-	handedOff := false
-	defer func() {
-		if !handedOff && stream != nil {
-			_ = stream.Close()
-		}
-	}()
+	defer stream.Close()
+	defer stream.CancelRead(0)
 
 	dec := cbor.NewDecoder(stream)
 	var req Request
 	if err := dec.Decode(&req); err != nil {
+		stream.CancelWrite(0)
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
 
 	if req.Method == "" {
+		stream.CancelWrite(0)
 		writeErrorResponse(stream, http.StatusBadRequest, errors.New("missing method field"))
 		return
 	}
 
 	handler, ok := r.handlers.Get(req.Method)
 	if !ok {
+		stream.CancelWrite(0)
 		writeErrorResponse(stream, http.StatusNotFound, fmt.Errorf("method not found: %s", req.Method))
 		return
 	}
 
 	resp, err := handler(req)
 	if err != nil {
+		stream.CancelWrite(0)
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
 
 	respBytes, err := cborEncMode.Marshal(&resp)
 	if err != nil {
+		stream.CancelWrite(0)
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
 	}
 
 	if _, err := stream.Write(respBytes); err != nil {
-		_ = stream.Close()
 		stream.CancelWrite(0)
-		stream.CancelRead(0)
 		return
 	}
 
 	if resp.Status == 213 && resp.RawStream != nil {
 		var b [1]byte
 		if _, err := io.ReadFull(stream, b[:]); err != nil || b[0] != 0x01 {
-			_ = stream.Close()
-			stream.CancelRead(0)
 			stream.CancelWrite(0)
 			return
 		}
-		handedOff = true
 		resp.RawStream(stream)
-		return
 	}
-
 }

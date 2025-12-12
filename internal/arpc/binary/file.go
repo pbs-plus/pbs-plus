@@ -9,7 +9,6 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
-	"github.com/quic-go/quic-go"
 )
 
 var bufferPool = &sync.Pool{
@@ -40,14 +39,12 @@ func readFull(r io.Reader, b []byte) error {
 	return err
 }
 
-func SendDataFromReader(r io.Reader, length int, stream *quic.Stream) error {
+func SendDataFromReader(r io.Reader, length int, stream io.Writer) error {
 	if stream == nil {
 		err := fmt.Errorf("stream is nil")
 		syslog.L.Error(err).WithMessage("SendDataFromReader: nil stream").Write()
 		return err
 	}
-
-	defer stream.Close()
 
 	syslog.L.Debug().WithMessage("SendDataFromReader: start").
 		WithField("length", length).
@@ -123,9 +120,7 @@ func SendDataFromReader(r io.Reader, length int, stream *quic.Stream) error {
 	return nil
 }
 
-func ReceiveDataInto(stream *quic.Stream, dst []byte) (int, error) {
-	defer stream.Close()
-
+func ReceiveDataInto(stream io.Reader, dst []byte) (int, error) {
 	var hdr [14]byte
 	if err := readFull(stream, hdr[:]); err != nil {
 		wErr := fmt.Errorf("failed to read header: %w", err)
