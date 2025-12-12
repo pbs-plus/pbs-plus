@@ -21,6 +21,11 @@ func NewAgentsManager() *AgentsManager {
 func (sm *AgentsManager) GetOrCreateStreamPipe(conn *quic.Conn) (*StreamPipe, string, error) {
 	clientID := conn.ConnectionState().TLS.ServerName
 
+	if len(conn.ConnectionState().TLS.PeerCertificates) > 0 {
+		clientCertificate := conn.ConnectionState().TLS.PeerCertificates[0]
+		clientID = clientCertificate.Subject.CommonName
+	}
+
 	if session, exists := sm.sessions.Get(clientID); exists {
 		return session, "", nil
 	}

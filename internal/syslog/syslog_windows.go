@@ -15,7 +15,7 @@ import (
 
 // SetServiceLogger configures the service logger for Windows Event Log integration.
 func (l *Logger) SetServiceLogger() error {
-	sourceName := "PBSPlusAgent"
+	sourceName := "PBSPlusAgentLogs"
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
