@@ -35,11 +35,11 @@ type TLSConfig struct {
 }
 
 type Store struct {
-	Ctx                context.Context
-	Database           *sqlite.Database
+	Ctx               context.Context
+	Database          *sqlite.Database
 	ARPCAgentsManager *arpc.AgentsManager
-	arpcFS             *safemap.Map[string, *arpcfs.ARPCFS]
-	mTLS               *TLSConfig
+	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
+	mTLS              *TLSConfig
 }
 
 func (s *Store) SignAgentCSR(csr []byte) (cert []byte, ca []byte, err error) {
@@ -135,11 +135,11 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	}
 
 	store := &Store{
-		Ctx:                ctx,
-		Database:           db,
-		arpcFS:             safemap.New[string, *arpcfs.ARPCFS](),
+		Ctx:               ctx,
+		Database:          db,
+		arpcFS:            safemap.New[string, *arpcfs.ARPCFS](),
 		ARPCAgentsManager: arpc.NewAgentsManager(),
-		mTLS:               &TLSConfig{},
+		mTLS:              &TLSConfig{},
 	}
 
 	return store, nil

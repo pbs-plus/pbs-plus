@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
@@ -29,7 +30,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers/agents"
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers/exclusions"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers/plus"
@@ -349,9 +349,6 @@ func main() {
 	agentMux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
 	agentMux.HandleFunc("/api2/json/d2d/agent-log", mw.AgentOnly(storeInstance, agents.AgentLogHandler(storeInstance)))
 
-	// aRPC route
-	agentMux.HandleFunc("/plus/arpc", mw.AgentOnly(storeInstance, arpc.ARPCHandler(storeInstance)))
-
 	// Agent auth routes
 	agentMux.HandleFunc("/plus/agent/bootstrap", agents.AgentBootstrapHandler(storeInstance))
 	agentMux.HandleFunc("/plus/agent/renew", mw.AgentOnly(storeInstance, agents.AgentRenewHandler(storeInstance)))
@@ -386,17 +383,39 @@ func main() {
 
 	var endpointsWg sync.WaitGroup
 
-	endpointsWg.Add(1)
-	go web.WatchAndServe(apiServer, constants.CertFile, constants.KeyFile, []string{constants.CertFile, constants.KeyFile}, &endpointsWg)
+	endpointsWg.Go(func() {
+		web.WatchAndServe(apiServer, constants.CertFile, constants.KeyFile, []string{constants.CertFile, constants.KeyFile})
+	})
 
-	endpointsWg.Add(1)
-	go func() {
-		defer endpointsWg.Done()
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", apiServer.Addr)).Write()
+	endpointsWg.Go(func() {
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", agentServer.Addr)).Write()
 		if err := storeInstance.ListenAndServeAgentEndpoint(agentServer); err != nil {
 			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
 		}
-	}()
+	})
+
+	endpointsWg.Go(func() {
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC QUIC endpoint on UDP %s", agentServer.Addr)).Write()
+
+		router := arpc.NewRouter()
+		router.Handle("echo", func(req arpc.Request) (arpc.Response, error) {
+			var msg arpc.StringMsg
+			if err := msg.Decode(req.Payload); err != nil {
+				return arpc.Response{}, arpc.WrapError(err)
+			}
+			data, err := msg.Encode()
+			if err != nil {
+				return arpc.Response{}, arpc.WrapError(err)
+			}
+			return arpc.Response{Status: 200, Data: data}, nil
+		})
+
+		if agentsManager, err := arpc.ListenAndServe(storeInstance.Ctx, agentServer.Addr, serverConfig, router); err != nil {
+			syslog.L.Error(err).WithMessage("quic agent endpoint server failed")
+		} else {
+			storeInstance.ARPCAgentsManager = agentsManager
+		}
+	})
 
 	endpointsWg.Wait()
 }

@@ -3,10 +3,11 @@ package arpc
 import (
 	"fmt"
 	"math/rand"
+	"net/http"
 	"sync"
 	"time"
 
-	"github.com/xtaci/smux"
+	"github.com/quic-go/quic-go"
 )
 
 var (
@@ -21,40 +22,21 @@ func safeRandFloat64() float64 {
 	return globalRand.Float64()
 }
 
-// getJitteredBackoff returns a backoff duration with a random jitter applied.
-func getJitteredBackoff(d time.Duration, jitterFactor float64) time.Duration {
-	// Compute jitter in the range [-jitterFactor*d, +jitterFactor*d]
-	jitter := time.Duration(float64(d) * jitterFactor * (safeRandFloat64()*2 - 1))
-	return d + jitter
-}
-
 // writeErrorResponse sends an error response over the stream.
-func writeErrorResponse(stream *smux.Stream, status int, err error) {
-	// Wrap the error in a SerializableError
-	serErr := WrapError(err)
-
-	// Encode the SerializableError
-	errBytes, encodeErr := serErr.Encode()
-	if encodeErr != nil {
-		// If encoding the error fails, write a generic error response
-		stream.Write([]byte(fmt.Sprintf("failed to encode error: %v", encodeErr)))
-		return
-	}
-
-	// Build the error response
+func writeErrorResponse(stream *quic.Stream, status int, err error) {
 	resp := Response{
 		Status:  status,
 		Message: err.Error(),
-		Data:    errBytes,
 	}
-
-	// Encode and write the error response
-	respBytes, encodeErr := resp.Encode()
-	if encodeErr != nil {
-		// If encoding the response fails, write a generic error response
-		stream.Write([]byte(fmt.Sprintf("failed to encode response: %v", encodeErr)))
-		return
+	data, marshalErr := resp.Encode()
+	if marshalErr == nil {
+		resp.Data = data
 	}
-
-	stream.Write(respBytes)
+	respBytes, marshalErr := cborEncMode.Marshal(&resp)
+	if marshalErr != nil {
+		respBytes = []byte(fmt.Sprintf(`{"status":%d,"message":"Internal Server Error: %s"}`, http.StatusInternalServerError, err.Error()))
+	}
+	_, _ = stream.Write(respBytes)
+	stream.CancelWrite(0)
+	stream.CancelRead(0)
 }

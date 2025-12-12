@@ -3,7 +3,6 @@ package arpc
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,36 +11,17 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
-	"github.com/xtaci/smux"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/quicvarint"
 )
 
-type Tunnel struct {
+type StreamPipe struct {
+	*quic.Conn
 	sync.Mutex
-	Conn *smux.Session
-}
 
-func (t *Tunnel) Set(s *smux.Session) {
-	t.Lock()
-	defer t.Unlock()
-	t.Conn = s
-}
-
-func (t *Tunnel) SetNoLock(s *smux.Session) {
-	t.Conn = s
-}
-
-func (t *Tunnel) Get() *smux.Session {
-	t.Lock()
-	defer t.Unlock()
-	return t.Conn
-}
-
-type Session struct {
 	serverAddr string
 	tlsConfig  *tls.Config
 	headers    http.Header
-	tunnel     *Tunnel
 	router     atomic.Pointer[Router]
 
 	state atomic.Int32
@@ -59,77 +39,40 @@ const (
 	StateDisconnected
 )
 
-func (s *Session) SetRouter(router Router) {
+func (s *StreamPipe) SetRouter(router Router) {
 	s.router.Store(&router)
 }
 
-func (s *Session) GetRouter() *Router {
+func (s *StreamPipe) GetRouter() *Router {
 	return s.router.Load()
 }
 
-func (s *Session) GetVersion() string {
+func (s *StreamPipe) GetVersion() string {
 	return s.version
 }
 
-func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
-	if config == nil {
-		config = defaultSmuxConfig()
-	}
-	s, err := smux.Server(conn, config)
-	if err != nil {
-		return nil, err
+func NewStreamPipe(conn *quic.Conn) (*StreamPipe, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("nil quic connection")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	session := &Session{
+	pipe := &StreamPipe{
+		Conn:       conn,
 		ctx:        ctx,
 		cancelFunc: cancel,
 	}
-	session.tunnel.Set(s)
-	session.state.Store(int32(StateConnected))
-	return session, nil
+	return pipe, nil
 }
 
-func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
-	if config == nil {
-		config = defaultSmuxConfig()
-	}
-	s, err := smux.Client(conn, config)
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	session := &Session{
-		ctx:        ctx,
-		cancelFunc: cancel,
-	}
-	session.tunnel.Set(s)
-	session.state.Store(int32(StateConnected))
-	return session, nil
-}
-
-func defaultSmuxConfig() *smux.Config {
-	defaults := smux.DefaultConfig()
-	defaults.Version = 2
-	defaults.MaxReceiveBuffer = utils.MaxReceiveBuffer
-	defaults.MaxStreamBuffer = utils.MaxStreamBuffer
-	defaults.MaxFrameSize = 65535
-	return defaults
-}
-
-func (s *Session) Serve() error {
+func (s *StreamPipe) Serve() error {
 	for {
 		select {
 		case <-s.ctx.Done():
 			return s.ctx.Err()
 		default:
 		}
-		tunnel := s.tunnel.Get()
-		if tunnel == nil {
-			return errors.New("tunnel is nil")
-		}
-		stream, err := tunnel.AcceptStream()
+		stream, err := s.AcceptStream(s.ctx)
 		if err != nil {
-			s.state.Store(int32(StateDisconnected))
 			return err
 		}
 		router := s.GetRouter()
@@ -147,27 +90,35 @@ func (s *Session) Serve() error {
 	}
 }
 
-func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
-	conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
+func dialServer(serverAddr string, tlsConfig *tls.Config) (*quic.Conn, error) {
+	if tlsConfig == nil {
+		return nil, fmt.Errorf("missing tls config")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if len(tlsConfig.NextProtos) == 0 {
+		tlsConfig = tlsConfig.Clone()
+		tlsConfig.NextProtos = []string{"arpc"}
+	}
+
+	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, &quic.Config{
+		KeepAlivePeriod: time.Second * 20,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("TLS dial failed: %w", err)
+		return nil, fmt.Errorf("QUIC dial failed: %w", err)
 	}
-	if err := conn.Handshake(); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("TLS handshake failed: %w", err)
-	}
-	state := conn.ConnectionState()
+
+	state := conn.ConnectionState().TLS
 	syslog.L.Info().
 		WithField("tls_version", state.Version).
-		WithField("cipher_suite", state.CipherSuite).
-		WithField("peer_certs_count", len(state.PeerCertificates)).
-		WithMessage("TLS connection established").
+		WithField("alpn", state.NegotiatedProtocol).
+		WithMessage("QUIC connection established").
 		Write()
-	conn.SetDeadline(time.Time{})
 	return conn, nil
 }
 
-func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
+func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*StreamPipe, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -180,79 +131,113 @@ func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers htt
 		return nil, fmt.Errorf("server not reachable: %w", err)
 	}
 
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-	defer conn.SetDeadline(time.Time{})
-	session, err := upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
+	pipe, err := NewStreamPipe(conn)
 	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("failed to connect to server: %w", err)
+		_ = conn.CloseWithError(0, "init failed")
+		return nil, fmt.Errorf("failed to create pipe: %w", err)
 	}
 
-	session.tlsConfig = tlsConfig
-	session.serverAddr = serverAddr
-	session.headers = headers
+	pipe.tlsConfig = tlsConfig
+	pipe.serverAddr = serverAddr
+	pipe.headers = headers
 
-	return session, nil
+	return pipe, nil
 }
 
-func (s *Session) Reconnect() error {
-	if s.tlsConfig == nil {
-		return fmt.Errorf("reconnect: tls config missing")
-	}
-
-	if s.serverAddr == "" {
-		return fmt.Errorf("reconnect: server address missing")
-	}
-
-	conn, err := dialServer(s.serverAddr, s.tlsConfig)
-	if err != nil {
-		return fmt.Errorf("server not reachable: %w", err)
-	}
-
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-	defer conn.SetDeadline(time.Time{})
-	session, err := upgradeHTTPClient(conn, "/plus/arpc", s.serverAddr, s.headers, nil)
-	if err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("failed to connect to server: %w", err)
-	}
-
-	newMuxSess := session.tunnel.Get()
-	s.tunnel.Set(newMuxSess)
-
-	return nil
-}
-
-func (s *Session) Close() error {
+func (s *StreamPipe) Close() error {
 	s.cancelFunc()
-	sess := s.tunnel.Get()
-	if sess != nil {
-		return sess.Close()
-	}
-	return nil
+	return s.CloseWithError(0, "pipe closed")
 }
 
-func (s *Session) GetState() ConnectionState {
-	if s == nil {
+func (s *StreamPipe) GetState() ConnectionState {
+	if s.Conn == nil {
 		return StateDisconnected
 	}
-	cur := s.tunnel.Get()
-	if cur == nil || cur.IsClosed() {
+	if s.Conn == nil || s.ConnectionState().TLS.HandshakeComplete == false && s.Context().Err() != nil {
+		return StateDisconnected
+	}
+	if s.Context().Err() != nil {
 		return StateDisconnected
 	}
 	return StateConnected
 }
 
-func (s *Session) openStream(ctx context.Context) (*smux.Stream, error) {
-	cur := s.tunnel.Get()
-	if cur == nil || cur.IsClosed() {
-		return nil, fmt.Errorf("tls mux is closed")
+func (s *StreamPipe) openStream(_ context.Context) (*quic.Stream, error) {
+	str, err := s.OpenStream()
+	if err != nil {
+		return nil, err
+	}
+	return str, nil
+}
+
+func ListenAndServe(ctx context.Context, addr string, tlsConfig *tls.Config, router Router) (*AgentsManager, error) {
+	if tlsConfig == nil {
+		return nil, fmt.Errorf("missing tls config")
+	}
+	if len(tlsConfig.NextProtos) == 0 {
+		tlsConfig = tlsConfig.Clone()
+		tlsConfig.NextProtos = []string{"arpc"}
+	}
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("resolve addr failed: %w", err)
+	}
+	udpConn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return nil, fmt.Errorf("listen udp failed: %w", err)
+	}
+	defer udpConn.Close()
+
+	ql, err := quic.Listen(udpConn, tlsConfig, &quic.Config{
+		KeepAlivePeriod:    time.Second * 20,
+		MaxIncomingStreams: quicvarint.Max,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("quic listen failed: %w", err)
 	}
 
-	go func() {
-		<-ctx.Done()
-		_ = cur.Close()
-	}()
+	agentsManager := NewAgentsManager()
+	for {
+		conn, err := ql.Accept(ctx)
+		if err != nil {
+			return nil, err
+		}
+		go func(c *quic.Conn) {
+			pipe, id, err := agentsManager.GetOrCreateStreamPipe(c)
+			if err != nil {
+				_ = c.CloseWithError(0, "init failed")
+				return
+			}
+			defer agentsManager.CloseStreamPipe(id)
+			pipe.SetRouter(router)
 
-	return cur.OpenStream()
+			_ = pipe.Serve()
+		}(conn)
+	}
+}
+
+func (s *StreamPipe) Reconnect(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	s.Lock()
+	defer s.Unlock()
+
+	if s.tlsConfig == nil || s.serverAddr == "" {
+		return fmt.Errorf("missing server address or TLS config for reconnect")
+	}
+
+	if s.Conn != nil {
+		_ = s.Conn.CloseWithError(0, "reconnecting")
+		s.Conn = nil
+	}
+
+	conn, err := dialServer(s.serverAddr, s.tlsConfig)
+	if err != nil {
+		return err
+	}
+
+	s.Conn = conn
+	return nil
 }

@@ -2,31 +2,33 @@ package arpc
 
 import (
 	"errors"
-	"net"
 
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
+	"github.com/quic-go/quic-go"
 )
 
 type AgentsManager struct {
-	sessions *safemap.Map[string, *Session]
+	sessions *safemap.Map[string, *StreamPipe]
 }
 
 func NewAgentsManager() *AgentsManager {
 	return &AgentsManager{
-		sessions: safemap.New[string, *Session](),
+		sessions: safemap.New[string, *StreamPipe](),
 	}
 }
 
-func (sm *AgentsManager) GetOrCreateSession(clientID string, version string, conn net.Conn) (*Session, error) {
+func (sm *AgentsManager) GetOrCreateStreamPipe(conn *quic.Conn) (*StreamPipe, string, error) {
+	clientID := conn.ConnectionState().TLS.ServerName
+
 	if session, exists := sm.sessions.Get(clientID); exists {
-		return session, nil
+		return session, "", nil
 	}
 
-	session, err := NewServerSession(conn, nil)
+	session, err := NewStreamPipe(conn)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	session.version = version
 
 	router := NewRouter()
 	router.Handle("echo", func(req Request) (Response, error) {
@@ -43,20 +45,24 @@ func (sm *AgentsManager) GetOrCreateSession(clientID string, version string, con
 	session.SetRouter(router)
 
 	sm.sessions.Set(clientID, session)
-	return session, nil
+
+	syslog.L.Info().WithMessage("agent successfully connected").WithField("hostname", clientID).Write()
+
+	return session, clientID, nil
 }
 
-func (sm *AgentsManager) GetSession(clientID string) (*Session, bool) {
+func (sm *AgentsManager) GetStreamPipe(clientID string) (*StreamPipe, bool) {
 	return sm.sessions.Get(clientID)
 }
 
-func (sm *AgentsManager) CloseSession(clientID string) error {
+func (sm *AgentsManager) CloseStreamPipe(clientID string) error {
 	session, exists := sm.sessions.Get(clientID)
 	if !exists {
 		return errors.New("session not found")
 	}
 
 	sm.sessions.Del(clientID)
+	syslog.L.Info().WithMessage("agent disconnected").WithField("hostname", clientID).Write()
 
 	return session.Close()
 }

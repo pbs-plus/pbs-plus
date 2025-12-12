@@ -180,7 +180,7 @@ func connectARPC(ctx context.Context) error {
 	syslog.L.Info().WithMessage("ARPC headers prepared").WithField("version", Version).Write()
 
 	syslog.L.Info().WithMessage("Attempting ARPC connection to server").Write()
-	session, err := arpc.ConnectToServer(ctx, true, uri.Host, headers, tlsConfig)
+	session, err := arpc.ConnectToServer(ctx, uri.Host, headers, tlsConfig)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to connect to ARPC server").Write()
 		return err
