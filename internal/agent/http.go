@@ -50,7 +50,7 @@ func AgentHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (
 	req, err := http.NewRequest(
 		method,
 		fmt.Sprintf(
-			"https://%s:%s/%s",
+			"https://%s%s/%s",
 			parsedServerUrl.Hostname(),
 			constants.AgentAPIPort,
 			url,
