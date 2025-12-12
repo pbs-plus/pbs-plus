@@ -137,20 +137,10 @@ func newTestQUICServer(t *testing.T, router Router) (addr string, cleanup func()
 		Certificates: []tls.Certificate{serverCert},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    clientCA.caPool,
-		NextProtos:   []string{"h2", "http/1.1", "pbsarpc"},
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("resolve udp: %v", err)
-	}
-	udpConn, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		t.Fatalf("listen udp: %v", err)
-	}
-
-	listener, err := quic.Listen(udpConn, serverTLS, &quic.Config{
+	listener, udpConn, err := Listen(t.Context(), "127.0.0.1:0", serverTLS, &quic.Config{
 		KeepAlivePeriod:    200 * time.Millisecond,
 		MaxIncomingStreams: quicvarint.Max,
 	})
@@ -159,24 +149,12 @@ func newTestQUICServer(t *testing.T, router Router) (addr string, cleanup func()
 	}
 
 	agentsManager := NewAgentsManager()
-
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for {
-			conn, err := listener.Accept(context.Background())
-			if err != nil {
-				return
-			}
-			go func(c *quic.Conn) {
-				pipe, id, err := agentsManager.GetOrCreateStreamPipe(c)
-				if err != nil {
-					return
-				}
-				defer func() { agentsManager.CloseStreamPipe(id) }()
-				pipe.SetRouter(router)
-				_ = pipe.Serve()
-			}(conn)
+		err = Serve(t.Context(), agentsManager, listener, router)
+		if err != nil {
+			return
 		}
 	}()
 
@@ -200,28 +178,8 @@ func newTestClientTLS(t *testing.T) *tls.Config {
 		Certificates: []tls.Certificate{clientCert},
 		RootCAs:      serverCA.caPool,
 		ServerName:   "localhost",
-		NextProtos:   []string{"h2", "http/1.1", "pbsarpc"},
 		MinVersion:   tls.VersionTLS13,
 	}
-}
-
-func dialTestPipe(t *testing.T, addr string, clientTLS *tls.Config) *StreamPipe {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	conn, err := quic.DialAddr(ctx, addr, clientTLS, &quic.Config{
-		KeepAlivePeriod:        200 * time.Millisecond,
-		MaxStreamReceiveWindow: quicvarint.Max,
-	})
-	if err != nil {
-		t.Fatalf("quic dial: %v", err)
-	}
-	pipe, err := NewStreamPipe(conn)
-	if err != nil {
-		t.Fatalf("new StreamPipe: %v", err)
-	}
-	return pipe
 }
 
 func TestRouterServeStream_Echo(t *testing.T) {
@@ -234,7 +192,7 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe, err := ConnectToServer(context.Background(), addr, nil, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
 	if err != nil {
 		t.Fatalf("ConnectToServer: %v", err)
 	}
@@ -271,7 +229,10 @@ func TestStreamPipeCall_Success(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe := dialTestPipe(t, addr, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
 	defer pipe.Close()
 
 	var out StringMsg
@@ -295,7 +256,10 @@ func TestStreamPipeCall_Concurrency(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe := dialTestPipe(t, addr, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
 	defer pipe.Close()
 
 	const numClients = 100
@@ -332,7 +296,10 @@ func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe := dialTestPipe(t, addr, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
 	defer pipe.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -344,7 +311,7 @@ func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
 	}()
 
 	var out []byte
-	err := pipe.Call(ctx, "slow", nil, &out)
+	err = pipe.Call(ctx, "slow", nil, &out)
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -363,11 +330,14 @@ func TestCall_ErrorResponse(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe := dialTestPipe(t, addr, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
 	defer pipe.Close()
 
 	var out []byte
-	err := pipe.Call(context.Background(), "error", nil, &out)
+	err = pipe.Call(context.Background(), "error", nil, &out)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -394,7 +364,10 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe := dialTestPipe(t, addr, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
 	defer pipe.Close()
 
 	var received []byte
@@ -430,11 +403,14 @@ func TestCall_RawStream_HandlerMissing(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe := dialTestPipe(t, addr, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
 	defer pipe.Close()
 
 	var out []byte
-	err := pipe.Call(context.Background(), "binary", nil, &out)
+	err = pipe.Call(context.Background(), "binary", nil, &out)
 	if err == nil {
 		t.Fatal("expected error due to missing RawStreamHandler")
 	}
@@ -452,7 +428,7 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe, err := ConnectToServer(context.Background(), addr, nil, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
 	if err != nil {
 		t.Fatalf("ConnectToServer: %v", err)
 	}
@@ -486,11 +462,14 @@ func TestRouter_NotFound_And_BadRequest(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe := dialTestPipe(t, addr, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
 	defer pipe.Close()
 
 	var out []byte
-	err := pipe.Call(context.Background(), "missing", nil, &out)
+	err = pipe.Call(context.Background(), "missing", nil, &out)
 	if err == nil {
 		t.Fatal("expected error for missing method")
 	}
@@ -499,7 +478,10 @@ func TestRouter_NotFound_And_BadRequest(t *testing.T) {
 	addr2, shutdown2, _ := newTestQUICServer(t, router2)
 	defer shutdown2()
 
-	pipe2 := dialTestPipe(t, addr2, clientTLS)
+	pipe2, err := ConnectToServer(t.Context(), addr2, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
 	defer pipe2.Close()
 
 	st, err := pipe2.OpenStreamSync(context.Background())
@@ -558,7 +540,10 @@ func TestStress_ConsecutiveCalls(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe := dialTestPipe(t, addr, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
 	defer pipe.Close()
 
 	const total = 100
@@ -598,7 +583,10 @@ func TestStress_BatchedSequences(t *testing.T) {
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
-	pipe := dialTestPipe(t, addr, clientTLS)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
 	defer pipe.Close()
 
 	const batches = 10
