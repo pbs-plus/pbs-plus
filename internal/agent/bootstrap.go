@@ -73,7 +73,7 @@ func Bootstrap() error {
 	req, err := http.NewRequest(
 		http.MethodPost,
 		fmt.Sprintf(
-			"https://%s:%s/%s",
+			"https://%s%s/%s",
 			parsedServerUrl.Hostname(),
 			constants.AgentAPIPort,
 			"/plus/agent/bootstrap",
