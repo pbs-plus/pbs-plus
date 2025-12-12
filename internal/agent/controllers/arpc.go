@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
@@ -24,7 +26,7 @@ func init() {
 	activePids = safemap.New[string, int]()
 }
 
-func BackupStartHandler(req arpc.Request, rpcSess *arpc.Session) (arpc.Response, error) {
+func BackupStartHandler(req arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {
 	var reqData types.BackupReq
 	err := reqData.Decode(req.Payload)
 	if err != nil {
@@ -77,6 +79,10 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 
 	pid, ok := activePids.Get(reqData.JobId)
 	if ok {
+		syslog.L.Info().WithMessage("killing child process").
+			WithField("id", reqData.JobId).
+			WithField("pid", pid).Write()
+
 		activePids.Del(reqData.JobId)
 		if runtime.GOOS == "windows" {
 			timeout := time.Second * 5
@@ -97,6 +103,10 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 				}
 			}
 		}
+	} else {
+		syslog.L.Info().WithMessage("no pid found to kill for cleanup").
+			WithField("id", reqData.JobId).
+			Write()
 	}
 
 	return arpc.Response{Status: 200, Message: "success"}, nil
@@ -124,7 +134,7 @@ func StatusHandler(req arpc.Request) (arpc.Response, error) {
 	fullPath := filepath.Join(prefix, reqData.Subpath)
 
 	if _, err := os.Stat(fullPath); !os.IsNotExist(err) {
-		return arpc.Response{Status: 200, Message: "reachable"}, nil
+		return arpc.Response{Status: 200, Message: fmt.Sprintf("reachable|%s", constants.Version)}, nil
 	} else {
 		return arpc.Response{}, err
 	}

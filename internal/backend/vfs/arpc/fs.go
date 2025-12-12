@@ -31,7 +31,7 @@ func (fs *ARPCFS) logError(fpath string, err error) {
 	}
 }
 
-func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
+func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
 	ctxFs, cancel := context.WithCancel(ctx)
 
 	memcachePath := filepath.Join(constants.MemcachedSocketPath, fmt.Sprintf("%s.sock", job.ID))
@@ -48,7 +48,7 @@ func NewARPCFS(ctx context.Context, session *arpc.Session, hostname string, job 
 	}
 
 	fs := &ARPCFS{
-		VFSBase: vfs.VFSBase{
+		VFSBase: &vfs.VFSBase{
 			BasePath: "/",
 			Ctx:      ctxFs,
 			Cancel:   cancel,
@@ -96,7 +96,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 		Perm: int(perm),
 	}
 
-	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &req)
+	raw, err := fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &req)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return ARPCFile{}, syscall.ENOENT
@@ -134,7 +134,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 		atomic.AddInt64(&fs.StatCacheHits, 1)
 		raw = cached.Value
 	} else {
-		raw, err = fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
+		raw, err = fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
 		if err != nil {
 			fs.logError(req.Path, err)
 			return types.AgentFileInfo{}, syscall.ENOENT
@@ -182,7 +182,7 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 		fs.Memcache.Delete("xattr:" + filename)
 	}
 
-	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)
+	raw, err := fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENODATA
@@ -214,7 +214,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	}
 
 	var fsStat types.StatFS
-	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute,
+	raw, err := fs.session.CallDataWithTimeout(1*time.Minute,
 		fs.Job.ID+"/StatFS", nil)
 	if err != nil {
 		syslog.L.Error(err).
@@ -246,7 +246,7 @@ func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 
 	var handleId types.FileHandleId
 	openReq := types.OpenFileReq{Path: path}
-	raw, err := fs.session.CallMsgWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &openReq)
+	raw, err := fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &openReq)
 	if err != nil {
 		return DirStream{}, syscall.ENOENT
 	}

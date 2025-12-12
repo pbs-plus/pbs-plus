@@ -6,10 +6,12 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"text/template"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -29,17 +31,18 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 		if forwardedProto := r.Header.Get("X-Forwarded-Proto"); forwardedProto != "" {
 			scheme = forwardedProto
 		} else if r.TLS == nil {
-			// If no X-Forwarded-Proto and no TLS, assume HTTP
 			scheme = "http"
 		}
 
-		// Use the host from the request, respecting X-Forwarded-Host if available
-		host := r.Host
+		hostname := r.Host
 		if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
-			host = forwardedHost
+			hostname = forwardedHost
+		}
+		if hostnameWithoutPort, _, err := net.SplitHostPort(hostname); err == nil && hostnameWithoutPort != "" {
+			hostname = hostnameWithoutPort
 		}
 
-		baseServerUrl := fmt.Sprintf("%s://%s", scheme, host)
+		baseServerUrl := fmt.Sprintf("%s://%s%s", scheme, hostname, constants.AgentAPIPort)
 
 		config := ScriptConfig{
 			ServerUrl:  baseServerUrl,

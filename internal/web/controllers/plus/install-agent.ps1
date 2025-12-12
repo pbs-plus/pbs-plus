@@ -4,7 +4,6 @@
 
 # Set URLs and paths
 $agentUrl = "{{.AgentUrl}}"
-$updaterUrl = "{{.UpdaterUrl}}"
 
 # Registry settings
 $serverUrl = "{{.ServerUrl}}"
@@ -25,7 +24,7 @@ if (-not (Test-Path -Path $installDir)) {
 
 Write-Host "Configuring SSL certificate validation bypass..." -ForegroundColor Cyan
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls13
 
 # Function to download file with retry
 function Download-FileWithRetry {
@@ -307,13 +306,11 @@ try {
 
     # Download files
     $agentTempPath = Join-Path -Path $tempDir -ChildPath "pbs-plus-agent.exe"
-    $updaterTempPath = Join-Path -Path $tempDir -ChildPath "pbs-plus-updater.exe"
 
     Write-Host "Downloading application files..." -ForegroundColor Cyan
     $downloadAgent = Download-FileWithRetry -Url $agentUrl -Destination $agentTempPath
-    $downloadUpdater = Download-FileWithRetry -Url $updaterUrl -Destination $updaterTempPath
 
-    if (-not ($downloadAgent -and $downloadUpdater)) {
+    if (-not ($downloadAgent)) {
         throw "One or more downloads failed. Installation cannot continue."
     }
 
@@ -335,15 +332,13 @@ try {
 
     # Copy new files to install directory
     $agentPath = Join-Path -Path $installDir -ChildPath "pbs-plus-agent.exe"
-    $updaterPath = Join-Path -Path $installDir -ChildPath "pbs-plus-updater.exe"
 
     Write-Host "Copying application files to installation directory..." -ForegroundColor Cyan
     Copy-Item -Path $agentTempPath -Destination $agentPath -Force
-    Copy-Item -Path $updaterTempPath -Destination $updaterPath -Force
     Write-Host "Files copied successfully" -ForegroundColor Green
 
     # Verify files were copied correctly
-    if (-not (Test-Path -Path $agentPath) -or -not (Test-Path -Path $updaterPath)) {
+    if (-not (Test-Path -Path $agentPath)) {
         throw "Failed to verify copied files"
     }
 
@@ -362,20 +357,15 @@ try {
 
     # Install and start services
     Install-AndStartService -ServiceName "PBSPlusAgent" -ExecutablePath $agentPath
-    Install-AndStartService -ServiceName "PBSPlusUpdater" -ExecutablePath $updaterPath
 
     # Final verification
     Write-Host "Performing final verification..." -ForegroundColor Cyan
     $agentService = Get-Service -Name "PBSPlusAgent" -ErrorAction SilentlyContinue
-    $updaterService = Get-Service -Name "PBSPlusUpdater" -ErrorAction SilentlyContinue
 
     $agentRunning = $agentService -and $agentService.Status -eq "Running"
-    $updaterRunning = $updaterService -and $updaterService.Status -eq "Running"
 
-    if ($agentRunning -and $updaterRunning) {
+    if ($agentRunning) {
         Write-Host "Installation completed successfully. Both services are running." -ForegroundColor Green
-    } elseif ($agentRunning -or $updaterRunning) {
-        Write-Host "Installation completed with warnings. Some services may not be running." -ForegroundColor Yellow
     } else {
         Write-Host "Installation completed but services are not running. Manual intervention may be required." -ForegroundColor Red
     }

@@ -170,7 +170,7 @@ func parseCACreds(caCertPEM, caKeyPEM []byte) (*x509.Certificate, *rsa.PrivateKe
 	return caCert, caKey, nil
 }
 
-func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, clientAuth tls.ClientAuthType) (*tls.Config, error) {
+func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, nextProtos []string, clientAuth tls.ClientAuthType) (*tls.Config, error) {
 	if err := updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile); err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, cl
 		GetConfigForClient: func(_ *tls.ClientHelloInfo) (*tls.Config, error) {
 			currentCerts, currentCAs := getCurrentServerTLSCerts(serverCertFile, serverKeyFile, caFile, prevCaFile)
 			return &tls.Config{
-				MinVersion:               tls.VersionTLS12,
+				MinVersion:               tls.VersionTLS13,
 				Certificates:             []tls.Certificate{*currentCerts},
 				ClientCAs:                currentCAs,
 				ClientAuth:               clientAuth,
@@ -190,6 +190,7 @@ func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, cl
 					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 				},
+				NextProtos: nextProtos,
 			}, nil
 		},
 	}, nil
@@ -210,7 +211,7 @@ func BuildClientTLS(clientCertPEM, clientKeyPEM, caPEM []byte, legacyCaPEM []byt
 	}
 
 	return &tls.Config{
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      rootCAs,
 		CipherSuites: []uint16{
@@ -486,7 +487,7 @@ func genCA(org, cn string, validDays, keySize int) ([]byte, *rsa.PrivateKey, *x5
 	return der, key, ca, nil
 }
 
-func signLeaf(ca *x509.Certificate, caKey *rsa.PrivateKey, pub interface{}, subj pkix.Name, validDays int, dns []string, ips []net.IP, eku []x509.ExtKeyUsage) ([]byte, error) {
+func signLeaf(ca *x509.Certificate, caKey *rsa.PrivateKey, pub any, subj pkix.Name, validDays int, dns []string, ips []net.IP, eku []x509.ExtKeyUsage) ([]byte, error) {
 	now := time.Now()
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
 	if err != nil {

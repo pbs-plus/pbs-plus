@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func StructToEnvVars(s interface{}) ([]string, error) {
+func StructToEnvVars(s any) ([]string, error) {
 	tagName := "env"
 
 	v := reflect.ValueOf(s)

@@ -70,7 +70,7 @@ func NewS3FS(
 	}
 
 	fs := &S3FS{
-		VFSBase: vfs.VFSBase{
+		VFSBase: &vfs.VFSBase{
 			BasePath: "/",
 			Ctx:      ctxFs,
 			Cancel:   cancel,

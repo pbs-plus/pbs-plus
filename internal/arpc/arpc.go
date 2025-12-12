@@ -3,23 +3,25 @@ package arpc
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
-	"github.com/xtaci/smux"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/quicvarint"
 )
 
-type Session struct {
+type StreamPipe struct {
+	*quic.Conn
+	sync.Mutex
+
 	serverAddr string
 	tlsConfig  *tls.Config
 	headers    http.Header
-	muxSess    atomic.Pointer[smux.Session]
 	router     atomic.Pointer[Router]
 
 	state atomic.Int32
@@ -37,86 +39,52 @@ const (
 	StateDisconnected
 )
 
-func (s *Session) SetRouter(router Router) {
+func (s *StreamPipe) SetRouter(router Router) {
 	s.router.Store(&router)
 }
 
-func (s *Session) GetRouter() *Router {
+func (s *StreamPipe) GetRouter() *Router {
 	return s.router.Load()
 }
 
-func (s *Session) GetVersion() string {
+func (s *StreamPipe) GetVersion() string {
 	return s.version
 }
 
-func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
-	if config == nil {
-		config = defaultSmuxConfig()
-	}
-	s, err := smux.Server(conn, config)
-	if err != nil {
-		return nil, err
+func NewStreamPipe(conn *quic.Conn) (*StreamPipe, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("nil quic connection")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	session := &Session{
+	pipe := &StreamPipe{
+		Conn:       conn,
 		ctx:        ctx,
 		cancelFunc: cancel,
 	}
-	session.muxSess.Store(s)
-	session.state.Store(int32(StateConnected))
-	return session, nil
+	return pipe, nil
 }
 
-func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
-	if config == nil {
-		config = defaultSmuxConfig()
-	}
-	s, err := smux.Client(conn, config)
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	session := &Session{
-		ctx:        ctx,
-		cancelFunc: cancel,
-	}
-	session.muxSess.Store(s)
-	session.state.Store(int32(StateConnected))
-	return session, nil
-}
-
-func defaultSmuxConfig() *smux.Config {
-	defaults := smux.DefaultConfig()
-	defaults.Version = 2
-	defaults.MaxReceiveBuffer = utils.MaxReceiveBuffer
-	defaults.MaxStreamBuffer = utils.MaxStreamBuffer
-	defaults.MaxFrameSize = 65535
-	return defaults
-}
-
-func (s *Session) Serve() error {
+func (s *StreamPipe) Serve() error {
 	for {
 		select {
 		case <-s.ctx.Done():
 			return s.ctx.Err()
 		default:
 		}
-		curSession := s.muxSess.Load()
-		if curSession == nil {
-			return errors.New("session is nil")
-		}
-		stream, err := curSession.AcceptStream()
+		stream, err := s.AcceptStream(s.ctx)
 		if err != nil {
-			s.state.Store(int32(StateDisconnected))
 			return err
 		}
 		router := s.GetRouter()
 		if router == nil {
+			stream.CancelWrite(quicErrServeNoRouter)
+			_ = stream.Close()
 			return fmt.Errorf("router is nil")
 		}
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
+					stream.CancelWrite(quicErrServePanic)
 					_ = stream.Close()
 				}
 			}()
@@ -125,30 +93,31 @@ func (s *Session) Serve() error {
 	}
 }
 
-func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
-	d := &net.Dialer{
-		Timeout:   5 * time.Second,
-		KeepAlive: 15 * time.Second,
+func dialServer(serverAddr string, tlsConfig *tls.Config) (*quic.Conn, error) {
+	if tlsConfig == nil {
+		return nil, fmt.Errorf("missing tls config")
 	}
-	conn, err := tls.DialWithDialer(d, "tcp", serverAddr, tlsConfig)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, &quic.Config{
+		KeepAlivePeriod:        time.Second * 20,
+		MaxStreamReceiveWindow: quicvarint.Max,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("TLS dial failed: %w", err)
+		return nil, fmt.Errorf("QUIC dial failed: %w", err)
 	}
-	if err := conn.Handshake(); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("TLS handshake failed: %w", err)
-	}
-	state := conn.ConnectionState()
+
+	state := conn.ConnectionState().TLS
 	syslog.L.Info().
 		WithField("tls_version", state.Version).
-		WithField("cipher_suite", state.CipherSuite).
-		WithField("peer_certs_count", len(state.PeerCertificates)).
-		WithMessage("TLS connection established").
+		WithField("alpn", state.NegotiatedProtocol).
+		WithMessage("QUIC connection established").
 		Write()
 	return conn, nil
 }
 
-func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
+func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*StreamPipe, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -156,78 +125,192 @@ func ConnectToServer(ctx context.Context, _ bool, serverAddr string, headers htt
 		return nil, fmt.Errorf("TLS configuration must include client certificate")
 	}
 
-	conn, err := dialServer(serverAddr, tlsConfig)
+	arpcTls := tlsConfig.Clone()
+	arpcTls.NextProtos = []string{"pbsarpc"}
+
+	conn, err := dialServer(serverAddr, arpcTls)
 	if err != nil {
+		syslog.L.Info().WithField("NextProtos", arpcTls.NextProtos).WithField("serverAddr", serverAddr).Write()
 		return nil, fmt.Errorf("server not reachable: %w", err)
 	}
 
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-	defer conn.SetDeadline(time.Time{})
-	session, err := upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
+	pipe, err := NewStreamPipe(conn)
 	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("failed to connect to server: %w", err)
+		_ = conn.CloseWithError(quicErrInitPipeFailed, "init failed")
+		return nil, fmt.Errorf("failed to create pipe: %w", err)
 	}
 
-	session.tlsConfig = tlsConfig
-	session.serverAddr = serverAddr
-	session.headers = headers
+	if headers == nil {
+		headers = make(http.Header)
+	}
 
-	return session, nil
+	headers.Add("ARPCVersion", "2")
+
+	pipe.tlsConfig = arpcTls
+	pipe.serverAddr = serverAddr
+	pipe.headers = headers
+
+	ustream, uerr := pipe.OpenUniStream()
+	if uerr != nil {
+		_ = pipe.CloseWithError(quicErrHeadersInitFailed, "failed to initialize header pipe")
+		return nil, fmt.Errorf("failed to initialize header pipe: %w", uerr)
+	}
+	if werr := writeHeadersFrame(ustream, headers); werr != nil {
+		_ = ustream.Close()
+		_ = pipe.CloseWithError(quicErrHeadersWriteFailed, "failed to write headers")
+		return nil, fmt.Errorf("failed to write headers: %w", werr)
+	}
+	if cerr := ustream.Close(); cerr != nil {
+		_ = pipe.CloseWithError(quicErrHeadersCloseFailed, "failed to close header pipe")
+		return nil, fmt.Errorf("failed to close header pipe: %w", cerr)
+	}
+
+	return pipe, nil
 }
 
-func (s *Session) Reconnect() error {
-	if s.tlsConfig == nil {
-		return fmt.Errorf("reconnect: tls config missing")
-	}
-
-	if s.serverAddr == "" {
-		return fmt.Errorf("reconnect: server address missing")
-	}
-
-	conn, err := dialServer(s.serverAddr, s.tlsConfig)
-	if err != nil {
-		return fmt.Errorf("server not reachable: %w", err)
-	}
-
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-	defer conn.SetDeadline(time.Time{})
-	session, err := upgradeHTTPClient(conn, "/plus/arpc", s.serverAddr, s.headers, nil)
-	if err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("failed to connect to server: %w", err)
-	}
-
-	newMuxSess := session.muxSess.Load()
-	s.muxSess.Store(newMuxSess)
-
-	return nil
-}
-
-func (s *Session) Close() error {
+func (s *StreamPipe) Close() error {
 	s.cancelFunc()
-	sess := s.muxSess.Load()
-	if sess != nil {
-		return sess.Close()
-	}
-	return nil
+	return s.CloseWithError(quicErrClosePipe, "pipe closed")
 }
 
-func (s *Session) GetState() ConnectionState {
-	if s == nil {
+func (s *StreamPipe) GetState() ConnectionState {
+	if s.Conn == nil {
 		return StateDisconnected
 	}
-	cur := s.muxSess.Load()
-	if cur == nil || cur.IsClosed() {
+	if s.Conn == nil || s.ConnectionState().TLS.HandshakeComplete == false && s.Context().Err() != nil {
+		return StateDisconnected
+	}
+	if s.Context().Err() != nil {
 		return StateDisconnected
 	}
 	return StateConnected
 }
 
-func (s *Session) openStream() (*smux.Stream, error) {
-	cur := s.muxSess.Load()
-	if cur == nil || cur.IsClosed() {
-		return nil, errors.New("session not available")
+func (s *StreamPipe) openStream(_ context.Context) (*quic.Stream, error) {
+	str, err := s.OpenStream()
+	if err != nil {
+		if s != nil && s.Conn != nil {
+			_ = s.Conn.CloseWithError(quicErrOpenStreamFailed, "open stream failed")
+		}
+		return nil, err
 	}
-	return cur.OpenStream()
+	return str, nil
+}
+
+func Listen(ctx context.Context, addr string, tlsConfig *tls.Config, quicConfig *quic.Config) (*quic.Listener, *net.UDPConn, error) {
+	if tlsConfig == nil {
+		return nil, nil, fmt.Errorf("missing tls config")
+	}
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve addr failed: %w", err)
+	}
+	udpConn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listen udp failed: %w", err)
+	}
+
+	arpcTls := tlsConfig.Clone()
+	arpcTls.NextProtos = []string{"pbsarpc"}
+
+	ql, err := quic.Listen(udpConn, arpcTls, quicConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("quic listen failed: %w", err)
+	}
+
+	return ql, udpConn, nil
+}
+
+func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener, router Router) error {
+	for {
+		conn, err := ql.Accept(ctx)
+		if err != nil {
+			return err
+		}
+		go func(c *quic.Conn) {
+			if len(c.ConnectionState().TLS.PeerCertificates) == 0 {
+				_ = c.CloseWithError(quicErrClientCertRequired, "client certificate required")
+				return
+			}
+
+			var reqHeaders http.Header
+			uh, uerr := c.AcceptUniStream(ctx)
+			if uerr == nil {
+				if hdrs, rerr := readHeadersFrame(uh); rerr == nil {
+					reqHeaders = hdrs
+				}
+				uh.CancelRead(0)
+			}
+
+			pipe, id, err := agentsManager.CreateStreamPipe(c, reqHeaders)
+			if err != nil {
+				_ = c.CloseWithError(quicErrInitPipeFailed, fmt.Sprintf("init failed: %v", err))
+				return
+			}
+			defer agentsManager.CloseStreamPipe(id)
+			pipe.SetRouter(router)
+
+			_ = pipe.Serve()
+		}(conn)
+	}
+}
+
+func ListenAndServe(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router) error {
+	quicConfig := &quic.Config{
+		KeepAlivePeriod:    time.Second * 20,
+		MaxIncomingStreams: quicvarint.Max,
+	}
+	ql, udpConn, err := Listen(ctx, addr, tlsConfig, quicConfig)
+	if err != nil {
+		return err
+	}
+	defer udpConn.Close()
+
+	return Serve(ctx, agentsManager, ql, router)
+}
+
+func (s *StreamPipe) Reconnect(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	s.Lock()
+	defer s.Unlock()
+
+	if s.tlsConfig == nil || s.serverAddr == "" {
+		return fmt.Errorf("missing server address or TLS config for reconnect")
+	}
+
+	if s.Conn != nil {
+		_ = s.Conn.CloseWithError(0, "reconnecting")
+		s.Conn = nil
+	}
+
+	conn, err := dialServer(s.serverAddr, s.tlsConfig)
+	if err != nil {
+		return err
+	}
+
+	s.Conn = conn
+
+	if s.headers == nil {
+		s.headers = make(http.Header)
+	}
+
+	ustream, uerr := s.OpenUniStream()
+	if uerr != nil {
+		_ = s.CloseWithError(quicErrHeadersInitFailed, "failed to initialize header pipe")
+		return fmt.Errorf("failed to initialize header pipe: %w", uerr)
+	}
+	if werr := writeHeadersFrame(ustream, s.headers); werr != nil {
+		_ = ustream.Close()
+		_ = s.CloseWithError(quicErrHeadersWriteFailed, "failed to write headers")
+		return fmt.Errorf("failed to write headers: %w", werr)
+	}
+	if cerr := ustream.Close(); cerr != nil {
+		_ = s.CloseWithError(quicErrHeadersCloseFailed, "failed to close header pipe")
+		return fmt.Errorf("failed to close header pipe: %w", cerr)
+	}
+
+	return nil
 }
