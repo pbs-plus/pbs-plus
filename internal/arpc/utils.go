@@ -2,26 +2,32 @@ package arpc
 
 import (
 	"fmt"
+	"io"
 	"net/http"
-
-	"github.com/quic-go/quic-go"
 )
 
-// writeErrorResponse sends an error response over the stream.
-func writeErrorResponse(stream *quic.Stream, status int, err error) {
+func writeErrorResponse(stream io.Writer, status int, err error) {
+	serErr := WrapError(err)
+
+	errBytes, encodeErr := serErr.Encode()
+	if encodeErr != nil {
+		stream.Write([]byte(fmt.Sprintf("failed to encode error: %v", encodeErr)))
+		return
+	}
+
 	resp := Response{
 		Status:  status,
 		Message: err.Error(),
+		Data:    errBytes,
 	}
-	data, marshalErr := resp.Encode()
-	if marshalErr == nil {
-		resp.Data = data
+
+	respBytes, encodeErr := resp.Encode()
+	if encodeErr != nil {
+		stream.Write([]byte(fmt.Sprintf("failed to encode response: %v", encodeErr)))
+		return
 	}
-	respBytes, marshalErr := cborEncMode.Marshal(&resp)
-	if marshalErr != nil {
-		respBytes = []byte(fmt.Sprintf(`{"status":%d,"message":"Internal Server Error: %s"}`, http.StatusInternalServerError, err.Error()))
-	}
-	_, _ = stream.Write(respBytes)
+
+	stream.Write(respBytes)
 }
 
 func headerCloneMap(h http.Header) map[string][]string {

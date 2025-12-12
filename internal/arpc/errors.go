@@ -3,9 +3,39 @@ package arpc
 import (
 	"errors"
 	"os"
+
+	"github.com/quic-go/quic-go"
 )
 
-// Error implements the error interface for SerializableError.
+// QUIC error codes
+const (
+	quicErrServeNoRouter       quic.StreamErrorCode      = 0x1101
+	quicErrServePanic          quic.StreamErrorCode      = 0x1102
+	quicErrClientCertRequired  quic.ApplicationErrorCode = 0x1105
+	quicErrInitPipeFailed      quic.ApplicationErrorCode = 0x1106
+	quicErrHeadersInitFailed   quic.ApplicationErrorCode = 0x1107
+	quicErrHeadersWriteFailed  quic.ApplicationErrorCode = 0x1108
+	quicErrHeadersCloseFailed  quic.ApplicationErrorCode = 0x1109
+	quicErrClosePipe           quic.ApplicationErrorCode = 0x110A
+	quicErrOpenStreamFailed    quic.ApplicationErrorCode = 0x110C
+	quicErrEncodePayload       quic.StreamErrorCode      = 0x1000
+	quicErrMarshalPayload      quic.StreamErrorCode      = 0x1001
+	quicErrEncodeRequest       quic.StreamErrorCode      = 0x1002
+	quicErrWriteRequest        quic.StreamErrorCode      = 0x1003
+	quicErrDecodeResponse      quic.StreamErrorCode      = 0x1004
+	quicErrInvalidRawHandler   quic.StreamErrorCode      = 0x1005
+	quicErrRawReadySignalWrite quic.StreamErrorCode      = 0x1006
+	quicErrRPCStatus           quic.StreamErrorCode      = 0x1007
+	quicErrRawNotSupported     quic.StreamErrorCode      = 0x1008
+	quicErrDecodeRequest       quic.StreamErrorCode      = 0x1200
+	quicErrMissingMethod       quic.StreamErrorCode      = 0x1201
+	quicErrMethodNotFound      quic.StreamErrorCode      = 0x1202
+	quicErrHandlerError        quic.StreamErrorCode      = 0x1203
+	quicErrMarshalResponse     quic.StreamErrorCode      = 0x1204
+	quicErrWriteResponse       quic.StreamErrorCode      = 0x1205
+	quicErrRawHandshakeFail    quic.StreamErrorCode      = 0x1206
+)
+
 func (se *SerializableError) Error() string {
 	return se.Message
 }
@@ -24,25 +54,21 @@ func IsOSError(err error) bool {
 	return false
 }
 
-// WrapError identifies and wraps standard Go errors for serialization.
 func WrapError(err error) *SerializableError {
 	if err == nil {
 		return nil
 	}
 
-	// Start with a generic error wrapper
 	serErr := SerializableError{
 		ErrorType:     "unknown",
 		Message:       err.Error(),
 		OriginalError: err,
 	}
 
-	// Extract path information from PathError
 	if pathErr, ok := err.(*os.PathError); ok {
 		serErr.Op = pathErr.Op
 		serErr.Path = pathErr.Path
 
-		// Identify the underlying error type
 		if errors.Is(pathErr.Err, os.ErrNotExist) {
 			serErr.ErrorType = "os.ErrNotExist"
 		} else if errors.Is(pathErr.Err, os.ErrPermission) {
@@ -55,7 +81,6 @@ func WrapError(err error) *SerializableError {
 		return &serErr
 	}
 
-	// Check for specific error types
 	if os.IsNotExist(err) {
 		serErr.ErrorType = "os.ErrNotExist"
 	} else if os.IsPermission(err) {
@@ -67,16 +92,13 @@ func WrapError(err error) *SerializableError {
 	} else if errors.Is(err, os.ErrProcessDone) {
 		serErr.ErrorType = "os.ErrProcessDone"
 	}
-	// Add more error types as needed
 
 	return &serErr
 }
 
-// UnwrapError reconstructs the original error type from the serialized data.
 func UnwrapError(serErr SerializableError) error {
 	switch serErr.ErrorType {
 	case "os.ErrNotExist":
-		// Create a PathError with os.ErrNotExist and the correct path
 		op := serErr.Op
 		if op == "" {
 			op = "open" // Default op
@@ -93,7 +115,6 @@ func UnwrapError(serErr SerializableError) error {
 		}
 		return &os.PathError{Op: op, Path: serErr.Path, Err: os.ErrPermission}
 	case "os.PathError":
-		// Generic PathError
 		op := serErr.Op
 		if op == "" {
 			op = "open"
@@ -106,7 +127,6 @@ func UnwrapError(serErr SerializableError) error {
 	case "os.ErrProcessDone":
 		return os.ErrProcessDone
 	default:
-		// Return a simple error with the original message
 		return errors.New(serErr.Message)
 	}
 }

@@ -77,11 +77,14 @@ func (s *StreamPipe) Serve() error {
 		}
 		router := s.GetRouter()
 		if router == nil {
+			stream.CancelWrite(quicErrServeNoRouter)
+			_ = stream.Close()
 			return fmt.Errorf("router is nil")
 		}
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
+					stream.CancelWrite(quicErrServePanic)
 					_ = stream.Close()
 				}
 			}()
@@ -133,7 +136,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 
 	pipe, err := NewStreamPipe(conn)
 	if err != nil {
-		_ = conn.CloseWithError(0, "init failed")
+		_ = conn.CloseWithError(quicErrInitPipeFailed, "init failed")
 		return nil, fmt.Errorf("failed to create pipe: %w", err)
 	}
 
@@ -149,14 +152,17 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 
 	ustream, uerr := pipe.OpenUniStream()
 	if uerr != nil {
-		return nil, fmt.Errorf("failed to initialize header pipe: %w", err)
+		_ = pipe.CloseWithError(quicErrHeadersInitFailed, "failed to initialize header pipe")
+		return nil, fmt.Errorf("failed to initialize header pipe: %w", uerr)
 	}
 	if werr := writeHeadersFrame(ustream, headers); werr != nil {
 		_ = ustream.Close()
-		return nil, fmt.Errorf("failed to write headers: %w", err)
+		_ = pipe.CloseWithError(quicErrHeadersWriteFailed, "failed to write headers")
+		return nil, fmt.Errorf("failed to write headers: %w", werr)
 	}
 	if cerr := ustream.Close(); cerr != nil {
-		return nil, fmt.Errorf("failed to close header pipe: %w", err)
+		_ = pipe.CloseWithError(quicErrHeadersCloseFailed, "failed to close header pipe")
+		return nil, fmt.Errorf("failed to close header pipe: %w", cerr)
 	}
 
 	return pipe, nil
@@ -164,7 +170,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 
 func (s *StreamPipe) Close() error {
 	s.cancelFunc()
-	return s.CloseWithError(0, "pipe closed")
+	return s.CloseWithError(quicErrClosePipe, "pipe closed")
 }
 
 func (s *StreamPipe) GetState() ConnectionState {
@@ -183,6 +189,9 @@ func (s *StreamPipe) GetState() ConnectionState {
 func (s *StreamPipe) openStream(_ context.Context) (*quic.Stream, error) {
 	str, err := s.OpenStream()
 	if err != nil {
+		if s != nil && s.Conn != nil {
+			_ = s.Conn.CloseWithError(quicErrOpenStreamFailed, "open stream failed")
+		}
 		return nil, err
 	}
 	return str, nil
@@ -220,7 +229,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener,
 		}
 		go func(c *quic.Conn) {
 			if len(c.ConnectionState().TLS.PeerCertificates) == 0 {
-				_ = c.CloseWithError(1, "client certificate required")
+				_ = c.CloseWithError(quicErrClientCertRequired, "client certificate required")
 				return
 			}
 
@@ -235,7 +244,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener,
 
 			pipe, id, err := agentsManager.CreateStreamPipe(c, reqHeaders)
 			if err != nil {
-				_ = c.CloseWithError(0, fmt.Sprintf("init failed: %v", err))
+				_ = c.CloseWithError(quicErrInitPipeFailed, fmt.Sprintf("init failed: %v", err))
 				return
 			}
 			defer agentsManager.CloseStreamPipe(id)
@@ -290,14 +299,17 @@ func (s *StreamPipe) Reconnect(ctx context.Context) error {
 
 	ustream, uerr := s.OpenUniStream()
 	if uerr != nil {
-		return fmt.Errorf("failed to initialize header pipe: %w", err)
+		_ = s.CloseWithError(quicErrHeadersInitFailed, "failed to initialize header pipe")
+		return fmt.Errorf("failed to initialize header pipe: %w", uerr)
 	}
 	if werr := writeHeadersFrame(ustream, s.headers); werr != nil {
 		_ = ustream.Close()
-		return fmt.Errorf("failed to write headers: %w", err)
+		_ = s.CloseWithError(quicErrHeadersWriteFailed, "failed to write headers")
+		return fmt.Errorf("failed to write headers: %w", werr)
 	}
 	if cerr := ustream.Close(); cerr != nil {
-		return fmt.Errorf("failed to close header pipe: %w", err)
+		_ = s.CloseWithError(quicErrHeadersCloseFailed, "failed to close header pipe")
+		return fmt.Errorf("failed to close header pipe: %w", cerr)
 	}
 
 	return nil
