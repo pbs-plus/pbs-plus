@@ -137,7 +137,8 @@ func dialTestPipe(t *testing.T, addr string, clientTLS *tls.Config) *StreamPipe 
 	defer cancel()
 
 	conn, err := quic.DialAddr(ctx, addr, clientTLS, &quic.Config{
-		KeepAlivePeriod: 200 * time.Millisecond,
+		KeepAlivePeriod:        200 * time.Millisecond,
+		MaxStreamReceiveWindow: quicvarint.Max,
 	})
 	if err != nil {
 		t.Fatalf("quic dial: %v", err)
