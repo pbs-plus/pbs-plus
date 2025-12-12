@@ -379,6 +379,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 		}
 		received = append(received[:0], buf[:n]...)
 		st.Close()
+		st.CancelRead(0)
 		return nil
 	})
 
@@ -547,7 +548,7 @@ func TestStress_ConsecutiveCalls(t *testing.T) {
 	}
 	defer pipe.Close()
 
-	const total = 100
+	const total = 1000
 	for i := 0; i < total; i++ {
 		var in IntMsg = IntMsg(i)
 		var out IntMsg
@@ -590,7 +591,7 @@ func TestStress_BatchedSequences(t *testing.T) {
 	}
 	defer pipe.Close()
 
-	const batches = 10
+	const batches = 100
 	const perBatch = 40
 
 	for b := 0; b < batches; b++ {

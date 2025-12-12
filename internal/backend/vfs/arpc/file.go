@@ -85,6 +85,7 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 		bytesRead = n
 
 		s.Close()
+		s.CancelRead(0)
 		return nil
 	}))
 	if err != nil {
