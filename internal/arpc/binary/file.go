@@ -47,6 +47,8 @@ func SendDataFromReader(r io.Reader, length int, stream *quic.Stream) error {
 		return err
 	}
 
+	defer stream.Close()
+
 	syslog.L.Debug().WithMessage("SendDataFromReader: start").
 		WithField("length", length).
 		Write()
@@ -122,6 +124,8 @@ func SendDataFromReader(r io.Reader, length int, stream *quic.Stream) error {
 }
 
 func ReceiveDataInto(stream *quic.Stream, dst []byte) (int, error) {
+	defer stream.Close()
+
 	var hdr [14]byte
 	if err := readFull(stream, hdr[:]); err != nil {
 		wErr := fmt.Errorf("failed to read header: %w", err)

@@ -321,7 +321,6 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleReadDir: sending batch").WithField("handle_id", payload.HandleID).WithField("bytes", len(encodedBatch)).Write()
 	byteReader := bytes.NewReader(encodedBatch)
 	streamCallback := func(stream *quic.Stream) {
-		defer stream.Close()
 		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader via binary stream").WithField("handle_id", payload.HandleID).Write()
 		}
@@ -360,7 +359,6 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{
 			Status: 213,
 			RawStream: func(stream *quic.Stream) {
-				defer stream.Close()
 				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
 					syslog.L.Error(err).WithMessage("handleReadAt: failed sending empty reader via binary stream").WithField("handle_id", payload.HandleID).Write()
 				}
@@ -378,7 +376,6 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{
 			Status: 213,
 			RawStream: func(stream *quic.Stream) {
-				defer stream.Close()
 				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
 					syslog.L.Error(err).WithMessage("handleReadAt: failed sending empty reader via binary stream").WithField("handle_id", payload.HandleID).Write()
 				}
@@ -402,7 +399,6 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 			reader := bytes.NewReader(result)
 			syslog.L.Debug().WithMessage("handleReadAt: starting stream (mmap)").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", reqLen).Write()
 			streamCallback := func(stream *quic.Stream) {
-				defer stream.Close()
 				defer unix.Munmap(data)
 				if err := binarystream.SendDataFromReader(reader, len(result), stream); err != nil {
 					syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed (mmap)").WithField("handle_id", payload.HandleID).Write()
@@ -435,7 +431,6 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	reader := bytes.NewReader(buf[:n])
 	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", n).Write()
 	streamCallback := func(stream *quic.Stream) {
-		defer stream.Close()
 		readBufPool.Put(&buf)
 
 		if err := binarystream.SendDataFromReader(reader, n, stream); err != nil {

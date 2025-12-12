@@ -119,6 +119,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		return fmt.Errorf("encode request: %w", err)
 	}
 	if _, err := stream.Write(reqBytes); err != nil {
+		_ = stream.Close()
 		stream.CancelWrite(0)
 		stream.CancelRead(0)
 		return fmt.Errorf("write request: %w", err)
@@ -128,6 +129,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	dec := cbor.NewDecoder(stream)
 	var resp Response
 	if err := dec.Decode(&resp); err != nil {
+		_ = stream.Close()
 		stream.CancelRead(0)
 		stream.CancelWrite(0)
 		if ctx.Err() != nil {
