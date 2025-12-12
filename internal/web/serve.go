@@ -4,15 +4,13 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFiles []string, wg *sync.WaitGroup) {
-	defer wg.Done()
+func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFiles []string) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("api server watcher error").Write()

@@ -16,7 +16,7 @@ import (
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
-	"github.com/xtaci/smux"
+	"github.com/quic-go/quic-go"
 	"golang.org/x/sys/windows"
 )
 
@@ -386,7 +386,8 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 
 	syslog.L.Debug().WithMessage("handleReadDir: sending batch").WithField("handle_id", payload.HandleID).WithField("bytes", len(encodedBatch)).Write()
 	byteReader := bytes.NewReader(encodedBatch)
-	streamCallback := func(stream *smux.Stream) {
+	streamCallback := func(stream *quic.Stream) {
+		defer stream.Close()
 		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader via binary stream").WithField("handle_id", payload.HandleID).Write()
 		}
@@ -429,7 +430,8 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
-			RawStream: func(stream *smux.Stream) {
+			RawStream: func(stream *quic.Stream) {
+				defer stream.Close()
 				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
 					syslog.L.Error(err).
 						WithMessage("handleReadAt: failed sending empty reader via binary stream").WithField("handle_id", payload.HandleID).Write()
@@ -448,7 +450,8 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
-			RawStream: func(stream *smux.Stream) {
+			RawStream: func(stream *quic.Stream) {
+				defer stream.Close()
 				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
 					syslog.L.Error(err).
 						WithMessage("handleReadAt: failed sending empty reader via binary stream").WithField("handle_id", payload.HandleID).Write()
@@ -473,7 +476,8 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		syslog.L.Debug().WithMessage("handleReadAt: using allocated ranges").WithField("handle_id", payload.HandleID).WithField("range_count", len(ranges)).Write()
 	}
 
-	streamFn := func(stream *smux.Stream) {
+	streamFn := func(stream *quic.Stream) {
+		defer stream.Close()
 		write := func(p []byte) error {
 			return binarystream.SendDataFromReader(bytes.NewReader(p), len(p), stream)
 		}
