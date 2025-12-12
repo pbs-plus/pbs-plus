@@ -97,6 +97,9 @@ func dialServer(serverAddr string, tlsConfig *tls.Config) (*quic.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
+	arpcTls := tlsConfig.Clone()
+	arpcTls.NextProtos = []string{"pbsarpc"}
+
 	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, &quic.Config{
 		KeepAlivePeriod:        time.Second * 20,
 		MaxStreamReceiveWindow: quicvarint.Max,
@@ -122,7 +125,10 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return nil, fmt.Errorf("TLS configuration must include client certificate")
 	}
 
-	conn, err := dialServer(serverAddr, tlsConfig)
+	arpcTls := tlsConfig.Clone()
+	arpcTls.NextProtos = []string{"pbsarpc"}
+
+	conn, err := dialServer(serverAddr, arpcTls)
 	if err != nil {
 		return nil, fmt.Errorf("server not reachable: %w", err)
 	}
