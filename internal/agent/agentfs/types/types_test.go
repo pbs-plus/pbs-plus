@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 )
 
 func TestEncodeDecodeConcurrency(t *testing.T) {
 	t.Run("LseekResp", func(t *testing.T) {
 		original := &LseekResp{NewOffset: 12345}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &LseekResp{}
 		})
 	})
@@ -27,7 +27,7 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 			IsDir:   false,
 			Blocks:  8,
 		}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &AgentFileInfo{}
 		})
 	})
@@ -37,7 +37,7 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 			Name: "subdir",
 			Mode: 0755,
 		}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &AgentFileInfo{}
 		})
 	})
@@ -52,7 +52,7 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 			Ffree:   5000,
 			NameLen: 255,
 		}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &StatFS{}
 		})
 	})
@@ -63,14 +63,14 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 			Flag: 2,
 			Perm: 0644,
 		}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &OpenFileReq{}
 		})
 	})
 
 	t.Run("StatReq", func(t *testing.T) {
 		original := &StatReq{Path: "/path/to/stat"}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &StatReq{}
 		})
 	})
@@ -79,7 +79,7 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 		original := &ReadDirReq{
 			HandleID: FileHandleId(12345),
 		}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &ReadDirReq{}
 		})
 	})
@@ -89,7 +89,7 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 			HandleID: FileHandleId(12345),
 			Length:   4096,
 		}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &ReadReq{}
 		})
 	})
@@ -100,14 +100,14 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 			Offset:   1024,
 			Length:   4096,
 		}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &ReadAtReq{}
 		})
 	})
 
 	t.Run("CloseReq", func(t *testing.T) {
 		original := &CloseReq{HandleID: FileHandleId(12345)}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &CloseReq{}
 		})
 	})
@@ -117,7 +117,7 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 			JobId: "job123",
 			Drive: "/dev/sda1",
 		}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &BackupReq{}
 		})
 	})
@@ -128,7 +128,7 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 			Offset:   1024,
 			Whence:   1,
 		}
-		validateEncodeDecodeConcurrency(t, original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &LseekReq{}
 		})
 	})
@@ -138,14 +138,14 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 			{Name: "file1.txt", Mode: 0644},
 			{Name: "file2.txt", Mode: 0755},
 		}
-		validateEncodeDecodeConcurrency(t, &original, func() arpcdata.Encodable {
+		validateEncodeDecodeConcurrency(t, &original, func() arpc.Encodable {
 			return &ReadDirEntries{}
 		})
 	})
 }
 
 // validateEncodeDecodeConcurrency tests encoding and decoding concurrently.
-func validateEncodeDecodeConcurrency(t *testing.T, original arpcdata.Encodable, newDecoded func() arpcdata.Encodable) {
+func validateEncodeDecodeConcurrency(t *testing.T, original arpc.Encodable, newDecoded func() arpc.Encodable) {
 	const numGoroutines = 100
 	var wg sync.WaitGroup
 
@@ -194,7 +194,7 @@ func validateEncodeDecodeConcurrency(t *testing.T, original arpcdata.Encodable, 
 }
 
 // deepCompare performs a deep comparison of two Encodable objects.
-func deepCompare(a, b arpcdata.Encodable) bool {
+func deepCompare(a, b arpc.Encodable) bool {
 	encodedA, errA := a.Encode()
 	encodedB, errB := b.Encode()
 

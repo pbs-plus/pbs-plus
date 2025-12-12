@@ -35,11 +35,11 @@ type TLSConfig struct {
 }
 
 type Store struct {
-	Ctx                context.Context
-	Database           *sqlite.Database
-	ARPCSessionManager *arpc.SessionManager
-	arpcFS             *safemap.Map[string, *arpcfs.ARPCFS]
-	mTLS               *TLSConfig
+	Ctx               context.Context
+	Database          *sqlite.Database
+	ARPCAgentsManager *arpc.AgentsManager
+	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
+	mTLS              *TLSConfig
 }
 
 func (s *Store) SignAgentCSR(csr []byte) (cert []byte, ca []byte, err error) {
@@ -112,11 +112,19 @@ func (s *Store) ListenAndServeAgentEndpoint(server *http.Server) error {
 	return server.ListenAndServeTLS(serverCert, serverKey)
 }
 
-func (s *Store) GetServerTLSConfig() (*tls.Config, error) {
+func (s *Store) GetAPIServerTLSConfig() (*tls.Config, error) {
 	s.mTLS.Lock()
 	defer s.mTLS.Unlock()
 
-	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, tls.VerifyClientCertIfGiven)
+	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, nil, tls.VerifyClientCertIfGiven)
+	return conf, err
+}
+
+func (s *Store) GetARPCServerTLSConfig() (*tls.Config, error) {
+	s.mTLS.Lock()
+	defer s.mTLS.Unlock()
+
+	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, []string{"pbsarpc"}, tls.VerifyClientCertIfGiven)
 	return conf, err
 }
 
@@ -135,11 +143,11 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	}
 
 	store := &Store{
-		Ctx:                ctx,
-		Database:           db,
-		arpcFS:             safemap.New[string, *arpcfs.ARPCFS](),
-		ARPCSessionManager: arpc.NewSessionManager(),
-		mTLS:               &TLSConfig{},
+		Ctx:               ctx,
+		Database:          db,
+		arpcFS:            safemap.New[string, *arpcfs.ARPCFS](),
+		ARPCAgentsManager: arpc.NewAgentsManager(),
+		mTLS:              &TLSConfig{},
 	}
 
 	return store, nil

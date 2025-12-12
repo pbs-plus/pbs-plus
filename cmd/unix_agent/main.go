@@ -9,21 +9,22 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/gofrs/flock"
+	"github.com/jpillora/overseer"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -35,24 +36,6 @@ var Version = "v0.0.0"
 type AgentDrivesRequest struct {
 	Hostname string            `json:"hostname"`
 	Drives   []utils.DriveInfo `json:"drives"`
-}
-
-func writeVersionToFile() error {
-	if err := os.MkdirAll("/etc/pbs-plus-agent", 0755); err != nil {
-		return err
-	}
-
-	versionLockPath := filepath.Join("/etc/pbs-plus-agent", "version.lock")
-	mutex := flock.New(versionLockPath)
-
-	mutex.Lock()
-	defer mutex.Close()
-
-	versionFile := filepath.Join("/etc/pbs-plus-agent", "version.txt")
-	if err := os.WriteFile(versionFile, []byte(Version), 0644); err != nil {
-		return fmt.Errorf("failed to write version file: %w", err)
-	}
-	return nil
 }
 
 func initializeDrives() error {
@@ -76,7 +59,7 @@ func initializeDrives() error {
 		return fmt.Errorf("failed to marshal drive request: %w", err)
 	}
 
-	resp, err := agent.ProxmoxHTTPRequest(
+	resp, err := agent.AgentHTTPRequest(
 		http.MethodPost,
 		"/api2/json/d2d/target/agent",
 		bytes.NewBuffer(reqBody),
@@ -168,12 +151,12 @@ func connectARPC(ctx context.Context) error {
 	}
 
 	syslog.L.Info().WithMessage("Parsing server URL").Write()
-	uri, err := url.Parse(serverUrl.Value)
+	uri, err := utils.ParseURI(serverUrl.Value)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to parse server URL").Write()
 		return fmt.Errorf("invalid server URL: %v", err)
 	}
-	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Host).Write()
+	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Hostname()).Write()
 
 	syslog.L.Info().WithMessage("Getting TLS configuration").Write()
 	tlsConfig, err := agent.GetTLSConfig()
@@ -197,7 +180,7 @@ func connectARPC(ctx context.Context) error {
 	syslog.L.Info().WithMessage("ARPC headers prepared").WithField("version", Version).Write()
 
 	syslog.L.Info().WithMessage("Attempting ARPC connection to server").Write()
-	session, err := arpc.ConnectToServer(ctx, true, uri.Host, headers, tlsConfig)
+	session, err := arpc.ConnectToServer(ctx, fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort), headers, tlsConfig)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to connect to ARPC server").Write()
 		return err
@@ -225,27 +208,43 @@ func connectARPC(ctx context.Context) error {
 	syslog.L.Info().WithMessage("Starting ARPC session handler goroutine").Write()
 	go func() {
 		defer session.Close()
+		defer func() {
+			syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
+		}()
+
+		base := 500 * time.Millisecond
+		maxWait := 30 * time.Second
+		factor := 2.0
+		jitter := 0.2
+
+		backoff := base
+
 		for {
 			select {
 			case <-ctx.Done():
-				syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
 				return
 			default:
-				syslog.L.Info().
-					WithMessage("connecting arpc endpoint from /plus/arpc").
-					WithField("hostname", clientId).
-					Write()
 				if err := session.Serve(); err != nil {
-					syslog.L.Warn().WithMessage("ARPC connection error, retrying").WithField("error", err.Error()).Write()
-					store, err := agent.NewBackupStore()
-					if err != nil {
-						syslog.L.Error(err).WithMessage("error initializing backup store").Write()
-					} else {
-						if err := store.ClearAll(); err != nil {
-							syslog.L.Error(err).WithMessage("error clearing backup store").Write()
-						}
+					mult := 1 + jitter*(2*rand.Float64()-1)
+					sleep := time.Duration(float64(backoff) * mult)
+					sleep = min(sleep, maxWait)
+
+					syslog.L.Warn().WithMessage(fmt.Sprintf("ARPC connection error, retrying after %v", sleep)).WithField("error", err.Error()).Write()
+
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(sleep):
 					}
-					time.Sleep(5 * time.Second)
+
+					next := time.Duration(float64(backoff) * factor)
+					next = min(next, maxWait)
+
+					backoff = next
+
+					if err = session.Reconnect(ctx); err != nil {
+						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
+					}
 				}
 			}
 		}
@@ -254,36 +253,12 @@ func connectARPC(ctx context.Context) error {
 	return nil
 }
 
-func main() {
-	defer func() {
-		if r := recover(); r != nil {
-			msg := fmt.Sprintf("Panic occurred: %v\nStack trace:\n%s", r, debug.Stack())
-
-			logFile, err := os.OpenFile("panic.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-			if err == nil {
-				defer logFile.Close()
-				_, _ = logFile.WriteString(msg)
-			} else {
-				fmt.Println("Error opening log file:", err)
-			}
-
-			os.Exit(1)
-		}
-	}()
-
-	forks.CmdBackup()
-	constants.Version = Version
-
+func runForeground(_ overseer.State) {
 	if err := syslog.L.SetServiceLogger(); err != nil {
 		log.Println(err)
 	}
 
 	syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
-
-	if err := writeVersionToFile(); err != nil {
-		syslog.L.Error(err).WithMessage("Failed to write version file").Write()
-		return
-	}
 
 	// Ensure registry defaults exist
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{
@@ -407,4 +382,35 @@ func main() {
 	cancel()
 	wg.Wait()
 	syslog.L.Info().WithMessage("Service stopped gracefully").Write()
+}
+
+func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("Panic occurred: %v\nStack trace:\n%s", r, debug.Stack())
+
+			logFile, err := os.OpenFile("panic.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err == nil {
+				defer logFile.Close()
+				_, _ = logFile.WriteString(msg)
+			} else {
+				fmt.Println("Error opening log file:", err)
+			}
+
+			os.Exit(1)
+		}
+	}()
+
+	forks.CmdBackup()
+	constants.Version = Version
+
+	dockerEnv := os.Getenv("PBS_PLUS__I_AM_INSIDE_CONTAINER")
+	if dockerEnv != "true" {
+		overseer.Run(overseer.Config{
+			Program: runForeground,
+			Fetcher: &updater.UpdateFetcher{},
+		})
+	} else {
+		runForeground(overseer.State{})
+	}
 }

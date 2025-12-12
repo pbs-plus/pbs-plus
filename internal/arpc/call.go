@@ -2,41 +2,91 @@ package arpc
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
-	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
-	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
+	"github.com/fxamacker/cbor/v2"
+	"github.com/quic-go/quic-go"
 )
 
-var headerPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 4)
-	},
-}
+var (
+	cborEncMode cbor.EncMode
+	cborDecMode cbor.DecMode
+)
 
-func (s *Session) Call(method string, payload arpcdata.Encodable) (Response, error) {
-	return s.CallContext(context.Background(), method, payload)
-}
-
-func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload arpcdata.Encodable) (Response, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	return s.CallContext(ctx, method, payload)
-}
-
-func (s *Session) CallContext(ctx context.Context, method string, payload arpcdata.Encodable) (Response, error) {
-	stream, err := s.openStream()
+func init() {
+	em, err := cbor.CTAP2EncOptions().EncMode()
 	if err != nil {
-		return Response{}, err
+		panic(err)
 	}
-	defer func() { _ = stream.Close() }()
+	dm, err := cbor.DecOptions{}.DecMode()
+	if err != nil {
+		panic(err)
+	}
+	cborEncMode = em
+	cborDecMode = dm
+}
+
+type Encodable interface {
+	Encode() ([]byte, error)
+	Decode([]byte) error
+}
+
+type Request struct {
+	Method  string              `cbor:"method"`
+	Payload []byte              `cbor:"payload"`
+	Headers map[string][]string `cbor:"headers,omitempty"`
+}
+
+func (r *Request) Encode() ([]byte, error) {
+	return cborEncMode.Marshal(r)
+}
+
+func (r *Request) Decode(b []byte) error {
+	return cborDecMode.Unmarshal(b, r)
+}
+
+type Response struct {
+	Status    int                `cbor:"status"`
+	Message   string             `cbor:"message"`
+	Data      []byte             `cbor:"data"`
+	RawStream func(*quic.Stream) `cbor:"-"`
+}
+
+func (r *Response) Encode() ([]byte, error) {
+	return cborEncMode.Marshal(r)
+}
+
+func (r *Response) Decode(b []byte) error {
+	return cborDecMode.Unmarshal(b, r)
+}
+
+type SerializableError struct {
+	ErrorType     string `cbor:"error_type"`
+	Message       string `cbor:"message"`
+	Op            string `cbor:"op"`
+	Path          string `cbor:"path"`
+	OriginalError error  `cbor:"-"`
+}
+
+func (e *SerializableError) Encode() ([]byte, error) {
+	return cborEncMode.Marshal(e)
+}
+
+func (e *SerializableError) Decode(b []byte) error {
+	return cborDecMode.Unmarshal(b, e)
+}
+
+type RawStreamHandler func(*quic.Stream) error
+
+func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out any) error {
+	stream, err := s.openStream(ctx)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	defer stream.CancelRead(0)
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
@@ -44,98 +94,114 @@ func (s *Session) CallContext(ctx context.Context, method string, payload arpcda
 
 	var payloadBytes []byte
 	if payload != nil {
-		payloadBytes, err = payload.Encode()
-		if err != nil {
-			return Response{}, fmt.Errorf("failed to encode payload: %w", err)
+		switch p := payload.(type) {
+		case []byte:
+			payloadBytes = p
+		case Encodable:
+			payloadBytes, err = p.Encode()
+			if err != nil {
+				stream.CancelWrite(quicErrEncodePayload)
+				return fmt.Errorf("encode payload: %w", err)
+			}
+		default:
+			payloadBytes, err = cborEncMode.Marshal(p)
+			if err != nil {
+				stream.CancelWrite(quicErrMarshalPayload)
+				return fmt.Errorf("marshal payload: %w", err)
+			}
 		}
 	}
 
-	req := Request{
-		Method:  method,
-		Payload: payloadBytes,
-	}
+	req := Request{Method: method, Payload: payloadBytes, Headers: headerCloneMap(s.headers)}
 	reqBytes, err := req.Encode()
 	if err != nil {
-		return Response{}, fmt.Errorf("failed to encode request: %w", err)
+		stream.CancelWrite(quicErrEncodeRequest)
+		return fmt.Errorf("encode request: %w", err)
 	}
-
 	if _, err := stream.Write(reqBytes); err != nil {
-		return Response{}, fmt.Errorf("failed to write request: %w", err)
+		stream.CancelWrite(quicErrWriteRequest)
+		return fmt.Errorf("write request: %w", err)
 	}
 
-	prefix := headerPool.Get().([]byte)
-	defer headerPool.Put(prefix)
-
-	if _, err := io.ReadFull(stream, prefix); err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			_ = stream.Close()
-			return Response{}, context.DeadlineExceeded
-		}
-		_ = stream.Close()
-		return Response{}, fmt.Errorf("failed to read length prefix: %w", err)
-	}
-	totalLength := binary.LittleEndian.Uint32(prefix)
-	if totalLength < 4 {
-		_ = stream.Close()
-		return Response{}, fmt.Errorf("invalid total length %d", totalLength)
-	}
-
-	buf := make([]byte, totalLength)
-	copy(buf, prefix)
-	if _, err := io.ReadFull(stream, buf[4:]); err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			_ = stream.Close()
-			return Response{}, context.DeadlineExceeded
-		}
-		_ = stream.Close()
-		return Response{}, fmt.Errorf("failed to read full response: %w", err)
-	}
-
+	dec := cbor.NewDecoder(stream)
 	var resp Response
-	if err := resp.Decode(buf); err != nil {
-		_ = stream.Close()
-		return Response{}, fmt.Errorf("failed to decode response: %w", err)
+	if err := dec.Decode(&resp); err != nil {
+		stream.CancelWrite(quicErrDecodeResponse)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("decode response: %w", err)
 	}
 
-	return resp, nil
-}
-
-func (s *Session) CallMsg(ctx context.Context, method string, payload arpcdata.Encodable) ([]byte, error) {
-	resp, err := s.CallContext(ctx, method, payload)
-	if err != nil {
-		return nil, err
+	if resp.Status == 213 {
+		handler, ok := out.(RawStreamHandler)
+		if !ok || handler == nil {
+			stream.CancelWrite(quicErrInvalidRawHandler)
+			return fmt.Errorf("invalid out handler while in raw stream mode")
+		}
+		if _, err := stream.Write([]byte{0x01}); err != nil {
+			stream.CancelWrite(quicErrRawReadySignalWrite)
+			return fmt.Errorf("raw ready signal write failed: %w", err)
+		}
+		err = handler(stream)
+		if err != nil {
+			stream.CancelWrite(quicErrRPCStatus)
+			return err
+		}
+		return nil
 	}
 
 	if resp.Status != http.StatusOK {
-		if resp.Data != nil {
+		if len(resp.Data) > 0 {
 			var serErr SerializableError
-			if err := serErr.Decode(resp.Data); err != nil {
-				return nil, fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+			if err := serErr.Decode(resp.Data); err == nil {
+				stream.CancelWrite(quicErrRPCStatus)
+				return UnwrapError(serErr)
 			}
-			return nil, UnwrapError(serErr)
 		}
-		return nil, fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+		stream.CancelWrite(quicErrRPCStatus)
+		return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
 	}
 
-	if resp.Data == nil {
-		return nil, nil
+	if out == nil || len(resp.Data) == 0 {
+		return nil
 	}
-	return resp.Data, nil
+	switch dst := out.(type) {
+	case *[]byte:
+		*dst = append((*dst)[:0], resp.Data...)
+		return nil
+	default:
+		return cborDecMode.Unmarshal(resp.Data, out)
+	}
 }
 
-func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, payload arpcdata.Encodable) ([]byte, error) {
+func (s *StreamPipe) CallWithTimeout(timeout time.Duration, method string, payload any, out any) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-
-	return s.CallMsg(ctx, method, payload)
+	return s.Call(ctx, method, payload, out)
 }
 
-func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdata.Encodable, dst []byte) (int, error) {
-	stream, err := s.openStream()
-	if err != nil {
-		return 0, fmt.Errorf("failed to open stream: %w", err)
+func (s *StreamPipe) CallData(ctx context.Context, method string, payload any) ([]byte, error) {
+	var out []byte
+	if err := s.Call(ctx, method, payload, &out); err != nil {
+		return nil, err
 	}
-	defer func() { _ = stream.Close() }()
+	return out, nil
+}
+
+func (s *StreamPipe) CallDataWithTimeout(timeout time.Duration, method string, payload any) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return s.CallData(ctx, method, payload)
+}
+
+func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any) (string, error) {
+	stream, err := s.openStream(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer stream.Close()
+	defer stream.CancelRead(0)
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
@@ -143,66 +209,67 @@ func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdat
 
 	var payloadBytes []byte
 	if payload != nil {
-		payloadBytes, err = payload.Encode()
-		if err != nil {
-			return 0, fmt.Errorf("failed to encode payload: %w", err)
+		switch p := payload.(type) {
+		case []byte:
+			payloadBytes = p
+		case Encodable:
+			payloadBytes, err = p.Encode()
+			if err != nil {
+				stream.CancelWrite(quicErrEncodePayload)
+				return "", fmt.Errorf("encode payload: %w", err)
+			}
+		default:
+			payloadBytes, err = cborEncMode.Marshal(p)
+			if err != nil {
+				stream.CancelWrite(quicErrMarshalPayload)
+				return "", fmt.Errorf("marshal payload: %w", err)
+			}
 		}
 	}
 
-	req := Request{
-		Method:  method,
-		Payload: payloadBytes,
-	}
-
+	req := Request{Method: method, Payload: payloadBytes}
 	reqBytes, err := req.Encode()
 	if err != nil {
-		return 0, fmt.Errorf("failed to encode request: %w", err)
+		stream.CancelWrite(quicErrEncodeRequest)
+		return "", fmt.Errorf("encode request: %w", err)
 	}
-
 	if _, err := stream.Write(reqBytes); err != nil {
-		return 0, fmt.Errorf("failed to write request: %w", err)
+		stream.CancelWrite(quicErrWriteRequest)
+		return "", fmt.Errorf("write request: %w", err)
 	}
 
-	headerPrefix := headerPool.Get().([]byte)
-	defer headerPool.Put(headerPrefix)
-
-	if _, err := io.ReadFull(stream, headerPrefix); err != nil {
-		_ = stream.Close()
-		return 0, fmt.Errorf("failed to read header length prefix: %w", err)
-	}
-	headerTotalLength := binary.LittleEndian.Uint32(headerPrefix)
-	if headerTotalLength < 4 {
-		_ = stream.Close()
-		return 0, fmt.Errorf("invalid header length %d", headerTotalLength)
-	}
-
-	headerBuf := make([]byte, headerTotalLength)
-	copy(headerBuf, headerPrefix)
-	if _, err := io.ReadFull(stream, headerBuf[4:]); err != nil {
-		_ = stream.Close()
-		return 0, fmt.Errorf("failed to read full header: %w", err)
-	}
-
+	dec := cbor.NewDecoder(stream)
 	var resp Response
-	if err := resp.Decode(headerBuf); err != nil {
-		_ = stream.Close()
-		return 0, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if resp.Status != 213 {
-		var serErr SerializableError
-		if err := serErr.Decode(resp.Data); err == nil {
-			_ = stream.Close()
-			return 0, UnwrapError(serErr)
+	if err := dec.Decode(&resp); err != nil {
+		stream.CancelWrite(quicErrDecodeResponse)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
 		}
-		_ = stream.Close()
-		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
+		return "", fmt.Errorf("decode response: %w", err)
 	}
 
-	n, err := binarystream.ReceiveDataInto(stream, dst)
-	if err != nil {
-		_ = stream.Close()
-		return n, err
+	if resp.Status == 213 {
+		stream.CancelWrite(quicErrRawNotSupported)
+		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", resp.Status)
 	}
-	return n, nil
+
+	if resp.Status != http.StatusOK {
+		if len(resp.Data) > 0 {
+			var serErr SerializableError
+			if err := serErr.Decode(resp.Data); err == nil {
+				stream.CancelWrite(quicErrRPCStatus)
+				return "", UnwrapError(serErr)
+			}
+		}
+		stream.CancelWrite(quicErrRPCStatus)
+		return "", fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+	}
+
+	return resp.Message, nil
+}
+
+func (s *StreamPipe) CallMessageWithTimeout(timeout time.Duration, method string, payload any) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return s.CallMessage(ctx, method, payload)
 }

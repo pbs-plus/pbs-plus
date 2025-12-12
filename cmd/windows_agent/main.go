@@ -10,17 +10,18 @@ import (
 	"log"
 	"math/rand/v2"
 	"net/http"
-	"net/url"
 	"os"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/jpillora/overseer"
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -38,16 +39,26 @@ type pbsService struct {
 }
 
 func (p *pbsService) Start(s service.Service) error {
-	if logger, err := s.Logger(nil); err == nil {
-		p.logger = logger
-		syslog.L.SetServiceLogger(logger)
+	go func() {
+		if updateDisabled := os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE"); updateDisabled == "true" {
+			p.runForeground(overseer.DisabledState)
+			return
+		}
+		overseer.Run(overseer.Config{
+			Program: p.runForeground,
+			Fetcher: &updater.UpdateFetcher{},
+		})
+	}()
+	return nil
+}
+
+func (p *pbsService) runForeground(_ overseer.State) {
+	err := syslog.L.SetServiceLogger()
+	if err != nil {
+		syslog.L.Error(err).Write()
 	}
 
 	syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
-
-	if err := p.writeVersionFile(); err != nil {
-		syslog.L.Warn().WithMessage("Failed to write version file").WithField("error", err.Error()).Write()
-	}
 
 	handle := windows.CurrentProcess()
 	const IDLE_PRIORITY_CLASS = 0x00000040
@@ -58,41 +69,6 @@ func (p *pbsService) Start(s service.Service) error {
 	}
 
 	p.ctx, p.cancel = context.WithCancel(context.Background())
-
-	go p.run()
-
-	return nil
-}
-
-func (p *pbsService) Stop(s service.Service) error {
-	syslog.L.Info().WithMessage("PBS Plus Agent service stopping").Write()
-
-	if p.cancel != nil {
-		p.cancel()
-	}
-
-	done := make(chan struct{})
-	go func() {
-		p.wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		syslog.L.Info().WithMessage("Service stopped gracefully").Write()
-	case <-time.After(30 * time.Second):
-		syslog.L.Warn().WithMessage("Service stop timeout reached").Write()
-	}
-
-	return nil
-}
-
-func (p *pbsService) run() {
-	defer func() {
-		if r := recover(); r != nil {
-			syslog.L.Error(fmt.Errorf("service panicked: %v", r)).WithMessage("Service encountered a panic").Write()
-		}
-	}()
 
 	agent.SetStatus("Starting")
 	syslog.L.Info().WithMessage("Waiting for PBS Plus Agent config").Write()
@@ -136,6 +112,29 @@ func (p *pbsService) run() {
 	<-p.ctx.Done()
 	agent.SetStatus("Stopping")
 	syslog.L.Info().WithMessage("Context cancelled, shutting down").Write()
+}
+
+func (p *pbsService) Stop(s service.Service) error {
+	syslog.L.Info().WithMessage("PBS Plus Agent service stopping").Write()
+
+	if p.cancel != nil {
+		p.cancel()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		syslog.L.Info().WithMessage("Service stopped gracefully").Write()
+	case <-time.After(30 * time.Second):
+		syslog.L.Warn().WithMessage("Service stop timeout reached").Write()
+	}
+
+	return nil
 }
 
 func (p *pbsService) waitForConfig() error {
@@ -210,8 +209,7 @@ func (p *pbsService) waitForBootstrap() error {
 
 func (p *pbsService) startBackgroundTasks() {
 	syslog.L.Info().WithMessage("Starting certificate renewal background task").Write()
-	p.wg.Add(1)
-	go func() {
+	p.wg.Go(func() {
 		defer p.wg.Done()
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
@@ -230,11 +228,10 @@ func (p *pbsService) startBackgroundTasks() {
 				}
 			}
 		}
-	}()
+	})
 
 	syslog.L.Info().WithMessage("Starting drive update background task").Write()
-	p.wg.Add(1)
-	go func() {
+	p.wg.Go(func() {
 		defer p.wg.Done()
 
 		syslog.L.Info().WithMessage("Running initial drive update").Write()
@@ -262,7 +259,7 @@ func (p *pbsService) startBackgroundTasks() {
 				ticker.Reset(utils.ComputeDelay())
 			}
 		}
-	}()
+	})
 }
 
 func (p *pbsService) updateDrives() error {
@@ -276,7 +273,7 @@ func (p *pbsService) updateDrives() error {
 		return err
 	}
 
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"hostname": hostname,
 		"drives":   drives,
 	}
@@ -286,7 +283,7 @@ func (p *pbsService) updateDrives() error {
 		return err
 	}
 
-	resp, err := agent.ProxmoxHTTPRequest(
+	resp, err := agent.AgentHTTPRequest(
 		http.MethodPost,
 		"/api2/json/d2d/target/agent",
 		bytes.NewBuffer(reqJSON),
@@ -310,12 +307,12 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("Server URL retrieved").WithField("serverUrl", serverUrl.Value).Write()
 
 	syslog.L.Info().WithMessage("Parsing server URL").Write()
-	uri, err := url.Parse(serverUrl.Value)
+	uri, err := utils.ParseURI(serverUrl.Value)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to parse server URL").Write()
 		return err
 	}
-	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Host).Write()
+	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Hostname()).Write()
 
 	syslog.L.Info().WithMessage("Getting TLS configuration").Write()
 	tlsConfig, err := agent.GetTLSConfig()
@@ -339,7 +336,7 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("ARPC headers prepared").WithField("version", Version).Write()
 
 	syslog.L.Info().WithMessage("Attempting ARPC connection to server").Write()
-	session, err := arpc.ConnectToServer(p.ctx, true, uri.Host, headers, tlsConfig)
+	session, err := arpc.ConnectToServer(p.ctx, fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort), headers, tlsConfig)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to connect to ARPC server").Write()
 		return err
@@ -397,7 +394,7 @@ func (p *pbsService) connectARPC() error {
 
 					backoff = next
 
-					if err = session.Reconnect(); err != nil {
+					if err = session.Reconnect(p.ctx); err != nil {
 						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
 					}
 				}
@@ -421,16 +418,6 @@ func (p *pbsService) handlePing(req arpc.Request) (arpc.Response, error) {
 	}
 
 	return arpc.Response{Status: 200, Data: respData}, nil
-}
-
-func (p *pbsService) writeVersionFile() error {
-	ex, err := os.Executable()
-	if err != nil {
-		return err
-	}
-
-	versionFile := filepath.Join(filepath.Dir(ex), "version.txt")
-	return os.WriteFile(versionFile, []byte(Version), 0644)
 }
 
 func main() {
