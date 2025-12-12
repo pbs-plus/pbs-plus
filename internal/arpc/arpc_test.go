@@ -24,50 +24,121 @@ import (
 	"github.com/quic-go/quic-go/quicvarint"
 )
 
-// --- Test helpers ---
+type testPKI struct {
+	caCert *x509.Certificate
+	caKey  *rsa.PrivateKey
+	caDER  []byte
+	caPool *x509.CertPool
+}
 
-func genSelfSignedCert(t *testing.T, cn string, isClient bool) tls.Certificate {
+func newTestCA(t *testing.T, cn string) *testPKI {
 	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		t.Fatalf("generate key: %v", err)
+		t.Fatalf("gen ca key: %v", err)
 	}
-	serialNumber, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
-	template := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName: cn,
-		},
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
+	ski := make([]byte, 20)
+	_, _ = rand.Read(ski)
+	caTpl := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: cn},
 		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		NotAfter:              time.Now().Add(48 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLenZero:        true,
+		SubjectKeyId:          ski,
+		SignatureAlgorithm:    x509.SHA256WithRSA,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTpl, caTpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create ca cert: %v", err)
+	}
+	caLeaf, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parse ca cert: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caLeaf)
+	return &testPKI{
+		caCert: caLeaf,
+		caKey:  caKey,
+		caDER:  caDER,
+		caPool: pool,
+	}
+}
+
+func (p *testPKI) issueCert(t *testing.T, cn string, isClient bool, ips []net.IP, dns []string) tls.Certificate {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
+	ski := make([]byte, 20)
+	_, _ = rand.Read(ski)
+	tpl := &x509.Certificate{
+		SerialNumber:       serial,
+		Subject:            pkix.Name{CommonName: cn},
+		NotBefore:          time.Now().Add(-time.Hour),
+		NotAfter:           time.Now().Add(24 * time.Hour),
+		KeyUsage:           x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		SignatureAlgorithm: x509.SHA256WithRSA,
+		SubjectKeyId:       ski,
 	}
 	if isClient {
-		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+		tpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	} else {
-		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
-		template.DNSNames = []string{cn}
+		tpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
 	}
-	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if len(ips) > 0 {
+		tpl.IPAddresses = append([]net.IP(nil), ips...)
+	}
+	if len(dns) > 0 {
+		tpl.DNSNames = append([]string(nil), dns...)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, p.caCert, &key.PublicKey, p.caKey)
 	if err != nil {
-		t.Fatalf("create cert: %v", err)
+		t.Fatalf("sign cert: %v", err)
 	}
-	cert := tls.Certificate{
-		Certificate: [][]byte{der},
-		PrivateKey:  priv,
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
 	}
-	return cert
+	return tls.Certificate{
+		Certificate: [][]byte{der, p.caDER},
+		PrivateKey:  key,
+		Leaf:        leaf,
+	}
+}
+
+var (
+	globalCAOnce sync.Once
+	serverCA     *testPKI
+	clientCA     *testPKI
+)
+
+func ensureGlobalCAs(t *testing.T) {
+	globalCAOnce.Do(func() {
+		serverCA = newTestCA(t, "test-server-ca")
+		clientCA = newTestCA(t, "test-client-ca")
+	})
 }
 
 func newTestQUICServer(t *testing.T, router Router) (addr string, cleanup func(), serverTLS *tls.Config) {
 	t.Helper()
 
-	serverCert := genSelfSignedCert(t, "localhost", false)
+	ensureGlobalCAs(t)
+	serverCert := serverCA.issueCert(t, "localhost", false, []net.IP{net.ParseIP("127.0.0.1")}, []string{"localhost"})
 
 	serverTLS = &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCA.caPool,
 		NextProtos:   []string{"h2", "http/1.1", "pbsarpc"},
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
@@ -98,11 +169,6 @@ func newTestQUICServer(t *testing.T, router Router) (addr string, cleanup func()
 				return
 			}
 			go func(c *quic.Conn) {
-				if len(c.ConnectionState().TLS.PeerCertificates) == 0 {
-					_ = c.CloseWithError(1, "client certificate required")
-					return
-				}
-
 				pipe, id, err := agentsManager.GetOrCreateStreamPipe(c)
 				if err != nil {
 					return
@@ -127,12 +193,15 @@ func newTestQUICServer(t *testing.T, router Router) (addr string, cleanup func()
 
 func newTestClientTLS(t *testing.T) *tls.Config {
 	t.Helper()
-	clientCert := genSelfSignedCert(t, "client", true)
+	ensureGlobalCAs(t)
+	clientCert := clientCA.issueCert(t, "client", true, nil, nil)
+
 	return &tls.Config{
-		Certificates:       []tls.Certificate{clientCert},
-		ServerName:         "localhost",
-		NextProtos:         []string{"h2", "http/1.1", "pbsarpc"},
-		InsecureSkipVerify: true,
+		Certificates: []tls.Certificate{clientCert},
+		RootCAs:      serverCA.caPool,
+		ServerName:   "localhost",
+		NextProtos:   []string{"h2", "http/1.1", "pbsarpc"},
+		MinVersion:   tls.VersionTLS13,
 	}
 }
 
@@ -154,8 +223,6 @@ func dialTestPipe(t *testing.T, addr string, clientTLS *tls.Config) *StreamPipe 
 	}
 	return pipe
 }
-
-// --- Tests ---
 
 func TestRouterServeStream_Echo(t *testing.T) {
 	router := NewRouter()
@@ -560,10 +627,8 @@ func TestStress_BatchedSequences(t *testing.T) {
 	}
 }
 
-// Simple contains helper to avoid pulling strings pkg repeatedly.
 func contains(s, sub string) bool { return len(s) >= len(sub) && (stringIndex(s, sub) >= 0) }
 
-// Minimal index to avoid extra imports; fine for tests.
 func stringIndex(s, sub string) int {
 outer:
 	for i := 0; i+len(sub) <= len(s); i++ {

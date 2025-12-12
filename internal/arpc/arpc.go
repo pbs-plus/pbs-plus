@@ -97,9 +97,6 @@ func dialServer(serverAddr string, tlsConfig *tls.Config) (*quic.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	arpcTls := tlsConfig.Clone()
-	arpcTls.NextProtos = []string{"pbsarpc"}
-
 	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, &quic.Config{
 		KeepAlivePeriod:        time.Second * 20,
 		MaxStreamReceiveWindow: quicvarint.Max,
@@ -185,6 +182,9 @@ func ListenAndServe(ctx context.Context, addr string, tlsConfig *tls.Config, rou
 		return nil, fmt.Errorf("listen udp failed: %w", err)
 	}
 	defer udpConn.Close()
+
+	arpcTls := tlsConfig.Clone()
+	arpcTls.NextProtos = []string{"pbsarpc"}
 
 	ql, err := quic.Listen(udpConn, tlsConfig, &quic.Config{
 		KeepAlivePeriod:    time.Second * 20,
