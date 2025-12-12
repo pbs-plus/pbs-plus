@@ -91,7 +91,7 @@ type MountRPCService struct {
 func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	syslog.L.Info().
 		WithMessage("Received backup request").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"target": args.TargetHostname,
 			"drive":  args.Drive,
@@ -187,7 +187,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 
 	syslog.L.Info().
 		WithMessage("Backup successful").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"mount":  mntPath,
 			"backup": backupMode,
@@ -199,7 +199,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
 	syslog.L.Info().
 		WithMessage("Received S3 backup request").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":    args.JobId,
 			"endpoint": args.Endpoint,
 			"bucket":   args.Bucket,
@@ -251,7 +251,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 
 	syslog.L.Info().
 		WithMessage("Backup successful").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":    args.JobId,
 			"mount":    mntPath,
 			"endpoint": args.Endpoint,
@@ -265,7 +265,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error {
 	syslog.L.Info().
 		WithMessage("Received cleanup request").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"target": args.TargetHostname,
 			"drive":  args.Drive,
@@ -319,7 +319,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 	syslog.L.Info().
 		WithMessage("Received status request").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"target": args.TargetHostname,
 		}).Write()

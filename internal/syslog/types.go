@@ -22,6 +22,6 @@ type LogEntry struct {
 	JobID     string                 `json:"job_id,omitempty"`
 	Err       error                  `json:"-"`
 	ErrString string                 `json:"error,omitempty"`
-	Fields    map[string]interface{} `json:"fields,omitempty"`
+	Fields    map[string]any `json:"fields,omitempty"`
 	logger    *Logger                `json:"-"`
 }
