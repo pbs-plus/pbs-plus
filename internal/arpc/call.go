@@ -151,6 +151,11 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		handedOff = true
 		st := stream
 		stream = nil
+		defer func() {
+			_ = st.Close()
+			st.CancelRead(0)
+			st.CancelWrite(0)
+		}()
 		return handler(st) // handler must Close() when done
 	}
 
