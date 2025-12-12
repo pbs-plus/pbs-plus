@@ -14,6 +14,7 @@ import (
 	"time"
 
 	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -72,10 +73,12 @@ func CheckTargetStatusBatch(
 				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 				defer cancel()
 
-				resp, err := arpcSess.CallMsgDecoded(
+				var resp arpc.Response
+				err := arpcSess.Call(
 					timeoutCtx,
 					"target_status",
 					&reqTypes.TargetStatusReq{Drive: drive},
+					&resp,
 				)
 				if err == nil && resp.Message == "reachable" {
 					result.ConnectionStatus = true
@@ -450,7 +453,13 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						target.ConnectionStatus = false
 
 						if strings.ToLower(r.FormValue("status")) == "true" {
-							resp, err := arpcSess.CallMsgDecoded(r.Context(), "target_status", &reqTypes.TargetStatusReq{Drive: targetSplit[1]})
+							var resp arpc.Response
+							err := arpcSess.Call(
+								r.Context(),
+								"target_status",
+								&reqTypes.TargetStatusReq{Drive: targetSplit[1]},
+								&resp,
+							)
 							if err == nil {
 								if resp.Message == "reachable" {
 									target.ConnectionStatus = true

@@ -186,7 +186,7 @@ func ListenAndServe(ctx context.Context, addr string, tlsConfig *tls.Config, rou
 	arpcTls := tlsConfig.Clone()
 	arpcTls.NextProtos = []string{"pbsarpc"}
 
-	ql, err := quic.Listen(udpConn, tlsConfig, &quic.Config{
+	ql, err := quic.Listen(udpConn, arpcTls, &quic.Config{
 		KeepAlivePeriod:    time.Second * 20,
 		MaxIncomingStreams: quicvarint.Max,
 	})
