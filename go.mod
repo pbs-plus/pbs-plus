@@ -25,7 +25,6 @@ require (
 	github.com/quic-go/quic-go v0.57.1
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.11.1
-	github.com/xtaci/smux v1.5.46
 	golang.org/x/crypto v0.44.0
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621
 	golang.org/x/sys v0.38.0
