@@ -127,6 +127,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 
 	conn, err := dialServer(serverAddr, arpcTls)
 	if err != nil {
+		syslog.L.Info().WithField("NextProtos", arpcTls.NextProtos).WithField("serverAddr", serverAddr).Write()
 		return nil, fmt.Errorf("server not reachable: %w", err)
 	}
 
