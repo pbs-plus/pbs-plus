@@ -97,11 +97,6 @@ func dialServer(serverAddr string, tlsConfig *tls.Config) (*quic.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if len(tlsConfig.NextProtos) == 0 {
-		tlsConfig = tlsConfig.Clone()
-		tlsConfig.NextProtos = []string{"arpc"}
-	}
-
 	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, &quic.Config{
 		KeepAlivePeriod:        time.Second * 20,
 		MaxStreamReceiveWindow: quicvarint.Max,
@@ -174,10 +169,6 @@ func (s *StreamPipe) openStream(_ context.Context) (*quic.Stream, error) {
 func ListenAndServe(ctx context.Context, addr string, tlsConfig *tls.Config, router Router) (*AgentsManager, error) {
 	if tlsConfig == nil {
 		return nil, fmt.Errorf("missing tls config")
-	}
-	if len(tlsConfig.NextProtos) == 0 {
-		tlsConfig = tlsConfig.Clone()
-		tlsConfig.NextProtos = []string{"arpc"}
 	}
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
