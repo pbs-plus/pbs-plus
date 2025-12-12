@@ -176,6 +176,6 @@ func (a *AgentMount) CloseMount() {
 	defer rpcClient.Close()
 
 	if err := rpcClient.Call("MountRPCService.Cleanup", args, &reply); err != nil {
-		syslog.L.Error(err).WithFields(map[string]interface{}{"hostname": a.Hostname, "drive": a.Drive}).Write()
+		syslog.L.Error(err).WithFields(map[string]any{"hostname": a.Hostname, "drive": a.Drive}).Write()
 	}
 }

@@ -1,9 +1,5 @@
 package types
 
-import (
-	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
-)
-
 // OpenFileReq represents a request to open a file
 type OpenFileReq struct {
 	Path string
@@ -12,41 +8,11 @@ type OpenFileReq struct {
 }
 
 func (req *OpenFileReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(req.Path) + 4 + 4)
-	if err := enc.WriteString(req.Path); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteUint32(uint32(req.Flag)); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteUint32(uint32(req.Perm)); err != nil {
-		return nil, err
-	}
-	return enc.Bytes(), nil
+	return cborEncMode.Marshal(req)
 }
 
 func (req *OpenFileReq) Decode(buf []byte) error {
-	dec, err := arpcdata.NewDecoder(buf)
-	if err != nil {
-		return err
-	}
-	path, err := dec.ReadString()
-	if err != nil {
-		return err
-	}
-	req.Path = path
-	flag, err := dec.ReadUint32()
-	if err != nil {
-		return err
-	}
-	req.Flag = int(flag)
-	perm, err := dec.ReadUint32()
-	if err != nil {
-		return err
-	}
-	req.Perm = int(perm)
-	arpcdata.ReleaseDecoder(dec)
-	return nil
+	return cborDecMode.Unmarshal(buf, req)
 }
 
 // StatReq represents a request to get file stats
@@ -56,32 +22,26 @@ type StatReq struct {
 }
 
 func (req *StatReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(req.Path) + 1)
-	if err := enc.WriteString(req.Path); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteBool(req.AclOnly); err != nil {
-		return nil, err
-	}
-	return enc.Bytes(), nil
+	return cborEncMode.Marshal(req)
 }
 
 func (req *StatReq) Decode(buf []byte) error {
-	dec, err := arpcdata.NewDecoder(buf)
-	if err != nil {
+	return cborDecMode.Unmarshal(buf, req)
+}
+
+// FileHandleId is a type alias for uint64
+type FileHandleId uint64
+
+func (id *FileHandleId) Encode() ([]byte, error) {
+	return cborEncMode.Marshal(uint64(*id))
+}
+
+func (id *FileHandleId) Decode(buf []byte) error {
+	var value uint64
+	if err := cborDecMode.Unmarshal(buf, &value); err != nil {
 		return err
 	}
-	path, err := dec.ReadString()
-	if err != nil {
-		return err
-	}
-	req.Path = path
-	aclOnly, err := dec.ReadBool()
-	if err != nil {
-		return err
-	}
-	req.AclOnly = aclOnly
-	arpcdata.ReleaseDecoder(dec)
+	*id = FileHandleId(value)
 	return nil
 }
 
@@ -91,25 +51,11 @@ type ReadDirReq struct {
 }
 
 func (req *ReadDirReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(8)
-	if err := enc.WriteUint64(uint64(req.HandleID)); err != nil {
-		return nil, err
-	}
-	return enc.Bytes(), nil
+	return cborEncMode.Marshal(req)
 }
 
 func (req *ReadDirReq) Decode(buf []byte) error {
-	dec, err := arpcdata.NewDecoder(buf)
-	if err != nil {
-		return err
-	}
-	handleId, err := dec.ReadUint64()
-	if err != nil {
-		return err
-	}
-	req.HandleID = FileHandleId(handleId)
-	arpcdata.ReleaseDecoder(dec)
-	return nil
+	return cborDecMode.Unmarshal(buf, req)
 }
 
 // ReadReq represents a request to read from a file
@@ -119,33 +65,11 @@ type ReadReq struct {
 }
 
 func (req *ReadReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(8 + 4)
-	if err := enc.WriteUint64(uint64(req.HandleID)); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteUint32(uint32(req.Length)); err != nil {
-		return nil, err
-	}
-	return enc.Bytes(), nil
+	return cborEncMode.Marshal(req)
 }
 
 func (req *ReadReq) Decode(buf []byte) error {
-	dec, err := arpcdata.NewDecoder(buf)
-	if err != nil {
-		return err
-	}
-	handleID, err := dec.ReadUint64()
-	if err != nil {
-		return err
-	}
-	req.HandleID = FileHandleId(handleID)
-	length, err := dec.ReadUint32()
-	if err != nil {
-		return err
-	}
-	req.Length = int(length)
-	arpcdata.ReleaseDecoder(dec)
-	return nil
+	return cborDecMode.Unmarshal(buf, req)
 }
 
 // ReadAtReq represents a request to read from a file at a specific offset
@@ -156,41 +80,11 @@ type ReadAtReq struct {
 }
 
 func (req *ReadAtReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(8 + 8 + 4)
-	if err := enc.WriteUint64(uint64(req.HandleID)); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteInt64(req.Offset); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteUint32(uint32(req.Length)); err != nil {
-		return nil, err
-	}
-	return enc.Bytes(), nil
+	return cborEncMode.Marshal(req)
 }
 
 func (req *ReadAtReq) Decode(buf []byte) error {
-	dec, err := arpcdata.NewDecoder(buf)
-	if err != nil {
-		return err
-	}
-	handleID, err := dec.ReadUint64()
-	if err != nil {
-		return err
-	}
-	req.HandleID = FileHandleId(handleID)
-	offset, err := dec.ReadInt64()
-	if err != nil {
-		return err
-	}
-	req.Offset = offset
-	length, err := dec.ReadUint32()
-	if err != nil {
-		return err
-	}
-	req.Length = int(length)
-	arpcdata.ReleaseDecoder(dec)
-	return nil
+	return cborDecMode.Unmarshal(buf, req)
 }
 
 // CloseReq represents a request to close a file
@@ -199,25 +93,11 @@ type CloseReq struct {
 }
 
 func (req *CloseReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(8)
-	if err := enc.WriteUint64(uint64(req.HandleID)); err != nil {
-		return nil, err
-	}
-	return enc.Bytes(), nil
+	return cborEncMode.Marshal(req)
 }
 
 func (req *CloseReq) Decode(buf []byte) error {
-	dec, err := arpcdata.NewDecoder(buf)
-	if err != nil {
-		return err
-	}
-	handleID, err := dec.ReadUint64()
-	if err != nil {
-		return err
-	}
-	req.HandleID = FileHandleId(handleID)
-	arpcdata.ReleaseDecoder(dec)
-	return nil
+	return cborDecMode.Unmarshal(buf, req)
 }
 
 // BackupReq represents a request to back up a file
@@ -230,57 +110,11 @@ type BackupReq struct {
 }
 
 func (req *BackupReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(req.JobId) + len(req.Drive) + len(req.SourceMode) + len(req.ReadMode) + len(req.Extras))
-	if err := enc.WriteString(req.JobId); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteString(req.Drive); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteString(req.SourceMode); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteString(req.ReadMode); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteString(req.Extras); err != nil {
-		return nil, err
-	}
-	return enc.Bytes(), nil
+	return cborEncMode.Marshal(req)
 }
 
 func (req *BackupReq) Decode(buf []byte) error {
-	dec, err := arpcdata.NewDecoder(buf)
-	if err != nil {
-		return err
-	}
-	jobId, err := dec.ReadString()
-	if err != nil {
-		return err
-	}
-	req.JobId = jobId
-	drive, err := dec.ReadString()
-	if err != nil {
-		return err
-	}
-	req.Drive = drive
-	sourceMode, err := dec.ReadString()
-	if err != nil {
-		return err
-	}
-	req.SourceMode = sourceMode
-	readMode, err := dec.ReadString()
-	if err != nil {
-		return err
-	}
-	req.ReadMode = readMode
-	extras, err := dec.ReadString()
-	if err != nil {
-		return err
-	}
-	req.Extras = extras
-	arpcdata.ReleaseDecoder(dec)
-	return nil
+	return cborDecMode.Unmarshal(buf, req)
 }
 
 // LseekReq represents a request to seek within a file
@@ -291,41 +125,11 @@ type LseekReq struct {
 }
 
 func (req *LseekReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(8 + 8 + 4)
-	if err := enc.WriteUint64(uint64(req.HandleID)); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteInt64(req.Offset); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteUint32(uint32(req.Whence)); err != nil {
-		return nil, err
-	}
-	return enc.Bytes(), nil
+	return cborEncMode.Marshal(req)
 }
 
 func (req *LseekReq) Decode(buf []byte) error {
-	dec, err := arpcdata.NewDecoder(buf)
-	if err != nil {
-		return err
-	}
-	handleID, err := dec.ReadUint64()
-	if err != nil {
-		return err
-	}
-	req.HandleID = FileHandleId(handleID)
-	offset, err := dec.ReadInt64()
-	if err != nil {
-		return err
-	}
-	req.Offset = offset
-	whence, err := dec.ReadUint32()
-	if err != nil {
-		return err
-	}
-	req.Whence = int(whence)
-	arpcdata.ReleaseDecoder(dec)
-	return nil
+	return cborDecMode.Unmarshal(buf, req)
 }
 
 type TargetStatusReq struct {
@@ -334,31 +138,9 @@ type TargetStatusReq struct {
 }
 
 func (req *TargetStatusReq) Encode() ([]byte, error) {
-	enc := arpcdata.NewEncoderWithSize(len(req.Drive) + len(req.Subpath))
-	if err := enc.WriteString(req.Drive); err != nil {
-		return nil, err
-	}
-	if err := enc.WriteString(req.Subpath); err != nil {
-		return nil, err
-	}
-	return enc.Bytes(), nil
+	return cborEncMode.Marshal(req)
 }
 
 func (req *TargetStatusReq) Decode(buf []byte) error {
-	dec, err := arpcdata.NewDecoder(buf)
-	if err != nil {
-		return err
-	}
-	drive, err := dec.ReadString()
-	if err != nil {
-		return err
-	}
-	req.Drive = drive
-	subpath, err := dec.ReadString()
-	if err != nil {
-		return err
-	}
-	req.Subpath = subpath
-	arpcdata.ReleaseDecoder(dec)
-	return nil
+	return cborDecMode.Unmarshal(buf, req)
 }

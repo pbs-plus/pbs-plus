@@ -16,63 +16,82 @@ import (
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pathjoin"
-	"github.com/xtaci/smux"
+	"github.com/quic-go/quic-go"
 	"golang.org/x/sys/windows"
 )
 
 func (s *AgentFSServer) abs(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
 	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
+		syslog.L.Debug().WithMessage("abs: returning snapshot path for root").Write()
 		return s.snapshot.Path, nil
 	}
 	path := pathjoin.Join(s.snapshot.Path, windowsDir)
+	syslog.L.Debug().WithMessage("abs: joined path").WithField("path", path).Write()
 	return path, nil
 }
 
 func (s *AgentFSServer) absUNC(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
 	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
-		return "\\\\?\\" + s.snapshot.Path, nil
+		unc := "\\\\?\\" + s.snapshot.Path
+		syslog.L.Debug().WithMessage("absUNC: returning UNC snapshot path for root").WithField("path", unc).Write()
+		return unc, nil
 	}
 	path := pathjoin.Join(s.snapshot.Path, windowsDir)
-	return "\\\\?\\" + path, nil
+	unc := "\\\\?\\" + path
+	syslog.L.Debug().WithMessage("absUNC: joined UNC path").WithField("path", unc).Write()
+	return unc, nil
 }
 
 func (s *AgentFSServer) closeFileHandles() {
+	syslog.L.Debug().WithMessage("closeFileHandles: closing all file handles").Write()
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
 		fh.Lock()
 		if fh.mapping != 0 {
 			windows.CloseHandle(fh.mapping)
+			syslog.L.Debug().WithMessage("closeFileHandles: closed mapping handle").WithField("handle_id", u).Write()
 			fh.mapping = 0
 		}
 		if fh.ov != nil {
 			_ = fh.ov.Close()
+			syslog.L.Debug().WithMessage("closeFileHandles: closed overlapped").WithField("handle_id", u).Write()
 			fh.ov = nil
 		}
 		windows.CloseHandle(fh.handle)
+		syslog.L.Debug().WithMessage("closeFileHandles: closed file handle").WithField("handle_id", u).Write()
 		fh.Unlock()
 		return true
 	})
 	s.handles.Clear()
+	syslog.L.Debug().WithMessage("closeFileHandles: all handles cleared").Write()
 }
 
 func (s *AgentFSServer) initializeStatFS() error {
 	var err error
 	if s.snapshot.SourcePath != "" {
 		driveLetter := s.snapshot.SourcePath[:1]
+		syslog.L.Debug().WithMessage("initializeStatFS: initializing").WithField("drive", driveLetter).Write()
 		s.statFs, err = getStatFS(driveLetter)
 		if err != nil {
+			syslog.L.Error(err).WithMessage("initializeStatFS: getStatFS failed").WithField("drive", driveLetter).Write()
 			return err
 		}
+		syslog.L.Debug().WithMessage("initializeStatFS: initialized successfully").WithField("drive", driveLetter).Write()
+	} else {
+		syslog.L.Warn().WithMessage("initializeStatFS: snapshot.SourcePath is empty").Write()
 	}
 	return nil
 }
 
 func (s *AgentFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
+	syslog.L.Debug().WithMessage("handleStatFS: encoding statFs").Write()
 	enc, err := s.statFs.Encode()
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleStatFS: encode failed").Write()
 		return arpc.Response{}, err
 	}
+	syslog.L.Debug().WithMessage("handleStatFS: success").Write()
 	return arpc.Response{
 		Status: 200,
 		Data:   enc,
@@ -80,15 +99,19 @@ func (s *AgentFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
+	syslog.L.Debug().WithMessage("handleOpenFile: decoding request").Write()
 	var payload types.OpenFileReq
 	if err := payload.Decode(req.Payload); err != nil {
+		syslog.L.Error(err).WithMessage("handleOpenFile: decode failed").Write()
 		return arpc.Response{}, err
 	}
 
 	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
+		syslog.L.Warn().WithMessage("handleOpenFile: write operation attempted and blocked").WithField("path", payload.Path).Write()
 		errStr := arpc.StringMsg("write operations not allowed")
 		errBytes, err := errStr.Encode()
 		if err != nil {
+			syslog.L.Error(err).WithMessage("handleOpenFile: encode error message failed").Write()
 			return arpc.Response{}, err
 		}
 		return arpc.Response{
@@ -99,6 +122,7 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 
 	path, err := s.absUNC(payload.Path)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleOpenFile: absUNC failed").WithField("path", payload.Path).Write()
 		return arpc.Response{}, err
 	}
 
@@ -115,6 +139,7 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 	)
 	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OVERLAPPED)
 
+	syslog.L.Debug().WithMessage("handleOpenFile: CreateFile").WithField("path", path).Write()
 	handle, err := windows.CreateFile(
 		&pathUTF16[0],
 		desiredAccess,
@@ -125,12 +150,14 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		0,
 	)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleOpenFile: CreateFile failed").WithField("path", path).Write()
 		return arpc.Response{}, err
 	}
 
 	var std fileStandardInfo
 	if err := getFileStandardInfoByHandle(handle, &std); err != nil {
 		windows.CloseHandle(handle)
+		syslog.L.Error(err).WithMessage("handleOpenFile: getFileStandardInfoByHandle failed").WithField("path", path).Write()
 		return arpc.Response{}, err
 	}
 
@@ -146,11 +173,13 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 		dirPath, err := s.abs(payload.Path)
 		if err != nil {
 			windows.CloseHandle(handle)
+			syslog.L.Error(err).WithMessage("handleOpenFile: abs failed for dir").WithField("path", payload.Path).Write()
 			return arpc.Response{}, err
 		}
 		reader, err := NewDirReaderNT(dirPath)
 		if err != nil {
 			windows.CloseHandle(handle)
+			syslog.L.Error(err).WithMessage("handleOpenFile: NewDirReaderNT failed").WithField("path", dirPath).Write()
 			return arpc.Response{}, err
 		}
 		fh.dirReader = reader
@@ -169,9 +198,11 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 			windows.CloseHandle(fh.mapping)
 		}
 		windows.CloseHandle(fh.handle)
+		syslog.L.Error(err).WithMessage("handleOpenFile: encode handle id failed").Write()
 		return arpc.Response{}, err
 	}
 
+	syslog.L.Debug().WithMessage("handleOpenFile: success").WithField("handle_id", handleId).WithField("is_dir", fh.isDir).WithField("size", fh.fileSize).Write()
 	return arpc.Response{
 		Status: 200,
 		Data:   dataBytes,
@@ -179,24 +210,32 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 }
 
 func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
+	syslog.L.Debug().WithMessage("handleAttr: decoding request").Write()
 	var payload types.StatReq
 	if err := payload.Decode(req.Payload); err != nil {
+		syslog.L.Error(err).WithMessage("handleAttr: decode failed").Write()
 		return arpc.Response{}, err
 	}
 
 	fullPath, err := s.absUNC(payload.Path)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleAttr: absUNC failed").WithField("path", payload.Path).Write()
 		return arpc.Response{}, err
 	}
 
 	h, err := openForAttrs(fullPath)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleAttr: openForAttrs failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
 	}
-	defer windows.CloseHandle(h)
+	defer func() {
+		windows.CloseHandle(h)
+		syslog.L.Debug().WithMessage("handleAttr: closed handle").WithField("path", fullPath).Write()
+	}()
 
 	var nfo fileNetworkOpenInformation
 	if err := ntQueryFileNetworkOpenInformation(h, &nfo); err != nil {
+		syslog.L.Error(err).WithMessage("handleAttr: ntQueryFileNetworkOpenInformation failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
 	}
 
@@ -235,27 +274,36 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	}
 	data, err := info.Encode()
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleAttr: encode failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
 	}
+	syslog.L.Debug().WithMessage("handleAttr: success").WithField("path", fullPath).WithField("is_dir", isDir).WithField("size", size).Write()
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
+	syslog.L.Debug().WithMessage("handleXattr: decoding request").Write()
 	var payload types.StatReq
 	if err := payload.Decode(req.Payload); err != nil {
+		syslog.L.Error(err).WithMessage("handleXattr: decode failed").Write()
 		return arpc.Response{}, err
 	}
 
 	fullPath, err := s.absUNC(payload.Path)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleXattr: absUNC failed").WithField("path", payload.Path).Write()
 		return arpc.Response{}, err
 	}
 
 	h, err := openForAttrs(fullPath)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleXattr: openForAttrs failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
 	}
-	defer windows.CloseHandle(h)
+	defer func() {
+		windows.CloseHandle(h)
+		syslog.L.Debug().WithMessage("handleXattr: closed handle").WithField("path", fullPath).Write()
+	}()
 
 	var creationTime int64
 	var lastAccessTime int64
@@ -265,6 +313,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	if !payload.AclOnly {
 		var nfo fileNetworkOpenInformation
 		if err := ntQueryFileNetworkOpenInformation(h, &nfo); err != nil {
+			syslog.L.Error(err).WithMessage("handleXattr: ntQueryFileNetworkOpenInformation failed").WithField("path", fullPath).Write()
 			return arpc.Response{}, err
 		}
 
@@ -282,10 +331,11 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		})
 
 		fileAttributes = parseFileAttributes(nfo.FileAttributes)
-
+		syslog.L.Debug().WithMessage("handleXattr: file attributes and times acquired").WithField("path", fullPath).Write()
 	}
 	owner, group, acls, err := GetWinACLsHandle(h)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleXattr: GetWinACLsHandle failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
 	}
 
@@ -300,19 +350,24 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	}
 	data, err := info.Encode()
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleXattr: encode failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
 	}
+	syslog.L.Debug().WithMessage("handleXattr: success").WithField("path", fullPath).Write()
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
+	syslog.L.Debug().WithMessage("handleReadDir: decoding request").Write()
 	var payload types.ReadDirReq
 	if err := payload.Decode(req.Payload); err != nil {
+		syslog.L.Error(err).WithMessage("handleReadDir: decode failed").Write()
 		return arpc.Response{}, err
 	}
 
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
+		syslog.L.Warn().WithMessage("handleReadDir: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
 
@@ -322,15 +377,18 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	encodedBatch, err := fh.dirReader.NextBatch(s.statFs.Bsize)
 	if err != nil {
 		if !errors.Is(err, os.ErrProcessDone) {
-			syslog.L.Error(err).WithMessage("error reading batch").Write()
+			syslog.L.Error(err).WithMessage("handleReadDir: error reading batch").WithField("handle_id", payload.HandleID).Write()
+		} else {
+			syslog.L.Debug().WithMessage("handleReadDir: directory read complete").WithField("handle_id", payload.HandleID).Write()
 		}
 		return arpc.Response{}, err
 	}
 
+	syslog.L.Debug().WithMessage("handleReadDir: sending batch").WithField("handle_id", payload.HandleID).WithField("bytes", len(encodedBatch)).Write()
 	byteReader := bytes.NewReader(encodedBatch)
-	streamCallback := func(stream *smux.Stream) {
+	streamCallback := func(stream *quic.Stream) {
 		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
-			syslog.L.Error(err).WithMessage("failed sending data from reader via binary stream").Write()
+			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader via binary stream").WithField("handle_id", payload.HandleID).Write()
 		}
 	}
 
@@ -341,20 +399,25 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
+	syslog.L.Debug().WithMessage("handleReadAt: decoding request").Write()
 	var payload types.ReadAtReq
 	if err := payload.Decode(req.Payload); err != nil {
+		syslog.L.Error(err).WithMessage("handleReadAt: decode failed").Write()
 		return arpc.Response{}, err
 	}
 
 	if payload.Length < 0 {
+		syslog.L.Warn().WithMessage("handleReadAt: negative length requested").WithField("length", payload.Length).Write()
 		return arpc.Response{}, fmt.Errorf("invalid negative length requested: %d", payload.Length)
 	}
 
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
+		syslog.L.Warn().WithMessage("handleReadAt: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
 	if fh.isDir {
+		syslog.L.Warn().WithMessage("handleReadAt: attempted read on directory handle").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
 
@@ -362,13 +425,14 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	defer fh.Unlock()
 
 	if payload.Offset >= fh.fileSize {
+		syslog.L.Debug().WithMessage("handleReadAt: offset beyond EOF, sending empty").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("size", fh.fileSize).Write()
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
-			RawStream: func(stream *smux.Stream) {
+			RawStream: func(stream *quic.Stream) {
 				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
 					syslog.L.Error(err).
-						WithMessage("failed sending empty reader via binary stream").Write()
+						WithMessage("handleReadAt: failed sending empty reader via binary stream").WithField("handle_id", payload.HandleID).Write()
 				}
 			},
 		}, nil
@@ -380,13 +444,14 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 		reqEnd = maxEnd
 	}
 	if reqEnd <= payload.Offset {
+		syslog.L.Debug().WithMessage("handleReadAt: empty range after clamp").WithField("handle_id", payload.HandleID).Write()
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
-			RawStream: func(stream *smux.Stream) {
+			RawStream: func(stream *quic.Stream) {
 				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
 					syslog.L.Error(err).
-						WithMessage("failed sending empty reader via binary stream").Write()
+						WithMessage("handleReadAt: failed sending empty reader via binary stream").WithField("handle_id", payload.HandleID).Write()
 				}
 			},
 		}, nil
@@ -398,10 +463,17 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 
 	ranges, err := queryAllocatedRanges(fh.handle, payload.Offset, int64(reqLen))
 	if err != nil || len(ranges) == 0 {
+		if err != nil {
+			syslog.L.Warn().WithMessage("handleReadAt: queryAllocatedRanges failed, falling back").WithField("handle_id", payload.HandleID).WithField("error", err.Error()).Write()
+		} else {
+			syslog.L.Debug().WithMessage("handleReadAt: no allocated ranges returned, treating as fully allocated").WithField("handle_id", payload.HandleID).Write()
+		}
 		ranges = []allocatedRange{{FileOffset: payload.Offset, Length: int64(reqLen)}}
+	} else {
+		syslog.L.Debug().WithMessage("handleReadAt: using allocated ranges").WithField("handle_id", payload.HandleID).WithField("range_count", len(ranges)).Write()
 	}
 
-	streamFn := func(stream *smux.Stream) {
+	streamFn := func(stream *quic.Stream) {
 		write := func(p []byte) error {
 			return binarystream.SendDataFromReader(bytes.NewReader(p), len(p), stream)
 		}
@@ -433,7 +505,7 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 						ch = gap
 					}
 					if err := write(zeroBuf[:ch]); err != nil {
-						syslog.L.Error(err).WithMessage("stream write gap").Write()
+						syslog.L.Error(err).WithMessage("handleReadAt: stream write gap failed").WithField("handle_id", payload.HandleID).Write()
 						return
 					}
 					gap -= ch
@@ -451,17 +523,18 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 				n, rerr := fh.ov.ReadAt(buf, cur)
 				if rerr != nil && rerr != io.EOF {
 					syslog.L.Error(rerr).
-						WithMessage("overlapped read error").Write()
+						WithMessage("handleReadAt: overlapped read error").WithField("handle_id", payload.HandleID).WithField("offset", cur).WithField("size", ch).Write()
 					return
 				}
 				if n > 0 {
 					if err := write(buf[:n]); err != nil {
-						syslog.L.Error(err).WithMessage("stream write data").Write()
+						syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed").WithField("handle_id", payload.HandleID).Write()
 						return
 					}
 					cur += int64(n)
 				}
 				if rerr == io.EOF && n == 0 {
+					syslog.L.Debug().WithMessage("handleReadAt: EOF reached").WithField("handle_id", payload.HandleID).Write()
 					return
 				}
 			}
@@ -476,14 +549,16 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 					ch = gap
 				}
 				if err := write(zeroBuf[:ch]); err != nil {
-					syslog.L.Error(err).WithMessage("stream write tail gap").Write()
+					syslog.L.Error(err).WithMessage("handleReadAt: stream write tail gap failed").WithField("handle_id", payload.HandleID).Write()
 					return
 				}
 				gap -= ch
 			}
 		}
+		syslog.L.Debug().WithMessage("handleReadAt: stream completed").WithField("handle_id", payload.HandleID).WithField("bytes", reqLen).Write()
 	}
 
+	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", payload.Length).Write()
 	return arpc.Response{
 		Status:    213,
 		RawStream: streamFn,
@@ -491,8 +566,10 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 }
 
 func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
+	syslog.L.Debug().WithMessage("handleLseek: decoding request").Write()
 	var payload types.LseekReq
 	if err := payload.Decode(req.Payload); err != nil {
+		syslog.L.Error(err).WithMessage("handleLseek: decode failed").Write()
 		return arpc.Response{}, err
 	}
 
@@ -501,14 +578,17 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 		payload.Whence != io.SeekEnd &&
 		payload.Whence != SeekData &&
 		payload.Whence != SeekHole {
+		syslog.L.Warn().WithMessage("handleLseek: invalid whence").WithField("whence", payload.Whence).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
 
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
+		syslog.L.Warn().WithMessage("handleLseek: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
 	if fh.isDir {
+		syslog.L.Warn().WithMessage("handleLseek: attempted lseek on directory").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
 
@@ -517,6 +597,7 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 
 	var std fileStandardInfo
 	if err := getFileStandardInfoByHandle(fh.handle, &std); err != nil {
+		syslog.L.Error(err).WithMessage("handleLseek: getFileStandardInfoByHandle failed").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, err
 	}
 	fileSize := std.EndOfFile
@@ -527,18 +608,21 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	switch payload.Whence {
 	case io.SeekStart:
 		if payload.Offset < 0 {
+			syslog.L.Warn().WithMessage("handleLseek: negative offset with SeekStart").WithField("offset", payload.Offset).Write()
 			return arpc.Response{}, os.ErrInvalid
 		}
 		newOffset = payload.Offset
 
 	case io.SeekCurrent:
 		if cur+payload.Offset < 0 {
+			syslog.L.Warn().WithMessage("handleLseek: negative resulting offset with SeekCurrent").WithField("current", cur).WithField("delta", payload.Offset).Write()
 			return arpc.Response{}, os.ErrInvalid
 		}
 		newOffset = cur + payload.Offset
 
 	case io.SeekEnd:
 		if fileSize+payload.Offset < 0 {
+			syslog.L.Warn().WithMessage("handleLseek: negative resulting offset with SeekEnd").WithField("file_size", fileSize).WithField("delta", payload.Offset).Write()
 			return arpc.Response{}, os.ErrInvalid
 		}
 		newOffset = fileSize + payload.Offset
@@ -551,15 +635,18 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 			fileSize,
 		)
 		if err != nil {
+			syslog.L.Error(err).WithMessage("handleLseek: sparseSeekAllocatedRanges failed").WithField("handle_id", payload.HandleID).Write()
 			return arpc.Response{}, err
 		}
 		newOffset = no
 
 	default:
+		syslog.L.Warn().WithMessage("handleLseek: invalid whence in default").Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
 
 	if newOffset > fileSize {
+		syslog.L.Warn().WithMessage("handleLseek: newOffset beyond EOF").WithField("new_offset", newOffset).WithField("file_size", fileSize).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
 
@@ -568,19 +655,24 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	resp := types.LseekResp{NewOffset: newOffset}
 	respBytes, err := resp.Encode()
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleLseek: encode failed").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, err
 	}
+	syslog.L.Debug().WithMessage("handleLseek: success").WithField("handle_id", payload.HandleID).WithField("new_offset", newOffset).Write()
 	return arpc.Response{Status: 200, Data: respBytes}, nil
 }
 
 func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
+	syslog.L.Debug().WithMessage("handleClose: decoding request").Write()
 	var payload types.CloseReq
 	if err := payload.Decode(req.Payload); err != nil {
+		syslog.L.Error(err).WithMessage("handleClose: decode failed").Write()
 		return arpc.Response{}, err
 	}
 
 	handle, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
+		syslog.L.Warn().WithMessage("handleClose: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
 
@@ -590,20 +682,25 @@ func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	if handle.mapping != 0 {
 		windows.CloseHandle(handle.mapping)
 		handle.mapping = 0
+		syslog.L.Debug().WithMessage("handleClose: mapping closed").WithField("handle_id", payload.HandleID).Write()
 	}
 	if !handle.isDir {
 		if handle.ov != nil {
 			_ = handle.ov.Close()
 			handle.ov = nil
+			syslog.L.Debug().WithMessage("handleClose: overlapped closed").WithField("handle_id", payload.HandleID).Write()
 		}
 		windows.CloseHandle(handle.handle)
+		syslog.L.Debug().WithMessage("handleClose: file handle closed").WithField("handle_id", payload.HandleID).Write()
 	} else {
 		handle.dirReader.Close()
 		if handle.ov != nil {
 			_ = handle.ov.Close()
 			handle.ov = nil
+			syslog.L.Debug().WithMessage("handleClose: dir overlapped closed").WithField("handle_id", payload.HandleID).Write()
 		}
 		windows.CloseHandle(handle.handle)
+		syslog.L.Debug().WithMessage("handleClose: dir handle closed").WithField("handle_id", payload.HandleID).Write()
 	}
 
 	s.handles.Del(uint64(payload.HandleID))
@@ -611,8 +708,10 @@ func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
 	closed := arpc.StringMsg("closed")
 	data, err := closed.Encode()
 	if err != nil {
+		syslog.L.Error(err).WithMessage("handleClose: encode close message failed").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, err
 	}
 
+	syslog.L.Debug().WithMessage("handleClose: success").WithField("handle_id", payload.HandleID).Write()
 	return arpc.Response{Status: 200, Data: data}, nil
 }

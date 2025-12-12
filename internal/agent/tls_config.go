@@ -152,7 +152,7 @@ func renewCertificate() error {
 
 	renewResp := &BootstrapResponse{}
 
-	_, err = ProxmoxHTTPRequest(http.MethodPost, "/plus/agent/renew", bytes.NewBuffer(reqBody), renewResp)
+	_, err = AgentHTTPRequest(http.MethodPost, "/plus/agent/renew", bytes.NewBuffer(reqBody), renewResp)
 	if err != nil {
 		return fmt.Errorf("renewCertificate: failed to fetch renewed certificate: %w", err)
 	}

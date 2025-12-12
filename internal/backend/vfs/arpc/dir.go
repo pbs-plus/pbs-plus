@@ -15,11 +15,14 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/quic-go/quic-go"
 )
 
 var bufPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return make([]byte, 4*1024*1024)
 	},
 }
@@ -60,8 +63,18 @@ func (s *DirStream) HasNext() bool {
 
 	readBuf := bufPool.Get().([]byte)
 	defer bufPool.Put(readBuf)
+	bytesRead := 0
 
-	bytesRead, err := s.fs.session.CallBinary(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
+	err := s.fs.session.Call(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(s *quic.Stream) error {
+		n, err := binarystream.ReceiveDataInto(s, readBuf)
+		if err != nil {
+			return err
+		}
+		bytesRead = n
+
+		return nil
+	}))
+
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			atomic.StoreInt32(&s.closed, 1)
@@ -175,7 +188,7 @@ func (s *DirStream) Close() {
 	}
 
 	closeReq := types.CloseReq{HandleID: s.handleId}
-	_, err := s.fs.session.CallMsgWithTimeout(1*time.Minute, s.fs.Job.ID+"/Close", &closeReq)
+	_, err := s.fs.session.CallDataWithTimeout(1*time.Minute, s.fs.Job.ID+"/Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithField("path", s.path).

@@ -59,7 +59,7 @@ func CheckTargetStatusBatch(
 			hostname := targetSplit[0]
 			drive := targetSplit[1]
 
-			arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(hostname)
+			arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(hostname)
 			if !ok {
 				results[idx] = result
 				return
@@ -72,14 +72,17 @@ func CheckTargetStatusBatch(
 				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 				defer cancel()
 
-				resp, err := arpcSess.CallContext(
+				respMsg, err := arpcSess.CallMessage(
 					timeoutCtx,
 					"target_status",
 					&reqTypes.TargetStatusReq{Drive: drive},
 				)
-
-				if err == nil && resp.Message == "reachable" {
+				if err == nil && strings.HasPrefix(respMsg, "reachable") {
 					result.ConnectionStatus = true
+					splittedMsg := strings.Split(respMsg, "|")
+					if len(splittedMsg) > 1 {
+						result.AgentVersion = splittedMsg[1]
+					}
 				} else if err != nil {
 					result.Error = err
 				}
@@ -445,16 +448,22 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if target.IsAgent {
 				targetSplit := strings.Split(target.Name, " - ")
 				if len(targetSplit) > 0 {
-					arpcSess, ok := storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
+					arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(targetSplit[0])
 					if ok {
 						target.AgentVersion = arpcSess.GetVersion()
 						target.ConnectionStatus = false
 
 						if strings.ToLower(r.FormValue("status")) == "true" {
-							resp, err := arpcSess.CallContext(r.Context(), "target_status", &reqTypes.TargetStatusReq{Drive: targetSplit[1]})
-							if err == nil {
-								if resp.Message == "reachable" {
-									target.ConnectionStatus = true
+							respMsg, err := arpcSess.CallMessage(
+								r.Context(),
+								"target_status",
+								&reqTypes.TargetStatusReq{Drive: targetSplit[1]},
+							)
+							if err == nil && strings.HasPrefix(respMsg, "reachable") {
+								target.ConnectionStatus = true
+								splittedMsg := strings.Split(respMsg, "|")
+								if len(splittedMsg) > 1 {
+									target.AgentVersion = splittedMsg[1]
 								}
 							}
 						}

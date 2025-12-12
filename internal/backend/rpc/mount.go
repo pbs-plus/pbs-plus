@@ -22,6 +22,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 type BackupArgs struct {
@@ -82,14 +83,15 @@ type WarnCountReply struct {
 }
 
 type MountRPCService struct {
-	ctx   context.Context
-	Store *store.Store
+	ctx           context.Context
+	Store         *store.Store
+	jobCtxCancels *safemap.Map[string, context.CancelFunc]
 }
 
 func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	syslog.L.Info().
 		WithMessage("Received backup request").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"target": args.TargetHostname,
 			"drive":  args.Drive,
@@ -108,7 +110,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	defer cancel()
 
 	// Retrieve the ARPC session for the target.
-	arpcSess, exists := s.Store.ARPCSessionManager.GetSession(args.TargetHostname)
+	arpcSess, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
 	if !exists {
 		reply.Status = 500
 		reply.Message = "unable to reach target"
@@ -124,18 +126,16 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	}
 
 	// Call the target's backup method via ARPC.
-	backupResp, err := arpcSess.CallContext(ctx, "backup", &backupReq)
-	if err != nil || backupResp.Status != 200 {
-		if err != nil {
-			syslog.L.Error(err).WithMessage(backupResp.Message).Write()
-		}
-		reply.Status = backupResp.Status
-		reply.Message = backupResp.Message
+	respMsg, err := arpcSess.CallMessage(ctx, "backup", &backupReq)
+	if err != nil {
+		syslog.L.Error(err).Write()
+		reply.Status = 500
+		reply.Message = err.Error()
 		return errors.New(reply.Message)
 	}
 
 	// Parse the backup response message (format: "backupMode|namespace").
-	backupRespSplit := strings.Split(backupResp.Message, "|")
+	backupRespSplit := strings.Split(respMsg, "|")
 	backupMode := backupRespSplit[0]
 
 	// If a namespace is provided in the backup response, update the job.
@@ -149,13 +149,17 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	// Retrieve or initialize an ARPCFS instance.
 	// The child session key is "targetHostname|jobId".
 	childKey := args.TargetHostname + "|" + args.JobId
-	arpcFSRPC, exists := s.Store.ARPCSessionManager.GetSession(childKey)
+	arpcFSRPC, exists := s.Store.ARPCAgentsManager.GetStreamPipe(childKey)
 	if !exists {
 		reply.Status = 500
 		reply.Message = "unable to reach child target"
 		return errors.New(reply.Message)
 	}
-	arpcFS := arpcfs.NewARPCFS(s.ctx, arpcFSRPC, args.TargetHostname, job, backupMode)
+
+	jobCtx, jobCancel := context.WithCancel(s.ctx)
+	s.jobCtxCancels.Set(args.JobId, jobCancel)
+
+	arpcFS := arpcfs.NewARPCFS(jobCtx, arpcFSRPC, args.TargetHostname, job, backupMode)
 	if arpcFS == nil {
 		reply.Status = 500
 		reply.Message = "failed to send create ARPCFS"
@@ -181,7 +185,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 
 	syslog.L.Info().
 		WithMessage("Backup successful").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"mount":  mntPath,
 			"backup": backupMode,
@@ -193,7 +197,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
 	syslog.L.Info().
 		WithMessage("Received S3 backup request").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":    args.JobId,
 			"endpoint": args.Endpoint,
 			"bucket":   args.Bucket,
@@ -216,7 +220,11 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 	}
 
 	childKey := args.Endpoint + "|" + args.JobId
-	s3FS := s3fs.NewS3FS(s.ctx, job, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
+
+	jobCtx, jobCancel := context.WithCancel(s.ctx)
+	s.jobCtxCancels.Set(args.JobId, jobCancel)
+
+	s3FS := s3fs.NewS3FS(jobCtx, job, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
 	if s3FS == nil {
 		reply.Status = 500
 		reply.Message = "failed to send create S3FS"
@@ -241,7 +249,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 
 	syslog.L.Info().
 		WithMessage("Backup successful").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":    args.JobId,
 			"mount":    mntPath,
 			"endpoint": args.Endpoint,
@@ -255,7 +263,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error {
 	syslog.L.Info().
 		WithMessage("Received cleanup request").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"target": args.TargetHostname,
 			"drive":  args.Drive,
@@ -266,7 +274,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	defer cancel()
 
 	// Try to acquire an ARPC session for the target.
-	arpcSess, exists := s.Store.ARPCSessionManager.GetSession(args.TargetHostname)
+	arpcSess, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
 	if !exists {
 		reply.Status = 500
 		reply.Message = "failed to send closure request to target"
@@ -279,18 +287,21 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 		JobId: args.JobId,
 	}
 
-	// Instruct the target to perform its cleanup.
-	cleanupResp, err := arpcSess.CallContext(ctx, "cleanup", &cleanupReq)
-	if err != nil || cleanupResp.Status != 200 {
-		if err != nil {
-			err = errors.New(cleanupResp.Message)
-		}
-		reply.Status = cleanupResp.Status
-		reply.Message = cleanupResp.Message
-		return fmt.Errorf("cleanup: %w", err)
+	ctxCancel, ok := s.jobCtxCancels.GetAndDel(args.JobId)
+	if ok {
+		ctxCancel()
 	}
 
-	reply.Status = cleanupResp.Status
+	// Instruct the target to perform its cleanup.
+	_, err := arpcSess.CallMessage(ctx, "cleanup", &cleanupReq)
+	if err != nil {
+		syslog.L.Error(err).Write()
+		reply.Status = 500
+		reply.Message = err.Error()
+		return errors.New(reply.Message)
+	}
+
+	reply.Status = 200
 	reply.Message = "Cleanup successful"
 
 	syslog.L.Info().
@@ -304,20 +315,20 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 	syslog.L.Info().
 		WithMessage("Received status request").
-		WithFields(map[string]interface{}{
+		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"target": args.TargetHostname,
 		}).Write()
 
 	// Retrieve the ARPC session for the target.
-	_, exists := s.Store.ARPCSessionManager.GetSession(args.TargetHostname)
+	_, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
 	if !exists {
 		reply.Connected = false
 		return nil
 	}
 
 	childKey := args.TargetHostname + "|" + args.JobId
-	_, exists = s.Store.ARPCSessionManager.GetSession(childKey)
+	_, exists = s.Store.ARPCAgentsManager.GetStreamPipe(childKey)
 	if !exists {
 		reply.Connected = false
 		return nil
@@ -336,8 +347,9 @@ func StartRPCServer(watcher chan struct{}, ctx context.Context, socketPath strin
 	}
 
 	service := &MountRPCService{
-		ctx:   ctx,
-		Store: storeInstance,
+		ctx:           ctx,
+		Store:         storeInstance,
+		jobCtxCancels: safemap.New[string, context.CancelFunc](),
 	}
 
 	// Register the RPC service.

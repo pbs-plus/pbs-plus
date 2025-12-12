@@ -6,22 +6,35 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"syscall"
 
-	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
+	"golang.org/x/sys/windows/svc/eventlog"
 )
 
 // SetServiceLogger configures the service logger for Windows Event Log integration.
-func (l *Logger) SetServiceLogger(s service.Logger) error {
+func (l *Logger) SetServiceLogger() error {
+	sourceName := "PBSPlusAgentLogs"
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	if err := eventlog.InstallAsEventCreate(sourceName,
+		eventlog.Info|eventlog.Warning|eventlog.Error); err != nil {
+		if errno, ok := err.(syscall.Errno); !ok || errno != syscall.ERROR_ALREADY_EXISTS {
+			return fmt.Errorf("failed to install event log source: %w", err)
+		}
+	}
+
+	evl, err := eventlog.Open(sourceName)
+	if err != nil {
+		return fmt.Errorf("failed to open event log: %w", err)
+	}
+
 	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-		w.Out = &LogWriter{logger: s}
+		w.Out = &LogWriter{logger: evl}
 		w.NoColor = true
-		w.FormatCaller = func(i interface{}) string {
+		w.FormatCaller = func(i any) string {
 			var c string
 			if cc, ok := i.(string); ok {
 				c = cc
@@ -59,8 +72,6 @@ func (e *LogEntry) Write() {
 		return
 	}
 
-	e.enqueueLog()
-
 	if e.JobID != "" {
 		e.Fields["jobId"] = e.JobID
 	}
@@ -73,21 +84,13 @@ func (e *LogEntry) Write() {
 	switch e.Level {
 	case "info":
 		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
+	case "debug":
+		e.logger.zlog.Debug().Fields(e.Fields).Msg(e.Message)
 	case "warn":
 		e.logger.zlog.Warn().Fields(e.Fields).Msg(e.Message)
 	case "error":
 		e.logger.zlog.Error().Err(e.Err).Fields(e.Fields).Msg(e.Message)
 	default:
 		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
-	}
-}
-
-// enqueueLog adds a log message to the logQueue for processing.
-func (e *LogEntry) enqueueLog() {
-	select {
-	case logQueue <- *e:
-		// Log enqueued successfully.
-	default:
-		log.Warn().Msg("Log queue is full, dropping log message")
 	}
 }
