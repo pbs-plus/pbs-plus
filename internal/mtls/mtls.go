@@ -181,7 +181,7 @@ func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, cl
 			return &tls.Config{
 				MinVersion:               tls.VersionTLS13,
 				Certificates:             []tls.Certificate{*currentCerts},
-				NextProtos:               []string{"h2", "pbsarpc"},
+				NextProtos:               []string{"pbsarpc"},
 				ClientCAs:                currentCAs,
 				ClientAuth:               clientAuth,
 				PreferServerCipherSuites: true,
@@ -213,7 +213,7 @@ func BuildClientTLS(clientCertPEM, clientKeyPEM, caPEM []byte, legacyCaPEM []byt
 	return &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"h2", "pbsarpc"},
+		NextProtos:   []string{"pbsarpc"},
 		RootCAs:      rootCAs,
 		CipherSuites: []uint16{
 			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
