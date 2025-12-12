@@ -156,7 +156,7 @@ func connectARPC(ctx context.Context) error {
 		syslog.L.Error(err).WithMessage("Failed to parse server URL").Write()
 		return fmt.Errorf("invalid server URL: %v", err)
 	}
-	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Host).Write()
+	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Hostname()).Write()
 
 	syslog.L.Info().WithMessage("Getting TLS configuration").Write()
 	tlsConfig, err := agent.GetTLSConfig()
