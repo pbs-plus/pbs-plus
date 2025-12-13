@@ -269,6 +269,9 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 			"drive":  args.Drive,
 		}).Write()
 
+	childKey := args.TargetHostname + "|" + args.JobId
+	store.DisconnectSession(childKey)
+
 	// Create a 30-second timeout context.
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 	defer cancel()
