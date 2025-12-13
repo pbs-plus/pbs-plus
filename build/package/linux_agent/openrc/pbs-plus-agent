@@ -12,6 +12,8 @@ directory="/var/lib/pbs-plus-agent"
 output_log="/var/log/pbs-plus-agent/agent.log"
 error_log="/var/log/pbs-plus-agent/agent.error.log"
 
+agent_env="/etc/pbs-plus-agent/agent.env"
+
 depend() {
     need net
     after firewall
@@ -22,6 +24,30 @@ start_pre() {
     checkpath --directory --owner pbsplus:pbsplus --mode 0750 /var/log/pbs-plus-agent
     checkpath --directory --owner pbsplus:pbsplus --mode 0750 /var/lib/pbs-plus-agent
     checkpath --directory --owner pbsplus:pbsplus --mode 0750 /etc/pbs-plus-agent
+
+    if [ -r "$agent_env" ]; then
+        # shellcheck disable=SC1090
+        . "$agent_env"
+
+        while IFS= read -r line; do
+            case "$line" in
+                ''|\#*) continue ;;                  # skip empty and comments
+                *'='*)
+                    var="${line%%=*}"
+                    # Validate variable name
+                    case "$var" in
+                        [A-Za-z_][A-Za-z0-9_]*)
+                            export "$var"
+                            ;;
+                        *) ;; # ignore invalid names
+                    esac
+                    ;;
+            esac
+        done < "$agent_env"
+    else
+        eerror "Environment file $agent_env not found or not readable"
+        return 1
+    fi
 }
 
 reload() {

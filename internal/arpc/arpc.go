@@ -257,11 +257,11 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener,
 }
 
 func ListenAndServe(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router) error {
-	quicConfig := &quic.Config{
-		KeepAlivePeriod:    time.Second * 10,
-		MaxIdleTimeout:     time.Second * 15,
-		MaxIncomingStreams: quicvarint.Max,
-	}
+	quicConfig := quicServerLimitsAutoConfig()
+	quicConfig.KeepAlivePeriod = time.Second * 10
+	quicConfig.MaxIdleTimeout = time.Second * 15
+	quicConfig.MaxIncomingStreams = quicvarint.Max
+
 	ql, udpConn, err := Listen(ctx, addr, tlsConfig, quicConfig)
 	if err != nil {
 		return err

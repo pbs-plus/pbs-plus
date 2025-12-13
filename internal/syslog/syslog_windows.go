@@ -6,25 +6,19 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/rs/zerolog"
 	"golang.org/x/sys/windows/svc/eventlog"
 )
 
-// SetServiceLogger configures the service logger for Windows Event Log integration.
 func (l *Logger) SetServiceLogger() error {
 	sourceName := "PBSPlusAgentLogs"
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if err := eventlog.InstallAsEventCreate(sourceName,
-		eventlog.Info|eventlog.Warning|eventlog.Error); err != nil {
-		if errno, ok := err.(syscall.Errno); !ok || errno != syscall.ERROR_ALREADY_EXISTS {
-			return fmt.Errorf("failed to install event log source: %w", err)
-		}
-	}
+	_ = eventlog.InstallAsEventCreate(sourceName,
+		eventlog.Info|eventlog.Warning|eventlog.Error)
 
 	evl, err := eventlog.Open(sourceName)
 	if err != nil {
@@ -61,9 +55,6 @@ func (l *Logger) SetServiceLogger() error {
 	return nil
 }
 
-// Write finalizes the LogEntry and writes it using the global zerolog logger.
-// (Here, the global logger sends the pre-formatted output through the
-// ConsoleWriter and then our SyslogWriter.)
 func (e *LogEntry) Write() {
 	e.logger.mu.RLock()
 	defer e.logger.mu.RUnlock()
