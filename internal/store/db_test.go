@@ -258,6 +258,157 @@ func TestTargetValidation(t *testing.T) {
 	}
 }
 
+func TestTargetValidation_S3(t *testing.T) {
+	store := setupTestStore(t)
+
+	tests := []struct {
+		name    string
+		target  types.Target
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid s3 target with https host",
+			target: types.Target{
+				Name:           "s3-valid-https",
+				TargetType:     "s3",
+				S3AccessID:     "AKIAEXAMPLE",
+				S3Host:         "https://s3.amazonaws.com",
+				S3Region:       "us-east-1",
+				S3UseSSL:       true,
+				S3UsePathStyle: false,
+				S3Bucket:       "my-valid.bucket-name-01",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid s3 target with plain host and http",
+			target: types.Target{
+				Name:           "s3-valid-http",
+				TargetType:     "s3",
+				S3AccessID:     "MINIOEXAMPLE",
+				S3Host:         "minio.local:9000",
+				S3Region:       "us-east-1",
+				S3UseSSL:       false,
+				S3UsePathStyle: true,
+				S3Bucket:       "backup-bucket",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid s3 bucket name",
+			target: types.Target{
+				Name:           "s3-invalid-bucket",
+				TargetType:     "s3",
+				S3AccessID:     "AKIAEXAMPLE",
+				S3Host:         "s3.us-west-2.amazonaws.com",
+				S3Region:       "us-west-2",
+				S3UseSSL:       true,
+				S3UsePathStyle: false,
+				S3Bucket:       "Invalid_Bucket_Name",
+			},
+			wantErr: true,
+			errMsg:  "invalid s3 bucket",
+		},
+		{
+			name: "missing s3 access id",
+			target: types.Target{
+				Name:           "s3-missing-access",
+				TargetType:     "s3",
+				S3AccessID:     "",
+				S3Host:         "s3.amazonaws.com",
+				S3Region:       "us-east-1",
+				S3UseSSL:       true,
+				S3UsePathStyle: false,
+				S3Bucket:       "good-bucket-name",
+			},
+			wantErr: true,
+			errMsg:  "s3 access id is empty",
+		},
+		{
+			name: "missing s3 host",
+			target: types.Target{
+				Name:           "s3-missing-host",
+				TargetType:     "s3",
+				S3AccessID:     "AKIAEXAMPLE",
+				S3Host:         "",
+				S3Region:       "us-east-1",
+				S3UseSSL:       true,
+				S3UsePathStyle: false,
+				S3Bucket:       "good-bucket-name",
+			},
+			wantErr: true,
+			errMsg:  "s3 host is empty",
+		},
+		{
+			name: "missing s3 bucket",
+			target: types.Target{
+				Name:           "s3-missing-bucket",
+				TargetType:     "s3",
+				S3AccessID:     "AKIAEXAMPLE",
+				S3Host:         "s3.amazonaws.com",
+				S3Region:       "us-east-1",
+				S3UseSSL:       true,
+				S3UsePathStyle: false,
+				S3Bucket:       "",
+			},
+			wantErr: true,
+			errMsg:  "s3 bucket is empty",
+		},
+		{
+			name: "reject agent fields on s3",
+			target: types.Target{
+				Name:           "s3-with-agent-host",
+				TargetType:     "s3",
+				S3AccessID:     "AKIAEXAMPLE",
+				S3Host:         "s3.amazonaws.com",
+				S3Region:       "us-east-1",
+				S3UseSSL:       true,
+				S3UsePathStyle: false,
+				S3Bucket:       "good-bucket-name",
+				AgentHost:      "should-not-be-here",
+			},
+			wantErr: true,
+			errMsg:  "agent host provided for non-agent target",
+		},
+		{
+			name: "reject s3 fields on non-s3 target",
+			target: types.Target{
+				Name:           "local-with-s3-fields",
+				TargetType:     "local",
+				LocalPath:      "/data",
+				S3AccessID:     "AKIAEXAMPLE",
+				S3Host:         "s3.amazonaws.com",
+				S3Bucket:       "bucket",
+				S3Region:       "us-east-1",
+				S3UseSSL:       true,
+				S3UsePathStyle: false,
+			},
+			wantErr: true,
+			errMsg:  "s3 fields provided for non-s3 target",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := store.Database.CreateTarget(nil, tt.target)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" && err != nil {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+				got, getErr := store.Database.GetTarget(tt.target.Name)
+				assert.NoError(t, getErr)
+				assert.Equal(t, tt.target.Name, got.Name)
+				assert.Equal(t, "s3", got.TargetType)
+				assert.Equal(t, tt.target.S3Bucket, got.S3Bucket)
+			}
+		})
+	}
+}
+
 func TestExclusionPatternValidation(t *testing.T) {
 	store := setupTestStore(t)
 
