@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -275,6 +276,7 @@ func (p *pbsService) updateDrives() error {
 
 	reqBody := map[string]any{
 		"hostname": hostname,
+		"os":       runtime.GOOS,
 		"drives":   drives,
 	}
 

@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
 
 func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -41,9 +41,10 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 }
 
 type BootstrapRequest struct {
-	Hostname string            `json:"hostname"`
-	CSR      string            `json:"csr"`
-	Drives   []utils.DriveInfo `json:"drives"`
+	Hostname        string            `json:"hostname"`
+	OperatingSystem string            `json:"os"`
+	CSR             string            `json:"csr"`
+	Drives          []utils.DriveInfo `json:"drives"`
 }
 
 func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -131,68 +132,49 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		_, err = storeInstance.Database.GetTarget(reqParsed.Hostname)
+		if err == nil {
+			err := storeInstance.Database.DeleteTarget(tx, reqParsed.Hostname)
+			if err != nil {
+				tx.Rollback()
+				w.WriteHeader(http.StatusInternalServerError)
+				controllers.WriteErrorResponse(w, err)
+				syslog.L.Error(err).Write()
+				return
+			}
+		}
+
+		newTarget := types.Target{
+			Name:            reqParsed.Hostname,
+			AgentHost:       clientIP,
+			Auth:            encodedCert,
+			TokenUsed:       tokenStr,
+			Volumes:         []types.Volume{},
+			OperatingSystem: reqParsed.OperatingSystem,
+			TargetType:      "agent",
+		}
+
 		for _, drive := range reqParsed.Drives {
-			syslog.L.Info().WithMessage("bootstrapping drive").WithFields(map[string]any{"drive": drive}).Write()
+			newTarget.Volumes = append(newTarget.Volumes, types.Volume{
+				VolumeName:     drive.Letter,
+				MetaType:       drive.Type,
+				MetaFS:         drive.FileSystem,
+				MetaFreeBytes:  int(drive.FreeBytes),
+				MetaUsedBytes:  int(drive.UsedBytes),
+				MetaTotalBytes: int(drive.TotalBytes),
+				MetaFree:       drive.Free,
+				MetaUsed:       drive.Used,
+				MetaTotal:      drive.Total,
+			})
+		}
 
-			newTarget := types.Target{
-				Auth:            encodedCert,
-				TokenUsed:       tokenStr,
-				DriveType:       drive.Type,
-				DriveFS:         drive.FileSystem,
-				DriveFreeBytes:  int(drive.FreeBytes),
-				DriveUsedBytes:  int(drive.UsedBytes),
-				DriveTotalBytes: int(drive.TotalBytes),
-				DriveFree:       drive.Free,
-				DriveUsed:       drive.Used,
-				DriveTotal:      drive.Total,
-				OperatingSystem: drive.OperatingSystem,
-				IsAgent:         true,
-			}
-
-			switch drive.OperatingSystem {
-			case "windows":
-				newTarget.Name = fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter)
-				newTarget.Path = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
-			default:
-				newTarget.Name = fmt.Sprintf("%s - Root", reqParsed.Hostname)
-				newTarget.Path = fmt.Sprintf("agent://%s/root", clientIP)
-			}
-
-			existingTarget, err := storeInstance.Database.GetTarget(newTarget.Name)
-			if err == nil {
-				newTarget.JobCount = existingTarget.JobCount
-				newTarget.AgentVersion = existingTarget.AgentVersion
-				newTarget.ConnectionStatus = existingTarget.ConnectionStatus
-
-				err := storeInstance.Database.DeleteTarget(tx, newTarget.Name)
-				if err != nil {
-					tx.Rollback()
-					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, err)
-					syslog.L.Error(err).Write()
-					return
-				}
-
-				err = storeInstance.Database.CreateTarget(tx, newTarget)
-				if err != nil {
-					tx.Rollback()
-					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, err)
-					syslog.L.Error(err).Write()
-					return
-				}
-				syslog.L.Info().WithMessage("updated existing target auth").WithFields(map[string]any{"target": newTarget.Name}).Write()
-			} else {
-				err := storeInstance.Database.CreateTarget(tx, newTarget)
-				if err != nil {
-					tx.Rollback()
-					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, err)
-					syslog.L.Error(err).Write()
-					return
-				}
-				syslog.L.Info().WithMessage("created new target").WithFields(map[string]any{"target": newTarget.Name}).Write()
-			}
+		err = storeInstance.Database.CreateTarget(tx, newTarget)
+		if err != nil {
+			tx.Rollback()
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
+			return
 		}
 
 		err = tx.Commit()
@@ -274,68 +256,48 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		existingTarget, err := storeInstance.Database.GetTarget(reqParsed.Hostname)
+		if err != nil {
+			syslog.L.Warn().WithMessage("target not found during renewal, skipping").WithFields(map[string]any{"target": reqParsed.Hostname}).Write()
+			tx.Rollback()
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
+			return
+		}
+
+		newTarget := types.Target{
+			Name:            reqParsed.Hostname,
+			AgentHost:       clientIP,
+			Auth:            encodedCert,
+			TokenUsed:       existingTarget.Name,
+			Volumes:         []types.Volume{},
+			OperatingSystem: reqParsed.OperatingSystem,
+			TargetType:      "agent",
+		}
+
 		for _, drive := range reqParsed.Drives {
-			var targetName string
-			var targetPath string
+			newTarget.Volumes = append(newTarget.Volumes, types.Volume{
+				VolumeName:     drive.Letter,
+				MetaType:       drive.Type,
+				MetaFS:         drive.FileSystem,
+				MetaFreeBytes:  int(drive.FreeBytes),
+				MetaUsedBytes:  int(drive.UsedBytes),
+				MetaTotalBytes: int(drive.TotalBytes),
+				MetaFree:       drive.Free,
+				MetaUsed:       drive.Used,
+				MetaTotal:      drive.Total,
+			})
+		}
 
-			switch drive.OperatingSystem {
-			case "windows":
-				targetName = fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter)
-				targetPath = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
-			default:
-				targetName = fmt.Sprintf("%s - Root", reqParsed.Hostname)
-				targetPath = fmt.Sprintf("agent://%s/root", clientIP)
-			}
-
-			existingTarget, err := storeInstance.Database.GetTarget(targetName)
-			if err != nil {
-				syslog.L.Warn().WithMessage("target not found during renewal, skipping").WithFields(map[string]any{"target": targetName}).Write()
-				continue
-			}
-
-			updatedTarget := types.Target{
-				Name:            targetName,
-				Path:            targetPath,
-				IsAgent:         true,
-				Auth:            encodedCert,
-				TokenUsed:       existingTarget.TokenUsed,
-				DriveType:       drive.Type,
-				DriveFS:         drive.FileSystem,
-				DriveFreeBytes:  int(drive.FreeBytes),
-				DriveUsedBytes:  int(drive.UsedBytes),
-				DriveTotalBytes: int(drive.TotalBytes),
-				DriveFree:       drive.Free,
-				DriveUsed:       drive.Used,
-				DriveTotal:      drive.Total,
-				OperatingSystem: drive.OperatingSystem,
-				// Preserve existing operational data
-				JobCount:         existingTarget.JobCount,
-				AgentVersion:     existingTarget.AgentVersion,
-				ConnectionStatus: existingTarget.ConnectionStatus,
-				MountScript:      existingTarget.MountScript,
-				IsS3:             existingTarget.IsS3,
-				DriveName:        existingTarget.DriveName,
-			}
-
-			err = storeInstance.Database.DeleteTarget(tx, targetName)
-			if err != nil {
-				tx.Rollback()
-				w.WriteHeader(http.StatusInternalServerError)
-				controllers.WriteErrorResponse(w, err)
-				syslog.L.Error(err).Write()
-				return
-			}
-
-			err = storeInstance.Database.CreateTarget(tx, updatedTarget)
-			if err != nil {
-				tx.Rollback()
-				w.WriteHeader(http.StatusInternalServerError)
-				controllers.WriteErrorResponse(w, err)
-				syslog.L.Error(err).Write()
-				return
-			}
-
-			syslog.L.Info().WithMessage("renewed target certificate").WithFields(map[string]any{"target": targetName}).Write()
+		err = storeInstance.Database.UpdateTarget(tx, newTarget)
+		if err != nil {
+			syslog.L.Warn().WithMessage("error updating target").WithFields(map[string]any{"target": reqParsed.Hostname}).Write()
+			tx.Rollback()
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
+			return
 		}
 
 		err = tx.Commit()
@@ -346,6 +308,8 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			syslog.L.Error(err).Write()
 			return
 		}
+
+		syslog.L.Info().WithMessage("renewed target certificate").WithFields(map[string]any{"target": reqParsed.Hostname}).Write()
 
 		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(map[string]string{"ca": encodedCA, "cert": encodedCert})

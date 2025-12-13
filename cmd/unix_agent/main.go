@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -34,8 +35,9 @@ import (
 var Version = "v0.0.0"
 
 type AgentDrivesRequest struct {
-	Hostname string            `json:"hostname"`
-	Drives   []utils.DriveInfo `json:"drives"`
+	Hostname        string            `json:"hostname"`
+	OperatingSystem string            `json:"os"`
+	Drives          []utils.DriveInfo `json:"drives"`
 }
 
 func initializeDrives() error {
@@ -52,8 +54,9 @@ func initializeDrives() error {
 	}
 
 	reqBody, err := json.Marshal(&AgentDrivesRequest{
-		Hostname: hostname,
-		Drives:   drives,
+		Hostname:        hostname,
+		OperatingSystem: runtime.GOOS,
+		Drives:          drives,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal drive request: %w", err)

@@ -76,7 +76,7 @@ func CmdBackup() {
 	cmdMode := flag.String("cmdMode", "", "Cmd Mode")
 	sourceMode := flag.String("sourceMode", "", "Backup source mode (direct or snapshot)")
 	readMode := flag.String("readMode", "", "File read mode (standard or mmap)")
-	drive := flag.String("drive", "", "Drive or path for backup")
+	volume := flag.String("volume", "", "Volume or path for backup")
 	jobId := flag.String("jobId", "", "Unique job identifier for the backup")
 	flag.Parse()
 
@@ -84,7 +84,7 @@ func CmdBackup() {
 		WithField("cmdMode", *cmdMode).
 		WithField("sourceMode", *sourceMode).
 		WithField("readMode", *readMode).
-		WithField("drive", *drive).
+		WithField("volume", *volume).
 		WithField("jobId", *jobId).
 		Write()
 
@@ -93,8 +93,8 @@ func CmdBackup() {
 		return
 	}
 
-	if *sourceMode == "" || *drive == "" || *jobId == "" || *readMode == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and jobId are required")
+	if *sourceMode == "" || *volume == "" || *jobId == "" || *readMode == "" {
+		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, volume, and jobId are required")
 		syslog.L.Error(errors.New("missing required flags")).WithMessage("CmdBackup: validation failed").Write()
 		os.Exit(1)
 	}
@@ -147,7 +147,7 @@ func CmdBackup() {
 		syslog.L.Info().WithMessage("CmdBackup: RPC Serve exited").WithField("jobId", *jobId).Write()
 	}()
 
-	backupMode, err := Backup(rpcSess, *sourceMode, *readMode, *drive, *jobId)
+	backupMode, err := Backup(rpcSess, *sourceMode, *readMode, *volume, *jobId)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		syslog.L.Error(err).WithMessage("CmdBackup: Backup failed").WithField("jobId", *jobId).Write()
@@ -180,11 +180,11 @@ func CmdBackup() {
 	os.Exit(0)
 }
 
-func ExecBackup(sourceMode string, readMode string, drive string, jobId string) (string, int, error) {
+func ExecBackup(sourceMode string, readMode string, volume string, jobId string) (string, int, error) {
 	syslog.L.Info().WithMessage("ExecBackup: begin").
 		WithField("sourceMode", sourceMode).
 		WithField("readMode", readMode).
-		WithField("drive", drive).
+		WithField("volume", volume).
 		WithField("jobId", jobId).
 		Write()
 
@@ -202,7 +202,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 		"--cmdMode=backup",
 		"--sourceMode=" + sourceMode,
 		"--readMode=" + readMode,
-		"--drive=" + drive,
+		"--volume=" + volume,
 		"--jobId=" + jobId,
 	}
 
@@ -243,7 +243,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 				backupMode <- mode
 			} else {
 				syslog.L.Info().
-					WithField("drive", drive).
+					WithField("volume", volume).
 					WithField("jobId", jobId).
 					WithField("forked", true).
 					WithMessage(line).Write()
@@ -257,7 +257,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 	go func() {
 		for errScanner.Scan() {
 			syslog.L.Error(errors.New(errScanner.Text())).
-				WithField("drive", drive).
+				WithField("volume", volume).
 				WithField("jobId", jobId).
 				WithField("forked", true).
 				Write()
@@ -275,11 +275,11 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 	return mode, cmd.Process.Pid, nil
 }
 
-func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, jobId string) (string, error) {
+func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, volume string, jobId string) (string, error) {
 	syslog.L.Info().WithMessage("Backup: begin").
 		WithField("sourceMode", sourceMode).
 		WithField("readMode", readMode).
-		WithField("drive", drive).
+		WithField("volume", volume).
 		WithField("jobId", jobId).
 		Write()
 
@@ -324,40 +324,40 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 	if runtime.GOOS == "windows" {
 		switch sourceMode {
 		case "direct":
-			path := drive
-			volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
+			path := volume
+			volName := filepath.VolumeName(fmt.Sprintf("%s:", volume))
 			path = volName + "\\"
 			snapshot = snapshots.Snapshot{
 				Path:        path,
 				TimeStarted: time.Now(),
-				SourcePath:  drive,
+				SourcePath:  volume,
 				Direct:      true,
 			}
 			syslog.L.Info().WithMessage("Backup: configured direct mode snapshot").
 				WithField("path", path).
-				WithField("drive", drive).
+				WithField("volume", volume).
 				Write()
 		default:
 			var err error
-			snapshot, err = snapshots.Manager.CreateSnapshot(jobId, drive)
+			snapshot, err = snapshots.Manager.CreateSnapshot(jobId, volume)
 			if err != nil && snapshot == (snapshots.Snapshot{}) {
-				syslog.L.Error(err).WithMessage("Backup: VSS snapshot failed; switching to direct mode").WithField("drive", drive).Write()
+				syslog.L.Error(err).WithMessage("Backup: VSS snapshot failed; switching to direct mode").WithField("volume", volume).Write()
 				backupMode = "direct"
 
-				path := drive
-				volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
+				path := volume
+				volName := filepath.VolumeName(fmt.Sprintf("%s:", volume))
 				path = volName + "\\"
 
 				snapshot = snapshots.Snapshot{
 					Path:        path,
 					TimeStarted: time.Now(),
-					SourcePath:  drive,
+					SourcePath:  volume,
 					Direct:      true,
 				}
 			} else {
 				syslog.L.Info().WithMessage("Backup: snapshot created successfully").
 					WithField("path", snapshot.Path).
-					WithField("drive", drive).
+					WithField("volume", volume).
 					Write()
 			}
 		}

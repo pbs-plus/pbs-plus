@@ -103,7 +103,7 @@ func (req *CloseReq) Decode(buf []byte) error {
 // BackupReq represents a request to back up a file
 type BackupReq struct {
 	JobId      string
-	Drive      string
+	Volume     string
 	SourceMode string
 	ReadMode   string
 	Extras     string

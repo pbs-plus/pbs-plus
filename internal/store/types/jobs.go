@@ -7,7 +7,8 @@ type Job struct {
 	ReadMode              string      `json:"readmode"`
 	Mode                  string      `json:"mode"`
 	Target                string      `json:"target"`
-	TargetPath            string      `json:"target-path"`
+	VolumeName            string      `json:"volume_name"`
+	TargetType            string      `json:"target_type"`
 	Subpath               string      `json:"subpath"`
 	Schedule              string      `json:"schedule"`
 	Comment               string      `json:"comment"`

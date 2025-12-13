@@ -28,11 +28,12 @@ import (
 type BackupArgs struct {
 	JobId          string
 	TargetHostname string
-	Drive          string
+	Volume         string
 }
 
 type S3BackupArgs struct {
 	JobId        string
+	TargetName   string
 	Endpoint     string
 	AccessKey    string
 	SecretKey    string
@@ -66,7 +67,7 @@ type VFSStatusArgs struct {
 type CleanupArgs struct {
 	JobId          string
 	TargetHostname string
-	Drive          string
+	Volume         string
 }
 
 type CleanupReply struct {
@@ -94,7 +95,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"target": args.TargetHostname,
-			"drive":  args.Drive,
+			"volume": args.Volume,
 		}).Write()
 
 	// Retrieve the job from the database.
@@ -119,7 +120,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 
 	// Prepare the backup request (using the types.BackupReq structure).
 	backupReq := types.BackupReq{
-		Drive:      args.Drive,
+		Volume:     args.Volume,
 		JobId:      args.JobId,
 		SourceMode: job.SourceMode,
 		ReadMode:   job.ReadMode,
@@ -198,10 +199,11 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 	syslog.L.Info().
 		WithMessage("Received S3 backup request").
 		WithFields(map[string]any{
-			"jobId":    args.JobId,
-			"endpoint": args.Endpoint,
-			"bucket":   args.Bucket,
-			"prefix":   args.Prefix,
+			"jobId":      args.JobId,
+			"targetName": args.TargetName,
+			"endpoint":   args.Endpoint,
+			"bucket":     args.Bucket,
+			"prefix":     args.Prefix,
 		}).Write()
 
 	// Retrieve the job from the database.
@@ -219,7 +221,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	childKey := args.Endpoint + "|" + args.JobId
+	childKey := args.TargetName + "|" + args.JobId
 
 	jobCtx, jobCancel := context.WithCancel(s.ctx)
 	s.jobCtxCancels.Set(args.JobId, jobCancel)
@@ -266,7 +268,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"target": args.TargetHostname,
-			"drive":  args.Drive,
+			"volume": args.Volume,
 		}).Write()
 
 	childKey := args.TargetHostname + "|" + args.JobId
@@ -286,8 +288,8 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 
 	// Create a cleanup request (using the BackupReq type).
 	cleanupReq := types.BackupReq{
-		Drive: args.Drive,
-		JobId: args.JobId,
+		Volume: args.Volume,
+		JobId:  args.JobId,
 	}
 
 	ctxCancel, ok := s.jobCtxCancels.GetAndDel(args.JobId)

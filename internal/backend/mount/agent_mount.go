@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
@@ -23,23 +22,17 @@ import (
 type AgentMount struct {
 	JobId    string
 	Hostname string
-	Drive    string
+	Volume   string
 	Path     string
 	isEmpty  bool
 }
 
-func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target) (*AgentMount, error) {
+func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target, volume types.Volume) (*AgentMount, error) {
 	// Parse target information
-	splittedTargetName := strings.Split(target.Name, " - ")
-	targetHostname := splittedTargetName[0]
-	agentPath := strings.TrimPrefix(target.Path, "agent://")
-	agentPathParts := strings.Split(agentPath, "/")
-	agentDrive := agentPathParts[1]
-
 	agentMount := &AgentMount{
 		JobId:    job.ID,
-		Hostname: targetHostname,
-		Drive:    agentDrive,
+		Hostname: target.Name,
+		Volume:   volume.VolumeName,
 	}
 
 	// Setup mount path
@@ -64,8 +57,8 @@ func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target
 
 	args := &rpcmount.BackupArgs{
 		JobId:          job.ID,
-		TargetHostname: targetHostname,
-		Drive:          agentDrive,
+		TargetHostname: target.Name,
+		Volume:         volume.VolumeName,
 	}
 	var reply rpcmount.BackupReply
 
@@ -164,7 +157,7 @@ func (a *AgentMount) CloseMount() {
 	args := &rpcmount.CleanupArgs{
 		JobId:          a.JobId,
 		TargetHostname: a.Hostname,
-		Drive:          a.Drive,
+		Volume:         a.Volume,
 	}
 	var reply rpcmount.CleanupReply
 
@@ -176,6 +169,6 @@ func (a *AgentMount) CloseMount() {
 	defer rpcClient.Close()
 
 	if err := rpcClient.Call("MountRPCService.Cleanup", args, &reply); err != nil {
-		syslog.L.Error(err).WithFields(map[string]any{"hostname": a.Hostname, "drive": a.Drive}).Write()
+		syslog.L.Error(err).WithFields(map[string]any{"hostname": a.Hostname, "volume": a.Volume}).Write()
 	}
 }

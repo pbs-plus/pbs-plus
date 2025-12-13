@@ -36,7 +36,7 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respon
 	syslog.L.Info().WithMessage("received backup request for job").WithField("id", reqData.JobId).Write()
 
 	syslog.L.Info().WithMessage("forking process for backup job").WithField("id", reqData.JobId).Write()
-	backupMode, pid, err := forks.ExecBackup(reqData.SourceMode, reqData.ReadMode, reqData.Drive, reqData.JobId)
+	backupMode, pid, err := forks.ExecBackup(reqData.SourceMode, reqData.ReadMode, reqData.Volume, reqData.JobId)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("forking process for backup job").WithField("id", reqData.JobId).Write()
 		if pid != -1 {

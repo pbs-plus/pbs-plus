@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -33,34 +32,26 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for i, job := range allJobs {
-			isS3 := false
-			isAgent := strings.HasPrefix(job.TargetPath, "agent://")
-			s3Parsed, err := s3url.Parse(job.TargetPath)
-			if err == nil {
-				isS3 = true
-			}
-
 			var stats vfs.VFSStats
-			if isAgent {
-				splittedTargetName := strings.Split(job.Target, " - ")
-				targetHostname := splittedTargetName[0]
-				childKey := targetHostname + "|" + job.ID
+			switch job.TargetType {
+			default:
+				continue
+			case "agent":
+				childKey := job.Target + "|" + job.ID
 				session := store.GetSessionARPCFS(childKey)
 				if session == nil {
 					continue
 				}
 
 				stats = session.GetStats()
-			} else if isS3 {
-				childKey := s3Parsed.Endpoint + "|" + job.ID
+			case "s3":
+				childKey := job.Target + "|" + job.ID
 				session := store.GetSessionS3FS(childKey)
 				if session == nil {
 					continue
 				}
 
 				stats = session.GetStats()
-			} else {
-				continue
 			}
 
 			allJobs[i].CurrentFileCount = int(stats.FilesAccessed)

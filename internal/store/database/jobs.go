@@ -21,7 +21,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// generateUniqueJobID produces a unique job id based on the job’s target.
 func (database *Database) generateUniqueJobID(job types.Job) (string, error) {
 	baseID := utils.Slugify(job.Target)
 	if baseID == "" {
@@ -44,15 +43,12 @@ func (database *Database) generateUniqueJobID(job types.Job) (string, error) {
 			return newID, nil
 		}
 		if err != nil {
-			return "", fmt.Errorf(
-				"generateUniqueJobID: error checking job existence: %w", err)
+			return "", fmt.Errorf("generateUniqueJobID: error checking job existence: %w", err)
 		}
 	}
-	return "", fmt.Errorf("failed to generate a unique job ID after %d attempts",
-		maxAttempts)
+	return "", fmt.Errorf("failed to generate a unique job ID after %d attempts", maxAttempts)
 }
 
-// CreateJob creates a new job record and adds any associated exclusions.
 func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
@@ -62,19 +58,18 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback() // Rollback on panic
-				panic(p)          // Re-panic after rollback
+				_ = tx.Rollback()
+				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
 					syslog.L.Error(fmt.Errorf("CreateJob: failed to rollback transaction: %w", rbErr)).Write()
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
-					err = fmt.Errorf("CreateJob: failed to commit transaction: %w", cErr) // Assign commit error back
+					err = fmt.Errorf("CreateJob: failed to commit transaction: %w", cErr)
 					syslog.L.Error(err).Write()
 				}
 			} else {
-				// Rollback if commit isn't explicitly needed (e.g., early return without error)
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
 					syslog.L.Error(fmt.Errorf("CreateJob: failed to rollback transaction: %w", rbErr)).Write()
 				}
@@ -120,11 +115,11 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
 
 	_, err = tx.Exec(`
         INSERT INTO jobs (
-            id, store, mode, source_mode, read_mode, target, subpath, schedule, comment,
+            id, store, mode, source_mode, read_mode, target, volume_name, subpath, schedule, comment,
             notification_mode, namespace, current_pid, last_run_upid, last_successful_upid, retry,
             retry_interval, max_dir_entries, pre_script, post_script
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, job.ID, job.Store, job.Mode, job.SourceMode, job.ReadMode, job.Target, job.Subpath,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, job.ID, job.Store, job.Mode, job.SourceMode, job.ReadMode, job.Target, job.VolumeName, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace, job.CurrentPID,
 		job.LastRunUpid, job.LastSuccessfulUpid, job.Retry, job.RetryInterval,
 		job.MaxDirEntries, job.PreScript, job.PostScript)
@@ -136,13 +131,11 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
 		if exclusion.JobID == "" {
 			exclusion.JobID = job.ID
 		}
-		// Assuming CreateExclusion uses the provided tx
 		if err = database.CreateExclusion(tx, exclusion); err != nil {
 			syslog.L.Error(fmt.Errorf("CreateJob: failed to create exclusion: %w", err)).
 				WithField("job_id", job.ID).
 				WithField("path", exclusion.Path).
 				Write()
-			// Return the first error encountered during exclusion creation
 			return fmt.Errorf("CreateJob: failed to create exclusion '%s': %w", exclusion.Path, err)
 		}
 	}
@@ -151,26 +144,25 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
 		syslog.L.Error(fmt.Errorf("CreateJob: failed to set schedule: %w", err)).
 			WithField("id", job.ID).
 			Write()
-		// Decide if schedule setting failure should rollback the DB transaction
-		// return fmt.Errorf("CreateJob: failed to set schedule: %w", err) // Uncomment to rollback
 	}
 
 	commitNeeded = true
 	return nil
 }
 
-// GetJob retrieves a job by id and assembles its exclusions.
 func (database *Database) GetJob(id string) (types.Job, error) {
 	query := `
         SELECT
-            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
+            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.volume_name, j.subpath, j.schedule, j.comment,
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes, t.mount_script
+            v.meta_used_bytes, t.mount_script,
+            t.target_type
         FROM jobs j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
+        LEFT JOIN volumes v ON v.target_name = j.target AND (j.volume_name IS NULL OR v.volume_name = j.volume_name)
         WHERE j.id = ?
     `
 	rows, err := database.readDb.Query(query, id)
@@ -186,16 +178,16 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 	for rows.Next() {
 		found = true
 		var exclusionPath sql.NullString
-		var driveUsedBytes sql.NullInt64
+		var usedBytes sql.NullInt64
 		var mountScript sql.NullString
+		var targetType sql.NullString
 
 		err := rows.Scan(
 			&job.ID, &job.Store, &job.Mode, &job.SourceMode, &job.ReadMode,
-			&job.Target, &job.Subpath, &job.Schedule, &job.Comment,
+			&job.Target, &job.VolumeName, &job.Subpath, &job.Schedule, &job.Comment,
 			&job.NotificationMode, &job.Namespace, &job.CurrentPID, &job.LastRunUpid,
 			&job.LastSuccessfulUpid, &job.Retry, &job.RetryInterval, &job.MaxDirEntries,
-			&job.PreScript, &job.PostScript, &exclusionPath, &driveUsedBytes,
-			&mountScript,
+			&job.PreScript, &job.PostScript, &exclusionPath, &usedBytes, &mountScript, &targetType,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetJob: error scanning job data: %w", err)).
@@ -207,16 +199,17 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 		if mountScript.Valid {
 			job.TargetMountScript = mountScript.String
 		} else {
-			// Optionally, handle the NULL case, e.g., set to an empty string
 			job.TargetMountScript = ""
+		}
+		if targetType.Valid {
+			job.TargetType = targetType.String
 		}
 
 		if exclusionPath.Valid && exclusionPath.String != "" {
 			exclusionPaths = append(exclusionPaths, exclusionPath.String)
 		}
-		// Only set ExpectedSize once from the first row (or any row) where it's valid
-		if driveUsedBytes.Valid && job.ExpectedSize == 0 {
-			job.ExpectedSize = int(driveUsedBytes.Int64)
+		if usedBytes.Valid && job.ExpectedSize == 0 {
+			job.ExpectedSize = int(usedBytes.Int64)
 		}
 	}
 
@@ -242,7 +235,6 @@ func (database *Database) GetJob(id string) (types.Job, error) {
 	return job, nil
 }
 
-// populateJobExtras fills in details not directly from the database tables.
 func (database *Database) populateJobExtras(job *types.Job) {
 	if job.LastRunUpid != "" {
 		task, err := proxmox.GetTaskByUPID(job.LastRunUpid)
@@ -267,7 +259,6 @@ func (database *Database) populateJobExtras(job *types.Job) {
 	}
 }
 
-// UpdateJob updates an existing job and its exclusions.
 func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
@@ -322,13 +313,13 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
 	}
 
 	_, err = tx.Exec(`
-        UPDATE jobs SET store = ?, mode = ?, source_mode = ?, read_mode = ?, target = ?,
+        UPDATE jobs SET store = ?, mode = ?, source_mode = ?, read_mode = ?, target = ?, volume_name = ?,
             subpath = ?, schedule = ?, comment = ?, notification_mode = ?,
             namespace = ?, current_pid = ?, last_run_upid = ?, retry = ?,
             retry_interval = ?, last_successful_upid = ?, pre_script = ?, post_script = ?,
             max_dir_entries = ?
         WHERE id = ?
-    `, job.Store, job.Mode, job.SourceMode, job.ReadMode, job.Target, job.Subpath,
+    `, job.Store, job.Mode, job.SourceMode, job.ReadMode, job.Target, job.VolumeName, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace,
 		job.CurrentPID, job.LastRunUpid, job.Retry, job.RetryInterval,
 		job.LastSuccessfulUpid, job.PreScript, job.PostScript, job.MaxDirEntries, job.ID)
@@ -342,7 +333,7 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
 	}
 
 	for _, exclusion := range job.Exclusions {
-		exclusion.JobID = job.ID // Ensure correct JobID
+		exclusion.JobID = job.ID
 		if err = database.CreateExclusion(tx, exclusion); err != nil {
 			syslog.L.Error(fmt.Errorf("UpdateJob: failed to create exclusion: %w", err)).
 				WithField("job_id", job.ID).
@@ -356,8 +347,6 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
 		syslog.L.Error(fmt.Errorf("UpdateJob: failed to set schedule: %w", err)).
 			WithField("id", job.ID).
 			Write()
-		// Decide if schedule setting failure should rollback the DB transaction
-		// return fmt.Errorf("UpdateJob: failed to set schedule: %w", err) // Uncomment to rollback
 	}
 
 	if job.LastRunUpid != "" {
@@ -368,7 +357,6 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
 	return nil
 }
 
-// linkJobLog handles the asynchronous log linking.
 func (database *Database) linkJobLog(jobID, upid string) {
 	jobLogsPath := filepath.Join(constants.JobLogsBasePath, jobID)
 	if err := os.MkdirAll(jobLogsPath, 0755); err != nil {
@@ -415,18 +403,19 @@ func (database *Database) linkJobLog(jobID, upid string) {
 	}
 }
 
-// GetAllJobs returns all job records.
 func (database *Database) GetAllJobs() ([]types.Job, error) {
 	query := `
         SELECT
-            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
+            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.volume_name, j.subpath, j.schedule, j.comment,
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes, t.mount_script, t.path
+            v.meta_used_bytes, t.mount_script,
+            t.target_type
         FROM jobs j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
+        LEFT JOIN volumes v ON v.target_name = j.target AND (j.volume_name IS NULL OR v.volume_name = j.volume_name)
         ORDER BY j.id
     `
 	rows, err := database.readDb.Query(query)
@@ -439,20 +428,20 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 	var jobOrder []string
 
 	for rows.Next() {
-		var jobID, store, mode, sourceMode, readMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
+		var jobID, store, mode, sourceMode, readMode, target, volumeName, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
 		var preScript, postScript string
 		var retry, maxDirEntries int
 		var retryInterval int
 		var currentPID int
-		var targetPath, exclusionPath sql.NullString
-		var driveUsedBytes sql.NullInt64
+		var targetType, exclusionPath sql.NullString
+		var usedBytes sql.NullInt64
 		var mountScript sql.NullString
 
 		err := rows.Scan(
-			&jobID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
+			&jobID, &store, &mode, &sourceMode, &readMode, &target, &volumeName, &subpath, &schedule, &comment,
 			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval, &maxDirEntries, &preScript, &postScript,
-			&exclusionPath, &driveUsedBytes, &mountScript, &targetPath,
+			&exclusionPath, &usedBytes, &mountScript, &targetType,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllJobs: error scanning row: %w", err)).Write()
@@ -468,6 +457,7 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 				SourceMode:         sourceMode,
 				ReadMode:           readMode,
 				Target:             target,
+				VolumeName:         volumeName,
 				Subpath:            subpath,
 				Schedule:           schedule,
 				Comment:            comment,
@@ -483,24 +473,22 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 				PreScript:          preScript,
 				PostScript:         postScript,
 			}
-			if driveUsedBytes.Valid {
-				job.ExpectedSize = int(driveUsedBytes.Int64)
+			if usedBytes.Valid {
+				job.ExpectedSize = int(usedBytes.Int64)
 			}
 			jobsMap[jobID] = job
 			jobOrder = append(jobOrder, jobID)
-			database.populateJobExtras(job) // Populate non-SQL extras once per job
+			database.populateJobExtras(job)
 		}
 
-		if targetPath.Valid {
-			job.TargetPath = targetPath.String
+		if targetType.Valid {
+			job.TargetType = targetType.String
 		}
-
 		if mountScript.Valid {
 			job.TargetMountScript = mountScript.String
 		} else {
 			job.TargetMountScript = ""
 		}
-
 		if exclusionPath.Valid && exclusionPath.String != "" {
 			job.Exclusions = append(job.Exclusions, types.Exclusion{
 				JobID: jobID,
@@ -530,15 +518,16 @@ func (database *Database) GetAllJobs() ([]types.Job, error) {
 func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 	query := `
         SELECT
-            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
+            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.volume_name, j.subpath, j.schedule, j.comment,
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes, t.mount_script
+            v.meta_used_bytes, t.mount_script
         FROM jobs j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
-				WHERE j.last_run_upid LIKE "%pbsplusgen-queue%"
+        LEFT JOIN volumes v ON v.target_name = j.target AND (j.volume_name IS NULL OR v.volume_name = j.volume_name)
+        WHERE j.last_run_upid LIKE "%pbsplusgen-queue%"
         ORDER BY j.id
     `
 	rows, err := database.readDb.Query(query)
@@ -551,20 +540,20 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 	var jobOrder []string
 
 	for rows.Next() {
-		var jobID, store, mode, sourceMode, readMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
+		var jobID, store, mode, sourceMode, readMode, target, volumeName, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
 		var preScript, postScript string
 		var retry, maxDirEntries int
 		var retryInterval int
 		var currentPID int
 		var exclusionPath sql.NullString
-		var driveUsedBytes sql.NullInt64
+		var usedBytes sql.NullInt64
 		var mountScript sql.NullString
 
 		err := rows.Scan(
-			&jobID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
+			&jobID, &store, &mode, &sourceMode, &readMode, &target, &volumeName, &subpath, &schedule, &comment,
 			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval, &maxDirEntries, &preScript, &postScript,
-			&exclusionPath, &driveUsedBytes, &mountScript,
+			&exclusionPath, &usedBytes, &mountScript,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllQueuedJobs: error scanning row: %w", err)).Write()
@@ -580,6 +569,7 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 				SourceMode:         sourceMode,
 				ReadMode:           readMode,
 				Target:             target,
+				VolumeName:         volumeName,
 				Subpath:            subpath,
 				Schedule:           schedule,
 				Comment:            comment,
@@ -595,12 +585,12 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 				PreScript:          preScript,
 				PostScript:         postScript,
 			}
-			if driveUsedBytes.Valid {
-				job.ExpectedSize = int(driveUsedBytes.Int64)
+			if usedBytes.Valid {
+				job.ExpectedSize = int(usedBytes.Int64)
 			}
 			jobsMap[jobID] = job
 			jobOrder = append(jobOrder, jobID)
-			database.populateJobExtras(job) // Populate non-SQL extras once per job
+			database.populateJobExtras(job)
 		}
 
 		if mountScript.Valid {
@@ -635,7 +625,6 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 	return jobs, nil
 }
 
-// DeleteJob deletes a job and any related exclusions.
 func (database *Database) DeleteJob(tx *sql.Tx, id string) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
@@ -664,17 +653,14 @@ func (database *Database) DeleteJob(tx *sql.Tx, id string) (err error) {
 		}()
 	}
 
-	// Delete associated exclusions first (or rely on ON DELETE CASCADE)
 	_, err = tx.Exec("DELETE FROM exclusions WHERE job_id = ?", id)
 	if err != nil {
 		syslog.L.Error(fmt.Errorf("DeleteJob: error deleting exclusions: %w", err)).
 			WithField("id", id).
 			Write()
-		// Return error if exclusions deletion fails
 		return fmt.Errorf("DeleteJob: error deleting exclusions for job %s: %w", id, err)
 	}
 
-	// Delete the job itself
 	res, err := tx.Exec("DELETE FROM jobs WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("DeleteJob: error deleting job %s: %w", id, err)
@@ -685,15 +671,12 @@ func (database *Database) DeleteJob(tx *sql.Tx, id string) (err error) {
 		return ErrJobNotFound
 	}
 
-	// Filesystem and system operations outside transaction
 	jobLogsPath := filepath.Join(constants.JobLogsBasePath, id)
 	if err := os.RemoveAll(jobLogsPath); err != nil {
 		if !os.IsNotExist(err) {
 			syslog.L.Error(fmt.Errorf("DeleteJob: failed removing job logs: %w", err)).
 				WithField("id", id).
 				Write()
-			// Decide if this failure should prevent commit (if tx was passed in)
-			// or just be logged. Currently just logged.
 		}
 	}
 
@@ -701,7 +684,6 @@ func (database *Database) DeleteJob(tx *sql.Tx, id string) (err error) {
 		syslog.L.Error(fmt.Errorf("DeleteJob: failed deleting schedule: %w", err)).
 			WithField("id", id).
 			Write()
-		// Decide if this failure should prevent commit or just be logged.
 	}
 
 	commitNeeded = true
