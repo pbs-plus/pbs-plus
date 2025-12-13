@@ -136,7 +136,7 @@ func StatusHandler(req arpc.Request) (arpc.Response, error) {
 			reqPath = "/"
 		}
 
-		if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		if _, err := os.Lstat(reqPath); err != nil {
 			continue
 		}
 
