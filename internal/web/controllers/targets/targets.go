@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ type TargetStatusResult struct {
 	AgentVersion     string
 	ConnectionStatus bool
 	Error            error
+	Volumes          []utils.DriveInfo
 }
 
 func CheckTargetStatusBatch(
@@ -63,17 +65,19 @@ func CheckTargetStatusBatch(
 				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 				defer cancel()
 
-				// TODO: have this return all available volumes then process volume status from there
-				respMsg, err := arpcSess.CallMessage(
+				var resp reqTypes.TargetStatusResp
+				err := arpcSess.Call(
 					timeoutCtx,
 					"target_status",
 					&reqTypes.TargetStatusReq{},
+					&resp,
 				)
-				if err == nil && strings.HasPrefix(respMsg, "reachable") {
+				if err == nil {
 					result.ConnectionStatus = true
-				} else if err != nil {
-					result.Error = err
+					result.Volumes = resp.Volumes
 				}
+
+				result.Error = err
 			}
 
 			results[idx] = result
@@ -91,7 +95,8 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		all, err := storeInstance.Database.GetAllTargets()
+		withVolumes := strings.ToLower(r.FormValue("volumes")) == "true"
+		all, err := storeInstance.Database.GetAllTargets(withVolumes)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -132,6 +137,14 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				originalIdx := agentIndices[i]
 				all[originalIdx].AgentVersion = result.AgentVersion
 				all[originalIdx].ConnectionStatus = result.ConnectionStatus
+				accessibleVols := result.Volumes
+				for volIdx, vol := range all[originalIdx].Volumes {
+					if slices.ContainsFunc(accessibleVols, func(s utils.DriveInfo) bool {
+						return s.Letter == vol.VolumeName
+					}) {
+						all[originalIdx].Volumes[volIdx].Accessible = true
+					}
+				}
 			}
 		}
 
@@ -142,6 +155,36 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		toReturn := TargetsResponse{
+			Data:   all,
+			Digest: digest,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(toReturn)
+	}
+}
+
+func D2DVolumeHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		target := r.PathValue("target")
+		all, err := storeInstance.Database.GetAllVolumes(target)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		digest, err := utils.CalculateDigest(all)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		toReturn := VolumesResponse{
 			Data:   all,
 			Digest: digest,
 		}

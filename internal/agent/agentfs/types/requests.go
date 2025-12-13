@@ -132,10 +132,7 @@ func (req *LseekReq) Decode(buf []byte) error {
 	return cborDecMode.Unmarshal(buf, req)
 }
 
-type TargetStatusReq struct {
-	Drive   string
-	Subpath string
-}
+type TargetStatusReq struct{}
 
 func (req *TargetStatusReq) Encode() ([]byte, error) {
 	return cborEncMode.Marshal(req)

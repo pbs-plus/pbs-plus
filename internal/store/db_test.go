@@ -484,7 +484,7 @@ func TestConcurrentOperations(t *testing.T) {
 		}
 		wg.Wait()
 
-		targets, err := store.Database.GetAllTargets()
+		targets, err := store.Database.GetAllTargets(true)
 		assert.NoError(t, err)
 		assert.Len(t, targets, targetCount)
 	})
@@ -522,7 +522,7 @@ func TestConcurrentOperations(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					_, _ = store.Database.GetAllTargets()
+					_, _ = store.Database.GetAllTargets(true)
 				}
 			}
 			doneCh <- struct{}{}

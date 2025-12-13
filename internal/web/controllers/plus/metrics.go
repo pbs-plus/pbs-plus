@@ -486,7 +486,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 	m.jobsLastRunFailedTotal.Set(float64(failedCount))
 	m.jobsLastRunSuccessTotal.Set(float64(successCount))
 
-	targets, err := storeInstance.Database.GetAllTargets()
+	targets, err := storeInstance.Database.GetAllTargets(true)
 	if err != nil {
 		syslog.L.Error(err).
 			WithField("handler", "prometheus_metrics").

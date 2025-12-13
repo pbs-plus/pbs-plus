@@ -16,6 +16,7 @@ var (
 
 type Volume struct {
 	VolumeName     string `json:"volume_name"`
+	TargetName     string `json:"target_name"`
 	MetaType       string `json:"meta_type"`
 	MetaName       string `json:"meta_name"`
 	MetaFS         string `json:"meta_fs"`
@@ -25,14 +26,15 @@ type Volume struct {
 	MetaTotal      string `json:"meta_total"`
 	MetaUsed       string `json:"meta_used"`
 	MetaFree       string `json:"meta_free"`
+	Accessible     bool   `json:"accessible"`
 }
 
 type Target struct {
 	Name             string   `json:"name"`
-	MountScript      string   `json:"mount-script"`
+	MountScript      string   `json:"mount_script"`
 	AgentVersion     string   `json:"agent_version"`
 	ConnectionStatus bool     `json:"connection_status"`
-	Auth             string   `json:"auth"`
+	Auth             string   `json:"-"`
 	JobCount         int      `json:"job_count"`
 	TokenUsed        string   `json:"token_used"`
 	OperatingSystem  string   `json:"os"`
@@ -45,7 +47,7 @@ type Target struct {
 	S3UsePathStyle   bool     `json:"s3_path_style"`
 	S3Bucket         string   `json:"s3_bucket"`
 	S3Secret         string   `json:"-"`
-	LocalPath        string   `json:"-"`
+	LocalPath        string   `json:"local_path"`
 	Volumes          []Volume `json:"volumes"`
 }
 

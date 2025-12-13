@@ -313,6 +313,7 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 		if err != nil {
 			return types.Target{}, fmt.Errorf("GetTarget: error scanning volume: %w", err)
 		}
+		v.TargetName = target.Name
 		volumes = append(volumes, v)
 	}
 	if err := volRows.Err(); err != nil {
@@ -322,6 +323,7 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 
 	return target, nil
 }
+
 func (database *Database) GetTargetAndVolume(targetName, volumeName string) (types.Target, types.Volume, error) {
 	row := database.readDb.QueryRow(`
         SELECT
@@ -361,6 +363,7 @@ func (database *Database) GetTargetAndVolume(targetName, volumeName string) (typ
 	`, targetName, volumeName)
 
 	var vol types.Volume
+	vol.TargetName = tgt.Name
 	if err := vrow.Scan(
 		&vol.VolumeName, &vol.MetaType, &vol.MetaName, &vol.MetaFS,
 		&vol.MetaTotalBytes, &vol.MetaUsedBytes, &vol.MetaFreeBytes,
@@ -396,38 +399,30 @@ func (database *Database) GetVolume(targetName, volumeName string) (types.Volume
 		}
 		return types.Volume{}, fmt.Errorf("GetVolume: fetch volume: %w", err)
 	}
+	vol.TargetName = targetName
 
 	return vol, nil
 }
 
-func (database *Database) GetUniqueAuthByHostname(hostname string) ([]string, error) {
-	rows, err := database.readDb.Query(`
-        SELECT DISTINCT t.auth
+func (database *Database) GetAuthByHostname(hostname string) (string, error) {
+	row := database.readDb.QueryRow(`
+        SELECT t.auth
         FROM targets t
-        WHERE t.agent_host = ?
-        AND t.auth IS NOT NULL AND t.auth != ''
-        ORDER BY t.auth
-   `, hostname)
-	if err != nil {
-		return nil, fmt.Errorf("GetUniqueAuthByHostname: error querying auth values: %w", err)
-	}
-	defer rows.Close()
+        WHERE t.name = ?
+          AND t.auth IS NOT NULL
+          AND t.auth != ''
+        LIMIT 1
+    `, hostname)
 
-	var authList []string
-	for rows.Next() {
-		var auth string
-		err := rows.Scan(&auth)
-		if err != nil {
-			return nil, fmt.Errorf("GetUniqueAuthByHostname: error scanning auth value: %w", err)
+	var auth string
+	if err := row.Scan(&auth); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("GetAuthByHostname: no auth found for %q", hostname)
 		}
-		authList = append(authList, auth)
+		return "", fmt.Errorf("GetAuthByHostname: query error: %w", err)
 	}
 
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetUniqueAuthByHostname: error iterating rows: %w", err)
-	}
-
-	return authList, nil
+	return auth, nil
 }
 
 func (database *Database) GetS3Secret(name string) (string, error) {
@@ -455,7 +450,7 @@ func (database *Database) GetS3Secret(name string) (string, error) {
 	return decrypted, nil
 }
 
-func (database *Database) GetAllTargets() ([]types.Target, error) {
+func (database *Database) GetAllTargets(withVolumes bool) ([]types.Target, error) {
 	rows, err := database.readDb.Query(`
         SELECT
             t.name, t.target_type, t.agent_host, t.s3_access_id, t.s3_host, t.s3_bucket, t.s3_secret,
@@ -489,7 +484,8 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 
 		target.JobCount = jobCount
 
-		volRows, err := database.readDb.Query(`
+		if withVolumes {
+			volRows, err := database.readDb.Query(`
 			SELECT
 				volume_name, meta_type, meta_name, meta_fs,
 				meta_total_bytes, meta_used_bytes, meta_free_bytes,
@@ -498,29 +494,31 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 			WHERE target_name = ?
 			ORDER BY volume_name
 		`, target.Name)
-		if err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllTargets: error querying volumes for %q: %w", target.Name, err)).Write()
-			targets = append(targets, target)
-			continue
-		}
-		var volumes []types.Volume
-		for volRows.Next() {
-			var v types.Volume
-			if err := volRows.Scan(
-				&v.VolumeName, &v.MetaType, &v.MetaName, &v.MetaFS,
-				&v.MetaTotalBytes, &v.MetaUsedBytes, &v.MetaFreeBytes,
-				&v.MetaTotal, &v.MetaUsed, &v.MetaFree,
-			); err != nil {
-				syslog.L.Error(fmt.Errorf("GetAllTargets: error scanning volume for %q: %w", target.Name, err)).Write()
+			if err != nil {
+				syslog.L.Error(fmt.Errorf("GetAllTargets: error querying volumes for %q: %w", target.Name, err)).Write()
+				targets = append(targets, target)
 				continue
 			}
-			volumes = append(volumes, v)
+			var volumes []types.Volume
+			for volRows.Next() {
+				var v types.Volume
+				if err := volRows.Scan(
+					&v.VolumeName, &v.MetaType, &v.MetaName, &v.MetaFS,
+					&v.MetaTotalBytes, &v.MetaUsedBytes, &v.MetaFreeBytes,
+					&v.MetaTotal, &v.MetaUsed, &v.MetaFree,
+				); err != nil {
+					syslog.L.Error(fmt.Errorf("GetAllTargets: error scanning volume for %q: %w", target.Name, err)).Write()
+					continue
+				}
+				v.TargetName = target.Name
+				volumes = append(volumes, v)
+			}
+			_ = volRows.Close()
+			if err := volRows.Err(); err != nil {
+				syslog.L.Error(fmt.Errorf("GetAllTargets: error iterating volumes for %q: %w", target.Name, err)).Write()
+			}
+			target.Volumes = volumes
 		}
-		_ = volRows.Close()
-		if err := volRows.Err(); err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllTargets: error iterating volumes for %q: %w", target.Name, err)).Write()
-		}
-		target.Volumes = volumes
 
 		targets = append(targets, target)
 	}
@@ -530,6 +528,41 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 	}
 
 	return targets, nil
+}
+
+func (database *Database) GetAllVolumes(targetName string) ([]types.Volume, error) {
+	volRows, err := database.readDb.Query(`
+			SELECT
+				volume_name, meta_type, meta_name, meta_fs,
+				meta_total_bytes, meta_used_bytes, meta_free_bytes,
+				meta_total, meta_used, meta_free
+			FROM volumes
+			WHERE target_name = ?
+			ORDER BY volume_name
+		`, targetName)
+	if err != nil {
+		return nil, fmt.Errorf("GetAllVolumes: error querying volumes: %w", err)
+	}
+	var volumes []types.Volume
+	for volRows.Next() {
+		var v types.Volume
+		if err := volRows.Scan(
+			&v.VolumeName, &v.MetaType, &v.MetaName, &v.MetaFS,
+			&v.MetaTotalBytes, &v.MetaUsedBytes, &v.MetaFreeBytes,
+			&v.MetaTotal, &v.MetaUsed, &v.MetaFree,
+		); err != nil {
+			syslog.L.Error(fmt.Errorf("GetAllVolumes: error scanning volume for %q: %w", targetName, err)).Write()
+			continue
+		}
+		v.TargetName = targetName
+		volumes = append(volumes, v)
+	}
+	_ = volRows.Close()
+	if err := volRows.Err(); err != nil {
+		syslog.L.Error(fmt.Errorf("GetAllVolumes: error iterating volumes for %q: %w", targetName, err)).Write()
+	}
+
+	return volumes, nil
 }
 
 func (database *Database) UpdateTargetVolumes(tx *sql.Tx, targetName string, volumes []types.Volume) (err error) {

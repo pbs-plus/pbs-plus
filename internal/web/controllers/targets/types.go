@@ -11,6 +11,11 @@ type TargetsResponse struct {
 	Digest string         `json:"digest"`
 }
 
+type VolumesResponse struct {
+	Data   []types.Volume `json:"data"`
+	Digest string         `json:"digest"`
+}
+
 type TargetConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`

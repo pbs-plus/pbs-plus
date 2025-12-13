@@ -1,9 +1,7 @@
 package controllers
 
 import (
-	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -15,6 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
@@ -119,23 +118,40 @@ func StatusHandler(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Info().WithMessage("received target status request").WithField("drive", reqData.Drive).WithField("subpath", reqData.Subpath).Write()
+	syslog.L.Info().WithMessage("received target status request").Write()
 
-	prefix := reqData.Drive
-
-	if len(prefix) == 1 {
-		prefix += ":/"
-	}
-
-	if strings.ToLower(reqData.Drive) == "root" {
-		prefix = "/"
-	}
-
-	fullPath := filepath.Join(prefix, reqData.Subpath)
-
-	if _, err := os.Stat(fullPath); !os.IsNotExist(err) {
-		return arpc.Response{Status: 200, Message: fmt.Sprintf("reachable|%s", constants.Version)}, nil
-	} else {
+	localDrives, err := utils.GetLocalDrives()
+	if err != nil {
 		return arpc.Response{}, err
 	}
+
+	accessibleVols := []utils.DriveInfo{}
+	for _, volume := range localDrives {
+		reqPath := volume.Letter
+		if len(reqPath) == 1 {
+			reqPath += ":/"
+		}
+
+		if strings.ToLower(volume.Letter) == "root" {
+			reqPath = "/"
+		}
+
+		if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+			continue
+		}
+
+		accessibleVols = append(accessibleVols, volume)
+	}
+
+	resp := types.TargetStatusResp{
+		Volumes:      accessibleVols,
+		AgentVersion: constants.Version,
+	}
+
+	encodedResp, err := resp.Encode()
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
+	return arpc.Response{Status: 200, Data: encodedResp}, nil
 }

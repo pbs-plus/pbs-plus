@@ -21,7 +21,7 @@ ALTER TABLE targets_legacy_rebuild ADD COLUMN secret_s3 TEXT NOT NULL DEFAULT ''
 -- Path:
 --  - agent: agent://{agent_host}/{volume_name}
 --  - s3: https://{s3_access_id}@{s3_host}/{s3_bucket}  (volume_name equals bucket usually)
---  - local: use targets.local_path; if NULL, fallback to volumes.original_path
+--  - local: use targets.local_path
 -- Name:
 --  - agent: "<agent_host> - <volume_name>"
 --  - s3: keep targets.name
@@ -48,7 +48,7 @@ SELECT
       COALESCE(tgt.s3_host, 'unknown') || '/' ||
       COALESCE(tgt.s3_bucket, vol.volume_name)
     ELSE
-      COALESCE(tgt.local_path, vol.original_path)
+      tgt.local_path
   END AS path,
   tgt.auth,
   tgt.token_used,
