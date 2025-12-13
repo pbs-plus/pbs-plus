@@ -32,11 +32,15 @@ require (
 )
 
 require (
+	cdr.dev/slog v1.6.1 // indirect
 	github.com/StackExchange/wmi v0.0.0-20190523213315-cbe66965904d // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/coder/clistat v1.1.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/elastic/go-sysinfo v1.15.4 // indirect
+	github.com/elastic/go-windows v1.0.2 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
@@ -63,19 +67,25 @@ require (
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
+	github.com/spf13/afero v1.12.0 // indirect
 	github.com/tinylib/msgp v1.4.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	go.opentelemetry.io/otel v1.37.0 // indirect
+	go.opentelemetry.io/otel/trace v1.37.0 // indirect
 	golang.org/x/mod v0.30.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/telemetry v0.0.0-20251111182119-bc8e575c7b54 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/tools v0.39.0 // indirect
+	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	howett.net/plist v1.0.0 // indirect
 	modernc.org/libc v1.66.9 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	tailscale.com v1.80.3 // indirect
 )
 
 replace github.com/hanwen/go-fuse/v2 v2.7.2 => github.com/pbs-plus/go-fuse/v2 v2.1.2

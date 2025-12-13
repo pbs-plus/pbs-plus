@@ -12,6 +12,7 @@ ExecStart=/usr/bin/pbs-plus-agent
 #ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10
+EnvironmentFile=-/etc/pbs-plus-agent/agent.env
 
 StandardOutput=journal
 StandardError=journal

@@ -145,10 +145,11 @@ func newTestQUICServerCustomIncoming(t *testing.T, router Router, maxIncomingStr
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	listener, udpConn, err := Listen(t.Context(), "127.0.0.1:0", serverTLS, &quic.Config{
-		KeepAlivePeriod:    200 * time.Millisecond,
-		MaxIncomingStreams: maxIncomingStreams,
-	})
+	quicConfig := quicServerLimitsAutoConfig()
+	quicConfig.KeepAlivePeriod = 200 * time.Millisecond
+	quicConfig.MaxIncomingStreams = maxIncomingStreams
+
+	listener, udpConn, err := Listen(t.Context(), "127.0.0.1:0", serverTLS, quicConfig)
 	if err != nil {
 		t.Fatalf("quic listen: %v", err)
 	}
