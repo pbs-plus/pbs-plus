@@ -1,0 +1,80 @@
+name: Delete RC draft Releases for a base version
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_version:
+        description: "Base version to match (e.g., 1.4.0). Matches v1.4.0-rcN and 1.4.0-rcN"
+        required: true
+        type: string
+      dry_run:
+        description: "Print what would be deleted without deleting"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: write
+
+jobs:
+  delete-draft-releases:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List and delete draft RC releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          BASE: ${{ inputs.base_version }}
+          DRY: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Repository: $GH_REPO"
+          echo "Base version: $BASE"
+          echo "Dry run: $DRY"
+
+          # Fetch all releases (paginated), filter to drafts, then to rc for this base
+          # Using jq to filter: draft == true AND tag_name matches ^(v)?BASE-rc<number>(.<number>)?$
+          releases_json=$(gh api -H "Accept: application/vnd.github+json" \
+            --paginate "/repos/${GH_REPO}/releases")
+
+          # Build regex for jq (escape dots in BASE)
+          base_escaped=$(printf '%s\n' "$BASE" | sed 's/[.[\*^$()+?{|}/\\&]/\\&/g')
+          rc_regex="^(v)?${base_escaped}-rc[0-9]+(\\.[0-9]+)?$"
+
+          # Create a compact list of candidate drafts
+          candidates=$(echo "$releases_json" | jq -r --arg re "$rc_regex" '
+            .[]
+            | select(.draft == true)
+            | select(.tag_name|test($re))
+            | "\(.id) \(.tag_name) \(.name // "")"
+          ')
+
+          if [[ -z "$candidates" ]]; then
+            echo "No draft RC releases found for base $BASE"
+            exit 0
+          fi
+
+          echo "Draft RC releases found:"
+          echo "$candidates" | while IFS= read -r line; do
+            echo "  - $line"
+          done
+
+          if [[ "$DRY" == "true" ]]; then
+            echo "Dry run enabled. No deletions performed."
+            exit 0
+          fi
+
+          # Delete each candidate release by id
+          echo "$candidates" | while IFS= read -r line; do
+            rel_id=$(echo "$line" | awk '{print $1}')
+            tag=$(echo "$line" | awk '{print $2}')
+            echo "Deleting release id=${rel_id} (tag_name=${tag})"
+            gh api -X DELETE "/repos/${GH_REPO}/releases/${rel_id}" || true
+          done
+
+          echo "Done deleting draft RC releases for $BASE."
