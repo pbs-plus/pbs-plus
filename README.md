@@ -69,7 +69,7 @@ PBS Plus currently consists of two main components: the server and the agent. Th
 - Currently, Windows and Linux agents are supported.
 - Linux agents **do not** support snapshots on backup yet.
 - The agent registers with the server on initialization, exchanging public keys for communication.
-- The agent acts as a service, using a custom RPC (`aRPC`/Agent RPC) using [smux](https://github.com/xtaci/smux) with mTLS to communicate with the server. For backups, the server communicates with the agent over `aRPC` to deploy a `FUSE`-based filesystem, mounts the volume to PBS, and runs `proxmox-backup-client` on the server side to perform the actual backup.
+- The agent acts as a service, using a custom RPC (`aRPC`/Agent RPC) using [QUIC](https://github.com/quic-go/quic-go) with mTLS to communicate with the server. For backups, the server communicates with the agent over `aRPC` to deploy a `FUSE`-based filesystem, mounts the volume to PBS, and runs `proxmox-backup-client` on the server side to perform the actual backup.
 
 ### S3-compatible backup target
 > [!WARNING]  
