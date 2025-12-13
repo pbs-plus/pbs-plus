@@ -432,37 +432,6 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			switch target.TargetType {
-			case "agent":
-				arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(target.Name)
-				if ok {
-					target.AgentVersion = arpcSess.GetVersion()
-					target.ConnectionStatus = false
-
-					if strings.ToLower(r.FormValue("status")) == "true" {
-						respMsg, err := arpcSess.CallMessage(
-							r.Context(),
-							"target_status",
-							&reqTypes.TargetStatusReq{},
-						)
-						if err == nil && strings.HasPrefix(respMsg, "reachable") {
-							target.ConnectionStatus = true
-						}
-					}
-				}
-			case "s3":
-				target.ConnectionStatus = true
-				target.AgentVersion = "N/A (S3 target)"
-			default:
-				target.AgentVersion = "N/A (local target)"
-				_, err := os.Stat(target.LocalPath)
-				if err != nil {
-					target.ConnectionStatus = false
-				} else {
-					target.ConnectionStatus = utils.IsValid(target.LocalPath)
-				}
-			}
-
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = target
