@@ -114,8 +114,8 @@ func TestEncodeDecodeConcurrency(t *testing.T) {
 
 	t.Run("BackupReq", func(t *testing.T) {
 		original := &BackupReq{
-			JobId: "job123",
-			Drive: "/dev/sda1",
+			JobId:  "job123",
+			Volume: "/dev/sda1",
 		}
 		validateEncodeDecodeConcurrency(t, original, func() arpc.Encodable {
 			return &BackupReq{}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
 
@@ -142,9 +143,10 @@ func renewCertificate() error {
 	}
 
 	reqBody, err := json.Marshal(&BootstrapRequest{
-		Hostname: hostname,
-		Drives:   drives,
-		CSR:      encodedCSR,
+		Hostname:        hostname,
+		Drives:          drives,
+		OperatingSystem: runtime.GOOS,
+		CSR:             encodedCSR,
 	})
 	if err != nil {
 		return fmt.Errorf("renewCertificate: failed to marshal bootstrap request: %w", err)

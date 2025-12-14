@@ -7,25 +7,25 @@ Ext.define("PBS.config.DiskBackupJobView", {
   stateful: true,
   stateId: "grid-disk-backup-jobs-v1",
 
-  selType: "checkboxmodel",    // show checkboxes
-  multiSelect: true,           // allow multi-row selection
+  selType: "checkboxmodel", // show checkboxes
+  multiSelect: true, // allow multi-row selection
 
   viewConfig: {
-    getRowClass: function(record) {
-      const lastRunEndtime = record.get('last-successful-endtime');
+    getRowClass: function (record) {
+      const lastRunEndtime = record.get("last-successful-endtime");
 
       if (!lastRunEndtime) {
-        return 'pbs-row-warning-old-backup';
+        return "pbs-row-warning-old-backup";
       }
 
       const now = Date.now() / 1000;
-      const sevenDaysAgo = now - (7 * 24 * 60 * 60);
+      const sevenDaysAgo = now - 7 * 24 * 60 * 60;
 
       if (lastRunEndtime < sevenDaysAgo) {
-        return 'pbs-row-warning-old-backup';
+        return "pbs-row-warning-old-backup";
       }
 
-      return '';
+      return "";
     },
   },
 
@@ -41,19 +41,22 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
       if (val) {
         // build a case-insensitive regex
-        const re = new RegExp(Ext.String.escapeRegex(val), 'i');
-        store.filterBy(rec => {
+        const re = new RegExp(Ext.String.escapeRegex(val), "i");
+        store.filterBy((rec) => {
           // test multiple fields:
-          return re.test(rec.get('id'))
-            || re.test(rec.get('target'))
-            || re.test(rec.get('ns'))
-            || re.test(rec.get('comment'))
-            || re.test(rec.get('subpath'));
+          return (
+            re.test(rec.get("id")) ||
+            re.test(rec.get("target")) ||
+            re.test(rec.get("volume")) ||
+            re.test(rec.get("ns")) ||
+            re.test(rec.get("comment")) ||
+            re.test(rec.get("subpath"))
+          );
         });
       }
     },
 
-    runJobs: function() {
+    runJobs: function () {
       const me = this;
       const view = me.getView();
       const recs = view.getSelection();
@@ -71,13 +74,17 @@ Ext.define("PBS.config.DiskBackupJobView", {
         if (btn !== "yes") return;
 
         // Build query string: job=id1&job=id2...
-        const params = ids.map(id => "job=" + encodeURIComponent(encodePathValue(id))).join("&");
+        const params = ids
+          .map((id) => "job=" + encodeURIComponent(encodePathValue(id)))
+          .join("&");
 
         PBS.PlusUtils.API2Request({
           url: "/api2/extjs/d2d/backup?" + params,
           method: "POST",
           waitMsgTarget: view,
-          success: () => { me.reload(); },
+          success: () => {
+            me.reload();
+          },
           failure: (resp) => {
             Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
           },
@@ -85,7 +92,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       });
     },
 
-    stopJobs: function() {
+    stopJobs: function () {
       const me = this;
       const view = me.getView();
       const recs = view.getSelection();
@@ -116,16 +123,18 @@ Ext.define("PBS.config.DiskBackupJobView", {
         if (btn !== "yes") return;
 
         // 1) delete the “Plus” queue entry for all jobs in one request
-        const plusJobs = jobs.filter(j => j.hasPlus);
+        const plusJobs = jobs.filter((j) => j.hasPlus);
         if (plusJobs.length > 0) {
-          const plusIds = plusJobs.map(j => "job=" + encodeURIComponent(encodePathValue(j.id))).join("&");
+          const plusIds = plusJobs
+            .map((j) => "job=" + encodeURIComponent(encodePathValue(j.id)))
+            .join("&");
           PBS.PlusUtils.API2Request({
             url: "/api2/extjs/d2d/backup?" + plusIds,
             method: "DELETE",
             waitMsgTarget: view,
             success: () => {
               // Only reload if there are no PBSTasks to stop
-              if (!jobs.some(j => j.hasPBSTask)) {
+              if (!jobs.some((j) => j.hasPBSTask)) {
                 me.reload();
               }
             },
@@ -147,7 +156,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
                 encodeURIComponent(job.upid),
               method: "DELETE",
               waitMsgTarget: view,
-              success: () => { me.reload(); },
+              success: () => {
+                me.reload();
+              },
               failure: (resp) => {
                 Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
               },
@@ -157,7 +168,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       });
     },
 
-    removeJobs: function() {
+    removeJobs: function () {
       const me = this;
       const view = me.getView();
       const recs = view.getSelection();
@@ -180,23 +191,23 @@ Ext.define("PBS.config.DiskBackupJobView", {
               success: () => me.reload(),
             });
           });
-        }
+        },
       );
     },
 
-    addJob: function() {
+    addJob: function () {
       let me = this;
       Ext.create("PBS.D2DManagement.BackupJobEdit", {
         autoShow: true,
         listeners: {
-          destroy: function() {
+          destroy: function () {
             me.reload();
           },
         },
       }).show();
     },
 
-    editJob: function() {
+    editJob: function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -208,14 +219,14 @@ Ext.define("PBS.config.DiskBackupJobView", {
         id: selection[0].data.id,
         autoShow: true,
         listeners: {
-          destroy: function() {
+          destroy: function () {
             me.reload();
           },
         },
       }).show();
     },
 
-    duplicateJob: function() {
+    duplicateJob: function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -231,14 +242,14 @@ Ext.define("PBS.config.DiskBackupJobView", {
         autoShow: true,
         jobData: jobData,
         listeners: {
-          destroy: function() {
+          destroy: function () {
             me.reload();
           },
         },
       }).show();
     },
 
-    openTaskLog: function() {
+    openTaskLog: function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -252,7 +263,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       }).show();
     },
 
-    openSuccessTaskLog: function() {
+    openSuccessTaskLog: function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -266,7 +277,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       }).show();
     },
 
-    exportCSV: async function() {
+    exportCSV: async function () {
       const view = this.getView();
       const store = view.getStore();
       const records = store.getData().items.map((item) => item.data);
@@ -400,24 +411,24 @@ Ext.define("PBS.config.DiskBackupJobView", {
       URL.revokeObjectURL(url);
     },
 
-    startStore: function() {
+    startStore: function () {
       this.getView().getStore().rstore.startUpdate();
     },
 
-    stopStore: function() {
+    stopStore: function () {
       this.getView().getStore().rstore.stopUpdate();
     },
 
-    reload: function() {
+    reload: function () {
       this.getView().getStore().rstore.load();
     },
 
-    init: function(view) {
+    init: function (view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
 
-      if (!document.getElementById('pbs-backup-job-styles')) {
-        const style = document.createElement('style');
-        style.id = 'pbs-backup-job-styles';
+      if (!document.getElementById("pbs-backup-job-styles")) {
+        const style = document.createElement("style");
+        style.id = "pbs-backup-job-styles";
         style.innerHTML = `
           .pbs-row-warning-old-backup {
             background-color: #ffc107 !important;
@@ -440,7 +451,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       const store = view.getStore();
       store.setGrouper({
         property: "ns",
-        groupFn: function(record) {
+        groupFn: function (record) {
           const ns = record.get("ns");
           return ns ? "Namespace: " + ns.split("/")[0] : "Namespace: /";
         },
@@ -472,7 +483,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       groupers: [
         {
           property: "ns",
-          groupFn: function(record) {
+          groupFn: function (record) {
             const ns = record.get("ns");
             return ns ? "Namespace: " + ns.split("/")[0] : "Namespace: /";
           },
@@ -481,7 +492,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       groupHeaderTpl: [
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
-          formatNS: function(ns) {
+          formatNS: function (ns) {
             return ns;
           },
         },
@@ -500,7 +511,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Duplicate Job"),
       handler: "duplicateJob",
-      enableFn: function() {
+      enableFn: function () {
         let recs = this.up("grid").getSelection();
         return recs.length === 1;
       },
@@ -510,7 +521,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Edit Job"),
       handler: "editJob",
-      enableFn: function() {
+      enableFn: function () {
         let recs = this.up("grid").getSelection();
         if (recs.length !== 1) return false;
         let d = recs[0].data;
@@ -522,7 +533,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Remove Job(s)"),
       handler: "removeJobs",
-      enableFn: function() {
+      enableFn: function () {
         let recs = this.up("grid").getSelection();
         // at least one selected, and none currently running
         return (
@@ -541,7 +552,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Show Log"),
       handler: "openTaskLog",
-      enableFn: function() {
+      enableFn: function () {
         let recs = this.up("grid").getSelection();
         return recs.length === 1 && !!recs[0].data["last-run-upid"];
       },
@@ -551,12 +562,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Show last success log"),
       handler: "openSuccessTaskLog",
-      enableFn: function() {
+      enableFn: function () {
         let recs = this.up("grid").getSelection();
-        return (
-          recs.length === 1 &&
-          !!recs[0].data["last-successful-upid"]
-        );
+        return recs.length === 1 && !!recs[0].data["last-successful-upid"];
       },
       disabled: true,
     },
@@ -565,14 +573,12 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Run Job(s)"),
       handler: "runJobs",
-      enableFn: function() {
+      enableFn: function () {
         let recs = this.up("grid").getSelection();
         return (
           recs.length > 0 &&
           recs.every(
-            (r) =>
-              !r.data["last-run-upid"] ||
-              !!r.data["last-run-state"]
+            (r) => !r.data["last-run-upid"] || !!r.data["last-run-state"],
           )
         );
       },
@@ -582,7 +588,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       xtype: "proxmoxButton",
       text: gettext("Stop Job(s)"),
       handler: "stopJobs",
-      enableFn: function() {
+      enableFn: function () {
         let recs = this.up("grid").getSelection();
         return (
           recs.length > 0 &&
@@ -629,6 +635,12 @@ Ext.define("PBS.config.DiskBackupJobView", {
     {
       header: gettext("Target"),
       dataIndex: "target",
+      width: 120,
+      sortable: true,
+    },
+    {
+      header: gettext("Volume"),
+      dataIndex: "volume",
       width: 120,
       sortable: true,
     },
@@ -682,7 +694,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
     {
       text: gettext("Read Speed"),
       dataIndex: "current_bytes_speed",
-      renderer: function(value) {
+      renderer: function (value) {
         if (!value && value !== 0) {
           return "-";
         }
@@ -693,7 +705,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
     {
       text: gettext("Read Total"),
       dataIndex: "current_bytes_total",
-      renderer: function(value) {
+      renderer: function (value) {
         if (!value && value !== 0) {
           return "-";
         }
@@ -704,7 +716,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
     {
       text: gettext("Target Size"),
       dataIndex: "expected_size",
-      renderer: function(value) {
+      renderer: function (value) {
         if (!value && value !== 0) {
           return "-";
         }
@@ -715,7 +727,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
     {
       text: gettext("Processing Speed"),
       dataIndex: "current_files_speed",
-      renderer: function(value) {
+      renderer: function (value) {
         if (!value && value !== 0) {
           return "-";
         }
@@ -726,7 +738,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
     {
       text: gettext("Files Processed"),
       dataIndex: "current_file_count",
-      renderer: function(value) {
+      renderer: function (value) {
         if (!value && value !== 0) {
           return "-";
         }
@@ -738,7 +750,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
     {
       text: gettext("Folders Processed"),
       dataIndex: "current_folder_count",
-      renderer: function(value) {
+      renderer: function (value) {
         if (!value && value !== 0) {
           return "-";
         }

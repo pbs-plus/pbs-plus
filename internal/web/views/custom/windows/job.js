@@ -17,9 +17,7 @@ var sourceModes = Ext.create("Ext.data.Store", {
 
 var readModes = Ext.create("Ext.data.Store", {
   fields: ["display", "value"],
-  data: [
-    { display: "Standard", value: "standard" },
-  ],
+  data: [{ display: "Standard", value: "standard" }],
 });
 
 Ext.define("PBS.D2DManagement.BackupJobEdit", {
@@ -37,14 +35,16 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
 
   bodyPadding: 0,
 
-  cbindData: function(initialConfig) {
+  cbindData: function (initialConfig) {
     let me = this;
 
     let baseurl = "/api2/extjs/config/disk-backup-job";
     let id = initialConfig.id;
 
     me.isCreate = !id;
-    me.url = id ? `${baseurl}/${encodeURIComponent(encodePathValue(id))}` : baseurl;
+    me.url = id
+      ? `${baseurl}/${encodeURIComponent(encodePathValue(id))}`
+      : baseurl;
     me.method = id ? "PUT" : "POST";
     me.autoLoad = !!id;
     me.scheduleValue = id ? null : "";
@@ -64,16 +64,32 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       "pbsDataStoreSelector[name=store]": {
         change: "storeChange",
       },
+      "pbsD2DTargetSelector[name=target]": {
+        change: "targetChange",
+        select: "targetSelect",
+      },
     },
 
-    storeChange: function(field, value) {
+    storeChange: function (field, value) {
       let me = this;
       let nsSelector = me.lookup("namespace");
       nsSelector.setDatastore(value);
     },
+    targetChange: function (field, value) {
+      let me = this;
+      const volumeSelector = me.lookup("volume");
+      if (volumeSelector) {
+        volumeSelector.setTarget(value);
+      }
+    },
+    // Some ComboGrids only reliably emit 'select' with a record; handle both.
+    targetSelect: function (field, rec) {
+      const value = rec && rec.get ? rec.get("name") : field.getValue();
+      this.targetChange(field, value);
+    },
   },
 
-  initComponent: function() {
+  initComponent: function () {
     let me = this;
     me.callParent();
 
@@ -93,7 +109,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       {
         title: gettext("Options"),
         xtype: "inputpanel",
-        onGetValues: function(values) {
+        onGetValues: function (values) {
           let me = this;
 
           if (me.isCreate) {
@@ -120,6 +136,12 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             xtype: "pbsD2DTargetSelector",
             fieldLabel: "Target",
             name: "target",
+          },
+          {
+            xtype: "pbsD2DVolumeSelector",
+            fieldLabel: "Volume",
+            name: "volume",
+            reference: "volume",
           },
           {
             xtype: "proxmoxtextfield",

@@ -4,6 +4,7 @@ Ext.define("pbs-disk-backup-job-status", {
     "id",
     "store",
     "target",
+    "volume",
     "mode",
     "sourcemode",
     "subpath",
@@ -41,23 +42,42 @@ Ext.define("pbs-model-targets", {
   extend: "Ext.data.Model",
   fields: [
     "name",
-    "path",
+    "local_path",
+    "type",
     "job_count",
-    "drive_type",
     "agent_version",
     "connection_status",
-    "drive_name",
-    "drive_fs",
-    "drive_total_bytes",
-    "drive_used_bytes",
-    "drive_free_bytes",
-    "drive_total",
-    "drive_used",
-    "drive_free",
+    "volumes",
     "os",
     "mount_script",
+    "host",
+    "s3_access_id",
+    "s3_host",
+    "s3_region",
+    "s3_ssl",
+    "s3_path_style",
+    "s3_bucket",
   ],
   idProperty: "name",
+});
+
+Ext.define("pbs-model-volumes", {
+  extend: "Ext.data.Model",
+  fields: [
+    "volume_name",
+    "target_name",
+    "meta_type",
+    "meta_name",
+    "meta_fs",
+    "meta_total_bytes",
+    "meta_used_bytes",
+    "meta_free_bytes",
+    "meta_total",
+    "meta_used",
+    "meta_free",
+    "accessible",
+  ],
+  idProperty: "volume_name",
 });
 
 Ext.define("pbs-model-tokens", {
@@ -74,12 +94,6 @@ Ext.define("pbs-model-exclusions", {
 
 Ext.define("pbs-model-scripts", {
   extend: "Ext.data.Model",
-  fields: [
-    "path",
-    "description",
-    "job_count",
-    "target_count",
-  ],
+  fields: ["path", "description", "job_count", "target_count"],
   idProperty: "path",
 });
-

@@ -309,43 +309,21 @@ func checkProxyAuth(r *http.Request) error {
 }
 
 func loadTrustedCert(store *store.Store, hostname string) (*x509.Certificate, error) {
-	authList, err := store.Database.GetUniqueAuthByHostname(hostname)
+	auth, err := store.Database.GetAuthByHostname(hostname)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get auth values for hostname %s: %w", hostname, err)
+		return nil, fmt.Errorf("failed to get auth value for hostname %s: %w", hostname, err)
 	}
 
-	if len(authList) == 0 {
-		return nil, fmt.Errorf("no auth values found for hostname %s", hostname)
+	decodedCert, err := base64.StdEncoding.DecodeString(auth)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode certificate: %w", err)
 	}
 
-	var lastErr error
-	for i, authValue := range authList {
-		decodedCert, err := base64.StdEncoding.DecodeString(authValue)
+	block, _ := pem.Decode(decodedCert)
+	if block != nil {
+		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			lastErr = fmt.Errorf("auth %d: failed to decode certificate: %w", i+1, err)
-			continue
-		}
-
-		block, _ := pem.Decode(decodedCert)
-		if block != nil {
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				lastErr = fmt.Errorf("auth %d: failed to parse PEM certificate: %w", i+1, err)
-				continue
-			}
-
-			now := time.Now()
-			if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
-				return nil, fmt.Errorf("certificate for hostname %s is expired or not yet valid", hostname)
-			}
-
-			return cert, nil
-		}
-
-		cert, err := x509.ParseCertificate(decodedCert)
-		if err != nil {
-			lastErr = fmt.Errorf("auth %d: failed to parse raw certificate: %w", i+1, err)
-			continue
+			return nil, fmt.Errorf("failed to parse PEM certificate: %w", err)
 		}
 
 		now := time.Now()
@@ -356,5 +334,15 @@ func loadTrustedCert(store *store.Store, hostname string) (*x509.Certificate, er
 		return cert, nil
 	}
 
-	return nil, fmt.Errorf("failed to load certificate from any auth value for hostname %s (tried %d): last error: %v", hostname, len(authList), lastErr)
+	cert, err := x509.ParseCertificate(decodedCert)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse raw certificate: %w", err)
+	}
+
+	now := time.Now()
+	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		return nil, fmt.Errorf("certificate for hostname %s is expired or not yet valid", hostname)
+	}
+
+	return cert, nil
 }

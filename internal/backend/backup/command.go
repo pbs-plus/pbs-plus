@@ -63,7 +63,7 @@ func getBackupId(isAgent bool, targetName string) (string, error) {
 	if targetName == "" {
 		return "", fmt.Errorf("target name is required for agent backup")
 	}
-	return strings.TrimSpace(strings.Split(targetName, " - ")[0]), nil
+	return strings.TrimSpace(targetName), nil
 }
 
 func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string, jobStore string, backupId string, extraExclusions []string) []string {

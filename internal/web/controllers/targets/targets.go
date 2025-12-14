@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ type TargetStatusResult struct {
 	AgentVersion     string
 	ConnectionStatus bool
 	Error            error
+	Volumes          []utils.DriveInfo
 }
 
 func CheckTargetStatusBatch(
@@ -50,16 +52,7 @@ func CheckTargetStatusBatch(
 
 			result := TargetStatusResult{Index: idx}
 
-			targetSplit := strings.Split(tgt.Name, " - ")
-			if len(targetSplit) < 2 {
-				results[idx] = result
-				return
-			}
-
-			hostname := targetSplit[0]
-			drive := targetSplit[1]
-
-			arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(hostname)
+			arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(tgt.Name)
 			if !ok {
 				results[idx] = result
 				return
@@ -72,20 +65,19 @@ func CheckTargetStatusBatch(
 				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 				defer cancel()
 
-				respMsg, err := arpcSess.CallMessage(
+				var resp reqTypes.TargetStatusResp
+				err := arpcSess.Call(
 					timeoutCtx,
 					"target_status",
-					&reqTypes.TargetStatusReq{Drive: drive},
+					&reqTypes.TargetStatusReq{},
+					&resp,
 				)
-				if err == nil && strings.HasPrefix(respMsg, "reachable") {
+				if err == nil {
 					result.ConnectionStatus = true
-					splittedMsg := strings.Split(respMsg, "|")
-					if len(splittedMsg) > 1 {
-						result.AgentVersion = splittedMsg[1]
-					}
-				} else if err != nil {
-					result.Error = err
+					result.Volumes = resp.Volumes
 				}
+
+				result.Error = err
 			}
 
 			results[idx] = result
@@ -103,7 +95,8 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		all, err := storeInstance.Database.GetAllTargets()
+		withVolumes := strings.ToLower(r.FormValue("volumes")) == "true"
+		all, err := storeInstance.Database.GetAllTargets(withVolumes)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -116,16 +109,17 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		agentIndices := make([]int, 0)
 
 		for i := range all {
-			if all[i].IsAgent {
+			switch all[i].TargetType {
+			case "agent":
 				agentTargets = append(agentTargets, all[i])
 				agentIndices = append(agentIndices, i)
-			} else if all[i].IsS3 {
+			case "s3":
 				all[i].ConnectionStatus = true
 				all[i].AgentVersion = "N/A (S3 target)"
-			} else {
+			default:
 				all[i].AgentVersion = "N/A (local target)"
-				_, err := os.Stat(all[i].Path)
-				all[i].ConnectionStatus = err == nil && utils.IsValid(all[i].Path)
+				_, err := os.Stat(all[i].LocalPath)
+				all[i].ConnectionStatus = err == nil && utils.IsValid(all[i].LocalPath)
 			}
 		}
 
@@ -143,6 +137,14 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				originalIdx := agentIndices[i]
 				all[originalIdx].AgentVersion = result.AgentVersion
 				all[originalIdx].ConnectionStatus = result.ConnectionStatus
+				accessibleVols := result.Volumes
+				for volIdx, vol := range all[originalIdx].Volumes {
+					if slices.ContainsFunc(accessibleVols, func(s utils.DriveInfo) bool {
+						return s.Letter == vol.VolumeName
+					}) {
+						all[originalIdx].Volumes[volIdx].Accessible = true
+					}
+				}
 			}
 		}
 
@@ -153,6 +155,36 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		toReturn := TargetsResponse{
+			Data:   all,
+			Digest: digest,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(toReturn)
+	}
+}
+
+func D2DVolumeHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		target := r.PathValue("target")
+		all, err := storeInstance.Database.GetAllVolumes(target)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		digest, err := utils.CalculateDigest(all)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		toReturn := VolumesResponse{
 			Data:   all,
 			Digest: digest,
 		}
@@ -199,16 +231,11 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			clientIP = strings.Split(clientIP, ":")[0]
 		}
 
-		existingTargets, err := storeInstance.Database.GetAllTargetsByIP(clientIP)
+		existingTarget, err := storeInstance.Database.GetTarget(reqParsed.Hostname)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to get existing targets: %w", err))
+			w.WriteHeader(http.StatusNotFound)
+			controllers.WriteErrorResponse(w, fmt.Errorf("target hostname not found: %w", err))
 			return
-		}
-
-		var targetTemplate types.Target
-		if len(existingTargets) > 0 {
-			targetTemplate = existingTargets[0]
 		}
 
 		tx, err := storeInstance.Database.NewTransaction()
@@ -223,88 +250,29 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}()
 
-		existingTargetsMap := make(map[string]types.Target)
-		for _, target := range existingTargets {
-			existingTargetsMap[target.Name] = target
+		existingTarget.AgentHost = clientIP
+		volumes := make([]types.Volume, len(reqParsed.Drives))
+		for _, drive := range reqParsed.Drives {
+			volumes = append(volumes, types.Volume{
+				VolumeName:     drive.Letter,
+				MetaType:       drive.Type,
+				MetaFS:         drive.FileSystem,
+				MetaFreeBytes:  int(drive.FreeBytes),
+				MetaUsedBytes:  int(drive.UsedBytes),
+				MetaTotalBytes: int(drive.TotalBytes),
+				MetaFree:       drive.Free,
+				MetaUsed:       drive.Used,
+				MetaTotal:      drive.Total,
+			})
 		}
 
-		processedTargetNames := make(map[string]bool)
+		existingTarget.Volumes = volumes
 
-		for _, parsedDrive := range reqParsed.Drives {
-			var targetName string
-			var targetPath string
-
-			switch parsedDrive.OperatingSystem {
-			case "windows":
-				driveLetter := parsedDrive.Letter
-				targetName = reqParsed.Hostname + " - " + driveLetter
-				targetPath = "agent://" + clientIP + "/" + driveLetter
-			default:
-				targetName = reqParsed.Hostname + " - Root"
-				targetPath = "agent://" + clientIP + "/root"
-			}
-
-			processedTargetNames[targetName] = true
-
-			if existingTarget, found := existingTargetsMap[targetName]; found {
-				updatedTarget := existingTarget
-				updatedTarget.DriveType = parsedDrive.Type
-				updatedTarget.DriveName = parsedDrive.VolumeName
-				updatedTarget.DriveFS = parsedDrive.FileSystem
-				updatedTarget.DriveFreeBytes = int(parsedDrive.FreeBytes)
-				updatedTarget.DriveUsedBytes = int(parsedDrive.UsedBytes)
-				updatedTarget.DriveTotalBytes = int(parsedDrive.TotalBytes)
-				updatedTarget.DriveFree = parsedDrive.Free
-				updatedTarget.DriveUsed = parsedDrive.Used
-				updatedTarget.DriveTotal = parsedDrive.Total
-				updatedTarget.OperatingSystem = parsedDrive.OperatingSystem
-
-				err = storeInstance.Database.UpdateTarget(tx, updatedTarget)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to update target %s: %w", targetName, err))
-					return
-				}
-			} else {
-				targetData := types.Target{
-					Name:            targetName,
-					Path:            targetPath,
-					Auth:            targetTemplate.Auth,
-					TokenUsed:       targetTemplate.TokenUsed,
-					DriveType:       parsedDrive.Type,
-					DriveName:       parsedDrive.VolumeName,
-					DriveFS:         parsedDrive.FileSystem,
-					DriveFreeBytes:  int(parsedDrive.FreeBytes),
-					DriveUsedBytes:  int(parsedDrive.UsedBytes),
-					DriveTotalBytes: int(parsedDrive.TotalBytes),
-					DriveFree:       parsedDrive.Free,
-					DriveUsed:       parsedDrive.Used,
-					DriveTotal:      parsedDrive.Total,
-					OperatingSystem: parsedDrive.OperatingSystem,
-					IsAgent:         true,
-				}
-
-				err = storeInstance.Database.CreateTarget(tx, targetData)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to create target %s: %w", targetName, err))
-					return
-				}
-			}
-		}
-
-		for _, existingTarget := range existingTargets {
-			if _, processed := processedTargetNames[existingTarget.Name]; !processed {
-				expectedPrefix := reqParsed.Hostname + " - "
-				if strings.HasPrefix(existingTarget.Name, expectedPrefix) {
-					err = storeInstance.Database.DeleteTarget(tx, existingTarget.Name)
-					if err != nil {
-						w.WriteHeader(http.StatusInternalServerError)
-						controllers.WriteErrorResponse(w, fmt.Errorf("Failed to delete target %s: %w", existingTarget.Name, err))
-						return
-					}
-				}
-			}
+		err = storeInstance.Database.UpdateTarget(tx, existingTarget)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to update target %s: %w", clientIP, err))
+			return
 		}
 
 		err = tx.Commit()
@@ -343,17 +311,26 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		path := r.FormValue("path")
-		_, s3Err := s3url.Parse(path)
-		if !utils.IsValid(path) && s3Err != nil {
-			controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", path))
-			return
-		}
-
 		newTarget := types.Target{
 			Name:        r.FormValue("name"),
-			Path:        path,
 			MountScript: r.FormValue("mount_script"),
-			IsS3:        s3Err == nil,
+		}
+
+		s3, err := s3url.Parse(path)
+		if err == nil {
+			newTarget.S3AccessID = s3.AccessKey
+			newTarget.S3Host = s3.Endpoint
+			newTarget.S3Bucket = s3.Bucket
+			newTarget.S3UsePathStyle = s3.IsPathStyle
+			newTarget.S3Region = s3.Region
+			newTarget.S3UseSSL = s3.UseSSL
+			newTarget.TargetType = "s3"
+		} else if utils.IsValid(path) {
+			newTarget.LocalPath = path
+			newTarget.TargetType = "local"
+		} else {
+			controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", path))
+			return
 		}
 
 		err = storeInstance.Database.CreateTarget(nil, newTarget)
@@ -404,9 +381,22 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				target.Name = r.FormValue("name")
 			}
 			if path != "" {
-				target.Path = path
-				_, s3Err := s3url.Parse(path)
-				target.IsS3 = s3Err == nil
+				s3, err := s3url.Parse(path)
+				if err == nil {
+					target.S3AccessID = s3.AccessKey
+					target.S3Host = s3.Endpoint
+					target.S3Bucket = s3.Bucket
+					target.S3UsePathStyle = s3.IsPathStyle
+					target.S3Region = s3.Region
+					target.S3UseSSL = s3.UseSSL
+					target.TargetType = "s3"
+				} else if utils.IsValid(path) {
+					target.LocalPath = path
+					target.TargetType = "local"
+				} else {
+					controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", path))
+					return
+				}
 			}
 
 			target.MountScript = r.FormValue("mount_script")
@@ -416,9 +406,6 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					switch attr {
 					case "name":
 						target.Name = ""
-					case "path":
-						target.Path = ""
-						target.IsS3 = false
 					case "mount_script":
 						target.MountScript = ""
 					}
@@ -443,44 +430,6 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
-			}
-
-			if target.IsAgent {
-				targetSplit := strings.Split(target.Name, " - ")
-				if len(targetSplit) > 0 {
-					arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(targetSplit[0])
-					if ok {
-						target.AgentVersion = arpcSess.GetVersion()
-						target.ConnectionStatus = false
-
-						if strings.ToLower(r.FormValue("status")) == "true" {
-							respMsg, err := arpcSess.CallMessage(
-								r.Context(),
-								"target_status",
-								&reqTypes.TargetStatusReq{Drive: targetSplit[1]},
-							)
-							if err == nil && strings.HasPrefix(respMsg, "reachable") {
-								target.ConnectionStatus = true
-								splittedMsg := strings.Split(respMsg, "|")
-								if len(splittedMsg) > 1 {
-									target.AgentVersion = splittedMsg[1]
-								}
-							}
-						}
-					}
-				}
-			} else if target.IsS3 {
-				target.ConnectionStatus = true
-				target.AgentVersion = "N/A (S3 target)"
-			} else {
-				target.AgentVersion = "N/A (local target)"
-
-				_, err := os.Stat(target.Path)
-				if err != nil {
-					target.ConnectionStatus = false
-				} else {
-					target.ConnectionStatus = utils.IsValid(target.Path)
-				}
 			}
 
 			response.Status = http.StatusOK
@@ -528,8 +477,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		_, s3Err := s3url.Parse(target.Path)
-		if s3Err != nil {
+		if target.TargetType != "s3" {
 			controllers.WriteErrorResponse(w, errors.New("target is not a valid S3 path"))
 			return
 		}

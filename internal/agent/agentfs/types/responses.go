@@ -2,7 +2,22 @@ package types
 
 import (
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
+
+type TargetStatusResp struct {
+	Volumes      []utils.DriveInfo
+	AgentVersion string
+}
+
+func (req *TargetStatusResp) Encode() ([]byte, error) {
+	return cborEncMode.Marshal(req)
+}
+
+func (req *TargetStatusResp) Decode(buf []byte) error {
+	return cborDecMode.Unmarshal(buf, req)
+}
 
 // LseekResp represents the response to a seek request
 type LseekResp struct {

@@ -103,7 +103,7 @@ func (req *CloseReq) Decode(buf []byte) error {
 // BackupReq represents a request to back up a file
 type BackupReq struct {
 	JobId      string
-	Drive      string
+	Volume     string
 	SourceMode string
 	ReadMode   string
 	Extras     string
@@ -132,10 +132,7 @@ func (req *LseekReq) Decode(buf []byte) error {
 	return cborDecMode.Unmarshal(buf, req)
 }
 
-type TargetStatusReq struct {
-	Drive   string
-	Subpath string
-}
+type TargetStatusReq struct{}
 
 func (req *TargetStatusReq) Encode() ([]byte, error) {
 	return cborEncMode.Marshal(req)

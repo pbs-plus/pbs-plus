@@ -63,10 +63,9 @@ func GetJobTask(
 		}
 	}
 
-	isAgent := strings.HasPrefix(target.Path, "agent://")
 	backupId := hostname
-	if isAgent {
-		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
+	if target.TargetType == "agent" {
+		backupId = strings.TrimSpace(target.Name)
 	}
 	backupId = NormalizeHostname(backupId)
 

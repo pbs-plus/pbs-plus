@@ -5,7 +5,6 @@ package utils
 import (
 	"errors"
 	"fmt"
-	"runtime"
 	"strings"
 	"unsafe"
 
@@ -341,17 +340,16 @@ func GetLocalDrives() ([]DriveInfo, error) {
 		fileSystemStr = strings.TrimRight(fileSystemStr, "\x00")
 
 		drives = append(drives, DriveInfo{
-			Letter:          driveLetter,
-			Type:            driveTypeStr,
-			VolumeName:      volumeNameStr,
-			FileSystem:      fileSystemStr,
-			TotalBytes:      totalBytes,
-			UsedBytes:       usedBytes,
-			FreeBytes:       freeBytes,
-			Total:           totalHuman,
-			Used:            usedHuman,
-			Free:            freeHuman,
-			OperatingSystem: runtime.GOOS,
+			Letter:     driveLetter,
+			Type:       driveTypeStr,
+			VolumeName: volumeNameStr,
+			FileSystem: fileSystemStr,
+			TotalBytes: totalBytes,
+			UsedBytes:  usedBytes,
+			FreeBytes:  freeBytes,
+			Total:      totalHuman,
+			Used:       usedHuman,
+			Free:       freeHuman,
 		})
 	}
 
