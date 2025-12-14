@@ -169,10 +169,10 @@ func DownloadSig(storeInstance *store.Store, version string) http.HandlerFunc {
 		}
 
 		platform := parsePlatformParams(r)
-		filename := buildFilename("pbs-plus-agent", version, platform)
+		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.sig", version, platform.OS, platform.Arch)
 
 		// Construct the passthrough URL
-		targetURL := fmt.Sprintf("%s%s/%s.sig", PBS_DOWNLOAD_BASE, version, filename)
+		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 
 		proxyUrl(targetURL, w, r)
 	}
