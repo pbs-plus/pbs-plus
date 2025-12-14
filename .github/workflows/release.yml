@@ -73,7 +73,7 @@ jobs:
         env:
           ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
         run: |
-          PUB=$("./bin/ed25519-signer" pubkey)
+          PUB=$("./bin/signer" pubkey)
           echo "ED25519_PUBLIC_KEY_B64=$PUB" >> "$GITHUB_ENV"
 
       - name: Run GoReleaser
