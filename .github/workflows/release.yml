@@ -68,12 +68,25 @@ jobs:
         run: |
           mkdir -p /tmp/bin
           go build -ldflags="-s -w" -o /tmp/bin/signer ./cmd/signer
+          ls -l /tmp/bin
+
+      - name: Check seed presence
+        env:
+          ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
+        run: |
+          if [ -z "${ED25519_SEED_B64+x}" ] || [ -z "$ED25519_SEED_B64" ]; then
+            echo "ED25519_SEED_B64 secret is not set"; exit 1; 
+          fi
 
       - name: Derive Ed25519 public key
         env:
           ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
         run: |
           PUB=$("/tmp/bin/signer" pubkey)
+          if [ -z "$PUB" ]; then
+            echo "Failed to derive pubkey"; exit 1;
+          fi
+          echo "Derived Ed25519 public key length: ${#PUB}"
           echo "ED25519_PUBLIC_KEY_B64=$PUB" >> "$GITHUB_ENV"
 
       - name: Run GoReleaser
