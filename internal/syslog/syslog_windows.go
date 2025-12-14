@@ -15,7 +15,7 @@ import (
 )
 
 func (l *Logger) SetServiceLogger() error {
-	sourceName := "PBSPlusAgentLogs"
+	sourceName := "PBSPlusAgent"
 
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -118,11 +118,10 @@ func StatusHandler(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Info().WithMessage("received target status request").Write()
+	prefix := reqData.Drive
 
-	localDrives, err := utils.GetLocalDrives()
-	if err != nil {
-		return arpc.Response{}, err
+	if len(prefix) == 1 {
+		prefix += ":/"
 	}
 
 	accessibleVols := []utils.DriveInfo{}
