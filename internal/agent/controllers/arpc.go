@@ -119,8 +119,6 @@ func StatusHandler(req arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Info().WithMessage("received target status request").WithField("drive", reqData.Drive).WithField("subpath", reqData.Subpath).Write()
-
 	prefix := reqData.Drive
 
 	if len(prefix) == 1 {
