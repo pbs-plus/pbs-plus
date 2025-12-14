@@ -96,8 +96,6 @@ binary_signs:
       - "${signature}"
     signature: "${artifact}.sig"
     artifacts: binary
-    env:
-      - ED25519_SEED_B64={{ .Env.ED25519_SEED_B64 }}
     output: true
 
 archives:
