@@ -58,12 +58,19 @@ func New(cfg Config) (*Updater, error) {
 	selfupdate.LogError = func(format string, args ...any) {
 		err := fmt.Errorf(format, args...)
 		if strings.Contains(err.Error(), "on the latest version") {
+			syslog.L.Debug().WithMessage(fmt.Sprintf(format, args...)).WithField("source", "selfupdate").Write()
 			return
 		}
 
 		syslog.L.Error(err).WithField("source", "selfupdate").Write()
 	}
 	selfupdate.LogInfo = func(format string, args ...any) {
+		info := fmt.Sprintf(format, args...)
+		if strings.Contains(info, "Scheduled upgrade check after") {
+			syslog.L.Debug().WithMessage(fmt.Sprintf(format, args...)).WithField("source", "selfupdate").Write()
+			return
+		}
+
 		syslog.L.Info().WithMessage(fmt.Sprintf(format, args...)).WithField("source", "selfupdate").Write()
 	}
 	selfupdate.LogDebug = func(format string, args ...any) {
