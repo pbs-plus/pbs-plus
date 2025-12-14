@@ -10,10 +10,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func restartCallback(cfg Config) bool {
+func restartCallback(cfg Config) {
 	if !hasSystemd() {
 		syslog.L.Error(fmt.Errorf("not a systemd-based system")).WithMessage("manual service restart required for update").Write()
-		return false
+		return
 	}
 
 	if cfg.SystemdUnit != "" {
@@ -26,13 +26,11 @@ func restartCallback(cfg Config) bool {
 
 		if err := cmd.Run(); err != nil {
 			syslog.L.Error(err).WithMessage(fmt.Sprintf("failed to restart systemd unit %q: %s", cfg.SystemdUnit, out.String())).Write()
-			return false
+			return
 		} else {
 			syslog.L.Info().WithMessage(fmt.Sprintf("successfully restarted systemd unit %q", cfg.SystemdUnit)).Write()
 		}
 	} else {
 		syslog.L.Info().WithMessage("Restart requested, but no systemd unit configured. Exiting for external restart.").Write()
 	}
-
-	return false
 }

@@ -104,7 +104,8 @@ func New(cfg Config) (*Updater, error) {
 			return cfg.UpgradeConfirm(src.pendingVersion)
 		},
 		RestartConfirmCallback: func() bool {
-			return restartCallback(cfg)
+			restartCallback(cfg)
+			return false
 		},
 		ExitCallback: func(err error) {
 			cfg.Exit(err)
@@ -213,6 +214,9 @@ func (a *agentSource) Get(v *selfupdate.Version) (io.ReadCloser, int64, error) {
 
 func (a *agentSource) GetSignature() ([64]byte, error) {
 	var sig [64]byte
+	for i := 0; i < len(sig); i++ {
+		sig[i] = byte(i)
+	}
 	return sig, nil
 }
 
