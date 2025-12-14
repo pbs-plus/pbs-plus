@@ -98,66 +98,41 @@ func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc
 const PBS_DOWNLOAD_BASE = "https://github.com/pbs-plus/pbs-plus/releases/download/"
 
 type PlatformInfo struct {
-	OS     string
-	Arch   string
-	Format string
-	Ext    string
+	OS   string
+	Arch string
+	Ext  string
 }
 
 func parsePlatformParams(r *http.Request) PlatformInfo {
 	// Default to Windows
-	platform := PlatformInfo{
-		OS:     "windows",
-		Arch:   "amd64",
-		Format: "binary",
-		Ext:    ".exe",
+	os := r.URL.Query().Get("os")
+	if os == "" {
+		os = "windows"
 	}
 
-	// Parse query parameters
-	format := r.URL.Query().Get("format")
+	platform := PlatformInfo{
+		OS:   os,
+		Arch: "amd64",
+		Ext:  ".exe",
+	}
+
 	arch := r.URL.Query().Get("arch")
 
 	if arch != "" {
 		platform.Arch = arch
 	}
 
-	if format != "" {
-		platform.Format = format
-		switch format {
-		case "deb":
-			platform.OS = "linux"
-			platform.Ext = ".deb"
-		case "rpm":
-			platform.OS = "linux"
-			platform.Ext = ".rpm"
-		case "apk":
-			platform.OS = "linux"
-			platform.Ext = ".apk"
-		case "ipk":
-			platform.OS = "linux"
-			platform.Ext = ".ipk"
-		case "binary":
-			// Check if we should use Linux binary instead of Windows
-			if r.URL.Query().Get("os") == "linux" {
-				platform.OS = "linux"
-				platform.Ext = ""
-			}
-		}
+	if platform.OS != "windows" {
+		platform.Ext = ""
 	}
 
 	return platform
 }
 
 func buildFilename(component, version string, platform PlatformInfo) string {
-	if platform.Format == "binary" {
-		if platform.OS == "linux" {
-			return fmt.Sprintf("%s-%s-%s-%s", component, version, platform.OS, platform.Arch)
-		}
-		// Windows binary
-		return fmt.Sprintf("%s-%s-%s-%s%s", component, version, platform.OS, platform.Arch, platform.Ext)
+	if platform.OS != "windows" {
+		return fmt.Sprintf("%s-%s-%s-%s", component, version, platform.OS, platform.Arch)
 	}
-
-	// Package formats
 	return fmt.Sprintf("%s-%s-%s-%s%s", component, version, platform.OS, platform.Arch, platform.Ext)
 }
 
@@ -177,6 +152,27 @@ func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc
 
 		// Construct the passthrough URL
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
+
+		proxyUrl(targetURL, w, r)
+	}
+}
+
+func DownloadSig(storeInstance *store.Store, version string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if version == "v0.0.0" {
+			version = "dev"
+		}
+
+		platform := parsePlatformParams(r)
+		filename := buildFilename("pbs-plus-agent", version, platform)
+
+		// Construct the passthrough URL
+		targetURL := fmt.Sprintf("%s%s/%s.sig", PBS_DOWNLOAD_BASE, version, filename)
 
 		proxyUrl(targetURL, w, r)
 	}

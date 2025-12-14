@@ -48,6 +48,7 @@ builds:
       - GOFIPS140=latest
     ldflags:
       - -X 'main.Version=v{{.Version}}'
+      - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
       - -extld gcc
       - -extldflags "-static"
     flags:
@@ -68,6 +69,7 @@ builds:
       - arm64
     ldflags:
       - -X 'main.Version=v{{.Version}}'
+      - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
 
   # Windows Agent
   - id: windows-agent
@@ -83,6 +85,20 @@ builds:
     ldflags:
       - -H=windowsgui
       - -X 'main.Version=v{{.Version}}'
+      - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
+
+binary_signs:
+  - id: ed25519
+    cmd: ./bin/signer
+    args:
+      - sign
+      - "${artifact}"
+      - "${signature}"
+    signature: "${artifact}.sig"
+    artifacts: binary
+    env:
+      - ED25519_SEED_B64={{ .Env.ED25519_SEED_B64 }}
+    output: true
 
 archives:
   - id: server

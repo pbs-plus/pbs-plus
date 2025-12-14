@@ -64,6 +64,18 @@ jobs:
             echo "previous_tag=" >> $GITHUB_OUTPUT
           fi
 
+      - name: Build Ed25519 signer
+        run: |
+          mkdir -p bin
+          go build -ldflags="-s -w" -o bin/signer ./cmd/signer
+
+      - name: Derive Ed25519 public key
+        env:
+          ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
+        run: |
+          PUB=$("./bin/ed25519-signer" pubkey)
+          echo "ED25519_PUBLIC_KEY_B64=$PUB" >> "$GITHUB_ENV"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -73,6 +85,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
+          ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
+          ED25519_PUBLIC_KEY_B64: ${{ env.ED25519_PUBLIC_KEY_B64 }}
 
   docker:
     runs-on: ubuntu-latest
