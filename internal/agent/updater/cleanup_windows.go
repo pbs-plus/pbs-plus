@@ -7,16 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-func (u *UpdateFetcher) Init() error {
-	if u.currentVersion == "" {
-		u.currentVersion = constants.Version
-	}
-
+func cleanUp() error {
 	const svcName = "PBSPlusUpdater"
 
 	m, err := mgr.Connect()
