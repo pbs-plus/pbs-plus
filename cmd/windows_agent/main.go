@@ -48,10 +48,6 @@ func (p *pbsService) Start(s service.Service) error {
 				syslog.L.Info().WithMessage("attempting to update agent").WithField("version", newVersion).Write()
 				return true
 			},
-			RestartConfirm: func() bool {
-				syslog.L.Info().WithMessage("restarting agent for an update").Write()
-				return true
-			},
 			Exit: func(err error) {
 				if err != nil {
 					syslog.L.Error(err).WithMessage("Updater exit with error").Write()
