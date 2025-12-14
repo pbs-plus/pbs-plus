@@ -8,7 +8,6 @@ type VersionResponse struct {
 
 type ScriptConfig struct {
 	AgentUrl       string
-	UpdaterUrl     string
 	ServerUrl      string
 	BootstrapToken string
 }
