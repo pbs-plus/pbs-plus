@@ -94,7 +94,11 @@ binary_signs:
       - sign
       - "${artifact}"
       - "${signature}"
-    signature: "${artifact}.sig"
+    signature: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}.sig"
+    ids:
+      - linux-agent
+      - freebsd-agent
+      - windows-agent
     artifacts: binary
     output: true
 
