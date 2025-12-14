@@ -10,11 +10,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func restartCallback(_ Config) bool {
+func restartCallback(_ Config) {
 	exePath, e := os.Executable()
 	if e != nil {
 		syslog.L.Error(e).WithMessage("failed to get executable path for restart").Write()
-		return false
 	}
 	args := append([]string{exePath, "restart"}, os.Args[1:]...)
 	cmd := exec.Command(exePath, args[1:]...)
@@ -24,11 +23,9 @@ func restartCallback(_ Config) bool {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
-	if err := cmd.Start(); err != nil {
+	if err := cmd.Run(); err != nil {
 		syslog.L.Error(err).WithMessage("failed to spawn self restart helper").Write()
 	} else {
 		syslog.L.Info().WithMessage("spawned self restart helper process").Write()
 	}
-
-	return false
 }
