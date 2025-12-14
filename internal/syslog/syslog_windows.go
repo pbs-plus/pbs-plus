@@ -4,29 +4,70 @@ package syslog
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/rs/zerolog"
 	"golang.org/x/sys/windows/svc/eventlog"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 func (l *Logger) SetServiceLogger() error {
 	sourceName := "PBSPlusAgentLogs"
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	_ = eventlog.InstallAsEventCreate(sourceName,
-		eventlog.Info|eventlog.Warning|eventlog.Error)
+	_ = eventlog.InstallAsEventCreate(
+		sourceName,
+		eventlog.Info|eventlog.Warning|eventlog.Error,
+	)
 
 	evl, err := eventlog.Open(sourceName)
-	if err != nil {
-		return fmt.Errorf("failed to open event log: %w", err)
+	if err == nil {
+		zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
+			w.Out = &LogWriter{logger: evl}
+			w.NoColor = true
+			w.FormatCaller = func(i any) string {
+				var c string
+				if cc, ok := i.(string); ok {
+					c = cc
+				}
+				if c == "" {
+					return ""
+				}
+				parts := strings.Split(c, "/")
+				if len(parts) >= 2 {
+					return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
+				}
+				return filepath.Base(c)
+			}
+		})).With().
+			CallerWithSkipFrameCount(3).
+			Timestamp().
+			Logger()
+
+		l.zlog = &zlogger
+		l.hostname, _ = utils.GetAgentHostname()
+		l.zlog.Info().Msg("Service logger successfully added for Windows Event Log")
+		return nil
+	}
+
+	logPath := `C:\ProgramData\PBS Plus Agent\agent.log`
+	_ = os.MkdirAll(filepath.Dir(logPath), os.ModeDir)
+
+	rotator := &lumberjack.Logger{
+		Filename:   logPath,
+		MaxSize:    25, // MB
+		MaxBackups: 5,
+		MaxAge:     30,   // days
+		Compress:   true, // gzip
 	}
 
 	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-		w.Out = &LogWriter{logger: evl}
+		w.Out = rotator
 		w.NoColor = true
 		w.FormatCaller = func(i any) string {
 			var c string
@@ -36,7 +77,6 @@ func (l *Logger) SetServiceLogger() error {
 			if c == "" {
 				return ""
 			}
-
 			parts := strings.Split(c, "/")
 			if len(parts) >= 2 {
 				return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
@@ -51,7 +91,7 @@ func (l *Logger) SetServiceLogger() error {
 	l.zlog = &zlogger
 	l.hostname, _ = utils.GetAgentHostname()
 
-	l.zlog.Info().Msg("Service logger successfully added for Windows Event Log")
+	l.zlog.Warn().Err(err).Msg("Windows Event Log unavailable; falling back to file logging")
 	return nil
 }
 
