@@ -45,6 +45,7 @@ ENV HOME=/var/lib/pbs-plus-agent \
   USER=${USER_NAME}
 
 ENV PBS_PLUS__I_AM_INSIDE_CONTAINER=true
+ENV PBS_PLUS_DISABLE_AUTO_UPDATE=true
 
 # Require using the init script
 ENTRYPOINT ["/usr/local/bin/init.sh"]

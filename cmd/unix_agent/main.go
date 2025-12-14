@@ -19,7 +19,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jpillora/overseer"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
@@ -253,7 +252,7 @@ func connectARPC(ctx context.Context) error {
 	return nil
 }
 
-func runForeground(_ overseer.State) {
+func run() {
 	if err := syslog.L.SetServiceLogger(); err != nil {
 		log.Println(err)
 	}
@@ -405,12 +404,30 @@ func main() {
 	constants.Version = Version
 
 	dockerEnv := os.Getenv("PBS_PLUS__I_AM_INSIDE_CONTAINER")
-	if dockerEnv != "true" {
-		overseer.Run(overseer.Config{
-			Program: runForeground,
-			Fetcher: &updater.UpdateFetcher{},
+	if updateDisabled := os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE"); updateDisabled != "true" && dockerEnv != "true" {
+		_, err := updater.New(updater.Config{
+			MinConstraint: ">= 0.52.0",
+			PollInterval:  2 * time.Minute,
+			FetchOnStart:  true,
+
+			UpgradeConfirm: func(newVersion string) bool {
+				syslog.L.Info().WithMessage("attempting to update agent").WithField("version", newVersion).Write()
+				return true
+			},
+			RestartConfirm: func() bool {
+				syslog.L.Info().WithMessage("restarting agent for an update").Write()
+				return true
+			},
+			Exit: func(err error) {
+				if err != nil {
+					syslog.L.Error(err).WithMessage("Updater exit with error").Write()
+				}
+			},
 		})
-	} else {
-		runForeground(overseer.State{})
+		if err != nil {
+			syslog.L.Error(err).WithMessage("failed to init updater").Write()
+		}
 	}
+
+	run()
 }
