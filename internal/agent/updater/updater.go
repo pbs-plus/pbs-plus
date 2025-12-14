@@ -56,7 +56,12 @@ func New(cfg Config) (*Updater, error) {
 	}
 
 	selfupdate.LogError = func(format string, args ...any) {
-		syslog.L.Error(fmt.Errorf(format, args...)).WithField("source", "selfupdate").Write()
+		err := fmt.Errorf(format, args...)
+		if strings.Contains(err.Error(), "on the latest version") {
+			return
+		}
+
+		syslog.L.Error(err).WithField("source", "selfupdate").Write()
 	}
 	selfupdate.LogInfo = func(format string, args ...any) {
 		syslog.L.Info().WithMessage(fmt.Sprintf(format, args...)).WithField("source", "selfupdate").Write()
