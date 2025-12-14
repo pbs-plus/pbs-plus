@@ -342,10 +342,9 @@ func main() {
 	apiMux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", mw.ServerOnly(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance)))
 
 	// Agent routes
-	agentMux.HandleFunc("/api2/json/plus/version", mw.AgentOrServer(storeInstance, plus.VersionHandler(storeInstance, Version)))
+	agentMux.HandleFunc("/api2/json/plus/version", plus.VersionHandler(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/plus/binary", plus.DownloadBinary(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/updater-binary", plus.DownloadUpdater(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/binary/checksum", mw.AgentOrServer(storeInstance, plus.DownloadChecksum(storeInstance, Version)))
+	agentMux.HandleFunc("/api2/json/plus/binary/checksum", plus.DownloadChecksum(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
 	agentMux.HandleFunc("/api2/json/d2d/agent-log", mw.AgentOnly(storeInstance, agents.AgentLogHandler(storeInstance)))
 

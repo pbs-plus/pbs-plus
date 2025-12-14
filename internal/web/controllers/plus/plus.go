@@ -45,9 +45,8 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 		baseServerUrl := fmt.Sprintf("%s://%s%s", scheme, hostname, constants.AgentAPIPort)
 
 		config := ScriptConfig{
-			ServerUrl:  baseServerUrl,
-			AgentUrl:   baseServerUrl + "/api2/json/plus/binary",
-			UpdaterUrl: baseServerUrl + "/api2/json/plus/updater-binary",
+			ServerUrl: baseServerUrl,
+			AgentUrl:  baseServerUrl + "/api2/json/plus/binary",
 		}
 
 		if token := r.URL.Query().Get("t"); token != "" {
@@ -175,27 +174,6 @@ func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc
 
 		platform := parsePlatformParams(r)
 		filename := buildFilename("pbs-plus-agent", version, platform)
-
-		// Construct the passthrough URL
-		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-
-		proxyUrl(targetURL, w, r)
-	}
-}
-
-func DownloadUpdater(storeInstance *store.Store, version string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
-			return
-		}
-
-		if version == "v0.0.0" {
-			version = "dev"
-		}
-
-		platform := parsePlatformParams(r)
-		filename := buildFilename("pbs-plus-updater", version, platform)
 
 		// Construct the passthrough URL
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
