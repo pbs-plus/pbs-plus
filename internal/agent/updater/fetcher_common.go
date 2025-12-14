@@ -13,7 +13,6 @@ import (
 
 	"github.com/Masterminds/semver"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -24,13 +23,6 @@ type VersionResp struct {
 type UpdateFetcher struct {
 	currentVersion string
 	delay          bool
-}
-
-func (u *UpdateFetcher) Init() error {
-	if u.currentVersion == "" {
-		u.currentVersion = constants.Version
-	}
-	return nil
 }
 
 func (u *UpdateFetcher) Fetch() (io.Reader, error) {
@@ -88,7 +80,7 @@ func (u *UpdateFetcher) downloadUpdate() (io.Reader, error) {
 func (u *UpdateFetcher) checkForNewVersion() (string, error) {
 	var versionResp VersionResp
 
-	constraint, err := semver.NewConstraint(">= 0.52.0-rc1")
+	constraint, err := semver.NewConstraint(">= 0.52.0")
 
 	resp, err := agent.AgentHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, nil)
 	if err != nil {
@@ -137,4 +129,3 @@ func (u *UpdateFetcher) downloadMD5() (string, error) {
 
 	return strings.TrimSpace(string(md5Bytes)), nil
 }
-

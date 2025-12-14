@@ -52,9 +52,6 @@ func (l *Logger) SetServiceLogger() error {
 	return nil
 }
 
-// Write finalizes the LogEntry and writes it using the global zerolog logger.
-// (Here, the global logger sends the pre-formatted output through the
-// ConsoleWriter and then our SyslogWriter.)
 func (e *LogEntry) Write() {
 	e.logger.mu.RLock()
 	defer e.logger.mu.RUnlock()
