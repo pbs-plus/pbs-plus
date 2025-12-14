@@ -114,6 +114,12 @@ func New(cfg Config) (*Updater, error) {
 		return nil, err
 	}
 
+	// remove old updater if it exists
+	err = cleanUp()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("update cleanup error, non-fatal").Write()
+	}
+
 	up.manager = manager
 	return up, nil
 }

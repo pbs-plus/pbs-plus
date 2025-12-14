@@ -11,11 +11,6 @@ import (
 )
 
 func restartCallback(_ Config) bool {
-	err := cleanUp()
-	if err != nil {
-		syslog.L.Error(err).WithMessage("update cleanup error, non-fatal").Write()
-	}
-
 	exePath, e := os.Executable()
 	if e != nil {
 		syslog.L.Error(e).WithMessage("failed to get executable path for restart").Write()

@@ -11,11 +11,6 @@ import (
 )
 
 func restartCallback(cfg Config) bool {
-	err := cleanUp()
-	if err != nil {
-		syslog.L.Error(err).WithMessage("update cleanup error, non-fatal").Write()
-	}
-
 	if !hasSystemd() {
 		syslog.L.Error(fmt.Errorf("not a systemd-based system")).WithMessage("manual service restart required for update").Write()
 		return false
