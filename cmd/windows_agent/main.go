@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jpillora/overseer"
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
@@ -39,20 +38,37 @@ type pbsService struct {
 }
 
 func (p *pbsService) Start(s service.Service) error {
-	go func() {
-		if updateDisabled := os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE"); updateDisabled == "true" {
-			p.runForeground(overseer.DisabledState)
-			return
-		}
-		overseer.Run(overseer.Config{
-			Program: p.runForeground,
-			Fetcher: &updater.UpdateFetcher{},
+	if updateDisabled := os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE"); updateDisabled != "true" {
+		_, err := updater.New(updater.Config{
+			MinConstraint: ">= 0.52.0",
+			PollInterval:  2 * time.Minute,
+			FetchOnStart:  true,
+
+			UpgradeConfirm: func(newVersion string) bool {
+				syslog.L.Info().WithMessage("attempting to update agent").WithField("version", newVersion).Write()
+				return true
+			},
+			RestartConfirm: func() bool {
+				syslog.L.Info().WithMessage("restarting agent for an update").Write()
+				return true
+			},
+			Exit: func(err error) {
+				if err != nil {
+					syslog.L.Error(err).WithMessage("Updater exit with error").Write()
+				}
+			},
 		})
-	}()
+		if err != nil {
+			syslog.L.Error(err).WithMessage("failed to init updater").Write()
+		}
+	}
+
+	go p.run()
+
 	return nil
 }
 
-func (p *pbsService) runForeground(_ overseer.State) {
+func (p *pbsService) run() {
 	err := syslog.L.SetServiceLogger()
 	if err != nil {
 		syslog.L.Error(err).Write()

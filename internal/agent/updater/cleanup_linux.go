@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -70,11 +69,7 @@ func removeSystemdUnit(unit string) {
 	_ = exec.Command("systemctl", "reset-failed").Run()
 }
 
-func (u *UpdateFetcher) Init() error {
-	if u.currentVersion == "" {
-		u.currentVersion = constants.Version
-	}
-
+func cleanUp() error {
 	if hasSystemd() {
 		const unit = "pbs-plus-updater.service"
 		if systemdUnitExists(unit) {
