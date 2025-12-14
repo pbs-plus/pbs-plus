@@ -171,7 +171,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 
 func (s *StreamPipe) Close() error {
 	s.cancelFunc()
-	return s.CloseWithError(quicErrClosePipe, "pipe closed")
+	return s.Conn.CloseWithError(quicErrClosePipe, "pipe closed")
 }
 
 func (s *StreamPipe) GetState() ConnectionState {

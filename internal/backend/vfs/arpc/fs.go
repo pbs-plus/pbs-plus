@@ -32,9 +32,22 @@ func (fs *ARPCFS) logError(fpath string, err error) {
 }
 
 func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
+	syslog.L.Debug().
+		WithMessage("NewARPCFS called").
+		WithField("hostname", hostname).
+		WithField("jobId", job.ID).
+		WithField("backupMode", backupMode).
+		Write()
+
 	ctxFs, cancel := context.WithCancel(ctx)
 
 	memcachePath := filepath.Join(constants.MemcachedSocketPath, fmt.Sprintf("%s.sock", job.ID))
+
+	syslog.L.Debug().
+		WithMessage("Starting local memcached").
+		WithField("socketPath", memcachePath).
+		WithField("jobId", job.ID).
+		Write()
 
 	stopMemLocal, err := memlocal.StartMemcachedOnUnixSocket(ctxFs, memlocal.MemcachedConfig{
 		SocketPath:     memcachePath,
@@ -60,8 +73,19 @@ func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, j
 		backupMode: backupMode,
 	}
 
+	syslog.L.Debug().
+		WithMessage("ARPCFS initialized").
+		WithField("jobId", fs.Job.ID).
+		WithField("hostname", fs.Hostname).
+		WithField("basePath", fs.BasePath).
+		Write()
+
 	go func() {
 		<-ctxFs.Done()
+		syslog.L.Debug().
+			WithMessage("Context done, cleaning up memcache and memlocal").
+			WithField("jobId", fs.Job.ID).
+			Write()
 		fs.Memcache.DeleteAll()
 		fs.Memcache.Close()
 		stopMemLocal()
@@ -73,10 +97,20 @@ func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, j
 func (fs *ARPCFS) Context() context.Context { return fs.Ctx }
 
 func (fs *ARPCFS) GetBackupMode() string {
+	syslog.L.Debug().
+		WithMessage("GetBackupMode called").
+		WithField("jobId", fs.Job.ID).
+		WithField("backupMode", fs.backupMode).
+		Write()
 	return fs.backupMode
 }
 
 func (fs *ARPCFS) Open(filename string) (ARPCFile, error) {
+	syslog.L.Debug().
+		WithMessage("Open called").
+		WithField("path", filename).
+		WithField("jobId", fs.Job.ID).
+		Write()
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
@@ -88,6 +122,14 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 			Write()
 		return ARPCFile{}, syscall.ENOENT
 	}
+
+	syslog.L.Debug().
+		WithMessage("OpenFile called").
+		WithField("path", filename).
+		WithField("flag", flag).
+		WithField("perm", perm).
+		WithField("jobId", fs.Job.ID).
+		Write()
 
 	var resp types.FileHandleId
 	req := types.OpenFileReq{
@@ -108,6 +150,13 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 		return ARPCFile{}, syscall.ENOENT
 	}
 
+	syslog.L.Debug().
+		WithMessage("OpenFile succeeded").
+		WithField("path", filename).
+		WithField("handleID", resp).
+		WithField("jobId", fs.Job.ID).
+		Write()
+
 	return ARPCFile{
 		fs:       fs,
 		name:     filename,
@@ -117,6 +166,13 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 }
 
 func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, error) {
+	syslog.L.Debug().
+		WithMessage("Attr called").
+		WithField("path", filename).
+		WithField("isLookup", isLookup).
+		WithField("jobId", fs.Job.ID).
+		Write()
+
 	var fi types.AgentFileInfo
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
@@ -133,14 +189,31 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	if err == nil {
 		atomic.AddInt64(&fs.StatCacheHits, 1)
 		raw = cached.Value
+		syslog.L.Debug().
+			WithMessage("Attr cache hit").
+			WithField("path", filename).
+			WithField("jobId", fs.Job.ID).
+			Write()
 	} else {
+		syslog.L.Debug().
+			WithMessage("Attr cache miss, issuing RPC").
+			WithField("path", filename).
+			WithField("jobId", fs.Job.ID).
+			Write()
 		raw, err = fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
 		if err != nil {
 			fs.logError(req.Path, err)
 			return types.AgentFileInfo{}, syscall.ENOENT
 		}
 		if isLookup {
-			_ = fs.Memcache.Set(&memcache.Item{Key: "attr:" + filename, Value: raw, Expiration: 0})
+			if mcErr := fs.Memcache.Set(&memcache.Item{Key: "attr:" + filename, Value: raw, Expiration: 0}); mcErr != nil {
+				syslog.L.Debug().
+					WithMessage("Attr cache set failed").
+					WithField("path", filename).
+					WithField("error", mcErr.Error()).
+					WithJob(fs.Job.ID).
+					Write()
+			}
 		}
 	}
 
@@ -153,9 +226,21 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	if !isLookup {
 		if fi.IsDir {
 			atomic.AddInt64(&fs.FolderCount, 1)
+			syslog.L.Debug().
+				WithMessage("Attr counted folder").
+				WithField("path", filename).
+				WithField("folderCount", atomic.LoadInt64(&fs.FolderCount)).
+				WithJob(fs.Job.ID).
+				Write()
 		} else {
 			fs.Memcache.Delete("attr:" + filename)
 			atomic.AddInt64(&fs.FileCount, 1)
+			syslog.L.Debug().
+				WithMessage("Attr counted file and cleared cache").
+				WithField("path", filename).
+				WithField("fileCount", atomic.LoadInt64(&fs.FileCount)).
+				WithJob(fs.Job.ID).
+				Write()
 		}
 	}
 
@@ -163,6 +248,12 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 }
 
 func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
+	syslog.L.Debug().
+		WithMessage("Xattr called").
+		WithField("path", filename).
+		WithField("jobId", fs.Job.ID).
+		Write()
+
 	var fi types.AgentFileInfo
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
@@ -180,6 +271,11 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 		req.AclOnly = true
 		_ = fiCached.Decode(rawCached.Value)
 		fs.Memcache.Delete("xattr:" + filename)
+		syslog.L.Debug().
+			WithMessage("Xattr cache hit for metadata").
+			WithField("path", filename).
+			WithField("jobId", fs.Job.ID).
+			Write()
 	}
 
 	raw, err := fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)
@@ -199,12 +295,22 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 		fi.LastWriteTime = fiCached.LastWriteTime
 		fi.LastAccessTime = fiCached.LastAccessTime
 		fi.FileAttributes = fiCached.FileAttributes
+		syslog.L.Debug().
+			WithMessage("Xattr merged cached timestamps/attributes").
+			WithField("path", filename).
+			WithField("jobId", fs.Job.ID).
+			Write()
 	}
 
 	return fi, nil
 }
 
 func (fs *ARPCFS) StatFS() (types.StatFS, error) {
+	syslog.L.Debug().
+		WithMessage("StatFS called").
+		WithField("jobId", fs.Job.ID).
+		Write()
+
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
@@ -232,10 +338,21 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 		return types.StatFS{}, syscall.ENOENT
 	}
 
+	syslog.L.Debug().
+		WithMessage("StatFS completed").
+		WithField("jobId", fs.Job.ID).
+		Write()
+
 	return fsStat, nil
 }
 
 func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
+	syslog.L.Debug().
+		WithMessage("ReadDir called").
+		WithField("path", path).
+		WithField("jobId", fs.Job.ID).
+		Write()
+
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
@@ -248,14 +365,31 @@ func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 	openReq := types.OpenFileReq{Path: path}
 	raw, err := fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &openReq)
 	if err != nil {
+		syslog.L.Error(err).
+			WithMessage("ReadDir open failed").
+			WithField("path", path).
+			WithJob(fs.Job.ID).
+			Write()
 		return DirStream{}, syscall.ENOENT
 	}
 	err = handleId.Decode(raw)
 	if err != nil {
+		syslog.L.Error(err).
+			WithMessage("ReadDir handle decode failed").
+			WithField("path", path).
+			WithJob(fs.Job.ID).
+			Write()
 		return DirStream{}, syscall.ENOENT
 	}
 
 	fs.Memcache.Delete("attr:" + path)
+
+	syslog.L.Debug().
+		WithMessage("ReadDir opened directory").
+		WithField("path", path).
+		WithField("handleId", handleId).
+		WithJob(fs.Job.ID).
+		Write()
 
 	return DirStream{
 		fs:       fs,
@@ -266,15 +400,37 @@ func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 }
 
 func (fs *ARPCFS) Root() string {
+	syslog.L.Debug().
+		WithMessage("Root called").
+		WithField("basePath", fs.BasePath).
+		WithField("jobId", fs.Job.ID).
+		Write()
 	return fs.BasePath
 }
 
 func (fs *ARPCFS) Unmount() {
+	syslog.L.Debug().
+		WithMessage("Unmount called").
+		WithField("jobId", fs.Job.ID).
+		Write()
+
 	if fs.Fuse != nil {
 		_ = fs.Fuse.Unmount()
+		syslog.L.Debug().
+			WithMessage("Fuse unmounted").
+			WithField("jobId", fs.Job.ID).
+			Write()
 	}
 	if fs.session != nil {
 		_ = fs.session.Close()
+		syslog.L.Debug().
+			WithMessage("ARPC session closed").
+			WithField("jobId", fs.Job.ID).
+			Write()
 	}
 	fs.Cancel()
+	syslog.L.Debug().
+		WithMessage("Context canceled").
+		WithField("jobId", fs.Job.ID).
+		Write()
 }
