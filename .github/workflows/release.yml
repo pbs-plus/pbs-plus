@@ -99,7 +99,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
           ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
-          ED25519_PUBLIC_KEY_B64: ${{ env.ED25519_PUBLIC_KEY_B64 }}
 
   docker:
     runs-on: ubuntu-latest
