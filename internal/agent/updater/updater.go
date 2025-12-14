@@ -1,9 +1,8 @@
 package updater
 
 import (
-	"bytes"
-	"crypto/md5"
-	"encoding/hex"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +17,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
+
+var Ed25519PublicKeyB64 = ""
 
 type Config struct {
 	MinConstraint  string
@@ -80,15 +81,21 @@ func New(cfg Config) (*Updater, error) {
 	src := &agentSource{
 		versionURL: "/api2/json/plus/version",
 		binaryURL:  "/api2/json/plus/binary",
-		md5URL:     "/api2/json/plus/binary/checksum",
+		sigURL:     "/api2/json/plus/binary/sig",
 		currentVer: constants.Version,
 		minConstr:  cfg.MinConstraint,
 	}
 
+	pubKey, err := loadEd25519Pub()
+	if err != nil {
+		return nil, err
+	}
+
 	up := &Updater{cfg: cfg}
 	manager, err := selfupdate.Manage(&selfupdate.Config{
-		Source:   src,
-		Schedule: selfupdate.Schedule{FetchOnStart: cfg.FetchOnStart, Interval: cfg.PollInterval},
+		Source:    src,
+		PublicKey: pubKey,
+		Schedule:  selfupdate.Schedule{FetchOnStart: cfg.FetchOnStart, Interval: cfg.PollInterval},
 		ProgressCallback: func(f float64, err error) {
 			if err != nil {
 				syslog.L.Error(err).WithMessage("update download error").Write()
@@ -142,7 +149,7 @@ func (u *Updater) Restart() error {
 type agentSource struct {
 	versionURL     string
 	binaryURL      string
-	md5URL         string
+	sigURL         string
 	currentVer     string
 	minConstr      string
 	pendingVersion string
@@ -191,91 +198,39 @@ func (a *agentSource) LatestVersion() (*selfupdate.Version, error) {
 }
 
 func (a *agentSource) Get(v *selfupdate.Version) (io.ReadCloser, int64, error) {
-	expectedHex, err := a.fetchMD5()
-	if err != nil || expectedHex == "" {
-		if err == nil {
-			err = fmt.Errorf("empty checksum")
-		}
-		return nil, 0, fmt.Errorf("md5 fetch failed: %w", err)
-	}
-	expected, err := hex.DecodeString(strings.TrimSpace(expectedHex))
-	if err != nil {
-		return nil, 0, fmt.Errorf("invalid md5 hex: %w", err)
-	}
-
 	rc, err := agent.AgentHTTPRequest(http.MethodGet, a.binaryURL, nil, nil)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	wrapped := newMD5VerifyingReadCloser(rc, expected)
-	return wrapped, -1, nil
+	return rc, -1, nil
+}
+
+func loadEd25519Pub() (ed25519.PublicKey, error) {
+	b, err := base64.StdEncoding.DecodeString(Ed25519PublicKeyB64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid embedded public key: %w", err)
+	}
+	if len(b) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("invalid public key size: %d", len(b))
+	}
+	return ed25519.PublicKey(b), nil
 }
 
 func (a *agentSource) GetSignature() ([64]byte, error) {
-	var sig [64]byte
-	for i := 0; i < len(sig); i++ {
-		sig[i] = byte(i)
-	}
-	return sig, nil
-}
-
-func (a *agentSource) fetchMD5() (string, error) {
-	rc, err := agent.AgentHTTPRequest(http.MethodGet, a.md5URL, nil, nil)
+	var sig64 [64]byte
+	rc, err := agent.AgentHTTPRequest(http.MethodGet, a.sigURL, nil, nil)
 	if err != nil {
-		return "", err
+		return sig64, err
 	}
 	defer rc.Close()
-	b, err := io.ReadAll(rc)
+	sigBytes, err := io.ReadAll(rc)
 	if err != nil {
-		return "", err
+		return sig64, err
 	}
-	return strings.TrimSpace(string(b)), nil
-}
-
-type md5VerifyingReadCloser struct {
-	src      io.ReadCloser
-	h        hashWriter
-	expected []byte
-	done     bool
-}
-
-type hashWriter struct {
-	h io.Writer
-	n interface {
-		Sum([]byte) []byte
-		Write([]byte) (int, error)
+	if len(sigBytes) != 64 {
+		return sig64, fmt.Errorf("invalid signature length: got %d, want 64", len(sigBytes))
 	}
-}
-
-func newMD5VerifyingReadCloser(src io.ReadCloser, expected []byte) io.ReadCloser {
-	return &md5VerifyingReadCloser{
-		src:      src,
-		h:        newMD5(),
-		expected: expected,
-	}
-}
-
-func newMD5() hashWriter {
-	h := md5.New()
-	return hashWriter{h: h, n: h}
-}
-
-func (r *md5VerifyingReadCloser) Read(p []byte) (int, error) {
-	n, err := r.src.Read(p)
-	if n > 0 {
-		_, _ = r.h.n.Write(p[:n])
-	}
-	if err == io.EOF && !r.done {
-		sum := r.h.n.Sum(nil)
-		if !bytes.Equal(sum, r.expected) {
-			return n, fmt.Errorf("md5 mismatch")
-		}
-		r.done = true
-	}
-	return n, err
-}
-
-func (r *md5VerifyingReadCloser) Close() error {
-	return r.src.Close()
+	copy(sig64[:], sigBytes)
+	return sig64, nil
 }
