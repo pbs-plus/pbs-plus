@@ -153,7 +153,7 @@ func (a *agentSource) LatestVersion() (*selfupdate.Version, error) {
 		return nil, err
 	}
 	if vr.Version == "" || vr.Version == a.currentVer {
-		return nil, nil
+		return nil, fmt.Errorf("current binary is on the latest version")
 	}
 
 	constr, err := semver.NewConstraint(a.minConstr)
@@ -165,12 +165,7 @@ func (a *agentSource) LatestVersion() (*selfupdate.Version, error) {
 		return nil, err
 	}
 	if !constr.Check(vs) {
-		syslog.L.Info().
-			WithMessage("available version does not meet updater constraint").
-			WithField("current", a.currentVer).
-			WithField("new", vr.Version).
-			Write()
-		return nil, nil
+		return nil, fmt.Errorf("available version does not meet updater constraint")
 	}
 
 	a.pendingVersion = vr.Version
