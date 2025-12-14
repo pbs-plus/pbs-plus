@@ -89,7 +89,7 @@ builds:
 
 binary_signs:
   - id: ed25519
-    cmd: ./bin/signer
+    cmd: /tmp/bin/signer
     args:
       - sign
       - "${artifact}"
