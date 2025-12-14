@@ -206,8 +206,7 @@ func (a *agentSource) Get(v *selfupdate.Version) (io.ReadCloser, int64, error) {
 }
 
 func (a *agentSource) GetSignature() ([64]byte, error) {
-	var sig [64]byte
-	return sig, fmt.Errorf("no signature available")
+	return nil, nil
 }
 
 func (a *agentSource) fetchMD5() (string, error) {
