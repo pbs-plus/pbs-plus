@@ -23,8 +23,8 @@ type Config struct {
 	MinConstraint  string
 	PollInterval   time.Duration
 	FetchOnStart   bool
+	SystemdUnit    string
 	UpgradeConfirm func(newVersion string) bool
-	RestartConfirm func() bool
 	Exit           func(error)
 }
 
@@ -43,8 +43,8 @@ func New(cfg Config) (*Updater, error) {
 	if cfg.UpgradeConfirm == nil {
 		cfg.UpgradeConfirm = func(string) bool { return true }
 	}
-	if cfg.RestartConfirm == nil {
-		cfg.RestartConfirm = func() bool { return true }
+	if cfg.SystemdUnit == "" {
+		cfg.SystemdUnit = "pbs-plus-agent"
 	}
 	if cfg.Exit == nil {
 		cfg.Exit = func(err error) {
@@ -92,11 +92,7 @@ func New(cfg Config) (*Updater, error) {
 			return cfg.UpgradeConfirm(src.pendingVersion)
 		},
 		RestartConfirmCallback: func() bool {
-			err := cleanUp()
-			if err != nil {
-				syslog.L.Error(err).WithMessage("update cleanup error, non-fatal").Write()
-			}
-			return cfg.RestartConfirm()
+			return restartCallback(cfg)
 		},
 		ExitCallback: func(err error) {
 			cfg.Exit(err)
@@ -261,4 +257,3 @@ func (r *md5VerifyingReadCloser) Read(p []byte) (int, error) {
 func (r *md5VerifyingReadCloser) Close() error {
 	return r.src.Close()
 }
-

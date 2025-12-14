@@ -1,4 +1,3 @@
-// updater/fetcher_generic.go
 //go:build !linux && !windows
 
 package updater
