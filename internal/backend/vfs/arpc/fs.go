@@ -224,17 +224,8 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	}
 
 	if !isLookup {
-		if fi.IsDir {
-			atomic.AddInt64(&fs.FolderCount, 1)
-			syslog.L.Debug().
-				WithMessage("Attr counted folder").
-				WithField("path", filename).
-				WithField("folderCount", atomic.LoadInt64(&fs.FolderCount)).
-				WithJob(fs.Job.ID).
-				Write()
-		} else {
+		if !fi.IsDir {
 			fs.Memcache.Delete("attr:" + memlocal.Key(filename))
-			atomic.AddInt64(&fs.FileCount, 1)
 			syslog.L.Debug().
 				WithMessage("Attr counted file and cleared cache").
 				WithField("path", filename).

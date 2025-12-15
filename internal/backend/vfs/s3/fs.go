@@ -134,9 +134,6 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 			LastAccessTime: now,
 			LastWriteTime:  now,
 		}
-		if !isLookup {
-			atomic.AddInt64(&fs.FolderCount, 1)
-		}
 		return fi, nil
 	}
 
@@ -146,13 +143,6 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 	if it, err := fs.Memcache.Get("attr:" + memlocal.Key(key)); err == nil {
 		atomic.AddInt64(&fs.StatCacheHits, 1)
 		if err := cached.Decode(it.Value); err == nil {
-			if !isLookup {
-				if cached.IsDir {
-					atomic.AddInt64(&fs.FolderCount, 1)
-				} else {
-					atomic.AddInt64(&fs.FileCount, 1)
-				}
-			}
 			return cached, nil
 		}
 	}
@@ -175,9 +165,6 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 		raw, _ := fi.Encode()
 		if isLookup {
 			_ = fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(key), Value: raw, Expiration: 0})
-		}
-		if !isLookup {
-			atomic.AddInt64(&fs.FileCount, 1)
 		}
 		return fi, nil
 	}
@@ -214,9 +201,6 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 		raw, _ := fi.Encode()
 		if isLookup {
 			_ = fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(key), Value: raw, Expiration: 0})
-		}
-		if !isLookup {
-			atomic.AddInt64(&fs.FolderCount, 1)
 		}
 		return fi, nil
 	}
@@ -382,6 +366,12 @@ func (fs *S3FS) ReadDir(fpath string) (S3DirStream, error) {
 		mode := uint32(0644)
 		if isDir {
 			mode = uint32(os.ModeDir | 0555)
+		}
+
+		if !isDir {
+			atomic.AddInt64(&fs.FileCount, 1)
+		} else {
+			atomic.AddInt64(&fs.FolderCount, 1)
 		}
 
 		entries = append(entries, agentTypes.AgentFileInfo{
