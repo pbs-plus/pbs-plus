@@ -80,7 +80,6 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 	}
 
 	cmdArgs := []string{
-		"--nofile=1024:1024",
 		"/usr/bin/proxmox-backup-client",
 		"backup",
 		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(job.Target), srcPath),
@@ -89,7 +88,11 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 		"--entries-max", fmt.Sprintf("%d", job.MaxDirEntries),
 		"--backup-id", backupId,
 		"--crypt-mode=none",
-		"--skip-e2big-xattr=true",
+	}
+
+	nofile := os.Getenv("PBS_PLUS_CLIENT_NOFILE")
+	if nofile != "" {
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--nofile=%s", nofile))
 	}
 
 	// Add exclusions
