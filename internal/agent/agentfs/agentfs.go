@@ -52,8 +52,8 @@ func NewAgentFSServer(jobId string, readMode string, snapshot snapshots.Snapshot
 	return s
 }
 
-func safeHandler(fn func(req arpc.Request) (arpc.Response, error)) func(req arpc.Request) (arpc.Response, error) {
-	return func(req arpc.Request) (res arpc.Response, err error) {
+func safeHandler(fn func(req *arpc.Request) (arpc.Response, error)) func(req *arpc.Request) (arpc.Response, error) {
+	return func(req *arpc.Request) (res arpc.Response, err error) {
 		defer func() {
 			if r := recover(); r != nil {
 				syslog.L.Error(fmt.Errorf("panic in handler: %v", r)).

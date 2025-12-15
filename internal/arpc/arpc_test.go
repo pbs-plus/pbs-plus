@@ -190,7 +190,7 @@ func newTestClientTLS(t *testing.T) *tls.Config {
 
 func TestRouterServeStream_Echo(t *testing.T) {
 	router := NewRouter()
-	router.Handle("echo", func(req Request) (Response, error) {
+	router.Handle("echo", func(req *Request) (Response, error) {
 		return Response{Status: http.StatusOK, Data: req.Payload}, nil
 	})
 
@@ -225,7 +225,7 @@ func TestRouterServeStream_Echo(t *testing.T) {
 
 func TestStreamPipeCall_Success(t *testing.T) {
 	router := NewRouter()
-	router.Handle("ping", func(req Request) (Response, error) {
+	router.Handle("ping", func(req *Request) (Response, error) {
 		var pong StringMsg = "pong"
 		b, _ := pong.Encode()
 		return Response{Status: http.StatusOK, Data: b}, nil
@@ -252,7 +252,7 @@ func TestStreamPipeCall_Success(t *testing.T) {
 
 func TestStreamPipeCall_Concurrency(t *testing.T) {
 	router := NewRouter()
-	router.Handle("ping", func(req Request) (Response, error) {
+	router.Handle("ping", func(req *Request) (Response, error) {
 		var pong StringMsg = "pong"
 		b, _ := pong.Encode()
 		return Response{Status: http.StatusOK, Data: b}, nil
@@ -291,7 +291,7 @@ func TestStreamPipeCall_Concurrency(t *testing.T) {
 
 func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
 	router := NewRouter()
-	router.Handle("slow", func(req Request) (Response, error) {
+	router.Handle("slow", func(req *Request) (Response, error) {
 		time.Sleep(200 * time.Millisecond)
 		var done StringMsg = "done"
 		b, _ := done.Encode()
@@ -328,7 +328,7 @@ func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
 
 func TestCall_ErrorResponse(t *testing.T) {
 	router := NewRouter()
-	router.Handle("error", func(req Request) (Response, error) {
+	router.Handle("error", func(req *Request) (Response, error) {
 		return Response{}, fmt.Errorf("test error")
 	})
 
@@ -354,7 +354,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 
 func TestCall_RawStream_BinaryFlow(t *testing.T) {
 	router := NewRouter()
-	router.Handle("binary_flow", func(req Request) (Response, error) {
+	router.Handle("binary_flow", func(req *Request) (Response, error) {
 		resp := Response{
 			Status: 213,
 			RawStream: func(st *quic.Stream) {
@@ -401,7 +401,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 
 func TestCall_RawStream_HandlerMissing(t *testing.T) {
 	router := NewRouter()
-	router.Handle("binary", func(req Request) (Response, error) {
+	router.Handle("binary", func(req *Request) (Response, error) {
 		return Response{Status: 213, RawStream: func(st *quic.Stream) {}}, nil
 	})
 
@@ -424,7 +424,7 @@ func TestCall_RawStream_HandlerMissing(t *testing.T) {
 
 func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 	router := NewRouter()
-	router.Handle("ping", func(req Request) (Response, error) {
+	router.Handle("ping", func(req *Request) (Response, error) {
 		var pong StringMsg = "pong"
 		b, _ := pong.Encode()
 		return Response{Status: http.StatusOK, Data: b}, nil
@@ -532,7 +532,7 @@ func TestSerializableError_Wrap_Unwrap(t *testing.T) {
 
 func TestStress_ConsecutiveCalls(t *testing.T) {
 	router := NewRouter()
-	router.Handle("inc", func(req Request) (Response, error) {
+	router.Handle("inc", func(req *Request) (Response, error) {
 		var n IntMsg
 		if err := n.Decode(req.Payload); err != nil {
 			return Response{Status: http.StatusBadRequest}, nil
@@ -568,10 +568,10 @@ func TestStress_ConsecutiveCalls(t *testing.T) {
 
 func TestStress_BatchedSequences(t *testing.T) {
 	router := NewRouter()
-	router.Handle("echo_str", func(req Request) (Response, error) {
+	router.Handle("echo_str", func(req *Request) (Response, error) {
 		return Response{Status: http.StatusOK, Data: req.Payload}, nil
 	})
-	router.Handle("sum_pair", func(req Request) (Response, error) {
+	router.Handle("sum_pair", func(req *Request) (Response, error) {
 		var pair MapStringIntMsg
 		if err := pair.Decode(req.Payload); err != nil {
 			return Response{Status: http.StatusBadRequest}, nil
@@ -623,7 +623,7 @@ func TestStress_BatchedSequences(t *testing.T) {
 
 func TestStreams_ProperlyClosed_NoExhaustion(t *testing.T) {
 	router := NewRouter()
-	router.Handle("short", func(req Request) (Response, error) {
+	router.Handle("short", func(req *Request) (Response, error) {
 		var ok StringMsg = "ok"
 		b, _ := ok.Encode()
 		return Response{Status: http.StatusOK, Data: b}, nil

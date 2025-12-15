@@ -40,7 +40,9 @@ func openForAttrs(path string) (windows.Handle, error) {
 		0,
 	)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("openForAttrs: CreateFile failed").WithField("path", path).Write()
+		if !strings.HasSuffix(path, ".pxarexclude") {
+			syslog.L.Error(err).WithMessage("openForAttrs: CreateFile failed").WithField("path", path).Write()
+		}
 		return 0, err
 	}
 	syslog.L.Debug().WithMessage("openForAttrs: handle opened").WithField("path", path).WithField("handle", uintptr(h)).Write()

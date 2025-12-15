@@ -355,7 +355,7 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("Setting up ARPC router and handlers").Write()
 	router := arpc.NewRouter()
 	router.Handle("ping", p.handlePing)
-	router.Handle("backup", func(req arpc.Request) (arpc.Response, error) {
+	router.Handle("backup", func(req *arpc.Request) (arpc.Response, error) {
 		return controllers.BackupStartHandler(req, session)
 	})
 	router.Handle("target_status", controllers.StatusHandler)
@@ -413,7 +413,7 @@ func (p *pbsService) connectARPC() error {
 	return nil
 }
 
-func (p *pbsService) handlePing(req arpc.Request) (arpc.Response, error) {
+func (p *pbsService) handlePing(req *arpc.Request) (arpc.Response, error) {
 	hostname, _ := utils.GetAgentHostname()
 	resp := map[string]string{
 		"version":  Version,

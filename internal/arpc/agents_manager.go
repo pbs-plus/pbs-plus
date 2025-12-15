@@ -42,7 +42,7 @@ func (sm *AgentsManager) CreateStreamPipe(conn *quic.Conn, headers http.Header) 
 	}
 
 	router := NewRouter()
-	router.Handle("echo", func(req Request) (Response, error) {
+	router.Handle("echo", func(req *Request) (Response, error) {
 		var msg StringMsg
 		if err := msg.Decode(req.Payload); err != nil {
 			return Response{}, WrapError(err)
