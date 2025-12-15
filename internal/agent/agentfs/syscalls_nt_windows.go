@@ -112,6 +112,9 @@ func ntDirectoryCall(
 	}
 	defer windows.CloseHandle(evt)
 
+	toCtx, c := context.WithTimeout(ctx, time.Minute)
+	defer c()
+
 	status, _, _ := ntQueryDirectoryFile.Call(
 		uintptr(handle),
 		uintptr(evt), // Event signaled on completion
@@ -139,12 +142,12 @@ func ntDirectoryCall(
 
 	for {
 		timeout := uint32(windows.INFINITE)
-		if dl, ok := ctx.Deadline(); ok {
+		if dl, ok := toCtx.Deadline(); ok {
 			d := time.Until(dl)
 			if d <= 0 {
 				_ = ntCancelIoFileEx(handle, ioStatusBlock)
 				_, _ = windows.WaitForSingleObject(evt, 10)
-				return ctx.Err()
+				return toCtx.Err()
 			}
 			ms := d / time.Millisecond
 			if ms <= 0 {
@@ -165,7 +168,7 @@ func ntDirectoryCall(
 		case windows.WAIT_OBJECT_0:
 			return nil
 		case uint32(windows.WAIT_TIMEOUT):
-			if err := ctx.Err(); err != nil {
+			if err := toCtx.Err(); err != nil {
 				_ = ntCancelIoFileEx(handle, ioStatusBlock)
 				_, _ = windows.WaitForSingleObject(evt, 10)
 				return err
