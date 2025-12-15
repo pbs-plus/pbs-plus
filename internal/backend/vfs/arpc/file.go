@@ -3,6 +3,7 @@
 package arpcfs
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -17,7 +18,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-func (f *ARPCFile) Close() error {
+func (f *ARPCFile) Close(ctx context.Context) error {
 	if f.isClosed.Load() {
 		syslog.L.Debug().
 			WithMessage("Close called on already closed file").
@@ -44,7 +45,11 @@ func (f *ARPCFile) Close() error {
 		Write()
 
 	req := types.CloseReq{HandleID: f.handleID}
-	_, err := f.fs.session.CallDataWithTimeout(1*time.Minute, f.jobId+"/Close", &req)
+
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
+
+	_, err := f.fs.session.CallData(ctxN, f.jobId+"/Close", &req)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		syslog.L.Error(err).
 			WithJob(f.jobId).
@@ -66,7 +71,7 @@ func (f *ARPCFile) Close() error {
 	return nil
 }
 
-func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
+func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, error) {
 	syslog.L.Debug().
 		WithMessage("Lseek called").
 		WithJob(f.jobId).
@@ -80,7 +85,11 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 		Offset:   int64(off),
 		Whence:   whence,
 	}
-	respBytes, err := f.fs.session.CallDataWithTimeout(1*time.Minute, f.jobId+"/Lseek", &req)
+
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
+
+	respBytes, err := f.fs.session.CallData(ctxN, f.jobId+"/Lseek", &req)
 	if err != nil {
 		syslog.L.Error(err).
 			WithJob(f.jobId).
@@ -112,7 +121,7 @@ func (f *ARPCFile) Lseek(off int64, whence int) (uint64, error) {
 	return uint64(resp.NewOffset), nil
 }
 
-func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
+func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error) {
 	if f.isClosed.Load() {
 		syslog.L.Error(syscall.ENOENT).
 			WithJob(f.jobId).
@@ -146,7 +155,11 @@ func (f *ARPCFile) ReadAt(p []byte, off int64) (int, error) {
 	}
 
 	bytesRead := 0
-	err := f.fs.session.Call(f.fs.Ctx, f.jobId+"/ReadAt", &req, arpc.RawStreamHandler(func(s *quic.Stream) error {
+
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
+
+	err := f.fs.session.Call(ctxN, f.jobId+"/ReadAt", &req, arpc.RawStreamHandler(func(s *quic.Stream) error {
 		n, err := binarystream.ReceiveDataInto(s, p)
 		if err != nil {
 			return err
