@@ -331,8 +331,8 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
     `, job.Store, job.Mode, job.SourceMode, job.ReadMode, job.Target, job.Subpath,
 		job.Schedule, job.Comment, job.NotificationMode, job.Namespace,
 		job.CurrentPID, job.LastRunUpid, job.Retry, job.RetryInterval,
-		job.LastSuccessfulUpid, job.PreScript, job.PostScript, job.MaxDirEntries, job.ID,
-		job.IncludeXattr)
+		job.LastSuccessfulUpid, job.PreScript, job.PostScript, job.MaxDirEntries,
+		job.IncludeXattr, job.ID)
 	if err != nil {
 		return fmt.Errorf("UpdateJob: error updating job: %w", err)
 	}
