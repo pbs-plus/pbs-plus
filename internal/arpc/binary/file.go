@@ -33,7 +33,7 @@ func writeFull(w io.Writer, b []byte, stream *quic.Stream) error {
 		}
 		b = b[n:]
 		if stream != nil {
-			_ = (*stream).SetDeadline(time.Now().Add(quietDeadline))
+			_ = stream.SetDeadline(time.Now().Add(quietDeadline))
 		}
 	}
 	return nil
@@ -44,7 +44,7 @@ func readFull(r io.Reader, b []byte, stream *quic.Stream) error {
 	for offset < len(b) {
 		n, err := r.Read(b[offset:])
 		if n > 0 && stream != nil {
-			_ = (*stream).SetDeadline(time.Now().Add(quietDeadline))
+			_ = stream.SetDeadline(time.Now().Add(quietDeadline))
 		}
 		if err != nil {
 			if err == io.EOF && n > 0 {
