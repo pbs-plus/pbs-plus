@@ -185,7 +185,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	req := types.StatReq{Path: filename}
 
 	var raw []byte
-	cached, err := fs.Memcache.Get("attr:" + filename)
+	cached, err := fs.Memcache.Get("attr:" + memlocal.Key(filename))
 	if err == nil {
 		atomic.AddInt64(&fs.StatCacheHits, 1)
 		raw = cached.Value
@@ -206,7 +206,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 			return types.AgentFileInfo{}, syscall.ENOENT
 		}
 		if isLookup {
-			if mcErr := fs.Memcache.Set(&memcache.Item{Key: "attr:" + filename, Value: raw, Expiration: 0}); mcErr != nil {
+			if mcErr := fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(filename), Value: raw, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("Attr cache set failed").
 					WithField("path", filename).
@@ -233,7 +233,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 				WithJob(fs.Job.ID).
 				Write()
 		} else {
-			fs.Memcache.Delete("attr:" + filename)
+			fs.Memcache.Delete("attr:" + memlocal.Key(filename))
 			atomic.AddInt64(&fs.FileCount, 1)
 			syslog.L.Debug().
 				WithMessage("Attr counted file and cleared cache").
@@ -266,11 +266,11 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	var fiCached types.AgentFileInfo
 	req := types.StatReq{Path: filename}
 
-	rawCached, err := fs.Memcache.Get("xattr:" + filename)
+	rawCached, err := fs.Memcache.Get("xattr:" + memlocal.Key(filename))
 	if err == nil {
 		req.AclOnly = true
 		_ = fiCached.Decode(rawCached.Value)
-		fs.Memcache.Delete("xattr:" + filename)
+		fs.Memcache.Delete("xattr:" + memlocal.Key(filename))
 		syslog.L.Debug().
 			WithMessage("Xattr cache hit for metadata").
 			WithField("path", filename).
@@ -382,7 +382,7 @@ func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 		return DirStream{}, syscall.ENOENT
 	}
 
-	fs.Memcache.Delete("attr:" + path)
+	fs.Memcache.Delete("attr:" + memlocal.Key(path))
 
 	syslog.L.Debug().
 		WithMessage("ReadDir opened directory").

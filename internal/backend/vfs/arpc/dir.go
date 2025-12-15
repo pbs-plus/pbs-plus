@@ -17,6 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
+	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/quic-go/quic-go"
 )
@@ -239,7 +240,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		attrBytes, err := currAttr.Encode()
 		if err == nil {
-			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: "attr:" + fullPath, Value: attrBytes, Expiration: 0}); mcErr != nil {
+			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(fullPath), Value: attrBytes, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("memcache set attr failed").
 					WithField("path", fullPath).
@@ -273,7 +274,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		xattrBytes, err := currXAttr.Encode()
 		if err == nil {
-			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: "xattr:" + fullPath, Value: xattrBytes, Expiration: 0}); mcErr != nil {
+			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(fullPath), Value: xattrBytes, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("memcache set xattr failed").
 					WithField("path", fullPath).

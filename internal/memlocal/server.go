@@ -4,8 +4,10 @@ package memlocal
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -15,7 +17,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
+	"github.com/minio/highwayhash"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -191,4 +196,30 @@ func terminateProcessGroup(p *os.Process) error {
 	time.Sleep(250 * time.Millisecond)
 	_ = p.Kill()
 	return nil
+}
+
+var hashKey []byte
+
+func init() {
+	hashKey = make([]byte, 32)
+	n, err := rand.Read(hashKey)
+	if err != nil {
+		log.Fatalf("Error reading random bytes for key: %v", err)
+	}
+	if n != 32 {
+		log.Fatalf("Expected to read 32 bytes for key, got %d", n)
+	}
+}
+
+func Key(raw string) string {
+	byteRaw := unsafe.Slice(unsafe.StringData(raw), len(raw))
+	h, err := highwayhash.New(hashKey)
+	if err != nil {
+		syslog.L.Error(err).WithField("raw", raw).Write()
+		return raw
+	}
+	h.Write(byteRaw)
+	sum := h.Sum(nil)
+
+	return string(sum)
 }

@@ -52,7 +52,7 @@ func (f *ARPCFile) Close() error {
 			WithField("path", f.name).
 			WithField("handleID", f.handleID).
 			Write()
-		return err
+		return nil
 	}
 	f.isClosed.Store(true)
 
