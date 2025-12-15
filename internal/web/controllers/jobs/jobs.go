@@ -196,6 +196,11 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
+		includeXattr, err := strconv.ParseBool(r.FormValue("include-xattr"))
+		if err != nil {
+			includeXattr = true
+		}
+
 		newJob := types.Job{
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
@@ -214,6 +219,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			Exclusions:       []types.Exclusion{},
 			PreScript:        r.FormValue("pre_script"),
 			PostScript:       r.FormValue("post_script"),
+			IncludeXattr:     includeXattr,
 		}
 
 		rawExclusions := r.FormValue("rawexclusions")
@@ -289,6 +295,14 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			if r.FormValue("notification-mode") != "" {
 				job.NotificationMode = r.FormValue("notification-mode")
+			}
+
+			if r.FormValue("include-xattr") != "" {
+				includeXattr, err := strconv.ParseBool(r.FormValue("include-xattr"))
+				if err != nil {
+					includeXattr = true
+				}
+				job.IncludeXattr = includeXattr
 			}
 
 			job.PreScript = r.FormValue("pre_script")

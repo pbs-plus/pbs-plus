@@ -89,6 +89,7 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 		"--entries-max", fmt.Sprintf("%d", job.MaxDirEntries),
 		"--backup-id", backupId,
 		"--crypt-mode=none",
+		"--skip-e2big-xattr=true",
 	}
 
 	// Add exclusions

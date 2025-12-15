@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"unicode/utf16"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -225,7 +226,9 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 
 	h, err := openForAttrs(fullPath)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("handleAttr: openForAttrs failed").WithField("path", fullPath).Write()
+		if !strings.HasSuffix(fullPath, ".pxarexclude") {
+			syslog.L.Error(err).WithMessage("handleAttr: openForAttrs failed").WithField("path", fullPath).Write()
+		}
 		return arpc.Response{}, err
 	}
 	defer func() {

@@ -17,8 +17,14 @@ var sourceModes = Ext.create("Ext.data.Store", {
 
 var readModes = Ext.create("Ext.data.Store", {
   fields: ["display", "value"],
+  data: [{ display: "Standard", value: "standard" }],
+});
+
+var xattrModes = Ext.create("Ext.data.Store", {
+  fields: ["display", "value"],
   data: [
-    { display: "Standard", value: "standard" },
+    { display: "Include extra security attributes", value: "true" },
+    { display: "Exclude extra security attributes", value: "false" },
   ],
 });
 
@@ -37,20 +43,23 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
 
   bodyPadding: 0,
 
-  cbindData: function(initialConfig) {
+  cbindData: function (initialConfig) {
     let me = this;
 
     let baseurl = "/api2/extjs/config/disk-backup-job";
     let id = initialConfig.id;
 
     me.isCreate = !id;
-    me.url = id ? `${baseurl}/${encodeURIComponent(encodePathValue(id))}` : baseurl;
+    me.url = id
+      ? `${baseurl}/${encodeURIComponent(encodePathValue(id))}`
+      : baseurl;
     me.method = id ? "PUT" : "POST";
     me.autoLoad = !!id;
     me.scheduleValue = id ? null : "";
     me.backupModeValue = id ? null : "metadata";
     me.sourceModeValue = id ? null : "snapshot";
     me.readModeValue = id ? null : "standard";
+    me.includeXAttrValue = id ? null : "true";
     me.authid = id ? null : Proxmox.UserName;
     me.editDatastore = me.datastore === undefined && me.isCreate;
     return {};
@@ -66,14 +75,14 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       },
     },
 
-    storeChange: function(field, value) {
+    storeChange: function (field, value) {
       let me = this;
       let nsSelector = me.lookup("namespace");
       nsSelector.setDatastore(value);
     },
   },
 
-  initComponent: function() {
+  initComponent: function () {
     let me = this;
     me.callParent();
 
@@ -93,7 +102,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       {
         title: gettext("Options"),
         xtype: "inputpanel",
-        onGetValues: function(values) {
+        onGetValues: function (values) {
           let me = this;
 
           if (me.isCreate) {
@@ -219,6 +228,22 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             allowBlank: true,
             cbind: {
               value: "{readModeValue}",
+            },
+          },
+          {
+            xtype: "combo",
+            fieldLabel: gettext("Extra security attributes"),
+            name: "include-xattr",
+            queryMode: "local",
+            store: xattrModes,
+            displayField: "display",
+            valueField: "value",
+            editable: false,
+            anyMatch: true,
+            forceSelection: true,
+            allowBlank: true,
+            cbind: {
+              value: "{includeXAttrValue}",
             },
           },
         ],

@@ -228,6 +228,15 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
 	var fi agentTypes.AgentFileInfo
 
+	if !fs.Job.IncludeXattr {
+		syslog.L.Debug().
+			WithMessage("Xattr disabled by job").
+			WithField("path", fpath).
+			WithField("jobId", fs.Job.ID).
+			Write()
+		return agentTypes.AgentFileInfo{}, syscall.ENOTSUP
+	}
+
 	key := fs.fullKey(fpath)
 
 	var fiCached agentTypes.AgentFileInfo
