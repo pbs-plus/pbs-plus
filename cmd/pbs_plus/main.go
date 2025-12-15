@@ -126,17 +126,6 @@ func main() {
 		syslog.L.Error(err).Write()
 	}
 
-	hn, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
-	if !ok {
-		syslog.L.Error(fmt.Errorf("PBS_PLUS_HOSTNAME is not set.")).WithMessage("a required environment variable is not set. you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables").Write()
-		return
-	}
-
-	if err := utils.ValidateHostname(hn); err != nil {
-		syslog.L.Error(fmt.Errorf("PBS_PLUS_HOSTNAME is an invalid hostname/fqdn")).WithField("PBS_PLUS_HOSTNAME", hn).WithMessage("a required environment variable is invalid. you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables").Write()
-		return
-	}
-
 	storeInstance, err := store.Initialize(mainCtx, nil)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to initialize store").Write()
@@ -185,6 +174,17 @@ func main() {
 				}
 			}
 		}
+		return
+	}
+
+	hn, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
+	if !ok {
+		syslog.L.Error(fmt.Errorf("PBS_PLUS_HOSTNAME is not set.")).WithMessage("a required environment variable is not set. you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables").Write()
+		return
+	}
+
+	if err := utils.ValidateHostname(hn); err != nil {
+		syslog.L.Error(fmt.Errorf("PBS_PLUS_HOSTNAME is an invalid hostname/fqdn")).WithField("PBS_PLUS_HOSTNAME", hn).WithMessage("a required environment variable is invalid. you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables").Write()
 		return
 	}
 
