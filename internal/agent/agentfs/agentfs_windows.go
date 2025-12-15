@@ -377,7 +377,7 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	fh.Lock()
 	defer fh.Unlock()
 
-	encodedBatch, err := fh.dirReader.NextBatch(s.ctx, s.statFs.Bsize)
+	encodedBatch, err := fh.dirReader.NextBatch(req.Context, s.statFs.Bsize)
 	if err != nil {
 		if !errors.Is(err, os.ErrProcessDone) {
 			syslog.L.Error(err).WithMessage("handleReadDir: error reading batch").WithField("handle_id", payload.HandleID).Write()
@@ -485,6 +485,9 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		end := reqEnd
 
 		for _, r := range ranges {
+			if err := req.Context.Err(); err != nil {
+				return
+			}
 			rStart := r.FileOffset
 			rEnd := r.FileOffset + r.Length
 			if rEnd <= pos {
@@ -547,6 +550,9 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		if pos < end {
 			gap := end - pos
 			for gap > 0 {
+				if err := req.Context.Err(); err != nil {
+					return
+				}
 				ch := int64(maxChunk)
 				if gap < ch {
 					ch = gap
