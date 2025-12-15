@@ -11,7 +11,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-type HandlerFunc func(req Request) (Response, error)
+type HandlerFunc func(req *Request) (Response, error)
 
 type Router struct {
 	handlers *safemap.Map[string, HandlerFunc]
@@ -51,7 +51,8 @@ func (r *Router) ServeStream(stream *quic.Stream) {
 		return
 	}
 
-	resp, err := handler(req)
+	req.Context = stream.Context()
+	resp, err := handler(&req)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return

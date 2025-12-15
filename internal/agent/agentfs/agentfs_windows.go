@@ -85,7 +85,7 @@ func (s *AgentFSServer) initializeStatFS() error {
 	return nil
 }
 
-func (s *AgentFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleStatFS(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleStatFS: encoding statFs").Write()
 	enc, err := s.statFs.Encode()
 	if err != nil {
@@ -99,7 +99,7 @@ func (s *AgentFSServer) handleStatFS(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
-func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleOpenFile: decoding request").Write()
 	var payload types.OpenFileReq
 	if err := payload.Decode(req.Payload); err != nil {
@@ -210,7 +210,7 @@ func (s *AgentFSServer) handleOpenFile(req arpc.Request) (arpc.Response, error) 
 	}, nil
 }
 
-func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleAttr: decoding request").Write()
 	var payload types.StatReq
 	if err := payload.Decode(req.Payload); err != nil {
@@ -284,7 +284,7 @@ func (s *AgentFSServer) handleAttr(req arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
-func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleXattr: decoding request").Write()
 	var payload types.StatReq
 	if err := payload.Decode(req.Payload); err != nil {
@@ -360,7 +360,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
-func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleReadDir: decoding request").Write()
 	var payload types.ReadDirReq
 	if err := payload.Decode(req.Payload); err != nil {
@@ -401,7 +401,7 @@ func (s *AgentFSServer) handleReadDir(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
-func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleReadAt: decoding request").Write()
 	var payload types.ReadAtReq
 	if err := payload.Decode(req.Payload); err != nil {
@@ -568,7 +568,7 @@ func (s *AgentFSServer) handleReadAt(req arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
-func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleLseek: decoding request").Write()
 	var payload types.LseekReq
 	if err := payload.Decode(req.Payload); err != nil {
@@ -665,7 +665,7 @@ func (s *AgentFSServer) handleLseek(req arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: respBytes}, nil
 }
 
-func (s *AgentFSServer) handleClose(req arpc.Request) (arpc.Response, error) {
+func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleClose: decoding request").Write()
 	var payload types.CloseReq
 	if err := payload.Decode(req.Payload); err != nil {
