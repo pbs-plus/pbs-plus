@@ -3,7 +3,6 @@ package binarystream
 import (
 	"encoding/binary"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"sync"
 
@@ -64,12 +63,6 @@ func SendDataFromReader(r io.Reader, length int, stream io.Writer) error {
 		if r == nil {
 			syslog.L.Warn().WithMessage("SendDataFromReader: reader is nil, sending zero-length").Write()
 		}
-		var zeroCRC [4]byte
-		if err := writeFull(stream, zeroCRC[:]); err != nil {
-			err = fmt.Errorf("failed to write zero-length crc: %w", err)
-			syslog.L.Error(err).WithMessage("SendDataFromReader: zero-length crc write failed").Write()
-			return err
-		}
 		syslog.L.Debug().WithMessage("SendDataFromReader: completed zero-length send").Write()
 		return nil
 	}
@@ -78,7 +71,6 @@ func SendDataFromReader(r io.Reader, length int, stream io.Writer) error {
 	defer bufferPool.Put(buf)
 
 	remaining := length
-	crc := crc32.NewIEEE()
 
 	for remaining > 0 {
 		readSize := min(len(buf), remaining)
@@ -96,21 +88,12 @@ func SendDataFromReader(r io.Reader, length int, stream io.Writer) error {
 			syslog.L.Error(err).WithMessage("SendDataFromReader: data write failed").Write()
 			return err
 		}
-		_, _ = crc.Write(buf[:n])
 		remaining -= n
 	}
 
 	if remaining != 0 {
 		err := fmt.Errorf("source ended before sending declared length: remaining=%d", remaining)
 		syslog.L.Error(err).WithMessage("SendDataFromReader: premature EOF").Write()
-		return err
-	}
-
-	var crcBuf [4]byte
-	binary.LittleEndian.PutUint32(crcBuf[:], crc.Sum32())
-	if err := writeFull(stream, crcBuf[:]); err != nil {
-		err = fmt.Errorf("failed to write final crc: %w", err)
-		syslog.L.Error(err).WithMessage("SendDataFromReader: crc write failed").Write()
 		return err
 	}
 
@@ -162,8 +145,6 @@ func ReceiveDataInto(stream io.Reader, dst []byte) (int, error) {
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)
 
-	crc := crc32.NewIEEE()
-
 	for totalRead < toRead {
 		want := min(len(buf), toRead-totalRead)
 		if err := readFull(stream, buf[:want]); err != nil {
@@ -172,7 +153,6 @@ func ReceiveDataInto(stream io.Reader, dst []byte) (int, error) {
 			return totalRead, e
 		}
 		copy(dst[totalRead:totalRead+want], buf[:want])
-		_, _ = crc.Write(buf[:want])
 		totalRead += want
 	}
 
@@ -184,21 +164,7 @@ func ReceiveDataInto(stream io.Reader, dst []byte) (int, error) {
 			syslog.L.Error(e).WithMessage("ReceiveDataInto: payload drain failed").Write()
 			return totalRead, e
 		}
-		_, _ = crc.Write(buf[:want])
 		remain -= want
-	}
-
-	var recvCRC [4]byte
-	if err := readFull(stream, recvCRC[:]); err != nil {
-		e := fmt.Errorf("failed to read final crc: %w", err)
-		syslog.L.Error(e).WithMessage("ReceiveDataInto: crc read failed").Write()
-		return totalRead, e
-	}
-
-	if binary.LittleEndian.Uint32(recvCRC[:]) != crc.Sum32() {
-		err := fmt.Errorf("crc mismatch for payload")
-		syslog.L.Error(err).WithMessage("ReceiveDataInto: crc mismatch").Write()
-		return totalRead, err
 	}
 
 	syslog.L.Debug().WithMessage("ReceiveDataInto: completed").

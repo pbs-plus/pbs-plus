@@ -188,7 +188,7 @@ func connectARPC(ctx context.Context) error {
 
 	syslog.L.Info().WithMessage("Setting up ARPC router and handlers").Write()
 	router := arpc.NewRouter()
-	router.Handle("ping", func(req arpc.Request) (arpc.Response, error) {
+	router.Handle("ping", func(req *arpc.Request) (arpc.Response, error) {
 		resp := arpc.MapStringStringMsg{"version": Version, "hostname": clientId}
 		b, err := resp.Encode()
 		if err != nil {
@@ -196,7 +196,7 @@ func connectARPC(ctx context.Context) error {
 		}
 		return arpc.Response{Status: 200, Data: b}, nil
 	})
-	router.Handle("backup", func(req arpc.Request) (arpc.Response, error) {
+	router.Handle("backup", func(req *arpc.Request) (arpc.Response, error) {
 		return controllers.BackupStartHandler(req, session)
 	})
 	router.Handle("target_status", controllers.StatusHandler)

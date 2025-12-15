@@ -26,7 +26,7 @@ func init() {
 	activePids = safemap.New[string, int]()
 }
 
-func BackupStartHandler(req arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {
+func BackupStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {
 	var reqData types.BackupReq
 	err := reqData.Decode(req.Payload)
 	if err != nil {
@@ -68,7 +68,7 @@ func BackupStartHandler(req arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respon
 	return arpc.Response{Status: 200, Message: backupMode}, nil
 }
 
-func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
+func BackupCloseHandler(req *arpc.Request) (arpc.Response, error) {
 	var reqData types.BackupReq
 	err := reqData.Decode(req.Payload)
 	if err != nil {
@@ -112,7 +112,7 @@ func BackupCloseHandler(req arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Message: "success"}, nil
 }
 
-func StatusHandler(req arpc.Request) (arpc.Response, error) {
+func StatusHandler(req *arpc.Request) (arpc.Response, error) {
 	var reqData types.TargetStatusReq
 	err := reqData.Decode(req.Payload)
 	if err != nil {

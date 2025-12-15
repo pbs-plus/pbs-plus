@@ -34,6 +34,7 @@ type Encodable interface {
 }
 
 type Request struct {
+	Context context.Context     `cbor:"-"`
 	Method  string              `cbor:"method"`
 	Payload []byte              `cbor:"payload"`
 	Headers map[string][]string `cbor:"headers,omitempty"`
@@ -90,6 +91,12 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
+	} else {
+		go func() {
+			<-ctx.Done()
+			stream.Close()
+			stream.CancelRead(0)
+		}()
 	}
 
 	var payloadBytes []byte
@@ -205,6 +212,12 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
+	} else {
+		go func() {
+			<-ctx.Done()
+			stream.Close()
+			stream.CancelRead(0)
+		}()
 	}
 
 	var payloadBytes []byte
