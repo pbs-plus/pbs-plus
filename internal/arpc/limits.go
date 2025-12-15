@@ -235,7 +235,7 @@ func quicServerLimitsAutoConfig() *quic.Config {
 	}
 
 	if memTotal > 0 {
-		syslog.L.Info().
+		syslog.L.Debug().
 			WithField("totalRAM", fmt.Sprintf("%dB", memTotal)).
 			WithField("budget", fmt.Sprintf("%.2f%%", ramFrac*100)).
 			WithField("N", N).
@@ -246,7 +246,7 @@ func quicServerLimitsAutoConfig() *quic.Config {
 			WithMessage("aRPC QUIC limits auto configured").
 			Write()
 	} else {
-		syslog.L.Info().
+		syslog.L.Debug().
 			WithField("initStreamReceiveWindow", cfg.InitialStreamReceiveWindow).
 			WithField("initConnReceiveWindow", cfg.InitialConnectionReceiveWindow).
 			WithField("maxStreamReceiveWindow", cfg.MaxStreamReceiveWindow).
