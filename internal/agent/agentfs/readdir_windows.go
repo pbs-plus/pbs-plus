@@ -199,8 +199,8 @@ func (r *DirReaderNT) NextBatch(blockSize uint64) ([]byte, error) {
 	}
 	syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: batch encoded").
 		WithField("path", r.path).
-		WithField("entries", len(entries)).
 		WithField("bytes", len(encodedBatch)).
+		WithField("entries", entries).
 		Write()
 	return encodedBatch, nil
 }
