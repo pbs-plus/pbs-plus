@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"sync"
 
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
@@ -37,10 +38,10 @@ func CreateS3FSMount(connId string, fs *s3fs.S3FS) {
 func DisconnectSession(connId string) {
 	if fs, ok := activeMounts.GetAndDel(connId); ok {
 		if fs.arpcfs != nil {
-			fs.arpcfs.Unmount()
+			fs.arpcfs.Unmount(context.Background())
 		}
 		if fs.s3fs != nil {
-			fs.s3fs.Unmount()
+			fs.s3fs.Unmount(context.Background())
 		}
 	}
 }
