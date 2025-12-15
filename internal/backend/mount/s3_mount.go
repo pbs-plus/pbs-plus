@@ -138,6 +138,8 @@ func (a *S3Mount) Unmount() {
 		}
 	}
 
+	store.DisconnectSession(a.Endpoint + "|" + a.JobId)
+
 	_ = os.RemoveAll(a.Path)
 }
 

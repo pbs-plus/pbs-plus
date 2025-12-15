@@ -4,7 +4,7 @@ package memlocal
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -196,7 +196,7 @@ func terminateProcessGroup(p *os.Process) error {
 	return nil
 }
 
-const memcachedKeyLimit = 200
+const memcachedKeyLimit = 250
 
 func Key(originalKey string) string {
 	if originalKey == "" {
@@ -205,11 +205,8 @@ func Key(originalKey string) string {
 	encodedKey := url.QueryEscape(originalKey)
 
 	if len(encodedKey) > memcachedKeyLimit {
-		hasher := sha1.New()
-		hasher.Write([]byte(encodedKey))
-		hashBytes := hasher.Sum(nil)
-
-		return hex.EncodeToString(hashBytes)
+		sum := sha256.Sum256([]byte(encodedKey))
+		return hex.EncodeToString(sum[:])
 	}
 
 	return encodedKey

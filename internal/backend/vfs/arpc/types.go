@@ -21,8 +21,8 @@ type DirStream struct {
 	fs            *ARPCFS
 	path          string
 	handleId      types.FileHandleId
-	closed        int32
-	lastRespMu    sync.Mutex
+	closed        bool
+	mu            sync.Mutex
 	lastResp      types.ReadDirEntries
 	curIdx        uint64
 	totalReturned uint64
