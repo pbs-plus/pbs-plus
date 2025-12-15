@@ -353,7 +353,7 @@ func (s *AgentFSServer) handleXattr(req arpc.Request) (arpc.Response, error) {
 		syslog.L.Error(err).WithMessage("handleXattr: encode failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
 	}
-	syslog.L.Debug().WithMessage("handleXattr: success").WithField("path", fullPath).Write()
+	syslog.L.Debug().WithMessage("handleXattr: success").WithField("path", fullPath).WithField("data", info).Write()
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
