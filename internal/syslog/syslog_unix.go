@@ -5,6 +5,7 @@ package syslog
 import (
 	"fmt"
 	"log/syslog"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -88,6 +89,10 @@ func (e *LogEntry) Write() {
 }
 
 func (e *LogEntry) serverWrite() {
+	if e.Level == "debug" && os.Getenv("DEBUG") != "true" {
+		return
+	}
+
 	if e.JobID != "" {
 		backupLogger := GetExistingBackupLogger(e.JobID)
 		if backupLogger != nil {
