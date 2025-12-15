@@ -219,7 +219,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		}
 
 		if attrBytes, err := currAttr.Encode(); err == nil {
-			if currAttr.IsDir {
+			if !currAttr.IsDir {
 				atomic.AddInt64(&s.fs.FileCount, 1)
 			} else {
 				atomic.AddInt64(&s.fs.FolderCount, 1)
