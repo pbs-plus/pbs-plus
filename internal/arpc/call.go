@@ -146,10 +146,12 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 			stream.CancelWrite(quicErrInvalidRawHandler)
 			return fmt.Errorf("invalid out handler while in raw stream mode")
 		}
+		_ = stream.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if _, err := stream.Write([]byte{0x01}); err != nil {
 			stream.CancelWrite(quicErrRawReadySignalWrite)
 			return fmt.Errorf("raw ready signal write failed: %w", err)
 		}
+		_ = stream.SetWriteDeadline(time.Time{})
 		err = handler(stream)
 		if err != nil {
 			stream.CancelWrite(quicErrRPCStatus)
