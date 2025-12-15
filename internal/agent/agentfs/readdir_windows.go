@@ -3,6 +3,7 @@
 package agentfs
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -67,7 +68,7 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 
 // NextBatch retrieves the next batch of directory entries.
 // It returns the encoded batch bytes or os.ErrProcessDone when enumeration is finished.
-func (r *DirReaderNT) NextBatch(blockSize uint64) ([]byte, error) {
+func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, error) {
 	if r.noMoreFiles {
 		syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: no more files (cached)").WithField("path", r.path).Write()
 		return nil, os.ErrProcessDone
@@ -83,7 +84,7 @@ func (r *DirReaderNT) NextBatch(blockSize uint64) ([]byte, error) {
 		WithField("buffer_len", len(buffer)).
 		Write()
 
-	err := ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan)
+	err := ntDirectoryCall(ctx, r.handle, &r.ioStatus, buffer, r.restartScan)
 	r.restartScan = false
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
@@ -103,6 +104,10 @@ func (r *DirReaderNT) NextBatch(blockSize uint64) ([]byte, error) {
 
 	offset := 0
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		if offset+int(unsafe.Sizeof(FileDirectoryInformation{})) > len(buffer) {
 			err := fmt.Errorf("offset exceeded buffer length")
 			syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: buffer overflow guard").WithField("path", r.path).Write()
@@ -190,6 +195,10 @@ func (r *DirReaderNT) NextBatch(blockSize uint64) ([]byte, error) {
 			return nil, err
 		}
 		offset = nextOffset
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	encodedBatch, err := entries.Encode()

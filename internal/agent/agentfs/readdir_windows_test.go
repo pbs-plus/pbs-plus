@@ -71,7 +71,7 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	entriesBytes, err := dirReader.NextBatch(0)
+	entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -104,7 +104,7 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	entriesBytes, err := dirReader.NextBatch(0)
+	entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
@@ -142,7 +142,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 
 	totalEntries := 0
 	for {
-		entriesBytes, err := dirReader.NextBatch(0)
+		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -187,7 +187,7 @@ func testFileAttributes(t *testing.T, tempDir string) {
 
 	allEntries := []types.AgentFileInfo{}
 	for {
-		entriesBytes, err := dirReader.NextBatch(0)
+		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -263,7 +263,7 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 
 	allEntries := []types.AgentFileInfo{}
 	for {
-		entriesBytes, err := dirReader.NextBatch(0)
+		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -306,7 +306,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 	allEntries := []types.AgentFileInfo{}
 
 	for {
-		entriesBytes, err := dirReader.NextBatch(0)
+		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -357,7 +357,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 	allEntries := []types.AgentFileInfo{}
 
 	for {
-		entriesBytes, err := dirReader.NextBatch(0)
+		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
