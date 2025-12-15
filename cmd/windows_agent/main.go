@@ -222,7 +222,6 @@ func (p *pbsService) waitForBootstrap() error {
 func (p *pbsService) startBackgroundTasks() {
 	syslog.L.Info().WithMessage("Starting certificate renewal background task").Write()
 	p.wg.Go(func() {
-		defer p.wg.Done()
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 
@@ -244,8 +243,6 @@ func (p *pbsService) startBackgroundTasks() {
 
 	syslog.L.Info().WithMessage("Starting drive update background task").Write()
 	p.wg.Go(func() {
-		defer p.wg.Done()
-
 		syslog.L.Info().WithMessage("Running initial drive update").Write()
 		if err := p.updateDrives(); err != nil {
 			syslog.L.Warn().WithMessage("Initial drive update failed").WithField("error", err.Error()).Write()
@@ -370,7 +367,6 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("Starting ARPC session handler goroutine").Write()
 
 	p.wg.Go(func() {
-		defer p.wg.Done()
 		defer session.Close()
 		defer func() {
 			syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
