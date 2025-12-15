@@ -39,6 +39,10 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 To install PBS Plus:
 ### PBS Plus
 - Install the `.deb` package in the release and install it in your Proxmox Backup Server machine.
+- Edit `/etc/proxmox-backup/pbs-plus/pbs-plus.env` and add the following required environment variables:
+  - `PBS_PLUS_HOSTNAME`: server's hostname/FQDN for mTLS certificate
+- Restart the `pbs-plus` service so it reads the env vars and initializes:
+  - `systemctl restart pbs-plus`
 - This will "mount" a new self-signed certificate (and custom JS files) on top of the current one. It gets "unmounted" whenever `pbs-plus` service is stopped.
 - When upgrading your `proxmox-backup-server`, don't forget to stop the `pbs-plus` service first before doing so.
 - You should see a modified Web UI on `https://<pbs>:8007` if installation was successful.
@@ -46,7 +50,8 @@ To install PBS Plus:
 ### Windows Agent
 - In the Agent Bootstrap menu under Disk Backup, click on an existing valid token or generate a new one.
 - Click on Deploy With Token while the valid token is selected. That should give you a PowerShell command. Executing that command in an elevated PowerShell should install and bootstrap the agent properly.
-- Windows agents store configuration in the Windows Registry and use DPAPI for secrets. They do not use environment variables for initial configuration.
+- Windows agents store configuration in the Windows Registry and use DPAPI for secrets. They do not use environment variables for initial configuration except for the following:
+  - `PBS_PLUS_HOSTNAME`: agent's hostname/FQDN for mTLS certificate; this will be used to the target name in the server's database. Make sure this is unique across all your agents.
 - As soon as the script finishes, you should be able to see the client as Reachable in the Targets tab. If so, you should be good to go.
 
 ### Linux Agent
@@ -56,6 +61,7 @@ To install PBS Plus:
 - Configure initial settings on the agent host using environment variables (Linux uses env vars for initial config; Windows uses the registry):
   - `PBS_PLUS_INIT_SERVER_URL` — e.g. `https://<pbs-server>:8008`
   - `PBS_PLUS_INIT_BOOTSTRAP_TOKEN` — the copied token
+  - `PBS_PLUS_HOSTNAME`: agent's hostname/FQDN for mTLS certificate; this will be used to the target name in the server's database. Make sure this is unique across all your agents.
 - Restart the `pbs-plus-agent` service so it reads the env vars and initializes:
   - `systemctl restart pbs-plus-agent` (if using systemd)
 - As soon as the agent starts, it should persist config to `/etc/pbs-plus-agent/registry`, bootstrap mTLS, and you should see the client as Reachable in the Targets tab. If so, you should be good to go.
@@ -65,6 +71,7 @@ To install PBS Plus:
 - Provide initial configuration via environment variables (Linux-style):
   - `PBS_PLUS_INIT_SERVER_URL` — e.g. `https://<pbs-server>:8008`
   - `PBS_PLUS_INIT_BOOTSTRAP_TOKEN` — the copied token
+  - `PBS_PLUS_HOSTNAME`: agent's hostname/FQDN for mTLS certificate; this will be used to the target name in the server's database. Make sure this is unique across all your agents.
 - Mount persistent volumes so state, logs, and registry survive restarts:
   - `/var/lib/pbs-plus-agent` (state)
   - `/var/log/pbs-plus-agent` (logs)
