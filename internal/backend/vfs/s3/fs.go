@@ -97,17 +97,17 @@ func (fs *S3FS) Root() string {
 	return fs.BasePath
 }
 
-func (fs *S3FS) Open(filename string) (S3File, error) {
-	return fs.OpenFile(filename, os.O_RDONLY, 0)
+func (fs *S3FS) Open(ctx context.Context, filename string) (S3File, error) {
+	return fs.OpenFile(ctx, filename, os.O_RDONLY, 0)
 }
 
-func (fs *S3FS) OpenFile(filename string, flag int, _ os.FileMode) (S3File, error) {
+func (fs *S3FS) OpenFile(ctx context.Context, filename string, flag int, _ os.FileMode) (S3File, error) {
 	defer func() {
 		key := fs.fullKey(filename)
 		fs.Memcache.Delete("attr:" + memlocal.Key(key))
 	}()
 
-	info, err := fs.Attr(filename, false)
+	info, err := fs.Attr(ctx, filename, false)
 	if err != nil {
 		return S3File{}, err
 	}
@@ -123,7 +123,7 @@ func (fs *S3FS) OpenFile(filename string, flag int, _ os.FileMode) (S3File, erro
 	}, nil
 }
 
-func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, error) {
+func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTypes.AgentFileInfo, error) {
 	now := time.Now().Unix()
 
 	if fpath == "/" || fpath == "" {
@@ -209,7 +209,7 @@ func (fs *S3FS) Attr(fpath string, isLookup bool) (agentTypes.AgentFileInfo, err
 	return agentTypes.AgentFileInfo{}, syscall.ENOENT
 }
 
-func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
+func (fs *S3FS) Xattr(ctx context.Context, fpath string) (agentTypes.AgentFileInfo, error) {
 	var fi agentTypes.AgentFileInfo
 
 	if !fs.Job.IncludeXattr {
@@ -300,7 +300,7 @@ func (fs *S3FS) Xattr(fpath string) (agentTypes.AgentFileInfo, error) {
 	return agentTypes.AgentFileInfo{}, syscall.ENODATA
 }
 
-func (fs *S3FS) StatFS() (agentTypes.StatFS, error) {
+func (fs *S3FS) StatFS(ctx context.Context) (agentTypes.StatFS, error) {
 	return agentTypes.StatFS{
 		Bsize:   4096,
 		Blocks:  1 << 50,
@@ -312,7 +312,7 @@ func (fs *S3FS) StatFS() (agentTypes.StatFS, error) {
 	}, nil
 }
 
-func (fs *S3FS) ReadDir(fpath string) (S3DirStream, error) {
+func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (S3DirStream, error) {
 	var prefix string
 	if fpath == "/" || fpath == "" {
 		prefix = fs.prefix
@@ -397,7 +397,7 @@ func (fs *S3FS) fullKey(fpath string) string {
 	return fs.prefix + p
 }
 
-func (fs *S3FS) Unmount() {
+func (fs *S3FS) Unmount(ctx context.Context) {
 	if fs.Fuse != nil {
 		_ = fs.Fuse.Unmount()
 	}

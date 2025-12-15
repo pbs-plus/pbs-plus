@@ -105,16 +105,16 @@ func (fs *ARPCFS) GetBackupMode() string {
 	return fs.backupMode
 }
 
-func (fs *ARPCFS) Open(filename string) (ARPCFile, error) {
+func (fs *ARPCFS) Open(ctx context.Context, filename string) (ARPCFile, error) {
 	syslog.L.Debug().
 		WithMessage("Open called").
 		WithField("path", filename).
 		WithField("jobId", fs.Job.ID).
 		Write()
-	return fs.OpenFile(filename, os.O_RDONLY, 0)
+	return fs.OpenFile(ctx, filename, os.O_RDONLY, 0)
 }
 
-func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFile, error) {
+func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm os.FileMode) (ARPCFile, error) {
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
@@ -138,7 +138,10 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 		Perm: int(perm),
 	}
 
-	raw, err := fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &req)
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
+
+	raw, err := fs.session.CallData(ctxN, fs.Job.ID+"/OpenFile", &req)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return ARPCFile{}, syscall.ENOENT
@@ -165,7 +168,7 @@ func (fs *ARPCFS) OpenFile(filename string, flag int, perm os.FileMode) (ARPCFil
 	}, nil
 }
 
-func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, error) {
+func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (types.AgentFileInfo, error) {
 	syslog.L.Debug().
 		WithMessage("Attr called").
 		WithField("path", filename).
@@ -181,6 +184,9 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 			Write()
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
+
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
 
 	req := types.StatReq{Path: filename}
 
@@ -200,7 +206,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 			WithField("path", filename).
 			WithField("jobId", fs.Job.ID).
 			Write()
-		raw, err = fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/Attr", &req)
+		raw, err = fs.session.CallData(ctxN, fs.Job.ID+"/Attr", &req)
 		if err != nil {
 			fs.logError(req.Path, err)
 			return types.AgentFileInfo{}, syscall.ENOENT
@@ -238,7 +244,7 @@ func (fs *ARPCFS) Attr(filename string, isLookup bool) (types.AgentFileInfo, err
 	return fi, nil
 }
 
-func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
+func (fs *ARPCFS) Xattr(ctx context.Context, filename string) (types.AgentFileInfo, error) {
 	syslog.L.Debug().
 		WithMessage("Xattr called").
 		WithField("path", filename).
@@ -253,6 +259,9 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 			Write()
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
+
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
 
 	var fi types.AgentFileInfo
 	if fs.session == nil {
@@ -278,7 +287,7 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 			Write()
 	}
 
-	raw, err := fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/Xattr", &req)
+	raw, err := fs.session.CallData(ctxN, fs.Job.ID+"/Xattr", &req)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENODATA
@@ -305,11 +314,14 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 	return fi, nil
 }
 
-func (fs *ARPCFS) StatFS() (types.StatFS, error) {
+func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
 	syslog.L.Debug().
 		WithMessage("StatFS called").
 		WithField("jobId", fs.Job.ID).
 		Write()
+
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
 
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
@@ -320,7 +332,7 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	}
 
 	var fsStat types.StatFS
-	raw, err := fs.session.CallDataWithTimeout(1*time.Minute,
+	raw, err := fs.session.CallData(ctxN,
 		fs.Job.ID+"/StatFS", nil)
 	if err != nil {
 		syslog.L.Error(err).
@@ -346,12 +358,15 @@ func (fs *ARPCFS) StatFS() (types.StatFS, error) {
 	return fsStat, nil
 }
 
-func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
+func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 	syslog.L.Debug().
 		WithMessage("ReadDir called").
 		WithField("path", path).
 		WithField("jobId", fs.Job.ID).
 		Write()
+
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
 
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).
@@ -363,7 +378,7 @@ func (fs *ARPCFS) ReadDir(path string) (DirStream, error) {
 
 	var handleId types.FileHandleId
 	openReq := types.OpenFileReq{Path: path}
-	raw, err := fs.session.CallDataWithTimeout(1*time.Minute, fs.Job.ID+"/OpenFile", &openReq)
+	raw, err := fs.session.CallData(ctxN, fs.Job.ID+"/OpenFile", &openReq)
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("ReadDir open failed").
@@ -408,7 +423,7 @@ func (fs *ARPCFS) Root() string {
 	return fs.BasePath
 }
 
-func (fs *ARPCFS) Unmount() {
+func (fs *ARPCFS) Unmount(ctx context.Context) {
 	syslog.L.Debug().
 		WithMessage("Unmount called").
 		WithField("jobId", fs.Job.ID).

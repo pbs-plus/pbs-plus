@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/quic-go/quic-go"
 )
 
 var bufferPool = &sync.Pool{
@@ -17,32 +19,61 @@ var bufferPool = &sync.Pool{
 }
 
 const (
-	magicV1   uint32 = 0x4E465353
-	version   uint16 = 1
-	maxLength        = 1 << 30
+	magicV1       uint32 = 0x4E465353
+	version       uint16 = 1
+	maxLength            = 1 << 30
+	quietDeadline        = 30 * time.Second
 )
 
-func writeFull(w io.Writer, b []byte) error {
+func writeFull(w io.Writer, b []byte, stream *quic.Stream) error {
 	for len(b) > 0 {
 		n, err := w.Write(b)
 		if err != nil {
 			return err
 		}
 		b = b[n:]
+		if stream != nil {
+			_ = (*stream).SetDeadline(time.Now().Add(quietDeadline))
+		}
 	}
 	return nil
 }
 
-func readFull(r io.Reader, b []byte) error {
-	_, err := io.ReadFull(r, b)
-	return err
+func readFull(r io.Reader, b []byte, stream *quic.Stream) error {
+	offset := 0
+	for offset < len(b) {
+		n, err := r.Read(b[offset:])
+		if n > 0 && stream != nil {
+			_ = (*stream).SetDeadline(time.Now().Add(quietDeadline))
+		}
+		if err != nil {
+			if err == io.EOF && n > 0 {
+				offset += n
+				continue
+			}
+			return err
+		}
+		offset += n
+	}
+	return nil
 }
 
-func SendDataFromReader(r io.Reader, length int, stream io.Writer) error {
+func setQuietDeadline(stream *quic.Stream) error {
+	if stream == nil {
+		return fmt.Errorf("nil stream")
+	}
+	return (*stream).SetDeadline(time.Now().Add(quietDeadline))
+}
+
+func SendDataFromReader(r io.Reader, length int, stream *quic.Stream) error {
 	if stream == nil {
 		err := fmt.Errorf("stream is nil")
 		syslog.L.Error(err).WithMessage("SendDataFromReader: nil stream").Write()
 		return err
+	}
+
+	if err := setQuietDeadline(stream); err != nil {
+		syslog.L.Warn().WithMessage(fmt.Sprintf("SendDataFromReader: failed to set initial deadline: %v", err.Error())).Write()
 	}
 
 	syslog.L.Debug().WithMessage("SendDataFromReader: start").
@@ -53,7 +84,7 @@ func SendDataFromReader(r io.Reader, length int, stream io.Writer) error {
 	binary.LittleEndian.PutUint32(hdr[0:4], magicV1)
 	binary.LittleEndian.PutUint16(hdr[4:6], version)
 	binary.LittleEndian.PutUint64(hdr[6:14], uint64(length))
-	if err := writeFull(stream, hdr[:]); err != nil {
+	if err := writeFull(stream, hdr[:], stream); err != nil {
 		err = fmt.Errorf("failed to write header: %w", err)
 		syslog.L.Error(err).WithMessage("SendDataFromReader: header write failed").Write()
 		return err
@@ -83,7 +114,7 @@ func SendDataFromReader(r io.Reader, length int, stream io.Writer) error {
 		if n == 0 {
 			break
 		}
-		if err := writeFull(stream, buf[:n]); err != nil {
+		if err := writeFull(stream, buf[:n], stream); err != nil {
 			err = fmt.Errorf("failed to write data: %w", err)
 			syslog.L.Error(err).WithMessage("SendDataFromReader: data write failed").Write()
 			return err
@@ -103,9 +134,13 @@ func SendDataFromReader(r io.Reader, length int, stream io.Writer) error {
 	return nil
 }
 
-func ReceiveDataInto(stream io.Reader, dst []byte) (int, error) {
+func ReceiveDataInto(stream *quic.Stream, dst []byte) (int, error) {
+	if err := setQuietDeadline(stream); err != nil {
+		syslog.L.Warn().WithMessage(fmt.Sprintf("ReceiveDataInto: failed to set initial deadline: %v", err.Error())).Write()
+	}
+
 	var hdr [14]byte
-	if err := readFull(stream, hdr[:]); err != nil {
+	if err := readFull(stream, hdr[:], stream); err != nil {
 		wErr := fmt.Errorf("failed to read header: %w", err)
 		syslog.L.Error(wErr).WithMessage("ReceiveDataInto: header read failed").Write()
 		return 0, wErr
@@ -147,7 +182,7 @@ func ReceiveDataInto(stream io.Reader, dst []byte) (int, error) {
 
 	for totalRead < toRead {
 		want := min(len(buf), toRead-totalRead)
-		if err := readFull(stream, buf[:want]); err != nil {
+		if err := readFull(stream, buf[:want], stream); err != nil {
 			e := fmt.Errorf("failed to read payload: %w", err)
 			syslog.L.Error(e).WithMessage("ReceiveDataInto: payload read failed").Write()
 			return totalRead, e
@@ -159,7 +194,7 @@ func ReceiveDataInto(stream io.Reader, dst []byte) (int, error) {
 	remain := int(totalLength) - totalRead
 	for remain > 0 {
 		want := min(len(buf), remain)
-		if err := readFull(stream, buf[:want]); err != nil {
+		if err := readFull(stream, buf[:want], stream); err != nil {
 			e := fmt.Errorf("failed to drain payload remainder: %w", err)
 			syslog.L.Error(e).WithMessage("ReceiveDataInto: payload drain failed").Write()
 			return totalRead, e

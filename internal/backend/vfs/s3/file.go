@@ -13,7 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
+func (f *S3File) ReadAt(ctx context.Context, buf []byte, off int64) (int, error) {
 	if len(buf) == 0 {
 		return 0, nil
 	}
@@ -81,10 +81,10 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	return n, nil
 }
 
-func (f *S3File) Lseek(off int64, whence int) (uint64, error) {
+func (f *S3File) Lseek(ctx context.Context, off int64, whence int) (uint64, error) {
 	return 0, syscall.EOPNOTSUPP
 }
 
-func (f *S3File) Close() error {
+func (f *S3File) Close(ctx context.Context) error {
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -88,14 +89,22 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	}
 	defer stream.Close()
 	defer stream.CancelRead(0)
+	defer stream.CancelWrite(0)
+
+	var streaming atomic.Bool
+	streaming.Store(false)
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
 	} else {
 		go func() {
 			<-ctx.Done()
+			if streaming.Load() {
+				return
+			}
 			stream.Close()
 			stream.CancelRead(0)
+			stream.CancelWrite(0)
 		}()
 	}
 
@@ -146,12 +155,16 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 			stream.CancelWrite(quicErrInvalidRawHandler)
 			return fmt.Errorf("invalid out handler while in raw stream mode")
 		}
-		_ = stream.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if _, err := stream.Write([]byte{0x01}); err != nil {
 			stream.CancelWrite(quicErrRawReadySignalWrite)
 			return fmt.Errorf("raw ready signal write failed: %w", err)
 		}
-		_ = stream.SetWriteDeadline(time.Time{})
+
+		// Cancel deadline
+		stream.SetDeadline(time.Time{})
+		streaming.Store(true)
+		defer streaming.Store(false)
+
 		err = handler(stream)
 		if err != nil {
 			stream.CancelWrite(quicErrRPCStatus)
@@ -184,24 +197,12 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	}
 }
 
-func (s *StreamPipe) CallWithTimeout(timeout time.Duration, method string, payload any, out any) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	return s.Call(ctx, method, payload, out)
-}
-
 func (s *StreamPipe) CallData(ctx context.Context, method string, payload any) ([]byte, error) {
 	var out []byte
 	if err := s.Call(ctx, method, payload, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
-}
-
-func (s *StreamPipe) CallDataWithTimeout(timeout time.Duration, method string, payload any) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	return s.CallData(ctx, method, payload)
 }
 
 func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any) (string, error) {
@@ -211,6 +212,7 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	}
 	defer stream.Close()
 	defer stream.CancelRead(0)
+	defer stream.CancelWrite(0)
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
@@ -219,6 +221,7 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 			<-ctx.Done()
 			stream.Close()
 			stream.CancelRead(0)
+			stream.CancelWrite(0)
 		}()
 	}
 
@@ -281,10 +284,4 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	}
 
 	return resp.Message, nil
-}
-
-func (s *StreamPipe) CallMessageWithTimeout(timeout time.Duration, method string, payload any) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	return s.CallMessage(ctx, method, payload)
 }
