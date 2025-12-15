@@ -8,6 +8,7 @@ type Job struct {
 	Mode                  string      `json:"mode"`
 	Target                string      `json:"target"`
 	TargetPath            string      `json:"target-path"`
+	IncludeXattr          bool        `json:"include-xattr"`
 	Subpath               string      `json:"subpath"`
 	Schedule              string      `json:"schedule"`
 	Comment               string      `json:"comment"`

@@ -243,7 +243,7 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
 	fi, err := n.fs.Xattr(n.getPath())
 	if err != nil {
-		return 0, syscall.ENODATA
+		return 0, syscall.ENOTSUP
 	}
 
 	var data []byte

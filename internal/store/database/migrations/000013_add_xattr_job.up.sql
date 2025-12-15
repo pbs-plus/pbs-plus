@@ -1,0 +1,1 @@
+ALTER TABLE jobs ADD COLUMN include_xattr INTEGER DEFAULT 1;

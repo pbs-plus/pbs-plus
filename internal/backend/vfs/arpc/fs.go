@@ -254,6 +254,15 @@ func (fs *ARPCFS) Xattr(filename string) (types.AgentFileInfo, error) {
 		WithField("jobId", fs.Job.ID).
 		Write()
 
+	if !fs.Job.IncludeXattr {
+		syslog.L.Debug().
+			WithMessage("Xattr disabled by job").
+			WithField("path", filename).
+			WithField("jobId", fs.Job.ID).
+			Write()
+		return types.AgentFileInfo{}, syscall.ENOTSUP
+	}
+
 	var fi types.AgentFileInfo
 	if fs.session == nil {
 		syslog.L.Error(os.ErrInvalid).

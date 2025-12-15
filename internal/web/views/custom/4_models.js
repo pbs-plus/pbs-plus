@@ -29,6 +29,7 @@ Ext.define("pbs-disk-backup-job-status", {
     "rawexclusions",
     "retry",
     "retry-interval",
+    "include-xattr",
   ],
   idProperty: "id",
   proxy: {
@@ -74,12 +75,6 @@ Ext.define("pbs-model-exclusions", {
 
 Ext.define("pbs-model-scripts", {
   extend: "Ext.data.Model",
-  fields: [
-    "path",
-    "description",
-    "job_count",
-    "target_count",
-  ],
+  fields: ["path", "description", "job_count", "target_count"],
   idProperty: "path",
 });
-
