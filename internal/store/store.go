@@ -116,7 +116,7 @@ func (s *Store) GetAPIServerTLSConfig() (*tls.Config, error) {
 	s.mTLS.Lock()
 	defer s.mTLS.Unlock()
 
-	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, nil, tls.VerifyClientCertIfGiven)
+	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, nil, tls.VerifyClientCertIfGiven, false)
 	return conf, err
 }
 
@@ -124,7 +124,7 @@ func (s *Store) GetARPCServerTLSConfig() (*tls.Config, error) {
 	s.mTLS.Lock()
 	defer s.mTLS.Unlock()
 
-	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, []string{"pbsarpc"}, tls.VerifyClientCertIfGiven)
+	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, []string{"pbsarpc"}, tls.VerifyClientCertIfGiven, true)
 	return conf, err
 }
 

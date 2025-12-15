@@ -55,7 +55,7 @@ func makeBootstrapHandler(caCertFile, caKeyFile string, clientValidDays int) (ht
 }
 
 func startMTLSServer(addr, serverCertFile, serverKeyFile, caFile string, clientAuth tls.ClientAuthType, handler http.Handler) (*http.Server, error) {
-	tlsCfg, err := BuildServerTLS(serverCertFile, serverKeyFile, caFile, "", nil, clientAuth)
+	tlsCfg, err := BuildServerTLS(serverCertFile, serverKeyFile, caFile, "", nil, clientAuth, true)
 	if err != nil {
 		return nil, err
 	}
