@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -29,17 +28,20 @@ var bufPool = sync.Pool{
 }
 
 func (s *DirStream) HasNext() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	syslog.L.Debug().
 		WithMessage("HasNext called").
 		WithField("path", s.path).
-		WithField("closed", atomic.LoadInt32(&s.closed)).
-		WithField("curIdx", atomic.LoadUint64(&s.curIdx)).
-		WithField("totalReturned", atomic.LoadUint64(&s.totalReturned)).
+		WithField("closed", s.closed).
+		WithField("curIdx", s.curIdx).
+		WithField("totalReturned", s.totalReturned).
 		WithField("maxDirEntries", s.fs.Job.MaxDirEntries).
 		WithJob(s.fs.Job.ID).
 		Write()
 
-	if atomic.LoadInt32(&s.closed) != 0 {
+	if s.closed {
 		syslog.L.Debug().
 			WithMessage("HasNext early return: stream closed").
 			WithField("path", s.path).
@@ -48,15 +50,12 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if atomic.LoadUint64(&s.totalReturned) >= uint64(s.fs.Job.MaxDirEntries) {
+	if s.totalReturned >= uint64(s.fs.Job.MaxDirEntries) {
 		lastPath := ""
-		s.lastRespMu.Lock()
-		curIdxVal := atomic.LoadUint64(&s.curIdx)
-		if curIdxVal > 0 && int(curIdxVal) <= len(s.lastResp) {
-			lastEntry := s.lastResp[curIdxVal-1]
+		if s.curIdx > 0 && int(s.curIdx) <= len(s.lastResp) {
+			lastEntry := s.lastResp[s.curIdx-1]
 			lastPath = lastEntry.Name
 		}
-		s.lastRespMu.Unlock()
 
 		syslog.L.Error(fmt.Errorf("maximum directory entries reached: %d", s.fs.Job.MaxDirEntries)).
 			WithField("path", s.path).
@@ -67,22 +66,7 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	s.lastRespMu.Lock()
-	hasCurrentEntry := int(atomic.LoadUint64(&s.curIdx)) < len(s.lastResp)
-	localLen := len(s.lastResp)
-	localIdx := atomic.LoadUint64(&s.curIdx)
-	s.lastRespMu.Unlock()
-
-	syslog.L.Debug().
-		WithMessage("HasNext state before fetch").
-		WithField("hasCurrentEntry", hasCurrentEntry).
-		WithField("lastRespLen", localLen).
-		WithField("curIdx", localIdx).
-		WithField("path", s.path).
-		WithJob(s.fs.Job.ID).
-		Write()
-
-	if hasCurrentEntry {
+	if int(s.curIdx) < len(s.lastResp) {
 		syslog.L.Debug().
 			WithMessage("HasNext hit in-memory entries").
 			WithField("path", s.path).
@@ -104,15 +88,16 @@ func (s *DirStream) HasNext() bool {
 		WithJob(s.fs.Job.ID).
 		Write()
 
-	err := s.fs.session.Call(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(s *quic.Stream) error {
-		n, err := binarystream.ReceiveDataInto(s, readBuf)
+	s.mu.Unlock()
+	err := s.fs.session.Call(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(st *quic.Stream) error {
+		n, err := binarystream.ReceiveDataInto(st, readBuf)
 		if err != nil {
 			return err
 		}
 		bytesRead = n
-
 		return nil
 	}))
+	s.mu.Lock()
 
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
@@ -121,7 +106,7 @@ func (s *DirStream) HasNext() bool {
 				WithField("path", s.path).
 				WithJob(s.fs.Job.ID).
 				Write()
-			atomic.StoreInt32(&s.closed, 1)
+			s.closed = true
 			return false
 		}
 
@@ -146,14 +131,11 @@ func (s *DirStream) HasNext() bool {
 			WithField("path", s.path).
 			WithJob(s.fs.Job.ID).
 			Write()
-		atomic.StoreInt32(&s.closed, 1)
+		s.closed = true
 		return false
 	}
 
-	s.lastRespMu.Lock()
-	err = s.lastResp.Decode(readBuf[:bytesRead])
-	if err != nil {
-		s.lastRespMu.Unlock()
+	if err := s.lastResp.Decode(readBuf[:bytesRead]); err != nil {
 		syslog.L.Error(err).
 			WithField("path", s.path).
 			WithField("bytesRead", bytesRead).
@@ -162,9 +144,8 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	atomic.StoreUint64(&s.curIdx, 0)
+	s.curIdx = 0
 	postLen := len(s.lastResp)
-	s.lastRespMu.Unlock()
 
 	syslog.L.Debug().
 		WithMessage("HasNext decoded batch").
@@ -177,7 +158,10 @@ func (s *DirStream) HasNext() bool {
 }
 
 func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
-	if atomic.LoadInt32(&s.closed) != 0 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
 		syslog.L.Debug().
 			WithMessage("Next called on closed stream").
 			WithField("path", s.path).
@@ -186,22 +170,17 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		return fuse.DirEntry{}, syscall.EBADF
 	}
 
-	s.lastRespMu.Lock()
-	defer s.lastRespMu.Unlock()
-
-	curIdxVal := atomic.LoadUint64(&s.curIdx)
-
-	if int(curIdxVal) >= len(s.lastResp) {
+	if int(s.curIdx) >= len(s.lastResp) {
 		syslog.L.Error(fmt.Errorf("internal state error: index out of bounds in Next")).
 			WithField("path", s.path).
-			WithField("curIdx", curIdxVal).
+			WithField("curIdx", s.curIdx).
 			WithField("lastRespLen", len(s.lastResp)).
 			WithJob(s.fs.Job.ID).
 			Write()
 		return fuse.DirEntry{}, syscall.EBADF
 	}
 
-	curr := s.lastResp[curIdxVal]
+	curr := s.lastResp[s.curIdx]
 
 	syslog.L.Debug().
 		WithMessage("Next returning entry").
@@ -210,9 +189,9 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		WithField("size", curr.Size).
 		WithField("mode", curr.Mode).
 		WithField("isDir", curr.IsDir).
-		WithField("curIdx", curIdxVal).
+		WithField("curIdx", s.curIdx).
 		WithField("lastRespLen", len(s.lastResp)).
-		WithField("totalReturned", atomic.LoadUint64(&s.totalReturned)).
+		WithField("totalReturned", s.totalReturned).
 		WithJob(s.fs.Job.ID).
 		Write()
 
@@ -238,8 +217,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 			IsDir:   curr.IsDir,
 		}
 
-		attrBytes, err := currAttr.Encode()
-		if err == nil {
+		if attrBytes, err := currAttr.Encode(); err == nil {
 			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(fullPath), Value: attrBytes, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("memcache set attr failed").
@@ -272,8 +250,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 			FileAttributes: curr.FileAttributes,
 		}
 
-		xattrBytes, err := currXAttr.Encode()
-		if err == nil {
+		if xattrBytes, err := currXAttr.Encode(); err == nil {
 			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(fullPath), Value: xattrBytes, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("memcache set xattr failed").
@@ -298,16 +275,14 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		}
 	}
 
-	atomic.AddUint64(&s.curIdx, 1)
-	newIdx := atomic.LoadUint64(&s.curIdx)
-	atomic.AddUint64(&s.totalReturned, 1)
-	newTotal := atomic.LoadUint64(&s.totalReturned)
+	s.curIdx++
+	s.totalReturned++
 
 	syslog.L.Debug().
 		WithMessage("Next advanced indices").
 		WithField("path", s.path).
-		WithField("newCurIdx", newIdx).
-		WithField("newTotalReturned", newTotal).
+		WithField("newCurIdx", s.curIdx).
+		WithField("newTotalReturned", s.totalReturned).
 		WithJob(s.fs.Job.ID).
 		Write()
 
@@ -318,15 +293,18 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 }
 
 func (s *DirStream) Close() {
-	if atomic.SwapInt32(&s.closed, 1) != 0 {
+	s.mu.Lock()
+	if s.closed {
 		syslog.L.Debug().
 			WithMessage("Close called on already closed stream").
 			WithField("path", s.path).
 			WithField("handleId", s.handleId).
 			WithJob(s.fs.Job.ID).
 			Write()
+		s.mu.Unlock()
 		return
 	}
+	s.closed = true
 
 	syslog.L.Debug().
 		WithMessage("Closing DirStream").
@@ -335,20 +313,24 @@ func (s *DirStream) Close() {
 		WithJob(s.fs.Job.ID).
 		Write()
 
-	closeReq := types.CloseReq{HandleID: s.handleId}
-	_, err := s.fs.session.CallDataWithTimeout(1*time.Minute, s.fs.Job.ID+"/Close", &closeReq)
+	handleID := s.handleId
+	jobID := s.fs.Job.ID
+	s.mu.Unlock()
+
+	closeReq := types.CloseReq{HandleID: handleID}
+	_, err := s.fs.session.CallDataWithTimeout(1*time.Minute, jobID+"/Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithField("path", s.path).
-			WithField("handleId", s.handleId).
-			WithJob(s.fs.Job.ID).
+			WithField("handleId", handleID).
+			WithJob(jobID).
 			Write()
 	} else {
 		syslog.L.Debug().
 			WithMessage("DirStream closed successfully").
 			WithField("path", s.path).
-			WithField("handleId", s.handleId).
-			WithJob(s.fs.Job.ID).
+			WithField("handleId", handleID).
+			WithJob(jobID).
 			Write()
 	}
 }
