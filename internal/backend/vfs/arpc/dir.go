@@ -117,7 +117,7 @@ func (s *DirStream) HasNext() bool {
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
 			syslog.L.Debug().
-				WithMessage("HasNext: process done received, closing stream").
+				WithMessage("HasNext: process done received, closing dirstream").
 				WithField("path", s.path).
 				WithJob(s.fs.Job.ID).
 				Write()

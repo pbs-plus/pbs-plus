@@ -212,6 +212,10 @@ func init() {
 }
 
 func Key(raw string) string {
+	if raw == "" {
+		raw = "/"
+	}
+
 	byteRaw := unsafe.Slice(unsafe.StringData(raw), len(raw))
 	h, err := highwayhash.New(hashKey)
 	if err != nil {
