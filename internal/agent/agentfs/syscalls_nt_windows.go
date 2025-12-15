@@ -3,9 +3,12 @@
 package agentfs
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -14,6 +17,7 @@ import (
 var (
 	ntdll                      = syscall.NewLazyDLL("ntdll.dll")
 	ntCreateFile               = ntdll.NewProc("NtCreateFile")
+	procNtCancelIoFileEx       = ntdll.NewProc("NtCancelIoFileEx")
 	ntQueryDirectoryFile       = ntdll.NewProc("NtQueryDirectoryFile")
 	ntClose                    = ntdll.NewProc("NtClose")
 	rtlInitUnicodeString       = ntdll.NewProc("RtlInitUnicodeString")
@@ -86,33 +90,92 @@ func ntCreateFileCall(handle *uintptr, objectAttributes *ObjectAttributes, ioSta
 	return nil
 }
 
-func ntDirectoryCall(handle uintptr, ioStatusBlock *IoStatusBlock, buffer []byte, restartScan bool) error {
+func ntCancelIoFileEx(h uintptr, iosb *IoStatusBlock) error {
+	r0, _, _ := procNtCancelIoFileEx.Call(
+		uintptr(h),
+		uintptr(unsafe.Pointer(iosb)),
+		0, // IoStatusBlock (out) optional; pass 0
+	)
+	return ntStatusToError(r0)
+}
+
+func ntDirectoryCall(
+	ctx context.Context,
+	handle uintptr,
+	ioStatusBlock *IoStatusBlock,
+	buffer []byte,
+	restartScan bool,
+) error {
+	evt, err := windows.CreateEvent(nil, 1, 0, nil) // manual reset, nonsignaled
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(evt)
+
 	status, _, _ := ntQueryDirectoryFile.Call(
-		handle,
-		0,
-		0,
-		0,
+		uintptr(handle),
+		uintptr(evt), // Event signaled on completion
+		0,            // ApcRoutine
+		0,            // ApcContext
 		uintptr(unsafe.Pointer(ioStatusBlock)),
 		uintptr(unsafe.Pointer(&buffer[0])),
 		uintptr(len(buffer)),
-		uintptr(1), // FileInformationClass: FileDirectoryInformation
-		uintptr(0), // ReturnSingleEntry: FALSE (batch)
-		0,          // FileName: NULL
+		uintptr(1), // FileDirectoryInformation
+		uintptr(0), // ReturnSingleEntry = FALSE
+		0,          // FileName = NULL
 		uintptr(boolToInt(restartScan)),
 	)
 
 	switch status {
-	case 0:
-		// success
+	case 0: // STATUS_SUCCESS
+		return nil
 	case STATUS_NO_MORE_FILES:
 		return os.ErrProcessDone
 	case STATUS_PENDING:
-		// Since we opened with synchronous I/O, this is unexpected but handle gracefully.
-		// Treat as retryable no-op; caller can call NextBatch again.
-		return os.ErrExist
+		// continue to wait loop
 	default:
-		return fmt.Errorf("NtQueryDirectoryFile failed with status: %x", status)
+		return fmt.Errorf("NtQueryDirectoryFile failed: 0x%x", status)
 	}
 
-	return nil
+	for {
+		timeout := uint32(windows.INFINITE)
+		if dl, ok := ctx.Deadline(); ok {
+			d := time.Until(dl)
+			if d <= 0 {
+				_ = ntCancelIoFileEx(handle, ioStatusBlock)
+				_, _ = windows.WaitForSingleObject(evt, 10)
+				return ctx.Err()
+			}
+			ms := d / time.Millisecond
+			if ms <= 0 {
+				ms = 1
+			}
+			if ms > 0x7fffffff {
+				ms = 0x7fffffff
+			}
+			timeout = uint32(ms)
+		}
+
+		wrc, werr := windows.WaitForSingleObject(evt, timeout)
+		if werr != nil {
+			_ = ntCancelIoFileEx(handle, ioStatusBlock)
+			return werr
+		}
+		switch wrc {
+		case windows.WAIT_OBJECT_0:
+			return nil
+		case uint32(windows.WAIT_TIMEOUT):
+			if err := ctx.Err(); err != nil {
+				_ = ntCancelIoFileEx(handle, ioStatusBlock)
+				_, _ = windows.WaitForSingleObject(evt, 10)
+				return err
+			}
+		case windows.WAIT_ABANDONED:
+			_ = ntCancelIoFileEx(handle, ioStatusBlock)
+			return errors.New("wait abandoned")
+		default:
+			_ = ntCancelIoFileEx(handle, ioStatusBlock)
+			return fmt.Errorf("unexpected wait result: %d", wrc)
+		}
+	}
 }

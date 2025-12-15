@@ -377,7 +377,7 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	fh.Lock()
 	defer fh.Unlock()
 
-	encodedBatch, err := fh.dirReader.NextBatch(s.statFs.Bsize)
+	encodedBatch, err := fh.dirReader.NextBatch(s.ctx, s.statFs.Bsize)
 	if err != nil {
 		if !errors.Is(err, os.ErrProcessDone) {
 			syslog.L.Error(err).WithMessage("handleReadDir: error reading batch").WithField("handle_id", payload.HandleID).Write()
