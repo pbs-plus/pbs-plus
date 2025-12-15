@@ -89,7 +89,6 @@ func (s *DirStream) HasNext() bool {
 		WithJob(s.fs.Job.ID).
 		Write()
 
-	s.mu.Unlock()
 	err := s.fs.session.Call(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(st *quic.Stream) error {
 		n, err := binarystream.ReceiveDataInto(st, readBuf)
 		if err != nil {
@@ -98,7 +97,6 @@ func (s *DirStream) HasNext() bool {
 		bytesRead = n
 		return nil
 	}))
-	s.mu.Lock()
 
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
@@ -300,6 +298,8 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 func (s *DirStream) Close() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.closed {
 		syslog.L.Debug().
 			WithMessage("Close called on already closed stream").
@@ -307,7 +307,6 @@ func (s *DirStream) Close() {
 			WithField("handleId", s.handleId).
 			WithJob(s.fs.Job.ID).
 			Write()
-		s.mu.Unlock()
 		return
 	}
 	s.closed = true
@@ -321,7 +320,6 @@ func (s *DirStream) Close() {
 
 	handleID := s.handleId
 	jobID := s.fs.Job.ID
-	s.mu.Unlock()
 
 	closeReq := types.CloseReq{HandleID: handleID}
 	_, err := s.fs.session.CallDataWithTimeout(1*time.Minute, jobID+"/Close", &closeReq)
