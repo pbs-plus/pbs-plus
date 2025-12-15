@@ -214,7 +214,7 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 
 // Getattr implements NodeGetattrer
 func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	fi, err := n.fs.Attr(n.getPath(), false)
+	fi, err := n.fs.Attr(ctx, n.getPath(), false)
 	if err != nil {
 		return syscall.ENOENT
 	}
@@ -241,7 +241,7 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 }
 
 func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
-	fi, err := n.fs.Xattr(n.getPath())
+	fi, err := n.fs.Xattr(ctx, n.getPath())
 	if err != nil {
 		return 0, syscall.ENOTSUP
 	}
@@ -297,7 +297,7 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 
 func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
 	// Retrieve extended attribute information for the node.
-	fi, err := n.fs.Xattr(n.getPath())
+	fi, err := n.fs.Xattr(ctx, n.getPath())
 	if err != nil {
 		return 0, syscall.ENOTSUP
 	}
@@ -350,7 +350,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 	childNode.fullPathCache = ""
 
 	path := childNode.getPath()
-	fi, err := childNode.fs.Attr(path, true)
+	fi, err := childNode.fs.Attr(ctx, path, true)
 	if err != nil {
 		return nil, fs.ToErrno(err)
 	}
@@ -380,7 +380,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 
 // Readdir implements NodeReaddirer
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	entries, err := n.fs.ReadDir(n.getPath())
+	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
 		return nil, syscall.EBADF
 	}
@@ -390,7 +390,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 
 // Open implements NodeOpener
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	file, err := n.fs.OpenFile(n.getPath(), int(flags), 0)
+	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
 	if err != nil {
 		return nil, 0, syscall.EACCES
 	}
@@ -402,7 +402,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 }
 
 func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
-	stat, err := n.fs.StatFS()
+	stat, err := n.fs.StatFS(ctx)
 	if err != nil {
 		return fs.ToErrno(err)
 	}
@@ -431,7 +431,7 @@ var _ = (fs.FileLseeker)((*FileHandle)(nil))
 
 // Read implements FileReader
 func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
-	n, err := fh.file.ReadAt(dest, offset)
+	n, err := fh.file.ReadAt(ctx, dest, offset)
 	if err != nil && err != io.EOF {
 		return nil, syscall.EBADF
 	}
@@ -440,7 +440,7 @@ func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse
 }
 
 func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uint64, syscall.Errno) {
-	n, err := fh.file.Lseek(int64(off), int(whence))
+	n, err := fh.file.Lseek(ctx, int64(off), int(whence))
 	if err != nil && err != io.EOF {
 		return 0, syscall.EBADF
 	}
@@ -449,6 +449,6 @@ func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uin
 }
 
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
-	err := fh.file.Close()
+	err := fh.file.Close(ctx)
 	return fs.ToErrno(err)
 }

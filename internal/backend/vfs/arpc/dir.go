@@ -3,6 +3,7 @@
 package arpcfs
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -89,7 +90,10 @@ func (s *DirStream) HasNext() bool {
 		WithJob(s.fs.Job.ID).
 		Write()
 
-	err := s.fs.session.Call(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(st *quic.Stream) error {
+	ctxN, cancelN := context.WithTimeout(s.fs.Ctx, 1*time.Minute)
+	defer cancelN()
+
+	err := s.fs.session.Call(ctxN, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(st *quic.Stream) error {
 		n, err := binarystream.ReceiveDataInto(st, readBuf)
 		if err != nil {
 			return err
@@ -322,7 +326,11 @@ func (s *DirStream) Close() {
 	jobID := s.fs.Job.ID
 
 	closeReq := types.CloseReq{HandleID: handleID}
-	_, err := s.fs.session.CallDataWithTimeout(1*time.Minute, jobID+"/Close", &closeReq)
+
+	ctxN, cancelN := context.WithTimeout(s.fs.Ctx, 1*time.Minute)
+	defer cancelN()
+
+	_, err := s.fs.session.CallData(ctxN, jobID+"/Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithField("path", s.path).
