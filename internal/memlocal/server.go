@@ -4,11 +4,12 @@ package memlocal
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,10 +18,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unsafe"
 
-	"github.com/minio/highwayhash"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -198,32 +196,21 @@ func terminateProcessGroup(p *os.Process) error {
 	return nil
 }
 
-var hashKey []byte
+const memcachedKeyLimit = 200
 
-func init() {
-	hashKey = make([]byte, 32)
-	n, err := rand.Read(hashKey)
-	if err != nil {
-		log.Fatalf("Error reading random bytes for key: %v", err)
+func Key(originalKey string) string {
+	if originalKey == "" {
+		originalKey = "/"
 	}
-	if n != 32 {
-		log.Fatalf("Expected to read 32 bytes for key, got %d", n)
-	}
-}
+	encodedKey := url.QueryEscape(originalKey)
 
-func Key(raw string) string {
-	if raw == "" {
-		raw = "/"
+	if len(encodedKey) > memcachedKeyLimit {
+		hasher := sha1.New()
+		hasher.Write([]byte(encodedKey))
+		hashBytes := hasher.Sum(nil)
+
+		return hex.EncodeToString(hashBytes)
 	}
 
-	byteRaw := unsafe.Slice(unsafe.StringData(raw), len(raw))
-	h, err := highwayhash.New(hashKey)
-	if err != nil {
-		syslog.L.Error(err).WithField("raw", raw).Write()
-		return raw
-	}
-	h.Write(byteRaw)
-	sum := h.Sum(nil)
-
-	return string(sum)
+	return encodedKey
 }
