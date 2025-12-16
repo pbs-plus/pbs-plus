@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/minio/minio-go/v7"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func (f *S3File) ReadAt(ctx context.Context, buf []byte, off int64) (int, error) {
+// ReadAt reads len(buf) bytes from the file starting at byte offset off.
+func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	if len(buf) == 0 {
 		return 0, nil
 	}
@@ -25,55 +25,34 @@ func (f *S3File) ReadAt(ctx context.Context, buf []byte, off int64) (int, error)
 	ctx, cancel := context.WithTimeout(f.fs.Ctx, 30*time.Second)
 	defer cancel()
 
+	// Use range request for the specific offset and length
 	opts := minio.GetObjectOptions{}
 	err := opts.SetRange(off, off+int64(len(buf))-1)
 	if err != nil {
-		syslog.L.Error(err).WithJob(f.jobId).
-			WithMessage("failed to handle read request to s3").
-			WithField("path", f.key).
-			WithField("offset", f.offset).
-			WithField("length", len(buf)).
-			Write()
 		return 0, err
 	}
 
 	obj, err := f.fs.client.GetObject(ctx, f.fs.bucket, f.key, opts)
 	if err != nil {
-		syslog.L.Error(err).WithJob(f.jobId).
-			WithMessage("failed to handle read request to s3").
-			WithField("path", f.key).
-			WithField("offset", f.offset).
-			WithField("length", len(buf)).
-			Write()
 		return 0, err
 	}
 	defer obj.Close()
 
+	// Read the data
 	n, err := io.ReadFull(obj, buf)
 
+	// Handle partial reads at end of file
 	if err == io.ErrUnexpectedEOF {
-		syslog.L.Error(err).WithJob(f.jobId).
-			WithMessage("unexpected eof handled from s3 file").
-			WithField("path", f.key).
-			WithField("offset", f.offset).
-			WithField("length", len(buf)).
-			Write()
-		atomic.AddInt64(&f.fs.TotalBytes, int64(n))
 		return n, io.EOF
 	}
 
 	if err != nil {
-		syslog.L.Error(err).WithJob(f.jobId).
-			WithMessage("error occurred during s3 file reading operation").
-			WithField("path", f.key).
-			WithField("offset", f.offset).
-			WithField("length", len(buf)).
-			Write()
 		return n, err
 	}
 
 	atomic.AddInt64(&f.fs.TotalBytes, int64(n))
 
+	// If we read less than requested, it means we hit EOF
 	if n < len(buf) {
 		return n, io.EOF
 	}
@@ -81,10 +60,7 @@ func (f *S3File) ReadAt(ctx context.Context, buf []byte, off int64) (int, error)
 	return n, nil
 }
 
-func (f *S3File) Lseek(ctx context.Context, off int64, whence int) (uint64, error) {
-	return 0, syscall.EOPNOTSUPP
-}
-
-func (f *S3File) Close(ctx context.Context) error {
+// Close closes the file.
+func (f *S3File) Close() error {
 	return nil
 }

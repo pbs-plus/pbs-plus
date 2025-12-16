@@ -336,6 +336,7 @@ func TestAgentFSServer(t *testing.T) {
 		var result types.AgentFileInfo
 		err := clientPipe.Call(ctx, "agentFs/Attr", &payload, &result)
 		assert.NoError(t, err)
+		t.Logf("Result: %v", result)
 		assert.NotNil(t, result.Size)
 		assert.EqualValues(t, 19, result.Size)
 	})
@@ -394,7 +395,6 @@ func TestAgentFSServer(t *testing.T) {
 
 		err = clientPipe.Call(ctx, "agentFs/ReadDir", &payload, readDirHandler)
 		assert.NoError(t, err)
-		t.Logf("Result: %v", buf)
 		t.Logf("Result Size: %v", n)
 		assert.GreaterOrEqual(t, len(result), 3)
 
