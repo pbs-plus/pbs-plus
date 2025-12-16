@@ -361,7 +361,9 @@ func TestAgentFSServer(t *testing.T) {
 		assert.NotEmpty(t, result.LastWriteTime, "LastWriteTime should not be empty")
 		t.Logf("WinACLs for %s: %+v", testFilePath, result.WinACLs)
 		t.Logf("PosixACLs for %s: %+v", testFilePath, result.PosixACLs)
-		assert.NotNil(t, result.FileAttributes, "FileAttributes map should not be nil")
+		if runtime.GOOS == "windows" {
+			assert.NotNil(t, result.FileAttributes, "FileAttributes map should not be nil")
+		}
 
 		err = os.Remove(testFilePath)
 		require.NoError(t, err, "Failed to remove test file")
