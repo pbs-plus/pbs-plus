@@ -100,12 +100,11 @@ func dialServer(serverAddr string, tlsConfig *tls.Config) (*quic.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	quicConfig := quicServerLimitsAutoConfig()
-	quicConfig.KeepAlivePeriod = time.Second * 5
-	quicConfig.MaxIdleTimeout = time.Second * 20
-	quicConfig.MaxIncomingStreams = quicvarint.Max
-
-	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, quicConfig)
+	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, &quic.Config{
+		KeepAlivePeriod:        time.Second * 15,
+		MaxIdleTimeout:         time.Minute,
+		MaxStreamReceiveWindow: quicvarint.Max,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("QUIC dial failed: %w", err)
 	}
@@ -259,8 +258,8 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener,
 
 func ListenAndServe(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router) error {
 	quicConfig := quicServerLimitsAutoConfig()
-	quicConfig.KeepAlivePeriod = time.Second * 5
-	quicConfig.MaxIdleTimeout = time.Second * 20
+	quicConfig.KeepAlivePeriod = time.Second * 15
+	quicConfig.MaxIdleTimeout = time.Minute
 	quicConfig.MaxIncomingStreams = quicvarint.Max
 
 	ql, udpConn, err := Listen(ctx, addr, tlsConfig, quicConfig)
