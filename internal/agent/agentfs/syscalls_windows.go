@@ -295,23 +295,23 @@ type overlappedHandle struct {
 	DefaultTimeout int
 }
 
-func (f *overlappedHandle) getEvent() windows.Handle {
+func (f *overlappedHandle) getEvent() (windows.Handle, error) {
 	f.m.Lock()
 	if len(f.e) == 0 {
 		f.m.Unlock()
 		e, err := windows.CreateEvent(nil, 0, 0, nil)
 		if err != nil {
 			syslog.L.Error(err).WithMessage("overlappedHandle.getEvent: CreateEvent failed").Write()
-			panic(err)
+			return 0, err
 		}
 		syslog.L.Debug().WithMessage("overlappedHandle.getEvent: created new event").WithField("event", uintptr(e)).Write()
-		return e
+		return e, nil
 	}
 	e := f.e[len(f.e)-1]
 	f.e = f.e[:len(f.e)-1]
 	f.m.Unlock()
 	syslog.L.Debug().WithMessage("overlappedHandle.getEvent: reused event").WithField("event", uintptr(e)).Write()
-	return e
+	return e, nil
 }
 
 func (f *overlappedHandle) putEvent(e windows.Handle) {
@@ -375,12 +375,15 @@ func (f *overlappedHandle) ReadAt(b []byte, off int64) (int, error) {
 	o := &windows.Overlapped{}
 	o.Offset = uint32(off)
 	o.OffsetHigh = uint32(uint64(off) >> 32)
-	e := f.getEvent()
+	e, err := f.getEvent()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("overlappedHandle.ReadAt: failed to get event").Write()
+		return 0, err
+	}
 	defer f.putEvent(e)
 	o.HEvent = e
 
 	n, err := f.asyncIo(windows.ReadFile, b, f.DefaultTimeout, o)
-	err = os.NewSyscallError("readAt", err)
 	if errors.Is(err, io.EOF) || (err == nil && n == 0 && len(b) > 0) || (err == nil && len(b) > int(n)) {
 		syslog.L.Debug().WithMessage("overlappedHandle.ReadAt: EOF condition").WithField("bytes", n).Write()
 		err = io.EOF
@@ -397,11 +400,13 @@ func (f *overlappedHandle) Close() error {
 	syslog.L.Debug().WithMessage("overlappedHandle.Close: closing").WithField("handle", uintptr(f.h)).Write()
 	windows.CancelIoEx(f.h, nil)
 	windows.Close(f.h)
+	f.m.Lock()
 	f.h = 0
 	for _, h := range f.e {
 		windows.Close(h)
 	}
 	f.e = nil
+	f.m.Unlock()
 	syslog.L.Debug().WithMessage("overlappedHandle.Close: closed").Write()
 	return nil
 }
