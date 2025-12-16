@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
@@ -102,7 +103,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 	}
 
 	var resp types.LseekResp
-	if err := resp.Decode(respBytes); err != nil {
+	if err := cbor.Unmarshal(respBytes, &resp); err != nil {
 		syslog.L.Error(err).
 			WithJob(f.jobId).
 			WithMessage("failed to handle lseek request").

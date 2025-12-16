@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 	"github.com/quic-go/quic-go"
@@ -43,11 +44,11 @@ func (sm *AgentsManager) CreateStreamPipe(conn *quic.Conn, headers http.Header) 
 
 	router := NewRouter()
 	router.Handle("echo", func(req *Request) (Response, error) {
-		var msg StringMsg
-		if err := msg.Decode(req.Payload); err != nil {
+		var msg string
+		if err := cbor.Unmarshal(req.Payload, &msg); err != nil {
 			return Response{}, WrapError(err)
 		}
-		data, err := msg.Encode()
+		data, err := cbor.Marshal(msg)
 		if err != nil {
 			return Response{}, WrapError(err)
 		}

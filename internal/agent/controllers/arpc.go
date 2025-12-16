@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/containers/winquit/pkg/winquit"
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -28,7 +29,7 @@ func init() {
 
 func BackupStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {
 	var reqData types.BackupReq
-	err := reqData.Decode(req.Payload)
+	err := cbor.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -70,7 +71,7 @@ func BackupStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respo
 
 func BackupCloseHandler(req *arpc.Request) (arpc.Response, error) {
 	var reqData types.BackupReq
-	err := reqData.Decode(req.Payload)
+	err := cbor.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{}, err
 	}
@@ -114,7 +115,7 @@ func BackupCloseHandler(req *arpc.Request) (arpc.Response, error) {
 
 func StatusHandler(req *arpc.Request) (arpc.Response, error) {
 	var reqData types.TargetStatusReq
-	err := reqData.Decode(req.Payload)
+	err := cbor.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{}, err
 	}
