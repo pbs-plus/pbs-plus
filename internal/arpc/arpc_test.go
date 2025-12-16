@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -653,3 +654,505 @@ func TestStreams_ProperlyClosed_NoExhaustion(t *testing.T) {
 	}
 }
 
+func goroutineSnapshot() int {
+	return runtime.NumGoroutine()
+}
+
+// waitForGoroutines waits for goroutines to settle within a tolerance
+func waitForGoroutines(t *testing.T, baseline int, tolerance int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastCount int
+	for time.Now().Before(deadline) {
+		runtime.GC()
+		runtime.Gosched()
+		time.Sleep(100 * time.Millisecond)
+		current := goroutineSnapshot()
+		if current <= baseline+tolerance {
+			return
+		}
+		lastCount = current
+	}
+	// Final check
+	runtime.GC()
+	runtime.Gosched()
+	time.Sleep(200 * time.Millisecond)
+	current := goroutineSnapshot()
+	if current > baseline+tolerance {
+		t.Errorf("goroutine leak detected: baseline=%d current=%d last=%d (tolerance=%d)",
+			baseline, current, lastCount, tolerance)
+
+		// Print stack traces for debugging
+		buf := make([]byte, 1<<20)
+		stackLen := runtime.Stack(buf, true)
+		t.Logf("Goroutine dump:\n%s", buf[:stackLen])
+	}
+}
+
+func TestLeak_SimpleCallAndClose(t *testing.T) {
+	router := NewRouter()
+	router.Handle("ping", func(req *Request) (Response, error) {
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestQUICServer(t, router)
+	defer shutdown()
+
+	baseline := goroutineSnapshot()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+
+	var out string
+	if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+
+	if err := pipe.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Give server time to cleanup
+	time.Sleep(200 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 5, 3*time.Second)
+}
+
+func TestLeak_MultipleConnections(t *testing.T) {
+	router := NewRouter()
+	router.Handle("echo", func(req *Request) (Response, error) {
+		return Response{Status: http.StatusOK, Data: req.Payload}, nil
+	})
+
+	addr, shutdown, _ := newTestQUICServer(t, router)
+	defer shutdown()
+
+	baseline := goroutineSnapshot()
+
+	const numConns = 20
+	for i := 0; i < numConns; i++ {
+		clientTLS := newTestClientTLS(t)
+		pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+		if err != nil {
+			t.Fatalf("ConnectToServer %d: %v", i, err)
+		}
+
+		msg := fmt.Sprintf("test-%d", i)
+		var out string
+		if err := pipe.Call(context.Background(), "echo", &msg, &out); err != nil {
+			t.Fatalf("Call %d: %v", i, err)
+		}
+
+		if err := pipe.Close(); err != nil {
+			t.Fatalf("Close %d: %v", i, err)
+		}
+
+		// Allow server to process disconnect
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Extra time for all connections to fully cleanup
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_ConcurrentCalls(t *testing.T) {
+	router := NewRouter()
+	router.Handle("work", func(req *Request) (Response, error) {
+		time.Sleep(10 * time.Millisecond)
+		var ok string = "ok"
+		b, _ := cbor.Marshal(ok)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestQUICServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const numCalls = 100
+	var wg sync.WaitGroup
+	wg.Add(numCalls)
+
+	for i := 0; i < numCalls; i++ {
+		go func(id int) {
+			defer wg.Done()
+			var out string
+			if err := pipe.Call(context.Background(), "work", nil, &out); err != nil {
+				t.Errorf("Call %d: %v", id, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Allow streams to fully close
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_TimeoutCalls(t *testing.T) {
+	router := NewRouter()
+	router.Handle("slow", func(req *Request) (Response, error) {
+		time.Sleep(500 * time.Millisecond)
+		var done string = "done"
+		b, _ := cbor.Marshal(done)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestQUICServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const numCalls = 20
+	for i := 0; i < numCalls; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		var out string
+		_ = pipe.Call(ctx, "slow", nil, &out)
+		cancel()
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Allow cancelled operations to cleanup
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_ReconnectCycle(t *testing.T) {
+	router := NewRouter()
+	router.Handle("ping", func(req *Request) (Response, error) {
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestQUICServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const cycles = 10
+	for i := 0; i < cycles; i++ {
+		_ = pipe.Conn.CloseWithError(0, "test cycle")
+		time.Sleep(50 * time.Millisecond)
+
+		if err := pipe.Reconnect(context.Background()); err != nil {
+			t.Fatalf("Reconnect %d: %v", i, err)
+		}
+
+		var out string
+		if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {
+			t.Fatalf("Call after reconnect %d: %v", i, err)
+		}
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_RawStreamHandlers(t *testing.T) {
+	router := NewRouter()
+	router.Handle("binary", func(req *Request) (Response, error) {
+		return Response{
+			Status: 213,
+			RawStream: func(st *quic.Stream) {
+				data := make([]byte, 1024)
+				_, _ = st.Write(data)
+				_ = st.Close()
+			},
+		}, nil
+	})
+
+	addr, shutdown, _ := newTestQUICServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const numCalls = 30
+	for i := 0; i < numCalls; i++ {
+		handler := RawStreamHandler(func(st *quic.Stream) error {
+			buf := make([]byte, 1024)
+			_, err := st.Read(buf)
+			return err
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = pipe.Call(ctx, "binary", nil, handler)
+		cancel()
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_ErrorResponses(t *testing.T) {
+	router := NewRouter()
+	router.Handle("error", func(req *Request) (Response, error) {
+		return Response{}, fmt.Errorf("intentional error")
+	})
+
+	addr, shutdown, _ := newTestQUICServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const numCalls = 50
+	for i := 0; i < numCalls; i++ {
+		var out []byte
+		_ = pipe.Call(context.Background(), "error", nil, &out)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_StreamExhaustion(t *testing.T) {
+	router := NewRouter()
+	router.Handle("quick", func(req *Request) (Response, error) {
+		var ok string = "ok"
+		b, _ := cbor.Marshal(ok)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestQUICServerCustomIncoming(t, router, 16)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const iters = 200
+	for i := 0; i < iters; i++ {
+		var out string
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := pipe.Call(ctx, "quick", nil, &out)
+		cancel()
+		if err != nil {
+			t.Fatalf("iter %d: %v", i, err)
+		}
+		if i%16 == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_CancelledContexts(t *testing.T) {
+	router := NewRouter()
+	router.Handle("work", func(req *Request) (Response, error) {
+		time.Sleep(100 * time.Millisecond)
+		var done string = "done"
+		b, _ := cbor.Marshal(done)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestQUICServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const numCalls = 30
+	for i := 0; i < numCalls; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			cancel()
+		}()
+
+		var out string
+		_ = pipe.Call(ctx, "work", nil, &out)
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_ServerServeLoop(t *testing.T) {
+	router := NewRouter()
+	router.Handle("ping", func(req *Request) (Response, error) {
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	baseline := goroutineSnapshot()
+
+	addr, shutdown, _ := newTestQUICServer(t, router)
+
+	clientTLS := newTestClientTLS(t)
+	const numClients = 10
+	for i := 0; i < numClients; i++ {
+		pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+		if err != nil {
+			t.Fatalf("ConnectToServer %d: %v", i, err)
+		}
+
+		var out string
+		if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {
+			t.Fatalf("Call %d: %v", i, err)
+		}
+
+		if err := pipe.Close(); err != nil {
+			t.Fatalf("Close %d: %v", i, err)
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	shutdown()
+
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_MemoryPressure(t *testing.T) {
+	router := NewRouter()
+	router.Handle("large", func(req *Request) (Response, error) {
+		data := make([]byte, 1024*1024) // 1 MB
+		return Response{Status: http.StatusOK, Data: data}, nil
+	})
+
+	addr, shutdown, _ := newTestQUICServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	runtime.GC()
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+
+	var m1 runtime.MemStats
+	runtime.ReadMemStats(&m1)
+
+	const numCalls = 50
+	for i := 0; i < numCalls; i++ {
+		var out []byte
+		if err := pipe.Call(context.Background(), "large", nil, &out); err != nil {
+			t.Fatalf("Call %d: %v", i, err)
+		}
+		// Don't hold references
+		out = nil
+	}
+
+	runtime.GC()
+	runtime.GC()
+	time.Sleep(200 * time.Millisecond)
+
+	var m2 runtime.MemStats
+	runtime.ReadMemStats(&m2)
+
+	// Check that allocated memory hasn't grown excessively
+	// Use HeapAlloc for more accurate measurement
+	growth := int64(m2.HeapAlloc) - int64(m1.HeapAlloc)
+	if growth < 0 {
+		growth = 0
+	}
+	maxExpectedGrowth := int64(10 * 1024 * 1024) // 10 MB tolerance
+
+	if growth > maxExpectedGrowth {
+		t.Errorf("potential memory leak: growth=%d MB (expected < %d MB)",
+			growth/(1024*1024), maxExpectedGrowth/(1024*1024))
+	}
+}
+
+func TestLeak_RouterHandlerReplace(t *testing.T) {
+	router := NewRouter()
+
+	baseline := goroutineSnapshot()
+
+	const cycles = 100
+	for i := 0; i < cycles; i++ {
+		method := fmt.Sprintf("method-%d", i)
+		router.Handle(method, func(req *Request) (Response, error) {
+			var ok string = "ok"
+			b, _ := cbor.Marshal(ok)
+			return Response{Status: http.StatusOK, Data: b}, nil
+		})
+
+		if i > 10 {
+			oldMethod := fmt.Sprintf("method-%d", i-10)
+			router.CloseHandle(oldMethod)
+		}
+	}
+
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+
+	current := goroutineSnapshot()
+	if current > baseline+5 {
+		t.Errorf("goroutine leak in router: baseline=%d current=%d", baseline, current)
+	}
+}

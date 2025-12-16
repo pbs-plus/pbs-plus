@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,24 +41,29 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
-	defer stream.CancelRead(0)
-	defer stream.CancelWrite(0)
+
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		stream.Close()
+		stream.CancelRead(0)
+		stream.CancelWrite(0)
+	}
+	defer cleanupOnce.Do(cleanup)
 
 	var streaming atomic.Bool
 	streaming.Store(false)
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
-	} else {
+	}
+
+	if ctx.Done() != nil {
 		go func() {
 			<-ctx.Done()
 			if streaming.Load() {
 				return
 			}
-			stream.Close()
-			stream.CancelRead(0)
-			stream.CancelWrite(0)
+			cleanupOnce.Do(cleanup)
 		}()
 	}
 
@@ -107,8 +113,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 			return fmt.Errorf("raw ready signal write failed: %w", err)
 		}
 
-		// Cancel deadline
-		stream.SetDeadline(time.Time{})
+		_ = stream.SetDeadline(time.Time{})
 		streaming.Store(true)
 		defer streaming.Store(false)
 
@@ -157,18 +162,23 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	if err != nil {
 		return "", err
 	}
-	defer stream.Close()
-	defer stream.CancelRead(0)
-	defer stream.CancelWrite(0)
+
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		stream.Close()
+		stream.CancelRead(0)
+		stream.CancelWrite(0)
+	}
+	defer cleanupOnce.Do(cleanup)
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
-	} else {
+	}
+
+	if ctx.Done() != nil {
 		go func() {
 			<-ctx.Done()
-			stream.Close()
-			stream.CancelRead(0)
-			stream.CancelWrite(0)
+			cleanupOnce.Do(cleanup)
 		}()
 	}
 
