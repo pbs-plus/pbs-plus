@@ -204,16 +204,16 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	}
 	defer pipe.Close()
 
-	var msg StringMsg = "hello"
-	payload, _ := msg.Encode()
+	var msg string = "hello"
+	payload, _ := cbor.Marshal(msg)
 
 	var out []byte
 	if err := pipe.Call(context.Background(), "echo", payload, &out); err != nil {
 		t.Fatalf("Call: %v", err)
 	}
 
-	var echoed StringMsg
-	if err := echoed.Decode(out); err != nil {
+	var echoed string
+	if err := cbor.Unmarshal(out, &echoed); err != nil {
 		t.Fatalf("decode echoed: %v", err)
 	}
 	if echoed != "hello" {
@@ -226,8 +226,8 @@ func TestRouterServeStream_Echo(t *testing.T) {
 func TestStreamPipeCall_Success(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req *Request) (Response, error) {
-		var pong StringMsg = "pong"
-		b, _ := pong.Encode()
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
@@ -241,7 +241,7 @@ func TestStreamPipeCall_Success(t *testing.T) {
 	}
 	defer pipe.Close()
 
-	var out StringMsg
+	var out string
 	if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -253,8 +253,8 @@ func TestStreamPipeCall_Success(t *testing.T) {
 func TestStreamPipeCall_Concurrency(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req *Request) (Response, error) {
-		var pong StringMsg = "pong"
-		b, _ := pong.Encode()
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
@@ -275,8 +275,8 @@ func TestStreamPipeCall_Concurrency(t *testing.T) {
 	for i := 0; i < numClients; i++ {
 		go func(id int) {
 			defer wg.Done()
-			payload := MapStringIntMsg{"client": id}
-			var out StringMsg
+			payload := map[string]int{"client": id}
+			var out string
 			if err := pipe.Call(context.Background(), "ping", &payload, &out); err != nil {
 				t.Errorf("client %d: %v", id, err)
 				return
@@ -293,8 +293,8 @@ func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
 	router := NewRouter()
 	router.Handle("slow", func(req *Request) (Response, error) {
 		time.Sleep(200 * time.Millisecond)
-		var done StringMsg = "done"
-		b, _ := done.Encode()
+		var done string = "done"
+		b, _ := cbor.Marshal(done)
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
@@ -425,8 +425,8 @@ func TestCall_RawStream_HandlerMissing(t *testing.T) {
 func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req *Request) (Response, error) {
-		var pong StringMsg = "pong"
-		b, _ := pong.Encode()
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
@@ -452,7 +452,7 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 		t.Fatalf("expected connected after reconnect, got %v", st)
 	}
 
-	var out StringMsg
+	var out string
 	if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {
 		t.Fatalf("Call after reconnect: %v", err)
 	}
@@ -497,12 +497,11 @@ func TestRouter_NotFound_And_BadRequest(t *testing.T) {
 	defer st.Close()
 
 	req := Request{Method: "", Payload: nil}
-	b, _ := req.Encode()
+	b, _ := cbor.Marshal(req)
 	_, _ = st.Write(b)
 
 	var resp Response
-	dec := cbor.NewDecoder(st)
-	if derr := dec.Decode(&resp); derr != nil {
+	if derr := cbor.Unmarshal(b, &resp); derr != nil {
 		return
 	}
 	if resp.Status == http.StatusOK {
@@ -533,12 +532,12 @@ func TestSerializableError_Wrap_Unwrap(t *testing.T) {
 func TestStress_ConsecutiveCalls(t *testing.T) {
 	router := NewRouter()
 	router.Handle("inc", func(req *Request) (Response, error) {
-		var n IntMsg
-		if err := n.Decode(req.Payload); err != nil {
+		var n int
+		if err := cbor.Unmarshal(req.Payload, &n); err != nil {
 			return Response{Status: http.StatusBadRequest}, nil
 		}
 		n = n + 1
-		b, _ := n.Encode()
+		b, _ := cbor.Marshal(n)
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
@@ -554,12 +553,12 @@ func TestStress_ConsecutiveCalls(t *testing.T) {
 
 	const total = 1000
 	for i := 0; i < total; i++ {
-		var in IntMsg = IntMsg(i)
-		var out IntMsg
+		var in int = int(i)
+		var out int
 		if err := pipe.Call(context.Background(), "inc", &in, &out); err != nil {
 			t.Fatalf("call %d failed: %v", i, err)
 		}
-		expected := IntMsg(i + 1)
+		expected := int(i + 1)
 		if out != expected {
 			t.Fatalf("call %d expected %d got %d", i, expected, out)
 		}
@@ -572,16 +571,16 @@ func TestStress_BatchedSequences(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: req.Payload}, nil
 	})
 	router.Handle("sum_pair", func(req *Request) (Response, error) {
-		var pair MapStringIntMsg
-		if err := pair.Decode(req.Payload); err != nil {
+		var pair map[string]int
+		if err := cbor.Unmarshal(req.Payload, &pair); err != nil {
 			return Response{Status: http.StatusBadRequest}, nil
 		}
 		total := 0
 		for _, v := range pair {
 			total += v
 		}
-		var out IntMsg = IntMsg(total)
-		b, _ := out.Encode()
+		var out int = int(total)
+		b, _ := cbor.Marshal(out)
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
@@ -600,8 +599,8 @@ func TestStress_BatchedSequences(t *testing.T) {
 
 	for b := 0; b < batches; b++ {
 		for i := 0; i < perBatch; i++ {
-			msg := StringMsg(fmt.Sprintf("b%d-i%d", b, i))
-			var echoed StringMsg
+			msg := string(fmt.Sprintf("b%d-i%d", b, i))
+			var echoed string
 			if err := pipe.Call(context.Background(), "echo_str", &msg, &echoed); err != nil {
 				t.Fatalf("batch %d iter %d echo_str err: %v", b, i, err)
 			}
@@ -609,8 +608,8 @@ func TestStress_BatchedSequences(t *testing.T) {
 				t.Fatalf("batch %d iter %d mismatch", b, i)
 			}
 
-			pl := MapStringIntMsg{"a": b, "b": i}
-			var sum IntMsg
+			pl := map[string]int{"a": b, "b": i}
+			var sum int
 			if err := pipe.Call(context.Background(), "sum_pair", &pl, &sum); err != nil {
 				t.Fatalf("batch %d iter %d sum_pair err: %v", b, i, err)
 			}
@@ -624,8 +623,8 @@ func TestStress_BatchedSequences(t *testing.T) {
 func TestStreams_ProperlyClosed_NoExhaustion(t *testing.T) {
 	router := NewRouter()
 	router.Handle("short", func(req *Request) (Response, error) {
-		var ok StringMsg = "ok"
-		b, _ := ok.Encode()
+		var ok string = "ok"
+		b, _ := cbor.Marshal(ok)
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
@@ -642,7 +641,7 @@ func TestStreams_ProperlyClosed_NoExhaustion(t *testing.T) {
 	const iters = 256
 	for i := 0; i < iters; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		var out StringMsg
+		var out string
 		err := pipe.Call(ctx, "short", nil, &out)
 		cancel()
 		if err != nil {

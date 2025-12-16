@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
@@ -189,8 +190,8 @@ func connectARPC(ctx context.Context) error {
 	syslog.L.Info().WithMessage("Setting up ARPC router and handlers").Write()
 	router := arpc.NewRouter()
 	router.Handle("ping", func(req *arpc.Request) (arpc.Response, error) {
-		resp := arpc.MapStringStringMsg{"version": Version, "hostname": clientId}
-		b, err := resp.Encode()
+		resp := map[string]string{"version": Version, "hostname": clientId}
+		b, err := cbor.Marshal(resp)
 		if err != nil {
 			return arpc.Response{}, err
 		}

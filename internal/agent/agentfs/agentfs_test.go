@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -398,7 +399,7 @@ func TestAgentFSServer(t *testing.T) {
 		err = clientPipe.Call(ctx, "agentFs/ReadDir", &payload, readDirHandler)
 		assert.NoError(t, err)
 
-		err = result.Decode(readDirBytes.Bytes())
+		err = cbor.Unmarshal(readDirBytes.Bytes(), &result)
 		assert.NoError(t, err)
 		t.Logf("Result Size: %v", len(readDirBytes.Bytes()))
 		assert.GreaterOrEqual(t, len(result), 3)
