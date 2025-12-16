@@ -62,7 +62,7 @@ func (r *Router) ServeStream(stream *quic.Stream) {
 		return
 	}
 
-	respBytes, err := cborEncMode.Marshal(&resp)
+	respBytes, err := cbor.Marshal(&resp)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return

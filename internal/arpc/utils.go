@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
 func writeErrorResponse(stream io.Writer, status int, err error) {
 	serErr := WrapError(err)
 
-	errBytes, encodeErr := serErr.Encode()
+	errBytes, encodeErr := cbor.Marshal(serErr)
 	if encodeErr != nil {
 		stream.Write([]byte(fmt.Sprintf("failed to encode error: %v", encodeErr)))
 		return
@@ -21,7 +23,7 @@ func writeErrorResponse(stream io.Writer, status int, err error) {
 		Data:    errBytes,
 	}
 
-	respBytes, encodeErr := resp.Encode()
+	respBytes, encodeErr := cbor.Marshal(resp)
 	if encodeErr != nil {
 		stream.Write([]byte(fmt.Sprintf("failed to encode response: %v", encodeErr)))
 		return

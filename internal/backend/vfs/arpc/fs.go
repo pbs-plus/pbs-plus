@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
@@ -147,7 +148,7 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 		return ARPCFile{}, syscall.ENOENT
 	}
 
-	err = resp.Decode(raw)
+	err = cbor.Unmarshal(raw, &resp)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return ARPCFile{}, syscall.ENOENT
@@ -223,7 +224,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 		}
 	}
 
-	err = fi.Decode(raw)
+	err = cbor.Unmarshal(raw, &fi)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENOENT
@@ -278,7 +279,7 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string) (types.AgentFileIn
 	rawCached, err := fs.Memcache.Get("xattr:" + memlocal.Key(filename))
 	if err == nil {
 		req.AclOnly = true
-		_ = fiCached.Decode(rawCached.Value)
+		_ = cbor.Unmarshal(rawCached.Value, &fiCached)
 		fs.Memcache.Delete("xattr:" + memlocal.Key(filename))
 		syslog.L.Debug().
 			WithMessage("Xattr cache hit for metadata").
@@ -293,7 +294,7 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string) (types.AgentFileIn
 		return types.AgentFileInfo{}, syscall.ENODATA
 	}
 
-	err = fi.Decode(raw)
+	err = cbor.Unmarshal(raw, &fi)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENODATA
@@ -341,7 +342,7 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
 		return types.StatFS{}, syscall.ENOENT
 	}
 
-	err = fsStat.Decode(raw)
+	err = cbor.Unmarshal(raw, &fsStat)
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("failed to handle statfs decode").
@@ -387,7 +388,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 			Write()
 		return DirStream{}, syscall.ENOENT
 	}
-	err = handleId.Decode(raw)
+	err = cbor.Unmarshal(raw, &handleId)
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("ReadDir handle decode failed").

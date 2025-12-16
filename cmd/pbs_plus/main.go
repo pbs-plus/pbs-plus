@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
@@ -399,11 +400,11 @@ func main() {
 
 		router := arpc.NewRouter()
 		router.Handle("echo", func(req *arpc.Request) (arpc.Response, error) {
-			var msg arpc.StringMsg
-			if err := msg.Decode(req.Payload); err != nil {
+			var msg string
+			if err := cbor.Unmarshal(req.Payload, &msg); err != nil {
 				return arpc.Response{}, arpc.WrapError(err)
 			}
-			data, err := msg.Encode()
+			data, err := cbor.Marshal(msg)
 			if err != nil {
 				return arpc.Response{}, arpc.WrapError(err)
 			}

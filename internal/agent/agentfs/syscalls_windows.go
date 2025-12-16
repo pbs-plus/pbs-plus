@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"unicode/utf16"
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -26,10 +25,8 @@ var (
 
 func openForAttrs(path string) (windows.Handle, error) {
 	syslog.L.Debug().WithMessage("openForAttrs: opening for attributes").WithField("path", path).Write()
-	pathUTF16 := utf16.Encode([]rune(path))
-	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
-		pathUTF16 = append(pathUTF16, 0)
-	}
+	bufPtr := utf16PathBufPool.Get().(*[]uint16)
+	pathUTF16 := toUTF16Z(path, *bufPtr)
 	h, err := windows.CreateFile(
 		&pathUTF16[0],
 		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
@@ -39,6 +36,7 @@ func openForAttrs(path string) (windows.Handle, error) {
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
 		0,
 	)
+	utf16PathBufPool.Put(bufPtr)
 	if err != nil {
 		if !strings.HasSuffix(path, ".pxarexclude") {
 			syslog.L.Error(err).WithMessage("openForAttrs: CreateFile failed").WithField("path", path).Write()
@@ -68,10 +66,8 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 
 	var sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters uint32
 
-	rootPath := utf16.Encode([]rune(path))
-	if len(rootPath) == 0 || rootPath[len(rootPath)-1] != 0 {
-		rootPath = append(rootPath, 0)
-	}
+	bufPtr := utf16PathBufPool.Get().(*[]uint16)
+	rootPath := toUTF16Z(path, *bufPtr)
 	rootPathPtr := &rootPath[0]
 
 	syslog.L.Debug().WithMessage("getStatFS: calling GetDiskFreeSpaceW").WithField("path", path).Write()
@@ -82,6 +78,7 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 		uintptr(unsafe.Pointer(&numberOfFreeClusters)),
 		uintptr(unsafe.Pointer(&totalNumberOfClusters)),
 	)
+	utf16PathBufPool.Put(bufPtr)
 	if ret == 0 {
 		syslog.L.Error(err).WithMessage("getStatFS: GetDiskFreeSpaceW failed").WithField("path", path).Write()
 		return types.StatFS{}, fmt.Errorf("GetDiskFreeSpaceW failed: %w", err)
@@ -285,13 +282,7 @@ func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange
 	}
 
 	count := br / int(unsafe.Sizeof(out[0]))
-	res := make([]allocatedRange, 0, count)
-	for i := 0; i < count; i++ {
-		res = append(res, allocatedRange{
-			FileOffset: out[i].FileOffset,
-			Length:     out[i].Length,
-		})
-	}
+	res := out[:count]
 	syslog.L.Debug().WithMessage("queryAllocatedRanges: success").WithField("range_count", len(res)).Write()
 	return res, nil
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/fxamacker/cbor/v2"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -142,7 +143,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 	var cached agentTypes.AgentFileInfo
 	if it, err := fs.Memcache.Get("attr:" + memlocal.Key(key)); err == nil {
 		atomic.AddInt64(&fs.StatCacheHits, 1)
-		if err := cached.Decode(it.Value); err == nil {
+		if err := cbor.Unmarshal(it.Value, &cached); err == nil {
 			return cached, nil
 		}
 	}
@@ -162,7 +163,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 			LastAccessTime: mod,
 			LastWriteTime:  mod,
 		}
-		raw, _ := fi.Encode()
+		raw, _ := cbor.Marshal(fi)
 		if isLookup {
 			_ = fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(key), Value: raw, Expiration: 0})
 		}
@@ -198,7 +199,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 			LastAccessTime: now,
 			LastWriteTime:  now,
 		}
-		raw, _ := fi.Encode()
+		raw, _ := cbor.Marshal(fi)
 		if isLookup {
 			_ = fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(key), Value: raw, Expiration: 0})
 		}
@@ -227,7 +228,7 @@ func (fs *S3FS) Xattr(ctx context.Context, fpath string) (agentTypes.AgentFileIn
 	reqAclOnly := false
 	if it, err := fs.Memcache.Get("xattr:" + memlocal.Key(key)); err == nil {
 		reqAclOnly = true
-		_ = fiCached.Decode(it.Value)
+		_ = cbor.Unmarshal(it.Value, &fiCached)
 		fs.Memcache.Delete("xattr:" + memlocal.Key(key))
 	}
 
@@ -264,7 +265,7 @@ func (fs *S3FS) Xattr(ctx context.Context, fpath string) (agentTypes.AgentFileIn
 			LastAccessTime: mod,
 			LastWriteTime:  mod,
 		}
-		raw, _ := fi.Encode()
+		raw, _ := cbor.Marshal(fi)
 		_ = fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(key), Value: raw, Expiration: 0})
 		return fi, nil
 	}
@@ -291,7 +292,7 @@ func (fs *S3FS) Xattr(ctx context.Context, fpath string) (agentTypes.AgentFileIn
 			LastAccessTime: now,
 			LastWriteTime:  now,
 		}
-		raw, _ := fi.Encode()
+		raw, _ := cbor.Marshal(fi)
 		_ = fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(key), Value: raw, Expiration: 0})
 		return fi, nil
 	}
@@ -326,7 +327,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (S3DirStream, error) 
 
 	if it, err := fs.Memcache.Get("dir:" + memlocal.Key(prefix)); err == nil {
 		var cached agentTypes.ReadDirEntries
-		if err := cached.Decode(it.Value); err == nil {
+		if err := cbor.Unmarshal(it.Value, &cached); err == nil {
 			return S3DirStream{fs: fs, entries: cached}, nil
 		}
 	}
@@ -380,7 +381,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (S3DirStream, error) 
 		})
 	}
 
-	raw, _ := entries.Encode()
+	raw, _ := cbor.Marshal(entries)
 	_ = fs.Memcache.Set(&memcache.Item{Key: "dir:" + memlocal.Key(prefix), Value: raw, Expiration: 0})
 	fs.Memcache.Delete("attr:" + memlocal.Key(strings.TrimSuffix(prefix, "/")))
 	return S3DirStream{fs: fs, entries: entries}, nil

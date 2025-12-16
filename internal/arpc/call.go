@@ -11,42 +11,11 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-var (
-	cborEncMode cbor.EncMode
-	cborDecMode cbor.DecMode
-)
-
-func init() {
-	em, err := cbor.CTAP2EncOptions().EncMode()
-	if err != nil {
-		panic(err)
-	}
-	dm, err := cbor.DecOptions{}.DecMode()
-	if err != nil {
-		panic(err)
-	}
-	cborEncMode = em
-	cborDecMode = dm
-}
-
-type Encodable interface {
-	Encode() ([]byte, error)
-	Decode([]byte) error
-}
-
 type Request struct {
 	Context context.Context     `cbor:"-"`
 	Method  string              `cbor:"method"`
 	Payload []byte              `cbor:"payload"`
 	Headers map[string][]string `cbor:"headers,omitempty"`
-}
-
-func (r *Request) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(r)
-}
-
-func (r *Request) Decode(b []byte) error {
-	return cborDecMode.Unmarshal(b, r)
 }
 
 type Response struct {
@@ -56,28 +25,12 @@ type Response struct {
 	RawStream func(*quic.Stream) `cbor:"-"`
 }
 
-func (r *Response) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(r)
-}
-
-func (r *Response) Decode(b []byte) error {
-	return cborDecMode.Unmarshal(b, r)
-}
-
 type SerializableError struct {
 	ErrorType     string `cbor:"error_type"`
 	Message       string `cbor:"message"`
 	Op            string `cbor:"op"`
 	Path          string `cbor:"path"`
 	OriginalError error  `cbor:"-"`
-}
-
-func (e *SerializableError) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(e)
-}
-
-func (e *SerializableError) Decode(b []byte) error {
-	return cborDecMode.Unmarshal(b, e)
 }
 
 type RawStreamHandler func(*quic.Stream) error
@@ -113,14 +66,8 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		switch p := payload.(type) {
 		case []byte:
 			payloadBytes = p
-		case Encodable:
-			payloadBytes, err = p.Encode()
-			if err != nil {
-				stream.CancelWrite(quicErrEncodePayload)
-				return fmt.Errorf("encode payload: %w", err)
-			}
 		default:
-			payloadBytes, err = cborEncMode.Marshal(p)
+			payloadBytes, err = cbor.Marshal(p)
 			if err != nil {
 				stream.CancelWrite(quicErrMarshalPayload)
 				return fmt.Errorf("marshal payload: %w", err)
@@ -129,7 +76,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	}
 
 	req := Request{Method: method, Payload: payloadBytes, Headers: headerCloneMap(s.headers)}
-	reqBytes, err := req.Encode()
+	reqBytes, err := cbor.Marshal(req)
 	if err != nil {
 		stream.CancelWrite(quicErrEncodeRequest)
 		return fmt.Errorf("encode request: %w", err)
@@ -176,7 +123,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	if resp.Status != http.StatusOK {
 		if len(resp.Data) > 0 {
 			var serErr SerializableError
-			if err := serErr.Decode(resp.Data); err == nil {
+			if err := cbor.Unmarshal(resp.Data, &serErr); err == nil {
 				stream.CancelWrite(quicErrRPCStatus)
 				return UnwrapError(serErr)
 			}
@@ -193,7 +140,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		*dst = append((*dst)[:0], resp.Data...)
 		return nil
 	default:
-		return cborDecMode.Unmarshal(resp.Data, out)
+		return cbor.Unmarshal(resp.Data, out)
 	}
 }
 
@@ -230,14 +177,8 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 		switch p := payload.(type) {
 		case []byte:
 			payloadBytes = p
-		case Encodable:
-			payloadBytes, err = p.Encode()
-			if err != nil {
-				stream.CancelWrite(quicErrEncodePayload)
-				return "", fmt.Errorf("encode payload: %w", err)
-			}
 		default:
-			payloadBytes, err = cborEncMode.Marshal(p)
+			payloadBytes, err = cbor.Marshal(p)
 			if err != nil {
 				stream.CancelWrite(quicErrMarshalPayload)
 				return "", fmt.Errorf("marshal payload: %w", err)
@@ -246,7 +187,7 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	}
 
 	req := Request{Method: method, Payload: payloadBytes}
-	reqBytes, err := req.Encode()
+	reqBytes, err := cbor.Marshal(req)
 	if err != nil {
 		stream.CancelWrite(quicErrEncodeRequest)
 		return "", fmt.Errorf("encode request: %w", err)
@@ -274,7 +215,7 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	if resp.Status != http.StatusOK {
 		if len(resp.Data) > 0 {
 			var serErr SerializableError
-			if err := serErr.Decode(resp.Data); err == nil {
+			if err := cbor.Unmarshal(resp.Data, &serErr); err == nil {
 				stream.CancelWrite(quicErrRPCStatus)
 				return "", UnwrapError(serErr)
 			}
