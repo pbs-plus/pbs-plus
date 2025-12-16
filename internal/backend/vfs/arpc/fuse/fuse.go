@@ -324,6 +324,11 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 		"user.fileattributes",
 	}
 
+	// compatibility
+	if fi.PosixACLs == nil {
+		fi.PosixACLs = make([]types.PosixACL, 0)
+	}
+
 	// Only add ACLs if available.
 	if fi.PosixACLs != nil || fi.WinACLs != nil {
 		attrs = append(attrs, "user.acls")
