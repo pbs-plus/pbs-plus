@@ -396,7 +396,7 @@ func main() {
 	})
 
 	endpointsWg.Go(func() {
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC QUIC endpoint on UDP %s", constants.ARPCServerPort)).Write()
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC endpoint on TCP %s", constants.ARPCServerPort)).Write()
 
 		router := arpc.NewRouter()
 		router.Handle("echo", func(req *arpc.Request) (arpc.Response, error) {

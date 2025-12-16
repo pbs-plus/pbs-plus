@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/quic-go/quic-go"
+	"github.com/xtaci/smux"
 )
 
 type Request struct {
@@ -23,7 +23,7 @@ type Response struct {
 	Status    int                `cbor:"status"`
 	Message   string             `cbor:"message"`
 	Data      []byte             `cbor:"data"`
-	RawStream func(*quic.Stream) `cbor:"-"`
+	RawStream func(*smux.Stream) `cbor:"-"`
 }
 
 type SerializableError struct {
@@ -34,10 +34,10 @@ type SerializableError struct {
 	OriginalError error  `cbor:"-"`
 }
 
-type RawStreamHandler func(*quic.Stream) error
+type RawStreamHandler func(*smux.Stream) error
 
 func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out any) error {
-	stream, err := s.openStream(ctx)
+	stream, err := s.OpenStream()
 	if err != nil {
 		return err
 	}
@@ -45,8 +45,6 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	var cleanupOnce sync.Once
 	cleanup := func() {
 		stream.Close()
-		stream.CancelRead(0)
-		stream.CancelWrite(0)
 	}
 	defer cleanupOnce.Do(cleanup)
 
@@ -75,27 +73,27 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		default:
 			payloadBytes, err = cbor.Marshal(p)
 			if err != nil {
-				stream.CancelWrite(quicErrMarshalPayload)
 				return fmt.Errorf("marshal payload: %w", err)
 			}
 		}
 	}
 
-	req := Request{Method: method, Payload: payloadBytes, Headers: headerCloneMap(s.headers)}
+	s.RLock()
+	headers := headerCloneMap(s.headers)
+	s.RUnlock()
+
+	req := Request{Method: method, Payload: payloadBytes, Headers: headers}
 	reqBytes, err := cbor.Marshal(req)
 	if err != nil {
-		stream.CancelWrite(quicErrEncodeRequest)
 		return fmt.Errorf("encode request: %w", err)
 	}
 	if _, err := stream.Write(reqBytes); err != nil {
-		stream.CancelWrite(quicErrWriteRequest)
 		return fmt.Errorf("write request: %w", err)
 	}
 
 	dec := cbor.NewDecoder(stream)
 	var resp Response
 	if err := dec.Decode(&resp); err != nil {
-		stream.CancelWrite(quicErrDecodeResponse)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -105,11 +103,9 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	if resp.Status == 213 {
 		handler, ok := out.(RawStreamHandler)
 		if !ok || handler == nil {
-			stream.CancelWrite(quicErrInvalidRawHandler)
 			return fmt.Errorf("invalid out handler while in raw stream mode")
 		}
 		if _, err := stream.Write([]byte{0x01}); err != nil {
-			stream.CancelWrite(quicErrRawReadySignalWrite)
 			return fmt.Errorf("raw ready signal write failed: %w", err)
 		}
 
@@ -119,7 +115,6 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 
 		err = handler(stream)
 		if err != nil {
-			stream.CancelWrite(quicErrRPCStatus)
 			return err
 		}
 		return nil
@@ -129,11 +124,9 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		if len(resp.Data) > 0 {
 			var serErr SerializableError
 			if err := cbor.Unmarshal(resp.Data, &serErr); err == nil {
-				stream.CancelWrite(quicErrRPCStatus)
 				return UnwrapError(serErr)
 			}
 		}
-		stream.CancelWrite(quicErrRPCStatus)
 		return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
 	}
 
@@ -158,7 +151,7 @@ func (s *StreamPipe) CallData(ctx context.Context, method string, payload any) (
 }
 
 func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any) (string, error) {
-	stream, err := s.openStream(ctx)
+	stream, err := s.OpenStream()
 	if err != nil {
 		return "", err
 	}
@@ -166,8 +159,6 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	var cleanupOnce sync.Once
 	cleanup := func() {
 		stream.Close()
-		stream.CancelRead(0)
-		stream.CancelWrite(0)
 	}
 	defer cleanupOnce.Do(cleanup)
 
@@ -190,7 +181,6 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 		default:
 			payloadBytes, err = cbor.Marshal(p)
 			if err != nil {
-				stream.CancelWrite(quicErrMarshalPayload)
 				return "", fmt.Errorf("marshal payload: %w", err)
 			}
 		}
@@ -199,18 +189,15 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	req := Request{Method: method, Payload: payloadBytes}
 	reqBytes, err := cbor.Marshal(req)
 	if err != nil {
-		stream.CancelWrite(quicErrEncodeRequest)
 		return "", fmt.Errorf("encode request: %w", err)
 	}
 	if _, err := stream.Write(reqBytes); err != nil {
-		stream.CancelWrite(quicErrWriteRequest)
 		return "", fmt.Errorf("write request: %w", err)
 	}
 
 	dec := cbor.NewDecoder(stream)
 	var resp Response
 	if err := dec.Decode(&resp); err != nil {
-		stream.CancelWrite(quicErrDecodeResponse)
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
@@ -218,7 +205,6 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	}
 
 	if resp.Status == 213 {
-		stream.CancelWrite(quicErrRawNotSupported)
 		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", resp.Status)
 	}
 
@@ -226,11 +212,9 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 		if len(resp.Data) > 0 {
 			var serErr SerializableError
 			if err := cbor.Unmarshal(resp.Data, &serErr); err == nil {
-				stream.CancelWrite(quicErrRPCStatus)
 				return "", UnwrapError(serErr)
 			}
 		}
-		stream.CancelWrite(quicErrRPCStatus)
 		return "", fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
 	}
 

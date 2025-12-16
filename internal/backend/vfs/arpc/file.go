@@ -16,7 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/quic-go/quic-go"
+	"github.com/xtaci/smux"
 )
 
 func (f *ARPCFile) Close(ctx context.Context) error {
@@ -160,7 +160,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	err := f.fs.session.Call(ctxN, f.jobId+"/ReadAt", &req, arpc.RawStreamHandler(func(s *quic.Stream) error {
+	err := f.fs.session.Call(ctxN, f.jobId+"/ReadAt", &req, arpc.RawStreamHandler(func(s *smux.Stream) error {
 		n, err := binarystream.ReceiveDataInto(s, p)
 		if err != nil {
 			return err

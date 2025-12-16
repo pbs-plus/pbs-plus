@@ -133,10 +133,7 @@ func CmdBackup() {
 	syslog.L.Info().WithMessage("CmdBackup: ARPC session established").WithField("jobId", *jobId).Write()
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer rpcSess.Close()
-		defer wg.Done()
+	wg.Go(func() {
 		syslog.L.Info().WithMessage("CmdBackup: RPC Serve starting").WithField("jobId", *jobId).Write()
 		if err := rpcSess.Serve(); err != nil {
 			syslog.L.Error(err).WithMessage("CmdBackup: RPC Serve returned error").WithField("jobId", *jobId).Write()
@@ -145,7 +142,7 @@ func CmdBackup() {
 			}
 		}
 		syslog.L.Info().WithMessage("CmdBackup: RPC Serve exited").WithField("jobId", *jobId).Write()
-	}()
+	})
 
 	backupMode, err := Backup(rpcSess, *sourceMode, *readMode, *drive, *jobId)
 	if err != nil {
