@@ -66,6 +66,7 @@ func (s *DirStream) HasNext() bool {
 			WithJob(s.fs.Job.ID).
 			Write()
 
+		s.closed = true
 		return false
 	}
 
@@ -111,6 +112,7 @@ func (s *DirStream) HasNext() bool {
 				WithJob(s.fs.Job.ID).
 				Write()
 			s.closed = true
+			s.lastResp = nil
 			return false
 		}
 
@@ -119,6 +121,8 @@ func (s *DirStream) HasNext() bool {
 			WithField("handleId", s.handleId).
 			WithJob(s.fs.Job.ID).
 			Write()
+		s.closed = true
+		s.lastResp = nil
 		return false
 	}
 
@@ -136,8 +140,11 @@ func (s *DirStream) HasNext() bool {
 			WithJob(s.fs.Job.ID).
 			Write()
 		s.closed = true
+		s.lastResp = nil
 		return false
 	}
+
+	s.lastResp = nil
 
 	if err := cbor.Unmarshal(readBuf[:bytesRead], &s.lastResp); err != nil {
 		syslog.L.Error(err).
@@ -145,6 +152,7 @@ func (s *DirStream) HasNext() bool {
 			WithField("bytesRead", bytesRead).
 			WithJob(s.fs.Job.ID).
 			Write()
+		s.closed = true
 		return false
 	}
 
@@ -158,7 +166,17 @@ func (s *DirStream) HasNext() bool {
 		WithJob(s.fs.Job.ID).
 		Write()
 
-	return postLen > 0
+	if postLen == 0 {
+		syslog.L.Debug().
+			WithMessage("HasNext: empty batch received, closing").
+			WithField("path", s.path).
+			WithJob(s.fs.Job.ID).
+			Write()
+		s.closed = true
+		return false
+	}
+
+	return true
 }
 
 func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
