@@ -247,6 +247,11 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 		return 0, syscall.ENOTSUP
 	}
 
+	// compatibility
+	if fi.FileAttributes == nil {
+		fi.FileAttributes = make(map[string]bool, 0)
+	}
+
 	var data []byte
 	switch attr {
 	case "user.creationtime":
