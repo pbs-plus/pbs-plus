@@ -1041,20 +1041,34 @@ func TestAgentFSServer(t *testing.T) {
 		var finalMemStats runtime.MemStats
 		runtime.ReadMemStats(&finalMemStats)
 
-		allocDiff := finalMemStats.Alloc - initialMemStats.Alloc
-		heapDiff := finalMemStats.HeapAlloc - initialMemStats.HeapAlloc
+		initialAlloc := int64(initialMemStats.Alloc)
+		finalAlloc := int64(finalMemStats.Alloc)
+		allocDiff := finalAlloc - initialAlloc
 
-		t.Logf("Initial Alloc: %d bytes", initialMemStats.Alloc)
-		t.Logf("Final Alloc: %d bytes", finalMemStats.Alloc)
+		initialHeap := int64(initialMemStats.HeapAlloc)
+		finalHeap := int64(finalMemStats.HeapAlloc)
+		heapDiff := finalHeap - initialHeap
+
+		t.Logf("Initial Alloc: %d bytes", initialAlloc)
+		t.Logf("Final Alloc: %d bytes", finalAlloc)
 		t.Logf("Alloc Diff: %d bytes", allocDiff)
-		t.Logf("Initial HeapAlloc: %d bytes", initialMemStats.HeapAlloc)
-		t.Logf("Final HeapAlloc: %d bytes", finalMemStats.HeapAlloc)
+		t.Logf("Initial HeapAlloc: %d bytes", initialHeap)
+		t.Logf("Final HeapAlloc: %d bytes", finalHeap)
 		t.Logf("HeapAlloc Diff: %d bytes", heapDiff)
 		t.Logf("Total Mallocs: %d", finalMemStats.Mallocs-initialMemStats.Mallocs)
 		t.Logf("Total Frees: %d", finalMemStats.Frees-initialMemStats.Frees)
 
-		maxAcceptableGrowth := uint64(5 * 1024 * 1024)
-		assert.Less(t, allocDiff, maxAcceptableGrowth, "Memory leak detected: allocation grew by %d bytes", allocDiff)
+		maxAcceptableGrowth := int64(5 * 1024 * 1024)
+		if allocDiff > maxAcceptableGrowth {
+			t.Errorf("Memory leak detected: allocation grew by %d bytes (%.2f MB)",
+				allocDiff, float64(allocDiff)/(1024*1024))
+		}
+
+		if allocDiff < 0 {
+			t.Logf("Memory decreased by %d bytes (%.2f MB) - good!",
+				-allocDiff, float64(-allocDiff)/(1024*1024))
+		}
+
 		assert.Equal(t, 0, agentFsServer.handles.Len(), "All handles should be closed")
 	})
 }
