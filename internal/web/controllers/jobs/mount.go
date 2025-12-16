@@ -126,6 +126,29 @@ func unmountPath(mountPoint string) error {
 	return fmt.Errorf("failed to unmount %s", mountPoint)
 }
 
+// daemonizeMount starts the mount command as a detached daemon process
+func daemonizeMount(args []string) error {
+	script := fmt.Sprintf(`#!/bin/sh
+exec setsid /usr/bin/proxmox-backup-pxar-mount %s </dev/null >/dev/null 2>&1 &
+`, strings.Join(shellEscapeArgs(args), " "))
+
+	cmd := exec.Command("/bin/sh", "-c", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true,
+	}
+
+	return cmd.Run()
+}
+
+// shellEscapeArgs escapes arguments for safe shell execution
+func shellEscapeArgs(args []string) []string {
+	escaped := make([]string, len(args))
+	for i, arg := range args {
+		escaped[i] = "'" + strings.ReplaceAll(arg, "'", "'\\''") + "'"
+	}
+	return escaped
+}
+
 func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -228,34 +251,21 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 		args = append(args, mountPoint)
 
-		cmd := exec.Command("/usr/bin/proxmox-backup-pxar-mount", args...)
-		// Detach from current process - run independently
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setsid:  true,
-			Setpgid: true,
-		}
-		// Detach standard streams
-		cmd.Stdin = nil
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-
-		if err := cmd.Start(); err != nil {
+		// Start mount as a daemonized process
+		if err := daemonizeMount(args); err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("start mount: %w", err))
 			_ = os.RemoveAll(mountPoint)
 			return
 		}
 
-		// Detach from the process - let it run independently
-		_ = cmd.Process.Release()
-
 		// Wait for mount to become active by checking filesystem
 		mountOK := false
-		for i := 0; i < 20; i++ {
+		for i := 0; i < 30; i++ {
 			if utils.IsMounted(mountPoint) {
 				mountOK = true
 				break
 			}
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 		}
 
 		if !mountOK {
@@ -353,12 +363,14 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			ns,
 		))
 
+		// Parse all current mount points
 		allMPs, err := parseMountPoints()
 		if err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("read mounts: %w", err))
 			return
 		}
 
+		// Find all mounts within our base path
 		var targets []string
 		for _, mp := range allMPs {
 			clean := filepath.Clean(mp)
@@ -367,6 +379,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
+		// Sort by depth (deepest first) and length
 		sort.Slice(targets, func(i, j int) bool {
 			di := strings.Count(targets[i], string(filepath.Separator))
 			dj := strings.Count(targets[j], string(filepath.Separator))
