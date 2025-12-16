@@ -12,6 +12,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
@@ -85,7 +86,6 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		Write()
 
 	err := ntDirectoryCall(ctx, r.handle, &r.ioStatus, buffer, r.restartScan)
-	r.restartScan = false
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			syslog.L.Warn().WithMessage("DirReaderNT.NextBatch: STATUS_PENDING, retry later").WithField("path", r.path).Write()
@@ -99,6 +99,8 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: ntDirectoryCall failed").WithField("path", r.path).Write()
 		return nil, err
 	}
+
+	r.restartScan = false
 
 	var entries types.ReadDirEntries
 
@@ -201,7 +203,7 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		return nil, err
 	}
 
-	encodedBatch, err := entries.Encode()
+	encodedBatch, err := cbor.Marshal(entries)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: encode failed").WithField("path", r.path).Write()
 		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
