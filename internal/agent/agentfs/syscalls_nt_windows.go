@@ -3,12 +3,9 @@
 package agentfs
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
 	"syscall"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -89,34 +86,10 @@ func ntCreateFileCall(handle *uintptr, objectAttributes *ObjectAttributes, ioSta
 	return nil
 }
 
-func ntCancelIoFileEx(h uintptr, iosb *IoStatusBlock) error {
-	r0, _, _ := procNtCancelIoFileEx.Call(
-		uintptr(h),
-		uintptr(unsafe.Pointer(iosb)),
-		0,
-	)
-	return ntStatusToError(r0)
-}
-
-func ntDirectoryCall(
-	ctx context.Context,
-	handle uintptr,
-	ioStatusBlock *IoStatusBlock,
-	buffer []byte,
-	restartScan bool,
-) error {
-	evt, err := windows.CreateEvent(nil, 1, 0, nil)
-	if err != nil {
-		return err
-	}
-	defer windows.CloseHandle(evt)
-
-	timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-
+func ntDirectoryCall(handle uintptr, ioStatusBlock *IoStatusBlock, buffer []byte, restartScan bool) error {
 	status, _, _ := ntQueryDirectoryFile.Call(
-		uintptr(handle),
-		uintptr(evt),
+		handle,
+		0,
 		0,
 		0,
 		uintptr(unsafe.Pointer(ioStatusBlock)),
@@ -129,54 +102,13 @@ func ntDirectoryCall(
 	)
 
 	switch status {
-	case STATUS_SUCCESS:
+	case 0:
 		return nil
 	case STATUS_NO_MORE_FILES:
 		return os.ErrProcessDone
 	case STATUS_PENDING:
+		return fmt.Errorf("unexpected STATUS_PENDING with synchronous I/O")
 	default:
-		return fmt.Errorf("NtQueryDirectoryFile failed: 0x%x", status)
-	}
-
-	for {
-		timeout := uint32(windows.INFINITE)
-		if dl, ok := timeoutCtx.Deadline(); ok {
-			d := time.Until(dl)
-			if d <= 0 {
-				_ = ntCancelIoFileEx(handle, ioStatusBlock)
-				_, _ = windows.WaitForSingleObject(evt, 10)
-				return timeoutCtx.Err()
-			}
-			ms := d / time.Millisecond
-			if ms <= 0 {
-				ms = 1
-			}
-			if ms > 0x7fffffff {
-				ms = 0x7fffffff
-			}
-			timeout = uint32(ms)
-		}
-
-		wrc, werr := windows.WaitForSingleObject(evt, timeout)
-		if werr != nil {
-			_ = ntCancelIoFileEx(handle, ioStatusBlock)
-			return werr
-		}
-		switch wrc {
-		case windows.WAIT_OBJECT_0:
-			return nil
-		case uint32(windows.WAIT_TIMEOUT):
-			if err := timeoutCtx.Err(); err != nil {
-				_ = ntCancelIoFileEx(handle, ioStatusBlock)
-				_, _ = windows.WaitForSingleObject(evt, 10)
-				return err
-			}
-		case windows.WAIT_ABANDONED:
-			_ = ntCancelIoFileEx(handle, ioStatusBlock)
-			return errors.New("wait abandoned")
-		default:
-			_ = ntCancelIoFileEx(handle, ioStatusBlock)
-			return fmt.Errorf("unexpected wait result: %d", wrc)
-		}
+		return fmt.Errorf("NtQueryDirectoryFile failed with status: 0x%x", status)
 	}
 }

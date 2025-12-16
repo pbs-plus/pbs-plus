@@ -81,11 +81,10 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		WithField("buffer_len", len(buffer)).
 		Write()
 
-	err := ntDirectoryCall(ctx, r.handle, &r.ioStatus, buffer, r.restartScan)
+	err := ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan)
 	r.restartScan = false
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			// STATUS_PENDING - async I/O not yet complete
 			return nil, nil
 		}
 		if errors.Is(err, os.ErrProcessDone) {
