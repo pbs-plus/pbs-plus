@@ -18,7 +18,6 @@ const (
 	quicErrHeadersCloseFailed  quic.ApplicationErrorCode = 0x1109
 	quicErrClosePipe           quic.ApplicationErrorCode = 0x110A
 	quicErrOpenStreamFailed    quic.ApplicationErrorCode = 0x110C
-	quicErrEncodePayload       quic.StreamErrorCode      = 0x1000
 	quicErrMarshalPayload      quic.StreamErrorCode      = 0x1001
 	quicErrEncodeRequest       quic.StreamErrorCode      = 0x1002
 	quicErrWriteRequest        quic.StreamErrorCode      = 0x1003
