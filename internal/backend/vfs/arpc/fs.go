@@ -438,7 +438,7 @@ func (fs *ARPCFS) Unmount(ctx context.Context) {
 			Write()
 	}
 	if fs.session != nil {
-		_ = fs.session.Close()
+		fs.session.Close()
 		syslog.L.Debug().
 			WithMessage("ARPC session closed").
 			WithField("jobId", fs.Job.ID).

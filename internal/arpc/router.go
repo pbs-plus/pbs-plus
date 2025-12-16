@@ -1,6 +1,7 @@
 package arpc
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,7 +10,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
-	"github.com/quic-go/quic-go"
+	"github.com/xtaci/smux"
 )
 
 type HandlerFunc func(req *Request) (Response, error)
@@ -30,9 +31,8 @@ func (r *Router) CloseHandle(method string) {
 	r.handlers.Del(method)
 }
 
-func (r *Router) ServeStream(stream *quic.Stream) {
+func (r *Router) serveStream(stream *smux.Stream) {
 	defer stream.Close()
-	defer stream.CancelRead(0)
 
 	_ = stream.SetReadDeadline(time.Now().Add(5 * time.Second))
 	dec := cbor.NewDecoder(stream)
@@ -55,7 +55,19 @@ func (r *Router) ServeStream(stream *quic.Stream) {
 		return
 	}
 
-	req.Context = stream.Context()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		select {
+		case <-stream.GetDieCh():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	req.Context = ctx
+
 	resp, err := handler(&req)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
@@ -69,7 +81,6 @@ func (r *Router) ServeStream(stream *quic.Stream) {
 	}
 
 	if _, err := stream.Write(respBytes); err != nil {
-		stream.CancelWrite(quicErrWriteResponse)
 		return
 	}
 
@@ -78,7 +89,6 @@ func (r *Router) ServeStream(stream *quic.Stream) {
 		_ = stream.SetReadDeadline(deadline)
 		var b [1]byte
 		if _, err := io.ReadFull(stream, b[:]); err != nil || b[0] != 0x01 {
-			stream.CancelWrite(quicErrRawHandshakeFail)
 			_ = stream.SetReadDeadline(time.Time{})
 			return
 		}

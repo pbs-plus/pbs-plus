@@ -1,13 +1,15 @@
 package arpc
 
 import (
+	"crypto/tls"
 	"errors"
+	"net"
 	"net/http"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
-	"github.com/quic-go/quic-go"
+	"github.com/xtaci/smux"
 )
 
 type AgentsManager struct {
@@ -20,11 +22,17 @@ func NewAgentsManager() *AgentsManager {
 	}
 }
 
-func (sm *AgentsManager) CreateStreamPipe(conn *quic.Conn, headers http.Header) (*StreamPipe, string, error) {
-	clientID := conn.ConnectionState().TLS.ServerName
+func (sm *AgentsManager) createStreamPipe(session *smux.Session, conn net.Conn, headers http.Header) (*StreamPipe, string, error) {
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		return nil, "", errors.New("connection is not a TLS connection")
+	}
 
-	if len(conn.ConnectionState().TLS.PeerCertificates) > 0 {
-		clientCertificate := conn.ConnectionState().TLS.PeerCertificates[0]
+	state := tlsConn.ConnectionState()
+	clientID := state.ServerName
+
+	if len(state.PeerCertificates) > 0 {
+		clientCertificate := state.PeerCertificates[0]
 		clientID = clientCertificate.Subject.CommonName
 	}
 
@@ -33,11 +41,11 @@ func (sm *AgentsManager) CreateStreamPipe(conn *quic.Conn, headers http.Header) 
 		clientID = clientID + "|" + jobIdHeader
 	}
 
-	if session, exists := sm.sessions.Get(clientID); exists {
-		session.CloseWithError(0, "replaced with new client stream pipe")
+	if existingSession, exists := sm.sessions.Get(clientID); exists {
+		existingSession.Close()
 	}
 
-	session, err := NewStreamPipe(conn)
+	pipe, err := NewStreamPipe(session, conn)
 	if err != nil {
 		return nil, "", err
 	}
@@ -54,27 +62,25 @@ func (sm *AgentsManager) CreateStreamPipe(conn *quic.Conn, headers http.Header) 
 		}
 		return Response{Status: 200, Data: data}, nil
 	})
-	session.SetRouter(router)
+	pipe.SetRouter(router)
 
-	sm.sessions.Set(clientID, session)
+	sm.sessions.Set(clientID, pipe)
 
 	syslog.L.Info().WithMessage("agent successfully connected").WithField("hostname", clientID).Write()
 
-	return session, clientID, nil
+	return pipe, clientID, nil
 }
 
 func (sm *AgentsManager) GetStreamPipe(clientID string) (*StreamPipe, bool) {
 	return sm.sessions.Get(clientID)
 }
 
-func (sm *AgentsManager) CloseStreamPipe(clientID string) error {
-	session, exists := sm.sessions.Get(clientID)
+func (sm *AgentsManager) closeStreamPipe(clientID string) {
+	_, exists := sm.sessions.Get(clientID)
 	if !exists {
-		return errors.New("session not found")
+		return
 	}
 
 	sm.sessions.Del(clientID)
 	syslog.L.Info().WithMessage("agent disconnected").WithField("hostname", clientID).Write()
-
-	return session.Close()
 }

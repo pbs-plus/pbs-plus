@@ -28,10 +28,9 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/quicvarint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xtaci/smux"
 )
 
 type testPKI struct {
@@ -137,7 +136,7 @@ func ensureGlobalCAs(t *testing.T) {
 	})
 }
 
-func newTestQUICServer(t *testing.T, router arpc.Router) (addr string, cleanup func(), serverTLS *tls.Config) {
+func newTestARPCServer(t *testing.T, router arpc.Router) (addr string, cleanup func(), serverTLS *tls.Config) {
 	t.Helper()
 
 	ensureGlobalCAs(t)
@@ -150,10 +149,7 @@ func newTestQUICServer(t *testing.T, router arpc.Router) (addr string, cleanup f
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	listener, udpConn, err := arpc.Listen(t.Context(), "127.0.0.1:0", serverTLS, &quic.Config{
-		KeepAlivePeriod:    200 * time.Millisecond,
-		MaxIncomingStreams: quicvarint.Max,
-	})
+	listener, err := arpc.Listen(t.Context(), "127.0.0.1:0", serverTLS)
 	if err != nil {
 		t.Fatalf("quic listen: %v", err)
 	}
@@ -168,7 +164,7 @@ func newTestQUICServer(t *testing.T, router arpc.Router) (addr string, cleanup f
 		}
 	}()
 
-	addr = udpConn.LocalAddr().String()
+	addr = listener.Addr().String()
 	cleanup = func() {
 		_ = listener.Close()
 		select {
@@ -323,7 +319,7 @@ func TestAgentFSServer(t *testing.T) {
 	agentFsServer := NewAgentFSServer("agentFs", "standard", snapshots.Snapshot{Path: testDir, SourcePath: ""})
 	agentFsServer.RegisterHandlers(&serverRouter)
 
-	addr, shutdownServer, _ := newTestQUICServer(t, serverRouter)
+	addr, shutdownServer, _ := newTestARPCServer(t, serverRouter)
 	defer shutdownServer()
 
 	clientTLS := newTestClientTLS(t)
@@ -381,7 +377,7 @@ func TestAgentFSServer(t *testing.T) {
 
 		n := 0
 		buf := make([]byte, 64*1024)
-		readDirHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
+		readDirHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 			n, err = binarystream.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
 				return err
@@ -435,7 +431,7 @@ func TestAgentFSServer(t *testing.T) {
 
 		var readAtBytes bytes.Buffer
 
-		readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
+		readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, 25)
 			n, err := binarystream.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
@@ -486,7 +482,7 @@ func TestAgentFSServer(t *testing.T) {
 				Length:   readSize,
 			}
 
-			readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
+			readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 				buf := make([]byte, readSize)
 				_, err := binarystream.ReceiveDataInto(st, buf)
 				if err != nil && !errors.Is(err, io.EOF) {
@@ -530,7 +526,7 @@ func TestAgentFSServer(t *testing.T) {
 		}
 
 		var receivedLargeFileBytes bytes.Buffer
-		readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
+		readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, readSize)
 			n, err := binarystream.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
@@ -575,7 +571,7 @@ func TestAgentFSServer(t *testing.T) {
 		}
 
 		t.Log("Current handle map before invalid ReadAt:", dumpHandleMap(agentFsServer))
-		err := clientPipe.Call(ctx, "agentFs/ReadAt", &readAtPayload, arpc.RawStreamHandler(func(st *quic.Stream) error { st.Close(); st.CancelRead(0); return nil }))
+		err := clientPipe.Call(ctx, "agentFs/ReadAt", &readAtPayload, arpc.RawStreamHandler(func(st *smux.Stream) error { st.Close(); return nil }))
 		assert.Error(t, err, "ReadAt with invalid handle should return an error")
 
 		closePayload := types.CloseReq{HandleID: 33123}
@@ -783,7 +779,7 @@ func TestAgentFSServer(t *testing.T) {
 				}
 
 				var goroutineReadBytes bytes.Buffer
-				readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
+				readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 					buf := make([]byte, readSize)
 					n, err := binarystream.ReceiveDataInto(st, buf)
 					if err != nil && !errors.Is(err, io.EOF) {
@@ -895,7 +891,7 @@ func TestAgentFSServer(t *testing.T) {
 		}
 
 		var buffer1 bytes.Buffer
-		readAtHandler1 := arpc.RawStreamHandler(func(st *quic.Stream) error {
+		readAtHandler1 := arpc.RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, readAtPayload1.Length)
 			n, copyErr := binarystream.ReceiveDataInto(st, buf)
 			if copyErr != nil && !errors.Is(copyErr, io.EOF) {
@@ -906,7 +902,7 @@ func TestAgentFSServer(t *testing.T) {
 		})
 
 		var buffer2 bytes.Buffer
-		readAtHandler2 := arpc.RawStreamHandler(func(st *quic.Stream) error {
+		readAtHandler2 := arpc.RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, readAtPayload2.Length)
 			n, copyErr := binarystream.ReceiveDataInto(st, buf)
 			if copyErr != nil && !errors.Is(copyErr, io.EOF) {
@@ -950,7 +946,7 @@ func TestAgentFSServer(t *testing.T) {
 				Length:   readSize,
 			}
 
-			readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
+			readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 				buf := make([]byte, readSize)
 				_, err := binarystream.ReceiveDataInto(st, buf)
 				if err != nil && !errors.Is(err, io.EOF) {

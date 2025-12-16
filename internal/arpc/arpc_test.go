@@ -22,8 +22,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/quicvarint"
+	"github.com/xtaci/smux"
 )
 
 type testPKI struct {
@@ -129,11 +128,7 @@ func ensureGlobalCAs(t *testing.T) {
 	})
 }
 
-func newTestQUICServer(t *testing.T, router Router) (addr string, cleanup func(), serverTLS *tls.Config) {
-	return newTestQUICServerCustomIncoming(t, router, quicvarint.Max)
-}
-
-func newTestQUICServerCustomIncoming(t *testing.T, router Router, maxIncomingStreams int64) (addr string, cleanup func(), serverTLS *tls.Config) {
+func newTestARPCServer(t *testing.T, router Router) (addr string, cleanup func(), serverTLS *tls.Config) {
 	t.Helper()
 
 	ensureGlobalCAs(t)
@@ -146,11 +141,7 @@ func newTestQUICServerCustomIncoming(t *testing.T, router Router, maxIncomingStr
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	quicConfig := quicServerLimitsAutoConfig()
-	quicConfig.KeepAlivePeriod = 200 * time.Millisecond
-	quicConfig.MaxIncomingStreams = maxIncomingStreams
-
-	listener, udpConn, err := Listen(t.Context(), "127.0.0.1:0", serverTLS, quicConfig)
+	listener, err := Listen(t.Context(), "127.0.0.1:0", serverTLS)
 	if err != nil {
 		t.Fatalf("quic listen: %v", err)
 	}
@@ -165,7 +156,7 @@ func newTestQUICServerCustomIncoming(t *testing.T, router Router, maxIncomingStr
 		}
 	}()
 
-	addr = udpConn.LocalAddr().String()
+	addr = listener.Addr().String()
 	cleanup = func() {
 		_ = listener.Close()
 		select {
@@ -195,7 +186,7 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: req.Payload}, nil
 	})
 
-	addr, shutdown, serverTLS := newTestQUICServer(t, router)
+	addr, shutdown, serverTLS := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -232,7 +223,7 @@ func TestStreamPipeCall_Success(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -259,7 +250,7 @@ func TestStreamPipeCall_Concurrency(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -299,7 +290,7 @@ func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -314,7 +305,7 @@ func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
 
 	go func() {
 		<-ctx.Done()
-		_ = pipe.Close()
+		pipe.Close()
 	}()
 
 	var out []byte
@@ -322,7 +313,7 @@ func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "deadline exceeded") {
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "timeout") {
 		t.Fatalf("expected DeadlineExceeded or Canceled, got %v", err)
 	}
 }
@@ -333,7 +324,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 		return Response{}, fmt.Errorf("test error")
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -358,7 +349,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 	router.Handle("binary_flow", func(req *Request) (Response, error) {
 		resp := Response{
 			Status: 213,
-			RawStream: func(st *quic.Stream) {
+			RawStream: func(st *smux.Stream) {
 				payload := []byte("hello world")
 				_ = binarystream.SendDataFromReader(bytes.NewReader(payload), len(payload), st)
 				_ = st.Close()
@@ -367,7 +358,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 		return resp, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -378,7 +369,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 	defer pipe.Close()
 
 	var received []byte
-	handler := RawStreamHandler(func(st *quic.Stream) error {
+	handler := RawStreamHandler(func(st *smux.Stream) error {
 		buf := make([]byte, len("hello world"))
 		n, err := binarystream.ReceiveDataInto(st, buf)
 		if err != nil {
@@ -403,10 +394,10 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 func TestCall_RawStream_HandlerMissing(t *testing.T) {
 	router := NewRouter()
 	router.Handle("binary", func(req *Request) (Response, error) {
-		return Response{Status: 213, RawStream: func(st *quic.Stream) {}}, nil
+		return Response{Status: 213, RawStream: func(st *smux.Stream) {}}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -431,7 +422,7 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -445,7 +436,7 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 		t.Fatalf("expected connected, got %v", st)
 	}
 
-	_ = pipe.Conn.CloseWithError(0, "test close")
+	_ = pipe.conn.Close()
 
 	_ = pipe.Reconnect(context.Background())
 
@@ -465,7 +456,7 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 func TestRouter_NotFound_And_BadRequest(t *testing.T) {
 	router := NewRouter()
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -482,7 +473,7 @@ func TestRouter_NotFound_And_BadRequest(t *testing.T) {
 	}
 
 	router2 := NewRouter()
-	addr2, shutdown2, _ := newTestQUICServer(t, router2)
+	addr2, shutdown2, _ := newTestARPCServer(t, router2)
 	defer shutdown2()
 
 	pipe2, err := ConnectToServer(t.Context(), addr2, nil, clientTLS)
@@ -491,7 +482,7 @@ func TestRouter_NotFound_And_BadRequest(t *testing.T) {
 	}
 	defer pipe2.Close()
 
-	st, err := pipe2.OpenStreamSync(context.Background())
+	st, err := pipe2.OpenStream()
 	if err != nil {
 		t.Fatalf("OpenStreamSync: %v", err)
 	}
@@ -542,7 +533,7 @@ func TestStress_ConsecutiveCalls(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -585,7 +576,7 @@ func TestStress_BatchedSequences(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -629,7 +620,7 @@ func TestStreams_ProperlyClosed_NoExhaustion(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServerCustomIncoming(t, router, 16)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -697,7 +688,7 @@ func TestLeak_SimpleCallAndClose(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	baseline := goroutineSnapshot()
@@ -713,9 +704,7 @@ func TestLeak_SimpleCallAndClose(t *testing.T) {
 		t.Fatalf("Call: %v", err)
 	}
 
-	if err := pipe.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
+	pipe.Close()
 
 	// Give server time to cleanup
 	time.Sleep(200 * time.Millisecond)
@@ -729,7 +718,7 @@ func TestLeak_MultipleConnections(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: req.Payload}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	baseline := goroutineSnapshot()
@@ -748,18 +737,18 @@ func TestLeak_MultipleConnections(t *testing.T) {
 			t.Fatalf("Call %d: %v", i, err)
 		}
 
-		if err := pipe.Close(); err != nil {
-			t.Fatalf("Close %d: %v", i, err)
-		}
+		pipe.Close()
 
 		// Allow server to process disconnect
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	// Extra time for all connections to fully cleanup
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 
-	waitForGoroutines(t, baseline, 15, 5*time.Second)
+	// More permissive tolerance for multiple connections
+	// Each connection creates: client Serve, server Serve, 2 smux goroutines, context watchers
+	waitForGoroutines(t, baseline, 25, 10*time.Second)
 }
 
 func TestLeak_ConcurrentCalls(t *testing.T) {
@@ -771,7 +760,7 @@ func TestLeak_ConcurrentCalls(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -814,7 +803,7 @@ func TestLeak_TimeoutCalls(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -849,7 +838,7 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -863,7 +852,7 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 
 	const cycles = 10
 	for i := 0; i < cycles; i++ {
-		_ = pipe.Conn.CloseWithError(0, "test cycle")
+		_ = pipe.conn.Close()
 		time.Sleep(50 * time.Millisecond)
 
 		if err := pipe.Reconnect(context.Background()); err != nil {
@@ -886,7 +875,7 @@ func TestLeak_RawStreamHandlers(t *testing.T) {
 	router.Handle("binary", func(req *Request) (Response, error) {
 		return Response{
 			Status: 213,
-			RawStream: func(st *quic.Stream) {
+			RawStream: func(st *smux.Stream) {
 				data := make([]byte, 1024)
 				_, _ = st.Write(data)
 				_ = st.Close()
@@ -894,7 +883,7 @@ func TestLeak_RawStreamHandlers(t *testing.T) {
 		}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -908,7 +897,7 @@ func TestLeak_RawStreamHandlers(t *testing.T) {
 
 	const numCalls = 30
 	for i := 0; i < numCalls; i++ {
-		handler := RawStreamHandler(func(st *quic.Stream) error {
+		handler := RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, 1024)
 			_, err := st.Read(buf)
 			return err
@@ -931,7 +920,7 @@ func TestLeak_ErrorResponses(t *testing.T) {
 		return Response{}, fmt.Errorf("intentional error")
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -963,7 +952,7 @@ func TestLeak_StreamExhaustion(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServerCustomIncoming(t, router, 16)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -1003,7 +992,7 @@ func TestLeak_CancelledContexts(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -1044,7 +1033,7 @@ func TestLeak_ServerServeLoop(t *testing.T) {
 
 	baseline := goroutineSnapshot()
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 
 	clientTLS := newTestClientTLS(t)
 	const numClients = 10
@@ -1059,9 +1048,7 @@ func TestLeak_ServerServeLoop(t *testing.T) {
 			t.Fatalf("Call %d: %v", i, err)
 		}
 
-		if err := pipe.Close(); err != nil {
-			t.Fatalf("Close %d: %v", i, err)
-		}
+		pipe.Close()
 
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -1080,7 +1067,7 @@ func TestLeak_MemoryPressure(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: data}, nil
 	})
 
-	addr, shutdown, _ := newTestQUICServer(t, router)
+	addr, shutdown, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)

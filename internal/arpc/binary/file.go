@@ -9,7 +9,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
-	"github.com/quic-go/quic-go"
+	"github.com/xtaci/smux"
 )
 
 var bufferPool = &sync.Pool{
@@ -25,7 +25,7 @@ const (
 	quietDeadline        = 30 * time.Second
 )
 
-func writeFull(w io.Writer, b []byte, stream *quic.Stream) error {
+func writeFull(w io.Writer, b []byte, stream *smux.Stream) error {
 	for len(b) > 0 {
 		n, err := w.Write(b)
 		if err != nil {
@@ -39,7 +39,7 @@ func writeFull(w io.Writer, b []byte, stream *quic.Stream) error {
 	return nil
 }
 
-func readFull(r io.Reader, b []byte, stream *quic.Stream) error {
+func readFull(r io.Reader, b []byte, stream *smux.Stream) error {
 	offset := 0
 	for offset < len(b) {
 		n, err := r.Read(b[offset:])
@@ -58,14 +58,14 @@ func readFull(r io.Reader, b []byte, stream *quic.Stream) error {
 	return nil
 }
 
-func setQuietDeadline(stream *quic.Stream) error {
+func setQuietDeadline(stream *smux.Stream) error {
 	if stream == nil {
 		return fmt.Errorf("nil stream")
 	}
 	return (*stream).SetDeadline(time.Now().Add(quietDeadline))
 }
 
-func SendDataFromReader(r io.Reader, length int, stream *quic.Stream) error {
+func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	if stream == nil {
 		err := fmt.Errorf("stream is nil")
 		syslog.L.Error(err).WithMessage("SendDataFromReader: nil stream").Write()
@@ -134,7 +134,7 @@ func SendDataFromReader(r io.Reader, length int, stream *quic.Stream) error {
 	return nil
 }
 
-func ReceiveDataInto(stream *quic.Stream, dst []byte) (int, error) {
+func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 	if err := setQuietDeadline(stream); err != nil {
 		syslog.L.Warn().WithMessage(fmt.Sprintf("ReceiveDataInto: failed to set initial deadline: %v", err.Error())).Write()
 	}
