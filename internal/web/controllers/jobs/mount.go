@@ -82,6 +82,49 @@ func parseMountPoints() ([]string, error) {
 	return mps, nil
 }
 
+// buildGroupPath constructs the proper path for backup groups with nested namespaces
+func buildGroupPath(ns, backupType, backupID, backupTime string) string {
+	var parts []string
+
+	// Handle nested namespaces: split by '/' and prefix each with 'ns/'
+	if ns != "" {
+		nsParts := strings.Split(ns, "/")
+		for _, nsPart := range nsParts {
+			if nsPart != "" {
+				parts = append(parts, "ns", nsPart)
+			}
+		}
+	}
+
+	// Add backup type (prefixed with appropriate directory)
+	parts = append(parts, backupType, backupID, backupTime)
+
+	return filepath.Join(parts...)
+}
+
+// removeEmptyDirsToBase removes empty directories recursively up to basePath
+func removeEmptyDirsToBase(path, basePath string) {
+	path = filepath.Clean(path)
+	basePath = filepath.Clean(basePath)
+
+	for {
+		if path == basePath || path == "/" || !isPathWithin(basePath, path) {
+			break
+		}
+
+		entries, err := os.ReadDir(path)
+		if err != nil || len(entries) > 0 {
+			break
+		}
+
+		if err := os.Remove(path); err != nil {
+			break
+		}
+
+		path = filepath.Dir(path)
+	}
+}
+
 func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -147,10 +190,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		groupPath := filepath.Join(backupType, backupID, backupTime)
-		if ns != "" {
-			groupPath = filepath.Join("ns", ns, groupPath)
-		}
+		groupPath := buildGroupPath(ns, backupType, backupID, backupTime)
 		didxPath := filepath.Join(pbsStoreRoot, groupPath, fileName)
 
 		args := []string{}
@@ -185,7 +225,6 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 				"--ppxar-didx", didxPath,
 			}
 		}
-		args = append(args, "--options", "ro,allow_other")
 		args = append(args, mountPoint)
 
 		cmd := exec.Command("/usr/bin/proxmox-backup-pxar-mount", args...)
@@ -300,6 +339,11 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			safeTime,
 		))
 
+		basePath := filepath.Clean(filepath.Join(
+			constants.RestoreMountBasePath,
+			datastore,
+		))
+
 		key := snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName)
 
 		var pids []int
@@ -331,8 +375,9 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
 
 		_ = os.RemoveAll(mountPoint)
-		_ = os.MkdirAll(mountPoint, 0o755)
-		_ = os.RemoveAll(mountPoint)
+
+		// Clean up empty parent directories recursively
+		removeEmptyDirsToBase(filepath.Dir(mountPoint), basePath)
 
 		writeJSON(w, JobRunResponse{
 			Success: true,
@@ -360,6 +405,11 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			constants.RestoreMountBasePath,
 			datastore,
 			ns,
+		))
+
+		datastoreBase := filepath.Clean(filepath.Join(
+			constants.RestoreMountBasePath,
+			datastore,
 		))
 
 		allMPs, err := parseMountPoints()
@@ -435,9 +485,10 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			_ = exec.Command("fusermount", "-uz", mp).Run()
 			_ = exec.Command("umount", "-f", "-l", mp).Run()
 			_ = os.RemoveAll(mp)
-			_ = os.MkdirAll(mp, 0o755)
-			_ = os.RemoveAll(mp)
 		}
+
+		// Clean up empty directories recursively
+		removeEmptyDirsToBase(base, datastoreBase)
 
 		writeJSON(w, JobRunResponse{
 			Success: true,
