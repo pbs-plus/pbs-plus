@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"unicode/utf16"
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -26,10 +25,7 @@ var (
 
 func openForAttrs(path string) (windows.Handle, error) {
 	syslog.L.Debug().WithMessage("openForAttrs: opening for attributes").WithField("path", path).Write()
-	pathUTF16 := utf16.Encode([]rune(path))
-	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
-		pathUTF16 = append(pathUTF16, 0)
-	}
+	pathUTF16 := toUTF16Z(path, utf16PathBuf[:0])
 	h, err := windows.CreateFile(
 		&pathUTF16[0],
 		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
@@ -68,10 +64,7 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 
 	var sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters uint32
 
-	rootPath := utf16.Encode([]rune(path))
-	if len(rootPath) == 0 || rootPath[len(rootPath)-1] != 0 {
-		rootPath = append(rootPath, 0)
-	}
+	rootPath := toUTF16Z(path, utf16PathBuf[:0])
 	rootPathPtr := &rootPath[0]
 
 	syslog.L.Debug().WithMessage("getStatFS: calling GetDiskFreeSpaceW").WithField("path", path).Write()
@@ -285,13 +278,7 @@ func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange
 	}
 
 	count := br / int(unsafe.Sizeof(out[0]))
-	res := make([]allocatedRange, 0, count)
-	for i := 0; i < count; i++ {
-		res = append(res, allocatedRange{
-			FileOffset: out[i].FileOffset,
-			Length:     out[i].Length,
-		})
-	}
+	res := out[:count]
 	syslog.L.Debug().WithMessage("queryAllocatedRanges: success").WithField("range_count", len(res)).Write()
 	return res, nil
 }

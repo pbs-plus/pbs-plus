@@ -989,4 +989,72 @@ func TestAgentFSServer(t *testing.T) {
 		err = clientPipe.Call(ctx, "agentFs/Close", &closePayload, nil)
 		assert.NoError(t, err, "Close should succeed")
 	})
+
+	t.Run("MemoryLeakTest", func(t *testing.T) {
+		runtime.GC()
+		var initialMemStats runtime.MemStats
+		runtime.ReadMemStats(&initialMemStats)
+
+		const iterations = 100
+		const readSize = 64 * 1024
+
+		for i := 0; i < iterations; i++ {
+			payload := types.OpenFileReq{Path: "medium_file.bin", Flag: 0, Perm: 0644}
+			var openResult types.FileHandleId
+			err := clientPipe.Call(ctx, "agentFs/OpenFile", &payload, &openResult)
+			require.NoError(t, err, "OpenFile should succeed")
+
+			readAtPayload := types.ReadAtReq{
+				HandleID: openResult,
+				Offset:   0,
+				Length:   readSize,
+			}
+
+			readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
+				buf := make([]byte, readSize)
+				for {
+					n, rerr := binarystream.ReceiveDataInto(st, buf)
+					if n > 0 {
+					}
+					if rerr != nil {
+						if errors.Is(rerr, io.EOF) {
+							break
+						}
+						return rerr
+					}
+				}
+				return nil
+			})
+
+			err = clientPipe.Call(ctx, "agentFs/ReadAt", &readAtPayload, readAtHandler)
+			require.NoError(t, err, "ReadAt should succeed")
+
+			closePayload := types.CloseReq{HandleID: openResult}
+			err = clientPipe.Call(ctx, "agentFs/Close", &closePayload, nil)
+			require.NoError(t, err, "Close should succeed")
+		}
+
+		runtime.GC()
+		time.Sleep(100 * time.Millisecond)
+		runtime.GC()
+
+		var finalMemStats runtime.MemStats
+		runtime.ReadMemStats(&finalMemStats)
+
+		allocDiff := finalMemStats.Alloc - initialMemStats.Alloc
+		heapDiff := finalMemStats.HeapAlloc - initialMemStats.HeapAlloc
+
+		t.Logf("Initial Alloc: %d bytes", initialMemStats.Alloc)
+		t.Logf("Final Alloc: %d bytes", finalMemStats.Alloc)
+		t.Logf("Alloc Diff: %d bytes", allocDiff)
+		t.Logf("Initial HeapAlloc: %d bytes", initialMemStats.HeapAlloc)
+		t.Logf("Final HeapAlloc: %d bytes", finalMemStats.HeapAlloc)
+		t.Logf("HeapAlloc Diff: %d bytes", heapDiff)
+		t.Logf("Total Mallocs: %d", finalMemStats.Mallocs-initialMemStats.Mallocs)
+		t.Logf("Total Frees: %d", finalMemStats.Frees-initialMemStats.Frees)
+
+		maxAcceptableGrowth := uint64(5 * 1024 * 1024)
+		assert.Less(t, allocDiff, maxAcceptableGrowth, "Memory leak detected: allocation grew by %d bytes", allocDiff)
+		assert.Equal(t, 0, agentFsServer.handles.Len(), "All handles should be closed")
+	})
 }
