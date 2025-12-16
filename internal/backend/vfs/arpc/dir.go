@@ -25,26 +25,23 @@ import (
 )
 
 var bufPool = sync.Pool{
-	New: func() any {
+	New: func() interface{} {
 		return make([]byte, 4*1024*1024)
 	},
 }
 
 func (s *DirStream) HasNext() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	syslog.L.Debug().
 		WithMessage("HasNext called").
 		WithField("path", s.path).
-		WithField("closed", s.closed).
-		WithField("curIdx", s.curIdx).
-		WithField("totalReturned", s.totalReturned).
+		WithField("closed", atomic.LoadInt32(&s.closed)).
+		WithField("curIdx", atomic.LoadUint64(&s.curIdx)).
+		WithField("totalReturned", atomic.LoadUint64(&s.totalReturned)).
 		WithField("maxDirEntries", s.fs.Job.MaxDirEntries).
 		WithJob(s.fs.Job.ID).
 		Write()
 
-	if s.closed {
+	if atomic.LoadInt32(&s.closed) != 0 {
 		syslog.L.Debug().
 			WithMessage("HasNext early return: stream closed").
 			WithField("path", s.path).
@@ -53,13 +50,17 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if s.totalReturned >= uint64(s.fs.Job.MaxDirEntries) {
+	if atomic.LoadUint64(&s.totalReturned) >= uint64(s.fs.Job.MaxDirEntries) {
 		lastPath := ""
-		if s.curIdx > 0 && int(s.curIdx) <= len(s.lastResp) {
-			lastEntry := s.lastResp[s.curIdx-1]
+		s.lastRespMu.Lock()
+		curIdxVal := atomic.LoadUint64(&s.curIdx)
+		if curIdxVal > 0 && int(curIdxVal) <= len(s.lastResp) {
+			lastEntry := s.lastResp[curIdxVal-1]
 			lastPath = lastEntry.Name
 		}
+		s.lastRespMu.Unlock()
 
+		atomic.StoreInt32(&s.closed, 1)
 		syslog.L.Error(fmt.Errorf("maximum directory entries reached: %d", s.fs.Job.MaxDirEntries)).
 			WithField("path", s.path).
 			WithField("lastFile", lastPath).
@@ -69,31 +70,38 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if int(s.curIdx) < len(s.lastResp) {
+	// Lock for entire check-and-fetch operation to prevent races
+	s.lastRespMu.Lock()
+	defer s.lastRespMu.Unlock()
+
+	curIdx := atomic.LoadUint64(&s.curIdx)
+	if int(curIdx) < len(s.lastResp) {
 		syslog.L.Debug().
 			WithMessage("HasNext hit in-memory entries").
 			WithField("path", s.path).
+			WithField("curIdx", curIdx).
+			WithField("lastRespLen", len(s.lastResp)).
 			WithJob(s.fs.Job.ID).
 			Write()
 		return true
 	}
 
-	req := types.ReadDirReq{HandleID: s.handleId}
-
-	readBuf := bufPool.Get().([]byte)
-	defer bufPool.Put(readBuf)
-	bytesRead := 0
-
+	// Need to fetch next batch
 	syslog.L.Debug().
-		WithMessage("HasNext issuing ReadDir RPC").
+		WithMessage("HasNext needs new batch - issuing ReadDir RPC").
 		WithField("path", s.path).
 		WithField("handleId", s.handleId).
 		WithJob(s.fs.Job.ID).
 		Write()
 
+	req := types.ReadDirReq{HandleID: s.handleId}
+	readBuf := bufPool.Get().([]byte)
+	defer bufPool.Put(readBuf)
+
 	ctxN, cancelN := context.WithTimeout(s.fs.Ctx, 1*time.Minute)
 	defer cancelN()
 
+	bytesRead := 0
 	err := s.fs.session.Call(ctxN, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(st *quic.Stream) error {
 		n, err := binarystream.ReceiveDataInto(st, readBuf)
 		if err != nil {
@@ -103,44 +111,59 @@ func (s *DirStream) HasNext() bool {
 		return nil
 	}))
 
+	syslog.L.Debug().
+		WithMessage("HasNext RPC completed").
+		WithField("bytesRead", bytesRead).
+		WithField("error", err).
+		WithField("path", s.path).
+		WithJob(s.fs.Job.ID).
+		Write()
+
 	if err != nil {
+		atomic.StoreInt32(&s.closed, 1)
 		if errors.Is(err, os.ErrProcessDone) {
 			syslog.L.Debug().
 				WithMessage("HasNext: process done received, closing dirstream").
 				WithField("path", s.path).
 				WithJob(s.fs.Job.ID).
 				Write()
-			s.closed = true
-			return false
+		} else {
+			syslog.L.Error(err).
+				WithMessage("HasNext: RPC error, closing dirstream").
+				WithField("path", s.path).
+				WithField("handleId", s.handleId).
+				WithJob(s.fs.Job.ID).
+				Write()
 		}
-
-		syslog.L.Error(err).
-			WithField("path", s.path).
-			WithField("handleId", s.handleId).
-			WithJob(s.fs.Job.ID).
-			Write()
 		return false
 	}
 
-	syslog.L.Debug().
-		WithMessage("HasNext RPC completed").
-		WithField("bytesRead", bytesRead).
-		WithField("path", s.path).
-		WithJob(s.fs.Job.ID).
-		Write()
-
 	if bytesRead == 0 {
+		atomic.StoreInt32(&s.closed, 1)
 		syslog.L.Debug().
 			WithMessage("HasNext: no bytes read, marking closed").
 			WithField("path", s.path).
 			WithJob(s.fs.Job.ID).
 			Write()
-		s.closed = true
 		return false
 	}
 
-	if err := cbor.Unmarshal(readBuf[:bytesRead], &s.lastResp); err != nil {
+	oldLen := len(s.lastResp)
+	s.lastResp = nil
+
+	syslog.L.Debug().
+		WithMessage("HasNext: decoding new batch").
+		WithField("path", s.path).
+		WithField("bytesRead", bytesRead).
+		WithField("oldBatchLen", oldLen).
+		WithJob(s.fs.Job.ID).
+		Write()
+
+	err = cbor.Unmarshal(readBuf[:bytesRead], &s.lastResp)
+	if err != nil {
+		atomic.StoreInt32(&s.closed, 1)
 		syslog.L.Error(err).
+			WithMessage("HasNext: decode failed, closing dirstream").
 			WithField("path", s.path).
 			WithField("bytesRead", bytesRead).
 			WithJob(s.fs.Job.ID).
@@ -148,24 +171,39 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	s.curIdx = 0
-	postLen := len(s.lastResp)
+	atomic.StoreUint64(&s.curIdx, 0)
+	newBatchLen := len(s.lastResp)
 
 	syslog.L.Debug().
 		WithMessage("HasNext decoded batch").
-		WithField("entries", postLen).
+		WithField("entries", newBatchLen).
 		WithField("path", s.path).
 		WithJob(s.fs.Job.ID).
 		Write()
 
-	return postLen > 0
+	if newBatchLen == 0 {
+		atomic.StoreInt32(&s.closed, 1)
+		syslog.L.Debug().
+			WithMessage("HasNext: empty batch received, closing").
+			WithField("path", s.path).
+			WithJob(s.fs.Job.ID).
+			Write()
+		return false
+	}
+
+	syslog.L.Debug().
+		WithMessage("HasNext: returning true with new batch").
+		WithField("path", s.path).
+		WithField("batchSize", newBatchLen).
+		WithField("curIdx", atomic.LoadUint64(&s.curIdx)).
+		WithJob(s.fs.Job.ID).
+		Write()
+
+	return true
 }
 
 func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
+	if atomic.LoadInt32(&s.closed) != 0 {
 		syslog.L.Debug().
 			WithMessage("Next called on closed stream").
 			WithField("path", s.path).
@@ -174,17 +212,22 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		return fuse.DirEntry{}, syscall.EBADF
 	}
 
-	if int(s.curIdx) >= len(s.lastResp) {
+	s.lastRespMu.Lock()
+	defer s.lastRespMu.Unlock()
+
+	curIdxVal := atomic.LoadUint64(&s.curIdx)
+
+	if int(curIdxVal) >= len(s.lastResp) {
 		syslog.L.Error(fmt.Errorf("internal state error: index out of bounds in Next")).
 			WithField("path", s.path).
-			WithField("curIdx", s.curIdx).
+			WithField("curIdx", curIdxVal).
 			WithField("lastRespLen", len(s.lastResp)).
 			WithJob(s.fs.Job.ID).
 			Write()
 		return fuse.DirEntry{}, syscall.EBADF
 	}
 
-	curr := s.lastResp[s.curIdx]
+	curr := s.lastResp[curIdxVal]
 
 	syslog.L.Debug().
 		WithMessage("Next returning entry").
@@ -193,9 +236,9 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		WithField("size", curr.Size).
 		WithField("mode", curr.Mode).
 		WithField("isDir", curr.IsDir).
-		WithField("curIdx", s.curIdx).
+		WithField("curIdx", curIdxVal).
 		WithField("lastRespLen", len(s.lastResp)).
-		WithField("totalReturned", s.totalReturned).
+		WithField("totalReturned", atomic.LoadUint64(&s.totalReturned)).
 		WithJob(s.fs.Job.ID).
 		Write()
 
@@ -284,14 +327,14 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		}
 	}
 
-	s.curIdx++
-	s.totalReturned++
+	atomic.AddUint64(&s.curIdx, 1)
+	atomic.AddUint64(&s.totalReturned, 1)
 
 	syslog.L.Debug().
 		WithMessage("Next advanced indices").
 		WithField("path", s.path).
-		WithField("newCurIdx", s.curIdx).
-		WithField("newTotalReturned", s.totalReturned).
+		WithField("newCurIdx", atomic.LoadUint64(&s.curIdx)).
+		WithField("newTotalReturned", atomic.LoadUint64(&s.totalReturned)).
 		WithJob(s.fs.Job.ID).
 		Write()
 
@@ -301,11 +344,8 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	}, 0
 }
 
-func (s *DirStream) Close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
+func (s *DirStream) Close(ctx context.Context) {
+	if atomic.SwapInt32(&s.closed, 1) != 0 {
 		syslog.L.Debug().
 			WithMessage("Close called on already closed stream").
 			WithField("path", s.path).
@@ -314,7 +354,6 @@ func (s *DirStream) Close() {
 			Write()
 		return
 	}
-	s.closed = true
 
 	syslog.L.Debug().
 		WithMessage("Closing DirStream").
@@ -323,27 +362,24 @@ func (s *DirStream) Close() {
 		WithJob(s.fs.Job.ID).
 		Write()
 
-	handleID := s.handleId
-	jobID := s.fs.Job.ID
-
-	closeReq := types.CloseReq{HandleID: handleID}
-
-	ctxN, cancelN := context.WithTimeout(s.fs.Ctx, 1*time.Minute)
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	_, err := s.fs.session.CallData(ctxN, jobID+"/Close", &closeReq)
+	closeReq := types.CloseReq{HandleID: s.handleId}
+	_, err := s.fs.session.CallData(ctxN, s.fs.Job.ID+"/Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
+			WithMessage("DirStream close RPC failed").
 			WithField("path", s.path).
-			WithField("handleId", handleID).
-			WithJob(jobID).
+			WithField("handleId", s.handleId).
+			WithJob(s.fs.Job.ID).
 			Write()
 	} else {
 		syslog.L.Debug().
 			WithMessage("DirStream closed successfully").
 			WithField("path", s.path).
-			WithField("handleId", handleID).
-			WithJob(jobID).
+			WithField("handleId", s.handleId).
+			WithJob(s.fs.Job.ID).
 			Write()
 	}
 }
