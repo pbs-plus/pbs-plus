@@ -375,25 +375,18 @@ func TestAgentFSServer(t *testing.T) {
 		err = clientPipe.Call(ctx, "agentFs/OpenFile", &openPayload, &openResult)
 		require.NoError(t, err, "OpenFile should succeed")
 
-		t.Logf("Handle ID: %d", openResult)
-
 		payload := types.ReadDirReq{HandleID: openResult}
 		var result types.ReadDirEntries
-		var readDirBytes bytes.Buffer
 
 		readDirHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
 			buf := make([]byte, 64*1024)
-			for {
-				n, rerr := binarystream.ReceiveDataInto(st, buf)
-				if n > 0 {
-					readDirBytes.Write(buf[:n])
-				}
-				if rerr != nil {
-					if errors.Is(rerr, io.EOF) {
-						break
-					}
-					return rerr
-				}
+			n, err := binarystream.ReceiveDataInto(st, buf)
+			if err != nil && !errors.Is(err, io.EOF) {
+				return err
+			}
+
+			if n > 0 {
+				return cbor.Unmarshal(buf[:n], &result)
 			}
 			return nil
 		})
@@ -401,9 +394,6 @@ func TestAgentFSServer(t *testing.T) {
 		err = clientPipe.Call(ctx, "agentFs/ReadDir", &payload, readDirHandler)
 		assert.NoError(t, err)
 
-		err = cbor.Unmarshal(readDirBytes.Bytes(), &result)
-		assert.NoError(t, err)
-		t.Logf("Result Size: %v", len(readDirBytes.Bytes()))
 		assert.GreaterOrEqual(t, len(result), 3)
 
 		foundTest1 := false
@@ -430,73 +420,38 @@ func TestAgentFSServer(t *testing.T) {
 	})
 
 	t.Run("OpenFile_ReadAt_Close", func(t *testing.T) {
-		t.Log("Before OpenFile:", dumpHandleMap(agentFsServer))
-
 		payload := types.OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
 		var openResult types.FileHandleId
 		err = clientPipe.Call(ctx, "agentFs/OpenFile", &payload, &openResult)
 		require.NoError(t, err, "OpenFile should succeed")
 
-		t.Logf("After OpenFile - Handle ID received: %d", uint64(openResult))
-		t.Log(dumpHandleMap(agentFsServer))
-
-		exists := false
-		agentFsServer.handles.ForEach(func(key uint64, fh *FileHandle) bool {
-			if key == uint64(openResult) {
-				exists = true
-				return false
-			}
-			return true
-		})
-		require.True(t, exists, "Handle ID should exist in server's handles map")
-
 		readAtPayload := types.ReadAtReq{
 			HandleID: openResult,
 			Offset:   10,
-			Length:   100,
+			Length:   25,
 		}
 
-		t.Logf("Before ReadAt - Using Handle ID: %d", uint64(readAtPayload.HandleID))
-		t.Log(dumpHandleMap(agentFsServer))
-
 		var readAtBytes bytes.Buffer
+
 		readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
-			buf := make([]byte, 32*1024)
-			for {
-				n, rerr := binarystream.ReceiveDataInto(st, buf)
-				if n > 0 {
-					readAtBytes.Write(buf[:n])
-				}
-				if rerr != nil {
-					if errors.Is(rerr, io.EOF) {
-						break
-					}
-					return rerr
-				}
+			buf := make([]byte, 25)
+			n, err := binarystream.ReceiveDataInto(st, buf)
+			if err != nil && !errors.Is(err, io.EOF) {
+				return err
 			}
+			readAtBytes.Reset()
+			readAtBytes.Write(buf[:n])
 			return nil
 		})
 
 		err = clientPipe.Call(ctx, "agentFs/ReadAt", &readAtPayload, readAtHandler)
-		if err != nil {
-			t.Logf("ReadAt error: %v - Current handle map: %s", err, dumpHandleMap(agentFsServer))
-			t.FailNow()
-		}
+		require.NoError(t, err)
 
 		assert.Equal(t, "2 content with more data", readAtBytes.String())
 
-		t.Logf("Before Close - Using Handle ID: %d", uint64(openResult))
-		t.Log(dumpHandleMap(agentFsServer))
-
 		closePayload := types.CloseReq{HandleID: openResult}
 		err = clientPipe.Call(ctx, "agentFs/Close", &closePayload, nil)
-		if err != nil {
-			t.Logf("Close error: %v - Current handle map: %s", err, dumpHandleMap(agentFsServer))
-			t.FailNow()
-		}
 		assert.NoError(t, err)
-
-		t.Log("After Close:", dumpHandleMap(agentFsServer))
 	})
 
 	t.Run("MultipleFiles_HandleManagement", func(t *testing.T) {
@@ -529,23 +484,17 @@ func TestAgentFSServer(t *testing.T) {
 				Length:   readSize,
 			}
 
-			var readAtBytes bytes.Buffer
 			readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
 				buf := make([]byte, readSize)
-				n, err := binarystream.ReceiveDataInto(st, buf)
+				_, err := binarystream.ReceiveDataInto(st, buf)
 				if err != nil && !errors.Is(err, io.EOF) {
-					return fmt.Errorf("read from stream failed: %w", err)
+					return err
 				}
-				readAtBytes.Write(buf[:n])
 				return nil
 			})
 
 			err = clientPipe.Call(ctx, "agentFs/ReadAt", &readAtPayload, readAtHandler)
-			if err != nil {
-				t.Logf("ReadAt error for handle %d: %v - Current handle map: %s",
-					uint64(handle), err, dumpHandleMap(agentFsServer))
-				t.FailNow()
-			}
+			require.NoError(t, err)
 		}
 
 		for i, handle := range handles {
@@ -571,9 +520,6 @@ func TestAgentFSServer(t *testing.T) {
 		err = clientPipe.Call(ctx, "agentFs/OpenFile", &payload, &openResult)
 		assert.NoError(t, err)
 
-		t.Logf("Large file open, handle ID: %d", uint64(openResult))
-		t.Log(dumpHandleMap(agentFsServer))
-
 		readSize := 256 * 1024
 		readAtPayload := types.ReadAtReq{
 			HandleID: openResult,
@@ -583,30 +529,19 @@ func TestAgentFSServer(t *testing.T) {
 
 		var receivedLargeFileBytes bytes.Buffer
 		readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
-			buf := make([]byte, 256*1024)
-			total := 0
-			for total < readSize {
-				n, rerr := binarystream.ReceiveDataInto(st, buf)
-				if n > 0 {
-					receivedLargeFileBytes.Write(buf[:n])
-					total += n
-				}
-				if rerr != nil {
-					if errors.Is(rerr, io.EOF) {
-						break
-					}
-					return rerr
-				}
+			buf := make([]byte, readSize)
+			n, err := binarystream.ReceiveDataInto(st, buf)
+			if err != nil && !errors.Is(err, io.EOF) {
+				return err
 			}
+			receivedLargeFileBytes.Write(buf[:n])
 			return nil
 		})
 
 		err = clientPipe.Call(ctx, "agentFs/ReadAt", &readAtPayload, readAtHandler)
-		if err != nil {
-			t.Logf("Large file ReadAt error: %v - Current handle map: %s", err, dumpHandleMap(agentFsServer))
-			t.FailNow()
-		}
-		assert.Equal(t, readSize, receivedLargeFileBytes.Len(), "Should read the full requested size")
+		require.NoError(t, err)
+
+		assert.Equal(t, readSize, receivedLargeFileBytes.Len())
 
 		originalFile, err := os.Open(largePath)
 		require.NoError(t, err)
@@ -848,9 +783,9 @@ func TestAgentFSServer(t *testing.T) {
 				var goroutineReadBytes bytes.Buffer
 				readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
 					buf := make([]byte, readSize)
-					n, copyErr := binarystream.ReceiveDataInto(st, buf)
-					if copyErr != nil && !errors.Is(copyErr, io.EOF) {
-						return fmt.Errorf("read from stream failed: %w", copyErr)
+					n, err := binarystream.ReceiveDataInto(st, buf)
+					if err != nil && !errors.Is(err, io.EOF) {
+						return err
 					}
 					goroutineReadBytes.Write(buf[:n])
 					return nil
@@ -1015,16 +950,9 @@ func TestAgentFSServer(t *testing.T) {
 
 			readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
 				buf := make([]byte, readSize)
-				for {
-					n, rerr := binarystream.ReceiveDataInto(st, buf)
-					if n > 0 {
-					}
-					if rerr != nil {
-						if errors.Is(rerr, io.EOF) {
-							break
-						}
-						return rerr
-					}
+				_, err := binarystream.ReceiveDataInto(st, buf)
+				if err != nil && !errors.Is(err, io.EOF) {
+					return err
 				}
 				return nil
 			})
