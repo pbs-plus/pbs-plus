@@ -3,11 +3,16 @@
 package s3fs
 
 import (
-	"sync/atomic"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 )
+
+type S3DirStream struct {
+	entries types.ReadDirEntries
+	idx     int
+}
 
 func (s *S3DirStream) HasNext() bool {
 	return s.idx < len(s.entries)
@@ -19,7 +24,6 @@ func (s *S3DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	}
 	e := s.entries[s.idx]
 	s.idx++
-	atomic.AddUint64(&s.total, 1)
 	return fuse.DirEntry{Name: e.Name, Mode: e.Mode}, 0
 }
 
