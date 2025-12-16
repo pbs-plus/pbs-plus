@@ -378,9 +378,10 @@ func TestAgentFSServer(t *testing.T) {
 		payload := types.ReadDirReq{HandleID: openResult}
 		var result types.ReadDirEntries
 
+		n := 0
+		buf := make([]byte, 64*1024)
 		readDirHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
-			buf := make([]byte, 64*1024)
-			n, err := binarystream.ReceiveDataInto(st, buf)
+			n, err = binarystream.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
 				return err
 			}
@@ -393,7 +394,8 @@ func TestAgentFSServer(t *testing.T) {
 
 		err = clientPipe.Call(ctx, "agentFs/ReadDir", &payload, readDirHandler)
 		assert.NoError(t, err)
-
+		t.Logf("Result: %v", buf)
+		t.Logf("Result Size: %v", n)
 		assert.GreaterOrEqual(t, len(result), 3)
 
 		foundTest1 := false
