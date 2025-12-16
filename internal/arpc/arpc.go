@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -100,9 +101,12 @@ func dialServer(serverAddr string, tlsConfig *tls.Config) (*quic.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
+	kaSec := parseSize(os.Getenv("PBS_PLUS_ARPC_KEEP_ALIVE_SEC"), 10)
+	idleTimeout := parseSize(os.Getenv("PBS_PLUS_ARPC_IDLE_TIMEOUT_SEC"), 20)
+
 	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, &quic.Config{
-		KeepAlivePeriod:        time.Second * 15,
-		MaxIdleTimeout:         time.Minute,
+		KeepAlivePeriod:        time.Second * time.Duration(kaSec),
+		MaxIdleTimeout:         time.Second * time.Duration(idleTimeout),
 		MaxStreamReceiveWindow: quicvarint.Max,
 	})
 	if err != nil {
@@ -257,9 +261,13 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener,
 }
 
 func ListenAndServe(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router) error {
+	kaSec := parseSize(os.Getenv("PBS_PLUS_ARPC_KEEP_ALIVE_SEC"), 10)
+	idleTimeout := parseSize(os.Getenv("PBS_PLUS_ARPC_IDLE_TIMEOUT_SEC"), 20)
+
 	quicConfig := quicServerLimitsAutoConfig()
-	quicConfig.KeepAlivePeriod = time.Second * 15
-	quicConfig.MaxIdleTimeout = time.Minute
+
+	quicConfig.KeepAlivePeriod = time.Second * time.Duration(kaSec)
+	quicConfig.MaxIdleTimeout = time.Second * time.Duration(idleTimeout)
 	quicConfig.MaxIncomingStreams = quicvarint.Max
 
 	ql, udpConn, err := Listen(ctx, addr, tlsConfig, quicConfig)
