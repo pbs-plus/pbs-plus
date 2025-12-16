@@ -34,6 +34,8 @@ type DirReaderNT struct {
 	restartScan bool
 	noMoreFiles bool
 	path        string
+	closed      bool
+	mu          sync.Mutex
 }
 
 type UnicodeString struct {

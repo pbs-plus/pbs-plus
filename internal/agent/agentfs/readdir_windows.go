@@ -211,13 +211,26 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 }
 
 func (r *DirReaderNT) Close() error {
-	syslog.L.Debug().WithMessage("DirReaderNT.Close: closing handle").WithField("path", r.path).WithField("handle", r.handle).Write()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.closed {
+		return nil
+	}
+
+	syslog.L.Debug().WithMessage("DirReaderNT.Close: closing handle").
+		WithField("path", r.path).WithField("handle", r.handle).Write()
+
 	status, _, _ := ntClose.Call(r.handle)
+	r.closed = true
+
 	if status != 0 {
 		err := fmt.Errorf("NtClose failed for path '%s' with status: 0x%x", r.path, status)
-		syslog.L.Error(err).WithMessage("DirReaderNT.Close: NtClose failed").WithField("path", r.path).WithField("status_hex", fmt.Sprintf("0x%X", status)).Write()
+		syslog.L.Error(err).WithMessage("DirReaderNT.Close: NtClose failed").
+			WithField("path", r.path).WithField("status_hex", fmt.Sprintf("0x%X", status)).Write()
 		return err
 	}
+
 	syslog.L.Debug().WithMessage("DirReaderNT.Close: success").WithField("path", r.path).Write()
 	return nil
 }
