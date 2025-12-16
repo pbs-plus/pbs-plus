@@ -23,6 +23,20 @@ var (
 	procGetSystemInfo    = modkernel32.NewProc("GetSystemInfo")
 )
 
+func isValidHandle(h windows.Handle) bool {
+	if h == 0 || h == windows.InvalidHandle {
+		return false
+	}
+
+	var fileType uint32
+	fileType, err := windows.GetFileType(h)
+	if err != nil || fileType == windows.FILE_TYPE_UNKNOWN {
+		return false
+	}
+
+	return true
+}
+
 func openForAttrs(path string) (windows.Handle, error) {
 	syslog.L.Debug().WithMessage("openForAttrs: opening for attributes").WithField("path", path).Write()
 	bufPtr := utf16PathBufPool.Get().(*[]uint16)
@@ -373,26 +387,29 @@ func (f *overlappedHandle) ReadAt(b []byte, off int64) (int, error) {
 		WithField("offset", off).
 		WithField("len", len(b)).
 		Write()
+
+	if !isValidHandle(f.h) {
+		return 0, os.ErrClosed
+	}
+
 	o := &windows.Overlapped{}
 	o.Offset = uint32(off)
 	o.OffsetHigh = uint32(uint64(off) >> 32)
 	e, err := f.getEvent()
 	if err != nil {
-		syslog.L.Debug().WithField("error", err).WithMessage("overlappedHandle.ReadAt: failed to get event").Write()
 		return 0, err
 	}
 	defer f.putEvent(e)
 	o.HEvent = e
 
 	n, err := f.asyncIo(windows.ReadFile, b, f.DefaultTimeout, o)
-	if errors.Is(err, io.EOF) || (err == nil && n == 0 && len(b) > 0) || (err == nil && len(b) > int(n)) {
-		syslog.L.Debug().WithMessage("overlappedHandle.ReadAt: EOF condition").WithField("bytes", n).Write()
-		err = io.EOF
+	if err == windows.ERROR_INVALID_HANDLE ||
+		err == windows.ERROR_FILE_NOT_FOUND {
+		return int(n), os.ErrClosed
 	}
-	if err != nil && !errors.Is(err, io.EOF) {
-		syslog.L.Debug().WithField("error", err).WithMessage("overlappedHandle.ReadAt: read failed").WithField("bytes", n).Write()
-	} else {
-		syslog.L.Debug().WithMessage("overlappedHandle.ReadAt: success").WithField("bytes", n).Write()
+
+	if errors.Is(err, io.EOF) || (err == nil && n == 0 && len(b) > 0) || (err == nil && len(b) > int(n)) {
+		err = io.EOF
 	}
 	return int(n), err
 }
