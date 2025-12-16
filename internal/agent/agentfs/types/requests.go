@@ -1,7 +1,5 @@
 package types
 
-import "time"
-
 type (
 	OpenFileReq struct {
 		Path string `cbor:"path"`
