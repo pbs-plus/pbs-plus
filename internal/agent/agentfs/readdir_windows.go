@@ -85,7 +85,6 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		Write()
 
 	err := ntDirectoryCall(ctx, r.handle, &r.ioStatus, buffer, r.restartScan)
-	r.restartScan = false
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			syslog.L.Warn().WithMessage("DirReaderNT.NextBatch: STATUS_PENDING, retry later").WithField("path", r.path).Write()
@@ -99,6 +98,8 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: ntDirectoryCall failed").WithField("path", r.path).Write()
 		return nil, err
 	}
+
+	r.restartScan = false
 
 	var entries types.ReadDirEntries
 
