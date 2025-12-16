@@ -1,146 +1,105 @@
 package types
 
-// OpenFileReq represents a request to open a file
-type OpenFileReq struct {
-	Path string
-	Flag int
-	Perm int
-}
+import "time"
 
-func (req *OpenFileReq) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(req)
-}
-
-func (req *OpenFileReq) Decode(buf []byte) error {
-	return cborDecMode.Unmarshal(buf, req)
-}
-
-// StatReq represents a request to get file stats
-type StatReq struct {
-	Path    string
-	AclOnly bool
-}
-
-func (req *StatReq) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(req)
-}
-
-func (req *StatReq) Decode(buf []byte) error {
-	return cborDecMode.Unmarshal(buf, req)
-}
-
-// FileHandleId is a type alias for uint64
-type FileHandleId uint64
-
-func (id *FileHandleId) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(uint64(*id))
-}
-
-func (id *FileHandleId) Decode(buf []byte) error {
-	var value uint64
-	if err := cborDecMode.Unmarshal(buf, &value); err != nil {
-		return err
+type (
+	OpenFileReq struct {
+		Path string `cbor:"path"`
+		Flag int    `cbor:"flag"`
+		Perm int    `cbor:"perm"`
 	}
-	*id = FileHandleId(value)
-	return nil
-}
 
-// ReadDirReq represents a request to read a directory
-type ReadDirReq struct {
-	HandleID FileHandleId
-}
+	StatReq struct {
+		Path    string `cbor:"path"`
+		AclOnly bool   `cbor:"acl_only,omitempty"`
+	}
 
-func (req *ReadDirReq) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(req)
-}
+	FileHandleId uint64
 
-func (req *ReadDirReq) Decode(buf []byte) error {
-	return cborDecMode.Unmarshal(buf, req)
-}
+	ReadDirReq struct {
+		HandleID FileHandleId `cbor:"handle_id"`
+	}
 
-// ReadReq represents a request to read from a file
-type ReadReq struct {
-	HandleID FileHandleId
-	Length   int
-}
+	ReadReq struct {
+		HandleID FileHandleId `cbor:"handle_id"`
+		Length   int          `cbor:"length"`
+	}
 
-func (req *ReadReq) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(req)
-}
+	ReadAtReq struct {
+		HandleID FileHandleId `cbor:"handle_id"`
+		Offset   int64        `cbor:"offset"`
+		Length   int          `cbor:"length"`
+	}
 
-func (req *ReadReq) Decode(buf []byte) error {
-	return cborDecMode.Unmarshal(buf, req)
-}
+	CloseReq struct {
+		HandleID FileHandleId `cbor:"handle_id"`
+	}
 
-// ReadAtReq represents a request to read from a file at a specific offset
-type ReadAtReq struct {
-	HandleID FileHandleId
-	Offset   int64
-	Length   int
-}
+	BackupReq struct {
+		JobId      string `cbor:"job_id"`
+		Drive      string `cbor:"drive"`
+		SourceMode string `cbor:"source_mode,omitempty"`
+		ReadMode   string `cbor:"read_mode,omitempty"`
+		Extras     string `cbor:"extras,omitempty"`
+	}
 
-func (req *ReadAtReq) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(req)
-}
+	LseekReq struct {
+		HandleID FileHandleId `cbor:"handle_id"`
+		Offset   int64        `cbor:"offset"`
+		Whence   int          `cbor:"whence"`
+	}
 
-func (req *ReadAtReq) Decode(buf []byte) error {
-	return cborDecMode.Unmarshal(buf, req)
-}
+	TargetStatusReq struct {
+		Drive   string `cbor:"drive"`
+		Subpath string `cbor:"subpath,omitempty"`
+	}
+)
 
-// CloseReq represents a request to close a file
-type CloseReq struct {
-	HandleID FileHandleId
-}
+// Response types
+type (
+	LseekResp struct {
+		NewOffset int64 `cbor:"new_offset"`
+	}
 
-func (req *CloseReq) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(req)
-}
+	WinACL struct {
+		SID        string `cbor:"sid"`
+		AccessMask uint32 `cbor:"access_mask"`
+		Type       uint8  `cbor:"type"`
+		Flags      uint8  `cbor:"flags"`
+	}
 
-func (req *CloseReq) Decode(buf []byte) error {
-	return cborDecMode.Unmarshal(buf, req)
-}
+	PosixACL struct {
+		Tag   string `cbor:"tag"`
+		ID    int32  `cbor:"id"`
+		Perms uint8  `cbor:"perms"`
+	}
 
-// BackupReq represents a request to back up a file
-type BackupReq struct {
-	JobId      string
-	Drive      string
-	SourceMode string
-	ReadMode   string
-	Extras     string
-}
+	AgentFileInfo struct {
+		Name           string          `cbor:"name"`
+		Size           int64           `cbor:"size"`
+		Mode           uint32          `cbor:"mode"`
+		ModTime        time.Time       `cbor:"mod_time"`
+		IsDir          bool            `cbor:"is_dir"`
+		Blocks         uint64          `cbor:"blocks,omitempty"`
+		CreationTime   int64           `cbor:"creation_time,omitempty"`
+		LastAccessTime int64           `cbor:"last_access_time,omitempty"`
+		LastWriteTime  int64           `cbor:"last_write_time,omitempty"`
+		FileAttributes map[string]bool `cbor:"file_attributes,omitempty"`
+		Owner          string          `cbor:"owner,omitempty"`
+		Group          string          `cbor:"group,omitempty"`
+		WinACLs        []WinACL        `cbor:"win_acls,omitempty"`
+		PosixACLs      []PosixACL      `cbor:"posix_acls,omitempty"`
+	}
 
-func (req *BackupReq) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(req)
-}
+	StatFS struct {
+		Bsize   uint64 `cbor:"bsize"`
+		Blocks  uint64 `cbor:"blocks"`
+		Bfree   uint64 `cbor:"bfree"`
+		Bavail  uint64 `cbor:"bavail"`
+		Files   uint64 `cbor:"files"`
+		Ffree   uint64 `cbor:"ffree"`
+		NameLen uint64 `cbor:"name_len"`
+	}
 
-func (req *BackupReq) Decode(buf []byte) error {
-	return cborDecMode.Unmarshal(buf, req)
-}
-
-// LseekReq represents a request to seek within a file
-type LseekReq struct {
-	HandleID FileHandleId
-	Offset   int64
-	Whence   int
-}
-
-func (req *LseekReq) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(req)
-}
-
-func (req *LseekReq) Decode(buf []byte) error {
-	return cborDecMode.Unmarshal(buf, req)
-}
-
-type TargetStatusReq struct {
-	Drive   string
-	Subpath string
-}
-
-func (req *TargetStatusReq) Encode() ([]byte, error) {
-	return cborEncMode.Marshal(req)
-}
-
-func (req *TargetStatusReq) Decode(buf []byte) error {
-	return cborDecMode.Unmarshal(buf, req)
-}
+	ReadDirEntries []AgentFileInfo
+)

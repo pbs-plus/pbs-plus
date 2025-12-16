@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/fxamacker/cbor/v2"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -138,7 +139,7 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if err := s.lastResp.Decode(readBuf[:bytesRead]); err != nil {
+	if err := cbor.Unmarshal(readBuf[:bytesRead], &s.lastResp); err != nil {
 		syslog.L.Error(err).
 			WithField("path", s.path).
 			WithField("bytesRead", bytesRead).
@@ -220,7 +221,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 			IsDir:   curr.IsDir,
 		}
 
-		if attrBytes, err := currAttr.Encode(); err == nil {
+		if attrBytes, err := cbor.Marshal(currAttr); err == nil {
 			if !currAttr.IsDir {
 				atomic.AddInt64(&s.fs.FileCount, 1)
 			} else {
@@ -258,7 +259,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 			FileAttributes: curr.FileAttributes,
 		}
 
-		if xattrBytes, err := currXAttr.Encode(); err == nil {
+		if xattrBytes, err := cbor.Marshal(currXAttr); err == nil {
 			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(fullPath), Value: xattrBytes, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("memcache set xattr failed").

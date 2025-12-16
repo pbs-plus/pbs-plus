@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -360,7 +361,9 @@ func TestAgentFSServer(t *testing.T) {
 		assert.NotEmpty(t, result.LastWriteTime, "LastWriteTime should not be empty")
 		t.Logf("WinACLs for %s: %+v", testFilePath, result.WinACLs)
 		t.Logf("PosixACLs for %s: %+v", testFilePath, result.PosixACLs)
-		assert.NotNil(t, result.FileAttributes, "FileAttributes map should not be nil")
+		if runtime.GOOS == "windows" {
+			assert.NotNil(t, result.FileAttributes, "FileAttributes map should not be nil")
+		}
 
 		err = os.Remove(testFilePath)
 		require.NoError(t, err, "Failed to remove test file")
@@ -398,7 +401,7 @@ func TestAgentFSServer(t *testing.T) {
 		err = clientPipe.Call(ctx, "agentFs/ReadDir", &payload, readDirHandler)
 		assert.NoError(t, err)
 
-		err = result.Decode(readDirBytes.Bytes())
+		err = cbor.Unmarshal(readDirBytes.Bytes(), &result)
 		assert.NoError(t, err)
 		t.Logf("Result Size: %v", len(readDirBytes.Bytes()))
 		assert.GreaterOrEqual(t, len(result), 3)
@@ -988,5 +991,87 @@ func TestAgentFSServer(t *testing.T) {
 		closePayload := types.CloseReq{HandleID: openResult}
 		err = clientPipe.Call(ctx, "agentFs/Close", &closePayload, nil)
 		assert.NoError(t, err, "Close should succeed")
+	})
+
+	t.Run("MemoryLeakTest", func(t *testing.T) {
+		runtime.GC()
+		var initialMemStats runtime.MemStats
+		runtime.ReadMemStats(&initialMemStats)
+
+		const iterations = 100
+		const readSize = 64 * 1024
+
+		for i := 0; i < iterations; i++ {
+			payload := types.OpenFileReq{Path: "medium_file.bin", Flag: 0, Perm: 0644}
+			var openResult types.FileHandleId
+			err := clientPipe.Call(ctx, "agentFs/OpenFile", &payload, &openResult)
+			require.NoError(t, err, "OpenFile should succeed")
+
+			readAtPayload := types.ReadAtReq{
+				HandleID: openResult,
+				Offset:   0,
+				Length:   readSize,
+			}
+
+			readAtHandler := arpc.RawStreamHandler(func(st *quic.Stream) error {
+				buf := make([]byte, readSize)
+				for {
+					n, rerr := binarystream.ReceiveDataInto(st, buf)
+					if n > 0 {
+					}
+					if rerr != nil {
+						if errors.Is(rerr, io.EOF) {
+							break
+						}
+						return rerr
+					}
+				}
+				return nil
+			})
+
+			err = clientPipe.Call(ctx, "agentFs/ReadAt", &readAtPayload, readAtHandler)
+			require.NoError(t, err, "ReadAt should succeed")
+
+			closePayload := types.CloseReq{HandleID: openResult}
+			err = clientPipe.Call(ctx, "agentFs/Close", &closePayload, nil)
+			require.NoError(t, err, "Close should succeed")
+		}
+
+		runtime.GC()
+		time.Sleep(100 * time.Millisecond)
+		runtime.GC()
+
+		var finalMemStats runtime.MemStats
+		runtime.ReadMemStats(&finalMemStats)
+
+		initialAlloc := int64(initialMemStats.Alloc)
+		finalAlloc := int64(finalMemStats.Alloc)
+		allocDiff := finalAlloc - initialAlloc
+
+		initialHeap := int64(initialMemStats.HeapAlloc)
+		finalHeap := int64(finalMemStats.HeapAlloc)
+		heapDiff := finalHeap - initialHeap
+
+		t.Logf("Initial Alloc: %d bytes", initialAlloc)
+		t.Logf("Final Alloc: %d bytes", finalAlloc)
+		t.Logf("Alloc Diff: %d bytes", allocDiff)
+		t.Logf("Initial HeapAlloc: %d bytes", initialHeap)
+		t.Logf("Final HeapAlloc: %d bytes", finalHeap)
+		t.Logf("HeapAlloc Diff: %d bytes", heapDiff)
+		t.Logf("Total Mallocs: %d", finalMemStats.Mallocs-initialMemStats.Mallocs)
+		t.Logf("Total Frees: %d", finalMemStats.Frees-initialMemStats.Frees)
+
+		maxAcceptableGrowth := int64(5 * 1024 * 1024)
+		if allocDiff > maxAcceptableGrowth {
+			t.Errorf("Memory leak detected: allocation grew by %d bytes (%.2f MB)",
+				allocDiff, float64(allocDiff)/(1024*1024))
+		}
+
+		if allocDiff < 0 {
+			t.Logf("Memory decreased by %d bytes (%.2f MB) - good!",
+				-allocDiff, float64(-allocDiff)/(1024*1024))
+		}
+
+		assert.Equal(t, 0, agentFsServer.handles.Len(), "All handles should be closed")
 	})
 }
