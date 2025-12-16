@@ -334,6 +334,8 @@ func (f *overlappedHandle) asyncIo(fn func(windows.Handle, []byte, *uint32, *win
 	if err == windows.ERROR_IO_PENDING {
 		if milliseconds >= 0 {
 			if n, _ = windows.WaitForSingleObject(o.HEvent, uint32(milliseconds)); n != windows.WAIT_OBJECT_0 {
+				windows.CancelIoEx(f.h, o)
+
 				switch n {
 				case syscall.WAIT_ABANDONED:
 					err = os.NewSyscallError("WaitForSingleObject", fmt.Errorf("WAIT_ABANDONED"))
@@ -344,7 +346,6 @@ func (f *overlappedHandle) asyncIo(fn func(windows.Handle, []byte, *uint32, *win
 				default:
 					err = os.NewSyscallError("WaitForSingleObject", fmt.Errorf("UNKNOWN ERROR"))
 				}
-				syslog.L.Debug().WithField("error", err).WithMessage("overlappedHandle.asyncIo: wait failed").Write()
 				return 0, err
 			}
 		}
