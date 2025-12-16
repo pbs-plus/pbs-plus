@@ -344,7 +344,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	}, 0
 }
 
-func (s *DirStream) Close(ctx context.Context) {
+func (s *DirStream) Close() {
 	if atomic.SwapInt32(&s.closed, 1) != 0 {
 		syslog.L.Debug().
 			WithMessage("Close called on already closed stream").
@@ -362,7 +362,7 @@ func (s *DirStream) Close(ctx context.Context) {
 		WithJob(s.fs.Job.ID).
 		Write()
 
-	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	ctxN, cancelN := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancelN()
 
 	closeReq := types.CloseReq{HandleID: s.handleId}
