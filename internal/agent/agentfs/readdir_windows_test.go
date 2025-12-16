@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 )
 
@@ -78,7 +79,7 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 
 	// Decode and verify results
 	var entries types.ReadDirEntries
-	if err := entries.Decode(entriesBytes); err != nil {
+	if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 		t.Fatalf("Failed to decode directory entries: %v", err)
 	}
 
@@ -111,7 +112,7 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 
 	// Decode and verify results
 	var entries types.ReadDirEntries
-	if err := entries.Decode(entriesBytes); err != nil {
+	if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 		t.Fatalf("Failed to decode directory entries: %v", err)
 	}
 
@@ -152,7 +153,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 
 		// Decode and verify results
 		var entries types.ReadDirEntries
-		if err := entries.Decode(entriesBytes); err != nil {
+		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
@@ -197,7 +198,7 @@ func testFileAttributes(t *testing.T, tempDir string) {
 
 		// Decode and verify results
 		var entries types.ReadDirEntries
-		if err := entries.Decode(entriesBytes); err != nil {
+		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
@@ -273,7 +274,7 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 
 		// Decode and verify results
 		var entries types.ReadDirEntries
-		if err := entries.Decode(entriesBytes); err != nil {
+		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
@@ -316,7 +317,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 
 		// Decode and verify results
 		var entries types.ReadDirEntries
-		if err := entries.Decode(entriesBytes); err != nil {
+		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
@@ -367,7 +368,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 
 		// Decode and verify results
 		var entries types.ReadDirEntries
-		if err := entries.Decode(entriesBytes); err != nil {
+		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
