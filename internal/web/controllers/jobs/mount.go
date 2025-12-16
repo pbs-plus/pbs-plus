@@ -4,7 +4,6 @@ package jobs
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +13,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -24,23 +22,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
-
-var (
-	mountMu        sync.Mutex
-	mountedPaths   = make(map[string][]string)
-	mountProcesses = make(map[string][]int)
-)
-
-func snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName string) string {
-	parts := []string{datastore, backupType, backupID, backupTime}
-	if ns != "" {
-		parts = append(parts, ns)
-	}
-	if fileName != "" {
-		parts = append(parts, fileName)
-	}
-	return strings.Join(parts, "|")
-}
 
 func isPathWithin(base, p string) bool {
 	base = filepath.Clean(base)
@@ -125,6 +106,26 @@ func removeEmptyDirsToBase(path, basePath string) {
 	}
 }
 
+// unmountPath attempts to unmount a single path using multiple methods
+func unmountPath(mountPoint string) error {
+	// Try fusermount3 first (modern FUSE)
+	if err := exec.Command("fusermount3", "-uz", mountPoint).Run(); err == nil {
+		return nil
+	}
+
+	// Try fusermount (legacy FUSE)
+	if err := exec.Command("fusermount", "-uz", mountPoint).Run(); err == nil {
+		return nil
+	}
+
+	// Try umount with force and lazy flags
+	if err := exec.Command("umount", "-f", "-l", mountPoint).Run(); err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("failed to unmount %s", mountPoint)
+}
+
 func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -181,10 +182,10 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			safeTime,
 		))
 
-		_ = exec.Command("fusermount3", "-uz", mountPoint).Run()
-		_ = exec.Command("fusermount", "-uz", mountPoint).Run()
-		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
+		// Clean up any existing mount
+		_ = unmountPath(mountPoint)
 		_ = os.RemoveAll(mountPoint)
+
 		if err := os.MkdirAll(mountPoint, 0o755); err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("failed to create mount-point: %w", err))
 			return
@@ -228,70 +229,41 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		args = append(args, mountPoint)
 
 		cmd := exec.Command("/usr/bin/proxmox-backup-pxar-mount", args...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		// Detach from current process - run independently
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setsid:  true,
+			Setpgid: true,
+		}
+		// Detach standard streams
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
 
 		if err := cmd.Start(); err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("start mount: %w", err))
 			_ = os.RemoveAll(mountPoint)
 			return
 		}
-		proc := cmd.Process
 
-		defer func() {
-			_ = proc.Signal(syscall.Signal(0))
-		}()
+		// Detach from the process - let it run independently
+		_ = cmd.Process.Release()
 
-		waitCtx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
-		defer cancel()
-
-		checkMounted := func() bool {
-			for i := 0; i < 10; i++ {
-				if utils.IsMounted(mountPoint) {
-					return true
-				}
-				time.Sleep(150 * time.Millisecond)
+		// Wait for mount to become active by checking filesystem
+		mountOK := false
+		for i := 0; i < 20; i++ {
+			if utils.IsMounted(mountPoint) {
+				mountOK = true
+				break
 			}
-			return utils.IsMounted(mountPoint)
-		}
-
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-
-		var mountOK bool
-		select {
-		case <-waitCtx.Done():
-			mountOK = utils.IsMounted(mountPoint)
-		case err := <-done:
-			if err != nil {
-				mountOK = false
-			} else {
-				mountOK = checkMounted()
-			}
-		case <-time.After(500 * time.Millisecond):
-			mountOK = checkMounted()
+			time.Sleep(150 * time.Millisecond)
 		}
 
 		if !mountOK {
-			_ = proc.Signal(syscall.SIGTERM)
-			select {
-			case <-done:
-			case <-time.After(1 * time.Second):
-				_ = proc.Kill()
-				_ = cmd.Wait()
-			}
-			_ = exec.Command("fusermount3", "-uz", mountPoint).Run()
-			_ = exec.Command("fusermount", "-uz", mountPoint).Run()
-			_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
+			_ = unmountPath(mountPoint)
 			_ = os.RemoveAll(mountPoint)
 			controllers.WriteErrorResponse(w, errors.New("mount failed"))
 			return
 		}
-
-		key := snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName)
-		mountMu.Lock()
-		mountedPaths[key] = appendUnique(mountedPaths[key], filepath.Clean(mountPoint))
-		mountProcesses[key] = appendIntUnique(mountProcesses[key], proc.Pid)
-		mountMu.Unlock()
 
 		writeJSON(w, JobRunResponse{
 			Success: true,
@@ -344,36 +316,10 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			datastore,
 		))
 
-		key := snapshotKey(datastore, backupType, backupID, backupTime, ns, fileName)
+		// Unmount the path
+		_ = unmountPath(mountPoint)
 
-		var pids []int
-		mountMu.Lock()
-		for k, v := range mountedPaths {
-			mountedPaths[k] = removeString(v, mountPoint)
-			if len(mountedPaths[k]) == 0 {
-				delete(mountedPaths, k)
-			}
-		}
-		if mp, ok := mountProcesses[key]; ok {
-			pids = append(pids, mp...)
-			delete(mountProcesses, key)
-		}
-		mountMu.Unlock()
-
-		for _, pid := range pids {
-			_ = syscall.Kill(pid, syscall.SIGTERM)
-		}
-
-		time.Sleep(600 * time.Millisecond)
-
-		for _, pid := range pids {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
-
-		_ = exec.Command("fusermount3", "-uz", mountPoint).Run()
-		_ = exec.Command("fusermount", "-uz", mountPoint).Run()
-		_ = exec.Command("umount", "-f", "-l", mountPoint).Run()
-
+		// Remove the mount point directory
 		_ = os.RemoveAll(mountPoint)
 
 		// Clean up empty parent directories recursively
@@ -407,11 +353,6 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			ns,
 		))
 
-		datastoreBase := filepath.Clean(filepath.Join(
-			constants.RestoreMountBasePath,
-			datastore,
-		))
-
 		allMPs, err := parseMountPoints()
 		if err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("read mounts: %w", err))
@@ -435,60 +376,13 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			return di > dj
 		})
 
-		var pidsToKill []int
-		mountMu.Lock()
-		for k, v := range mountedPaths {
-			var kept []string
-			for _, p := range v {
-				if !(p == base || isPathWithin(base, p)) {
-					kept = append(kept, p)
-				}
-			}
-			if len(kept) > 0 {
-				mountedPaths[k] = kept
-			} else {
-				delete(mountedPaths, k)
-			}
-		}
-		for k, plist := range mountProcesses {
-			parts := strings.Split(k, "|")
-			if len(parts) < 4 {
-				continue
-			}
-			datastoreK := parts[0]
-			nsK := ""
-			if len(parts) > 4 {
-				nsK = parts[4]
-			}
-			mpBase := filepath.Clean(filepath.Join(
-				constants.RestoreMountBasePath,
-				datastoreK,
-				nsK,
-			))
-			if mpBase == base || isPathWithin(base, mpBase) || isPathWithin(mpBase, base) {
-				pidsToKill = append(pidsToKill, plist...)
-				delete(mountProcesses, k)
-			}
-		}
-		mountMu.Unlock()
-
-		for _, pid := range pidsToKill {
-			_ = syscall.Kill(pid, syscall.SIGTERM)
-		}
-		time.Sleep(600 * time.Millisecond)
-		for _, pid := range pidsToKill {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
-
+		// Unmount all targets
 		for _, mp := range targets {
-			_ = exec.Command("fusermount3", "-uz", mp).Run()
-			_ = exec.Command("fusermount", "-uz", mp).Run()
-			_ = exec.Command("umount", "-f", "-l", mp).Run()
-			_ = os.RemoveAll(mp)
+			_ = unmountPath(mp)
 		}
 
-		// Clean up empty directories recursively
-		removeEmptyDirsToBase(base, datastoreBase)
+		// Remove all directories recursively under base
+		_ = os.RemoveAll(base)
 
 		writeJSON(w, JobRunResponse{
 			Success: true,
@@ -501,32 +395,4 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
-}
-
-func appendUnique(slice []string, item string) []string {
-	for _, s := range slice {
-		if s == item {
-			return slice
-		}
-	}
-	return append(slice, item)
-}
-
-func appendIntUnique(slice []int, item int) []int {
-	for _, s := range slice {
-		if s == item {
-			return slice
-		}
-	}
-	return append(slice, item)
-}
-
-func removeString(slice []string, item string) []string {
-	out := make([]string, 0, len(slice))
-	for _, s := range slice {
-		if s != item {
-			out = append(out, s)
-		}
-	}
-	return out
 }
