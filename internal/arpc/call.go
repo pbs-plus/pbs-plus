@@ -55,7 +55,9 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
-	} else {
+	}
+
+	if ctx.Done() != nil {
 		go func() {
 			<-ctx.Done()
 			if streaming.Load() {
@@ -171,7 +173,9 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
-	} else {
+	}
+
+	if ctx.Done() != nil {
 		go func() {
 			<-ctx.Done()
 			cleanupOnce.Do(cleanup)
