@@ -4,34 +4,42 @@ package s3fs
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/fxamacker/cbor/v2"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
-	"github.com/pbs-plus/pbs-plus/internal/memlocal"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func (fs *S3FS) logError(fpath string, err error) {
-	if !strings.HasSuffix(fpath, ".pxarexclude") {
-		syslog.L.Error(err).
-			WithField("path", fpath).
-			WithJob(fs.Job.ID).
-			Write()
-	}
+const (
+	metaCacheTTL    = 30 * time.Second
+	dirCacheTTL     = 30 * time.Second
+	maxCacheEntries = 2048
+)
+
+type cacheEntry[T any] struct {
+	value     *T
+	expiresAt time.Time
+}
+
+func (e cacheEntry[T]) expired() bool {
+	return time.Now().After(e.expiresAt)
+}
+
+var seenNamesPool = sync.Pool{
+	New: func() any {
+		m := make(map[string]bool, 64)
+		return &m
+	},
 }
 
 func NewS3FS(
@@ -40,15 +48,12 @@ func NewS3FS(
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
 ) *S3FS {
-	ctxFs, cancel := context.WithCancel(ctx)
-
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure: useSSL,
 		Region: region,
 	})
 	if err != nil {
-		cancel()
 		return nil
 	}
 
@@ -57,104 +62,60 @@ func NewS3FS(
 		prefix += "/"
 	}
 
-	memcachePath := filepath.Join(constants.MemcachedSocketPath, fmt.Sprintf("%s.sock", job.ID))
+	metaCache, _ := lru.New[string, cacheEntry[agentTypes.AgentFileInfo]](maxCacheEntries)
+	dirCache, _ := lru.New[string, cacheEntry[agentTypes.ReadDirEntries]](maxCacheEntries)
 
-	stopMemLocal, err := memlocal.StartMemcachedOnUnixSocket(ctxFs, memlocal.MemcachedConfig{
-		SocketPath:     memcachePath,
-		MemoryMB:       1024,
-		MaxConnections: 0,
-	})
-	if err != nil {
-		cancel()
-		return nil
-	}
-
-	fs := &S3FS{
+	return &S3FS{
 		VFSBase: &vfs.VFSBase{
-			BasePath: "/",
-			Ctx:      ctxFs,
-			Cancel:   cancel,
-			Job:      job,
-			Memcache: memcache.New(memcachePath),
+			Ctx: ctx,
+			Job: job,
 		},
-		client: client,
-		bucket: bucket,
-		prefix: prefix,
+		client:    client,
+		bucket:    bucket,
+		prefix:    prefix,
+		metaCache: metaCache,
+		dirCache:  dirCache,
 	}
-
-	go func() {
-		<-ctxFs.Done()
-		fs.Memcache.DeleteAll()
-		fs.Memcache.Close()
-		stopMemLocal()
-	}()
-
-	return fs
 }
 
-func (fs *S3FS) Context() context.Context { return fs.Ctx }
-
-func (fs *S3FS) Root() string {
-	return fs.BasePath
-}
-
-func (fs *S3FS) Open(ctx context.Context, filename string) (S3File, error) {
-	return fs.OpenFile(ctx, filename, os.O_RDONLY, 0)
-}
-
-func (fs *S3FS) OpenFile(ctx context.Context, filename string, flag int, _ os.FileMode) (S3File, error) {
-	defer func() {
-		key := fs.fullKey(filename)
-		fs.Memcache.Delete("attr:" + memlocal.Key(key))
-	}()
-
-	info, err := fs.Attr(ctx, filename, false)
-	if err != nil {
-		return S3File{}, err
+func (fs *S3FS) fullKey(fpath string) string {
+	if fpath == "/" || fpath == "" {
+		return fs.prefix
 	}
-	if info.IsDir {
-		return S3File{}, syscall.EISDIR
+	p := strings.TrimPrefix(path.Clean(fpath), "/")
+	if p == "." || p == "" {
+		return fs.prefix
 	}
-
-	return S3File{
-		fs:    fs,
-		key:   fs.fullKey(filename),
-		size:  info.Size,
-		jobId: fs.Job.ID,
-	}, nil
+	return fs.prefix + p
 }
 
-func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTypes.AgentFileInfo, error) {
+func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 	now := time.Now().Unix()
 
 	if fpath == "/" || fpath == "" {
-		fi := agentTypes.AgentFileInfo{
+		return agentTypes.AgentFileInfo{
 			IsDir:          true,
 			Mode:           uint32(os.ModeDir | 0555),
 			CreationTime:   now,
 			LastAccessTime: now,
 			LastWriteTime:  now,
-		}
-		return fi, nil
+		}, nil
 	}
 
 	key := fs.fullKey(fpath)
 
-	var cached agentTypes.AgentFileInfo
-	if it, err := fs.Memcache.Get("attr:" + memlocal.Key(key)); err == nil {
-		atomic.AddInt64(&fs.StatCacheHits, 1)
-		if err := cbor.Unmarshal(it.Value, &cached); err == nil {
-			return cached, nil
-		}
+	if val, ok := fs.metaCache.Get(key); ok && !val.expired() {
+		return *val.value, nil
 	}
 
-	ctx, cancel := context.WithTimeout(fs.Ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(fs.Ctx, 5*time.Second)
 	defer cancel()
 
+	// Try to get object info directly (for files)
 	if objInfo, err := fs.client.StatObject(ctx, fs.bucket, key, minio.StatObjectOptions{}); err == nil {
 		mod := objInfo.LastModified.Unix()
 		blocks := uint64((objInfo.Size + 511) / 512)
-		fi := agentTypes.AgentFileInfo{
+		result := agentTypes.AgentFileInfo{
 			IsDir:          false,
 			Mode:           0644,
 			Size:           objInfo.Size,
@@ -163,13 +124,16 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 			LastAccessTime: mod,
 			LastWriteTime:  mod,
 		}
-		raw, _ := cbor.Marshal(fi)
-		if isLookup {
-			_ = fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(key), Value: raw, Expiration: 0})
-		}
-		return fi, nil
+
+		fs.metaCache.Add(key, cacheEntry[agentTypes.AgentFileInfo]{
+			value:     &result,
+			expiresAt: time.Now().Add(metaCacheTTL),
+		})
+		atomic.AddInt64(&fs.FileCount, 1)
+		return result, nil
 	}
 
+	// Check if it's a directory by listing with prefix
 	dirKey := key
 	if !strings.HasSuffix(dirKey, "/") {
 		dirKey += "/"
@@ -181,127 +145,31 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 		MaxKeys:   1,
 	}
 
-	foundDir := false
 	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
 		if obj.Err != nil {
-			fs.logError(fpath, obj.Err)
-			return agentTypes.AgentFileInfo{}, syscall.ENOENT
+			return agentTypes.AgentFileInfo{}, obj.Err
 		}
-		foundDir = true
-		break
-	}
 
-	if foundDir {
-		fi := agentTypes.AgentFileInfo{
+		result := agentTypes.AgentFileInfo{
 			IsDir:          true,
 			Mode:           uint32(os.ModeDir | 0555),
 			CreationTime:   now,
 			LastAccessTime: now,
 			LastWriteTime:  now,
 		}
-		raw, _ := cbor.Marshal(fi)
-		if isLookup {
-			_ = fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(key), Value: raw, Expiration: 0})
-		}
-		return fi, nil
+
+		fs.metaCache.Add(key, cacheEntry[agentTypes.AgentFileInfo]{
+			value:     &result,
+			expiresAt: time.Now().Add(metaCacheTTL),
+		})
+		atomic.AddInt64(&fs.FolderCount, 1)
+		return result, nil
 	}
 
-	fs.logError(fpath, syscall.ENOENT)
 	return agentTypes.AgentFileInfo{}, syscall.ENOENT
 }
 
-func (fs *S3FS) Xattr(ctx context.Context, fpath string) (agentTypes.AgentFileInfo, error) {
-	var fi agentTypes.AgentFileInfo
-
-	if !fs.Job.IncludeXattr {
-		syslog.L.Debug().
-			WithMessage("Xattr disabled by job").
-			WithField("path", fpath).
-			WithField("jobId", fs.Job.ID).
-			Write()
-		return agentTypes.AgentFileInfo{}, syscall.ENOTSUP
-	}
-
-	key := fs.fullKey(fpath)
-
-	var fiCached agentTypes.AgentFileInfo
-	reqAclOnly := false
-	if it, err := fs.Memcache.Get("xattr:" + memlocal.Key(key)); err == nil {
-		reqAclOnly = true
-		_ = cbor.Unmarshal(it.Value, &fiCached)
-		fs.Memcache.Delete("xattr:" + memlocal.Key(key))
-	}
-
-	ctx, cancel := context.WithTimeout(fs.Ctx, 30*time.Second)
-	defer cancel()
-
-	if reqAclOnly {
-		if objInfo, err := fs.client.StatObject(ctx, fs.bucket, key, minio.StatObjectOptions{}); err == nil {
-			fi = agentTypes.AgentFileInfo{
-				IsDir:          false,
-				Mode:           0644,
-				Size:           objInfo.Size,
-				Blocks:         uint64((objInfo.Size + 511) / 512),
-				CreationTime:   fiCached.CreationTime,
-				LastAccessTime: fiCached.LastAccessTime,
-				LastWriteTime:  fiCached.LastWriteTime,
-				FileAttributes: fiCached.FileAttributes,
-			}
-			return fi, nil
-		} else {
-			fs.logError(fpath, err)
-		}
-		return agentTypes.AgentFileInfo{}, syscall.ENODATA
-	}
-
-	if objInfo, err := fs.client.StatObject(ctx, fs.bucket, key, minio.StatObjectOptions{}); err == nil {
-		mod := objInfo.LastModified.Unix()
-		fi = agentTypes.AgentFileInfo{
-			IsDir:          false,
-			Mode:           0644,
-			Size:           objInfo.Size,
-			Blocks:         uint64((objInfo.Size + 511) / 512),
-			CreationTime:   mod,
-			LastAccessTime: mod,
-			LastWriteTime:  mod,
-		}
-		raw, _ := cbor.Marshal(fi)
-		_ = fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(key), Value: raw, Expiration: 0})
-		return fi, nil
-	}
-
-	dirKey := key
-	if !strings.HasSuffix(dirKey, "/") {
-		dirKey += "/"
-	}
-	opts := minio.ListObjectsOptions{
-		Prefix:    dirKey,
-		Recursive: false,
-		MaxKeys:   1,
-	}
-	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
-		if obj.Err != nil {
-			fs.logError(fpath, obj.Err)
-			return agentTypes.AgentFileInfo{}, syscall.ENODATA
-		}
-		now := time.Now().Unix()
-		fi = agentTypes.AgentFileInfo{
-			IsDir:          true,
-			Mode:           uint32(os.ModeDir | 0555),
-			CreationTime:   now,
-			LastAccessTime: now,
-			LastWriteTime:  now,
-		}
-		raw, _ := cbor.Marshal(fi)
-		_ = fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(key), Value: raw, Expiration: 0})
-		return fi, nil
-	}
-
-	fs.logError(fpath, syscall.ENODATA)
-	return agentTypes.AgentFileInfo{}, syscall.ENODATA
-}
-
-func (fs *S3FS) StatFS(ctx context.Context) (agentTypes.StatFS, error) {
+func (fs *S3FS) StatFS() (agentTypes.StatFS, error) {
 	return agentTypes.StatFS{
 		Bsize:   4096,
 		Blocks:  1 << 50,
@@ -313,7 +181,7 @@ func (fs *S3FS) StatFS(ctx context.Context) (agentTypes.StatFS, error) {
 	}, nil
 }
 
-func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (S3DirStream, error) {
+func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 	var prefix string
 	if fpath == "/" || fpath == "" {
 		prefix = fs.prefix
@@ -325,14 +193,11 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (S3DirStream, error) 
 		}
 	}
 
-	if it, err := fs.Memcache.Get("dir:" + memlocal.Key(prefix)); err == nil {
-		var cached agentTypes.ReadDirEntries
-		if err := cbor.Unmarshal(it.Value, &cached); err == nil {
-			return S3DirStream{fs: fs, entries: cached}, nil
-		}
+	if val, ok := fs.dirCache.Get(prefix); ok && !val.expired() {
+		return &S3DirStream{entries: *val.value}, nil
 	}
 
-	ctx, cancel := context.WithTimeout(fs.Ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(fs.Ctx, 10*time.Second)
 	defer cancel()
 
 	opts := minio.ListObjectsOptions{
@@ -341,12 +206,15 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (S3DirStream, error) 
 	}
 
 	entries := make(agentTypes.ReadDirEntries, 0, 64)
-	seen := map[string]struct{}{}
+	seenNames := *(seenNamesPool.Get().(*map[string]bool))
+	for k := range seenNames {
+		delete(seenNames, k)
+	}
 
 	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
 		if obj.Err != nil {
-			fs.logError(fpath, obj.Err)
-			return S3DirStream{}, syscall.ENOENT
+			seenNamesPool.Put(&seenNames)
+			return nil, obj.Err
 		}
 
 		name := strings.TrimPrefix(obj.Key, prefix)
@@ -359,20 +227,14 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (S3DirStream, error) 
 			name = strings.TrimSuffix(name, "/")
 		}
 
-		if _, ok := seen[name]; ok {
+		if seenNames[name] {
 			continue
 		}
-		seen[name] = struct{}{}
+		seenNames[name] = true
 
 		mode := uint32(0644)
 		if isDir {
 			mode = uint32(os.ModeDir | 0555)
-		}
-
-		if !isDir {
-			atomic.AddInt64(&fs.FileCount, 1)
-		} else {
-			atomic.AddInt64(&fs.FolderCount, 1)
 		}
 
 		entries = append(entries, agentTypes.AgentFileInfo{
@@ -381,21 +243,40 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (S3DirStream, error) 
 		})
 	}
 
-	raw, _ := cbor.Marshal(entries)
-	_ = fs.Memcache.Set(&memcache.Item{Key: "dir:" + memlocal.Key(prefix), Value: raw, Expiration: 0})
-	fs.Memcache.Delete("attr:" + memlocal.Key(strings.TrimSuffix(prefix, "/")))
-	return S3DirStream{fs: fs, entries: entries}, nil
+	seenNamesPool.Put(&seenNames)
+
+	fs.dirCache.Add(prefix, cacheEntry[agentTypes.ReadDirEntries]{
+		value:     &entries,
+		expiresAt: time.Now().Add(dirCacheTTL),
+	})
+	return &S3DirStream{entries: entries}, nil
 }
 
-func (fs *S3FS) fullKey(fpath string) string {
-	if fpath == "/" || fpath == "" {
-		return fs.prefix
+func (fs *S3FS) OpenFile(
+	fpath string,
+	flag int,
+	_ os.FileMode,
+) (*S3File, error) {
+	if flag&(os.O_WRONLY|os.O_RDWR) != 0 {
+		return nil, syscall.EROFS
 	}
-	p := strings.TrimPrefix(path.Clean(fpath), "/")
-	if p == "." || p == "" {
-		return fs.prefix
+
+	key := fs.fullKey(fpath)
+
+	info, err := fs.Attr(fpath)
+	if err != nil {
+		return nil, err
 	}
-	return fs.prefix + p
+
+	if info.IsDir {
+		return nil, syscall.EISDIR
+	}
+
+	return &S3File{
+		fs:   fs,
+		key:  key,
+		size: info.Size,
+	}, nil
 }
 
 func (fs *S3FS) Unmount(ctx context.Context) {

@@ -120,7 +120,7 @@ func (s *AgentFSServer) initializeStatFS() error {
 		}
 		syslog.L.Debug().WithMessage("initializeStatFS: initialized successfully").WithField("drive", driveLetter).Write()
 	} else {
-		syslog.L.Warn().WithMessage("initializeStatFS: snapshot.SourcePath is empty").Write()
+		syslog.L.Debug().WithMessage("initializeStatFS: snapshot.SourcePath is empty").Write()
 	}
 	return nil
 }
@@ -148,7 +148,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	}
 
 	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
-		syslog.L.Warn().WithMessage("handleOpenFile: write operation attempted and blocked").WithField("path", payload.Path).Write()
+		syslog.L.Debug().WithMessage("handleOpenFile: write operation attempted and blocked").WithField("path", payload.Path).Write()
 		errStr := "write operations not allowed"
 		errBytes, err := cbor.Marshal(errStr)
 		if err != nil {
@@ -407,7 +407,7 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		syslog.L.Warn().WithMessage("handleReadDir: handle not found").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Debug().WithMessage("handleReadDir: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
 
@@ -447,17 +447,17 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	if payload.Length < 0 {
-		syslog.L.Warn().WithMessage("handleReadAt: negative length requested").WithField("length", payload.Length).Write()
+		syslog.L.Debug().WithMessage("handleReadAt: negative length requested").WithField("length", payload.Length).Write()
 		return arpc.Response{}, fmt.Errorf("invalid negative length requested: %d", payload.Length)
 	}
 
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		syslog.L.Warn().WithMessage("handleReadAt: handle not found").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Debug().WithMessage("handleReadAt: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
 	if fh.isDir {
-		syslog.L.Warn().WithMessage("handleReadAt: attempted read on directory handle").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Debug().WithMessage("handleReadAt: attempted read on directory handle").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
 
@@ -504,7 +504,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	ranges, err := queryAllocatedRanges(handle, payload.Offset, int64(reqLen))
 	if err != nil || len(ranges) == 0 {
 		if err != nil {
-			syslog.L.Warn().WithMessage("handleReadAt: queryAllocatedRanges failed, falling back").WithField("handle_id", payload.HandleID).WithField("error", err.Error()).Write()
+			syslog.L.Debug().WithMessage("handleReadAt: queryAllocatedRanges failed, falling back").WithField("handle_id", payload.HandleID).WithField("error", err.Error()).Write()
 		} else {
 			syslog.L.Debug().WithMessage("handleReadAt: no allocated ranges returned, treating as fully allocated").WithField("handle_id", payload.HandleID).Write()
 		}
@@ -628,17 +628,17 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 		payload.Whence != io.SeekEnd &&
 		payload.Whence != SeekData &&
 		payload.Whence != SeekHole {
-		syslog.L.Warn().WithMessage("handleLseek: invalid whence").WithField("whence", payload.Whence).Write()
+		syslog.L.Debug().WithMessage("handleLseek: invalid whence").WithField("whence", payload.Whence).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
 
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		syslog.L.Warn().WithMessage("handleLseek: handle not found").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Debug().WithMessage("handleLseek: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
 	if fh.isDir {
-		syslog.L.Warn().WithMessage("handleLseek: attempted lseek on directory").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Debug().WithMessage("handleLseek: attempted lseek on directory").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
 
@@ -658,21 +658,21 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 	switch payload.Whence {
 	case io.SeekStart:
 		if payload.Offset < 0 {
-			syslog.L.Warn().WithMessage("handleLseek: negative offset with SeekStart").WithField("offset", payload.Offset).Write()
+			syslog.L.Debug().WithMessage("handleLseek: negative offset with SeekStart").WithField("offset", payload.Offset).Write()
 			return arpc.Response{}, os.ErrInvalid
 		}
 		newOffset = payload.Offset
 
 	case io.SeekCurrent:
 		if cur+payload.Offset < 0 {
-			syslog.L.Warn().WithMessage("handleLseek: negative resulting offset with SeekCurrent").WithField("current", cur).WithField("delta", payload.Offset).Write()
+			syslog.L.Debug().WithMessage("handleLseek: negative resulting offset with SeekCurrent").WithField("current", cur).WithField("delta", payload.Offset).Write()
 			return arpc.Response{}, os.ErrInvalid
 		}
 		newOffset = cur + payload.Offset
 
 	case io.SeekEnd:
 		if fileSize+payload.Offset < 0 {
-			syslog.L.Warn().WithMessage("handleLseek: negative resulting offset with SeekEnd").WithField("file_size", fileSize).WithField("delta", payload.Offset).Write()
+			syslog.L.Debug().WithMessage("handleLseek: negative resulting offset with SeekEnd").WithField("file_size", fileSize).WithField("delta", payload.Offset).Write()
 			return arpc.Response{}, os.ErrInvalid
 		}
 		newOffset = fileSize + payload.Offset
@@ -691,12 +691,12 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 		newOffset = no
 
 	default:
-		syslog.L.Warn().WithMessage("handleLseek: invalid whence in default").Write()
+		syslog.L.Debug().WithMessage("handleLseek: invalid whence in default").Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
 
 	if newOffset > fileSize {
-		syslog.L.Warn().WithMessage("handleLseek: newOffset beyond EOF").WithField("new_offset", newOffset).WithField("file_size", fileSize).Write()
+		syslog.L.Debug().WithMessage("handleLseek: newOffset beyond EOF").WithField("new_offset", newOffset).WithField("file_size", fileSize).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
 
@@ -722,7 +722,7 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 
 	handle, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		syslog.L.Warn().WithMessage("handleClose: handle not found").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Debug().WithMessage("handleClose: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
 

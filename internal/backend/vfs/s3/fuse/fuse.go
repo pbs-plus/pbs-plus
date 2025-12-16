@@ -1,16 +1,15 @@
 //go:build linux
 
-package s3fuse
+package fuse
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"os"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -20,6 +19,12 @@ import (
 var nodePool = &sync.Pool{
 	New: func() any {
 		return &Node{}
+	},
+}
+
+var pathBuilderPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]string, 128)
 	},
 }
 
@@ -33,7 +38,11 @@ func newRoot(fs *s3fs.S3FS) fs.InodeEmbedder {
 }
 
 // Mount mounts the billy filesystem at the specified mountpoint
-func Mount(mountpoint string, fsName string, afs *s3fs.S3FS) (*fuse.Server, error) {
+func Mount(
+	mountpoint string,
+	fsName string,
+	afs *s3fs.S3FS,
+) (*fuse.Server, error) {
 	root := newRoot(afs)
 
 	timeout := 2 * time.Second
@@ -44,7 +53,7 @@ func Mount(mountpoint string, fsName string, afs *s3fs.S3FS) (*fuse.Server, erro
 			FsName:             fsName,
 			Name:               "pbsagent",
 			AllowOther:         true,
-			DisableXAttrs:      false,
+			DisableXAttrs:      true,
 			DisableReadDirPlus: true,
 			Options: []string{
 				"ro",
@@ -135,13 +144,14 @@ func (n *Node) getPath() string {
 		}
 	}
 
-	n.fullPathCache = string(buffer)
+	n.fullPathCache = unsafe.String(
+		unsafe.SliceData(buffer[:totalLen]),
+		totalLen,
+	)
 	return n.fullPathCache
 }
 
 var _ = (fs.NodeGetattrer)((*Node)(nil))
-var _ = (fs.NodeListxattrer)((*Node)(nil))
-var _ = (fs.NodeGetxattrer)((*Node)(nil))
 var _ = (fs.NodeLookuper)((*Node)(nil))
 var _ = (fs.NodeReaddirer)((*Node)(nil))
 var _ = (fs.NodeOpener)((*Node)(nil))
@@ -168,7 +178,10 @@ func (n *Node) Opendir(ctx context.Context) syscall.Errno {
 	return 0
 }
 
-func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
+func (n *Node) Release(
+	ctx context.Context,
+	f fs.FileHandle,
+) syscall.Errno {
 	if fh, ok := f.(fs.FileReleaser); ok {
 		return fh.Release(ctx)
 	}
@@ -178,7 +191,13 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 	return 0
 }
 
-func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask uint32, out *fuse.StatxOut) syscall.Errno {
+func (n *Node) Statx(
+	ctx context.Context,
+	f fs.FileHandle,
+	flags uint32,
+	mask uint32,
+	out *fuse.StatxOut,
+) syscall.Errno {
 	// Get file stats the regular way, then populate StatxOut
 	var attrOut fuse.AttrOut
 	errno := n.Getattr(ctx, f, &attrOut)
@@ -213,10 +232,14 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 }
 
 // Getattr implements NodeGetattrer
-func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	fi, err := n.fs.Attr(ctx, n.getPath(), false)
+func (n *Node) Getattr(
+	ctx context.Context,
+	fh fs.FileHandle,
+	out *fuse.AttrOut,
+) syscall.Errno {
+	fi, err := n.fs.Attr(n.getPath())
 	if err != nil {
-		return syscall.ENOENT
+		return s3ErrorToErrno(err)
 	}
 
 	mode := fi.Mode
@@ -240,109 +263,12 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 	return 0
 }
 
-func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
-	fi, err := n.fs.Xattr(ctx, n.getPath())
-	if err != nil {
-		return 0, syscall.ENODATA
-	}
-
-	var data []byte
-	switch attr {
-	case "user.creationtime":
-		data = strconv.AppendInt(data, fi.CreationTime, 10)
-	case "user.lastaccesstime":
-		data = strconv.AppendInt(data, fi.LastAccessTime, 10)
-	case "user.lastwritetime":
-		data = strconv.AppendInt(data, fi.LastWriteTime, 10)
-	case "user.owner":
-		data = append(data, fi.Owner...)
-	case "user.group":
-		data = append(data, fi.Group...)
-	case "user.fileattributes":
-		data, err = json.Marshal(fi.FileAttributes)
-		if err != nil {
-			return 0, syscall.ENODATA
-		}
-	case "user.acls":
-		if fi.PosixACLs != nil {
-			data, err = json.Marshal(fi.PosixACLs)
-			if err != nil {
-				return 0, syscall.ENODATA
-			}
-		} else if fi.WinACLs != nil {
-			data, err = json.Marshal(fi.WinACLs)
-			if err != nil {
-				return 0, syscall.ENODATA
-			}
-		} else {
-			return 0, syscall.ENODATA
-		}
-	default:
-		return 0, syscall.ENODATA
-	}
-
-	length := uint32(len(data))
-
-	if dest == nil {
-		return length, 0
-	}
-
-	if len(dest) < len(data) {
-		return length, syscall.E2BIG
-	}
-
-	copy(dest, data)
-	return length, 0
-}
-
-func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
-	// Retrieve extended attribute information for the node.
-	fi, err := n.fs.Xattr(ctx, n.getPath())
-	if err != nil {
-		return 0, syscall.ENOTSUP
-	}
-
-	// Build our list of supported attribute keys.
-	attrs := []string{
-		"user.creationtime",
-		"user.lastaccesstime",
-		"user.lastwritetime",
-		"user.owner",
-		"user.group",
-		"user.fileattributes",
-	}
-
-	// Only add ACLs if available.
-	if fi.PosixACLs != nil || fi.WinACLs != nil {
-		attrs = append(attrs, "user.acls")
-	}
-
-	// Create the null-terminated list of attribute names.
-	var list []byte
-	for _, attr := range attrs {
-		list = append(list, attr...)
-		list = append(list, 0) // Add null terminator.
-	}
-
-	length := uint32(len(list))
-
-	// If dest is nil, just return the required length.
-	if dest == nil {
-		return length, 0
-	}
-
-	// If the provided dest slice is too small, return ERANGE.
-	if len(dest) < len(list) {
-		return length, syscall.E2BIG
-	}
-
-	// Copy the extended attribute list into dest.
-	copy(dest, list)
-	return length, 0
-}
-
 // Lookup implements NodeLookuper
-func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func (n *Node) Lookup(
+	ctx context.Context,
+	name string,
+	out *fuse.EntryOut,
+) (*fs.Inode, syscall.Errno) {
 	childNode := nodePool.Get().(*Node)
 	childNode.fs = n.fs
 	childNode.parent = n
@@ -350,9 +276,10 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 	childNode.fullPathCache = ""
 
 	path := childNode.getPath()
-	fi, err := childNode.fs.Attr(ctx, path, true)
+	fi, err := childNode.fs.Attr(path)
 	if err != nil {
-		return nil, fs.ToErrno(err)
+		nodePool.Put(childNode) // Return to pool on error
+		return nil, s3ErrorToErrno(err)
 	}
 
 	mode := fi.Mode
@@ -372,39 +299,49 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 
 	out.Mode = mode
 	out.Size = uint64(fi.Size)
-	mtime := fi.ModTime
-	out.SetTimes(nil, &mtime, nil)
+	out.Blocks = fi.Blocks
+
+	atime := time.Unix(fi.LastAccessTime, 0)
+	mtime := time.Unix(fi.LastWriteTime, 0)
+	ctime := time.Unix(fi.CreationTime, 0)
+	out.SetTimes(&atime, &mtime, &ctime)
 
 	return child, 0
 }
 
 // Readdir implements NodeReaddirer
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	entries, err := n.fs.ReadDir(ctx, n.getPath())
+	entries, err := n.fs.ReadDir(n.getPath())
 	if err != nil {
-		return nil, syscall.EBADF
+		return nil, s3ErrorToErrno(err)
 	}
 
-	return &entries, 0
+	return entries, 0
 }
 
 // Open implements NodeOpener
-func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
+func (n *Node) Open(
+	ctx context.Context,
+	flags uint32,
+) (fs.FileHandle, uint32, syscall.Errno) {
+	file, err := n.fs.OpenFile(n.getPath(), int(flags), 0)
 	if err != nil {
-		return nil, 0, syscall.EACCES
+		return nil, 0, s3ErrorToErrno(err)
 	}
 
 	return &FileHandle{
 		fs:   n.fs,
-		file: &file,
+		file: file,
 	}, 0, 0
 }
 
-func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
-	stat, err := n.fs.StatFS(ctx)
+func (n *Node) Statfs(
+	ctx context.Context,
+	out *fuse.StatfsOut,
+) syscall.Errno {
+	stat, err := n.fs.StatFS()
 	if err != nil {
-		return fs.ToErrno(err)
+		return s3ErrorToErrno(err)
 	}
 
 	out.Blocks = stat.Blocks
@@ -427,28 +364,22 @@ type FileHandle struct {
 
 var _ = (fs.FileReader)((*FileHandle)(nil))
 var _ = (fs.FileReleaser)((*FileHandle)(nil))
-var _ = (fs.FileLseeker)((*FileHandle)(nil))
 
 // Read implements FileReader
-func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
-	n, err := fh.file.ReadAt(ctx, dest, offset)
+func (fh *FileHandle) Read(
+	ctx context.Context,
+	dest []byte,
+	offset int64,
+) (fuse.ReadResult, syscall.Errno) {
+	n, err := fh.file.ReadAt(dest, offset)
 	if err != nil && err != io.EOF {
-		return nil, syscall.EBADF
+		return nil, s3ErrorToErrno(err)
 	}
 
 	return fuse.ReadResultData(dest[:n]), 0
 }
 
-func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uint64, syscall.Errno) {
-	n, err := fh.file.Lseek(ctx, int64(off), int(whence))
-	if err != nil && err != io.EOF {
-		return 0, syscall.EBADF
-	}
-
-	return n, 0
-}
-
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
-	err := fh.file.Close(ctx)
-	return fs.ToErrno(err)
+	err := fh.file.Close()
+	return s3ErrorToErrno(err)
 }

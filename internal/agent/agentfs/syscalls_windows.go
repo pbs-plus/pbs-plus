@@ -39,7 +39,7 @@ func openForAttrs(path string) (windows.Handle, error) {
 	utf16PathBufPool.Put(bufPtr)
 	if err != nil {
 		if !strings.HasSuffix(path, ".pxarexclude") {
-			syslog.L.Error(err).WithMessage("openForAttrs: CreateFile failed").WithField("path", path).Write()
+			syslog.L.Debug().WithField("error", err).WithMessage("openForAttrs: CreateFile failed").WithField("path", path).Write()
 		}
 		return 0, err
 	}
@@ -58,7 +58,7 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 
 	if len(driveLetter) != 2 || driveLetter[1] != ':' {
 		err := fmt.Errorf("invalid drive letter format: %s", driveLetter)
-		syslog.L.Error(err).WithMessage("getStatFS: invalid drive letter").WithField("drive_letter", driveLetter).Write()
+		syslog.L.Debug().WithField("error", err).WithMessage("getStatFS: invalid drive letter").WithField("drive_letter", driveLetter).Write()
 		return types.StatFS{}, err
 	}
 
@@ -80,7 +80,7 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 	)
 	utf16PathBufPool.Put(bufPtr)
 	if ret == 0 {
-		syslog.L.Error(err).WithMessage("getStatFS: GetDiskFreeSpaceW failed").WithField("path", path).Write()
+		syslog.L.Debug().WithField("error", err).WithMessage("getStatFS: GetDiskFreeSpaceW failed").WithField("path", path).Write()
 		return types.StatFS{}, fmt.Errorf("GetDiskFreeSpaceW failed: %w", err)
 	}
 
@@ -119,7 +119,7 @@ func getFileStandardInfoByHandle(h windows.Handle, out *fileStandardInfo) error 
 	syslog.L.Debug().WithMessage("getFileStandardInfoByHandle: querying").WithField("handle", uintptr(h)).WithField("size", size).Write()
 	err := windows.GetFileInformationByHandleEx(h, fileStandardInfoClass, (*byte)(unsafe.Pointer(out)), size)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("getFileStandardInfoByHandle: failed").WithField("handle", uintptr(h)).Write()
+		syslog.L.Debug().WithField("error", err).WithMessage("getFileStandardInfoByHandle: failed").WithField("handle", uintptr(h)).Write()
 		return err
 	}
 	syslog.L.Debug().WithMessage("getFileStandardInfoByHandle: success").WithField("handle", uintptr(h)).Write()
@@ -135,7 +135,7 @@ func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSi
 		Write()
 
 	if start < 0 {
-		syslog.L.Warn().WithMessage("sparseSeekAllocatedRanges: negative start").WithField("start", start).Write()
+		syslog.L.Debug().WithMessage("sparseSeekAllocatedRanges: negative start").WithField("start", start).Write()
 		return 0, os.ErrInvalid
 	}
 	if start >= fileSize {
@@ -163,13 +163,13 @@ func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSi
 	if err != nil && bytesReturned == 0 {
 		if err == windows.ERROR_INVALID_FUNCTION {
 			if whence == SeekData {
-				syslog.L.Warn().WithMessage("sparseSeekAllocatedRanges: FSCTL not supported, returning start for SEEK_DATA").Write()
+				syslog.L.Debug().WithMessage("sparseSeekAllocatedRanges: FSCTL not supported, returning start for SEEK_DATA").Write()
 				return start, nil
 			}
-			syslog.L.Warn().WithMessage("sparseSeekAllocatedRanges: FSCTL not supported, returning EOF for SEEK_HOLE").Write()
+			syslog.L.Debug().WithMessage("sparseSeekAllocatedRanges: FSCTL not supported, returning EOF for SEEK_HOLE").Write()
 			return fileSize, nil
 		}
-		syslog.L.Error(err).WithMessage("sparseSeekAllocatedRanges: DeviceIoControl failed with no bytes").Write()
+		syslog.L.Debug().WithField("error", err).WithMessage("sparseSeekAllocatedRanges: DeviceIoControl failed with no bytes").Write()
 		return 0, err
 	}
 
@@ -226,7 +226,7 @@ func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSi
 		syslog.L.Debug().WithMessage("sparseSeekAllocatedRanges: SEEK_HOLE at end of last range").WithField("offset", last.FileOffset+last.Length).Write()
 		return last.FileOffset + last.Length, nil
 	default:
-		syslog.L.Warn().WithMessage("sparseSeekAllocatedRanges: invalid whence").WithField("whence", whence).Write()
+		syslog.L.Debug().WithMessage("sparseSeekAllocatedRanges: invalid whence").WithField("whence", whence).Write()
 		return 0, os.ErrInvalid
 	}
 }
@@ -260,7 +260,7 @@ func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange
 					Write()
 				return int(br), err
 			}
-			syslog.L.Error(err).WithMessage("queryAllocatedRanges: DeviceIoControl failed").Write()
+			syslog.L.Debug().WithField("error", err).WithMessage("queryAllocatedRanges: DeviceIoControl failed").Write()
 			return 0, err
 		}
 		return int(br), nil
@@ -277,7 +277,7 @@ func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange
 		br, err = call(out)
 	}
 	if err != nil {
-		syslog.L.Error(err).WithMessage("queryAllocatedRanges: failed after retry").Write()
+		syslog.L.Debug().WithField("error", err).WithMessage("queryAllocatedRanges: failed after retry").Write()
 		return nil, err
 	}
 
@@ -295,23 +295,23 @@ type overlappedHandle struct {
 	DefaultTimeout int
 }
 
-func (f *overlappedHandle) getEvent() windows.Handle {
+func (f *overlappedHandle) getEvent() (windows.Handle, error) {
 	f.m.Lock()
 	if len(f.e) == 0 {
 		f.m.Unlock()
 		e, err := windows.CreateEvent(nil, 0, 0, nil)
 		if err != nil {
-			syslog.L.Error(err).WithMessage("overlappedHandle.getEvent: CreateEvent failed").Write()
-			panic(err)
+			syslog.L.Debug().WithField("error", err).WithMessage("overlappedHandle.getEvent: CreateEvent failed").Write()
+			return 0, err
 		}
 		syslog.L.Debug().WithMessage("overlappedHandle.getEvent: created new event").WithField("event", uintptr(e)).Write()
-		return e
+		return e, nil
 	}
 	e := f.e[len(f.e)-1]
 	f.e = f.e[:len(f.e)-1]
 	f.m.Unlock()
 	syslog.L.Debug().WithMessage("overlappedHandle.getEvent: reused event").WithField("event", uintptr(e)).Write()
-	return e
+	return e, nil
 }
 
 func (f *overlappedHandle) putEvent(e windows.Handle) {
@@ -334,6 +334,8 @@ func (f *overlappedHandle) asyncIo(fn func(windows.Handle, []byte, *uint32, *win
 	if err == windows.ERROR_IO_PENDING {
 		if milliseconds >= 0 {
 			if n, _ = windows.WaitForSingleObject(o.HEvent, uint32(milliseconds)); n != windows.WAIT_OBJECT_0 {
+				windows.CancelIoEx(f.h, o)
+
 				switch n {
 				case syscall.WAIT_ABANDONED:
 					err = os.NewSyscallError("WaitForSingleObject", fmt.Errorf("WAIT_ABANDONED"))
@@ -344,7 +346,6 @@ func (f *overlappedHandle) asyncIo(fn func(windows.Handle, []byte, *uint32, *win
 				default:
 					err = os.NewSyscallError("WaitForSingleObject", fmt.Errorf("UNKNOWN ERROR"))
 				}
-				syslog.L.Error(err).WithMessage("overlappedHandle.asyncIo: wait failed").Write()
 				return 0, err
 			}
 		}
@@ -359,7 +360,7 @@ func (f *overlappedHandle) asyncIo(fn func(windows.Handle, []byte, *uint32, *win
 			return 0, err2
 		}
 	} else if err != nil {
-		syslog.L.Error(err).WithMessage("overlappedHandle.asyncIo: I/O call failed immediately").Write()
+		syslog.L.Debug().WithField("error", err).WithMessage("overlappedHandle.asyncIo: I/O call failed immediately").Write()
 		return 0, err
 	}
 	syslog.L.Debug().WithMessage("overlappedHandle.asyncIo: success").WithField("bytes", n).Write()
@@ -375,18 +376,21 @@ func (f *overlappedHandle) ReadAt(b []byte, off int64) (int, error) {
 	o := &windows.Overlapped{}
 	o.Offset = uint32(off)
 	o.OffsetHigh = uint32(uint64(off) >> 32)
-	e := f.getEvent()
+	e, err := f.getEvent()
+	if err != nil {
+		syslog.L.Debug().WithField("error", err).WithMessage("overlappedHandle.ReadAt: failed to get event").Write()
+		return 0, err
+	}
 	defer f.putEvent(e)
 	o.HEvent = e
 
 	n, err := f.asyncIo(windows.ReadFile, b, f.DefaultTimeout, o)
-	err = os.NewSyscallError("readAt", err)
 	if errors.Is(err, io.EOF) || (err == nil && n == 0 && len(b) > 0) || (err == nil && len(b) > int(n)) {
 		syslog.L.Debug().WithMessage("overlappedHandle.ReadAt: EOF condition").WithField("bytes", n).Write()
 		err = io.EOF
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
-		syslog.L.Error(err).WithMessage("overlappedHandle.ReadAt: read failed").WithField("bytes", n).Write()
+		syslog.L.Debug().WithField("error", err).WithMessage("overlappedHandle.ReadAt: read failed").WithField("bytes", n).Write()
 	} else {
 		syslog.L.Debug().WithMessage("overlappedHandle.ReadAt: success").WithField("bytes", n).Write()
 	}
@@ -397,11 +401,13 @@ func (f *overlappedHandle) Close() error {
 	syslog.L.Debug().WithMessage("overlappedHandle.Close: closing").WithField("handle", uintptr(f.h)).Write()
 	windows.CancelIoEx(f.h, nil)
 	windows.Close(f.h)
+	f.m.Lock()
 	f.h = 0
 	for _, h := range f.e {
 		windows.Close(h)
 	}
 	f.e = nil
+	f.m.Unlock()
 	syslog.L.Debug().WithMessage("overlappedHandle.Close: closed").Write()
 	return nil
 }
