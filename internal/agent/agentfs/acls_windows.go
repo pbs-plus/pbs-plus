@@ -5,6 +5,7 @@ package agentfs
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -164,15 +165,58 @@ func GetExplicitEntriesFromACL(acl *windows.ACL) (uintptr, uint32, error) {
 	return explicitEntriesPtr, entriesCount, nil
 }
 
+type freedPointerRing struct {
+	mu      sync.Mutex
+	ptrs    []uintptr
+	index   int
+	maxSize int
+}
+
+var freedPointers = &freedPointerRing{
+	ptrs:    make([]uintptr, 0, 1024),
+	maxSize: 1024,
+}
+
+func (r *freedPointerRing) contains(ptr uintptr) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, p := range r.ptrs {
+		if p == ptr {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *freedPointerRing) add(ptr uintptr) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if len(r.ptrs) < r.maxSize {
+		r.ptrs = append(r.ptrs, ptr)
+		return
+	}
+
+	r.ptrs[r.index] = ptr
+	r.index = (r.index + 1) % r.maxSize
+}
+
 func FreeExplicitEntries(explicitEntriesPtr uintptr) error {
 	if explicitEntriesPtr == 0 {
 		return nil // Nothing to free
 	}
+
+	if freedPointers.contains(explicitEntriesPtr) {
+		return fmt.Errorf("detected double-free attempt for pointer 0x%X", explicitEntriesPtr)
+	}
+
 	ret, _, callErr := procLocalFree.Call(explicitEntriesPtr)
-	// LocalFree returns NULL on success. If it returns non-NULL, it's the handle itself, indicating failure.
 	if ret != 0 {
 		return fmt.Errorf("LocalFree failed: %w", callErr)
 	}
+
+	freedPointers.add(explicitEntriesPtr)
 	return nil
 }
 
@@ -213,7 +257,7 @@ func isValidACL(acl *windows.ACL) bool {
 
 	// Basic sanity checks on ACL structure
 	// ACL has a minimum size and the AclSize should be reasonable
-	const minACLSize = 8 // sizeof(ACL) structure header
+	const minACLSize = 8     // sizeof(ACL) structure header
 	const maxACLSize = 65535 // Maximum reasonable ACL size
 
 	aclSize := header.AclSize
