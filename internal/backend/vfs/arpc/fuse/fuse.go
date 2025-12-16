@@ -14,6 +14,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
 )
 
@@ -264,19 +265,30 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 			return 0, syscall.ENODATA
 		}
 	case "user.acls":
-		if fi.PosixACLs != nil {
-			data, err = json.Marshal(fi.PosixACLs)
-			if err != nil {
-				return 0, syscall.ENODATA
-			}
-		} else if fi.WinACLs != nil {
-			data, err = json.Marshal(fi.WinACLs)
-			if err != nil {
-				return 0, syscall.ENODATA
-			}
-		} else {
+		// temporary compatibility setting
+		if fi.PosixACLs == nil {
+			fi.PosixACLs = make([]types.PosixACL, 0)
+		}
+
+		data, err = json.Marshal(fi.PosixACLs)
+		if err != nil {
 			return 0, syscall.ENODATA
 		}
+		/*
+			if fi.PosixACLs != nil {
+				data, err = json.Marshal(fi.PosixACLs)
+				if err != nil {
+					return 0, syscall.ENODATA
+				}
+			} else if fi.WinACLs != nil {
+				data, err = json.Marshal(fi.WinACLs)
+				if err != nil {
+					return 0, syscall.ENODATA
+				}
+			} else {
+				return 0, syscall.ENODATA
+			}
+		*/
 	default:
 		return 0, syscall.ENODATA
 	}
