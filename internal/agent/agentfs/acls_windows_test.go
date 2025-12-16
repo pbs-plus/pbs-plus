@@ -127,21 +127,34 @@ func TestGetExplicitEntriesFromACL_CorruptedACL(t *testing.T) {
 
 // TestUnsafeEntriesToSlice_KernelPointers tests kernel space pointer detection
 func TestUnsafeEntriesToSlice_KernelPointers(t *testing.T) {
+	// Architecture-aware test cases
+	is64Bit := unsafe.Sizeof(uintptr(0)) == 8
+
 	tests := []struct {
-		name string
-		ptr  uintptr
+		name      string
+		ptr       uintptr
+		skip64bit bool // Skip this test on 64-bit
+		skip32bit bool // Skip this test on 32-bit
 	}{
-		{"Kernel64 start", 0xFFFF800000000000},
-		{"High kernel address", 0xFFFFFFFFFFFFFFF0},
-		{"Kernel32 start", 0x80000000},
+		{"Kernel64 start", 0xFFFF800000000000, false, true},
+		{"High kernel address", 0xFFFFFFFFFFFFFFF0, false, true},
+		{"Kernel32 start", 0x80000000, true, false},
+		{"High 32-bit kernel", 0xFFFFFFFF, true, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if is64Bit && tt.skip64bit {
+				t.Skip("Skipping on 64-bit architecture")
+			}
+			if !is64Bit && tt.skip32bit {
+				t.Skip("Skipping on 32-bit architecture")
+			}
+
 			// Should return nil for kernel pointers
 			slice := unsafeEntriesToSlice(tt.ptr, 10)
 			if slice != nil {
-				t.Error("Expected nil for kernel space pointer")
+				t.Errorf("Expected nil for kernel space pointer 0x%X", tt.ptr)
 			}
 		})
 	}
@@ -320,5 +333,40 @@ func BenchmarkGetWinACLsHandle(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, _, _ = GetWinACLsHandle(handle)
+	}
+}
+
+// TestIsSafePointer_ArchitectureSpecific tests pointer validation for current architecture
+func TestIsSafePointer_ArchitectureSpecific(t *testing.T) {
+	is64Bit := unsafe.Sizeof(uintptr(0)) == 8
+
+	if is64Bit {
+		t.Run("64-bit kernel boundary", func(t *testing.T) {
+			// Just below kernel space should be safe
+			safePtr := unsafe.Pointer(uintptr(0xFFFF7FFFFFFFFFFF))
+			if !isSafePointer(safePtr) {
+				t.Error("Expected user space pointer to be safe on 64-bit")
+			}
+
+			// Kernel space should be unsafe
+			kernelPtr := unsafe.Pointer(uintptr(0xFFFF800000000000))
+			if isSafePointer(kernelPtr) {
+				t.Error("Expected kernel space pointer to be unsafe on 64-bit")
+			}
+		})
+	} else {
+		t.Run("32-bit kernel boundary", func(t *testing.T) {
+			// Just below kernel space should be safe
+			safePtr := unsafe.Pointer(uintptr(0x7FFFFFFF))
+			if !isSafePointer(safePtr) {
+				t.Error("Expected user space pointer to be safe on 32-bit")
+			}
+
+			// Kernel space should be unsafe
+			kernelPtr := unsafe.Pointer(uintptr(0x80000000))
+			if isSafePointer(kernelPtr) {
+				t.Error("Expected kernel space pointer to be unsafe on 32-bit")
+			}
+		})
 	}
 }
