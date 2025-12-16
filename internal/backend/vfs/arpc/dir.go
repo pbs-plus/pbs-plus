@@ -21,7 +21,7 @@ import (
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/quic-go/quic-go"
+	"github.com/xtaci/smux"
 )
 
 var bufPool = sync.Pool{
@@ -102,7 +102,7 @@ func (s *DirStream) HasNext() bool {
 	defer cancelN()
 
 	bytesRead := 0
-	err := s.fs.session.Call(ctxN, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(st *quic.Stream) error {
+	err := s.fs.session.Call(ctxN, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(st *smux.Stream) error {
 		n, err := binarystream.ReceiveDataInto(st, readBuf)
 		if err != nil {
 			return err

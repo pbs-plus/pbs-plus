@@ -6,118 +6,31 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/quicvarint"
+	"github.com/xtaci/smux"
 )
 
-type StreamPipe struct {
-	*quic.Conn
-	sync.Mutex
-
-	serverAddr string
-	tlsConfig  *tls.Config
-	headers    http.Header
-	router     atomic.Pointer[Router]
-
-	state atomic.Int32
-
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-
-	version string
-}
-
-type ConnectionState int32
-
-const (
-	StateConnected ConnectionState = iota
-	StateDisconnected
-)
-
-func (s *StreamPipe) SetRouter(router Router) {
-	s.router.Store(&router)
-}
-
-func (s *StreamPipe) GetRouter() *Router {
-	return s.router.Load()
-}
-
-func (s *StreamPipe) GetVersion() string {
-	return s.version
-}
-
-func NewStreamPipe(conn *quic.Conn) (*StreamPipe, error) {
-	if conn == nil {
-		return nil, fmt.Errorf("nil quic connection")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	pipe := &StreamPipe{
-		Conn:       conn,
-		ctx:        ctx,
-		cancelFunc: cancel,
-	}
-	return pipe, nil
-}
-
-func (s *StreamPipe) Serve() error {
-	for {
-		select {
-		case <-s.ctx.Done():
-			return s.ctx.Err()
-		default:
-		}
-		stream, err := s.AcceptStream(s.ctx)
-		if err != nil {
-			return err
-		}
-		router := s.GetRouter()
-		if router == nil {
-			stream.CancelWrite(quicErrServeNoRouter)
-			_ = stream.Close()
-			return fmt.Errorf("router is nil")
-		}
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					stream.CancelWrite(quicErrServePanic)
-					_ = stream.Close()
-				}
-			}()
-			router.ServeStream(stream)
-		}()
-	}
-}
-
-func dialServer(serverAddr string, tlsConfig *tls.Config) (*quic.Conn, error) {
+func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
 	if tlsConfig == nil {
 		return nil, fmt.Errorf("missing tls config")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 
-	kaSec := parseSize(os.Getenv("PBS_PLUS_ARPC_KEEP_ALIVE_SEC"), 10)
-	idleTimeout := parseSize(os.Getenv("PBS_PLUS_ARPC_IDLE_TIMEOUT_SEC"), 20)
-
-	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, &quic.Config{
-		KeepAlivePeriod:        time.Second * time.Duration(kaSec),
-		MaxIdleTimeout:         time.Second * time.Duration(idleTimeout),
-		MaxStreamReceiveWindow: quicvarint.Max,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("QUIC dial failed: %w", err)
+	dialer := &net.Dialer{
+		Timeout: 15 * time.Second,
 	}
 
-	state := conn.ConnectionState().TLS
+	conn, err := tls.DialWithDialer(dialer, "tcp", serverAddr, tlsConfig)
+	if err != nil {
+		return nil, fmt.Errorf("TLS dial failed: %w", err)
+	}
+
+	state := conn.ConnectionState()
 	syslog.L.Info().
 		WithField("tls_version", state.Version).
 		WithField("alpn", state.NegotiatedProtocol).
-		WithMessage("QUIC connection established").
+		WithMessage("TLS connection established").
 		Write()
 	return conn, nil
 }
@@ -136,12 +49,20 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 	conn, err := dialServer(serverAddr, arpcTls)
 	if err != nil {
 		syslog.L.Info().WithField("NextProtos", arpcTls.NextProtos).WithField("serverAddr", serverAddr).Write()
-		return nil, fmt.Errorf("server not reachable: %w", err)
+		return nil, fmt.Errorf("server not reachable (%s): %w", serverAddr, err)
 	}
 
-	pipe, err := NewStreamPipe(conn)
+	smuxConfig := smux.DefaultConfig()
+	session, err := smux.Client(conn, smuxConfig)
 	if err != nil {
-		_ = conn.CloseWithError(quicErrInitPipeFailed, "init failed")
+		_ = conn.Close()
+		return nil, fmt.Errorf("failed to create smux client: %w", err)
+	}
+
+	pipe, err := NewStreamPipe(session, conn)
+	if err != nil {
+		_ = session.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to create pipe: %w", err)
 	}
 
@@ -155,104 +76,103 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 	pipe.serverAddr = serverAddr
 	pipe.headers = headers
 
-	ustream, uerr := pipe.OpenUniStream()
-	if uerr != nil {
-		_ = pipe.CloseWithError(quicErrHeadersInitFailed, "failed to initialize header pipe")
-		return nil, fmt.Errorf("failed to initialize header pipe: %w", uerr)
+	stream, err := pipe.OpenStream()
+	if err != nil {
+		pipe.Close()
+		return nil, fmt.Errorf("failed to initialize header stream: %w", err)
 	}
-	if werr := writeHeadersFrame(ustream, headers); werr != nil {
-		_ = ustream.Close()
-		_ = pipe.CloseWithError(quicErrHeadersWriteFailed, "failed to write headers")
+	if werr := writeHeadersFrame(stream, headers); werr != nil {
+		_ = stream.Close()
+		pipe.Close()
 		return nil, fmt.Errorf("failed to write headers: %w", werr)
 	}
-	if cerr := ustream.Close(); cerr != nil {
-		_ = pipe.CloseWithError(quicErrHeadersCloseFailed, "failed to close header pipe")
-		return nil, fmt.Errorf("failed to close header pipe: %w", cerr)
+	if cerr := stream.Close(); cerr != nil {
+		pipe.Close()
+		return nil, fmt.Errorf("failed to close header stream: %w", cerr)
 	}
 
 	return pipe, nil
 }
 
-func (s *StreamPipe) Close() error {
-	s.cancelFunc()
-	return s.Conn.CloseWithError(quicErrClosePipe, "pipe closed")
-}
-
-func (s *StreamPipe) GetState() ConnectionState {
-	if s.Conn == nil {
-		return StateDisconnected
-	}
-	if s.Conn == nil || s.ConnectionState().TLS.HandshakeComplete == false && s.Context().Err() != nil {
-		return StateDisconnected
-	}
-	if s.Context().Err() != nil {
-		return StateDisconnected
-	}
-	return StateConnected
-}
-
-func (s *StreamPipe) openStream(_ context.Context) (*quic.Stream, error) {
-	str, err := s.OpenStream()
-	if err != nil {
-		if s != nil && s.Conn != nil {
-			_ = s.Conn.CloseWithError(quicErrOpenStreamFailed, "open stream failed")
-		}
-		return nil, err
-	}
-	return str, nil
-}
-
-func Listen(ctx context.Context, addr string, tlsConfig *tls.Config, quicConfig *quic.Config) (*quic.Listener, *net.UDPConn, error) {
+func Listen(ctx context.Context, addr string, tlsConfig *tls.Config) (net.Listener, error) {
 	if tlsConfig == nil {
-		return nil, nil, fmt.Errorf("missing tls config")
-	}
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
-	if err != nil {
-		return nil, nil, fmt.Errorf("resolve addr failed: %w", err)
-	}
-	udpConn, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		return nil, nil, fmt.Errorf("listen udp failed: %w", err)
+		return nil, fmt.Errorf("missing tls config")
 	}
 
 	arpcTls := tlsConfig.Clone()
 	arpcTls.NextProtos = []string{"pbsarpc"}
 
-	ql, err := quic.Listen(udpConn, arpcTls, quicConfig)
+	listener, err := tls.Listen("tcp", addr, arpcTls)
 	if err != nil {
-		return nil, nil, fmt.Errorf("quic listen failed: %w", err)
+		return nil, fmt.Errorf("tls listen failed: %w", err)
 	}
 
-	return ql, udpConn, nil
+	return listener, nil
 }
 
-func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener, router Router) error {
+func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Listener, router Router) error {
 	for {
-		conn, err := ql.Accept(ctx)
-		if err != nil {
-			return err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
-		go func(c *quic.Conn) {
-			if len(c.ConnectionState().TLS.PeerCertificates) == 0 {
-				_ = c.CloseWithError(quicErrClientCertRequired, "client certificate required")
+
+		conn, err := listener.Accept()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				return err
+			}
+		}
+
+		go func(c net.Conn) {
+			tlsConn, ok := c.(*tls.Conn)
+			if !ok {
+				c.Close()
+				return
+			}
+
+			if err := tlsConn.Handshake(); err != nil {
+				c.Close()
+				return
+			}
+
+			if len(tlsConn.ConnectionState().PeerCertificates) == 0 {
+				c.Close()
+				return
+			}
+
+			smuxConfig := smux.DefaultConfig()
+			session, err := smux.Server(c, smuxConfig)
+			if err != nil {
+				c.Close()
 				return
 			}
 
 			var reqHeaders http.Header
-			uh, uerr := c.AcceptUniStream(ctx)
-			if uerr == nil {
-				if hdrs, rerr := readHeadersFrame(uh); rerr == nil {
+			stream, err := session.AcceptStream()
+			if err == nil {
+				if hdrs, rerr := readHeadersFrame(stream); rerr == nil {
 					reqHeaders = hdrs
 				}
-				uh.CancelRead(0)
+				_ = stream.Close()
 			}
 
-			pipe, id, err := agentsManager.CreateStreamPipe(c, reqHeaders)
+			pipe, id, err := agentsManager.createStreamPipe(session, c, reqHeaders)
 			if err != nil {
-				_ = c.CloseWithError(quicErrInitPipeFailed, fmt.Sprintf("init failed: %v", err))
+				_ = session.Close()
+				_ = c.Close()
 				return
 			}
-			defer agentsManager.CloseStreamPipe(id)
+
+			defer func() {
+				pipe.Close()
+				agentsManager.closeStreamPipe(id)
+			}()
+
 			pipe.SetRouter(router)
 
 			_ = pipe.Serve()
@@ -261,66 +181,11 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, ql *quic.Listener,
 }
 
 func ListenAndServe(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router) error {
-	kaSec := parseSize(os.Getenv("PBS_PLUS_ARPC_KEEP_ALIVE_SEC"), 10)
-	idleTimeout := parseSize(os.Getenv("PBS_PLUS_ARPC_IDLE_TIMEOUT_SEC"), 20)
-
-	quicConfig := quicServerLimitsAutoConfig()
-
-	quicConfig.KeepAlivePeriod = time.Second * time.Duration(kaSec)
-	quicConfig.MaxIdleTimeout = time.Second * time.Duration(idleTimeout)
-	quicConfig.MaxIncomingStreams = quicvarint.Max
-
-	ql, udpConn, err := Listen(ctx, addr, tlsConfig, quicConfig)
+	listener, err := Listen(ctx, addr, tlsConfig)
 	if err != nil {
 		return err
 	}
-	defer udpConn.Close()
+	defer listener.Close()
 
-	return Serve(ctx, agentsManager, ql, router)
-}
-
-func (s *StreamPipe) Reconnect(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	s.Lock()
-	defer s.Unlock()
-
-	if s.tlsConfig == nil || s.serverAddr == "" {
-		return fmt.Errorf("missing server address or TLS config for reconnect")
-	}
-
-	if s.Conn != nil {
-		_ = s.Conn.CloseWithError(0, "reconnecting")
-		s.Conn = nil
-	}
-
-	conn, err := dialServer(s.serverAddr, s.tlsConfig)
-	if err != nil {
-		return err
-	}
-
-	s.Conn = conn
-
-	if s.headers == nil {
-		s.headers = make(http.Header)
-	}
-
-	ustream, uerr := s.OpenUniStream()
-	if uerr != nil {
-		_ = s.CloseWithError(quicErrHeadersInitFailed, "failed to initialize header pipe")
-		return fmt.Errorf("failed to initialize header pipe: %w", uerr)
-	}
-	if werr := writeHeadersFrame(ustream, s.headers); werr != nil {
-		_ = ustream.Close()
-		_ = s.CloseWithError(quicErrHeadersWriteFailed, "failed to write headers")
-		return fmt.Errorf("failed to write headers: %w", werr)
-	}
-	if cerr := ustream.Close(); cerr != nil {
-		_ = s.CloseWithError(quicErrHeadersCloseFailed, "failed to close header pipe")
-		return fmt.Errorf("failed to close header pipe: %w", cerr)
-	}
-
-	return nil
+	return Serve(ctx, agentsManager, listener, router)
 }

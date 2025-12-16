@@ -3,31 +3,6 @@ package arpc
 import (
 	"errors"
 	"os"
-
-	"github.com/quic-go/quic-go"
-)
-
-// QUIC error codes
-const (
-	quicErrServeNoRouter       quic.StreamErrorCode      = 0x1101
-	quicErrServePanic          quic.StreamErrorCode      = 0x1102
-	quicErrClientCertRequired  quic.ApplicationErrorCode = 0x1105
-	quicErrInitPipeFailed      quic.ApplicationErrorCode = 0x1106
-	quicErrHeadersInitFailed   quic.ApplicationErrorCode = 0x1107
-	quicErrHeadersWriteFailed  quic.ApplicationErrorCode = 0x1108
-	quicErrHeadersCloseFailed  quic.ApplicationErrorCode = 0x1109
-	quicErrClosePipe           quic.ApplicationErrorCode = 0x110A
-	quicErrOpenStreamFailed    quic.ApplicationErrorCode = 0x110C
-	quicErrMarshalPayload      quic.StreamErrorCode      = 0x1001
-	quicErrEncodeRequest       quic.StreamErrorCode      = 0x1002
-	quicErrWriteRequest        quic.StreamErrorCode      = 0x1003
-	quicErrDecodeResponse      quic.StreamErrorCode      = 0x1004
-	quicErrInvalidRawHandler   quic.StreamErrorCode      = 0x1005
-	quicErrRawReadySignalWrite quic.StreamErrorCode      = 0x1006
-	quicErrRPCStatus           quic.StreamErrorCode      = 0x1007
-	quicErrRawNotSupported     quic.StreamErrorCode      = 0x1008
-	quicErrWriteResponse       quic.StreamErrorCode      = 0x1205
-	quicErrRawHandshakeFail    quic.StreamErrorCode      = 0x1206
 )
 
 func (se *SerializableError) Error() string {
