@@ -311,7 +311,7 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 		Name:    name,
 		Size:    size,
 		Mode:    mode,
-		ModTime: modTime,
+		ModTime: modTime.UnixNano(),
 		IsDir:   isDir,
 		Blocks:  blocks,
 	}
