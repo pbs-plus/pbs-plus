@@ -47,14 +47,14 @@ func NewS3FS(
 	job storeTypes.Job,
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
-) (*S3FS, error) {
+) *S3FS {
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure: useSSL,
 		Region: region,
 	})
 	if err != nil {
-		return nil, err
+		return nil
 	}
 
 	prefix = strings.Trim(prefix, "/")
@@ -75,7 +75,7 @@ func NewS3FS(
 		prefix:    prefix,
 		metaCache: metaCache,
 		dirCache:  dirCache,
-	}, nil
+	}
 }
 
 func (fs *S3FS) fullKey(fpath string) string {
