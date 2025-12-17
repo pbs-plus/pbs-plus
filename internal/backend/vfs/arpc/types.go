@@ -12,7 +12,7 @@ import (
 type ARPCFS struct {
 	*vfs.VFSBase
 
-	session    *arpc.StreamPipe
+	session    atomic.Pointer[arpc.StreamPipe]
 	Hostname   string
 	backupMode string
 }
