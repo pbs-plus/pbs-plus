@@ -5,7 +5,6 @@ package backup
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -81,7 +80,6 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 	}
 
 	cmdArgs := []string{
-		"--nofile=1024:1024",
 		"/usr/bin/proxmox-backup-client",
 		"backup",
 		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(job.Target), srcPath),
@@ -90,6 +88,11 @@ func buildCommandArgs(storeInstance *store.Store, job types.Job, srcPath string,
 		"--entries-max", fmt.Sprintf("%d", job.MaxDirEntries),
 		"--backup-id", backupId,
 		"--crypt-mode=none",
+	}
+
+	nofile := os.Getenv("PBS_PLUS_CLIENT_NOFILE")
+	if nofile != "" {
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--nofile=%s", nofile))
 	}
 
 	// Add exclusions
@@ -146,19 +149,4 @@ func buildCommandEnv(storeInstance *store.Store) []string {
 	}
 
 	return env
-}
-
-func setupCommandPipes(cmd *exec.Cmd) (io.ReadCloser, io.ReadCloser, error) {
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, fmt.Errorf("error creating stdout pipe: %w", err)
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		stdout.Close() // Clean up stdout if stderr fails
-		return nil, nil, fmt.Errorf("error creating stderr pipe: %w", err)
-	}
-
-	return stdout, stderr, nil
 }

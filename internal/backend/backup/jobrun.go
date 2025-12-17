@@ -38,7 +38,6 @@ var (
 	ErrTargetNotFound    = errors.New("target does not exist")
 	ErrTargetUnreachable = errors.New("target unreachable")
 
-	ErrMountInitialization  = errors.New("mount initialization error")
 	ErrPrepareBackupCommand = errors.New("failed to prepare backup command")
 
 	ErrTaskMonitoringInitializationFailed = errors.New("task monitoring initialization failed")
@@ -148,7 +147,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 	var agentMount *mount.AgentMount
 	var s3Mount *mount.S3Mount
 
-	postScriptExecute := func(success bool) {
+	postScriptExecute := func(success bool, warningsNum int) {
 		if op.job.PostScript != "" {
 			op.queueTask.UpdateDescription("running post-backup script")
 
@@ -162,6 +161,8 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			} else {
 				envVars = append(envVars, "PBS_PLUS__JOB_SUCCESS=false")
 			}
+
+			envVars = append(envVars, fmt.Sprintf("PBS_PLUS__JOB_WARNINGS=%d", warningsNum))
 
 			scriptOut, _, err := utils.RunShellScript(ctx, op.job.PostScript, envVars)
 			if err != nil {
@@ -189,7 +190,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			_ = op.logger.Close()
 		}
 
-		postScriptExecute(false)
+		postScriptExecute(false, 0)
 		close(errorMonitorDone)
 	}
 
@@ -219,7 +220,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 
 	if !op.skipCheck && target.IsAgent {
 		targetSplit := strings.Split(target.Name, " - ")
-		_, exists := op.storeInstance.ARPCSessionManager.GetSession(targetSplit[0])
+		_, exists := op.storeInstance.ARPCAgentsManager.GetStreamPipe(targetSplit[0])
 		if !exists {
 			errCleanUp()
 			return fmt.Errorf("%w: %s", ErrTargetUnreachable, op.job.Target)
@@ -243,7 +244,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		agentMount, err = mount.AgentFSMount(op.storeInstance, op.job, target)
 		if err != nil {
 			errCleanUp()
-			return fmt.Errorf("%w: %v", ErrMountInitialization, err)
+			return err
 		}
 		srcPath = agentMount.Path
 
@@ -261,7 +262,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		s3Mount, err = mount.S3FSMount(op.storeInstance, op.job, target)
 		if err != nil {
 			errCleanUp()
-			return fmt.Errorf("%w: %v", ErrMountInitialization, err)
+			return err
 		}
 		srcPath = s3Mount.Path
 
@@ -385,7 +386,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 		if currOwner != "" {
 			_ = SetDatastoreOwner(op.job, op.storeInstance, currOwner)
 		}
-		return fmt.Errorf("%w: %v", ErrTaskDetectionTimedOut, monitorCtx.Err())
+		return ErrTaskDetectionTimedOut
 	}
 
 	if err := updateJobStatus(false, 0, op.job, task, op.storeInstance); err != nil {
@@ -480,7 +481,7 @@ func (op *BackupOperation) Execute(ctx context.Context) error {
 			s3Mount.Unmount()
 		}
 
-		postScriptExecute(true)
+		postScriptExecute(true, warningsNum)
 	}()
 
 	return nil

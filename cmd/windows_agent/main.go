@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net/http"
-	"net/url"
 	"os"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +20,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -37,16 +38,39 @@ type pbsService struct {
 }
 
 func (p *pbsService) Start(s service.Service) error {
-	if logger, err := s.Logger(nil); err == nil {
-		p.logger = logger
-		syslog.L.SetServiceLogger(logger)
+	if updateDisabled := os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE"); updateDisabled != "true" {
+		_, err := updater.New(updater.Config{
+			MinConstraint: ">= 0.52.0",
+			PollInterval:  2 * time.Minute,
+			FetchOnStart:  true,
+
+			UpgradeConfirm: func(newVersion string) bool {
+				syslog.L.Info().WithMessage("attempting to update agent").WithField("version", newVersion).Write()
+				return true
+			},
+			Exit: func(err error) {
+				if err != nil {
+					syslog.L.Error(err).WithMessage("Updater exit with error").Write()
+				}
+			},
+		})
+		if err != nil {
+			syslog.L.Error(err).WithMessage("failed to init updater").Write()
+		}
+	}
+
+	go p.run()
+
+	return nil
+}
+
+func (p *pbsService) run() {
+	err := syslog.L.SetServiceLogger()
+	if err != nil {
+		syslog.L.Error(err).Write()
 	}
 
 	syslog.L.Info().WithMessage("PBS Plus Agent service starting with version " + Version).Write()
-
-	if err := p.writeVersionFile(); err != nil {
-		syslog.L.Warn().WithMessage("Failed to write version file").WithField("error", err.Error()).Write()
-	}
 
 	handle := windows.CurrentProcess()
 	const IDLE_PRIORITY_CLASS = 0x00000040
@@ -57,41 +81,6 @@ func (p *pbsService) Start(s service.Service) error {
 	}
 
 	p.ctx, p.cancel = context.WithCancel(context.Background())
-
-	go p.run()
-
-	return nil
-}
-
-func (p *pbsService) Stop(s service.Service) error {
-	syslog.L.Info().WithMessage("PBS Plus Agent service stopping").Write()
-
-	if p.cancel != nil {
-		p.cancel()
-	}
-
-	done := make(chan struct{})
-	go func() {
-		p.wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		syslog.L.Info().WithMessage("Service stopped gracefully").Write()
-	case <-time.After(30 * time.Second):
-		syslog.L.Warn().WithMessage("Service stop timeout reached").Write()
-	}
-
-	return nil
-}
-
-func (p *pbsService) run() {
-	defer func() {
-		if r := recover(); r != nil {
-			syslog.L.Error(fmt.Errorf("service panicked: %v", r)).WithMessage("Service encountered a panic").Write()
-		}
-	}()
 
 	agent.SetStatus("Starting")
 	syslog.L.Info().WithMessage("Waiting for PBS Plus Agent config").Write()
@@ -135,6 +124,29 @@ func (p *pbsService) run() {
 	<-p.ctx.Done()
 	agent.SetStatus("Stopping")
 	syslog.L.Info().WithMessage("Context cancelled, shutting down").Write()
+}
+
+func (p *pbsService) Stop(s service.Service) error {
+	syslog.L.Info().WithMessage("PBS Plus Agent service stopping").Write()
+
+	if p.cancel != nil {
+		p.cancel()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		syslog.L.Info().WithMessage("Service stopped gracefully").Write()
+	case <-time.After(30 * time.Second):
+		syslog.L.Warn().WithMessage("Service stop timeout reached").Write()
+	}
+
+	return nil
 }
 
 func (p *pbsService) waitForConfig() error {
@@ -209,9 +221,7 @@ func (p *pbsService) waitForBootstrap() error {
 
 func (p *pbsService) startBackgroundTasks() {
 	syslog.L.Info().WithMessage("Starting certificate renewal background task").Write()
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
+	p.wg.Go(func() {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 
@@ -229,13 +239,10 @@ func (p *pbsService) startBackgroundTasks() {
 				}
 			}
 		}
-	}()
+	})
 
 	syslog.L.Info().WithMessage("Starting drive update background task").Write()
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
-
+	p.wg.Go(func() {
 		syslog.L.Info().WithMessage("Running initial drive update").Write()
 		if err := p.updateDrives(); err != nil {
 			syslog.L.Warn().WithMessage("Initial drive update failed").WithField("error", err.Error()).Write()
@@ -261,11 +268,11 @@ func (p *pbsService) startBackgroundTasks() {
 				ticker.Reset(utils.ComputeDelay())
 			}
 		}
-	}()
+	})
 }
 
 func (p *pbsService) updateDrives() error {
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		return err
 	}
@@ -275,7 +282,7 @@ func (p *pbsService) updateDrives() error {
 		return err
 	}
 
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"hostname": hostname,
 		"drives":   drives,
 	}
@@ -285,7 +292,7 @@ func (p *pbsService) updateDrives() error {
 		return err
 	}
 
-	resp, err := agent.ProxmoxHTTPRequest(
+	resp, err := agent.AgentHTTPRequest(
 		http.MethodPost,
 		"/api2/json/d2d/target/agent",
 		bytes.NewBuffer(reqJSON),
@@ -309,12 +316,12 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("Server URL retrieved").WithField("serverUrl", serverUrl.Value).Write()
 
 	syslog.L.Info().WithMessage("Parsing server URL").Write()
-	uri, err := url.Parse(serverUrl.Value)
+	uri, err := utils.ParseURI(serverUrl.Value)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to parse server URL").Write()
 		return err
 	}
-	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Host).Write()
+	syslog.L.Info().WithMessage("Server URL parsed successfully").WithField("host", uri.Hostname()).Write()
 
 	syslog.L.Info().WithMessage("Getting TLS configuration").Write()
 	tlsConfig, err := agent.GetTLSConfig()
@@ -325,7 +332,7 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("TLS configuration obtained successfully").Write()
 
 	syslog.L.Info().WithMessage("Getting hostname for ARPC headers").Write()
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to get hostname").Write()
 		return err
@@ -338,7 +345,7 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("ARPC headers prepared").WithField("version", Version).Write()
 
 	syslog.L.Info().WithMessage("Attempting ARPC connection to server").Write()
-	session, err := arpc.ConnectToServer(p.ctx, true, uri.Host, headers, tlsConfig)
+	session, err := arpc.ConnectToServer(p.ctx, fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort), headers, tlsConfig)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Failed to connect to ARPC server").Write()
 		return err
@@ -348,7 +355,7 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("Setting up ARPC router and handlers").Write()
 	router := arpc.NewRouter()
 	router.Handle("ping", p.handlePing)
-	router.Handle("backup", func(req arpc.Request) (arpc.Response, error) {
+	router.Handle("backup", func(req *arpc.Request) (arpc.Response, error) {
 		return controllers.BackupStartHandler(req, session)
 	})
 	router.Handle("target_status", controllers.StatusHandler)
@@ -358,30 +365,59 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("ARPC router configured successfully").Write()
 
 	syslog.L.Info().WithMessage("Starting ARPC session handler goroutine").Write()
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
-		defer session.Close()
+
+	p.wg.Go(func() {
+		defer func() {
+			syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
+		}()
+
+		base := 500 * time.Millisecond
+		maxWait := 30 * time.Second
+		factor := 2.0
+		jitter := 0.2
+
+		backoff := base
 
 		for {
 			select {
 			case <-p.ctx.Done():
-				syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
+				session.Close()
 				return
 			default:
 				if err := session.Serve(); err != nil {
-					syslog.L.Warn().WithMessage("ARPC connection error, retrying").WithField("error", err.Error()).Write()
-					time.Sleep(5 * time.Second)
+					mult := 1 + jitter*(2*rand.Float64()-1)
+					sleep := time.Duration(float64(backoff) * mult)
+					sleep = min(sleep, maxWait)
+
+					syslog.L.Warn().WithMessage(fmt.Sprintf("ARPC connection error, retrying after %v", sleep)).WithField("error", err.Error()).Write()
+
+					select {
+					case <-p.ctx.Done():
+						session.Close()
+						return
+					case <-time.After(sleep):
+					}
+
+					next := time.Duration(float64(backoff) * factor)
+					next = min(next, maxWait)
+
+					backoff = next
+
+					if newS, err := session.Reconnect(p.ctx); err != nil {
+						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
+					} else {
+						session = newS
+					}
 				}
 			}
 		}
-	}()
+	})
 
 	return nil
 }
 
-func (p *pbsService) handlePing(req arpc.Request) (arpc.Response, error) {
-	hostname, _ := os.Hostname()
+func (p *pbsService) handlePing(req *arpc.Request) (arpc.Response, error) {
+	hostname, _ := utils.GetAgentHostname()
 	resp := map[string]string{
 		"version":  Version,
 		"hostname": hostname,
@@ -393,16 +429,6 @@ func (p *pbsService) handlePing(req arpc.Request) (arpc.Response, error) {
 	}
 
 	return arpc.Response{Status: 200, Data: respData}, nil
-}
-
-func (p *pbsService) writeVersionFile() error {
-	ex, err := os.Executable()
-	if err != nil {
-		return err
-	}
-
-	versionFile := filepath.Join(filepath.Dir(ex), "version.txt")
-	return os.WriteFile(versionFile, []byte(Version), 0644)
 }
 
 func main() {
@@ -432,24 +458,17 @@ func main() {
 		case "version":
 			fmt.Print(Version)
 			return
-		case "install":
-			err := service.Control(s, "install")
-			if err != nil {
-				log.Fatal("Failed to install service: ", err)
-			}
-			fmt.Println("Service installed successfully")
-		case "uninstall":
-			err := service.Control(s, "uninstall")
-			if err != nil {
-				log.Fatal("Failed to uninstall service: ", err)
-			}
-			fmt.Println("Service uninstalled successfully")
 		default:
 			err := service.Control(s, os.Args[1])
 			if err != nil {
 				log.Fatal("Failed to execute command: ", err)
 			}
 		}
+		return
+	}
+
+	if service.Interactive() {
+		prg.run()
 		return
 	}
 

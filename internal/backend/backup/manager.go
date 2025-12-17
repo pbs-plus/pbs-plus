@@ -294,6 +294,8 @@ func (m *Manager) CreateOK(op *BackupOperation, err error) {
 		latest.LastRunUpid = task.UPID
 		latest.LastRunState = task.Status
 		latest.LastRunEndtime = task.EndTime
+		latest.LastSuccessfulEndtime = task.EndTime
+		latest.LastSuccessfulUpid = task.UPID
 		if uerr := op.storeInstance.Database.UpdateJob(nil, latest); uerr != nil {
 			syslog.L.Error(uerr).
 				WithField("jobId", latest.ID).

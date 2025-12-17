@@ -1,0 +1,292 @@
+#!/bin/sh
+set -e
+
+SERVICE_NAME="${SERVICE_NAME:-pbs-plus-agent}"
+BIN_PATH="${BIN_PATH:-/usr/bin/pbs-plus-agent}"
+
+STATE_DIR="${STATE_DIR:-/var/lib/pbs-plus-agent}"
+LOG_DIR="${LOG_DIR:-/var/log/pbs-plus-agent}"
+RUN_DIR="${RUN_DIR:-/run/pbs-plus-agent}"
+ETC_DIR="${ETC_DIR:-/etc/pbs-plus-agent}"
+
+CAP_PROFILE="${CAP_PROFILE:-tight}"
+ENABLE_LINGER="${ENABLE_LINGER:-true}"
+ENABLE_SELINUX_HELPERS="${ENABLE_SELINUX_HELPERS:-false}"
+
+is_cmd() { command -v "$1" >/dev/null 2>&1; }
+log() { echo "$@"; }
+warn() { echo "Warning: $@" >&2; }
+
+detect_system() {
+  ID_LIKE=""
+  ID=""
+  if [ -r /etc/os-release ]; then
+    . /etc/os-release
+  fi
+
+  is_systemd=false
+  is_openrc=false
+
+  if is_cmd systemctl && systemctl >/dev/null 2>&1; then
+    is_systemd=true
+  fi
+
+  if is_cmd rc-update && is_cmd rc-service; then
+    is_openrc=true
+  fi
+}
+
+create_group() {
+  if getent group pbsplus >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if is_cmd addgroup; then
+    addgroup -S pbsplus 2>/dev/null || addgroup pbsplus
+  elif is_cmd groupadd; then
+    groupadd -r pbsplus
+  else
+    warn "No group creation command found"
+    return 1
+  fi
+  log "Created group: pbsplus"
+}
+
+create_user() {
+  if getent passwd pbsplus >/dev/null 2>&1; then
+    return 0
+  fi
+
+  NOLOGIN_SHELL="/sbin/nologin"
+  if [ ! -x "$NOLOGIN_SHELL" ]; then
+    NOLOGIN_SHELL="/usr/sbin/nologin"
+  fi
+  if [ ! -x "$NOLOGIN_SHELL" ]; then
+    NOLOGIN_SHELL="/bin/false"
+  fi
+
+  if is_cmd adduser; then
+    adduser -S -D -H -s "$NOLOGIN_SHELL" \
+      -h "$STATE_DIR" -G pbsplus \
+      -g "PBS Plus Agent" pbsplus 2>/dev/null || \
+    adduser -S -D -s "$NOLOGIN_SHELL" \
+      -h "$STATE_DIR" pbsplus
+  elif is_cmd useradd; then
+    useradd -r -g pbsplus -s "$NOLOGIN_SHELL" \
+      -d "$STATE_DIR" -c "PBS Plus Agent" pbsplus
+  else
+    warn "No user creation command found"
+    return 1
+  fi
+  log "Created user: pbsplus"
+}
+
+setup_binary() {
+  if [ ! -e "$BIN_PATH" ]; then
+    warn "$BIN_PATH not found - capabilities will not be set"
+    return 0
+  fi
+
+  chmod 0755 "$BIN_PATH"
+  chown root:pbsplus "$BIN_PATH" 2>/dev/null || chown root:root "$BIN_PATH"
+  log "Set permissions on $BIN_PATH"
+}
+
+create_directories() {
+  mkdir -p "$STATE_DIR" "$LOG_DIR" "$RUN_DIR" "$ETC_DIR"
+  chown -R pbsplus:pbsplus "$STATE_DIR" "$LOG_DIR" "$RUN_DIR" "$ETC_DIR"
+  chmod 0750 "$STATE_DIR"
+  chmod 0750 "$LOG_DIR"
+  chmod 0755 "$RUN_DIR"
+  chmod 0750 "$ETC_DIR"
+  log "Created and configured directories"
+
+  env_file="$ETC_DIR/agent.env"
+  if [ ! -e "$env_file" ]; then
+    umask 0137
+    cat > "$env_file" <<'EOF'
+# PBS Plus environment configuration
+# This file is sourced by systemd/openrc (EnvironmentFile).
+# Format: KEY=VALUE, no quotes unless needed for spaces.
+
+# Required variables:
+# PBS_PLUS_INIT_SERVER_URL= # https://<pbs-server>
+# PBS_PLUS_INIT_BOOTSTRAP_TOKEN=  # the copied token
+EOF
+    chown pbsplus:pbsplus "$env_file" 2>/dev/null || chown root:pbsplus "$env_file" 2>/dev/null || chown root:root "$env_file"
+    chmod 0640 "$env_file"
+    log "Created initial environment file at $env_file"
+  fi
+}
+
+add_to_groups() {
+  groups_list="wheel disk adm sys tty audio video netdev kvm qemu docker \
+    lp dialout tape staff shadow systemd-journal ssl-cert libvirt lvm \
+    users backup cdrom floppy scanner games mail"
+
+  added_count=0
+  for group in $groups_list; do
+    if getent group "$group" >/dev/null 2>&1; then
+      if is_cmd usermod; then
+        usermod -a -G "$group" pbsplus 2>/dev/null && added_count=$((added_count + 1))
+      elif is_cmd adduser; then
+        adduser pbsplus "$group" 2>/dev/null && added_count=$((added_count + 1))
+      fi
+    fi
+  done
+
+  log "Added pbsplus to $added_count system groups"
+}
+
+set_capabilities() {
+  if ! is_cmd setcap; then
+    warn "setcap not available - install libcap for capability support"
+    return 0
+  fi
+
+  if [ ! -e "$BIN_PATH" ]; then
+    return 0
+  fi
+
+  tight_caps="cap_dac_read_search,cap_dac_override+ep"
+  broad_caps="cap_dac_read_search,cap_dac_override,cap_fowner,cap_sys_admin,cap_sys_ptrace,cap_sys_rawio,cap_mknod+ep"
+
+  case "$CAP_PROFILE" in
+    broad)
+      setcap "$broad_caps" "$BIN_PATH"
+      log "Set broad capabilities on $BIN_PATH"
+      ;;
+    tight|*)
+      setcap "$tight_caps" "$BIN_PATH"
+      log "Set tight capabilities on $BIN_PATH"
+      ;;
+  esac
+
+  if is_cmd getcap; then
+    getcap "$BIN_PATH"
+  fi
+}
+
+set_pam_limits() {
+  limits_file="/etc/security/limits.conf"
+
+  if [ ! -w "$limits_file" ]; then
+    return 0
+  fi
+
+  if grep -q '^pbsplus ' "$limits_file" 2>/dev/null; then
+    return 0
+  fi
+
+  cat >> "$limits_file" <<'EOF'
+pbsplus soft nofile 65536
+pbsplus hard nofile 65536
+pbsplus soft nproc 32768
+pbsplus hard nproc 32768
+EOF
+  log "Configured PAM limits"
+}
+
+enable_lingering() {
+  if [ "$ENABLE_LINGER" != "true" ]; then
+    return 0
+  fi
+
+  if is_cmd loginctl; then
+    loginctl enable-linger pbsplus 2>/dev/null || true
+    log "Enabled lingering for pbsplus"
+  fi
+}
+
+check_security_modules() {
+  if is_cmd aa-status && aa-status --enabled >/dev/null 2>&1; then
+    log "AppArmor detected - you may need to configure profiles for $BIN_PATH"
+    log "  Consider creating a profile allowing read access to all paths"
+  fi
+
+  if is_cmd getenforce; then
+    selinux_status=$(getenforce 2>/dev/null || echo "Disabled")
+    if [ "$selinux_status" != "Disabled" ]; then
+      log "SELinux is $selinux_status"
+      log "  You may need to configure policies for $BIN_PATH"
+      log "  Monitor denials: ausearch -m avc -ts recent"
+
+      if [ "$ENABLE_SELINUX_HELPERS" = "true" ] && is_cmd semanage; then
+        semanage fcontext -a -t bin_t "$BIN_PATH" 2>/dev/null || true
+        restorecon -v "$BIN_PATH" 2>/dev/null || true
+        log "Applied basic SELinux context"
+      fi
+    fi
+  fi
+}
+
+setup_service() {
+  if $is_systemd; then
+    systemctl daemon-reload 2>/dev/null || true
+    if systemctl list-unit-files 2>/dev/null | grep -q "^$SERVICE_NAME.service"; then
+      systemctl enable "$SERVICE_NAME.service" 2>/dev/null || true
+      systemctl restart "$SERVICE_NAME.service" 2>/dev/null || true
+      log "Systemd service $SERVICE_NAME enabled and started"
+      log "  Check status: systemctl status $SERVICE_NAME.service"
+    else
+      warn "Service file $SERVICE_NAME.service not found - manual setup required"
+    fi
+  elif $is_openrc; then
+    if [ -x "/etc/init.d/$SERVICE_NAME" ]; then
+      rc-update add "$SERVICE_NAME" default 2>/dev/null || true
+      rc-service "$SERVICE_NAME" restart 2>/dev/null || \
+        rc-service "$SERVICE_NAME" start 2>/dev/null || true
+      log "OpenRC service $SERVICE_NAME enabled and started"
+      log "  Check status: rc-service $SERVICE_NAME status"
+    else
+      warn "Init script /etc/init.d/$SERVICE_NAME not found - manual setup required"
+    fi
+  else
+    warn "Unknown init system - please enable $SERVICE_NAME manually"
+  fi
+}
+
+show_status() {
+  log ""
+  log "========================================="
+  log "PBS Plus Agent Installation Complete"
+  log "========================================="
+  log ""
+  log "User: pbsplus"
+  log "Groups: $(groups pbsplus 2>/dev/null || echo 'N/A')"
+  log ""
+  if is_cmd getcap && [ -e "$BIN_PATH" ]; then
+    log "Capabilities: $(getcap "$BIN_PATH" 2>/dev/null || echo 'N/A')"
+  fi
+  log ""
+  log "Service: $SERVICE_NAME"
+  if $is_systemd; then
+    log "  Status: rc-service $SERVICE_NAME status"
+    log "  Logs:   journalctl -u $SERVICE_NAME -f"
+  elif $is_openrc; then
+    log "  Status: rc-service $SERVICE_NAME status"
+    log "  Logs:   tail -f $LOG_DIR/*.log"
+  fi
+  log ""
+  log "Note: The pbsplus user has read-only access to system files"
+  log "      via capabilities and group memberships."
+  log ""
+}
+
+main() {
+  log "Starting PBS Plus Agent setup..."
+  detect_system
+  create_group
+  create_user
+  setup_binary
+  create_directories
+  add_to_groups
+  set_capabilities
+  set_pam_limits
+  enable_lingering
+  check_security_modules
+  setup_service
+  show_status
+}
+
+main

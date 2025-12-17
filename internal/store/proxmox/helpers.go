@@ -5,7 +5,6 @@ package proxmox
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -214,7 +213,7 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	syslog.L.Info().WithFields(map[string]interface{}{"original": upid, "new": newUpid}).WithMessage("updated UPID start time").Write()
+	syslog.L.Info().WithFields(map[string]any{"original": upid, "new": newUpid}).WithMessage("updated UPID start time").Write()
 
 	_ = os.Symlink(newPath, path)
 
@@ -423,15 +422,6 @@ func IsUPIDRunning(upid string) bool {
 
 	// If output is not empty, the UPID was found.
 	return strings.TrimSpace(string(output)) != ""
-}
-
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		log.Println("Error checking path:", err)
-		return false
-	}
-	return info.IsDir()
 }
 
 func encodeToHexEscapes(input string) string {

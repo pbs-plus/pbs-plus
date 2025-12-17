@@ -5,29 +5,6 @@ project_name: pbs-plus
 before:
   hooks:
     - go mod tidy
-#    - |
-#      # Generate UpgradeCode (should be consistent across versions)
-#      if [ -z "$UPGRADE_CODE" ]; then
-#        export UPGRADE_CODE=$(echo "pbs-plus-agent-upgrade" | sha256sum | cut -c1-32 | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
-#      fi
-#    - |
-#      # Generate ProductCode (should be unique per version)
-#      export PRODUCT_CODE=$(echo "pbs-plus-agent-{{.Version}}" | sha256sum | cut -c1-32 | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
-
-#binary_signs:
-#  - id: gpg-sign
-#    cmd: gpg
-#    args:
-#      - "--batch"
-#      - "--local-user"
-#      - "{{ .Env.GPG_FINGERPRINT }}"
-#      - "--output"
-#      - "${signature}"
-#      - "--detach-sign"
-#      - "${artifact}"
-#    artifacts: binary
-#    signature: "${artifact}.sig"
-#    output: true
 
 builds:
   # Server build (Linux)
@@ -44,26 +21,17 @@ builds:
     ldflags:
       - -X 'main.Version=v{{.Version}}'
 
-  # ESXi NFS Backup
-  - id: esxi-nfs-backup
-    main: ./cmd/esxi_nfs_backup
-    binary: esxi-nfs-backup
-    goos:
-      - linux
-    goarch:
-      - amd64
-      - arm64
-    env:
-      - CGO_ENABLED=0
-      - GOEXPERIMENT=greenteagc
-      - GOFIPS140=latest
-    ldflags:
-      - -X 'main.Version=v{{.Version}}'
-      - -extld gcc
-      - -extldflags "-static"
+  # Proxmox Backup PXAR Mount (Linux)
+  - id: pxar-mount
+    builder: rust
+    tool: cargo
+    command: build
+    binary: proxmox-backup-pxar-mount
+    targets:
+      - x86_64-unknown-linux-gnu
+    dir: extras/proxmox-backup-pxar-mount
     flags:
-      - -tags=netgo,osusergo
-      - -installsuffix=netgo
+      - --release
 
   # Linux Agent
   - id: linux-agent
@@ -80,26 +48,7 @@ builds:
       - GOFIPS140=latest
     ldflags:
       - -X 'main.Version=v{{.Version}}'
-      - -extld gcc
-      - -extldflags "-static"
-    flags:
-      - -tags=netgo,osusergo
-      - -installsuffix=netgo
-
-  # Linux Updater
-  - id: linux-updater
-    main: ./cmd/unix_updater
-    binary: pbs-plus-updater
-    goos:
-      - linux
-    goarch:
-      - amd64
-      - arm64
-    env:
-      - CGO_ENABLED=0
-      - GOEXPERIMENT=greenteagc
-      - GOFIPS140=latest
-    ldflags:
+      - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
       - -extld gcc
       - -extldflags "-static"
     flags:
@@ -120,6 +69,7 @@ builds:
       - arm64
     ldflags:
       - -X 'main.Version=v{{.Version}}'
+      - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
 
   # Windows Agent
   - id: windows-agent
@@ -135,20 +85,22 @@ builds:
     ldflags:
       - -H=windowsgui
       - -X 'main.Version=v{{.Version}}'
+      - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
 
-  # Windows Updater
-  - id: windows-updater
-    main: ./cmd/windows_updater
-    binary: pbs-plus-updater
-    env:
-      - GOEXPERIMENT=greenteagc
-      - GOFIPS140=latest
-    goos:
-      - windows
-    goarch:
-      - amd64
-    ldflags:
-      - -H=windowsgui
+binary_signs:
+  - id: ed25519
+    cmd: /tmp/bin/signer
+    args:
+      - sign
+      - "${artifact}"
+      - "${signature}"
+    signature: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}.sig"
+    ids:
+      - linux-agent
+      - freebsd-agent
+      - windows-agent
+    artifacts: binary
+    output: true
 
 archives:
   - id: server
@@ -158,10 +110,10 @@ archives:
     formats:
       - binary
 
-  - id: esxi-nfs-backup
+  - id: pxar-mount
     ids:
-      - esxi-nfs-backup
-    name_template: "esxi-nfs-backup-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+      - pxar-mount
+    name_template: "proxmox-backup-pxar-mount-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
 
@@ -169,13 +121,6 @@ archives:
     ids:
       - linux-agent
     name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
-    formats:
-      - binary
-
-  - id: linux-updater
-    ids:
-      - linux-updater
-    name_template: "{{ .ProjectName }}-updater-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
 
@@ -193,36 +138,16 @@ archives:
     formats:
       - binary
 
-  - id: windows-updater
-    ids:
-      - windows-updater
-    name_template: "{{ .ProjectName }}-updater-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
-    formats:
-      - binary
-
 checksum:
   name_template: "{{ .ArtifactName }}.{{ .Algorithm }}"
   algorithm: md5
   split: true
 
-#msi:
-#  - id: windows-agent-msi
-#    ids:
-#      - windows-agent
-#      - windows-updater
-#    name: "PBS Plus Agent"
-#    wxs: "./build/package/windows_agent/agent.wxs"
-#    extra_files:
-#      - source: "./build/package/windows_agent/install.ps1"
-#        target: "install.ps1"
-#      - source: "./build/package/windows_agent/uninstall.ps1"
-#        target: "uninstall.ps1"
-
 nfpms:
   - id: server-deb
     ids:
       - server
-      - esxi-nfs-backup
+      - pxar-mount
     package_name: "{{ .ProjectName }}"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -251,7 +176,6 @@ nfpms:
   - id: linux-agent-deb
     ids:
       - linux-agent
-      - linux-updater
     package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -262,14 +186,11 @@ nfpms:
     formats:
       - deb
     contents:
-      - src: ./build/package/linux_agent/deb/pbs-plus-agent.service
+      - src: ./build/package/linux_agent/systemd/pbs-plus-agent.service
         dst: /lib/systemd/system/pbs-plus-agent.service
         type: config
-      - src: ./build/package/linux_agent/deb/pbs-plus-updater.service
-        dst: /lib/systemd/system/pbs-plus-updater.service
-        type: config
     scripts:
-      postinstall: ./build/package/linux_agent/deb/postinst
+      postinstall: ./build/package/linux_agent/postinst
     overrides:
       deb:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
@@ -277,7 +198,6 @@ nfpms:
   - id: linux-agent-rpm
     ids:
       - linux-agent
-      - linux-updater
     package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -288,14 +208,11 @@ nfpms:
     formats:
       - rpm
     contents:
-      - src: ./build/package/linux_agent/rpm/pbs-plus-agent.service
+      - src: ./build/package/linux_agent/systemd/pbs-plus-agent.service
         dst: /usr/lib/systemd/system/pbs-plus-agent.service
         type: config
-      - src: ./build/package/linux_agent/rpm/pbs-plus-updater.service
-        dst: /usr/lib/systemd/system/pbs-plus-updater.service
-        type: config
     scripts:
-      postinstall: ./build/package/linux_agent/rpm/postinst
+      postinstall: ./build/package/linux_agent/postinst
     overrides:
       rpm:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
@@ -303,7 +220,6 @@ nfpms:
   - id: linux-agent-apk
     ids:
       - linux-agent
-      - linux-updater
     package_name: "{{ .ProjectName }}-agent"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -314,18 +230,13 @@ nfpms:
     formats:
       - apk
     contents:
-      - src: ./build/package/linux_agent/apk/pbs-plus-agent
+      - src: ./build/package/linux_agent/openrc/pbs-plus-agent
         dst: /etc/init.d/pbs-plus-agent
         type: config
         file_info:
           mode: 0755
-      - src: ./build/package/linux_agent/apk/pbs-plus-updater
-        dst: /etc/init.d/pbs-plus-updater
-        type: config
-        file_info:
-          mode: 0755
     scripts:
-      postinstall: ./build/package/linux_agent/apk/postinst
+      postinstall: ./build/package/linux_agent/postinst
     overrides:
       apk:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"

@@ -3,232 +3,131 @@ package arpc
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/xtaci/smux"
 )
 
-type Session struct {
-	muxSess atomic.Pointer[smux.Session]
-	router  atomic.Pointer[Router]
-
-	reconnectConfig ReconnectConfig
-	reconnectMu     sync.Mutex
-
-	state atomic.Int32
-
-	circuitOpen    atomic.Bool
-	circuitResetAt atomic.Int64
-	reconnectChan  chan struct{}
-
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-
-	version string
-}
-
-func (s *Session) SetRouter(router Router) {
-	s.router.Store(&router)
-}
-
-func (s *Session) GetRouter() *Router {
-	return s.router.Load()
-}
-
-func (s *Session) GetVersion() string {
-	return s.version
-}
-
-func NewServerSession(conn net.Conn, config *smux.Config) (*Session, error) {
-	if config == nil {
-		config = defaultSmuxConfig()
+func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
+	if tlsConfig == nil {
+		return nil, fmt.Errorf("missing tls config")
 	}
 
-	s, err := smux.Server(conn, config)
+	conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("TLS dial failed: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	session := &Session{
-		reconnectConfig: ReconnectConfig{},
-		reconnectChan:   make(chan struct{}, 1),
-		ctx:             ctx,
-		cancelFunc:      cancel,
-	}
-	session.muxSess.Store(s)
-	session.state.Store(int32(StateConnected))
-
-	return session, nil
+	state := conn.ConnectionState()
+	syslog.L.Info().
+		WithField("tls_version", state.Version).
+		WithField("alpn", state.NegotiatedProtocol).
+		WithMessage("TLS connection established").
+		Write()
+	return conn, nil
 }
 
-func NewClientSession(conn net.Conn, config *smux.Config) (*Session, error) {
-	if config == nil {
-		config = defaultSmuxConfig()
+func Listen(ctx context.Context, addr string, tlsConfig *tls.Config) (net.Listener, error) {
+	if tlsConfig == nil {
+		return nil, fmt.Errorf("missing tls config")
 	}
 
-	s, err := smux.Client(conn, config)
+	arpcTls := tlsConfig.Clone()
+	arpcTls.NextProtos = []string{"pbsarpc"}
+
+	listener, err := tls.Listen("tcp", addr, arpcTls)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tls listen failed: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	session := &Session{
-		reconnectConfig: ReconnectConfig{},
-		reconnectChan:   make(chan struct{}, 1),
-		ctx:             ctx,
-		cancelFunc:      cancel,
-	}
-	session.muxSess.Store(s)
-	session.state.Store(int32(StateConnected))
-
-	return session, nil
+	return listener, nil
 }
 
-func defaultSmuxConfig() *smux.Config {
-	defaults := smux.DefaultConfig()
-	defaults.Version = 2
-	defaults.MaxReceiveBuffer = utils.MaxReceiveBuffer
-	defaults.MaxStreamBuffer = utils.MaxStreamBuffer
-	defaults.MaxFrameSize = 65535
-
-	return defaults
-}
-
-func (s *Session) Serve() error {
+func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Listener, router Router) error {
 	for {
 		select {
-		case <-s.ctx.Done():
-			return s.ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		default:
 		}
 
-		curSession := s.muxSess.Load()
-		if curSession == nil {
-			return errors.New("session is nil")
-		}
-
-		rc := s.reconnectConfig
-
-		stream, err := curSession.AcceptStream()
+		conn, err := listener.Accept()
 		if err != nil {
-			s.state.Store(int32(StateDisconnected))
-			if rc.AutoReconnect {
-				if err2 := s.attemptReconnect(); err2 != nil {
-					return err2
-				}
-				continue
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				return err
 			}
-			return err
 		}
-		router := s.GetRouter()
-		if router == nil {
-			return fmt.Errorf("router is nil")
-		}
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					stream.Close()
+
+		go func(c net.Conn) {
+			defer c.Close()
+
+			tlsConn, ok := c.(*tls.Conn)
+			if !ok {
+				return
+			}
+
+			if err := tlsConn.Handshake(); err != nil {
+				return
+			}
+
+			if len(tlsConn.ConnectionState().PeerCertificates) == 0 {
+				return
+			}
+
+			smuxS, err := smux.Server(c, defaultConfig())
+			if err != nil {
+				return
+			}
+			defer smuxS.Close()
+
+			var reqHeaders http.Header
+			stream, err := smuxS.AcceptStream()
+			if err == nil {
+				hdrs, rerr := readHeadersFrame(stream)
+				if rerr != nil {
+					syslog.L.Debug().WithMessage("closing tun and conn due to missing header frames").Write()
+					_ = stream.Close()
+					return
 				}
+				reqHeaders = hdrs
+				_ = stream.Close()
+			} else {
+				return
+			}
+
+			pCtx, pCan := context.WithCancel(ctx)
+			defer pCan()
+
+			pipe, id, err := agentsManager.registerStreamPipe(pCtx, smuxS, c, reqHeaders)
+			if err != nil {
+				syslog.L.Debug().WithMessage("closing tun and conn due to stream pipe err reg").Write()
+				return
+			}
+
+			defer func() {
+				pipe.Close()
+				agentsManager.unregisterStreamPipe(id)
 			}()
-			router.ServeStream(stream)
-		}()
+
+			pipe.SetRouter(router)
+
+			_ = pipe.Serve()
+		}(conn)
 	}
 }
 
-func ConnectToServer(ctx context.Context, autoReconnect bool, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*Session, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	if tlsConfig == nil || len(tlsConfig.Certificates) == 0 {
-		return nil, fmt.Errorf("TLS configuration must include client certificate")
-	}
-
-	dialFunc := func() (net.Conn, error) {
-		conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
-		if err != nil {
-			return nil, fmt.Errorf("TLS dial failed: %w", err)
-		}
-
-		if err := conn.Handshake(); err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("TLS handshake failed: %w", err)
-		}
-
-		state := conn.ConnectionState()
-		syslog.L.Info().
-			WithField("tls_version", state.Version).
-			WithField("cipher_suite", state.CipherSuite).
-			WithField("peer_certs_count", len(state.PeerCertificates)).
-			WithMessage("TLS connection established").
-			Write()
-
-		return conn, nil
-	}
-
-	upgradeFunc := func(conn net.Conn) (*Session, error) {
-		conn.SetDeadline(time.Now().Add(10 * time.Second))
-		defer conn.SetDeadline(time.Time{})
-
-		return upgradeHTTPClient(conn, "/plus/arpc", serverAddr, headers, nil)
-	}
-
-	var session *Session
-	var err error
-	if autoReconnect {
-		session, err = dialWithBackoff(
-			ctx,
-			dialFunc,
-			upgradeFunc,
-			100*time.Millisecond,
-			30*time.Second,
-		)
-	} else {
-		conn, err := dialWithProbe(ctx, dialFunc)
-		if err != nil {
-			return nil, errors.New("server not reachable")
-		}
-
-		session, err = upgradeFunc(conn)
-		if err != nil {
-			conn.Close()
-		}
-	}
+func ListenAndServe(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router) error {
+	listener, err := Listen(ctx, addr, tlsConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to server: %w", err)
+		return err
 	}
+	defer listener.Close()
 
-	if autoReconnect {
-		session.EnableAutoReconnect(ReconnectConfig{
-			AutoReconnect:    true,
-			DialFunc:         dialFunc,
-			UpgradeFunc:      upgradeFunc,
-			InitialBackoff:   100 * time.Millisecond,
-			MaxBackoff:       30 * time.Second,
-			BackoffJitter:    0.2,
-			CircuitBreakTime: 60 * time.Second,
-			ReconnectCtx:     ctx,
-		})
-	}
-
-	return session, nil
-}
-
-func (s *Session) Close() error {
-	s.cancelFunc()
-
-	sess := s.muxSess.Load()
-	if sess != nil {
-		return sess.Close()
-	}
-	return nil
+	return Serve(ctx, agentsManager, listener, router)
 }

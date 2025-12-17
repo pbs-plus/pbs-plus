@@ -20,6 +20,7 @@ type fileStandardInfo struct {
 type FileHandle struct {
 	sync.Mutex
 	handle        windows.Handle
+	ov            *overlappedHandle
 	fileSize      int64
 	isDir         bool
 	dirReader     *DirReaderNT
@@ -33,6 +34,8 @@ type DirReaderNT struct {
 	restartScan bool
 	noMoreFiles bool
 	path        string
+	closed      bool
+	mu          sync.Mutex
 }
 
 type UnicodeString struct {

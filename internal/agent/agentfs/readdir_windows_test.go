@@ -3,13 +3,18 @@
 package agentfs
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 )
 
@@ -44,6 +49,9 @@ func TestReadDirBulk(t *testing.T) {
 	t.Run("Special Characters in File Names", func(t *testing.T) {
 		testSpecialCharacters(t, tempDir)
 	})
+	t.Run("Memory Leaks", func(t *testing.T) {
+		testMemoryLeaks(t, tempDir)
+	})
 }
 
 // Test Cases
@@ -71,14 +79,14 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	entriesBytes, err := dirReader.NextBatch(0)
+	entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
 
 	// Decode and verify results
 	var entries types.ReadDirEntries
-	if err := entries.Decode(entriesBytes); err != nil {
+	if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 		t.Fatalf("Failed to decode directory entries: %v", err)
 	}
 
@@ -104,14 +112,14 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	entriesBytes, err := dirReader.NextBatch(0)
+	entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("readDirBulk failed: %v", err)
 	}
 
 	// Decode and verify results
 	var entries types.ReadDirEntries
-	if err := entries.Decode(entriesBytes); err != nil {
+	if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 		t.Fatalf("Failed to decode directory entries: %v", err)
 	}
 
@@ -142,7 +150,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 
 	totalEntries := 0
 	for {
-		entriesBytes, err := dirReader.NextBatch(0)
+		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -152,7 +160,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 
 		// Decode and verify results
 		var entries types.ReadDirEntries
-		if err := entries.Decode(entriesBytes); err != nil {
+		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
@@ -187,7 +195,7 @@ func testFileAttributes(t *testing.T, tempDir string) {
 
 	allEntries := []types.AgentFileInfo{}
 	for {
-		entriesBytes, err := dirReader.NextBatch(0)
+		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -197,7 +205,7 @@ func testFileAttributes(t *testing.T, tempDir string) {
 
 		// Decode and verify results
 		var entries types.ReadDirEntries
-		if err := entries.Decode(entriesBytes); err != nil {
+		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
@@ -263,7 +271,7 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 
 	allEntries := []types.AgentFileInfo{}
 	for {
-		entriesBytes, err := dirReader.NextBatch(0)
+		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -273,7 +281,7 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 
 		// Decode and verify results
 		var entries types.ReadDirEntries
-		if err := entries.Decode(entriesBytes); err != nil {
+		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
@@ -306,7 +314,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 	allEntries := []types.AgentFileInfo{}
 
 	for {
-		entriesBytes, err := dirReader.NextBatch(0)
+		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -316,7 +324,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 
 		// Decode and verify results
 		var entries types.ReadDirEntries
-		if err := entries.Decode(entriesBytes); err != nil {
+		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
@@ -357,7 +365,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 	allEntries := []types.AgentFileInfo{}
 
 	for {
-		entriesBytes, err := dirReader.NextBatch(0)
+		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
 		if err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				break
@@ -367,7 +375,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 
 		// Decode and verify results
 		var entries types.ReadDirEntries
-		if err := entries.Decode(entriesBytes); err != nil {
+		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
 
@@ -386,4 +394,248 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 			t.Errorf("File with special characters %s not found in directory entries", name)
 		}
 	}
+}
+
+func testMemoryLeaks(t *testing.T, tempDir string) {
+	// Create a test directory with files
+	leakTestDir := filepath.Join(tempDir, "leak_test")
+	if err := os.Mkdir(leakTestDir, 0755); err != nil {
+		t.Fatalf("Failed to create leak test directory: %v", err)
+	}
+
+	// Create a reasonable number of files for testing
+	numFiles := 1000
+	for i := 0; i < numFiles; i++ {
+		fileName := filepath.Join(leakTestDir, "file"+strconv.Itoa(i)+".txt")
+		if err := os.WriteFile(fileName, []byte("test content"), 0644); err != nil {
+			t.Fatalf("Failed to create file %s: %v", fileName, err)
+		}
+	}
+
+	t.Run("Handle Leak Test", func(t *testing.T) {
+		// Test that handles are properly closed after multiple iterations
+		iterations := 100
+		for i := 0; i < iterations; i++ {
+			dirReader, err := NewDirReaderNT(leakTestDir)
+			if err != nil {
+				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+			}
+
+			// Read all entries
+			for {
+				_, err := dirReader.NextBatch(context.Background(), 0)
+				if err != nil {
+					if errors.Is(err, os.ErrProcessDone) {
+						break
+					}
+					t.Fatalf("Iteration %d: NextBatch failed: %v", i, err)
+				}
+			}
+
+			// Close the reader
+			if err := dirReader.Close(); err != nil {
+				t.Fatalf("Iteration %d: Close failed: %v", i, err)
+			}
+		}
+		t.Logf("Successfully completed %d iterations without handle leaks", iterations)
+	})
+
+	t.Run("Early Close Test", func(t *testing.T) {
+		// Test closing reader before consuming all entries
+		iterations := 50
+		for i := 0; i < iterations; i++ {
+			dirReader, err := NewDirReaderNT(leakTestDir)
+			if err != nil {
+				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+			}
+
+			// Read only first batch
+			_, err = dirReader.NextBatch(context.Background(), 0)
+			if err != nil && !errors.Is(err, os.ErrProcessDone) {
+				t.Fatalf("Iteration %d: NextBatch failed: %v", i, err)
+			}
+
+			// Close immediately without reading all entries
+			if err := dirReader.Close(); err != nil {
+				t.Fatalf("Iteration %d: Close failed: %v", i, err)
+			}
+		}
+		t.Logf("Successfully completed %d early close iterations", iterations)
+	})
+
+	t.Run("Context Cancellation Test", func(t *testing.T) {
+		iterations := 50
+		for i := 0; i < iterations; i++ {
+			dirReader, err := NewDirReaderNT(leakTestDir)
+			if err != nil {
+				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+
+			var readErr error
+			done := make(chan struct{})
+
+			go func() {
+				defer close(done)
+				for {
+					_, err := dirReader.NextBatch(ctx, 0)
+					if err != nil {
+						readErr = err
+						return
+					}
+				}
+			}()
+
+			cancel()
+			<-done
+
+			// After cancellation, we expect context.Canceled or invalid handle errors
+			if readErr != nil {
+				if !errors.Is(readErr, context.Canceled) &&
+					!strings.Contains(readErr.Error(), "0xc0000008") &&
+					!strings.Contains(readErr.Error(), "0xc0000024") {
+					t.Logf("Iteration %d: Unexpected error after cancel: %v", i, readErr)
+				}
+			}
+
+			// Close may fail with INVALID_HANDLE - that's fine
+			err = dirReader.Close()
+			if err != nil && !strings.Contains(err.Error(), "0xc0000008") &&
+				!strings.Contains(readErr.Error(), "0xc0000024") {
+				t.Fatalf("Iteration %d: Close failed with unexpected error: %v", i, err)
+			}
+		}
+		t.Logf("Successfully completed %d context cancellation iterations", iterations)
+	})
+
+	t.Run("Concurrent Access Test", func(t *testing.T) {
+		// Test concurrent access to ensure no resource leaks
+		numGoroutines := 10
+		iterations := 10
+
+		var wg sync.WaitGroup
+		errChan := make(chan error, numGoroutines*iterations)
+
+		for g := 0; g < numGoroutines; g++ {
+			wg.Add(1)
+			go func(goroutineID int) {
+				defer wg.Done()
+				for i := 0; i < iterations; i++ {
+					dirReader, err := NewDirReaderNT(leakTestDir)
+					if err != nil {
+						errChan <- fmt.Errorf("Goroutine %d, Iteration %d: NewDirReaderNT failed: %v", goroutineID, i, err)
+						return
+					}
+
+					// Read all entries
+					for {
+						_, err := dirReader.NextBatch(context.Background(), 0)
+						if err != nil {
+							if errors.Is(err, os.ErrProcessDone) {
+								break
+							}
+							errChan <- fmt.Errorf("Goroutine %d, Iteration %d: NextBatch failed: %v", goroutineID, i, err)
+							dirReader.Close()
+							return
+						}
+					}
+
+					if err := dirReader.Close(); err != nil {
+						errChan <- fmt.Errorf("Goroutine %d, Iteration %d: Close failed: %v", goroutineID, i, err)
+						return
+					}
+				}
+			}(g)
+		}
+
+		wg.Wait()
+		close(errChan)
+
+		// Check for errors
+		for err := range errChan {
+			t.Error(err)
+		}
+
+		t.Logf("Successfully completed %d concurrent goroutines with %d iterations each", numGoroutines, iterations)
+	})
+
+	t.Run("Buffer Pool Test", func(t *testing.T) {
+		// Test that buffer pool doesn't accumulate leaked buffers
+		iterations := 200
+		for i := 0; i < iterations; i++ {
+			dirReader, err := NewDirReaderNT(leakTestDir)
+			if err != nil {
+				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+			}
+
+			// Read entries - this uses the buffer pool
+			for {
+				_, err := dirReader.NextBatch(context.Background(), 0)
+				if err != nil {
+					if errors.Is(err, os.ErrProcessDone) {
+						break
+					}
+					t.Fatalf("Iteration %d: NextBatch failed: %v", i, err)
+				}
+			}
+
+			if err := dirReader.Close(); err != nil {
+				t.Fatalf("Iteration %d: Close failed: %v", i, err)
+			}
+		}
+		t.Logf("Successfully completed %d buffer pool iterations", iterations)
+	})
+
+	t.Run("Panic Recovery Test", func(t *testing.T) {
+		// Test that handles are cleaned up even with panics
+		// Note: This simulates cleanup patterns, actual panic handling depends on your implementation
+		iterations := 10
+		for i := 0; i < iterations; i++ {
+			func() {
+				dirReader, err := NewDirReaderNT(leakTestDir)
+				if err != nil {
+					t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+				}
+				defer func() {
+					if r := recover(); r != nil {
+						// Ensure cleanup happens
+						dirReader.Close()
+					}
+				}()
+
+				// Normal operation
+				_, err = dirReader.NextBatch(context.Background(), 0)
+				if err != nil && !errors.Is(err, os.ErrProcessDone) {
+					t.Fatalf("Iteration %d: NextBatch failed: %v", i, err)
+				}
+
+				if err := dirReader.Close(); err != nil {
+					t.Fatalf("Iteration %d: Close failed: %v", i, err)
+				}
+			}()
+		}
+		t.Logf("Successfully completed %d panic recovery iterations", iterations)
+	})
+
+	t.Run("Double Close Test", func(t *testing.T) {
+		// Test that double-closing doesn't cause issues
+		dirReader, err := NewDirReaderNT(leakTestDir)
+		if err != nil {
+			t.Fatalf("NewDirReaderNT failed: %v", err)
+		}
+
+		// First close
+		if err := dirReader.Close(); err != nil {
+			t.Fatalf("First close failed: %v", err)
+		}
+
+		// Second close - should either be idempotent or return a clear error
+		err = dirReader.Close()
+		if err != nil {
+			t.Logf("Second close returned error (expected): %v", err)
+		} else {
+			t.Log("Second close succeeded (idempotent)")
+		}
+	})
 }

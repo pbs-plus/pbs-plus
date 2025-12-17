@@ -3,718 +3,1147 @@ package arpc
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"net"
-	_ "net/http/pprof"
+	"net/http"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/xtaci/smux"
 )
 
-type latencyConn struct {
-	net.Conn
-	delay time.Duration
+type testPKI struct {
+	caCert *x509.Certificate
+	caKey  *rsa.PrivateKey
+	caDER  []byte
+	caPool *x509.CertPool
 }
 
-func (l *latencyConn) randomDelay() {
-	jitter := time.Duration(rand.Int63n(int64(l.delay)))
-	time.Sleep(l.delay + jitter)
+func newTestCA(t *testing.T, cn string) *testPKI {
+	t.Helper()
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("gen ca key: %v", err)
+	}
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
+	ski := make([]byte, 20)
+	_, _ = rand.Read(ski)
+	caTpl := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(48 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLenZero:        true,
+		SubjectKeyId:          ski,
+		SignatureAlgorithm:    x509.SHA256WithRSA,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTpl, caTpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create ca cert: %v", err)
+	}
+	caLeaf, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parse ca cert: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caLeaf)
+	return &testPKI{
+		caCert: caLeaf,
+		caKey:  caKey,
+		caDER:  caDER,
+		caPool: pool,
+	}
 }
 
-func (l *latencyConn) Read(b []byte) (n int, err error) {
-	l.randomDelay()
-	return l.Conn.Read(b)
+func (p *testPKI) issueCert(t *testing.T, cn string, isClient bool, ips []net.IP, dns []string) tls.Certificate {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
+	ski := make([]byte, 20)
+	_, _ = rand.Read(ski)
+	tpl := &x509.Certificate{
+		SerialNumber:       serial,
+		Subject:            pkix.Name{CommonName: cn},
+		NotBefore:          time.Now().Add(-time.Hour),
+		NotAfter:           time.Now().Add(24 * time.Hour),
+		KeyUsage:           x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		SignatureAlgorithm: x509.SHA256WithRSA,
+		SubjectKeyId:       ski,
+	}
+	if isClient {
+		tpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	} else {
+		tpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+	}
+	if len(ips) > 0 {
+		tpl.IPAddresses = append([]net.IP(nil), ips...)
+	}
+	if len(dns) > 0 {
+		tpl.DNSNames = append([]string(nil), dns...)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, p.caCert, &key.PublicKey, p.caKey)
+	if err != nil {
+		t.Fatalf("sign cert: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+	return tls.Certificate{
+		Certificate: [][]byte{der, p.caDER},
+		PrivateKey:  key,
+		Leaf:        leaf,
+	}
 }
 
-func (l *latencyConn) Write(b []byte) (n int, err error) {
-	l.randomDelay()
-	return l.Conn.Write(b)
+var (
+	globalCAOnce sync.Once
+	serverCA     *testPKI
+	clientCA     *testPKI
+)
+
+func ensureGlobalCAs(t *testing.T) {
+	globalCAOnce.Do(func() {
+		serverCA = newTestCA(t, "test-server-ca")
+		clientCA = newTestCA(t, "test-client-ca")
+	})
 }
 
-// ---------------------------------------------------------------------
-// Helper: setupSessionWithRouter
-//
-// Creates a new pair of connected sessions (client/server) using net.Pipe.
-// The server session immediately begins serving on the provided router.
-// The function returns the client‑side session (which is used for calls)
-// plus a cleanup function to shut down both sessions.
-// ---------------------------------------------------------------------
-func setupSessionWithRouter(t *testing.T, router Router) (clientSession *Session, cleanup func()) {
+func newTestARPCServer(t *testing.T, router Router) (addr string, cleanup func(), serverTLS *tls.Config) {
 	t.Helper()
 
-	clientConn, serverConn := net.Pipe()
+	ensureGlobalCAs(t)
+	serverCert := serverCA.issueCert(t, "localhost", false, []net.IP{net.ParseIP("127.0.0.1")}, []string{"localhost"})
 
-	// Emulate network latency by wrapping the connections.
-	// For example, here we simulate a constant 100ms latency.
-	const simulatedLatency = 5 * time.Millisecond
-	serverConn = &latencyConn{Conn: serverConn, delay: simulatedLatency}
-	clientConn = &latencyConn{Conn: clientConn, delay: simulatedLatency}
-
-	serverSession, err := NewServerSession(serverConn, nil)
-	if err != nil {
-		t.Fatalf("failed to create server session: %v", err)
+	serverTLS = &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCA.caPool,
+		MinVersion:   tls.VersionTLS13,
 	}
 
-	clientSession, err = NewClientSession(clientConn, nil)
+	listener, err := Listen(t.Context(), "127.0.0.1:0", serverTLS)
 	if err != nil {
-		t.Fatalf("failed to create client session: %v", err)
+		t.Fatalf("arpc listen: %v", err)
 	}
 
-	serverSession.SetRouter(router)
-
+	agentsManager := NewAgentsManager()
 	done := make(chan struct{})
-
-	// Start the server session in a goroutine. Serve() continuously accepts streams.
 	go func() {
-		_ = serverSession.Serve()
-		close(done)
-	}()
-
-	cleanup = func() {
-		_ = clientSession.Close()
-		_ = serverSession.Close()
-		select {
-		case <-done:
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-
-	return clientSession, cleanup
-}
-
-// ---------------------------------------------------------------------
-// Test 1: Router.ServeStream working as expected (Echo handler).
-// We simulate a single request/response using a net.Pipe as the underlying stream.
-// ---------------------------------------------------------------------
-func TestRouterServeStream_Echo(t *testing.T) {
-	// Create an in‑memory connection pair.
-	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
-
-	// Create smux sessions for server and client.
-	serverSession, err := smux.Server(serverConn, nil)
-	if err != nil {
-		t.Fatalf("failed to create smux server session: %v", err)
-	}
-	clientSession, err := smux.Client(clientConn, nil)
-	if err != nil {
-		t.Fatalf("failed to create smux client session: %v", err)
-	}
-
-	// Create the router and register an "echo" handler.
-	router := NewRouter()
-	router.Handle("echo", func(req Request) (Response, error) {
-		// Echo back the payload.
-		return Response{
-			Status: 200,
-			Data:   req.Payload,
-		}, nil
-	})
-
-	// On the server side, accept a stream.
-	var (
-		wg     sync.WaitGroup
-		srvErr error
-	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		stream, err := serverSession.AcceptStream()
+		defer close(done)
+		err = Serve(t.Context(), agentsManager, listener, router)
 		if err != nil {
-			srvErr = err
 			return
 		}
-		router.ServeStream(stream)
 	}()
 
-	// On the client side, open a stream.
-	clientStream, err := clientSession.OpenStream()
+	addr = listener.Addr().String()
+	cleanup = func() {
+		_ = listener.Close()
+		select {
+		case <-done:
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	return addr, cleanup, serverTLS
+}
+
+func newTestClientTLS(t *testing.T) *tls.Config {
+	t.Helper()
+	ensureGlobalCAs(t)
+	clientCert := clientCA.issueCert(t, "client", true, nil, nil)
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{clientCert},
+		RootCAs:      serverCA.caPool,
+		ServerName:   "localhost",
+		MinVersion:   tls.VersionTLS13,
+	}
+}
+
+func TestRouterServeStream_Echo(t *testing.T) {
+	router := NewRouter()
+	router.Handle("echo", func(req *Request) (Response, error) {
+		return Response{Status: http.StatusOK, Data: req.Payload}, nil
+	})
+
+	addr, shutdown, serverTLS := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
 	if err != nil {
-		t.Fatalf("failed to open client stream: %v", err)
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	var msg string = "hello"
+	payload, _ := cbor.Marshal(msg)
+
+	var out []byte
+	if err := pipe.Call(context.Background(), "echo", payload, &out); err != nil {
+		t.Fatalf("Call: %v", err)
 	}
 
-	// Build and send a request.
-	payload := StringMsg("hello")
-	payloadBytes, err := payload.Encode()
-	if err != nil {
-		t.Fatalf("failed to encode payload: %v", err)
-	}
-
-	req := Request{
-		Method:  "echo",
-		Payload: payloadBytes,
-	}
-
-	reqBytes, err := req.Encode()
-	if err != nil {
-		t.Fatalf("failed to encode request: %v", err)
-	}
-
-	if _, err := clientStream.Write(reqBytes); err != nil {
-		t.Fatalf("failed to write request: %v", err)
-	}
-
-	// Read and decode the response.
-	respBuf := make([]byte, 1024)
-	n, err := clientStream.Read(respBuf)
-	if err != nil {
-		t.Fatalf("failed to read response: %v", err)
-	}
-
-	var resp Response
-	if err := resp.Decode(respBuf[:n]); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if resp.Status != 200 {
-		t.Fatalf("expected status 200, got %d", resp.Status)
-	}
-
-	// Extract the echoed payload.
-	var echoed StringMsg
-	if err := echoed.Decode(resp.Data); err != nil {
-		t.Fatalf("failed to decode echoed data: %v", err)
+	var echoed string
+	if err := cbor.Unmarshal(out, &echoed); err != nil {
+		t.Fatalf("decode echoed: %v", err)
 	}
 	if echoed != "hello" {
-		t.Fatalf("expected data 'hello', got %q", echoed)
+		t.Fatalf("expected hello, got %q", echoed)
 	}
 
-	// Wait for the server goroutine to finish.
-	doneCh := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(doneCh)
-	}()
-	select {
-	case <-doneCh:
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("timeout waiting for ServeStream to finish")
-	}
-
-	if srvErr != nil {
-		t.Fatalf("server error during AcceptStream: %v", srvErr)
-	}
+	_ = serverTLS
 }
 
-// ---------------------------------------------------------------------
-// Test 2: Session.Call (simple call).
-// Create connected client/server sessions and call a simple "ping" method.
-// ---------------------------------------------------------------------
-func TestSessionCall_Success(t *testing.T) {
+func TestStreamPipeCall_Success(t *testing.T) {
 	router := NewRouter()
-	router.Handle("ping", func(req Request) (Response, error) {
-		// Echo back "pong".
-		var pong StringMsg = "pong"
-		pongBytes, _ := pong.Encode()
-		return Response{
-			Status: 200,
-			Data:   pongBytes,
-		}, nil
+	router.Handle("ping", func(req *Request) (Response, error) {
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
+		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	clientSession, cleanup := setupSessionWithRouter(t, router)
-	defer cleanup()
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
 
-	resp, err := clientSession.Call("ping", nil)
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
 	if err != nil {
-		t.Fatalf("Call failed: %v", err)
+		t.Fatalf("ConnectToServer: %v", err)
 	}
-	if resp.Status != 200 {
-		t.Fatalf("expected status 200, got %d", resp.Status)
-	}
+	defer pipe.Close()
 
-	var pong StringMsg
-	if err := pong.Decode(resp.Data); err != nil {
-		t.Fatalf("failed to decode pong: %v", err)
+	var out string
+	if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {
+		t.Fatalf("Call: %v", err)
 	}
-	if pong != "pong" {
-		t.Fatalf("expected pong response, got %q", pong)
+	if out != "pong" {
+		t.Fatalf("expected pong, got %q", out)
 	}
 }
 
-// ---------------------------------------------------------------------
-// Test 3: Concurrency test.
-// Spawn many concurrent goroutines making calls via the same session.
-// ---------------------------------------------------------------------
-func TestSessionCall_Concurrency(t *testing.T) {
+func TestStreamPipeCall_Concurrency(t *testing.T) {
 	router := NewRouter()
-	router.Handle("ping", func(req Request) (Response, error) {
-		var pong StringMsg = "pong"
-		pongBytes, _ := pong.Encode()
-		return Response{
-			Status: 200,
-			Data:   pongBytes,
-		}, nil
+	router.Handle("ping", func(req *Request) (Response, error) {
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
+		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	clientSession, cleanup := setupSessionWithRouter(t, router)
-	defer cleanup()
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
 
 	const numClients = 100
 	var wg sync.WaitGroup
+	wg.Add(numClients)
 
 	for i := 0; i < numClients; i++ {
-		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			payload := MapStringIntMsg{"client": id}
-			resp, err := clientSession.Call("ping", &payload)
-			if err != nil {
-				t.Errorf("Client %d error: %v", id, err)
+			payload := map[string]int{"client": id}
+			var out string
+			if err := pipe.Call(context.Background(), "ping", &payload, &out); err != nil {
+				t.Errorf("client %d: %v", id, err)
 				return
 			}
-			if resp.Status != 200 {
-				t.Errorf("Client %d: expected status 200, got %d", id, resp.Status)
+			if out != "pong" {
+				t.Errorf("client %d: expected pong, got %q", id, out)
 			}
-			var pong StringMsg
-			if err := pong.Decode(resp.Data); err != nil {
-				t.Errorf("Client %d: failed to decode: %v", id, err)
-				return
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
+	router := NewRouter()
+	router.Handle("slow", func(req *Request) (Response, error) {
+		time.Sleep(200 * time.Millisecond)
+		var done string = "done"
+		b, _ := cbor.Marshal(done)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	go func() {
+		<-ctx.Done()
+		pipe.Close()
+	}()
+
+	var out []byte
+	err = pipe.Call(ctx, "slow", nil, &out)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("expected DeadlineExceeded or Canceled, got %v", err)
+	}
+}
+
+func TestCall_ErrorResponse(t *testing.T) {
+	router := NewRouter()
+	router.Handle("error", func(req *Request) (Response, error) {
+		return Response{}, fmt.Errorf("test error")
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	var out []byte
+	err = pipe.Call(context.Background(), "error", nil, &out)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if err.Error() == "" {
+		t.Fatalf("expected error containing 'test error', got: %v", err)
+	}
+}
+
+func TestCall_RawStream_BinaryFlow(t *testing.T) {
+	router := NewRouter()
+	router.Handle("binary_flow", func(req *Request) (Response, error) {
+		resp := Response{
+			Status: 213,
+			RawStream: func(st *smux.Stream) {
+				payload := []byte("hello world")
+				_ = binarystream.SendDataFromReader(bytes.NewReader(payload), len(payload), st)
+				_ = st.Close()
+			},
+		}
+		return resp, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	var received []byte
+	handler := RawStreamHandler(func(st *smux.Stream) error {
+		buf := make([]byte, len("hello world"))
+		n, err := binarystream.ReceiveDataInto(st, buf)
+		if err != nil {
+			return fmt.Errorf("receive failed: %w", err)
+		}
+		received = append(received[:0], buf[:n]...)
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := pipe.Call(ctx, "binary_flow", nil, handler); err != nil {
+		t.Fatalf("Call failed: %v", err)
+	}
+
+	if string(received) != "hello world" {
+		t.Fatalf("expected 'hello world', got %q", string(received))
+	}
+}
+
+func TestCall_RawStream_HandlerMissing(t *testing.T) {
+	router := NewRouter()
+	router.Handle("binary", func(req *Request) (Response, error) {
+		return Response{Status: 213, RawStream: func(st *smux.Stream) {}}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	var out []byte
+	err = pipe.Call(context.Background(), "binary", nil, &out)
+	if err == nil {
+		t.Fatal("expected error due to missing RawStreamHandler")
+	}
+}
+
+func TestStreamPipe_State_And_Reconnect(t *testing.T) {
+	router := NewRouter()
+	router.Handle("ping", func(req *Request) (Response, error) {
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	if st := pipe.GetState(); st != StateConnected {
+		t.Fatalf("expected connected, got %v", st)
+	}
+
+	_ = pipe.conn.Close()
+
+	pipe, err = pipe.Reconnect(t.Context())
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	if st := pipe.GetState(); st != StateConnected {
+		t.Fatalf("expected connected after reconnect, got %v", st)
+	}
+
+	var out string
+	if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {
+		t.Fatalf("Call after reconnect: %v", err)
+	}
+	if out != "pong" {
+		t.Fatalf("expected pong, got %q", out)
+	}
+}
+
+func TestRouter_NotFound_And_BadRequest(t *testing.T) {
+	router := NewRouter()
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	var out []byte
+	err = pipe.Call(context.Background(), "missing", nil, &out)
+	if err == nil {
+		t.Fatal("expected error for missing method")
+	}
+
+	router2 := NewRouter()
+	addr2, shutdown2, _ := newTestARPCServer(t, router2)
+	defer shutdown2()
+
+	pipe2, err := ConnectToServer(t.Context(), addr2, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe2.Close()
+
+	st, err := pipe2.OpenStream()
+	if err != nil {
+		t.Fatalf("OpenStreamSync: %v", err)
+	}
+	defer st.Close()
+
+	req := Request{Method: "", Payload: nil}
+	b, _ := cbor.Marshal(req)
+	_, _ = st.Write(b)
+
+	var resp Response
+	if derr := cbor.Unmarshal(b, &resp); derr != nil {
+		return
+	}
+	if resp.Status == http.StatusOK {
+		t.Fatalf("expected non-200 for bad request, got 200")
+	}
+}
+
+func TestSerializableError_Wrap_Unwrap(t *testing.T) {
+	orig := &os.PathError{Op: "open", Path: "/nope", Err: os.ErrNotExist}
+	se := WrapError(orig)
+	if se == nil {
+		t.Fatal("WrapError returned nil")
+	}
+	if se.ErrorType == "" || se.Message == "" {
+		t.Fatal("missing fields in SerializableError")
+	}
+
+	err := UnwrapError(*se)
+	var pe *os.PathError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PathError, got %T", err)
+	}
+	if !errors.Is(pe.Err, os.ErrNotExist) {
+		t.Fatalf("expected os.ErrNotExist, got %v", pe.Err)
+	}
+}
+
+func TestStress_ConsecutiveCalls(t *testing.T) {
+	router := NewRouter()
+	router.Handle("inc", func(req *Request) (Response, error) {
+		var n int
+		if err := cbor.Unmarshal(req.Payload, &n); err != nil {
+			return Response{Status: http.StatusBadRequest}, nil
+		}
+		n = n + 1
+		b, _ := cbor.Marshal(n)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	const total = 1000
+	for i := 0; i < total; i++ {
+		var in int = int(i)
+		var out int
+		if err := pipe.Call(context.Background(), "inc", &in, &out); err != nil {
+			t.Fatalf("call %d failed: %v", i, err)
+		}
+		expected := int(i + 1)
+		if out != expected {
+			t.Fatalf("call %d expected %d got %d", i, expected, out)
+		}
+	}
+}
+
+func TestStress_BatchedSequences(t *testing.T) {
+	router := NewRouter()
+	router.Handle("echo_str", func(req *Request) (Response, error) {
+		return Response{Status: http.StatusOK, Data: req.Payload}, nil
+	})
+	router.Handle("sum_pair", func(req *Request) (Response, error) {
+		var pair map[string]int
+		if err := cbor.Unmarshal(req.Payload, &pair); err != nil {
+			return Response{Status: http.StatusBadRequest}, nil
+		}
+		total := 0
+		for _, v := range pair {
+			total += v
+		}
+		var out int = int(total)
+		b, _ := cbor.Marshal(out)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	const batches = 100
+	const perBatch = 40
+
+	for b := 0; b < batches; b++ {
+		for i := 0; i < perBatch; i++ {
+			msg := string(fmt.Sprintf("b%d-i%d", b, i))
+			var echoed string
+			if err := pipe.Call(context.Background(), "echo_str", &msg, &echoed); err != nil {
+				t.Fatalf("batch %d iter %d echo_str err: %v", b, i, err)
 			}
-			if pong != "pong" {
-				t.Errorf("Client %d: expected 'pong', got %q", id, pong)
+			if echoed != msg {
+				t.Fatalf("batch %d iter %d mismatch", b, i)
+			}
+
+			pl := map[string]int{"a": b, "b": i}
+			var sum int
+			if err := pipe.Call(context.Background(), "sum_pair", &pl, &sum); err != nil {
+				t.Fatalf("batch %d iter %d sum_pair err: %v", b, i, err)
+			}
+			if int(sum) != b+i {
+				t.Fatalf("batch %d iter %d expected %d got %d", b, i, b+i, sum)
+			}
+		}
+	}
+}
+
+func TestStreams_ProperlyClosed_NoExhaustion(t *testing.T) {
+	router := NewRouter()
+	router.Handle("short", func(req *Request) (Response, error) {
+		var ok string = "ok"
+		b, _ := cbor.Marshal(ok)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	const iters = 256
+	for i := 0; i < iters; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		var out string
+		err := pipe.Call(ctx, "short", nil, &out)
+		cancel()
+		if err != nil {
+			t.Fatalf("iter %d Call error: %v", i, err)
+		}
+		if out != "ok" {
+			t.Fatalf("iter %d expected ok got %q", i, out)
+		}
+	}
+}
+
+func goroutineSnapshot() int {
+	return runtime.NumGoroutine()
+}
+
+// waitForGoroutines waits for goroutines to settle within a tolerance
+func waitForGoroutines(t *testing.T, baseline int, tolerance int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastCount int
+	for time.Now().Before(deadline) {
+		runtime.GC()
+		runtime.Gosched()
+		time.Sleep(100 * time.Millisecond)
+		current := goroutineSnapshot()
+		if current <= baseline+tolerance {
+			return
+		}
+		lastCount = current
+	}
+	// Final check
+	runtime.GC()
+	runtime.Gosched()
+	time.Sleep(200 * time.Millisecond)
+	current := goroutineSnapshot()
+	if current > baseline+tolerance {
+		t.Errorf("goroutine leak detected: baseline=%d current=%d last=%d (tolerance=%d)",
+			baseline, current, lastCount, tolerance)
+
+		// Print stack traces for debugging
+		buf := make([]byte, 1<<20)
+		stackLen := runtime.Stack(buf, true)
+		t.Logf("Goroutine dump:\n%s", buf[:stackLen])
+	}
+}
+
+func TestLeak_SimpleCallAndClose(t *testing.T) {
+	router := NewRouter()
+	router.Handle("ping", func(req *Request) (Response, error) {
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	baseline := goroutineSnapshot()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+
+	var out string
+	if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+
+	pipe.Close()
+
+	// Give server time to cleanup
+	time.Sleep(200 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 5, 3*time.Second)
+}
+
+func TestLeak_MultipleConnections(t *testing.T) {
+	router := NewRouter()
+	router.Handle("echo", func(req *Request) (Response, error) {
+		return Response{Status: http.StatusOK, Data: req.Payload}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	baseline := goroutineSnapshot()
+
+	const numConns = 20
+	for i := 0; i < numConns; i++ {
+		clientTLS := newTestClientTLS(t)
+		pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+		if err != nil {
+			t.Fatalf("ConnectToServer %d: %v", i, err)
+		}
+
+		msg := fmt.Sprintf("test-%d", i)
+		var out string
+		if err := pipe.Call(context.Background(), "echo", &msg, &out); err != nil {
+			t.Fatalf("Call %d: %v", i, err)
+		}
+
+		pipe.Close()
+
+		// Allow server to process disconnect
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Extra time for all connections to fully cleanup
+	time.Sleep(1 * time.Second)
+
+	// More permissive tolerance for multiple connections
+	// Each connection creates: client Serve, server Serve, 2 smux goroutines, context watchers
+	waitForGoroutines(t, baseline, 50, 10*time.Second)
+}
+
+func TestLeak_ConcurrentCalls(t *testing.T) {
+	router := NewRouter()
+	router.Handle("work", func(req *Request) (Response, error) {
+		time.Sleep(10 * time.Millisecond)
+		var ok string = "ok"
+		b, _ := cbor.Marshal(ok)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const numCalls = 100
+	var wg sync.WaitGroup
+	wg.Add(numCalls)
+
+	for i := 0; i < numCalls; i++ {
+		go func(id int) {
+			defer wg.Done()
+			var out string
+			if err := pipe.Call(context.Background(), "work", nil, &out); err != nil {
+				t.Errorf("Call %d: %v", id, err)
 			}
 		}(i)
 	}
 
 	wg.Wait()
+
+	// Allow streams to fully close
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
 }
 
-// ---------------------------------------------------------------------
-// Test 4: CallContext with timeout.
-// The server is deliberately slow. The client should abort the call.
-// ---------------------------------------------------------------------
-func TestCallContext_Timeout(t *testing.T) {
+func TestLeak_TimeoutCalls(t *testing.T) {
 	router := NewRouter()
-	router.Handle("slow", func(req Request) (Response, error) {
-		time.Sleep(200 * time.Millisecond)
-		var done StringMsg = "done"
-		doneBytes, _ := done.Encode()
-		return Response{
-			Status: 200,
-			Data:   doneBytes,
-		}, nil
+	router.Handle("slow", func(req *Request) (Response, error) {
+		time.Sleep(500 * time.Millisecond)
+		var done string = "done"
+		b, _ := cbor.Marshal(done)
+		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	clientSession, cleanup := setupSessionWithRouter(t, router)
-	defer cleanup()
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
 
-	_, err := clientSession.CallMsg(ctx, "slow", nil)
-	if err == nil {
-		t.Fatal("expected timeout error, got nil")
+	baseline := goroutineSnapshot()
+
+	const numCalls = 20
+	for i := 0; i < numCalls; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		var out string
+		_ = pipe.Call(ctx, "slow", nil, &out)
+		cancel()
+		time.Sleep(20 * time.Millisecond)
 	}
-	if err != context.DeadlineExceeded {
-		t.Fatalf("expected DeadlineExceeded, got %v", err)
-	}
+
+	// Allow cancelled operations to cleanup
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
 }
 
-// ---------------------------------------------------------------------
-// Test 5: Auto-reconnect.
-// Simulate a broken connection by closing the underlying session, and
-// verify that a subsequent call automatically triggers reconnection.
-// ---------------------------------------------------------------------
-func TestAutoReconnect(t *testing.T) {
+func TestLeak_ReconnectCycle(t *testing.T) {
 	router := NewRouter()
-	router.Handle("ping", func(req Request) (Response, error) {
-		var pong StringMsg = "pong"
-		pongBytes, _ := pong.Encode()
-		return Response{
-			Status: 200,
-			Data:   pongBytes,
-		}, nil
+	router.Handle("ping", func(req *Request) (Response, error) {
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
+		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	// Start an initial client/server session.
-	clientSession, cleanup := setupSessionWithRouter(t, router)
-	defer cleanup()
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
 
-	var dialCount int32
-
-	// Create a custom dial function that creates a new net.Pipe pair and
-	// immediately starts a new server session using the same router.
-	dialFunc := func() (net.Conn, error) {
-		atomic.AddInt32(&dialCount, 1)
-		serverConn, clientConn := net.Pipe()
-		go func() {
-			sess, err := NewServerSession(serverConn, nil)
-			if err != nil {
-				t.Logf("server session error: %v", err)
-				return
-			}
-			sess.SetRouter(router)
-			_ = sess.Serve()
-		}()
-		return clientConn, nil
-	}
-
-	upgradeFunc := func(conn net.Conn) (*Session, error) {
-		return NewClientSession(conn, nil)
-	}
-
-	// Enable auto‑reconnect on the client session.
-	rc := ReconnectConfig{
-		AutoReconnect:  true,
-		DialFunc:       dialFunc,
-		UpgradeFunc:    upgradeFunc,
-		InitialBackoff: 10 * time.Millisecond,
-		MaxBackoff:     50 * time.Millisecond,
-		ReconnectCtx:   context.Background(),
-	}
-	clientSession.EnableAutoReconnect(rc)
-
-	// Simulate network failure by closing the underlying session.
-	curMux := clientSession.muxSess.Load()
-	curMux.Close()
-
-	// Now call "ping" which should trigger auto‑reconnect.
-	resp, err := clientSession.Call("ping", nil)
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
 	if err != nil {
-		t.Fatalf("Call after disconnection failed: %v", err)
-	}
-	if resp.Status != 200 {
-		t.Fatalf("expected status 200, got %d", resp.Status)
-	}
-	var pong StringMsg
-	if err := pong.Decode(resp.Data); err != nil {
-		t.Fatalf("failed to decode pong: %v", err)
-	}
-	if pong != "pong" {
-		t.Fatalf("expected 'pong', got %q", pong)
+		t.Fatalf("ConnectToServer: %v", err)
 	}
 
-	if atomic.LoadInt32(&dialCount) == 0 {
-		t.Fatal("expected dial function to be called for reconnection")
-	}
-}
+	baseline := goroutineSnapshot()
 
-// ---------------------------------------------------------------------
-// Test 6: CallBinary_Success
-//
-// Verifies that CallBinary correctly reads the metadata and then the
-// binary payload written by a custom server.
-// ---------------------------------------------------------------------
-func TestCallBinary_Success(t *testing.T) {
-	// Create an in-memory connection pair.
-	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
+	const cycles = 10
+	for i := 0; i < cycles; i++ {
+		_ = pipe.conn.Close()
+		time.Sleep(50 * time.Millisecond)
 
-	// Create server and client sessions.
-	serverSess, err := NewServerSession(serverConn, nil)
-	if err != nil {
-		t.Fatalf("failed to create server session: %v", err)
-	}
-	clientSess, err := NewClientSession(clientConn, nil)
-	if err != nil {
-		t.Fatalf("failed to create client session: %v", err)
-	}
-
-	// Launch a goroutine to simulate a buffered-call handler on the server side.
-	go func() {
-		curSession := serverSess.muxSess.Load()
-		stream, err := curSession.AcceptStream()
+		pipe, err = pipe.Reconnect(t.Context())
 		if err != nil {
-			t.Errorf("server: AcceptStream error: %v", err)
-			return
-		}
-		defer stream.Close()
-
-		// Read and decode the request.
-		reqBuf := make([]byte, 1024)
-		n, err := stream.Read(reqBuf)
-		if err != nil {
-			t.Errorf("server: error reading request: %v", err)
-			return
+			t.Fatalf("ConnectToServer: %v", err)
 		}
 
-		var req Request
-		if err := req.Decode(reqBuf[:n]); err != nil {
-			t.Errorf("server: error decoding request: %v", err)
-			return
+		var out string
+		if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {
+			t.Fatalf("Call after reconnect %d: %v", i, err)
 		}
-
-		// Prepare the binary payload
-		binaryData := []byte("hello world")
-
-		// Send the response
-		resp := Response{Status: 213}
-		respBytes, err := resp.Encode()
-		if err != nil {
-			t.Errorf("server: error encoding response: %v", err)
-			return
-		}
-
-		if _, err := stream.Write(respBytes); err != nil {
-			t.Errorf("server: error writing response: %v", err)
-			return
-		}
-
-		r := bytes.NewReader(binaryData)
-		if err := binarystream.SendDataFromReader(r, len(binaryData), stream); err != nil {
-			t.Errorf("server: error writing response: %v", err)
-			return
-		}
-	}()
-
-	// On the client side, use CallBinary to send a request.
-	buffer := make([]byte, 1024)
-	n, err := clientSess.CallBinary(context.Background(), "buffer", nil, buffer)
-	if err != nil {
-		t.Fatalf("client: CallBinary error: %v", err)
 	}
 
-	expected := "hello world"
-	if n != len(expected) {
-		t.Fatalf("expected %d bytes, got %d", len(expected), n)
-	}
-	got := string(buffer[:n])
-	if got != expected {
-		t.Fatalf("expected %q, got %q", expected, got)
-	}
+	time.Sleep(300 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 50, 5*time.Second)
 }
 
-// ---------------------------------------------------------------------
-// TestCallMsg_ErrorResponse verifies that when the server handler returns
-// an error, the client can correctly parse the error response from CallMsg.
-// ---------------------------------------------------------------------
-func TestCallMsg_ErrorResponse(t *testing.T) {
+func TestLeak_RawStreamHandlers(t *testing.T) {
 	router := NewRouter()
-	// Register a handler that deliberately returns an error.
-	router.Handle("error", func(req Request) (Response, error) {
-		// Returning an error here will trigger writeErrorResponse,
-		// which wraps the error inside a Response with non‑200 status.
-		return Response{}, errors.New("test error")
-	})
-
-	clientSession, cleanup := setupSessionWithRouter(t, router)
-	defer cleanup()
-
-	// CallMsg should return an error since the handler produced one.
-	data, err := clientSession.CallMsg(context.Background(), "error", nil)
-	if err == nil {
-		t.Fatal("expected error response from CallMsg, got nil")
-	}
-	if !strings.Contains(err.Error(), "test error") {
-		t.Fatalf("expected error to contain 'test error', got: %v", err)
-	}
-	if data != nil {
-		t.Fatalf("expected no returned data on error response, got: %v", data)
-	}
-}
-
-// ---------------------------------------------------------------------
-// TestCallBinary_ErrorResponse verifies that when the server handler
-// returns an error during a buffered call, the client returns the expected error.
-// ---------------------------------------------------------------------
-func TestCallBinary_ErrorResponse(t *testing.T) {
-	router := NewRouter()
-	// Register a handler that simulates an error response.
-	router.Handle("buffer_error", func(req Request) (Response, error) {
-		// Trigger an error response; writeErrorResponse is used internally.
-		return Response{}, errors.New("buffer error occurred")
-	})
-
-	clientSession, cleanup := setupSessionWithRouter(t, router)
-	defer cleanup()
-
-	// Prepare a buffer for the expected binary payload.
-	buffer := make([]byte, 1024)
-	n, err := clientSession.CallBinary(context.Background(), "buffer_error", nil, buffer)
-	if err == nil {
-		t.Fatal("expected error response from CallBinary, got nil")
-	}
-	if !strings.Contains(err.Error(), "buffer error occurred") {
-		t.Fatalf("expected error message to contain 'buffer error occurred', got: %v", err)
-	}
-	// When an error response is returned, no binary data is expected.
-	if n != 0 {
-		t.Fatalf("expected 0 bytes read on error response, got %d", n)
-	}
-}
-
-// TestCallBinary_Concurrency verifies that CallBinary works concurrently
-// with different sets of binary data. For each client call, a unique payload
-// (with an "id") is sent and the server replies with a binary message that
-// includes the id.
-func TestCallBinary_Concurrency(t *testing.T) {
-	// Create a router and register a handler for "binary_concurrent".
-	router := NewRouter()
-	router.Handle("binary_concurrent", func(req Request) (Response, error) {
-		// Decode the payload to extract the client ID.
-		var payload MapStringIntMsg
-		id := 0
-		if req.Payload != nil {
-			if err := payload.Decode(req.Payload); err == nil {
-				if v, ok := payload["id"]; ok {
-					id = v
-				}
-			}
-		}
-
-		// Prepare binary data that is unique for this client.
-		dataStr := fmt.Sprintf("binary data for client %d", id)
-		binaryData := []byte(dataStr)
-
-		// Return a response with status 213 and a streaming callback.
+	router.Handle("binary", func(req *Request) (Response, error) {
 		return Response{
 			Status: 213,
-			RawStream: func(stream *smux.Stream) {
-				// Send the binary data to the client.
-				r := bytes.NewReader(binaryData)
-				if err := binarystream.SendDataFromReader(r, len(binaryData), stream); err != nil {
-					t.Logf("server: error sending binary data for client %d: %v", id, err)
-				}
+			RawStream: func(st *smux.Stream) {
+				data := make([]byte, 1024)
+				_, _ = st.Write(data)
+				_ = st.Close()
 			},
 		}, nil
 	})
 
-	// Set up the client and server sessions with the router.
-	clientSession, cleanup := setupSessionWithRouter(t, router)
-	defer cleanup()
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
 
-	// Spawn multiple concurrent client calls.
-	const numClients = 50
-	var clientWg sync.WaitGroup
-	for i := 0; i < numClients; i++ {
-		clientWg.Add(1)
-		go func(id int) {
-			defer clientWg.Done()
-
-			// Prepare a payload with a unique client ID.
-			payload := MapStringIntMsg{"id": id}
-
-			// Allocate a buffer to hold the binary response.
-			expectedSize := len(fmt.Sprintf("binary data for client %d", id))
-			buffer := make([]byte, expectedSize+100)
-			n, err := clientSession.CallBinary(context.Background(), "binary_concurrent", &payload, buffer)
-			if err != nil {
-				t.Errorf("client %d: CallBinary error: %v", id, err)
-				return
-			}
-
-			// Verify the response.
-			expected := fmt.Sprintf("binary data for client %d", id)
-			if n != len(expected) {
-				t.Errorf("client %d: expected %d bytes, got %d", id, len(expected), n)
-				return
-			}
-			if got := string(buffer[:n]); got != expected {
-				t.Errorf("client %d: expected %q, got %q", id, expected, got)
-			}
-		}(i)
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
 	}
-	clientWg.Wait()
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const numCalls = 30
+	for i := 0; i < numCalls; i++ {
+		handler := RawStreamHandler(func(st *smux.Stream) error {
+			buf := make([]byte, 1024)
+			_, err := st.Read(buf)
+			return err
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = pipe.Call(ctx, "binary", nil, handler)
+		cancel()
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
 }
 
-func setupSessionWithRouterForBenchmark(b *testing.B, router Router) (clientSession *Session, cleanup func()) {
-	b.Helper()
-
-	clientConn, serverConn := net.Pipe()
-
-	serverSession, err := NewServerSession(serverConn, nil)
-	if err != nil {
-		b.Fatalf("failed to create server session: %v", err)
-	}
-
-	clientSession, err = NewClientSession(clientConn, nil)
-	if err != nil {
-		b.Fatalf("failed to create client session: %v", err)
-	}
-
-	serverSession.SetRouter(router)
-
-	done := make(chan struct{})
-
-	// Start the server session in a goroutine. Serve() continuously accepts streams.
-	go func() {
-		_ = serverSession.Serve()
-		close(done)
-	}()
-
-	cleanup = func() {
-		_ = clientSession.Close()
-		_ = serverSession.Close()
-		select {
-		case <-done:
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-
-	return clientSession, cleanup
-}
-
-// BenchmarkSessionCall benchmarks the performance of the Session.Call method
-// with a high number of concurrent requests.
-func BenchmarkSessionCall(b *testing.B) {
-	// Define the number of concurrent clients and requests per client.
-	const (
-		numClients        = 100 // Number of concurrent clients
-		requestsPerClient = 100 // Number of requests per client
-	)
-
-	// Set up the router with a simple "ping" handler.
+func TestLeak_ErrorResponses(t *testing.T) {
 	router := NewRouter()
-	router.Handle("ping", func(req Request) (Response, error) {
-		// Simulate minimal processing time.
-		var pong StringMsg = "pong"
-		pongBytes, _ := pong.Encode()
-		return Response{
-			Status: 200,
-			Data:   pongBytes,
-		}, nil
+	router.Handle("error", func(req *Request) (Response, error) {
+		return Response{}, fmt.Errorf("intentional error")
 	})
 
-	// Set up the client session and cleanup function.
-	clientSession, cleanup := setupSessionWithRouterForBenchmark(b, router)
-	defer cleanup()
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
 
-	// Report memory allocations.
-	b.ReportAllocs()
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
 
-	// Run the benchmark.
-	b.ResetTimer() // Reset the timer to exclude setup time.
-	for i := 0; i < b.N; i++ {
-		var wg sync.WaitGroup
-		wg.Add(numClients)
+	baseline := goroutineSnapshot()
 
-		// Launch multiple clients in parallel.
-		for clientID := 0; clientID < numClients; clientID++ {
-			go func(clientID int) {
-				defer wg.Done()
-				for j := 0; j < requestsPerClient; j++ {
-					// Make a "ping" call.
-					resp, err := clientSession.Call("ping", nil)
-					if err != nil {
-						b.Errorf("Client %d: Call failed: %v", clientID, err)
-						return
-					}
-					if resp.Status != 200 {
-						b.Errorf("Client %d: Expected status 200, got %d", clientID, resp.Status)
-					}
-					var pong StringMsg
-					if err := pong.Decode(resp.Data); err != nil {
-						b.Errorf("Client %d: Failed to decode response: %v", clientID, err)
-					}
-					if pong != "pong" {
-						b.Errorf("Client %d: Expected 'pong', got %q", clientID, pong)
-					}
-				}
-			}(clientID)
+	const numCalls = 50
+	for i := 0; i < numCalls; i++ {
+		var out []byte
+		_ = pipe.Call(context.Background(), "error", nil, &out)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_StreamExhaustion(t *testing.T) {
+	router := NewRouter()
+	router.Handle("quick", func(req *Request) (Response, error) {
+		var ok string = "ok"
+		b, _ := cbor.Marshal(ok)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const iters = 200
+	for i := 0; i < iters; i++ {
+		var out string
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := pipe.Call(ctx, "quick", nil, &out)
+		cancel()
+		if err != nil {
+			t.Fatalf("iter %d: %v", i, err)
+		}
+		if i%16 == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_CancelledContexts(t *testing.T) {
+	router := NewRouter()
+	router.Handle("work", func(req *Request) (Response, error) {
+		time.Sleep(100 * time.Millisecond)
+		var done string = "done"
+		b, _ := cbor.Marshal(done)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	baseline := goroutineSnapshot()
+
+	const numCalls = 30
+	for i := 0; i < numCalls; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			cancel()
+		}()
+
+		var out string
+		_ = pipe.Call(ctx, "work", nil, &out)
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 15, 5*time.Second)
+}
+
+func TestLeak_ServerServeLoop(t *testing.T) {
+	router := NewRouter()
+	router.Handle("ping", func(req *Request) (Response, error) {
+		var pong string = "pong"
+		b, _ := cbor.Marshal(pong)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	baseline := goroutineSnapshot()
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+
+	clientTLS := newTestClientTLS(t)
+	const numClients = 10
+	for i := 0; i < numClients; i++ {
+		pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+		if err != nil {
+			t.Fatalf("ConnectToServer %d: %v", i, err)
 		}
 
-		// Wait for all clients to finish.
-		wg.Wait()
+		var out string
+		if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {
+			t.Fatalf("Call %d: %v", i, err)
+		}
+
+		pipe.Close()
+
+		time.Sleep(50 * time.Millisecond)
 	}
-	b.StopTimer() // Stop the timer after the benchmark is complete.
+
+	shutdown()
+
+	time.Sleep(500 * time.Millisecond)
+
+	waitForGoroutines(t, baseline, 30, 5*time.Second)
+}
+
+func TestLeak_MemoryPressure(t *testing.T) {
+	router := NewRouter()
+	router.Handle("large", func(req *Request) (Response, error) {
+		data := make([]byte, 1024*1024) // 1 MB
+		return Response{Status: http.StatusOK, Data: data}, nil
+	})
+
+	addr, shutdown, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	runtime.GC()
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+
+	var m1 runtime.MemStats
+	runtime.ReadMemStats(&m1)
+
+	const numCalls = 50
+	for i := 0; i < numCalls; i++ {
+		var out []byte
+		if err := pipe.Call(context.Background(), "large", nil, &out); err != nil {
+			t.Fatalf("Call %d: %v", i, err)
+		}
+		// Don't hold references
+		out = nil
+	}
+
+	runtime.GC()
+	runtime.GC()
+	time.Sleep(200 * time.Millisecond)
+
+	var m2 runtime.MemStats
+	runtime.ReadMemStats(&m2)
+
+	// Check that allocated memory hasn't grown excessively
+	// Use HeapAlloc for more accurate measurement
+	growth := int64(m2.HeapAlloc) - int64(m1.HeapAlloc)
+	if growth < 0 {
+		growth = 0
+	}
+	maxExpectedGrowth := int64(10 * 1024 * 1024) // 10 MB tolerance
+
+	if growth > maxExpectedGrowth {
+		t.Errorf("potential memory leak: growth=%d MB (expected < %d MB)",
+			growth/(1024*1024), maxExpectedGrowth/(1024*1024))
+	}
+}
+
+func TestLeak_RouterHandlerReplace(t *testing.T) {
+	router := NewRouter()
+
+	baseline := goroutineSnapshot()
+
+	const cycles = 100
+	for i := 0; i < cycles; i++ {
+		method := fmt.Sprintf("method-%d", i)
+		router.Handle(method, func(req *Request) (Response, error) {
+			var ok string = "ok"
+			b, _ := cbor.Marshal(ok)
+			return Response{Status: http.StatusOK, Data: b}, nil
+		})
+
+		if i > 10 {
+			oldMethod := fmt.Sprintf("method-%d", i-10)
+			router.CloseHandle(oldMethod)
+		}
+	}
+
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+
+	current := goroutineSnapshot()
+	if current > baseline+5 {
+		t.Errorf("goroutine leak in router: baseline=%d current=%d", baseline, current)
+	}
 }

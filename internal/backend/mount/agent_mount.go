@@ -3,6 +3,7 @@
 package mount
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/rpc"
@@ -12,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/proxy/rpc"
+	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -78,11 +79,14 @@ func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target
 		rpcClient.Close()
 		if err != nil {
 			errCleanup()
-			return nil, fmt.Errorf("backup failed: %w", err)
+			return nil, err
 		}
 		if reply.Status != 200 {
 			errCleanup()
-			return nil, fmt.Errorf("backup returned an error %d: %s", reply.Status, reply.Message)
+			if reply.Message == "" || reply.Status == 0 {
+				return nil, fmt.Errorf("server rpc did not respond on time")
+			}
+			return nil, errors.New(reply.Message)
 		}
 	}
 
@@ -172,6 +176,6 @@ func (a *AgentMount) CloseMount() {
 	defer rpcClient.Close()
 
 	if err := rpcClient.Call("MountRPCService.Cleanup", args, &reply); err != nil {
-		syslog.L.Error(err).WithFields(map[string]interface{}{"hostname": a.Hostname, "drive": a.Drive}).Write()
+		syslog.L.Error(err).WithFields(map[string]any{"hostname": a.Hostname, "drive": a.Drive}).Write()
 	}
 }

@@ -19,6 +19,7 @@ const (
 	excludedAttrs = windows.FILE_ATTRIBUTE_REPARSE_POINT |
 		windows.FILE_ATTRIBUTE_DEVICE |
 		windows.FILE_ATTRIBUTE_OFFLINE |
+		windows.FILE_ATTRIBUTE_SYSTEM |
 		windows.FILE_ATTRIBUTE_VIRTUAL |
 		windows.FILE_ATTRIBUTE_RECALL_ON_OPEN |
 		windows.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS |
@@ -29,19 +30,16 @@ const (
 func windowsFileModeFromHandle(h windows.Handle, fileAttributes uint32) uint32 {
 	var m os.FileMode
 
-	// Base permissions from READONLY
 	if fileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
 		m |= 0444
 	} else {
 		m |= 0666
 	}
 
-	// Directory bit (no reparse-point exclusion needed here since caller excludes them)
 	if fileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
 		m |= os.ModeDir | 0111
 	}
 
-	// Special file types based on GetFileType(handle)
 	if h != 0 {
 		if ft, err := windows.GetFileType(h); err == nil {
 			switch ft {
@@ -56,7 +54,6 @@ func windowsFileModeFromHandle(h windows.Handle, fileAttributes uint32) uint32 {
 	return uint32(m)
 }
 
-// windowsAttributesToFileMode converts Windows file attributes to Go's os.FileMode
 func windowsAttributesToFileMode(attrs uint32) uint32 {
 	var mode os.FileMode = 0
 
@@ -73,9 +70,9 @@ func windowsAttributesToFileMode(attrs uint32) uint32 {
 	}
 
 	if mode == 0 {
-		mode |= 0644 // Default permission for files
+		mode |= 0644
 	} else if mode&os.ModeDir != 0 {
-		mode |= 0755 // Default permission for directories
+		mode |= 0755
 	}
 
 	return uint32(mode)
@@ -99,10 +96,8 @@ func mapWinError(err error, helper string) error {
 	}
 }
 
-// parseFileAttributes converts Windows file attribute flags into a map.
 func parseFileAttributes(attr uint32) map[string]bool {
 	attributes := make(map[string]bool)
-	// Attributes are defined in golang.org/x/sys/windows.
 	if attr&windows.FILE_ATTRIBUTE_READONLY != 0 {
 		attributes["readOnly"] = true
 	}
@@ -146,22 +141,18 @@ func parseFileAttributes(attr uint32) map[string]bool {
 }
 
 func filetimeToTime(ft windows.Filetime) time.Time {
-	// windows.NsecToFiletime is inverse; use Unix epoch conversion
 	return time.Unix(0, ft.Nanoseconds())
 }
 
-// filetimeToUnix converts a Windows FILETIME to a Unix timestamp.
-// Windows file times are in 100-nanosecond intervals since January 1, 1601.
 func filetimeToUnix(ft windows.Filetime) int64 {
 	const (
-		winToUnixEpochDiff = 116444736000000000 // in 100-nanosecond units
-		hundredNano        = 10000000           // 100-ns units per second
+		winToUnixEpochDiff = 116444736000000000
+		hundredNano        = 10000000
 	)
 	t := (int64(ft.HighDateTime) << 32) | int64(ft.LowDateTime)
 	return (t - winToUnixEpochDiff) / hundredNano
 }
 
-// Prefer NT path prefix to avoid reparsing and keep long paths working.
 func convertToNTPath(path string) string {
 	if len(path) >= 4 && path[:4] == "\\??\\" {
 		return path
