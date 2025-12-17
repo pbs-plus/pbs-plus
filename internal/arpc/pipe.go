@@ -62,7 +62,11 @@ func (s *StreamPipe) Reconnect(ctx context.Context) (*StreamPipe, error) {
 	if err != nil {
 		return s, err
 	}
-	newS.SetRouter(*s.GetRouter())
+
+	r := s.GetRouter()
+	if r != nil {
+		newS.SetRouter(*r)
+	}
 
 	return newS, nil
 }
