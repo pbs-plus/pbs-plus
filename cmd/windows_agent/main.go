@@ -367,7 +367,6 @@ func (p *pbsService) connectARPC() error {
 	syslog.L.Info().WithMessage("Starting ARPC session handler goroutine").Write()
 
 	p.wg.Go(func() {
-		defer session.Close()
 		defer func() {
 			syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
 		}()
@@ -382,6 +381,7 @@ func (p *pbsService) connectARPC() error {
 		for {
 			select {
 			case <-p.ctx.Done():
+				session.Close()
 				return
 			default:
 				if err := session.Serve(); err != nil {
@@ -393,6 +393,7 @@ func (p *pbsService) connectARPC() error {
 
 					select {
 					case <-p.ctx.Done():
+						session.Close()
 						return
 					case <-time.After(sleep):
 					}
