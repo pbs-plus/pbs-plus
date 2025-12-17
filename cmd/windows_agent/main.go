@@ -458,24 +458,17 @@ func main() {
 		case "version":
 			fmt.Print(Version)
 			return
-		case "install":
-			err := service.Control(s, "install")
-			if err != nil {
-				log.Fatal("Failed to install service: ", err)
-			}
-			fmt.Println("Service installed successfully")
-		case "uninstall":
-			err := service.Control(s, "uninstall")
-			if err != nil {
-				log.Fatal("Failed to uninstall service: ", err)
-			}
-			fmt.Println("Service uninstalled successfully")
 		default:
 			err := service.Control(s, os.Args[1])
 			if err != nil {
 				log.Fatal("Failed to execute command: ", err)
 			}
 		}
+		return
+	}
+
+	if service.Interactive() {
+		prg.run()
 		return
 	}
 
