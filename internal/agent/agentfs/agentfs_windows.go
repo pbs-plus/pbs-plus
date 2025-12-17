@@ -463,7 +463,6 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 	fh.Lock()
 	fileSize := fh.fileSize
-	handle := fh.handle
 	ov := fh.ov
 	fh.Unlock()
 
@@ -479,8 +478,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 			Status: 213,
 			RawStream: func(stream *smux.Stream) {
 				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
-					syslog.L.Error(err).
-						WithMessage("handleReadAt: failed sending empty reader via binary stream").WithField("handle_id", payload.HandleID).Write()
+					syslog.L.Error(err).WithMessage("handleReadAt: failed sending empty reader").WithField("handle_id", payload.HandleID).Write()
 				}
 			},
 		}, nil
@@ -491,190 +489,37 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	if reqEnd > maxEnd {
 		reqEnd = maxEnd
 	}
-	if reqEnd <= payload.Offset {
-		syslog.L.Debug().WithMessage("handleReadAt: empty range after clamp").WithField("handle_id", payload.HandleID).Write()
-		emptyReader := bytes.NewReader(nil)
-		return arpc.Response{
-			Status: 213,
-			RawStream: func(stream *smux.Stream) {
-				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
-					syslog.L.Error(err).
-						WithMessage("handleReadAt: failed sending empty reader via binary stream").WithField("handle_id", payload.HandleID).Write()
-				}
-			},
-		}, nil
-	}
-	reqLen := int(reqEnd - payload.Offset)
-
-	rangesChan := make(chan []allocatedRange, 1)
-	rangesErrChan := make(chan error, 1)
-
-	go func() {
-		ranges, err := queryAllocatedRanges(handle, payload.Offset, int64(reqLen))
-		if err != nil {
-			rangesErrChan <- err
-			return
-		}
-		rangesChan <- ranges
-	}()
-
-	var ranges []allocatedRange
-	select {
-	case <-req.Context.Done():
-		syslog.L.Debug().WithMessage("handleReadAt: context cancelled during range query").WithField("handle_id", payload.HandleID).Write()
-		return arpc.Response{}, req.Context.Err()
-	case err := <-rangesErrChan:
-		syslog.L.Debug().WithMessage("handleReadAt: queryAllocatedRanges failed, falling back").WithField("handle_id", payload.HandleID).WithField("error", err.Error()).Write()
-		ranges = []allocatedRange{{FileOffset: payload.Offset, Length: int64(reqLen)}}
-	case ranges = <-rangesChan:
-		if len(ranges) == 0 {
-			syslog.L.Debug().WithMessage("handleReadAt: no allocated ranges returned, treating as fully allocated").WithField("handle_id", payload.HandleID).Write()
-			ranges = []allocatedRange{{FileOffset: payload.Offset, Length: int64(reqLen)}}
-		} else {
-			syslog.L.Debug().WithMessage("handleReadAt: using allocated ranges").WithField("handle_id", payload.HandleID).WithField("range_count", len(ranges)).Write()
-		}
-	}
+	readLen := int(reqEnd - payload.Offset)
 
 	streamFn := func(stream *smux.Stream) {
 		bufPtr := zeroBufPool.Get().(*[]byte)
 		defer zeroBufPool.Put(bufPtr)
-		zeroBuf := *bufPtr
+		buf := (*bufPtr)[:readLen]
 
-		const maxChunkSize = 64 * 1024
+		fh.Lock()
+		if ov.DefaultTimeout == -1 {
+			ov.DefaultTimeout = 30000
+		}
+		fh.Unlock()
 
-		write := func(p []byte) error {
-			if err := req.Context.Err(); err != nil {
-				return err
-			}
-			return binarystream.SendDataFromReader(bytes.NewReader(p), len(p), stream)
+		n, err := ov.ReadAt(buf, payload.Offset)
+
+		if err != nil && err != io.EOF {
+			syslog.L.Error(err).WithMessage("handleReadAt: read failed").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).Write()
+			return
 		}
 
-		pos := payload.Offset
-		end := reqEnd
-
-		for _, r := range ranges {
-			if err := req.Context.Err(); err != nil {
-				syslog.L.Debug().WithMessage("handleReadAt: context cancelled in range loop").WithField("handle_id", payload.HandleID).Write()
+		if n > 0 {
+			if err := binarystream.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream); err != nil {
+				syslog.L.Error(err).WithMessage("handleReadAt: stream write failed").WithField("handle_id", payload.HandleID).Write()
 				return
 			}
-			rStart := r.FileOffset
-			rEnd := r.FileOffset + r.Length
-			if rEnd <= pos {
-				continue
-			}
-			if rStart < pos {
-				rStart = pos
-			}
-			if rEnd > end {
-				rEnd = end
-			}
-			if rStart >= rEnd {
-				continue
-			}
-
-			if rStart > pos {
-				gap := rStart - pos
-				for gap > 0 {
-					if err := req.Context.Err(); err != nil {
-						syslog.L.Debug().WithMessage("handleReadAt: context cancelled writing gap").WithField("handle_id", payload.HandleID).Write()
-						return
-					}
-					ch := int64(maxChunkSize)
-					if gap < ch {
-						ch = gap
-					}
-					if err := write(zeroBuf[:ch]); err != nil {
-						syslog.L.Error(err).WithMessage("handleReadAt: stream write gap failed").WithField("handle_id", payload.HandleID).Write()
-						return
-					}
-					gap -= ch
-					pos += ch
-				}
-			}
-
-			cur := rStart
-			for cur < rEnd {
-				if err := req.Context.Err(); err != nil {
-					syslog.L.Debug().WithMessage("handleReadAt: context cancelled during read").WithField("handle_id", payload.HandleID).Write()
-					return
-				}
-
-				ch := int64(maxChunkSize)
-				if rEnd-cur < ch {
-					ch = rEnd - cur
-				}
-				buf := zeroBuf[:ch]
-
-				fh.Lock()
-				if ov.DefaultTimeout == -1 {
-					ov.DefaultTimeout = 30000
-				}
-				fh.Unlock()
-
-				n, rerr := ov.ReadAt(buf, cur)
-
-				if rerr != nil && rerr != io.EOF {
-					if errors.Is(rerr, windows.WAIT_TIMEOUT) {
-						syslog.L.Error(rerr).
-							WithMessage("handleReadAt: read timeout - file might be locked or slow").
-							WithField("handle_id", payload.HandleID).
-							WithField("offset", cur).
-							WithField("size", ch).Write()
-					} else {
-						syslog.L.Error(rerr).
-							WithMessage("handleReadAt: overlapped read error").
-							WithField("handle_id", payload.HandleID).
-							WithField("offset", cur).
-							WithField("size", ch).Write()
-					}
-					return
-				}
-
-				if n > 0 {
-					if err := write(buf[:n]); err != nil {
-						syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed").WithField("handle_id", payload.HandleID).Write()
-						return
-					}
-					cur += int64(n)
-					pos = cur
-				}
-
-				if rerr == io.EOF {
-					if n == 0 {
-						syslog.L.Debug().WithMessage("handleReadAt: EOF reached with no data").WithField("handle_id", payload.HandleID).Write()
-						break
-					}
-				}
-
-				if n < int(ch) && rerr == nil {
-					syslog.L.Debug().WithMessage("handleReadAt: short read, checking if at EOF").WithField("handle_id", payload.HandleID).WithField("read", n).WithField("requested", ch).Write()
-					break
-				}
-			}
 		}
 
-		if pos < end {
-			gap := end - pos
-			for gap > 0 {
-				if err := req.Context.Err(); err != nil {
-					syslog.L.Debug().WithMessage("handleReadAt: context cancelled writing tail").WithField("handle_id", payload.HandleID).Write()
-					return
-				}
-				ch := int64(maxChunkSize)
-				if gap < ch {
-					ch = gap
-				}
-				if err := write(zeroBuf[:ch]); err != nil {
-					syslog.L.Error(err).WithMessage("handleReadAt: stream write tail gap failed").WithField("handle_id", payload.HandleID).Write()
-					return
-				}
-				gap -= ch
-			}
-		}
-		syslog.L.Debug().WithMessage("handleReadAt: stream completed").WithField("handle_id", payload.HandleID).WithField("bytes", reqLen).Write()
+		syslog.L.Debug().WithMessage("handleReadAt: stream completed").WithField("handle_id", payload.HandleID).WithField("bytes", n).Write()
 	}
 
-	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", payload.Length).Write()
+	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", readLen).Write()
 	return arpc.Response{
 		Status:    213,
 		RawStream: streamFn,
