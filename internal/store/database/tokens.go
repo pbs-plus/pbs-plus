@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
@@ -18,12 +19,12 @@ import (
 func generateWinInstall(token string) string {
 	hostname := os.Getenv("PBS_PLUS_HOSTNAME")
 	if utils.IsProxyCertValid(hostname) {
-		return fmt.Sprintf("irm https://%s:8018/plus/agent/install/win?t=%s | iex", hostname, token)
+		return fmt.Sprintf("irm https://%s:%s/plus/agent/install/win?t=%s | iex", hostname, constants.AgentAPIPort, token)
 	}
 
 	return fmt.Sprintf(`[System.Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; `+
 		`[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; `+
-		`iex(New-Object Net.WebClient).DownloadString("https://%s:8018/plus/agent/install/win?t=%s")`, hostname, token)
+		`iex(New-Object Net.WebClient).DownloadString("https://%s:%s/plus/agent/install/win?t=%s")`, hostname, constants.AgentAPIPort, token)
 }
 
 // CreateToken generates a new token using the manager and stores it.
