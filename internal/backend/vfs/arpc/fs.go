@@ -245,9 +245,9 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 	return fi, nil
 }
 
-func (fs *ARPCFS) Xattr(ctx context.Context, filename string) (types.AgentFileInfo, error) {
+func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFileInfo, error) {
 	syslog.L.Debug().
-		WithMessage("Xattr called").
+		WithMessage("ListXattr called").
 		WithField("path", filename).
 		WithField("jobId", fs.Job.ID).
 		Write()
@@ -270,7 +270,7 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string) (types.AgentFileIn
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
 			Write()
-		return types.AgentFileInfo{}, syscall.ENODATA
+		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
 	var fiCached types.AgentFileInfo
@@ -280,7 +280,6 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string) (types.AgentFileIn
 	if err == nil {
 		req.AclOnly = true
 		_ = cbor.Unmarshal(rawCached.Value, &fiCached)
-		fs.Memcache.Delete("xattr:" + memlocal.Key(filename))
 		syslog.L.Debug().
 			WithMessage("Xattr cache hit for metadata").
 			WithField("path", filename).
@@ -291,13 +290,13 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string) (types.AgentFileIn
 	raw, err := fs.session.CallData(ctxN, fs.Job.ID+"/Xattr", &req)
 	if err != nil {
 		fs.logError(req.Path, err)
-		return types.AgentFileInfo{}, syscall.ENODATA
+		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
 	err = cbor.Unmarshal(raw, &fi)
 	if err != nil {
 		fs.logError(req.Path, err)
-		return types.AgentFileInfo{}, syscall.ENODATA
+		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
 	if req.AclOnly {
@@ -312,7 +311,47 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string) (types.AgentFileIn
 			Write()
 	}
 
+	xattrBytes, err := cbor.Marshal(fi)
+	if err != nil {
+		return types.AgentFileInfo{}, syscall.ENOTSUP
+	}
+
+	fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(filename), Value: xattrBytes, Expiration: 5})
+
 	return fi, nil
+}
+
+func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (types.AgentFileInfo, error) {
+	syslog.L.Debug().
+		WithMessage("Xattr called").
+		WithField("path", filename).
+		WithField("attr", attr).
+		WithField("jobId", fs.Job.ID).
+		Write()
+
+	if !fs.Job.IncludeXattr {
+		syslog.L.Debug().
+			WithMessage("Xattr disabled by job").
+			WithField("path", filename).
+			WithField("jobId", fs.Job.ID).
+			Write()
+		return types.AgentFileInfo{}, syscall.ENOTSUP
+	}
+
+	var fiCached types.AgentFileInfo
+	rawCached, err := fs.Memcache.Get("xattr:" + memlocal.Key(filename))
+	if err != nil {
+		fs.logError(filename, err)
+		return types.AgentFileInfo{}, syscall.ENODATA
+	}
+
+	err = cbor.Unmarshal(rawCached.Value, &fiCached)
+	if err != nil {
+		fs.logError(filename, err)
+		return types.AgentFileInfo{}, syscall.ENODATA
+	}
+
+	return fiCached, nil
 }
 
 func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
