@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
@@ -19,37 +18,26 @@ var bufferPool = &sync.Pool{
 }
 
 const (
-	magicV1       uint32 = 0x4E465353
-	version       uint16 = 1
-	maxLength            = 1 << 30
-	quietDeadline        = 30 * time.Second
+	magicV1   uint32 = 0x4E465353
+	version   uint16 = 1
+	maxLength        = 1 << 30
 )
 
 func writeFull(w io.Writer, b []byte, stream *smux.Stream) error {
-	defer stream.SetDeadline(time.Time{})
-
 	for len(b) > 0 {
 		n, err := w.Write(b)
 		if err != nil {
 			return err
 		}
 		b = b[n:]
-		if stream != nil {
-			_ = stream.SetDeadline(time.Now().Add(quietDeadline))
-		}
 	}
 	return nil
 }
 
 func readFull(r io.Reader, b []byte, stream *smux.Stream) error {
-	defer stream.SetDeadline(time.Time{})
-
 	offset := 0
 	for offset < len(b) {
 		n, err := r.Read(b[offset:])
-		if n > 0 && stream != nil {
-			_ = stream.SetDeadline(time.Now().Add(quietDeadline))
-		}
 		if err != nil {
 			if err == io.EOF && n > 0 {
 				offset += n
@@ -62,22 +50,11 @@ func readFull(r io.Reader, b []byte, stream *smux.Stream) error {
 	return nil
 }
 
-func setQuietDeadline(stream *smux.Stream) error {
-	if stream == nil {
-		return fmt.Errorf("nil stream")
-	}
-	return (*stream).SetDeadline(time.Now().Add(quietDeadline))
-}
-
 func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	if stream == nil {
 		err := fmt.Errorf("stream is nil")
 		syslog.L.Error(err).WithMessage("SendDataFromReader: nil stream").Write()
 		return err
-	}
-
-	if err := setQuietDeadline(stream); err != nil {
-		syslog.L.Warn().WithMessage(fmt.Sprintf("SendDataFromReader: failed to set initial deadline: %v", err.Error())).Write()
 	}
 
 	syslog.L.Debug().WithMessage("SendDataFromReader: start").
@@ -139,10 +116,6 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 }
 
 func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
-	if err := setQuietDeadline(stream); err != nil {
-		syslog.L.Warn().WithMessage(fmt.Sprintf("ReceiveDataInto: failed to set initial deadline: %v", err.Error())).Write()
-	}
-
 	var hdr [14]byte
 	if err := readFull(stream, hdr[:], stream); err != nil {
 		wErr := fmt.Errorf("failed to read header: %w", err)
