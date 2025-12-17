@@ -66,13 +66,7 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
         return;
       }
 
-      let token = selection[0].data.token;
-
-      const hostname = window.location.hostname;
-      const powershellCommand =
-        `[System.Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; ` +
-        `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls13; ` +
-        `iex(New-Object Net.WebClient).DownloadString("https://${hostname}:8018/plus/agent/install/win?t=${token}")`;
+      let powershellCommand = selection[0].data.win_install;
 
       Ext.create("Ext.window.Window", {
         modal: true,
