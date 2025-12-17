@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 	"github.com/xtaci/smux"
 )
@@ -51,11 +52,15 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	defer func() {
+		syslog.L.Debug().WithMessage("cancelling stream with defer").Write()
+		cancel()
+	}()
 
 	go func() {
 		select {
 		case <-stream.GetDieCh():
+			syslog.L.Debug().WithMessage("cancelling stream due to closure itself").Write()
 			cancel()
 		case <-ctx.Done():
 		}
