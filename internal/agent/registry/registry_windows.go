@@ -3,7 +3,6 @@
 package registry
 
 import (
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/billgraziano/dpapi"
-	"golang.org/x/crypto/nacl/secretbox"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -26,272 +24,97 @@ type RegistryEntry struct {
 }
 
 var (
-	secretFilePath    string
-	keyFilePath       string
-	legacySecretsPath string
-	legacyKeyPath     string
-	secretKey         *[32]byte
-	secretsMu         sync.Mutex
-	initOnce          sync.Once
-	initErr           error
+	// legacy file-based paths (from the previous implementation)
+	legacySecretFilePath string // "secrets.json"
+	legacyKeyFilePath    string // "master.key" (no longer used, but removed if present)
+
+	initOnce sync.Once
+	initErr  error
 )
-
-func init() {
-	systemRoot := "C:\\"
-	serviceDataDir := filepath.Join(systemRoot, "PBS Plus Agent")
-	secretFilePath = filepath.Join(serviceDataDir, "secrets.json")
-	keyFilePath = filepath.Join(serviceDataDir, "master.key")
-
-	if ex, err := os.Executable(); err == nil {
-		execDir := filepath.Dir(ex)
-		legacySecretsPath = filepath.Join(execDir, "secret.json")
-		legacyKeyPath = filepath.Join(execDir, "secret.key")
-	}
-}
 
 func ensureInitialized() error {
 	initOnce.Do(func() {
-		dir := filepath.Dir(secretFilePath)
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			initErr = fmt.Errorf("failed to create service data directory: %w", err)
-			return
-		}
+		// C:\PBS Plus Agent\secrets.json and C:\PBS Plus Agent\master.key
+		serviceDataDir := filepath.Join("C:\\", "PBS Plus Agent")
+		legacySecretFilePath = filepath.Join(serviceDataDir, "secrets.json")
+		legacyKeyFilePath = filepath.Join(serviceDataDir, "master.key")
 
-		if err := migrateLegacyData(); err != nil {
+		// Attempt migration; ignore non-fatal issues but record a fatal initErr.
+		if err := migrateFromFileSecretsToRegistry(); err != nil {
+			// Non-fatal: we continue operating with DPAPI+registry regardless.
+			// Only set initErr if you want to surface migration failure.
+			// Here, we log it via wrapping but do not fail init.
 			_ = err
-		}
-
-		secretKey = getOrCreateSecretKey()
-		if secretKey == nil {
-			initErr = errors.New("failed to initialize secret key")
 		}
 	})
 	return initErr
 }
 
-func migrateLegacyData() error {
-	if legacySecretsPath == "" || legacyKeyPath == "" {
+func migrateFromFileSecretsToRegistry() error {
+	type secretsMap = map[string]string
+
+	legacySecrets, err := readLegacySecrets(legacySecretFilePath)
+	if err != nil {
+		return nil
+	}
+	if len(legacySecrets) == 0 {
+		cleanupLegacyFiles()
 		return nil
 	}
 
-	if _, err := os.Stat(secretFilePath); err == nil {
-		if _, err := os.Stat(keyFilePath); err == nil {
-			cleanupLegacyFiles()
-			return nil
+	for b64k, val := range legacySecrets {
+		raw, err := base64.StdEncoding.DecodeString(b64k)
+		if err != nil {
+			// Skip malformed entries
+			continue
 		}
-	}
+		parts := strings.SplitN(string(raw), "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		path := parts[0]
+		key := parts[1]
 
-	if err := migrateLegacyKey(); err != nil {
-		return fmt.Errorf("failed to migrate legacy key: %w", err)
-	}
-
-	if err := migrateLegacySecrets(); err != nil {
-		return fmt.Errorf("failed to migrate legacy secrets: %w", err)
+		if err := writeSecretDPAPIToRegistry(path, key, val); err != nil {
+			continue
+		}
 	}
 
 	cleanupLegacyFiles()
 	return nil
 }
 
-func migrateLegacyKey() error {
-	legacyData, err := os.ReadFile(legacyKeyPath)
+func readLegacySecrets(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-
-	if len(legacyData) != 32 {
-		return fmt.Errorf("invalid legacy key length: %d", len(legacyData))
-	}
-
-	if err := os.WriteFile(keyFilePath, legacyData, 0600); err != nil {
-		return fmt.Errorf("failed to write new key file: %w", err)
-	}
-
-	return nil
-}
-
-func migrateLegacySecrets() error {
-	legacyData, err := os.ReadFile(legacySecretsPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-
-	var legacySecrets map[string]string
-	if err := json.Unmarshal(legacyData, &legacySecrets); err != nil {
-		return fmt.Errorf("invalid legacy secrets format: %w", err)
-	}
-
-	if err := os.WriteFile(secretFilePath, legacyData, 0600); err != nil {
-		return fmt.Errorf("failed to write new secrets file: %w", err)
-	}
-
-	return nil
-}
-
-func cleanupLegacyFiles() {
-	if legacySecretsPath != "" {
-		_ = os.Remove(legacySecretsPath)
-	}
-	if legacyKeyPath != "" {
-		_ = os.Remove(legacyKeyPath)
-	}
-}
-
-func getOrCreateSecretKey() *[32]byte {
-	var key [32]byte
-
-	if data, err := os.ReadFile(keyFilePath); err == nil && len(data) == 32 {
-		copy(key[:], data)
-		return &key
-	}
-
-	if _, err := rand.Read(key[:]); err != nil {
-		return nil
-	}
-
-	if err := os.WriteFile(keyFilePath, key[:], 0600); err != nil {
-		return nil
-	}
-
-	return &key
-}
-
-func loadSecrets() (map[string]string, error) {
-	if err := ensureInitialized(); err != nil {
 		return nil, err
 	}
-
-	secretsMu.Lock()
-	defer secretsMu.Unlock()
-
-	m := make(map[string]string)
-	data, err := os.ReadFile(secretFilePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return m, nil
-		}
-		return nil, fmt.Errorf("failed to read secrets file: %w", err)
-	}
-
+	var m map[string]string
 	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("failed to parse secrets file: %w", err)
+		return nil, err
 	}
 	return m, nil
 }
 
-func saveSecrets(m map[string]string) error {
-	if err := ensureInitialized(); err != nil {
-		return err
-	}
-
-	secretsMu.Lock()
-	defer secretsMu.Unlock()
-
-	data, err := json.MarshalIndent(m, "", "  ")
+func writeSecretDPAPIToRegistry(path, key, plaintext string) error {
+	enc, err := dpapi.EncryptMachineLocal(plaintext)
 	if err != nil {
-		return fmt.Errorf("failed to marshal secrets: %w", err)
+		return fmt.Errorf("dpapi encrypt (LocalMachine) failed: %w", err)
 	}
 
-	if err := os.WriteFile(secretFilePath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write secrets file: %w", err)
-	}
-
-	return nil
-}
-
-func secretKeyFor(path, key string) string {
-	return base64.StdEncoding.EncodeToString([]byte(path + "|" + key))
-}
-
-func encryptSecret(plaintext string) (string, error) {
-	if err := ensureInitialized(); err != nil {
-		return "", fmt.Errorf("encryption initialization failed: %w", err)
-	}
-
-	var nonce [24]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	encrypted := secretbox.Seal(nonce[:], []byte(plaintext), &nonce, secretKey)
-	return base64.StdEncoding.EncodeToString(encrypted), nil
-}
-
-func decryptSecret(ciphertext string) (string, error) {
-	if err := ensureInitialized(); err != nil {
-		return "", fmt.Errorf("decryption initialization failed: %w", err)
-	}
-
-	data, err := base64.StdEncoding.DecodeString(ciphertext)
+	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.SET_VALUE)
 	if err != nil {
-		return "", fmt.Errorf("invalid base64: %w", err)
-	}
-	if len(data) < 24 {
-		return "", errors.New("ciphertext too short")
-	}
-
-	var nonce [24]byte
-	copy(nonce[:], data[:24])
-
-	plaintext, ok := secretbox.Open(nil, data[24:], &nonce, secretKey)
-	if !ok {
-		return "", errors.New("decryption failed")
-	}
-
-	return string(plaintext), nil
-}
-
-func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
-	if isSecret {
-		secrets, err := loadSecrets()
+		baseKey, _, err = registry.CreateKey(registry.LOCAL_MACHINE, path, registry.SET_VALUE)
 		if err != nil {
-			return nil, fmt.Errorf("GetEntry error loading secrets: %w", err)
+			return fmt.Errorf("failed creating/opening registry key: %w", err)
 		}
-
-		sk := secretKeyFor(path, key)
-		if enc, ok := secrets[sk]; ok {
-			val, err := decryptSecret(enc)
-			if err != nil {
-				return nil, fmt.Errorf("GetEntry error decrypting secret: %w", err)
-			}
-			return &RegistryEntry{Path: path, Key: key, Value: val, IsSecret: true}, nil
-		}
-
-		if entry, err := migrateFromRegistryDPAPI(path, key); err == nil {
-			enc, encErr := encryptSecret(entry.Value)
-			if encErr == nil {
-				secrets[sk] = enc
-				if saveErr := saveSecrets(secrets); saveErr == nil {
-					if baseKey, regErr := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.SET_VALUE); regErr == nil {
-						_ = baseKey.DeleteValue(key)
-						baseKey.Close()
-					}
-				}
-			}
-			return entry, nil
-		}
-
-		return nil, errors.New("GetEntry error: secret not found")
-	}
-
-	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
-	if err != nil {
-		return nil, fmt.Errorf("GetEntry error opening key: %w", err)
 	}
 	defer baseKey.Close()
 
-	value, _, err := baseKey.GetStringValue(key)
-	if err != nil {
-		return nil, fmt.Errorf("GetEntry error reading value: %w", err)
+	if err := baseKey.SetStringValue(key, enc); err != nil {
+		return fmt.Errorf("failed setting registry value: %w", err)
 	}
-
-	return &RegistryEntry{Path: path, Key: key, Value: value, IsSecret: false}, nil
+	return nil
 }
 
 func migrateFromRegistryDPAPI(path, key string) (*RegistryEntry, error) {
@@ -314,20 +137,39 @@ func migrateFromRegistryDPAPI(path, key string) (*RegistryEntry, error) {
 	return &RegistryEntry{Path: path, Key: key, Value: plain, IsSecret: true}, nil
 }
 
+func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
+	if err := ensureInitialized(); err != nil {
+		return nil, err
+	}
+
+	if isSecret {
+		if entry, err := migrateFromRegistryDPAPI(path, key); err == nil {
+			return entry, nil
+		}
+		return nil, errors.New("GetEntry error: secret not found")
+	}
+
+	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
+	if err != nil {
+		return nil, fmt.Errorf("GetEntry error opening key: %w", err)
+	}
+	defer baseKey.Close()
+
+	value, _, err := baseKey.GetStringValue(key)
+	if err != nil {
+		return nil, fmt.Errorf("GetEntry error reading value: %w", err)
+	}
+
+	return &RegistryEntry{Path: path, Key: key, Value: value, IsSecret: false}, nil
+}
+
 func CreateEntry(entry *RegistryEntry) error {
+	if err := ensureInitialized(); err != nil {
+		return err
+	}
+
 	if entry.IsSecret {
-		secrets, err := loadSecrets()
-		if err != nil {
-			return fmt.Errorf("CreateEntry error loading secrets: %w", err)
-		}
-
-		enc, err := encryptSecret(entry.Value)
-		if err != nil {
-			return fmt.Errorf("CreateEntry error encrypting: %w", err)
-		}
-
-		secrets[secretKeyFor(entry.Path, entry.Key)] = enc
-		return saveSecrets(secrets)
+		return writeSecretDPAPIToRegistry(entry.Path, entry.Key, entry.Value)
 	}
 
 	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, entry.Path, registry.SET_VALUE)
@@ -363,13 +205,8 @@ func UpdateEntry(entry *RegistryEntry) error {
 }
 
 func DeleteEntry(path string, key string) error {
-	secrets, err := loadSecrets()
-	if err == nil {
-		sk := secretKeyFor(path, key)
-		if _, ok := secrets[sk]; ok {
-			delete(secrets, sk)
-			return saveSecrets(secrets)
-		}
+	if err := ensureInitialized(); err != nil {
+		return err
 	}
 
 	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.SET_VALUE)
@@ -386,23 +223,24 @@ func DeleteEntry(path string, key string) error {
 }
 
 func DeleteKey(path string) error {
-	secrets, err := loadSecrets()
-	if err == nil {
-		changed := false
+	if err := ensureInitialized(); err != nil {
+		return err
+	}
 
-		for k := range secrets {
+	// Best-effort cleanup of legacy secrets.json if present.
+	legacySecrets, _ := readLegacySecrets(legacySecretFilePath)
+	if len(legacySecrets) > 0 {
+		changed := false
+		for k := range legacySecrets {
 			if decoded, decErr := base64.StdEncoding.DecodeString(k); decErr == nil {
 				if strings.HasPrefix(string(decoded), path+"|") {
-					delete(secrets, k)
+					delete(legacySecrets, k)
 					changed = true
 				}
 			}
 		}
-
 		if changed {
-			if saveErr := saveSecrets(secrets); saveErr != nil {
-				return fmt.Errorf("DeleteKey error saving secrets: %w", saveErr)
-			}
+			_ = os.WriteFile(legacySecretFilePath, mustJSON(legacySecrets), 0o600)
 		}
 	}
 
@@ -414,6 +252,10 @@ func DeleteKey(path string) error {
 }
 
 func ListEntries(path string) ([]string, error) {
+	if err := ensureInitialized(); err != nil {
+		return nil, err
+	}
+
 	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
 	if err != nil {
 		return nil, fmt.Errorf("ListEntries error opening key: %w", err)
@@ -426,4 +268,14 @@ func ListEntries(path string) ([]string, error) {
 	}
 
 	return names, nil
+}
+
+func mustJSON(v any) []byte {
+	b, _ := json.MarshalIndent(v, "", "  ")
+	return b
+}
+
+func cleanupLegacyFiles() {
+	_ = os.Remove(legacySecretFilePath)
+	_ = os.Remove(legacyKeyFilePath)
 }

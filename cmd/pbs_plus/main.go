@@ -17,28 +17,27 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
-	"github.com/pbs-plus/pbs-plus/internal/auth/server"
-	"github.com/pbs-plus/pbs-plus/internal/auth/token"
+	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
-	"github.com/pbs-plus/pbs-plus/internal/proxy"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/agents"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/exclusions"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/plus"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/scripts"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/targets"
-	"github.com/pbs-plus/pbs-plus/internal/proxy/controllers/tokens"
-	mw "github.com/pbs-plus/pbs-plus/internal/proxy/middlewares"
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/proxy/rpc"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/proxy/rpc/job"
+	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
+	jobrpc "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
+	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/web"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/agents"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/exclusions"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/plus"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/scripts"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/targets"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers/tokens"
+	mw "github.com/pbs-plus/pbs-plus/internal/web/middlewares"
 
 	"net/http/pprof"
 
@@ -49,6 +48,10 @@ import (
 )
 
 var Version = "v0.0.0"
+
+func init() {
+	utils.IsServer = true
+}
 
 type arrayFlags []string
 
@@ -119,6 +122,11 @@ func main() {
 		return
 	}
 
+	syslog.L.Server = true
+	if err := syslog.L.SetServiceLogger(); err != nil {
+		syslog.L.Error(err).Write()
+	}
+
 	storeInstance, err := store.Initialize(mainCtx, nil)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to initialize store").Write()
@@ -170,12 +178,18 @@ func main() {
 		return
 	}
 
-	if err = storeInstance.MigrateLegacyData(); err != nil {
-		syslog.L.Error(err).WithMessage("error migrating legacy database").Write()
+	hn, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
+	if !ok {
+		syslog.L.Error(fmt.Errorf("PBS_PLUS_HOSTNAME is not set.")).WithMessage("a required environment variable is not set. you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables").Write()
 		return
 	}
 
-	if err := proxy.ModifyPBSHandlebars("/usr/share/javascript/proxmox-backup/index.hbs", "/usr/share/javascript/proxmox-backup/js"); err != nil {
+	if err := utils.ValidateHostname(hn); err != nil {
+		syslog.L.Error(fmt.Errorf("PBS_PLUS_HOSTNAME is an invalid hostname/fqdn")).WithField("PBS_PLUS_HOSTNAME", hn).WithMessage("a required environment variable is invalid. you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables").Write()
+		return
+	}
+
+	if err := web.ModifyPBSHandlebars("/usr/share/javascript/proxmox-backup/index.hbs", "/usr/share/javascript/proxmox-backup/js"); err != nil {
 		syslog.L.Error(err).WithMessage("failed to mount modified proxmox-backup-gui.js").Write()
 		return
 	}
@@ -208,13 +222,6 @@ func main() {
 		tx.Commit()
 	}
 
-	certOpts := certificates.DefaultOptions()
-	generator, err := certificates.NewGenerator(certOpts)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to initialize certificate generator").Write()
-		return
-	}
-
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
 
 	if _, err := os.Lstat(secKeyPath); err != nil {
@@ -230,87 +237,28 @@ func main() {
 		return
 	}
 
-	serverConfig := server.DefaultConfig()
-	serverConfig.CertFile = filepath.Join(certOpts.OutputDir, "server.crt")
-	serverConfig.KeyFile = filepath.Join(certOpts.OutputDir, "server.key")
-	serverConfig.CAFile = filepath.Join(certOpts.OutputDir, "ca.crt")
-	serverConfig.CAKey = filepath.Join(certOpts.OutputDir, "ca.key")
-	serverConfig.TokenSecret = string(secKey)
-	serverConfig.Unmount()
-
-	if err := generator.ValidateExistingCerts(); err != nil {
-		if err := generator.GenerateCA(); err != nil {
-			syslog.L.Error(err).WithMessage("failed to generate certificate").Write()
-			return
-		}
-
-		if err := generator.GenerateCert("server"); err != nil {
-			syslog.L.Error(err).WithMessage("failed to generate certificate").Write()
-			return
-		}
-	}
-
-	if err := serverConfig.Validate(); err != nil {
-		syslog.L.Error(err).WithMessage("failed to validate server config").Write()
-		return
-	}
-
-	storeInstance.CertGenerator = generator
-
-	err = os.Chown(serverConfig.KeyFile, 0, 34)
+	err = storeInstance.ValidateServerCertificates()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to change cert key permissions").Write()
+		syslog.L.Error(err).WithMessage("failed to generate local CA and server cert").Write()
 		return
 	}
 
-	err = os.Chown(serverConfig.CertFile, 0, 34)
+	serverConfig, err := storeInstance.GetAPIServerTLSConfig()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to change cert permissions").Write()
+		syslog.L.Error(err).WithMessage("failed to build server TLS config").Write()
 		return
 	}
-
-	proxyExec := exec.Command("/usr/bin/systemctl", "restart", "proxmox-backup-proxy")
-	proxyExec.Env = os.Environ()
-	_ = proxyExec.Run()
 
 	// Initialize token manager
-	tokenManager, err := token.NewManager(token.Config{
-		TokenExpiration: serverConfig.TokenExpiration,
-		SecretKey:       serverConfig.TokenSecret,
+	tokenManager, err := mtls.NewTokenManager(mtls.TokenConfig{
+		TokenExpiration: constants.AuthTokenExpiration,
+		SecretKey:       string(secKey),
 	})
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to initialize token manager").Write()
 		return
 	}
 	storeInstance.Database.TokenManager = tokenManager
-
-	// Setup HTTP server
-	tlsConfig, err := serverConfig.LoadTLSConfig()
-	if err != nil {
-		return
-	}
-
-	caRenewalCtx, cancelRenewal := context.WithCancel(context.Background())
-	defer cancelRenewal()
-	go func() {
-		for {
-			select {
-			case <-caRenewalCtx.Done():
-				return
-			case <-time.After(time.Hour):
-				if err := generator.ValidateExistingCerts(); err != nil {
-					if err := generator.GenerateCA(); err != nil {
-						syslog.L.Error(err).WithMessage("failed to generate CA").Write()
-					}
-
-					if err := generator.GenerateCert("server"); err != nil {
-						syslog.L.Error(err).WithMessage("failed to generate server certificate").Write()
-					}
-				}
-
-			}
-		}
-	}()
 
 	// Unmount and remove all stale mount points
 	// Get all mount points under the base path
@@ -395,15 +343,12 @@ func main() {
 	apiMux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", mw.ServerOnly(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance)))
 
 	// Agent routes
-	agentMux.HandleFunc("/api2/json/plus/version", mw.AgentOrServer(storeInstance, plus.VersionHandler(storeInstance, Version)))
+	agentMux.HandleFunc("/api2/json/plus/version", plus.VersionHandler(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/plus/binary", plus.DownloadBinary(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/updater-binary", plus.DownloadUpdater(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/binary/checksum", mw.AgentOrServer(storeInstance, plus.DownloadChecksum(storeInstance, Version)))
+	agentMux.HandleFunc("/api2/json/plus/binary/sig", plus.DownloadSig(storeInstance, Version))
+	agentMux.HandleFunc("/api2/json/plus/binary/checksum", plus.DownloadChecksum(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
 	agentMux.HandleFunc("/api2/json/d2d/agent-log", mw.AgentOnly(storeInstance, agents.AgentLogHandler(storeInstance)))
-
-	// aRPC route
-	agentMux.HandleFunc("/plus/arpc", mw.AgentOnly(storeInstance, arpc.ARPCHandler(storeInstance)))
 
 	// Agent auth routes
 	agentMux.HandleFunc("/plus/agent/bootstrap", agents.AgentBootstrapHandler(storeInstance))
@@ -419,37 +364,63 @@ func main() {
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	apiServer := &http.Server{
-		Addr:           serverConfig.Address,
+		Addr:           constants.ServerAPIExtPort,
 		Handler:        apiMux,
-		ReadTimeout:    serverConfig.ReadTimeout,
-		WriteTimeout:   serverConfig.WriteTimeout,
-		IdleTimeout:    serverConfig.IdleTimeout,
-		MaxHeaderBytes: serverConfig.MaxHeaderBytes,
+		ReadTimeout:    constants.HTTPReadTimeout,
+		WriteTimeout:   constants.HTTPWriteTimeout,
+		IdleTimeout:    constants.HTTPIdleTimeout,
+		MaxHeaderBytes: constants.HTTPMaxHeaderBytes,
 	}
 
 	agentServer := &http.Server{
-		Addr:           serverConfig.AgentAddress,
+		Addr:           constants.AgentAPIPort,
 		Handler:        agentMux,
-		TLSConfig:      tlsConfig,
-		ReadTimeout:    serverConfig.ReadTimeout,
-		WriteTimeout:   serverConfig.WriteTimeout,
-		IdleTimeout:    serverConfig.IdleTimeout,
-		MaxHeaderBytes: serverConfig.MaxHeaderBytes,
+		TLSConfig:      serverConfig,
+		ReadTimeout:    constants.HTTPReadTimeout,
+		WriteTimeout:   constants.HTTPWriteTimeout,
+		IdleTimeout:    constants.HTTPIdleTimeout,
+		MaxHeaderBytes: constants.HTTPMaxHeaderBytes,
 	}
 
 	var endpointsWg sync.WaitGroup
 
-	endpointsWg.Add(1)
-	go proxy.WatchAndServe(apiServer, server.ProxyCert, server.ProxyKey, []string{server.ProxyCert, server.ProxyKey}, &endpointsWg)
+	endpointsWg.Go(func() {
+		web.WatchAndServe(apiServer, constants.CertFile, constants.KeyFile, []string{constants.CertFile, constants.KeyFile})
+	})
 
-	endpointsWg.Add(1)
-	go func() {
-		defer endpointsWg.Done()
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", serverConfig.AgentAddress)).Write()
-		if err := agentServer.ListenAndServeTLS(serverConfig.CertFile, serverConfig.KeyFile); err != nil {
+	endpointsWg.Go(func() {
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", agentServer.Addr)).Write()
+		if err := storeInstance.ListenAndServeAgentEndpoint(agentServer); err != nil {
 			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
 		}
-	}()
+	})
+
+	endpointsWg.Go(func() {
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC endpoint on TCP %s", constants.ARPCServerPort)).Write()
+
+		router := arpc.NewRouter()
+		router.Handle("echo", func(req *arpc.Request) (arpc.Response, error) {
+			var msg string
+			if err := cbor.Unmarshal(req.Payload, &msg); err != nil {
+				return arpc.Response{}, arpc.WrapError(err)
+			}
+			data, err := cbor.Marshal(msg)
+			if err != nil {
+				return arpc.Response{}, arpc.WrapError(err)
+			}
+			return arpc.Response{Status: 200, Data: data}, nil
+		})
+
+		arpcTlsConfig, err := storeInstance.GetARPCServerTLSConfig()
+		if err != nil {
+			syslog.L.Error(err).WithMessage("failed to build server TLS config").Write()
+			return
+		}
+
+		if err := arpc.ListenAndServe(storeInstance.Ctx, constants.ARPCServerPort, storeInstance.ARPCAgentsManager, arpcTlsConfig, router); err != nil {
+			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed")
+		}
+	})
 
 	endpointsWg.Wait()
 }

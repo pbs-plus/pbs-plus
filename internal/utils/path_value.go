@@ -6,14 +6,6 @@ import (
 	"strings"
 )
 
-func EncodePath(path string) string {
-	encoded := base64.StdEncoding.EncodeToString([]byte(path))
-	encoded = strings.ReplaceAll(encoded, "+", "-")
-	encoded = strings.ReplaceAll(encoded, "/", "_")
-	encoded = strings.TrimRight(encoded, "=")
-	return encoded
-}
-
 func DecodePath(encoded string) string {
 	decoded, err := url.QueryUnescape(encoded)
 	if err != nil {

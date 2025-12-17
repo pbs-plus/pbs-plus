@@ -23,6 +23,14 @@ jobs:
         with:
           go-version: "1.25"
 
+      - name: Set up Rust
+        uses: moonrepo/setup-rust@v1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fuse3 libfuse3-dev uuid-dev libsystemd-dev libacl1-dev pkg-config build-essential
+
       - name: Import GPG key
         run: |
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
@@ -56,6 +64,31 @@ jobs:
             echo "previous_tag=" >> $GITHUB_OUTPUT
           fi
 
+      - name: Build Ed25519 signer
+        run: |
+          mkdir -p /tmp/bin
+          go build -ldflags="-s -w" -o /tmp/bin/signer ./cmd/signer
+          ls -l /tmp/bin
+
+      - name: Check seed presence
+        env:
+          ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
+        run: |
+          if [ -z "${ED25519_SEED_B64+x}" ] || [ -z "$ED25519_SEED_B64" ]; then
+            echo "ED25519_SEED_B64 secret is not set"; exit 1; 
+          fi
+
+      - name: Derive Ed25519 public key
+        env:
+          ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
+        run: |
+          PUB=$("/tmp/bin/signer" pubkey)
+          if [ -z "$PUB" ]; then
+            echo "Failed to derive pubkey"; exit 1;
+          fi
+          echo "Derived Ed25519 public key length: ${#PUB}"
+          echo "ED25519_PUBLIC_KEY_B64=$PUB" >> "$GITHUB_ENV"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -65,6 +98,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
+          ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
 
   docker:
     runs-on: ubuntu-latest

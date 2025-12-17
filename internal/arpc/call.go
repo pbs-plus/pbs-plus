@@ -2,225 +2,188 @@ package arpc
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
-	"sync"
-	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/arpc/arpcdata"
+	"github.com/fxamacker/cbor/v2"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
+	"github.com/xtaci/smux"
 )
 
-var headerPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 4)
-	},
+type Request struct {
+	Context context.Context     `cbor:"-"`
+	Method  string              `cbor:"method"`
+	Payload []byte              `cbor:"payload"`
+	Headers map[string][]string `cbor:"headers,omitempty"`
 }
 
-// Call initiates a request/response conversation on a new stream.
-func (s *Session) Call(method string, payload arpcdata.Encodable) (Response, error) {
-	return s.CallContext(context.Background(), method, payload)
+type Response struct {
+	Status    int                `cbor:"status"`
+	Message   string             `cbor:"message"`
+	Data      []byte             `cbor:"data"`
+	RawStream func(*smux.Stream) `cbor:"-"`
 }
 
-func (s *Session) CallWithTimeout(timeout time.Duration, method string, payload arpcdata.Encodable) (Response, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	return s.CallContext(ctx, method, payload)
+type SerializableError struct {
+	ErrorType     string `cbor:"error_type"`
+	Message       string `cbor:"message"`
+	Op            string `cbor:"op"`
+	Path          string `cbor:"path"`
+	OriginalError error  `cbor:"-"`
 }
 
-// CallContext performs an RPC call over a new stream.
-// It applies any context deadlines to the smux stream.
-func (s *Session) CallContext(ctx context.Context, method string, payload arpcdata.Encodable) (Response, error) {
-	// Grab the current smux session
-	curSession := s.muxSess.Load()
+type RawStreamHandler func(*smux.Stream) error
 
-	// Open a new stream. (Note: while stream reuse might reduce overhead,
-	// with smux the recommended pattern is one stream per RPC call to avoid
-	// interleaved messages. If your protocol allows reuse, you might pool streams.)
-	stream, err := openStreamWithReconnect(s, curSession)
+func (s *StreamPipe) call(ctx context.Context, method string, payload any) (*smux.Stream, *Response, error) {
+	stream, err := s.OpenStream()
 	if err != nil {
-		return Response{}, err
-	}
-	defer stream.Close()
-
-	// Propagate context deadlines to the stream
-	if deadline, ok := ctx.Deadline(); ok {
-		stream.SetWriteDeadline(deadline)
-		stream.SetReadDeadline(deadline)
+		return nil, nil, err
 	}
 
-	// Serialize the payload if provided
-	var payloadBytes []byte
-	if payload != nil {
-		payloadBytes, err = payload.Encode()
-		if err != nil {
-			return Response{}, fmt.Errorf("failed to encode payload: %w", err)
-		}
-	}
+	enc := cbor.NewEncoder(stream)
+	dec := cbor.NewDecoder(stream)
 
-	// Build the RPC request and encode it.
-	req := Request{
-		Method:  method,
-		Payload: payloadBytes,
-	}
-	reqBytes, err := req.Encode()
-	if err != nil {
-		return Response{}, fmt.Errorf("failed to encode request: %w", err)
-	}
-
-	if _, err := stream.Write(reqBytes); err != nil {
-		return Response{}, fmt.Errorf("failed to write request: %w", err)
-	}
-
-	prefix := headerPool.Get().([]byte)
-	defer headerPool.Put(prefix)
-
-	if _, err := io.ReadFull(stream, prefix); err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return Response{}, context.DeadlineExceeded
-		}
-		return Response{}, fmt.Errorf("failed to read length prefix: %w", err)
-	}
-	totalLength := binary.LittleEndian.Uint32(prefix)
-	if totalLength < 4 {
-		return Response{}, fmt.Errorf("invalid total length %d", totalLength)
-	}
-
-	// Allocate a buffer with exactly totalLength bytes.
-	buf := make([]byte, totalLength)
-
-	// Copy the already-read prefix into buf.
-	copy(buf, prefix)
-	// Read the remaining totalLength-4 bytes.
-	if _, err := io.ReadFull(stream, buf[4:]); err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return Response{}, context.DeadlineExceeded
-		}
-		return Response{}, fmt.Errorf("failed to read full response: %w", err)
-	}
-
-	// Decode the response.
-	var resp Response
-	if err := resp.Decode(buf); err != nil {
-		return Response{}, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return resp, nil
-}
-
-// CallMsg performs an RPC call and unmarshals its Data into v on success,
-// or decodes the error from Data if status != http.StatusOK.
-func (s *Session) CallMsg(ctx context.Context, method string, payload arpcdata.Encodable) ([]byte, error) {
-	resp, err := s.CallContext(ctx, method, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	// Handle error responses
-	if resp.Status != http.StatusOK {
-		if resp.Data != nil {
-			var serErr SerializableError
-			if err := serErr.Decode(resp.Data); err != nil {
-				return nil, fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
-			}
-			return nil, UnwrapError(serErr)
-		}
-		return nil, fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
-	}
-
-	// Return the response data
-	if resp.Data == nil {
-		return nil, nil
-	}
-	return resp.Data, nil
-}
-
-func (s *Session) CallMsgWithTimeout(timeout time.Duration, method string, payload arpcdata.Encodable) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	return s.CallMsg(ctx, method, payload)
-}
-
-// CallBinary performs an RPC call for file I/O-style operations in which the server
-// first sends metadata about a binary transfer and then writes the payload directly.
-func (s *Session) CallBinary(ctx context.Context, method string, payload arpcdata.Encodable, dst []byte) (int, error) {
-	curSession := s.muxSess.Load()
-	stream, err := openStreamWithReconnect(s, curSession)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open stream: %w", err)
-	}
-	defer stream.Close()
-
-	// Propagate context deadlines to the stream
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
-	}
-
-	// Serialize the payload
-	var payloadBytes []byte
-	if payload != nil {
-		payloadBytes, err = payload.Encode()
-		if err != nil {
-			return 0, fmt.Errorf("failed to encode payload: %w", err)
+	} else {
+		if ctx.Done() != nil && stream.GetDieCh() != nil {
+			go func() {
+				select {
+				case <-ctx.Done():
+					stream.Close()
+				case <-stream.GetDieCh():
+				}
+			}()
 		}
 	}
 
-	// Build the RPC request
-	req := Request{
-		Method:  method,
-		Payload: payloadBytes,
+	var payloadBytes []byte
+	if payload != nil {
+		switch p := payload.(type) {
+		case []byte:
+			payloadBytes = p
+		default:
+			payloadBytes, err = cbor.Marshal(p)
+			if err != nil {
+				return stream, nil, fmt.Errorf("marshal payload: %w", err)
+			}
+		}
 	}
 
-	// Encode and send the request
-	reqBytes, err := req.Encode()
-	if err != nil {
-		return 0, fmt.Errorf("failed to encode request: %w", err)
+	headers := s.headers
+
+	req := Request{Method: method, Payload: payloadBytes, Headers: headers}
+	if err := enc.Encode(req); err != nil {
+		return stream, nil, fmt.Errorf("write request: %w", err)
 	}
 
-	if _, err := stream.Write(reqBytes); err != nil {
-		return 0, fmt.Errorf("failed to write request: %w", err)
-	}
-
-	// Read the response
-	headerPrefix := headerPool.Get().([]byte)
-	defer headerPool.Put(headerPrefix)
-
-	if _, err := io.ReadFull(stream, headerPrefix); err != nil {
-		return 0, fmt.Errorf("failed to read header length prefix: %w", err)
-	}
-	headerTotalLength := binary.LittleEndian.Uint32(headerPrefix)
-	if headerTotalLength < 4 {
-		return 0, fmt.Errorf("invalid header length %d", headerTotalLength)
-	}
-
-	// Allocate header buffer.
-	headerBuf := make([]byte, headerTotalLength)
-
-	// Copy prefix into headerBuf.
-	copy(headerBuf, headerPrefix)
-	// Read the remainder of the header.
-	if _, err := io.ReadFull(stream, headerBuf[4:]); err != nil {
-		return 0, fmt.Errorf("failed to read full header: %w", err)
-	}
-
-	// Decode the header.
 	var resp Response
-	if err := resp.Decode(headerBuf); err != nil {
-		return 0, fmt.Errorf("failed to decode response: %w", err)
+	if err := dec.Decode(&resp); err != nil {
+		if ctx.Err() != nil {
+			return stream, nil, ctx.Err()
+		}
+		return stream, nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	// Handle error responses
+	return stream, &resp, nil
+}
+
+func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out any) error {
+	stream, resp, err := s.call(ctx, method, payload)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	if resp.Status == 213 {
+		handler, ok := out.(RawStreamHandler)
+		if !ok || handler == nil {
+			return fmt.Errorf("invalid out handler while in raw stream mode")
+		}
+
+		syncByte := []byte{0xFF}
+		if _, err := stream.Write(syncByte); err != nil {
+			return fmt.Errorf("write sync byte: %w", err)
+		}
+
+		err = handler(stream)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if resp.Status != http.StatusOK {
+		if len(resp.Data) > 0 {
+			var serErr SerializableError
+			if err := cbor.Unmarshal(resp.Data, &serErr); err == nil {
+				return UnwrapError(serErr)
+			}
+		}
+		return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+	}
+
+	if out == nil || len(resp.Data) == 0 {
+		return nil
+	}
+	switch dst := out.(type) {
+	case *[]byte:
+		*dst = append((*dst)[:0], resp.Data...)
+		return nil
+	default:
+		return cbor.Unmarshal(resp.Data, out)
+	}
+}
+
+func (s *StreamPipe) CallData(ctx context.Context, method string, payload any) ([]byte, error) {
+	var out []byte
+	if err := s.Call(ctx, method, payload, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any) (string, error) {
+	stream, resp, err := s.call(ctx, method, payload)
+	if err != nil {
+		return "", err
+	}
+	defer stream.Close()
+
+	if resp.Status == 213 {
+		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", resp.Status)
+	}
+
+	if resp.Status != http.StatusOK {
+		if len(resp.Data) > 0 {
+			var serErr SerializableError
+			if err := cbor.Unmarshal(resp.Data, &serErr); err == nil {
+				return "", UnwrapError(serErr)
+			}
+		}
+		return "", fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+	}
+
+	return resp.Message, nil
+}
+
+func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any, dst []byte) (int, error) {
+	stream, resp, err := s.call(ctx, method, payload)
+	if err != nil {
+		return 0, err
+	}
+
 	if resp.Status != 213 {
 		var serErr SerializableError
-		if err := serErr.Decode(resp.Data); err == nil {
+		if err := cbor.Unmarshal(resp.Data, &serErr); err == nil {
 			return 0, UnwrapError(serErr)
 		}
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
+	}
+
+	syncByte := []byte{0xFF}
+	if _, err := stream.Write(syncByte); err != nil {
+		return 0, fmt.Errorf("write sync byte: %w", err)
 	}
 
 	return binarystream.ReceiveDataInto(stream, dst)
