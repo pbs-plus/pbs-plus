@@ -22,7 +22,7 @@ const (
 	magicV1       uint32 = 0x4E465353
 	version       uint16 = 1
 	maxLength            = 1 << 30
-	quietDeadline        = 30 * time.Second
+	quietDeadline        = 5 * time.Minute
 )
 
 func writeFull(w io.Writer, b []byte, stream *smux.Stream) error {
