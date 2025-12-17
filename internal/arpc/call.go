@@ -45,6 +45,16 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (*smu
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
+	} else {
+		if ctx.Done() != nil && stream.GetDieCh() != nil {
+			go func() {
+				select {
+				case <-ctx.Done():
+					stream.Close()
+				case <-stream.GetDieCh():
+				}
+			}()
+		}
 	}
 
 	var payloadBytes []byte
