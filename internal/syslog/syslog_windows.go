@@ -62,7 +62,10 @@ func (l *Logger) SetServiceLogger() error {
 	}
 
 	logPath := `C:\ProgramData\PBS Plus Agent\agent.log`
-	_ = os.MkdirAll(filepath.Dir(logPath), os.ModeDir)
+	err := os.MkdirAll(filepath.Dir(logPath), os.ModeDir)
+	if err != nil {
+		logPath = `agent.log`
+	}
 
 	rotator := &lumberjack.Logger{
 		Filename:   logPath,
