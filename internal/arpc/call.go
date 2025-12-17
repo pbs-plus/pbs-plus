@@ -101,9 +101,17 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 			return fmt.Errorf("invalid out handler while in raw stream mode")
 		}
 
-		syncByte := []byte{0xFF}
-		if _, err := stream.Write(syncByte); err != nil {
-			return fmt.Errorf("write sync byte: %w", err)
+		readySignal := []byte{0xFF}
+		if _, err := stream.Write(readySignal); err != nil {
+			return fmt.Errorf("write ready signal: %w", err)
+		}
+
+		ackByte := make([]byte, 1)
+		if _, err := stream.Read(ackByte); err != nil {
+			return fmt.Errorf("read ack signal: %w", err)
+		}
+		if ackByte[0] != 0xAA {
+			return fmt.Errorf("invalid ack signal: expected 0xAA, got 0x%02X", ackByte[0])
 		}
 
 		err = handler(stream)
@@ -181,9 +189,17 @@ func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any,
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
-	syncByte := []byte{0xFF}
-	if _, err := stream.Write(syncByte); err != nil {
-		return 0, fmt.Errorf("write sync byte: %w", err)
+	readySignal := []byte{0xFF}
+	if _, err := stream.Write(readySignal); err != nil {
+		return 0, fmt.Errorf("write ready signal: %w", err)
+	}
+
+	ackByte := make([]byte, 1)
+	if _, err := stream.Read(ackByte); err != nil {
+		return 0, fmt.Errorf("read ack signal: %w", err)
+	}
+	if ackByte[0] != 0xAA {
+		return 0, fmt.Errorf("invalid ack signal: expected 0xAA, got 0x%02X", ackByte[0])
 	}
 
 	return binarystream.ReceiveDataInto(stream, dst)
