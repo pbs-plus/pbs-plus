@@ -81,14 +81,21 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	}
 
 	if _, err := stream.Write(respBytes); err != nil {
+		syslog.L.Debug().WithField("req", req.Method).WithField("code", resp.Status).WithMessage("sending response")
 		return
 	}
 
 	if resp.Status == 213 && resp.RawStream != nil {
-		syncByte := []byte{0xFF}
-		if _, err := stream.Write(syncByte); err != nil {
+		syslog.L.Debug().WithField("req", req.Method).WithMessage("sending binary")
+
+		syncByte := make([]byte, 1)
+		if _, err := stream.Read(syncByte); err != nil {
 			return
 		}
+		if syncByte[0] != 0xFF {
+			return
+		}
+
 		resp.RawStream(stream)
 	}
 }
