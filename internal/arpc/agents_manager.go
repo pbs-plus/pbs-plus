@@ -1,6 +1,7 @@
 package arpc
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"net"
@@ -22,7 +23,7 @@ func NewAgentsManager() *AgentsManager {
 	}
 }
 
-func (sm *AgentsManager) createStreamPipe(session *smux.Session, conn net.Conn, headers http.Header) (*StreamPipe, string, error) {
+func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.Session, conn net.Conn, headers http.Header) (*StreamPipe, string, error) {
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
 		return nil, "", errors.New("connection is not a TLS connection")
@@ -45,7 +46,7 @@ func (sm *AgentsManager) createStreamPipe(session *smux.Session, conn net.Conn, 
 		existingSession.Close()
 	}
 
-	pipe, err := NewStreamPipe(session, conn)
+	pipe, err := newStreamPipe(ctx, smuxTun, conn)
 	if err != nil {
 		return nil, "", err
 	}
@@ -75,7 +76,7 @@ func (sm *AgentsManager) GetStreamPipe(clientID string) (*StreamPipe, bool) {
 	return sm.sessions.Get(clientID)
 }
 
-func (sm *AgentsManager) closeStreamPipe(clientID string) {
+func (sm *AgentsManager) unregisterStreamPipe(clientID string) {
 	_, exists := sm.sessions.Get(clientID)
 	if !exists {
 		return
