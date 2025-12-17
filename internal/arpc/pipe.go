@@ -151,21 +151,21 @@ func (s *StreamPipe) Serve() error {
 	}
 
 	for {
+		select {
+		case <-s.ctx.Done():
+			
+			syslog.L.Debug().WithMessage("closing pipe due to context cancellation").Write()
+			return s.ctx.Err()
+		default:
+		}
+
 		stream, err := s.tun.AcceptStream()
 		if err != nil {
 			if s.tun.IsClosed() {
 				syslog.L.Debug().WithMessage("closing pipe due to closed tun").Write()
 				return fmt.Errorf("session closed: %w", err)
 			}
-
-			select {
-			case <-s.ctx.Done():
-				syslog.L.Debug().WithMessage("closing pipe due to context cancellation").Write()
-				return s.ctx.Err()
-			default:
-			}
-
-			continue
+			return err
 		}
 
 		router := s.GetRouter()
