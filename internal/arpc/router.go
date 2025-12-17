@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
@@ -34,15 +32,12 @@ func (r *Router) CloseHandle(method string) {
 func (r *Router) serveStream(stream *smux.Stream) {
 	defer stream.Close()
 
-	_ = stream.SetReadDeadline(time.Now().Add(5 * time.Second))
 	dec := cbor.NewDecoder(stream)
 	var req Request
 	if err := dec.Decode(&req); err != nil {
-		_ = stream.SetReadDeadline(time.Time{})
 		writeErrorResponse(stream, http.StatusBadRequest, err)
 		return
 	}
-	_ = stream.SetReadDeadline(time.Time{})
 
 	if req.Method == "" {
 		writeErrorResponse(stream, http.StatusBadRequest, errors.New("missing method field"))
@@ -85,14 +80,6 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	}
 
 	if resp.Status == 213 && resp.RawStream != nil {
-		deadline := time.Now().Add(5 * time.Second)
-		_ = stream.SetReadDeadline(deadline)
-		var b [1]byte
-		if _, err := io.ReadFull(stream, b[:]); err != nil || b[0] != 0x01 {
-			_ = stream.SetReadDeadline(time.Time{})
-			return
-		}
-		_ = stream.SetReadDeadline(time.Time{})
 		resp.RawStream(stream)
 	}
 }

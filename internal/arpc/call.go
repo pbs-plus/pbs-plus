@@ -93,9 +93,6 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		if !ok || handler == nil {
 			return fmt.Errorf("invalid out handler while in raw stream mode")
 		}
-		if _, err := stream.Write([]byte{0x01}); err != nil {
-			return fmt.Errorf("raw ready signal write failed: %w", err)
-		}
 
 		err = handler(stream)
 		if err != nil {

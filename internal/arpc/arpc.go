@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
@@ -17,11 +16,7 @@ func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
 		return nil, fmt.Errorf("missing tls config")
 	}
 
-	dialer := &net.Dialer{
-		Timeout: 15 * time.Second,
-	}
-
-	conn, err := tls.DialWithDialer(dialer, "tcp", serverAddr, tlsConfig)
+	conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
 	if err != nil {
 		return nil, fmt.Errorf("TLS dial failed: %w", err)
 	}
