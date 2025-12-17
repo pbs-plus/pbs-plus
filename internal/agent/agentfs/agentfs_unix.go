@@ -429,11 +429,16 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, fmt.Errorf("pread failed: %w", err)
 	}
 
-	reader := bytes.NewReader(buf[:n])
+	result := make([]byte, n)
+	copy(result, buf[:n])
+
+	if len(*bptr) >= reqLen {
+		readBufPool.Put(bptr)
+	}
+
+	reader := bytes.NewReader(result)
 	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", n).Write()
 	streamCallback := func(stream *smux.Stream) {
-		readBufPool.Put(&buf)
-
 		if err := binarystream.SendDataFromReader(reader, n, stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed").WithField("handle_id", payload.HandleID).Write()
 			return
