@@ -69,11 +69,19 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	if resp.Status == 213 && resp.RawStream != nil {
 		syslog.L.Debug().WithField("req", req.Method).WithMessage("sending binary")
 
-		syncByte := make([]byte, 1)
-		if _, err := stream.Read(syncByte); err != nil {
+		readyByte := make([]byte, 1)
+		if _, err := stream.Read(readyByte); err != nil {
+			syslog.L.Debug().WithField("req", req.Method).WithMessage("client not ready")
 			return
 		}
-		if syncByte[0] != 0xFF {
+		if readyByte[0] != 0xFF {
+			syslog.L.Debug().WithField("req", req.Method).WithMessage("invalid ready signal")
+			return
+		}
+
+		ackSignal := []byte{0xAA}
+		if _, err := stream.Write(ackSignal); err != nil {
+			syslog.L.Debug().WithField("req", req.Method).WithMessage("failed to send ack")
 			return
 		}
 
