@@ -39,7 +39,6 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (*smu
 	if err != nil {
 		return nil, nil, err
 	}
-	defer stream.Close()
 
 	enc := cbor.NewEncoder(stream)
 	dec := cbor.NewDecoder(stream)
@@ -94,6 +93,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	if err != nil {
 		return err
 	}
+	defer stream.Close()
 
 	if resp.Status == 213 {
 		handler, ok := out.(RawStreamHandler)
@@ -139,10 +139,11 @@ func (s *StreamPipe) CallData(ctx context.Context, method string, payload any) (
 }
 
 func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any) (string, error) {
-	_, resp, err := s.call(ctx, method, payload)
+	stream, resp, err := s.call(ctx, method, payload)
 	if err != nil {
 		return "", err
 	}
+	defer stream.Close()
 
 	if resp.Status == 213 {
 		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", resp.Status)
@@ -166,6 +167,7 @@ func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any,
 	if err != nil {
 		return 0, err
 	}
+	defer stream.Close()
 
 	if resp.Status != 213 {
 		var serErr SerializableError
