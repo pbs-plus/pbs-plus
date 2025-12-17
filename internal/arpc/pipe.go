@@ -187,9 +187,7 @@ func (s *StreamPipe) Serve() error {
 
 		go func(st *smux.Stream) {
 			defer func() {
-				if r := recover(); r != nil {
-					_ = st.Close()
-				}
+				_ = st.Close()
 			}()
 			router.serveStream(st)
 		}(stream)

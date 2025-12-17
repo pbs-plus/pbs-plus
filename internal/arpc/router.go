@@ -31,8 +31,6 @@ func (r *Router) CloseHandle(method string) {
 }
 
 func (r *Router) serveStream(stream *smux.Stream) {
-	defer stream.Close()
-
 	dec := cbor.NewDecoder(stream)
 	var req Request
 	if err := dec.Decode(&req); err != nil {
