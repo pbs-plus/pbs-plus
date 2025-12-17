@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -24,7 +25,7 @@ func generateWinInstall(token string) string {
 
 	return fmt.Sprintf(`[System.Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; `+
 		`[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; `+
-		`iex(New-Object Net.WebClient).DownloadString("https://%s:%s/plus/agent/install/win?t=%s")`, hostname, constants.AgentAPIPort, token)
+		`iex(New-Object Net.WebClient).DownloadString("https://%s:%s/plus/agent/install/win?t=%s")`, hostname, strings.TrimPrefix(constants.AgentAPIPort, ":"), token)
 }
 
 // CreateToken generates a new token using the manager and stores it.

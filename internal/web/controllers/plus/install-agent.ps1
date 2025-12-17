@@ -226,9 +226,12 @@ function Remove-OldFiles {
         "nfssessions.json",
         "backup_sessions.json",
         "backup_sessions.lock",
+        "version.txt",
+        "version.lock",
+        "register_agent.reg",
         "pbs-plus-updater.exe",
-        "*.old",
-        "*.new",
+        ".pbs-plus-agent.exe.old",
+        ".pbs-plus-agent.exe.new",
         "*.backup"
     )
 
@@ -256,7 +259,8 @@ function Remove-OldFiles {
     # Remove empty legacy directories if they exist
     $legacyDirs = @(
         "C:\PBS Plus Agent",
-        "C:\PBS Plus"
+        "C:\PBS Plus",
+        "C:\Program Files (x86)\PBS Plus Agent\updates"
     )
     foreach ($d in $legacyDirs) {
         if (Test-Path $d) {
