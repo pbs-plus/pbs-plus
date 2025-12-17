@@ -78,7 +78,7 @@ func (r *DirReaderUnix) fillAttrs(info *types.AgentFileInfo) error {
 
 	if r.FetchFullAttrs {
 		info.Size = int64(stx.Size)
-		info.ModTime = time.Unix(int64(stx.Mtime.Sec), int64(stx.Mtime.Nsec)).UnixNano()
+		info.ModTime = time.Unix(int64(stx.Mtime.Sec), int64(stx.Mtime.Nsec))
 		if info.IsDir {
 			info.Blocks = 0
 		} else {
