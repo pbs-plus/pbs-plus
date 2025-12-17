@@ -3,7 +3,6 @@ package arpc
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -88,12 +87,14 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		return fmt.Errorf("write request: %w", err)
 	}
 
-	respRaw, err := io.ReadAll(stream)
-	if err != nil {
+	respRaw := responsePool.Get().([]byte)
+	defer responsePool.Put(respRaw)
+
+	if _, err := stream.Read(respRaw); err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return context.DeadlineExceeded
 		}
-		return fmt.Errorf("failed to read resp: %w", err)
+		return fmt.Errorf("failed to read length prefix: %w", err)
 	}
 
 	var resp Response
