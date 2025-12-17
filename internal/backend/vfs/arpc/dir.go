@@ -95,7 +95,10 @@ func (s *DirStream) HasNext() bool {
 	readBuf := bufPool.Get().([]byte)
 	defer bufPool.Put(readBuf)
 
-	bytesRead, err := s.fs.session.Load().CallBinary(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
+	ctxN, cancelN := context.WithTimeout(s.fs.Ctx, 1*time.Minute)
+	defer cancelN()
+
+	bytesRead, err := s.fs.session.Load().CallBinary(ctxN, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	syslog.L.Debug().
 		WithMessage("HasNext RPC completed").
 		WithField("bytesRead", bytesRead).
