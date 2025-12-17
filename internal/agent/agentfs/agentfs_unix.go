@@ -241,7 +241,7 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 		Name:    lastPathElem(fullPath),
 		Size:    st.Size,
 		Mode:    uint32(modeFromUnix(uint32(st.Mode))),
-		ModTime: time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)).UnixNano(),
+		ModTime: time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)),
 		IsDir:   (st.Mode & unix.S_IFMT) == unix.S_IFDIR,
 		Blocks:  blocks,
 	}

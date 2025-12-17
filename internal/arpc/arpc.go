@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/xtaci/smux"
 )
 
@@ -86,8 +87,12 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 				return
 			}
 
-			smuxConfig := smux.DefaultConfig()
-			smuxS, err := smux.Server(c, smuxConfig)
+			defaults := smux.DefaultConfig()
+			defaults.Version = 2
+			defaults.MaxReceiveBuffer = utils.MaxReceiveBuffer
+			defaults.MaxStreamBuffer = utils.MaxStreamBuffer
+			defaults.MaxFrameSize = 65535
+			smuxS, err := smux.Server(c, defaults)
 			if err != nil {
 				c.Close()
 				return

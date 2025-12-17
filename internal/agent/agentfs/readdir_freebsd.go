@@ -57,7 +57,7 @@ func (r *DirReaderUnix) fillAttrs(info *types.AgentFileInfo) error {
 	if r.FetchFullAttrs {
 		info.Size = st.Size
 		// FreeBSD Stat_t has Timespec fields
-		info.ModTime = time.Unix(int64(st.Mtimespec.Sec), int64(st.Mtimespec.Nsec)).UnixNano()
+		info.ModTime = time.Unix(int64(st.Mtimespec.Sec), int64(st.Mtimespec.Nsec))
 		if info.IsDir {
 			info.Blocks = 0
 		} else {

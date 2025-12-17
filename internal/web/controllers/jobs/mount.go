@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -63,11 +62,25 @@ func parseMountPoints() ([]string, error) {
 	return mps, nil
 }
 
-// buildGroupPath constructs the proper path for backup groups with nested namespaces
+func unmountPath(mountPoint string) error {
+	if err := exec.Command("fusermount3", "-uz", mountPoint).Run(); err == nil {
+		return nil
+	}
+
+	if err := exec.Command("fusermount", "-uz", mountPoint).Run(); err == nil {
+		return nil
+	}
+
+	if err := exec.Command("umount", "-f", "-l", mountPoint).Run(); err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("failed to unmount %s", mountPoint)
+}
+
 func buildGroupPath(ns, backupType, backupID, backupTime string) string {
 	var parts []string
 
-	// Handle nested namespaces: split by '/' and prefix each with 'ns/'
 	if ns != "" {
 		nsParts := strings.Split(ns, "/")
 		for _, nsPart := range nsParts {
@@ -77,13 +90,11 @@ func buildGroupPath(ns, backupType, backupID, backupTime string) string {
 		}
 	}
 
-	// Add backup type (prefixed with appropriate directory)
 	parts = append(parts, backupType, backupID, backupTime)
 
 	return filepath.Join(parts...)
 }
 
-// removeEmptyDirsToBase removes empty directories recursively up to basePath
 func removeEmptyDirsToBase(path, basePath string) {
 	path = filepath.Clean(path)
 	basePath = filepath.Clean(basePath)
@@ -106,47 +117,74 @@ func removeEmptyDirsToBase(path, basePath string) {
 	}
 }
 
-// unmountPath attempts to unmount a single path using multiple methods
-func unmountPath(mountPoint string) error {
-	// Try fusermount3 first (modern FUSE)
-	if err := exec.Command("fusermount3", "-uz", mountPoint).Run(); err == nil {
-		return nil
+func generateServiceName(datastore, ns, backupType, backupID, safeTime string) string {
+	parts := []string{"pbs-plus-restore", datastore}
+	if ns != "" {
+		parts = append(parts, strings.ReplaceAll(ns, "/", "-"))
 	}
+	parts = append(parts, backupType, backupID, safeTime)
 
-	// Try fusermount (legacy FUSE)
-	if err := exec.Command("fusermount", "-uz", mountPoint).Run(); err == nil {
-		return nil
-	}
+	name := strings.Join(parts, "-")
+	name = strings.ReplaceAll(name, " ", "-")
+	name = strings.ReplaceAll(name, ":", "-")
 
-	// Try umount with force and lazy flags
-	if err := exec.Command("umount", "-f", "-l", mountPoint).Run(); err == nil {
-		return nil
-	}
-
-	return fmt.Errorf("failed to unmount %s", mountPoint)
+	return name + ".service"
 }
 
-// daemonizeMount starts the mount command as a detached daemon process
-func daemonizeMount(args []string) error {
-	script := fmt.Sprintf(`#!/bin/sh
-exec setsid /usr/bin/proxmox-backup-pxar-mount %s </dev/null >/dev/null 2>&1 &
-`, strings.Join(shellEscapeArgs(args), " "))
+func createSystemdService(serviceName, mountPoint string, args []string) error {
+	cmdArgs := []string{
+		"run",
+		"--unit=" + serviceName,
+		"--description=PBS Plus restore mount for " + mountPoint,
+		"--remain-after-exit",
+		"--collect",
+		"--property=Type=forking",
+		"--property=KillMode=control-group",
+		"--property=Restart=no",
+		"/usr/bin/proxmox-backup-pxar-mount",
+	}
+	cmdArgs = append(cmdArgs, args...)
 
-	cmd := exec.Command("/bin/sh", "-c", script)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
+	cmd := exec.Command("systemd-run", cmdArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("systemd-run failed: %w, output: %s", err, string(output))
 	}
 
-	return cmd.Run()
+	return nil
 }
 
-// shellEscapeArgs escapes arguments for safe shell execution
-func shellEscapeArgs(args []string) []string {
-	escaped := make([]string, len(args))
-	for i, arg := range args {
-		escaped[i] = "'" + strings.ReplaceAll(arg, "'", "'\\''") + "'"
+func stopSystemdService(serviceName string) error {
+	stopCmd := exec.Command("systemctl", "stop", serviceName)
+	_ = stopCmd.Run()
+
+	resetCmd := exec.Command("systemctl", "reset-failed", serviceName)
+	_ = resetCmd.Run()
+
+	return nil
+}
+
+func listRestoreServices() ([]string, error) {
+	cmd := exec.Command("systemctl", "list-units", "--all", "--no-legend", "--plain", "pbs-plus-restore-*")
+	output, err := cmd.Output()
+	if err != nil {
+		return []string{}, nil
 	}
-	return escaped
+
+	var services []string
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) > 0 && strings.HasPrefix(fields[0], "pbs-plus-restore-") {
+			services = append(services, fields[0])
+		}
+	}
+
+	return services, nil
 }
 
 func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -205,8 +243,12 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			safeTime,
 		))
 
-		// Clean up any existing mount
-		_ = unmountPath(mountPoint)
+		serviceName := generateServiceName(datastore, ns, backupType, backupID, safeTime)
+
+		_ = stopSystemdService(serviceName)
+		if utils.IsMounted(mountPoint) {
+			_ = unmountPath(mountPoint)
+		}
 		_ = os.RemoveAll(mountPoint)
 
 		if err := os.MkdirAll(mountPoint, 0o755); err != nil {
@@ -251,14 +293,12 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 		args = append(args, mountPoint)
 
-		// Start mount as a daemonized process
-		if err := daemonizeMount(args); err != nil {
-			controllers.WriteErrorResponse(w, fmt.Errorf("start mount: %w", err))
+		if err := createSystemdService(serviceName, mountPoint, args); err != nil {
+			controllers.WriteErrorResponse(w, fmt.Errorf("start mount service: %w", err))
 			_ = os.RemoveAll(mountPoint)
 			return
 		}
 
-		// Wait for mount to become active by checking filesystem
 		mountOK := false
 		for i := 0; i < 30; i++ {
 			if utils.IsMounted(mountPoint) {
@@ -269,7 +309,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if !mountOK {
-			_ = unmountPath(mountPoint)
+			_ = stopSystemdService(serviceName)
 			_ = os.RemoveAll(mountPoint)
 			controllers.WriteErrorResponse(w, errors.New("mount failed"))
 			return
@@ -326,13 +366,16 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			datastore,
 		))
 
-		// Unmount the path
-		_ = unmountPath(mountPoint)
+		serviceName := generateServiceName(datastore, ns, backupType, backupID, safeTime)
 
-		// Remove the mount point directory
+		_ = stopSystemdService(serviceName)
+
+		if utils.IsMounted(mountPoint) {
+			_ = unmountPath(mountPoint)
+		}
+
 		_ = os.RemoveAll(mountPoint)
 
-		// Clean up empty parent directories recursively
 		removeEmptyDirsToBase(filepath.Dir(mountPoint), basePath)
 
 		writeJSON(w, JobRunResponse{
@@ -363,14 +406,29 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			ns,
 		))
 
-		// Parse all current mount points
+		services, err := listRestoreServices()
+		if err != nil {
+			controllers.WriteErrorResponse(w, fmt.Errorf("list services: %w", err))
+			return
+		}
+
+		prefix := "pbs-plus-restore-" + datastore
+		if ns != "" {
+			prefix += "-" + strings.ReplaceAll(ns, "/", "-")
+		}
+
+		for _, svc := range services {
+			if strings.HasPrefix(svc, prefix) {
+				_ = stopSystemdService(svc)
+			}
+		}
+
 		allMPs, err := parseMountPoints()
 		if err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("read mounts: %w", err))
 			return
 		}
 
-		// Find all mounts within our base path
 		var targets []string
 		for _, mp := range allMPs {
 			clean := filepath.Clean(mp)
@@ -379,7 +437,6 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
-		// Sort by depth (deepest first) and length
 		sort.Slice(targets, func(i, j int) bool {
 			di := strings.Count(targets[i], string(filepath.Separator))
 			dj := strings.Count(targets[j], string(filepath.Separator))
@@ -389,12 +446,12 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			return di > dj
 		})
 
-		// Unmount all targets
 		for _, mp := range targets {
-			_ = unmountPath(mp)
+			if utils.IsMounted(mp) {
+				_ = unmountPath(mp)
+			}
 		}
 
-		// Remove all directories recursively under base
 		_ = os.RemoveAll(base)
 
 		writeJSON(w, JobRunResponse{
