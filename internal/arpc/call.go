@@ -3,7 +3,10 @@ package arpc
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"sync"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/xtaci/smux"
@@ -32,6 +35,12 @@ type SerializableError struct {
 }
 
 type RawStreamHandler func(*smux.Stream) error
+
+var responsePool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 64*1024)
+	},
+}
 
 func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out any) error {
 	stream, err := s.OpenStream()
@@ -79,9 +88,18 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		return fmt.Errorf("write request: %w", err)
 	}
 
-	dec := cbor.NewDecoder(stream)
+	respRaw := responsePool.Get().([]byte)
+	defer responsePool.Put(respRaw)
+
+	if _, err := io.ReadFull(stream, respRaw); err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return context.DeadlineExceeded
+		}
+		return fmt.Errorf("failed to read length prefix: %w", err)
+	}
+
 	var resp Response
-	if err := dec.Decode(&resp); err != nil {
+	if err := cbor.Unmarshal(respRaw, &resp); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
