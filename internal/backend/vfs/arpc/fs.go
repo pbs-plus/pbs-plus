@@ -322,7 +322,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
-	fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(filename), Value: xattrBytes, Expiration: 5})
+	fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(filename), Value: xattrBytes, Expiration: 10})
 
 	return fi, nil
 }
@@ -347,8 +347,7 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (type
 	var fiCached types.AgentFileInfo
 	rawCached, err := fs.Memcache.Get("xattr:" + memlocal.Key(filename))
 	if err != nil {
-		fs.logError(filename, err)
-		return types.AgentFileInfo{}, syscall.ENODATA
+		return fs.ListXattr(ctx, filename)
 	}
 
 	err = cbor.Unmarshal(rawCached.Value, &fiCached)

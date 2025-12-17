@@ -394,7 +394,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 
 	out.Mode = mode
 	out.Size = uint64(fi.Size)
-	mtime := fi.ModTime
+	mtime := time.Unix(0, fi.ModTime)
 	out.SetTimes(nil, &mtime, nil)
 
 	return child, 0
