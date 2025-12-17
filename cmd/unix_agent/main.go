@@ -206,8 +206,7 @@ func connectARPC(ctx context.Context) error {
 	syslog.L.Info().WithMessage("ARPC router configured successfully").Write()
 
 	syslog.L.Info().WithMessage("Starting ARPC session handler goroutine").Write()
-	go func() {
-		defer session.Close()
+	go func(pipe *arpc.StreamPipe) {
 		defer func() {
 			syslog.L.Info().WithMessage("ARPC session handler shutting down").Write()
 		}()
@@ -224,7 +223,7 @@ func connectARPC(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			default:
-				if err := session.Serve(); err != nil {
+				if err := pipe.Serve(); err != nil {
 					mult := 1 + jitter*(2*rand.Float64()-1)
 					sleep := time.Duration(float64(backoff) * mult)
 					sleep = min(sleep, maxWait)
@@ -242,15 +241,13 @@ func connectARPC(ctx context.Context) error {
 
 					backoff = next
 
-					if newS, err := session.Reconnect(ctx); err != nil {
+					if pipe, err = pipe.Reconnect(ctx); err != nil {
 						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
-					} else {
-						session = newS
 					}
 				}
 			}
 		}
-	}()
+	}(session)
 
 	return nil
 }
