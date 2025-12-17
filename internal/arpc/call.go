@@ -3,9 +3,7 @@ package arpc
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
-	"sync"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/xtaci/smux"
@@ -35,19 +33,15 @@ type SerializableError struct {
 
 type RawStreamHandler func(*smux.Stream) error
 
-var responsePool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 64*1024)
-	},
-}
-
 func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out any) error {
 	stream, err := s.OpenStream()
 	if err != nil {
 		return err
 	}
-
 	defer stream.Close()
+
+	enc := cbor.NewEncoder(stream)
+	dec := cbor.NewDecoder(stream)
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
@@ -79,26 +73,12 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	headers := s.headers
 
 	req := Request{Method: method, Payload: payloadBytes, Headers: headers}
-	reqBytes, err := cbor.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("encode request: %w", err)
-	}
-	if _, err := stream.Write(reqBytes); err != nil {
+	if err := enc.Encode(req); err != nil {
 		return fmt.Errorf("write request: %w", err)
 	}
 
-	respRaw := responsePool.Get().([]byte)
-	defer responsePool.Put(respRaw)
-
-	if _, err := stream.Read(respRaw); err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return context.DeadlineExceeded
-		}
-		return fmt.Errorf("failed to read length prefix: %w", err)
-	}
-
 	var resp Response
-	if err := cbor.Unmarshal(respRaw, &resp); err != nil {
+	if err := dec.Decode(&resp); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
