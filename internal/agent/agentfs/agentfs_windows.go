@@ -540,7 +540,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		defer zeroBufPool.Put(bufPtr)
 		zeroBuf := *bufPtr
 
-		const maxChunkSize = 48 * 1024
+		const maxChunkSize = 64 * 1024
 
 		write := func(p []byte) error {
 			if err := req.Context.Err(); err != nil {
@@ -588,8 +588,8 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 						return
 					}
 					gap -= ch
+					pos += ch
 				}
-				pos = rStart
 			}
 
 			cur := rStart
@@ -636,16 +636,21 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 						return
 					}
 					cur += int64(n)
+					pos = cur
 				}
 
 				if rerr == io.EOF {
 					if n == 0 {
-						syslog.L.Debug().WithMessage("handleReadAt: EOF reached").WithField("handle_id", payload.HandleID).Write()
-						return
+						syslog.L.Debug().WithMessage("handleReadAt: EOF reached with no data").WithField("handle_id", payload.HandleID).Write()
+						break
 					}
 				}
+
+				if n < int(ch) && rerr == nil {
+					syslog.L.Debug().WithMessage("handleReadAt: short read, checking if at EOF").WithField("handle_id", payload.HandleID).WithField("read", n).WithField("requested", ch).Write()
+					break
+				}
 			}
-			pos = rEnd
 		}
 
 		if pos < end {
