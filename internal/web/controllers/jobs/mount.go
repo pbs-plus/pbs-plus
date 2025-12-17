@@ -137,7 +137,7 @@ func createSystemdService(serviceName, mountPoint string, args []string) error {
 		"--description=PBS Plus restore mount for " + mountPoint,
 		"--remain-after-exit",
 		"--collect",
-		"--property=Type=forking",
+		"--property=Type=simple",
 		"--property=KillMode=control-group",
 		"--property=Restart=no",
 		"/usr/bin/proxmox-backup-pxar-mount",
