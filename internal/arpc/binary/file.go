@@ -26,6 +26,8 @@ const (
 )
 
 func writeFull(w io.Writer, b []byte, stream *smux.Stream) error {
+	defer stream.SetDeadline(time.Time{})
+
 	for len(b) > 0 {
 		n, err := w.Write(b)
 		if err != nil {
@@ -40,6 +42,8 @@ func writeFull(w io.Writer, b []byte, stream *smux.Stream) error {
 }
 
 func readFull(r io.Reader, b []byte, stream *smux.Stream) error {
+	defer stream.SetDeadline(time.Time{})
+
 	offset := 0
 	for offset < len(b) {
 		n, err := r.Read(b[offset:])
