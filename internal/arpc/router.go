@@ -54,15 +54,6 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() {
-		select {
-		case <-stream.GetDieCh():
-			syslog.L.Debug().WithMessage("cancelling stream due to closure itself").Write()
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-
 	req.Context = ctx
 	resp, err := handler(&req)
 	if err != nil {
