@@ -150,7 +150,13 @@ func CmdBackup() {
 			}
 			if err := rpcSess.Serve(); err != nil {
 				syslog.L.Error(err).WithMessage("CmdBackup: RPC Serve returned error").WithField("jobId", *jobId).Write()
+				rpcSess, err = rpcSess.Reconnect(context.Background())
+				if err != nil {
+					syslog.L.Error(err).WithMessage("CmdBackup: RPC reconnect returned error").WithField("jobId", *jobId).Write()
+				}
+				continue
 			}
+			close(exitGo)
 		}
 	})
 
