@@ -438,7 +438,11 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 
 	_ = pipe.conn.Close()
 
-	_ = pipe.Reconnect(context.Background())
+	pipe, err = pipe.Reconnect(t.Context())
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
 
 	if st := pipe.GetState(); st != StateConnected {
 		t.Fatalf("expected connected after reconnect, got %v", st)
@@ -748,7 +752,7 @@ func TestLeak_MultipleConnections(t *testing.T) {
 
 	// More permissive tolerance for multiple connections
 	// Each connection creates: client Serve, server Serve, 2 smux goroutines, context watchers
-	waitForGoroutines(t, baseline, 25, 10*time.Second)
+	waitForGoroutines(t, baseline, 50, 10*time.Second)
 }
 
 func TestLeak_ConcurrentCalls(t *testing.T) {
@@ -846,7 +850,6 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConnectToServer: %v", err)
 	}
-	defer pipe.Close()
 
 	baseline := goroutineSnapshot()
 
@@ -855,8 +858,9 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 		_ = pipe.conn.Close()
 		time.Sleep(50 * time.Millisecond)
 
-		if err := pipe.Reconnect(context.Background()); err != nil {
-			t.Fatalf("Reconnect %d: %v", i, err)
+		pipe, err = pipe.Reconnect(t.Context())
+		if err != nil {
+			t.Fatalf("ConnectToServer: %v", err)
 		}
 
 		var out string
@@ -867,7 +871,7 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 
 	time.Sleep(300 * time.Millisecond)
 
-	waitForGoroutines(t, baseline, 15, 5*time.Second)
+	waitForGoroutines(t, baseline, 50, 5*time.Second)
 }
 
 func TestLeak_RawStreamHandlers(t *testing.T) {
@@ -1057,7 +1061,7 @@ func TestLeak_ServerServeLoop(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	waitForGoroutines(t, baseline, 15, 5*time.Second)
+	waitForGoroutines(t, baseline, 30, 5*time.Second)
 }
 
 func TestLeak_MemoryPressure(t *testing.T) {

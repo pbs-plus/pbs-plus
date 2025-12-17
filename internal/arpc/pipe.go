@@ -6,15 +6,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sync"
 	"sync/atomic"
 
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
 )
 
 type StreamPipe struct {
-	session *smux.Session // Changed from embedded to private field
-	sync.RWMutex
+	tun *smux.Session
 
 	serverAddr string
 	tlsConfig  *tls.Config
@@ -49,67 +48,87 @@ func (s *StreamPipe) GetVersion() string {
 	return s.version
 }
 
-func (s *StreamPipe) AcceptStream() (*smux.Stream, error) {
-	s.RLock()
-	session := s.session
-	ctx := s.ctx
-	s.RUnlock()
-
-	if session == nil {
-		return nil, fmt.Errorf("session is nil")
-	}
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
-
-	return session.AcceptStream()
-}
-
 func (s *StreamPipe) OpenStream() (*smux.Stream, error) {
-	s.RLock()
-	session := s.session
-	s.RUnlock()
-
-	if session == nil {
-		return nil, fmt.Errorf("session is nil")
+	if s.tun != nil {
+		return s.tun.OpenStream()
 	}
-	return session.OpenStream()
+
+	return nil, fmt.Errorf("nil smux tunnel")
 }
 
-func (s *StreamPipe) IsClosed() bool {
-	s.RLock()
-	session := s.session
-	s.RUnlock()
-
-	if session == nil {
-		return true
-	}
-	return session.IsClosed()
+func (s *StreamPipe) Reconnect(ctx context.Context) (*StreamPipe, error) {
+	s.Close()
+	return ConnectToServer(ctx, s.serverAddr, s.headers, s.tlsConfig)
 }
 
-func (s *StreamPipe) NumStreams() int {
-	s.RLock()
-	session := s.session
-	s.RUnlock()
-
-	if session == nil {
-		return 0
+func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*StreamPipe, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return session.NumStreams()
+	if tlsConfig == nil || len(tlsConfig.Certificates) == 0 {
+		return nil, fmt.Errorf("TLS configuration must include client certificate")
+	}
+
+	arpcTls := tlsConfig.Clone()
+	arpcTls.NextProtos = []string{"pbsarpc"}
+
+	conn, err := dialServer(serverAddr, arpcTls)
+	if err != nil {
+		syslog.L.Info().WithField("NextProtos", arpcTls.NextProtos).WithField("serverAddr", serverAddr).Write()
+		return nil, fmt.Errorf("server not reachable (%s): %w", serverAddr, err)
+	}
+
+	smuxConfig := smux.DefaultConfig()
+	smuxC, err := smux.Client(conn, smuxConfig)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("failed to create smux client: %w", err)
+	}
+
+	pipe, err := newStreamPipe(ctx, smuxC, conn)
+	if err != nil {
+		_ = smuxC.Close()
+		_ = conn.Close()
+		return nil, fmt.Errorf("failed to create pipe: %w", err)
+	}
+
+	if headers == nil {
+		headers = make(http.Header)
+	}
+
+	headers.Add("ARPCVersion", "2")
+
+	pipe.tlsConfig = arpcTls
+	pipe.serverAddr = serverAddr
+	pipe.headers = headers
+
+	stream, err := pipe.OpenStream()
+	if err != nil {
+		pipe.Close()
+		return nil, fmt.Errorf("failed to initialize header stream: %w", err)
+	}
+	if werr := writeHeadersFrame(stream, headers); werr != nil {
+		_ = stream.Close()
+		pipe.Close()
+		return nil, fmt.Errorf("failed to write headers: %w", werr)
+	}
+	if cerr := stream.Close(); cerr != nil {
+		pipe.Close()
+		return nil, fmt.Errorf("failed to close header stream: %w", cerr)
+	}
+
+	return pipe, nil
 }
 
-func NewStreamPipe(session *smux.Session, conn net.Conn) (*StreamPipe, error) {
-	if session == nil {
-		return nil, fmt.Errorf("nil smux session")
+func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn) (*StreamPipe, error) {
+	if tun == nil {
+		return nil, fmt.Errorf("nil smux tunnel")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 
 	pipe := &StreamPipe{
-		session:    session,
+		tun:        tun,
 		conn:       conn,
 		ctx:        ctx,
 		cancelFunc: cancel,
@@ -117,7 +136,7 @@ func NewStreamPipe(session *smux.Session, conn net.Conn) (*StreamPipe, error) {
 
 	go func() {
 		select {
-		case <-session.CloseChan():
+		case <-tun.CloseChan():
 			cancel()
 		case <-ctx.Done():
 		}
@@ -127,10 +146,14 @@ func NewStreamPipe(session *smux.Session, conn net.Conn) (*StreamPipe, error) {
 }
 
 func (s *StreamPipe) Serve() error {
+	if s.tun == nil {
+		return fmt.Errorf("nil smux tunnel")
+	}
+
 	for {
-		stream, err := s.AcceptStream()
+		stream, err := s.tun.AcceptStream()
 		if err != nil {
-			if s.IsClosed() {
+			if s.tun.IsClosed() {
 				return fmt.Errorf("session closed: %w", err)
 			}
 
@@ -161,120 +184,23 @@ func (s *StreamPipe) Serve() error {
 }
 
 func (s *StreamPipe) Close() {
-	s.Lock()
-	defer s.Unlock()
-
 	s.cancelFunc()
 
-	if s.session != nil && !s.session.IsClosed() {
-		_ = s.session.Close()
+	if s.tun != nil && !s.tun.IsClosed() {
+		_ = s.tun.Close()
 	}
 
 	if s.conn != nil {
 		_ = s.conn.Close()
 	}
-
-	s.session = nil
-	s.conn = nil
 }
 
 func (s *StreamPipe) GetState() ConnectionState {
-	s.RLock()
-	defer s.RUnlock()
-
-	if s.session == nil || s.session.IsClosed() {
+	if s.tun == nil || s.tun.IsClosed() {
 		return StateDisconnected
 	}
 	if s.ctx.Err() != nil {
 		return StateDisconnected
 	}
 	return StateConnected
-}
-
-func (s *StreamPipe) Reconnect(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	s.Lock()
-	defer s.Unlock()
-
-	if s.tlsConfig == nil || s.serverAddr == "" {
-		return fmt.Errorf("missing server address or TLS config for reconnect")
-	}
-
-	s.cancelFunc()
-
-	if s.session != nil && !s.session.IsClosed() {
-		_ = s.session.Close()
-	}
-	if s.conn != nil {
-		_ = s.conn.Close()
-	}
-
-	conn, err := dialServer(s.serverAddr, s.tlsConfig)
-	if err != nil {
-		s.session = nil
-		s.conn = nil
-		return err
-	}
-
-	smuxConfig := smux.DefaultConfig()
-	session, err := smux.Client(conn, smuxConfig)
-	if err != nil {
-		_ = conn.Close()
-		s.session = nil
-		s.conn = nil
-		return fmt.Errorf("failed to create smux client: %w", err)
-	}
-
-	newCtx, cancel := context.WithCancel(context.Background())
-
-	s.session = session
-	s.conn = conn
-	s.ctx = newCtx
-	s.cancelFunc = cancel
-
-	go func() {
-		select {
-		case <-session.CloseChan():
-			cancel()
-		case <-newCtx.Done():
-		}
-	}()
-
-	if s.headers == nil {
-		s.headers = make(http.Header)
-	}
-
-	stream, err := session.OpenStream()
-	if err != nil {
-		s.cancelFunc()
-		_ = s.session.Close()
-		_ = s.conn.Close()
-		s.session = nil
-		s.conn = nil
-		return fmt.Errorf("failed to initialize header stream: %w", err)
-	}
-
-	if werr := writeHeadersFrame(stream, s.headers); werr != nil {
-		_ = stream.Close()
-		s.cancelFunc()
-		_ = s.session.Close()
-		_ = s.conn.Close()
-		s.session = nil
-		s.conn = nil
-		return fmt.Errorf("failed to write headers: %w", werr)
-	}
-
-	if cerr := stream.Close(); cerr != nil {
-		s.cancelFunc()
-		_ = s.session.Close()
-		_ = s.conn.Close()
-		s.session = nil
-		s.conn = nil
-		return fmt.Errorf("failed to close header stream: %w", cerr)
-	}
-
-	return nil
 }

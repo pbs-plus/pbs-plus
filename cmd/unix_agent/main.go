@@ -242,8 +242,10 @@ func connectARPC(ctx context.Context) error {
 
 					backoff = next
 
-					if err = session.Reconnect(ctx); err != nil {
+					if newS, err := session.Reconnect(ctx); err != nil {
 						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
+					} else {
+						session = newS
 					}
 				}
 			}
