@@ -86,6 +86,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 
 	pipe, err := newStreamPipe(ctx, smuxC, conn)
 	if err != nil {
+		syslog.L.Debug().WithMessage("closing tun and conn due to stream pipe err init").Write()
 		_ = smuxC.Close()
 		_ = conn.Close()
 		return nil, fmt.Errorf("failed to create pipe: %w", err)
@@ -153,20 +154,25 @@ func (s *StreamPipe) Serve() error {
 		stream, err := s.tun.AcceptStream()
 		if err != nil {
 			if s.tun.IsClosed() {
+				syslog.L.Debug().WithMessage("closing pipe due to closed tun").Write()
 				return fmt.Errorf("session closed: %w", err)
 			}
 
 			select {
 			case <-s.ctx.Done():
+				syslog.L.Debug().WithMessage("closing pipe due to context cancellation").Write()
 				return s.ctx.Err()
 			default:
 			}
+
+			syslog.L.Debug().WithMessage(fmt.Sprintf("encountered and ignored accept stream error: %v", err)).Write()
 
 			continue
 		}
 
 		router := s.GetRouter()
 		if router == nil {
+			syslog.L.Debug().WithMessage("closing stream due to invalid router").Write()
 			_ = stream.Close()
 			continue
 		}
@@ -186,10 +192,12 @@ func (s *StreamPipe) Close() {
 	s.cancelFunc()
 
 	if s.tun != nil && !s.tun.IsClosed() {
+		syslog.L.Debug().WithMessage("closing tunnel due to pipe close").Write()
 		_ = s.tun.Close()
 	}
 
 	if s.conn != nil {
+		syslog.L.Debug().WithMessage("closing conn due to pipe close").Write()
 		_ = s.conn.Close()
 	}
 }

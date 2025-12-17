@@ -92,6 +92,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 			if err == nil {
 				hdrs, rerr := readHeadersFrame(stream)
 				if rerr != nil {
+					syslog.L.Debug().WithMessage("closing tun and conn due to missing header frames").Write()
 					_ = stream.Close()
 					_ = smuxS.Close()
 					_ = c.Close()
@@ -106,6 +107,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 
 			pipe, id, err := agentsManager.registerStreamPipe(pCtx, smuxS, c, reqHeaders)
 			if err != nil {
+				syslog.L.Debug().WithMessage("closing tun and conn due to stream pipe err reg").Write()
 				_ = smuxS.Close()
 				_ = c.Close()
 				return
