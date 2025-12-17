@@ -96,7 +96,7 @@ function Stop-PBSPlusProcesses {
     }
 
     # Kill processes by common name patterns
-    $processPatterns = @("*pbs*plus*", "*pbsplus*", "pbs-plus-agent*", "pbs-plus-updater*")
+    $processPatterns = @("*pbs*plus*", "*pbsplus*", "*pbs-plus-agent*", "pbs-plus-updater*")
     foreach ($pattern in $processPatterns) {
         Get-Process -Name $pattern -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "Killing process: $($_.Name) (PID: $($_.Id))" -ForegroundColor Cyan
@@ -226,6 +226,9 @@ function Remove-OldFiles {
         "nfssessions.json",
         "backup_sessions.json",
         "backup_sessions.lock",
+        "pbs-plus-updater.exe",
+        "*.old",
+        "*.new",
         "*.backup"
     )
 

@@ -5,13 +5,26 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"sort"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	_ "modernc.org/sqlite"
 )
+
+func generateWinInstall(token string) string {
+	hostname := os.Getenv("PBS_PLUS_HOSTNAME")
+	if utils.IsProxyCertValid(hostname) {
+		return fmt.Sprintf("irm https://%s:8018/plus/agent/install/win?t=%s | iex", hostname, token)
+	}
+
+	return fmt.Sprintf(`[System.Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; `+
+		`[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; `+
+		`iex(New-Object Net.WebClient).DownloadString("https://%s:8018/plus/agent/install/win?t=%s")`, hostname, token)
+}
 
 // CreateToken generates a new token using the manager and stores it.
 func (database *Database) CreateToken(comment string) error {
@@ -53,6 +66,7 @@ func (database *Database) GetToken(tokenStr string) (types.AgentToken, error) {
 		tokenProp.Revoked = true
 	}
 
+	tokenProp.WinInstall = generateWinInstall(tokenProp.Token)
 	return tokenProp, nil
 }
 
@@ -93,6 +107,7 @@ func (database *Database) GetAllTokens(includeRevoked bool) ([]types.AgentToken,
 		if !includeRevoked && tokenProp.Revoked {
 			continue
 		}
+		tokenProp.WinInstall = generateWinInstall(tokenProp.Token)
 		tokens = append(tokens, tokenProp)
 	}
 	if err := rows.Err(); err != nil {
