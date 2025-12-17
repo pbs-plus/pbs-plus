@@ -65,27 +65,26 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 		}
 
 		go func(c net.Conn) {
+			defer c.Close()
+
 			tlsConn, ok := c.(*tls.Conn)
 			if !ok {
-				c.Close()
 				return
 			}
 
 			if err := tlsConn.Handshake(); err != nil {
-				c.Close()
 				return
 			}
 
 			if len(tlsConn.ConnectionState().PeerCertificates) == 0 {
-				c.Close()
 				return
 			}
 
 			smuxS, err := smux.Server(c, defaultConfig())
 			if err != nil {
-				c.Close()
 				return
 			}
+			defer smuxS.Close()
 
 			var reqHeaders http.Header
 			stream, err := smuxS.AcceptStream()
@@ -94,12 +93,12 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 				if rerr != nil {
 					syslog.L.Debug().WithMessage("closing tun and conn due to missing header frames").Write()
 					_ = stream.Close()
-					_ = smuxS.Close()
-					_ = c.Close()
 					return
 				}
 				reqHeaders = hdrs
 				_ = stream.Close()
+			} else {
+				return
 			}
 
 			pCtx, pCan := context.WithCancel(ctx)
@@ -108,8 +107,6 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 			pipe, id, err := agentsManager.registerStreamPipe(pCtx, smuxS, c, reqHeaders)
 			if err != nil {
 				syslog.L.Debug().WithMessage("closing tun and conn due to stream pipe err reg").Write()
-				_ = smuxS.Close()
-				_ = c.Close()
 				return
 			}
 

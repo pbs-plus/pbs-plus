@@ -52,6 +52,8 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
 	go func() {
 		select {
 		case <-stream.GetDieCh():
@@ -62,7 +64,6 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	}()
 
 	req.Context = ctx
-
 	resp, err := handler(&req)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
@@ -76,15 +77,6 @@ func (r *Router) serveStream(stream *smux.Stream) {
 
 	if resp.Status == 213 && resp.RawStream != nil {
 		syslog.L.Debug().WithField("req", req.Method).WithMessage("sending binary")
-
-		syncByte := make([]byte, 1)
-		if _, err := stream.Read(syncByte); err != nil {
-			return
-		}
-		if syncByte[0] != 0xFF {
-			return
-		}
-
 		resp.RawStream(stream)
 	}
 }

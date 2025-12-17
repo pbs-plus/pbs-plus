@@ -117,14 +117,11 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		pipe.Close()
 		return nil, fmt.Errorf("failed to initialize header stream: %w", err)
 	}
+	defer stream.Close()
+
 	if werr := writeHeadersFrame(stream, headers); werr != nil {
-		_ = stream.Close()
 		pipe.Close()
 		return nil, fmt.Errorf("failed to write headers: %w", werr)
-	}
-	if cerr := stream.Close(); cerr != nil {
-		pipe.Close()
-		return nil, fmt.Errorf("failed to close header stream: %w", cerr)
 	}
 
 	return pipe, nil
@@ -187,7 +184,13 @@ func (s *StreamPipe) Serve() error {
 
 		go func(st *smux.Stream) {
 			defer func() {
-				_ = st.Close()
+				if rec := recover(); rec != nil {
+					syslog.L.Debug().
+						WithField("panic", fmt.Sprintf("%v", rec)).
+						WithMessage("recovered from panic in handler").
+						Write()
+				}
+				stream.Close()
 			}()
 			router.serveStream(st)
 		}(stream)
