@@ -32,6 +32,8 @@ func (r *Router) CloseHandle(method string) {
 
 func (r *Router) serveStream(stream *smux.Stream) {
 	dec := cbor.NewDecoder(stream)
+	enc := cbor.NewEncoder(stream)
+
 	var req Request
 	if err := dec.Decode(&req); err != nil {
 		writeErrorResponse(stream, http.StatusBadRequest, err)
@@ -67,13 +69,7 @@ func (r *Router) serveStream(stream *smux.Stream) {
 		return
 	}
 
-	respBytes, err := cbor.Marshal(resp)
-	if err != nil {
-		writeErrorResponse(stream, http.StatusInternalServerError, err)
-		return
-	}
-
-	if _, err := stream.Write(respBytes); err != nil {
+	if err = enc.Encode(resp); err != nil {
 		syslog.L.Debug().WithField("req", req.Method).WithField("code", resp.Status).WithMessage("sending response")
 		return
 	}
