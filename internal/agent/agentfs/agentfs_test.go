@@ -151,7 +151,7 @@ func newTestARPCServer(t *testing.T, router arpc.Router) (addr string, cleanup f
 
 	listener, err := arpc.Listen(t.Context(), "127.0.0.1:0", serverTLS)
 	if err != nil {
-		t.Fatalf("quic listen: %v", err)
+		t.Fatalf("arpc listen: %v", err)
 	}
 
 	agentsManager := arpc.NewAgentsManager()

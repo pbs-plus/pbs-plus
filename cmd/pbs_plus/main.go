@@ -411,14 +411,14 @@ func main() {
 			return arpc.Response{Status: 200, Data: data}, nil
 		})
 
-		quicTlsConfig, err := storeInstance.GetARPCServerTLSConfig()
+		arpcTlsConfig, err := storeInstance.GetARPCServerTLSConfig()
 		if err != nil {
 			syslog.L.Error(err).WithMessage("failed to build server TLS config").Write()
 			return
 		}
 
-		if err := arpc.ListenAndServe(storeInstance.Ctx, constants.ARPCServerPort, storeInstance.ARPCAgentsManager, quicTlsConfig, router); err != nil {
-			syslog.L.Error(err).WithMessage("quic agent endpoint server failed")
+		if err := arpc.ListenAndServe(storeInstance.Ctx, constants.ARPCServerPort, storeInstance.ARPCAgentsManager, arpcTlsConfig, router); err != nil {
+			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed")
 		}
 	})
 

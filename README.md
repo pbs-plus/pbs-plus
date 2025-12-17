@@ -101,7 +101,7 @@ PBS Plus currently consists of two main components: the server and the agent. Th
 - Currently, Windows and Linux agents are supported.
 - Linux agents **do not** support snapshots on backup yet.
 - The agent registers with the server on initialization, exchanging public keys for communication.
-- The agent acts as a service, using a custom RPC (`aRPC`/Agent RPC) using [QUIC](https://github.com/quic-go/quic-go) with mTLS to communicate with the server. For backups, the server communicates with the agent over `aRPC` to deploy a `FUSE`-based filesystem, mounts the volume to PBS, and runs `proxmox-backup-client` on the server side to perform the actual backup.
+- The agent acts as a service, using a custom RPC (`aRPC`/Agent RPC) using [smux](https://github.com/pbs-plus/smux) with mTLS to communicate with the server. For backups, the server communicates with the agent over `aRPC` to deploy a `FUSE`-based filesystem, mounts the volume to PBS, and runs `proxmox-backup-client` on the server side to perform the actual backup.
 
 ### S3-compatible backup target
 > [!WARNING]  
@@ -190,66 +190,6 @@ MSG="Job ${JOB} completed: success=${STATUS}, warnings=${WARN}"
 logger -t pbs-plus "$MSG"
 exit 0
 ```
-
-### aRPC QUIC window auto-tuning (server)
-
-The server auto-sizes QUIC receive windows from system RAM and enforces sane bounds while honoring quic-go’s defaults as the minimum base.
-
-Key env vars (sizes accept `4194304`, `4MB`, `4MiB`, etc.):
-
-- `PBS_PLUS_ARPC_CONN_TARGET`
-  - Default: `100`
-  - Expected concurrent active connections used to divide the RAM budget.
-
-- `PBS_PLUS_ARPC_RAM_FRACTION`
-  - Default: `0.10` (10%), max `0.50`
-  - Fraction of total RAM reserved for worst-case QUIC receive buffering across all active connections.
-
-Floors and ceilings:
-
-- `PBS_PLUS_ARPC_MIN_CONN_WIN`
-  - Default: `15MiB` (quic-go default `MaxConnectionReceiveWindow`)
-  - Minimum per-connection max window.
-
-- `PBS_PLUS_ARPC_MIN_STREAM_WIN`
-  - Default: `6MiB` (quic-go default `MaxStreamReceiveWindow`)
-  - Minimum per-stream max window.
-
-- `PBS_PLUS_ARPC_ABS_MAX_CONN_WIN`
-  - Default: `256MiB`
-  - Hard upper bound for per-connection max window.
-
-- `PBS_PLUS_ARPC_ABS_MAX_STREAM_WIN`
-  - Default: `64MiB`
-  - Hard upper bound for per-stream max window.
-
-Explicit overrides (optional):
-
-- `PBS_PLUS_ARPC_MAX_CONN_WIN`
-  - Force `MaxConnectionReceiveWindow` (still clamped and related to stream max).
-
-- `PBS_PLUS_ARPC_MAX_STREAM_WIN`
-  - Force `MaxStreamReceiveWindow`.
-
-- `PBS_PLUS_ARPC_INIT_CONN_WIN`
-  - Force `InitialConnectionReceiveWindow` (otherwise ≈ `min(4MiB, maxConn/4)`, ≥ `512KiB`).
-
-- `PBS_PLUS_ARPC_INIT_STREAM_WIN`
-  - Force `InitialStreamReceiveWindow` (otherwise ≈ `min(2MiB, maxStream/4)`, ≥ `512KiB`).
-
-How sizing works (simplified):
-
-- `totalBudget = totalRAM × PBS_PLUS_ARPC_RAM_FRACTION`
-- `per-connection cap = floor(totalBudget / PBS_PLUS_ARPC_CONN_TARGET)`, clamped to `[MIN_CONN, ABS_MAX_CONN]`
-- `per-stream cap = per-connection cap / 4`, clamped to `[MIN_STREAM, ABS_MAX_STREAM]`, and `≤ per-connection cap / 2`
-- Initial windows derived from maxima unless explicitly set
-- Relationships enforced: `Max ≥ Initial`; `MaxConn ≥ 2 × MaxStream`
-
-Effects:
-
-- Lower `PBS_PLUS_ARPC_CONN_TARGET` or higher `PBS_PLUS_ARPC_RAM_FRACTION` ⇒ larger per-connection caps (more throughput headroom, higher worst-case buffering).
-- Increase `PBS_PLUS_ARPC_ABS_MAX_*` to allow higher ceilings; increase `PBS_PLUS_ARPC_MIN_*` to raise the minimum base.
-- If `totalRAM / PBS_PLUS_ARPC_CONN_TARGET` is small, values will clamp to the minimum base (`15MiB` conn, `6MiB` stream).
 
 ## Contributing
 Contributions are welcome! Please fork the repository and create a pull request with your changes. Ensure code style consistency and include tests for any new features or bug fixes.
