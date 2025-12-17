@@ -240,7 +240,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	}
 
 	fullPath := filepath.Join(s.path, curr.Name)
-	if !curr.ModTime.IsZero() {
+	if !time.Unix(0, curr.ModTime).IsZero() {
 		currAttr := types.AgentFileInfo{
 			Name:    curr.Name,
 			Size:    curr.Size,
