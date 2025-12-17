@@ -80,6 +80,10 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	}
 
 	if resp.Status == 213 && resp.RawStream != nil {
+		syncByte := []byte{0xFF}
+		if _, err := stream.Write(syncByte); err != nil {
+			return
+		}
 		resp.RawStream(stream)
 	}
 }

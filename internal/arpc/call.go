@@ -94,6 +94,14 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 			return fmt.Errorf("invalid out handler while in raw stream mode")
 		}
 
+		syncByte := make([]byte, 1)
+		if _, err := stream.Read(syncByte); err != nil {
+			return fmt.Errorf("read sync byte: %w", err)
+		}
+		if syncByte[0] != 0xFF {
+			return fmt.Errorf("invalid sync byte received")
+		}
+
 		err = handler(stream)
 		if err != nil {
 			return err
