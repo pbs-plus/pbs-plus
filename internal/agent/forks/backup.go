@@ -132,22 +132,33 @@ func CmdBackup() {
 	rpcSess.SetRouter(arpc.NewRouter())
 	syslog.L.Info().WithMessage("CmdBackup: ARPC session established").WithField("jobId", *jobId).Write()
 
+	defer func() {
+		if session, ok := activeSessions.Get(*jobId); ok {
+			session.Close()
+		}
+	}()
+
+	exitGo := make(chan struct{}, 1)
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		syslog.L.Info().WithMessage("CmdBackup: RPC Serve starting").WithField("jobId", *jobId).Write()
-		if err := rpcSess.Serve(); err != nil {
-			syslog.L.Error(err).WithMessage("CmdBackup: RPC Serve returned error").WithField("jobId", *jobId).Write()
-			if session, ok := activeSessions.Get(*jobId); ok {
-				session.Close()
+		for {
+			select {
+			case <-exitGo:
+				syslog.L.Info().WithMessage("CmdBackup: RPC Serve exited").WithField("jobId", *jobId).Write()
+			default:
+			}
+			if err := rpcSess.Serve(); err != nil {
+				syslog.L.Error(err).WithMessage("CmdBackup: RPC Serve returned error").WithField("jobId", *jobId).Write()
 			}
 		}
-		syslog.L.Info().WithMessage("CmdBackup: RPC Serve exited").WithField("jobId", *jobId).Write()
 	})
 
 	backupMode, err := Backup(rpcSess, *sourceMode, *readMode, *drive, *jobId)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		syslog.L.Error(err).WithMessage("CmdBackup: Backup failed").WithField("jobId", *jobId).Write()
+		close(exitGo)
 		os.Exit(1)
 	}
 
@@ -162,6 +173,7 @@ func CmdBackup() {
 		sig := <-done
 		syslog.L.Info().WithMessage(fmt.Sprintf("CmdBackup: received signal %v, shutting down gracefully", sig)).WithField("jobId", *jobId).Write()
 
+		close(exitGo)
 		rpcSess.Close()
 
 		if session, ok := activeSessions.Get(*jobId); ok {
