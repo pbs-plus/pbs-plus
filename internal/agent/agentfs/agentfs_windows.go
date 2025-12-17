@@ -467,6 +467,11 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	ov := fh.ov
 	fh.Unlock()
 
+	if err := req.Context.Err(); err != nil {
+		syslog.L.Debug().WithMessage("handleReadAt: context cancelled before read").WithField("handle_id", payload.HandleID).Write()
+		return arpc.Response{}, err
+	}
+
 	if payload.Offset >= fileSize {
 		syslog.L.Debug().WithMessage("handleReadAt: offset beyond EOF, sending empty").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("size", fileSize).Write()
 		emptyReader := bytes.NewReader(nil)
@@ -501,16 +506,33 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	}
 	reqLen := int(reqEnd - payload.Offset)
 
-	ranges, err := queryAllocatedRanges(handle, payload.Offset, int64(reqLen))
-	if err != nil || len(ranges) == 0 {
+	rangesChan := make(chan []allocatedRange, 1)
+	rangesErrChan := make(chan error, 1)
+
+	go func() {
+		ranges, err := queryAllocatedRanges(handle, payload.Offset, int64(reqLen))
 		if err != nil {
-			syslog.L.Debug().WithMessage("handleReadAt: queryAllocatedRanges failed, falling back").WithField("handle_id", payload.HandleID).WithField("error", err.Error()).Write()
-		} else {
-			syslog.L.Debug().WithMessage("handleReadAt: no allocated ranges returned, treating as fully allocated").WithField("handle_id", payload.HandleID).Write()
+			rangesErrChan <- err
+			return
 		}
+		rangesChan <- ranges
+	}()
+
+	var ranges []allocatedRange
+	select {
+	case <-req.Context.Done():
+		syslog.L.Debug().WithMessage("handleReadAt: context cancelled during range query").WithField("handle_id", payload.HandleID).Write()
+		return arpc.Response{}, req.Context.Err()
+	case err := <-rangesErrChan:
+		syslog.L.Debug().WithMessage("handleReadAt: queryAllocatedRanges failed, falling back").WithField("handle_id", payload.HandleID).WithField("error", err.Error()).Write()
 		ranges = []allocatedRange{{FileOffset: payload.Offset, Length: int64(reqLen)}}
-	} else {
-		syslog.L.Debug().WithMessage("handleReadAt: using allocated ranges").WithField("handle_id", payload.HandleID).WithField("range_count", len(ranges)).Write()
+	case ranges = <-rangesChan:
+		if len(ranges) == 0 {
+			syslog.L.Debug().WithMessage("handleReadAt: no allocated ranges returned, treating as fully allocated").WithField("handle_id", payload.HandleID).Write()
+			ranges = []allocatedRange{{FileOffset: payload.Offset, Length: int64(reqLen)}}
+		} else {
+			syslog.L.Debug().WithMessage("handleReadAt: using allocated ranges").WithField("handle_id", payload.HandleID).WithField("range_count", len(ranges)).Write()
+		}
 	}
 
 	streamFn := func(stream *smux.Stream) {
@@ -518,7 +540,12 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		defer zeroBufPool.Put(bufPtr)
 		zeroBuf := *bufPtr
 
+		const maxChunkSize = 64 * 1024
+
 		write := func(p []byte) error {
+			if err := req.Context.Err(); err != nil {
+				return err
+			}
 			return binarystream.SendDataFromReader(bytes.NewReader(p), len(p), stream)
 		}
 
@@ -527,6 +554,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 		for _, r := range ranges {
 			if err := req.Context.Err(); err != nil {
+				syslog.L.Debug().WithMessage("handleReadAt: context cancelled in range loop").WithField("handle_id", payload.HandleID).Write()
 				return
 			}
 			rStart := r.FileOffset
@@ -547,7 +575,11 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 			if rStart > pos {
 				gap := rStart - pos
 				for gap > 0 {
-					ch := int64(len(zeroBuf))
+					if err := req.Context.Err(); err != nil {
+						syslog.L.Debug().WithMessage("handleReadAt: context cancelled writing gap").WithField("handle_id", payload.HandleID).Write()
+						return
+					}
+					ch := int64(maxChunkSize)
 					if gap < ch {
 						ch = gap
 					}
@@ -562,17 +594,42 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 			cur := rStart
 			for cur < rEnd {
-				ch := int64(len(zeroBuf))
+				if err := req.Context.Err(); err != nil {
+					syslog.L.Debug().WithMessage("handleReadAt: context cancelled during read").WithField("handle_id", payload.HandleID).Write()
+					return
+				}
+
+				ch := int64(maxChunkSize)
 				if rEnd-cur < ch {
 					ch = rEnd - cur
 				}
 				buf := zeroBuf[:ch]
+
+				fh.Lock()
+				if ov.DefaultTimeout == -1 {
+					ov.DefaultTimeout = 30000
+				}
+				fh.Unlock()
+
 				n, rerr := ov.ReadAt(buf, cur)
+
 				if rerr != nil && rerr != io.EOF {
-					syslog.L.Error(rerr).
-						WithMessage("handleReadAt: overlapped read error").WithField("handle_id", payload.HandleID).WithField("offset", cur).WithField("size", ch).Write()
+					if errors.Is(rerr, windows.WAIT_TIMEOUT) {
+						syslog.L.Error(rerr).
+							WithMessage("handleReadAt: read timeout - file might be locked or slow").
+							WithField("handle_id", payload.HandleID).
+							WithField("offset", cur).
+							WithField("size", ch).Write()
+					} else {
+						syslog.L.Error(rerr).
+							WithMessage("handleReadAt: overlapped read error").
+							WithField("handle_id", payload.HandleID).
+							WithField("offset", cur).
+							WithField("size", ch).Write()
+					}
 					return
 				}
+
 				if n > 0 {
 					if err := write(buf[:n]); err != nil {
 						syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed").WithField("handle_id", payload.HandleID).Write()
@@ -580,9 +637,12 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 					}
 					cur += int64(n)
 				}
-				if rerr == io.EOF && n == 0 {
-					syslog.L.Debug().WithMessage("handleReadAt: EOF reached").WithField("handle_id", payload.HandleID).Write()
-					return
+
+				if rerr == io.EOF {
+					if n == 0 {
+						syslog.L.Debug().WithMessage("handleReadAt: EOF reached").WithField("handle_id", payload.HandleID).Write()
+						return
+					}
 				}
 			}
 			pos = rEnd
@@ -592,9 +652,10 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 			gap := end - pos
 			for gap > 0 {
 				if err := req.Context.Err(); err != nil {
+					syslog.L.Debug().WithMessage("handleReadAt: context cancelled writing tail").WithField("handle_id", payload.HandleID).Write()
 					return
 				}
-				ch := int64(len(zeroBuf))
+				ch := int64(maxChunkSize)
 				if gap < ch {
 					ch = gap
 				}
