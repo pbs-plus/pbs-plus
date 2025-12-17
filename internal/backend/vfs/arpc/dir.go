@@ -17,11 +17,8 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/xtaci/smux"
 )
 
 var bufPool = sync.Pool{
@@ -101,16 +98,7 @@ func (s *DirStream) HasNext() bool {
 	ctxN, cancelN := context.WithTimeout(s.fs.Ctx, 1*time.Minute)
 	defer cancelN()
 
-	bytesRead := 0
-	err := s.fs.session.Load().Call(ctxN, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(st *smux.Stream) error {
-		n, err := binarystream.ReceiveDataInto(st, readBuf)
-		if err != nil {
-			return err
-		}
-		bytesRead = n
-		return nil
-	}))
-
+	bytesRead, err := s.fs.session.Load().CallBinary(ctxN, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	syslog.L.Debug().
 		WithMessage("HasNext RPC completed").
 		WithField("bytesRead", bytesRead).

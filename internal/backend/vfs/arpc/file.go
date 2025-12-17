@@ -13,10 +13,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/xtaci/smux"
 )
 
 func (f *ARPCFile) Close(ctx context.Context) error {
@@ -155,20 +152,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		Length:   len(p),
 	}
 
-	bytesRead := 0
-
-	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
-	defer cancelN()
-
-	err := f.fs.session.Load().Call(ctxN, f.jobId+"/ReadAt", &req, arpc.RawStreamHandler(func(s *smux.Stream) error {
-		n, err := binarystream.ReceiveDataInto(s, p)
-		if err != nil {
-			return err
-		}
-		bytesRead = n
-
-		return nil
-	}))
+	n, err := f.fs.session.Load().CallBinary(ctx, f.jobId+"/ReadAt", &req, p)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).
 			WithMessage("failed to handle read request, replace failed reads with zeroes, likely corrupted").
@@ -180,7 +164,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		return 0, io.EOF
 	}
 
-	atomic.AddInt64(&f.fs.TotalBytes, int64(bytesRead))
+	atomic.AddInt64(&f.fs.TotalBytes, int64(n))
 
 	syslog.L.Debug().
 		WithMessage("ReadAt completed").
@@ -188,12 +172,12 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		WithField("path", f.name).
 		WithField("offset", off).
 		WithField("requested", len(p)).
-		WithField("bytesRead", bytesRead).
+		WithField("bytesRead", n).
 		Write()
 
-	if bytesRead < len(p) {
-		return bytesRead, io.EOF
+	if n < len(p) {
+		return n, io.EOF
 	}
 
-	return bytesRead, nil
+	return n, nil
 }
