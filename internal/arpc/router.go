@@ -74,7 +74,7 @@ func (r *Router) serveStream(stream *smux.Stream) {
 		return
 	}
 
-	respBytes, err := cbor.Marshal(&resp)
+	respBytes, err := cbor.Marshal(resp)
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return
