@@ -69,10 +69,14 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	if resp.Status == 213 && resp.RawStream != nil {
 		syslog.L.Debug().WithField("req", req.Method).WithMessage("sending binary")
 
-		syncByte := []byte{0xFF}
-		if _, err := stream.Write(syncByte); err != nil {
+		syncByte := make([]byte, 1)
+		if _, err := stream.Read(syncByte); err != nil {
 			return
 		}
+		if syncByte[0] != 0xFF {
+			return
+		}
+
 		resp.RawStream(stream)
 	}
 }

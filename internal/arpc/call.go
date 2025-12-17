@@ -176,12 +176,9 @@ func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any,
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
-	syncByte := make([]byte, 1)
-	if _, err := stream.Read(syncByte); err != nil {
-		return 0, fmt.Errorf("read sync byte: %w", err)
-	}
-	if syncByte[0] != 0xFF {
-		return 0, fmt.Errorf("invalid sync byte received")
+	syncByte := []byte{0xFF}
+	if _, err := stream.Write(syncByte); err != nil {
+		return 0, fmt.Errorf("write sync byte: %w", err)
 	}
 
 	return binarystream.ReceiveDataInto(stream, dst)
