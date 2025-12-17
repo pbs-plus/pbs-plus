@@ -118,7 +118,10 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 
 			pipe.SetRouter(router)
 
-			_ = pipe.Serve()
+			err = pipe.Serve()
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}(conn)
 	}
 }
