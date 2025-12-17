@@ -3,9 +3,10 @@ package arpc
 import (
 	"fmt"
 	"io"
-	"net/http"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/xtaci/smux"
 )
 
 func writeErrorResponse(stream io.Writer, status int, err error) {
@@ -32,15 +33,12 @@ func writeErrorResponse(stream io.Writer, status int, err error) {
 	stream.Write(respBytes)
 }
 
-func headerCloneMap(h http.Header) map[string][]string {
-	if h == nil {
-		return nil
-	}
-	out := make(map[string][]string, len(h))
-	for k, v := range h {
-		vv := make([]string, len(v))
-		copy(vv, v)
-		out[k] = vv
-	}
-	return out
+func defaultConfig() *smux.Config {
+	defaults := smux.DefaultConfig()
+	defaults.Version = 2
+	defaults.MaxReceiveBuffer = utils.MaxReceiveBuffer
+	defaults.MaxStreamBuffer = utils.MaxStreamBuffer
+	defaults.MaxFrameSize = 65535
+
+	return defaults
 }

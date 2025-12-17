@@ -78,8 +78,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return nil, fmt.Errorf("server not reachable (%s): %w", serverAddr, err)
 	}
 
-	smuxConfig := smux.DefaultConfig()
-	smuxC, err := smux.Client(conn, smuxConfig)
+	smuxC, err := smux.Client(conn, defaultConfig())
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("failed to create smux client: %w", err)

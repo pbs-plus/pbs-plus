@@ -77,11 +77,8 @@ func (sm *AgentsManager) GetStreamPipe(clientID string) (*StreamPipe, bool) {
 }
 
 func (sm *AgentsManager) unregisterStreamPipe(clientID string) {
-	_, exists := sm.sessions.Get(clientID)
-	if !exists {
-		return
+	_, exists := sm.sessions.GetAndDel(clientID)
+	if exists {
+		syslog.L.Info().WithMessage("agent disconnected").WithField("hostname", clientID).Write()
 	}
-
-	sm.sessions.Del(clientID)
-	syslog.L.Info().WithMessage("agent disconnected").WithField("hostname", clientID).Write()
 }
