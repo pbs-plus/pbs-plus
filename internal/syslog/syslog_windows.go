@@ -24,48 +24,43 @@ func (l *Logger) SetServiceLogger() error {
 		return nil
 	}
 
-	if os.Getenv("PBS_PLUS_DISABLE_EVENT_LOGS") != "true" {
-		_ = eventlog.InstallAsEventCreate(
-			sourceName,
-			eventlog.Info|eventlog.Warning|eventlog.Error,
-		)
+	_ = eventlog.InstallAsEventCreate(
+		sourceName,
+		eventlog.Info|eventlog.Warning|eventlog.Error,
+	)
 
-		evl, err := eventlog.Open(sourceName)
-		if err == nil {
-			zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-				w.Out = &LogWriter{logger: evl}
-				w.NoColor = true
-				w.FormatCaller = func(i any) string {
-					var c string
-					if cc, ok := i.(string); ok {
-						c = cc
-					}
-					if c == "" {
-						return ""
-					}
-					parts := strings.Split(c, "/")
-					if len(parts) >= 2 {
-						return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
-					}
-					return filepath.Base(c)
+	evl, err := eventlog.Open(sourceName)
+	if err == nil {
+		zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
+			w.Out = &LogWriter{logger: evl}
+			w.NoColor = true
+			w.FormatCaller = func(i any) string {
+				var c string
+				if cc, ok := i.(string); ok {
+					c = cc
 				}
-			})).With().
-				CallerWithSkipFrameCount(3).
-				Timestamp().
-				Logger()
+				if c == "" {
+					return ""
+				}
+				parts := strings.Split(c, "/")
+				if len(parts) >= 2 {
+					return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
+				}
+				return filepath.Base(c)
+			}
+		})).With().
+			CallerWithSkipFrameCount(3).
+			Timestamp().
+			Logger()
 
-			l.zlog = &zlogger
-			l.hostname, _ = utils.GetAgentHostname()
-			l.zlog.Info().Msg("Service logger successfully added for Windows Event Log")
-			return nil
-		}
+		l.zlog = &zlogger
+		l.hostname, _ = utils.GetAgentHostname()
+		l.zlog.Info().Msg("Service logger successfully added for Windows Event Log")
+		return nil
 	}
 
 	logPath := `C:\ProgramData\PBS Plus Agent\agent.log`
-	err := os.MkdirAll(filepath.Dir(logPath), os.ModeDir)
-	if err != nil {
-		logPath = `agent.log`
-	}
+	_ = os.MkdirAll(filepath.Dir(logPath), os.ModeDir)
 
 	rotator := &lumberjack.Logger{
 		Filename:   logPath,
@@ -100,6 +95,7 @@ func (l *Logger) SetServiceLogger() error {
 	l.zlog = &zlogger
 	l.hostname, _ = utils.GetAgentHostname()
 
+	l.zlog.Warn().Err(err).Msg("Windows Event Log unavailable; falling back to file logging")
 	return nil
 }
 
