@@ -81,7 +81,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 				return
 			}
 
-			smuxS, err := smux.Server(c, smux.DefaultConfig())
+			smuxS, err := smux.Server(c, defaultConfig())
 			if err != nil {
 				c.Close()
 				return

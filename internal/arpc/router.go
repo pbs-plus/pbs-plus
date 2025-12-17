@@ -52,11 +52,6 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		syslog.L.Debug().WithMessage("cancelling stream with defer").Write()
-		cancel()
-	}()
-
 	go func() {
 		select {
 		case <-stream.GetDieCh():
