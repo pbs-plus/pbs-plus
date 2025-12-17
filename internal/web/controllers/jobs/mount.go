@@ -133,7 +133,6 @@ func generateServiceName(datastore, ns, backupType, backupID, safeTime string) s
 
 func createSystemdService(serviceName, mountPoint string, args []string) error {
 	cmdArgs := []string{
-		"run",
 		"--unit=" + serviceName,
 		"--description=PBS Plus restore mount for " + mountPoint,
 		"--remain-after-exit",
