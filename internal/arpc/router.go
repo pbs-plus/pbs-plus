@@ -52,7 +52,7 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	defer cancel()
 
 	go func() {
 		select {
