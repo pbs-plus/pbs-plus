@@ -170,7 +170,7 @@ func parseCACreds(caCertPEM, caKeyPEM []byte) (*x509.Certificate, *rsa.PrivateKe
 	return caCert, caKey, nil
 }
 
-func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, nextProtos []string, clientAuth tls.ClientAuthType, isQuic bool) (*tls.Config, error) {
+func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, nextProtos []string, clientAuth tls.ClientAuthType, isArpc bool) (*tls.Config, error) {
 	if err := updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile); err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, ne
 		GetConfigForClient: func(_ *tls.ClientHelloInfo) (*tls.Config, error) {
 			currentCerts, currentCAs := getCurrentServerTLSCerts(serverCertFile, serverKeyFile, caFile, prevCaFile)
 			tlsVers := tls.VersionTLS13
-			if !isQuic {
+			if !isArpc {
 				tlsVers = tls.VersionTLS12
 			}
 
