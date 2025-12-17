@@ -88,14 +88,12 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		return fmt.Errorf("write request: %w", err)
 	}
 
-	respRaw := responsePool.Get().([]byte)
-	defer responsePool.Put(respRaw)
-
-	if _, err := io.ReadFull(stream, respRaw); err != nil {
+	respRaw, err := io.ReadAll(stream)
+	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return context.DeadlineExceeded
 		}
-		return fmt.Errorf("failed to read length prefix: %w", err)
+		return fmt.Errorf("failed to read resp: %w", err)
 	}
 
 	var resp Response
