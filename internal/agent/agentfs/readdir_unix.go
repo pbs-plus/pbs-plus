@@ -9,6 +9,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"golang.org/x/sys/unix"
 )
@@ -35,7 +36,7 @@ type DirReaderUnix struct {
 }
 
 var bufferPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return make([]byte, defaultBufSize)
 	},
 }
@@ -127,7 +128,7 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 
 			encodedSizeEstimate += 8 + len(name)
 			if encodedSizeEstimate >= target {
-				enc, err := entries.Encode()
+				enc, err := cbor.Marshal(entries)
 				if err != nil {
 					return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
 				}
@@ -136,7 +137,7 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 		}
 
 		if len(entries) > 0 {
-			enc, err := entries.Encode()
+			enc, err := cbor.Marshal(entries)
 			if err != nil {
 				return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
 			}
@@ -148,7 +149,7 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 		return nil, os.ErrProcessDone
 	}
 
-	enc, err := entries.Encode()
+	enc, err := cbor.Marshal(entries)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
 	}

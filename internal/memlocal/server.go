@@ -4,9 +4,12 @@ package memlocal
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -191,4 +194,20 @@ func terminateProcessGroup(p *os.Process) error {
 	time.Sleep(250 * time.Millisecond)
 	_ = p.Kill()
 	return nil
+}
+
+const memcachedKeyLimit = 250
+
+func Key(originalKey string) string {
+	if originalKey == "" {
+		originalKey = "/"
+	}
+	encodedKey := url.QueryEscape(originalKey)
+
+	if len(encodedKey) > memcachedKeyLimit {
+		sum := sha256.Sum256([]byte(encodedKey))
+		return hex.EncodeToString(sum[:])
+	}
+
+	return encodedKey
 }

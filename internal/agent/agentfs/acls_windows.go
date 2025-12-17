@@ -5,6 +5,7 @@ package agentfs
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -20,8 +21,22 @@ var (
 	procLocalFree                 = modKernel32.NewProc("LocalFree")
 )
 
+// aclHeader matches the Windows ACL structure layout for validation
+type aclHeader struct {
+	AclRevision byte
+	Sbz1        byte
+	AclSize     uint16
+	AceCount    uint16
+	Sbz2        uint16
+}
+
 // GetWinACLsHandle retrieves Owner, Group, and DACL ACEs.
 func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []types.WinACL, err error) {
+	// Validate handle before use
+	if h == windows.InvalidHandle || h == 0 {
+		return "", "", nil, fmt.Errorf("invalid handle")
+	}
+
 	const si = windows.OWNER_SECURITY_INFORMATION |
 		windows.GROUP_SECURITY_INFORMATION |
 		windows.DACL_SECURITY_INFORMATION
@@ -68,6 +83,11 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 		return owner, group, []types.WinACL{}, nil
 	}
 
+	// Validate ACL structure before passing to syscall
+	if !isValidACL(pDacl) {
+		return owner, group, []types.WinACL{}, fmt.Errorf("ACL structure validation failed")
+	}
+
 	// IMPORTANT: Use the same canonicalization path as the old code
 	entriesPtr, entriesCount, err := GetExplicitEntriesFromACL(pDacl)
 	if err != nil {
@@ -84,7 +104,7 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 	result := make([]types.WinACL, 0, entriesCount)
 	for _, e := range entries {
 		pSid := (*windows.SID)(unsafe.Pointer(e.Trustee.TrusteeValue))
-		if pSid == nil || !pSid.IsValid() {
+		if pSid == nil || !isSafePointer(unsafe.Pointer(pSid)) || !pSid.IsValid() {
 			continue
 		}
 
@@ -132,19 +152,71 @@ func GetExplicitEntriesFromACL(acl *windows.ACL) (uintptr, uint32, error) {
 		return 0, 0, fmt.Errorf("GetExplicitEntriesFromACL returned success but null pointer for entries")
 	}
 
+	// Sanity check: Validate count is reasonable (prevent massive allocations/corrupted count)
+	const maxReasonableACEs = 10000 // Reasonable upper limit for ACEs in a DACL
+	if entriesCount > maxReasonableACEs {
+		if explicitEntriesPtr != 0 {
+			procLocalFree.Call(explicitEntriesPtr) // Clean up before returning error
+		}
+		return 0, 0, fmt.Errorf("unreasonable ACE count: %d (max: %d)", entriesCount, maxReasonableACEs)
+	}
+
 	// Return the raw pointer and count. Caller is responsible for LocalFree(explicitEntriesPtr).
 	return explicitEntriesPtr, entriesCount, nil
+}
+
+type freedPointerRing struct {
+	mu      sync.Mutex
+	ptrs    []uintptr
+	index   int
+	maxSize int
+}
+
+var freedPointers = &freedPointerRing{
+	ptrs:    make([]uintptr, 0, 1024),
+	maxSize: 1024,
+}
+
+func (r *freedPointerRing) contains(ptr uintptr) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, p := range r.ptrs {
+		if p == ptr {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *freedPointerRing) add(ptr uintptr) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if len(r.ptrs) < r.maxSize {
+		r.ptrs = append(r.ptrs, ptr)
+		return
+	}
+
+	r.ptrs[r.index] = ptr
+	r.index = (r.index + 1) % r.maxSize
 }
 
 func FreeExplicitEntries(explicitEntriesPtr uintptr) error {
 	if explicitEntriesPtr == 0 {
 		return nil // Nothing to free
 	}
+
+	if freedPointers.contains(explicitEntriesPtr) {
+		return fmt.Errorf("detected double-free attempt for pointer 0x%X", explicitEntriesPtr)
+	}
+
 	ret, _, callErr := procLocalFree.Call(explicitEntriesPtr)
-	// LocalFree returns NULL on success. If it returns non-NULL, it's the handle itself, indicating failure.
 	if ret != 0 {
 		return fmt.Errorf("LocalFree failed: %w", callErr)
 	}
+
+	freedPointers.add(explicitEntriesPtr)
 	return nil
 }
 
@@ -155,6 +227,12 @@ func unsafeEntriesToSlice(entriesPtr uintptr, count uint32) []windows.EXPLICIT_A
 	if entriesPtr == 0 || count == 0 {
 		return nil
 	}
+
+	// Additional safety: verify pointer is not in kernel space (on 64-bit this is a basic check)
+	if !isSafePointer(unsafe.Pointer(entriesPtr)) {
+		return nil
+	}
+
 	// Create a slice header pointing to the Windows-allocated memory.
 	var slice []windows.EXPLICIT_ACCESS
 	hdr := (*struct {
@@ -166,4 +244,58 @@ func unsafeEntriesToSlice(entriesPtr uintptr, count uint32) []windows.EXPLICIT_A
 	hdr.len = int(count)
 	hdr.cap = int(count)
 	return slice
+}
+
+// isValidACL performs basic validation on an ACL structure
+func isValidACL(acl *windows.ACL) bool {
+	if acl == nil {
+		return false
+	}
+
+	// Cast to our header structure to access the fields
+	header := (*aclHeader)(unsafe.Pointer(acl))
+
+	// Basic sanity checks on ACL structure
+	// ACL has a minimum size and the AclSize should be reasonable
+	const minACLSize = 8     // sizeof(ACL) structure header
+	const maxACLSize = 65535 // Maximum reasonable ACL size
+
+	aclSize := header.AclSize
+	if aclSize < minACLSize || aclSize > maxACLSize {
+		return false
+	}
+
+	// AceCount should be reasonable
+	const maxReasonableACEs = 10000
+	if header.AceCount > maxReasonableACEs {
+		return false
+	}
+
+	return true
+}
+
+// isSafePointer performs basic validation that a pointer is in user-space
+func isSafePointer(ptr unsafe.Pointer) bool {
+	if ptr == nil {
+		return false
+	}
+
+	addr := uintptr(ptr)
+
+	// On 64-bit Windows, kernel space starts at 0xFFFF800000000000
+	// On 32-bit Windows, kernel space starts at 0x80000000
+	// Check if pointer is in user space
+	const (
+		kernel64Start = 0xFFFF800000000000
+		kernel32Start = 0x80000000
+	)
+
+	// Detect architecture and apply appropriate check
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		// 64-bit: user space is below kernel64Start
+		return addr < kernel64Start
+	} else {
+		// 32-bit: user space is below kernel32Start
+		return addr < kernel32Start
+	}
 }

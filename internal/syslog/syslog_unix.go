@@ -9,15 +9,25 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/rs/zerolog"
 )
 
-func init() {
-	sysWriter, _ := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-plus")
-	logger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
+func (l *Logger) SetServiceLogger() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.hostname, _ = utils.GetAgentHostname()
+
+	sysWriter, err := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-plus")
+	if err != nil {
+		return err
+	}
+
+	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
 		w.Out = &LogWriter{logger: sysWriter}
 		w.NoColor = true
-		w.FormatCaller = func(i interface{}) string {
+		w.FormatCaller = func(i any) string {
 			var c string
 			if cc, ok := i.(string); ok {
 				c = cc
@@ -32,15 +42,17 @@ func init() {
 			}
 			return filepath.Base(c)
 		}
-	})).With().Timestamp().CallerWithSkipFrameCount(3).Logger()
+	})).With().
+		CallerWithSkipFrameCount(3).
+		Timestamp().
+		Logger()
 
-	hostname, _ := os.Hostname()
-	L = &Logger{zlog: &logger, hostname: hostname}
+	l.zlog = &zlogger
+
+	l.zlog.Info().Msg("Service logger successfully added for syslog")
+	return nil
 }
 
-// Write finalizes the LogEntry and writes it using the global zerolog logger.
-// (Here, the global logger sends the pre-formatted output through the
-// ConsoleWriter and then our SyslogWriter.)
 func (e *LogEntry) Write() {
 	e.logger.mu.RLock()
 	defer e.logger.mu.RUnlock()
@@ -51,6 +63,34 @@ func (e *LogEntry) Write() {
 
 	if _, ok := e.Fields["hostname"]; !ok {
 		e.Fields["hostname"] = e.logger.hostname
+	}
+
+	if e.logger.Server {
+		e.serverWrite()
+	} else {
+		if e.JobID != "" {
+			e.Fields["jobId"] = e.JobID
+		}
+	}
+
+	// Produce a full JSON log entry.
+	switch e.Level {
+	case "info":
+		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
+	case "debug":
+		e.logger.zlog.Debug().Fields(e.Fields).Msg(e.Message)
+	case "warn":
+		e.logger.zlog.Warn().Fields(e.Fields).Msg(e.Message)
+	case "error":
+		e.logger.zlog.Error().Err(e.Err).Fields(e.Fields).Msg(e.Message)
+	default:
+		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
+	}
+}
+
+func (e *LogEntry) serverWrite() {
+	if e.Level == "debug" && os.Getenv("DEBUG") != "true" {
+		return
 	}
 
 	if e.JobID != "" {
@@ -83,17 +123,5 @@ func (e *LogEntry) Write() {
 			sb.Reset()
 		}
 		e.Fields["jobId"] = e.JobID
-	}
-
-	// Produce a full JSON log entry.
-	switch e.Level {
-	case "info":
-		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
-	case "warn":
-		e.logger.zlog.Warn().Fields(e.Fields).Msg(e.Message)
-	case "error":
-		e.logger.zlog.Error().Err(e.Err).Fields(e.Fields).Msg(e.Message)
-	default:
-		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
 	}
 }

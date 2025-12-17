@@ -3,11 +3,49 @@ package syslog
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/rs/zerolog"
 )
 
 // Global logger instance.
 var L *Logger
+
+func init() {
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	if os.Getenv("DEBUG") == "true" {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	}
+
+	// Configure zerolog to output via our EventLogWriter wrapped in a ConsoleWriter.
+	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
+		w.NoColor = true
+		w.FormatCaller = func(i any) string {
+			var c string
+			if cc, ok := i.(string); ok {
+				c = cc
+			}
+			if c == "" {
+				return ""
+			}
+
+			parts := strings.Split(c, "/")
+			if len(parts) >= 2 {
+				return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
+			}
+			return filepath.Base(c)
+		}
+	})).With().
+		CallerWithSkipFrameCount(3).
+		Timestamp().
+		Logger()
+
+	L = &Logger{zlog: &zlogger}
+}
 
 func (l *Logger) Disable() {
 	l.mu.Lock()
@@ -26,7 +64,7 @@ func (l *Logger) Error(err error) *LogEntry {
 	return &LogEntry{
 		Level:  "error",
 		Err:    err,
-		Fields: make(map[string]interface{}),
+		Fields: make(map[string]any),
 		logger: l,
 	}
 }
@@ -35,7 +73,7 @@ func (l *Logger) Error(err error) *LogEntry {
 func (l *Logger) Warn() *LogEntry {
 	return &LogEntry{
 		Level:  "warn",
-		Fields: make(map[string]interface{}),
+		Fields: make(map[string]any),
 		logger: l,
 	}
 }
@@ -44,7 +82,15 @@ func (l *Logger) Warn() *LogEntry {
 func (l *Logger) Info() *LogEntry {
 	return &LogEntry{
 		Level:  "info",
-		Fields: make(map[string]interface{}),
+		Fields: make(map[string]any),
+		logger: l,
+	}
+}
+
+func (l *Logger) Debug() *LogEntry {
+	return &LogEntry{
+		Level:  "debug",
+		Fields: make(map[string]any),
 		logger: l,
 	}
 }
@@ -63,7 +109,7 @@ func (e *LogEntry) WithJob(jobId string) *LogEntry {
 
 // WithJSON attempts to unmarshal the input JSON and merge the fields.
 func (e *LogEntry) WithJSON(msg string) *LogEntry {
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
 		for k, v := range parsed {
 			e.Fields[k] = v
@@ -75,13 +121,13 @@ func (e *LogEntry) WithJSON(msg string) *LogEntry {
 }
 
 // WithField adds one key-value pair to the LogEntry.
-func (e *LogEntry) WithField(key string, value interface{}) *LogEntry {
+func (e *LogEntry) WithField(key string, value any) *LogEntry {
 	e.Fields[key] = value
 	return e
 }
 
 // WithFields adds multiple key-value pairs to the LogEntry.
-func (e *LogEntry) WithFields(fields map[string]interface{}) *LogEntry {
+func (e *LogEntry) WithFields(fields map[string]any) *LogEntry {
 	for k, v := range fields {
 		e.Fields[k] = v
 	}
@@ -120,6 +166,8 @@ func ParseAndLogWindowsEntry(body io.ReadCloser) error {
 		entry.logger.zlog.Warn().Fields(entry.Fields).Msg(entry.Message)
 	case "error":
 		entry.logger.zlog.Error().Err(entry.Err).Fields(entry.Fields).Msg(entry.Message)
+	case "debug":
+		entry.logger.zlog.Debug().Err(entry.Err).Fields(entry.Fields).Msg(entry.Message)
 	default:
 		entry.logger.zlog.Info().Fields(entry.Fields).Msg(entry.Message)
 	}

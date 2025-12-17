@@ -3,18 +3,16 @@ package agent
 import (
 	"bytes"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
-	"github.com/pbs-plus/pbs-plus/internal/auth/certificates"
+	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -45,9 +43,10 @@ func GetTLSConfig() (*tls.Config, error) {
 		return nil, fmt.Errorf("GetTLSConfig: server cert not found -> %w", err)
 	}
 
-	rootCAs := x509.NewCertPool()
-	if ok := rootCAs.AppendCertsFromPEM([]byte(serverCertReg.Value)); !ok {
-		return nil, fmt.Errorf("failed to append CA certificate")
+	var legacyCertPEM []byte
+	legacyServerCertReg, err := registry.GetEntry(registry.AUTH, "LegacyServerCA", true)
+	if err == nil {
+		legacyCertPEM = []byte(legacyServerCertReg.Value)
 	}
 
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
@@ -63,21 +62,9 @@ func GetTLSConfig() (*tls.Config, error) {
 	certPEM := []byte(certReg.Value)
 	keyPEM := []byte(keyReg.Value)
 
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	tlsConfig, err := mtls.BuildClientTLS(certPEM, keyPEM, []byte(serverCertReg.Value), legacyCertPEM)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load client certificate: %w", err)
-	}
-
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      rootCAs,
-		MinVersion:   tls.VersionTLS12,
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-		},
+		return nil, fmt.Errorf("GetTLSConfig: buildclienttls error -> %w", err)
 	}
 
 	tlsConfigCache = tlsConfig
@@ -94,34 +81,40 @@ func invalidateTLSConfigCache() {
 }
 
 func CheckAndRenewCertificate() error {
-	const renewalWindow = 30 * 24 * time.Hour
+	const renewalWindow = max(constants.TLSCARotationGraceDays-1, 1) * 24 * time.Hour
 
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
 	if err != nil {
 		return fmt.Errorf("CheckAndRenewCertificate: failed to retrieve certificate - %w", err)
 	}
 
-	block, _ := pem.Decode([]byte(certReg.Value))
-	if block == nil {
-		return fmt.Errorf("CheckAndRenewCertificate: failed to decode PEM block")
+	serverCAReg, err := registry.GetEntry(registry.AUTH, "ServerCA", true)
+	if err != nil {
+		return fmt.Errorf("CheckAndRenewCertificate: failed to retrieve server CA - %w", err)
 	}
 
-	cert, err := x509.ParseCertificate(block.Bytes)
+	cert, err := mtls.ParseCertInfo([]byte(certReg.Value))
 	if err != nil {
 		return fmt.Errorf("CheckAndRenewCertificate: failed to parse certificate - %w", err)
 	}
 
+	serverCA, err := mtls.ParseCertInfo([]byte(serverCAReg.Value))
+	if err != nil {
+		return fmt.Errorf("CheckAndRenewCertificate: failed to parse server CA - %w", err)
+	}
+
 	now := time.Now()
-	timeUntilExpiry := cert.NotAfter.Sub(now)
+	timeUntilExpiry := time.Until(cert.NotAfter)
+	caTimeUntilExpiry := time.Until(serverCA.NotAfter)
 
 	switch {
-	case cert.NotAfter.Before(now):
+	case cert.NotAfter.Before(now) || serverCA.NotAfter.Before(now):
 		registry.DeleteEntry(registry.AUTH, "Cert")
 		registry.DeleteEntry(registry.AUTH, "Priv")
 		registry.DeleteEntry(registry.AUTH, "ServerCA")
 
 		return fmt.Errorf("certificate has expired, agent needs to be bootstrapped again")
-	case timeUntilExpiry < renewalWindow:
+	case timeUntilExpiry < renewalWindow || caTimeUntilExpiry < renewalWindow:
 		fmt.Printf("Certificate expires in %v hours. Renewing...\n", timeUntilExpiry.Hours())
 		return renewCertificate()
 	default:
@@ -131,12 +124,12 @@ func CheckAndRenewCertificate() error {
 }
 
 func renewCertificate() error {
-	hostname, err := os.Hostname()
+	hostname, err := utils.GetAgentHostname()
 	if err != nil {
 		return fmt.Errorf("renewCertificate: failed to get hostname - %w", err)
 	}
 
-	csr, privKey, err := certificates.GenerateCSR(hostname, 2048)
+	csr, privKey, err := mtls.GenerateCSR(hostname, 2048)
 	if err != nil {
 		return fmt.Errorf("renewCertificate: generating csr failed -> %w", err)
 	}
@@ -159,7 +152,7 @@ func renewCertificate() error {
 
 	renewResp := &BootstrapResponse{}
 
-	_, err = ProxmoxHTTPRequest(http.MethodPost, "/plus/agent/renew", bytes.NewBuffer(reqBody), renewResp)
+	_, err = AgentHTTPRequest(http.MethodPost, "/plus/agent/renew", bytes.NewBuffer(reqBody), renewResp)
 	if err != nil {
 		return fmt.Errorf("renewCertificate: failed to fetch renewed certificate: %w", err)
 	}
@@ -173,8 +166,6 @@ func renewCertificate() error {
 	if err != nil {
 		return fmt.Errorf("renewCertificate: error decoding cert content -> %w", err)
 	}
-
-	privKeyPEM := certificates.EncodeKeyPEM(privKey)
 
 	caEntry := registry.RegistryEntry{
 		Key:      "ServerCA",
@@ -192,9 +183,17 @@ func renewCertificate() error {
 
 	privEntry := registry.RegistryEntry{
 		Key:      "Priv",
-		Value:    string(privKeyPEM),
+		Value:    string(privKey),
 		Path:     registry.AUTH,
 		IsSecret: true,
+	}
+
+	legacyServerCA, err := registry.GetEntry(registry.AUTH, "ServerCA", true)
+	if err == nil {
+		legacyServerCA.Key = "LegacyServerCA"
+		if err = registry.CreateEntry(legacyServerCA); err != nil {
+			return fmt.Errorf("renewCertificate: error storing ca to registry -> %w", err)
+		}
 	}
 
 	if err = registry.CreateEntry(&caEntry); err != nil {

@@ -14,6 +14,7 @@ import (
 var (
 	ntdll                      = syscall.NewLazyDLL("ntdll.dll")
 	ntCreateFile               = ntdll.NewProc("NtCreateFile")
+	procNtCancelIoFileEx       = ntdll.NewProc("NtCancelIoFileEx")
 	ntQueryDirectoryFile       = ntdll.NewProc("NtQueryDirectoryFile")
 	ntClose                    = ntdll.NewProc("NtClose")
 	rtlInitUnicodeString       = ntdll.NewProc("RtlInitUnicodeString")
@@ -21,9 +22,10 @@ var (
 	procRtlNtStatusToDosError  = ntdll.NewProc("RtlNtStatusToDosError")
 )
 
-const fileNetworkOpenInformationClass = 34 // FileNetworkOpenInformation
+const fileNetworkOpenInformationClass = 34
 
 const (
+	STATUS_SUCCESS               = 0x00000000
 	FILE_LIST_DIRECTORY          = 0x0001
 	FILE_SHARE_READ              = 0x00000001
 	FILE_SHARE_WRITE             = 0x00000002
@@ -40,7 +42,6 @@ func ntStatusToError(status uintptr) error {
 	if status == 0 {
 		return nil
 	}
-	// Convert NTSTATUS to Win32 error for consistency with other Windows calls.
 	r0, _, _ := procRtlNtStatusToDosError.Call(status)
 	return windows.Errno(r0)
 }
@@ -95,24 +96,20 @@ func ntDirectoryCall(handle uintptr, ioStatusBlock *IoStatusBlock, buffer []byte
 		uintptr(unsafe.Pointer(ioStatusBlock)),
 		uintptr(unsafe.Pointer(&buffer[0])),
 		uintptr(len(buffer)),
-		uintptr(1), // FileInformationClass: FileDirectoryInformation
-		uintptr(0), // ReturnSingleEntry: FALSE (batch)
-		0,          // FileName: NULL
+		uintptr(1),
+		uintptr(0),
+		0,
 		uintptr(boolToInt(restartScan)),
 	)
 
 	switch status {
 	case 0:
-		// success
+		return nil
 	case STATUS_NO_MORE_FILES:
 		return os.ErrProcessDone
 	case STATUS_PENDING:
-		// Since we opened with synchronous I/O, this is unexpected but handle gracefully.
-		// Treat as retryable no-op; caller can call NextBatch again.
-		return os.ErrExist
+		return fmt.Errorf("unexpected STATUS_PENDING with synchronous I/O")
 	default:
-		return fmt.Errorf("NtQueryDirectoryFile failed with status: %x", status)
+		return fmt.Errorf("NtQueryDirectoryFile failed with status: 0x%x", status)
 	}
-
-	return nil
 }

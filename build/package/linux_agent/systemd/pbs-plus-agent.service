@@ -1,0 +1,29 @@
+[Unit]
+Description=PBS Plus Agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=pbsplus
+Group=pbsplus
+WorkingDirectory=/var/lib/pbs-plus-agent
+ExecStart=/usr/bin/pbs-plus-agent
+#ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+EnvironmentFile=-/etc/pbs-plus-agent/agent.env
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pbs-plus-agent
+
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+ReadWritePaths=/var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/pbs-plus-agent /etc/pbs-plus-agent /tmp /var/tmp
+
+[Install]
+WantedBy=multi-user.target
