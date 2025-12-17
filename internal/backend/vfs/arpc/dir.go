@@ -102,7 +102,7 @@ func (s *DirStream) HasNext() bool {
 	defer cancelN()
 
 	bytesRead := 0
-	err := s.fs.session.Call(ctxN, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(st *smux.Stream) error {
+	err := s.fs.session.Load().Call(ctxN, s.fs.Job.ID+"/ReadDir", &req, arpc.RawStreamHandler(func(st *smux.Stream) error {
 		n, err := binarystream.ReceiveDataInto(st, readBuf)
 		if err != nil {
 			return err
@@ -366,7 +366,7 @@ func (s *DirStream) Close() {
 	defer cancelN()
 
 	closeReq := types.CloseReq{HandleID: s.handleId}
-	_, err := s.fs.session.CallData(ctxN, s.fs.Job.ID+"/Close", &closeReq)
+	_, err := s.fs.session.Load().CallData(ctxN, s.fs.Job.ID+"/Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithMessage("DirStream close RPC failed").

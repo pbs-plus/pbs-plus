@@ -29,7 +29,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 		return nil
 	}
 
-	if f.fs.session == nil {
+	if f.fs.session.Load() == nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithJob(f.jobId).
 			WithMessage("arpc session is nil").
@@ -50,7 +50,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	_, err := f.fs.session.CallData(ctxN, f.jobId+"/Close", &req)
+	_, err := f.fs.session.Load().CallData(ctxN, f.jobId+"/Close", &req)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		syslog.L.Error(err).
 			WithJob(f.jobId).
@@ -90,7 +90,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	respBytes, err := f.fs.session.CallData(ctxN, f.jobId+"/Lseek", &req)
+	respBytes, err := f.fs.session.Load().CallData(ctxN, f.jobId+"/Lseek", &req)
 	if err != nil {
 		syslog.L.Error(err).
 			WithJob(f.jobId).
@@ -132,7 +132,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		return 0, syscall.ENOENT
 	}
 
-	if f.fs.session == nil {
+	if f.fs.session.Load() == nil {
 		syslog.L.Error(syscall.ENOENT).
 			WithJob(f.jobId).
 			WithMessage("fs session is nil").
@@ -160,7 +160,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	err := f.fs.session.Call(ctxN, f.jobId+"/ReadAt", &req, arpc.RawStreamHandler(func(s *smux.Stream) error {
+	err := f.fs.session.Load().Call(ctxN, f.jobId+"/ReadAt", &req, arpc.RawStreamHandler(func(s *smux.Stream) error {
 		n, err := binarystream.ReceiveDataInto(s, p)
 		if err != nil {
 			return err
