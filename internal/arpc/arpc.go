@@ -100,7 +100,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 
 			var reqHeaders http.Header
 			stream, err := smuxS.AcceptStream()
-			if err != nil {
+			if err == nil {
 				hdrs, rerr := readHeadersFrame(stream)
 				if rerr != nil {
 					_ = stream.Close()
