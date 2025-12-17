@@ -101,6 +101,11 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 			return fmt.Errorf("invalid out handler while in raw stream mode")
 		}
 
+		syncByte := []byte{0xFF}
+		if _, err := stream.Write(syncByte); err != nil {
+			return fmt.Errorf("write sync byte: %w", err)
+		}
+
 		err = handler(stream)
 		if err != nil {
 			return err
