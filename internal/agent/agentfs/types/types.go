@@ -14,6 +14,12 @@ type (
 		AclOnly bool   `cbor:"acl_only,omitempty"`
 	}
 
+	XAttrReq struct {
+		Path    string `cbor:"path"`
+		Attr    string `cbor:"attr"`
+		AclOnly bool   `cbor:"acl_only,omitempty"`
+	}
+
 	FileHandleId uint64
 
 	ReadDirReq struct {
