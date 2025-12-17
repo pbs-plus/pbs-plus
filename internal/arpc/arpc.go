@@ -35,65 +35,6 @@ func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
 	return conn, nil
 }
 
-func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*StreamPipe, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if tlsConfig == nil || len(tlsConfig.Certificates) == 0 {
-		return nil, fmt.Errorf("TLS configuration must include client certificate")
-	}
-
-	arpcTls := tlsConfig.Clone()
-	arpcTls.NextProtos = []string{"pbsarpc"}
-
-	conn, err := dialServer(serverAddr, arpcTls)
-	if err != nil {
-		syslog.L.Info().WithField("NextProtos", arpcTls.NextProtos).WithField("serverAddr", serverAddr).Write()
-		return nil, fmt.Errorf("server not reachable (%s): %w", serverAddr, err)
-	}
-
-	smuxConfig := smux.DefaultConfig()
-	session, err := smux.Client(conn, smuxConfig)
-	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("failed to create smux client: %w", err)
-	}
-
-	pipe, err := NewStreamPipe(session, conn)
-	if err != nil {
-		_ = session.Close()
-		_ = conn.Close()
-		return nil, fmt.Errorf("failed to create pipe: %w", err)
-	}
-
-	if headers == nil {
-		headers = make(http.Header)
-	}
-
-	headers.Add("ARPCVersion", "2")
-
-	pipe.tlsConfig = arpcTls
-	pipe.serverAddr = serverAddr
-	pipe.headers = headers
-
-	stream, err := pipe.OpenStream()
-	if err != nil {
-		pipe.Close()
-		return nil, fmt.Errorf("failed to initialize header stream: %w", err)
-	}
-	if werr := writeHeadersFrame(stream, headers); werr != nil {
-		_ = stream.Close()
-		pipe.Close()
-		return nil, fmt.Errorf("failed to write headers: %w", werr)
-	}
-	if cerr := stream.Close(); cerr != nil {
-		pipe.Close()
-		return nil, fmt.Errorf("failed to close header stream: %w", cerr)
-	}
-
-	return pipe, nil
-}
-
 func Listen(ctx context.Context, addr string, tlsConfig *tls.Config) (net.Listener, error) {
 	if tlsConfig == nil {
 		return nil, fmt.Errorf("missing tls config")
@@ -146,31 +87,39 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 			}
 
 			smuxConfig := smux.DefaultConfig()
-			session, err := smux.Server(c, smuxConfig)
+			smuxS, err := smux.Server(c, smuxConfig)
 			if err != nil {
 				c.Close()
 				return
 			}
 
 			var reqHeaders http.Header
-			stream, err := session.AcceptStream()
-			if err == nil {
-				if hdrs, rerr := readHeadersFrame(stream); rerr == nil {
-					reqHeaders = hdrs
+			stream, err := smuxS.AcceptStream()
+			if err != nil {
+				hdrs, rerr := readHeadersFrame(stream)
+				if rerr != nil {
+					_ = stream.Close()
+					_ = smuxS.Close()
+					_ = c.Close()
+					return
 				}
+				reqHeaders = hdrs
 				_ = stream.Close()
 			}
 
-			pipe, id, err := agentsManager.createStreamPipe(session, c, reqHeaders)
+			pCtx, pCan := context.WithCancel(ctx)
+			defer pCan()
+
+			pipe, id, err := agentsManager.registerStreamPipe(pCtx, smuxS, c, reqHeaders)
 			if err != nil {
-				_ = session.Close()
+				_ = smuxS.Close()
 				_ = c.Close()
 				return
 			}
 
 			defer func() {
 				pipe.Close()
-				agentsManager.closeStreamPipe(id)
+				agentsManager.unregisterStreamPipe(id)
 			}()
 
 			pipe.SetRouter(router)

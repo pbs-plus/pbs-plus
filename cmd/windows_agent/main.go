@@ -402,8 +402,10 @@ func (p *pbsService) connectARPC() error {
 
 					backoff = next
 
-					if err = session.Reconnect(p.ctx); err != nil {
+					if newS, err := session.Reconnect(p.ctx); err != nil {
 						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
+					} else {
+						session = newS
 					}
 				}
 			}

@@ -4,9 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/xtaci/smux"
@@ -42,27 +39,20 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		return err
 	}
 
-	var cleanupOnce sync.Once
-	cleanup := func() {
-		stream.Close()
-	}
-	defer cleanupOnce.Do(cleanup)
-
-	var streaming atomic.Bool
-	streaming.Store(false)
+	defer stream.Close()
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
-	}
-
-	if ctx.Done() != nil {
-		go func() {
-			<-ctx.Done()
-			if streaming.Load() {
-				return
-			}
-			cleanupOnce.Do(cleanup)
-		}()
+	} else {
+		if ctx.Done() != nil && stream.GetDieCh() != nil {
+			go func() {
+				select {
+				case <-ctx.Done():
+					stream.Close()
+				case <-stream.GetDieCh():
+				}
+			}()
+		}
 	}
 
 	var payloadBytes []byte
@@ -78,9 +68,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		}
 	}
 
-	s.RLock()
-	headers := headerCloneMap(s.headers)
-	s.RUnlock()
+	headers := s.headers
 
 	req := Request{Method: method, Payload: payloadBytes, Headers: headers}
 	reqBytes, err := cbor.Marshal(req)
@@ -108,10 +96,6 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		if _, err := stream.Write([]byte{0x01}); err != nil {
 			return fmt.Errorf("raw ready signal write failed: %w", err)
 		}
-
-		_ = stream.SetDeadline(time.Time{})
-		streaming.Store(true)
-		defer streaming.Store(false)
 
 		err = handler(stream)
 		if err != nil {
@@ -156,21 +140,20 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 		return "", err
 	}
 
-	var cleanupOnce sync.Once
-	cleanup := func() {
-		stream.Close()
-	}
-	defer cleanupOnce.Do(cleanup)
+	defer stream.Close()
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
-	}
-
-	if ctx.Done() != nil {
-		go func() {
-			<-ctx.Done()
-			cleanupOnce.Do(cleanup)
-		}()
+	} else {
+		if ctx.Done() != nil && stream.GetDieCh() != nil {
+			go func() {
+				select {
+				case <-ctx.Done():
+					stream.Close()
+				case <-stream.GetDieCh():
+				}
+			}()
+		}
 	}
 
 	var payloadBytes []byte
@@ -186,7 +169,9 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 		}
 	}
 
-	req := Request{Method: method, Payload: payloadBytes}
+	headers := s.headers
+
+	req := Request{Method: method, Payload: payloadBytes, Headers: headers}
 	reqBytes, err := cbor.Marshal(req)
 	if err != nil {
 		return "", fmt.Errorf("encode request: %w", err)
