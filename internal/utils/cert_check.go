@@ -36,14 +36,6 @@ func IsProxyCertValid(hostname string) bool {
 		return false
 	}
 
-	now := time.Now()
-	if now.Before(cert.NotBefore) {
-		return false
-	}
-	if now.After(cert.NotAfter) {
-		return false
-	}
-
 	roots, err := x509.SystemCertPool()
 	if err != nil {
 		return false
@@ -51,12 +43,16 @@ func IsProxyCertValid(hostname string) bool {
 
 	opts := x509.VerifyOptions{
 		Roots:       roots,
-		DNSName:     hostname,
-		CurrentTime: now,
+		CurrentTime: time.Now(),
 		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	}
 
 	_, err = cert.Verify(opts)
+	if err != nil {
+		return false
+	}
+
+	err = cert.VerifyHostname(hostname)
 	if err != nil {
 		return false
 	}
