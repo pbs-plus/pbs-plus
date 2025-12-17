@@ -242,7 +242,7 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 }
 
 func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
-	fi, err := n.fs.Xattr(ctx, n.getPath())
+	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
 	if err != nil {
 		return 0, syscall.ENOTSUP
 	}
@@ -314,7 +314,7 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 
 func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
 	// Retrieve extended attribute information for the node.
-	fi, err := n.fs.Xattr(ctx, n.getPath())
+	fi, err := n.fs.ListXattr(ctx, n.getPath())
 	if err != nil {
 		return 0, syscall.ENOTSUP
 	}
