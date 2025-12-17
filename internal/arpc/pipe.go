@@ -165,8 +165,6 @@ func (s *StreamPipe) Serve() error {
 			default:
 			}
 
-			syslog.L.Debug().WithMessage(fmt.Sprintf("encountered and ignored accept stream error: %v", err)).Write()
-
 			continue
 		}
 
