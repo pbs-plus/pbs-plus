@@ -505,7 +505,6 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		n, err := ov.ReadAt(buf, payload.Offset)
 
 		if err != nil && err != io.EOF {
-			syslog.L.Error(err).WithMessage("handleReadAt: read failed").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).Write()
 			return
 		}
 
