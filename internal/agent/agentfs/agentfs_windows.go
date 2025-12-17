@@ -540,7 +540,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		defer zeroBufPool.Put(bufPtr)
 		zeroBuf := *bufPtr
 
-		const maxChunkSize = 64 * 1024
+		const maxChunkSize = 48 * 1024
 
 		write := func(p []byte) error {
 			if err := req.Context.Err(); err != nil {

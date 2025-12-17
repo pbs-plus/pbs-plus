@@ -25,9 +25,8 @@ type StreamPipe struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 
-	version         string
-	conn            net.Conn
-	ReplacementPipe chan *StreamPipe
+	version string
+	conn    net.Conn
 }
 
 type ConnectionState int32
@@ -58,14 +57,12 @@ func (s *StreamPipe) OpenStream() (*smux.Stream, error) {
 }
 
 func (s *StreamPipe) Reconnect(ctx context.Context) (*StreamPipe, error) {
-	defer s.Close()
+	s.Close()
 	newS, err := ConnectToServer(ctx, s.serverAddr, s.headers, s.tlsConfig)
 	if err != nil {
 		return s, err
 	}
 	newS.SetRouter(*s.GetRouter())
-
-	s.ReplacementPipe <- newS
 
 	return newS, nil
 }
@@ -137,11 +134,10 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn) (*Stre
 	ctx, cancel := context.WithCancel(ctx)
 
 	pipe := &StreamPipe{
-		tun:             tun,
-		conn:            conn,
-		ctx:             ctx,
-		cancelFunc:      cancel,
-		ReplacementPipe: make(chan *StreamPipe, 1),
+		tun:        tun,
+		conn:       conn,
+		ctx:        ctx,
+		cancelFunc: cancel,
 	}
 
 	go func() {

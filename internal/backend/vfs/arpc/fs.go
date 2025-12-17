@@ -76,17 +76,6 @@ func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, j
 
 	fs.session.Store(session)
 
-	go func() {
-		for {
-			select {
-			case <-ctxFs.Done():
-				return
-			case newPipe := <-fs.session.Load().ReplacementPipe:
-				fs.session.Store(newPipe)
-			}
-		}
-	}()
-
 	syslog.L.Debug().
 		WithMessage("ARPCFS initialized").
 		WithField("jobId", fs.Job.ID).
@@ -106,6 +95,10 @@ func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, j
 	}()
 
 	return fs
+}
+
+func (fs *ARPCFS) SwitchSession(session *arpc.StreamPipe) {
+	fs.session.Swap(session)
 }
 
 func (fs *ARPCFS) Context() context.Context { return fs.Ctx }
