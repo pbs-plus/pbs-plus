@@ -58,7 +58,13 @@ func (s *StreamPipe) OpenStream() (*smux.Stream, error) {
 
 func (s *StreamPipe) Reconnect(ctx context.Context) (*StreamPipe, error) {
 	s.Close()
-	return ConnectToServer(ctx, s.serverAddr, s.headers, s.tlsConfig)
+	newS, err := ConnectToServer(ctx, s.serverAddr, s.headers, s.tlsConfig)
+	if err != nil {
+		return s, err
+	}
+	newS.SetRouter(*s.GetRouter())
+
+	return newS, nil
 }
 
 func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*StreamPipe, error) {
@@ -153,7 +159,7 @@ func (s *StreamPipe) Serve() error {
 	for {
 		select {
 		case <-s.ctx.Done():
-			
+
 			syslog.L.Debug().WithMessage("closing pipe due to context cancellation").Write()
 			return s.ctx.Err()
 		default:
