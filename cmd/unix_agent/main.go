@@ -400,7 +400,7 @@ func main() {
 		}
 	}()
 
-	forks.CmdBackup()
+	forks.CmdForkEntry()
 	constants.Version = Version
 
 	dockerEnv := os.Getenv("PBS_PLUS__I_AM_INSIDE_CONTAINER")
