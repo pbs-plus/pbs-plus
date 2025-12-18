@@ -35,7 +35,7 @@ func writeErrorResponse(stream io.Writer, status int, err error) {
 
 func defaultConfig() *smux.Config {
 	defaults := smux.DefaultConfig()
-	defaults.Version = 1
+	defaults.Version = 2
 	defaults.MaxReceiveBuffer = utils.MaxReceiveBuffer
 	defaults.MaxStreamBuffer = utils.MaxStreamBuffer
 	defaults.MaxFrameSize = 65535
