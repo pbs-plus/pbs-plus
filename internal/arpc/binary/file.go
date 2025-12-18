@@ -7,13 +7,12 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/xtaci/smux"
 )
 
 var bufferPool = &sync.Pool{
 	New: func() any {
-		return make([]byte, utils.MaxStreamBuffer)
+		return make([]byte, 128*1024)
 	},
 }
 
