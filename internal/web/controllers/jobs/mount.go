@@ -132,25 +132,7 @@ func generateServiceName(datastore, ns, backupType, backupID, safeTime string) s
 }
 
 func createSystemdService(serviceName, mountPoint string, args []string) error {
-	cmdArgs := []string{
-		"--unit=" + serviceName,
-		"--description=PBS Plus restore mount for " + mountPoint,
-		"--remain-after-exit",
-		"--collect",
-		"--property=Type=simple",
-		"--property=KillMode=control-group",
-		"--property=Restart=no",
-		"/usr/bin/proxmox-backup-pxar-mount",
-	}
-	cmdArgs = append(cmdArgs, args...)
-
-	cmd := exec.Command("systemd-run", cmdArgs...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("systemd-run failed: %w, output: %s", err, string(output))
-	}
-
-	return nil
+	return utils.RunSystemd(serviceName, "PBS Plus restore mount for "+mountPoint, "/usr/bin/proxmox-backup-pxar-mount", args)
 }
 
 func stopSystemdService(serviceName string) error {

@@ -1,0 +1,49 @@
+name: Release pxar-socket-api
+
+on:
+  push:
+    tags:
+      - "*"
+    paths:
+      - extras/pxar-socket-api/**
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: moonrepo/setup-rust@v1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y uuid-dev libsystemd-dev libacl1-dev pkg-config build-essential
+
+      - name: Import GPG key
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          echo "GPG_FINGERPRINT=${{ secrets.GPG_FINGERPRINT }}" >> $GITHUB_ENV
+
+      - name: Set environment variables
+        run: |
+          echo "GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}" >> $GITHUB_ENV
+          echo "GITHUB_REPOSITORY_NAME=${{ github.event.repository.name }}" >> $GITHUB_ENV
+          echo "GITHUB_REPOSITORY=${{ github.repository }}" >> $GITHUB_ENV
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean -f ./extras/pxar-socket-api/.goreleaser.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -62,14 +62,6 @@ jobs:
         with:
           go-version: "1.25"
 
-      - name: Set up Rust
-        uses: moonrepo/setup-rust@v1
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fuse3 libfuse3-dev uuid-dev libsystemd-dev libacl1-dev pkg-config build-essential
-
       - name: Import GPG key
         run: |
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
@@ -85,16 +77,16 @@ jobs:
         id: prev_tag
         run: |
           CURRENT_TAG="${{ github.ref_name }}"
-          
+
           # Get all tags sorted by version
           git fetch --tags --prune --force
-          
+
           # Find the previous non-RC tag
           PREV_TAG=$(git tag -l --sort=-version:refname | \
             grep -v '\-rc' | \
             grep -v "^${CURRENT_TAG}$" | \
             head -n1)
-          
+
           if [ -n "$PREV_TAG" ]; then
             echo "previous_tag=$PREV_TAG" >> $GITHUB_OUTPUT
             echo "Previous non-RC tag: $PREV_TAG"
