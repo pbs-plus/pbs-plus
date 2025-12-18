@@ -1,0 +1,65 @@
+version: 2
+
+project_name: proxmox-backup-pxar-mount
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: proxmox-backup-pxar-mount
+    builder: rust
+    tool: cargo
+    command: build
+    binary: proxmox-backup-pxar-mount
+    targets:
+      - x86_64-unknown-linux-gnu
+    dir: extras/proxmox-backup-pxar-mount
+    flags:
+      - --release
+
+archives:
+  - id: proxmox-backup-pxar-mount
+    ids:
+      - proxmox-backup-pxar-mount
+    name_template: "proxmox-backup-pxar-mount-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
+checksum:
+  name_template: "{{ .ArtifactName }}.{{ .Algorithm }}"
+  algorithm: md5
+  split: true
+
+nfpms:
+  - id: proxmox-backup-pxar-mount-deb
+    ids:
+      - proxmox-backup-pxar-mount
+    package_name: "{{ .ProjectName }}"
+    vendor: Son Roy Almerol
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    maintainer: Son Roy Almerol <github@snry.me>
+    description: >
+      proxmox-backup-pxar-mount is a proxmox-backup-client alternative without needing Proxmox Backup Server running.
+    license: MIT
+    formats:
+      - deb
+    overrides:
+      deb:
+        file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
+
+release:
+  github:
+    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+    name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
+  name_template: "proxmox-backup-pxar-mount {{ .Version }}"
+  draft: false
+  prerelease: auto
+  mode: replace
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
