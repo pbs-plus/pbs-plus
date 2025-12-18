@@ -752,7 +752,7 @@ func TestLeak_MultipleConnections(t *testing.T) {
 
 	// More permissive tolerance for multiple connections
 	// Each connection creates: client Serve, server Serve, 2 smux goroutines, context watchers
-	waitForGoroutines(t, baseline, 50, 10*time.Second)
+	waitForGoroutines(t, baseline, 5, 10*time.Second)
 }
 
 func TestLeak_ConcurrentCalls(t *testing.T) {
@@ -795,7 +795,7 @@ func TestLeak_ConcurrentCalls(t *testing.T) {
 	// Allow streams to fully close
 	time.Sleep(500 * time.Millisecond)
 
-	waitForGoroutines(t, baseline, 15, 5*time.Second)
+	waitForGoroutines(t, baseline, 5, 5*time.Second)
 }
 
 func TestLeak_TimeoutCalls(t *testing.T) {
@@ -871,7 +871,7 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 
 	time.Sleep(300 * time.Millisecond)
 
-	waitForGoroutines(t, baseline, 50, 5*time.Second)
+	waitForGoroutines(t, baseline, 5, 5*time.Second)
 }
 
 func TestLeak_RawStreamHandlers(t *testing.T) {
@@ -915,7 +915,7 @@ func TestLeak_RawStreamHandlers(t *testing.T) {
 
 	time.Sleep(300 * time.Millisecond)
 
-	waitForGoroutines(t, baseline, 15, 5*time.Second)
+	waitForGoroutines(t, baseline, 5, 5*time.Second)
 }
 
 func TestLeak_ErrorResponses(t *testing.T) {
@@ -945,7 +945,7 @@ func TestLeak_ErrorResponses(t *testing.T) {
 
 	time.Sleep(300 * time.Millisecond)
 
-	waitForGoroutines(t, baseline, 15, 5*time.Second)
+	waitForGoroutines(t, baseline, 5, 5*time.Second)
 }
 
 func TestLeak_StreamExhaustion(t *testing.T) {
@@ -984,7 +984,7 @@ func TestLeak_StreamExhaustion(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	waitForGoroutines(t, baseline, 15, 5*time.Second)
+	waitForGoroutines(t, baseline, 5, 5*time.Second)
 }
 
 func TestLeak_CancelledContexts(t *testing.T) {
@@ -1024,7 +1024,7 @@ func TestLeak_CancelledContexts(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	waitForGoroutines(t, baseline, 15, 5*time.Second)
+	waitForGoroutines(t, baseline, 5, 5*time.Second)
 }
 
 func TestLeak_ServerServeLoop(t *testing.T) {
@@ -1061,7 +1061,7 @@ func TestLeak_ServerServeLoop(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	waitForGoroutines(t, baseline, 30, 5*time.Second)
+	waitForGoroutines(t, baseline, 5, 5*time.Second)
 }
 
 func TestLeak_MemoryPressure(t *testing.T) {
