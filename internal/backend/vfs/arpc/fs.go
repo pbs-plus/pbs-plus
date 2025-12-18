@@ -322,7 +322,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
-	fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(filename), Value: xattrBytes, Expiration: 10})
+	fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(filename), Value: xattrBytes, Expiration: 5})
 
 	return fi, nil
 }
