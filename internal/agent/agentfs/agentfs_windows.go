@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -36,6 +37,35 @@ var (
 		},
 	}
 )
+
+func NewFileHandle(handle windows.Handle) *FileHandle {
+	fh := &FileHandle{
+		handle: handle,
+	}
+	fh.closeCond = sync.NewCond(&fh.Mutex)
+	return fh
+}
+
+func (fh *FileHandle) acquireOp() bool {
+	fh.Lock()
+	defer fh.Unlock()
+
+	if fh.closing {
+		return false
+	}
+	atomic.AddInt32(&fh.activeOps, 1)
+	return true
+}
+
+func (fh *FileHandle) releaseOp() {
+	fh.Lock()
+	defer fh.Unlock()
+
+	atomic.AddInt32(&fh.activeOps, -1)
+	if fh.activeOps == 0 && fh.closing {
+		fh.closeCond.Broadcast()
+	}
+}
 
 func (s *AgentFSServer) abs(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
@@ -89,6 +119,10 @@ func (s *AgentFSServer) closeFileHandles() {
 	syslog.L.Debug().WithMessage("closeFileHandles: closing all file handles").Write()
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
 		fh.Lock()
+		fh.closing = true
+		for fh.activeOps > 0 {
+			fh.closeCond.Wait()
+		}
 		if fh.mapping != 0 {
 			windows.CloseHandle(fh.mapping)
 			syslog.L.Debug().WithMessage("closeFileHandles: closed mapping handle").WithField("handle_id", u).Write()
@@ -98,6 +132,9 @@ func (s *AgentFSServer) closeFileHandles() {
 			_ = fh.ov.Close()
 			syslog.L.Debug().WithMessage("closeFileHandles: closed overlapped").WithField("handle_id", u).Write()
 			fh.ov = nil
+		}
+		if fh.dirReader != nil {
+			fh.dirReader.Close()
 		}
 		windows.CloseHandle(fh.handle)
 		syslog.L.Debug().WithMessage("closeFileHandles: closed file handle").WithField("handle_id", u).Write()
@@ -202,12 +239,10 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		return arpc.Response{}, err
 	}
 
-	fh := &FileHandle{
-		handle:        handle,
-		fileSize:      std.EndOfFile,
-		isDir:         std.Directory != 0,
-		logicalOffset: 0,
-	}
+	fh := NewFileHandle(handle)
+	fh.fileSize = std.EndOfFile
+	fh.isDir = std.Directory != 0
+	fh.logicalOffset = 0
 	fh.ov = newOverlapped(handle)
 
 	if fh.isDir {
@@ -411,11 +446,18 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, os.ErrNotExist
 	}
 
-	fh.Lock()
-	defer fh.Unlock()
+	if !fh.acquireOp() {
+		syslog.L.Debug().WithMessage("handleReadDir: handle is closing").WithField("handle_id", payload.HandleID).Write()
+		return arpc.Response{}, os.ErrClosed
+	}
 
-	encodedBatch, err := fh.dirReader.NextBatch(req.Context, s.statFs.Bsize)
+	fh.Lock()
+	dirReader := fh.dirReader
+	fh.Unlock()
+
+	encodedBatch, err := dirReader.NextBatch(req.Context, s.statFs.Bsize)
 	if err != nil {
+		fh.releaseOp()
 		if !errors.Is(err, os.ErrProcessDone) {
 			syslog.L.Error(err).WithMessage("handleReadDir: error reading batch").WithField("handle_id", payload.HandleID).Write()
 		} else {
@@ -427,6 +469,8 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	syslog.L.Debug().WithMessage("handleReadDir: sending batch").WithField("handle_id", payload.HandleID).WithField("bytes", len(encodedBatch)).Write()
 	byteReader := bytes.NewReader(encodedBatch)
 	streamCallback := func(stream *smux.Stream) {
+		defer fh.releaseOp()
+
 		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader via binary stream").WithField("handle_id", payload.HandleID).Write()
 		}
@@ -461,17 +505,24 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrInvalid
 	}
 
+	if !fh.acquireOp() {
+		syslog.L.Debug().WithMessage("handleReadAt: handle is closing").WithField("handle_id", payload.HandleID).Write()
+		return arpc.Response{}, os.ErrClosed
+	}
+
 	fh.Lock()
 	fileSize := fh.fileSize
 	ov := fh.ov
 	fh.Unlock()
 
 	if err := req.Context.Err(); err != nil {
+		fh.releaseOp()
 		syslog.L.Debug().WithMessage("handleReadAt: context cancelled before read").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, err
 	}
 
 	if payload.Offset >= fileSize {
+		fh.releaseOp()
 		syslog.L.Debug().WithMessage("handleReadAt: offset beyond EOF, sending empty").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("size", fileSize).Write()
 		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
@@ -492,6 +543,8 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	readLen := int(reqEnd - payload.Offset)
 
 	streamFn := func(stream *smux.Stream) {
+		defer fh.releaseOp()
+
 		bufPtr := zeroBufPool.Get().(*[]byte)
 		defer zeroBufPool.Put(bufPtr)
 		buf := (*bufPtr)[:readLen]
@@ -505,6 +558,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		n, err := ov.ReadAt(buf, payload.Offset)
 
 		if err != nil && err != io.EOF {
+			syslog.L.Error(err).WithMessage("handleReadAt: ov.ReadAt failed").WithField("handle_id", payload.HandleID).Write()
 			return
 		}
 
@@ -551,6 +605,12 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 		syslog.L.Debug().WithMessage("handleLseek: attempted lseek on directory").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
+
+	if !fh.acquireOp() {
+		syslog.L.Debug().WithMessage("handleLseek: handle closed").WithField("handle_id", payload.HandleID).Write()
+		return arpc.Response{}, os.ErrClosed
+	}
+	defer fh.releaseOp()
 
 	fh.Lock()
 	defer fh.Unlock()
@@ -637,7 +697,12 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	handle.Lock()
-	defer handle.Unlock()
+	handle.closing = true
+	for handle.activeOps > 0 {
+		syslog.L.Debug().WithMessage("handleClose: waiting for active operations").WithField("handle_id", payload.HandleID).WithField("active_ops", handle.activeOps).Write()
+		handle.closeCond.Wait()
+	}
+	syslog.L.Debug().WithMessage("handleClose: all operations completed").WithField("handle_id", payload.HandleID).Write()
 
 	if handle.mapping != 0 {
 		windows.CloseHandle(handle.mapping)
@@ -664,6 +729,7 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 		windows.CloseHandle(handle.handle)
 		syslog.L.Debug().WithMessage("handleClose: dir handle closed").WithField("handle_id", payload.HandleID).Write()
 	}
+	handle.Unlock()
 
 	s.handles.Del(uint64(payload.HandleID))
 
