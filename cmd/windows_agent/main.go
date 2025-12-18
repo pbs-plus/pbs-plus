@@ -432,7 +432,7 @@ func (p *pbsService) handlePing(req *arpc.Request) (arpc.Response, error) {
 }
 
 func main() {
-	forks.CmdBackup()
+	forks.CmdForkEntry()
 	constants.Version = Version
 
 	svcConfig := &service.Config{
