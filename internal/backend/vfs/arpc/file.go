@@ -152,7 +152,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		Length:   len(p),
 	}
 
-	n, err := f.fs.session.Load().CallBinary(ctx, f.jobId+"/ReadAt", &req, p)
+	n, err := f.fs.session.Load().CallBinary(f.fs.Ctx, f.jobId+"/ReadAt", &req, p)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).
 			WithMessage("failed to handle read request").
