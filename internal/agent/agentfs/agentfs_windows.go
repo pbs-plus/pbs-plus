@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -42,28 +42,59 @@ func NewFileHandle(handle windows.Handle) *FileHandle {
 	fh := &FileHandle{
 		handle: handle,
 	}
-	fh.closeCond = sync.NewCond(&fh.Mutex)
 	return fh
 }
 
 func (fh *FileHandle) acquireOp() bool {
-	fh.Lock()
-	defer fh.Unlock()
+	fh.mu.Lock()
+	defer fh.mu.Unlock()
 
 	if fh.closing {
 		return false
 	}
-	atomic.AddInt32(&fh.activeOps, 1)
+	fh.activeOps++
 	return true
 }
 
 func (fh *FileHandle) releaseOp() {
-	fh.Lock()
-	defer fh.Unlock()
+	fh.mu.Lock()
+	defer fh.mu.Unlock()
 
-	atomic.AddInt32(&fh.activeOps, -1)
+	fh.activeOps--
 	if fh.activeOps == 0 && fh.closing {
-		fh.closeCond.Broadcast()
+		close(fh.closeDone)
+	}
+}
+
+func (fh *FileHandle) beginClose() bool {
+	fh.mu.Lock()
+	defer fh.mu.Unlock()
+
+	if fh.closing {
+		return false
+	}
+	fh.closing = true
+	fh.closeDone = make(chan struct{})
+	if fh.activeOps == 0 {
+		close(fh.closeDone)
+	}
+	return true
+}
+
+func (fh *FileHandle) waitForOps(timeout time.Duration) bool {
+	fh.mu.Lock()
+	done := fh.closeDone
+	fh.mu.Unlock()
+
+	if done == nil {
+		return true
+	}
+
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
 	}
 }
 
@@ -118,11 +149,13 @@ func (s *AgentFSServer) absUNC(filename string) (string, error) {
 func (s *AgentFSServer) closeFileHandles() {
 	syslog.L.Debug().WithMessage("closeFileHandles: closing all file handles").Write()
 	s.handles.ForEach(func(u uint64, fh *FileHandle) bool {
-		fh.Lock()
-		fh.closing = true
-		for fh.activeOps > 0 {
-			fh.closeCond.Wait()
+		if !fh.beginClose() {
+			return true
 		}
+
+		fh.waitForOps(30 * time.Second)
+
+		fh.mu.Lock()
 		if fh.mapping != 0 {
 			windows.CloseHandle(fh.mapping)
 			syslog.L.Debug().WithMessage("closeFileHandles: closed mapping handle").WithField("handle_id", u).Write()
@@ -138,7 +171,7 @@ func (s *AgentFSServer) closeFileHandles() {
 		}
 		windows.CloseHandle(fh.handle)
 		syslog.L.Debug().WithMessage("closeFileHandles: closed file handle").WithField("handle_id", u).Write()
-		fh.Unlock()
+		fh.mu.Unlock()
 		return true
 	})
 	s.handles.Clear()
@@ -451,9 +484,9 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, os.ErrClosed
 	}
 
-	fh.Lock()
+	fh.mu.Lock()
 	dirReader := fh.dirReader
-	fh.Unlock()
+	fh.mu.Unlock()
 
 	encodedBatch, err := dirReader.NextBatch(req.Context, s.statFs.Bsize)
 	if err != nil {
@@ -510,10 +543,10 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrClosed
 	}
 
-	fh.Lock()
+	fh.mu.Lock()
 	fileSize := fh.fileSize
 	ov := fh.ov
-	fh.Unlock()
+	fh.mu.Unlock()
 
 	if err := req.Context.Err(); err != nil {
 		fh.releaseOp()
@@ -549,11 +582,11 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		defer zeroBufPool.Put(bufPtr)
 		buf := (*bufPtr)[:readLen]
 
-		fh.Lock()
+		fh.mu.Lock()
 		if ov.DefaultTimeout == -1 {
 			ov.DefaultTimeout = 30000
 		}
-		fh.Unlock()
+		fh.mu.Unlock()
 
 		n, err := ov.ReadAt(buf, payload.Offset)
 
@@ -612,8 +645,8 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 	}
 	defer fh.releaseOp()
 
-	fh.Lock()
-	defer fh.Unlock()
+	fh.mu.Lock()
+	defer fh.mu.Unlock()
 
 	var std fileStandardInfo
 	if err := getFileStandardInfoByHandle(fh.handle, &std); err != nil {
@@ -696,27 +729,33 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, os.ErrNotExist
 	}
 
-	handle.Lock()
-	handle.closing = true
-	for handle.activeOps > 0 {
-		syslog.L.Debug().WithMessage("handleClose: waiting for active operations").WithField("handle_id", payload.HandleID).WithField("active_ops", handle.activeOps).Write()
-		handle.closeCond.Wait()
+	if !handle.beginClose() {
+		syslog.L.Debug().WithMessage("handleClose: handle already closing").WithField("handle_id", payload.HandleID).Write()
+		return arpc.Response{}, os.ErrClosed
 	}
-	syslog.L.Debug().WithMessage("handleClose: all operations completed").WithField("handle_id", payload.HandleID).Write()
 
+	if !handle.waitForOps(30 * time.Second) {
+		syslog.L.Warn().WithMessage("handleClose: timeout waiting for operations, forcing close").
+			WithField("handle_id", payload.HandleID).Write()
+	}
+
+	handle.mu.Lock()
 	if handle.mapping != 0 {
 		windows.CloseHandle(handle.mapping)
 		handle.mapping = 0
-		syslog.L.Debug().WithMessage("handleClose: mapping closed").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Debug().WithMessage("handleClose: mapping closed").
+			WithField("handle_id", payload.HandleID).Write()
 	}
 	if !handle.isDir {
 		if handle.ov != nil {
 			_ = handle.ov.Close()
 			handle.ov = nil
-			syslog.L.Debug().WithMessage("handleClose: overlapped closed").WithField("handle_id", payload.HandleID).Write()
+			syslog.L.Debug().WithMessage("handleClose: overlapped closed").
+				WithField("handle_id", payload.HandleID).Write()
 		}
 		windows.CloseHandle(handle.handle)
-		syslog.L.Debug().WithMessage("handleClose: file handle closed").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Debug().WithMessage("handleClose: file handle closed").
+			WithField("handle_id", payload.HandleID).Write()
 	} else {
 		if handle.dirReader != nil {
 			handle.dirReader.Close()
@@ -724,22 +763,26 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 		if handle.ov != nil {
 			_ = handle.ov.Close()
 			handle.ov = nil
-			syslog.L.Debug().WithMessage("handleClose: dir overlapped closed").WithField("handle_id", payload.HandleID).Write()
+			syslog.L.Debug().WithMessage("handleClose: dir overlapped closed").
+				WithField("handle_id", payload.HandleID).Write()
 		}
 		windows.CloseHandle(handle.handle)
-		syslog.L.Debug().WithMessage("handleClose: dir handle closed").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Debug().WithMessage("handleClose: dir handle closed").
+			WithField("handle_id", payload.HandleID).Write()
 	}
-	handle.Unlock()
+	handle.mu.Unlock()
 
 	s.handles.Del(uint64(payload.HandleID))
 
 	closed := "closed"
 	data, err := cbor.Marshal(closed)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("handleClose: encode close message failed").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Error(err).WithMessage("handleClose: encode close message failed").
+			WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Debug().WithMessage("handleClose: success").WithField("handle_id", payload.HandleID).Write()
+	syslog.L.Debug().WithMessage("handleClose: success").
+		WithField("handle_id", payload.HandleID).Write()
 	return arpc.Response{Status: 200, Data: data}, nil
 }
