@@ -113,6 +113,9 @@ func (b *BackupLogger) Write(in []byte) (n int, err error) {
 
 		formattedLogMessage := stringBuilder.String()
 		if len(formattedLogMessage) > 0 { // Ensure we actually have something to write
+			if b.Writer == nil {
+				return 0, errors.New("logger closed")
+			}
 			_, writeErr := b.Writer.WriteString(formattedLogMessage)
 			if writeErr != nil {
 				// Don't attempt to flush if WriteString itself failed.
