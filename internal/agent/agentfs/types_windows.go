@@ -26,6 +26,10 @@ type FileHandle struct {
 	dirReader     *DirReaderNT
 	mapping       windows.Handle
 	logicalOffset int64
+
+	activeOps int32
+	closing   bool
+	closeCond *sync.Cond
 }
 
 type DirReaderNT struct {
