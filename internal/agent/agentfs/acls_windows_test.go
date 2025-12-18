@@ -152,7 +152,7 @@ func TestUnsafeEntriesToSlice_KernelPointers(t *testing.T) {
 			}
 
 			// Should return nil for kernel pointers
-			slice := unsafeEntriesToSlice(tt.ptr, 10)
+			slice, _ := safeEntriesToSlice(tt.ptr, 10)
 			if slice != nil {
 				t.Errorf("Expected nil for kernel space pointer 0x%X", tt.ptr)
 			}
@@ -176,7 +176,7 @@ func TestUnsafeEntriesToSlice_InvalidPointers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Should not crash
-			slice := unsafeEntriesToSlice(tt.ptr, tt.count)
+			slice, _ := safeEntriesToSlice(tt.ptr, tt.count)
 			t.Logf("Result: %v (len=%d)", slice != nil, len(slice))
 		})
 	}

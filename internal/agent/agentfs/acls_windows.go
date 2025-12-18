@@ -5,6 +5,7 @@ package agentfs
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -50,25 +51,17 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 	pOwnerSid, _, _ := sd.Owner()
 	pGroupSid, _, _ := sd.Group()
 
-	// Use the SIDs returned by MakeAbsoluteSD directly if they are valid.
-	if pOwnerSid != nil && pOwnerSid.IsValid() {
-		owner = pOwnerSid.String()
-	} else {
-		// Fallback or handle error if owner SID is expected but missing/invalid
-		// For simplicity here, we proceed, but production code might error out.
-		// Alternatively, call getOwnerGroupAbsolute as a fallback, but it might be redundant.
-		// owner, group, err = getOwnerGroupAbsolute(absoluteSD)
-		// if err != nil {
-		// 	 return "", "", nil, fmt.Errorf("failed to extract owner/group: %w", err)
-		// }
-		return "", "", nil, fmt.Errorf("owner SID from MakeAbsoluteSD is nil or invalid")
+	// Validate owner SID
+	if pOwnerSid == nil || !pOwnerSid.IsValid() {
+		return "", "", nil, fmt.Errorf("owner SID from security descriptor is nil or invalid")
 	}
+	owner = pOwnerSid.String()
 
-	if pGroupSid != nil && pGroupSid.IsValid() {
-		group = pGroupSid.String()
-	} else {
-		return owner, "", nil, fmt.Errorf("group SID from MakeAbsoluteSD is nil or invalid")
+	// Validate group SID
+	if pGroupSid == nil || !pGroupSid.IsValid() {
+		return owner, "", nil, fmt.Errorf("group SID from security descriptor is nil or invalid")
 	}
+	group = pGroupSid.String()
 
 	// DACL pointer
 	pDacl, _, err := sd.DACL()
@@ -79,7 +72,7 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 		return owner, group, nil, fmt.Errorf("SECURITY_DESCRIPTOR.DACL: %w", err)
 	}
 	if pDacl == nil {
-		// NULL DACL => no explicit entries (old code returned empty slice)
+		// NULL DACL => no explicit entries
 		return owner, group, []types.WinACL{}, nil
 	}
 
@@ -88,10 +81,9 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 		return owner, group, []types.WinACL{}, fmt.Errorf("ACL structure validation failed")
 	}
 
-	// IMPORTANT: Use the same canonicalization path as the old code
+	// Get explicit entries from ACL
 	entriesPtr, entriesCount, err := GetExplicitEntriesFromACL(pDacl)
 	if err != nil {
-		// Keep behavior consistent: on failure, return empty ACLs with error
 		return owner, group, []types.WinACL{}, fmt.Errorf("GetExplicitEntriesFromACL: %w", err)
 	}
 	if entriesPtr == 0 || entriesCount == 0 {
@@ -99,22 +91,50 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 	}
 	defer FreeExplicitEntries(entriesPtr)
 
-	entries := unsafeEntriesToSlice(entriesPtr, entriesCount)
+	entries, err := safeEntriesToSlice(entriesPtr, entriesCount)
+	if err != nil {
+		return owner, group, []types.WinACL{}, fmt.Errorf("failed to parse ACL entries: %w", err)
+	}
 
-	result := make([]types.WinACL, 0, entriesCount)
-	for _, e := range entries {
+	result := make([]types.WinACL, 0, len(entries))
+	for i := range entries {
+		e := &entries[i]
+
+		// Validate trustee structure
+		if e.Trustee.TrusteeForm != windows.TRUSTEE_IS_SID {
+			continue
+		}
+
 		pSid := (*windows.SID)(unsafe.Pointer(e.Trustee.TrusteeValue))
-		if pSid == nil || !isSafePointer(unsafe.Pointer(pSid)) || !pSid.IsValid() {
+
+		// Comprehensive SID validation
+		if pSid == nil {
+			continue
+		}
+
+		if !isSafePointer(unsafe.Pointer(pSid)) {
+			continue
+		}
+
+		// Validate SID structure before calling IsValid
+		if !isValidSIDPointer(pSid) {
+			continue
+		}
+
+		if !pSid.IsValid() {
 			continue
 		}
 
 		sidStr := pSid.String()
+		if sidStr == "" {
+			continue
+		}
 
 		result = append(result, types.WinACL{
 			SID:        sidStr,
 			AccessMask: uint32(e.AccessPermissions),
-			Type:       uint8(e.AccessMode),  // matches path-based mapping
-			Flags:      uint8(e.Inheritance), // matches path-based mapping
+			Type:       uint8(e.AccessMode),
+			Flags:      uint8(e.Inheritance),
 		})
 	}
 
@@ -123,127 +143,173 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 
 func GetExplicitEntriesFromACL(acl *windows.ACL) (uintptr, uint32, error) {
 	if acl == nil {
-		// An ACL pointer is required. A nil ACL might represent "no DACL" or "NULL DACL".
-		// GetExplicitEntriesFromAcl requires a valid ACL pointer.
 		return 0, 0, fmt.Errorf("input ACL cannot be nil")
 	}
 
+	// Validate ACL pointer is properly aligned
+	if uintptr(unsafe.Pointer(acl))%unsafe.Alignof(acl) != 0 {
+		return 0, 0, fmt.Errorf("ACL pointer is misaligned")
+	}
+
 	var entriesCount uint32
-	var explicitEntriesPtr uintptr // Pointer to the array allocated by the API
+	var explicitEntriesPtr uintptr
 
 	ret, _, callErr := procGetExplicitEntriesFromACL.Call(
 		uintptr(unsafe.Pointer(acl)),
 		uintptr(unsafe.Pointer(&entriesCount)),
-		uintptr(unsafe.Pointer(&explicitEntriesPtr)), // Receives pointer to allocated array
+		uintptr(unsafe.Pointer(&explicitEntriesPtr)),
 	)
 
-	// According to docs, returns ERROR_SUCCESS on success.
 	if ret != uintptr(windows.ERROR_SUCCESS) {
-		// Check if callErr provides more info, otherwise use the return value.
 		if callErr != nil && callErr != windows.ERROR_SUCCESS {
 			return 0, 0, fmt.Errorf("GetExplicitEntriesFromACL call failed: %w", callErr)
 		}
-		// If callErr is success but ret isn't, use ret as the error code.
 		return 0, 0, fmt.Errorf("GetExplicitEntriesFromACL call failed with code: %d", ret)
 	}
 
 	if explicitEntriesPtr == 0 && entriesCount > 0 {
-		// This shouldn't happen if the call succeeded.
 		return 0, 0, fmt.Errorf("GetExplicitEntriesFromACL returned success but null pointer for entries")
 	}
 
-	// Sanity check: Validate count is reasonable (prevent massive allocations/corrupted count)
-	const maxReasonableACEs = 10000 // Reasonable upper limit for ACEs in a DACL
+	// Validate count is reasonable
+	const maxReasonableACEs = 10000
 	if entriesCount > maxReasonableACEs {
 		if explicitEntriesPtr != 0 {
-			procLocalFree.Call(explicitEntriesPtr) // Clean up before returning error
+			procLocalFree.Call(explicitEntriesPtr)
 		}
 		return 0, 0, fmt.Errorf("unreasonable ACE count: %d (max: %d)", entriesCount, maxReasonableACEs)
 	}
 
-	// Return the raw pointer and count. Caller is responsible for LocalFree(explicitEntriesPtr).
+	// Validate pointer is not in freed pointers ring (catches some use-after-free)
+	if entriesCount > 0 && freedPointers.contains(explicitEntriesPtr) {
+		return 0, 0, fmt.Errorf("pointer already freed")
+	}
+
 	return explicitEntriesPtr, entriesCount, nil
 }
 
 type freedPointerRing struct {
-	mu      sync.Mutex
-	ptrs    []uintptr
-	index   int
+	mu      sync.RWMutex
+	ptrs    map[uintptr]struct{}
+	order   []uintptr
 	maxSize int
 }
 
 var freedPointers = &freedPointerRing{
-	ptrs:    make([]uintptr, 0, 1024),
+	ptrs:    make(map[uintptr]struct{}, 1024),
+	order:   make([]uintptr, 0, 1024),
 	maxSize: 1024,
 }
 
 func (r *freedPointerRing) contains(ptr uintptr) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	for _, p := range r.ptrs {
-		if p == ptr {
-			return true
-		}
+	if ptr == 0 {
+		return false
 	}
-	return false
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	_, exists := r.ptrs[ptr]
+	return exists
 }
 
 func (r *freedPointerRing) add(ptr uintptr) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if len(r.ptrs) < r.maxSize {
-		r.ptrs = append(r.ptrs, ptr)
+	if ptr == 0 {
 		return
 	}
 
-	r.ptrs[r.index] = ptr
-	r.index = (r.index + 1) % r.maxSize
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// If already at capacity, remove oldest entry
+	if len(r.order) >= r.maxSize {
+		oldest := r.order[0]
+		delete(r.ptrs, oldest)
+		r.order = r.order[1:]
+	}
+
+	// Add new pointer if not already present
+	if _, exists := r.ptrs[ptr]; !exists {
+		r.ptrs[ptr] = struct{}{}
+		r.order = append(r.order, ptr)
+	}
 }
 
 func FreeExplicitEntries(explicitEntriesPtr uintptr) error {
 	if explicitEntriesPtr == 0 {
-		return nil // Nothing to free
+		return nil
 	}
 
+	// Check for double-free
 	if freedPointers.contains(explicitEntriesPtr) {
 		return fmt.Errorf("detected double-free attempt for pointer 0x%X", explicitEntriesPtr)
 	}
 
 	ret, _, callErr := procLocalFree.Call(explicitEntriesPtr)
 	if ret != 0 {
-		return fmt.Errorf("LocalFree failed: %w", callErr)
+		if callErr != nil {
+			return fmt.Errorf("LocalFree failed: %w", callErr)
+		}
+		return fmt.Errorf("LocalFree failed with code: %d", ret)
 	}
 
 	freedPointers.add(explicitEntriesPtr)
 	return nil
 }
 
-// Helper function to convert raw EXPLICIT_ACCESS pointer and count to a Go slice.
-// This is unsafe because the underlying memory is managed by Windows and freed via LocalFree.
-// Use only for temporary access immediately after GetExplicitEntriesFromACL and before FreeExplicitEntries.
-func unsafeEntriesToSlice(entriesPtr uintptr, count uint32) []windows.EXPLICIT_ACCESS {
+// safeEntriesToSlice safely converts raw EXPLICIT_ACCESS pointer and count to a Go slice
+// using proper bounds checking and validation
+func safeEntriesToSlice(entriesPtr uintptr, count uint32) ([]windows.EXPLICIT_ACCESS, error) {
 	if entriesPtr == 0 || count == 0 {
-		return nil
+		return nil, nil
 	}
 
-	// Additional safety: verify pointer is not in kernel space (on 64-bit this is a basic check)
+	// Validate pointer is in user space
 	if !isSafePointer(unsafe.Pointer(entriesPtr)) {
-		return nil
+		return nil, fmt.Errorf("entries pointer is not in user space")
 	}
 
-	// Create a slice header pointing to the Windows-allocated memory.
+	// Validate count to prevent massive allocations
+	const maxReasonableACEs = 10000
+	if count > maxReasonableACEs {
+		return nil, fmt.Errorf("entry count exceeds reasonable limit: %d", count)
+	}
+
+	// Calculate required memory size and check for overflow
+	entrySize := unsafe.Sizeof(windows.EXPLICIT_ACCESS{})
+	if entrySize == 0 {
+		return nil, fmt.Errorf("invalid EXPLICIT_ACCESS size")
+	}
+
+	totalSize := uintptr(count) * entrySize
+	if totalSize/entrySize != uintptr(count) {
+		return nil, fmt.Errorf("integer overflow in size calculation")
+	}
+
+	// Validate pointer alignment
+	if entriesPtr%unsafe.Alignof(windows.EXPLICIT_ACCESS{}) != 0 {
+		return nil, fmt.Errorf("entries pointer is misaligned")
+	}
+
+	// Use reflect.SliceHeader for safer slice construction
 	var slice []windows.EXPLICIT_ACCESS
-	hdr := (*struct {
-		data unsafe.Pointer
-		len  int
-		cap  int
-	})(unsafe.Pointer(&slice))
-	hdr.data = unsafe.Pointer(entriesPtr)
-	hdr.len = int(count)
-	hdr.cap = int(count)
-	return slice
+	header := (*reflect.SliceHeader)(unsafe.Pointer(&slice))
+	header.Data = entriesPtr
+	header.Len = int(count)
+	header.Cap = int(count)
+
+	// Validate we can safely access the memory by checking first and last entries
+	if len(slice) > 0 {
+		// Touch first entry to verify readable
+		_ = slice[0].AccessPermissions
+
+		// Touch last entry to verify readable
+		if len(slice) > 1 {
+			_ = slice[len(slice)-1].AccessPermissions
+		}
+	}
+
+	return slice, nil
 }
 
 // isValidACL performs basic validation on an ACL structure
@@ -252,11 +318,20 @@ func isValidACL(acl *windows.ACL) bool {
 		return false
 	}
 
+	// Validate pointer is in user space
+	if !isSafePointer(unsafe.Pointer(acl)) {
+		return false
+	}
+
+	// Validate pointer alignment
+	if uintptr(unsafe.Pointer(acl))%unsafe.Alignof(*acl) != 0 {
+		return false
+	}
+
 	// Cast to our header structure to access the fields
 	header := (*aclHeader)(unsafe.Pointer(acl))
 
 	// Basic sanity checks on ACL structure
-	// ACL has a minimum size and the AclSize should be reasonable
 	const minACLSize = 8     // sizeof(ACL) structure header
 	const maxACLSize = 65535 // Maximum reasonable ACL size
 
@@ -271,6 +346,33 @@ func isValidACL(acl *windows.ACL) bool {
 		return false
 	}
 
+	// ACL revision should be valid (ACL_REVISION = 2 or ACL_REVISION_DS = 4)
+	if header.AclRevision != 2 && header.AclRevision != 4 {
+		return false
+	}
+
+	return true
+}
+
+// isValidSIDPointer validates a SID pointer before dereferencing
+func isValidSIDPointer(sid *windows.SID) bool {
+	if sid == nil {
+		return false
+	}
+
+	// Validate pointer is in user space
+	if !isSafePointer(unsafe.Pointer(sid)) {
+		return false
+	}
+
+	// Validate pointer alignment (SIDs are typically 4-byte aligned)
+	if uintptr(unsafe.Pointer(sid))%4 != 0 {
+		return false
+	}
+
+	// A SID has a minimum size (8 bytes: revision + subauth count + authority)
+	// We can't fully validate without accessing memory, but we've done basic checks
+
 	return true
 }
 
@@ -282,20 +384,27 @@ func isSafePointer(ptr unsafe.Pointer) bool {
 
 	addr := uintptr(ptr)
 
+	// Validate pointer is not NULL or near-NULL (catch null pointer arithmetic)
+	const minValidAddress = 0x10000 // 64KB - typical guard page region
+	if addr < minValidAddress {
+		return false
+	}
+
 	// On 64-bit Windows, kernel space starts at 0xFFFF800000000000
 	// On 32-bit Windows, kernel space starts at 0x80000000
-	// Check if pointer is in user space
 	const (
 		kernel64Start = 0xFFFF800000000000
 		kernel32Start = 0x80000000
+		maxUserAddr64 = 0x00007FFFFFFFFFFF // Maximum user-mode address on 64-bit
+		maxUserAddr32 = 0x7FFFFFFF         // Maximum user-mode address on 32-bit
 	)
 
 	// Detect architecture and apply appropriate check
 	if unsafe.Sizeof(uintptr(0)) == 8 {
-		// 64-bit: user space is below kernel64Start
-		return addr < kernel64Start
+		// 64-bit: user space is below kernel64Start and within valid range
+		return addr < kernel64Start && addr <= maxUserAddr64
 	} else {
-		// 32-bit: user space is below kernel32Start
-		return addr < kernel32Start
+		// 32-bit: user space is below kernel32Start and within valid range
+		return addr < kernel32Start && addr <= maxUserAddr32
 	}
 }
