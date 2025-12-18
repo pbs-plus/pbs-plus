@@ -18,7 +18,6 @@ type fileStandardInfo struct {
 }
 
 type FileHandle struct {
-	sync.Mutex
 	handle        windows.Handle
 	ov            *overlappedHandle
 	fileSize      int64
@@ -27,9 +26,10 @@ type FileHandle struct {
 	mapping       windows.Handle
 	logicalOffset int64
 
+	mu        sync.Mutex
 	activeOps int32
 	closing   bool
-	closeCond *sync.Cond
+	closeDone chan struct{}
 }
 
 type DirReaderNT struct {
