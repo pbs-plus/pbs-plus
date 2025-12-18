@@ -146,11 +146,6 @@ func GetExplicitEntriesFromACL(acl *windows.ACL) (uintptr, uint32, error) {
 		return 0, 0, fmt.Errorf("input ACL cannot be nil")
 	}
 
-	// Validate ACL pointer is properly aligned
-	if uintptr(unsafe.Pointer(acl))%unsafe.Alignof(acl) != 0 {
-		return 0, 0, fmt.Errorf("ACL pointer is misaligned")
-	}
-
 	var entriesCount uint32
 	var explicitEntriesPtr uintptr
 
@@ -286,11 +281,6 @@ func safeEntriesToSlice(entriesPtr uintptr, count uint32) ([]windows.EXPLICIT_AC
 		return nil, fmt.Errorf("integer overflow in size calculation")
 	}
 
-	// Validate pointer alignment
-	if entriesPtr%unsafe.Alignof(windows.EXPLICIT_ACCESS{}) != 0 {
-		return nil, fmt.Errorf("entries pointer is misaligned")
-	}
-
 	// Use reflect.SliceHeader for safer slice construction
 	var slice []windows.EXPLICIT_ACCESS
 	header := (*reflect.SliceHeader)(unsafe.Pointer(&slice))
@@ -320,11 +310,6 @@ func isValidACL(acl *windows.ACL) bool {
 
 	// Validate pointer is in user space
 	if !isSafePointer(unsafe.Pointer(acl)) {
-		return false
-	}
-
-	// Validate pointer alignment
-	if uintptr(unsafe.Pointer(acl))%unsafe.Alignof(*acl) != 0 {
 		return false
 	}
 
@@ -365,11 +350,6 @@ func isValidSIDPointer(sid *windows.SID) bool {
 		return false
 	}
 
-	// Validate pointer alignment (SIDs are typically 4-byte aligned)
-	if uintptr(unsafe.Pointer(sid))%4 != 0 {
-		return false
-	}
-
 	// A SID has a minimum size (8 bytes: revision + subauth count + authority)
 	// We can't fully validate without accessing memory, but we've done basic checks
 
@@ -385,7 +365,8 @@ func isSafePointer(ptr unsafe.Pointer) bool {
 	addr := uintptr(ptr)
 
 	// Validate pointer is not NULL or near-NULL (catch null pointer arithmetic)
-	const minValidAddress = 0x10000 // 64KB - typical guard page region
+	// Use a smaller threshold that won't reject valid low addresses
+	const minValidAddress = 0x1000 // 4KB - first page
 	if addr < minValidAddress {
 		return false
 	}
@@ -395,16 +376,16 @@ func isSafePointer(ptr unsafe.Pointer) bool {
 	const (
 		kernel64Start = 0xFFFF800000000000
 		kernel32Start = 0x80000000
-		maxUserAddr64 = 0x00007FFFFFFFFFFF // Maximum user-mode address on 64-bit
-		maxUserAddr32 = 0x7FFFFFFF         // Maximum user-mode address on 32-bit
 	)
 
 	// Detect architecture and apply appropriate check
 	if unsafe.Sizeof(uintptr(0)) == 8 {
-		// 64-bit: user space is below kernel64Start and within valid range
-		return addr < kernel64Start && addr <= maxUserAddr64
+		// 64-bit: user space is below kernel64Start
+		// Note: Maximum user-mode address is actually around 0x00007FFFFFFFFFFF
+		// but we check against kernel start which is simpler and safe
+		return addr < kernel64Start
 	} else {
-		// 32-bit: user space is below kernel32Start and within valid range
-		return addr < kernel32Start && addr <= maxUserAddr32
+		// 32-bit: user space is below kernel32Start
+		return addr < kernel32Start
 	}
 }
