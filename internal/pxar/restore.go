@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -23,6 +24,9 @@ func RestoreToLocal(ctx context.Context, rootDir string, client *RemoteClient) e
 
 func restoreFile(ctx context.Context, client *RemoteClient, path string, e EntryInfo) error {
 	mode := os.FileMode(e.Mode & 0777)
+	if runtime.GOOS == "windows" {
+		mode = 0666
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
 		return fmt.Errorf("create file %q: %w", path, err)
@@ -75,14 +79,18 @@ func restoreSymlink(ctx context.Context, client *RemoteClient, path string, e En
 }
 
 func applyMeta(path string, e EntryInfo) error {
-	_ = os.Chmod(path, os.FileMode(e.Mode&0777))
-	_ = os.Chown(path, int(e.UID), int(e.GID))
+	if runtime.GOOS != "windows" {
+		_ = os.Chmod(path, os.FileMode(e.Mode&0777))
+		_ = os.Chown(path, int(e.UID), int(e.GID))
+	}
 	mt := time.Unix(e.MtimeSecs, int64(e.MtimeNsecs))
 	_ = os.Chtimes(path, mt, mt)
 	return nil
 }
 
 func applyMetaSymlink(path string, e EntryInfo) error {
-	_ = os.Lchown(path, int(e.UID), int(e.GID))
+	if runtime.GOOS != "windows" {
+		_ = os.Lchown(path, int(e.UID), int(e.GID))
+	}
 	return nil
 }
