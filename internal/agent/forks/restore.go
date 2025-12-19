@@ -98,7 +98,25 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 		syslog.L.Error(err).WithMessage("CmdRestore: ConnectToServer failed").Write()
 		os.Exit(1)
 	}
-	rpcSess.SetRouter(arpc.NewRouter())
+
+	router := arpc.NewRouter()
+	router.Handle("server_ready", func(req *arpc.Request) (arpc.Response, error) {
+		go func() {
+			err = Restore(rpcSess, *restoreId, *srcPath, *destPath)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err.Error())
+				syslog.L.Error(err).WithMessage("CmdRestore: Restore failed").WithField("restoreId", *restoreId).Write()
+				os.Exit(1)
+			}
+		}()
+
+		return arpc.Response{
+			Status:  200,
+			Message: "success",
+		}, nil
+	})
+
+	rpcSess.SetRouter(router)
 	syslog.L.Info().WithMessage("CmdRestore: ARPC session established").WithField("restoreId", *restoreId).Write()
 
 	var wg sync.WaitGroup
@@ -112,13 +130,6 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 		}
 		syslog.L.Info().WithMessage("CmdRestore: RPC Serve exited").WithField("restoreId", *restoreId).Write()
 	})
-
-	err = Restore(rpcSess, *restoreId, *srcPath, *destPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		syslog.L.Error(err).WithMessage("CmdRestore: Restore failed").WithField("restoreId", *restoreId).Write()
-		os.Exit(1)
-	}
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
@@ -143,7 +154,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 	os.Exit(0)
 }
 
-func ExecRestore(id, srcPath, destPath string) (string, int, error) {
+func ExecRestore(id, srcPath, destPath string) (int, error) {
 	syslog.L.Info().WithMessage("ExecRestore: begin").
 		WithField("restoreId", id).
 		Write()
@@ -151,7 +162,7 @@ func ExecRestore(id, srcPath, destPath string) (string, int, error) {
 	execCmd, err := os.Executable()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("ExecRestore: os.Executable failed").Write()
-		return "", -1, err
+		return -1, err
 	}
 
 	args := []string{
@@ -167,18 +178,18 @@ func ExecRestore(id, srcPath, destPath string) (string, int, error) {
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("ExecRestore: StdoutPipe failed").Write()
-		return "", -1, err
+		return -1, err
 	}
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("ExecRestore: StderrPipe failed").Write()
-		return "", -1, err
+		return -1, err
 	}
 
 	if err := cmd.Start(); err != nil {
 		syslog.L.Error(err).WithMessage("ExecRestore: cmd.Start failed").Write()
-		return "", -1, err
+		return -1, err
 	}
 	syslog.L.Info().WithMessage("ExecRestore: child started").
 		WithField("pid", cmd.Process.Pid).
@@ -187,8 +198,6 @@ func ExecRestore(id, srcPath, destPath string) (string, int, error) {
 
 	errScanner := bufio.NewScanner(stderrPipe)
 	scanner := bufio.NewScanner(stdoutPipe)
-
-	restoreMode := make(chan string, 1)
 
 	go func() {
 		for scanner.Scan() {
@@ -215,12 +224,10 @@ func ExecRestore(id, srcPath, destPath string) (string, int, error) {
 		}
 	}()
 
-	mode := strings.TrimSpace(<-restoreMode)
 	syslog.L.Info().WithMessage("ExecRestore: returning to parent").
-		WithField("mode", mode).
 		WithField("pid", cmd.Process.Pid).
 		Write()
-	return mode, cmd.Process.Pid, nil
+	return cmd.Process.Pid, nil
 }
 
 func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string) error {

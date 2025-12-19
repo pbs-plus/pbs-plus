@@ -64,8 +64,6 @@ func (s *MountRPCService) Restore(args *RestoreArgs, reply *RestoreReply) error 
 		reply.Message = err.Error()
 		return errors.New(reply.Message)
 	}
-	// TODO: Agent SHOULD wait for router to be setup before starting restore
-	// TODO: Thus, 2-way handshake between this server and remote agent
 
 	// The child session key is "targetHostname|restoreId|restore".
 	childKey := args.TargetHostname + "|" + args.RestoreId + "|restore"
@@ -91,12 +89,19 @@ func (s *MountRPCService) Restore(args *RestoreArgs, reply *RestoreReply) error 
 	srv := pxar.NewRemoteServer(reader)
 	agentRPC.SetRouter(*srv.Router())
 
-	// Set the reply values.
+	_, err = agentRPC.CallMessage(ctx, "server_ready", &restoreReq)
+	if err != nil {
+		syslog.L.Error(err).Write()
+		reply.Status = 500
+		reply.Message = err.Error()
+		return errors.New(reply.Message)
+	}
+
 	reply.Status = 200
 	reply.Message = "success"
 
 	syslog.L.Info().
-		WithMessage("Restore successful").
+		WithMessage("Restore request sent").
 		WithFields(map[string]any{
 			"restoreId": args.RestoreId,
 		}).Write()
