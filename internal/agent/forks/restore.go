@@ -9,8 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,10 +16,9 @@ import (
 
 	"github.com/containers/winquit/pkg/winquit"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
-	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
@@ -38,42 +35,35 @@ func init() {
 }
 
 type restoreSession struct {
-	jobId    string
-	ctx      context.Context
-	cancel   context.CancelFunc
-	store    *agent.RestoreStore
-	snapshot snapshots.Snapshot
-	fs       *agentfs.AgentFSServer
-	once     sync.Once
+	restoreId    string
+	ctx          context.Context
+	cancel       context.CancelFunc
+	store        *agent.RestoreStore
+	once         sync.Once
+	remoteClient *pxar.RemoteClient
 }
-
-const RESTORE_MODE_PREFIX = "pbs-plus--child-restore-mode:"
 
 func (s *restoreSession) Close() {
-	syslog.L.Info().WithMessage("restoreSession.Close: begin").WithField("jobId", s.jobId).Write()
+	syslog.L.Info().WithMessage("restoreSession.Close: begin").WithField("restoreId", s.restoreId).Write()
 	s.once.Do(func() {
-		if s.fs != nil {
-			syslog.L.Info().WithMessage("restoreSession.Close: closing AgentFSServer").WithField("jobId", s.jobId).Write()
-			s.fs.Close()
-		}
-		if s.snapshot != (snapshots.Snapshot{}) && !s.snapshot.Direct && s.snapshot.Handler != nil {
-			syslog.L.Info().WithMessage("restoreSession.Close: deleting snapshot").WithField("jobId", s.jobId).WithField("path", s.snapshot.Path).Write()
-			s.snapshot.Handler.DeleteSnapshot(s.snapshot)
+		if s.remoteClient != nil {
+			syslog.L.Info().WithMessage("restoreSession.Close: closing remoteClient").WithField("restoreId", s.restoreId).Write()
+			s.remoteClient.Close()
 		}
 		if s.store != nil {
-			if err := s.store.EndRestore(s.jobId); err != nil {
-				syslog.L.Warn().WithMessage("restoreSession.Close: EndRestore returned error").WithField("jobId", s.jobId).WithField("error", err.Error()).Write()
+			if err := s.store.EndRestore(s.restoreId); err != nil {
+				syslog.L.Warn().WithMessage("restoreSession.Close: EndRestore returned error").WithField("restoreId", s.restoreId).WithField("error", err.Error()).Write()
 			}
 		}
-		activeRestoreSessions.Del(s.jobId)
+		activeRestoreSessions.Del(s.restoreId)
 		s.cancel()
 	})
-	syslog.L.Info().WithMessage("restoreSession.Close: done").WithField("jobId", s.jobId).Write()
+	syslog.L.Info().WithMessage("restoreSession.Close: done").WithField("restoreId", s.restoreId).Write()
 }
 
-func cmdRestore(sourceMode, readMode, drive, jobId *string) {
-	if *sourceMode == "" || *drive == "" || *jobId == "" || *readMode == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and jobId are required")
+func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
+	if *restoreId == "" || *srcPath == "" || *destPath == "" {
+		fmt.Fprintln(os.Stderr, "Error: missing required flags: restoreId, srcPath, and destPath are required")
 		syslog.L.Error(errors.New("missing required flags")).WithMessage("CmdRestore: validation failed").Write()
 		os.Exit(1)
 	}
@@ -99,9 +89,9 @@ func cmdRestore(sourceMode, readMode, drive, jobId *string) {
 	}
 
 	headers := http.Header{}
-	headers.Add("X-PBS-Plus-JobId", *jobId)
+	headers.Add("X-PBS-Plus-RestoreId", *restoreId)
 
-	syslog.L.Info().WithMessage("CmdRestore: connecting to server").WithField("host", uri.Hostname()).WithField("jobId", *jobId).Write()
+	syslog.L.Info().WithMessage("CmdRestore: connecting to server").WithField("host", uri.Hostname()).WithField("restoreId", *restoreId).Write()
 	rpcSess, err := arpc.ConnectToServer(context.Background(), fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort), headers, tlsConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to connect to server: %v", err)
@@ -109,29 +99,26 @@ func cmdRestore(sourceMode, readMode, drive, jobId *string) {
 		os.Exit(1)
 	}
 	rpcSess.SetRouter(arpc.NewRouter())
-	syslog.L.Info().WithMessage("CmdRestore: ARPC session established").WithField("jobId", *jobId).Write()
+	syslog.L.Info().WithMessage("CmdRestore: ARPC session established").WithField("restoreId", *restoreId).Write()
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		syslog.L.Info().WithMessage("CmdRestore: RPC Serve starting").WithField("jobId", *jobId).Write()
+		syslog.L.Info().WithMessage("CmdRestore: RPC Serve starting").WithField("restoreId", *restoreId).Write()
 		if err := rpcSess.Serve(); err != nil {
-			syslog.L.Error(err).WithMessage("CmdRestore: RPC Serve returned error").WithField("jobId", *jobId).Write()
-			if session, ok := activeRestoreSessions.Get(*jobId); ok {
+			syslog.L.Error(err).WithMessage("CmdRestore: RPC Serve returned error").WithField("restoreId", *restoreId).Write()
+			if session, ok := activeRestoreSessions.Get(*restoreId); ok {
 				session.Close()
 			}
 		}
-		syslog.L.Info().WithMessage("CmdRestore: RPC Serve exited").WithField("jobId", *jobId).Write()
+		syslog.L.Info().WithMessage("CmdRestore: RPC Serve exited").WithField("restoreId", *restoreId).Write()
 	})
 
-	restoreMode, err := Restore(rpcSess, *sourceMode, *readMode, *drive, *jobId)
+	err = Restore(rpcSess, *restoreId, *srcPath, *destPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
-		syslog.L.Error(err).WithMessage("CmdRestore: Restore failed").WithField("jobId", *jobId).Write()
+		syslog.L.Error(err).WithMessage("CmdRestore: Restore failed").WithField("restoreId", *restoreId).Write()
 		os.Exit(1)
 	}
-
-	fmt.Println(RESTORE_MODE_PREFIX + restoreMode)
-	syslog.L.Info().WithMessage("CmdRestore: restore mode announced").WithField("mode", restoreMode).WithField("jobId", *jobId).Write()
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
@@ -139,11 +126,11 @@ func cmdRestore(sourceMode, readMode, drive, jobId *string) {
 
 	go func() {
 		sig := <-done
-		syslog.L.Info().WithMessage(fmt.Sprintf("CmdRestore: received signal %v, shutting down gracefully", sig)).WithField("jobId", *jobId).Write()
+		syslog.L.Info().WithMessage(fmt.Sprintf("CmdRestore: received signal %v, shutting down gracefully", sig)).WithField("restoreId", *restoreId).Write()
 
 		rpcSess.Close()
 
-		if session, ok := activeRestoreSessions.Get(*jobId); ok {
+		if session, ok := activeRestoreSessions.Get(*restoreId); ok {
 			session.Close()
 		}
 
@@ -152,16 +139,13 @@ func cmdRestore(sourceMode, readMode, drive, jobId *string) {
 	}()
 
 	wg.Wait()
-	syslog.L.Info().WithMessage("CmdRestore: background RPC goroutine finished").WithField("jobId", *jobId).Write()
+	syslog.L.Info().WithMessage("CmdRestore: background RPC goroutine finished").WithField("restoreId", *restoreId).Write()
 	os.Exit(0)
 }
 
-func ExecRestore(sourceMode string, readMode string, drive string, jobId string) (string, int, error) {
+func ExecRestore(id, srcPath, destPath string) (string, int, error) {
 	syslog.L.Info().WithMessage("ExecRestore: begin").
-		WithField("sourceMode", sourceMode).
-		WithField("readMode", readMode).
-		WithField("drive", drive).
-		WithField("jobId", jobId).
+		WithField("restoreId", id).
 		Write()
 
 	execCmd, err := os.Executable()
@@ -170,16 +154,11 @@ func ExecRestore(sourceMode string, readMode string, drive string, jobId string)
 		return "", -1, err
 	}
 
-	if sourceMode == "" {
-		sourceMode = "snapshot"
-	}
-
 	args := []string{
 		"--cmdMode=restore",
-		"--sourceMode=" + sourceMode,
-		"--readMode=" + readMode,
-		"--drive=" + drive,
-		"--jobId=" + jobId,
+		"--restoreId=" + id,
+		"--srcPath=" + srcPath,
+		"--destPath=" + destPath,
 	}
 
 	cmd := exec.Command(execCmd, args...)
@@ -214,16 +193,10 @@ func ExecRestore(sourceMode string, readMode string, drive string, jobId string)
 	go func() {
 		for scanner.Scan() {
 			line := scanner.Text()
-			if mode, found := strings.CutPrefix(line, RESTORE_MODE_PREFIX); found {
-				syslog.L.Info().WithMessage("ExecRestore: detected restore mode line").WithField("mode", mode).Write()
-				restoreMode <- mode
-			} else {
-				syslog.L.Info().
-					WithField("drive", drive).
-					WithField("jobId", jobId).
-					WithField("forked", true).
-					WithMessage(line).Write()
-			}
+			syslog.L.Info().
+				WithField("restoreId", id).
+				WithField("forked", true).
+				WithMessage(line).Write()
 		}
 		if err := scanner.Err(); err != nil {
 			syslog.L.Warn().WithMessage("ExecRestore: stdout scanner error").WithField("error", err.Error()).Write()
@@ -233,8 +206,7 @@ func ExecRestore(sourceMode string, readMode string, drive string, jobId string)
 	go func() {
 		for errScanner.Scan() {
 			syslog.L.Error(errors.New(errScanner.Text())).
-				WithField("drive", drive).
-				WithField("jobId", jobId).
+				WithField("restoreId", id).
 				WithField("forked", true).
 				Write()
 		}
@@ -251,123 +223,62 @@ func ExecRestore(sourceMode string, readMode string, drive string, jobId string)
 	return mode, cmd.Process.Pid, nil
 }
 
-func Restore(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, jobId string) (string, error) {
+func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string) error {
 	syslog.L.Info().WithMessage("Restore: begin").
-		WithField("sourceMode", sourceMode).
-		WithField("readMode", readMode).
-		WithField("drive", drive).
-		WithField("jobId", jobId).
+		WithField("restoreId", restoreId).
 		Write()
 
 	store, err := agent.NewRestoreStore()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Restore: NewRestoreStore failed").WithField("jobId", jobId).Write()
-		return "", err
+		syslog.L.Error(err).WithMessage("Restore: NewRestoreStore failed").WithField("restoreId", restoreId).Write()
+		return err
 	}
-	if existingSession, ok := activeRestoreSessions.Get(jobId); ok {
-		syslog.L.Info().WithMessage("Restore: closing existing session").WithField("jobId", jobId).Write()
+	if existingSession, ok := activeRestoreSessions.Get(restoreId); ok {
+		syslog.L.Info().WithMessage("Restore: closing existing session").WithField("restoreId", restoreId).Write()
 		existingSession.Close()
-		_ = store.EndRestore(jobId)
+		_ = store.EndRestore(restoreId)
 	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	session := &restoreSession{
-		jobId:  jobId,
-		ctx:    sessionCtx,
-		cancel: cancel,
-		store:  store,
+		restoreId: restoreId,
+		ctx:       sessionCtx,
+		cancel:    cancel,
+		store:     store,
 	}
-	activeRestoreSessions.Set(jobId, session)
+	activeRestoreSessions.Set(restoreId, session)
 
-	if hasActive, err := store.HasActiveRestoreForJob(jobId); hasActive || err != nil {
+	if hasActive, err := store.HasActiveRestoreForJob(restoreId); hasActive || err != nil {
 		if err != nil {
-			syslog.L.Error(err).WithMessage("Restore: HasActiveRestoreForJob failed").WithField("jobId", jobId).Write()
-			return "", err
+			syslog.L.Error(err).WithMessage("Restore: HasActiveRestoreForRestore failed").WithField("restoreId", restoreId).Write()
+			return err
 		}
-		syslog.L.Info().WithMessage("Restore: ending previous active restore").WithField("jobId", jobId).Write()
-		_ = store.EndRestore(jobId)
+		syslog.L.Info().WithMessage("Restore: ending previous active restore").WithField("restoreId", restoreId).Write()
+		_ = store.EndRestore(restoreId)
 	}
 
-	if err := store.StartRestore(jobId); err != nil {
-		syslog.L.Error(err).WithMessage("Restore: StartRestore failed").WithField("jobId", jobId).Write()
+	if err := store.StartRestore(restoreId); err != nil {
+		syslog.L.Error(err).WithMessage("Restore: StartRestore failed").WithField("restoreId", restoreId).Write()
 		session.Close()
-		return "", err
+		return err
 	}
 
-	var snapshot snapshots.Snapshot
-	restoreMode := sourceMode
-
-	if runtime.GOOS == "windows" {
-		switch sourceMode {
-		case "direct":
-			path := drive
-			volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
-			path = volName + "\\"
-			snapshot = snapshots.Snapshot{
-				Path:        path,
-				TimeStarted: time.Now(),
-				SourcePath:  drive,
-				Direct:      true,
-			}
-			syslog.L.Info().WithMessage("Restore: configured direct mode snapshot").
-				WithField("path", path).
-				WithField("drive", drive).
-				Write()
-		default:
-			var err error
-			snapshot, err = snapshots.Manager.CreateSnapshot(jobId, drive)
-			if err != nil && snapshot == (snapshots.Snapshot{}) {
-				syslog.L.Error(err).WithMessage("Restore: VSS snapshot failed; switching to direct mode").WithField("drive", drive).Write()
-				restoreMode = "direct"
-
-				path := drive
-				volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
-				path = volName + "\\"
-
-				snapshot = snapshots.Snapshot{
-					Path:        path,
-					TimeStarted: time.Now(),
-					SourcePath:  drive,
-					Direct:      true,
-				}
-			} else {
-				syslog.L.Info().WithMessage("Restore: snapshot created successfully").
-					WithField("path", snapshot.Path).
-					WithField("drive", drive).
-					Write()
-			}
-		}
-	} else {
-		snapshot = snapshots.Snapshot{
-			Path:        "/",
-			TimeStarted: time.Now(),
-			SourcePath:  "/",
-			Direct:      true,
-		}
-		syslog.L.Info().WithMessage("Restore: non-Windows platform, using root snapshot").Write()
-	}
-
-	session.snapshot = snapshot
-
-	fs := agentfs.NewAgentFSServer(jobId, readMode, snapshot)
-	if fs == nil {
-		syslog.L.Error(errors.New("fs is nil")).WithMessage("Restore: NewAgentFSServer returned nil").Write()
+	client := pxar.NewRemoteClient(rpcSess)
+	if client == nil {
+		syslog.L.Error(errors.New("client is nil")).WithMessage("Restore: NewRemoteClient returned nil").Write()
 		session.Close()
-		return "", fmt.Errorf("fs is nil")
+		return fmt.Errorf("client is nil")
 	}
-	router := rpcSess.GetRouter()
-	if router == nil {
-		syslog.L.Error(errors.New("router is nil")).WithMessage("Restore: GetRouter returned nil").Write()
-		return "", fmt.Errorf("router is nil")
-	}
+	session.remoteClient = client
 
-	fs.RegisterHandlers(router)
-	session.fs = fs
-	syslog.L.Info().WithMessage("Restore: AgentFSServer registered and session ready").
-		WithField("jobId", jobId).
-		WithField("mode", restoreMode).
-		WithField("snapshot_path", snapshot.Path).
+	syslog.L.Info().WithMessage("Restore: client registered and session ready").
+		WithField("restoreId", restoreId).
 		Write()
 
-	return restoreMode, nil
+	errs := pxar.RemoteRestore(session.ctx, client, []string{source}, dest)
+	if len(errs) > 0 {
+		return fmt.Errorf("%v", errs)
+	}
+
+	return nil
 }

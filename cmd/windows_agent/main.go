@@ -358,8 +358,12 @@ func (p *pbsService) connectARPC() error {
 	router.Handle("backup", func(req *arpc.Request) (arpc.Response, error) {
 		return controllers.BackupStartHandler(req, session)
 	})
+	router.Handle("restore", func(req *arpc.Request) (arpc.Response, error) {
+		return controllers.RestoreStartHandler(req, session)
+	})
 	router.Handle("target_status", controllers.StatusHandler)
 	router.Handle("cleanup", controllers.BackupCloseHandler)
+	router.Handle("cleanup_restore", controllers.RestoreCloseHandler)
 
 	session.SetRouter(router)
 	syslog.L.Info().WithMessage("ARPC router configured successfully").Write()

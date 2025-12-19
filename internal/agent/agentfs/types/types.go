@@ -47,6 +47,13 @@ type (
 		Extras     string `cbor:"extras,omitempty"`
 	}
 
+	RestoreReq struct {
+		RestoreId string `cbor:"restore_id"`
+		SrcPath   string `cbor:"src_path"`
+		DestPath  string `cbor:"dest_path"`
+		Extras    string `cbor:"extras,omitempty"`
+	}
+
 	LseekReq struct {
 		HandleID FileHandleId `cbor:"handle_id"`
 		Offset   int64        `cbor:"offset"`

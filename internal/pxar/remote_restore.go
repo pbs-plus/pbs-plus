@@ -4,25 +4,42 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
 )
 
-func RestoreToLocal(ctx context.Context, rootDir string, client *RemoteClient) error {
-	if err := os.MkdirAll(rootDir, 0o755); err != nil {
-		return fmt.Errorf("mkdir root: %w", err)
+func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, destDir string) []error {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return []error{fmt.Errorf("mkdir root: %w", err)}
 	}
-	root, err := client.GetRoot(ctx)
-	if err != nil {
-		return err
+
+	errors := make([]error, 0, len(sources))
+	for _, source := range sources {
+		sourceAttr, err := client.LookupByPath(ctx, source)
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		}
+		if sourceAttr.IsDir() {
+			err = remoteRestoreDir(ctx, client, destDir, sourceAttr)
+			if err != nil {
+				errors = append(errors, err)
+				continue
+			}
+		} else {
+			path := filepath.Join(destDir, sourceAttr.Name())
+			err = remoteRestoreFile(ctx, client, path, sourceAttr)
+			if err != nil {
+				errors = append(errors, err)
+				continue
+			}
+		}
 	}
-	if !root.IsDir() {
-		return fmt.Errorf("archive root is not a directory")
-	}
-	return restoreDir(ctx, client, rootDir, root)
+	return nil
 }
 
-func restoreFile(ctx context.Context, client *RemoteClient, path string, e EntryInfo) error {
+func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e EntryInfo) error {
 	mode := os.FileMode(e.Mode & 0777)
 	if runtime.GOOS == "windows" {
 		mode = 0666
@@ -64,10 +81,10 @@ func restoreFile(ctx context.Context, client *RemoteClient, path string, e Entry
 		}
 	}
 
-	return applyMeta(path, e)
+	return remoteApplyMeta(path, e)
 }
 
-func restoreSymlink(ctx context.Context, client *RemoteClient, path string, e EntryInfo) error {
+func remoteRestoreSymlink(ctx context.Context, client *RemoteClient, path string, e EntryInfo) error {
 	target, err := client.ReadLink(ctx, e.EntryRangeStart, e.EntryRangeEnd)
 	if err != nil {
 		return fmt.Errorf("readlink data %q: %w", path, err)
@@ -75,10 +92,10 @@ func restoreSymlink(ctx context.Context, client *RemoteClient, path string, e En
 	if err := os.Symlink(string(target), path); err != nil {
 		return fmt.Errorf("symlink %q: %w", path, err)
 	}
-	return applyMetaSymlink(path, e)
+	return remoteApplyMetaSymlink(path, e)
 }
 
-func applyMeta(path string, e EntryInfo) error {
+func remoteApplyMeta(path string, e EntryInfo) error {
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(path, os.FileMode(e.Mode&0777))
 		_ = os.Chown(path, int(e.UID), int(e.GID))
@@ -88,7 +105,7 @@ func applyMeta(path string, e EntryInfo) error {
 	return nil
 }
 
-func applyMetaSymlink(path string, e EntryInfo) error {
+func remoteApplyMetaSymlink(path string, e EntryInfo) error {
 	if runtime.GOOS != "windows" {
 		_ = os.Lchown(path, int(e.UID), int(e.GID))
 	}
