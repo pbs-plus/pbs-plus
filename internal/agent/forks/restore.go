@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -99,15 +100,33 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 		os.Exit(1)
 	}
 
+	var signalReceived atomic.Bool
+	signalReceived.Store(false)
+
 	router := arpc.NewRouter()
 	router.Handle("server_ready", func(req *arpc.Request) (arpc.Response, error) {
 		go func() {
+			if signalReceived.Load() {
+				return
+			}
+
+			signalReceived.Store(true)
 			err = Restore(rpcSess, *restoreId, *srcPath, *destPath)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err.Error())
 				syslog.L.Error(err).WithMessage("CmdRestore: Restore failed").WithField("restoreId", *restoreId).Write()
 				os.Exit(1)
 			}
+
+			syslog.L.Info().WithMessage("CmdRestore: restore goroutine finished").WithField("restoreId", *restoreId).Write()
+			rpcSess.Close()
+
+			if session, ok := activeRestoreSessions.Get(*restoreId); ok {
+				session.Close()
+			}
+
+			time.Sleep(100 * time.Millisecond)
+			os.Exit(0)
 		}()
 
 		return arpc.Response{
