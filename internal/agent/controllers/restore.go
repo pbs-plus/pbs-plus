@@ -24,7 +24,7 @@ func RestoreStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Resp
 	syslog.L.Info().WithMessage("received restore request for job").WithField("id", reqData.RestoreId).Write()
 
 	syslog.L.Info().WithMessage("forking process for restore job").WithField("id", reqData.RestoreId).Write()
-	restoreMode, pid, err := forks.ExecRestore(reqData.RestoreId, reqData.SrcPath, reqData.DestPath)
+	pid, err := forks.ExecRestore(reqData.RestoreId, reqData.SrcPath, reqData.DestPath)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("forking process for restore job").WithField("id", reqData.RestoreId).Write()
 		if pid != -1 {
@@ -53,7 +53,7 @@ func RestoreStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Resp
 
 	activePids.Set(reqData.RestoreId, pid)
 
-	return arpc.Response{Status: 200, Message: restoreMode}, nil
+	return arpc.Response{Status: 200, Message: "success"}, nil
 }
 
 func RestoreCloseHandler(req *arpc.Request) (arpc.Response, error) {
