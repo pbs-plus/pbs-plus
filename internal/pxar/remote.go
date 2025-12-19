@@ -197,7 +197,7 @@ func (s *RemoteServer) handleListXAttrs(req *arpc.Request) (arpc.Response, error
 
 func makeErrorResponse(err error) (arpc.Response, error) {
 	if errno, ok := err.(syscall.Errno); ok {
-		errData, _ := json.Marshal(map[string]interface{}{
+		errData, _ := json.Marshal(map[string]any{
 			"errno": int64(errno),
 		})
 		return arpc.Response{
@@ -226,7 +226,7 @@ func (c *RemoteClient) GetRoot(ctx context.Context) (EntryInfo, error) {
 }
 
 func (c *RemoteClient) LookupByPath(ctx context.Context, path string) (EntryInfo, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"path": path,
 	}
 	var info EntryInfo
@@ -237,7 +237,7 @@ func (c *RemoteClient) LookupByPath(ctx context.Context, path string) (EntryInfo
 }
 
 func (c *RemoteClient) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"entry_end": entryEnd,
 	}
 	var entries []EntryInfo
@@ -248,7 +248,7 @@ func (c *RemoteClient) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInf
 }
 
 func (c *RemoteClient) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (EntryInfo, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
 	}
@@ -260,7 +260,7 @@ func (c *RemoteClient) GetAttr(ctx context.Context, entryStart, entryEnd uint64)
 }
 
 func (c *RemoteClient) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"content_start": contentStart,
 		"content_end":   contentEnd,
 		"offset":        offset,
@@ -274,7 +274,7 @@ func (c *RemoteClient) Read(ctx context.Context, contentStart, contentEnd, offse
 }
 
 func (c *RemoteClient) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
 	}
@@ -286,7 +286,7 @@ func (c *RemoteClient) ReadLink(ctx context.Context, entryStart, entryEnd uint64
 }
 
 func (c *RemoteClient) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (map[string][]byte, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
 	}
