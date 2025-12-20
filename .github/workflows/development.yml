@@ -108,7 +108,6 @@ jobs:
           docker exec pbs-plus-test proxmox-backup-manager datastore create test /mnt/test
           curl -k -X POST "https://localhost:8017/api2/extjs/config/disk-backup-job" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            -H "Accept: application/json" \
             -d "id=test-backup-job" \
             -d "target=test-host - Root" \
             -d "subpath=/test-backup" \
@@ -126,11 +125,13 @@ jobs:
             -d "rawexclusions=" \
             -d "pre_script=" \
             -d "post_script="
+
           curl -k -X POST "https://localhost:8017/api2/extjs/config/d2d-token" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            -H "Accept: application/json" \
             -d "comment=test-backup"
-          echo "PLUS_TOKEN=$(curl -k -s "https://localhost:8017/api2/json/d2d/token" -H "Accept: application/json" | jq -r '.data[0].token')" >> "$GITHUB_ENV"
+
+          PLUS_TOKEN=$(curl -k -s "https://localhost:8017/api2/json/d2d/token" -H "Accept: application/json" | jq -r '.data[0].token')
+          echo "PLUS_TOKEN=${PLUS_TOKEN}" >> "$GITHUB_ENV"
 
           if [ -z "$PLUS_TOKEN" ] || [ "$PLUS_TOKEN" = "null" ]; then
             echo "PLUS_TOKEN is empty or null; failing the job."
