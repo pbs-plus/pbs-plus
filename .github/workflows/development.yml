@@ -39,7 +39,7 @@ jobs:
         run: |
           docker run -d --name pbs-plus-test \
             -p 8007:8007 \
-            -p 8008:8008 \
+            -p 8017:8017 \
             --tmpfs /run/proxmox-backup:size=64M \
             pbs-plus:test
           
@@ -58,8 +58,8 @@ jobs:
           echo "==================================="
           echo ""
           
-          echo "Testing port 8008..."
-          curl -k -v --max-time 10 https://localhost:8008 2>&1 | tee port_8008.log || true
+          echo "Testing port 8017..."
+          curl -k -v --max-time 10 https://localhost:8017 2>&1 | tee port_8017.log || true
           
           echo ""
           echo "==================================="
@@ -74,11 +74,11 @@ jobs:
             exit 1
           fi
           
-          # Check if port 8008 responded (look for HTTP response or SSL handshake)
-          if grep -q -E "(HTTP|SSL|Connected to)" port_8008.log; then
-            echo "✓ Port 8008 responded via HTTPS"
+          # Check if port 8017 responded (look for HTTP response or SSL handshake)
+          if grep -q -E "(HTTP|SSL|Connected to)" port_8017.log; then
+            echo "✓ Port 8017 responded via HTTPS"
           else
-            echo "✗ Port 8008 did not respond"
+            echo "✗ Port 8017 did not respond"
             exit 1
           fi
 
@@ -101,9 +101,9 @@ jobs:
           
           echo ""
           echo "==================================="
-          echo "Port 8008 Response:"
+          echo "Port 8017 Response:"
           echo "==================================="
-          cat port_8008.log || echo "No log file found"
+          cat port_8017.log || echo "No log file found"
 
       - name: Cleanup
         if: always()
