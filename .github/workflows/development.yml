@@ -40,6 +40,7 @@ jobs:
           docker run -d --name pbs-plus-test \
             -p 8007:8007 \
             -p 8008:8008 \
+            --tmpfs /run/proxmox-backup:size=64M \
             pbs-plus:test
           
           # Wait for container to start
@@ -48,21 +49,61 @@ jobs:
           # Check if container is running
           docker ps | grep pbs-plus-test
 
-      - name: Test TCP sockets
+      - name: Test HTTPS endpoints
         run: |
-          # Test port 8007
-          timeout 10 bash -c 'until nc -z localhost 8007; do sleep 1; done' && \
-            echo "✓ Port 8007 is accessible" || \
-            (echo "✗ Port 8007 is not accessible" && exit 1)
+          echo "Testing port 8007..."
+          curl -k -v --max-time 10 https://localhost:8007 2>&1 | tee port_8007.log || true
           
-          # Test port 8008
-          timeout 10 bash -c 'until nc -z localhost 8008; do sleep 1; done' && \
-            echo "✓ Port 8008 is accessible" || \
-            (echo "✗ Port 8008 is not accessible" && exit 1)
+          echo ""
+          echo "==================================="
+          echo ""
+          
+          echo "Testing port 8008..."
+          curl -k -v --max-time 10 https://localhost:8008 2>&1 | tee port_8008.log || true
+          
+          echo ""
+          echo "==================================="
+          echo "Checking if ports responded..."
+          echo "==================================="
+          
+          # Check if port 8007 responded (look for HTTP response or SSL handshake)
+          if grep -q -E "(HTTP|SSL|Connected to)" port_8007.log; then
+            echo "✓ Port 8007 responded via HTTPS"
+          else
+            echo "✗ Port 8007 did not respond"
+            exit 1
+          fi
+          
+          # Check if port 8008 responded (look for HTTP response or SSL handshake)
+          if grep -q -E "(HTTP|SSL|Connected to)" port_8008.log; then
+            echo "✓ Port 8008 responded via HTTPS"
+          else
+            echo "✗ Port 8008 did not respond"
+            exit 1
+          fi
 
       - name: Show container logs
         if: always()
-        run: docker logs pbs-plus-test
+        run: |
+          echo "==================================="
+          echo "Container Logs:"
+          echo "==================================="
+          docker logs pbs-plus-test
+
+      - name: Show response contents
+        if: always()
+        run: |
+          echo ""
+          echo "==================================="
+          echo "Port 8007 Response:"
+          echo "==================================="
+          cat port_8007.log || echo "No log file found"
+          
+          echo ""
+          echo "==================================="
+          echo "Port 8008 Response:"
+          echo "==================================="
+          cat port_8008.log || echo "No log file found"
 
       - name: Cleanup
         if: always()
