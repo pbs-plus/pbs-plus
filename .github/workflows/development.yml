@@ -145,6 +145,7 @@ jobs:
             -v ./test:/mnt/test \
             -e PBS_PLUS_INIT_SERVER_URL="https://pbs-plus-test:8008" \
             -e PBS_PLUS_INIT_BOOTSTRAP_TOKEN="${PLUS_TOKEN}" \
+            -e PBS_PLUS_HOSTNAME="test-host" \
             pbs-plus-agent:test
 
           sleep 10
