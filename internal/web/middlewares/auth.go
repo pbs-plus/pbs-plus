@@ -21,6 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 func getClientInfo(r *http.Request) string {
@@ -215,7 +216,7 @@ func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 
 func ServerOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := checkProxyAuth(r); err != nil {
+		if err := checkProxyAuth(r); err != nil && !utils.IsLocalhost(r) {
 			syslog.L.Error(err).
 				WithField("mode", "server_only").
 				WithField("hostname", getClientInfo(r)).
@@ -239,7 +240,7 @@ func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
 			lastErr = err
 		}
 
-		if err := checkProxyAuth(r); err == nil {
+		if err := checkProxyAuth(r); err == nil || utils.IsLocalhost(r) {
 			authenticated = true
 		} else {
 			lastErr = err
