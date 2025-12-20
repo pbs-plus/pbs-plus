@@ -32,11 +32,20 @@ jobs:
       - name: Build test.Dockerfile
         run: docker build -f test.Dockerfile -t pbs-plus:test .
 
+      - name: Build containerized agent
+        run: docker build -f Dockerfile -t pbs-plus-agent:test .
+
+      - name: Make test datastore
+        run: mkdir test
+
       - name: Run container
         run: |
+          docker network create pbs-plus-test 2>/dev/null || true
           docker run -d --name pbs-plus-test \
+            --network pbs-plus-test \
             -p 8007:8007 \
             -p 8017:8017 \
+            -v ./test:/mnt/test \
             --tmpfs /run/proxmox-backup:size=64M \
             pbs-plus:test
           
@@ -79,14 +88,6 @@ jobs:
             exit 1
           fi
 
-      - name: Show container logs
-        if: always()
-        run: |
-          echo "==================================="
-          echo "Container Logs:"
-          echo "==================================="
-          docker logs pbs-plus-test
-
       - name: Show response contents
         if: always()
         run: |
@@ -102,6 +103,69 @@ jobs:
           echo "==================================="
           cat port_8017.log || echo "No log file found"
 
+      - name: Initialize test baselines
+        run: |
+          docker exec pbs-plus-test proxmox-backup-manager datastore create test /mnt/test
+          curl -k -X POST "https://localhost:8017/api2/extjs/config/disk-backup-job" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -d '{
+              "id": "test-backup-job",
+              "target": "test-host - Root",
+              "subpath": "/test-backup",
+              "store": "test-datastore",
+              "ns": "test",
+              "schedule": "",
+              "retry": "",
+              "retry-interval": "",
+              "max-dir-entries": "",
+              "mode": "",
+              "sourcemode": "",
+              "readmode": "",
+              "include-xattr": "",
+              "comment": "",
+              "rawexclusions": "",
+              "pre_script": "",
+              "post_script": ""
+            }'
+          curl -k -X POST "https://localhost:8017/api2/extjs/config/d2d-token" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -d '{
+              "comment": "test-backup"
+            }'
+          echo "PLUS_TOKEN=$(curl -k -s "https://localhost:8017/api2/json/d2d/token" -H "Accept: application/json" | jq -r '.data[0].token')" >> "$GITHUB_ENV"
+
+      - name: Initialize agent
+        run: |
+          docker run -d --name pbs-plus-agent \
+            --network pbs-plus-test \
+            -v ./test:/mnt/test \
+            -e PBS_PLUS_INIT_SERVER_URL="https://pbs-plus-test:8008" \
+            -e PBS_PLUS_INIT_BOOTSTRAP_TOKEN="${PLUS_TOKEN}" \
+            pbs-plus-agent:test
+
+          sleep 10
+
+      - name: Show container logs
+        if: always()
+        run: |
+          echo "==================================="
+          echo "Container Logs:"
+          echo "==================================="
+          docker logs pbs-plus-test
+
+      - name: Show agent logs
+        if: always()
+        run: |
+          echo "==================================="
+          echo "Agent Logs:"
+          echo "==================================="
+          docker logs pbs-plus-agent
+
       - name: Cleanup
         if: always()
-        run: docker rm -f pbs-plus-test || true
+        run: |
+          docker rm -f pbs-plus-test || true
+          docker rm -f pbs-plus-agent || true
+          docker network rm pbs-plus-test || true
