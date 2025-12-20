@@ -2,8 +2,6 @@ name: Development Build
 
 on:
   push:
-    branches:
-      - main
 
 permissions:
   contents: write
@@ -27,3 +25,45 @@ jobs:
 
       - name: Run tests
         run: go test -v -race ./... -count=1 -timeout 1m
+
+      - name: Build pbs-plus
+        run: GOFIPS140=latest go build -o pbs-plus ./cmd/pbs_plus
+
+      - name: Verify binary exists
+        run: ls -lh pbs-plus
+
+      - name: Build test.Dockerfile
+        run: docker build -f test.Dockerfile -t pbs-plus:test .
+
+      - name: Run container
+        run: |
+          docker run -d --name pbs-plus-test \
+            -p 8007:8007 \
+            -p 8008:8008 \
+            pbs-plus:test
+          
+          # Wait for container to start
+          sleep 5
+          
+          # Check if container is running
+          docker ps | grep pbs-plus-test
+
+      - name: Test TCP sockets
+        run: |
+          # Test port 8007
+          timeout 10 bash -c 'until nc -z localhost 8007; do sleep 1; done' && \
+            echo "✓ Port 8007 is accessible" || \
+            (echo "✗ Port 8007 is not accessible" && exit 1)
+          
+          # Test port 8008
+          timeout 10 bash -c 'until nc -z localhost 8008; do sleep 1; done' && \
+            echo "✓ Port 8008 is accessible" || \
+            (echo "✗ Port 8008 is not accessible" && exit 1)
+
+      - name: Show container logs
+        if: always()
+        run: docker logs pbs-plus-test
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f pbs-plus-test || true
