@@ -107,34 +107,35 @@ jobs:
         run: |
           docker exec pbs-plus-test proxmox-backup-manager datastore create test /mnt/test
           curl -k -X POST "https://localhost:8017/api2/extjs/config/disk-backup-job" \
-            -H "Content-Type: application/json" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
             -H "Accept: application/json" \
-            -d '{
-              "id": "test-backup-job",
-              "target": "test-host - Root",
-              "subpath": "/test-backup",
-              "store": "test-datastore",
-              "ns": "test",
-              "schedule": "",
-              "retry": "",
-              "retry-interval": "",
-              "max-dir-entries": "",
-              "mode": "",
-              "sourcemode": "",
-              "readmode": "",
-              "include-xattr": "",
-              "comment": "",
-              "rawexclusions": "",
-              "pre_script": "",
-              "post_script": ""
-            }'
+            -d "id=test-backup-job" \
+            -d "target=test-host - Root" \
+            -d "subpath=/test-backup" \
+            -d "store=test-datastore" \
+            -d "ns=test" \
+            -d "schedule=" \
+            -d "retry=" \
+            -d "retry-interval=" \
+            -d "max-dir-entries=" \
+            -d "mode=" \
+            -d "sourcemode=" \
+            -d "readmode=" \
+            -d "include-xattr=" \
+            -d "comment=" \
+            -d "rawexclusions=" \
+            -d "pre_script=" \
+            -d "post_script="
           curl -k -X POST "https://localhost:8017/api2/extjs/config/d2d-token" \
-            -H "Content-Type: application/json" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
             -H "Accept: application/json" \
-            -d '{
-              "comment": "test-backup"
-            }'
+            -d "comment=test-backup"
           echo "PLUS_TOKEN=$(curl -k -s "https://localhost:8017/api2/json/d2d/token" -H "Accept: application/json" | jq -r '.data[0].token')" >> "$GITHUB_ENV"
+
+          if [ -z "$PLUS_TOKEN" ] || [ "$PLUS_TOKEN" = "null" ]; then
+            echo "PLUS_TOKEN is empty or null; failing the job."
+            exit 1
+          fi
 
       - name: Initialize agent
         run: |
