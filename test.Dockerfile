@@ -107,7 +107,7 @@ RUN printf '%s\n' \
   '# Format: KEY=VALUE, no quotes unless needed for spaces.' \
   '' \
   '# Required variables:' \
-  '# PBS_PLUS_HOSTNAME=<hostname/fqdn for server here>' \
+  'PBS_PLUS_HOSTNAME=pbs-plus-test' \
   'EOF' \
   '    chmod 0644 /etc/proxmox-backup/pbs-plus/pbs-plus.env' \
   'fi' \
@@ -156,7 +156,7 @@ RUN install -d -m 0755 /etc/s6-overlay/s6-rc.d/pbs-plus && \
     # Enable the service
     ln -s ../pbs-plus /etc/s6-overlay/s6-rc.d/user/contents.d/pbs-plus
 
-EXPOSE 8008
+EXPOSE 8017
 
 VOLUME ["/var/lib/proxmox-backup", "/etc/proxmox-backup", "/var/log/proxmox-backup"]
 
