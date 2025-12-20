@@ -140,15 +140,26 @@ jobs:
 
       - name: Initialize agent
         run: |
+          mkdir -p ./test-agent
+          for i in $(seq 1 50); do
+            len=$((16 + RANDOM % 241)) # 16..256
+            head -c "$len" /dev/urandom | base64 | tr -d '\n' > "./test-agent/random${i}.txt"
+          done
+
           docker run -d --name pbs-plus-agent \
             --network pbs-plus-test \
-            -v ./test:/mnt/test \
+            -v ./test-agent:/test-backup \
             -e PBS_PLUS_INIT_SERVER_URL="https://pbs-plus-test:8008" \
             -e PBS_PLUS_INIT_BOOTSTRAP_TOKEN="${PLUS_TOKEN}" \
             -e PBS_PLUS_HOSTNAME="test-host" \
             pbs-plus-agent:test
 
           sleep 10
+
+          curl -k -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=test-backup-job" \
+            -H "Content-Type: application/x-www-form-urlencoded"
+
+          sleep 20
 
       - name: Show container logs
         if: always()
