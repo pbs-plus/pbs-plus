@@ -17,6 +17,8 @@ RUN chmod 0755 /usr/bin/pbs-plus
 # Create pbs-plus configuration directory
 RUN install -d -m 0755 -o root -g root /etc/proxmox-backup/pbs-plus
 
+RUN apt-get update && apt-get install -y util-linux && rm -rf /var/lib/apt/lists/*
+
 # Update initialization script to include pbs-plus setup
 RUN printf '%s\n' \
   '#!/command/with-contenv bash' \

@@ -156,7 +156,7 @@ jobs:
 
           sleep 10
 
-          curl -k -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=test-backup-job" \
+          curl -k -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=dGVzdC1iYWNrdXAtam9i" \
             -H "Content-Type: application/x-www-form-urlencoded"
 
           sleep 20
