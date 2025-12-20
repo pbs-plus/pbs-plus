@@ -24,24 +24,6 @@ RUN printf '%s\n' \
   '' \
   'echo "Initializing Proxmox Backup Server..."' \
   '' \
-  '# Check if /run/proxmox-backup exists and is on tmpfs' \
-  'if [ ! -d /run/proxmox-backup ]; then' \
-  '    echo "ERROR: /run/proxmox-backup directory does not exist!"' \
-  '    echo "Please create it as a tmpfs mount with:"' \
-  '    echo "  docker run --tmpfs /run/proxmox-backup:size=64M ..."' \
-  '    exit 1' \
-  'fi' \
-  '' \
-  '# Verify it is on tmpfs' \
-  'FS_TYPE=$(stat -f -c %T /run/proxmox-backup 2>/dev/null || echo "unknown")' \
-  'if [ "$FS_TYPE" != "tmpfs" ]; then' \
-  '    echo "ERROR: /run/proxmox-backup is not on tmpfs (found: $FS_TYPE)!"' \
-  '    echo "Proxmox Backup Server requires this directory to be on tmpfs."' \
-  '    echo "Please run the container with:"' \
-  '    echo "  docker run --tmpfs /run/proxmox-backup:size=64M ..."' \
-  '    exit 1' \
-  'fi' \
-  '' \
   'chown backup:backup /run/proxmox-backup' \
   'chmod 755 /run/proxmox-backup' \
   '' \
@@ -55,22 +37,6 @@ RUN printf '%s\n' \
   '    echo "root:$ROOT_PASSWORD" | chpasswd' \
   '    unset ROOT_PASSWORD' \
   'fi' \
-  '' \
-  '# Create additional PAM users if specified' \
-  'for var in $(compgen -e | grep "^PBS_USER_"); do' \
-  '    username=$(echo "$var" | sed "s/^PBS_USER_//" | tr "[:upper:]" "[:lower:]")' \
-  '    password="${!var}"' \
-  '    if [ -n "$password" ] && [ -n "$username" ]; then' \
-  '        if ! id "$username" >/dev/null 2>&1; then' \
-  '            echo "Creating PAM user: $username"' \
-  '            useradd -m -s /bin/bash "$username"' \
-  '        else' \
-  '            echo "Updating password for PAM user: $username"' \
-  '        fi' \
-  '        echo "$username:$password" | chpasswd' \
-  '        unset "$var"' \
-  '    fi' \
-  'done' \
   '' \
   '# Generate RSA key pair for authentication if needed' \
   'if [ ! -f /etc/proxmox-backup/authkey.key ]; then' \
