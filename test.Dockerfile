@@ -1,6 +1,17 @@
+FROM golang:1.25 AS builder
+
+WORKDIR /build
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN GOFIPS140=latest go build -o pbs-plus ./cmd/pbs_plus
+
 FROM ghcr.io/pbs-plus/proxmox-backup-docker:latest
 
-COPY pbs-plus /usr/bin/pbs-plus
+COPY --from=builder /build/pbs-plus /usr/bin/pbs-plus
 RUN chmod 0755 /usr/bin/pbs-plus
 
 # Create pbs-plus configuration directory
@@ -99,6 +110,7 @@ RUN printf '%s\n' \
   'fi' \
   '' \
   '# Setup PBS Plus configuration' \
+  'mkdir -p /etc/proxmox-backup/pbs-plus' \
   'if [ ! -f /etc/proxmox-backup/pbs-plus/pbs-plus.env ]; then' \
   '    echo "Creating PBS Plus environment configuration..."' \
   '    cat > /etc/proxmox-backup/pbs-plus/pbs-plus.env <<EOF' \
