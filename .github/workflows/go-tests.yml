@@ -1,22 +1,14 @@
+name: Go tests workflow
+
 on:
   workflow_call:
-  pull_request:
-    branches:
-      - main
-
-permissions:
-  contents: write
-  packages: write
+    inputs:
+      go-version:
+        required: true
+        type: string
 
 jobs:
-  e2e-tests:
-    name: E2E tests
-    uses: ./.github/workflows/e2e-tests.yml
-    with:
-      go-version: '1.25'
-
   go-tests:
-    name: Go tests
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -25,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
-          go-version: "1.25"
+          go-version: ${{ inputs.go-version }}
           cache: true
       - run: go mod download
       - name: Run Linux tests
