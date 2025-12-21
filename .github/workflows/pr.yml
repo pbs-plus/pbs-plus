@@ -11,7 +11,7 @@ permissions:
 jobs:
   e2e-backup-test:
     name: E2E backup test
-    uses: ./.github/workflows/e2e-tests/backup.yml
+    uses: ./.github/workflows/e2e-test-backup.yml
     with:
       go-version: '1.25'
 
