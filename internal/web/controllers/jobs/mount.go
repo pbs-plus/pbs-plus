@@ -132,7 +132,7 @@ func generateServiceName(datastore, ns, backupType, backupID, safeTime string) s
 }
 
 func createSystemdService(serviceName, mountPoint string, args []string) error {
-	return utils.RunSystemd(serviceName, "PBS Plus restore mount for "+mountPoint, "/usr/bin/proxmox-backup-pxar-mount", args)
+	return utils.RunSystemd(serviceName, "PBS Plus restore mount for "+mountPoint, "/usr/bin/pxar-direct-mount", args)
 }
 
 func stopSystemdService(serviceName string) error {

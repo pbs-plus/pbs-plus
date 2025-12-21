@@ -125,7 +125,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		args := []string{}
 		for _, jobId := range decodedJobIDs {
-			args = append(args, "-job", jobId)
+			args = append(args, "-backup-job", jobId)
 		}
 		args = append(args, "-web")
 		if r.Method == http.MethodDelete {
