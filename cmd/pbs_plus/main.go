@@ -128,6 +128,7 @@ func main() {
 	if err := syslog.L.SetServiceLogger(); err != nil {
 		syslog.L.Error(err).Write()
 	}
+	_ = proxmox.GetToken()
 
 	storeInstance, err := store.Initialize(mainCtx, nil)
 	if err != nil {
