@@ -17,8 +17,6 @@ RUN chmod 0755 /usr/bin/pbs-plus
 # Create pbs-plus configuration directory
 RUN install -d -m 0755 -o root -g root /etc/proxmox-backup/pbs-plus
 
-RUN apt-get update && apt-get install -y util-linux && rm -rf /var/lib/apt/lists/*
-
 # Update initialization script to include pbs-plus setup
 RUN printf '%s\n' \
   '#!/command/with-contenv bash' \
@@ -135,6 +133,18 @@ RUN install -d -m 0755 /etc/s6-overlay/s6-rc.d/pbs-plus && \
     printf '%s\n' 'pbs-init' 'proxmox-backup-proxy' > /etc/s6-overlay/s6-rc.d/pbs-plus/dependencies && \
     # Enable the service
     ln -s ../pbs-plus /etc/s6-overlay/s6-rc.d/user/contents.d/pbs-plus
+
+# Bypass systemd stuff
+RUN set -eu; \
+  dir="/usr/local/libexec/systemd-stubs"; \
+  mkdir -p "$dir"; \
+  for b in systemctl systemd-run loginctl hostnamectl timedatectl localectl; do \
+    printf '%s\n' '#!/bin/sh' 'exit 1' >"$dir/$b"; \
+    chmod +x "$dir/$b"; \
+  done; \
+  printf 'export PATH="%s:$PATH"\n' "$dir" > /etc/profile.d/00-systemd-stubs.sh
+
+ENV PATH="/usr/local/libexec/systemd-stubs:${PATH}"
 
 EXPOSE 8017
 
