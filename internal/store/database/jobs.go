@@ -117,6 +117,12 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
 	if job.MaxDirEntries <= 0 {
 		job.MaxDirEntries = 1048576
 	}
+	if strings.TrimSpace(job.ReadMode) == "" {
+		job.ReadMode = "standard"
+	}
+	if strings.TrimSpace(job.SourceMode) == "" {
+		job.SourceMode = "snapshot"
+	}
 
 	_, err = tx.Exec(`
         INSERT INTO jobs (
@@ -319,6 +325,12 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
 	}
 	if !utils.IsValidPathString(job.Subpath) {
 		return fmt.Errorf("invalid subpath string: %s", job.Subpath)
+	}
+	if strings.TrimSpace(job.ReadMode) == "" {
+		job.ReadMode = "standard"
+	}
+	if strings.TrimSpace(job.SourceMode) == "" {
+		job.SourceMode = "snapshot"
 	}
 
 	_, err = tx.Exec(`
