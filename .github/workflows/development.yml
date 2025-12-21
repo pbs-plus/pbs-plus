@@ -24,7 +24,10 @@ jobs:
           cache: true
 
       - name: Download dependencies
-        run: go mod download
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y fuse3
+          go mod download
 
       - name: Run tests
         run: go test -v -race ./... -count=1 -timeout 1m
