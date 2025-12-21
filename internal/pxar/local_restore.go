@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func LocalRestore(pr *PxarReader, sourceDirs []string, destDir string) []error {
@@ -73,7 +75,7 @@ func localRestoreFile(pr *PxarReader, path string, e *EntryInfo) error {
 		}
 	}
 
-	return localApplyMeta(path, e)
+	return localApplyMeta(pr, path, e)
 }
 
 func localRestoreSymlink(pr *PxarReader, path string, e *EntryInfo) error {
@@ -84,18 +86,34 @@ func localRestoreSymlink(pr *PxarReader, path string, e *EntryInfo) error {
 	if err := os.Symlink(string(target), path); err != nil {
 		return fmt.Errorf("symlink %q: %w", path, err)
 	}
-	return localApplyMetaSymlink(path, e)
+	return localApplyMetaSymlink(pr, path, e)
 }
 
-func localApplyMeta(path string, e *EntryInfo) error {
+func localApplyMeta(pr *PxarReader, path string, e *EntryInfo) error {
 	_ = os.Chmod(path, os.FileMode(e.Mode&0777))
 	_ = os.Chown(path, int(e.UID), int(e.GID))
 	mt := time.Unix(e.MtimeSecs, int64(e.MtimeNsecs))
 	_ = os.Chtimes(path, mt, mt)
+
+	xattrs, err := pr.ListXAttrs(e.EntryRangeStart, e.EntryRangeEnd)
+	if err == nil && len(xattrs) > 0 {
+		for name, value := range xattrs {
+			_ = unix.Setxattr(path, name, value, 0)
+		}
+	}
+
 	return nil
 }
 
-func localApplyMetaSymlink(path string, e *EntryInfo) error {
+func localApplyMetaSymlink(pr *PxarReader, path string, e *EntryInfo) error {
 	_ = os.Lchown(path, int(e.UID), int(e.GID))
+
+	xattrs, err := pr.ListXAttrs(e.EntryRangeStart, e.EntryRangeEnd)
+	if err == nil && len(xattrs) > 0 {
+		for name, value := range xattrs {
+			_ = unix.Lsetxattr(path, name, value, 0)
+		}
+	}
+
 	return nil
 }
