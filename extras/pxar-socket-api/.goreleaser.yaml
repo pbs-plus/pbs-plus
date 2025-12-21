@@ -55,6 +55,8 @@ release:
   name_template: "pxar-socket-api - PBS Plus v{{ .Version }}"
   draft: false
   prerelease: auto
+  replace_existing_artifacts: true
+  make_latest: false
   mode: replace
 
 changelog:
