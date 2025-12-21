@@ -1,0 +1,22 @@
+on:
+  workflow_call:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  e2e-tests:
+    name: E2E tests
+    uses: ./.github/workflows/e2e-tests.yml
+    with:
+      go-version: '1.25'
+
+  go-tests:
+    name: Go tests
+    uses: ./.github/workflows/go-tests.yml
+    with:
+      go-version: '1.25'

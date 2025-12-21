@@ -10,12 +10,12 @@ permissions:
   packages: write
 
 jobs:
-  check-pr-status:
+  check-tests-status:
     runs-on: ubuntu-latest
     outputs:
-      pr_passed: ${{ steps.check.outputs.passed }}
+      tests_passed: ${{ steps.check.outputs.passed }}
     steps:
-      - name: Check if PR workflow passed on this commit
+      - name: Check if tests workflow passed on this commit
         id: check
         uses: actions/github-script@v7
         with:
@@ -30,26 +30,26 @@ jobs:
               status: 'completed'
             });
             
-            // Check if pr.yml workflow has passed
-            const prWorkflow = runs.data.workflow_runs.find(run => 
-              run.path === '.github/workflows/pr.yml' && 
+            // Check if tests.yml workflow has passed
+            const testsWorkflow = runs.data.workflow_runs.find(run => 
+              run.path === '.github/workflows/tests.yml' && 
               run.conclusion === 'success'
             );
             
-            const passed = !!prWorkflow;
+            const passed = !!testsWorkflow;
             core.setOutput('passed', passed);
-            console.log(`PR workflow ${passed ? 'has' : 'has not'} passed for commit ${commit}`);
+            console.log(`Tests workflow ${passed ? 'has' : 'has not'} passed for commit ${commit}`);
             return passed;
 
-  run-pr-if-needed:
-    needs: check-pr-status
-    if: needs.check-pr-status.outputs.pr_passed == 'false'
-    name: Run PR test workflows
-    uses: ./.github/workflows/pr.yml
+  run-tests-if-needed:
+    needs: check-tests-status
+    if: needs.check-tests-status.outputs.tests_passed == 'false'
+    name: Run test workflows
+    uses: ./.github/workflows/tests.yml
 
   goreleaser:
-    needs: [check-pr-status, run-pr-if-needed]
-    if: always() && (needs.check-pr-status.outputs.pr_passed == 'true' || needs.run-pr-if-needed.result == 'success')
+    needs: [check-tests-status, run-tests-if-needed]
+    if: needs.check-tests-status.outputs.tests_passed == 'true' || needs.run-tests-if-needed.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -132,8 +132,8 @@ jobs:
           ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
 
   docker:
-    needs: [check-pr-status, run-pr-if-needed]
-    if: always() && (needs.check-pr-status.outputs.pr_passed == 'true' || needs.run-pr-if-needed.result == 'success')
+    needs: [check-tests-status, run-tests-if-needed]
+    if: needs.check-tests-status.outputs.tests_passed == 'true' || needs.run-tests-if-needed.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
