@@ -1,0 +1,36 @@
+name: Show Logs
+description: Display endpoint responses and container logs
+
+runs:
+  using: composite
+  steps:
+    - name: Show response contents
+      shell: bash
+      run: |
+        echo ""
+        echo "==================================="
+        echo "Port 8007 Response:"
+        echo "==================================="
+        cat port_8007.log || echo "No log file found"
+        
+        echo ""
+        echo "==================================="
+        echo "Port 8017 Response:"
+        echo "==================================="
+        cat port_8017.log || echo "No log file found"
+
+    - name: Show container logs
+      shell: bash
+      run: |
+        echo "==================================="
+        echo "Container Logs:"
+        echo "==================================="
+        docker logs pbs-plus-test
+
+    - name: Show agent logs
+      shell: bash
+      run: |
+        echo "==================================="
+        echo "Agent Logs:"
+        echo "==================================="
+        docker logs pbs-plus-agent

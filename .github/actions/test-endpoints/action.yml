@@ -1,0 +1,37 @@
+name: Test HTTPS Endpoints
+description: Test PBS Plus HTTPS endpoints
+
+runs:
+  using: composite
+  steps:
+    - name: Test HTTPS endpoints
+      shell: bash
+      run: |
+        echo "Testing port 8007..."
+        curl -k -v --max-time 10 https://localhost:8007 2>&1 | tee port_8007.log || true
+        
+        echo ""
+        echo "==================================="
+        echo ""
+        
+        echo "Testing port 8017..."
+        curl -k -v --max-time 10 https://localhost:8017 2>&1 | tee port_8017.log || true
+        
+        echo ""
+        echo "==================================="
+        echo "Checking if ports responded..."
+        echo "==================================="
+        
+        if grep -q -E "(HTTP|SSL|Connected to)" port_8007.log; then
+          echo "✓ Port 8007 responded via HTTPS"
+        else
+          echo "✗ Port 8007 did not respond"
+          exit 1
+        fi
+        
+        if grep -q -E "(HTTP|SSL|Connected to)" port_8017.log; then
+          echo "✓ Port 8017 responded via HTTPS"
+        else
+          echo "✗ Port 8017 did not respond"
+          exit 1
+        fi

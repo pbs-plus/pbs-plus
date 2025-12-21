@@ -1,0 +1,50 @@
+name: Setup PBS Plus Server
+description: Run and initialize PBS Plus server container
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: '20'
+    description: Timeout for server initialization
+
+runs:
+  using: composite
+  steps:
+    - name: Run container
+      shell: bash
+      run: |
+        docker network create pbs-plus-test 2>/dev/null || true
+        docker run -d --name pbs-plus-test \
+          --network pbs-plus-test \
+          -p 8007:8007 \
+          -p 8017:8017 \
+          -v ./test:/mnt/test \
+          --tmpfs /run/proxmox-backup:size=64M \
+          --cap-add SYS_ADMIN --device /dev/fuse \
+          --security-opt apparmor:unconfined \
+          pbs-plus:test
+
+    - name: Wait for PBS Plus
+      shell: bash
+      run: |
+        echo "Waiting for PBS Plus..."
+        timeout=${{ inputs.timeout-seconds }}
+        elapsed=0
+        
+        while [ $elapsed -lt $timeout ]; do
+          if docker logs pbs-plus-test 2>&1 | grep -q "Starting aRPC endpoint"; then
+            echo "✓ PBS Plus fully initialized and running"
+            break
+          fi
+          sleep 1
+          elapsed=$((elapsed + 1))
+          echo "Still waiting... (${elapsed}s)"
+        done
+        sleep 5
+
+        if [ $elapsed -ge $timeout ]; then
+          echo "✗ Timeout reached after ${timeout}s"
+          exit 1
+        fi
+        
+        docker ps | grep pbs-plus-test
