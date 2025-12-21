@@ -9,8 +9,8 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
 
   allowBlank: false,
   autoSelect: true,
-  valueField: "backup-id",
-  displayField: "backup-id",
+  valueField: "value",
+  displayField: "display",
   emptyText: gettext("Select Snapshot"),
   editable: true,
   anyMatch: true,
@@ -57,6 +57,28 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
         "comment",
         "owner",
         "size",
+        {
+          name: "value",
+          convert: function (v, record) {
+            // Format: <backup-time>|<backup-id>
+            return `${record.data["backup-time"]}|${record.data["backup-id"]}`;
+          },
+        },
+        {
+          name: "display",
+          convert: function (v, record) {
+            let time = new Date(record.data["backup-time"] * 1000);
+            let year = time.getFullYear();
+            let month = String(time.getMonth() + 1).padStart(2, "0");
+            let day = String(time.getDate()).padStart(2, "0");
+            let hours = String(time.getHours()).padStart(2, "0");
+            let minutes = String(time.getMinutes()).padStart(2, "0");
+            let seconds = String(time.getSeconds()).padStart(2, "0");
+            let timeStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+            // Format: <YYYY-MM-DD HH:MM:SS> | <backup-id>
+            return `${timeStr} | ${record.data["backup-id"]}`;
+          },
+        },
       ],
       autoLoad: false,
       proxy: {
