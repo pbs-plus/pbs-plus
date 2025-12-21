@@ -1,7 +1,6 @@
 package pxar
 
 import (
-	"fmt"
 	"os"
 	"time"
 )
@@ -30,35 +29,6 @@ type EntryInfo struct {
 	Size            uint64     `cbor:"size"`
 	MtimeSecs       int64      `cbor:"mtime_secs"`
 	MtimeNsecs      uint32     `cbor:"mtime_nsecs"`
-}
-
-func extractEntryInfo(c *PxarReader, resp Response) (*EntryInfo, error) {
-	entryData, ok := resp["Entry"]
-	if !ok {
-		return nil, fmt.Errorf("unexpected response type")
-	}
-
-	entryMap, ok := entryData.(map[any]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid entry data")
-	}
-
-	infoData, ok := entryMap["info"]
-	if !ok {
-		return nil, fmt.Errorf("missing info field")
-	}
-
-	infoBytes, err := c.enc.Marshal(infoData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to re-encode info: %w", err)
-	}
-
-	var info EntryInfo
-	if err := c.dec.Unmarshal(infoBytes, &info); err != nil {
-		return nil, fmt.Errorf("failed to decode info: %w", err)
-	}
-
-	return &info, nil
 }
 
 func (e *EntryInfo) IsDir() bool {
