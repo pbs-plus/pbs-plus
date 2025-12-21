@@ -4,8 +4,10 @@ type Restore struct {
 	ID                    string   `json:"id"`
 	Store                 string   `json:"store"`
 	Snapshot              string   `json:"snapshot"`
+	Namespace             string   `json:"ns"`
 	SrcPath               string   `json:"src-path"`
 	DestTarget            string   `json:"dest-target"`
+	DestTargetPath        string   `json:"dest-target-path"`
 	DestPath              string   `json:"dest-path"`
 	Comment               string   `json:"comment"`
 	Retry                 int      `json:"retry"`

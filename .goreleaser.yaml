@@ -142,7 +142,7 @@ nfpms:
       - proxmox-backup-server (>= 3.2)
       - proxmox-backup-client (>= 3.2.5)
       - fuse3
-      - proxmox-backup-pxar-mount
+      - pxar-direct-mount
       - pxar-socket-api
       - memcached
     contents:
