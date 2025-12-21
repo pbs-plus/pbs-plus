@@ -55,7 +55,7 @@ jobs:
             pbs-plus:test
           
           echo "Waiting for PBS Plus..."
-          timeout=10
+          timeout=20
           elapsed=0
           
           while [ $elapsed -lt $timeout ]; do
@@ -64,7 +64,7 @@ jobs:
               break
             fi
             sleep 1
-            elapsed=$((elapsed + 2))
+            elapsed=$((elapsed + 1))
             echo "Still waiting... (${elapsed}s)"
           done
           sleep 5
@@ -176,7 +176,7 @@ jobs:
             pbs-plus-agent:test
 
           echo "Waiting for agent to bootstrap..."
-          timeout=10
+          timeout=20
           elapsed=0
           
           while [ $elapsed -lt $timeout ]; do
@@ -185,7 +185,7 @@ jobs:
               break
             fi
             sleep 1
-            elapsed=$((elapsed + 2))
+            elapsed=$((elapsed + 1))
             echo "Still waiting... (${elapsed}s)"
           done
           sleep 5
@@ -211,8 +211,8 @@ jobs:
               echo "✓ PBS Agent forked process exited (found 'CmdBackup: RPC Serve exited' in logs)"
               break
             fi
-            sleep 2
-            elapsed=$((elapsed + 2))
+            sleep 1
+            elapsed=$((elapsed + 1))
             echo "Still waiting... (${elapsed}s)"
           done
           
