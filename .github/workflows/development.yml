@@ -116,7 +116,7 @@ jobs:
             -d "id=test-backup-job" \
             -d "target=test-host - Root" \
             -d "subpath=/test-backup" \
-            -d "store=test-datastore" \
+            -d "store=test" \
             -d "ns=test" \
             -d "schedule=" \
             -d "retry=" \
