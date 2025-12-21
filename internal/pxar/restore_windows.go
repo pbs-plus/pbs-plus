@@ -31,7 +31,7 @@ func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dir
 			if err := remoteRestoreDir(ctx, client, target, e); err != nil {
 				return err
 			}
-			if err := remoteApplyMeta(target, e); err != nil {
+			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
 				return err
 			}
 		case FileTypeFile:

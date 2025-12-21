@@ -26,7 +26,7 @@ func localRestoreDir(pr *PxarReader, dst string, dirEntry *EntryInfo) error {
 			if err := localRestoreDir(pr, target, &e); err != nil {
 				return err
 			}
-			if err := localApplyMeta(target, &e); err != nil {
+			if err := localApplyMeta(pr, target, &e); err != nil {
 				return err
 			}
 		case FileTypeFile:
@@ -41,13 +41,22 @@ func localRestoreDir(pr *PxarReader, dst string, dirEntry *EntryInfo) error {
 			if err := syscall.Mkfifo(target, uint32(e.Mode&0777)); err != nil && !os.IsExist(err) {
 				return fmt.Errorf("mkfifo %q: %w", target, err)
 			}
+			if err := localApplyMeta(pr, target, &e); err != nil {
+				return err
+			}
 		case FileTypeSocket:
 			if err := syscall.Mknod(target, syscall.S_IFSOCK|uint32(e.Mode&0777), 0); err != nil && !os.IsExist(err) {
 				return fmt.Errorf("mksocket %q: %w", target, err)
 			}
+			if err := localApplyMeta(pr, target, &e); err != nil {
+				return err
+			}
 		case FileTypeDevice:
 			if err := syscall.Mknod(target, syscall.S_IFCHR|uint32(e.Mode&0777), 0); err != nil && !os.IsExist(err) {
 				return fmt.Errorf("mknod %q: %w", target, err)
+			}
+			if err := localApplyMeta(pr, target, &e); err != nil {
+				return err
 			}
 		case FileTypeHardlink:
 		}
@@ -77,7 +86,7 @@ func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dir
 			if err := remoteRestoreDir(ctx, client, target, e); err != nil {
 				return err
 			}
-			if err := remoteApplyMeta(target, e); err != nil {
+			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
 				return err
 			}
 		case FileTypeFile:
@@ -92,13 +101,22 @@ func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dir
 			if err := syscall.Mkfifo(target, uint32(e.Mode&0777)); err != nil && !os.IsExist(err) {
 				return fmt.Errorf("mkfifo %q: %w", target, err)
 			}
+			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
+				return err
+			}
 		case FileTypeSocket:
 			if err := syscall.Mknod(target, syscall.S_IFSOCK|uint32(e.Mode&0777), 0); err != nil && !os.IsExist(err) {
 				return fmt.Errorf("mksocket %q: %w", target, err)
 			}
+			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
+				return err
+			}
 		case FileTypeDevice:
 			if err := syscall.Mknod(target, syscall.S_IFCHR|uint32(e.Mode&0777), 0); err != nil && !os.IsExist(err) {
 				return fmt.Errorf("mknod %q: %w", target, err)
+			}
+			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
+				return err
 			}
 		case FileTypeHardlink:
 		}

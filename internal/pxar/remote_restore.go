@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"time"
 )
 
 func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, destDir string) []error {
@@ -36,7 +35,7 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 			}
 		}
 	}
-	return nil
+	return errors
 }
 
 func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e EntryInfo) error {
@@ -81,7 +80,7 @@ func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e
 		}
 	}
 
-	return remoteApplyMeta(path, e)
+	return remoteApplyMeta(ctx, client, path, e)
 }
 
 func remoteRestoreSymlink(ctx context.Context, client *RemoteClient, path string, e EntryInfo) error {
@@ -92,22 +91,5 @@ func remoteRestoreSymlink(ctx context.Context, client *RemoteClient, path string
 	if err := os.Symlink(string(target), path); err != nil {
 		return fmt.Errorf("symlink %q: %w", path, err)
 	}
-	return remoteApplyMetaSymlink(path, e)
-}
-
-func remoteApplyMeta(path string, e EntryInfo) error {
-	if runtime.GOOS != "windows" {
-		_ = os.Chmod(path, os.FileMode(e.Mode&0777))
-		_ = os.Chown(path, int(e.UID), int(e.GID))
-	}
-	mt := time.Unix(e.MtimeSecs, int64(e.MtimeNsecs))
-	_ = os.Chtimes(path, mt, mt)
-	return nil
-}
-
-func remoteApplyMetaSymlink(path string, e EntryInfo) error {
-	if runtime.GOOS != "windows" {
-		_ = os.Lchown(path, int(e.UID), int(e.GID))
-	}
-	return nil
+	return remoteApplyMetaSymlink(ctx, client, path, e)
 }
