@@ -16,7 +16,7 @@ WORKDIR /build
 COPY ./extras/pxar-socket-api/. .
 
 RUN apt-get update -y \
-  apt-get install -y fuse3 libfuse3-dev uuid-dev libsystemd-dev libacl1-dev pkg-config build-essential
+  && apt-get install -y fuse3 libfuse3-dev uuid-dev libsystemd-dev libacl1-dev pkg-config build-essential
 
 RUN cargo build
 
