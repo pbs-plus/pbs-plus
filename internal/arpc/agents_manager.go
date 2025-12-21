@@ -42,6 +42,11 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 		clientID = clientID + "|" + jobIdHeader
 	}
 
+	restoreIdHeader := headers.Get("X-PBS-Plus-RestoreId")
+	if restoreIdHeader != "" {
+		clientID = clientID + "|" + restoreIdHeader + "|restore"
+	}
+
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
 		existingSession.Close()
 	}

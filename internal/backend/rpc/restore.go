@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
+	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -78,8 +82,8 @@ func (s *MountRPCService) Restore(args *RestoreArgs, reply *RestoreReply) error 
 	_, jobCancel := context.WithCancel(s.ctx)
 	s.jobCtxCancels.Set(args.RestoreId, jobCancel)
 
-	// TODO: generate values for args
-	reader, err := pxar.NewPxarReader("socketPath", "pbsStore", "mpxarPath", "ppxarPath", "")
+	socketPath := filepath.Join(constants.RestoreSocketPath, strings.ReplaceAll(childKey, "|", "-")+".sock")
+	reader, err := pxar.NewPxarReader(socketPath, restore.Store, restore.Namespace, restore.Snapshot)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = "failed to create pxar reader"
@@ -88,6 +92,9 @@ func (s *MountRPCService) Restore(args *RestoreArgs, reply *RestoreReply) error 
 
 	srv := pxar.NewRemoteServer(reader)
 	agentRPC.SetRouter(*srv.Router())
+
+	store.CreatePxarReader(childKey, reader)
+	// TODO: ensure to disconnect on cleanup
 
 	_, err = agentRPC.CallMessage(ctx, "server_ready", &restoreReq)
 	if err != nil {

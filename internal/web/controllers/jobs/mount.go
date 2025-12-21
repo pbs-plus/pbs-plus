@@ -78,23 +78,6 @@ func unmountPath(mountPoint string) error {
 	return fmt.Errorf("failed to unmount %s", mountPoint)
 }
 
-func buildGroupPath(ns, backupType, backupID, backupTime string) string {
-	var parts []string
-
-	if ns != "" {
-		nsParts := strings.Split(ns, "/")
-		for _, nsPart := range nsParts {
-			if nsPart != "" {
-				parts = append(parts, "ns", nsPart)
-			}
-		}
-	}
-
-	parts = append(parts, backupType, backupID, backupTime)
-
-	return filepath.Join(parts...)
-}
-
 func removeEmptyDirsToBase(path, basePath string) {
 	path = filepath.Clean(path)
 	basePath = filepath.Clean(basePath)
@@ -202,12 +185,6 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			http.Error(w, "missing required parameters", http.StatusBadRequest)
 			return
 		}
-		if !strings.HasSuffix(fileName, ".mpxar.didx") &&
-			!strings.HasSuffix(fileName, ".pxar.didx") &&
-			!strings.HasSuffix(fileName, ".ppxar.didx") {
-			http.Error(w, "file-name must end with .pxar.didx, .mpxar.didx, or .ppxar.didx", http.StatusBadRequest)
-			return
-		}
 
 		parsedTime, err := time.Parse(time.RFC3339, backupTime)
 		if err != nil {
@@ -237,40 +214,17 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		groupPath := buildGroupPath(ns, backupType, backupID, backupTime)
-		didxPath := filepath.Join(pbsStoreRoot, groupPath, fileName)
+		mpxarPath, ppxarPath, isMetadataSplit, err := proxmox.BuildPxarPaths(pbsStoreRoot, ns, backupType, backupID, backupTime, fileName)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
 
-		args := []string{}
-		switch {
-		case strings.HasSuffix(fileName, ".pxar.didx"):
-			args = []string{
-				"--pbs-store", pbsStoreRoot,
-				"--ppxar-didx", didxPath,
-			}
-		case strings.HasSuffix(fileName, ".mpxar.didx"):
-			ppxarName := strings.TrimSuffix(fileName, ".mpxar.didx") + ".ppxar.didx"
-			ppxarPath := filepath.Join(pbsStoreRoot, groupPath, ppxarName)
-			if _, err := os.Stat(ppxarPath); err != nil {
-				controllers.WriteErrorResponse(w, fmt.Errorf("payload index not found: %s", ppxarPath))
-				return
-			}
-			args = []string{
-				"--pbs-store", pbsStoreRoot,
-				"--mpxar-didx", didxPath,
-				"--ppxar-didx", ppxarPath,
-			}
-		case strings.HasSuffix(fileName, ".ppxar.didx"):
-			mpxarName := strings.TrimSuffix(fileName, ".ppxar.didx") + ".mpxar.didx"
-			mpxarPath := filepath.Join(pbsStoreRoot, groupPath, mpxarName)
-			if _, err := os.Stat(mpxarPath); err != nil {
-				controllers.WriteErrorResponse(w, fmt.Errorf("metadata index not found: %s", mpxarPath))
-				return
-			}
-			args = []string{
-				"--pbs-store", pbsStoreRoot,
-				"--mpxar-didx", mpxarPath,
-				"--ppxar-didx", didxPath,
-			}
+		args := []string{"--pbs-store", pbsStoreRoot}
+		if isMetadataSplit {
+			args = append(args, "--mpxar-didx", mpxarPath, "--ppxar-didx", ppxarPath)
+		} else {
+			args = append(args, "--ppxar-didx", ppxarPath)
 		}
 		args = append(args, mountPoint)
 

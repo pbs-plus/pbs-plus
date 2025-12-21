@@ -38,6 +38,7 @@ const (
 	SecretsKeyPath       = "/var/lib/pbs-plus/.secret.key"
 	MountSocketPath      = "/var/run/pbs_agent_mount.sock"
 	JobMutateSocketPath  = "/var/run/pbs_agent_job_mutate.sock"
+	RestoreSocketPath    = "/var/run/pbs_plus_restore"
 	LockSocketPath       = "/var/run/pbs_plus_locker.sock"
 	MemcachedSocketPath  = "/var/run/pbs_plus_memcached"
 	PBSAuthKeyPath       = "/etc/proxmox-backup/authkey.key"

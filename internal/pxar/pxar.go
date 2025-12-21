@@ -7,13 +7,17 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -31,10 +35,100 @@ type PxarReader struct {
 	enc  cbor.EncMode
 	dec  cbor.DecMode
 	cmd  *exec.Cmd
+
+	FileCount   int64
+	FolderCount int64
+	TotalBytes  int64
+
+	lastAccessTime  int64
+	lastBytesTime   int64
+	lastFileCount   int64
+	lastFolderCount int64
+	lastTotalBytes  int64
 }
 
-func NewPxarReader(socketPath, pbsStore, mpxarPath, ppxarPath, keyFile string) (*PxarReader, error) {
-	cmd, err := runSocket(socketPath, pbsStore, mpxarPath, ppxarPath, keyFile)
+type PxarReaderStats struct {
+	ByteReadSpeed   float64
+	FileAccessSpeed float64
+	FilesAccessed   int64
+	FoldersAccessed int64
+	TotalAccessed   int64
+	TotalBytes      uint64
+	StatCacheHits   int64
+}
+
+func (r *PxarReader) GetStats() PxarReaderStats {
+	// Get the current time in nanoseconds.
+	currentTime := time.Now().UnixNano()
+
+	// Atomically load the current counters.
+	currentFileCount := atomic.LoadInt64(&r.FileCount)
+	currentFolderCount := atomic.LoadInt64(&r.FolderCount)
+	totalAccessed := currentFileCount + currentFolderCount
+
+	// Swap out the previous access statistics.
+	lastATime := atomic.SwapInt64(&r.lastAccessTime, currentTime)
+	lastFileCount := atomic.SwapInt64(&r.lastFileCount, currentFileCount)
+	lastFolderCount := atomic.SwapInt64(&r.lastFolderCount, currentFolderCount)
+
+	// Calculate the elapsed time in seconds.
+	elapsed := float64(currentTime-lastATime) / 1e9
+	var accessSpeed float64
+	if elapsed > 0 {
+		accessDelta := (currentFileCount + currentFolderCount) - (lastFileCount + lastFolderCount)
+		accessSpeed = float64(accessDelta) / elapsed
+	}
+
+	// Similarly, for byte counters (if you're tracking totalBytes elsewhere).
+	currentTotalBytes := atomic.LoadInt64(&r.TotalBytes)
+	lastBTime := atomic.SwapInt64(&r.lastBytesTime, currentTime)
+	lastTotalBytes := atomic.SwapInt64(&r.lastTotalBytes, currentTotalBytes)
+
+	secDiff := float64(currentTime-lastBTime) / 1e9
+	var bytesSpeed float64
+	if secDiff > 0 {
+		bytesSpeed = float64(currentTotalBytes-lastTotalBytes) / secDiff
+	}
+
+	return PxarReaderStats{
+		FilesAccessed:   currentFileCount,
+		FoldersAccessed: currentFolderCount,
+		TotalAccessed:   totalAccessed,
+		FileAccessSpeed: accessSpeed,
+		TotalBytes:      uint64(currentTotalBytes),
+		ByteReadSpeed:   bytesSpeed,
+	}
+}
+
+func NewPxarReader(socketPath, pbsStore, namespace, snapshot string) (*PxarReader, error) {
+	dsInfo, err := proxmox.GetDatastoreInfo(pbsStore)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get datastore: %w", err)
+	}
+
+	snapSplit := strings.Split(snapshot, "|")
+	if len(snapSplit) != 2 {
+		return nil, fmt.Errorf("invalid snapshot string: %s", snapshot)
+	}
+
+	snapshotTimeRaw := snapSplit[0]
+	snapshotId := snapSplit[1]
+	parsedTime, err := time.Parse(time.RFC3339, snapshotTimeRaw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid backup-time format: %w", err)
+	}
+	snapshotTime := parsedTime.Format("2006-01-02_15-04-05")
+
+	mpxarPath, ppxarPath, isSplit, err := proxmox.BuildPxarPaths(dsInfo.Path, namespace, "host", snapshotId, snapshotTime, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build pxar paths: %w", err)
+	}
+
+	if !isSplit {
+		return nil, fmt.Errorf(".pxar.didx found, only split archives are supported for now")
+	}
+
+	cmd, err := runSocket(socketPath, dsInfo.Path, mpxarPath, ppxarPath, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to serve socket: %w", err)
 	}
@@ -75,6 +169,12 @@ func NewPxarReader(socketPath, pbsStore, mpxarPath, ppxarPath, keyFile string) (
 }
 
 func runSocket(socketPath, pbsStore, mpxarPath, ppxarPath, keyFile string) (*exec.Cmd, error) {
+	socketDir := filepath.Dir(socketPath)
+	if err := os.MkdirAll(socketDir, 0755); err != nil {
+		syslog.L.Error(err).WithMessage("pxar-socket: failed to create socket directory").Write()
+		return nil, err
+	}
+
 	args := []string{
 		"--socket", socketPath,
 		"--pbs-store", pbsStore,
@@ -292,7 +392,18 @@ func (c *PxarReader) GetAttr(entryStart, entryEnd uint64) (*EntryInfo, error) {
 		return nil, err
 	}
 
-	return extractEntryInfo(c, resp)
+	entry, err := extractEntryInfo(c, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if entry.IsDir() {
+		atomic.AddInt64(&c.FolderCount, 1)
+	} else {
+		atomic.AddInt64(&c.FileCount, 1)
+	}
+
+	return entry, nil
 }
 
 func (c *PxarReader) Read(contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
@@ -322,6 +433,8 @@ func (c *PxarReader) Read(contentStart, contentEnd, offset uint64, size uint) ([
 	if !ok {
 		return nil, fmt.Errorf("invalid data field")
 	}
+
+	atomic.AddInt64(&c.TotalBytes, int64(len(data)))
 
 	return data, nil
 }

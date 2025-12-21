@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 
+	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
@@ -28,47 +30,31 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// TODO: implement stats for restore
-		/*
-			for i, restore := range allRestores {
-				isS3 := false
-				isAgent := strings.HasPrefix(restore.DestTargetPath, "agent://")
-				s3Parsed, err := s3url.Parse(restore.DestTargetPath)
-				if err == nil {
-					isS3 = true
-				}
+		for i, restore := range allRestores {
+			isAgent := strings.HasPrefix(restore.DestTargetPath, "agent://")
 
-				var stats vfs.VFSStats
-				if isAgent {
-					splittedTargetName := strings.Split(restore.Target, " - ")
-					targetHostname := splittedTargetName[0]
-					childKey := targetHostname + "|" + restore.ID
-					session := store.GetSessionARPCFS(childKey)
-					if session == nil {
-						continue
-					}
-
-					stats = session.GetStats()
-				} else if isS3 {
-					childKey := s3Parsed.Endpoint + "|" + restore.ID
-					session := store.GetSessionS3FS(childKey)
-					if session == nil {
-						continue
-					}
-
-					stats = session.GetStats()
-				} else {
+			var stats pxar.PxarReaderStats
+			if isAgent {
+				splittedTargetName := strings.Split(restore.DestTarget, " - ")
+				targetHostname := splittedTargetName[0]
+				childKey := targetHostname + "|" + restore.ID + "|restore"
+				session := store.GetSessionPxarReader(childKey)
+				if session == nil {
 					continue
 				}
 
-				allRestores[i].CurrentFileCount = int(stats.FilesAccessed)
-				allRestores[i].CurrentFolderCount = int(stats.FoldersAccessed)
-				allRestores[i].CurrentBytesTotal = int(stats.TotalBytes)
-				allRestores[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
-				allRestores[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
-				allRestores[i].StatCacheHits = int(stats.StatCacheHits)
+				stats = session.GetStats()
+			} else {
+				continue
 			}
-		*/
+
+			allRestores[i].CurrentFileCount = int(stats.FilesAccessed)
+			allRestores[i].CurrentFolderCount = int(stats.FoldersAccessed)
+			allRestores[i].CurrentBytesTotal = int(stats.TotalBytes)
+			allRestores[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
+			allRestores[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
+			allRestores[i].StatCacheHits = int(stats.StatCacheHits)
+		}
 
 		digest, err := utils.CalculateDigest(allRestores)
 		if err != nil {
