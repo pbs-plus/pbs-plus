@@ -1,0 +1,12 @@
+name: Cleanup
+description: Remove containers and networks
+
+runs:
+  using: composite
+  steps:
+    - name: Cleanup containers and network
+      shell: bash
+      run: |
+        docker rm -f pbs-plus-test || true
+        docker rm -f pbs-plus-agent || true
+        docker network rm pbs-plus-test || true

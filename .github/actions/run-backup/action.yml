@@ -1,0 +1,49 @@
+name: Run Backup Test
+description: Execute and verify backup operation
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: '20'
+    description: Timeout for backup completion
+
+runs:
+  using: composite
+  steps:
+    - name: Start backup
+      shell: bash
+      run: |
+        curl -k -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=dGVzdC1iYWNrdXAtam9i" \
+          -H "Content-Type: application/x-www-form-urlencoded"
+
+    - name: Wait for backup completion
+      shell: bash
+      run: |
+        echo "Waiting for backup to complete..."
+        timeout=${{ inputs.timeout-seconds }}
+        elapsed=0
+        
+        while [ $elapsed -lt $timeout ]; do
+          if docker logs pbs-plus-agent 2>&1 | grep -q "CmdBackup: RPC Serve exited"; then
+            echo "✓ PBS Agent forked process exited"
+            break
+          fi
+          sleep 1
+          elapsed=$((elapsed + 1))
+          echo "Still waiting... (${elapsed}s)"
+        done
+        
+        if [ $elapsed -ge $timeout ]; then
+          echo "✗ Timeout reached after ${timeout}s"
+          exit 1
+        fi
+
+    - name: Verify backup success
+      shell: bash
+      run: |
+        if docker logs pbs-plus-test 2>&1 | grep -q ": had to backup"; then
+          echo "✓ proxmox-backup-client finished successfully"
+        else
+          echo "✗ proxmox-backup-client did not finish successfully"
+          exit 1
+        fi

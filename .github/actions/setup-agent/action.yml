@@ -1,0 +1,59 @@
+name: Setup PBS Agent
+description: Create test data and run PBS Plus agent
+
+inputs:
+  plus-token:
+    required: true
+    description: PBS Plus authentication token
+  timeout-seconds:
+    required: false
+    default: '20'
+    description: Timeout for agent initialization
+
+runs:
+  using: composite
+  steps:
+    - name: Create test data
+      shell: bash
+      run: |
+        mkdir -p ./test-agent
+        for i in $(seq 1 50); do
+          len=$((16 + RANDOM % 241))
+          head -c "$len" /dev/urandom | base64 | tr -d '\n' > "./test-agent/random${i}.txt"
+        done
+
+    - name: Run agent container
+      shell: bash
+      run: |
+        docker run -d --name pbs-plus-agent \
+          --network pbs-plus-test \
+          -v ./test-agent:/test-backup \
+          -e PBS_PLUS_INIT_SERVER_URL="https://pbs-plus-test:8008" \
+          -e PBS_PLUS_INIT_BOOTSTRAP_TOKEN="${{ inputs.plus-token }}" \
+          -e PBS_PLUS_HOSTNAME="test-host" \
+          pbs-plus-agent:test
+
+    - name: Wait for agent
+      shell: bash
+      run: |
+        echo "Waiting for agent to bootstrap..."
+        timeout=${{ inputs.timeout-seconds }}
+        elapsed=0
+        
+        while [ $elapsed -lt $timeout ]; do
+          if docker logs pbs-plus-agent 2>&1 | grep -q "PBS Plus Agent fully initialized and running"; then
+            echo "✓ PBS Agent fully initialized and running"
+            break
+          fi
+          sleep 1
+          elapsed=$((elapsed + 1))
+          echo "Still waiting... (${elapsed}s)"
+        done
+        sleep 5
+
+        if [ $elapsed -ge $timeout ]; then
+          echo "✗ Timeout reached after ${timeout}s"
+          exit 1
+        fi
+
+        docker ps | grep pbs-plus-agent

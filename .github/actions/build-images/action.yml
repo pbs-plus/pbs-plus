@@ -1,0 +1,17 @@
+name: Build Docker Images
+description: Build PBS Plus server and agent images
+
+runs:
+  using: composite
+  steps:
+    - name: Build test PBS Plus server
+      shell: bash
+      run: docker build -f ./build/tests/Dockerfile -t pbs-plus:test .
+
+    - name: Build containerized agent
+      shell: bash
+      run: docker build -f Dockerfile -t pbs-plus-agent:test .
+
+    - name: Make test datastore
+      shell: bash
+      run: mkdir test
