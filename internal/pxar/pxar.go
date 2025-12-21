@@ -1,3 +1,5 @@
+//go:build linux
+
 package pxar
 
 import (
@@ -11,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -20,42 +21,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
-
-type Request struct {
-	_msgpack struct{} `cbor:",toarray"`
-	Variant  string
-	Data     any
-}
-
-type Response map[string]any
-
-type PxarReader struct {
-	conn net.Conn
-	mu   sync.Mutex
-	enc  cbor.EncMode
-	dec  cbor.DecMode
-	cmd  *exec.Cmd
-
-	FileCount   int64
-	FolderCount int64
-	TotalBytes  int64
-
-	lastAccessTime  int64
-	lastBytesTime   int64
-	lastFileCount   int64
-	lastFolderCount int64
-	lastTotalBytes  int64
-}
-
-type PxarReaderStats struct {
-	ByteReadSpeed   float64
-	FileAccessSpeed float64
-	FilesAccessed   int64
-	FoldersAccessed int64
-	TotalAccessed   int64
-	TotalBytes      uint64
-	StatCacheHits   int64
-}
 
 func (r *PxarReader) GetStats() PxarReaderStats {
 	// Get the current time in nanoseconds.
@@ -517,3 +482,33 @@ func (c *PxarReader) ListXAttrs(entryStart, entryEnd uint64) (map[string][]byte,
 
 	return result, nil
 }
+
+func extractEntryInfo(c *PxarReader, resp Response) (*EntryInfo, error) {
+	entryData, ok := resp["Entry"]
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type")
+	}
+
+	entryMap, ok := entryData.(map[any]any)
+	if !ok {
+		return nil, fmt.Errorf("invalid entry data")
+	}
+
+	infoData, ok := entryMap["info"]
+	if !ok {
+		return nil, fmt.Errorf("missing info field")
+	}
+
+	infoBytes, err := c.enc.Marshal(infoData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to re-encode info: %w", err)
+	}
+
+	var info EntryInfo
+	if err := c.dec.Unmarshal(infoBytes, &info); err != nil {
+		return nil, fmt.Errorf("failed to decode info: %w", err)
+	}
+
+	return &info, nil
+}
+
