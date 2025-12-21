@@ -54,10 +54,26 @@ jobs:
             --security-opt apparmor:unconfined \
             pbs-plus:test
           
-          # Wait for container to start
-          sleep 5
+          echo "Waiting for PBS Plus..."
+          timeout=10
+          elapsed=0
           
-          # Check if container is running
+          while [ $elapsed -lt $timeout ]; do
+            if docker logs pbs-plus-test 2>&1 | grep -q "Starting aRPC endpoint"; then
+              echo "✓ PBS Plus fully initialized and running"
+              break
+            fi
+            sleep 1
+            elapsed=$((elapsed + 2))
+            echo "Still waiting... (${elapsed}s)"
+          done
+          sleep 5
+
+          if [ $elapsed -ge $timeout ]; then
+            echo "✗ Timeout reached after ${timeout}s without finding completion string"
+            exit 1
+          fi
+          
           docker ps | grep pbs-plus-test
 
       - name: Test HTTPS endpoints
@@ -159,13 +175,60 @@ jobs:
             -e PBS_PLUS_HOSTNAME="test-host" \
             pbs-plus-agent:test
 
-          sleep 10
+          echo "Waiting for agent to bootstrap..."
+          timeout=10
+          elapsed=0
+          
+          while [ $elapsed -lt $timeout ]; do
+            if docker logs pbs-plus-agent 2>&1 | grep -q "PBS Plus Agent fully initialized and running"; then
+              echo "✓ PBS Agent fully initialized and running"
+              break
+            fi
+            sleep 1
+            elapsed=$((elapsed + 2))
+            echo "Still waiting... (${elapsed}s)"
+          done
+          sleep 5
 
+          if [ $elapsed -ge $timeout ]; then
+            echo "✗ Timeout reached after ${timeout}s without finding completion string"
+            exit 1
+          fi
+
+          docker ps | grep pbs-plus-agent
+
+      - name: Start test backup
+        run: |
           curl -k -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=dGVzdC1iYWNrdXAtam9i" \
             -H "Content-Type: application/x-www-form-urlencoded"
 
-          c=pbs-plus-test; pat=proxmox-backup-client
-          while docker ps -q --filter "name=^/${c}$" >/dev/null && docker exec "$c" pgrep -f "$pat" >/dev/null 2>&1; do sleep 5; done
+          echo "Waiting for backup to complete..."
+          timeout=20
+          elapsed=0
+          
+          while [ $elapsed -lt $timeout ]; do
+            if docker logs pbs-plus-agent 2>&1 | grep -q "CmdBackup: RPC Serve exited"; then
+              echo "✓ PBS Agent forked process exited (found 'CmdBackup: RPC Serve exited' in logs)"
+              break
+            fi
+            sleep 2
+            elapsed=$((elapsed + 2))
+            echo "Still waiting... (${elapsed}s)"
+          done
+          
+          if [ $elapsed -ge $timeout ]; then
+            echo "✗ Timeout reached after ${timeout}s without finding completion string"
+            exit 1
+          fi
+
+          if docker logs pbs-plus-test 2>&1 | grep -q ": had to backup"; then
+            echo "✓ proxmox-backup-client finished (found ': had to backup' in logs)"
+          else
+            echo "✗ proxmox-backup-client did not finish successfully"
+            exit 1
+          fi
+
+
 
       - name: Show container logs
         if: always()
