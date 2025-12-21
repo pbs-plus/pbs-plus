@@ -74,8 +74,8 @@ func (s *backupSession) Close() {
 
 func CmdBackup() {
 	cmdMode := flag.String("cmdMode", "", "Cmd Mode")
-	sourceMode := flag.String("sourceMode", "snapshot", "Backup source mode (direct or snapshot)")
-	readMode := flag.String("readMode", "standard", "File read mode (standard or mmap)")
+	sourceMode := flag.String("sourceMode", "", "Backup source mode (direct or snapshot)")
+	readMode := flag.String("readMode", "", "File read mode (standard or mmap)")
 	drive := flag.String("drive", "", "Drive or path for backup")
 	jobId := flag.String("jobId", "", "Unique job identifier for the backup")
 	flag.Parse()
