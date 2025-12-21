@@ -378,6 +378,14 @@ func (c *PxarReader) ReadDir(entryEnd uint64) ([]EntryInfo, error) {
 		return nil, fmt.Errorf("failed to decode entries: %w", err)
 	}
 
+	for _, entry := range entries {
+		if entry.IsDir() {
+			atomic.AddInt64(&c.FolderCount, 1)
+		} else {
+			atomic.AddInt64(&c.FileCount, 1)
+		}
+	}
+
 	return entries, nil
 }
 
