@@ -164,7 +164,8 @@ jobs:
           curl -k -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=dGVzdC1iYWNrdXAtam9i" \
             -H "Content-Type: application/x-www-form-urlencoded"
 
-          sleep 20
+          c=pbs-plus-test; pat=proxmox-backup-client
+          while docker ps -q --filter "name=^/${c}$" >/dev/null && docker exec "$c" pgrep -f "$pat" >/dev/null 2>&1; do sleep 5; done
 
       - name: Show container logs
         if: always()
