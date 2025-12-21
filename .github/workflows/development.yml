@@ -51,6 +51,7 @@ jobs:
             -v ./test:/mnt/test \
             --tmpfs /run/proxmox-backup:size=64M \
             --cap-add SYS_ADMIN --device /dev/fuse \
+            --security-opt apparmor:unconfined \
             pbs-plus:test
           
           # Wait for container to start
