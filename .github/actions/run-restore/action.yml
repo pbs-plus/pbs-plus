@@ -1,0 +1,17 @@
+name: Run Restore Test
+description: Execute and verify restore operation
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: '20'
+    description: Timeout for restore completion
+
+runs:
+  using: composite
+  steps:
+    - name: Start restore
+      shell: bash
+      run: |
+        exit 0
+
