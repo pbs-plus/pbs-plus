@@ -25,11 +25,10 @@ type BackupQueueArgs struct {
 }
 
 type RestoreQueueArgs struct {
-	Job             types.Restore
-	SkipCheck       bool
-	Web             bool
-	Stop            bool
-	ExtraExclusions []string
+	Job       types.Restore
+	SkipCheck bool
+	Web       bool
+	Stop      bool
 }
 
 type QueueReply struct {
