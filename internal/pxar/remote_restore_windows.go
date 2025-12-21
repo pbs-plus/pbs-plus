@@ -42,13 +42,11 @@ func remoteApplyMetaSymlink(_ context.Context, _ *RemoteClient, _ string, _ Entr
 }
 
 func restoreWindowsXattrs(path string, xattrs map[string][]byte) error {
-	// Convert path to UTF-16 for Windows API
 	pathPtr, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return err
 	}
 
-	// Open file handle with appropriate permissions
 	handle, err := windows.CreateFile(
 		pathPtr,
 		windows.FILE_WRITE_ATTRIBUTES|windows.WRITE_OWNER|windows.WRITE_DAC,
@@ -63,7 +61,6 @@ func restoreWindowsXattrs(path string, xattrs map[string][]byte) error {
 	}
 	defer windows.CloseHandle(handle)
 
-	// Parse and apply timestamps
 	var creationTime, lastAccessTime, lastWriteTime *windows.Filetime
 
 	if data, ok := xattrs["user.creationtime"]; ok {
@@ -87,12 +84,10 @@ func restoreWindowsXattrs(path string, xattrs map[string][]byte) error {
 		}
 	}
 
-	// Set file times if any were found
 	if creationTime != nil || lastAccessTime != nil || lastWriteTime != nil {
 		_ = windows.SetFileTime(handle, creationTime, lastAccessTime, lastWriteTime)
 	}
 
-	// Restore file attributes
 	if data, ok := xattrs["user.fileattributes"]; ok {
 		var fileAttrs map[string]bool
 		if err := json.Unmarshal(data, &fileAttrs); err == nil {
@@ -103,16 +98,14 @@ func restoreWindowsXattrs(path string, xattrs map[string][]byte) error {
 		}
 	}
 
-	// Restore Windows ACLs (owner, group, and DACLs)
 	_ = restoreWindowsACLs(path, xattrs)
 
 	return nil
 }
 
 func unixToFiletime(unixTime int64) windows.Filetime {
-	// Convert Unix timestamp (seconds since 1970) to Windows Filetime (100-nanosecond intervals since 1601)
 	const ticksPerSecond = 10000000
-	const epochDifference = 116444736000000000 // 100-nanosecond intervals between 1601 and 1970
+	const epochDifference = 116444736000000000
 
 	ticks := unixTime*ticksPerSecond + epochDifference
 	return windows.Filetime{
@@ -179,7 +172,6 @@ func restoreWindowsACLs(path string, xattrs map[string][]byte) error {
 	var newDACL *windows.ACL
 	var secInfo windows.SECURITY_INFORMATION
 
-	// Restore owner
 	if data, ok := xattrs["user.owner"]; ok && len(data) > 0 {
 		sid, err := windows.StringToSid(string(data))
 		if err == nil {
@@ -188,7 +180,6 @@ func restoreWindowsACLs(path string, xattrs map[string][]byte) error {
 		}
 	}
 
-	// Restore group
 	if data, ok := xattrs["user.group"]; ok && len(data) > 0 {
 		sid, err := windows.StringToSid(string(data))
 		if err == nil {
@@ -197,11 +188,9 @@ func restoreWindowsACLs(path string, xattrs map[string][]byte) error {
 		}
 	}
 
-	// Restore ACLs
 	if data, ok := xattrs["user.acls"]; ok && len(data) > 0 {
 		var winACLs []types.WinACL
 		if err := json.Unmarshal(data, &winACLs); err == nil && len(winACLs) > 0 {
-			// Build DACL from ACEs
 			dacl, err := buildDACLFromACEs(winACLs)
 			if err == nil && dacl != nil {
 				newDACL = dacl
@@ -258,7 +247,6 @@ func buildDACLFromACEs(winACLs []types.WinACL) (*windows.ACL, error) {
 		return nil, nil
 	}
 
-	// Call SetEntriesInAcl to build the ACL
 	var newACL *windows.ACL
 	ret, _, err := procSetEntriesInAclW.Call(
 		uintptr(len(entries)),
