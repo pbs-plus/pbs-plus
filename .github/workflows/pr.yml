@@ -9,9 +9,9 @@ permissions:
   packages: write
 
 jobs:
-  e2e-backup-test:
-    name: E2E backup test
-    uses: ./.github/workflows/e2e-test-backup.yml
+  e2e-tests:
+    name: E2E tests
+    uses: ./.github/workflows/e2e-tests.yml
     with:
       go-version: '1.25'
 
