@@ -1,10 +1,10 @@
 [package]
-name = "proxmox-backup-pxar-mount"
+name = "pxar-direct-mount"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "proxmox-backup-pxar-mount"
+name = "pxar-direct-mount"
 path = "src/main.rs"
 
 [dependencies]

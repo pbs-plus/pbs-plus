@@ -1,8 +1,8 @@
-Ext.define("PBS.D2DRestore", {
+Ext.define("PBS.D2DSnapshotMount", {
   extend: "Ext.tab.Panel",
-  alias: "widget.pbsD2DRestore",
+  alias: "widget.pbsD2DSnapshotMount",
 
-  title: "Disk Restore",
+  title: "Snapshot Mount",
   tools: [],
   border: true,
 
@@ -11,25 +11,25 @@ Ext.define("PBS.D2DRestore", {
     xtype: "panel",
   },
 
-  initComponent: function() {
+  initComponent: function () {
     var me = this;
 
     var store = Ext.data.StoreManager.lookup("pbs-datastore-list");
     if (!store) {
       Ext.log.warn(
-        "Store 'pbs-datastore-list' not found. Ensure it is created with a storeId before this component."
+        "Store 'pbs-datastore-list' not found. Ensure it is created with a storeId before this component.",
       );
     } else {
       store.load({
-        callback: function(records, operation, success) {
+        callback: function (records, operation, success) {
           if (success && records && records.length) {
             var tabs = [];
-            Ext.Array.forEach(records, function(rec) {
+            Ext.Array.forEach(records, function (rec) {
               var name = rec.get("store");
               tabs.push({
-                xtype: "pbsPlusDatastorePanel",
+                xtype: "pbsPlusSnapshotMountDatastorePanel",
                 title: name,
-                itemId: "d2d-restore-" + name,
+                itemId: "d2d-mount-" + name,
                 iconCls: "fa fa-archive",
                 datastore: name,
               });

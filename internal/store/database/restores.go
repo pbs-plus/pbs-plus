@@ -118,11 +118,11 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
 
 	_, err = tx.Exec(`
         INSERT INTO restores (
-            id, store, snapshot, src_path, dest_target, dest_path, comment,
+            id, store, namespace, snapshot, src_path, dest_target, dest_path, comment,
             current_pid, last_run_upid, last_successful_upid, retry,
             retry_interval
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, restore.ID, restore.Store, restore.Snapshot, restore.SrcPath, restore.DestTarget, restore.DestPath,
+    `, restore.ID, restore.Store, restore.Namespace, restore.Snapshot, restore.SrcPath, restore.DestTarget, restore.DestPath,
 		restore.Comment, restore.CurrentPID, restore.LastRunUpid, restore.LastSuccessfulUpid, restore.Retry,
 		restore.RetryInterval)
 	if err != nil {
@@ -137,7 +137,7 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
 func (database *Database) GetRestore(id string) (types.Restore, error) {
 	query := `
         SELECT
-            j.id, j.store, j.snapshot, j.src_path, j.dest_target, j.dest_path, j.comment,
+            j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, j.dest_path, j.comment,
             j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval
         FROM restores j
@@ -155,7 +155,7 @@ func (database *Database) GetRestore(id string) (types.Restore, error) {
 	for rows.Next() {
 		found = true
 		err := rows.Scan(
-			&restore.ID, &restore.Store, &restore.Snapshot, &restore.SrcPath, &restore.DestTarget,
+			&restore.ID, &restore.Store, &restore.Namespace, &restore.Snapshot, &restore.SrcPath, &restore.DestTarget,
 			&restore.DestPath, &restore.Comment, &restore.CurrentPID, &restore.LastRunUpid,
 			&restore.LastSuccessfulUpid, &restore.Retry, &restore.RetryInterval)
 		if err != nil {
@@ -261,11 +261,11 @@ func (database *Database) UpdateRestore(tx *sql.Tx, restore types.Restore) (err 
 	}
 
 	_, err = tx.Exec(`
-        UPDATE restores SET store = ?, snapshot = ?, src_path = ?, dest_target = ?, dest_path = ?,
+        UPDATE restores SET store = ?, namespace = ?, snapshot = ?, src_path = ?, dest_target = ?, dest_path = ?,
             comment = ?, current_pid = ?, last_run_upid = ?, retry = ?,
             retry_interval = ?, last_successful_upid = ?
         WHERE id = ?
-    `, restore.Store, restore.Snapshot, restore.SrcPath, restore.DestTarget, restore.DestPath,
+    `, restore.Store, restore.Namespace, restore.Snapshot, restore.SrcPath, restore.DestTarget, restore.DestPath,
 		restore.Comment, restore.CurrentPID, restore.LastRunUpid, restore.Retry, restore.RetryInterval,
 		restore.LastSuccessfulUpid, restore.ID)
 	if err != nil {
@@ -331,10 +331,11 @@ func (database *Database) linkRestoreLog(restoreID, upid string) {
 func (database *Database) GetAllRestores() ([]types.Restore, error) {
 	query := `
         SELECT
-            j.id, j.store, j.snapshot, j.src_path, j.dest_target, j.dest_path, j.comment,
+            j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, t.path, j.dest_path, j.comment,
             j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval
         FROM restores j
+        LEFT JOIN targets t ON j.dest_target = t.name
         ORDER BY j.id
     `
 	rows, err := database.readDb.Query(query)
@@ -350,10 +351,11 @@ func (database *Database) GetAllRestores() ([]types.Restore, error) {
 		var restoreID, store, snapshot, srcPath, destTarget, destPath, comment, lastRunUpid, lastSuccessfulUpid string
 		var retry int
 		var retryInterval int
+		var targetPath, namespace sql.NullString
 		var currentPID int
 
 		err := rows.Scan(
-			&restoreID, &store, &snapshot, &srcPath, &destTarget, &destPath, &comment,
+			&restoreID, &store, &namespace, &snapshot, &srcPath, &destTarget, &targetPath, &destPath, &comment,
 			&currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval,
 		)
@@ -381,6 +383,13 @@ func (database *Database) GetAllRestores() ([]types.Restore, error) {
 			restoresMap[restoreID] = restore
 			restoreOrder = append(restoreOrder, restoreID)
 			database.populateRestoreExtras(restore) // Populate non-SQL extras once per restore
+		}
+
+		if targetPath.Valid {
+			restore.DestTargetPath = targetPath.String
+		}
+		if namespace.Valid {
+			restore.Namespace = namespace.String
 		}
 	}
 
@@ -400,7 +409,7 @@ func (database *Database) GetAllRestores() ([]types.Restore, error) {
 func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 	query := `
         SELECT
-            j.id, j.store, j.snapshot, j.src_path, j.dest_target, j.dest_path, j.comment,
+            j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, j.dest_path, j.comment,
             j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval
         FROM restores j
@@ -417,13 +426,14 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 	var restoreOrder []string
 
 	for rows.Next() {
-		var restoreID, store, snapshot, srcPath, destTarget, destPath, comment, lastRunUpid, lastSuccessfulUpid string
+		var restoreID, store, snapshot, srcPath, destTarget, comment, lastRunUpid, lastSuccessfulUpid string
 		var retry int
 		var retryInterval int
 		var currentPID int
+		var targetPath, namespace sql.NullString
 
 		err := rows.Scan(
-			&restoreID, &store, &snapshot, &srcPath, &destTarget, &destPath, &comment,
+			&restoreID, &store, &namespace, &snapshot, &srcPath, &destTarget, &targetPath, &comment,
 			&currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval,
 		)
@@ -440,7 +450,6 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 				Snapshot:           snapshot,
 				SrcPath:            srcPath,
 				DestTarget:         destTarget,
-				DestPath:           destPath,
 				Comment:            comment,
 				CurrentPID:         currentPID,
 				LastRunUpid:        lastRunUpid,
@@ -451,6 +460,13 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 			restoresMap[restoreID] = restore
 			restoreOrder = append(restoreOrder, restoreID)
 			database.populateRestoreExtras(restore) // Populate non-SQL extras once per restore
+		}
+
+		if targetPath.Valid {
+			restore.DestTargetPath = targetPath.String
+		}
+		if namespace.Valid {
+			restore.Namespace = namespace.String
 		}
 	}
 

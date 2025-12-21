@@ -16,8 +16,16 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-type QueueArgs struct {
+type BackupQueueArgs struct {
 	Job             types.Job
+	SkipCheck       bool
+	Web             bool
+	Stop            bool
+	ExtraExclusions []string
+}
+
+type RestoreQueueArgs struct {
+	Job             types.Restore
 	SkipCheck       bool
 	Web             bool
 	Stop            bool
@@ -30,14 +38,14 @@ type QueueReply struct {
 }
 
 type JobRPCService struct {
-	ctx     context.Context
-	Store   *store.Store
-	Manager *backup.Manager
+	ctx           context.Context
+	Store         *store.Store
+	BackupManager *backup.Manager
 }
 
-func (s *JobRPCService) Queue(args *QueueArgs, reply *QueueReply) error {
+func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 	if args.Stop {
-		err := s.Manager.StopJob(args.Job.ID)
+		err := s.BackupManager.StopJob(args.Job.ID)
 		if err != nil {
 			reply.Status = 500
 			reply.Message = err.Error()
@@ -55,7 +63,18 @@ func (s *JobRPCService) Queue(args *QueueArgs, reply *QueueReply) error {
 		return nil
 	}
 
-	s.Manager.Enqueue(job)
+	s.BackupManager.Enqueue(job)
+	reply.Status = 200
+
+	return nil
+}
+
+func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error {
+	if args.Stop {
+	}
+
+	// TODO: restore queue operation
+
 	reply.Status = 200
 
 	return nil
@@ -70,9 +89,9 @@ func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath st
 	}
 
 	service := &JobRPCService{
-		ctx:     ctx,
-		Store:   storeInstance,
-		Manager: manager,
+		ctx:           ctx,
+		Store:         storeInstance,
+		BackupManager: manager,
 	}
 
 	// Register the RPC service.

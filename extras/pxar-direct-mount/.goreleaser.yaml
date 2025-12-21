@@ -1,28 +1,28 @@
 version: 2
 
-project_name: proxmox-backup-pxar-mount
+project_name: pxar-direct-mount
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: proxmox-backup-pxar-mount
+  - id: pxar-direct-mount
     builder: rust
     tool: cargo
     command: build
-    binary: proxmox-backup-pxar-mount
+    binary: pxar-direct-mount
     targets:
       - x86_64-unknown-linux-gnu
-    dir: extras/proxmox-backup-pxar-mount
+    dir: extras/pxar-direct-mount
     flags:
       - --release
 
 archives:
-  - id: proxmox-backup-pxar-mount
+  - id: pxar-direct-mount
     ids:
-      - proxmox-backup-pxar-mount
-    name_template: "proxmox-backup-pxar-mount-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+      - pxar-direct-mount
+    name_template: "pxar-direct-mount-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
 
@@ -32,15 +32,15 @@ checksum:
   split: true
 
 nfpms:
-  - id: proxmox-backup-pxar-mount-deb
+  - id: pxar-direct-mount-deb
     ids:
-      - proxmox-backup-pxar-mount
+      - pxar-direct-mount
     package_name: "{{ .ProjectName }}"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
     maintainer: Son Roy Almerol <github@snry.me>
     description: >
-      proxmox-backup-pxar-mount is a proxmox-backup-client alternative without needing Proxmox Backup Server running.
+      pxar-direct-mount is a proxmox-backup-client alternative without needing Proxmox Backup Server running.
     license: MIT
     formats:
       - deb
@@ -52,7 +52,7 @@ release:
   github:
     owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
     name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
-  name_template: "proxmox-backup-pxar-mount {{ .Version }}"
+  name_template: "pxar-direct-mount {{ .Version }}"
   draft: false
   prerelease: auto
   mode: replace
