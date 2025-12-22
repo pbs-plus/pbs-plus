@@ -138,6 +138,151 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
           ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
+          
+  build-msi:
+    needs: goreleaser
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          # WiX requires X.X.X.X format
+          if ($version -notmatch '\.\d+$') {
+            $version = $version + ".0"
+          }
+          # Handle RC versions (e.g., 1.0.0-rc1 -> 1.0.0.0)
+          $version = $version -replace '-.*', ''
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+          echo "TAG_VERSION=$tag" >> $env:GITHUB_ENV
+          echo "Version: $version"
+
+      - name: Download Windows agent from release
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $asset = "pbs-plus-agent-$tag-windows-amd64.exe"
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/$asset"
+          
+          Write-Host "Downloading from: $url"
+          
+          # Wait for GoReleaser to finish and asset to be available
+          $maxAttempts = 30
+          $attempt = 0
+          $downloaded = $false
+          
+          while (-not $downloaded -and $attempt -lt $maxAttempts) {
+            try {
+              Invoke-WebRequest -Uri $url -OutFile "pbs-plus-agent.exe" -Headers @{Authorization="token ${{ secrets.GITHUB_TOKEN }}"}
+              $downloaded = $true
+              Write-Host "Downloaded successfully"
+            } catch {
+              $attempt++
+              Write-Host "Attempt $attempt failed, waiting 10 seconds..."
+              Start-Sleep -Seconds 10
+            }
+          }
+          
+          if (-not $downloaded) {
+            throw "Failed to download Windows agent after $maxAttempts attempts"
+          }
+          
+          # Verify the file exists and has content
+          if (-not (Test-Path "pbs-plus-agent.exe")) {
+            throw "Downloaded file does not exist"
+          }
+          
+          $size = (Get-Item "pbs-plus-agent.exe").Length
+          Write-Host "Downloaded file size: $size bytes"
+          
+          if ($size -eq 0) {
+            throw "Downloaded file is empty"
+          }
+
+      - name: Install WiX Toolset
+        run: |
+          choco install wixtoolset -y
+          
+      - name: Refresh environment
+        shell: pwsh
+        run: |
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          echo $env:PATH
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $env:VERSION = "${{ env.VERSION }}"
+          $env:AGENT_EXE_PATH = "${{ github.workspace }}\pbs-plus-agent.exe"
+          
+          Write-Host "Building MSI with version: $env:VERSION"
+          Write-Host "Agent executable: $env:AGENT_EXE_PATH"
+          
+          # Verify executable exists
+          if (-not (Test-Path $env:AGENT_EXE_PATH)) {
+            throw "Agent executable not found at $env:AGENT_EXE_PATH"
+          }
+          
+          # Create output directory
+          New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\msi-output" | Out-Null
+          
+          # Build WiX object file
+          $candlePath = "C:\Program Files (x86)\WiX Toolset v3.11\bin\candle.exe"
+          if (-not (Test-Path $candlePath)) {
+            throw "candle.exe not found at $candlePath"
+          }
+          
+          & $candlePath `
+            -ext WixUtilExtension `
+            -out "${{ github.workspace }}\msi-output\Product.wixobj" `
+            "${{ github.workspace }}\build\package\windows_agent\Product.wxs"
+          
+          if ($LASTEXITCODE -ne 0) {
+            throw "candle.exe failed with exit code $LASTEXITCODE"
+          }
+          
+          Write-Host "WiX object file created successfully"
+          
+          # Link MSI
+          $lightPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin\light.exe"
+          if (-not (Test-Path $lightPath)) {
+            throw "light.exe not found at $lightPath"
+          }
+          
+          & $lightPath `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            -cultures:en-US `
+            -out "${{ github.workspace }}\msi-output\pbs-plus-agent-${{ env.TAG_VERSION }}-windows-amd64.msi" `
+            "${{ github.workspace }}\msi-output\Product.wixobj"
+          
+          if ($LASTEXITCODE -ne 0) {
+            throw "light.exe failed with exit code $LASTEXITCODE"
+          }
+          
+          Write-Host "MSI created successfully"
+          
+          # Verify MSI was created
+          $msiPath = "${{ github.workspace }}\msi-output\pbs-plus-agent-${{ env.TAG_VERSION }}-windows-amd64.msi"
+          if (-not (Test-Path $msiPath)) {
+            throw "MSI file was not created at $msiPath"
+          }
+          
+          $msiSize = (Get-Item $msiPath).Length
+          Write-Host "MSI file size: $msiSize bytes"
+
+      - name: Upload MSI to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ./msi-output/pbs-plus-agent-${{ env.TAG_VERSION }}-windows-amd64.msi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
     needs: [check-pr-status, run-pr-if-needed]
