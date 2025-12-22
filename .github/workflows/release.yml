@@ -232,7 +232,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\msi-output" | Out-Null
           
           # Build WiX object file
-          $candlePath = "C:\Program Files (x86)\WiX Toolset v3.11\bin\candle.exe"
+          $candlePath = "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe"
           if (-not (Test-Path $candlePath)) {
             throw "candle.exe not found at $candlePath"
           }
@@ -249,7 +249,7 @@ jobs:
           Write-Host "WiX object file created successfully"
           
           # Link MSI
-          $lightPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin\light.exe"
+          $lightPath = "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe"
           if (-not (Test-Path $lightPath)) {
             throw "light.exe not found at $lightPath"
           }
