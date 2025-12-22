@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  
+  <?define ProductName = "PBS Plus Agent" ?>
+  <?define ProductVersion = "$(env.VERSION)" ?>
+  <?define Manufacturer = "Son Roy Almerol" ?>
+  <?define UpgradeCode = "536F6BA8-2DBB-4D9D-A084-B64B99BBD3A0" ?>
+  
+  <Product Id="*"
+           Name="$(var.ProductName)"
+           Language="1033"
+           Version="$(var.ProductVersion)"
+           Manufacturer="$(var.Manufacturer)"
+           UpgradeCode="$(var.UpgradeCode)">
+    
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="PBS Plus Agent for Windows"
+             Comments="Backup agent for PBS Plus"
+             Manufacturer="$(var.Manufacturer)" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  AllowSameVersionUpgrades="yes" />
+    
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Properties for Server URL and Bootstrap Token -->
+    <Property Id="SERVERURL" Secure="yes">
+      <RegistrySearch Id="ServerURLSearch"
+                      Root="HKLM"
+                      Key="SOFTWARE\PBSPlus\Config"
+                      Name="ServerURL"
+                      Type="raw" />
+    </Property>
+
+    <Property Id="BOOTSTRAPTOKEN" Secure="yes">
+      <RegistrySearch Id="BootstrapTokenSearch"
+                      Root="HKLM"
+                      Key="SOFTWARE\PBSPlus\Config"
+                      Name="BootstrapToken"
+                      Type="raw" />
+    </Property>
+
+    <!-- Validate properties -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    
+    <Condition Message="You must specify a Server URL.">
+      <![CDATA[Installed OR SERVERURL <> ""]]>
+    </Condition>
+    
+    <Condition Message="You must specify a Bootstrap Token.">
+      <![CDATA[Installed OR BOOTSTRAPTOKEN <> ""]]>
+    </Condition>
+
+    <!-- Directory structure -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="PBS Plus Agent">
+          <Component Id="AgentExecutable" Guid="*">
+            <File Id="AgentExe"
+                  Source="$(env.AGENT_EXE_PATH)"
+                  KeyPath="yes"
+                  Checksum="yes" />
+            
+            <!-- Registry settings -->
+            <RegistryKey Root="HKLM" Key="SOFTWARE\PBSPlus\Config">
+              <RegistryValue Type="string" Name="ServerURL" Value="[SERVERURL]" />
+              <RegistryValue Type="string" Name="BootstrapToken" Value="[BOOTSTRAPTOKEN]" />
+            </RegistryKey>
+
+            <!-- Service installation -->
+            <ServiceInstall Id="PBSPlusAgentService"
+                           Name="PBSPlusAgent"
+                           DisplayName="PBS Plus Agent"
+                           Description="PBS Plus backup agent service"
+                           Type="ownProcess"
+                           Start="auto"
+                           ErrorControl="normal"
+                           Account="LocalSystem">
+              <util:ServiceConfig
+                FirstFailureActionType="restart"
+                SecondFailureActionType="restart"
+                ThirdFailureActionType="restart"
+                RestartServiceDelayInSeconds="60" />
+            </ServiceInstall>
+
+            <ServiceControl Id="StartPBSPlusAgent"
+                           Name="PBSPlusAgent"
+                           Start="install"
+                           Stop="both"
+                           Remove="uninstall"
+                           Wait="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <!-- Features -->
+    <Feature Id="ProductFeature" Title="PBS Plus Agent" Level="1">
+      <ComponentRef Id="AgentExecutable" />
+    </Feature>
+
+    <!-- UI -->
+    <UI>
+      <UIRef Id="WixUI_InstallDir" />
+      <UIRef Id="WixUI_ErrorProgressText" />
+      
+      <!-- Custom dialog for Server URL and Bootstrap Token -->
+      <Dialog Id="ConfigurationDlg" Width="370" Height="270" Title="[ProductName] Configuration">
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes">
+          <Text>{\WixUI_Font_Title}Server Configuration</Text>
+        </Control>
+        
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes">
+          <Text>Please enter your PBS Plus server details.</Text>
+        </Control>
+        
+        <Control Id="ServerURLLabel" Type="Text" X="25" Y="60" Width="100" Height="15" TabSkip="no" Text="Server URL:" />
+        <Control Id="ServerURLEdit" Type="Edit" X="25" Y="75" Width="320" Height="18" Property="SERVERURL" />
+        
+        <Control Id="BootstrapTokenLabel" Type="Text" X="25" Y="100" Width="100" Height="15" TabSkip="no" Text="Bootstrap Token:" />
+        <Control Id="BootstrapTokenEdit" Type="Edit" X="25" Y="115" Width="320" Height="18" Property="BOOTSTRAPTOKEN" Password="yes" />
+        
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
+          <Publish Event="NewDialog" Value="LicenseAgreementDlg">1</Publish>
+        </Control>
+        
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next">
+          <Publish Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+        </Control>
+        
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+      </Dialog>
+      
+      <!-- Insert custom dialog into sequence -->
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="ConfigurationDlg" Order="3">LicenseAccepted = "1"</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="ConfigurationDlg">1</Publish>
+    </UI>
+
+    <!-- Custom actions for service management -->
+    <CustomAction Id="StopOldService"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand='cmd.exe /c "net stop PBSPlusAgent 2>nul &amp; net stop PBSPlusUpdater 2>nul"'
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <CustomAction Id="CleanupOldFiles"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand='cmd.exe /c "del /f /q pbs-plus-updater.exe 2>nul &amp; del /f /q secret.key 2>nul &amp; del /f /q master.key 2>nul"'
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="StopOldService" Before="InstallFiles">NOT REMOVE</Custom>
+      <Custom Action="CleanupOldFiles" After="StopOldService">NOT REMOVE</Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>
