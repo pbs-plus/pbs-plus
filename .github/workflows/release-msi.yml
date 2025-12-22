@@ -1,0 +1,279 @@
+name: Build and Upload MSI
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-msi:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Validate tag exists
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          Write-Host "Validating tag: $tag"
+          
+          try {
+            $release = Invoke-RestMethod `
+              -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" `
+              -Headers @{
+                Authorization = "token ${{ secrets.GITHUB_TOKEN }}"
+                Accept = "application/vnd.github.v3+json"
+              }
+            Write-Host "✓ Release found: $($release.name)"
+          } catch {
+            throw "Release tag '$tag' does not exist"
+          }
+
+      - name: Extract version for WiX
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          $version = $tag -replace '^v', ''
+          
+          # WiX requires X.X.X.X format (4 components, all numeric)
+          # Remove any pre-release identifiers
+          $version = $version -replace '-.*', ''
+          
+          # Ensure we have 4 components
+          $parts = $version -split '\.'
+          while ($parts.Count -lt 4) {
+            $parts += "0"
+          }
+          $version = $parts[0..3] -join '.'
+          
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+          echo "TAG=$tag" >> $env:GITHUB_ENV
+          Write-Host "WiX Version: $version"
+          Write-Host "Release Tag: $tag"
+
+      - name: Download Windows agent binary
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          $assetName = "pbs-plus-agent-$tag-windows-amd64.exe"
+          $outputFile = "pbs-plus-agent.exe"
+          
+          Write-Host "Downloading asset: $assetName"
+          
+          # Get release info
+          $release = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" `
+            -Headers @{
+              Authorization = "token ${{ secrets.GITHUB_TOKEN }}"
+              Accept = "application/vnd.github.v3+json"
+            }
+          
+          # Find the Windows agent asset
+          $asset = $release.assets | Where-Object { $_.name -eq $assetName }
+          
+          if (-not $asset) {
+            Write-Host "Available assets:"
+            $release.assets | ForEach-Object { Write-Host "  - $($_.name)" }
+            throw "Asset '$assetName' not found in release"
+          }
+          
+          Write-Host "Found asset ID: $($asset.id)"
+          Write-Host "Asset size: $($asset.size) bytes"
+          Write-Host "Download URL: $($asset.browser_download_url)"
+          
+          # Download the asset
+          Invoke-WebRequest `
+            -Uri $asset.browser_download_url `
+            -OutFile $outputFile `
+            -Headers @{
+              Authorization = "token ${{ secrets.GITHUB_TOKEN }}"
+              Accept = "application/octet-stream"
+            }
+          
+          # Verify download
+          if (-not (Test-Path $outputFile)) {
+            throw "Failed to download file"
+          }
+          
+          $size = (Get-Item $outputFile).Length
+          Write-Host "✓ Downloaded successfully: $size bytes"
+          
+          if ($size -eq 0) {
+            throw "Downloaded file is empty"
+          }
+
+      - name: Install WiX Toolset
+        run: choco install wixtoolset -y
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $env:VERSION = "${{ env.VERSION }}"
+          $env:AGENT_EXE_PATH = "${{ github.workspace }}\pbs-plus-agent.exe"
+          
+          Write-Host "========================================="
+          Write-Host "Building MSI"
+          Write-Host "========================================="
+          Write-Host "Version: $env:VERSION"
+          Write-Host "Tag: ${{ env.TAG }}"
+          Write-Host "Agent Path: $env:AGENT_EXE_PATH"
+          Write-Host "========================================="
+          
+          # Verify executable exists
+          if (-not (Test-Path $env:AGENT_EXE_PATH)) {
+            throw "Agent executable not found at $env:AGENT_EXE_PATH"
+          }
+          
+          # Create output directory
+          $outputDir = "${{ github.workspace }}\msi-output"
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+          
+          # Build WiX object file
+          $candlePath = "C:\Program Files (x86)\WiX Toolset v3.11\bin\candle.exe"
+          $wxsPath = "${{ github.workspace }}\build\package\windows_agent\Product.wxs"
+          $wixobjPath = "$outputDir\Product.wixobj"
+          
+          if (-not (Test-Path $candlePath)) {
+            throw "candle.exe not found at $candlePath"
+          }
+          
+          if (-not (Test-Path $wxsPath)) {
+            throw "Product.wxs not found at $wxsPath"
+          }
+          
+          Write-Host "Running candle.exe..."
+          & $candlePath `
+            -ext WixUtilExtension `
+            -out $wixobjPath `
+            $wxsPath
+          
+          if ($LASTEXITCODE -ne 0) {
+            throw "candle.exe failed with exit code $LASTEXITCODE"
+          }
+          
+          Write-Host "✓ WiX object file created"
+          
+          # Link MSI
+          $lightPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin\light.exe"
+          $msiPath = "$outputDir\pbs-plus-agent-${{ env.TAG }}-windows-amd64.msi"
+          
+          if (-not (Test-Path $lightPath)) {
+            throw "light.exe not found at $lightPath"
+          }
+          
+          Write-Host "Running light.exe..."
+          & $lightPath `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            -cultures:en-US `
+            -out $msiPath `
+            $wixobjPath `
+            -sval
+          
+          if ($LASTEXITCODE -ne 0) {
+            throw "light.exe failed with exit code $LASTEXITCODE"
+          }
+          
+          Write-Host "✓ MSI created successfully"
+          
+          # Verify MSI was created
+          if (-not (Test-Path $msiPath)) {
+            throw "MSI file was not created at $msiPath"
+          }
+          
+          $msiSize = (Get-Item $msiPath).Length
+          Write-Host "========================================="
+          Write-Host "MSI Build Complete"
+          Write-Host "========================================="
+          Write-Host "File: $msiPath"
+          Write-Host "Size: $msiSize bytes"
+          Write-Host "========================================="
+
+      - name: Upload MSI to release
+        shell: pwsh
+        run: |
+          $tag = "${{ env.TAG }}"
+          $msiPath = "${{ github.workspace }}\msi-output\pbs-plus-agent-$tag-windows-amd64.msi"
+          $msiName = "pbs-plus-agent-$tag-windows-amd64.msi"
+          
+          Write-Host "Uploading MSI to release..."
+          Write-Host "Tag: $tag"
+          Write-Host "File: $msiPath"
+          
+          # Get release info
+          $release = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" `
+            -Headers @{
+              Authorization = "token ${{ secrets.GITHUB_TOKEN }}"
+              Accept = "application/vnd.github.v3+json"
+            }
+          
+          Write-Host "Release ID: $($release.id)"
+          
+          # Check if asset already exists
+          $existingAsset = $release.assets | Where-Object { $_.name -eq $msiName }
+          if ($existingAsset) {
+            Write-Host "Asset already exists, deleting old version..."
+            Invoke-RestMethod `
+              -Method Delete `
+              -Uri "https://api.github.com/repos/${{ github.repository }}/releases/assets/$($existingAsset.id)" `
+              -Headers @{
+                Authorization = "token ${{ secrets.GITHUB_TOKEN }}"
+                Accept = "application/vnd.github.v3+json"
+              }
+            Write-Host "✓ Old asset deleted"
+          }
+          
+          # Upload new asset
+          $uploadUrl = $release.upload_url -replace '\{\?name,label\}', "?name=$msiName"
+          
+          Write-Host "Uploading to: $uploadUrl"
+          
+          $bytes = [System.IO.File]::ReadAllBytes($msiPath)
+          
+          $response = Invoke-RestMethod `
+            -Method Post `
+            -Uri $uploadUrl `
+            -Headers @{
+              Authorization = "token ${{ secrets.GITHUB_TOKEN }}"
+              "Content-Type" = "application/x-msi"
+            } `
+            -Body $bytes
+          
+          Write-Host "========================================="
+          Write-Host "Upload Complete"
+          Write-Host "========================================="
+          Write-Host "Asset Name: $($response.name)"
+          Write-Host "Asset Size: $($response.size) bytes"
+          Write-Host "Download URL: $($response.browser_download_url)"
+          Write-Host "========================================="
+
+      - name: Summary
+        shell: pwsh
+        run: |
+          $tag = "${{ env.TAG }}"
+          $msiName = "pbs-plus-agent-$tag-windows-amd64.msi"
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$msiName"
+          
+          Write-Host ""
+          Write-Host "========================================="
+          Write-Host "MSI Build and Upload Successful!"
+          Write-Host "========================================="
+          Write-Host ""
+          Write-Host "Release Tag: $tag"
+          Write-Host "MSI File: $msiName"
+          Write-Host ""
+          Write-Host "Download URL:"
+          Write-Host $downloadUrl
+          Write-Host ""
+          Write-Host "========================================="
