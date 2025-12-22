@@ -38,6 +38,39 @@ Ext.define("pbs-disk-backup-job-status", {
   },
 });
 
+Ext.define("pbs-disk-restore-job-status", {
+  extend: "Ext.data.Model",
+  fields: [
+    "id",
+    "store",
+    "ns",
+    "snapshot",
+    "src-path",
+    "dest-target",
+    "dest-path",
+    "comment",
+    "duration",
+    "current_bytes_total",
+    "current_bytes_speed",
+    "current_file_count",
+    "current_files_speed",
+    "current_folder_count",
+    "expected_size",
+    "last-run-upid",
+    "last-successful-upid",
+    "last-run-state",
+    "last-run-endtime",
+    "last-successful-endtime",
+    "retry",
+    "retry-interval",
+  ],
+  idProperty: "id",
+  proxy: {
+    type: "pbsplus",
+    url: pbsPlusBaseUrl + "/api2/json/d2d/restore",
+  },
+});
+
 Ext.define("pbs-model-targets", {
   extend: "Ext.data.Model",
   fields: [

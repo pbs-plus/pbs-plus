@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -72,27 +71,7 @@ func (s *backupSession) Close() {
 	syslog.L.Info().WithMessage("backupSession.Close: done").WithField("jobId", s.jobId).Write()
 }
 
-func CmdBackup() {
-	cmdMode := flag.String("cmdMode", "", "Cmd Mode")
-	sourceMode := flag.String("sourceMode", "", "Backup source mode (direct or snapshot)")
-	readMode := flag.String("readMode", "", "File read mode (standard or mmap)")
-	drive := flag.String("drive", "", "Drive or path for backup")
-	jobId := flag.String("jobId", "", "Unique job identifier for the backup")
-	flag.Parse()
-
-	syslog.L.Info().WithMessage("CmdBackup: invoked").
-		WithField("cmdMode", *cmdMode).
-		WithField("sourceMode", *sourceMode).
-		WithField("readMode", *readMode).
-		WithField("drive", *drive).
-		WithField("jobId", *jobId).
-		Write()
-
-	if *cmdMode != "backup" {
-		syslog.L.Info().WithMessage("CmdBackup: cmdMode not backup, returning").WithField("cmdMode", *cmdMode).Write()
-		return
-	}
-
+func cmdBackup(sourceMode, readMode, drive, jobId *string) {
 	if *sourceMode == "" || *drive == "" || *jobId == "" || *readMode == "" {
 		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and jobId are required")
 		syslog.L.Error(errors.New("missing required flags")).WithMessage("CmdBackup: validation failed").Write()

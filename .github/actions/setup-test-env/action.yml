@@ -18,9 +18,12 @@ runs:
         go-version: ${{ inputs.go-version }}
         cache: true
 
+    - name: Set up Rust
+      uses: moonrepo/setup-rust@v1
+
     - name: Download dependencies
       shell: bash
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y fuse3
+        sudo apt-get install -y fuse3 libfuse3-dev uuid-dev libsystemd-dev libacl1-dev pkg-config build-essential
         go mod download

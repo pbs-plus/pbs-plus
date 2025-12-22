@@ -141,9 +141,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.19.0"
+version = "3.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
+checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 
 [[package]]
 name = "bytes"
@@ -183,6 +183,33 @@ checksum = "8eebd66744a15ded14960ab4ccdbfb51ad3b81f51f3f04a80adac98c985396c9"
 dependencies = [
  "hashbrown 0.14.5",
  "stacker",
+]
+
+[[package]]
+name = "ciborium"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42e69ffd6f0917f5c029256a24d0161db17cea3997d185db0d35926308770f0e"
+dependencies = [
+ "ciborium-io",
+ "ciborium-ll",
+ "serde",
+]
+
+[[package]]
+name = "ciborium-io"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05afea1e0a06c9be33d539b876f1ce3692f4afea2cb41f740e7743225ed1c757"
+
+[[package]]
+name = "ciborium-ll"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57663b653d948a338bfb3eeba9bb2fd5fcfaecb9e199e87e1eda4d9e8b240fd9"
+dependencies = [
+ "ciborium-io",
+ "half",
 ]
 
 [[package]]
@@ -244,6 +271,12 @@ checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "crunchy"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "crypto-common"
@@ -555,6 +588,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "half"
+version = "2.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
+dependencies = [
+ "cfg-if",
+ "crunchy",
+ "zerocopy",
+]
+
+[[package]]
 name = "handlebars"
 version = "5.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -741,9 +785,9 @@ checksum = "7aedcccd01fc5fe81e6b489c15b247b8b0690feb23304303a9e560f37efc560a"
 
 [[package]]
 name = "icu_properties"
-version = "2.1.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e93fcd3157766c0c8da2f8cff6ce651a31f0810eaa1c51ec363ef790bbb5fb99"
+checksum = "020bfc02fe870ec3a66d93e677ccca0562506e5872c650f893269e08615d74ec"
 dependencies = [
  "icu_collections",
  "icu_locale_core",
@@ -755,9 +799,9 @@ dependencies = [
 
 [[package]]
 name = "icu_properties_data"
-version = "2.1.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02845b3647bb045f1100ecd6480ff52f34c35f82d9880e029d329c21d1054899"
+checksum = "616c294cf8d725c6afcd8f55abc17c56464ef6211f9ed59cccffe534129c77af"
 
 [[package]]
 name = "icu_provider"
@@ -903,13 +947,13 @@ checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
 name = "libredox"
-version = "0.1.10"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "416f7e718bdb06000964960ffa43b4335ad4012ae8b99060261aa4a8088d5ccb"
+checksum = "df15f6eac291ed1cf25865b1ee60399f57e7c227e7f51bdbd4c5270396a9ed50"
 dependencies = [
  "bitflags",
  "libc",
- "redox_syscall",
+ "redox_syscall 0.6.0",
 ]
 
 [[package]]
@@ -1125,7 +1169,7 @@ checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall",
+ "redox_syscall 0.5.18",
  "smallvec",
  "windows-link",
 ]
@@ -1142,7 +1186,7 @@ dependencies = [
 [[package]]
 name = "pbs-api-types"
 version = "1.0.9"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "const_format",
@@ -1166,12 +1210,12 @@ dependencies = [
 [[package]]
 name = "pbs-buildcfg"
 version = "4.1.0"
-source = "git+https://git.proxmox.com/git/proxmox-backup.git#9f88a0211d130c7728d9010aaa1fcf91a7e9f764"
+source = "git+https://git.proxmox.com/git/proxmox-backup.git#4bbfdeb5e61be804e02270bba949546789bdcf45"
 
 [[package]]
 name = "pbs-config"
 version = "0.1.0"
-source = "git+https://git.proxmox.com/git/proxmox-backup.git#9f88a0211d130c7728d9010aaa1fcf91a7e9f764"
+source = "git+https://git.proxmox.com/git/proxmox-backup.git#4bbfdeb5e61be804e02270bba949546789bdcf45"
 dependencies = [
  "anyhow",
  "const_format",
@@ -1198,7 +1242,7 @@ dependencies = [
 [[package]]
 name = "pbs-datastore"
 version = "0.1.0"
-source = "git+https://git.proxmox.com/git/proxmox-backup.git#9f88a0211d130c7728d9010aaa1fcf91a7e9f764"
+source = "git+https://git.proxmox.com/git/proxmox-backup.git#4bbfdeb5e61be804e02270bba949546789bdcf45"
 dependencies = [
  "anyhow",
  "const_format",
@@ -1247,7 +1291,7 @@ dependencies = [
 [[package]]
 name = "pbs-key-config"
 version = "0.1.0"
-source = "git+https://git.proxmox.com/git/proxmox-backup.git#9f88a0211d130c7728d9010aaa1fcf91a7e9f764"
+source = "git+https://git.proxmox.com/git/proxmox-backup.git#4bbfdeb5e61be804e02270bba949546789bdcf45"
 dependencies = [
  "anyhow",
  "nix",
@@ -1265,7 +1309,7 @@ dependencies = [
 [[package]]
 name = "pbs-tools"
 version = "0.1.0"
-source = "git+https://git.proxmox.com/git/proxmox-backup.git#9f88a0211d130c7728d9010aaa1fcf91a7e9f764"
+source = "git+https://git.proxmox.com/git/proxmox-backup.git#4bbfdeb5e61be804e02270bba949546789bdcf45"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1404,7 +1448,7 @@ dependencies = [
 [[package]]
 name = "proxmox-api-macro"
 version = "1.4.4"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "proc-macro2 1.0.103",
@@ -1415,7 +1459,7 @@ dependencies = [
 [[package]]
 name = "proxmox-apt-api-types"
 version = "2.0.4"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "proxmox-config-digest",
  "proxmox-schema",
@@ -1427,7 +1471,7 @@ dependencies = [
 [[package]]
 name = "proxmox-async"
 version = "0.5.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "futures",
@@ -1440,7 +1484,7 @@ dependencies = [
 [[package]]
 name = "proxmox-auth-api"
 version = "1.0.5"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "const_format",
@@ -1451,36 +1495,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "proxmox-backup-pxar-mount"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "env_logger",
- "futures",
- "hex",
- "libc",
- "log",
- "nix",
- "pbs-api-types",
- "pbs-datastore",
- "pbs-key-config",
- "pbs-tools",
- "proxmox-fuse",
- "proxmox-io",
- "proxmox-lang",
- "proxmox-sys",
- "pxar",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "proxmox-base64"
 version = "1.0.1"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "base64",
  "serde",
@@ -1489,12 +1506,12 @@ dependencies = [
 [[package]]
 name = "proxmox-borrow"
 version = "1.1.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 
 [[package]]
 name = "proxmox-compression"
 version = "1.0.1"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1515,7 +1532,7 @@ dependencies = [
 [[package]]
 name = "proxmox-config-digest"
 version = "1.0.1"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "hex",
@@ -1527,7 +1544,7 @@ dependencies = [
 [[package]]
 name = "proxmox-fixed-string"
 version = "0.1.1"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "serde",
  "serde_plain",
@@ -1549,7 +1566,7 @@ dependencies = [
 [[package]]
 name = "proxmox-http"
 version = "1.0.5"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1579,7 +1596,7 @@ dependencies = [
 [[package]]
 name = "proxmox-http-error"
 version = "1.0.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "http",
@@ -1589,7 +1606,7 @@ dependencies = [
 [[package]]
 name = "proxmox-human-byte"
 version = "1.0.1"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "proxmox-schema",
@@ -1600,7 +1617,7 @@ dependencies = [
 [[package]]
 name = "proxmox-io"
 version = "1.2.1"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "endian_trait",
  "tokio",
@@ -1609,12 +1626,12 @@ dependencies = [
 [[package]]
 name = "proxmox-lang"
 version = "1.5.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 
 [[package]]
 name = "proxmox-notify"
 version = "1.0.3"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "const_format",
@@ -1643,7 +1660,7 @@ dependencies = [
 [[package]]
 name = "proxmox-rate-limiter"
 version = "1.0.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "hyper",
@@ -1655,7 +1672,7 @@ dependencies = [
 [[package]]
 name = "proxmox-router"
 version = "3.2.4"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "futures",
@@ -1673,7 +1690,7 @@ dependencies = [
 [[package]]
 name = "proxmox-s3-client"
 version = "1.2.4"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1708,7 +1725,7 @@ dependencies = [
 [[package]]
 name = "proxmox-schema"
 version = "5.0.1"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "const_format",
@@ -1722,7 +1739,7 @@ dependencies = [
 [[package]]
 name = "proxmox-section-config"
 version = "3.1.1"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "hex",
@@ -1735,7 +1752,7 @@ dependencies = [
 [[package]]
 name = "proxmox-sendmail"
 version = "1.0.1"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "percent-encoding",
@@ -1746,7 +1763,7 @@ dependencies = [
 [[package]]
 name = "proxmox-serde"
 version = "1.0.1"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "proxmox-base64",
@@ -1758,7 +1775,7 @@ dependencies = [
 [[package]]
 name = "proxmox-shared-memory"
 version = "1.0.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "libc",
@@ -1769,7 +1786,7 @@ dependencies = [
 [[package]]
 name = "proxmox-sys"
 version = "1.0.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "libc",
@@ -1786,7 +1803,7 @@ dependencies = [
 [[package]]
 name = "proxmox-systemd"
 version = "1.0.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "libc",
 ]
@@ -1794,7 +1811,7 @@ dependencies = [
 [[package]]
 name = "proxmox-time"
 version = "2.1.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -1806,7 +1823,7 @@ dependencies = [
 [[package]]
 name = "proxmox-uuid"
 version = "1.1.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "js-sys",
  "serde",
@@ -1815,7 +1832,7 @@ dependencies = [
 [[package]]
 name = "proxmox-worker-task"
 version = "1.0.0"
-source = "git+https://git.proxmox.com/git/proxmox.git#0645c1cb4c36fdb69f2eed139dad0c4d9a52a308"
+source = "git+https://git.proxmox.com/git/proxmox.git#56e0f959d8d906d169b1302920e96ca644692628"
 dependencies = [
  "anyhow",
 ]
@@ -1838,6 +1855,34 @@ dependencies = [
  "endian_trait",
  "libc",
  "siphasher",
+ "tokio",
+]
+
+[[package]]
+name = "pxar-socket-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ciborium",
+ "env_logger",
+ "futures",
+ "hex",
+ "libc",
+ "log",
+ "nix",
+ "pbs-api-types",
+ "pbs-datastore",
+ "pbs-key-config",
+ "pbs-tools",
+ "proxmox-fuse",
+ "proxmox-io",
+ "proxmox-lang",
+ "proxmox-sys",
+ "pxar",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
  "tokio",
 ]
 
@@ -1891,6 +1936,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_syscall"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec96166dafa0886eb81fe1c0a388bece180fbef2135f97c1e2cf8302e74b43b5"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
 name = "regex"
 version = "1.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1934,9 +1988,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.13.1"
+version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "708c0f9d5f54ba0272468c1d306a52c495b31fa155e91bc25371e6df7996908c"
+checksum = "21e6f2ab2928ca4291b86736a8bd920a277a399bba1589409d72154ff87c1282"
 dependencies = [
  "zeroize",
 ]

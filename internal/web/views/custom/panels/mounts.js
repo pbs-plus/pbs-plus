@@ -1,6 +1,6 @@
-Ext.define("PBS.D2DRestore.DatastorePanel", {
+Ext.define("PBS.D2DSnapshotMount.DatastorePanel", {
   extend: "Ext.tree.Panel",
-  alias: "widget.pbsPlusDatastorePanel",
+  alias: "widget.pbsPlusSnapshotMountDatastorePanel",
   config: { datastore: null },
   mixins: ["Proxmox.Mixin.CBind"],
 

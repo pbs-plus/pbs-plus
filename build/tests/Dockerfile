@@ -9,9 +9,22 @@ COPY . .
 
 RUN GOFIPS140=latest go build -o pbs-plus ./cmd/pbs_plus
 
+FROM rust:trixie AS socket-api-builder
+
+WORKDIR /build
+
+COPY ./extras/pxar-socket-api/. .
+
+RUN apt-get update -y \
+  && apt-get install -y fuse3 libfuse3-dev uuid-dev libsystemd-dev libacl1-dev pkg-config build-essential
+
+RUN cargo build
+
 FROM ghcr.io/pbs-plus/proxmox-backup-docker:latest
 
 COPY --from=builder /build/pbs-plus /usr/bin/pbs-plus
+COPY --from=socket-api-builder /build/target/debug/pxar-socket-api /usr/bin/pxar-socket-api
+
 RUN chmod 0755 /usr/bin/pbs-plus
 
 # Create pbs-plus configuration directory

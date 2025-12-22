@@ -37,7 +37,7 @@ struct Args {
 
 fn print_usage() {
     eprintln!("Usage (datastore-only, no local .mpxar needed):");
-    eprintln!("  proxmox-backup-pxar-mount --pbs-store <datastore> --mpxar-didx <path/to/mpxar.didx> --ppxar-didx <path/to/ppxar.didx> <mountpoint> [--keyfile <path>] [--verify-chunks] [--options <opts>] [--verbose]");
+    eprintln!("  pxar-direct-mount --pbs-store <datastore> --mpxar-didx <path/to/mpxar.didx> --ppxar-didx <path/to/ppxar.didx> <mountpoint> [--keyfile <path>] [--verify-chunks] [--options <opts>] [--verbose]");
     eprintln!("Options:");
     eprintln!("  --pbs-store <DIR>        PBS datastore root (contains .chunks)");
     eprintln!("  --mpxar-didx <FILE>      Path to metadata dynamic index (mpxar.didx)");

@@ -473,3 +473,95 @@ func parseLastLogMessage(upid string) (string, error) {
 
 	return strings.TrimSpace(message), nil
 }
+
+func buildGroupPath(ns, backupType, backupID, backupTime string) string {
+	var parts []string
+
+	if ns != "" {
+		nsParts := strings.Split(ns, "/")
+		for _, nsPart := range nsParts {
+			if nsPart != "" {
+				parts = append(parts, "ns", nsPart)
+			}
+		}
+	}
+
+	parts = append(parts, backupType, backupID, backupTime)
+
+	return filepath.Join(parts...)
+}
+
+// BuildPxarPaths constructs the full filesystem paths for pxar/mpxar/ppxar files.
+// Returns (mpxarPath, ppxarPath, isMetadataSplit, error).
+// For non-split pxar: ppxarPath is empty, mpxarPath contains the .pxar.didx path.
+// For split pxar: both mpxarPath and ppxarPath are populated.
+// If fileName is empty, scans the backup directory for .pxar.didx or .mpxar.didx files.
+func BuildPxarPaths(pbsStoreRoot, ns, backupType, backupID, backupTime, fileName string) (mpxarPath, ppxarPath string, isMetadataSplit bool, err error) {
+	groupPath := buildGroupPath(ns, backupType, backupID, backupTime)
+	groupDir := filepath.Join(pbsStoreRoot, groupPath)
+
+	// If fileName is empty, scan directory for pxar files
+	if fileName == "" {
+		entries, err := os.ReadDir(groupDir)
+		if err != nil {
+			return "", "", false, fmt.Errorf("failed to read backup directory: %w", err)
+		}
+
+		// Look for .mpxar.didx first (prefer split archives), then .pxar.didx
+		var foundMpxar, foundPxar string
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if strings.HasSuffix(name, ".mpxar.didx") && foundMpxar == "" {
+				foundMpxar = name
+			} else if strings.HasSuffix(name, ".pxar.didx") && foundPxar == "" {
+				foundPxar = name
+			}
+		}
+
+		if foundMpxar != "" {
+			fileName = foundMpxar
+		} else if foundPxar != "" {
+			fileName = foundPxar
+		} else {
+			return "", "", false, fmt.Errorf("no .pxar.didx or .mpxar.didx file found in %s", groupDir)
+		}
+	}
+
+	if !strings.HasSuffix(fileName, ".mpxar.didx") &&
+		!strings.HasSuffix(fileName, ".pxar.didx") &&
+		!strings.HasSuffix(fileName, ".ppxar.didx") {
+		return "", "", false, fmt.Errorf("file-name must end with .pxar.didx, .mpxar.didx, or .ppxar.didx")
+	}
+
+	switch {
+	case strings.HasSuffix(fileName, ".pxar.didx"):
+		// Non-split archive
+		mpxarPath = filepath.Join(groupDir, fileName)
+		return mpxarPath, "", false, nil
+
+	case strings.HasSuffix(fileName, ".mpxar.didx"):
+		// Metadata file provided, need to find payload
+		mpxarPath = filepath.Join(groupDir, fileName)
+		ppxarName := strings.TrimSuffix(fileName, ".mpxar.didx") + ".ppxar.didx"
+		ppxarPath = filepath.Join(groupDir, ppxarName)
+		if _, err := os.Stat(ppxarPath); err != nil {
+			return "", "", false, fmt.Errorf("payload index not found: %s", ppxarPath)
+		}
+		return mpxarPath, ppxarPath, true, nil
+
+	case strings.HasSuffix(fileName, ".ppxar.didx"):
+		// Payload file provided, need to find metadata
+		ppxarPath = filepath.Join(groupDir, fileName)
+		mpxarName := strings.TrimSuffix(fileName, ".ppxar.didx") + ".mpxar.didx"
+		mpxarPath = filepath.Join(groupDir, mpxarName)
+		if _, err := os.Stat(mpxarPath); err != nil {
+			return "", "", false, fmt.Errorf("metadata index not found: %s", mpxarPath)
+		}
+		return mpxarPath, ppxarPath, true, nil
+	}
+
+	return "", "", false, fmt.Errorf("unexpected file-name format")
+}
