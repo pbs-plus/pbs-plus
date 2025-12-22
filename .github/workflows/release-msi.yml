@@ -139,7 +139,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
           
           # Build WiX object file
-          $candlePath = "C:\Program Files (x86)\WiX Toolset v3.11\bin\candle.exe"
+          $candlePath = "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe"
           $wxsPath = "${{ github.workspace }}\build\package\windows_agent\Product.wxs"
           $wixobjPath = "$outputDir\Product.wixobj"
           
@@ -164,7 +164,7 @@ jobs:
           Write-Host "✓ WiX object file created"
           
           # Link MSI
-          $lightPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin\light.exe"
+          $lightPath = "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe"
           $msiPath = "$outputDir\pbs-plus-agent-${{ env.TAG }}-windows-amd64.msi"
           
           if (-not (Test-Path $lightPath)) {
