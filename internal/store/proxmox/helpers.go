@@ -308,7 +308,31 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 		}
 	}
 
-	errorLine := fmt.Sprintf("%s: TASK ERROR: %s\n", timestamp, pbsError.Error())
+	fullError := pbsError.Error()
+	errorLines := strings.Split(fullError, "\n")
+
+	firstNonEmptyLine := ""
+	for _, line := range errorLines {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			firstNonEmptyLine = trimmed
+			break
+		}
+	}
+
+	if firstNonEmptyLine == "" {
+		firstNonEmptyLine = fullError
+	}
+
+	for _, line := range errorLines {
+		if line != "" {
+			errorDetailLine := fmt.Sprintf("%s: %s\n", timestamp, line)
+			if _, err := file.WriteString(errorDetailLine); err != nil {
+				return Task{}, fmt.Errorf("failed to write error detail line: %w", err)
+			}
+		}
+	}
+
+	errorLine := fmt.Sprintf("%s: TASK ERROR: %s\n", timestamp, firstNonEmptyLine)
 	if _, err := file.WriteString(errorLine); err != nil {
 		return Task{}, fmt.Errorf("failed to write error line: %w", err)
 	}
@@ -319,13 +343,13 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 	}
 	defer archive.Close()
 
-	archiveLine := fmt.Sprintf("%s %s %s\n", upid, startTime, pbsError.Error())
+	archiveLine := fmt.Sprintf("%s %s %s\n", upid, startTime, firstNonEmptyLine)
 	if _, err := archive.WriteString(archiveLine); err != nil {
 		return Task{}, fmt.Errorf("failed to write archive line: %w", err)
 	}
 
 	task.Status = "stopped"
-	task.ExitStatus = pbsError.Error()
+	task.ExitStatus = firstNonEmptyLine
 	task.EndTime = time.Now().Unix()
 
 	return task, nil
