@@ -19,7 +19,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
