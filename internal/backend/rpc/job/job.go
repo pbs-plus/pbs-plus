@@ -10,7 +10,7 @@ import (
 	"net/rpc"
 	"os"
 
-	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -48,7 +48,7 @@ func (s *JobRPCService) Queue(args *QueueArgs, reply *QueueReply) error {
 		return nil
 	}
 
-	job := backup.NewJob(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
+	job := backup.NewBackupOperation(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
 	s.Manager.Enqueue(job)
 	reply.Status = 200
 
