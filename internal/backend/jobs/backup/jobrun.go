@@ -445,9 +445,17 @@ func (b *BackupOperation) startBackup(ctx context.Context, srcPath string, targe
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
 	}
 
-	task, readyChan, err := b.startTaskMonitoring(ctx, target)
-	if err != nil {
-		return nil, proxmox.Task{}, "", err
+	taskChan, readyChan, errChan := b.startTaskMonitoring(ctx, target)
+
+	select {
+	case <-readyChan:
+	case err := <-errChan:
+		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskMonitoringInitializationFailed, err)
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, proxmox.Task{}, "", jobs.ErrCanceled
+		}
+		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskMonitoringTimedOut, ctx.Err())
 	}
 
 	currOwner, _ := GetCurrentOwner(b.job, b.storeInstance)
@@ -471,9 +479,13 @@ func (b *BackupOperation) startBackup(ctx context.Context, srcPath string, targe
 
 	go monitorPBSClientLogs(b.logger.Path, cmd, errorMonitorDone)
 
+	var task proxmox.Task
 	syslog.L.Info().WithMessage("waiting for task monitoring results").Write()
+
 	select {
-	case <-readyChan:
+	case task = <-taskChan:
+	case err := <-errChan:
+		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskDetectionFailed, err)
 	case <-ctx.Done():
 		_ = cmd.Process.Kill()
 		if currOwner != "" {
@@ -493,7 +505,7 @@ func (b *BackupOperation) startBackup(ctx context.Context, srcPath string, targe
 	return cmd, task, currOwner, nil
 }
 
-func (b *BackupOperation) startTaskMonitoring(ctx context.Context, target types.Target) (proxmox.Task, chan struct{}, error) {
+func (b *BackupOperation) startTaskMonitoring(ctx context.Context, target types.Target) (chan proxmox.Task, chan struct{}, chan error) {
 	readyChan := make(chan struct{})
 	taskChan := make(chan proxmox.Task, 1)
 	errChan := make(chan error, 1)
@@ -521,31 +533,7 @@ func (b *BackupOperation) startTaskMonitoring(ctx context.Context, target types.
 		}
 	}()
 
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		return proxmox.Task{}, nil, fmt.Errorf("%w: %v", ErrTaskMonitoringInitializationFailed, err)
-	case <-monitorCtx.Done():
-		if errors.Is(monitorCtx.Err(), context.Canceled) {
-			return proxmox.Task{}, nil, jobs.ErrCanceled
-		}
-		return proxmox.Task{}, nil, fmt.Errorf("%w: %v", ErrTaskMonitoringTimedOut, monitorCtx.Err())
-	}
-
-	select {
-	case task := <-taskChan:
-		return task, readyChan, nil
-	case err := <-errChan:
-		if os.IsNotExist(err) {
-			return proxmox.Task{}, nil, ErrNilTask
-		}
-		return proxmox.Task{}, nil, fmt.Errorf("%w: %v", ErrTaskDetectionFailed, err)
-	case <-monitorCtx.Done():
-		if errors.Is(monitorCtx.Err(), context.Canceled) {
-			return proxmox.Task{}, nil, jobs.ErrCanceled
-		}
-		return proxmox.Task{}, nil, ErrTaskDetectionTimedOut
-	}
+	return taskChan, readyChan, errChan
 }
 
 func (b *BackupOperation) waitForCompletion(ctx context.Context, cmd *exec.Cmd, task proxmox.Task, currOwner string, agentMount *mount.AgentMount, s3Mount *mount.S3Mount, errorMonitorDone chan struct{}, wg *sync.WaitGroup) {
