@@ -10,7 +10,8 @@ import (
 	"net/rpc"
 	"os"
 
-	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -37,14 +38,14 @@ type QueueReply struct {
 }
 
 type JobRPCService struct {
-	ctx           context.Context
-	Store         *store.Store
-	BackupManager *backup.Manager
+	ctx     context.Context
+	Store   *store.Store
+	Manager *jobs.Manager
 }
 
-func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
+func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *BackupQueueReply) error {
 	if args.Stop {
-		err := s.BackupManager.StopJob(args.Job.ID)
+		err := s.Manager.StopJob(args.Job.ID)
 		if err != nil {
 			reply.Status = 500
 			reply.Message = err.Error()
@@ -55,20 +56,14 @@ func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) er
 		return nil
 	}
 
-	job, err := backup.NewJob(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
-	if err != nil {
-		reply.Status = 500
-		reply.Message = err.Error()
-		return nil
-	}
-
-	s.BackupManager.Enqueue(job)
+	job := backup.NewBackupOperation(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
+	s.Manager.Enqueue(job)
 	reply.Status = 200
 
 	return nil
 }
 
-func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error {
+func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *RestoreQueueReply) error {
 	if args.Stop {
 	}
 
@@ -79,7 +74,7 @@ func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) 
 	return nil
 }
 
-func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, manager *backup.Manager, storeInstance *store.Store) error {
+func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
 	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
 	listener, err := net.Listen("unix", socketPath)
@@ -88,9 +83,9 @@ func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath st
 	}
 
 	service := &JobRPCService{
-		ctx:           ctx,
-		Store:         storeInstance,
-		BackupManager: manager,
+		ctx:     ctx,
+		Store:   storeInstance,
+		Manager: manager,
 	}
 
 	// Register the RPC service.
@@ -119,7 +114,7 @@ func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath st
 	return nil
 }
 
-func RunJobRPCServer(ctx context.Context, socketPath string, manager *backup.Manager, storeInstance *store.Store) error {
+func RunJobRPCServer(ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
 	watcher := make(chan struct{}, 1)
 	err := StartJobRPCServer(watcher, ctx, socketPath, manager, storeInstance)
 	if err != nil {
