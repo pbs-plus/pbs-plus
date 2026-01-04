@@ -184,7 +184,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	reply.BackupMode = backupMode
 
 	syslog.L.Info().
-		WithMessage("Backup successful").
+		WithMessage("Mounting successful").
 		WithFields(map[string]any{
 			"jobId":  args.JobId,
 			"mount":  mntPath,
@@ -248,7 +248,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 	reply.Message = job.Namespace
 
 	syslog.L.Info().
-		WithMessage("Backup successful").
+		WithMessage("Mounting successful").
 		WithFields(map[string]any{
 			"jobId":    args.JobId,
 			"mount":    mntPath,

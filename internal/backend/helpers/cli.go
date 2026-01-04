@@ -1,6 +1,6 @@
 //go:build linux
 
-package backup
+package helpers
 
 import (
 	"bufio"
@@ -9,11 +9,35 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+var (
+	JunkSubstrings = []string{
+		"upload_chunk done:",
+		"POST /dynamic_chunk",
+		"POST /dynamic_index",
+		"PUT /dynamic_index",
+		"dynamic_append",
+		"successfully added chunk",
+		"created new dynamic index",
+		"GET /previous",
+		"from previous backup.",
+	}
+)
+
+func IsJunkLog(line string) bool {
+	for _, junk := range JunkSubstrings {
+		if strings.Contains(line, junk) {
+			return true
+		}
+	}
+	return false
+}
 
 func processFile(path string, removedCount *int64) error {
 	inputFile, err := os.Open(path)
@@ -22,25 +46,15 @@ func processFile(path string, removedCount *int64) error {
 	}
 	defer inputFile.Close()
 
-	// Get original file info to preserve permissions, ownership, and timestamps
 	info, err := inputFile.Stat()
 	if err != nil {
 		return fmt.Errorf("getting stat of file %s: %w", path, err)
 	}
-	origMode := info.Mode()
-	origModTime := info.ModTime()
-	origAccessTime := origModTime // Use ModTime as AccessTime if not available
 
-	// Retrieve UID and GID from the underlying stat
 	statT, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return fmt.Errorf("failed to retrieve underlying stat from file %s", path)
 	}
-	origUid := int(statT.Uid)
-	origGid := int(statT.Gid)
-
-	// On Unix systems, get the actual access time
-	origAccessTime = time.Unix(statT.Atim.Sec, statT.Atim.Nsec)
 
 	dir := filepath.Dir(path)
 	tmpFile, err := os.CreateTemp(dir, "clean_")
@@ -52,39 +66,49 @@ func processFile(path string, removedCount *int64) error {
 	defer tmpFile.Close()
 
 	scanner := bufio.NewScanner(inputFile)
-	writer := bufio.NewWriter(tmpFile)
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+	writer := bufio.NewWriterSize(tmpFile, 256*1024)
 
 	var removedInFile int64
 	for scanner.Scan() {
-		line := scanner.Text()
-		if isJunkLog(line) {
-			// Count the removed junk log line and skip writing it
+		line := scanner.Bytes()
+		if IsJunkLog(string(line)) {
 			removedInFile++
 		} else {
-			if _, err := writer.WriteString(line + "\n"); err != nil {
+			if _, err := writer.Write(line); err != nil {
+				os.Remove(tmpName)
 				return fmt.Errorf("writing to temp file for %s: %w", path, err)
+			}
+			if err := writer.WriteByte('\n'); err != nil {
+				os.Remove(tmpName)
+				return fmt.Errorf("writing newline for %s: %w", path, err)
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		os.Remove(tmpName)
 		return fmt.Errorf("scanning file %s: %w", path, err)
 	}
 	if err := writer.Flush(); err != nil {
+		os.Remove(tmpName)
 		return fmt.Errorf("flushing writer for %s: %w", path, err)
 	}
 
-	// Ensure the temp file has the same permissions as the original
-	if err := os.Chmod(tmpName, origMode); err != nil {
+	if removedInFile == 0 {
+		tmpFile.Close()
+		os.Remove(tmpName)
+		return nil
+	}
+
+	if err := os.Chmod(tmpName, info.Mode()); err != nil {
 		return fmt.Errorf("setting permissions on temp file for %s: %w", path, err)
 	}
-
-	// Preserve the owner and group of the original file
-	if err := os.Chown(tmpName, origUid, origGid); err != nil {
+	if err := os.Chown(tmpName, int(statT.Uid), int(statT.Gid)); err != nil {
 		return fmt.Errorf("setting ownership on temp file for %s: %w", path, err)
 	}
-
-	// Preserve the original timestamps
-	if err := os.Chtimes(tmpName, origAccessTime, origModTime); err != nil {
+	origAccessTime := time.Unix(statT.Atim.Sec, statT.Atim.Nsec)
+	if err := os.Chtimes(tmpName, origAccessTime, info.ModTime()); err != nil {
 		return fmt.Errorf("setting timestamps on temp file for %s: %w", path, err)
 	}
 
@@ -105,7 +129,6 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 	var errOnce sync.Once
 	var finalErr error
 
-	// Global atomic counter for removed lines.
 	var totalRemoved int64
 
 	worker := func() {
@@ -121,19 +144,16 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 		}
 	}
 
-	// Start worker goroutines.
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go worker()
 	}
 
-	// List the entries in the root directory.
 	entries, err := os.ReadDir(rootDir)
 	if err != nil {
 		return 0, err
 	}
 
-	// Process only the subdirectories of rootDir.
 	for _, entry := range entries {
 		if entry.IsDir() {
 			subDir := filepath.Join(rootDir, entry.Name())
