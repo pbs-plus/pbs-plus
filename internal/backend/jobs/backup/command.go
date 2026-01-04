@@ -64,7 +64,7 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(job.Target), srcPath),
 		"--repository", jobStore,
 		detectionMode,
-		"--entries-max", fmt.Sprintf("%d", job.MaxDirEntries),
+		"--entries-max", fmt.Sprintf("%d", job.MaxDirEntries+1024),
 		"--backup-id", backupId,
 		"--crypt-mode=none",
 	}
