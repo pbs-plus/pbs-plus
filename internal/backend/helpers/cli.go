@@ -8,7 +8,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -29,8 +28,6 @@ var (
 		"GET /previous",
 		"from previous backup.",
 	}
-
-	errorPathRegex = regexp.MustCompile(`upload failed: error at "([^"]+)"`)
 )
 
 func IsJunkLog(line string) bool {
