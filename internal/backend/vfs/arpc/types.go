@@ -22,6 +22,7 @@ type DirStream struct {
 	path          string
 	handleId      types.FileHandleId
 	closed        int32
+	maxedOut      int32
 	lastRespMu    sync.Mutex
 	lastResp      types.ReadDirEntries
 	curIdx        uint64
