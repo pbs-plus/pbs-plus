@@ -20,7 +20,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/helpers"
-	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
+	backendJobs "github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
@@ -333,7 +333,7 @@ func main() {
 		}
 	}()
 
-	backupManager := backup.NewManager(mainCtx)
+	manager := backendJobs.NewManager(mainCtx, utils.MaxConcurrentClients, 100)
 
 	go func() {
 		for {
@@ -342,7 +342,7 @@ func main() {
 				syslog.L.Error(mainCtx.Err()).WithMessage("job rpc server cancelled")
 				return
 			default:
-				if err := jobrpc.RunJobRPCServer(mainCtx, constants.JobMutateSocketPath, backupManager, storeInstance); err != nil {
+				if err := jobrpc.RunJobRPCServer(mainCtx, constants.JobMutateSocketPath, manager, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("job rpc server failed, restarting")
 				}
 			}
