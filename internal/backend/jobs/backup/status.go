@@ -12,14 +12,12 @@ import (
 )
 
 func updateJobStatus(succeeded bool, warningsNum int, job types.Job, task proxmox.Task, storeInstance *store.Store) error {
-	// Update task status
 	taskFound, err := proxmox.GetTaskByUPID(task.UPID)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("unable to get task by upid").Write()
 		return err
 	}
 
-	// Update job status
 	latestJob, err := storeInstance.Database.GetJob(job.ID)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("unable to get job").Write()
