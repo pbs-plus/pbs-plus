@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sync"
 	"syscall"
 	"unsafe"
 
@@ -175,69 +174,12 @@ func GetExplicitEntriesFromACL(acl *windows.ACL) (uintptr, uint32, error) {
 		return 0, 0, fmt.Errorf("unreasonable ACE count: %d (max: %d)", entriesCount, maxReasonableACEs)
 	}
 
-	// Validate pointer is not in freed pointers ring (catches some use-after-free)
-	if entriesCount > 0 && freedPointers.contains(explicitEntriesPtr) {
-		return 0, 0, fmt.Errorf("pointer already freed")
-	}
-
 	return explicitEntriesPtr, entriesCount, nil
-}
-
-type freedPointerRing struct {
-	mu      sync.RWMutex
-	ptrs    map[uintptr]struct{}
-	order   []uintptr
-	maxSize int
-}
-
-var freedPointers = &freedPointerRing{
-	ptrs:    make(map[uintptr]struct{}, 1024),
-	order:   make([]uintptr, 0, 1024),
-	maxSize: 1024,
-}
-
-func (r *freedPointerRing) contains(ptr uintptr) bool {
-	if ptr == 0 {
-		return false
-	}
-
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	_, exists := r.ptrs[ptr]
-	return exists
-}
-
-func (r *freedPointerRing) add(ptr uintptr) {
-	if ptr == 0 {
-		return
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// If already at capacity, remove oldest entry
-	if len(r.order) >= r.maxSize {
-		oldest := r.order[0]
-		delete(r.ptrs, oldest)
-		r.order = r.order[1:]
-	}
-
-	// Add new pointer if not already present
-	if _, exists := r.ptrs[ptr]; !exists {
-		r.ptrs[ptr] = struct{}{}
-		r.order = append(r.order, ptr)
-	}
 }
 
 func FreeExplicitEntries(explicitEntriesPtr uintptr) error {
 	if explicitEntriesPtr == 0 {
 		return nil
-	}
-
-	// Check for double-free
-	if freedPointers.contains(explicitEntriesPtr) {
-		return fmt.Errorf("detected double-free attempt for pointer 0x%X", explicitEntriesPtr)
 	}
 
 	ret, _, callErr := procLocalFree.Call(explicitEntriesPtr)
@@ -248,7 +190,6 @@ func FreeExplicitEntries(explicitEntriesPtr uintptr) error {
 		return fmt.Errorf("LocalFree failed with code: %d", ret)
 	}
 
-	freedPointers.add(explicitEntriesPtr)
 	return nil
 }
 
