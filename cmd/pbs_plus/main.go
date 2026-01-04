@@ -19,7 +19,8 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/backend/backup"
+	"github.com/pbs-plus/pbs-plus/internal/backend/helpers"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
@@ -84,7 +85,7 @@ func main() {
 		fmt.Println("         /var/log/proxmox-backup/tasks")
 		fmt.Println()
 		fmt.Println("All log entries with the following substrings will be removed if found in any log file:")
-		for _, substr := range backup.JunkSubstrings {
+		for _, substr := range helpers.JunkSubstrings {
 			fmt.Printf(" - %s\n", substr)
 		}
 		fmt.Println()
@@ -114,7 +115,7 @@ func main() {
 
 		fmt.Println("Proceeding with log cleanup...")
 
-		removed, err := backup.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
+		removed, err := helpers.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
 		if err != nil {
 			log.Fatal(err)
 		}
