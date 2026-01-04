@@ -43,7 +43,7 @@ type JobRPCService struct {
 	Manager *jobs.Manager
 }
 
-func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *BackupQueueReply) error {
+func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 	if args.Stop {
 		err := s.Manager.StopJob(args.Job.ID)
 		if err != nil {
@@ -63,7 +63,7 @@ func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *BackupQueueRep
 	return nil
 }
 
-func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *RestoreQueueReply) error {
+func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error {
 	if args.Stop {
 	}
 
