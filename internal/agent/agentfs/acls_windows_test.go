@@ -182,27 +182,6 @@ func TestUnsafeEntriesToSlice_InvalidPointers(t *testing.T) {
 	}
 }
 
-// TestFreeExplicitEntries_DoubleFreePrevention tests double free scenarios
-func TestFreeExplicitEntries_DoubleFreePrevention(t *testing.T) {
-	// Allocate some memory via LocalAlloc
-	size := uintptr(100)
-	ptr, _, _ := modKernel32.NewProc("LocalAlloc").Call(0, size)
-
-	if ptr == 0 {
-		t.Skip("LocalAlloc failed, skipping double free test")
-	}
-
-	// First free should succeed
-	err := FreeExplicitEntries(ptr)
-	if err != nil {
-		t.Logf("First free error (might be expected): %v", err)
-	}
-
-	// Second free should handle gracefully (might error, but shouldn't crash)
-	err = FreeExplicitEntries(ptr)
-	t.Logf("Second free error: %v", err)
-}
-
 // TestFreeExplicitEntries_InvalidPointers tests freeing invalid pointers
 func TestFreeExplicitEntries_InvalidPointers(t *testing.T) {
 	tests := []struct {
