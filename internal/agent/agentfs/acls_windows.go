@@ -165,7 +165,6 @@ func GetExplicitEntriesFromACL(acl *windows.ACL) (uintptr, uint32, error) {
 		return 0, 0, fmt.Errorf("GetExplicitEntriesFromACL returned success but null pointer for entries")
 	}
 
-	// Validate count is reasonable
 	const maxReasonableACEs = 10000
 	if entriesCount > maxReasonableACEs {
 		if explicitEntriesPtr != 0 {
