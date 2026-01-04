@@ -445,7 +445,10 @@ func (b *BackupOperation) startBackup(ctx context.Context, srcPath string, targe
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
 	}
 
-	taskChan, readyChan, errChan := b.startTaskMonitoring(ctx, target)
+	monitorCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	taskChan, readyChan, errChan := b.startTaskMonitoring(monitorCtx, target)
 
 	select {
 	case <-readyChan:
@@ -510,18 +513,15 @@ func (b *BackupOperation) startTaskMonitoring(ctx context.Context, target types.
 	taskChan := make(chan proxmox.Task, 1)
 	errChan := make(chan error, 1)
 
-	monitorCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-
 	syslog.L.Info().WithMessage("starting monitor goroutine").Write()
 	go func() {
 		defer syslog.L.Info().WithMessage("monitor goroutine closing").Write()
-		task, err := proxmox.GetJobTask(monitorCtx, readyChan, b.job, target)
+		task, err := proxmox.GetJobTask(ctx, readyChan, b.job, target)
 		if err != nil {
 			syslog.L.Error(err).WithMessage("found error in getjobtask return").Write()
 			select {
 			case errChan <- err:
-			case <-monitorCtx.Done():
+			case <-ctx.Done():
 			}
 			return
 		}
@@ -529,7 +529,7 @@ func (b *BackupOperation) startTaskMonitoring(ctx context.Context, target types.
 		syslog.L.Info().WithMessage("found task in getjobtask return").WithField("task", task.UPID).Write()
 		select {
 		case taskChan <- task:
-		case <-monitorCtx.Done():
+		case <-ctx.Done():
 		}
 	}()
 
