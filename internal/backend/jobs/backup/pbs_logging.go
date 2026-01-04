@@ -13,30 +13,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/backend/helpers"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
-var JunkSubstrings = []string{
-	"upload_chunk done:",
-	"POST /dynamic_chunk",
-	"POST /dynamic_index",
-	"PUT /dynamic_index",
-	"dynamic_append",
-	"successfully added chunk",
-	"created new dynamic index",
-	"GET /previous",
-	"from previous backup.",
-}
-
-func isJunkLog(line string) bool {
-	for _, junk := range JunkSubstrings {
-		if strings.Contains(line, junk) {
-			return true
-		}
-	}
-	return false
-}
+var (
+	errorPathRegex = regexp.MustCompile(`upload failed: error at "([^"]+)"`)
+)
 
 func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.BackupLogger) (bool, bool, int, string, error) {
 	logFilePath := utils.GetTaskLogPath(upid)
@@ -46,7 +30,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	}
 	defer inFile.Close()
 
-	// Retrieve original file's metadata (permissions, ownership, and timestamps)
 	info, err := inFile.Stat()
 	if err != nil {
 		return false, false, 0, "", fmt.Errorf("getting stat of file %s: %w", logFilePath, err)
@@ -61,7 +44,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	origGid := int(statT.Gid)
 	origAccessTime := time.Unix(statT.Atim.Sec, statT.Atim.Nsec)
 
-	// Create a temporary file in the same directory
 	dir := filepath.Dir(logFilePath)
 	tmpFile, err := os.CreateTemp(dir, "processed_*.tmp")
 	if err != nil {
@@ -71,39 +53,31 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	defer func() {
 		if tmpFile != nil {
 			tmpFile.Close()
-			os.Remove(tmpFile.Name()) // Clean up in case of error
+			os.Remove(tmpName)
 		}
 	}()
 
 	tmpWriter := bufio.NewWriter(tmpFile)
 
-	// Filter existing log content
 	scanner := bufio.NewScanner(inFile)
-	const maxCapacity = 1024 * 1024 // 1 MB
+	const maxCapacity = 1024 * 1024
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, maxCapacity)
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if isJunkLog(line) {
-			continue // Skip junk lines
+		if helpers.IsJunkLog(line) {
+			continue
 		}
-		if _, err := tmpWriter.WriteString(line + "\n"); err != nil {
-			return false, false, 0, "", fmt.Errorf("writing to temporary file: %w", err)
-		}
+		tmpWriter.WriteString(line)
+		tmpWriter.WriteByte('\n')
 	}
 	if err := scanner.Err(); err != nil {
 		return false, false, 0, "", fmt.Errorf("scanning input file: %w", err)
 	}
 
-	// Write header for proxmox backup client logs
-	if _, err := tmpWriter.WriteString(
-		"--- proxmox-backup-client log starts here ---\n",
-	); err != nil {
-		return false, false, 0, "", fmt.Errorf("failed to write log header: %w", err)
-	}
+	tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n")
 
-	// Process output files and analyze for status info
 	hasError := false
 	incomplete := true
 	disconnected := false
@@ -111,117 +85,91 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	var errorPath string
 	pbsWarningRawCount := 0
 
-	// Process status info while streaming the logs to avoid storing everything in memory
-	processLogFile := func(path string) error {
-		file, err := os.Open(path)
-		if err != nil {
-			return fmt.Errorf("failed to open log file: %w", err)
-		}
-		defer file.Close()
+	clientFile, err := os.Open(clientLogFile.Path)
+	if err != nil {
+		return false, false, 0, "", fmt.Errorf("failed to open client log file: %w", err)
+	}
+	defer clientFile.Close()
 
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := scanner.Text()
+	clientScanner := bufio.NewScanner(clientFile)
+	clientScanner.Buffer(buf, maxCapacity)
 
-			if strings.Contains(line, "warning: ") {
-				pbsWarningRawCount++
-			}
+	for clientScanner.Scan() {
+		line := clientScanner.Text()
 
-			skipLine := false
-			// Check for indicators before writing the line
-			if strings.Contains(line, "Error: upload failed:") {
-				errorString = strings.Replace(line, "Error:", "TASK ERROR:", 1)
-
-				re := regexp.MustCompile(`upload failed: error at "([^"]+)"`)
-				matches := re.FindStringSubmatch(line)
-				if len(matches) >= 2 {
-					errorPath = matches[1]
-				}
-
-				hasError = true
-				skipLine = true
-			} else if strings.Contains(line, "TASK ERROR:") {
-				errorString = line
-				hasError = true
-				skipLine = true
-			}
-
-			if skipLine {
-				continue
-			}
-
-			if strings.Contains(line, "connection failed") || strings.Contains(line, "connection error: not connected") {
-				disconnected = true
-			}
-			if strings.Contains(line, "End Time:") {
-				incomplete = false
-			}
-
-			if _, err := tmpWriter.WriteString(line + "\n"); err != nil {
-				return fmt.Errorf("failed to write log line: %w", err)
-			}
+		if strings.Contains(line, "warning: ") {
+			pbsWarningRawCount++
 		}
 
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("scanning log file: %w", err)
+		if strings.Contains(line, "Error: upload failed:") {
+			errorString = strings.Replace(line, "Error:", "TASK ERROR:", 1)
+			if matches := errorPathRegex.FindStringSubmatch(line); len(matches) >= 2 {
+				errorPath = matches[1]
+			}
+			hasError = true
+			continue
+		} else if strings.Contains(line, "TASK ERROR:") {
+			errorString = line
+			hasError = true
+			continue
 		}
 
-		return nil
+		if strings.Contains(line, "connection failed") || strings.Contains(line, "connection error: not connected") {
+			disconnected = true
+		}
+		if strings.Contains(line, "End Time:") {
+			incomplete = false
+		}
+
+		tmpWriter.WriteString(line)
+		tmpWriter.WriteByte('\n')
 	}
 
-	// Process stdout and stderr
-	if err := processLogFile(clientLogFile.Path); err != nil {
-		return false, false, 0, "", err
+	if err := clientScanner.Err(); err != nil {
+		return false, false, 0, "", fmt.Errorf("scanning client log file: %w", err)
 	}
 
 	succeeded := false
 	cancelled := false
 	warningsNum := pbsWarningRawCount
 
-	// Build and write final status line
-	var sb strings.Builder
-
 	timestamp := time.Now().Format(time.RFC3339)
-	if !hasError {
-		sb.WriteString(timestamp)
-	}
 
 	if hasError {
-		sb.WriteString(errorString)
+		tmpWriter.WriteString(errorString)
+		tmpWriter.WriteByte('\n')
 	} else if incomplete || disconnected {
-		sb.WriteString(fmt.Sprintf(": TASK ERROR: %s", ErrCanceled.Error()))
+		tmpWriter.WriteString(timestamp)
+		tmpWriter.WriteString(": TASK ERROR: ")
+		tmpWriter.WriteString(ErrCanceled.Error())
+		tmpWriter.WriteByte('\n')
 		cancelled = true
 	} else {
+		tmpWriter.WriteString(timestamp)
 		succeeded = true
 		if warningsNum > 0 {
-			sb.WriteString(": TASK WARNINGS: ")
-			sb.WriteString(strconv.Itoa(warningsNum))
+			tmpWriter.WriteString(": TASK WARNINGS: ")
+			tmpWriter.WriteString(strconv.Itoa(warningsNum))
 		} else {
 			if isGraceful {
-				sb.WriteString(": TASK OK")
+				tmpWriter.WriteString(": TASK OK")
 			} else {
 				succeeded = false
-				sb.WriteString(": TASK ERROR: Agent crashed unexpectedly")
+				tmpWriter.WriteString(": TASK ERROR: Agent crashed unexpectedly")
 			}
 		}
-	}
-	sb.WriteString("\n")
-
-	if _, err := tmpWriter.WriteString(sb.String()); err != nil {
-		return false, false, warningsNum, errorPath, fmt.Errorf("failed to write final status: %w", err)
+		tmpWriter.WriteByte('\n')
 	}
 
 	if err := tmpWriter.Flush(); err != nil {
 		return false, false, warningsNum, errorPath, fmt.Errorf("failed to flush temporary writer: %w", err)
 	}
 
-	// Close the temp file before renaming
 	if err := tmpFile.Close(); err != nil {
 		return false, false, warningsNum, errorPath, fmt.Errorf("closing temporary file: %w", err)
 	}
-	tmpFile = nil // Prevent cleanup in deferred function
+	tmpFile = nil
 
-	// Ensure the temporary file has the same permissions, ownership, and timestamps
 	if err := os.Chmod(tmpName, origMode); err != nil {
 		return false, false, warningsNum, errorPath, fmt.Errorf("setting permissions on temporary file: %w", err)
 	}
@@ -232,7 +180,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 		return false, false, warningsNum, errorPath, fmt.Errorf("setting timestamps on temporary file: %w", err)
 	}
 
-	// Replace the original log file with the processed temporary file.
 	if err := os.Rename(tmpName, logFilePath); err != nil {
 		return false, false, warningsNum, errorPath, fmt.Errorf("replacing original file: %w", err)
 	}
