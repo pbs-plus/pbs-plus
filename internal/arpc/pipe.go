@@ -24,6 +24,8 @@ type StreamPipe struct {
 	reconnectOnce *sync.Once
 	reconnecting  atomic.Bool
 
+	IsClosed chan struct{}
+
 	serverAddr   string
 	tlsConfig    *tls.Config
 	headers      http.Header
@@ -369,6 +371,7 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, server
 		generation:    1,
 		reconnectOnce: &sync.Once{},
 		isServerSide:  isServerSide,
+		IsClosed:      make(chan struct{}, 1),
 	}
 
 	go func() {
@@ -444,6 +447,10 @@ func (s *StreamPipe) Serve() error {
 }
 
 func (s *StreamPipe) Close() {
+	if s.IsClosed != nil {
+		close(s.IsClosed)
+	}
+
 	s.cancelFunc()
 	s.wg.Wait()
 
@@ -458,36 +465,4 @@ func (s *StreamPipe) GetState() ConnectionState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.state
-}
-
-func (s *StreamPipe) SwapConnection(tun *smux.Session, conn net.Conn) error {
-	if tun == nil {
-		return fmt.Errorf("nil smux session provided")
-	}
-
-	if conn == nil {
-		return fmt.Errorf("nil connection provided")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.closeOldConnectionLocked()
-
-	s.tun = tun
-	s.conn = conn
-	s.generation++
-	s.state = StateConnected
-	s.reconnectOnce = &sync.Once{}
-
-	go func() {
-		select {
-		case <-tun.CloseChan():
-			s.markDisconnected()
-		case <-s.ctx.Done():
-		}
-	}()
-
-	syslog.L.Info().WithMessage("connection swapped successfully").Write()
-	return nil
 }
