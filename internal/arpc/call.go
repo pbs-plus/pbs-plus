@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
@@ -39,30 +38,9 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (*smu
 	var stream *smux.Stream
 	var err error
 
-	backoff := 500 * time.Millisecond
-
-	for attempt := 0; ; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, nil, ctx.Err()
-			case <-time.After(backoff):
-				backoff = min(backoff*2, 5*time.Second)
-			}
-		}
-
-		stream, err = s.OpenStream()
-		if err == nil {
-			break
-		}
-
-		if ctx.Err() != nil {
-			return nil, nil, ctx.Err()
-		}
-
-		if s.isServerSide {
-			continue
-		}
+	stream, err = s.OpenStream()
+	if err != nil {
+		return nil, nil, err
 	}
 
 	enc := cbor.NewEncoder(stream)

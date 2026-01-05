@@ -21,6 +21,7 @@ import (
 	s3mount "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/mount"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
@@ -149,17 +150,11 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	// Retrieve or initialize an ARPCFS instance.
 	// The child session key is "targetHostname|jobId".
 	childKey := args.TargetHostname + "|" + args.JobId
-	arpcFSRPC, exists := s.Store.ARPCAgentsManager.GetStreamPipe(childKey)
-	if !exists {
-		reply.Status = 500
-		reply.Message = "unable to reach child target"
-		return errors.New(reply.Message)
-	}
 
 	jobCtx, jobCancel := context.WithCancel(s.ctx)
 	s.jobCtxCancels.Set(args.JobId, jobCancel)
 
-	arpcFS := arpcfs.NewARPCFS(jobCtx, arpcFSRPC, args.TargetHostname, job, backupMode)
+	arpcFS := arpcfs.NewARPCFS(jobCtx, s.Store.ARPCAgentsManager, childKey, args.TargetHostname, job, backupMode)
 	if arpcFS == nil {
 		reply.Status = 500
 		reply.Message = "failed to send create ARPCFS"
@@ -176,7 +171,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	store.CreateARPCFSMount(childKey, arpcFS)
+	vfssessions.CreateARPCFSMount(childKey, arpcFS)
 
 	// Set the reply values.
 	reply.Status = 200
@@ -231,7 +226,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return errors.New(reply.Message)
 	}
 
-	store.CreateS3FSMount(childKey, s3FS)
+	vfssessions.CreateS3FSMount(childKey, s3FS)
 
 	// Set up the local mount path.
 	mntPath := filepath.Join(constants.AgentMountBasePath, args.JobId)
@@ -270,7 +265,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 		}).Write()
 
 	childKey := args.TargetHostname + "|" + args.JobId
-	store.DisconnectSession(childKey)
+	vfssessions.DisconnectSession(childKey)
 
 	// Create a 30-second timeout context.
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)

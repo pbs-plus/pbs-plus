@@ -32,7 +32,7 @@ func (fs *ARPCFS) logError(fpath string, err error) {
 	}
 }
 
-func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
+func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId string, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
 	syslog.L.Debug().
 		WithMessage("NewARPCFS called").
 		WithField("hostname", hostname).
@@ -69,12 +69,51 @@ func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, j
 			Job:      job,
 			Memcache: memcache.New(memcachePath),
 		},
-		session:    atomic.Pointer[arpc.StreamPipe]{},
-		Hostname:   hostname,
-		backupMode: backupMode,
+		session:      atomic.Pointer[arpc.StreamPipe]{},
+		Hostname:     hostname,
+		backupMode:   backupMode,
+		agentManager: agentManager,
+		sessionId:    sessionId,
 	}
 
-	fs.session.Store(session)
+	ensureCtx, ensureCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer ensureCancel()
+
+	err = fs.ensurePipe(ensureCtx)
+	if err != nil {
+		syslog.L.Error(err).
+			WithMessage("failed to ensure pipe").
+			WithField("jobId", fs.Job.ID).
+			WithField("hostname", fs.Hostname).
+			WithField("basePath", fs.BasePath).
+			Write()
+		return nil
+	}
+
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			currSession := fs.session.Load()
+			if currSession == nil {
+				select {
+				case <-fs.Ctx.Done():
+					return
+				case <-ticker.C:
+					continue
+				}
+			}
+
+			select {
+			case <-currSession.IsClosed:
+				fs.ensurePipe(fs.Ctx)
+			case <-fs.Ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 
 	syslog.L.Debug().
 		WithMessage("ARPCFS initialized").
@@ -97,8 +136,24 @@ func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, j
 	return fs
 }
 
-func (fs *ARPCFS) SwitchSession(session *arpc.StreamPipe) {
-	fs.session.Swap(session)
+func (fs *ARPCFS) ensurePipe(ctx context.Context) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		session, exists := fs.agentManager.GetStreamPipe(fs.sessionId)
+		if exists {
+			fs.session.Swap(session)
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			continue
+		}
+	}
 }
 
 func (fs *ARPCFS) Context() context.Context { return fs.Ctx }
