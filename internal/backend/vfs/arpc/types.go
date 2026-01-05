@@ -12,9 +12,10 @@ import (
 type ARPCFS struct {
 	*vfs.VFSBase
 
-	session    atomic.Pointer[arpc.StreamPipe]
-	Hostname   string
-	backupMode string
+	agentManager *arpc.AgentsManager
+	sessionId    string
+	Hostname     string
+	backupMode   string
 }
 
 type DirStream struct {

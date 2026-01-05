@@ -32,7 +32,7 @@ func (fs *ARPCFS) logError(fpath string, err error) {
 	}
 }
 
-func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
+func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId string, hostname string, job storeTypes.Job, backupMode string) *ARPCFS {
 	syslog.L.Debug().
 		WithMessage("NewARPCFS called").
 		WithField("hostname", hostname).
@@ -69,12 +69,11 @@ func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, j
 			Job:      job,
 			Memcache: memcache.New(memcachePath),
 		},
-		session:    atomic.Pointer[arpc.StreamPipe]{},
-		Hostname:   hostname,
-		backupMode: backupMode,
+		Hostname:     hostname,
+		backupMode:   backupMode,
+		agentManager: agentManager,
+		sessionId:    sessionId,
 	}
-
-	fs.session.Store(session)
 
 	syslog.L.Debug().
 		WithMessage("ARPCFS initialized").
@@ -97,8 +96,23 @@ func NewARPCFS(ctx context.Context, session *arpc.StreamPipe, hostname string, j
 	return fs
 }
 
-func (fs *ARPCFS) SwitchSession(session *arpc.StreamPipe) {
-	fs.session.Swap(session)
+func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		session, exists := fs.agentManager.GetStreamPipe(fs.sessionId)
+		if exists {
+			return session, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			continue
+		}
+	}
 }
 
 func (fs *ARPCFS) Context() context.Context { return fs.Ctx }
@@ -122,7 +136,8 @@ func (fs *ARPCFS) Open(ctx context.Context, filename string) (ARPCFile, error) {
 }
 
 func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm os.FileMode) (ARPCFile, error) {
-	if fs.session.Load() == nil {
+	pipe, err := fs.getPipe(ctx)
+	if err != nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
@@ -148,7 +163,7 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	raw, err := fs.session.Load().CallData(ctxN, fs.Job.ID+"/OpenFile", &req)
+	raw, err := pipe.CallData(ctxN, fs.Job.ID+"/OpenFile", &req)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return ARPCFile{}, syscall.ENOENT
@@ -184,7 +199,8 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 		Write()
 
 	var fi types.AgentFileInfo
-	if fs.session.Load() == nil {
+	pipe, err := fs.getPipe(ctx)
+	if err != nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
@@ -213,7 +229,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 			WithField("path", filename).
 			WithField("jobId", fs.Job.ID).
 			Write()
-		raw, err = fs.session.Load().CallData(ctxN, fs.Job.ID+"/Attr", &req)
+		raw, err = pipe.CallData(ctxN, fs.Job.ID+"/Attr", &req)
 		if err != nil {
 			fs.logError(req.Path, err)
 			return types.AgentFileInfo{}, syscall.ENOENT
@@ -271,7 +287,8 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 	defer cancelN()
 
 	var fi types.AgentFileInfo
-	if fs.session.Load() == nil {
+	pipe, err := fs.getPipe(ctx)
+	if err != nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
@@ -293,7 +310,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 			Write()
 	}
 
-	raw, err := fs.session.Load().CallData(ctxN, fs.Job.ID+"/Xattr", &req)
+	raw, err := pipe.CallData(ctxN, fs.Job.ID+"/Xattr", &req)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENOTSUP
@@ -368,7 +385,8 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	if fs.session.Load() == nil {
+	pipe, err := fs.getPipe(ctx)
+	if err != nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
@@ -377,7 +395,7 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
 	}
 
 	var fsStat types.StatFS
-	raw, err := fs.session.Load().CallData(ctxN,
+	raw, err := pipe.CallData(ctxN,
 		fs.Job.ID+"/StatFS", nil)
 	if err != nil {
 		syslog.L.Error(err).
@@ -413,7 +431,8 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	if fs.session.Load() == nil {
+	pipe, err := fs.getPipe(ctx)
+	if err != nil {
 		syslog.L.Error(os.ErrInvalid).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
@@ -423,7 +442,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 
 	var handleId types.FileHandleId
 	openReq := types.OpenFileReq{Path: path}
-	raw, err := fs.session.Load().CallData(ctxN, fs.Job.ID+"/OpenFile", &openReq)
+	raw, err := pipe.CallData(ctxN, fs.Job.ID+"/OpenFile", &openReq)
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("ReadDir open failed").
@@ -481,8 +500,10 @@ func (fs *ARPCFS) Unmount(ctx context.Context) {
 			WithField("jobId", fs.Job.ID).
 			Write()
 	}
-	if fs.session.Load() != nil {
-		fs.session.Load().Close()
+
+	pipe, _ := fs.getPipe(ctx)
+	if pipe != nil {
+		pipe.Close()
 		syslog.L.Debug().
 			WithMessage("ARPC session closed").
 			WithField("jobId", fs.Job.ID).

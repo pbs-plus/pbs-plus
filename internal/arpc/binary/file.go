@@ -105,10 +105,25 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 
 func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 	var hdr [14]byte
-	if _, err := io.ReadFull(stream, hdr[:]); err != nil {
-		wErr := fmt.Errorf("failed to read header: %w", err)
-		syslog.L.Error(wErr).WithMessage("ReceiveDataInto: header read failed").Write()
-		return 0, wErr
+	totalHdrRead := 0
+	for totalHdrRead < len(hdr) {
+		n, err := stream.Read(hdr[totalHdrRead:])
+		totalHdrRead += n
+		if err != nil {
+			if err == io.EOF && totalHdrRead > 0 {
+				wErr := fmt.Errorf("failed to read header: %w", io.ErrUnexpectedEOF)
+				syslog.L.Error(wErr).WithMessage("ReceiveDataInto: header read failed").Write()
+				return 0, wErr
+			}
+			wErr := fmt.Errorf("failed to read header: %w", err)
+			syslog.L.Error(wErr).WithMessage("ReceiveDataInto: header read failed").Write()
+			return 0, wErr
+		}
+		if n == 0 && totalHdrRead < len(hdr) {
+			wErr := fmt.Errorf("failed to read header: %w", io.ErrNoProgress)
+			syslog.L.Error(wErr).WithMessage("ReceiveDataInto: header read failed").Write()
+			return 0, wErr
+		}
 	}
 
 	if binary.LittleEndian.Uint32(hdr[0:4]) != magicV1 {
@@ -147,24 +162,54 @@ func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 
 	for totalRead < toRead {
 		want := min(len(buf), toRead-totalRead)
-		if _, err := io.ReadFull(stream, buf[:want]); err != nil {
-			e := fmt.Errorf("failed to read payload: %w", err)
-			syslog.L.Error(e).WithMessage("ReceiveDataInto: payload read failed").Write()
-			return totalRead, e
+		chunkRead := 0
+		for chunkRead < want {
+			n, err := stream.Read(buf[chunkRead:want])
+			chunkRead += n
+			if err != nil {
+				if err == io.EOF && chunkRead > 0 {
+					e := fmt.Errorf("failed to read payload: %w", io.ErrUnexpectedEOF)
+					syslog.L.Error(e).WithMessage("ReceiveDataInto: payload read failed").Write()
+					return totalRead, e
+				}
+				e := fmt.Errorf("failed to read payload: %w", err)
+				syslog.L.Error(e).WithMessage("ReceiveDataInto: payload read failed").Write()
+				return totalRead, e
+			}
+			if n == 0 && chunkRead < want {
+				e := fmt.Errorf("failed to read payload: %w", io.ErrNoProgress)
+				syslog.L.Error(e).WithMessage("ReceiveDataInto: payload read failed").Write()
+				return totalRead, e
+			}
 		}
-		copy(dst[totalRead:totalRead+want], buf[:want])
-		totalRead += want
+		copy(dst[totalRead:totalRead+chunkRead], buf[:chunkRead])
+		totalRead += chunkRead
 	}
 
 	remain := int(totalLength) - totalRead
 	for remain > 0 {
 		want := min(len(buf), remain)
-		if _, err := io.ReadFull(stream, buf[:want]); err != nil {
-			e := fmt.Errorf("failed to drain payload remainder: %w", err)
-			syslog.L.Error(e).WithMessage("ReceiveDataInto: payload drain failed").Write()
-			return totalRead, e
+		chunkRead := 0
+		for chunkRead < want {
+			n, err := stream.Read(buf[chunkRead:want])
+			chunkRead += n
+			if err != nil {
+				if err == io.EOF && chunkRead > 0 {
+					e := fmt.Errorf("failed to drain payload remainder: %w", io.ErrUnexpectedEOF)
+					syslog.L.Error(e).WithMessage("ReceiveDataInto: payload drain failed").Write()
+					return totalRead, e
+				}
+				e := fmt.Errorf("failed to drain payload remainder: %w", err)
+				syslog.L.Error(e).WithMessage("ReceiveDataInto: payload drain failed").Write()
+				return totalRead, e
+			}
+			if n == 0 && chunkRead < want {
+				e := fmt.Errorf("failed to drain payload remainder: %w", io.ErrNoProgress)
+				syslog.L.Error(e).WithMessage("ReceiveDataInto: payload drain failed").Write()
+				return totalRead, e
+			}
 		}
-		remain -= want
+		remain -= chunkRead
 	}
 
 	syslog.L.Debug().WithMessage("ReceiveDataInto: completed").
