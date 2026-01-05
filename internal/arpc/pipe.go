@@ -449,6 +449,7 @@ func (s *StreamPipe) Serve() error {
 func (s *StreamPipe) Close() {
 	if s.IsClosed != nil {
 		close(s.IsClosed)
+		s.IsClosed = nil
 	}
 
 	s.cancelFunc()
