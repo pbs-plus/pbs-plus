@@ -104,11 +104,6 @@ func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
 	defer cancel()
 
 	for {
-		_, primaryExists := fs.agentManager.GetStreamPipe(fs.Hostname)
-		if !primaryExists {
-			return nil, fmt.Errorf("primary agent (%s) is down, recovery not possible", fs.Hostname)
-		}
-
 		session, exists := fs.agentManager.GetStreamPipe(fs.sessionId)
 		if exists {
 			return session, nil
