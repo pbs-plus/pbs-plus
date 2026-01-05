@@ -71,6 +71,8 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 
 	if nofile := os.Getenv("PBS_PLUS_CLIENT_NOFILE"); nofile != "" {
 		cmdArgs = append(cmdArgs, fmt.Sprintf("--nofile=%s", nofile))
+	} else {
+		cmdArgs = append(cmdArgs, "--nofile=1024:1024")
 	}
 
 	addExclusion := func(path string) {
