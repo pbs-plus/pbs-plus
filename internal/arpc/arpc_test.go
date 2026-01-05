@@ -438,14 +438,13 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 
 	_ = pipe.conn.Close()
 
-	pipe, err = pipe.Reconnect(t.Context())
-	if err != nil {
-		t.Fatalf("ConnectToServer: %v", err)
-	}
-	defer pipe.Close()
-
-	if st := pipe.GetState(); st != StateConnected {
-		t.Fatalf("expected connected after reconnect, got %v", st)
+	timeout := time.NewTimer(10 * time.Second)
+	for st := pipe.GetState(); st != StateConnected; {
+		select {
+		case <-timeout.C:
+			t.Fatalf("expected connected after reconnect, got %v", st)
+		default:
+		}
 	}
 
 	var out string
@@ -857,11 +856,6 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 	for i := 0; i < cycles; i++ {
 		_ = pipe.conn.Close()
 		time.Sleep(50 * time.Millisecond)
-
-		pipe, err = pipe.Reconnect(t.Context())
-		if err != nil {
-			t.Fatalf("ConnectToServer: %v", err)
-		}
 
 		var out string
 		if err := pipe.Call(context.Background(), "ping", nil, &out); err != nil {

@@ -212,7 +212,7 @@ func connectARPC(ctx context.Context) error {
 		}()
 
 		base := 500 * time.Millisecond
-		maxWait := 30 * time.Second
+		maxWait := 5 * time.Second
 		factor := 2.0
 		jitter := 0.2
 
@@ -240,10 +240,6 @@ func connectARPC(ctx context.Context) error {
 					next = min(next, maxWait)
 
 					backoff = next
-
-					if pipe, err = pipe.Reconnect(ctx); err != nil {
-						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
-					}
 				}
 			}
 		}
