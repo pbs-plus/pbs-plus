@@ -85,7 +85,16 @@ func (s *DirStream) HasNext() bool {
 	readBuf := bufPool.Get().([]byte)
 	defer bufPool.Put(readBuf)
 
-	bytesRead, err := s.fs.session.Load().CallBinary(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
+	pipe, err := s.fs.getPipe(s.fs.Ctx)
+	if err != nil {
+		syslog.L.Error(os.ErrInvalid).
+			WithMessage("arpc session is nil").
+			WithJob(s.fs.Job.ID).
+			Write()
+		return false
+	}
+
+	bytesRead, err := pipe.CallBinary(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	syslog.L.Debug().
 		WithMessage("HasNext RPC completed").
 		WithField("bytesRead", bytesRead).
@@ -350,7 +359,16 @@ func (s *DirStream) Close() {
 	defer cancelN()
 
 	closeReq := types.CloseReq{HandleID: s.handleId}
-	_, err := s.fs.session.Load().CallData(ctxN, s.fs.Job.ID+"/Close", &closeReq)
+	pipe, err := s.fs.getPipe(s.fs.Ctx)
+	if err != nil {
+		syslog.L.Error(os.ErrInvalid).
+			WithMessage("arpc session is nil").
+			WithJob(s.fs.Job.ID).
+			Write()
+		return
+	}
+
+	_, err = pipe.CallData(ctxN, s.fs.Job.ID+"/Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithMessage("DirStream close RPC failed").
