@@ -44,6 +44,7 @@ func stopAllJobTimers(sanitized string) {
 	primaryTimer := fmt.Sprintf("pbs-plus-job-%s.timer", sanitized)
 	stopCmd := exec.Command("systemctl", "stop", primaryTimer)
 	stopCmd.Env = os.Environ()
+	stopCmd.Stderr = nil
 	_ = stopCmd.Run()
 
 	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
@@ -58,6 +59,7 @@ func stopAllJobTimers(sanitized string) {
 			if len(fields) > 0 {
 				stopCmd := exec.Command("systemctl", "stop", fields[0])
 				stopCmd.Env = os.Environ()
+				stopCmd.Stderr = nil
 				_ = stopCmd.Run()
 			}
 		}
@@ -136,41 +138,48 @@ func DeleteSchedule(id string) error {
 	return nil
 }
 
-func SetRetrySchedule(job types.Job, extraExclusions []string) error {
-	sanitized, err := sanitizeUnitName(job.ID)
+func getCurrentRetryAttempt(sanitized string) int {
+	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
+	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend", "--no-pager")
+	listCmd.Env = os.Environ()
+	output, err := listCmd.Output()
 	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: %w", err)
+		return 0
 	}
 
-	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
-	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend")
-	listCmd.Env = os.Environ()
-	output, _ := listCmd.Output()
-
-	currentAttempt := 0
-	var existingRetries []string
-
+	maxAttempt := 0
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Fields(line)
 		if len(fields) > 0 {
 			unitName := fields[0]
-			existingRetries = append(existingRetries, unitName)
 
+			// Extract attempt number from unit name: pbs-plus-job-{id}-retry-{N}.timer
 			parts := strings.Split(unitName, "-retry-")
 			if len(parts) == 2 {
 				attemptStr := strings.TrimSuffix(parts[1], ".timer")
 				if attemptInt, err := strconv.Atoi(attemptStr); err == nil {
-					if attemptInt > currentAttempt {
-						currentAttempt = attemptInt
+					if attemptInt > maxAttempt {
+						maxAttempt = attemptInt
 					}
 				}
 			}
 		}
 	}
 
+	return maxAttempt
+}
+
+func SetRetrySchedule(job types.Job, extraExclusions []string) error {
+	sanitized, err := sanitizeUnitName(job.ID)
+	if err != nil {
+		return fmt.Errorf("SetRetrySchedule: %w", err)
+	}
+
+	currentAttempt := getCurrentRetryAttempt(sanitized)
 	newAttempt := currentAttempt + 1
+
 	if newAttempt > job.Retry {
 		fmt.Printf("Job %s reached max retry count (%d). No further retry scheduled.\n",
 			job.ID, job.Retry)
@@ -178,10 +187,21 @@ func SetRetrySchedule(job types.Job, extraExclusions []string) error {
 		return nil
 	}
 
-	for _, unit := range existingRetries {
-		stopCmd := exec.Command("systemctl", "stop", unit)
-		stopCmd.Env = os.Environ()
-		_ = stopCmd.Run()
+	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
+	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend")
+	listCmd.Env = os.Environ()
+	output, _ := listCmd.Output()
+
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			stopCmd := exec.Command("systemctl", "stop", fields[0])
+			stopCmd.Env = os.Environ()
+			stopCmd.Stderr = nil
+			_ = stopCmd.Run()
+		}
 	}
 
 	retryUnitName, err := getRetryUnitName(job.ID, newAttempt)
@@ -216,6 +236,9 @@ func SetRetrySchedule(job types.Job, extraExclusions []string) error {
 			string(output), err)
 	}
 
+	fmt.Printf("Scheduled retry %d/%d for job %s in %d minutes\n",
+		newAttempt, job.Retry, job.ID, job.RetryInterval)
+
 	return nil
 }
 
@@ -240,6 +263,7 @@ func RemoveAllRetrySchedules(job types.Job) {
 		if len(fields) > 0 {
 			stopCmd := exec.Command("systemctl", "stop", fields[0])
 			stopCmd.Env = os.Environ()
+			stopCmd.Stderr = nil
 			_ = stopCmd.Run()
 		}
 	}
@@ -280,7 +304,7 @@ func GetNextSchedule(job types.Job) (*time.Time, error) {
 	if !lastSchedUpdate.IsZero() && time.Since(lastSchedUpdate) <= 5*time.Second {
 		output = lastSchedString
 	} else {
-		cmd := exec.Command("systemctl", "list-timers", "--all")
+		cmd := exec.Command("systemctl", "list-timers", "--all", "--no-pager")
 		cmd.Env = os.Environ()
 
 		var err error
@@ -381,10 +405,12 @@ func migrateLegacyUnit(job types.Job, sanitized string) error {
 
 		stopCmd := exec.Command("systemctl", "stop", unitName)
 		stopCmd.Env = os.Environ()
+		stopCmd.Stderr = nil
 		_ = stopCmd.Run()
 
 		disableCmd := exec.Command("systemctl", "disable", unitName)
 		disableCmd.Env = os.Environ()
+		disableCmd.Stderr = nil
 		_ = disableCmd.Run()
 	}
 
@@ -411,10 +437,12 @@ func migrateLegacyUnit(job types.Job, sanitized string) error {
 		unitName := filepath.Base(file)
 		stopCmd := exec.Command("systemctl", "stop", unitName)
 		stopCmd.Env = os.Environ()
+		stopCmd.Stderr = nil
 		_ = stopCmd.Run()
 
 		disableCmd := exec.Command("systemctl", "disable", unitName)
 		disableCmd.Env = os.Environ()
+		disableCmd.Stderr = nil
 		_ = disableCmd.Run()
 
 		_ = os.Remove(file)
