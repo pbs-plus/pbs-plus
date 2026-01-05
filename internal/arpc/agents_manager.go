@@ -46,7 +46,7 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 		existingSession.Close()
 	}
 
-	pipe, err := newStreamPipe(ctx, smuxTun, conn)
+	pipe, err := AcceptConnection(ctx, smuxTun, conn)
 	if err != nil {
 		return nil, "", err
 	}
