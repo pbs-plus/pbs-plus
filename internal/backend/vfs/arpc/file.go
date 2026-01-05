@@ -28,7 +28,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 
 	pipe, err := f.fs.getPipe(ctx)
 	if err != nil {
-		syslog.L.Error(os.ErrInvalid).
+		syslog.L.Error(err).
 			WithJob(f.jobId).
 			WithMessage("arpc session is nil").
 			WithField("path", f.name).
@@ -87,7 +87,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 
 	pipe, err := f.fs.getPipe(ctx)
 	if err != nil {
-		syslog.L.Error(os.ErrInvalid).
+		syslog.L.Error(err).
 			WithJob(f.jobId).
 			WithMessage("arpc session is nil").
 			WithField("path", f.name).
@@ -142,7 +142,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 
 	pipe, err := f.fs.getPipe(ctx)
 	if err != nil {
-		syslog.L.Error(syscall.ENOENT).
+		syslog.L.Error(err).
 			WithJob(f.jobId).
 			WithMessage("fs session is nil").
 			WithField("path", f.name).

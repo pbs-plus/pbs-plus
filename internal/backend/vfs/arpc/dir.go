@@ -87,7 +87,7 @@ func (s *DirStream) HasNext() bool {
 
 	pipe, err := s.fs.getPipe(s.fs.Ctx)
 	if err != nil {
-		syslog.L.Error(os.ErrInvalid).
+		syslog.L.Error(err).
 			WithMessage("arpc session is nil").
 			WithJob(s.fs.Job.ID).
 			Write()
@@ -361,7 +361,7 @@ func (s *DirStream) Close() {
 	closeReq := types.CloseReq{HandleID: s.handleId}
 	pipe, err := s.fs.getPipe(s.fs.Ctx)
 	if err != nil {
-		syslog.L.Error(os.ErrInvalid).
+		syslog.L.Error(err).
 			WithMessage("arpc session is nil").
 			WithJob(s.fs.Job.ID).
 			Write()
