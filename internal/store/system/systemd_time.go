@@ -46,7 +46,7 @@ func stopAllJobTimers(sanitized string) {
 	checkCmd := exec.Command("systemctl", "is-active", primaryTimer)
 	checkCmd.Env = os.Environ()
 	if err := checkCmd.Run(); err == nil {
-		stopCmd := exec.Command("systemctl", "stop", primaryTimer)
+		stopCmd := exec.Command("systemctl", "disable", "--now", primaryTimer)
 		stopCmd.Env = os.Environ()
 		_ = stopCmd.Run()
 
@@ -65,7 +65,7 @@ func stopAllRetries(sanitized string) {
 			line := scanner.Text()
 			fields := strings.Fields(line)
 			if len(fields) > 0 {
-				stopCmd := exec.Command("systemctl", "stop", fields[0])
+				stopCmd := exec.Command("systemctl", "disable", "--now", fields[0])
 				stopCmd.Env = os.Environ()
 				_ = stopCmd.Run()
 			}
@@ -75,6 +75,10 @@ func stopAllRetries(sanitized string) {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
+
+	reloadCmd := exec.Command("systemctl", "daemon-reload")
+	reloadCmd.Env = os.Environ()
+	_ = reloadCmd.Run()
 }
 
 func SetSchedule(job types.Job) error {
@@ -84,7 +88,6 @@ func SetSchedule(job types.Job) error {
 	}
 
 	sanitized, _ := sanitizeUnitName(job.ID)
-	stopAllRetries(sanitized)
 
 	if job.Schedule == "" {
 		stopAllJobTimers(sanitized)
@@ -211,7 +214,7 @@ func SetRetrySchedule(job types.Job, extraExclusions []string) error {
 		line := scanner.Text()
 		fields := strings.Fields(line)
 		if len(fields) > 0 {
-			stopCmd := exec.Command("systemctl", "stop", fields[0])
+			stopCmd := exec.Command("systemctl", "disable", "--now", fields[0])
 			stopCmd.Env = os.Environ()
 			stopCmd.Stderr = nil
 			_ = stopCmd.Run()
@@ -262,49 +265,7 @@ func RemoveAllRetrySchedules(job types.Job) {
 		return
 	}
 
-	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
-	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend")
-	listCmd.Env = os.Environ()
-	output, err := listCmd.Output()
-	if err != nil {
-		return
-	}
-
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		fields := strings.Fields(line)
-		if len(fields) > 0 {
-			stopCmd := exec.Command("systemctl", "stop", fields[0])
-			stopCmd.Env = os.Environ()
-			stopCmd.Stderr = nil
-			_ = stopCmd.Run()
-		}
-	}
-
-	timerBasePath := "/etc/systemd/system"
-
-	retryTimerPattern := filepath.Join(timerBasePath,
-		fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized))
-	retryServicePattern := filepath.Join(timerBasePath,
-		fmt.Sprintf("pbs-plus-job-%s-retry-*.service", sanitized))
-
-	retryTimers, _ := filepath.Glob(retryTimerPattern)
-	retryServices, _ := filepath.Glob(retryServicePattern)
-
-	for _, file := range retryTimers {
-		_ = os.Remove(file)
-	}
-
-	for _, file := range retryServices {
-		_ = os.Remove(file)
-	}
-
-	if len(retryTimers) > 0 || len(retryServices) > 0 {
-		reloadCmd := exec.Command("systemctl", "daemon-reload")
-		reloadCmd.Env = os.Environ()
-		_ = reloadCmd.Run()
-	}
+	stopAllRetries(sanitized)
 }
 
 var lastSchedMux sync.Mutex
@@ -417,15 +378,10 @@ func migrateLegacyUnit(job types.Job, sanitized string) error {
 	if timerExists {
 		unitName := fmt.Sprintf("pbs-plus-job-%s.timer", sanitized)
 
-		stopCmd := exec.Command("systemctl", "stop", unitName)
+		stopCmd := exec.Command("systemctl", "disable", "--now", unitName)
 		stopCmd.Env = os.Environ()
 		stopCmd.Stderr = nil
 		_ = stopCmd.Run()
-
-		disableCmd := exec.Command("systemctl", "disable", unitName)
-		disableCmd.Env = os.Environ()
-		disableCmd.Stderr = nil
-		_ = disableCmd.Run()
 	}
 
 	if timerExists {
@@ -449,15 +405,10 @@ func migrateLegacyUnit(job types.Job, sanitized string) error {
 
 	for _, file := range retryTimers {
 		unitName := filepath.Base(file)
-		stopCmd := exec.Command("systemctl", "stop", unitName)
+		stopCmd := exec.Command("systemctl", "disable", "--now", unitName)
 		stopCmd.Env = os.Environ()
 		stopCmd.Stderr = nil
 		_ = stopCmd.Run()
-
-		disableCmd := exec.Command("systemctl", "disable", unitName)
-		disableCmd.Env = os.Environ()
-		disableCmd.Stderr = nil
-		_ = disableCmd.Run()
 
 		_ = os.Remove(file)
 	}

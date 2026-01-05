@@ -1,6 +1,6 @@
 //go:build linux
 
-package store
+package vfssessions
 
 import (
 	"context"
