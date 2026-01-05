@@ -48,13 +48,8 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 	}
 
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
-		err = existingSession.SwapConnection(pipe.tun, pipe.conn)
-		if err == nil {
-			syslog.L.Info().WithMessage("agent successfully re-connected").WithField("hostname", clientID).Write()
-			return existingSession, clientID, nil
-		}
-
-		syslog.L.Error(err).WithMessage("agent reconnect attempt failed, creating a new pipe").WithField("hostname", clientID).Write()
+		existingSession.Close()
+		syslog.L.Error(err).WithMessage("agent reconnecting, creating a new pipe").WithField("hostname", clientID).Write()
 	}
 
 	router := NewRouter()
