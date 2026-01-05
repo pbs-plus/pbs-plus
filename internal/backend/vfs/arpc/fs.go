@@ -143,7 +143,7 @@ func (fs *ARPCFS) Open(ctx context.Context, filename string) (ARPCFile, error) {
 func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm os.FileMode) (ARPCFile, error) {
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		syslog.L.Error(os.ErrInvalid).
+		syslog.L.Error(err).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
 			Write()
@@ -206,7 +206,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 	var fi types.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		syslog.L.Error(os.ErrInvalid).
+		syslog.L.Error(err).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
 			Write()
@@ -294,7 +294,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 	var fi types.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		syslog.L.Error(os.ErrInvalid).
+		syslog.L.Error(err).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
 			Write()
@@ -392,7 +392,7 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
 
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		syslog.L.Error(os.ErrInvalid).
+		syslog.L.Error(err).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
 			Write()
@@ -438,7 +438,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		syslog.L.Error(os.ErrInvalid).
+		syslog.L.Error(err).
 			WithMessage("arpc session is nil").
 			WithJob(fs.Job.ID).
 			Write()
