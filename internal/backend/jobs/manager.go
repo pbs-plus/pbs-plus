@@ -106,7 +106,7 @@ func (m *Manager) processQueue() {
 		case <-m.ctx.Done():
 			return
 		case op := <-m.taskMonitorQueue:
-			m.runJob(op)
+			go m.runJob(op)
 		}
 	}
 }
