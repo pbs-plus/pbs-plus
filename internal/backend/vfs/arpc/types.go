@@ -12,7 +12,6 @@ import (
 type ARPCFS struct {
 	*vfs.VFSBase
 
-	session      atomic.Pointer[arpc.StreamPipe]
 	agentManager *arpc.AgentsManager
 	sessionId    string
 	Hostname     string
