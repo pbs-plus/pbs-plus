@@ -17,6 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 )
 
 type S3Mount struct {
@@ -138,7 +139,7 @@ func (a *S3Mount) Unmount() {
 		}
 	}
 
-	store.DisconnectSession(a.Endpoint + "|" + a.JobId)
+	vfssessions.DisconnectSession(a.Endpoint + "|" + a.JobId)
 
 	_ = os.RemoveAll(a.Path)
 }
