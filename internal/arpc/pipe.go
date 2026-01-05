@@ -6,27 +6,32 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
 )
 
 type StreamPipe struct {
-	tun *smux.Session
+	tun    atomic.Pointer[smux.Session]
+	conn   atomic.Pointer[net.Conn]
+	router atomic.Pointer[Router]
 
 	serverAddr string
 	tlsConfig  *tls.Config
 	headers    http.Header
-	router     atomic.Pointer[Router]
 
-	state atomic.Int32
+	state          atomic.Int32
+	reconnectState atomic.Int32
+	reconnectChan  chan struct{}
+	reconnectMu    sync.Mutex
 
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 
 	version string
-	conn    net.Conn
 }
 
 type ConnectionState int32
@@ -34,6 +39,8 @@ type ConnectionState int32
 const (
 	StateConnected ConnectionState = iota
 	StateDisconnected
+	StateReconnecting
+	StateFailed
 )
 
 func (s *StreamPipe) SetRouter(router Router) {
@@ -49,26 +56,156 @@ func (s *StreamPipe) GetVersion() string {
 }
 
 func (s *StreamPipe) OpenStream() (*smux.Stream, error) {
-	if s.tun != nil {
-		return s.tun.OpenStream()
+	tun := s.tun.Load()
+	if tun != nil && !(*tun).IsClosed() {
+		stream, err := (*tun).OpenStream()
+		if err == nil {
+			return stream, nil
+		}
+		// Stream open failed, trigger reconnection
+		if s.state.Load() == int32(StateConnected) {
+			s.state.Store(int32(StateDisconnected))
+		}
 	}
 
-	return nil, fmt.Errorf("nil smux tunnel")
+	// Wait for reconnection
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+
+	select {
+	case <-s.reconnectChan:
+		tun := s.tun.Load()
+		if tun == nil {
+			return nil, fmt.Errorf("session is nil after reconnection")
+		}
+		if (*tun).IsClosed() {
+			return nil, fmt.Errorf("session closed after reconnection")
+		}
+		return (*tun).OpenStream()
+	case <-timeout.C:
+		return nil, fmt.Errorf("timeout waiting for reconnection")
+	case <-s.ctx.Done():
+		return nil, s.ctx.Err()
+	}
 }
 
-func (s *StreamPipe) Reconnect(ctx context.Context) (*StreamPipe, error) {
-	s.Close()
-	newS, err := ConnectToServer(ctx, s.serverAddr, s.headers, s.tlsConfig)
-	if err != nil {
-		return s, err
+func (s *StreamPipe) Reconnect(ctx context.Context) error {
+	if !s.reconnectState.CompareAndSwap(int32(StateDisconnected), int32(StateReconnecting)) {
+		currentState := ConnectionState(s.reconnectState.Load())
+		if currentState == StateConnected {
+			return nil
+		}
+		return fmt.Errorf("reconnection already in progress")
 	}
 
-	r := s.GetRouter()
-	if r != nil {
-		newS.SetRouter(*r)
+	defer func() {
+		select {
+		case s.reconnectChan <- struct{}{}:
+		default:
+		}
+	}()
+
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	return newS, nil
+	// Dial with backoff
+	var conn net.Conn
+	var err error
+	backoff := 100 * time.Millisecond
+	maxBackoff := 30 * time.Second
+
+	for attempt := 0; attempt < 10; attempt++ {
+		select {
+		case <-ctx.Done():
+			s.reconnectState.Store(int32(StateFailed))
+			return ctx.Err()
+		default:
+		}
+
+		if attempt > 0 {
+			time.Sleep(backoff)
+			backoff = min(backoff*2, maxBackoff)
+		}
+
+		conn, err = dialServer(s.serverAddr, s.tlsConfig)
+		if err != nil {
+			syslog.L.Error(err).WithField("attempt", attempt).WithField("stage", "dial").Write()
+			continue
+		}
+
+		smuxC, err := smux.Client(conn, defaultConfig())
+		if err != nil {
+			conn.Close()
+			syslog.L.Error(err).WithField("attempt", attempt).WithField("stage", "smux").Write()
+			continue
+		}
+
+		// Initialize the new connection
+		stream, err := smuxC.OpenStream()
+		if err != nil {
+			smuxC.Close()
+			conn.Close()
+			syslog.L.Error(err).WithField("attempt", attempt).WithField("stage", "header-stream").Write()
+			continue
+		}
+
+		if werr := writeHeadersFrame(stream, s.headers); werr != nil {
+			stream.Close()
+			smuxC.Close()
+			conn.Close()
+			syslog.L.Error(werr).WithField("attempt", attempt).WithField("stage", "write-headers").Write()
+			continue
+		}
+		stream.Close()
+
+		// Success - replace the old connection
+		s.reconnectMu.Lock()
+		oldTun := s.tun.Load()
+		if oldTun != nil && !(*oldTun).IsClosed() {
+			(*oldTun).Close()
+		}
+		oldConn := s.conn.Load()
+		if oldConn != nil {
+			(*oldConn).Close()
+		}
+		s.tun.Store(smuxC)
+		s.conn.Store(&conn)
+		s.reconnectMu.Unlock()
+
+		s.state.Store(int32(StateConnected))
+		s.reconnectState.Store(int32(StateConnected))
+		syslog.L.Info().WithMessage("reconnection successful").Write()
+		return nil
+	}
+
+	s.reconnectState.Store(int32(StateFailed))
+	return fmt.Errorf("reconnection failed after retries: %w", err)
+}
+
+func (s *StreamPipe) connectionMonitor() {
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-timer.C:
+			tun := s.tun.Load()
+			if tun == nil || (*tun).IsClosed() {
+				if s.reconnectState.Load() != int32(StateReconnecting) {
+					s.state.Store(int32(StateDisconnected))
+					go func() {
+						if err := s.Reconnect(s.ctx); err != nil {
+							syslog.L.Error(err).WithMessage("reconnection failed").Write()
+						}
+					}()
+				}
+			}
+			timer.Reset(5 * time.Second)
+		}
+	}
 }
 
 func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*StreamPipe, error) {
@@ -124,6 +261,9 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return nil, fmt.Errorf("failed to write headers: %w", werr)
 	}
 
+	// Start connection monitor
+	go pipe.connectionMonitor()
+
 	return pipe, nil
 }
 
@@ -135,16 +275,21 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn) (*Stre
 	ctx, cancel := context.WithCancel(ctx)
 
 	pipe := &StreamPipe{
-		tun:        tun,
-		conn:       conn,
-		ctx:        ctx,
-		cancelFunc: cancel,
+		ctx:           ctx,
+		cancelFunc:    cancel,
+		reconnectChan: make(chan struct{}, 1),
 	}
+	pipe.tun.Store(tun)
+	pipe.conn.Store(&conn)
+	pipe.state.Store(int32(StateConnected))
+	pipe.reconnectState.Store(int32(StateConnected))
 
 	go func() {
 		select {
 		case <-tun.CloseChan():
-			cancel()
+			if pipe.state.Load() == int32(StateConnected) {
+				pipe.state.Store(int32(StateDisconnected))
+			}
 		case <-ctx.Done():
 		}
 	}()
@@ -153,22 +298,27 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn) (*Stre
 }
 
 func (s *StreamPipe) Serve() error {
-	if s.tun == nil {
+	tun := s.tun.Load()
+	if tun == nil {
 		return fmt.Errorf("nil smux tunnel")
 	}
 
 	for {
 		select {
 		case <-s.ctx.Done():
-
 			syslog.L.Debug().WithMessage("closing pipe due to context cancellation").Write()
 			return s.ctx.Err()
 		default:
 		}
 
-		stream, err := s.tun.AcceptStream()
+		currentTun := s.tun.Load()
+		if currentTun == nil || (*currentTun).IsClosed() {
+			return fmt.Errorf("session closed")
+		}
+
+		stream, err := (*currentTun).AcceptStream()
 		if err != nil {
-			if s.tun.IsClosed() {
+			if (*currentTun).IsClosed() {
 				syslog.L.Debug().WithMessage("closing pipe due to closed tun").Write()
 				return fmt.Errorf("session closed: %w", err)
 			}
@@ -200,23 +350,29 @@ func (s *StreamPipe) Serve() error {
 func (s *StreamPipe) Close() {
 	s.cancelFunc()
 
-	if s.tun != nil && !s.tun.IsClosed() {
+	s.reconnectMu.Lock()
+	defer s.reconnectMu.Unlock()
+
+	tun := s.tun.Load()
+	if tun != nil && !(*tun).IsClosed() {
 		syslog.L.Debug().WithMessage("closing tunnel due to pipe close").Write()
-		_ = s.tun.Close()
+		_ = (*tun).Close()
 	}
 
-	if s.conn != nil {
+	conn := s.conn.Load()
+	if conn != nil {
 		syslog.L.Debug().WithMessage("closing conn due to pipe close").Write()
-		_ = s.conn.Close()
+		_ = (*conn).Close()
 	}
 }
 
 func (s *StreamPipe) GetState() ConnectionState {
-	if s.tun == nil || s.tun.IsClosed() {
+	tun := s.tun.Load()
+	if tun == nil || (*tun).IsClosed() {
 		return StateDisconnected
 	}
 	if s.ctx.Err() != nil {
 		return StateDisconnected
 	}
-	return StateConnected
+	return ConnectionState(s.state.Load())
 }
