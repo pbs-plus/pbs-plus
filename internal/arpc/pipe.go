@@ -447,6 +447,9 @@ func (s *StreamPipe) Serve() error {
 }
 
 func (s *StreamPipe) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.IsClosed != nil {
 		close(s.IsClosed)
 		s.IsClosed = nil
@@ -454,9 +457,6 @@ func (s *StreamPipe) Close() {
 
 	s.cancelFunc()
 	s.wg.Wait()
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	s.closeOldConnectionLocked()
 	s.state = StateDisconnected
