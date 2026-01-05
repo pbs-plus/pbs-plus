@@ -15,23 +15,24 @@ import (
 )
 
 type StreamPipe struct {
-	tun    atomic.Pointer[smux.Session]
-	conn   atomic.Pointer[net.Conn]
-	router atomic.Pointer[Router]
+	mu            sync.RWMutex
+	tun           *smux.Session
+	conn          net.Conn
+	router        *Router
+	generation    uint64
+	state         ConnectionState
+	reconnectOnce *sync.Once
+	reconnecting  atomic.Bool
 
-	serverAddr string
-	tlsConfig  *tls.Config
-	headers    http.Header
-
-	state          atomic.Int32
-	reconnectState atomic.Int32
-	reconnectChan  chan struct{}
-	reconnectMu    sync.Mutex
+	serverAddr   string
+	tlsConfig    *tls.Config
+	headers      http.Header
+	version      string
+	isServerSide bool
 
 	ctx        context.Context
 	cancelFunc context.CancelFunc
-
-	version string
+	wg         sync.WaitGroup
 }
 
 type ConnectionState int32
@@ -43,73 +44,126 @@ const (
 	StateFailed
 )
 
+type sessionRef struct {
+	session    *smux.Session
+	generation uint64
+}
+
 func (s *StreamPipe) SetRouter(router Router) {
-	s.router.Store(&router)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.router = &router
 }
 
 func (s *StreamPipe) GetRouter() *Router {
-	return s.router.Load()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.router
 }
 
 func (s *StreamPipe) GetVersion() string {
 	return s.version
 }
 
-func (s *StreamPipe) OpenStream() (*smux.Stream, error) {
-	tun := s.tun.Load()
-	if tun != nil && !(*tun).IsClosed() {
-		stream, err := (*tun).OpenStream()
-		if err == nil {
-			return stream, nil
-		}
-		// Stream open failed, trigger reconnection
-		if s.state.Load() == int32(StateConnected) {
-			s.state.Store(int32(StateDisconnected))
-		}
+func (s *StreamPipe) getSession() *sessionRef {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.tun == nil || s.tun.IsClosed() {
+		return nil
 	}
-
-	// Wait for reconnection
-	timeout := time.NewTimer(5 * time.Second)
-	defer timeout.Stop()
-
-	select {
-	case <-s.reconnectChan:
-		tun := s.tun.Load()
-		if tun == nil {
-			return nil, fmt.Errorf("session is nil after reconnection")
-		}
-		if (*tun).IsClosed() {
-			return nil, fmt.Errorf("session closed after reconnection")
-		}
-		return (*tun).OpenStream()
-	case <-timeout.C:
-		return nil, fmt.Errorf("timeout waiting for reconnection")
-	case <-s.ctx.Done():
-		return nil, s.ctx.Err()
+	return &sessionRef{
+		session:    s.tun,
+		generation: s.generation,
 	}
 }
 
-func (s *StreamPipe) Reconnect(ctx context.Context) error {
-	if !s.reconnectState.CompareAndSwap(int32(StateDisconnected), int32(StateReconnecting)) {
-		currentState := ConnectionState(s.reconnectState.Load())
-		if currentState == StateConnected {
-			return nil
+func (s *StreamPipe) OpenStream() (*smux.Stream, error) {
+	ref := s.getSession()
+	if ref != nil {
+		stream, err := ref.session.OpenStream()
+		if err == nil {
+			return stream, nil
 		}
+		s.markDisconnected()
+	}
+
+	if s.isServerSide {
+		return nil, fmt.Errorf("server-side pipe cannot reconnect")
+	}
+
+	if err := s.ensureConnected(); err != nil {
+		return nil, err
+	}
+
+	ref = s.getSession()
+	if ref == nil {
+		return nil, fmt.Errorf("session unavailable after reconnection")
+	}
+
+	return ref.session.OpenStream()
+}
+
+func (s *StreamPipe) markDisconnected() {
+	s.mu.Lock()
+	if s.state == StateConnected {
+		s.state = StateDisconnected
+		if !s.isServerSide {
+			s.reconnectOnce = &sync.Once{}
+		}
+	}
+	s.mu.Unlock()
+}
+
+func (s *StreamPipe) ensureConnected() error {
+	if s.isServerSide {
+		return fmt.Errorf("server-side pipe cannot initiate reconnection")
+	}
+
+	s.mu.RLock()
+	state := s.state
+	once := s.reconnectOnce
+	s.mu.RUnlock()
+
+	if state == StateConnected {
+		return nil
+	}
+
+	if state == StateFailed {
+		return fmt.Errorf("connection failed")
+	}
+
+	errChan := make(chan error, 1)
+	once.Do(func() {
+		errChan <- s.reconnect()
+	})
+
+	select {
+	case err := <-errChan:
+		return err
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("timeout waiting for reconnection")
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	}
+}
+
+func (s *StreamPipe) reconnect() error {
+	if s.isServerSide {
+		return fmt.Errorf("server-side pipe cannot reconnect")
+	}
+
+	if !s.reconnecting.CompareAndSwap(false, true) {
 		return fmt.Errorf("reconnection already in progress")
 	}
+	defer s.reconnecting.Store(false)
 
-	defer func() {
-		select {
-		case s.reconnectChan <- struct{}{}:
-		default:
-		}
-	}()
+	s.mu.Lock()
+	s.state = StateReconnecting
+	s.mu.Unlock()
 
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
+	defer cancel()
 
-	// Dial with backoff
 	var conn net.Conn
 	var err error
 	backoff := 100 * time.Millisecond
@@ -118,7 +172,9 @@ func (s *StreamPipe) Reconnect(ctx context.Context) error {
 	for attempt := 0; attempt < 10; attempt++ {
 		select {
 		case <-ctx.Done():
-			s.reconnectState.Store(int32(StateFailed))
+			s.mu.Lock()
+			s.state = StateFailed
+			s.mu.Unlock()
 			return ctx.Err()
 		default:
 		}
@@ -141,7 +197,6 @@ func (s *StreamPipe) Reconnect(ctx context.Context) error {
 			continue
 		}
 
-		// Initialize the new connection
 		stream, err := smuxC.OpenStream()
 		if err != nil {
 			smuxC.Close()
@@ -159,51 +214,69 @@ func (s *StreamPipe) Reconnect(ctx context.Context) error {
 		}
 		stream.Close()
 
-		// Success - replace the old connection
-		s.reconnectMu.Lock()
-		oldTun := s.tun.Load()
-		if oldTun != nil && !(*oldTun).IsClosed() {
-			(*oldTun).Close()
-		}
-		oldConn := s.conn.Load()
-		if oldConn != nil {
-			(*oldConn).Close()
-		}
-		s.tun.Store(smuxC)
-		s.conn.Store(&conn)
-		s.reconnectMu.Unlock()
+		s.mu.Lock()
+		s.closeOldConnectionLocked()
+		s.tun = smuxC
+		s.conn = conn
+		s.generation++
+		s.state = StateConnected
+		s.reconnectOnce = &sync.Once{}
+		s.mu.Unlock()
 
-		s.state.Store(int32(StateConnected))
-		s.reconnectState.Store(int32(StateConnected))
 		syslog.L.Info().WithMessage("reconnection successful").Write()
 		return nil
 	}
 
-	s.reconnectState.Store(int32(StateFailed))
+	s.mu.Lock()
+	s.state = StateFailed
+	s.mu.Unlock()
+
 	return fmt.Errorf("reconnection failed after retries: %w", err)
 }
 
+func (s *StreamPipe) closeOldConnectionLocked() {
+	if s.tun != nil {
+		if !s.tun.IsClosed() {
+			s.tun.Close()
+		}
+		s.tun = nil
+	}
+	if s.conn != nil {
+		s.conn.Close()
+		s.conn = nil
+	}
+}
+
 func (s *StreamPipe) connectionMonitor() {
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
+	defer s.wg.Done()
+
+	if s.isServerSide {
+		return
+	}
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case <-timer.C:
-			tun := s.tun.Load()
-			if tun == nil || (*tun).IsClosed() {
-				if s.reconnectState.Load() != int32(StateReconnecting) {
-					s.state.Store(int32(StateDisconnected))
+		case <-ticker.C:
+			ref := s.getSession()
+			if ref == nil {
+				s.mu.RLock()
+				state := s.state
+				s.mu.RUnlock()
+
+				if state != StateReconnecting && state != StateFailed {
+					s.markDisconnected()
 					go func() {
-						if err := s.Reconnect(s.ctx); err != nil {
-							syslog.L.Error(err).WithMessage("reconnection failed").Write()
+						if err := s.ensureConnected(); err != nil {
+							syslog.L.Error(err).WithMessage("background reconnection failed").Write()
 						}
 					}()
 				}
 			}
-			timer.Reset(5 * time.Second)
 		}
 	}
 }
@@ -231,7 +304,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return nil, fmt.Errorf("failed to create smux client: %w", err)
 	}
 
-	pipe, err := newStreamPipe(ctx, smuxC, conn)
+	pipe, err := newStreamPipe(ctx, smuxC, conn, serverAddr, arpcTls, false)
 	if err != nil {
 		syslog.L.Debug().WithMessage("closing tun and conn due to stream pipe err init").Write()
 		_ = smuxC.Close()
@@ -244,10 +317,8 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 	}
 
 	headers.Add("ARPCVersion", "2")
-
-	pipe.tlsConfig = arpcTls
-	pipe.serverAddr = serverAddr
 	pipe.headers = headers
+	pipe.version = "2"
 
 	stream, err := pipe.OpenStream()
 	if err != nil {
@@ -261,13 +332,26 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return nil, fmt.Errorf("failed to write headers: %w", werr)
 	}
 
-	// Start connection monitor
+	pipe.wg.Add(1)
 	go pipe.connectionMonitor()
 
 	return pipe, nil
 }
 
-func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn) (*StreamPipe, error) {
+func AcceptConnection(ctx context.Context, tun *smux.Session, conn net.Conn) (*StreamPipe, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	pipe, err := newStreamPipe(ctx, tun, conn, "", nil, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create server pipe: %w", err)
+	}
+
+	return pipe, nil
+}
+
+func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, serverAddr string, tlsConfig *tls.Config, isServerSide bool) (*StreamPipe, error) {
 	if tun == nil {
 		return nil, fmt.Errorf("nil smux tunnel")
 	}
@@ -277,19 +361,20 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn) (*Stre
 	pipe := &StreamPipe{
 		ctx:           ctx,
 		cancelFunc:    cancel,
-		reconnectChan: make(chan struct{}, 1),
+		tun:           tun,
+		conn:          conn,
+		serverAddr:    serverAddr,
+		tlsConfig:     tlsConfig,
+		state:         StateConnected,
+		generation:    1,
+		reconnectOnce: &sync.Once{},
+		isServerSide:  isServerSide,
 	}
-	pipe.tun.Store(tun)
-	pipe.conn.Store(&conn)
-	pipe.state.Store(int32(StateConnected))
-	pipe.reconnectState.Store(int32(StateConnected))
 
 	go func() {
 		select {
 		case <-tun.CloseChan():
-			if pipe.state.Load() == int32(StateConnected) {
-				pipe.state.Store(int32(StateDisconnected))
-			}
+			pipe.markDisconnected()
 		case <-ctx.Done():
 		}
 	}()
@@ -298,11 +383,6 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn) (*Stre
 }
 
 func (s *StreamPipe) Serve() error {
-	tun := s.tun.Load()
-	if tun == nil {
-		return fmt.Errorf("nil smux tunnel")
-	}
-
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -311,21 +391,37 @@ func (s *StreamPipe) Serve() error {
 		default:
 		}
 
-		currentTun := s.tun.Load()
-		if currentTun == nil || (*currentTun).IsClosed() {
-			return fmt.Errorf("session closed")
+		ref := s.getSession()
+		if ref == nil {
+			if s.isServerSide {
+				return fmt.Errorf("server-side session closed")
+			}
+
+			if err := s.ensureConnected(); err != nil {
+				return fmt.Errorf("session unavailable: %w", err)
+			}
+			ref = s.getSession()
+			if ref == nil {
+				return fmt.Errorf("session unavailable after reconnection")
+			}
 		}
 
-		stream, err := (*currentTun).AcceptStream()
+		stream, err := ref.session.AcceptStream()
 		if err != nil {
-			if (*currentTun).IsClosed() {
-				syslog.L.Debug().WithMessage("closing pipe due to closed tun").Write()
-				return fmt.Errorf("session closed: %w", err)
+			if ref.session.IsClosed() {
+				s.markDisconnected()
+				if s.isServerSide {
+					return fmt.Errorf("session closed: %w", err)
+				}
+				continue
 			}
 			return err
 		}
 
-		router := s.GetRouter()
+		s.mu.RLock()
+		router := s.router
+		s.mu.RUnlock()
+
 		if router == nil {
 			syslog.L.Debug().WithMessage("closing stream due to invalid router").Write()
 			_ = stream.Close()
@@ -340,7 +436,7 @@ func (s *StreamPipe) Serve() error {
 						WithMessage("recovered from panic in handler").
 						Write()
 				}
-				stream.Close()
+				st.Close()
 			}()
 			router.serveStream(st)
 		}(stream)
@@ -349,30 +445,17 @@ func (s *StreamPipe) Serve() error {
 
 func (s *StreamPipe) Close() {
 	s.cancelFunc()
+	s.wg.Wait()
 
-	s.reconnectMu.Lock()
-	defer s.reconnectMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	tun := s.tun.Load()
-	if tun != nil && !(*tun).IsClosed() {
-		syslog.L.Debug().WithMessage("closing tunnel due to pipe close").Write()
-		_ = (*tun).Close()
-	}
-
-	conn := s.conn.Load()
-	if conn != nil {
-		syslog.L.Debug().WithMessage("closing conn due to pipe close").Write()
-		_ = (*conn).Close()
-	}
+	s.closeOldConnectionLocked()
+	s.state = StateDisconnected
 }
 
 func (s *StreamPipe) GetState() ConnectionState {
-	tun := s.tun.Load()
-	if tun == nil || (*tun).IsClosed() {
-		return StateDisconnected
-	}
-	if s.ctx.Err() != nil {
-		return StateDisconnected
-	}
-	return ConnectionState(s.state.Load())
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state
 }

@@ -436,7 +436,7 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 		t.Fatalf("expected connected, got %v", st)
 	}
 
-	_ = (*pipe.conn.Load()).Close()
+	_ = pipe.conn.Close()
 
 	timeout := time.NewTimer(10 * time.Second)
 	for st := pipe.GetState(); st != StateConnected; {
@@ -854,7 +854,7 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 
 	const cycles = 10
 	for i := 0; i < cycles; i++ {
-		_ = (*pipe.conn.Load()).Close()
+		_ = pipe.conn.Close()
 		time.Sleep(50 * time.Millisecond)
 
 		var out string
