@@ -100,6 +100,9 @@ func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
+	pipeCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	for {
 		_, primaryExists := fs.agentManager.GetStreamPipe(fs.Hostname)
 		if !primaryExists {
@@ -112,8 +115,8 @@ func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
 		}
 
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		case <-pipeCtx.Done():
+			return nil, pipeCtx.Err()
 		case <-ticker.C:
 			continue
 		}
