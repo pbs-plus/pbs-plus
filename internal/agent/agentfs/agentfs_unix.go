@@ -383,22 +383,22 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 			},
 		}, nil
 	}
-	reqLen := int(reqEnd - payload.Offset)
 	alignedOffset := payload.Offset - (payload.Offset % int64(s.allocGranularity))
 	offsetDiff := int(payload.Offset - alignedOffset)
-	viewSize := reqLen + offsetDiff
+	viewSize := payload.Length + offsetDiff
+
 	if s.readMode == "mmap" {
-		syslog.L.Debug().WithMessage("handleReadAt: attempting mmap read").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", reqLen).Write()
+		syslog.L.Debug().WithMessage("handleReadAt: attempting mmap read").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", payload.Length).Write()
 		data, err := unix.Mmap(fh.fd, alignedOffset, viewSize, unix.PROT_READ, unix.MAP_SHARED)
 		if err == nil {
-			if offsetDiff+reqLen > len(data) {
+			if offsetDiff+payload.Length > len(data) {
 				_ = unix.Munmap(data)
 				syslog.L.Error(fmt.Errorf("mapping bounds")).WithMessage("handleReadAt: invalid file mapping boundaries").WithField("handle_id", payload.HandleID).Write()
 				return arpc.Response{}, fmt.Errorf("invalid file mapping boundaries")
 			}
-			result := data[offsetDiff : offsetDiff+reqLen]
+			result := data[offsetDiff : offsetDiff+payload.Length]
 			reader := bytes.NewReader(result)
-			syslog.L.Debug().WithMessage("handleReadAt: starting stream (mmap)").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", reqLen).Write()
+			syslog.L.Debug().WithMessage("handleReadAt: starting stream (mmap)").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", payload.Length).Write()
 			streamCallback := func(stream *smux.Stream) {
 				defer unix.Munmap(data)
 				if err := binarystream.SendDataFromReader(reader, len(result), stream); err != nil {
@@ -414,34 +414,30 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 	var buf []byte
 	bptr := readBufPool.Get().(*[]byte)
-	if len(*bptr) < reqLen {
-		buf = make([]byte, reqLen)
+	if len(*bptr) < payload.Length {
+		buf = make([]byte, payload.Length)
 	} else {
 		buf = *bptr
 	}
 
-	n, err := unix.Pread(fh.fd, buf[:reqLen], payload.Offset)
+	n, err := unix.Pread(fh.fd, buf[:payload.Length], payload.Offset)
 	if err != nil {
-		if len(*bptr) >= reqLen {
+		if len(*bptr) >= payload.Length {
 			readBufPool.Put(bptr)
 		}
 		syslog.L.Error(err).WithMessage("handleReadAt: pread failed").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, fmt.Errorf("pread failed: %w", err)
 	}
 
-	result := make([]byte, n)
-	copy(result, buf[:n])
-
-	if len(*bptr) >= reqLen {
-		readBufPool.Put(bptr)
-	}
-
-	reader := bytes.NewReader(result)
+	reader := bytes.NewReader(buf[:n])
 	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", n).Write()
 	streamCallback := func(stream *smux.Stream) {
 		if err := binarystream.SendDataFromReader(reader, n, stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed").WithField("handle_id", payload.HandleID).Write()
 			return
+		}
+		if len(*bptr) >= payload.Length {
+			readBufPool.Put(bptr)
 		}
 		syslog.L.Debug().WithMessage("handleReadAt: stream completed").WithField("handle_id", payload.HandleID).WithField("bytes", n).Write()
 	}
@@ -455,11 +451,7 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 		syslog.L.Error(err).WithMessage("handleLseek: decode failed").Write()
 		return arpc.Response{}, err
 	}
-	if payload.Whence != io.SeekStart &&
-		payload.Whence != io.SeekCurrent &&
-		payload.Whence != io.SeekEnd &&
-		payload.Whence != SeekData &&
-		payload.Whence != SeekHole {
+	if payload.Whence == SeekHole || payload.Whence == SeekData {
 		syslog.L.Warn().WithMessage("handleLseek: invalid whence").WithField("whence", payload.Whence).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
