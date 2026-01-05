@@ -42,13 +42,19 @@ func getRetryUnitName(jobID string, attempt int) (string, error) {
 
 func stopAllJobTimers(sanitized string) {
 	primaryTimer := fmt.Sprintf("pbs-plus-job-%s.timer", sanitized)
-	stopCmd := exec.Command("systemctl", "stop", primaryTimer)
-	stopCmd.Env = os.Environ()
-	stopCmd.Stderr = nil
-	_ = stopCmd.Run()
+
+	checkCmd := exec.Command("systemctl", "is-active", primaryTimer)
+	checkCmd.Env = os.Environ()
+	if err := checkCmd.Run(); err == nil {
+		stopCmd := exec.Command("systemctl", "stop", primaryTimer)
+		stopCmd.Env = os.Environ()
+		_ = stopCmd.Run()
+
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
-	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend")
+	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend", "--state=active")
 	listCmd.Env = os.Environ()
 	output, err := listCmd.Output()
 	if err == nil {
@@ -59,9 +65,12 @@ func stopAllJobTimers(sanitized string) {
 			if len(fields) > 0 {
 				stopCmd := exec.Command("systemctl", "stop", fields[0])
 				stopCmd.Env = os.Environ()
-				stopCmd.Stderr = nil
 				_ = stopCmd.Run()
 			}
+		}
+
+		if len(strings.TrimSpace(string(output))) > 0 {
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }
