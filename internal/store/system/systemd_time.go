@@ -52,7 +52,9 @@ func stopAllJobTimers(sanitized string) {
 
 		time.Sleep(50 * time.Millisecond)
 	}
+}
 
+func stopAllRetries(sanitized string) {
 	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
 	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend", "--state=active")
 	listCmd.Env = os.Environ()
@@ -82,9 +84,10 @@ func SetSchedule(job types.Job) error {
 	}
 
 	sanitized, _ := sanitizeUnitName(job.ID)
-	stopAllJobTimers(sanitized)
+	stopAllRetries(sanitized)
 
 	if job.Schedule == "" {
+		stopAllJobTimers(sanitized)
 		return nil
 	}
 
@@ -114,7 +117,9 @@ func DeleteSchedule(id string) error {
 	if err != nil {
 		return fmt.Errorf("DeleteSchedule: %w", err)
 	}
+
 	stopAllJobTimers(sanitized)
+	stopAllRetries(sanitized)
 
 	timerBasePath := "/etc/systemd/system"
 
