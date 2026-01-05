@@ -459,3 +459,35 @@ func (s *StreamPipe) GetState() ConnectionState {
 	defer s.mu.RUnlock()
 	return s.state
 }
+
+func (s *StreamPipe) SwapConnection(tun *smux.Session, conn net.Conn) error {
+	if tun == nil {
+		return fmt.Errorf("nil smux session provided")
+	}
+
+	if conn == nil {
+		return fmt.Errorf("nil connection provided")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.closeOldConnectionLocked()
+
+	s.tun = tun
+	s.conn = conn
+	s.generation++
+	s.state = StateConnected
+	s.reconnectOnce = &sync.Once{}
+
+	go func() {
+		select {
+		case <-tun.CloseChan():
+			s.markDisconnected()
+		case <-s.ctx.Done():
+		}
+	}()
+
+	syslog.L.Info().WithMessage("connection swapped successfully").Write()
+	return nil
+}
