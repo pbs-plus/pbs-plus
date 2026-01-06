@@ -52,11 +52,10 @@ release:
   github:
     owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
     name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
-  name_template: "pxar-direct-mount - PBS Plus v{{ .Version }}"
+  name_template: "PBS Plus {{ .Version }}"
   draft: false
   prerelease: auto
   replace_existing_artifacts: true
-  make_latest: false
   mode: replace
 
 changelog:
