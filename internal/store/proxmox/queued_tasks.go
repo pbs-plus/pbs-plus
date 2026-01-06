@@ -91,7 +91,7 @@ func GenerateRestoreQueuedTask(job types.Restore, web bool) (QueuedTask, error) 
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
-	wtype := "read"
+	wtype := "reader"
 	node := "pbsplusgen-queue"
 
 	task := Task{
