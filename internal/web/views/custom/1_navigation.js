@@ -10,7 +10,7 @@ Ext.onReady(function () {
       let index = root.indexOf(notesNode);
 
       root.insertChild(index, {
-        text: "Disk Backup",
+        text: "Disk Backup / Restore",
         iconCls: "fa fa-hdd-o",
         id: "backup_targets",
         path: "pbsD2DManagement",
