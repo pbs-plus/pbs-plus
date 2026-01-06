@@ -86,7 +86,7 @@ func SetSchedule(ctx context.Context, backup types.Backup) error {
 
 	serviceProps := []dbus.Property{
 		dbus.PropDescription(backup.ID + " Backup Service"),
-		dbus.PropExecStart([]string{"/usr/bin/pbs-plus", "-backup=" + backup.ID}, false),
+		dbus.PropExecStart([]string{"/usr/bin/pbs-plus", "-backup-job=" + backup.ID}, false),
 	}
 
 	timerProps := []dbus.Property{
@@ -176,7 +176,7 @@ func SetRetrySchedule(ctx context.Context, backup types.Backup, extraExclusions 
 	serviceName := retryUnitName + ".service"
 	delay := fmt.Sprintf("%dm", backup.RetryInterval)
 
-	execArgs := []string{"/usr/bin/pbs-plus", "-backup=" + backup.ID, "-retry=" + strconv.Itoa(newAttempt)}
+	execArgs := []string{"/usr/bin/pbs-plus", "-backup-job=" + backup.ID, "-retry=" + strconv.Itoa(newAttempt)}
 	for _, exclusion := range extraExclusions {
 		if !strings.Contains(exclusion, `"`) {
 			execArgs = append(execArgs, "-skip="+exclusion)
@@ -361,7 +361,7 @@ func SetBatchSchedules(ctx context.Context, jobs []types.Backup) error {
 
 		serviceProps := []dbus.Property{
 			dbus.PropDescription(fmt.Sprintf("PBS-Plus Backup: %s", job.ID)),
-			dbus.PropExecStart([]string{"/usr/bin/pbs-plus", "-backup=" + job.ID}, false),
+			dbus.PropExecStart([]string{"/usr/bin/pbs-plus", "-backup-job=" + job.ID}, false),
 		}
 
 		timerProps := []dbus.Property{
