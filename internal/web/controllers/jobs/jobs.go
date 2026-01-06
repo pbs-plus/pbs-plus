@@ -232,7 +232,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			exclusionInst := types.Exclusion{
 				Path:  exclusion,
-				BackupID: newBackup.ID,
+				JobId: newBackup.ID,
 			}
 
 			newBackup.Exclusions = append(newBackup.Exclusions, exclusionInst)
@@ -342,7 +342,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 					exclusionInst := types.Exclusion{
 						Path:  exclusion,
-						BackupID: backup.ID,
+						JobId: backup.ID,
 					}
 
 					backup.Exclusions = append(backup.Exclusions, exclusionInst)
