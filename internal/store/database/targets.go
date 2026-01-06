@@ -244,7 +244,7 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
             t.drive_total, t.drive_used, t.drive_free, t.mount_script, t.os,
             COUNT(j.id) as job_count
         FROM targets t
-        LEFT JOIN jobs j ON t.name = j.target
+        LEFT JOIN backups j ON t.name = j.target
         WHERE t.name = ?
         GROUP BY t.name
     `, name) // Grouping by primary key (or unique key) is sufficient
@@ -345,7 +345,7 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
             t.drive_total, t.drive_used, t.drive_free, t.mount_script, t.os,
             COUNT(j.id) as job_count
         FROM targets t
-        LEFT JOIN jobs j ON t.name = j.target
+        LEFT JOIN backups j ON t.name = j.target
         GROUP BY t.name, t.path, t.auth, t.token_used, t.drive_type, t.drive_name,
                  t.drive_fs, t.drive_total_bytes, t.drive_used_bytes, t.drive_free_bytes,
                  t.drive_total, t.drive_used, t.drive_free, t.mount_script, t.os

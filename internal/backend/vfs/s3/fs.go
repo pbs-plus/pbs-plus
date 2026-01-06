@@ -44,7 +44,7 @@ var seenNamesPool = sync.Pool{
 
 func NewS3FS(
 	ctx context.Context,
-	job storeTypes.Job,
+	backup storeTypes.Backup,
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
 ) *S3FS {
@@ -71,7 +71,7 @@ func NewS3FS(
 		VFSBase: &vfs.VFSBase{
 			Ctx:    s3ctx,
 			Cancel: cancel,
-			Job:    job,
+			Backup: backup,
 		},
 		client:    client,
 		bucket:    bucket,

@@ -59,120 +59,120 @@ func setupTestStore(t *testing.T) *Store {
 	return store
 }
 
-// Job Tests
-func TestJobCRUD(t *testing.T) {
+// Backup Tests
+func TestBackupCRUD(t *testing.T) {
 	store := setupTestStore(t)
 
 	t.Run("Basic CRUD Operations", func(t *testing.T) {
-		job := types.Job{
-			ID:               "test-job-1",
+		backup := types.Backup{
+			ID:               "test-backup-1",
 			Store:            "local",
 			Target:           "test-target",
 			Subpath:          "backups/test",
 			Schedule:         "daily",
-			Comment:          "Test backup job",
+			Comment:          "Test backup backup",
 			NotificationMode: "always",
 			Namespace:        "test",
 		}
 
-		err := store.Database.CreateJob(nil, job)
+		err := store.Database.CreateBackup(nil, backup)
 		assert.NoError(t, err)
 
 		// Test Get
-		retrievedJob, err := store.Database.GetJob(job.ID)
+		retrievedBackup, err := store.Database.GetBackup(backup.ID)
 		assert.NoError(t, err)
-		assert.NotNil(t, retrievedJob)
-		assert.Equal(t, job.ID, retrievedJob.ID)
-		assert.Equal(t, job.Store, retrievedJob.Store)
-		assert.Equal(t, job.Target, retrievedJob.Target)
+		assert.NotNil(t, retrievedBackup)
+		assert.Equal(t, backup.ID, retrievedBackup.ID)
+		assert.Equal(t, backup.Store, retrievedBackup.Store)
+		assert.Equal(t, backup.Target, retrievedBackup.Target)
 
 		// Test Update
-		job.Comment = "Updated comment"
-		err = store.Database.UpdateJob(nil, job)
+		backup.Comment = "Updated comment"
+		err = store.Database.UpdateBackup(nil, backup)
 		assert.NoError(t, err)
 
-		updatedJob, err := store.Database.GetJob(job.ID)
+		updatedBackup, err := store.Database.GetBackup(backup.ID)
 		assert.NoError(t, err)
-		assert.Equal(t, "Updated comment", updatedJob.Comment)
+		assert.Equal(t, "Updated comment", updatedBackup.Comment)
 
 		// Test GetAll
-		jobs, err := store.Database.GetAllJobs()
+		backups, err := store.Database.GetAllBackups()
 		assert.NoError(t, err)
-		assert.Len(t, jobs, 1)
+		assert.Len(t, backups, 1)
 
 		// Test Delete
-		err = store.Database.DeleteJob(nil, job.ID)
+		err = store.Database.DeleteBackup(nil, backup.ID)
 		assert.NoError(t, err)
 
-		_, err = store.Database.GetJob(job.ID)
-		assert.ErrorIs(t, err, sqlite.ErrJobNotFound)
+		_, err = store.Database.GetBackup(backup.ID)
+		assert.ErrorIs(t, err, sqlite.ErrBackupNotFound)
 	})
 
 	t.Run("Concurrent Operations", func(t *testing.T) {
 		var wg sync.WaitGroup
-		jobCount := 10
+		backupCount := 10
 
 		// Concurrent creation
-		for i := 0; i < jobCount; i++ {
+		for i := 0; i < backupCount; i++ {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				job := types.Job{
-					ID:               fmt.Sprintf("concurrent-job-%d", idx),
+				backup := types.Backup{
+					ID:               fmt.Sprintf("concurrent-backup-%d", idx),
 					Store:            "local",
 					Target:           "test-target",
 					Subpath:          fmt.Sprintf("backups/test-%d", idx),
 					Schedule:         `mon..fri *-*-* 00:00:00`,
-					Comment:          fmt.Sprintf("Concurrent test job %d", idx),
+					Comment:          fmt.Sprintf("Concurrent test backup %d", idx),
 					NotificationMode: "always",
 					Namespace:        "test",
 				}
-				err := store.Database.CreateJob(nil, job)
+				err := store.Database.CreateBackup(nil, backup)
 				assert.NoError(t, err)
 			}(i)
 		}
 		wg.Wait()
 
-		// Verify all jobs were created
-		jobs, err := store.Database.GetAllJobs()
+		// Verify all backups were created
+		backups, err := store.Database.GetAllBackups()
 		assert.NoError(t, err)
-		assert.Len(t, jobs, jobCount)
+		assert.Len(t, backups, backupCount)
 	})
 
 	t.Run("Special Characters", func(t *testing.T) {
-		job := types.Job{
-			ID:               "test-job-special-!@#$%^",
+		backup := types.Backup{
+			ID:               "test-backup-special-!@#$%^",
 			Store:            "local",
 			Target:           "test-target",
 			Subpath:          "backups/test/special/!@#$%^",
 			Schedule:         `mon..fri *-*-* 00:00:00`,
-			Comment:          "Test job with special characters !@#$%^",
+			Comment:          "Test backup with special characters !@#$%^",
 			NotificationMode: "always",
 			Namespace:        "test",
 		}
-		err := store.Database.CreateJob(nil, job)
+		err := store.Database.CreateBackup(nil, backup)
 		assert.Error(t, err) // Should reject special characters
 	})
 }
 
-func TestJobValidation(t *testing.T) {
+func TestBackupValidation(t *testing.T) {
 	store := setupTestStore(t)
 
 	tests := []struct {
 		name    string
-		job     types.Job
+		backup  types.Backup
 		wantErr bool
 		errMsg  string
 	}{
 		{
-			name: "valid job with all fields",
-			job: types.Job{
+			name: "valid backup with all fields",
+			backup: types.Backup{
 				ID:               "test-valid",
 				Store:            "local",
 				Target:           "test",
 				Subpath:          "valid/path",
 				Schedule:         `*-*-* 00:00:00`,
-				Comment:          "Valid test job",
+				Comment:          "Valid test backup",
 				NotificationMode: "always",
 				Namespace:        "test",
 			},
@@ -180,7 +180,7 @@ func TestJobValidation(t *testing.T) {
 		},
 		{
 			name: "invalid schedule string",
-			job: types.Job{
+			backup: types.Backup{
 				ID:        "test-invalid-cron",
 				Store:     "local",
 				Target:    "test",
@@ -192,7 +192,7 @@ func TestJobValidation(t *testing.T) {
 		},
 		{
 			name: "empty required fields",
-			job: types.Job{
+			backup: types.Backup{
 				ID: "test-empty",
 			},
 			wantErr: true,
@@ -202,7 +202,7 @@ func TestJobValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreateJob(nil, tt.job)
+			err := store.Database.CreateBackup(nil, tt.backup)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" && err != nil {

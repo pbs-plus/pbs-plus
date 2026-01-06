@@ -21,7 +21,7 @@ import (
 )
 
 type S3Mount struct {
-	JobId     string
+	BackupId  string
 	Endpoint  string
 	AccessKey string
 	SecretKey string
@@ -33,7 +33,7 @@ type S3Mount struct {
 	isEmpty   bool
 }
 
-func S3FSMount(storeInstance *store.Store, job types.Job, target types.Target) (*S3Mount, error) {
+func S3FSMount(storeInstance *store.Store, backup types.Backup, target types.Target) (*S3Mount, error) {
 	// Parse target information
 	parsedS3, err := s3url.Parse(target.Path)
 	if err != nil {
@@ -41,16 +41,16 @@ func S3FSMount(storeInstance *store.Store, job types.Job, target types.Target) (
 	}
 
 	s3Mount := &S3Mount{
-		JobId:     job.ID,
+		BackupId:  backup.ID,
 		Endpoint:  parsedS3.Endpoint,
 		AccessKey: parsedS3.AccessKey,
 		Bucket:    parsedS3.Bucket,
 		Region:    parsedS3.Region,
 		UseSSL:    parsedS3.UseSSL,
-		Prefix:    job.Subpath,
+		Prefix:    backup.Subpath,
 	}
 
-	s3Mount.Path = filepath.Join(constants.AgentMountBasePath, job.ID)
+	s3Mount.Path = filepath.Join(constants.AgentMountBasePath, backup.ID)
 	s3Mount.Unmount() // Ensure clean mount point
 
 	// Create mount directory if it doesn't exist
@@ -68,14 +68,14 @@ func S3FSMount(storeInstance *store.Store, job types.Job, target types.Target) (
 	}
 
 	args := &rpcmount.S3BackupArgs{
-		JobId:        job.ID,
+		BackupId:     backup.ID,
 		Endpoint:     parsedS3.Endpoint,
 		AccessKey:    parsedS3.AccessKey,
 		Bucket:       parsedS3.Bucket,
 		Region:       parsedS3.Region,
 		UseSSL:       parsedS3.UseSSL,
 		UsePathStyle: parsedS3.IsPathStyle,
-		Prefix:       job.Subpath,
+		Prefix:       backup.Subpath,
 	}
 	var reply rpcmount.BackupReply
 
@@ -139,7 +139,7 @@ func (a *S3Mount) Unmount() {
 		}
 	}
 
-	vfssessions.DisconnectSession(a.Endpoint + "|" + a.JobId)
+	vfssessions.DisconnectSession(a.Endpoint + "|" + a.BackupId)
 
 	_ = os.RemoveAll(a.Path)
 }

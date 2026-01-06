@@ -24,172 +24,172 @@ func init() {
 }
 
 type metrics struct {
-	jobsTotal                        prometheus.Gauge
-	jobLastRunSuccess                *prometheus.GaugeVec
-	jobLastRunTimestamp              *prometheus.GaugeVec
-	jobLastSuccessfulTimestamp       *prometheus.GaugeVec
-	jobNextRunTimestamp              *prometheus.GaugeVec
-	jobDuration                      *prometheus.GaugeVec
-	jobRunning                       *prometheus.GaugeVec
-	jobQueued                        *prometheus.GaugeVec
-	jobExpectedSize                  *prometheus.GaugeVec
-	jobCurrentBytesTotal             *prometheus.GaugeVec
-	jobCurrentBytesSpeed             *prometheus.GaugeVec
-	jobCurrentFilesSpeed             *prometheus.GaugeVec
-	jobCurrentFileCount              *prometheus.GaugeVec
-	jobCurrentFolderCount            *prometheus.GaugeVec
-	jobTimeSinceLastSuccess          *prometheus.GaugeVec
-	jobLatestSnapshotSize            *prometheus.GaugeVec
-	jobsRunningTotal                 prometheus.Gauge
-	jobsQueuedTotal                  prometheus.Gauge
-	jobsLastRunFailedTotal           prometheus.Gauge
-	jobsLastRunSuccessTotal          prometheus.Gauge
-	targetsTotal                     prometheus.Gauge
-	targetDriveTotalBytes            *prometheus.GaugeVec
-	targetDriveUsedBytes             *prometheus.GaugeVec
-	targetDriveFreeBytes             *prometheus.GaugeVec
-	targetDriveUsagePercent          *prometheus.GaugeVec
-	targetJobCount                   *prometheus.GaugeVec
-	targetInfo                       *prometheus.GaugeVec
-	targetsAgentTotal                prometheus.Gauge
-	targetsS3Total                   prometheus.Gauge
-	targetsLocalTotal                prometheus.Gauge
-	targetLastSuccessfulJobTimestamp *prometheus.GaugeVec
-	targetTimeSinceLastSuccessfulJob *prometheus.GaugeVec
-	targetHasFailedJobs              *prometheus.GaugeVec
-	targetFailedJobCount             *prometheus.GaugeVec
-	targetSuccessfulJobCount         *prometheus.GaugeVec
-	previousJobLabels                map[string]prometheus.Labels
-	previousTargetLabels             map[string]prometheus.Labels
-	previousTargetInfoLabels         map[string]prometheus.Labels
+	backupsTotal                        prometheus.Gauge
+	backupLastRunSuccess                *prometheus.GaugeVec
+	backupLastRunTimestamp              *prometheus.GaugeVec
+	backupLastSuccessfulTimestamp       *prometheus.GaugeVec
+	backupNextRunTimestamp              *prometheus.GaugeVec
+	backupDuration                      *prometheus.GaugeVec
+	backupRunning                       *prometheus.GaugeVec
+	backupQueued                        *prometheus.GaugeVec
+	backupExpectedSize                  *prometheus.GaugeVec
+	backupCurrentBytesTotal             *prometheus.GaugeVec
+	backupCurrentBytesSpeed             *prometheus.GaugeVec
+	backupCurrentFilesSpeed             *prometheus.GaugeVec
+	backupCurrentFileCount              *prometheus.GaugeVec
+	backupCurrentFolderCount            *prometheus.GaugeVec
+	backupTimeSinceLastSuccess          *prometheus.GaugeVec
+	backupLatestSnapshotSize            *prometheus.GaugeVec
+	backupsRunningTotal                 prometheus.Gauge
+	backupsQueuedTotal                  prometheus.Gauge
+	backupsLastRunFailedTotal           prometheus.Gauge
+	backupsLastRunSuccessTotal          prometheus.Gauge
+	targetsTotal                        prometheus.Gauge
+	targetDriveTotalBytes               *prometheus.GaugeVec
+	targetDriveUsedBytes                *prometheus.GaugeVec
+	targetDriveFreeBytes                *prometheus.GaugeVec
+	targetDriveUsagePercent             *prometheus.GaugeVec
+	targetBackupCount                   *prometheus.GaugeVec
+	targetInfo                          *prometheus.GaugeVec
+	targetsAgentTotal                   prometheus.Gauge
+	targetsS3Total                      prometheus.Gauge
+	targetsLocalTotal                   prometheus.Gauge
+	targetLastSuccessfulBackupTimestamp *prometheus.GaugeVec
+	targetTimeSinceLastSuccessfulBackup *prometheus.GaugeVec
+	targetHasFailedBackups              *prometheus.GaugeVec
+	targetFailedBackupCount             *prometheus.GaugeVec
+	targetSuccessfulBackupCount         *prometheus.GaugeVec
+	previousBackupLabels                map[string]prometheus.Labels
+	previousTargetLabels                map[string]prometheus.Labels
+	previousTargetInfoLabels            map[string]prometheus.Labels
 }
 
 func newMetrics(reg prometheus.Registerer) *metrics {
 	m := &metrics{
-		jobsTotal: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "pbsplus_jobs_total",
-			Help: "Total number of backup jobs",
+		backupsTotal: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "pbsplus_backups_total",
+			Help: "Total number of backup backups",
 		}),
-		jobLastRunSuccess: prometheus.NewGaugeVec(
+		backupLastRunSuccess: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_last_run_success",
+				Name: "pbsplus_backup_last_run_success",
 				Help: "Last run success status (1=success, 0=failure, -1=unknown)",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobLastRunTimestamp: prometheus.NewGaugeVec(
+		backupLastRunTimestamp: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_last_run_timestamp_seconds",
-				Help: "Timestamp of the last job run",
+				Name: "pbsplus_backup_last_run_timestamp_seconds",
+				Help: "Timestamp of the last backup run",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobLastSuccessfulTimestamp: prometheus.NewGaugeVec(
+		backupLastSuccessfulTimestamp: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_last_successful_timestamp_seconds",
-				Help: "Timestamp of the last successful job run",
+				Name: "pbsplus_backup_last_successful_timestamp_seconds",
+				Help: "Timestamp of the last successful backup run",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobNextRunTimestamp: prometheus.NewGaugeVec(
+		backupNextRunTimestamp: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_next_run_timestamp_seconds",
-				Help: "Timestamp of the next scheduled job run",
+				Name: "pbsplus_backup_next_run_timestamp_seconds",
+				Help: "Timestamp of the next scheduled backup run",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobDuration: prometheus.NewGaugeVec(
+		backupDuration: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_duration_seconds",
-				Help: "Duration of the last job run in seconds",
+				Name: "pbsplus_backup_duration_seconds",
+				Help: "Duration of the last backup run in seconds",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobRunning: prometheus.NewGaugeVec(
+		backupRunning: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_running",
-				Help: "Job currently running (1=running, 0=not running)",
+				Name: "pbsplus_backup_running",
+				Help: "Backup currently running (1=running, 0=not running)",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobQueued: prometheus.NewGaugeVec(
+		backupQueued: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_queued",
-				Help: "Job is in queue (1=queued, 0=not queued)",
+				Name: "pbsplus_backup_queued",
+				Help: "Backup is in queue (1=queued, 0=not queued)",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobExpectedSize: prometheus.NewGaugeVec(
+		backupExpectedSize: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_expected_size_bytes",
+				Name: "pbsplus_backup_expected_size_bytes",
 				Help: "Expected size of the backup in bytes",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobCurrentBytesTotal: prometheus.NewGaugeVec(
+		backupCurrentBytesTotal: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_current_bytes_total",
+				Name: "pbsplus_backup_current_bytes_total",
 				Help: "Current bytes transferred during active backup",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobCurrentBytesSpeed: prometheus.NewGaugeVec(
+		backupCurrentBytesSpeed: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_current_bytes_speed",
+				Name: "pbsplus_backup_current_bytes_speed",
 				Help: "Current transfer speed in bytes per second",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobCurrentFilesSpeed: prometheus.NewGaugeVec(
+		backupCurrentFilesSpeed: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_current_files_speed",
+				Name: "pbsplus_backup_current_files_speed",
 				Help: "Current file processing speed in files per second",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobCurrentFileCount: prometheus.NewGaugeVec(
+		backupCurrentFileCount: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_current_file_count",
+				Name: "pbsplus_backup_current_file_count",
 				Help: "Current number of files processed",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobCurrentFolderCount: prometheus.NewGaugeVec(
+		backupCurrentFolderCount: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_current_folder_count",
+				Name: "pbsplus_backup_current_folder_count",
 				Help: "Current number of folders processed",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobTimeSinceLastSuccess: prometheus.NewGaugeVec(
+		backupTimeSinceLastSuccess: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_time_since_last_success_seconds",
+				Name: "pbsplus_backup_time_since_last_success_seconds",
 				Help: "Time since last successful run in seconds",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobLatestSnapshotSize: prometheus.NewGaugeVec(
+		backupLatestSnapshotSize: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_job_latest_snapshot_size_bytes",
+				Name: "pbsplus_backup_latest_snapshot_size_bytes",
 				Help: "Size of the latest snapshot in bytes",
 			},
-			[]string{"job_id", "target", "store", "mode", "schedule"},
+			[]string{"backup_id", "target", "store", "mode", "schedule"},
 		),
-		jobsRunningTotal: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "pbsplus_jobs_running_total",
-			Help: "Number of currently running jobs",
+		backupsRunningTotal: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "pbsplus_backups_running_total",
+			Help: "Number of currently running backups",
 		}),
-		jobsQueuedTotal: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "pbsplus_jobs_queued_total",
-			Help: "Number of queued jobs",
+		backupsQueuedTotal: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "pbsplus_backups_queued_total",
+			Help: "Number of queued backups",
 		}),
-		jobsLastRunFailedTotal: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "pbsplus_jobs_last_run_failed_total",
-			Help: "Number of jobs that failed on last run",
+		backupsLastRunFailedTotal: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "pbsplus_backups_last_run_failed_total",
+			Help: "Number of backups that failed on last run",
 		}),
-		jobsLastRunSuccessTotal: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "pbsplus_jobs_last_run_success_total",
-			Help: "Number of jobs that succeeded on last run",
+		backupsLastRunSuccessTotal: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "pbsplus_backups_last_run_success_total",
+			Help: "Number of backups that succeeded on last run",
 		}),
 		targetsTotal: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "pbsplus_targets_total",
@@ -223,10 +223,10 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 			},
 			[]string{"target_name", "drive_name", "drive_type", "drive_fs", "os"},
 		),
-		targetJobCount: prometheus.NewGaugeVec(
+		targetBackupCount: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_target_job_count",
-				Help: "Number of jobs associated with this target",
+				Name: "pbsplus_target_backup_count",
+				Help: "Number of backups associated with this target",
 			},
 			[]string{"target_name"},
 		),
@@ -249,82 +249,82 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 			Name: "pbsplus_targets_local_total",
 			Help: "Number of local/other targets",
 		}),
-		targetLastSuccessfulJobTimestamp: prometheus.NewGaugeVec(
+		targetLastSuccessfulBackupTimestamp: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_target_last_successful_job_timestamp_seconds",
-				Help: "Timestamp of the most recent successful job for this target",
+				Name: "pbsplus_target_last_successful_backup_timestamp_seconds",
+				Help: "Timestamp of the most recent successful backup for this target",
 			},
 			[]string{"target_name"},
 		),
-		targetTimeSinceLastSuccessfulJob: prometheus.NewGaugeVec(
+		targetTimeSinceLastSuccessfulBackup: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_target_time_since_last_successful_job_seconds",
-				Help: "Time since the most recent successful job for this target in seconds",
+				Name: "pbsplus_target_time_since_last_successful_backup_seconds",
+				Help: "Time since the most recent successful backup for this target in seconds",
 			},
 			[]string{"target_name"},
 		),
-		targetHasFailedJobs: prometheus.NewGaugeVec(
+		targetHasFailedBackups: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_target_has_failed_jobs",
-				Help: "Target has at least one failed job (1=yes, 0=no)",
+				Name: "pbsplus_target_has_failed_backups",
+				Help: "Target has at least one failed backup (1=yes, 0=no)",
 			},
 			[]string{"target_name"},
 		),
-		targetFailedJobCount: prometheus.NewGaugeVec(
+		targetFailedBackupCount: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_target_failed_job_count",
-				Help: "Number of jobs that failed on last run for this target",
+				Name: "pbsplus_target_failed_backup_count",
+				Help: "Number of backups that failed on last run for this target",
 			},
 			[]string{"target_name"},
 		),
-		targetSuccessfulJobCount: prometheus.NewGaugeVec(
+		targetSuccessfulBackupCount: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_target_successful_job_count",
-				Help: "Number of jobs that succeeded on last run for this target",
+				Name: "pbsplus_target_successful_backup_count",
+				Help: "Number of backups that succeeded on last run for this target",
 			},
 			[]string{"target_name"},
 		),
-		previousJobLabels:        make(map[string]prometheus.Labels),
+		previousBackupLabels:     make(map[string]prometheus.Labels),
 		previousTargetLabels:     make(map[string]prometheus.Labels),
 		previousTargetInfoLabels: make(map[string]prometheus.Labels),
 	}
 
 	reg.MustRegister(
-		m.jobsTotal,
-		m.jobLastRunSuccess,
-		m.jobLastRunTimestamp,
-		m.jobLastSuccessfulTimestamp,
-		m.jobNextRunTimestamp,
-		m.jobDuration,
-		m.jobRunning,
-		m.jobQueued,
-		m.jobExpectedSize,
-		m.jobCurrentBytesTotal,
-		m.jobCurrentBytesSpeed,
-		m.jobCurrentFilesSpeed,
-		m.jobCurrentFileCount,
-		m.jobCurrentFolderCount,
-		m.jobTimeSinceLastSuccess,
-		m.jobLatestSnapshotSize,
-		m.jobsRunningTotal,
-		m.jobsQueuedTotal,
-		m.jobsLastRunFailedTotal,
-		m.jobsLastRunSuccessTotal,
+		m.backupsTotal,
+		m.backupLastRunSuccess,
+		m.backupLastRunTimestamp,
+		m.backupLastSuccessfulTimestamp,
+		m.backupNextRunTimestamp,
+		m.backupDuration,
+		m.backupRunning,
+		m.backupQueued,
+		m.backupExpectedSize,
+		m.backupCurrentBytesTotal,
+		m.backupCurrentBytesSpeed,
+		m.backupCurrentFilesSpeed,
+		m.backupCurrentFileCount,
+		m.backupCurrentFolderCount,
+		m.backupTimeSinceLastSuccess,
+		m.backupLatestSnapshotSize,
+		m.backupsRunningTotal,
+		m.backupsQueuedTotal,
+		m.backupsLastRunFailedTotal,
+		m.backupsLastRunSuccessTotal,
 		m.targetsTotal,
 		m.targetDriveTotalBytes,
 		m.targetDriveUsedBytes,
 		m.targetDriveFreeBytes,
 		m.targetDriveUsagePercent,
-		m.targetJobCount,
+		m.targetBackupCount,
 		m.targetInfo,
 		m.targetsAgentTotal,
 		m.targetsS3Total,
 		m.targetsLocalTotal,
-		m.targetLastSuccessfulJobTimestamp,
-		m.targetTimeSinceLastSuccessfulJob,
-		m.targetHasFailedJobs,
-		m.targetFailedJobCount,
-		m.targetSuccessfulJobCount,
+		m.targetLastSuccessfulBackupTimestamp,
+		m.targetTimeSinceLastSuccessfulBackup,
+		m.targetHasFailedBackups,
+		m.targetFailedBackupCount,
+		m.targetSuccessfulBackupCount,
 	)
 
 	return m
@@ -344,20 +344,20 @@ func PrometheusMetricsHandler(storeInstance *store.Store) http.HandlerFunc {
 }
 
 func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
-	currentJobLabels := make(map[string]prometheus.Labels)
+	currentBackupLabels := make(map[string]prometheus.Labels)
 	currentTargetLabels := make(map[string]prometheus.Labels)
 	currentTargetInfoLabels := make(map[string]prometheus.Labels)
 
-	// Collect job metrics
-	jobs, err := storeInstance.Database.GetAllJobs()
+	// Collect backup metrics
+	backups, err := storeInstance.Database.GetAllBackups()
 	if err != nil {
 		syslog.L.Error(err).
 			WithField("handler", "prometheus_metrics").
-			WithMessage("failed to get jobs").Write()
+			WithMessage("failed to get backups").Write()
 		return
 	}
 
-	m.jobsTotal.Set(float64(len(jobs)))
+	m.backupsTotal.Set(float64(len(backups)))
 
 	var runningCount, queuedCount, failedCount, successCount int
 
@@ -368,132 +368,132 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		successfulCount         int
 	})
 
-	for _, job := range jobs {
+	for _, backup := range backups {
 		labels := prometheus.Labels{
-			"job_id":   job.ID,
-			"target":   job.Target,
-			"store":    job.Store,
-			"mode":     job.Mode,
-			"schedule": job.Schedule,
+			"backup_id": backup.ID,
+			"target":    backup.Target,
+			"store":     backup.Store,
+			"mode":      backup.Mode,
+			"schedule":  backup.Schedule,
 		}
-		currentJobLabels[job.ID] = labels
+		currentBackupLabels[backup.ID] = labels
 
 		// Last run success status
 		// Consider successful if LastRunEndtime == LastSuccessfulEndtime OR if LastRunState == "OK"
 		successValue := float64(-1)
 		isSuccess := false
-		if job.LastRunEndtime > 0 && job.LastSuccessfulEndtime > 0 && job.LastRunEndtime == job.LastSuccessfulEndtime {
+		if backup.LastRunEndtime > 0 && backup.LastSuccessfulEndtime > 0 && backup.LastRunEndtime == backup.LastSuccessfulEndtime {
 			successValue = 1
 			successCount++
 			isSuccess = true
-		} else if job.LastRunState == "OK" {
+		} else if backup.LastRunState == "OK" {
 			successValue = 1
 			successCount++
 			isSuccess = true
-		} else if job.LastRunEndtime > 0 || job.LastRunState != "" {
+		} else if backup.LastRunEndtime > 0 || backup.LastRunState != "" {
 			// If we have a last run but it's not successful, mark as failed
 			successValue = 0
 			failedCount++
 		}
-		m.jobLastRunSuccess.With(labels).Set(successValue)
+		m.backupLastRunSuccess.With(labels).Set(successValue)
 
 		// Update target statistics
-		stats := targetStats[job.Target]
+		stats := targetStats[backup.Target]
 		if isSuccess {
 			stats.successfulCount++
 			// Track the most recent successful timestamp for this target
-			if job.LastSuccessfulEndtime > stats.lastSuccessfulTimestamp {
-				stats.lastSuccessfulTimestamp = job.LastSuccessfulEndtime
+			if backup.LastSuccessfulEndtime > stats.lastSuccessfulTimestamp {
+				stats.lastSuccessfulTimestamp = backup.LastSuccessfulEndtime
 			}
 		} else if successValue == 0 {
 			stats.failedCount++
 		}
-		targetStats[job.Target] = stats
+		targetStats[backup.Target] = stats
 
 		// Timestamps
-		if job.LastRunEndtime > 0 {
-			m.jobLastRunTimestamp.With(labels).Set(float64(job.LastRunEndtime))
+		if backup.LastRunEndtime > 0 {
+			m.backupLastRunTimestamp.With(labels).Set(float64(backup.LastRunEndtime))
 		}
-		if job.LastSuccessfulEndtime > 0 {
-			m.jobLastSuccessfulTimestamp.With(labels).Set(float64(job.LastSuccessfulEndtime))
-			m.jobTimeSinceLastSuccess.With(labels).Set(float64(now - job.LastSuccessfulEndtime))
+		if backup.LastSuccessfulEndtime > 0 {
+			m.backupLastSuccessfulTimestamp.With(labels).Set(float64(backup.LastSuccessfulEndtime))
+			m.backupTimeSinceLastSuccess.With(labels).Set(float64(now - backup.LastSuccessfulEndtime))
 		}
-		if job.NextRun > 0 {
-			m.jobNextRunTimestamp.With(labels).Set(float64(job.NextRun))
+		if backup.NextRun > 0 {
+			m.backupNextRunTimestamp.With(labels).Set(float64(backup.NextRun))
 		}
 
 		// Duration
-		if job.Duration > 0 {
-			m.jobDuration.With(labels).Set(float64(job.Duration))
+		if backup.Duration > 0 {
+			m.backupDuration.With(labels).Set(float64(backup.Duration))
 		}
 
 		// Running status
 		isRunning := float64(0)
-		if job.CurrentPID > 0 {
+		if backup.CurrentPID > 0 {
 			isRunning = 1
 			runningCount++
 		}
-		m.jobRunning.With(labels).Set(isRunning)
+		m.backupRunning.With(labels).Set(isRunning)
 
 		// Queued status
 		isQueued := float64(0)
-		if strings.Contains(job.LastRunUpid, "pbsplusgen-queue") {
+		if strings.Contains(backup.LastRunUpid, "pbsplusgen-queue") {
 			isQueued = 1
 			queuedCount++
 		}
-		m.jobQueued.With(labels).Set(isQueued)
+		m.backupQueued.With(labels).Set(isQueued)
 
 		// Size metrics
-		if job.ExpectedSize > 0 {
-			m.jobExpectedSize.With(labels).Set(float64(job.ExpectedSize))
+		if backup.ExpectedSize > 0 {
+			m.backupExpectedSize.With(labels).Set(float64(backup.ExpectedSize))
 		}
-		if job.CurrentBytesTotal > 0 {
-			m.jobCurrentBytesTotal.With(labels).Set(float64(job.CurrentBytesTotal))
+		if backup.CurrentBytesTotal > 0 {
+			m.backupCurrentBytesTotal.With(labels).Set(float64(backup.CurrentBytesTotal))
 		}
-		if job.CurrentBytesSpeed > 0 {
-			m.jobCurrentBytesSpeed.With(labels).Set(float64(job.CurrentBytesSpeed))
+		if backup.CurrentBytesSpeed > 0 {
+			m.backupCurrentBytesSpeed.With(labels).Set(float64(backup.CurrentBytesSpeed))
 		}
-		if job.CurrentFilesSpeed > 0 {
-			m.jobCurrentFilesSpeed.With(labels).Set(float64(job.CurrentFilesSpeed))
+		if backup.CurrentFilesSpeed > 0 {
+			m.backupCurrentFilesSpeed.With(labels).Set(float64(backup.CurrentFilesSpeed))
 		}
-		if job.CurrentFileCount > 0 {
-			m.jobCurrentFileCount.With(labels).Set(float64(job.CurrentFileCount))
+		if backup.CurrentFileCount > 0 {
+			m.backupCurrentFileCount.With(labels).Set(float64(backup.CurrentFileCount))
 		}
-		if job.CurrentFolderCount > 0 {
-			m.jobCurrentFolderCount.With(labels).Set(float64(job.CurrentFolderCount))
+		if backup.CurrentFolderCount > 0 {
+			m.backupCurrentFolderCount.With(labels).Set(float64(backup.CurrentFolderCount))
 		}
-		if job.LatestSnapshotSize > 0 {
-			m.jobLatestSnapshotSize.With(labels).Set(float64(job.LatestSnapshotSize))
+		if backup.LatestSnapshotSize > 0 {
+			m.backupLatestSnapshotSize.With(labels).Set(float64(backup.LatestSnapshotSize))
 		}
 	}
 
-	// Delete metrics for jobs that no longer exist
-	for jobID, labels := range m.previousJobLabels {
-		if _, exists := currentJobLabels[jobID]; !exists {
-			m.jobLastRunSuccess.Delete(labels)
-			m.jobLastRunTimestamp.Delete(labels)
-			m.jobLastSuccessfulTimestamp.Delete(labels)
-			m.jobNextRunTimestamp.Delete(labels)
-			m.jobDuration.Delete(labels)
-			m.jobRunning.Delete(labels)
-			m.jobQueued.Delete(labels)
-			m.jobExpectedSize.Delete(labels)
-			m.jobCurrentBytesTotal.Delete(labels)
-			m.jobCurrentBytesSpeed.Delete(labels)
-			m.jobCurrentFilesSpeed.Delete(labels)
-			m.jobCurrentFileCount.Delete(labels)
-			m.jobCurrentFolderCount.Delete(labels)
-			m.jobTimeSinceLastSuccess.Delete(labels)
-			m.jobLatestSnapshotSize.Delete(labels)
+	// Delete metrics for backups that no longer exist
+	for backupID, labels := range m.previousBackupLabels {
+		if _, exists := currentBackupLabels[backupID]; !exists {
+			m.backupLastRunSuccess.Delete(labels)
+			m.backupLastRunTimestamp.Delete(labels)
+			m.backupLastSuccessfulTimestamp.Delete(labels)
+			m.backupNextRunTimestamp.Delete(labels)
+			m.backupDuration.Delete(labels)
+			m.backupRunning.Delete(labels)
+			m.backupQueued.Delete(labels)
+			m.backupExpectedSize.Delete(labels)
+			m.backupCurrentBytesTotal.Delete(labels)
+			m.backupCurrentBytesSpeed.Delete(labels)
+			m.backupCurrentFilesSpeed.Delete(labels)
+			m.backupCurrentFileCount.Delete(labels)
+			m.backupCurrentFolderCount.Delete(labels)
+			m.backupTimeSinceLastSuccess.Delete(labels)
+			m.backupLatestSnapshotSize.Delete(labels)
 		}
 	}
-	m.previousJobLabels = currentJobLabels // Update for next run
+	m.previousBackupLabels = currentBackupLabels // Update for next run
 
-	// Aggregate job metrics
-	m.jobsRunningTotal.Set(float64(runningCount))
-	m.jobsQueuedTotal.Set(float64(queuedCount))
-	m.jobsLastRunFailedTotal.Set(float64(failedCount))
-	m.jobsLastRunSuccessTotal.Set(float64(successCount))
+	// Aggregate backup metrics
+	m.backupsRunningTotal.Set(float64(runningCount))
+	m.backupsQueuedTotal.Set(float64(queuedCount))
+	m.backupsLastRunFailedTotal.Set(float64(failedCount))
+	m.backupsLastRunSuccessTotal.Set(float64(successCount))
 
 	// Collect target metrics
 	targets, err := storeInstance.Database.GetAllTargets()
@@ -536,32 +536,32 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			m.targetDriveUsagePercent.With(driveLabels).Set(usagePercent)
 		}
 
-		// Job count
-		jobCountLabels := prometheus.Labels{
+		// Backup count
+		backupCountLabels := prometheus.Labels{
 			"target_name": target.Name,
 		}
-		m.targetJobCount.With(jobCountLabels).Set(float64(target.JobCount))
+		m.targetBackupCount.With(backupCountLabels).Set(float64(target.JobCount))
 
-		// Target-specific job statistics
+		// Target-specific backup statistics
 		if stats, exists := targetStats[target.Name]; exists {
 			if stats.lastSuccessfulTimestamp > 0 {
-				m.targetLastSuccessfulJobTimestamp.With(jobCountLabels).Set(float64(stats.lastSuccessfulTimestamp))
-				m.targetTimeSinceLastSuccessfulJob.With(jobCountLabels).Set(float64(now - stats.lastSuccessfulTimestamp))
+				m.targetLastSuccessfulBackupTimestamp.With(backupCountLabels).Set(float64(stats.lastSuccessfulTimestamp))
+				m.targetTimeSinceLastSuccessfulBackup.With(backupCountLabels).Set(float64(now - stats.lastSuccessfulTimestamp))
 			}
 
-			m.targetFailedJobCount.With(jobCountLabels).Set(float64(stats.failedCount))
-			m.targetSuccessfulJobCount.With(jobCountLabels).Set(float64(stats.successfulCount))
+			m.targetFailedBackupCount.With(backupCountLabels).Set(float64(stats.failedCount))
+			m.targetSuccessfulBackupCount.With(backupCountLabels).Set(float64(stats.successfulCount))
 
-			hasFailedJobs := float64(0)
+			hasFailedBackups := float64(0)
 			if stats.failedCount > 0 {
-				hasFailedJobs = 1
+				hasFailedBackups = 1
 			}
-			m.targetHasFailedJobs.With(jobCountLabels).Set(hasFailedJobs)
+			m.targetHasFailedBackups.With(backupCountLabels).Set(hasFailedBackups)
 		} else {
-			// Target has no jobs, set defaults
-			m.targetFailedJobCount.With(jobCountLabels).Set(0)
-			m.targetSuccessfulJobCount.With(jobCountLabels).Set(0)
-			m.targetHasFailedJobs.With(jobCountLabels).Set(0)
+			// Target has no backups, set defaults
+			m.targetFailedBackupCount.With(backupCountLabels).Set(0)
+			m.targetSuccessfulBackupCount.With(backupCountLabels).Set(0)
+			m.targetHasFailedBackups.With(backupCountLabels).Set(0)
 		}
 
 		// Target info (metadata)
@@ -602,15 +602,15 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			m.targetDriveUsedBytes.Delete(labels)
 			m.targetDriveFreeBytes.Delete(labels)
 			m.targetDriveUsagePercent.Delete(labels)
-			m.targetJobCount.Delete(prometheus.Labels{"target_name": labels["target_name"]}) // JobCount uses only target_name
+			m.targetBackupCount.Delete(prometheus.Labels{"target_name": labels["target_name"]}) // BackupCount uses only target_name
 			if infoLabels, exists := m.previousTargetInfoLabels[targetID]; exists {
 				m.targetInfo.Delete(infoLabels)
 			}
-			m.targetLastSuccessfulJobTimestamp.Delete(prometheus.Labels{"target_name": labels["target_name"]})
-			m.targetTimeSinceLastSuccessfulJob.Delete(prometheus.Labels{"target_name": labels["target_name"]})
-			m.targetHasFailedJobs.Delete(prometheus.Labels{"target_name": labels["target_name"]})
-			m.targetFailedJobCount.Delete(prometheus.Labels{"target_name": labels["target_name"]})
-			m.targetSuccessfulJobCount.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+			m.targetLastSuccessfulBackupTimestamp.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+			m.targetTimeSinceLastSuccessfulBackup.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+			m.targetHasFailedBackups.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+			m.targetFailedBackupCount.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+			m.targetSuccessfulBackupCount.Delete(prometheus.Labels{"target_name": labels["target_name"]})
 		}
 	}
 

@@ -20,7 +20,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 	if f.isClosed.Load() {
 		syslog.L.Debug().
 			WithMessage("Close called on already closed file").
-			WithField("job", f.jobId).
+			WithField("backup", f.backupId).
 			WithField("path", f.name).
 			Write()
 		return nil
@@ -29,7 +29,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 	pipe, err := f.fs.getPipe(ctx)
 	if err != nil {
 		syslog.L.Error(err).
-			WithJob(f.jobId).
+			WithJob(f.backupId).
 			WithMessage("arpc session is nil").
 			WithField("path", f.name).
 			Write()
@@ -38,7 +38,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 
 	syslog.L.Debug().
 		WithMessage("Issuing Close RPC").
-		WithJob(f.jobId).
+		WithJob(f.backupId).
 		WithField("path", f.name).
 		WithField("handleID", f.handleID).
 		Write()
@@ -48,10 +48,10 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	_, err = pipe.CallData(ctxN, f.jobId+"/Close", &req)
+	_, err = pipe.CallData(ctxN, f.backupId+"/Close", &req)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		syslog.L.Error(err).
-			WithJob(f.jobId).
+			WithJob(f.backupId).
 			WithMessage("failed to handle close request").
 			WithField("path", f.name).
 			WithField("handleID", f.handleID).
@@ -62,7 +62,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 
 	syslog.L.Debug().
 		WithMessage("Close RPC completed").
-		WithJob(f.jobId).
+		WithJob(f.backupId).
 		WithField("path", f.name).
 		WithField("handleID", f.handleID).
 		Write()
@@ -73,7 +73,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, error) {
 	syslog.L.Debug().
 		WithMessage("Lseek called").
-		WithJob(f.jobId).
+		WithJob(f.backupId).
 		WithField("path", f.name).
 		WithField("offset", off).
 		WithField("whence", whence).
@@ -88,7 +88,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 	pipe, err := f.fs.getPipe(ctx)
 	if err != nil {
 		syslog.L.Error(err).
-			WithJob(f.jobId).
+			WithJob(f.backupId).
 			WithMessage("arpc session is nil").
 			WithField("path", f.name).
 			Write()
@@ -98,10 +98,10 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	respBytes, err := pipe.CallData(ctxN, f.jobId+"/Lseek", &req)
+	respBytes, err := pipe.CallData(ctxN, f.backupId+"/Lseek", &req)
 	if err != nil {
 		syslog.L.Error(err).
-			WithJob(f.jobId).
+			WithJob(f.backupId).
 			WithMessage("lseek call failed").
 			WithField("path", f.name).
 			WithField("offset", off).
@@ -113,7 +113,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 	var resp types.LseekResp
 	if err := cbor.Unmarshal(respBytes, &resp); err != nil {
 		syslog.L.Error(err).
-			WithJob(f.jobId).
+			WithJob(f.backupId).
 			WithMessage("failed to handle lseek request").
 			WithField("path", f.name).
 			Write()
@@ -122,7 +122,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 
 	syslog.L.Debug().
 		WithMessage("Lseek completed").
-		WithJob(f.jobId).
+		WithJob(f.backupId).
 		WithField("path", f.name).
 		WithField("newOffset", resp.NewOffset).
 		Write()
@@ -133,7 +133,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error) {
 	if f.isClosed.Load() {
 		syslog.L.Error(syscall.ENOENT).
-			WithJob(f.jobId).
+			WithJob(f.backupId).
 			WithMessage("file is closed").
 			WithField("path", f.name).
 			Write()
@@ -143,7 +143,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 	pipe, err := f.fs.getPipe(ctx)
 	if err != nil {
 		syslog.L.Error(err).
-			WithJob(f.jobId).
+			WithJob(f.backupId).
 			WithMessage("fs session is nil").
 			WithField("path", f.name).
 			Write()
@@ -152,7 +152,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 
 	syslog.L.Debug().
 		WithMessage("ReadAt called").
-		WithJob(f.jobId).
+		WithJob(f.backupId).
 		WithField("path", f.name).
 		WithField("offset", off).
 		WithField("length", len(p)).
@@ -164,9 +164,9 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		Length:   len(p),
 	}
 
-	n, err := pipe.CallBinary(f.fs.Ctx, f.jobId+"/ReadAt", &req, p)
+	n, err := pipe.CallBinary(f.fs.Ctx, f.backupId+"/ReadAt", &req, p)
 	if err != nil {
-		syslog.L.Error(err).WithJob(f.jobId).
+		syslog.L.Error(err).WithJob(f.backupId).
 			WithMessage("failed to handle read request").
 			WithField("path", f.name).
 			WithField("offset", f.offset).
@@ -180,7 +180,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 
 	syslog.L.Debug().
 		WithMessage("ReadAt completed").
-		WithJob(f.jobId).
+		WithJob(f.backupId).
 		WithField("path", f.name).
 		WithField("offset", off).
 		WithField("requested", len(p)).

@@ -27,12 +27,12 @@ type PBSStoreGroupsResponse struct {
 	Data PBSStoreGroups `json:"data"`
 }
 
-func CreateNamespace(namespace string, job types.Job, storeInstance *store.Store) error {
+func CreateNamespace(namespace string, backup types.Backup, storeInstance *store.Store) error {
 	if storeInstance == nil {
 		return fmt.Errorf("CreateNamespace: store is required")
 	}
 
-	datastoreInfo, err := proxmox.GetDatastoreInfo(job.Store)
+	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return fmt.Errorf("CreateNamespace: failed to get datastore; %w", err)
 	}
@@ -59,41 +59,41 @@ func CreateNamespace(namespace string, job types.Job, storeInstance *store.Store
 		return fmt.Errorf("CreateNamespace: error changing filesystem owner -> %w", err)
 	}
 
-	job.Namespace = namespace
-	err = storeInstance.Database.UpdateJob(nil, job)
+	backup.Namespace = namespace
+	err = storeInstance.Database.UpdateBackup(nil, backup)
 	if err != nil {
-		return fmt.Errorf("CreateNamespace: error updating job to namespace -> %w", err)
+		return fmt.Errorf("CreateNamespace: error updating backup to namespace -> %w", err)
 	}
 
 	return nil
 }
 
-func GetOwnerFilePath(job types.Job, storeInstance *store.Store) (string, error) {
+func GetOwnerFilePath(backup types.Backup, storeInstance *store.Store) (string, error) {
 	if storeInstance == nil {
 		return "", fmt.Errorf("GetCurrentOwner: store is required")
 	}
 
-	target, err := storeInstance.Database.GetTarget(job.Target)
+	target, err := storeInstance.Database.GetTarget(backup.Target)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("GetCurrentOwner: Target '%s' does not exist.", job.Target)
+			return "", fmt.Errorf("GetCurrentOwner: Target '%s' does not exist.", backup.Target)
 		}
 		return "", fmt.Errorf("GetCurrentOwner -> %w", err)
 	}
 
 	isAgent := strings.HasPrefix(target.Path, "agent://")
-	backupId, err := getBackupId(isAgent, job.Target)
+	backupId, err := getBackupId(isAgent, backup.Target)
 	if err != nil {
 		return "", fmt.Errorf("GetCurrentOwner: failed to get backup ID: %w", err)
 	}
 	backupId = proxmox.NormalizeHostname(backupId)
 
-	datastoreInfo, err := proxmox.GetDatastoreInfo(job.Store)
+	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return "", fmt.Errorf("GetCurrentOwner: failed to get datastore; %w", err)
 	}
 
-	namespaceSplit := strings.Split(job.Namespace, "/")
+	namespaceSplit := strings.Split(backup.Namespace, "/")
 
 	fullNamespacePath := datastoreInfo.Path
 
@@ -106,8 +106,8 @@ func GetOwnerFilePath(job types.Job, storeInstance *store.Store) (string, error)
 	return ownerFilePath, nil
 }
 
-func GetCurrentOwner(job types.Job, storeInstance *store.Store) (string, error) {
-	filePath, err := GetOwnerFilePath(job, storeInstance)
+func GetCurrentOwner(backup types.Backup, storeInstance *store.Store) (string, error) {
+	filePath, err := GetOwnerFilePath(backup, storeInstance)
 	if err != nil {
 		return "", err
 	}
@@ -120,8 +120,8 @@ func GetCurrentOwner(job types.Job, storeInstance *store.Store) (string, error) 
 	return strings.TrimSpace(string(owner)), nil
 }
 
-func SetDatastoreOwner(job types.Job, storeInstance *store.Store, owner string) error {
-	filePath, err := GetOwnerFilePath(job, storeInstance)
+func SetDatastoreOwner(backup types.Backup, storeInstance *store.Store, owner string) error {
+	filePath, err := GetOwnerFilePath(backup, storeInstance)
 	if err != nil {
 		return err
 	}
@@ -148,8 +148,8 @@ func SetDatastoreOwner(job types.Job, storeInstance *store.Store, owner string) 
 	return nil
 }
 
-func FixDatastore(job types.Job, storeInstance *store.Store) error {
-	return SetDatastoreOwner(job, storeInstance, proxmox.AUTH_ID)
+func FixDatastore(backup types.Backup, storeInstance *store.Store) error {
+	return SetDatastoreOwner(backup, storeInstance, proxmox.AUTH_ID)
 }
 
 func parseSnapshotTimestamp(input string) (time.Time, error) {
@@ -160,17 +160,17 @@ func parseSnapshotTimestamp(input string) (time.Time, error) {
 	return parsedTime, nil
 }
 
-func CleanUnfinishedSnapshot(job types.Job, backupId string) error {
+func CleanUnfinishedSnapshot(backup types.Backup, backupId string) error {
 	if backupId == "" {
 		return fmt.Errorf("CleanUnfinishedSnapshot: backupId is required")
 	}
 
-	datastoreInfo, err := proxmox.GetDatastoreInfo(job.Store)
+	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return fmt.Errorf("CleanUnfinishedSnapshot: failed to get datastore; %w", err)
 	}
 
-	namespaceSplit := strings.Split(job.Namespace, "/")
+	namespaceSplit := strings.Split(backup.Namespace, "/")
 
 	fullNamespacePath := datastoreInfo.Path
 	parentNamespacePath := datastoreInfo.Path
@@ -211,7 +211,7 @@ func CleanUnfinishedSnapshot(job types.Job, backupId string) error {
 		return nil
 	}
 
-	expectedPxarName := proxmox.NormalizeHostname(job.Target)
+	expectedPxarName := proxmox.NormalizeHostname(backup.Target)
 	tmpSuffixes := map[string]struct{}{
 		expectedPxarName + ".mpxar.tmp_didx": {},
 		expectedPxarName + ".ppxar.tmp_didx": {},

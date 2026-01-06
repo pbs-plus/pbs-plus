@@ -121,10 +121,10 @@ type QueuedTask struct {
 	sync.Mutex
 	closed atomic.Bool
 	path   string
-	job    types.Job
+	job    types.Backup
 }
 
-func GenerateQueuedTask(job types.Job, web bool) (QueuedTask, error) {
+func GenerateQueuedTask(job types.Backup, web bool) (QueuedTask, error) {
 	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
@@ -255,7 +255,7 @@ func (task *QueuedTask) Close() {
 	task.closed.Store(true)
 }
 
-func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []string) (Task, error) {
+func GenerateTaskErrorFile(job types.Backup, pbsError error, additionalData []string) (Task, error) {
 	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
@@ -355,7 +355,7 @@ func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []strin
 	return task, nil
 }
 
-func GenerateTaskOKFile(job types.Job, additionalData []string) (Task, error) {
+func GenerateTaskOKFile(job types.Backup, additionalData []string) (Task, error) {
 	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))

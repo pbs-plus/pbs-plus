@@ -21,14 +21,14 @@ import (
 )
 
 type AgentMount struct {
-	JobId    string
+	BackupId string
 	Hostname string
 	Drive    string
 	Path     string
 	isEmpty  bool
 }
 
-func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target) (*AgentMount, error) {
+func AgentFSMount(storeInstance *store.Store, backup types.Backup, target types.Target) (*AgentMount, error) {
 	// Parse target information
 	splittedTargetName := strings.Split(target.Name, " - ")
 	targetHostname := splittedTargetName[0]
@@ -37,13 +37,13 @@ func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target
 	agentDrive := agentPathParts[1]
 
 	agentMount := &AgentMount{
-		JobId:    job.ID,
+		BackupId: backup.ID,
 		Hostname: targetHostname,
 		Drive:    agentDrive,
 	}
 
 	// Setup mount path
-	agentMount.Path = filepath.Join(constants.AgentMountBasePath, job.ID)
+	agentMount.Path = filepath.Join(constants.AgentMountBasePath, backup.ID)
 	agentMount.Unmount() // Ensure clean mount point
 
 	// Create mount directory if it doesn't exist
@@ -63,7 +63,7 @@ func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target
 	}
 
 	args := &rpcmount.BackupArgs{
-		JobId:          job.ID,
+		BackupId:       backup.ID,
 		TargetHostname: targetHostname,
 		Drive:          agentDrive,
 	}
@@ -121,7 +121,7 @@ func (a *AgentMount) IsEmpty() bool {
 
 func (a *AgentMount) IsConnected() bool {
 	args := &rpcmount.StatusArgs{
-		JobId:          a.JobId,
+		BackupId:       a.BackupId,
 		TargetHostname: a.Hostname,
 	}
 	var reply rpcmount.StatusReply
@@ -162,7 +162,7 @@ func (a *AgentMount) Unmount() {
 
 func (a *AgentMount) CloseMount() {
 	args := &rpcmount.CleanupArgs{
-		JobId:          a.JobId,
+		BackupId:       a.BackupId,
 		TargetHostname: a.Hostname,
 		Drive:          a.Drive,
 	}

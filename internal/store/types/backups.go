@@ -1,6 +1,6 @@
 package types
 
-type Job struct {
+type Backup struct {
 	ID                    string      `json:"id"`
 	Store                 string      `json:"store"`
 	SourceMode            string      `json:"sourcemode"`

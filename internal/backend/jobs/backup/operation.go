@@ -25,8 +25,7 @@ import (
 )
 
 var (
-	ErrJobMutexCreation = errors.New("failed to create job mutex")
-	ErrOneInstance      = errors.New("a job is still running; only one instance allowed")
+	ErrOneInstance = errors.New("a job is still running; only one instance allowed")
 
 	ErrStdoutTempCreation = errors.New("failed to create stdout temp file")
 
@@ -51,8 +50,8 @@ var (
 	ErrTaskDetectionTimedOut = errors.New("task detection timed out")
 	ErrMountEmpty            = errors.New("target directory is empty, skipping backup")
 
-	ErrJobStatusUpdateFailed = errors.New("failed to update job status")
-	ErrCanceled              = errors.New("operation canceled")
+	ErrBackupStatusUpdateFailed = errors.New("failed to update job status")
+	ErrCanceled                 = errors.New("operation canceled")
 )
 
 type BackupOperation struct {
@@ -64,9 +63,9 @@ type BackupOperation struct {
 	waitGroup *sync.WaitGroup
 	err       error
 
-	logger *syslog.BackupLogger
+	logger *syslog.JobLogger
 
-	job             types.Job
+	job             types.Backup
 	storeInstance   *store.Store
 	skipCheck       bool
 	web             bool
@@ -76,7 +75,7 @@ type BackupOperation struct {
 var _ jobs.Operation = (*BackupOperation)(nil)
 
 func NewBackupOperation(
-	job types.Job,
+	job types.Backup,
 	storeInstance *store.Store,
 	skipCheck bool,
 	web bool,
@@ -87,7 +86,7 @@ func NewBackupOperation(
 		storeInstance:   storeInstance,
 		skipCheck:       skipCheck,
 		web:             web,
-		logger:          syslog.CreateBackupLogger(job.ID),
+		logger:          syslog.CreateJobLogger(job.ID),
 		extraExclusions: extraExclusions,
 	}
 }
@@ -110,7 +109,7 @@ func (b *BackupOperation) PreExecute(ctx context.Context) error {
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
 	} else {
-		if err := updateJobStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
+		if err := updateBackupStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
 			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
 		}
 	}
@@ -140,14 +139,14 @@ func (b *BackupOperation) OnError(err error) {
 		err,
 		[]string{
 			"Error handling from a scheduled job run request",
-			"Job ID: " + b.job.ID,
+			"Backup ID: " + b.job.ID,
 			"Source Mode: " + b.job.SourceMode,
 		},
 	)
 	if terr != nil {
 		syslog.L.Error(terr).WithField("jobId", b.job.ID).Write()
 	} else {
-		b.updateJobWithTask(task)
+		b.updateBackupWithTask(task)
 	}
 
 	if rerr := system.SetRetrySchedule(b.job, b.extraExclusions); rerr != nil {
@@ -201,12 +200,12 @@ func (b *BackupOperation) runPreScript(ctx context.Context) error {
 	}
 
 	if newNs, ok := modEnvVars["PBS_PLUS__NAMESPACE"]; ok {
-		latestJob, err := b.storeInstance.Database.GetJob(b.job.ID)
+		latestBackup, err := b.storeInstance.Database.GetBackup(b.job.ID)
 		if err == nil {
-			b.job = latestJob
+			b.job = latestBackup
 		}
 		b.job.Namespace = newNs
-		err = b.storeInstance.Database.UpdateJob(nil, b.job)
+		err = b.storeInstance.Database.UpdateBackup(nil, b.job)
 		if err != nil {
 			syslog.L.Error(err).WithJob(b.job.ID).WithMessage("error encountered while running job pre-backup script update").Write()
 		}
@@ -394,8 +393,8 @@ func (b *BackupOperation) mountSource(ctx context.Context, target types.Target) 
 		default:
 		}
 
-		if latestJob, err := b.storeInstance.Database.GetJob(b.job.ID); err == nil {
-			b.job = latestJob
+		if latestBackup, err := b.storeInstance.Database.GetBackup(b.job.ID); err == nil {
+			b.job = latestBackup
 		}
 
 		if agentMount.IsEmpty() {
@@ -415,8 +414,8 @@ func (b *BackupOperation) mountSource(ctx context.Context, target types.Target) 
 		default:
 		}
 
-		if latestJob, err := b.storeInstance.Database.GetJob(b.job.ID); err == nil {
-			b.job = latestJob
+		if latestBackup, err := b.storeInstance.Database.GetBackup(b.job.ID); err == nil {
+			b.job = latestBackup
 		}
 
 		if s3Mount.IsEmpty() {
@@ -509,7 +508,7 @@ func (b *BackupOperation) startTaskMonitoring(ctx context.Context, target types.
 	syslog.L.Info().WithMessage("starting monitor goroutine").Write()
 	go func() {
 		defer syslog.L.Info().WithMessage("monitor goroutine closing").Write()
-		task, err := proxmox.GetJobTask(ctx, readyChan, b.job, target)
+		task, err := proxmox.GetBackupTask(ctx, readyChan, b.job, target)
 		if err != nil {
 			syslog.L.Error(err).WithMessage("found error in getjobtask return").Write()
 			select {
@@ -532,7 +531,7 @@ func (b *BackupOperation) startTaskMonitoring(ctx context.Context, target types.
 func (b *BackupOperation) waitForCompletion(ctx context.Context, cmd *exec.Cmd, task proxmox.Task, currOwner string, agentMount *mount.AgentMount, s3Mount *mount.S3Mount, errorMonitorDone chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	if err := updateJobStatus(false, 0, b.job, task, b.storeInstance); err != nil {
+	if err := updateBackupStatus(false, 0, b.job, task, b.storeInstance); err != nil {
 		if currOwner != "" {
 			_ = SetDatastoreOwner(b.job, b.storeInstance, currOwner)
 		}
@@ -586,7 +585,7 @@ func (b *BackupOperation) waitForCompletion(ctx context.Context, cmd *exec.Cmd, 
 		task.UPID = newUpid
 	}
 
-	if err := updateJobStatus(succeeded, warningsNum, b.job, task, b.storeInstance); err != nil {
+	if err := updateBackupStatus(succeeded, warningsNum, b.job, task, b.storeInstance); err != nil {
 		syslog.L.Error(err).WithMessage("failed to update job status - post cmd.Wait").Write()
 	}
 
@@ -647,7 +646,7 @@ func (b *BackupOperation) createOK(err error) {
 		b.job,
 		[]string{
 			"Done handling from a job run request",
-			"Job ID: " + b.job.ID,
+			"Backup ID: " + b.job.ID,
 			"Source Mode: " + b.job.SourceMode,
 			"Response: " + err.Error(),
 		},
@@ -657,7 +656,7 @@ func (b *BackupOperation) createOK(err error) {
 		return
 	}
 
-	latest, gerr := b.storeInstance.Database.GetJob(b.job.ID)
+	latest, gerr := b.storeInstance.Database.GetBackup(b.job.ID)
 	if gerr != nil {
 		latest = b.job
 	}
@@ -667,7 +666,7 @@ func (b *BackupOperation) createOK(err error) {
 	latest.LastSuccessfulEndtime = task.EndTime
 	latest.LastSuccessfulUpid = task.UPID
 
-	if uerr := b.storeInstance.Database.UpdateJob(nil, latest); uerr != nil {
+	if uerr := b.storeInstance.Database.UpdateBackup(nil, latest); uerr != nil {
 		syslog.L.Error(uerr).
 			WithField("jobId", latest.ID).
 			WithField("upid", task.UPID).
@@ -675,8 +674,8 @@ func (b *BackupOperation) createOK(err error) {
 	}
 }
 
-func (b *BackupOperation) updateJobWithTask(task proxmox.Task) {
-	latest, gerr := b.storeInstance.Database.GetJob(b.job.ID)
+func (b *BackupOperation) updateBackupWithTask(task proxmox.Task) {
+	latest, gerr := b.storeInstance.Database.GetBackup(b.job.ID)
 	if gerr != nil {
 		latest = b.job
 	}
@@ -684,7 +683,7 @@ func (b *BackupOperation) updateJobWithTask(task proxmox.Task) {
 	latest.LastRunState = task.Status
 	latest.LastRunEndtime = task.EndTime
 
-	if uerr := b.storeInstance.Database.UpdateJob(nil, latest); uerr != nil {
+	if uerr := b.storeInstance.Database.UpdateBackup(nil, latest); uerr != nil {
 		syslog.L.Error(uerr).
 			WithField("jobId", latest.ID).
 			WithField("upid", task.UPID).
