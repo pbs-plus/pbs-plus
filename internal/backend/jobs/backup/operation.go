@@ -497,13 +497,6 @@ func (b *BackupOperation) startBackup(ctx context.Context, srcPath string, targe
 		return nil, proxmox.Task{}, "", jobs.ErrCanceled
 	}
 
-	if err := updateJobStatus(false, 0, b.job, task, b.storeInstance); err != nil {
-		if currOwner != "" {
-			_ = SetDatastoreOwner(b.job, b.storeInstance, currOwner)
-		}
-		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrJobStatusUpdateFailed, err)
-	}
-
 	syslog.L.Info().WithMessage("task monitoring finished").WithField("task", task.UPID).Write()
 	return cmd, task, currOwner, nil
 }
@@ -538,6 +531,12 @@ func (b *BackupOperation) startTaskMonitoring(ctx context.Context, target types.
 
 func (b *BackupOperation) waitForCompletion(ctx context.Context, cmd *exec.Cmd, task proxmox.Task, currOwner string, agentMount *mount.AgentMount, s3Mount *mount.S3Mount, errorMonitorDone chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	if err := updateJobStatus(false, 0, b.job, task, b.storeInstance); err != nil {
+		if currOwner != "" {
+			_ = SetDatastoreOwner(b.job, b.storeInstance, currOwner)
+		}
+	}
 
 	done := make(chan error, 1)
 	go func() {
@@ -692,4 +691,3 @@ func (b *BackupOperation) updateJobWithTask(task proxmox.Task) {
 			Write()
 	}
 }
-
