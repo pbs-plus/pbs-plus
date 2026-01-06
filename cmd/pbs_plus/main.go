@@ -72,8 +72,8 @@ func main() {
 	var extExclusions arrayFlags
 	var backupsRun arrayFlags
 	var restoresRun arrayFlags
-	flag.Var(&backupsRun, "backup", "Backup ID/s to execute")
-	flag.Var(&restoresRun, "restore", "Restore ID/s to execute")
+	flag.Var(&backupsRun, "backup-job", "Backup ID/s to execute")
+	flag.Var(&restoresRun, "restore-job", "Restore ID/s to execute")
 	retryAttempts := flag.String("retry", "", "Current attempt number")
 	webRun := flag.Bool("web", false, "Backup executed from Web UI")
 	stop := flag.Bool("stop", false, "Stop Job ID instead of executing")
@@ -172,7 +172,7 @@ func main() {
 			}
 			var reply backuprpc.QueueReply
 
-			err = rpcClient.Call("BackupRPCService.BackupQueue", args, &reply)
+			err = rpcClient.Call("JobRPCService.BackupQueue", args, &reply)
 			if err != nil {
 				syslog.L.Error(err).WithField("backupId", backupRun).Write()
 				continue
@@ -198,7 +198,7 @@ func main() {
 			}
 			var reply backuprpc.QueueReply
 
-			err = rpcClient.Call("BackupRPCService.RestoreQueue", args, &reply)
+			err = rpcClient.Call("JobRPCService.RestoreQueue", args, &reply)
 			if err != nil {
 				syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
 				continue
