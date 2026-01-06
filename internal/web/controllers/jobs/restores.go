@@ -13,6 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
@@ -38,7 +39,7 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 				splittedTargetName := strings.Split(restore.DestTarget, " - ")
 				targetHostname := splittedTargetName[0]
 				childKey := targetHostname + "|" + restore.ID + "|restore"
-				session := store.GetSessionPxarReader(childKey)
+				session := vfssessions.GetSessionPxarReader(childKey)
 				if session == nil {
 					continue
 				}
