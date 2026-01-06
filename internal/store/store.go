@@ -17,6 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	sqlite "github.com/pbs-plus/pbs-plus/internal/store/database"
+	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 
 	_ "modernc.org/sqlite"
@@ -141,6 +142,14 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error initializing database -> %w", err)
 	}
+
+	go func() {
+		_ = system.PurgeAllLegacyUnits(ctx)
+		jobs, err := db.GetAllJobs()
+		if err == nil {
+			system.SetBatchSchedules(ctx, jobs)
+		}
+	}()
 
 	store := &Store{
 		Ctx:               ctx,

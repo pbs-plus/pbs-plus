@@ -115,7 +115,7 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-			system.RemoveAllRetrySchedules(backup)
+			system.RemoveAllRetrySchedules(r.Context(), backup)
 		}
 
 		execPath, err := os.Executable()

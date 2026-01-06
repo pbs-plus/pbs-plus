@@ -149,7 +149,7 @@ func (b *BackupOperation) OnError(err error) {
 		b.updateBackupWithTask(task)
 	}
 
-	if rerr := system.SetRetrySchedule(b.job, b.extraExclusions); rerr != nil {
+	if rerr := system.SetRetrySchedule(b.ctx, b.job, b.extraExclusions); rerr != nil {
 		syslog.L.Error(rerr).WithField("jobId", b.job.ID).Write()
 	}
 }
@@ -590,9 +590,9 @@ func (b *BackupOperation) waitForCompletion(ctx context.Context, cmd *exec.Cmd, 
 	}
 
 	if succeeded || cancelled {
-		system.RemoveAllRetrySchedules(b.job)
+		system.RemoveAllRetrySchedules(ctx, b.job)
 	} else {
-		if err := system.SetRetrySchedule(b.job, b.extraExclusions); err != nil {
+		if err := system.SetRetrySchedule(ctx, b.job, b.extraExclusions); err != nil {
 			syslog.L.Error(err).WithField("jobId", b.job.ID).Write()
 		}
 	}
