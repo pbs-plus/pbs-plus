@@ -9,22 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 )
-
-type RestoreTask struct {
-	Task
-	sync.Mutex
-	closed  atomic.Bool
-	file    *os.File
-	restore types.Restore
-}
 
 func GetRestoreTask(
 	job types.Restore,

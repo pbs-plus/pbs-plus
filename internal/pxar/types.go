@@ -1,5 +1,14 @@
 package pxar
 
+import (
+	"net"
+	"os/exec"
+	"sync"
+
+	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
+)
+
 type Request struct {
 	_msgpack struct{} `cbor:",toarray"`
 	Variant  string
@@ -7,6 +16,25 @@ type Request struct {
 }
 
 type Response map[string]any
+
+type PxarReader struct {
+	conn net.Conn
+	mu   sync.Mutex
+	enc  cbor.EncMode
+	dec  cbor.DecMode
+	cmd  *exec.Cmd
+	task *proxmox.RestoreTask
+
+	FileCount   int64
+	FolderCount int64
+	TotalBytes  int64
+
+	lastAccessTime  int64
+	lastBytesTime   int64
+	lastFileCount   int64
+	lastFolderCount int64
+	lastTotalBytes  int64
+}
 
 type PxarReaderStats struct {
 	ByteReadSpeed   float64
