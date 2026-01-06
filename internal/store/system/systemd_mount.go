@@ -2,6 +2,7 @@ package system
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 
@@ -10,15 +11,17 @@ import (
 )
 
 func GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime string) string {
-	parts := []string{"pbs-plus-restore", datastore}
-	if ns != "" {
-		parts = append(parts, strings.ReplaceAll(ns, "/", "-"))
-	}
-	parts = append(parts, backupType, backupID, safeTime)
+	rawID := fmt.Sprintf("%s|%s|%s|%s|%s", datastore, ns, backupType, backupID, safeTime)
 
-	name := strings.Join(parts, "-")
-	name = strings.ReplaceAll(name, " ", "-")
-	name = strings.ReplaceAll(name, ":", "-")
+	hash := sha256.Sum256([]byte(rawID))
+	shortHash := fmt.Sprintf("%x", hash)[:16]
+
+	safeDs := strings.ReplaceAll(datastore, "/", "-")
+	if len(safeDs) > 20 {
+		safeDs = safeDs[:20]
+	}
+
+	name := fmt.Sprintf("pbs-plus-snapshot-mount-%s-%s", safeDs, shortHash)
 
 	return dbus.PathBusEscape(name) + ".service"
 }
@@ -86,7 +89,7 @@ func ListMountServices(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 
-	units, err := conn.ListUnitsByPatternsContext(ctx, nil, []string{"pbs-plus-restore-*.service"})
+	units, err := conn.ListUnitsByPatternsContext(ctx, nil, []string{"pbs-plus-snapshot-mount-*.service"})
 	if err != nil {
 		return []string{}, nil
 	}
