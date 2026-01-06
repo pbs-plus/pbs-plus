@@ -58,20 +58,23 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 		detectionMode = "--change-detection-mode=data"
 	}
 
-	cmdArgs := []string{
+	cmdArgs := []string{}
+	if nofile := os.Getenv("PBS_PLUS_CLIENT_NOFILE"); nofile != "" {
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--nofile=%s", nofile))
+	} else {
+		cmdArgs = append(cmdArgs, "--nofile=1024:1024")
+	}
+
+	cmdArgs = append(cmdArgs, []string{
 		"/usr/bin/proxmox-backup-client",
 		"backup",
 		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(job.Target), srcPath),
 		"--repository", jobStore,
 		detectionMode,
-		"--entries-max", fmt.Sprintf("%d", job.MaxDirEntries),
+		"--entries-max", fmt.Sprintf("%d", job.MaxDirEntries+1024),
 		"--backup-id", backupId,
 		"--crypt-mode=none",
-	}
-
-	if nofile := os.Getenv("PBS_PLUS_CLIENT_NOFILE"); nofile != "" {
-		cmdArgs = append(cmdArgs, fmt.Sprintf("--nofile=%s", nofile))
-	}
+	}...)
 
 	addExclusion := func(path string) {
 		if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "!") && !strings.HasPrefix(path, "**/") {

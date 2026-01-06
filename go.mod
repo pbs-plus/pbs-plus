@@ -26,7 +26,7 @@ require (
 	github.com/rclone/rclone v1.72.1
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.11.1
-	github.com/xtaci/smux v1.5.35
+	github.com/xtaci/smux v1.5.50
 	golang.org/x/crypto v0.45.0
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546
 	golang.org/x/sys v0.38.0
@@ -84,7 +84,5 @@ require (
 )
 
 replace github.com/hanwen/go-fuse/v2 v2.7.2 => github.com/pbs-plus/go-fuse/v2 v2.1.2
-
-replace github.com/xtaci/smux v1.5.35 => github.com/pbs-plus/smux v0.0.0-20250322005336-855507aa64bf
 
 tool golang.org/x/tools/cmd/deadcode

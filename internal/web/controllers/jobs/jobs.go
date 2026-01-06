@@ -15,6 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
@@ -45,7 +46,7 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				splittedTargetName := strings.Split(job.Target, " - ")
 				targetHostname := splittedTargetName[0]
 				childKey := targetHostname + "|" + job.ID
-				session := store.GetSessionARPCFS(childKey)
+				session := vfssessions.GetSessionARPCFS(childKey)
 				if session == nil {
 					continue
 				}
@@ -53,7 +54,7 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				stats = session.GetStats()
 			} else if isS3 {
 				childKey := s3Parsed.Endpoint + "|" + job.ID
-				session := store.GetSessionS3FS(childKey)
+				session := vfssessions.GetSessionS3FS(childKey)
 				if session == nil {
 					continue
 				}

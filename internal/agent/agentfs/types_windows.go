@@ -19,7 +19,6 @@ type fileStandardInfo struct {
 
 type FileHandle struct {
 	handle        windows.Handle
-	ov            *overlappedHandle
 	fileSize      int64
 	isDir         bool
 	dirReader     *DirReaderNT

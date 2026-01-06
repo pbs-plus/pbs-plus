@@ -161,11 +161,6 @@ func (s *AgentFSServer) closeFileHandles() {
 			syslog.L.Debug().WithMessage("closeFileHandles: closed mapping handle").WithField("handle_id", u).Write()
 			fh.mapping = 0
 		}
-		if fh.ov != nil {
-			_ = fh.ov.Close()
-			syslog.L.Debug().WithMessage("closeFileHandles: closed overlapped").WithField("handle_id", u).Write()
-			fh.ov = nil
-		}
 		if fh.dirReader != nil {
 			fh.dirReader.Close()
 		}
@@ -276,7 +271,6 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	fh.fileSize = std.EndOfFile
 	fh.isDir = std.Directory != 0
 	fh.logicalOffset = 0
-	fh.ov = newOverlapped(handle)
 
 	if fh.isDir {
 		dirPath, err := s.abs(payload.Path)
@@ -305,9 +299,6 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		}
 		if fh.mapping != 0 {
 			windows.CloseHandle(fh.mapping)
-		}
-		if fh.ov != nil {
-			_ = fh.ov.Close()
 		}
 		windows.CloseHandle(fh.handle)
 		syslog.L.Error(err).WithMessage("handleOpenFile: encode handle id failed").Write()
@@ -545,7 +536,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 	fh.mu.Lock()
 	fileSize := fh.fileSize
-	ov := fh.ov
+	handle := fh.handle
 	fh.mu.Unlock()
 
 	if err := req.Context.Err(); err != nil {
@@ -573,39 +564,123 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	if reqEnd > maxEnd {
 		reqEnd = maxEnd
 	}
-	readLen := int(reqEnd - payload.Offset)
+	if reqEnd <= payload.Offset {
+		fh.releaseOp()
+		syslog.L.Debug().WithMessage("handleReadAt: empty range after clamping").WithField("handle_id", payload.HandleID).Write()
+		emptyReader := bytes.NewReader(nil)
+		return arpc.Response{
+			Status: 213,
+			RawStream: func(stream *smux.Stream) {
+				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
+					syslog.L.Error(err).WithMessage("handleReadAt: failed sending empty reader").WithField("handle_id", payload.HandleID).Write()
+				}
+			},
+		}, nil
+	}
+	reqLen := int(reqEnd - payload.Offset)
+
+	const maxChunk = 512 * 1024
+
+	ranges, err := queryAllocatedRanges(handle, payload.Offset, int64(reqLen))
+	if err != nil || len(ranges) == 0 {
+		syslog.L.Debug().WithMessage("handleReadAt: treating file as contiguous").WithField("handle_id", payload.HandleID).Write()
+		ranges = []allocatedRange{{FileOffset: payload.Offset, Length: int64(reqLen)}}
+	}
 
 	streamFn := func(stream *smux.Stream) {
 		defer fh.releaseOp()
 
-		bufPtr := zeroBufPool.Get().(*[]byte)
-		defer zeroBufPool.Put(bufPtr)
-		buf := (*bufPtr)[:readLen]
+		zeroBufPtr := zeroBufPool.Get().(*[]byte)
+		defer zeroBufPool.Put(zeroBufPtr)
+		zeroBuf := *zeroBufPtr
 
-		fh.mu.Lock()
-		if ov.DefaultTimeout == -1 {
-			ov.DefaultTimeout = 30000
-		}
-		fh.mu.Unlock()
-
-		n, err := ov.ReadAt(buf, payload.Offset)
-
-		if err != nil && err != io.EOF {
-			syslog.L.Error(err).WithMessage("handleReadAt: ov.ReadAt failed").WithField("handle_id", payload.HandleID).Write()
-			return
+		write := func(p []byte) error {
+			return binarystream.SendDataFromReader(bytes.NewReader(p), len(p), stream)
 		}
 
-		if n > 0 {
-			if err := binarystream.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream); err != nil {
-				syslog.L.Error(err).WithMessage("handleReadAt: stream write failed").WithField("handle_id", payload.HandleID).Write()
-				return
+		pos := payload.Offset
+		end := reqEnd
+
+		for _, r := range ranges {
+			rStart := r.FileOffset
+			rEnd := r.FileOffset + r.Length
+			if rEnd <= pos {
+				continue
+			}
+			if rStart < pos {
+				rStart = pos
+			}
+			if rEnd > end {
+				rEnd = end
+			}
+			if rStart >= rEnd {
+				continue
+			}
+
+			if rStart > pos {
+				gap := rStart - pos
+				syslog.L.Debug().WithMessage("handleReadAt: writing zero gap").WithField("handle_id", payload.HandleID).WithField("gap_bytes", gap).Write()
+				for gap > 0 {
+					ch := int64(maxChunk)
+					if gap < ch {
+						ch = gap
+					}
+					if err := write(zeroBuf[:ch]); err != nil {
+						syslog.L.Error(err).WithMessage("handleReadAt: stream write gap failed").WithField("handle_id", payload.HandleID).Write()
+						return
+					}
+					gap -= ch
+				}
+				pos = rStart
+			}
+
+			cur := rStart
+			for cur < rEnd {
+				ch := int64(maxChunk)
+				if rEnd-cur < ch {
+					ch = rEnd - cur
+				}
+				buf := make([]byte, ch)
+				n, rerr := readAtOverlapped(handle, cur, buf)
+				if rerr != nil && rerr != io.EOF {
+					syslog.L.Error(rerr).WithMessage("handleReadAt: overlapped read error").WithField("handle_id", payload.HandleID).Write()
+					return
+				}
+				if n > 0 {
+					if err := write(buf[:n]); err != nil {
+						syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed").WithField("handle_id", payload.HandleID).Write()
+						return
+					}
+					cur += int64(n)
+				}
+				if rerr == io.EOF && n == 0 {
+					syslog.L.Debug().WithMessage("handleReadAt: unexpected EOF in allocated range").WithField("handle_id", payload.HandleID).Write()
+					return
+				}
+			}
+			pos = rEnd
+		}
+
+		if pos < end {
+			gap := end - pos
+			syslog.L.Debug().WithMessage("handleReadAt: writing trailing zero gap").WithField("handle_id", payload.HandleID).WithField("gap_bytes", gap).Write()
+			for gap > 0 {
+				ch := int64(maxChunk)
+				if gap < ch {
+					ch = gap
+				}
+				if err := write(zeroBuf[:ch]); err != nil {
+					syslog.L.Error(err).WithMessage("handleReadAt: stream write tail gap failed").WithField("handle_id", payload.HandleID).Write()
+					return
+				}
+				gap -= ch
 			}
 		}
 
-		syslog.L.Debug().WithMessage("handleReadAt: stream completed").WithField("handle_id", payload.HandleID).WithField("bytes", n).Write()
+		syslog.L.Debug().WithMessage("handleReadAt: stream completed successfully").WithField("handle_id", payload.HandleID).Write()
 	}
 
-	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", readLen).Write()
+	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", reqLen).Write()
 	return arpc.Response{
 		Status:    213,
 		RawStream: streamFn,
@@ -747,24 +822,12 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 			WithField("handle_id", payload.HandleID).Write()
 	}
 	if !handle.isDir {
-		if handle.ov != nil {
-			_ = handle.ov.Close()
-			handle.ov = nil
-			syslog.L.Debug().WithMessage("handleClose: overlapped closed").
-				WithField("handle_id", payload.HandleID).Write()
-		}
 		windows.CloseHandle(handle.handle)
 		syslog.L.Debug().WithMessage("handleClose: file handle closed").
 			WithField("handle_id", payload.HandleID).Write()
 	} else {
 		if handle.dirReader != nil {
 			handle.dirReader.Close()
-		}
-		if handle.ov != nil {
-			_ = handle.ov.Close()
-			handle.ov = nil
-			syslog.L.Debug().WithMessage("handleClose: dir overlapped closed").
-				WithField("handle_id", payload.HandleID).Write()
 		}
 		windows.CloseHandle(handle.handle)
 		syslog.L.Debug().WithMessage("handleClose: dir handle closed").

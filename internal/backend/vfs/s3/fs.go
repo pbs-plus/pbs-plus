@@ -65,10 +65,13 @@ func NewS3FS(
 	metaCache, _ := lru.New[string, cacheEntry[agentTypes.AgentFileInfo]](maxCacheEntries)
 	dirCache, _ := lru.New[string, cacheEntry[agentTypes.ReadDirEntries]](maxCacheEntries)
 
+	s3ctx, cancel := context.WithCancel(ctx)
+
 	return &S3FS{
 		VFSBase: &vfs.VFSBase{
-			Ctx: ctx,
-			Job: job,
+			Ctx:    s3ctx,
+			Cancel: cancel,
+			Job:    job,
 		},
 		client:    client,
 		bucket:    bucket,

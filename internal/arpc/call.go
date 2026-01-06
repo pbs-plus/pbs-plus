@@ -35,7 +35,10 @@ type SerializableError struct {
 type RawStreamHandler func(*smux.Stream) error
 
 func (s *StreamPipe) call(ctx context.Context, method string, payload any) (*smux.Stream, *Response, error) {
-	stream, err := s.OpenStream()
+	var stream *smux.Stream
+	var err error
+
+	stream, err = s.OpenStream()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -170,6 +173,7 @@ func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any,
 	if err != nil {
 		return 0, err
 	}
+	defer stream.Close()
 
 	if resp.Status != 213 {
 		var serErr SerializableError
