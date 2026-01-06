@@ -153,7 +153,7 @@ func (database *Database) CreateJob(tx *sql.Tx, job types.Job) (err error) {
 		}
 	}
 
-	if err = system.SetSchedule(job); err != nil {
+	if err = system.SetSchedule(database.ctx, job); err != nil {
 		syslog.L.Error(fmt.Errorf("CreateJob: failed to set schedule: %w", err)).
 			WithField("id", job.ID).
 			Write()
@@ -268,7 +268,7 @@ func (database *Database) populateJobExtras(job *types.Job) {
 		}
 	}
 
-	if nextSchedule, err := system.GetNextSchedule(*job); err == nil && nextSchedule != nil {
+	if nextSchedule, err := system.GetNextSchedule(database.ctx, *job); err == nil && nextSchedule != nil {
 		job.NextRun = nextSchedule.Unix()
 	}
 }
@@ -365,7 +365,7 @@ func (database *Database) UpdateJob(tx *sql.Tx, job types.Job) (err error) {
 		}
 	}
 
-	if err = system.SetSchedule(job); err != nil {
+	if err = system.SetSchedule(database.ctx, job); err != nil {
 		syslog.L.Error(fmt.Errorf("UpdateJob: failed to set schedule: %w", err)).
 			WithField("id", job.ID).
 			Write()
@@ -714,7 +714,7 @@ func (database *Database) DeleteJob(tx *sql.Tx, id string) (err error) {
 		}
 	}
 
-	if err := system.DeleteSchedule(id); err != nil {
+	if err := system.DeleteSchedule(database.ctx, id); err != nil {
 		syslog.L.Error(fmt.Errorf("DeleteJob: failed deleting schedule: %w", err)).
 			WithField("id", id).
 			Write()
