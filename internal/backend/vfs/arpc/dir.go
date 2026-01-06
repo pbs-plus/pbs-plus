@@ -22,7 +22,7 @@ import (
 )
 
 var bufPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return make([]byte, 4*1024*1024)
 	},
 }
@@ -47,29 +47,20 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if atomic.LoadUint64(&s.totalReturned) >= uint64(s.fs.Job.MaxDirEntries) {
-		lastPath := ""
-		s.lastRespMu.Lock()
-		curIdxVal := atomic.LoadUint64(&s.curIdx)
-		if curIdxVal > 0 && int(curIdxVal) <= len(s.lastResp) {
-			lastEntry := s.lastResp[curIdxVal-1]
-			lastPath = lastEntry.Name
-		}
-		s.lastRespMu.Unlock()
-
-		atomic.StoreInt32(&s.closed, 1)
-		syslog.L.Error(fmt.Errorf("maximum directory entries reached: %d", s.fs.Job.MaxDirEntries)).
-			WithField("path", s.path).
-			WithField("lastFile", lastPath).
-			WithJob(s.fs.Job.ID).
-			Write()
-
-		return false
-	}
-
-	// Lock for entire check-and-fetch operation to prevent races
 	s.lastRespMu.Lock()
 	defer s.lastRespMu.Unlock()
+
+	if atomic.LoadUint64(&s.totalReturned) >= uint64(s.fs.Job.MaxDirEntries) {
+		if atomic.SwapInt32(&s.maxedOut, 1) == 0 {
+			syslog.L.Warn().
+				WithMessage("maximum directory entries limit reached - stopping enumeration").
+				WithField("path", s.path).
+				WithField("maxDirEntries", s.fs.Job.MaxDirEntries).
+				WithJob(s.fs.Job.ID).
+				Write()
+		}
+		return false
+	}
 
 	curIdx := atomic.LoadUint64(&s.curIdx)
 	if int(curIdx) < len(s.lastResp) {
@@ -83,7 +74,6 @@ func (s *DirStream) HasNext() bool {
 		return true
 	}
 
-	// Need to fetch next batch
 	syslog.L.Debug().
 		WithMessage("HasNext needs new batch - issuing ReadDir RPC").
 		WithField("path", s.path).
@@ -95,7 +85,16 @@ func (s *DirStream) HasNext() bool {
 	readBuf := bufPool.Get().([]byte)
 	defer bufPool.Put(readBuf)
 
-	bytesRead, err := s.fs.session.Load().CallBinary(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
+	pipe, err := s.fs.getPipe(s.fs.Ctx)
+	if err != nil {
+		syslog.L.Error(err).
+			WithMessage("arpc session is nil").
+			WithJob(s.fs.Job.ID).
+			Write()
+		return false
+	}
+
+	bytesRead, err := pipe.CallBinary(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
 	syslog.L.Debug().
 		WithMessage("HasNext RPC completed").
 		WithField("bytesRead", bytesRead).
@@ -191,6 +190,15 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	if atomic.LoadInt32(&s.closed) != 0 {
 		syslog.L.Debug().
 			WithMessage("Next called on closed stream").
+			WithField("path", s.path).
+			WithJob(s.fs.Job.ID).
+			Write()
+		return fuse.DirEntry{}, syscall.EBADF
+	}
+
+	if atomic.LoadInt32(&s.maxedOut) != 0 {
+		syslog.L.Debug().
+			WithMessage("Next called on maxed out stream").
 			WithField("path", s.path).
 			WithJob(s.fs.Job.ID).
 			Write()
@@ -351,7 +359,16 @@ func (s *DirStream) Close() {
 	defer cancelN()
 
 	closeReq := types.CloseReq{HandleID: s.handleId}
-	_, err := s.fs.session.Load().CallData(ctxN, s.fs.Job.ID+"/Close", &closeReq)
+	pipe, err := s.fs.getPipe(s.fs.Ctx)
+	if err != nil {
+		syslog.L.Error(err).
+			WithMessage("arpc session is nil").
+			WithJob(s.fs.Job.ID).
+			Write()
+		return
+	}
+
+	_, err = pipe.CallData(ctxN, s.fs.Job.ID+"/Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithMessage("DirStream close RPC failed").

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -115,7 +116,9 @@ func cmdBackup(sourceMode, readMode, drive, jobId *string) {
 	wg.Go(func() {
 		syslog.L.Info().WithMessage("CmdBackup: RPC Serve starting").WithField("jobId", *jobId).Write()
 		if err := rpcSess.Serve(); err != nil {
-			syslog.L.Error(err).WithMessage("CmdBackup: RPC Serve returned error").WithField("jobId", *jobId).Write()
+			if !errors.Is(err, io.EOF) {
+				syslog.L.Error(err).WithMessage("CmdBackup: RPC Serve returned error").WithField("jobId", *jobId).Write()
+			}
 			if session, ok := activeSessions.Get(*jobId); ok {
 				session.Close()
 			}
