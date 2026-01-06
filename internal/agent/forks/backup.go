@@ -39,7 +39,7 @@ func init() {
 }
 
 type backupSession struct {
-	jobId    string
+	backupId string
 	ctx      context.Context
 	cancel   context.CancelFunc
 	store    *agent.BackupStore
@@ -51,30 +51,30 @@ type backupSession struct {
 const BACKUP_MODE_PREFIX = "pbs-plus--child-backup-mode:"
 
 func (s *backupSession) Close() {
-	syslog.L.Info().WithMessage("backupSession.Close: begin").WithField("jobId", s.jobId).Write()
+	syslog.L.Info().WithMessage("backupSession.Close: begin").WithField("backupId", s.backupId).Write()
 	s.once.Do(func() {
 		if s.fs != nil {
-			syslog.L.Info().WithMessage("backupSession.Close: closing AgentFSServer").WithField("jobId", s.jobId).Write()
+			syslog.L.Info().WithMessage("backupSession.Close: closing AgentFSServer").WithField("backupId", s.backupId).Write()
 			s.fs.Close()
 		}
 		if s.snapshot != (snapshots.Snapshot{}) && !s.snapshot.Direct && s.snapshot.Handler != nil {
-			syslog.L.Info().WithMessage("backupSession.Close: deleting snapshot").WithField("jobId", s.jobId).WithField("path", s.snapshot.Path).Write()
+			syslog.L.Info().WithMessage("backupSession.Close: deleting snapshot").WithField("backupId", s.backupId).WithField("path", s.snapshot.Path).Write()
 			s.snapshot.Handler.DeleteSnapshot(s.snapshot)
 		}
 		if s.store != nil {
-			if err := s.store.EndBackup(s.jobId); err != nil {
-				syslog.L.Warn().WithMessage("backupSession.Close: EndBackup returned error").WithField("jobId", s.jobId).WithField("error", err.Error()).Write()
+			if err := s.store.EndBackup(s.backupId); err != nil {
+				syslog.L.Warn().WithMessage("backupSession.Close: EndBackup returned error").WithField("backupId", s.backupId).WithField("error", err.Error()).Write()
 			}
 		}
-		activeSessions.Del(s.jobId)
+		activeSessions.Del(s.backupId)
 		s.cancel()
 	})
-	syslog.L.Info().WithMessage("backupSession.Close: done").WithField("jobId", s.jobId).Write()
+	syslog.L.Info().WithMessage("backupSession.Close: done").WithField("backupId", s.backupId).Write()
 }
 
-func cmdBackup(sourceMode, readMode, drive, jobId *string) {
-	if *sourceMode == "" || *drive == "" || *jobId == "" || *readMode == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and jobId are required")
+func cmdBackup(sourceMode, readMode, drive, backupId *string) {
+	if *sourceMode == "" || *drive == "" || *backupId == "" || *readMode == "" {
+		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and backupId are required")
 		syslog.L.Error(errors.New("missing required flags")).WithMessage("CmdBackup: validation failed").Write()
 		os.Exit(1)
 	}
@@ -100,9 +100,9 @@ func cmdBackup(sourceMode, readMode, drive, jobId *string) {
 	}
 
 	headers := http.Header{}
-	headers.Add("X-PBS-Plus-JobId", *jobId)
+	headers.Add("X-PBS-Plus-JobId", *backupId)
 
-	syslog.L.Info().WithMessage("CmdBackup: connecting to server").WithField("host", uri.Hostname()).WithField("jobId", *jobId).Write()
+	syslog.L.Info().WithMessage("CmdBackup: connecting to server").WithField("host", uri.Hostname()).WithField("backupId", *backupId).Write()
 	rpcSess, err := arpc.ConnectToServer(context.Background(), fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort), headers, tlsConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to connect to server: %v", err)
@@ -110,31 +110,31 @@ func cmdBackup(sourceMode, readMode, drive, jobId *string) {
 		os.Exit(1)
 	}
 	rpcSess.SetRouter(arpc.NewRouter())
-	syslog.L.Info().WithMessage("CmdBackup: ARPC session established").WithField("jobId", *jobId).Write()
+	syslog.L.Info().WithMessage("CmdBackup: ARPC session established").WithField("backupId", *backupId).Write()
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		syslog.L.Info().WithMessage("CmdBackup: RPC Serve starting").WithField("jobId", *jobId).Write()
+		syslog.L.Info().WithMessage("CmdBackup: RPC Serve starting").WithField("backupId", *backupId).Write()
 		if err := rpcSess.Serve(); err != nil {
 			if !errors.Is(err, io.EOF) {
-				syslog.L.Error(err).WithMessage("CmdBackup: RPC Serve returned error").WithField("jobId", *jobId).Write()
+				syslog.L.Error(err).WithMessage("CmdBackup: RPC Serve returned error").WithField("backupId", *backupId).Write()
 			}
-			if session, ok := activeSessions.Get(*jobId); ok {
+			if session, ok := activeSessions.Get(*backupId); ok {
 				session.Close()
 			}
 		}
-		syslog.L.Info().WithMessage("CmdBackup: RPC Serve exited").WithField("jobId", *jobId).Write()
+		syslog.L.Info().WithMessage("CmdBackup: RPC Serve exited").WithField("backupId", *backupId).Write()
 	})
 
-	backupMode, err := Backup(rpcSess, *sourceMode, *readMode, *drive, *jobId)
+	backupMode, err := Backup(rpcSess, *sourceMode, *readMode, *drive, *backupId)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
-		syslog.L.Error(err).WithMessage("CmdBackup: Backup failed").WithField("jobId", *jobId).Write()
+		syslog.L.Error(err).WithMessage("CmdBackup: Backup failed").WithField("backupId", *backupId).Write()
 		os.Exit(1)
 	}
 
 	fmt.Println(BACKUP_MODE_PREFIX + backupMode)
-	syslog.L.Info().WithMessage("CmdBackup: backup mode announced").WithField("mode", backupMode).WithField("jobId", *jobId).Write()
+	syslog.L.Info().WithMessage("CmdBackup: backup mode announced").WithField("mode", backupMode).WithField("backupId", *backupId).Write()
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
@@ -142,11 +142,11 @@ func cmdBackup(sourceMode, readMode, drive, jobId *string) {
 
 	go func() {
 		sig := <-done
-		syslog.L.Info().WithMessage(fmt.Sprintf("CmdBackup: received signal %v, shutting down gracefully", sig)).WithField("jobId", *jobId).Write()
+		syslog.L.Info().WithMessage(fmt.Sprintf("CmdBackup: received signal %v, shutting down gracefully", sig)).WithField("backupId", *backupId).Write()
 
 		rpcSess.Close()
 
-		if session, ok := activeSessions.Get(*jobId); ok {
+		if session, ok := activeSessions.Get(*backupId); ok {
 			session.Close()
 		}
 
@@ -155,16 +155,16 @@ func cmdBackup(sourceMode, readMode, drive, jobId *string) {
 	}()
 
 	wg.Wait()
-	syslog.L.Info().WithMessage("CmdBackup: background RPC goroutine finished").WithField("jobId", *jobId).Write()
+	syslog.L.Info().WithMessage("CmdBackup: background RPC goroutine finished").WithField("backupId", *backupId).Write()
 	os.Exit(0)
 }
 
-func ExecBackup(sourceMode string, readMode string, drive string, jobId string) (string, int, error) {
+func ExecBackup(sourceMode string, readMode string, drive string, backupId string) (string, int, error) {
 	syslog.L.Info().WithMessage("ExecBackup: begin").
 		WithField("sourceMode", sourceMode).
 		WithField("readMode", readMode).
 		WithField("drive", drive).
-		WithField("jobId", jobId).
+		WithField("backupId", backupId).
 		Write()
 
 	execCmd, err := os.Executable()
@@ -182,7 +182,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 		"--sourceMode=" + sourceMode,
 		"--readMode=" + readMode,
 		"--drive=" + drive,
-		"--jobId=" + jobId,
+		"--backupId=" + backupId,
 	}
 
 	cmd := exec.Command(execCmd, args...)
@@ -223,7 +223,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 			} else {
 				syslog.L.Info().
 					WithField("drive", drive).
-					WithField("jobId", jobId).
+					WithField("backupId", backupId).
 					WithField("forked", true).
 					WithMessage(line).Write()
 			}
@@ -237,7 +237,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 		for errScanner.Scan() {
 			syslog.L.Error(errors.New(errScanner.Text())).
 				WithField("drive", drive).
-				WithField("jobId", jobId).
+				WithField("backupId", backupId).
 				WithField("forked", true).
 				Write()
 		}
@@ -254,45 +254,45 @@ func ExecBackup(sourceMode string, readMode string, drive string, jobId string) 
 	return mode, cmd.Process.Pid, nil
 }
 
-func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, jobId string) (string, error) {
+func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, backupId string) (string, error) {
 	syslog.L.Info().WithMessage("Backup: begin").
 		WithField("sourceMode", sourceMode).
 		WithField("readMode", readMode).
 		WithField("drive", drive).
-		WithField("jobId", jobId).
+		WithField("backupId", backupId).
 		Write()
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Backup: NewBackupStore failed").WithField("jobId", jobId).Write()
+		syslog.L.Error(err).WithMessage("Backup: NewBackupStore failed").WithField("backupId", backupId).Write()
 		return "", err
 	}
-	if existingSession, ok := activeSessions.Get(jobId); ok {
-		syslog.L.Info().WithMessage("Backup: closing existing session").WithField("jobId", jobId).Write()
+	if existingSession, ok := activeSessions.Get(backupId); ok {
+		syslog.L.Info().WithMessage("Backup: closing existing session").WithField("backupId", backupId).Write()
 		existingSession.Close()
-		_ = store.EndBackup(jobId)
+		_ = store.EndBackup(backupId)
 	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	session := &backupSession{
-		jobId:  jobId,
-		ctx:    sessionCtx,
-		cancel: cancel,
-		store:  store,
+		backupId: backupId,
+		ctx:      sessionCtx,
+		cancel:   cancel,
+		store:    store,
 	}
-	activeSessions.Set(jobId, session)
+	activeSessions.Set(backupId, session)
 
-	if hasActive, err := store.HasActiveBackupForJob(jobId); hasActive || err != nil {
+	if hasActive, err := store.HasActiveBackupForJob(backupId); hasActive || err != nil {
 		if err != nil {
-			syslog.L.Error(err).WithMessage("Backup: HasActiveBackupForJob failed").WithField("jobId", jobId).Write()
+			syslog.L.Error(err).WithMessage("Backup: HasActiveBackupForJob failed").WithField("backupId", backupId).Write()
 			return "", err
 		}
-		syslog.L.Info().WithMessage("Backup: ending previous active backup").WithField("jobId", jobId).Write()
-		_ = store.EndBackup(jobId)
+		syslog.L.Info().WithMessage("Backup: ending previous active backup").WithField("backupId", backupId).Write()
+		_ = store.EndBackup(backupId)
 	}
 
-	if err := store.StartBackup(jobId); err != nil {
-		syslog.L.Error(err).WithMessage("Backup: StartBackup failed").WithField("jobId", jobId).Write()
+	if err := store.StartBackup(backupId); err != nil {
+		syslog.L.Error(err).WithMessage("Backup: StartBackup failed").WithField("backupId", backupId).Write()
 		session.Close()
 		return "", err
 	}
@@ -318,7 +318,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 				Write()
 		default:
 			var err error
-			snapshot, err = snapshots.Manager.CreateSnapshot(jobId, drive)
+			snapshot, err = snapshots.Manager.CreateSnapshot(backupId, drive)
 			if err != nil && snapshot == (snapshots.Snapshot{}) {
 				syslog.L.Error(err).WithMessage("Backup: VSS snapshot failed; switching to direct mode").WithField("drive", drive).Write()
 				backupMode = "direct"
@@ -352,7 +352,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 
 	session.snapshot = snapshot
 
-	fs := agentfs.NewAgentFSServer(jobId, readMode, snapshot)
+	fs := agentfs.NewAgentFSServer(backupId, readMode, snapshot)
 	if fs == nil {
 		syslog.L.Error(errors.New("fs is nil")).WithMessage("Backup: NewAgentFSServer returned nil").Write()
 		session.Close()
@@ -367,7 +367,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 	fs.RegisterHandlers(router)
 	session.fs = fs
 	syslog.L.Info().WithMessage("Backup: AgentFSServer registered and session ready").
-		WithField("jobId", jobId).
+		WithField("backupId", backupId).
 		WithField("mode", backupMode).
 		WithField("snapshot_path", snapshot.Path).
 		Write()
