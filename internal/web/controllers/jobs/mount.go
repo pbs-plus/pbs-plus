@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
@@ -100,57 +101,6 @@ func removeEmptyDirsToBase(path, basePath string) {
 	}
 }
 
-func generateServiceName(datastore, ns, backupType, backupID, safeTime string) string {
-	parts := []string{"pbs-plus-restore", datastore}
-	if ns != "" {
-		parts = append(parts, strings.ReplaceAll(ns, "/", "-"))
-	}
-	parts = append(parts, backupType, backupID, safeTime)
-
-	name := strings.Join(parts, "-")
-	name = strings.ReplaceAll(name, " ", "-")
-	name = strings.ReplaceAll(name, ":", "-")
-
-	return name + ".service"
-}
-
-func createSystemdService(serviceName, mountPoint string, args []string) error {
-	return utils.RunSystemd(serviceName, "PBS Plus restore mount for "+mountPoint, "/usr/bin/pxar-direct-mount", args)
-}
-
-func stopSystemdService(serviceName string) error {
-	stopCmd := exec.Command("systemctl", "stop", serviceName)
-	_ = stopCmd.Run()
-
-	resetCmd := exec.Command("systemctl", "reset-failed", serviceName)
-	_ = resetCmd.Run()
-
-	return nil
-}
-
-func listRestoreServices() ([]string, error) {
-	cmd := exec.Command("systemctl", "list-units", "--all", "--no-legend", "--plain", "pbs-plus-restore-*")
-	output, err := cmd.Output()
-	if err != nil {
-		return []string{}, nil
-	}
-
-	var services []string
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) > 0 && strings.HasPrefix(fields[0], "pbs-plus-restore-") {
-			services = append(services, fields[0])
-		}
-	}
-
-	return services, nil
-}
-
 func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -201,9 +151,9 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			safeTime,
 		))
 
-		serviceName := generateServiceName(datastore, ns, backupType, backupID, safeTime)
+		serviceName := system.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
 
-		_ = stopSystemdService(serviceName)
+		_ = system.StopMountService(r.Context(), serviceName)
 		if utils.IsMounted(mountPoint) {
 			_ = unmountPath(mountPoint)
 		}
@@ -228,7 +178,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 		args = append(args, mountPoint)
 
-		if err := createSystemdService(serviceName, mountPoint, args); err != nil {
+		if err := system.CreateMountService(r.Context(), serviceName, mountPoint, args); err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("start mount service: %w", err))
 			_ = os.RemoveAll(mountPoint)
 			return
@@ -244,7 +194,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if !mountOK {
-			_ = stopSystemdService(serviceName)
+			_ = system.StopMountService(r.Context(), serviceName)
 			_ = os.RemoveAll(mountPoint)
 			controllers.WriteErrorResponse(w, errors.New("mount failed"))
 			return
@@ -301,9 +251,9 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			datastore,
 		))
 
-		serviceName := generateServiceName(datastore, ns, backupType, backupID, safeTime)
+		serviceName := system.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
 
-		_ = stopSystemdService(serviceName)
+		_ = system.StopMountService(r.Context(), serviceName)
 
 		if utils.IsMounted(mountPoint) {
 			_ = unmountPath(mountPoint)
@@ -341,7 +291,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			ns,
 		))
 
-		services, err := listRestoreServices()
+		services, err := system.ListMountServices(r.Context())
 		if err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("list services: %w", err))
 			return
@@ -354,7 +304,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, svc := range services {
 			if strings.HasPrefix(svc, prefix) {
-				_ = stopSystemdService(svc)
+				_ = system.StopMountService(r.Context(), svc)
 			}
 		}
 

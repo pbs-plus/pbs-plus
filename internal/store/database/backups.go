@@ -153,7 +153,7 @@ func (database *Database) CreateBackup(tx *sql.Tx, backup types.Backup) (err err
 		}
 	}
 
-	if err = system.SetSchedule(backup); err != nil {
+	if err = system.SetSchedule(database.ctx, backup); err != nil {
 		syslog.L.Error(fmt.Errorf("CreateBackup: failed to set schedule: %w", err)).
 			WithField("id", backup.ID).
 			Write()
@@ -268,7 +268,7 @@ func (database *Database) populateBackupExtras(backup *types.Backup) {
 		}
 	}
 
-	if nextSchedule, err := system.GetNextSchedule(*backup); err == nil && nextSchedule != nil {
+	if nextSchedule, err := system.GetNextSchedule(database.ctx, *backup); err == nil && nextSchedule != nil {
 		backup.NextRun = nextSchedule.Unix()
 	}
 }
@@ -365,7 +365,7 @@ func (database *Database) UpdateBackup(tx *sql.Tx, backup types.Backup) (err err
 		}
 	}
 
-	if err = system.SetSchedule(backup); err != nil {
+	if err = system.SetSchedule(database.ctx, backup); err != nil {
 		syslog.L.Error(fmt.Errorf("UpdateBackup: failed to set schedule: %w", err)).
 			WithField("id", backup.ID).
 			Write()
@@ -714,7 +714,7 @@ func (database *Database) DeleteBackup(tx *sql.Tx, id string) (err error) {
 		}
 	}
 
-	if err := system.DeleteSchedule(id); err != nil {
+	if err := system.DeleteSchedule(database.ctx, id); err != nil {
 		syslog.L.Error(fmt.Errorf("DeleteBackup: failed deleting schedule: %w", err)).
 			WithField("id", id).
 			Write()
