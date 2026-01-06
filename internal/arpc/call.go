@@ -173,6 +173,7 @@ func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any,
 	if err != nil {
 		return 0, err
 	}
+	defer stream.Close()
 
 	if resp.Status != 213 {
 		var serErr SerializableError
