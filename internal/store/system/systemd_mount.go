@@ -23,7 +23,7 @@ func GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime stri
 
 	name := fmt.Sprintf("pbs-plus-snapshot-mount-%s-%s", safeDs, shortHash)
 
-	return dbus.PathBusEscape(name) + ".service"
+	return name + ".service"
 }
 
 func CreateMountService(ctx context.Context, serviceName, mountPoint string, args []string) error {
