@@ -20,32 +20,32 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
 
-func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
 
-		allJobs, err := storeInstance.Database.GetAllJobs()
+		allBackups, err := storeInstance.Database.GetAllBackups()
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
 		}
 
-		for i, job := range allJobs {
+		for i, backup := range allBackups {
 			isS3 := false
-			isAgent := strings.HasPrefix(job.TargetPath, "agent://")
-			s3Parsed, err := s3url.Parse(job.TargetPath)
+			isAgent := strings.HasPrefix(backup.TargetPath, "agent://")
+			s3Parsed, err := s3url.Parse(backup.TargetPath)
 			if err == nil {
 				isS3 = true
 			}
 
 			var stats vfs.VFSStats
 			if isAgent {
-				splittedTargetName := strings.Split(job.Target, " - ")
+				splittedTargetName := strings.Split(backup.Target, " - ")
 				targetHostname := splittedTargetName[0]
-				childKey := targetHostname + "|" + job.ID
+				childKey := targetHostname + "|" + backup.ID
 				session := vfssessions.GetSessionARPCFS(childKey)
 				if session == nil {
 					continue
@@ -53,7 +53,7 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 
 				stats = session.GetStats()
 			} else if isS3 {
-				childKey := s3Parsed.Endpoint + "|" + job.ID
+				childKey := s3Parsed.Endpoint + "|" + backup.ID
 				session := vfssessions.GetSessionS3FS(childKey)
 				if session == nil {
 					continue
@@ -64,22 +64,22 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				continue
 			}
 
-			allJobs[i].CurrentFileCount = int(stats.FilesAccessed)
-			allJobs[i].CurrentFolderCount = int(stats.FoldersAccessed)
-			allJobs[i].CurrentBytesTotal = int(stats.TotalBytes)
-			allJobs[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
-			allJobs[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
-			allJobs[i].StatCacheHits = int(stats.StatCacheHits)
+			allBackups[i].CurrentFileCount = int(stats.FilesAccessed)
+			allBackups[i].CurrentFolderCount = int(stats.FoldersAccessed)
+			allBackups[i].CurrentBytesTotal = int(stats.TotalBytes)
+			allBackups[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
+			allBackups[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
+			allBackups[i].StatCacheHits = int(stats.StatCacheHits)
 		}
 
-		digest, err := utils.CalculateDigest(allJobs)
+		digest, err := utils.CalculateDigest(allBackups)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
 		}
 
-		toReturn := JobsResponse{
-			Data:   allJobs,
+		toReturn := BackupsResponse{
+			Data:   allBackups,
 			Digest: digest,
 		}
 
@@ -88,34 +88,34 @@ func D2DJobHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
 
-		var response JobRunResponse
+		var response BackupRunResponse
 
-		// Get all job IDs from query parameters: ?job=job1&job=job2
-		jobIDs := r.URL.Query()["job"]
-		if len(jobIDs) == 0 {
-			http.Error(w, "Missing job parameter(s)", http.StatusBadRequest)
+		// Get all backup IDs from query parameters: ?backup=backup1&backup=backup2
+		backupIDs := r.URL.Query()["backup"]
+		if len(backupIDs) == 0 {
+			http.Error(w, "Missing backup parameter(s)", http.StatusBadRequest)
 			return
 		}
 
-		decodedJobIDs := []string{}
+		decodedBackupIDs := []string{}
 
-		for _, jobID := range jobIDs {
-			decoded := utils.DecodePath(jobID)
-			decodedJobIDs = append(decodedJobIDs, decoded)
+		for _, backupID := range backupIDs {
+			decoded := utils.DecodePath(backupID)
+			decodedBackupIDs = append(decodedBackupIDs, decoded)
 
-			job, err := storeInstance.Database.GetJob(decoded)
+			backup, err := storeInstance.Database.GetBackup(decoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-			system.RemoveAllRetrySchedules(job)
+			system.RemoveAllRetrySchedules(backup)
 		}
 
 		execPath, err := os.Executable()
@@ -125,8 +125,8 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		args := []string{}
-		for _, jobId := range decodedJobIDs {
-			args = append(args, "-backup-job", jobId)
+		for _, backupId := range decodedBackupIDs {
+			args = append(args, "-backup-backup", backupId)
 		}
 		args = append(args, "-web")
 		if r.Method == http.MethodDelete {
@@ -151,9 +151,9 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		response := JobConfigResponse{}
+		response := BackupConfigResponse{}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
@@ -202,7 +202,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			includeXattr = true
 		}
 
-		newJob := types.Job{
+		newBackup := types.Backup{
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
 			SourceMode:       r.FormValue("sourcemode"),
@@ -232,13 +232,13 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			exclusionInst := types.Exclusion{
 				Path:  exclusion,
-				JobID: newJob.ID,
+				BackupID: newBackup.ID,
 			}
 
-			newJob.Exclusions = append(newJob.Exclusions, exclusionInst)
+			newBackup.Exclusions = append(newBackup.Exclusions, exclusionInst)
 		}
 
-		err = storeInstance.Database.CreateJob(nil, newJob)
+		err = storeInstance.Database.CreateBackup(nil, newBackup)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -250,9 +250,9 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		response := JobConfigResponse{}
+		response := BackupConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
@@ -261,7 +261,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodPut {
-			job, err := storeInstance.Database.GetJob(utils.DecodePath(r.PathValue("job")))
+			backup, err := storeInstance.Database.GetBackup(utils.DecodePath(r.PathValue("backup")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -274,28 +274,28 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			if r.FormValue("store") != "" {
-				job.Store = r.FormValue("store")
+				backup.Store = r.FormValue("store")
 			}
 			if r.FormValue("mode") != "" {
-				job.Mode = r.FormValue("mode")
+				backup.Mode = r.FormValue("mode")
 			}
 			if r.FormValue("sourcemode") != "" {
-				job.SourceMode = r.FormValue("sourcemode")
+				backup.SourceMode = r.FormValue("sourcemode")
 			}
 			if r.FormValue("readmode") != "" {
-				job.ReadMode = r.FormValue("readmode")
+				backup.ReadMode = r.FormValue("readmode")
 			}
 			if r.FormValue("target") != "" {
-				job.Target = r.FormValue("target")
+				backup.Target = r.FormValue("target")
 			}
 			if r.FormValue("schedule") != "" {
-				job.Schedule = r.FormValue("schedule")
+				backup.Schedule = r.FormValue("schedule")
 			}
 			if r.FormValue("comment") != "" {
-				job.Comment = r.FormValue("comment")
+				backup.Comment = r.FormValue("comment")
 			}
 			if r.FormValue("notification-mode") != "" {
-				job.NotificationMode = r.FormValue("notification-mode")
+				backup.NotificationMode = r.FormValue("notification-mode")
 			}
 
 			if r.FormValue("include-xattr") != "" {
@@ -303,11 +303,11 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				if err != nil {
 					includeXattr = true
 				}
-				job.IncludeXattr = includeXattr
+				backup.IncludeXattr = includeXattr
 			}
 
-			job.PreScript = r.FormValue("pre_script")
-			job.PostScript = r.FormValue("post_script")
+			backup.PreScript = r.FormValue("pre_script")
+			backup.PostScript = r.FormValue("post_script")
 
 			retry, err := strconv.Atoi(r.FormValue("retry"))
 			if err != nil {
@@ -324,13 +324,13 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				maxDirEntries = 1048576
 			}
 
-			job.Retry = retry
-			job.RetryInterval = retryInterval
-			job.MaxDirEntries = maxDirEntries
+			backup.Retry = retry
+			backup.RetryInterval = retryInterval
+			backup.MaxDirEntries = maxDirEntries
 
-			job.Subpath = r.FormValue("subpath")
-			job.Namespace = r.FormValue("ns")
-			job.Exclusions = []types.Exclusion{}
+			backup.Subpath = r.FormValue("subpath")
+			backup.Namespace = r.FormValue("ns")
+			backup.Exclusions = []types.Exclusion{}
 
 			if r.FormValue("rawexclusions") != "" {
 				rawExclusions := r.FormValue("rawexclusions")
@@ -342,10 +342,10 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 					exclusionInst := types.Exclusion{
 						Path:  exclusion,
-						JobID: job.ID,
+						BackupID: backup.ID,
 					}
 
-					job.Exclusions = append(job.Exclusions, exclusionInst)
+					backup.Exclusions = append(backup.Exclusions, exclusionInst)
 				}
 			}
 
@@ -353,42 +353,42 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				for _, attr := range delArr {
 					switch attr {
 					case "store":
-						job.Store = ""
+						backup.Store = ""
 					case "mode":
-						job.Mode = ""
+						backup.Mode = ""
 					case "sourcemode":
-						job.SourceMode = ""
+						backup.SourceMode = ""
 					case "readmode":
-						job.ReadMode = ""
+						backup.ReadMode = ""
 					case "target":
-						job.Target = ""
+						backup.Target = ""
 					case "subpath":
-						job.Subpath = ""
+						backup.Subpath = ""
 					case "schedule":
-						job.Schedule = ""
+						backup.Schedule = ""
 					case "comment":
-						job.Comment = ""
+						backup.Comment = ""
 					case "ns":
-						job.Namespace = ""
+						backup.Namespace = ""
 					case "retry":
-						job.Retry = 0
+						backup.Retry = 0
 					case "retry-interval":
-						job.RetryInterval = 1
+						backup.RetryInterval = 1
 					case "max-dir-entries":
-						job.MaxDirEntries = 1048576
+						backup.MaxDirEntries = 1048576
 					case "notification-mode":
-						job.NotificationMode = ""
+						backup.NotificationMode = ""
 					case "pre_script":
-						job.PreScript = ""
+						backup.PreScript = ""
 					case "post_script":
-						job.PostScript = ""
+						backup.PostScript = ""
 					case "rawexclusions":
-						job.Exclusions = []types.Exclusion{}
+						backup.Exclusions = []types.Exclusion{}
 					}
 				}
 			}
 
-			err = storeInstance.Database.UpdateJob(nil, job)
+			err = storeInstance.Database.UpdateBackup(nil, backup)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -402,7 +402,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			job, err := storeInstance.Database.GetJob(utils.DecodePath(r.PathValue("job")))
+			backup, err := storeInstance.Database.GetBackup(utils.DecodePath(r.PathValue("backup")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -410,14 +410,14 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = job
+			response.Data = backup
 			json.NewEncoder(w).Encode(response)
 
 			return
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.Database.DeleteJob(nil, utils.DecodePath(r.PathValue("job")))
+			err := storeInstance.Database.DeleteBackup(nil, utils.DecodePath(r.PathValue("backup")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

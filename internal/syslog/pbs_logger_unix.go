@@ -16,7 +16,7 @@ import (
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
-type BackupLogger struct {
+type JobLogger struct {
 	*os.File
 	Path      string
 	jobId     string
@@ -26,10 +26,10 @@ type BackupLogger struct {
 	sync.Mutex
 }
 
-var backupLoggers = xsync.NewMapOf[string, *BackupLogger]()
+var backupLoggers = xsync.NewMapOf[string, *JobLogger]()
 
-func CreateBackupLogger(jobId string) *BackupLogger {
-	logger, _ := backupLoggers.Compute(jobId, func(_ *BackupLogger, _ bool) (*BackupLogger, bool) {
+func CreateJobLogger(jobId string) *JobLogger {
+	logger, _ := backupLoggers.Compute(jobId, func(_ *JobLogger, _ bool) (*JobLogger, bool) {
 		tempDir := os.TempDir()
 		fileName := fmt.Sprintf("backup-%s-stdout", jobId)
 		filePath := filepath.Join(tempDir, fileName)
@@ -39,7 +39,7 @@ func CreateBackupLogger(jobId string) *BackupLogger {
 			return nil, true
 		}
 
-		return &BackupLogger{
+		return &JobLogger{
 			File:      clientLogFile,
 			Path:      filePath,
 			jobId:     jobId,
@@ -51,8 +51,8 @@ func CreateBackupLogger(jobId string) *BackupLogger {
 	return logger
 }
 
-func GetExistingBackupLogger(jobId string) *BackupLogger {
-	logger, _ := backupLoggers.LoadOrCompute(jobId, func() *BackupLogger {
+func GetExistingJobLogger(jobId string) *JobLogger {
+	logger, _ := backupLoggers.LoadOrCompute(jobId, func() *JobLogger {
 		tempDir := os.TempDir()
 		fileName := fmt.Sprintf("backup-%s-stdout", jobId)
 		filePath := filepath.Join(tempDir, fileName)
@@ -65,7 +65,7 @@ func GetExistingBackupLogger(jobId string) *BackupLogger {
 			return nil
 		}
 
-		return &BackupLogger{
+		return &JobLogger{
 			File:      clientLogFile,
 			Path:      filePath,
 			jobId:     jobId,
@@ -76,7 +76,7 @@ func GetExistingBackupLogger(jobId string) *BackupLogger {
 	return logger
 }
 
-func (b *BackupLogger) Write(in []byte) (n int, err error) {
+func (b *JobLogger) Write(in []byte) (n int, err error) {
 	b.Lock()
 	defer b.Unlock()
 
@@ -142,14 +142,14 @@ func (b *BackupLogger) Write(in []byte) (n int, err error) {
 	return bytesConsumedFromInput, nil
 }
 
-func (b *BackupLogger) Flush() error {
+func (b *JobLogger) Flush() error {
 	b.Lock()
 	defer b.Unlock()
 
 	return b.Writer.Flush()
 }
 
-func (b *BackupLogger) Close() error {
+func (b *JobLogger) Close() error {
 	b.Lock()
 	defer b.Unlock()
 

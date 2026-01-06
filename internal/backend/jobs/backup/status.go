@@ -12,10 +12,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-var jobMutexes sync.Map
+var backupMutexes sync.Map
 
-func updateJobStatus(succeeded bool, warningsNum int, job types.Job, task proxmox.Task, storeInstance *store.Store) error {
-	value, _ := jobMutexes.LoadOrStore(job.ID, &sync.Mutex{})
+func updateBackupStatus(succeeded bool, warningsNum int, backup types.Backup, task proxmox.Task, storeInstance *store.Store) error {
+	value, _ := backupMutexes.LoadOrStore(backup.ID, &sync.Mutex{})
 	mu := value.(*sync.Mutex)
 
 	mu.Lock()
@@ -27,27 +27,27 @@ func updateJobStatus(succeeded bool, warningsNum int, job types.Job, task proxmo
 		return err
 	}
 
-	latestJob, err := storeInstance.Database.GetJob(job.ID)
+	latestBackup, err := storeInstance.Database.GetBackup(backup.ID)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("unable to get job").Write()
+		syslog.L.Error(err).WithMessage("unable to get backup").Write()
 		return err
 	}
 
-	latestJob.CurrentPID = job.CurrentPID
-	latestJob.LastRunUpid = taskFound.UPID
-	latestJob.LastRunState = taskFound.Status
-	latestJob.LastRunEndtime = taskFound.EndTime
+	latestBackup.CurrentPID = backup.CurrentPID
+	latestBackup.LastRunUpid = taskFound.UPID
+	latestBackup.LastRunState = taskFound.Status
+	latestBackup.LastRunEndtime = taskFound.EndTime
 
 	if warningsNum > 0 && succeeded {
-		latestJob.LastRunState = fmt.Sprintf("WARNINGS: %d", warningsNum)
+		latestBackup.LastRunState = fmt.Sprintf("WARNINGS: %d", warningsNum)
 	}
 
 	if succeeded {
-		latestJob.LastSuccessfulUpid = taskFound.UPID
-		latestJob.LastSuccessfulEndtime = task.EndTime
+		latestBackup.LastSuccessfulUpid = taskFound.UPID
+		latestBackup.LastSuccessfulEndtime = task.EndTime
 	}
 
-	if err := storeInstance.Database.UpdateJob(nil, latestJob); err != nil {
+	if err := storeInstance.Database.UpdateBackup(nil, latestBackup); err != nil {
 		return err
 	}
 

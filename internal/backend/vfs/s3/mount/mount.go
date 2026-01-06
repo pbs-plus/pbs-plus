@@ -11,7 +11,7 @@ import (
 )
 
 func Mount(f *s3fs.S3FS, mountpoint string) error {
-	fsName := "pbs-plus://" + f.Job.ID
+	fsName := "pbs-plus://" + f.Backup.ID
 
 	umount := exec.Command("umount", "-lf", mountpoint)
 	umount.Env = os.Environ()

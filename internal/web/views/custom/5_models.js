@@ -1,4 +1,4 @@
-Ext.define("pbs-disk-backup-job-status", {
+Ext.define("pbs-disk-backup-status", {
   extend: "Ext.data.Model",
   fields: [
     "id",

@@ -5,7 +5,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
   title: "Disk Backup Jobs",
 
   stateful: true,
-  stateId: "grid-disk-backup-jobs-v1",
+  stateId: "grid-disk-backups-v1",
 
   selType: "checkboxmodel",    // show checkboxes
   multiSelect: true,           // allow multi-row selection
@@ -171,7 +171,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
           recs.forEach((rec) => {
             PBS.PlusUtils.API2Request({
               url:
-                "/api2/extjs/config/disk-backup-job/" +
+                "/api2/extjs/config/disk-backup/" +
                 encodeURIComponent(encodePathValue(rec.getId())),
               method: "DELETE",
               waitMsgTarget: view,
@@ -393,7 +393,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "disk-backup-jobs.csv";
+      a.download = "disk-backups.csv";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -458,8 +458,8 @@ Ext.define("PBS.config.DiskBackupJobView", {
     type: "diff",
     rstore: {
       type: "update",
-      storeid: "pbs-disk-backup-job-status",
-      model: "pbs-disk-backup-job-status",
+      storeid: "pbs-disk-backup-status",
+      model: "pbs-disk-backup-status",
       interval: 5000,
     },
     sorters: "id",
