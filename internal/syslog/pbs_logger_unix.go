@@ -26,12 +26,12 @@ type JobLogger struct {
 	sync.Mutex
 }
 
-var backupLoggers = xsync.NewMapOf[string, *JobLogger]()
+var jobLoggers = xsync.NewMapOf[string, *JobLogger]()
 
 func CreateJobLogger(jobId string) *JobLogger {
-	logger, _ := backupLoggers.Compute(jobId, func(_ *JobLogger, _ bool) (*JobLogger, bool) {
+	logger, _ := jobLoggers.Compute(jobId, func(_ *JobLogger, _ bool) (*JobLogger, bool) {
 		tempDir := os.TempDir()
-		fileName := fmt.Sprintf("backup-%s-stdout", jobId)
+		fileName := fmt.Sprintf("job-%s-stdout", jobId)
 		filePath := filepath.Join(tempDir, fileName)
 
 		clientLogFile, err := os.Create(filePath)
@@ -52,9 +52,9 @@ func CreateJobLogger(jobId string) *JobLogger {
 }
 
 func GetExistingJobLogger(jobId string) *JobLogger {
-	logger, _ := backupLoggers.LoadOrCompute(jobId, func() *JobLogger {
+	logger, _ := jobLoggers.LoadOrCompute(jobId, func() *JobLogger {
 		tempDir := os.TempDir()
-		fileName := fmt.Sprintf("backup-%s-stdout", jobId)
+		fileName := fmt.Sprintf("job-%s-stdout", jobId)
 		filePath := filepath.Join(tempDir, fileName)
 
 		flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
@@ -100,17 +100,7 @@ func (b *JobLogger) Write(in []byte) (n int, err error) {
 		return 0, fmt.Errorf("error scanning input for lines: %w", scanErr)
 	}
 
-	// Only write to the internal buffer if there was actual content processed.
-	// This avoids writing empty strings if `in` was empty or only whitespace
-	// that scanner might skip (though default scanner processes empty lines).
 	if hasContent || (len(in) > 0 && stringBuilder.Len() == 0) {
-		// The second condition (len(in) > 0 && stringBuilder.Len() == 0)
-		// handles cases like `in` being just "\n". Scanner produces one empty line,
-		// which Fprintf formats as "timestamp: \n". So `stringBuilder.Len()` would be > 0.
-		// If `in` is `[]byte{}`, `hasContent` is false, `stringBuilder` is empty. Nothing written.
-		// This logic ensures that if `in` was not empty, we attempt to write *something*
-		// (even if it's just timestamped newlines).
-
 		formattedLogMessage := stringBuilder.String()
 		if len(formattedLogMessage) > 0 { // Ensure we actually have something to write
 			if b.Writer == nil {
@@ -118,7 +108,6 @@ func (b *JobLogger) Write(in []byte) (n int, err error) {
 			}
 			_, writeErr := b.Writer.WriteString(formattedLogMessage)
 			if writeErr != nil {
-				// Don't attempt to flush if WriteString itself failed.
 				return 0, fmt.Errorf(
 					"error writing formatted message to logger's internal buffer: %w",
 					writeErr,
@@ -127,8 +116,6 @@ func (b *JobLogger) Write(in []byte) (n int, err error) {
 
 			flushErr := b.Writer.Flush()
 			if flushErr != nil {
-				// Data made it to buffer but not to disk.
-				// Return 0 because the write operation to the final destination failed.
 				return 0, fmt.Errorf(
 					"error flushing logger buffer to file: %w",
 					flushErr,
@@ -136,9 +123,6 @@ func (b *JobLogger) Write(in []byte) (n int, err error) {
 			}
 		}
 	}
-
-	// If all operations were successful (or if `in` was empty and nothing needed to be written),
-	// we report that we have processed all bytes from the input slice `in`.
 	return bytesConsumedFromInput, nil
 }
 
@@ -171,7 +155,7 @@ func (b *JobLogger) Close() error {
 	}
 
 	// Always try to remove from map and delete file
-	backupLoggers.Delete(b.jobId)
+	jobLoggers.Delete(b.jobId)
 
 	if b.Path != "" {
 		if err := os.RemoveAll(b.Path); err != nil {

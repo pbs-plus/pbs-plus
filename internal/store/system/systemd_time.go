@@ -144,13 +144,13 @@ func DeleteSchedule(ctx context.Context, id string) error {
 	return nil
 }
 
-func SetRetrySchedule(ctx context.Context, backup types.Backup, extraExclusions []string) error {
+func SetBackupRetrySchedule(ctx context.Context, backup types.Backup, extraExclusions []string) error {
 	sanitized, err := sanitizeUnitName(backup.ID)
 	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: %w", err)
+		return fmt.Errorf("SetBackupRetrySchedule: %w", err)
 	}
 
-	currentAttempt := getCurrentRetryAttempt(ctx, sanitized)
+	currentAttempt := getCurrentBackupRetryAttempt(ctx, sanitized)
 	newAttempt := currentAttempt + 1
 
 	if newAttempt > backup.Retry {
@@ -164,12 +164,12 @@ func SetRetrySchedule(ctx context.Context, backup types.Backup, extraExclusions 
 
 	conn, err := getConn()
 	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: failed to connect to dbus: %w", err)
+		return fmt.Errorf("SetBackupRetrySchedule: failed to connect to dbus: %w", err)
 	}
 
 	retryUnitName, err := getRetryUnitName(backup.ID, newAttempt)
 	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: %w", err)
+		return fmt.Errorf("SetBackupRetrySchedule: %w", err)
 	}
 
 	timerName := retryUnitName + ".timer"
@@ -196,12 +196,12 @@ func SetRetrySchedule(ctx context.Context, backup types.Backup, extraExclusions 
 
 	_, err = conn.StartTransientUnitContext(ctx, serviceName, "replace", serviceProps, nil)
 	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: error creating service: %w", err)
+		return fmt.Errorf("SetBackupRetrySchedule: error creating service: %w", err)
 	}
 
 	_, err = conn.StartTransientUnitContext(ctx, timerName, "replace", timerProps, nil)
 	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: error creating timer: %w", err)
+		return fmt.Errorf("SetBackupRetrySchedule: error creating timer: %w", err)
 	}
 
 	fmt.Printf("Scheduled retry %d/%d for backup %s in %s\n",
@@ -209,7 +209,7 @@ func SetRetrySchedule(ctx context.Context, backup types.Backup, extraExclusions 
 	return nil
 }
 
-func getCurrentRetryAttempt(ctx context.Context, sanitized string) int {
+func getCurrentBackupRetryAttempt(ctx context.Context, sanitized string) int {
 	conn, err := getConn()
 	if err != nil {
 		return 0

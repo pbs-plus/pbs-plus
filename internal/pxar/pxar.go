@@ -65,7 +65,7 @@ func (r *PxarReader) GetStats() PxarReaderStats {
 	}
 }
 
-func NewPxarReader(socketPath, pbsStore, namespace, snapshot string) (*PxarReader, error) {
+func NewPxarReader(socketPath, pbsStore, namespace, snapshot string, proxmoxTask *proxmox.RestoreTask) (*PxarReader, error) {
 	dsInfo, err := proxmox.GetDatastoreInfo(pbsStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore: %w", err)
@@ -130,6 +130,7 @@ func NewPxarReader(socketPath, pbsStore, namespace, snapshot string) (*PxarReade
 		enc:  encMode,
 		dec:  decMode,
 		cmd:  cmd,
+		task: proxmoxTask,
 	}, nil
 }
 
@@ -262,6 +263,8 @@ func (c *PxarReader) sendRequest(reqVariant string, reqData any) (Response, erro
 }
 
 func (c *PxarReader) GetRoot() (*EntryInfo, error) {
+	c.task.WriteString("get root of source")
+
 	resp, err := c.sendRequest("GetRoot", nil)
 	if err != nil {
 		return nil, err
@@ -296,6 +299,8 @@ func (c *PxarReader) GetRoot() (*EntryInfo, error) {
 }
 
 func (c *PxarReader) LookupByPath(path string) (*EntryInfo, error) {
+	c.task.WriteString(fmt.Sprintf("looking up path: %s", path))
+
 	reqData := map[string]any{
 		"path": []byte(path),
 	}
@@ -309,6 +314,8 @@ func (c *PxarReader) LookupByPath(path string) (*EntryInfo, error) {
 }
 
 func (c *PxarReader) ReadDir(entryEnd uint64) ([]EntryInfo, error) {
+	c.task.WriteString(fmt.Sprintf("reading directory [entryEnd: %d]", entryEnd))
+
 	reqData := map[string]any{
 		"entry_end": entryEnd,
 	}
@@ -355,6 +362,8 @@ func (c *PxarReader) ReadDir(entryEnd uint64) ([]EntryInfo, error) {
 }
 
 func (c *PxarReader) GetAttr(entryStart, entryEnd uint64) (*EntryInfo, error) {
+	c.task.WriteString(fmt.Sprintf("getting file attributes [entryStart: %d, entryEnd: %d]", entryStart, entryEnd))
+
 	reqData := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
@@ -380,6 +389,8 @@ func (c *PxarReader) GetAttr(entryStart, entryEnd uint64) (*EntryInfo, error) {
 }
 
 func (c *PxarReader) Read(contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
+	c.task.WriteString(fmt.Sprintf("reading source content [start: %d, end: %d, offset: %d, size %d]", contentStart, contentEnd, offset, size))
+
 	reqData := map[string]any{
 		"content_start": contentStart,
 		"content_end":   contentEnd,
@@ -413,6 +424,8 @@ func (c *PxarReader) Read(contentStart, contentEnd, offset uint64, size uint) ([
 }
 
 func (c *PxarReader) ReadLink(entryStart, entryEnd uint64) ([]byte, error) {
+	c.task.WriteString(fmt.Sprintf("reading source link [start: %d, end: %d]", entryStart, entryEnd))
+
 	reqData := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
@@ -442,6 +455,8 @@ func (c *PxarReader) ReadLink(entryStart, entryEnd uint64) ([]byte, error) {
 }
 
 func (c *PxarReader) ListXAttrs(entryStart, entryEnd uint64) (map[string][]byte, error) {
+	c.task.WriteString(fmt.Sprintf("listing xattrs [start: %d, end: %d]", entryStart, entryEnd))
+
 	reqData := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,

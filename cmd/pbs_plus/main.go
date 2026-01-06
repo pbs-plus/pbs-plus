@@ -237,7 +237,7 @@ func main() {
 	tx, err := storeInstance.Database.NewTransaction()
 	if err == nil {
 		for _, queuedBackup := range queuedBackups {
-			task, err := proxmox.GenerateTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
+			task, err := proxmox.GenerateBackupTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
 			if err != nil {
 				continue
 			}
