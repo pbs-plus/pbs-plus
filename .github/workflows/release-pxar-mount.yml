@@ -1,11 +1,11 @@
-name: Release proxmox-backup-pxar-mount
+name: Release pxar-direct-mount
 
 on:
   push:
     tags:
       - "*"
     paths:
-      - extras/proxmox-backup-pxar-mount/**
+      - extras/pxar-direct-mount/**
 
 permissions:
   contents: write
@@ -44,6 +44,6 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean -f ./extras/proxmox-backup-pxar-mount/.goreleaser.yaml
+          args: release --clean -f ./extras/pxar-direct-mount/.goreleaser.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

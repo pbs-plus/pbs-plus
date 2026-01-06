@@ -29,7 +29,7 @@ func CreateMountService(ctx context.Context, serviceName, mountPoint string, arg
 		return err
 	}
 
-	execStart := append([]string{"/usr/bin/proxmox-backup-pxar-mount"}, args...)
+	execStart := append([]string{"/usr/bin/pxar-direct-mount"}, args...)
 
 	props := []dbus.Property{
 		dbus.PropDescription("PBS Plus restore mount for " + mountPoint),
