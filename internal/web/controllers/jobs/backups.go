@@ -126,7 +126,7 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		args := []string{}
 		for _, backupId := range decodedBackupIDs {
-			args = append(args, "-backup", backupId)
+			args = append(args, "-backup-job", backupId)
 		}
 		args = append(args, "-web")
 		if r.Method == http.MethodDelete {
