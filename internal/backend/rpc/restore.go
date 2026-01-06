@@ -12,8 +12,8 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
-	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -95,7 +95,7 @@ func (s *MountRPCService) Restore(args *RestoreArgs, reply *RestoreReply) error 
 	srv := pxar.NewRemoteServer(reader)
 	agentRPC.SetRouter(*srv.Router())
 
-	store.CreatePxarReader(childKey, reader)
+	vfssessions.CreatePxarReader(childKey, reader)
 	// TODO: ensure to disconnect on cleanup
 
 	_, err = agentRPC.CallMessage(ctx, "server_ready", &restoreReq)
