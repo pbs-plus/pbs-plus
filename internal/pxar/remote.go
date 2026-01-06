@@ -4,6 +4,7 @@ package pxar
 
 import (
 	"encoding/json"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/fxamacker/cbor/v2"
@@ -13,6 +14,8 @@ import (
 type RemoteServer struct {
 	reader *PxarReader
 	router *arpc.Router
+	isDone atomic.Bool
+	DoneCh chan struct{}
 }
 
 func NewRemoteServer(reader *PxarReader) *RemoteServer {
@@ -20,6 +23,7 @@ func NewRemoteServer(reader *PxarReader) *RemoteServer {
 	s := &RemoteServer{
 		reader: reader,
 		router: &router,
+		DoneCh: make(chan struct{}, 1),
 	}
 	s.registerHandlers()
 	return s
@@ -37,6 +41,18 @@ func (s *RemoteServer) registerHandlers() {
 	s.router.Handle("pxar.Read", s.handleRead)
 	s.router.Handle("pxar.ReadLink", s.handleReadLink)
 	s.router.Handle("pxar.ListXAttrs", s.handleListXAttrs)
+	s.router.Handle("pxar.Done", s.handleDone)
+}
+
+func (s *RemoteServer) handleDone(req *arpc.Request) (arpc.Response, error) {
+	if !s.isDone.Swap(true) {
+		close(s.DoneCh)
+	}
+
+	return arpc.Response{
+		Status: 200,
+		Data:   nil,
+	}, nil
 }
 
 func (s *RemoteServer) handleGetRoot(req *arpc.Request) (arpc.Response, error) {

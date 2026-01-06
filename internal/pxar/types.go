@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 )
 
 type Request struct {
@@ -22,6 +23,7 @@ type PxarReader struct {
 	enc  cbor.EncMode
 	dec  cbor.DecMode
 	cmd  *exec.Cmd
+	task *proxmox.RestoreTask
 
 	FileCount   int64
 	FolderCount int64

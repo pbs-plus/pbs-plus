@@ -77,10 +77,13 @@ func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) 
 		return nil
 	}
 
-	job := restore.NewRestoreOperation(args.Job, s.Store, args.SkipCheck, args.Web)
+	job, err := restore.NewRestoreOperation(args.Job, s.Store, args.SkipCheck, args.Web)
+	if err != nil {
+		reply.Status = 500
+		reply.Message = err.Error()
+		return nil
+	}
 	s.Manager.Enqueue(job)
-	reply.Status = 200
-
 	reply.Status = 200
 
 	return nil

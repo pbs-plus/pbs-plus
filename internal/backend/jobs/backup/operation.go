@@ -105,7 +105,7 @@ func (b *BackupOperation) Context() context.Context {
 }
 
 func (b *BackupOperation) PreExecute(ctx context.Context) error {
-	queueTask, err := proxmox.GenerateQueuedTask(b.job, b.web)
+	queueTask, err := proxmox.GenerateBackupQueuedTask(b.job, b.web)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
 	} else {
@@ -134,7 +134,7 @@ func (b *BackupOperation) OnError(err error) {
 		return
 	}
 
-	task, terr := proxmox.GenerateTaskErrorFile(
+	task, terr := proxmox.GenerateBackupTaskErrorFile(
 		b.job,
 		err,
 		[]string{
@@ -149,7 +149,7 @@ func (b *BackupOperation) OnError(err error) {
 		b.updateBackupWithTask(task)
 	}
 
-	if rerr := system.SetRetrySchedule(b.ctx, b.job, b.extraExclusions); rerr != nil {
+	if rerr := system.SetBackupRetrySchedule(b.ctx, b.job, b.extraExclusions); rerr != nil {
 		syslog.L.Error(rerr).WithField("jobId", b.job.ID).Write()
 	}
 }
@@ -592,7 +592,7 @@ func (b *BackupOperation) waitForCompletion(ctx context.Context, cmd *exec.Cmd, 
 	if succeeded || cancelled {
 		system.RemoveAllRetrySchedules(ctx, b.job)
 	} else {
-		if err := system.SetRetrySchedule(ctx, b.job, b.extraExclusions); err != nil {
+		if err := system.SetBackupRetrySchedule(ctx, b.job, b.extraExclusions); err != nil {
 			syslog.L.Error(err).WithField("jobId", b.job.ID).Write()
 		}
 	}
@@ -642,7 +642,7 @@ func (b *BackupOperation) runPostScript(ctx context.Context, success bool, warni
 }
 
 func (b *BackupOperation) createOK(err error) {
-	task, terr := proxmox.GenerateTaskOKFile(
+	task, terr := proxmox.GenerateBackupTaskOKFile(
 		b.job,
 		[]string{
 			"Done handling from a job run request",
