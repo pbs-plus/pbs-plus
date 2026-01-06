@@ -60,7 +60,6 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
         {
           name: "value",
           convert: function (v, record) {
-            // Format: <backup-time>|<backup-id>
             return `${record.data["backup-time"]}|${record.data["backup-id"]}`;
           },
         },
@@ -68,72 +67,51 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
           name: "display",
           convert: function (v, record) {
             let time = new Date(record.data["backup-time"] * 1000);
-            let year = time.getFullYear();
-            let month = String(time.getMonth() + 1).padStart(2, "0");
-            let day = String(time.getDate()).padStart(2, "0");
-            let hours = String(time.getHours()).padStart(2, "0");
-            let minutes = String(time.getMinutes()).padStart(2, "0");
-            let seconds = String(time.getSeconds()).padStart(2, "0");
-            let timeStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-            // Format: <YYYY-MM-DD HH:MM:SS> | <backup-id>
+            let timeStr = Ext.Date.format(time, "Y-m-d H:i:s");
             return `${timeStr} | ${record.data["backup-id"]}`;
           },
         },
       ],
-      autoLoad: false,
+      autoLoad: !!me.getDatastore(),
       proxy: {
         type: "proxmox",
         timeout: 30 * 1000,
-        // Use a default URL in case no datastore is provided.
         url: me.getDatastore()
           ? `/api2/json/admin/datastore/${me.getDatastore()}/snapshots`
           : null,
         extraParams: {
           "backup-type": "host",
+          ns: me.getNamespace() || null,
         },
       },
     });
 
-    // Set namespace if provided
-    if (me.getNamespace()) {
-      me.store.getProxy().setExtraParam("ns", me.getNamespace());
-    }
-
-    // Load if datastore is set
-    if (me.getDatastore()) {
-      me.store.load();
-    }
-
-    // disable or enable based on the datastore config
     me.setDisabled(!me.getDatastore());
 
     me.callParent();
   },
 
   updateDatastore: function (newDatastore, oldDatastore) {
-    // When the datastore changes through binding, update the URL and reload
+    let me = this;
     if (newDatastore) {
-      this.setDisabled(false);
-      this.store
-        .getProxy()
-        .setUrl(`/api2/json/admin/datastore/${newDatastore}/snapshots`);
-      this.store.load();
-      this.validate();
+      me.setDisabled(false);
+      let proxy = me.store.getProxy();
+      proxy.setUrl(`/api2/json/admin/datastore/${newDatastore}/snapshots`);
+      me.store.load();
+      me.validate();
     } else {
-      this.setDisabled(true);
+      me.setDisabled(true);
+      me.store.removeAll();
     }
   },
 
   updateNamespace: function (newNamespace, oldNamespace) {
-    // When the namespace changes through binding, update the params and reload
-    if (newNamespace) {
-      this.store.getProxy().setExtraParam("ns", newNamespace);
-    } else {
-      this.store.getProxy().setExtraParam("ns", null);
-    }
-    if (this.getDatastore()) {
-      this.store.load();
-      this.validate();
+    let me = this;
+    if (me.getDatastore()) {
+      let proxy = me.store.getProxy();
+      proxy.setExtraParam("ns", newNamespace || null);
+      me.store.load();
+      me.validate();
     }
   },
 });
