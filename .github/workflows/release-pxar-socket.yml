@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - "*"
-    paths:
-      - extras/pxar-socket-api/**
 
 permissions:
   contents: write

@@ -16,7 +16,7 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
   cbindData: function (initialConfig) {
     let me = this;
 
-    let baseurl = "/api2/extjs/config/disk-restore-job";
+    let baseurl = "/api2/extjs/config/disk-restore";
     let id = initialConfig.id;
 
     me.isCreate = !id;
