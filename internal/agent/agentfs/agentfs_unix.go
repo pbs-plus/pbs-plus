@@ -226,7 +226,9 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 	}
 	var st unix.Stat_t
 	if err := unix.Fstatat(unix.AT_FDCWD, fullPath, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		syslog.L.Error(err).WithMessage("handleAttr: fstatat failed").WithField("path", fullPath).Write()
+		if !strings.HasSuffix(fullPath, ".pxarexclude") {
+			syslog.L.Error(err).WithMessage("handleAttr: fstatat failed").WithField("path", fullPath).Write()
+		}
 		return arpc.Response{}, err
 	}
 	blockSize := s.statFs.Bsize
@@ -268,7 +270,9 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 	}
 	var st unix.Stat_t
 	if err := unix.Fstatat(unix.AT_FDCWD, fullPath, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		syslog.L.Error(err).WithMessage("handleXattr: fstatat failed").WithField("path", fullPath).Write()
+		if !strings.HasSuffix(fullPath, ".pxarexclude") {
+			syslog.L.Error(err).WithMessage("handleXattr: fstatat failed").WithField("path", fullPath).Write()
+		}
 		return arpc.Response{}, err
 	}
 	var creationTime int64
@@ -451,7 +455,11 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 		syslog.L.Error(err).WithMessage("handleLseek: decode failed").Write()
 		return arpc.Response{}, err
 	}
-	if payload.Whence == SeekHole || payload.Whence == SeekData {
+	if payload.Whence != io.SeekStart &&
+		payload.Whence != io.SeekCurrent &&
+		payload.Whence != io.SeekEnd &&
+		payload.Whence != SeekData &&
+		payload.Whence != SeekHole {
 		syslog.L.Warn().WithMessage("handleLseek: invalid whence").WithField("whence", payload.Whence).Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
