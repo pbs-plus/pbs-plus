@@ -13,7 +13,7 @@ import (
 type VFSBase struct {
 	Ctx      context.Context
 	Cancel   context.CancelFunc
-	Job      types.Job
+	Backup     types.Backup
 	Fuse     *fuse.Server
 	BasePath string
 

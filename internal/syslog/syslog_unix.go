@@ -94,7 +94,7 @@ func (e *LogEntry) serverWrite() {
 	}
 
 	if e.JobID != "" {
-		backupLogger := GetExistingBackupLogger(e.JobID)
+		backupLogger := GetExistingJobLogger(e.JobID)
 		if backupLogger != nil {
 			var sb strings.Builder
 

@@ -6,20 +6,20 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 )
 
-type JobsResponse struct {
-	Data   []types.Job `json:"data"`
-	Digest string      `json:"digest"`
+type BackupsResponse struct {
+	Data   []types.Backup `json:"data"`
+	Digest string         `json:"digest"`
 }
 
-type JobConfigResponse struct {
+type BackupConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    types.Job         `json:"data"`
+	Data    types.Backup      `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }
 
-type JobRunResponse struct {
+type BackupRunResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
 	Data    string            `json:"data"`

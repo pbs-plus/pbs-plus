@@ -47,10 +47,10 @@ func ListTasksJSON(ctx context.Context) ([]Task, error) {
 	return tasks, nil
 }
 
-func GetJobTask(
+func GetBackupTask(
 	ctx context.Context,
 	readyChan chan struct{},
-	job types.Job,
+	job types.Backup,
 	target types.Target,
 ) (Task, error) {
 	hostname, err := os.Hostname()

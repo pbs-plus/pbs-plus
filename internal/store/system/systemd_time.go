@@ -19,29 +19,29 @@ import (
 
 func sanitizeUnitName(id string) (string, error) {
 	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
-		return "", fmt.Errorf("invalid job ID: %s", id)
+		return "", fmt.Errorf("invalid backup ID: %s", id)
 	}
 	return strings.ReplaceAll(id, " ", "-"), nil
 }
 
-func getUnitName(jobID string) (string, error) {
-	sanitized, err := sanitizeUnitName(jobID)
+func getUnitName(backupID string) (string, error) {
+	sanitized, err := sanitizeUnitName(backupID)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("pbs-plus-job-%s", sanitized), nil
+	return fmt.Sprintf("pbs-plus-backup-%s", sanitized), nil
 }
 
-func getRetryUnitName(jobID string, attempt int) (string, error) {
-	sanitized, err := sanitizeUnitName(jobID)
+func getRetryUnitName(backupID string, attempt int) (string, error) {
+	sanitized, err := sanitizeUnitName(backupID)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("pbs-plus-job-%s-retry-%d", sanitized, attempt), nil
+	return fmt.Sprintf("pbs-plus-backup-%s-retry-%d", sanitized, attempt), nil
 }
 
-func stopAllJobTimers(sanitized string) {
-	primaryTimer := fmt.Sprintf("pbs-plus-job-%s.timer", sanitized)
+func stopAllBackupTimers(sanitized string) {
+	primaryTimer := fmt.Sprintf("pbs-plus-backup-%s.timer", sanitized)
 
 	checkCmd := exec.Command("systemctl", "is-active", primaryTimer)
 	checkCmd.Env = os.Environ()
@@ -55,7 +55,7 @@ func stopAllJobTimers(sanitized string) {
 }
 
 func stopAllRetries(sanitized string) {
-	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
+	pattern := fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized)
 	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend", "--state=active")
 	listCmd.Env = os.Environ()
 	output, err := listCmd.Output()
@@ -81,26 +81,26 @@ func stopAllRetries(sanitized string) {
 	_ = reloadCmd.Run()
 }
 
-func SetSchedule(job types.Job) error {
-	unitName, err := getUnitName(job.ID)
+func SetSchedule(backup types.Backup) error {
+	unitName, err := getUnitName(backup.ID)
 	if err != nil {
 		return fmt.Errorf("SetSchedule: %w", err)
 	}
 
-	sanitized, _ := sanitizeUnitName(job.ID)
+	sanitized, _ := sanitizeUnitName(backup.ID)
 
-	if job.Schedule == "" {
-		stopAllJobTimers(sanitized)
+	if backup.Schedule == "" {
+		stopAllBackupTimers(sanitized)
 		return nil
 	}
 
 	args := []string{
 		"--unit=" + unitName,
-		"--on-calendar=" + job.Schedule,
+		"--on-calendar=" + backup.Schedule,
 		"--timer-property=Persistent=false",
-		"--description=" + job.ID + " Backup Job",
+		"--description=" + backup.ID + " Backup Backup",
 		"/usr/bin/pbs-plus",
-		"-job=" + job.ID,
+		"-backup=" + backup.ID,
 	}
 
 	cmd := exec.Command("systemd-run", args...)
@@ -110,10 +110,10 @@ func SetSchedule(job types.Job) error {
 	if err != nil {
 		if strings.Contains(string(output), "already loaded") ||
 			strings.Contains(string(output), "has a fragment file") {
-			stopAllJobTimers(sanitized)
+			stopAllBackupTimers(sanitized)
 
-			timerName := fmt.Sprintf("pbs-plus-job-%s.timer", sanitized)
-			serviceName := fmt.Sprintf("pbs-plus-job-%s.service", sanitized)
+			timerName := fmt.Sprintf("pbs-plus-backup-%s.timer", sanitized)
+			serviceName := fmt.Sprintf("pbs-plus-backup-%s.service", sanitized)
 
 			stopCmd := exec.Command("systemctl", "stop", timerName, serviceName)
 			stopCmd.Env = os.Environ()
@@ -154,21 +154,21 @@ func DeleteSchedule(id string) error {
 		return fmt.Errorf("DeleteSchedule: %w", err)
 	}
 
-	stopAllJobTimers(sanitized)
+	stopAllBackupTimers(sanitized)
 	stopAllRetries(sanitized)
 
 	timerBasePath := "/etc/systemd/system"
 
-	timerFile := filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-job-%s.timer", sanitized))
-	serviceFile := filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-job-%s.service", sanitized))
+	timerFile := filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-backup-%s.timer", sanitized))
+	serviceFile := filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-backup-%s.service", sanitized))
 
 	_ = os.Remove(timerFile)
 	_ = os.Remove(serviceFile)
 
 	retryTimerPattern := filepath.Join(timerBasePath,
-		fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized))
+		fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized))
 	retryServicePattern := filepath.Join(timerBasePath,
-		fmt.Sprintf("pbs-plus-job-%s-retry-*.service", sanitized))
+		fmt.Sprintf("pbs-plus-backup-%s-retry-*.service", sanitized))
 
 	retryTimers, _ := filepath.Glob(retryTimerPattern)
 	retryServices, _ := filepath.Glob(retryServicePattern)
@@ -188,11 +188,11 @@ func DeleteSchedule(id string) error {
 	return nil
 }
 
-func SetRetrySchedule(job types.Job, extraExclusions []string) error {
+func SetRetrySchedule(backup types.Backup, extraExclusions []string) error {
 	return nil
 
 	/*
-		sanitized, err := sanitizeUnitName(job.ID)
+		sanitized, err := sanitizeUnitName(backup.ID)
 		if err != nil {
 			return fmt.Errorf("SetRetrySchedule: %w", err)
 		}
@@ -200,14 +200,14 @@ func SetRetrySchedule(job types.Job, extraExclusions []string) error {
 		currentAttempt := getCurrentRetryAttempt(sanitized)
 		newAttempt := currentAttempt + 1
 
-		if newAttempt > job.Retry {
-			fmt.Printf("Job %s reached max retry count (%d). No further retry scheduled.\n",
-				job.ID, job.Retry)
-			RemoveAllRetrySchedules(job)
+		if newAttempt > backup.Retry {
+			fmt.Printf("Backup %s reached max retry count (%d). No further retry scheduled.\n",
+				backup.ID, backup.Retry)
+			RemoveAllRetrySchedules(backup)
 			return nil
 		}
 
-		pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
+		pattern := fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized)
 		listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend")
 		listCmd.Env = os.Environ()
 		output, _ := listCmd.Output()
@@ -224,20 +224,20 @@ func SetRetrySchedule(job types.Job, extraExclusions []string) error {
 			}
 		}
 
-		retryUnitName, err := getRetryUnitName(job.ID, newAttempt)
+		retryUnitName, err := getRetryUnitName(backup.ID, newAttempt)
 		if err != nil {
 			return fmt.Errorf("SetRetrySchedule: %w", err)
 		}
 
-		delay := fmt.Sprintf("%dm", job.RetryInterval)
+		delay := fmt.Sprintf("%dm", backup.RetryInterval)
 
 		args := []string{
 			"--unit=" + retryUnitName,
 			"--on-active=" + delay,
 			"--timer-property=Persistent=false",
-			"--description=" + fmt.Sprintf("%s Backup Job Retry (Attempt %d)", job.ID, newAttempt),
+			"--description=" + fmt.Sprintf("%s Backup Backup Retry (Attempt %d)", backup.ID, newAttempt),
 			"/usr/bin/pbs-plus",
-			"-job=" + job.ID,
+			"-backup=" + backup.ID,
 			"-retry=" + strconv.Itoa(newAttempt),
 		}
 
@@ -255,8 +255,8 @@ func SetRetrySchedule(job types.Job, extraExclusions []string) error {
 			if strings.Contains(string(output), "already loaded") ||
 				strings.Contains(string(output), "has a fragment file") {
 				// Clean up the specific retry unit
-				timerName := fmt.Sprintf("pbs-plus-job-%s-retry-%d.timer", sanitized, newAttempt)
-				serviceName := fmt.Sprintf("pbs-plus-job-%s-retry-%d.service", sanitized, newAttempt)
+				timerName := fmt.Sprintf("pbs-plus-backup-%s-retry-%d.timer", sanitized, newAttempt)
+				serviceName := fmt.Sprintf("pbs-plus-backup-%s-retry-%d.service", sanitized, newAttempt)
 
 				stopCmd := exec.Command("systemctl", "stop", timerName, serviceName)
 				stopCmd.Env = os.Environ()
@@ -282,8 +282,8 @@ func SetRetrySchedule(job types.Job, extraExclusions []string) error {
 						string(retryOutput), retryErr)
 				}
 
-				fmt.Printf("Scheduled retry %d/%d for job %s in %d minutes\n",
-					newAttempt, job.Retry, job.ID, job.RetryInterval)
+				fmt.Printf("Scheduled retry %d/%d for backup %s in %d minutes\n",
+					newAttempt, backup.Retry, backup.ID, backup.RetryInterval)
 
 				return nil
 			}
@@ -292,15 +292,15 @@ func SetRetrySchedule(job types.Job, extraExclusions []string) error {
 				string(output), err)
 		}
 
-		fmt.Printf("Scheduled retry %d/%d for job %s in %d minutes\n",
-			newAttempt, job.Retry, job.ID, job.RetryInterval)
+		fmt.Printf("Scheduled retry %d/%d for backup %s in %d minutes\n",
+			newAttempt, backup.Retry, backup.ID, backup.RetryInterval)
 
 		return nil
 	*/
 }
 
 func getCurrentRetryAttempt(sanitized string) int {
-	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
+	pattern := fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized)
 	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend", "--no-pager")
 	listCmd.Env = os.Environ()
 	output, err := listCmd.Output()
@@ -316,7 +316,7 @@ func getCurrentRetryAttempt(sanitized string) int {
 		if len(fields) > 0 {
 			unitName := fields[0]
 
-			// Extract attempt number from unit name: pbs-plus-job-{id}-retry-{N}.timer
+			// Extract attempt number from unit name: pbs-plus-backup-{id}-retry-{N}.timer
 			parts := strings.Split(unitName, "-retry-")
 			if len(parts) == 2 {
 				attemptStr := strings.TrimSuffix(parts[1], ".timer")
@@ -331,7 +331,7 @@ func getCurrentRetryAttempt(sanitized string) int {
 
 	// Also check /run/systemd/transient for any leftover unit files
 	transientPath := "/run/systemd/transient"
-	retryPattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
+	retryPattern := fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized)
 
 	matches, _ := filepath.Glob(filepath.Join(transientPath, retryPattern))
 	for _, match := range matches {
@@ -350,13 +350,13 @@ func getCurrentRetryAttempt(sanitized string) int {
 	return maxAttempt
 }
 
-func RemoveAllRetrySchedules(job types.Job) {
-	sanitized, err := sanitizeUnitName(job.ID)
+func RemoveAllRetrySchedules(backup types.Backup) {
+	sanitized, err := sanitizeUnitName(backup.ID)
 	if err != nil {
 		return
 	}
 
-	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
+	pattern := fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized)
 	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend")
 	listCmd.Env = os.Environ()
 	output, _ := listCmd.Output()
@@ -379,8 +379,8 @@ func RemoveAllRetrySchedules(job types.Job) {
 	}
 
 	transientPath := "/run/systemd/transient"
-	retryTimerPattern := filepath.Join(transientPath, fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized))
-	retryServicePattern := filepath.Join(transientPath, fmt.Sprintf("pbs-plus-job-%s-retry-*.service", sanitized))
+	retryTimerPattern := filepath.Join(transientPath, fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized))
+	retryServicePattern := filepath.Join(transientPath, fmt.Sprintf("pbs-plus-backup-%s-retry-*.service", sanitized))
 
 	retryTimers, _ := filepath.Glob(retryTimerPattern)
 	retryServices, _ := filepath.Glob(retryServicePattern)
@@ -402,7 +402,7 @@ var lastSchedMux sync.Mutex
 var lastSchedUpdate time.Time
 var lastSchedString []byte
 
-func GetNextSchedule(job types.Job) (*time.Time, error) {
+func GetNextSchedule(backup types.Backup) (*time.Time, error) {
 	var output []byte
 
 	lastSchedMux.Lock()
@@ -427,13 +427,13 @@ func GetNextSchedule(job types.Job) (*time.Time, error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	layout := "Mon 2006-01-02 15:04:05 MST"
 
-	sanitized, err := sanitizeUnitName(job.ID)
+	sanitized, err := sanitizeUnitName(backup.ID)
 	if err != nil {
 		return nil, fmt.Errorf("GetNextSchedule: %w", err)
 	}
 
-	primaryTimer := fmt.Sprintf("pbs-plus-job-%s.timer", sanitized)
-	retryPrefix := fmt.Sprintf("pbs-plus-job-%s-retry", sanitized)
+	primaryTimer := fmt.Sprintf("pbs-plus-backup-%s.timer", sanitized)
+	retryPrefix := fmt.Sprintf("pbs-plus-backup-%s-retry", sanitized)
 
 	var nextTimes []time.Time
 
@@ -463,8 +463,8 @@ func GetNextSchedule(job types.Job) (*time.Time, error) {
 		return nil, fmt.Errorf("GetNextSchedule: error reading command output: %w", err)
 	}
 
-	if err := migrateLegacyUnit(job, sanitized); err != nil {
-		fmt.Printf("Warning: failed to migrate legacy unit for job %s: %v\n", job.ID, err)
+	if err := migrateLegacyUnit(backup, sanitized); err != nil {
+		fmt.Printf("Warning: failed to migrate legacy unit for backup %s: %v\n", backup.ID, err)
 	}
 
 	if len(nextTimes) == 0 {
@@ -481,11 +481,11 @@ func GetNextSchedule(job types.Job) (*time.Time, error) {
 	return &earliest, nil
 }
 
-func migrateLegacyUnit(job types.Job, sanitized string) error {
+func migrateLegacyUnit(backup types.Backup, sanitized string) error {
 	timerBasePath := constants.TimerBasePath
 
-	timerFile := filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-job-%s.timer", sanitized))
-	serviceFile := filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-job-%s.service", sanitized))
+	timerFile := filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-backup-%s.timer", sanitized))
+	serviceFile := filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-backup-%s.service", sanitized))
 
 	timerExists := false
 	serviceExists := false
@@ -501,12 +501,12 @@ func migrateLegacyUnit(job types.Job, sanitized string) error {
 		return nil
 	}
 
-	fmt.Printf("Migrating legacy unit files for job %s to transient units...\n", job.ID)
+	fmt.Printf("Migrating legacy unit files for backup %s to transient units...\n", backup.ID)
 
-	needsRecreation := job.Schedule != ""
+	needsRecreation := backup.Schedule != ""
 
 	if timerExists {
-		unitName := fmt.Sprintf("pbs-plus-job-%s.timer", sanitized)
+		unitName := fmt.Sprintf("pbs-plus-backup-%s.timer", sanitized)
 
 		stopCmd := exec.Command("systemctl", "disable", "--now", unitName)
 		stopCmd.Env = os.Environ()
@@ -526,9 +526,9 @@ func migrateLegacyUnit(job types.Job, sanitized string) error {
 	}
 
 	retryTimerPattern := filepath.Join(timerBasePath,
-		fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized))
+		fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized))
 	retryServicePattern := filepath.Join(timerBasePath,
-		fmt.Sprintf("pbs-plus-job-%s-retry-*.service", sanitized))
+		fmt.Sprintf("pbs-plus-backup-%s-retry-*.service", sanitized))
 
 	retryTimers, _ := filepath.Glob(retryTimerPattern)
 	retryServices, _ := filepath.Glob(retryServicePattern)
@@ -554,13 +554,13 @@ func migrateLegacyUnit(job types.Job, sanitized string) error {
 	}
 
 	if needsRecreation {
-		fmt.Printf("Recreating job %s as transient unit with schedule: %s\n",
-			job.ID, job.Schedule)
-		if err := SetSchedule(job); err != nil {
+		fmt.Printf("Recreating backup %s as transient unit with schedule: %s\n",
+			backup.ID, backup.Schedule)
+		if err := SetSchedule(backup); err != nil {
 			return fmt.Errorf("failed to recreate schedule as transient unit: %w", err)
 		}
 	}
 
-	fmt.Printf("Successfully migrated job %s from legacy to transient units\n", job.ID)
+	fmt.Printf("Successfully migrated backup %s from legacy to transient units\n", backup.ID)
 	return nil
 }

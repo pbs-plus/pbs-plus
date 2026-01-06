@@ -250,7 +250,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, JobRunResponse{
+		writeJSON(w, BackupRunResponse{
 			Success: true,
 			Status:  http.StatusOK,
 			Message: "mounted",
@@ -313,7 +313,7 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		removeEmptyDirsToBase(filepath.Dir(mountPoint), basePath)
 
-		writeJSON(w, JobRunResponse{
+		writeJSON(w, BackupRunResponse{
 			Success: true,
 			Status:  http.StatusOK,
 			Message: "unmounted",
@@ -389,7 +389,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		_ = os.RemoveAll(base)
 
-		writeJSON(w, JobRunResponse{
+		writeJSON(w, BackupRunResponse{
 			Success: true,
 			Status:  http.StatusOK,
 			Message: "unmounted all within datastore",

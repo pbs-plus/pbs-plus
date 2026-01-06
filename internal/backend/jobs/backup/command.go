@@ -34,24 +34,24 @@ func getBackupId(isAgent bool, targetName string) (string, error) {
 	return hostname, nil
 }
 
-func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, backup types.Backup, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
 
-	backupId, err := getBackupId(isAgent, job.Target)
+	backupId, err := getBackupId(isAgent, backup.Target)
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to get backup ID: %w", err)
 	}
 	backupId = proxmox.NormalizeHostname(backupId)
 
-	jobStore := fmt.Sprintf("%s@localhost:%s", proxmox.AUTH_ID, job.Store)
-	if jobStore == "@localhost:" {
-		return nil, fmt.Errorf("RunBackup: invalid job store configuration")
+	backupStore := fmt.Sprintf("%s@localhost:%s", proxmox.AUTH_ID, backup.Store)
+	if backupStore == "@localhost:" {
+		return nil, fmt.Errorf("RunBackup: invalid backup store configuration")
 	}
 
 	detectionMode := "--change-detection-mode=metadata"
-	switch job.Mode {
+	switch backup.Mode {
 	case "legacy":
 		detectionMode = "--change-detection-mode=legacy"
 	case "data":
@@ -68,10 +68,10 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 	cmdArgs = append(cmdArgs, []string{
 		"/usr/bin/proxmox-backup-client",
 		"backup",
-		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(job.Target), srcPath),
-		"--repository", jobStore,
+		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(backup.Target), srcPath),
+		"--repository", backupStore,
 		detectionMode,
-		"--entries-max", fmt.Sprintf("%d", job.MaxDirEntries+1024),
+		"--entries-max", fmt.Sprintf("%d", backup.MaxDirEntries+1024),
 		"--backup-id", backupId,
 		"--crypt-mode=none",
 	}...)
@@ -87,7 +87,7 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 		addExclusion(exclusion)
 	}
 
-	for _, exclusion := range job.Exclusions {
+	for _, exclusion := range backup.Exclusions {
 		addExclusion(exclusion.Path)
 	}
 
@@ -97,9 +97,9 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 		}
 	}
 
-	if job.Namespace != "" {
-		_ = CreateNamespace(job.Namespace, job, storeInstance)
-		cmdArgs = append(cmdArgs, "--ns", job.Namespace)
+	if backup.Namespace != "" {
+		_ = CreateNamespace(backup.Namespace, backup, storeInstance)
+		cmdArgs = append(cmdArgs, "--ns", backup.Namespace)
 	}
 
 	env := append(os.Environ(), fmt.Sprintf("PBS_PASSWORD=%s", proxmox.GetToken()))
@@ -110,8 +110,8 @@ func prepareBackupCommand(ctx context.Context, job types.Job, storeInstance *sto
 	cmd := exec.CommandContext(ctx, "/usr/bin/prlimit", cmdArgs...)
 	cmd.Env = env
 
-	if err := CleanUnfinishedSnapshot(job, backupId); err != nil {
-		syslog.L.Error(err).WithJob(job.ID).WithField("backupId", backupId).Write()
+	if err := CleanUnfinishedSnapshot(backup, backupId); err != nil {
+		syslog.L.Error(err).WithJob(backup.ID).WithField("backupId", backupId).Write()
 	}
 
 	return cmd, nil

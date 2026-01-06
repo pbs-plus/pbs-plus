@@ -12,13 +12,14 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/restore"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type BackupQueueArgs struct {
-	Job             types.Job
+	Job             types.Backup
 	SkipCheck       bool
 	Web             bool
 	Stop            bool
@@ -65,9 +66,20 @@ func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) er
 
 func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error {
 	if args.Stop {
+		err := s.Manager.StopJob(args.Job.ID)
+		if err != nil {
+			reply.Status = 500
+			reply.Message = err.Error()
+			return nil
+		}
+
+		reply.Status = 200
+		return nil
 	}
 
-	// TODO: restore queue operation
+	job := restore.NewRestoreOperation(args.Job, s.Store, args.SkipCheck, args.Web)
+	s.Manager.Enqueue(job)
+	reply.Status = 200
 
 	reply.Status = 200
 

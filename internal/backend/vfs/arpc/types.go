@@ -36,5 +36,5 @@ type ARPCFile struct {
 	offset   int64
 	handleID types.FileHandleId
 	isClosed atomic.Bool
-	jobId    string
+	backupId string
 }
