@@ -145,7 +145,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 
 	go func() {
 		_ = system.PurgeAllLegacyUnits(ctx)
-		jobs, err := db.GetAllJobs()
+		jobs, err := db.GetAllBackups()
 		if err == nil {
 			system.SetBatchSchedules(ctx, jobs)
 		}
