@@ -32,6 +32,7 @@ const (
 	RestoreMountBasePath = "/mnt/pbs-plus-restores"
 	LogsBasePath         = "/var/log/proxmox-backup"
 	TaskLogsBasePath     = LogsBasePath + "/tasks"
+	ActiveLogsPath       = TaskLogsBasePath + "/active"
 	BackupLogsBasePath   = "/var/log/pbs-plus"
 	RestoreLogsBasePath  = "/var/log/pbs-plus/restores"
 	ScriptsBasePath      = "/var/lib/pbs-plus/scripts"

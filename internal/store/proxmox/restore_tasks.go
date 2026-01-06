@@ -3,6 +3,7 @@
 package proxmox
 
 import (
+	"bufio"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -65,6 +67,16 @@ func GetRestoreTask(
 		return nil, err
 	}
 
+	active, err := os.OpenFile(constants.ActiveLogsPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	defer active.Close()
+
+	if _, err := active.WriteString(upid + "\n"); err != nil {
+		return nil, err
+	}
+
 	return &RestoreTask{
 		Task:    task,
 		file:    file,
@@ -95,7 +107,76 @@ func (t *RestoreTask) close() {
 		t.file.Close()
 	}
 
+	t.removeActiveTask()
+
 	t.closed.Store(true)
+}
+
+func (t *RestoreTask) removeActiveTask() error {
+	filePath := constants.ActiveLogsPath
+	target := t.UPID
+
+	lockPath := filepath.Join(filepath.Dir(filePath), "."+filepath.Base(filePath)+".lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return fmt.Errorf("could not create/open lock file: %w", err)
+	}
+	defer lockFile.Close()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("could not acquire lock: %w", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+
+	tempFile, err := os.CreateTemp(filepath.Dir(filePath), "active_update_*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+
+	success := false
+	defer func() {
+		if !success {
+			tempFile.Close()
+			os.Remove(tempPath)
+		}
+	}()
+
+	scanner := bufio.NewScanner(f)
+	writer := bufio.NewWriter(tempFile)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.Contains(line, target) {
+			if _, err := writer.WriteString(line + "\n"); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+
+	if err := tempFile.Sync(); err != nil {
+		return err
+	}
+	tempFile.Close()
+
+	if err := os.Rename(tempPath, filePath); err != nil {
+		return err
+	}
+
+	success = true
+	return nil
 }
 
 func (t *RestoreTask) CloseOK() {
