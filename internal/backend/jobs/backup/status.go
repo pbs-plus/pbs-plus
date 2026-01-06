@@ -4,6 +4,7 @@ package backup
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
@@ -11,7 +12,15 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
+var jobMutexes sync.Map
+
 func updateJobStatus(succeeded bool, warningsNum int, job types.Job, task proxmox.Task, storeInstance *store.Store) error {
+	value, _ := jobMutexes.LoadOrStore(job.ID, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+
+	mu.Lock()
+	defer mu.Unlock()
+
 	taskFound, err := proxmox.GetTaskByUPID(task.UPID)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("unable to get task by upid").Write()

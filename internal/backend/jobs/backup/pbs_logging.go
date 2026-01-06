@@ -117,7 +117,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 		if strings.Contains(line, "connection failed") || strings.Contains(line, "connection error: not connected") {
 			disconnected = true
 		}
-		if strings.Contains(line, "End Time:") {
+		if strings.Contains(line, "End Time:") || strings.Contains(line, "TASK OK") || strings.Contains(line, "backup finished successfully") {
 			incomplete = false
 		}
 

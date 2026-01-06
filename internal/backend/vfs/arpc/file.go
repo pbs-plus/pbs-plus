@@ -20,7 +20,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 	if f.isClosed.Load() {
 		syslog.L.Debug().
 			WithMessage("Close called on already closed file").
-			WithJob(f.jobId).
+			WithField("job", f.jobId).
 			WithField("path", f.name).
 			Write()
 		return nil
