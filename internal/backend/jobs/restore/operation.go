@@ -5,12 +5,20 @@ package restore
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
+	agenttypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -49,12 +57,10 @@ type RestoreOperation struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	Task      proxmox.Task
+	task      *proxmox.RestoreTask
 	queueTask *proxmox.QueuedTask
 	waitGroup *sync.WaitGroup
 	err       error
-
-	logger *syslog.JobLogger
 
 	job           types.Restore
 	storeInstance *store.Store
@@ -69,14 +75,19 @@ func NewRestoreOperation(
 	storeInstance *store.Store,
 	skipCheck bool,
 	web bool,
-) *RestoreOperation {
+) (*RestoreOperation, error) {
+	task, err := proxmox.GetRestoreTask(job)
+	if err != nil {
+		return nil, err
+	}
+
 	return &RestoreOperation{
 		job:           job,
 		storeInstance: storeInstance,
 		skipCheck:     skipCheck,
 		web:           web,
-		logger:        syslog.CreateJobLogger(job.ID),
-	}
+		task:          task,
+	}, nil
 }
 
 func (b *RestoreOperation) GetID() string {
@@ -93,13 +104,102 @@ func (b *RestoreOperation) Context() context.Context {
 }
 
 func (b *RestoreOperation) PreExecute(ctx context.Context) error {
-	// TODO: queue log
+	queueTask, err := proxmox.GenerateRestoreQueuedTask(b.job, b.web)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
+	} else {
+		if err := updateRestoreStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
+			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
+		}
+	}
+	b.queueTask = &queueTask
 
 	return nil
 }
 
 func (b *RestoreOperation) Execute(ctx context.Context) error {
-	return b.executeRestore(ctx)
+	b.updateRestoreWithTask(b.task.Task)
+
+	syslog.L.Info().
+		WithMessage("Received restore request").
+		WithFields(map[string]any{
+			"restoreId": b.job.ID,
+			"target":    b.job.DestTarget,
+		}).Write()
+
+	preCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", b.job.DestTarget))
+
+	arpcSess, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.DestTarget)
+	if !exists {
+		return errors.New("destination target is unreachable")
+	}
+
+	restoreReq := agenttypes.RestoreReq{
+		RestoreId: b.job.ID,
+		SrcPath:   b.job.SrcPath,
+		DestPath:  b.job.DestPath,
+	}
+
+	b.task.WriteString(fmt.Sprintf("calling restore to %s", b.job.DestTarget))
+
+	_, err := arpcSess.CallMessage(preCtx, "restore", &restoreReq)
+	if err != nil {
+		return err
+	}
+
+	// The child session key is "targetHostname|restoreId|restore".
+	childKey := b.job.DestTarget + "|" + b.job.ID + "|restore"
+
+	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", childKey))
+
+	agentRPC, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(childKey)
+	if !exists {
+		return errors.New("child destination target is unreachable")
+	}
+
+	socketPath := filepath.Join(constants.RestoreSocketPath, strings.ReplaceAll(childKey, "|", "-")+".sock")
+
+	b.task.WriteString(fmt.Sprintf("running pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
+	reader, err := pxar.NewPxarReader(socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task)
+	if err != nil {
+		return err
+	}
+
+	b.task.WriteString(fmt.Sprintf("running remote pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
+	srv := pxar.NewRemoteServer(reader)
+	agentRPC.SetRouter(*srv.Router())
+
+	vfssessions.CreatePxarReader(childKey, reader)
+
+	syslog.L.Info().
+		WithMessage("Restore request sent").
+		WithFields(map[string]any{
+			"restoreId": b.job.ID,
+		}).Write()
+
+	b.task.WriteString(fmt.Sprintf("sending ready signal to stream pipe of %s", childKey))
+	_, err = agentRPC.CallMessage(preCtx, "server_ready", &restoreReq)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		b.task.WriteString(fmt.Sprintf("disconnecting stream pipe session of %s", childKey))
+		vfssessions.DisconnectSession(childKey)
+		agentRPC.Close()
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-srv.DoneCh:
+		b.task.WriteString("received done signal from agent")
+	}
+
+	return nil
 }
 
 func (b *RestoreOperation) OnError(err error) {
@@ -114,10 +214,11 @@ func (b *RestoreOperation) OnError(err error) {
 		return
 	}
 
-	// TODO: error log
+	b.task.CloseErr(err)
 }
 
 func (b *RestoreOperation) OnSuccess() {
+	b.task.CloseOK()
 }
 
 func (b *RestoreOperation) Cleanup() {
@@ -133,10 +234,54 @@ func (b *RestoreOperation) Wait() error {
 	return b.err
 }
 
-func (b *RestoreOperation) executeRestore(ctx context.Context) error {
-	return nil
+func (b *RestoreOperation) createOK(err error) {
+	task, terr := proxmox.GenerateRestoreTaskOKFile(
+		b.job,
+		[]string{
+			"Done handling from a job run request",
+			"Restore ID: " + b.job.ID,
+			"Snapshot: " + b.job.Snapshot,
+			"Store: " + b.job.Store,
+			"Destination: " + b.job.DestTarget,
+			"Response: " + err.Error(),
+		},
+	)
+	if terr != nil {
+		syslog.L.Error(terr).WithField("jobId", b.job.ID).Write()
+		return
+	}
+
+	latest, gerr := b.storeInstance.Database.GetRestore(b.job.ID)
+	if gerr != nil {
+		latest = b.job
+	}
+	latest.LastRunUpid = task.UPID
+	latest.LastRunState = task.Status
+	latest.LastRunEndtime = task.EndTime
+	latest.LastSuccessfulEndtime = task.EndTime
+	latest.LastSuccessfulUpid = task.UPID
+
+	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
+		syslog.L.Error(uerr).
+			WithField("jobId", latest.ID).
+			WithField("upid", task.UPID).
+			Write()
+	}
 }
 
-func (b *RestoreOperation) createOK(err error) {
-	// TODO: generate ok log
+func (b *RestoreOperation) updateRestoreWithTask(task proxmox.Task) {
+	latest, gerr := b.storeInstance.Database.GetRestore(b.job.ID)
+	if gerr != nil {
+		latest = b.job
+	}
+	latest.LastRunUpid = task.UPID
+	latest.LastRunState = task.Status
+	latest.LastRunEndtime = task.EndTime
+
+	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
+		syslog.L.Error(uerr).
+			WithField("jobId", latest.ID).
+			WithField("upid", task.UPID).
+			Write()
+	}
 }

@@ -274,6 +274,8 @@ func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string) error {
 	}
 	activeRestoreSessions.Set(restoreId, session)
 
+	defer session.Close()
+
 	if hasActive, err := store.HasActiveRestoreForJob(restoreId); hasActive || err != nil {
 		if err != nil {
 			syslog.L.Error(err).WithMessage("Restore: HasActiveRestoreForRestore failed").WithField("restoreId", restoreId).Write()
@@ -285,14 +287,12 @@ func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string) error {
 
 	if err := store.StartRestore(restoreId); err != nil {
 		syslog.L.Error(err).WithMessage("Restore: StartRestore failed").WithField("restoreId", restoreId).Write()
-		session.Close()
 		return err
 	}
 
 	client := pxar.NewRemoteClient(rpcSess)
 	if client == nil {
 		syslog.L.Error(errors.New("client is nil")).WithMessage("Restore: NewRemoteClient returned nil").Write()
-		session.Close()
 		return fmt.Errorf("client is nil")
 	}
 	session.remoteClient = client
