@@ -70,13 +70,13 @@ func main() {
 	defer mainCancel()
 
 	var extExclusions arrayFlags
-	var backupBackupsRun arrayFlags
-	var restoreBackupsRun arrayFlags
-	flag.Var(&backupBackupsRun, "backup-backup", "Backup Backup ID/s to execute")
-	flag.Var(&restoreBackupsRun, "restore-backup", "Restore Backup ID/s to execute")
+	var backupsRun arrayFlags
+	var restoresRun arrayFlags
+	flag.Var(&backupsRun, "backup", "Backup ID/s to execute")
+	flag.Var(&restoresRun, "restore", "Restore ID/s to execute")
 	retryAttempts := flag.String("retry", "", "Current attempt number")
 	webRun := flag.Bool("web", false, "Backup executed from Web UI")
-	stop := flag.Bool("stop", false, "Stop Backup ID instead of executing")
+	stop := flag.Bool("stop", false, "Stop Job ID instead of executing")
 	flag.Var(&extExclusions, "skip", "Extra exclusions")
 	flag.Parse()
 
@@ -138,22 +138,22 @@ func main() {
 	}
 
 	// Handle backup execution
-	if len(backupBackupsRun) > 0 || len(restoreBackupsRun) > 0 {
+	if len(backupsRun) > 0 || len(restoresRun) > 0 {
 		conn, err := net.DialTimeout("unix", constants.JobMutateSocketPath, 5*time.Minute)
 		if err != nil {
 			syslog.L.Error(err).
-				WithField("backupBackups", backupBackupsRun).
-				WithField("restoreBackups", restoreBackupsRun).
+				WithField("backups", backupsRun).
+				WithField("restores", restoresRun).
 				Write()
 			return
 		}
 		rpcClient := rpc.NewClient(conn)
 		defer rpcClient.Close()
 
-		for _, backupRun := range backupBackupsRun {
+		for _, backupRun := range backupsRun {
 			backupTask, err := storeInstance.Database.GetBackup(backupRun)
 			if err != nil {
-				syslog.L.Error(err).WithField("backupBackupId", backupRun).Write()
+				syslog.L.Error(err).WithField("backupId", backupRun).Write()
 				continue
 			}
 
@@ -174,24 +174,24 @@ func main() {
 
 			err = rpcClient.Call("BackupRPCService.BackupQueue", args, &reply)
 			if err != nil {
-				syslog.L.Error(err).WithField("backupBackupId", backupRun).Write()
+				syslog.L.Error(err).WithField("backupId", backupRun).Write()
 				continue
 			}
 			if reply.Status != 200 {
-				syslog.L.Error(err).WithField("backupBackupId", backupRun).Write()
+				syslog.L.Error(err).WithField("backupId", backupRun).Write()
 				continue
 			}
 		}
 
-		for _, backupRun := range restoreBackupsRun {
-			backupTask, err := storeInstance.Database.GetRestore(backupRun)
+		for _, restoreRun := range restoresRun {
+			restoreTask, err := storeInstance.Database.GetRestore(restoreRun)
 			if err != nil {
-				syslog.L.Error(err).WithField("restoreBackupId", backupRun).Write()
+				syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
 				continue
 			}
 
 			args := &backuprpc.RestoreQueueArgs{
-				Job:       backupTask,
+				Job:       restoreTask,
 				SkipCheck: true,
 				Stop:      *stop,
 				Web:       *webRun,
@@ -200,11 +200,11 @@ func main() {
 
 			err = rpcClient.Call("BackupRPCService.RestoreQueue", args, &reply)
 			if err != nil {
-				syslog.L.Error(err).WithField("restoreBackupId", backupRun).Write()
+				syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
 				continue
 			}
 			if reply.Status != 200 {
-				syslog.L.Error(err).WithField("restoreBackupId", backupRun).Write()
+				syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
 				continue
 			}
 		}

@@ -97,10 +97,10 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		var response BackupRunResponse
 
-		// Get all backup IDs from query parameters: ?backup=backup1&backup=backup2
-		backupIDs := r.URL.Query()["backup"]
+		// Get all backup IDs from query parameters: ?job=backup1&job=backup2
+		backupIDs := r.URL.Query()["job"]
 		if len(backupIDs) == 0 {
-			http.Error(w, "Missing backup parameter(s)", http.StatusBadRequest)
+			http.Error(w, "Missing job parameter(s)", http.StatusBadRequest)
 			return
 		}
 
@@ -126,7 +126,7 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		args := []string{}
 		for _, backupId := range decodedBackupIDs {
-			args = append(args, "-backup-backup", backupId)
+			args = append(args, "-backup", backupId)
 		}
 		args = append(args, "-web")
 		if r.Method == http.MethodDelete {

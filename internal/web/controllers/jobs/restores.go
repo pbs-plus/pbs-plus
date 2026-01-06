@@ -82,8 +82,8 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		var response RestoreRunResponse
 
-		// Get all restore IDs from query parameters: ?restore=restore1&restore=restore2
-		restoreIDs := r.URL.Query()["restore"]
+		// Get all restore IDs from query parameters: ?job=restore1&job=restore2
+		restoreIDs := r.URL.Query()["job"]
 		if len(restoreIDs) == 0 {
 			http.Error(w, "Missing restore parameter(s)", http.StatusBadRequest)
 			return
@@ -104,7 +104,7 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		args := []string{}
 		for _, restoreId := range decodedRestoreIDs {
-			args = append(args, "-restore-job", restoreId)
+			args = append(args, "-restore", restoreId)
 		}
 		args = append(args, "-web")
 		if r.Method == http.MethodDelete {
