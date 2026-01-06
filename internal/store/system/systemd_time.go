@@ -42,12 +42,21 @@ func getRetryUnitName(jobID string, attempt int) (string, error) {
 
 func stopAllJobTimers(sanitized string) {
 	primaryTimer := fmt.Sprintf("pbs-plus-job-%s.timer", sanitized)
-	stopCmd := exec.Command("systemctl", "stop", primaryTimer)
-	stopCmd.Env = os.Environ()
-	_ = stopCmd.Run()
 
+	checkCmd := exec.Command("systemctl", "is-active", primaryTimer)
+	checkCmd.Env = os.Environ()
+	if err := checkCmd.Run(); err == nil {
+		stopCmd := exec.Command("systemctl", "disable", "--now", primaryTimer)
+		stopCmd.Env = os.Environ()
+		_ = stopCmd.Run()
+
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func stopAllRetries(sanitized string) {
 	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
-	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend")
+	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend", "--state=active")
 	listCmd.Env = os.Environ()
 	output, err := listCmd.Output()
 	if err == nil {
@@ -56,12 +65,20 @@ func stopAllJobTimers(sanitized string) {
 			line := scanner.Text()
 			fields := strings.Fields(line)
 			if len(fields) > 0 {
-				stopCmd := exec.Command("systemctl", "stop", fields[0])
+				stopCmd := exec.Command("systemctl", "disable", "--now", fields[0])
 				stopCmd.Env = os.Environ()
 				_ = stopCmd.Run()
 			}
 		}
+
+		if len(strings.TrimSpace(string(output))) > 0 {
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
+
+	reloadCmd := exec.Command("systemctl", "daemon-reload")
+	reloadCmd.Env = os.Environ()
+	_ = reloadCmd.Run()
 }
 
 func SetSchedule(job types.Job) error {
@@ -71,9 +88,9 @@ func SetSchedule(job types.Job) error {
 	}
 
 	sanitized, _ := sanitizeUnitName(job.ID)
-	stopAllJobTimers(sanitized)
 
 	if job.Schedule == "" {
+		stopAllJobTimers(sanitized)
 		return nil
 	}
 
@@ -91,6 +108,39 @@ func SetSchedule(job types.Job) error {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if strings.Contains(string(output), "already loaded") ||
+			strings.Contains(string(output), "has a fragment file") {
+			stopAllJobTimers(sanitized)
+
+			timerName := fmt.Sprintf("pbs-plus-job-%s.timer", sanitized)
+			serviceName := fmt.Sprintf("pbs-plus-job-%s.service", sanitized)
+
+			stopCmd := exec.Command("systemctl", "stop", timerName, serviceName)
+			stopCmd.Env = os.Environ()
+			_ = stopCmd.Run()
+
+			resetCmd := exec.Command("systemctl", "reset-failed", timerName, serviceName)
+			resetCmd.Env = os.Environ()
+			_ = resetCmd.Run()
+
+			reloadCmd := exec.Command("systemctl", "daemon-reload")
+			reloadCmd.Env = os.Environ()
+			_ = reloadCmd.Run()
+
+			time.Sleep(100 * time.Millisecond)
+
+			retryCmd := exec.Command("systemd-run", args...)
+			retryCmd.Env = os.Environ()
+
+			retryOutput, retryErr := retryCmd.CombinedOutput()
+			if retryErr != nil {
+				return fmt.Errorf("SetSchedule: error creating timer after cleanup (output: %s) -> %w",
+					string(retryOutput), retryErr)
+			}
+
+			return nil
+		}
+
 		return fmt.Errorf("SetSchedule: error creating timer (output: %s) -> %w",
 			string(output), err)
 	}
@@ -103,7 +153,9 @@ func DeleteSchedule(id string) error {
 	if err != nil {
 		return fmt.Errorf("DeleteSchedule: %w", err)
 	}
+
 	stopAllJobTimers(sanitized)
+	stopAllRetries(sanitized)
 
 	timerBasePath := "/etc/systemd/system"
 
@@ -137,86 +189,165 @@ func DeleteSchedule(id string) error {
 }
 
 func SetRetrySchedule(job types.Job, extraExclusions []string) error {
-	sanitized, err := sanitizeUnitName(job.ID)
+	return nil
+
+	/*
+		sanitized, err := sanitizeUnitName(job.ID)
+		if err != nil {
+			return fmt.Errorf("SetRetrySchedule: %w", err)
+		}
+
+		currentAttempt := getCurrentRetryAttempt(sanitized)
+		newAttempt := currentAttempt + 1
+
+		if newAttempt > job.Retry {
+			fmt.Printf("Job %s reached max retry count (%d). No further retry scheduled.\n",
+				job.ID, job.Retry)
+			RemoveAllRetrySchedules(job)
+			return nil
+		}
+
+		pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
+		listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend")
+		listCmd.Env = os.Environ()
+		output, _ := listCmd.Output()
+
+		scanner := bufio.NewScanner(strings.NewReader(string(output)))
+		for scanner.Scan() {
+			line := scanner.Text()
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				stopCmd := exec.Command("systemctl", "stop", fields[0])
+				stopCmd.Env = os.Environ()
+				stopCmd.Stderr = nil
+				_ = stopCmd.Run()
+			}
+		}
+
+		retryUnitName, err := getRetryUnitName(job.ID, newAttempt)
+		if err != nil {
+			return fmt.Errorf("SetRetrySchedule: %w", err)
+		}
+
+		delay := fmt.Sprintf("%dm", job.RetryInterval)
+
+		args := []string{
+			"--unit=" + retryUnitName,
+			"--on-active=" + delay,
+			"--timer-property=Persistent=false",
+			"--description=" + fmt.Sprintf("%s Backup Job Retry (Attempt %d)", job.ID, newAttempt),
+			"/usr/bin/pbs-plus",
+			"-job=" + job.ID,
+			"-retry=" + strconv.Itoa(newAttempt),
+		}
+
+		for _, exclusion := range extraExclusions {
+			if !strings.Contains(exclusion, `"`) {
+				args = append(args, "-skip="+exclusion)
+			}
+		}
+
+		cmd := exec.Command("systemd-run", args...)
+		cmd.Env = os.Environ()
+
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			if strings.Contains(string(output), "already loaded") ||
+				strings.Contains(string(output), "has a fragment file") {
+				// Clean up the specific retry unit
+				timerName := fmt.Sprintf("pbs-plus-job-%s-retry-%d.timer", sanitized, newAttempt)
+				serviceName := fmt.Sprintf("pbs-plus-job-%s-retry-%d.service", sanitized, newAttempt)
+
+				stopCmd := exec.Command("systemctl", "stop", timerName, serviceName)
+				stopCmd.Env = os.Environ()
+				_ = stopCmd.Run()
+
+				resetCmd := exec.Command("systemctl", "reset-failed", timerName, serviceName)
+				resetCmd.Env = os.Environ()
+				_ = resetCmd.Run()
+
+				reloadCmd := exec.Command("systemctl", "daemon-reload")
+				reloadCmd.Env = os.Environ()
+				_ = reloadCmd.Run()
+
+				time.Sleep(100 * time.Millisecond)
+
+				// Retry creating the timer
+				retryCmd := exec.Command("systemd-run", args...)
+				retryCmd.Env = os.Environ()
+
+				retryOutput, retryErr := retryCmd.CombinedOutput()
+				if retryErr != nil {
+					return fmt.Errorf("SetRetrySchedule: error creating retry timer after cleanup (output: %s) -> %w",
+						string(retryOutput), retryErr)
+				}
+
+				fmt.Printf("Scheduled retry %d/%d for job %s in %d minutes\n",
+					newAttempt, job.Retry, job.ID, job.RetryInterval)
+
+				return nil
+			}
+
+			return fmt.Errorf("SetRetrySchedule: error creating retry timer (output: %s) -> %w",
+				string(output), err)
+		}
+
+		fmt.Printf("Scheduled retry %d/%d for job %s in %d minutes\n",
+			newAttempt, job.Retry, job.ID, job.RetryInterval)
+
+		return nil
+	*/
+}
+
+func getCurrentRetryAttempt(sanitized string) int {
+	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
+	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend", "--no-pager")
+	listCmd.Env = os.Environ()
+	output, err := listCmd.Output()
 	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: %w", err)
+		return 0
 	}
 
-	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
-	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend")
-	listCmd.Env = os.Environ()
-	output, _ := listCmd.Output()
-
-	currentAttempt := 0
-	var existingRetries []string
-
+	maxAttempt := 0
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Fields(line)
 		if len(fields) > 0 {
 			unitName := fields[0]
-			existingRetries = append(existingRetries, unitName)
 
+			// Extract attempt number from unit name: pbs-plus-job-{id}-retry-{N}.timer
 			parts := strings.Split(unitName, "-retry-")
 			if len(parts) == 2 {
 				attemptStr := strings.TrimSuffix(parts[1], ".timer")
 				if attemptInt, err := strconv.Atoi(attemptStr); err == nil {
-					if attemptInt > currentAttempt {
-						currentAttempt = attemptInt
+					if attemptInt > maxAttempt {
+						maxAttempt = attemptInt
 					}
 				}
 			}
 		}
 	}
 
-	newAttempt := currentAttempt + 1
-	if newAttempt > job.Retry {
-		fmt.Printf("Job %s reached max retry count (%d). No further retry scheduled.\n",
-			job.ID, job.Retry)
-		RemoveAllRetrySchedules(job)
-		return nil
-	}
+	// Also check /run/systemd/transient for any leftover unit files
+	transientPath := "/run/systemd/transient"
+	retryPattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
 
-	for _, unit := range existingRetries {
-		stopCmd := exec.Command("systemctl", "stop", unit)
-		stopCmd.Env = os.Environ()
-		_ = stopCmd.Run()
-	}
-
-	retryUnitName, err := getRetryUnitName(job.ID, newAttempt)
-	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: %w", err)
-	}
-
-	delay := fmt.Sprintf("%dm", job.RetryInterval)
-
-	args := []string{
-		"--unit=" + retryUnitName,
-		"--on-active=" + delay,
-		"--timer-property=Persistent=false",
-		"--description=" + fmt.Sprintf("%s Backup Job Retry (Attempt %d)", job.ID, newAttempt),
-		"/usr/bin/pbs-plus",
-		"-job=" + job.ID,
-		"-retry=" + strconv.Itoa(newAttempt),
-	}
-
-	for _, exclusion := range extraExclusions {
-		if !strings.Contains(exclusion, `"`) {
-			args = append(args, "-skip="+exclusion)
+	matches, _ := filepath.Glob(filepath.Join(transientPath, retryPattern))
+	for _, match := range matches {
+		unitName := filepath.Base(match)
+		parts := strings.Split(unitName, "-retry-")
+		if len(parts) == 2 {
+			attemptStr := strings.TrimSuffix(parts[1], ".timer")
+			if attemptInt, err := strconv.Atoi(attemptStr); err == nil {
+				if attemptInt > maxAttempt {
+					maxAttempt = attemptInt
+				}
+			}
 		}
 	}
 
-	cmd := exec.Command("systemd-run", args...)
-	cmd.Env = os.Environ()
-
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: error creating retry timer (output: %s) -> %w",
-			string(output), err)
-	}
-
-	return nil
+	return maxAttempt
 }
 
 func RemoveAllRetrySchedules(job types.Job) {
@@ -228,28 +359,28 @@ func RemoveAllRetrySchedules(job types.Job) {
 	pattern := fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized)
 	listCmd := exec.Command("systemctl", "list-units", pattern, "--all", "--no-legend")
 	listCmd.Env = os.Environ()
-	output, err := listCmd.Output()
-	if err != nil {
-		return
-	}
+	output, _ := listCmd.Output()
 
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Fields(line)
 		if len(fields) > 0 {
-			stopCmd := exec.Command("systemctl", "stop", fields[0])
+			unitName := fields[0]
+			stopCmd := exec.Command("systemctl", "stop", unitName)
 			stopCmd.Env = os.Environ()
+			stopCmd.Stderr = nil
 			_ = stopCmd.Run()
+
+			resetCmd := exec.Command("systemctl", "reset-failed", unitName)
+			resetCmd.Env = os.Environ()
+			_ = resetCmd.Run()
 		}
 	}
 
-	timerBasePath := "/etc/systemd/system"
-
-	retryTimerPattern := filepath.Join(timerBasePath,
-		fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized))
-	retryServicePattern := filepath.Join(timerBasePath,
-		fmt.Sprintf("pbs-plus-job-%s-retry-*.service", sanitized))
+	transientPath := "/run/systemd/transient"
+	retryTimerPattern := filepath.Join(transientPath, fmt.Sprintf("pbs-plus-job-%s-retry-*.timer", sanitized))
+	retryServicePattern := filepath.Join(transientPath, fmt.Sprintf("pbs-plus-job-%s-retry-*.service", sanitized))
 
 	retryTimers, _ := filepath.Glob(retryTimerPattern)
 	retryServices, _ := filepath.Glob(retryServicePattern)
@@ -262,11 +393,9 @@ func RemoveAllRetrySchedules(job types.Job) {
 		_ = os.Remove(file)
 	}
 
-	if len(retryTimers) > 0 || len(retryServices) > 0 {
-		reloadCmd := exec.Command("systemctl", "daemon-reload")
-		reloadCmd.Env = os.Environ()
-		_ = reloadCmd.Run()
-	}
+	reloadCmd := exec.Command("systemctl", "daemon-reload")
+	reloadCmd.Env = os.Environ()
+	_ = reloadCmd.Run()
 }
 
 var lastSchedMux sync.Mutex
@@ -280,7 +409,7 @@ func GetNextSchedule(job types.Job) (*time.Time, error) {
 	if !lastSchedUpdate.IsZero() && time.Since(lastSchedUpdate) <= 5*time.Second {
 		output = lastSchedString
 	} else {
-		cmd := exec.Command("systemctl", "list-timers", "--all")
+		cmd := exec.Command("systemctl", "list-timers", "--all", "--no-pager")
 		cmd.Env = os.Environ()
 
 		var err error
@@ -379,13 +508,10 @@ func migrateLegacyUnit(job types.Job, sanitized string) error {
 	if timerExists {
 		unitName := fmt.Sprintf("pbs-plus-job-%s.timer", sanitized)
 
-		stopCmd := exec.Command("systemctl", "stop", unitName)
+		stopCmd := exec.Command("systemctl", "disable", "--now", unitName)
 		stopCmd.Env = os.Environ()
+		stopCmd.Stderr = nil
 		_ = stopCmd.Run()
-
-		disableCmd := exec.Command("systemctl", "disable", unitName)
-		disableCmd.Env = os.Environ()
-		_ = disableCmd.Run()
 	}
 
 	if timerExists {
@@ -409,13 +535,10 @@ func migrateLegacyUnit(job types.Job, sanitized string) error {
 
 	for _, file := range retryTimers {
 		unitName := filepath.Base(file)
-		stopCmd := exec.Command("systemctl", "stop", unitName)
+		stopCmd := exec.Command("systemctl", "disable", "--now", unitName)
 		stopCmd.Env = os.Environ()
+		stopCmd.Stderr = nil
 		_ = stopCmd.Run()
-
-		disableCmd := exec.Command("systemctl", "disable", unitName)
-		disableCmd.Env = os.Environ()
-		_ = disableCmd.Run()
 
 		_ = os.Remove(file)
 	}

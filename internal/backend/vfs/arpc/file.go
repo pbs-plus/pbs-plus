@@ -20,14 +20,15 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 	if f.isClosed.Load() {
 		syslog.L.Debug().
 			WithMessage("Close called on already closed file").
-			WithJob(f.jobId).
+			WithField("job", f.jobId).
 			WithField("path", f.name).
 			Write()
 		return nil
 	}
 
-	if f.fs.session.Load() == nil {
-		syslog.L.Error(os.ErrInvalid).
+	pipe, err := f.fs.getPipe(ctx)
+	if err != nil {
+		syslog.L.Error(err).
 			WithJob(f.jobId).
 			WithMessage("arpc session is nil").
 			WithField("path", f.name).
@@ -47,7 +48,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	_, err := f.fs.session.Load().CallData(ctxN, f.jobId+"/Close", &req)
+	_, err = pipe.CallData(ctxN, f.jobId+"/Close", &req)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		syslog.L.Error(err).
 			WithJob(f.jobId).
@@ -84,10 +85,20 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 		Whence:   whence,
 	}
 
+	pipe, err := f.fs.getPipe(ctx)
+	if err != nil {
+		syslog.L.Error(err).
+			WithJob(f.jobId).
+			WithMessage("arpc session is nil").
+			WithField("path", f.name).
+			Write()
+		return 0, syscall.EOPNOTSUPP
+	}
+
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	respBytes, err := f.fs.session.Load().CallData(ctxN, f.jobId+"/Lseek", &req)
+	respBytes, err := pipe.CallData(ctxN, f.jobId+"/Lseek", &req)
 	if err != nil {
 		syslog.L.Error(err).
 			WithJob(f.jobId).
@@ -129,8 +140,9 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		return 0, syscall.ENOENT
 	}
 
-	if f.fs.session.Load() == nil {
-		syslog.L.Error(syscall.ENOENT).
+	pipe, err := f.fs.getPipe(ctx)
+	if err != nil {
+		syslog.L.Error(err).
 			WithJob(f.jobId).
 			WithMessage("fs session is nil").
 			WithField("path", f.name).
@@ -152,7 +164,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		Length:   len(p),
 	}
 
-	n, err := f.fs.session.Load().CallBinary(f.fs.Ctx, f.jobId+"/ReadAt", &req, p)
+	n, err := pipe.CallBinary(f.fs.Ctx, f.jobId+"/ReadAt", &req, p)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.jobId).
 			WithMessage("failed to handle read request").
