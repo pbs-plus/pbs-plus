@@ -158,7 +158,7 @@ func main() {
 			}
 
 			if retryAttempts == nil || *retryAttempts == "" {
-				system.RemoveAllRetrySchedules(backupTask)
+				system.RemoveAllRetrySchedules(context.Background(), backupTask)
 			}
 
 			arrExtExc := []string(extExclusions)
