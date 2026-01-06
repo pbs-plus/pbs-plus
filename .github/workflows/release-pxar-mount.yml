@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - "*"
-    paths:
-      - extras/pxar-direct-mount/**
 
 permissions:
   contents: write
