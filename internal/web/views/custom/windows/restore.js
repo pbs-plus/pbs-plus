@@ -46,13 +46,19 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
     storeChange: function (field, value) {
       let me = this;
       let nsSelector = me.lookup("namespace");
+      let snapSelector = me.lookup("snapshot");
+
       nsSelector.setDatastore(value);
+      snapSelector.setDatastore(value);
+      snapSelector.setValue(null);
     },
 
     nsChange: function (field, value) {
       let me = this;
       let snapSelector = me.lookup("snapshot");
+
       snapSelector.setNamespace(value);
+      snapSelector.setValue(null);
     },
   },
 
