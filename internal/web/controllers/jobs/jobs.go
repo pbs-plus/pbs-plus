@@ -115,7 +115,7 @@ func ExtJsJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-			system.RemoveAllRetrySchedules(job)
+			system.RemoveAllRetrySchedules(r.Context(), job)
 		}
 
 		execPath, err := os.Executable()
