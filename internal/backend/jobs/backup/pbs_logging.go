@@ -57,6 +57,8 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 		}
 	}()
 
+	alreadyHasClientLogs := false
+
 	tmpWriter := bufio.NewWriter(tmpFile)
 
 	scanner := bufio.NewScanner(inFile)
@@ -69,14 +71,15 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 		if helpers.IsJunkLog(line) {
 			continue
 		}
+		if line == "--- proxmox-backup-client log starts here ---" {
+			alreadyHasClientLogs = true
+		}
 		tmpWriter.WriteString(line)
 		tmpWriter.WriteByte('\n')
 	}
 	if err := scanner.Err(); err != nil {
 		return false, false, 0, "", fmt.Errorf("scanning input file: %w", err)
 	}
-
-	tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n")
 
 	hasError := false
 	incomplete := true
@@ -94,35 +97,39 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Bac
 	clientScanner := bufio.NewScanner(clientFile)
 	clientScanner.Buffer(buf, maxCapacity)
 
-	for clientScanner.Scan() {
-		line := clientScanner.Text()
+	if !alreadyHasClientLogs {
+		tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n")
 
-		if strings.Contains(line, "warning: ") {
-			pbsWarningRawCount++
-		}
+		for clientScanner.Scan() {
+			line := clientScanner.Text()
 
-		if strings.Contains(line, "Error: upload failed:") {
-			errorString = strings.Replace(line, "Error:", "TASK ERROR:", 1)
-			if matches := errorPathRegex.FindStringSubmatch(line); len(matches) >= 2 {
-				errorPath = matches[1]
+			if strings.Contains(line, "warning: ") {
+				pbsWarningRawCount++
 			}
-			hasError = true
-			continue
-		} else if strings.Contains(line, "TASK ERROR:") {
-			errorString = line
-			hasError = true
-			continue
-		}
 
-		if strings.Contains(line, "connection failed") || strings.Contains(line, "connection error: not connected") {
-			disconnected = true
-		}
-		if strings.Contains(line, "End Time:") || strings.Contains(line, "TASK OK") || strings.Contains(line, "backup finished successfully") {
-			incomplete = false
-		}
+			if strings.Contains(line, "Error: upload failed:") {
+				errorString = strings.Replace(line, "Error:", "TASK ERROR:", 1)
+				if matches := errorPathRegex.FindStringSubmatch(line); len(matches) >= 2 {
+					errorPath = matches[1]
+				}
+				hasError = true
+				continue
+			} else if strings.Contains(line, "TASK ERROR:") {
+				errorString = line
+				hasError = true
+				continue
+			}
 
-		tmpWriter.WriteString(line)
-		tmpWriter.WriteByte('\n')
+			if strings.Contains(line, "connection failed") || strings.Contains(line, "connection error: not connected") {
+				disconnected = true
+			}
+			if strings.Contains(line, "End Time:") || strings.Contains(line, "TASK OK") || strings.Contains(line, "backup finished successfully") {
+				incomplete = false
+			}
+
+			tmpWriter.WriteString(line)
+			tmpWriter.WriteByte('\n')
+		}
 	}
 
 	if err := clientScanner.Err(); err != nil {
