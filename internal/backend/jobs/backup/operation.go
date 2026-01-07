@@ -155,7 +155,7 @@ func (b *BackupOperation) Execute() error {
 	default:
 	}
 
-	cmd, task, currOwner, err := b.startBackup(b.srcPath, b.target, b.errorMonitorDone)
+	cmd, task, currOwner, err := b.startBackup(b.srcPath, b.target)
 	if err != nil {
 		return err
 	}
@@ -435,7 +435,7 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 	return srcPath, agentMount, s3Mount, nil
 }
 
-func (b *BackupOperation) startBackup(srcPath string, target types.Target, errorMonitorDone chan struct{}) (*exec.Cmd, proxmox.Task, string, error) {
+func (b *BackupOperation) startBackup(srcPath string, target types.Target) (*exec.Cmd, proxmox.Task, string, error) {
 	select {
 	case <-b.Context().Done():
 		return nil, proxmox.Task{}, "", jobs.ErrCanceled
@@ -488,9 +488,7 @@ func (b *BackupOperation) startBackup(srcPath string, target types.Target, error
 		b.mu.Unlock()
 	}
 
-	b.waitGroup.Go(func() {
-		monitorPBSClientLogs(b.logger.Path, cmd, errorMonitorDone)
-	})
+	go monitorPBSClientLogs(b.logger.Path, cmd, b.errorMonitorDone)
 
 	var task proxmox.Task
 	select {
@@ -517,7 +515,7 @@ func (b *BackupOperation) startTaskMonitoring(target types.Target) (chan proxmox
 	job := b.job
 	b.mu.RUnlock()
 
-	b.waitGroup.Go(func() {
+	go func() {
 		timedCtx, timedCancel := context.WithTimeout(b.Context(), 20*time.Second)
 		defer timedCancel()
 
@@ -527,7 +525,7 @@ func (b *BackupOperation) startTaskMonitoring(target types.Target) (chan proxmox
 			return
 		}
 		taskChan <- task
-	})
+	}()
 
 	return taskChan, readyChan, errChan
 }
@@ -546,9 +544,9 @@ func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, task proxmox.Task, cu
 
 	done := make(chan error, 1)
 
-	b.waitGroup.Go(func() {
+	go func() {
 		done <- cmd.Wait()
-	})
+	}()
 
 	select {
 	case err := <-done:
@@ -584,6 +582,7 @@ func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, task proxmox.Task, cu
 		b.mu.Unlock()
 	}
 
+	syslog.L.Info().WithJob(b.job.ID).WithMessage("updating job status")
 	if newUpid, err := proxmox.ChangeUPIDStartTime(task.UPID, b.logger.StartTime); err == nil {
 		task.UPID = newUpid
 	}
@@ -597,8 +596,10 @@ func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, task proxmox.Task, cu
 	}
 
 	if succeeded || cancelled {
+		syslog.L.Info().WithJob(b.job.ID).WithMessage("succeeded/cancelled, removing all retry schedules")
 		system.RemoveAllRetrySchedules(b.Context(), currentJob)
 	} else {
+		syslog.L.Info().WithJob(b.job.ID).WithMessage("failed, setting a retry schedule")
 		b.mu.RLock()
 		excl := b.extraExclusions
 		b.mu.RUnlock()
@@ -606,9 +607,11 @@ func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, task proxmox.Task, cu
 	}
 
 	if currOwner != "" {
+		syslog.L.Info().WithJob(b.job.ID).WithMessage("setting owner to datastore owner")
 		_ = SetDatastoreOwner(currentJob, b.storeInstance, currOwner)
 	}
 
+	syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script")
 	b.runPostScript(succeeded, warningsNum)
 }
 
