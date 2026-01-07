@@ -91,9 +91,6 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
 	if restore.DestTarget == "" {
 		return errors.New("dest target is empty")
 	}
-	if restore.SrcPath == "" {
-		return errors.New("source path is empty")
-	}
 	if restore.Snapshot == "" {
 		return errors.New("snapshot is empty")
 	}
@@ -103,10 +100,10 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
 	if !utils.IsValidID(restore.ID) && restore.ID != "" {
 		return fmt.Errorf("CreateRestore: invalid id string -> %s", restore.ID)
 	}
-	if restore.SrcPath != "" && !utils.IsValidPathString(restore.SrcPath) {
+	if !utils.IsValidPathString(restore.SrcPath) {
 		return fmt.Errorf("invalid source path string: %s", restore.SrcPath)
 	}
-	if restore.DestPath != "" && !utils.IsValidPathString(restore.DestPath) {
+	if !utils.IsValidPathString(restore.DestPath) {
 		return fmt.Errorf("invalid dest path string: %s", restore.DestPath)
 	}
 	if restore.RetryInterval <= 0 {
@@ -121,7 +118,7 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
             id, store, namespace, snapshot, src_path, dest_target, dest_path, comment,
             current_pid, last_run_upid, last_successful_upid, retry,
             retry_interval
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, restore.ID, restore.Store, restore.Namespace, restore.Snapshot, restore.SrcPath, restore.DestTarget, restore.DestPath,
 		restore.Comment, restore.CurrentPID, restore.LastRunUpid, restore.LastSuccessfulUpid, restore.Retry,
 		restore.RetryInterval)
@@ -235,9 +232,6 @@ func (database *Database) UpdateRestore(tx *sql.Tx, restore types.Restore) (err 
 	if restore.DestTarget == "" {
 		return errors.New("dest target is empty")
 	}
-	if restore.SrcPath == "" {
-		return errors.New("source path is empty")
-	}
 	if restore.Snapshot == "" {
 		return errors.New("snapshot is empty")
 	}
@@ -247,10 +241,10 @@ func (database *Database) UpdateRestore(tx *sql.Tx, restore types.Restore) (err 
 	if !utils.IsValidID(restore.ID) && restore.ID != "" {
 		return fmt.Errorf("CreateRestore: invalid id string -> %s", restore.ID)
 	}
-	if restore.SrcPath != "" && !utils.IsValidPathString(restore.SrcPath) {
+	if !utils.IsValidPathString(restore.SrcPath) {
 		return fmt.Errorf("invalid source path string: %s", restore.SrcPath)
 	}
-	if restore.DestPath != "" && !utils.IsValidPathString(restore.DestPath) {
+	if !utils.IsValidPathString(restore.DestPath) {
 		return fmt.Errorf("invalid dest path string: %s", restore.DestPath)
 	}
 	if restore.RetryInterval <= 0 {
