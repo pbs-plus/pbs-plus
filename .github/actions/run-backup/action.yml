@@ -4,7 +4,7 @@ description: Execute and verify backup operation
 inputs:
   timeout-seconds:
     required: false
-    default: '20'
+    default: "20"
     description: Timeout for backup completion
 
 runs:
@@ -22,9 +22,9 @@ runs:
         echo "Waiting for backup to complete..."
         timeout=${{ inputs.timeout-seconds }}
         elapsed=0
-        
+
         while [ $elapsed -lt $timeout ]; do
-          if docker logs pbs-plus-agent 2>&1 | grep -q "CmdBackup: RPC Serve exited"; then
+          if docker logs pbs-plus-agent 2>&1 | grep -q "CmdBackup: background RPC goroutine finished"; then
             echo "✓ PBS Agent forked process exited"
             break
           fi
@@ -32,7 +32,7 @@ runs:
           elapsed=$((elapsed + 1))
           echo "Still waiting... (${elapsed}s)"
         done
-        
+
         if [ $elapsed -ge $timeout ]; then
           echo "✗ Timeout reached after ${timeout}s"
           exit 1
