@@ -37,12 +37,14 @@ type Manager struct {
 	executionSem chan struct{}
 
 	// Track running jobs to prevent duplicates
-	mu          sync.Mutex
-	runningJobs map[string]context.CancelFunc
+	mu              sync.Mutex
+	detectionMu     sync.Mutex
+	singleExecution bool
+	runningJobs     map[string]context.CancelFunc
 }
 
 // NewManager creates a new job manager with the specified max concurrent operations
-func NewManager(ctx context.Context, maxConcurrent int, queueSize int) *Manager {
+func NewManager(ctx context.Context, maxConcurrent int, queueSize int, singleExecution bool) *Manager {
 	newCtx, cancel := context.WithCancel(ctx)
 
 	m := &Manager{
@@ -51,6 +53,7 @@ func NewManager(ctx context.Context, maxConcurrent int, queueSize int) *Manager 
 		taskMonitorQueue: make(chan Operation, queueSize),
 		executionSem:     make(chan struct{}, maxConcurrent),
 		runningJobs:      make(map[string]context.CancelFunc),
+		singleExecution:  singleExecution,
 	}
 
 	go m.processQueue()
@@ -163,13 +166,18 @@ func (m *Manager) runJob(op Operation) {
 		return
 	}
 
-	// Execute the operation
+	if m.singleExecution {
+		m.detectionMu.Lock()
+	}
+
 	err := op.Execute(ctx)
 
-	// Release semaphore
-	<-m.executionSem
+	if m.singleExecution {
+		m.detectionMu.Unlock()
+	}
 
 	if err != nil {
+		<-m.executionSem
 		if errors.Is(err, ErrCanceled) || errors.Is(err, context.Canceled) {
 			op.OnError(ErrCanceled)
 		} else {
@@ -185,9 +193,11 @@ func (m *Manager) runJob(op Operation) {
 	if waitable, ok := op.(interface{ Wait() }); ok {
 		go func() {
 			waitable.Wait()
+			<-m.executionSem
 			m.cleanup(jobID)
 		}()
 	} else {
+		<-m.executionSem
 		m.cleanup(jobID)
 	}
 }

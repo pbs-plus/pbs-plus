@@ -15,6 +15,6 @@ type Manager struct {
 
 func NewManager(ctx context.Context) *Manager {
 	return &Manager{
-		Manager: jobs.NewManager(ctx, utils.MaxConcurrentClients, 100),
+		Manager: jobs.NewManager(ctx, utils.MaxConcurrentClients, 100, true),
 	}
 }
