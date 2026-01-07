@@ -4,6 +4,8 @@ set -eu
 USER_NAME="${USER:-pbsplus}"
 BIN_PATH="/usr/bin/pbs-plus-agent"
 
+chmod +x "$BIN_PATH"
+
 # Registry paths (lowercase per new Unix-native layout)
 REG_BASE="/etc/pbs-plus-agent/registry"
 REG_DIR_AGENT="$REG_BASE/software/pbsplus/config"
