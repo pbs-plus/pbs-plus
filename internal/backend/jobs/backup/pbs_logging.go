@@ -22,7 +22,7 @@ var (
 	errorPathRegex = regexp.MustCompile(`upload failed: error at "([^"]+)"`)
 )
 
-func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.JobLogger) (bool, bool, int, string, error) {
+func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.JobLogger, customErr error) (bool, bool, int, string, error) {
 	logFilePath := utils.GetTaskLogPath(upid)
 	inFile, err := os.Open(logFilePath)
 	if err != nil {
@@ -137,12 +137,10 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 
 	if hasError {
 		tmpWriter.WriteString(errorString)
-		tmpWriter.WriteByte('\n')
 	} else if incomplete || disconnected {
 		tmpWriter.WriteString(timestamp)
 		tmpWriter.WriteString(": TASK ERROR: ")
 		tmpWriter.WriteString(ErrCanceled.Error())
-		tmpWriter.WriteByte('\n')
 		cancelled = true
 	} else {
 		tmpWriter.WriteString(timestamp)
@@ -158,8 +156,13 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 				tmpWriter.WriteString(": TASK ERROR: Agent crashed unexpectedly")
 			}
 		}
-		tmpWriter.WriteByte('\n')
 	}
+
+	if customErr != nil && !succeeded {
+		fmt.Fprintf(tmpWriter, " [%s]", customErr.Error())
+	}
+
+	tmpWriter.WriteByte('\n')
 
 	if err := tmpWriter.Flush(); err != nil {
 		return false, false, warningsNum, errorPath, fmt.Errorf("failed to flush temporary writer: %w", err)
