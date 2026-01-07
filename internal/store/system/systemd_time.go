@@ -5,6 +5,7 @@ package system
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -73,7 +74,7 @@ func stopAllRetries(ctx context.Context, sanitized string) {
 }
 
 func SetSchedule(ctx context.Context, backup types.Job) error {
-	err := setSchedule(ctx, backup)
+	unitName, err := createScheduleUnits(ctx, backup)
 
 	conn, err := getConn()
 	if err != nil {
@@ -84,18 +85,22 @@ func SetSchedule(ctx context.Context, backup types.Job) error {
 		return fmt.Errorf("SetSchedule: daemon-reload failed: %w", err)
 	}
 
+	if unitName != "" {
+		_, err = conn.StartUnitContext(ctx, unitName+".timer", "replace", nil)
+	}
+
 	return err
 }
 
-func setSchedule(ctx context.Context, backup types.Job) error {
+func createScheduleUnits(ctx context.Context, backup types.Job) (string, error) {
 	unitName, err := getUnitName(backup.ID)
 	if err != nil {
-		return fmt.Errorf("SetSchedule: %w", err)
+		return "", fmt.Errorf("SetSchedule: %w", err)
 	}
 
 	if backup.Schedule == "" {
 		_ = DeleteSchedule(ctx, backup.ID)
-		return nil
+		return "", nil
 	}
 
 	timerPath := filepath.Join("/etc/systemd/system", unitName+".timer")
@@ -124,27 +129,17 @@ WantedBy=timers.target
 	existingService, _ := os.ReadFile(servicePath)
 	existingTimer, _ := os.ReadFile(timerPath)
 	if string(existingService) == serviceContent && string(existingTimer) == timerContent {
-		return nil
+		return unitName, nil
 	}
 
 	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
-		return fmt.Errorf("SetSchedule: error writing service: %w", err)
+		return "", fmt.Errorf("SetSchedule: error writing service: %w", err)
 	}
 	if err := os.WriteFile(timerPath, []byte(timerContent), 0644); err != nil {
-		return fmt.Errorf("SetSchedule: error writing timer: %w", err)
+		return "", fmt.Errorf("SetSchedule: error writing timer: %w", err)
 	}
 
-	conn, err := getConn()
-	if err != nil {
-		return fmt.Errorf("SetSchedule: failed to connect to dbus: %w", err)
-	}
-
-	if err := conn.ReloadContext(ctx); err != nil {
-		return fmt.Errorf("SetSchedule: daemon-reload failed: %w", err)
-	}
-
-	_, err = conn.StartUnitContext(ctx, unitName+".timer", "replace", nil)
-	return err
+	return unitName, nil
 }
 
 func DeleteSchedule(ctx context.Context, id string) error {
@@ -298,59 +293,94 @@ func GetNextSchedule(ctx context.Context, backup types.Job) (*time.Time, error) 
 	}
 
 	primaryTimer := fmt.Sprintf("pbs-plus-backup-%s.timer", sanitized)
-	retryPattern := fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized)
+	retryPattern := fmt.Sprintf("pbs-plus-backup-%s-retry*.timer", sanitized)
 
-	units, err := conn.ListUnitsByPatternsContext(ctx, nil, []string{primaryTimer, retryPattern})
+	units, err := conn.ListUnitsByPatternsContext(ctx, []string{}, []string{primaryTimer, retryPattern})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("GetNextSchedule: failed to list units: %w", err)
 	}
 
-	if len(units) == 0 {
-		return nil, nil
-	}
-
-	var earliest *time.Time
+	var earliest time.Time
+	found := false
 
 	for _, unit := range units {
-		if unit.ActiveState != "active" {
+		if !strings.HasSuffix(unit.Name, ".timer") {
 			continue
 		}
 
-		prop, err := conn.GetUnitPropertyContext(ctx, unit.Name, "NextElapseUSecRealtime")
+		prop, err := conn.GetUnitTypePropertyContext(ctx, unit.Name, "Timer", "NextElapseUSecRealtime")
 		if err != nil {
 			continue
 		}
 
-		usec := getUint64FromVariant(prop.Value)
+		val, ok := prop.Value.Value().(uint64)
+		if !ok || val == 0 || val == math.MaxUint64 {
+			continue
+		}
 
-		if usec > 0 && usec != ^uint64(0) {
-			nextTime := time.Unix(0, int64(usec)*int64(time.Microsecond))
-			if earliest == nil || nextTime.Before(*earliest) {
-				t := nextTime
-				earliest = &t
-			}
+		nextTime := time.Unix(0, int64(val)*int64(time.Microsecond))
+		if !found || nextTime.Before(earliest) {
+			earliest = nextTime
+			found = true
 		}
 	}
 
-	return earliest, nil
+	if !found {
+		return nil, nil
+	}
+
+	return &earliest, nil
 }
 
-func getUint64FromVariant(v godbus.Variant) uint64 {
-	switch val := v.Value().(type) {
-	case uint64:
-		return val
-	case int64:
-		if val >= 0 {
-			return uint64(val)
-		}
+func PurgeAllLegacyUnits(ctx context.Context) error {
+	timerBasePath := "/etc/systemd/system"
+	pattern := filepath.Join(timerBasePath, "pbs-plus-job-*.timer")
+
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("failed to glob legacy units: %w", err)
 	}
-	return 0
+
+	if len(matches) == 0 {
+		return nil
+	}
+
+	conn, err := getConn()
+	if err != nil {
+		return fmt.Errorf("failed to connect to dbus: %w", err)
+	}
+
+	fmt.Printf("Found %d legacy unit(s) to migrate...\n", len(matches))
+
+	for _, timerFile := range matches {
+		fileName := filepath.Base(timerFile)
+		serviceFile := strings.TrimSuffix(timerFile, ".timer") + ".service"
+
+		_, _ = conn.StopUnitContext(ctx, fileName, "replace", nil)
+		_, _ = conn.DisableUnitFilesContext(ctx, []string{fileName}, false)
+
+		_ = os.Remove(timerFile)
+		_ = os.Remove(serviceFile)
+
+		fmt.Printf("Purged legacy unit: %s\n", fileName)
+	}
+
+	err = conn.ReloadContext(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to reload daemon after purge: %w", err)
+	}
+
+	return nil
 }
 
 func SetBatchSchedules(ctx context.Context, jobs []types.Job) error {
+	unitNames := make([]string, 0, len(jobs))
+
 	for _, job := range jobs {
-		if err := setSchedule(ctx, job); err != nil {
+		if unitName, err := createScheduleUnits(ctx, job); err != nil {
 			fmt.Printf("Batch error for %s: %v\n", job.ID, err)
+		} else if unitName != "" {
+			unitNames = append(unitNames, unitName)
 		}
 	}
 
@@ -361,6 +391,10 @@ func SetBatchSchedules(ctx context.Context, jobs []types.Job) error {
 
 	if err := conn.ReloadContext(ctx); err != nil {
 		return fmt.Errorf("SetSchedule: daemon-reload failed: %w", err)
+	}
+
+	for _, unitName := range unitNames {
+		_, err = conn.StartUnitContext(ctx, unitName+".timer", "replace", nil)
 	}
 	return nil
 }
