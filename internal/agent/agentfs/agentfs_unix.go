@@ -4,11 +4,9 @@ package agentfs
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +35,7 @@ type FileHandle struct {
 
 var readBufPool = sync.Pool{
 	New: func() any {
-		b := make([]byte, 512*1024)
+		b := make([]byte, 1024*1024)
 		return &b
 	},
 }
@@ -121,10 +119,7 @@ func (s *AgentFSServer) handleStatFS(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 	syslog.L.Debug().WithMessage("handleStatFS: success").Write()
-	return arpc.Response{
-		Status: 200,
-		Data:   enc,
-	}, nil
+	return arpc.Response{Status: 200, Data: enc}, nil
 }
 
 func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error) {
@@ -134,82 +129,60 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		syslog.L.Error(err).WithMessage("handleOpenFile: decode failed").Write()
 		return arpc.Response{}, err
 	}
+
 	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
-		syslog.L.Warn().WithMessage("handleOpenFile: write operation attempted and blocked").WithField("path", payload.Path).Write()
-		errStr := "write operations not allowed"
-		errBytes, err := cbor.Marshal(errStr)
-		if err != nil {
-			syslog.L.Error(err).WithMessage("handleOpenFile: encode error message failed").Write()
-			return arpc.Response{}, err
-		}
-		return arpc.Response{
-			Status: 403,
-			Data:   errBytes,
-		}, nil
+		syslog.L.Warn().WithMessage("handleOpenFile: write operation blocked").WithField("path", payload.Path).Write()
+		errBytes, _ := cbor.Marshal("write operations not allowed")
+		return arpc.Response{Status: 403, Data: errBytes}, nil
 	}
+
 	path, err := s.abs(payload.Path)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("handleOpenFile: abs failed").WithField("path", payload.Path).Write()
 		return arpc.Response{}, err
 	}
-	syslog.L.Debug().WithMessage("handleOpenFile: opening file").WithField("path", path).Write()
+
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("handleOpenFile: open failed").WithField("path", path).Write()
-		return arpc.Response{}, fmt.Errorf("open failed '%s': %w", path, err)
+		return arpc.Response{}, fmt.Errorf("open failed: %w", err)
 	}
-	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
+
+	var stx unix.Statx_t
+	mask := uint32(unix.STATX_TYPE | unix.STATX_SIZE)
+	if err := unix.Statx(fd, "", unix.AT_EMPTY_PATH|unix.AT_STATX_DONT_SYNC, int(mask), &stx); err != nil {
 		_ = unix.Close(fd)
-		syslog.L.Error(err).WithMessage("handleOpenFile: fstat failed").WithField("path", path).Write()
-		return arpc.Response{}, fmt.Errorf("fstat failed '%s': %w", path, err)
+		syslog.L.Error(err).WithMessage("handleOpenFile: statx failed").Write()
+		return arpc.Response{}, err
 	}
+
 	handleId := s.handleIdGen.NextID()
 	var fh *FileHandle
-	if (st.Mode & unix.S_IFMT) == unix.S_IFDIR {
-		_ = unix.Close(fd)
-		reader, err := NewDirReaderUnix(path)
+	isDir := (stx.Mode & unix.S_IFMT) == unix.S_IFDIR
+
+	if isDir {
+		reader, err := NewDirReaderUnix(fd, path)
 		if err != nil {
-			syslog.L.Error(err).WithMessage("handleOpenFile: NewDirReaderUnix failed").WithField("path", path).Write()
+			_ = unix.Close(fd)
 			return arpc.Response{}, err
 		}
-		fh = &FileHandle{
-			dirReader: reader,
-			isDir:     true,
-		}
+		fh = &FileHandle{dirReader: reader, isDir: true, fd: fd}
 	} else {
-		file := os.NewFile(uintptr(fd), path)
-		if file == nil {
-			_ = unix.Close(fd)
-			syslog.L.Error(fmt.Errorf("wrap fd failed")).WithMessage("handleOpenFile: failed to wrap fd").WithField("path", path).Write()
-			return arpc.Response{}, fmt.Errorf("failed to wrap fd for '%s'", path)
-		}
 		fh = &FileHandle{
-			file:     file,
+			file:     os.NewFile(uintptr(fd), path),
 			fd:       fd,
-			fileSize: st.Size,
+			fileSize: int64(stx.Size),
 			isDir:    false,
 		}
 	}
+
 	s.handles.Set(handleId, fh)
-	fhId := types.FileHandleId(handleId)
-	dataBytes, err := cbor.Marshal(fhId)
-	if err != nil {
-		if fh != nil {
-			if fh.isDir && fh.dirReader != nil {
-				_ = fh.dirReader.Close()
-			} else if fh.fd != 0 {
-				_ = unix.Close(fh.fd)
-			}
-		}
-		syslog.L.Error(err).WithMessage("handleOpenFile: encode handle id failed").Write()
-		return arpc.Response{}, err
-	}
-	syslog.L.Debug().WithMessage("handleOpenFile: success").WithField("handle_id", handleId).WithField("is_dir", fh.isDir).WithField("size", fh.fileSize).Write()
-	return arpc.Response{
-		Status: 200,
-		Data:   dataBytes,
-	}, nil
+	dataBytes, _ := cbor.Marshal(types.FileHandleId(handleId))
+
+	syslog.L.Debug().WithMessage("handleOpenFile: success").
+		WithField("handle_id", handleId).
+		WithField("is_dir", isDir).Write()
+
+	return arpc.Response{Status: 200, Data: dataBytes}, nil
 }
 
 func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
@@ -219,40 +192,51 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 		syslog.L.Error(err).WithMessage("handleAttr: decode failed").Write()
 		return arpc.Response{}, err
 	}
+
 	fullPath, err := s.abs(payload.Path)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("handleAttr: abs failed").WithField("path", payload.Path).Write()
 		return arpc.Response{}, err
 	}
-	var st unix.Stat_t
-	if err := unix.Fstatat(unix.AT_FDCWD, fullPath, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+
+	var stx unix.Statx_t
+	mask := uint32(unix.STATX_MODE | unix.STATX_SIZE | unix.STATX_MTIME)
+	flags := unix.AT_SYMLINK_NOFOLLOW | unix.AT_STATX_DONT_SYNC
+
+	if err := unix.Statx(unix.AT_FDCWD, fullPath, flags, int(mask), &stx); err != nil {
 		if !strings.HasSuffix(fullPath, ".pxarexclude") {
-			syslog.L.Error(err).WithMessage("handleAttr: fstatat failed").WithField("path", fullPath).Write()
+			syslog.L.Error(err).WithMessage("handleAttr: statx failed").WithField("path", fullPath).Write()
 		}
 		return arpc.Response{}, err
 	}
+
 	blockSize := s.statFs.Bsize
 	if blockSize == 0 {
 		blockSize = 4096
 	}
-	blocks := uint64(0)
-	if (st.Mode & unix.S_IFMT) != unix.S_IFDIR {
-		blocks = uint64((st.Size + int64(blockSize) - 1) / int64(blockSize))
+
+	isDir := (stx.Mode & unix.S_IFMT) == unix.S_IFDIR
+	var blocks uint64
+	if !isDir {
+		blocks = uint64((int64(stx.Size) + int64(blockSize) - 1) / int64(blockSize))
 	}
+
 	info := types.AgentFileInfo{
 		Name:    lastPathElem(fullPath),
-		Size:    st.Size,
-		Mode:    uint32(modeFromUnix(uint32(st.Mode))),
-		ModTime: time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)).UnixNano(),
-		IsDir:   (st.Mode & unix.S_IFMT) == unix.S_IFDIR,
+		Size:    int64(stx.Size),
+		Mode:    uint32(modeFromUnix(uint32(stx.Mode))),
+		ModTime: time.Unix(int64(stx.Mtime.Sec), int64(stx.Mtime.Nsec)).UnixNano(),
+		IsDir:   isDir,
 		Blocks:  blocks,
 	}
+
 	data, err := cbor.Marshal(info)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("handleAttr: encode failed").WithField("path", fullPath).Write()
+		syslog.L.Error(err).WithMessage("handleAttr: encode failed").Write()
 		return arpc.Response{}, err
 	}
-	syslog.L.Debug().WithMessage("handleAttr: success").WithField("path", fullPath).WithField("is_dir", info.IsDir).WithField("size", info.Size).Write()
+
+	syslog.L.Debug().WithMessage("handleAttr: success").WithField("path", fullPath).Write()
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
@@ -268,34 +252,41 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 		syslog.L.Error(err).WithMessage("handleXattr: abs failed").WithField("path", payload.Path).Write()
 		return arpc.Response{}, err
 	}
-	var st unix.Stat_t
-	if err := unix.Fstatat(unix.AT_FDCWD, fullPath, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		if !strings.HasSuffix(fullPath, ".pxarexclude") {
-			syslog.L.Error(err).WithMessage("handleXattr: fstatat failed").WithField("path", fullPath).Write()
-		}
+
+	var stx unix.Statx_t
+	// STATX_BTIME is 'birth time' (creation time), supported on newer kernels/filesystems (ext4, btrfs, xfs)
+	mask := uint32(unix.STATX_UID | unix.STATX_GID | unix.STATX_ATIME | unix.STATX_MTIME | unix.STATX_BTIME)
+	flags := unix.AT_SYMLINK_NOFOLLOW | unix.AT_STATX_DONT_SYNC
+
+	if err := unix.Statx(unix.AT_FDCWD, fullPath, flags, int(mask), &stx); err != nil {
+		syslog.L.Error(err).WithMessage("handleXattr: statx failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
 	}
-	var creationTime int64
-	lastAccessTime := time.Unix(int64(st.Atim.Sec), int64(st.Atim.Nsec)).Unix()
-	lastWriteTime := time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)).Unix()
-	uidStr := strconv.Itoa(int(st.Uid))
-	gidStr := strconv.Itoa(int(st.Gid))
-	owner := uidStr
-	group := gidStr
+
+	owner := getIDString(stx.Uid)
+	group := getIDString(stx.Gid)
+
 	fileAttributes := make(map[string]bool)
+	if (stx.Attributes_mask & unix.STATX_ATTR_IMMUTABLE) != 0 {
+		fileAttributes["immutable"] = (stx.Attributes & unix.STATX_ATTR_IMMUTABLE) != 0
+	}
+
 	info := types.AgentFileInfo{
-		CreationTime:   creationTime,
-		LastAccessTime: lastAccessTime,
-		LastWriteTime:  lastWriteTime,
-		FileAttributes: fileAttributes,
+		// CreationTime (Btime) is 0 if not supported by the filesystem
+		CreationTime:   time.Unix(int64(stx.Btime.Sec), int64(stx.Btime.Nsec)).Unix(),
+		LastAccessTime: time.Unix(int64(stx.Atime.Sec), int64(stx.Atime.Nsec)).Unix(),
+		LastWriteTime:  time.Unix(int64(stx.Mtime.Sec), int64(stx.Mtime.Nsec)).Unix(),
 		Owner:          owner,
 		Group:          group,
+		FileAttributes: fileAttributes,
 	}
+
 	data, err := cbor.Marshal(info)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("handleXattr: encode failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
 	}
+
 	syslog.L.Debug().WithMessage("handleXattr: success").WithField("path", fullPath).Write()
 	return arpc.Response{Status: 200, Data: data}, nil
 }
@@ -316,24 +307,16 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	defer fh.Unlock()
 	encodedBatch, err := fh.dirReader.NextBatch()
 	if err != nil {
-		if !errors.Is(err, os.ErrProcessDone) {
-			syslog.L.Error(err).WithMessage("handleReadDir: error reading batch").WithField("handle_id", payload.HandleID).Write()
-		} else {
-			syslog.L.Debug().WithMessage("handleReadDir: directory read complete").WithField("handle_id", payload.HandleID).Write()
-		}
 		return arpc.Response{}, err
 	}
 	syslog.L.Debug().WithMessage("handleReadDir: sending batch").WithField("handle_id", payload.HandleID).WithField("bytes", len(encodedBatch)).Write()
 	byteReader := bytes.NewReader(encodedBatch)
 	streamCallback := func(stream *smux.Stream) {
-		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
-			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader via binary stream").WithField("handle_id", payload.HandleID).Write()
+		if err := binarystream.SendDataFromReader(byteReader, len(encodedBatch), stream); err != nil {
+			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader").WithField("handle_id", payload.HandleID).Write()
 		}
 	}
-	return arpc.Response{
-		Status:    213,
-		RawStream: streamCallback,
-	}, nil
+	return arpc.Response{Status: 213, RawStream: streamCallback}, nil
 }
 
 func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
@@ -343,109 +326,51 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		syslog.L.Error(err).WithMessage("handleReadAt: decode failed").Write()
 		return arpc.Response{}, err
 	}
-	if payload.Length < 0 {
-		syslog.L.Warn().WithMessage("handleReadAt: negative length requested").WithField("length", payload.Length).Write()
-		return arpc.Response{}, fmt.Errorf("invalid negative length requested: %d", payload.Length)
-	}
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
 		syslog.L.Warn().WithMessage("handleReadAt: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
-	if fh.isDir {
-		syslog.L.Warn().WithMessage("handleReadAt: attempted read on directory handle").WithField("handle_id", payload.HandleID).Write()
-		return arpc.Response{}, os.ErrInvalid
-	}
 	fh.Lock()
 	defer fh.Unlock()
 	if payload.Offset >= fh.fileSize {
-		syslog.L.Debug().WithMessage("handleReadAt: offset beyond EOF, sending empty").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("size", fh.fileSize).Write()
-		emptyReader := bytes.NewReader(nil)
-		return arpc.Response{
-			Status: 213,
-			RawStream: func(stream *smux.Stream) {
-				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
-					syslog.L.Error(err).WithMessage("handleReadAt: failed sending empty reader via binary stream").WithField("handle_id", payload.HandleID).Write()
-				}
-			},
-		}, nil
+		syslog.L.Debug().WithMessage("handleReadAt: offset beyond EOF").WithField("handle_id", payload.HandleID).Write()
+		return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
+			_ = binarystream.SendDataFromReader(bytes.NewReader(nil), 0, stream)
+		}}, nil
 	}
-	maxEnd := fh.fileSize
-	reqEnd := payload.Offset + int64(payload.Length)
-	if reqEnd > maxEnd {
-		reqEnd = maxEnd
-	}
-	if reqEnd <= payload.Offset {
-		syslog.L.Debug().WithMessage("handleReadAt: empty range after clamp").WithField("handle_id", payload.HandleID).Write()
-		emptyReader := bytes.NewReader(nil)
-		return arpc.Response{
-			Status: 213,
-			RawStream: func(stream *smux.Stream) {
-				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
-					syslog.L.Error(err).WithMessage("handleReadAt: failed sending empty reader via binary stream").WithField("handle_id", payload.HandleID).Write()
-				}
-			},
-		}, nil
-	}
-	alignedOffset := payload.Offset - (payload.Offset % int64(s.allocGranularity))
-	offsetDiff := int(payload.Offset - alignedOffset)
-	viewSize := payload.Length + offsetDiff
-
 	if s.readMode == "mmap" {
-		syslog.L.Debug().WithMessage("handleReadAt: attempting mmap read").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", payload.Length).Write()
+		syslog.L.Debug().WithMessage("handleReadAt: attempting mmap read").WithField("handle_id", payload.HandleID).Write()
+		alignedOffset := payload.Offset - (payload.Offset % int64(s.allocGranularity))
+		offsetDiff := int(payload.Offset - alignedOffset)
+		viewSize := payload.Length + offsetDiff
 		data, err := unix.Mmap(fh.fd, alignedOffset, viewSize, unix.PROT_READ, unix.MAP_SHARED)
 		if err == nil {
-			if offsetDiff+payload.Length > len(data) {
-				_ = unix.Munmap(data)
-				syslog.L.Error(fmt.Errorf("mapping bounds")).WithMessage("handleReadAt: invalid file mapping boundaries").WithField("handle_id", payload.HandleID).Write()
-				return arpc.Response{}, fmt.Errorf("invalid file mapping boundaries")
-			}
 			result := data[offsetDiff : offsetDiff+payload.Length]
-			reader := bytes.NewReader(result)
-			syslog.L.Debug().WithMessage("handleReadAt: starting stream (mmap)").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", payload.Length).Write()
-			streamCallback := func(stream *smux.Stream) {
+			return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
 				defer unix.Munmap(data)
-				if err := binarystream.SendDataFromReader(reader, len(result), stream); err != nil {
-					syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed (mmap)").WithField("handle_id", payload.HandleID).Write()
-					return
-				}
-				syslog.L.Debug().WithMessage("handleReadAt: stream completed").WithField("handle_id", payload.HandleID).WithField("bytes", len(result)).Write()
-			}
-			return arpc.Response{Status: 213, RawStream: streamCallback}, nil
+				_ = binarystream.SendDataFromReader(bytes.NewReader(result), len(result), stream)
+				syslog.L.Debug().WithMessage("handleReadAt: stream completed (mmap)").WithField("bytes", len(result)).Write()
+			}}, nil
 		}
-		syslog.L.Warn().WithMessage("handleReadAt: mmap failed, falling back to pread").WithField("handle_id", payload.HandleID).WithField("error", err.Error()).Write()
+		syslog.L.Warn().WithMessage("handleReadAt: mmap failed, falling back to pread").Write()
 	}
-
-	var buf []byte
 	bptr := readBufPool.Get().(*[]byte)
-	if len(*bptr) < payload.Length {
+	buf := *bptr
+	if len(buf) < payload.Length {
 		buf = make([]byte, payload.Length)
-	} else {
-		buf = *bptr
 	}
-
 	n, err := unix.Pread(fh.fd, buf[:payload.Length], payload.Offset)
 	if err != nil {
-		if len(*bptr) >= payload.Length {
-			readBufPool.Put(bptr)
-		}
-		syslog.L.Error(err).WithMessage("handleReadAt: pread failed").WithField("handle_id", payload.HandleID).Write()
-		return arpc.Response{}, fmt.Errorf("pread failed: %w", err)
+		readBufPool.Put(bptr)
+		syslog.L.Error(err).WithMessage("handleReadAt: pread failed").Write()
+		return arpc.Response{}, err
 	}
-
-	reader := bytes.NewReader(buf[:n])
-	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", n).Write()
-	streamCallback := func(stream *smux.Stream) {
-		if err := binarystream.SendDataFromReader(reader, n, stream); err != nil {
-			syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed").WithField("handle_id", payload.HandleID).Write()
-			return
-		}
-		if len(*bptr) >= payload.Length {
-			readBufPool.Put(bptr)
-		}
-		syslog.L.Debug().WithMessage("handleReadAt: stream completed").WithField("handle_id", payload.HandleID).WithField("bytes", n).Write()
-	}
-	return arpc.Response{Status: 213, RawStream: streamCallback}, nil
+	return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
+		defer readBufPool.Put(bptr)
+		_ = binarystream.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream)
+		syslog.L.Debug().WithMessage("handleReadAt: stream completed").WithField("bytes", n).Write()
+	}}, nil
 }
 
 func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
@@ -455,65 +380,30 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 		syslog.L.Error(err).WithMessage("handleLseek: decode failed").Write()
 		return arpc.Response{}, err
 	}
-	if payload.Whence != io.SeekStart &&
-		payload.Whence != io.SeekCurrent &&
-		payload.Whence != io.SeekEnd &&
-		payload.Whence != SeekData &&
-		payload.Whence != SeekHole {
-		syslog.L.Warn().WithMessage("handleLseek: invalid whence").WithField("whence", payload.Whence).Write()
-		return arpc.Response{}, os.ErrInvalid
-	}
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
 		syslog.L.Warn().WithMessage("handleLseek: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
-	if fh.isDir {
-		syslog.L.Warn().WithMessage("handleLseek: attempted lseek on directory").WithField("handle_id", payload.HandleID).Write()
-		return arpc.Response{}, os.ErrInvalid
-	}
 	fh.Lock()
 	defer fh.Unlock()
-	if payload.Whence == SeekHole || payload.Whence == SeekData {
-		syslog.L.Warn().WithMessage("handleLseek: SEEK_HOLE/SEEK_DATA unsupported").WithField("handle_id", payload.HandleID).Write()
-		return arpc.Response{}, os.ErrInvalid
-	}
 	var newOffset int64
 	switch payload.Whence {
 	case io.SeekStart:
-		if payload.Offset < 0 {
-			syslog.L.Warn().WithMessage("handleLseek: negative offset with SeekStart").WithField("offset", payload.Offset).Write()
-			return arpc.Response{}, os.ErrInvalid
-		}
 		newOffset = payload.Offset
 	case io.SeekCurrent:
-		if fh.curOffset+payload.Offset < 0 {
-			syslog.L.Warn().WithMessage("handleLseek: negative resulting offset with SeekCurrent").WithField("current", fh.curOffset).WithField("delta", payload.Offset).Write()
-			return arpc.Response{}, os.ErrInvalid
-		}
 		newOffset = fh.curOffset + payload.Offset
 	case io.SeekEnd:
-		if fh.fileSize+payload.Offset < 0 {
-			syslog.L.Warn().WithMessage("handleLseek: negative resulting offset with SeekEnd").WithField("file_size", fh.fileSize).WithField("delta", payload.Offset).Write()
-			return arpc.Response{}, os.ErrInvalid
-		}
 		newOffset = fh.fileSize + payload.Offset
 	default:
-		syslog.L.Warn().WithMessage("handleLseek: invalid whence in default").Write()
 		return arpc.Response{}, os.ErrInvalid
 	}
-	if newOffset > fh.fileSize {
-		syslog.L.Warn().WithMessage("handleLseek: newOffset beyond EOF").WithField("new_offset", newOffset).WithField("file_size", fh.fileSize).Write()
+	if newOffset < 0 || newOffset > fh.fileSize {
 		return arpc.Response{}, os.ErrInvalid
 	}
 	fh.curOffset = newOffset
-	resp := types.LseekResp{NewOffset: newOffset}
-	respBytes, err := cbor.Marshal(resp)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("handleLseek: encode failed").WithField("handle_id", payload.HandleID).Write()
-		return arpc.Response{}, err
-	}
-	syslog.L.Debug().WithMessage("handleLseek: success").WithField("handle_id", payload.HandleID).WithField("new_offset", newOffset).Write()
+	respBytes, _ := cbor.Marshal(types.LseekResp{NewOffset: newOffset})
+	syslog.L.Debug().WithMessage("handleLseek: success").WithField("new_offset", newOffset).Write()
 	return arpc.Response{Status: 200, Data: respBytes}, nil
 }
 
@@ -533,18 +423,11 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	defer handle.Unlock()
 	if handle.file != nil {
 		_ = handle.file.Close()
-		syslog.L.Debug().WithMessage("handleClose: file handle closed").WithField("handle_id", payload.HandleID).Write()
 	} else if handle.dirReader != nil {
 		_ = handle.dirReader.Close()
-		syslog.L.Debug().WithMessage("handleClose: dir reader closed").WithField("handle_id", payload.HandleID).Write()
 	}
 	s.handles.Del(uint64(payload.HandleID))
-	closed := "closed"
-	data, err := cbor.Marshal(closed)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("handleClose: encode close message failed").WithField("handle_id", payload.HandleID).Write()
-		return arpc.Response{}, err
-	}
+	data, _ := cbor.Marshal("closed")
 	syslog.L.Debug().WithMessage("handleClose: success").WithField("handle_id", payload.HandleID).Write()
 	return arpc.Response{Status: 200, Data: data}, nil
 }
