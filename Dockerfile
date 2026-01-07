@@ -1,7 +1,5 @@
 FROM golang:1.25-alpine AS builder
 
-RUN apk add --no-cache gcc musl-dev
-
 WORKDIR /app
 
 COPY go.mod go.sum ./
@@ -18,10 +16,8 @@ ENV CGO_ENABLED=0 \
   GOFIPS140=latest
 
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH \
-  go build -trimpath \
-  -tags="netgo,osusergo" \
-  -installsuffix="netgo" \
-  -ldflags="-s -w -X 'main.Version=v${VERSION}' -extld gcc -extldflags '-static'" \
+  go build \
+  -ldflags="-s -w -X 'main.Version=v${VERSION}'" \
   -o /out/pbs-plus-agent ./cmd/unix_agent
 
 FROM alpine:3.23
