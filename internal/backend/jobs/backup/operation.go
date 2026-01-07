@@ -372,7 +372,10 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 			b.queueTask.UpdateDescription("waiting for agent to finish snapshot")
 		}
 
-		agentMount, err = mount.AgentFSMount(b.storeInstance, job, target)
+		timedCtx, timedCtxCancel := context.WithTimeout(b.Context(), 5*time.Minute)
+		defer timedCtxCancel()
+
+		agentMount, err = mount.AgentFSMount(timedCtx, b.storeInstance, job, target)
 		if err != nil {
 			return "", nil, nil, err
 		}
@@ -397,7 +400,10 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 			return "", agentMount, nil, ErrMountEmpty
 		}
 	} else if target.IsS3 {
-		s3Mount, err = mount.S3FSMount(b.storeInstance, job, target)
+		timedCtx, timedCtxCancel := context.WithTimeout(b.Context(), 5*time.Minute)
+		defer timedCtxCancel()
+
+		s3Mount, err = mount.S3FSMount(timedCtx, b.storeInstance, job, target)
 		if err != nil {
 			return "", nil, nil, err
 		}
