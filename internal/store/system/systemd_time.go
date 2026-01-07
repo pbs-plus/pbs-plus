@@ -305,36 +305,46 @@ func GetNextSchedule(ctx context.Context, backup types.Job) (*time.Time, error) 
 		return nil, err
 	}
 
+	if len(units) == 0 {
+		return nil, nil
+	}
+
 	var earliest *time.Time
 
 	for _, unit := range units {
+		if unit.ActiveState != "active" {
+			continue
+		}
+
 		prop, err := conn.GetUnitPropertyContext(ctx, unit.Name, "NextElapseUSecRealtime")
 		if err != nil {
 			continue
 		}
 
-		var usec uint64
-		switch v := prop.Value.Value().(type) {
-		case uint64:
-			usec = v
-		case int64:
-			usec = uint64(v)
-		default:
-			continue
-		}
+		usec := getUint64FromVariant(prop.Value)
 
-		if usec == 0 || usec == ^uint64(0) {
-			continue
-		}
-
-		nextTime := time.Unix(0, int64(usec)*int64(time.Microsecond))
-		if earliest == nil || nextTime.Before(*earliest) {
-			t := nextTime
-			earliest = &t
+		if usec > 0 && usec != ^uint64(0) {
+			nextTime := time.Unix(0, int64(usec)*int64(time.Microsecond))
+			if earliest == nil || nextTime.Before(*earliest) {
+				t := nextTime
+				earliest = &t
+			}
 		}
 	}
 
 	return earliest, nil
+}
+
+func getUint64FromVariant(v godbus.Variant) uint64 {
+	switch val := v.Value().(type) {
+	case uint64:
+		return val
+	case int64:
+		if val >= 0 {
+			return uint64(val)
+		}
+	}
+	return 0
 }
 
 func SetBatchSchedules(ctx context.Context, jobs []types.Job) error {
