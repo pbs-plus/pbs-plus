@@ -5,6 +5,7 @@ package system
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -63,49 +64,82 @@ func stopAllRetries(ctx context.Context, sanitized string) {
 			_ = conn.ResetFailedUnitContext(ctx, unit.Name)
 		}
 	}
+
+	runPath := "/run/systemd/system"
+	filePattern := fmt.Sprintf("pbs-plus-backup-%s-retry-*", sanitized)
+	matches, _ := filepath.Glob(filepath.Join(runPath, filePattern))
+	for _, match := range matches {
+		_ = os.Remove(match)
+	}
 }
 
 func SetSchedule(ctx context.Context, backup types.Backup) error {
-	unitName, err := getUnitName(backup.ID)
-	if err != nil {
-		return fmt.Errorf("SetSchedule: %w", err)
-	}
-
-	if backup.Schedule == "" {
-		stopBackupTimer(ctx, unitName)
-		return nil
-	}
+	unitName, err := createScheduleUnits(ctx, backup)
 
 	conn, err := getConn()
 	if err != nil {
-		return fmt.Errorf("SetSchedule: failed to connect to dbus: %w", err)
+		return err
 	}
 
-	timerName := unitName + ".timer"
-	serviceName := unitName + ".service"
-
-	serviceProps := []dbus.Property{
-		dbus.PropDescription(backup.ID + " Backup Service"),
-		dbus.PropExecStart([]string{"/usr/bin/pbs-plus", "-backup-job=" + backup.ID}, false),
+	if err := conn.ReloadContext(ctx); err != nil {
+		return fmt.Errorf("SetSchedule: daemon-reload failed: %w", err)
 	}
 
-	timerProps := []dbus.Property{
-		dbus.PropDescription(backup.ID + " Backup Timer"),
-		{Name: "OnCalendar", Value: godbus.MakeVariant(backup.Schedule)},
-		{Name: "Persistent", Value: godbus.MakeVariant(false)},
+	if unitName != "" {
+		_, err = conn.StartUnitContext(ctx, unitName+".timer", "replace", nil)
 	}
 
-	_, err = conn.StartTransientUnitContext(ctx, serviceName, "replace", serviceProps, nil)
+	return err
+}
+
+func createScheduleUnits(ctx context.Context, backup types.Backup) (string, error) {
+	unitName, err := getUnitName(backup.ID)
 	if err != nil {
-		return fmt.Errorf("SetSchedule: error creating service: %w", err)
+		return "", fmt.Errorf("SetSchedule: %w", err)
 	}
 
-	_, err = conn.StartTransientUnitContext(ctx, timerName, "replace", timerProps, nil)
-	if err != nil {
-		return fmt.Errorf("SetSchedule: error creating timer: %w", err)
+	if backup.Schedule == "" {
+		_ = DeleteSchedule(ctx, backup.ID)
+		return "", nil
 	}
 
-	return nil
+	timerPath := filepath.Join("/etc/systemd/system", unitName+".timer")
+	servicePath := filepath.Join("/etc/systemd/system", unitName+".service")
+
+	serviceContent := fmt.Sprintf(`[Unit]
+Description=%s Backup Service
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pbs-plus -job=%s
+`, backup.ID, backup.ID)
+
+	timerContent := fmt.Sprintf(`[Unit]
+Description=%s Backup Timer
+
+[Timer]
+OnCalendar=%s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+`, backup.ID, backup.Schedule)
+
+	existingService, _ := os.ReadFile(servicePath)
+	existingTimer, _ := os.ReadFile(timerPath)
+	if string(existingService) == serviceContent && string(existingTimer) == timerContent {
+		return unitName, nil
+	}
+
+	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
+		return "", fmt.Errorf("SetSchedule: error writing service: %w", err)
+	}
+	if err := os.WriteFile(timerPath, []byte(timerContent), 0644); err != nil {
+		return "", fmt.Errorf("SetSchedule: error writing timer: %w", err)
+	}
+
+	return unitName, nil
 }
 
 func DeleteSchedule(ctx context.Context, id string) error {
@@ -118,19 +152,9 @@ func DeleteSchedule(ctx context.Context, id string) error {
 	stopAllRetries(ctx, sanitized)
 
 	timerBasePath := "/etc/systemd/system"
-
 	filesToRemove := []string{
 		filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-backup-%s.timer", sanitized)),
 		filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-backup-%s.service", sanitized)),
-	}
-
-	retryPatterns := []string{
-		filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized)),
-		filepath.Join(timerBasePath, fmt.Sprintf("pbs-plus-backup-%s-retry-*.service", sanitized)),
-	}
-	for _, p := range retryPatterns {
-		matches, _ := filepath.Glob(p)
-		filesToRemove = append(filesToRemove, matches...)
 	}
 
 	for _, file := range filesToRemove {
@@ -162,11 +186,6 @@ func SetBackupRetrySchedule(ctx context.Context, backup types.Backup, extraExclu
 
 	stopAllRetries(ctx, sanitized)
 
-	conn, err := getConn()
-	if err != nil {
-		return fmt.Errorf("SetBackupRetrySchedule: failed to connect to dbus: %w", err)
-	}
-
 	retryUnitName, err := getRetryUnitName(backup.ID, newAttempt)
 	if err != nil {
 		return fmt.Errorf("SetBackupRetrySchedule: %w", err)
@@ -183,20 +202,31 @@ func SetBackupRetrySchedule(ctx context.Context, backup types.Backup, extraExclu
 		}
 	}
 
-	serviceProps := []dbus.Property{
-		dbus.PropDescription(fmt.Sprintf("%s Backup Retry (Attempt %d)", backup.ID, newAttempt)),
-		dbus.PropExecStart(execArgs, false),
+	servicePath := filepath.Join("/run/systemd/system", serviceName)
+	serviceContent := fmt.Sprintf(`[Unit]
+Description=%s Backup Retry Service (Attempt %d)
+
+[Service]
+Type=oneshot
+ExecStart=%s
+`, backup.ID, newAttempt, strings.Join(execArgs, " "))
+
+	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
+		return fmt.Errorf("SetRetrySchedule: error writing service: %w", err)
+	}
+
+	conn, err := getConn()
+	if err != nil {
+		return fmt.Errorf("SetRetrySchedule: failed to connect to dbus: %w", err)
+	}
+
+	if err := conn.ReloadContext(ctx); err != nil {
+		return fmt.Errorf("SetRetrySchedule: daemon-reload failed: %w", err)
 	}
 
 	timerProps := []dbus.Property{
-		dbus.PropDescription(fmt.Sprintf("%s Backup Retry (Attempt %d)", backup.ID, newAttempt)),
-		{Name: "OnUnitActiveSec", Value: godbus.MakeVariant(delay)},
-		{Name: "Persistent", Value: godbus.MakeVariant(false)},
-	}
-
-	_, err = conn.StartTransientUnitContext(ctx, serviceName, "replace", serviceProps, nil)
-	if err != nil {
-		return fmt.Errorf("SetBackupRetrySchedule: error creating service: %w", err)
+		dbus.PropDescription(fmt.Sprintf("%s Backup Retry Timer (Attempt %d)", backup.ID, newAttempt)),
+		{Name: "OnActiveSec", Value: godbus.MakeVariant(delay)},
 	}
 
 	_, err = conn.StartTransientUnitContext(ctx, timerName, "replace", timerProps, nil)
@@ -238,7 +268,7 @@ func getCurrentBackupRetryAttempt(ctx context.Context, sanitized string) int {
 		parseAttempt(unit.Name)
 	}
 
-	matches, _ := filepath.Glob(filepath.Join("/run/systemd/transient", pattern))
+	matches, _ := filepath.Glob(filepath.Join("/run/systemd/system", pattern))
 	for _, match := range matches {
 		parseAttempt(filepath.Base(match))
 	}
@@ -263,38 +293,48 @@ func GetNextSchedule(ctx context.Context, backup types.Backup) (*time.Time, erro
 	}
 
 	primaryTimer := fmt.Sprintf("pbs-plus-backup-%s.timer", sanitized)
-	retryPattern := fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized)
+	retryPattern := fmt.Sprintf("pbs-plus-backup-%s-retry*.timer", sanitized)
 
-	units, err := conn.ListUnitsByPatternsContext(ctx, nil, []string{primaryTimer, retryPattern})
+	units, err := conn.ListUnitsByPatternsContext(ctx, []string{}, []string{primaryTimer, retryPattern})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("GetNextSchedule: failed to list units: %w", err)
 	}
 
-	var earliest *time.Time
+	var earliest time.Time
+	found := false
 
 	for _, unit := range units {
-		prop, err := conn.GetUnitPropertyContext(ctx, unit.Name, "NextElapseUSecRealtime")
+		if !strings.HasSuffix(unit.Name, ".timer") {
+			continue
+		}
+
+		prop, err := conn.GetUnitTypePropertyContext(ctx, unit.Name, "Timer", "NextElapseUSecRealtime")
 		if err != nil {
 			continue
 		}
 
-		usec, ok := prop.Value.Value().(uint64)
-		if !ok || usec == 0 || usec == ^uint64(0) {
+		val, ok := prop.Value.Value().(uint64)
+		if !ok || val == 0 || val == math.MaxUint64 {
 			continue
 		}
 
-		nextTime := time.Unix(0, int64(usec)*int64(time.Microsecond))
-		if earliest == nil || nextTime.Before(*earliest) {
-			earliest = &nextTime
+		nextTime := time.Unix(0, int64(val)*int64(time.Microsecond))
+		if !found || nextTime.Before(earliest) {
+			earliest = nextTime
+			found = true
 		}
 	}
 
-	return earliest, nil
+	if !found {
+		return nil, nil
+	}
+
+	return &earliest, nil
 }
 
 func PurgeAllLegacyUnits(ctx context.Context) error {
 	timerBasePath := "/etc/systemd/system"
-	pattern := filepath.Join(timerBasePath, "pbs-plus-backup-*.timer")
+	pattern := filepath.Join(timerBasePath, "pbs-plus-job-*.timer")
 
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -334,60 +374,27 @@ func PurgeAllLegacyUnits(ctx context.Context) error {
 }
 
 func SetBatchSchedules(ctx context.Context, jobs []types.Backup) error {
-	if len(jobs) == 0 {
-		return nil
+	unitNames := make([]string, 0, len(jobs))
+
+	for _, job := range jobs {
+		if unitName, err := createScheduleUnits(ctx, job); err != nil {
+			fmt.Printf("Batch error for %s: %v\n", job.ID, err)
+		} else if unitName != "" {
+			unitNames = append(unitNames, unitName)
+		}
 	}
 
 	conn, err := getConn()
 	if err != nil {
-		return fmt.Errorf("SetBatchSchedules: failed to connect to dbus: %w", err)
+		return err
 	}
 
-	for _, job := range jobs {
-		unitName, err := getUnitName(job.ID)
-		if err != nil {
-			fmt.Printf("Error generating unit name for %s: %v\n", job.ID, err)
-			continue
-		}
-
-		if job.Schedule == "" {
-			timerName := unitName + ".timer"
-			_, _ = conn.StopUnitContext(ctx, timerName, "replace", nil)
-			continue
-		}
-
-		timerName := unitName + ".timer"
-		serviceName := unitName + ".service"
-
-		serviceProps := []dbus.Property{
-			dbus.PropDescription(fmt.Sprintf("PBS-Plus Backup: %s", job.ID)),
-			dbus.PropExecStart([]string{"/usr/bin/pbs-plus", "-backup-job=" + job.ID}, false),
-		}
-
-		timerProps := []dbus.Property{
-			dbus.PropDescription(fmt.Sprintf("PBS-Plus Timer: %s", job.ID)),
-			{
-				Name:  "OnCalendar",
-				Value: godbus.MakeVariant(job.Schedule),
-			},
-			{
-				Name:  "Persistent",
-				Value: godbus.MakeVariant(false),
-			},
-		}
-
-		_, err = conn.StartTransientUnitContext(ctx, serviceName, "replace", serviceProps, nil)
-		if err != nil {
-			fmt.Printf("Batch error starting service for %s: %v\n", job.ID, err)
-			continue
-		}
-
-		_, err = conn.StartTransientUnitContext(ctx, timerName, "replace", timerProps, nil)
-		if err != nil {
-			fmt.Printf("Batch error starting timer for %s: %v\n", job.ID, err)
-			continue
-		}
+	if err := conn.ReloadContext(ctx); err != nil {
+		return fmt.Errorf("SetSchedule: daemon-reload failed: %w", err)
 	}
 
+	for _, unitName := range unitNames {
+		_, err = conn.StartUnitContext(ctx, unitName+".timer", "replace", nil)
+	}
 	return nil
 }

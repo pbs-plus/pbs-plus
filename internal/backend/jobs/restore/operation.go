@@ -103,7 +103,7 @@ func (b *RestoreOperation) Context() context.Context {
 	return b.ctx
 }
 
-func (b *RestoreOperation) PreExecute(ctx context.Context) error {
+func (b *RestoreOperation) PreExecute() error {
 	queueTask, err := proxmox.GenerateRestoreQueuedTask(b.job, b.web)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
@@ -117,7 +117,7 @@ func (b *RestoreOperation) PreExecute(ctx context.Context) error {
 	return nil
 }
 
-func (b *RestoreOperation) Execute(ctx context.Context) error {
+func (b *RestoreOperation) Execute() error {
 	b.updateRestoreWithTask(b.task.Task)
 
 	syslog.L.Info().
@@ -127,7 +127,7 @@ func (b *RestoreOperation) Execute(ctx context.Context) error {
 			"target":    b.job.DestTarget,
 		}).Write()
 
-	preCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	preCtx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
 	defer cancel()
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", b.job.DestTarget))
@@ -193,8 +193,8 @@ func (b *RestoreOperation) Execute(ctx context.Context) error {
 	}()
 
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-b.ctx.Done():
+		return b.ctx.Err()
 	case <-srv.DoneCh:
 		b.task.WriteString("received done signal from agent")
 	}

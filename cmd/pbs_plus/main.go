@@ -333,7 +333,7 @@ func main() {
 		}
 	}()
 
-	manager := backend.NewManager(mainCtx, utils.MaxConcurrentClients, 100)
+	manager := backend.NewManager(mainCtx, utils.MaxConcurrentClients, 100, true)
 
 	go func() {
 		for {
