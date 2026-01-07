@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
@@ -74,6 +75,7 @@ type BackupOperation struct {
 	extraExclusions []string
 
 	cleanupOnce sync.Once
+	started     atomic.Bool
 
 	agentMount       *mount.AgentMount
 	s3Mount          *mount.S3Mount
@@ -164,11 +166,66 @@ func (b *BackupOperation) Execute() error {
 	b.Task = task
 	b.mu.Unlock()
 
+	if err := updateJobStatus(false, 0, b.job, task, b.storeInstance); err != nil {
+		if currOwner != "" {
+			_ = SetDatastoreOwner(b.job, b.storeInstance, currOwner)
+		}
+	}
+
+	b.started.Store(true)
+
 	b.waitGroup.Go(func() {
 		b.waitForCompletion(cmd, task, currOwner, b.agentMount, b.s3Mount)
 	})
 
 	return nil
+}
+
+func (b *BackupOperation) processPBSLogs(logErr error) (bool, int) {
+	gracefulEnd := true
+	if b.agentMount != nil && !b.agentMount.IsConnected() {
+		gracefulEnd = false
+	}
+
+	_ = b.logger.Flush()
+	succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, b.Task.UPID, b.logger, logErr)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to process logs").Write()
+	}
+
+	if errorPath != "" {
+		b.mu.Lock()
+		b.extraExclusions = append(b.extraExclusions, errorPath)
+		b.mu.Unlock()
+	}
+
+	syslog.L.Info().WithJob(b.job.ID).WithMessage("updating job status")
+	if newUpid, err := proxmox.ChangeUPIDStartTime(b.Task.UPID, b.logger.StartTime); err == nil {
+		b.mu.Lock()
+		b.Task.UPID = newUpid
+		b.mu.Unlock()
+	}
+
+	b.mu.RLock()
+	currentJob := b.job
+	b.mu.RUnlock()
+
+	if err := updateJobStatus(succeeded, warningsNum, currentJob, b.Task, b.storeInstance); err != nil {
+		syslog.L.Error(err).WithMessage("failed to update job status - post cmd.Wait").Write()
+	}
+
+	if succeeded || cancelled {
+		syslog.L.Info().WithJob(b.job.ID).WithMessage("succeeded/cancelled, removing all retry schedules")
+		system.RemoveAllRetrySchedules(b.Context(), currentJob)
+	} else {
+		syslog.L.Info().WithJob(b.job.ID).WithMessage("failed, setting a retry schedule")
+		b.mu.RLock()
+		excl := b.extraExclusions
+		b.mu.RUnlock()
+		_ = system.SetRetrySchedule(b.Context(), currentJob, excl)
+	}
+
+	return succeeded, warningsNum
 }
 
 func (b *BackupOperation) OnError(err error) {
@@ -180,6 +237,11 @@ func (b *BackupOperation) OnError(err error) {
 
 	if errors.Is(err, ErrMountEmpty) {
 		b.createOK(err)
+		return
+	}
+
+	if b.started.Load() {
+		_, _ = b.processPBSLogs(err)
 		return
 	}
 
@@ -536,12 +598,6 @@ func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, task proxmox.Task, cu
 	extraExclusions := b.extraExclusions
 	b.mu.RUnlock()
 
-	if err := updateJobStatus(false, 0, job, task, b.storeInstance); err != nil {
-		if currOwner != "" {
-			_ = SetDatastoreOwner(job, b.storeInstance, currOwner)
-		}
-	}
-
 	done := make(chan error, 1)
 
 	go func() {
@@ -565,50 +621,11 @@ func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, task proxmox.Task, cu
 		syslog.L.Warn().WithJob(job.ID).WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", ext)).Write()
 	}
 
-	gracefulEnd := true
-	if agentMount != nil && !agentMount.IsConnected() {
-		gracefulEnd = false
-	}
-
-	_ = b.logger.Flush()
-	succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, task.UPID, b.logger)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to process logs").Write()
-	}
-
-	if errorPath != "" {
-		b.mu.Lock()
-		b.extraExclusions = append(b.extraExclusions, errorPath)
-		b.mu.Unlock()
-	}
-
-	syslog.L.Info().WithJob(b.job.ID).WithMessage("updating job status")
-	if newUpid, err := proxmox.ChangeUPIDStartTime(task.UPID, b.logger.StartTime); err == nil {
-		task.UPID = newUpid
-	}
-
-	b.mu.RLock()
-	currentJob := b.job
-	b.mu.RUnlock()
-
-	if err := updateJobStatus(succeeded, warningsNum, currentJob, task, b.storeInstance); err != nil {
-		syslog.L.Error(err).WithMessage("failed to update job status - post cmd.Wait").Write()
-	}
-
-	if succeeded || cancelled {
-		syslog.L.Info().WithJob(b.job.ID).WithMessage("succeeded/cancelled, removing all retry schedules")
-		system.RemoveAllRetrySchedules(b.Context(), currentJob)
-	} else {
-		syslog.L.Info().WithJob(b.job.ID).WithMessage("failed, setting a retry schedule")
-		b.mu.RLock()
-		excl := b.extraExclusions
-		b.mu.RUnlock()
-		_ = system.SetRetrySchedule(b.Context(), currentJob, excl)
-	}
+	succeeded, warningsNum := b.processPBSLogs(nil)
 
 	if currOwner != "" {
 		syslog.L.Info().WithJob(b.job.ID).WithMessage("setting owner to datastore owner")
-		_ = SetDatastoreOwner(currentJob, b.storeInstance, currOwner)
+		_ = SetDatastoreOwner(b.job, b.storeInstance, currOwner)
 	}
 
 	syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script")
