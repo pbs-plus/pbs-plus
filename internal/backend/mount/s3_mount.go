@@ -3,6 +3,7 @@
 package mount
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -33,7 +34,7 @@ type S3Mount struct {
 	isEmpty   bool
 }
 
-func S3FSMount(storeInstance *store.Store, backup types.Backup, target types.Target) (*S3Mount, error) {
+func S3FSMount(ctx context.Context, storeInstance *store.Store, backup types.Backup, target types.Target) (*S3Mount, error) {
 	// Parse target information
 	parsedS3, err := s3url.Parse(target.Path)
 	if err != nil {
@@ -79,7 +80,8 @@ func S3FSMount(storeInstance *store.Store, backup types.Backup, target types.Tar
 	}
 	var reply rpcmount.BackupReply
 
-	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
+	d := net.Dialer{}
+	conn, err := d.DialContext(ctx, "unix", constants.MountSocketPath)
 	if err != nil {
 		errCleanup()
 		return nil, fmt.Errorf("failed to reach backup RPC: %w", err)
@@ -105,6 +107,9 @@ func S3FSMount(storeInstance *store.Store, backup types.Backup, target types.Tar
 checkLoop:
 	for {
 		select {
+		case <-ctx.Done():
+			errCleanup()
+			return nil, ctx.Err()
 		case <-checkTimeout:
 			break checkLoop
 		case <-ticker.C:
