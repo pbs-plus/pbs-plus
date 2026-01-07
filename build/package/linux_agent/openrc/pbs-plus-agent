@@ -6,13 +6,17 @@ description="PBS Plus Agent for backup operations"
 command="/usr/bin/pbs-plus-agent"
 command_user="pbsplus:pbsplus"
 pidfile="/run/pbs-plus-agent/pbs-plus-agent.pid"
-command_background="yes"
 directory="/var/lib/pbs-plus-agent"
+agent_env="/etc/pbs-plus-agent/agent.env"
 
 output_log="/var/log/pbs-plus-agent/agent.log"
 error_log="/var/log/pbs-plus-agent/agent.error.log"
 
-agent_env="/etc/pbs-plus-agent/agent.env"
+# Background execution & Resource management
+# --nicelevel 19: Lowest CPU priority
+# --ionice idle: Only perform I/O when system is idle (prevents disk lag)
+command_background="yes"
+start_stop_daemon_args="--nicelevel 19 --ionice idle"
 
 depend() {
     need net
@@ -23,41 +27,32 @@ start_pre() {
     checkpath --directory --owner pbsplus:pbsplus --mode 0755 /run/pbs-plus-agent
     checkpath --directory --owner pbsplus:pbsplus --mode 0750 /var/log/pbs-plus-agent
     checkpath --directory --owner pbsplus:pbsplus --mode 0750 /var/lib/pbs-plus-agent
-    checkpath --directory --owner pbsplus:pbsplus --mode 0750 /etc/pbs-plus-agent
-
-    if [ -r "$agent_env" ]; then
-        # shellcheck disable=SC1090
-        . "$agent_env"
-
-        while IFS= read -r line; do
+    
+    if [ -f "$agent_env" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
             case "$line" in
-                ''|\#*) continue ;;                  # skip empty and comments
-                *'='*)
-                    var="${line%%=*}"
-                    # Validate variable name
-                    case "$var" in
-                        [A-Za-z_][A-Za-z0-9_]*)
-                            export "$var"
-                            ;;
-                        *) ;; # ignore invalid names
-                    esac
+                ''|#*) continue ;;
+                *=*) 
+                    key=$(echo "${line%%=*}" | tr -d ' ')
+                    val=$(echo "${line#*=}" | sed "s/^['\"]//;s/['\"]$//")
+                    export "$key=$val"
                     ;;
             esac
         done < "$agent_env"
-    else
-        eerror "Environment file $agent_env not found or not readable"
-        return 1
+    fi
+
+    # OpenRC doesn't manage caps, so we verify the install script did its job
+    if command -v getcap >/dev/null 2>&1; then
+        if ! getcap "$command" | grep -q "cap_dac_read_search"; then
+            ewarn "Warning: Binary lacks CAP_DAC_READ_SEARCH. Backups may fail to read root files."
+        fi
     fi
 }
 
 reload() {
     ebegin "Reloading ${name}"
-    if [ -f "${pidfile}" ]; then
-        kill -HUP "$(cat "${pidfile}")"
-        eend $?
-    else
-        eend 1 "PID file not found"
-    fi
+    start-stop-daemon --signal HUP --pidfile "${pidfile}"
+    eend $?
 }
 
 stop_post() {
