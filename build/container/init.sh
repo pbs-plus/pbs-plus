@@ -4,8 +4,6 @@ set -eu
 USER_NAME="${USER:-pbsplus}"
 BIN_PATH="/usr/bin/pbs-plus-agent"
 
-chmod +x "$BIN_PATH"
-
 # Registry paths (lowercase per new Unix-native layout)
 REG_BASE="/etc/pbs-plus-agent/registry"
 REG_DIR_AGENT="$REG_BASE/software/pbsplus/config"
@@ -110,6 +108,10 @@ if [ "$need_server_url" -eq 1 ] || [ "$need_bootstrap_token" -eq 1 ]; then
     chown "$USER_NAME:$TARGET_GROUP" "$tmp"
     mv -f "$tmp" "$REG_BOOTSTRAP_TOKEN_FILE"
   fi
+fi
+
+if command -v setcap >/dev/null 2>&1; then
+  setcap 'cap_net_bind_service=+ep' "$BIN_PATH" 2>/dev/null || true
 fi
 
 if [ -e /proc/sys/kernel/cap_last_cap ]; then
