@@ -372,7 +372,7 @@ func (p *pbsService) connectARPC() error {
 		}()
 
 		base := 500 * time.Millisecond
-		maxWait := 5 * time.Second
+		maxWait := 30 * time.Second
 		factor := 2.0
 		jitter := 0.2
 
@@ -402,6 +402,12 @@ func (p *pbsService) connectARPC() error {
 					next = min(next, maxWait)
 
 					backoff = next
+
+					if newS, err := session.Reconnect(p.ctx); err != nil {
+						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
+					} else {
+						session = newS
+					}
 				}
 			}
 		}
