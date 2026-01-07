@@ -42,6 +42,8 @@ RUN addgroup -g ${USER_GID} -S ${USER_NAME} && \
   adduser -u ${USER_UID} -S -D -H -G ${USER_NAME} -s /sbin/nologin ${USER_NAME}
 
 COPY --from=builder /out/pbs-plus-agent ${BIN_PATH}
+RUN chmod 0755 ${BIN_PATH} && chown root:${USER_NAME} ${BIN_PATH}
+
 COPY build/container/init.sh /usr/local/bin/init.sh
 
 RUN chmod 0755 /usr/local/bin/init.sh ${BIN_PATH} && \
