@@ -161,7 +161,6 @@ func CmdBackup() {
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		defer wg.Done()
 		defer syslog.L.Info().WithMessage("CmdBackup: ARPC session handler shutting down").Write()
 
 		base := 500 * time.Millisecond
