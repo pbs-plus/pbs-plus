@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"syscall"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 	"golang.org/x/sys/unix"
 )
 
@@ -18,6 +20,19 @@ const (
 	defaultBufSize          = 1024 * 1024 // 1 MiB
 	defaultTargetEncodedLen = 1024 * 1024
 )
+
+var (
+	idCache = safemap.New[uint32, string]()
+)
+
+func getIDString(id uint32) string {
+	if s, ok := idCache.Get(id); ok {
+		return s
+	}
+	s := strconv.Itoa(int(id))
+	idCache.Set(id, s)
+	return s
+}
 
 type DirReaderUnix struct {
 	fd              int

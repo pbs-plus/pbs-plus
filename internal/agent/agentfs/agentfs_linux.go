@@ -1,4 +1,4 @@
-//go:build unix && !linux
+//go:build linux
 
 package agentfs
 
@@ -141,23 +141,23 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Debug().WithMessage("handleOpenFile: opening path").WithField("path", path).Write()
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("handleOpenFile: open failed").WithField("path", path).Write()
 		return arpc.Response{}, fmt.Errorf("open failed: %w", err)
 	}
 
-	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
+	var stx unix.Statx_t
+	mask := uint32(unix.STATX_TYPE | unix.STATX_SIZE)
+	if err := unix.Statx(fd, "", unix.AT_EMPTY_PATH|unix.AT_STATX_DONT_SYNC, int(mask), &stx); err != nil {
 		_ = unix.Close(fd)
-		syslog.L.Error(err).WithMessage("handleOpenFile: fstat failed").Write()
+		syslog.L.Error(err).WithMessage("handleOpenFile: statx failed").Write()
 		return arpc.Response{}, err
 	}
 
 	handleId := s.handleIdGen.NextID()
 	var fh *FileHandle
-	isDir := (st.Mode & unix.S_IFMT) == unix.S_IFDIR
+	isDir := (stx.Mode & unix.S_IFMT) == unix.S_IFDIR
 
 	if isDir {
 		reader, err := NewDirReaderUnix(fd, path)
@@ -165,12 +165,12 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 			_ = unix.Close(fd)
 			return arpc.Response{}, err
 		}
-		fh = &FileHandle{dirReader: reader, isDir: true}
+		fh = &FileHandle{dirReader: reader, isDir: true, fd: fd}
 	} else {
 		fh = &FileHandle{
 			file:     os.NewFile(uintptr(fd), path),
 			fd:       fd,
-			fileSize: int64(st.Size),
+			fileSize: int64(stx.Size),
 			isDir:    false,
 		}
 	}
@@ -199,11 +199,13 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	var st unix.Stat_t
-	// AT_SYMLINK_NOFOLLOW is standard POSIX for lstat-like behavior
-	if err := unix.Fstatat(unix.AT_FDCWD, fullPath, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	var stx unix.Statx_t
+	mask := uint32(unix.STATX_MODE | unix.STATX_SIZE | unix.STATX_MTIME)
+	flags := unix.AT_SYMLINK_NOFOLLOW | unix.AT_STATX_DONT_SYNC
+
+	if err := unix.Statx(unix.AT_FDCWD, fullPath, flags, int(mask), &stx); err != nil {
 		if !strings.HasSuffix(fullPath, ".pxarexclude") {
-			syslog.L.Error(err).WithMessage("handleAttr: fstatat failed").WithField("path", fullPath).Write()
+			syslog.L.Error(err).WithMessage("handleAttr: statx failed").WithField("path", fullPath).Write()
 		}
 		return arpc.Response{}, err
 	}
@@ -213,17 +215,17 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 		blockSize = 4096
 	}
 
-	isDir := (st.Mode & unix.S_IFMT) == unix.S_IFDIR
+	isDir := (stx.Mode & unix.S_IFMT) == unix.S_IFDIR
 	var blocks uint64
 	if !isDir {
-		blocks = uint64((st.Size + int64(blockSize) - 1) / int64(blockSize))
+		blocks = uint64((int64(stx.Size) + int64(blockSize) - 1) / int64(blockSize))
 	}
 
 	info := types.AgentFileInfo{
 		Name:    lastPathElem(fullPath),
-		Size:    st.Size,
-		Mode:    uint32(modeFromUnix(uint32(st.Mode))),
-		ModTime: time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)).UnixNano(),
+		Size:    int64(stx.Size),
+		Mode:    uint32(modeFromUnix(uint32(stx.Mode))),
+		ModTime: time.Unix(int64(stx.Mtime.Sec), int64(stx.Mtime.Nsec)).UnixNano(),
 		IsDir:   isDir,
 		Blocks:  blocks,
 	}
@@ -251,22 +253,32 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	var st unix.Stat_t
-	if err := unix.Fstatat(unix.AT_FDCWD, fullPath, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		syslog.L.Error(err).WithMessage("handleXattr: fstatat failed").WithField("path", fullPath).Write()
+	var stx unix.Statx_t
+	// STATX_BTIME is 'birth time' (creation time), supported on newer kernels/filesystems (ext4, btrfs, xfs)
+	mask := uint32(unix.STATX_UID | unix.STATX_GID | unix.STATX_ATIME | unix.STATX_MTIME | unix.STATX_BTIME)
+	flags := unix.AT_SYMLINK_NOFOLLOW | unix.AT_STATX_DONT_SYNC
+
+	if err := unix.Statx(unix.AT_FDCWD, fullPath, flags, int(mask), &stx); err != nil {
+		syslog.L.Error(err).WithMessage("handleXattr: statx failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
 	}
 
-	owner := getIDString(st.Uid)
-	group := getIDString(st.Gid)
+	owner := getIDString(stx.Uid)
+	group := getIDString(stx.Gid)
+
+	fileAttributes := make(map[string]bool)
+	if (stx.Attributes_mask & unix.STATX_ATTR_IMMUTABLE) != 0 {
+		fileAttributes["immutable"] = (stx.Attributes & unix.STATX_ATTR_IMMUTABLE) != 0
+	}
 
 	info := types.AgentFileInfo{
-		CreationTime:   getBirthTime(&st),
-		LastAccessTime: time.Unix(int64(st.Atim.Sec), int64(st.Atim.Nsec)).Unix(),
-		LastWriteTime:  time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)).Unix(),
+		// CreationTime (Btime) is 0 if not supported by the filesystem
+		CreationTime:   time.Unix(int64(stx.Btime.Sec), int64(stx.Btime.Nsec)).Unix(),
+		LastAccessTime: time.Unix(int64(stx.Atime.Sec), int64(stx.Atime.Nsec)).Unix(),
+		LastWriteTime:  time.Unix(int64(stx.Mtime.Sec), int64(stx.Mtime.Nsec)).Unix(),
 		Owner:          owner,
 		Group:          group,
-		FileAttributes: make(map[string]bool),
+		FileAttributes: fileAttributes,
 	}
 
 	data, err := cbor.Marshal(info)
