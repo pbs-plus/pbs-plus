@@ -74,6 +74,12 @@ type BackupOperation struct {
 	extraExclusions []string
 
 	cleanupOnce sync.Once
+
+	agentMount       *mount.AgentMount
+	s3Mount          *mount.S3Mount
+	srcPath          string
+	target           types.Target
+	errorMonitorDone chan struct{}
 }
 
 var _ jobs.Operation = (*BackupOperation)(nil)
@@ -86,13 +92,14 @@ func NewBackupOperation(
 	extraExclusions []string,
 ) *BackupOperation {
 	return &BackupOperation{
-		job:             job,
-		storeInstance:   storeInstance,
-		skipCheck:       skipCheck,
-		web:             web,
-		logger:          syslog.CreateBackupLogger(job.ID),
-		extraExclusions: extraExclusions,
-		waitGroup:       &sync.WaitGroup{},
+		job:              job,
+		storeInstance:    storeInstance,
+		skipCheck:        skipCheck,
+		web:              web,
+		logger:           syslog.CreateBackupLogger(job.ID),
+		extraExclusions:  extraExclusions,
+		waitGroup:        &sync.WaitGroup{},
+		errorMonitorDone: make(chan struct{}, 1),
 	}
 }
 
@@ -120,62 +127,36 @@ func (b *BackupOperation) PreExecute() error {
 	}
 	b.queueTask = &queueTask
 
-	return b.runPreScript()
+	if err := b.runPreScript(); err != nil {
+		return err
+	}
+
+	b.target, err = b.getAndValidateTarget()
+	if err != nil {
+		return err
+	}
+
+	if err := b.runTargetMountScript(b.target); err != nil {
+		return err
+	}
+
+	b.srcPath, b.agentMount, b.s3Mount, err = b.mountSource(b.target)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (b *BackupOperation) Execute() error {
-	errorMonitorDone := make(chan struct{})
-	var agentMount *mount.AgentMount
-	var s3Mount *mount.S3Mount
-
-	cleanup := func() {
-		b.cleanupOnce.Do(func() {
-			b.mu.Lock()
-			utils.ClearIOStats(b.job.CurrentPID)
-			b.job.CurrentPID = 0
-			b.mu.Unlock()
-
-			if agentMount != nil {
-				agentMount.Unmount()
-				agentMount.CloseMount()
-			}
-			if s3Mount != nil {
-				s3Mount.Unmount()
-			}
-			if b.logger != nil {
-				_ = b.logger.Close()
-			}
-			close(errorMonitorDone)
-		})
-	}
-
 	select {
 	case <-b.ctx.Done():
-		cleanup()
 		return jobs.ErrCanceled
 	default:
 	}
 
-	target, err := b.getAndValidateTarget()
+	cmd, task, currOwner, err := b.startBackup(b.srcPath, b.target, b.errorMonitorDone)
 	if err != nil {
-		cleanup()
-		return err
-	}
-
-	if err := b.runTargetMountScript(target); err != nil {
-		cleanup()
-		return err
-	}
-
-	srcPath, agentMount, s3Mount, err := b.mountSource(target)
-	if err != nil {
-		cleanup()
-		return err
-	}
-
-	cmd, task, currOwner, err := b.startBackup(srcPath, target, errorMonitorDone)
-	if err != nil {
-		cleanup()
 		return err
 	}
 
@@ -184,7 +165,7 @@ func (b *BackupOperation) Execute() error {
 	b.mu.Unlock()
 
 	b.waitGroup.Go(func() {
-		b.waitForCompletion(cmd, task, currOwner, agentMount, s3Mount, cleanup)
+		b.waitForCompletion(cmd, task, currOwner, b.agentMount, b.s3Mount)
 	})
 
 	return nil
@@ -226,9 +207,28 @@ func (b *BackupOperation) OnSuccess() {
 }
 
 func (b *BackupOperation) Cleanup() {
-	if b.queueTask != nil {
-		b.queueTask.Close()
-	}
+	b.cleanupOnce.Do(func() {
+		b.mu.Lock()
+		utils.ClearIOStats(b.job.CurrentPID)
+		b.job.CurrentPID = 0
+		b.mu.Unlock()
+
+		if b.agentMount != nil {
+			b.agentMount.Unmount()
+			b.agentMount.CloseMount()
+		}
+		if b.s3Mount != nil {
+			b.s3Mount.Unmount()
+		}
+		if b.logger != nil {
+			_ = b.logger.Close()
+		}
+		if b.queueTask != nil {
+			b.queueTask.Close()
+		}
+
+		close(b.errorMonitorDone)
+	})
 }
 
 func (b *BackupOperation) Wait() error {
@@ -532,9 +532,7 @@ func (b *BackupOperation) startTaskMonitoring(target types.Target) (chan proxmox
 	return taskChan, readyChan, errChan
 }
 
-func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, task proxmox.Task, currOwner string, agentMount *mount.AgentMount, s3Mount *mount.S3Mount, cleanup func()) {
-	defer cleanup()
-
+func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, task proxmox.Task, currOwner string, agentMount *mount.AgentMount, s3Mount *mount.S3Mount) {
 	b.mu.RLock()
 	job := b.job
 	extraExclusions := b.extraExclusions
