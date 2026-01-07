@@ -507,14 +507,14 @@ func (b *BackupOperation) startTaskMonitoring(target types.Target) (chan proxmox
 	taskChan := make(chan proxmox.Task, 1)
 	errChan := make(chan error, 1)
 
-	timedCtx, timedCancel := context.WithTimeout(b.Context(), 20*time.Second)
-	defer timedCancel()
-
 	b.mu.RLock()
 	job := b.job
 	b.mu.RUnlock()
 
 	b.waitGroup.Go(func() {
+		timedCtx, timedCancel := context.WithTimeout(b.Context(), 20*time.Second)
+		defer timedCancel()
+
 		task, err := proxmox.GetJobTask(timedCtx, readyChan, job, target)
 		if err != nil {
 			errChan <- err
