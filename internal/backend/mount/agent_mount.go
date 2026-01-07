@@ -3,6 +3,7 @@
 package mount
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -28,7 +29,7 @@ type AgentMount struct {
 	isEmpty  bool
 }
 
-func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target) (*AgentMount, error) {
+func AgentFSMount(ctx context.Context, storeInstance *store.Store, job types.Job, target types.Target) (*AgentMount, error) {
 	// Parse target information
 	splittedTargetName := strings.Split(target.Name, " - ")
 	targetHostname := splittedTargetName[0]
@@ -69,7 +70,8 @@ func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target
 	}
 	var reply rpcmount.BackupReply
 
-	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
+	d := net.Dialer{}
+	conn, err := d.DialContext(ctx, "unix", constants.MountSocketPath)
 	if err != nil {
 		errCleanup()
 		return nil, fmt.Errorf("failed to reach backup RPC: %w", err)
@@ -98,6 +100,9 @@ func AgentFSMount(storeInstance *store.Store, job types.Job, target types.Target
 checkLoop:
 	for {
 		select {
+		case <-ctx.Done():
+			errCleanup()
+			return nil, ctx.Err()
 		case <-checkTimeout:
 			break checkLoop
 		case <-ticker.C:
