@@ -28,7 +28,7 @@ func getUnitName(jobID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("pbs-plus-job-%s", sanitized), nil
+	return fmt.Sprintf("pbs-plus-backup-%s", sanitized), nil
 }
 
 func getRetryUnitName(jobID string, attempt int) (string, error) {
@@ -36,7 +36,7 @@ func getRetryUnitName(jobID string, attempt int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("pbs-plus-job-%s-retry-%d", sanitized, attempt), nil
+	return fmt.Sprintf("pbs-plus-backup-%s-retry-%d", sanitized, attempt), nil
 }
 
 func stopBackupTimer(ctx context.Context, sanitized string) {
@@ -290,6 +290,32 @@ func GetNextSchedule(ctx context.Context, backup types.Job) (*time.Time, error) 
 	}
 
 	return earliest, nil
+}
+
+func PurgeAll(ctx context.Context) error {
+	conn, err := getConn()
+	if err != nil {
+		return fmt.Errorf("PurgeAll: failed to connect to dbus: %w", err)
+	}
+
+	patterns := []string{
+		"pbs-plus-backup-*",
+		"pbs-plus-job-*",
+	}
+
+	units, err := conn.ListUnitsByPatternsContext(ctx, nil, patterns)
+	if err != nil {
+		return fmt.Errorf("PurgeAll: failed to list units: %w", err)
+	}
+
+	for _, unit := range units {
+		fmt.Printf("Stopping and cleaning up unit: %s\n", unit.Name)
+
+		_, _ = conn.StopUnitContext(ctx, unit.Name, "replace", nil)
+		_ = conn.ResetFailedUnitContext(ctx, unit.Name)
+	}
+
+	return nil
 }
 
 func PurgeAllLegacyUnits(ctx context.Context) error {
