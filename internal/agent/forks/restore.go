@@ -62,6 +62,7 @@ func (s *restoreSession) Close() {
 	syslog.L.Info().WithMessage("restoreSession.Close: done").WithField("restoreId", s.restoreId).Write()
 }
 
+// TODO: needs target as well to determine basePath of destPath
 func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 	if *restoreId == "" || *srcPath == "" || *destPath == "" {
 		fmt.Fprintln(os.Stderr, "Error: missing required flags: restoreId, srcPath, and destPath are required")
