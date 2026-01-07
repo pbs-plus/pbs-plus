@@ -73,6 +73,21 @@ func stopAllRetries(ctx context.Context, sanitized string) {
 }
 
 func SetSchedule(ctx context.Context, backup types.Job) error {
+	err := setSchedule(ctx, backup)
+
+	conn, err := getConn()
+	if err != nil {
+		return err
+	}
+
+	if err := conn.ReloadContext(ctx); err != nil {
+		return fmt.Errorf("SetSchedule: daemon-reload failed: %w", err)
+	}
+
+	return err
+}
+
+func setSchedule(ctx context.Context, backup types.Job) error {
 	unitName, err := getUnitName(backup.ID)
 	if err != nil {
 		return fmt.Errorf("SetSchedule: %w", err)
@@ -105,6 +120,12 @@ Persistent=false
 [Install]
 WantedBy=timers.target
 `, backup.ID, backup.Schedule)
+
+	existingService, _ := os.ReadFile(servicePath)
+	existingTimer, _ := os.ReadFile(timerPath)
+	if string(existingService) == serviceContent && string(existingTimer) == timerContent {
+		return nil
+	}
 
 	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
 		return fmt.Errorf("SetSchedule: error writing service: %w", err)
@@ -292,90 +313,44 @@ func GetNextSchedule(ctx context.Context, backup types.Job) (*time.Time, error) 
 			continue
 		}
 
-		usec, ok := prop.Value.Value().(uint64)
-		if !ok || usec == 0 || usec == ^uint64(0) {
+		var usec uint64
+		switch v := prop.Value.Value().(type) {
+		case uint64:
+			usec = v
+		case int64:
+			usec = uint64(v)
+		default:
+			continue
+		}
+
+		if usec == 0 || usec == ^uint64(0) {
 			continue
 		}
 
 		nextTime := time.Unix(0, int64(usec)*int64(time.Microsecond))
 		if earliest == nil || nextTime.Before(*earliest) {
-			earliest = &nextTime
+			t := nextTime
+			earliest = &t
 		}
 	}
 
 	return earliest, nil
 }
 
-func PurgeAll(ctx context.Context) error {
-	conn, err := getConn()
-	if err != nil {
-		return fmt.Errorf("PurgeAll: failed to connect to dbus: %w", err)
-	}
-
-	patterns := []string{
-		"pbs-plus-backup-*",
-		"pbs-plus-job-*",
-	}
-
-	units, err := conn.ListUnitsByPatternsContext(ctx, nil, patterns)
-	if err != nil {
-		return fmt.Errorf("PurgeAll: failed to list units: %w", err)
-	}
-
-	for _, unit := range units {
-		_, _ = conn.StopUnitContext(ctx, unit.Name, "replace", nil)
-		_ = conn.ResetFailedUnitContext(ctx, unit.Name)
-
-		_ = os.Remove(filepath.Join("/etc/systemd/system", unit.Name))
-		_ = os.Remove(filepath.Join("/run/systemd/system", unit.Name))
-	}
-
-	_ = conn.ReloadContext(ctx)
-	return nil
-}
-
-func PurgeAllLegacyUnits(ctx context.Context) error {
-	timerBasePath := "/etc/systemd/system"
-	pattern := filepath.Join(timerBasePath, "pbs-plus-backup-*.timer")
-
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return fmt.Errorf("failed to glob legacy units: %w", err)
-	}
-
-	if len(matches) == 0 {
-		return nil
-	}
-
-	conn, err := getConn()
-	if err != nil {
-		return fmt.Errorf("failed to connect to dbus: %w", err)
-	}
-
-	for _, timerFile := range matches {
-		fileName := filepath.Base(timerFile)
-		serviceFile := strings.TrimSuffix(timerFile, ".timer") + ".service"
-
-		_, _ = conn.StopUnitContext(ctx, fileName, "replace", nil)
-		_, _ = conn.DisableUnitFilesContext(ctx, []string{fileName}, false)
-
-		_ = os.Remove(timerFile)
-		_ = os.Remove(serviceFile)
-	}
-
-	err = conn.ReloadContext(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to reload daemon after purge: %w", err)
-	}
-
-	return nil
-}
-
 func SetBatchSchedules(ctx context.Context, jobs []types.Job) error {
 	for _, job := range jobs {
-		if err := SetSchedule(ctx, job); err != nil {
+		if err := setSchedule(ctx, job); err != nil {
 			fmt.Printf("Batch error for %s: %v\n", job.ID, err)
 		}
+	}
+
+	conn, err := getConn()
+	if err != nil {
+		return err
+	}
+
+	if err := conn.ReloadContext(ctx); err != nil {
+		return fmt.Errorf("SetSchedule: daemon-reload failed: %w", err)
 	}
 	return nil
 }
