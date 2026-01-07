@@ -175,7 +175,7 @@ func (b *BackupOperation) Execute() error {
 	b.started.Store(true)
 
 	b.waitGroup.Go(func() {
-		b.waitForCompletion(cmd, task, currOwner, b.agentMount, b.s3Mount)
+		b.waitForCompletion(cmd, currOwner)
 	})
 
 	return nil
@@ -592,7 +592,7 @@ func (b *BackupOperation) startTaskMonitoring(target types.Target) (chan proxmox
 	return taskChan, readyChan, errChan
 }
 
-func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, task proxmox.Task, currOwner string, agentMount *mount.AgentMount, s3Mount *mount.S3Mount) {
+func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, currOwner string) {
 	b.mu.RLock()
 	job := b.job
 	extraExclusions := b.extraExclusions
