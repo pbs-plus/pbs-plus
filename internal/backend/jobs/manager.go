@@ -81,11 +81,11 @@ func (m *Manager) Enqueue(op Operation) error {
 	case m.taskMonitorQueue <- op:
 		return nil
 	case <-m.ctx.Done():
-		m.cleanup(jobID)
+		m.cleanup(op)
 		op.OnError(ErrManagerClosed)
 		return ErrManagerClosed
 	case <-ctx.Done():
-		m.cleanup(jobID)
+		m.cleanup(op)
 		op.OnError(ErrCanceled)
 		return ErrCanceled
 	}
@@ -103,12 +103,10 @@ func (m *Manager) processQueue() {
 }
 
 func (m *Manager) runJob(op Operation) {
-	jobID := op.GetID()
-
 	select {
 	case <-op.Context().Done():
 		op.OnError(ErrCanceled)
-		m.cleanup(jobID)
+		m.cleanup(op)
 		return
 	default:
 	}
@@ -119,18 +117,18 @@ func (m *Manager) runJob(op Operation) {
 		} else {
 			op.OnError(err)
 		}
-		m.cleanup(jobID)
+		m.cleanup(op)
 		return
 	}
 
 	select {
 	case m.executionSem <- struct{}{}:
 	case <-m.ctx.Done():
-		m.cleanup(jobID)
+		m.cleanup(op)
 		return
 	case <-op.Context().Done():
 		op.OnError(ErrCanceled)
-		m.cleanup(jobID)
+		m.cleanup(op)
 		return
 	}
 
@@ -148,7 +146,7 @@ func (m *Manager) runJob(op Operation) {
 		if m.singleExecution {
 			m.detectionMu.Unlock()
 		}
-		m.cleanup(jobID)
+		m.cleanup(op)
 		<-m.executionSem
 		return
 	}
@@ -164,13 +162,13 @@ func (m *Manager) runJob(op Operation) {
 			} else {
 				op.OnError(err)
 			}
-			m.cleanup(jobID)
+			m.cleanup(op)
 			<-m.executionSem
 			return
 		}
 
 		op.OnSuccess()
-		m.cleanup(jobID)
+		m.cleanup(op)
 		<-m.executionSem
 	}()
 }
@@ -188,9 +186,11 @@ func (m *Manager) StopJob(jobID string) error {
 	return nil
 }
 
-func (m *Manager) cleanup(jobID string) {
+func (m *Manager) cleanup(op Operation) {
+	op.Cleanup()
+
 	m.mu.Lock()
-	delete(m.runningJobs, jobID)
+	delete(m.runningJobs, op.GetID())
 	m.mu.Unlock()
 }
 
