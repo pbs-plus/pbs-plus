@@ -1,5 +1,3 @@
-//go:build linux
-
 package jobs
 
 import (
@@ -15,7 +13,6 @@ var (
 	ErrCanceled      = errors.New("operation canceled")
 )
 
-// Operation defines the interface that any job type must implement
 type Operation interface {
 	GetID() string
 	PreExecute(ctx context.Context) error
@@ -25,25 +22,19 @@ type Operation interface {
 	Cleanup()
 }
 
-// Manager handles queuing and execution of operations
 type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// Sequential queue for task monitoring (critical section)
 	taskMonitorQueue chan Operation
+	executionSem     chan struct{}
 
-	// Parallel execution semaphore (after task assigned)
-	executionSem chan struct{}
-
-	// Track running jobs to prevent duplicates
 	mu              sync.Mutex
 	detectionMu     sync.Mutex
 	singleExecution bool
 	runningJobs     map[string]context.CancelFunc
 }
 
-// NewManager creates a new job manager with the specified max concurrent operations
 func NewManager(ctx context.Context, maxConcurrent int, queueSize int, singleExecution bool) *Manager {
 	newCtx, cancel := context.WithCancel(ctx)
 
@@ -61,7 +52,6 @@ func NewManager(ctx context.Context, maxConcurrent int, queueSize int, singleExe
 	return m
 }
 
-// Enqueue adds an operation to the queue
 func (m *Manager) Enqueue(op Operation) error {
 	select {
 	case <-m.ctx.Done():
@@ -82,7 +72,6 @@ func (m *Manager) Enqueue(op Operation) error {
 	m.runningJobs[jobID] = cancel
 	m.mu.Unlock()
 
-	// Store context for the operation if it needs it
 	if ctxAware, ok := op.(interface {
 		SetContext(context.Context, context.CancelFunc)
 	}); ok {
@@ -116,69 +105,24 @@ func (m *Manager) processQueue() {
 
 func (m *Manager) runJob(op Operation) {
 	jobID := op.GetID()
+	var opCtx context.Context
 
-	// Check if context is aware and if it's already canceled
 	if ctxAware, ok := op.(interface{ Context() context.Context }); ok {
-		select {
-		case <-ctxAware.Context().Done():
-			op.OnError(ErrCanceled)
-			m.cleanup(jobID)
-			return
-		default:
-		}
-	}
-
-	// Run pre-execution hook
-	if ctxAware, ok := op.(interface{ Context() context.Context }); ok {
-		if err := op.PreExecute(ctxAware.Context()); err != nil {
-			if errors.Is(err, context.Canceled) {
-				op.OnError(ErrCanceled)
-			} else {
-				op.OnError(err)
-			}
-			m.cleanup(jobID)
-			return
-		}
+		opCtx = ctxAware.Context()
 	} else {
-		if err := op.PreExecute(m.ctx); err != nil {
-			op.OnError(err)
-			m.cleanup(jobID)
-			return
-		}
-	}
-
-	// Acquire execution semaphore
-	var ctx context.Context
-	if ctxAware, ok := op.(interface{ Context() context.Context }); ok {
-		ctx = ctxAware.Context()
-	} else {
-		ctx = m.ctx
+		opCtx = m.ctx
 	}
 
 	select {
-	case m.executionSem <- struct{}{}:
-	case <-m.ctx.Done():
-		m.cleanup(jobID)
-		return
-	case <-ctx.Done():
+	case <-opCtx.Done():
 		op.OnError(ErrCanceled)
 		m.cleanup(jobID)
 		return
+	default:
 	}
 
-	if m.singleExecution {
-		m.detectionMu.Lock()
-	}
-
-	err := op.Execute(ctx)
-
-	if m.singleExecution {
-		m.detectionMu.Unlock()
-	}
-
-	if err != nil {
-		<-m.executionSem
-		if errors.Is(err, ErrCanceled) || errors.Is(err, context.Canceled) {
+	if err := op.PreExecute(opCtx); err != nil {
+		if errors.Is(err, context.Canceled) {
 			op.OnError(ErrCanceled)
 		} else {
 			op.OnError(err)
@@ -187,22 +131,47 @@ func (m *Manager) runJob(op Operation) {
 		return
 	}
 
-	op.OnSuccess()
+	select {
+	case m.executionSem <- struct{}{}:
+	case <-m.ctx.Done():
+		m.cleanup(jobID)
+		return
+	case <-opCtx.Done():
+		op.OnError(ErrCanceled)
+		m.cleanup(jobID)
+		return
+	}
 
-	// Handle async cleanup if operation supports it
-	if waitable, ok := op.(interface{ Wait() }); ok {
-		go func() {
-			waitable.Wait()
+	defer func() {
+		if waitable, ok := op.(interface{ Wait() error }); ok {
+			go func() {
+				_ = waitable.Wait()
+				<-m.executionSem
+				m.cleanup(jobID)
+			}()
+		} else {
 			<-m.executionSem
 			m.cleanup(jobID)
-		}()
-	} else {
-		<-m.executionSem
-		m.cleanup(jobID)
+		}
+	}()
+
+	if m.singleExecution {
+		m.detectionMu.Lock()
+		defer m.detectionMu.Unlock()
 	}
+
+	if err := op.Execute(opCtx); err != nil {
+		if errors.Is(err, ErrCanceled) || errors.Is(err, context.Canceled) {
+			op.OnError(ErrCanceled)
+		} else {
+			op.OnError(err)
+		}
+		return
+	}
+
+	op.OnSuccess()
 }
 
-// StopJob cancels a running job by its ID
 func (m *Manager) StopJob(jobID string) error {
 	m.mu.Lock()
 	cancel, exists := m.runningJobs[jobID]
@@ -222,7 +191,6 @@ func (m *Manager) cleanup(jobID string) {
 	m.mu.Unlock()
 }
 
-// IsRunning checks if a job is currently running
 func (m *Manager) IsRunning(jobID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -230,14 +198,12 @@ func (m *Manager) IsRunning(jobID string) bool {
 	return exists
 }
 
-// RunningCount returns the number of currently running jobs
 func (m *Manager) RunningCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.runningJobs)
 }
 
-// Close shuts down the manager
 func (m *Manager) Close() {
 	m.cancel()
 }
