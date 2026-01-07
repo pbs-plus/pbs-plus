@@ -3,8 +3,6 @@
 package agentfs
 
 import (
-	"strconv"
-	"sync"
 	"time"
 	"unsafe"
 
@@ -22,23 +20,7 @@ type linuxDirent64 struct {
 
 var (
 	linuxHdrSize = int(unsafe.Offsetof(linuxDirent64{}.NameBuf))
-	idCache      = make(map[uint32]string)
-	idCacheLock  sync.RWMutex
 )
-
-func getIDString(id uint32) string {
-	idCacheLock.RLock()
-	if s, ok := idCache[id]; ok {
-		idCacheLock.RUnlock()
-		return s
-	}
-	idCacheLock.RUnlock()
-	s := strconv.Itoa(int(id))
-	idCacheLock.Lock()
-	idCache[id] = s
-	idCacheLock.Unlock()
-	return s
-}
 
 func (r *DirReaderUnix) getdents() (int, error) {
 	for {
