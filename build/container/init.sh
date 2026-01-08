@@ -110,11 +110,6 @@ if [ "$need_server_url" -eq 1 ] || [ "$need_bootstrap_token" -eq 1 ]; then
   fi
 fi
 
-# Optional low-port capability
-if command -v setcap >/dev/null 2>&1; then
-  setcap 'cap_net_bind_service=+ep' "$BIN_PATH" 2>/dev/null || true
-fi
-
 # Exec
 if [ "${1:-}" = "" ] || [ "$1" = "pbs-plus-agent" ] || [ "$1" = "$BIN_PATH" ]; then
   exec su-exec "$USER_NAME:$TARGET_GROUP" "$BIN_PATH"
