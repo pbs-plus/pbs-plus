@@ -7,14 +7,18 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sync"
+	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/store/config"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	sqlite "github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
@@ -38,9 +42,49 @@ type TLSConfig struct {
 type Store struct {
 	Ctx               context.Context
 	Database          *sqlite.Database
+	appConfig         *config.AppConfig
+	configMu          sync.RWMutex
 	ARPCAgentsManager *arpc.AgentsManager
 	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
 	mTLS              *TLSConfig
+}
+
+func (s *Store) GetAppConfig() *config.AppConfig {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	return s.appConfig
+}
+
+func (s *Store) ReloadConfig() error {
+	newConfig, err := config.Load(constants.AppConfigFile)
+	if err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+
+	s.configMu.Lock()
+	s.appConfig = newConfig
+	s.configMu.Unlock()
+
+	log.Println("Configuration reloaded successfully via SIGHUP")
+	return nil
+}
+
+func (s *Store) watchSignals() {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGHUP)
+
+	go func() {
+		for {
+			select {
+			case <-sigChan:
+				if err := s.ReloadConfig(); err != nil {
+					log.Printf("Error reloading configuration: %v", err)
+				}
+			case <-s.Ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 func (s *Store) SignAgentCSR(csr []byte) (cert []byte, ca []byte, err error) {
@@ -151,13 +195,21 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		}
 	}()
 
+	conf, err := config.Load(constants.AppConfigFile)
+	if err != nil {
+		return nil, fmt.Errorf("Initialize: error initializing config.toml -> %w", err)
+	}
+
 	store := &Store{
 		Ctx:               ctx,
 		Database:          db,
+		appConfig:         conf,
 		arpcFS:            safemap.New[string, *arpcfs.ARPCFS](),
 		ARPCAgentsManager: arpc.NewAgentsManager(),
 		mTLS:              &TLSConfig{},
 	}
+
+	store.watchSignals()
 
 	return store, nil
 }
