@@ -9,11 +9,9 @@ import (
 	"strings"
 )
 
-// detectFilesystem detects the filesystem type of the given source path
 func detectFilesystem(mountPoint string) (string, error) {
 	switch runtime.GOOS {
 	case "linux":
-		// Use /proc/mounts to find the filesystem type for the given mount point
 		mountsFile, err := os.Open("/proc/mounts")
 		if err != nil {
 			return "", fmt.Errorf("failed to open /proc/mounts: %w", err)
@@ -37,7 +35,6 @@ func detectFilesystem(mountPoint string) (string, error) {
 		return "", fmt.Errorf("mount point %s not found in /proc/mounts", mountPoint)
 
 	case "darwin":
-		// Use `diskutil` to detect the filesystem type on macOS
 		cmd := exec.Command("diskutil", "info", mountPoint)
 		output, err := cmd.Output()
 		if err != nil {
@@ -54,7 +51,6 @@ func detectFilesystem(mountPoint string) (string, error) {
 		return "", fmt.Errorf("could not determine filesystem type from diskutil output")
 
 	case "windows":
-		// On Windows, assume NTFS or ReFS and use VSS
 		return "ntfs", nil
 
 	default:
