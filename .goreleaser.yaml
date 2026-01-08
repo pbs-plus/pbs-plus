@@ -191,10 +191,11 @@ nfpms:
         type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
-      templates: ./build/package/linux_agent/templates
     overrides:
       deb:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
+        scripts:
+          templates: ./build/package/linux_agent/templates
 
   - id: linux-agent-rpm
     ids:
