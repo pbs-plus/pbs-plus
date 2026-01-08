@@ -321,7 +321,7 @@ func (b *BackupOperation) runPreScript() error {
 		envVars = []string{}
 	}
 
-	scriptOut, modEnvVars, err := utils.RunShellScript(b.Context(), b.job.PreScript, envVars)
+	scriptOut, modEnvVars, err := b.storeInstance.RunScript(b.Context(), b.job.PreScript, envVars)
 	syslog.L.Info().WithJob(b.job.ID).WithMessage(scriptOut).WithField("script", b.job.PreScript).Write()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -402,7 +402,7 @@ func (b *BackupOperation) runTargetMountScript(target types.Target) error {
 		envVars = []string{}
 	}
 
-	scriptOut, _, err := utils.RunShellScript(b.Context(), target.MountScript, envVars)
+	scriptOut, _, err := b.storeInstance.RunScript(b.Context(), target.MountScript, envVars)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return jobs.ErrCanceled
@@ -661,7 +661,7 @@ func (b *BackupOperation) runPostScript(success bool, warningsNum int) {
 	envVars = append(envVars, fmt.Sprintf("PBS_PLUS__JOB_SUCCESS=%t", success))
 	envVars = append(envVars, fmt.Sprintf("PBS_PLUS__JOB_WARNINGS=%d", warningsNum))
 
-	scriptOut, _, err := utils.RunShellScript(b.Context(), job.PostScript, envVars)
+	scriptOut, _, err := b.storeInstance.RunScript(b.Context(), job.PostScript, envVars)
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("error encountered while running job post-backup script").
