@@ -27,7 +27,6 @@ import (
 
 var (
 	ErrJobMutexCreation = errors.New("failed to create job mutex")
-	ErrOneInstance      = errors.New("a job is still running; only one instance allowed")
 
 	ErrStdoutTempCreation = errors.New("failed to create stdout temp file")
 
