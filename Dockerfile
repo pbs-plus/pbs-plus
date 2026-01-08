@@ -17,6 +17,7 @@ ENV CGO_ENABLED=0 \
 
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH \
   go build \
+  -trimpath \
   -ldflags="-s -w -X 'main.Version=v${VERSION}'" \
   -o /out/pbs-plus-agent ./cmd/unix_agent
 

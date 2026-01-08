@@ -110,16 +110,6 @@ if [ "$need_server_url" -eq 1 ] || [ "$need_bootstrap_token" -eq 1 ]; then
   fi
 fi
 
-if command -v setcap >/dev/null 2>&1; then
-  setcap 'cap_net_bind_service=+ep' "$BIN_PATH" 2>/dev/null || true
-fi
-
-if [ -e /proc/sys/kernel/cap_last_cap ]; then
-  # This requires the container to be run with --cap-add
-  # It's a no-op if the capability isn't granted by Docker
-  setcap 'cap_dac_read_search+ep' "$BIN_PATH" 2>/dev/null || true
-fi
-
 # Exec
 if [ "${1:-}" = "" ] || [ "$1" = "pbs-plus-agent" ] || [ "$1" = "$BIN_PATH" ]; then
   exec su-exec "$USER_NAME:$TARGET_GROUP" "$BIN_PATH"
