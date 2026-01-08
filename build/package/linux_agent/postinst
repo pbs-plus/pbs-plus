@@ -56,8 +56,26 @@ create_directories() {
   chmod 0755 "$RUN_DIR"
 
   env_file="$ETC_DIR/agent.env"
-  if [ ! -e "$env_file" ]; then
-    printf "PBS_PLUS_INIT_SERVER_URL=\nPBS_PLUS_INIT_BOOTSTRAP_TOKEN=\n" > "$env_file"
+
+  FINAL_URL=""
+  FINAL_TOKEN=""
+
+  if [ -f /usr/share/debconf/confmodule ]; then
+    . /usr/share/debconf/confmodule
+    db_get pbs-plus-agent/server_url || true
+    FINAL_URL="$RET"
+    db_get pbs-plus-agent/bootstrap_token || true
+    FINAL_TOKEN="$RET"
+  fi
+
+  [ -z "$FINAL_URL" ] && FINAL_URL="$PBS_PLUS_INIT_SERVER_URL"
+  [ -z "$FINAL_TOKEN" ] && FINAL_TOKEN="$PBS_PLUS_INIT_BOOTSTRAP_TOKEN"
+
+  if [ ! -e "$env_file" ] || [ -n "$FINAL_URL" ]; then
+    cat > "$env_file" <<EOF
+PBS_PLUS_INIT_SERVER_URL=${FINAL_URL}
+PBS_PLUS_INIT_BOOTSTRAP_TOKEN=${FINAL_TOKEN}
+EOF
     chown pbsplus:pbsplus "$env_file"
     chmod 0640 "$env_file"
   fi
