@@ -100,13 +100,17 @@ func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	pipeCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	pipeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	for {
 		session, exists := fs.agentManager.GetStreamPipe(fs.sessionId)
 		if exists {
 			return session, nil
+		}
+
+		if _, exists := fs.agentManager.GetStreamPipe(fs.Hostname); !exists {
+			return nil, fmt.Errorf("primary agent for %s is unreachable", fs.Hostname)
 		}
 
 		select {
