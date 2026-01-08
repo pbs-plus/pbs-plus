@@ -40,7 +40,7 @@ type (
 	}
 
 	BackupReq struct {
-		BackupId   string `cbor:"backup_id"`
+		BackupId   string `cbor:"job_id"`
 		Drive      string `cbor:"drive"`
 		SourceMode string `cbor:"source_mode,omitempty"`
 		ReadMode   string `cbor:"read_mode,omitempty"`
@@ -48,7 +48,7 @@ type (
 	}
 
 	RestoreReq struct {
-		RestoreId string `cbor:"restore_id"`
+		RestoreId string `cbor:"job_id"`
 		SrcPath   string `cbor:"src_path"`
 		DestPath  string `cbor:"dest_path"`
 		Extras    string `cbor:"extras,omitempty"`
