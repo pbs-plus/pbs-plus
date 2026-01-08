@@ -71,6 +71,7 @@ To install PBS Plus:
 
 ### Containerized Agent (Docker/Podman/Kubernetes)
 - You can run the agent as a container instead of installing a native package.
+- `DAC_READ_SEARCH` might be required for the agent to have read permissions to the filesystem.
 - Provide initial configuration via environment variables (Linux-style):
   - `PBS_PLUS_INIT_SERVER_URL` — e.g. `https://<pbs-server>:8008`
   - `PBS_PLUS_INIT_BOOTSTRAP_TOKEN` — the copied token
@@ -83,6 +84,7 @@ To install PBS Plus:
   ```bash
   docker run -d --name pbs-plus-agent \
     --restart=unless-stopped \
+    --cap-add=DAC_READ_SEARCH \
     -e PBS_PLUS_INIT_SERVER_URL="https://<pbs-server>:8008" \
     -e PBS_PLUS_INIT_BOOTSTRAP_TOKEN="<your-bootstrap-token>" \
     -v /srv/pbs-plus-agent/lib:/var/lib/pbs-plus-agent \
