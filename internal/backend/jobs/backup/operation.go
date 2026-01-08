@@ -147,6 +147,8 @@ func (b *BackupOperation) PreExecute() error {
 		return err
 	}
 
+	b.queueTask.UpdateDescription("operation ready, waiting for queue to free up")
+
 	return nil
 }
 
