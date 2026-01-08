@@ -173,7 +173,7 @@ func (a *AgentMount) CloseMount() {
 	}
 	var reply rpcmount.CleanupReply
 
-	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 5*time.Minute)
+	conn, err := net.DialTimeout("unix", constants.MountSocketPath, 1*time.Minute)
 	if err != nil {
 		return
 	}
@@ -181,6 +181,8 @@ func (a *AgentMount) CloseMount() {
 	defer rpcClient.Close()
 
 	if err := rpcClient.Call("MountRPCService.Cleanup", args, &reply); err != nil {
-		syslog.L.Error(err).WithFields(map[string]any{"hostname": a.Hostname, "drive": a.Drive}).Write()
+		syslog.L.Error(err).WithFields(map[string]any{"hostname": a.Hostname, "drive": a.Drive}).WithMessage(reply.Message).Write()
 	}
+
+	syslog.L.Info().WithFields(map[string]any{"hostname": a.Hostname, "drive": a.Drive}).WithMessage(reply.Message).Write()
 }
