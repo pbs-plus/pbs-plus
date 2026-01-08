@@ -1,0 +1,9 @@
+Template: pbs-plus-agent/server_url
+Type: string
+Description: PBS Plus Server URL:
+ Please enter the full URL of the PBS Plus management server (e.g. https://pbs-plus.example.com:8008).
+
+Template: pbs-plus-agent/bootstrap_token
+Type: password
+Description: PBS Plus Bootstrap Token:
+ Please enter the bootstrap token provided by your admin.

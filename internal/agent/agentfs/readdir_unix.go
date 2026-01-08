@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"syscall"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 	"golang.org/x/sys/unix"
 )
 
@@ -19,15 +21,29 @@ const (
 	defaultTargetEncodedLen = 1024 * 1024
 )
 
+var (
+	idCache = safemap.New[uint32, string]()
+)
+
+func getIDString(id uint32) string {
+	if s, ok := idCache.Get(id); ok {
+		return s
+	}
+	s := strconv.Itoa(int(id))
+	idCache.Set(id, s)
+	return s
+}
+
 type DirReaderUnix struct {
-	fd            int
-	buf           []byte
-	bufPos        int
-	bufEnd        int
-	noMoreFiles   bool
-	path          string
-	basep         uintptr // FreeBSD only
-	targetEncoded int
+	fd              int
+	buf             []byte
+	bufPos          int
+	bufEnd          int
+	noMoreFiles     bool
+	path            string
+	basep           uintptr // FreeBSD only
+	targetEncoded   int
+	reusableEntries types.ReadDirEntries
 
 	// Controls whether to fetch full attrs (size, mtime, blocks) for each entry.
 	// If false, only Name, Mode, and IsDir are filled (IsDir inferred from d_type
@@ -41,11 +57,7 @@ var bufferPool = sync.Pool{
 	},
 }
 
-func NewDirReaderUnix(path string) (*DirReaderUnix, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open directory '%s': %w", path, err)
-	}
+func NewDirReaderUnix(fd int, path string) (*DirReaderUnix, error) {
 	return &DirReaderUnix{
 		fd:             fd,
 		buf:            bufferPool.Get().([]byte),
@@ -60,100 +72,60 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 	if r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
-
-	entries := make(types.ReadDirEntries, 0, 512)
-
+	if r.reusableEntries == nil {
+		r.reusableEntries = make(types.ReadDirEntries, 0, 512)
+	}
+	r.reusableEntries = r.reusableEntries[:0]
 	target := r.targetEncoded
 	if target <= 0 {
 		target = defaultTargetEncodedLen
 	}
-
-	encodedSizeEstimate := 4 // u32 count header
-
+	encodedSizeEstimate := 4
 	for {
 		if r.bufPos >= r.bufEnd {
 			n, err := r.getdents()
-			if err != nil {
-				return nil, fmt.Errorf("getdents failed: %w", err)
-			}
-			if n == 0 {
+			if err != nil || n == 0 {
 				r.noMoreFiles = true
 				break
 			}
-			r.bufPos = 0
-			r.bufEnd = n
+			r.bufPos, r.bufEnd = 0, n
 		}
-
 		for r.bufPos < r.bufEnd {
 			nameBytes, typ, reclen, ok, perr := r.parseDirent()
 			if perr != nil {
-				return nil, fmt.Errorf("failed to parse dirent for '%s': %w", r.path, perr)
+				return nil, perr
 			}
 			if !ok || reclen == 0 {
 				r.bufPos = r.bufEnd
 				break
 			}
 			r.bufPos += reclen
-
-			if isDot(nameBytes) || isDotDot(nameBytes) {
+			if isDot(nameBytes) || isDotDot(nameBytes) || typ == unix.DT_LNK || typ == unix.DT_UNKNOWN {
 				continue
 			}
-
-			if typ == unix.DT_LNK {
-				continue
-			}
-
-			if typ == unix.DT_UNKNOWN {
-				continue
-			}
-
-			name := string(nameBytes)
-
-			info := types.AgentFileInfo{
-				Name: name,
-			}
-
-			// If the caller wants full attrs, or we could not trust d_type, fetch attrs.
+			info := types.AgentFileInfo{Name: string(nameBytes)}
 			if r.FetchFullAttrs {
 				if err := r.fillAttrs(&info); err != nil {
-					// If file vanished or permission denied, skip cleanly rather than failing the whole batch.
-					if err == unix.ENOENT || err == unix.EACCES || err == unix.EPERM {
+					if err == unix.ENOENT || err == unix.EACCES {
 						continue
 					}
-					return nil, fmt.Errorf("stat attrs failed for '%s/%s': %w", r.path, name, err)
+					return nil, err
 				}
 			}
-
-			entries = append(entries, info)
-
-			encodedSizeEstimate += 8 + len(name)
+			r.reusableEntries = append(r.reusableEntries, info)
+			encodedSizeEstimate += 12 + len(info.Name)
 			if encodedSizeEstimate >= target {
-				enc, err := cbor.Marshal(entries)
-				if err != nil {
-					return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
-				}
-				return enc, nil
+				return cbor.Marshal(r.reusableEntries)
 			}
 		}
-
-		if len(entries) > 0 {
-			enc, err := cbor.Marshal(entries)
-			if err != nil {
-				return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
-			}
-			return enc, nil
+		if len(r.reusableEntries) > 0 {
+			break
 		}
 	}
-
-	if len(entries) == 0 {
+	if len(r.reusableEntries) == 0 {
 		return nil, os.ErrProcessDone
 	}
-
-	enc, err := cbor.Marshal(entries)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
-	}
-	return enc, nil
+	return cbor.Marshal(r.reusableEntries)
 }
 
 func (r *DirReaderUnix) Close() error {
