@@ -95,8 +95,9 @@ To install PBS Plus:
 PBS Plus currently consists of two main components: the server and the agent. The server should be installed on the PBS machine, while agents are installed on client workstations.
 
 ### Server
-- The server hosts an API server for its services on port `8017` to enable enhanced functionality.
-- The server hosts another endpoint solely for agent communications with mTLS on port `8008`.
+- The server hosts an API server for its services on port `TCP/8017` to enable enhanced functionality.
+- The server hosts another endpoint solely for agent communications with HTTPS on port `TCP/8018`.
+- The server hosts another endpoint solely for agent communications with aRPC over mTLS on port `TCP/8008`.
 - All new features, including remote file-level backups, can be managed through the "Disk Backup" page.
 
 ### Agent
