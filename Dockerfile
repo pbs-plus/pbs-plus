@@ -19,7 +19,7 @@ RUN GOOS=$TARGETOS GOARCH=$TARGETARCH \
   go build \
   -trimpath \
   -ldflags="-s -w -X 'main.Version=v${VERSION}'" \
-  -o /out/pbs-plus-agent ./cmd/unix_agent
+  -o /out/pbs-plus-agent ./cmd/agent
 
 FROM alpine:3.23
 
