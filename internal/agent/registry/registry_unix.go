@@ -110,9 +110,10 @@ func lcPath(p string) string {
 	if p == "" {
 		return "root"
 	}
-	// Convert Windows \ to TOML . for table nesting
-	p = strings.ReplaceAll(p, "\\", ".")
-	return strings.ToLower(strings.Trim(p, "."))
+	// Replace Windows backslashes with forward slashes for a unified Linux feel
+	// while avoiding the "dot" recursion that causes TOML duplication
+	p = strings.ReplaceAll(p, "\\", "/")
+	return strings.ToLower(strings.Trim(p, "/"))
 }
 
 func toTomlKey(k string) string {
@@ -242,43 +243,36 @@ func migrateLegacy() error {
 			return nil
 		}
 		reg := make(fullRegistry)
-		_ = filepath.Walk(
-			legacyRegistryBasePath,
-			func(path string, info os.FileInfo, err error) error {
-				if err != nil || info.IsDir() {
-					return nil
-				}
-				if strings.HasSuffix(info.Name(), ".json") &&
-					info.Name() != metaFileName {
-					p := strings.TrimSuffix(info.Name(), ".json")
-					b, _ := os.ReadFile(path)
-					var ld legacyData
-					if err := json.Unmarshal(b, &ld); err == nil {
-						pathKey := lcPath(p)
-						if reg[pathKey] == nil {
-							reg[pathKey] = make(map[string]string)
-						}
-						for k, v := range ld.Values {
-							reg[pathKey][toTomlKey(k)] = v
-						}
-					}
-				}
-				if strings.HasSuffix(info.Name(), valueFileSuffix) {
-					rel, _ := filepath.Rel(
-						legacyRegistryBasePath,
-						filepath.Dir(path),
-					)
-					pathKey := lcPath(rel)
-					keyName := strings.TrimSuffix(info.Name(), valueFileSuffix)
+		_ = filepath.Walk(legacyRegistryBasePath, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			if strings.HasSuffix(info.Name(), ".json") && info.Name() != metaFileName {
+				p := strings.TrimSuffix(info.Name(), ".json")
+				b, _ := os.ReadFile(path)
+				var ld legacyData
+				if err := json.Unmarshal(b, &ld); err == nil {
+					pathKey := lcPath(p)
 					if reg[pathKey] == nil {
 						reg[pathKey] = make(map[string]string)
 					}
-					b, _ := os.ReadFile(path)
-					reg[pathKey][toTomlKey(keyName)] = string(b)
+					for k, v := range ld.Values {
+						reg[pathKey][toTomlKey(k)] = v
+					}
 				}
-				return nil
-			},
-		)
+			}
+			if strings.HasSuffix(info.Name(), valueFileSuffix) {
+				rel, _ := filepath.Rel(legacyRegistryBasePath, filepath.Dir(path))
+				pathKey := lcPath(rel)
+				keyName := strings.TrimSuffix(info.Name(), valueFileSuffix)
+				if reg[pathKey] == nil {
+					reg[pathKey] = make(map[string]string)
+				}
+				b, _ := os.ReadFile(path)
+				reg[pathKey][toTomlKey(keyName)] = string(b)
+			}
+			return nil
+		})
 		if len(reg) > 0 {
 			return saveRegistry(reg)
 		}
@@ -358,7 +352,10 @@ func UpdateEntry(entry *RegistryEntry) error {
 		}
 		p := lcPath(entry.Path)
 		k := toTomlKey(entry.Key)
-		if reg[p] == nil || reg[p][k] == "" {
+		if reg[p] == nil {
+			return fmt.Errorf("UpdateEntry error: entry does not exist")
+		}
+		if _, ok := reg[p][k]; !ok {
 			return fmt.Errorf("UpdateEntry error: entry does not exist")
 		}
 		value := preprocessValue(entry.Value, entry.IsSecret)
