@@ -24,7 +24,7 @@ runs:
         elapsed=0
 
         while [ $elapsed -lt $timeout ]; do
-          if docker logs pbs-plus-agent 2>&1 | grep -q "CmdBackup: background RPC goroutine finished"; then
+          if docker logs pbs-plus-agent 2>&1 | grep -q "CmdBackup: finished"; then
             echo "✓ PBS Agent forked process exited"
             break
           fi
