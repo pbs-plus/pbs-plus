@@ -30,7 +30,7 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 - [x] Windows agent support for workstations
 - [x] Linux agent support for workstations
 - [x] Containerized agent support for Docker/Kubernetes
-- [ ] Mac agent support for workstations 
+- ~[ ] Mac agent support for workstations~ (unfortunately, I don't have a setup to develop for this platform but PRs will be accepted) 
 - [x] MySQL database backup/restore support (use pre-backup hook scripts to dump databases)
 - [x] PostgreSQL database backup/restore support (use pre-backup hook scripts to dump databases)
 - [x] Active Directory/LDAP backup/restore support (use pre-backup hook scripts to dump databases)
