@@ -193,6 +193,81 @@ logger -t pbs-plus "$MSG"
 exit 0
 ```
 
+## Database/Services Backup
+
+PBS Plus can back up databases (MySQL, PostgreSQL, etc.) and Directory Services (LDAP/Active Directory) by using hook scripts. Since the agent mounts the target filesystem to the PBS server, a script set up as a PreScript or Mount Script can trigger a dump to a local folder on the agent or a specific path on the server before the backup process begins.
+
+### How it works
+1. **PreScript/Mount Script Execution**: The PBS Server runs your script.
+2. **Data Export**: The script connects to your database/service and exports the data to a designated "Dump Directory".
+3. **Backup**: PBS Plus backs up the files in that directory as part of the job.
+
+Add these scripts on your PBS Server (Disk Backup > Scripts > Add) and set them as the **PreScripts** in your Job configuration or as **Mount Scripts** (Disk Backup > Targets > Edit/Create Job > Mount Script).
+
+### 1. PostgreSQL Backup Script
+
+```bash
+#!/bin/bash
+# PostgreSQL Pre-Backup Hook
+HOST="localhost"
+PORT="5432"
+USER="postgres"
+export PGPASSWORD="your_password"
+DUMP_DIR="/mnt/backups/postgres" # Ensure PBS has write access
+
+mkdir -p "$DUMP_DIR"
+
+# Dump all databases individually for easier restoration
+DATABASES=$(psql -h "$HOST" -p "$PORT" -U "$USER" -Atc "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres';")
+
+for DB in $DATABASES; do
+    pg_dump -h "$HOST" -p "$PORT" -U "$USER" -F c -b -v -f "$DUMP_DIR/${DB}.dump" "$DB"
+done
+
+exit 0
+```
+
+### 2. MySQL / MariaDB Backup Script
+
+```bash
+#!/bin/bash
+# MySQL Pre-Backup Hook
+HOST="localhost"
+USER="root"
+PASS="your_password"
+DUMP_DIR="/mnt/backups/mysql"
+
+mkdir -p "$DUMP_DIR"
+
+# Dump all databases with structure and routines
+mysqldump --host="$HOST" --user="$USER" --password="$PASS" \
+    --all-databases --single-transaction --quick --lock-tables=false \
+    --routines --triggers > "$DUMP_DIR/full_backup.sql"
+
+exit 0
+```
+
+### 3. LDAP / Active Directory Backup Script
+For LDAP-based services, use `slapcat` (OpenLDAP) or `ldifde` (Windows/AD via agent-side scripts) to export the directory structure.
+
+**OpenLDAP Example:**
+```bash
+#!/bin/bash
+# LDAP Pre-Backup Hook
+DUMP_DIR="/mnt/backups/ldap"
+mkdir -p "$DUMP_DIR"
+
+# Export LDAP Directory to LDIF format
+slapcat -l "$DUMP_DIR/config.ldif" -n 0 # Config database
+slapcat -l "$DUMP_DIR/data.ldif" -n 1   # Main database
+
+exit 0
+```
+
+### Important Tips:
+- **Cleanup**: You can use a **PostScript** to delete the `.dump` or `.sql` files after the backup is successful to save local disk space.
+- **Error Handling**: If your dump script fails (e.g., database is down), ensure the script exits with a non-zero code (`exit 1`). This will prevent PBS Plus from backing up a partial or corrupted database dump.
+
 ## Contributing
 Contributions are welcome! Please fork the repository and create a pull request with your changes. Ensure code style consistency and include tests for any new features or bug fixes.
 
