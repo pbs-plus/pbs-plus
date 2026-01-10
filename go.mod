@@ -26,6 +26,7 @@ require (
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/prometheus/client_golang v1.23.2
 	github.com/puzpuzpuz/xsync/v3 v3.5.1
+	github.com/puzpuzpuz/xsync/v4 v4.2.0
 	github.com/rclone/rclone v1.72.1
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.11.1
