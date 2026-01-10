@@ -64,7 +64,7 @@ To install PBS Plus:
   - `PBS_PLUS_HOSTNAME`: agent's hostname/FQDN for mTLS certificate; this will be used to the target name in the server's database. Make sure this is unique across all your agents.
 - Restart the `pbs-plus-agent` service so it reads the env vars and initializes:
   - `systemctl restart pbs-plus-agent` (if using systemd)
-- As soon as the agent starts, it should persist config to `/etc/pbs-plus-agent/registry`, bootstrap mTLS, and you should see the client as Reachable in the Targets tab. If so, you should be good to go.
+- As soon as the agent starts, it should persist config to `/etc/pbs-plus-agent/registry.toml`, bootstrap mTLS, and you should see the client as Reachable in the Targets tab. If so, you should be good to go.
 
 ### Containerized Agent (Docker/Podman/Kubernetes)
 - You can run the agent as a container instead of installing a native package.
