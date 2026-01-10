@@ -9,6 +9,16 @@ ETC_DIR="/etc/pbs-plus-agent"
 is_cmd() { command -v "$1" >/dev/null 2>&1; }
 log() { echo "--> $@"; }
 
+detect_system() {
+  is_systemd=false
+  is_openrc=false
+  if [ -d /run/systemd/system ]; then
+    is_systemd=true
+  elif is_cmd rc-service; then
+    is_openrc=true
+  fi
+}
+
 create_user() {
   if getent passwd pbsplus >/dev/null 2>&1; then return 0; fi
   
@@ -27,6 +37,29 @@ create_user() {
     adduser -S -D -s "$NOLOGIN_SHELL" -h "$STATE_DIR" pbsplus
   elif is_cmd useradd; then
     useradd -r -g pbsplus -s "$NOLOGIN_SHELL" -d "$STATE_DIR" pbsplus
+  fi
+}
+
+setup_permissions_for_updates() {
+  if $is_systemd && [ -d /etc/polkit-1/rules.d ]; then
+    cat > /etc/polkit-1/rules.d/10-pbs-plus-agent.rules <<EOF
+polkit.addRule(function(action, subject) {
+    var actions = ["org.freedesktop.systemd1.manage-units", "org.freedesktop.systemd1.reload-daemon"];
+    if (actions.indexOf(action.id) !== -1 && subject.user == "pbsplus") {
+        var unit = action.lookup("unit");
+        if (!unit || unit == "$SERVICE_NAME.service" || action.id == "org.freedesktop.systemd1.reload-daemon") {
+            return polkit.Result.YES;
+        }
+    }
+});
+EOF
+    log "Configured Polkit for systemd updates"
+  fi
+
+  if is_cmd sudo && [ -d /etc/sudoers.d ]; then
+    echo "pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/rc-service $SERVICE_NAME *, /usr/bin/systemctl restart $SERVICE_NAME" > /etc/sudoers.d/pbs-plus-agent
+    chmod 0440 /etc/sudoers.d/pbs-plus-agent
+    log "Configured Sudoers fallback for service restarts"
   fi
 }
 
@@ -52,7 +85,10 @@ setup_service() {
 }
 
 main() {
+  detect_system
   create_user
+  setup_permissions_for_updates
+  [ "$ENABLE_LINGER" = "true" ] && is_cmd loginctl && loginctl enable-linger pbsplus 2>/dev/null || true
   setup_service
   log "Installation Complete."
 }
