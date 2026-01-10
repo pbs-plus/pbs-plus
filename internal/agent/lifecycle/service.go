@@ -1,9 +1,37 @@
-#!/sbin/openrc-run
+package lifecycle
 
-name="PBS Plus Agent"
-description="PBS Plus Agent for backup operations"
+const SYSTEMD_SCRIPT = `[Unit]
+Description={{.DisplayName}}
+After=network-online.target
+Wants=network-online.target
 
-command="/usr/bin/pbs-plus-agent"
+[Service]
+Type=simple
+User=pbsplus
+Group=pbsplus
+WorkingDirectory=/var/lib/pbs-plus-agent
+ExecStart={{.Path}}
+Restart=on-failure
+EnvironmentFile=-/etc/pbs-plus-agent/agent.env
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+NoNewPrivileges=yes
+Nice=19
+IOSchedulingClass=idle
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=/var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/pbs-plus-agent /etc/pbs-plus-agent /tmp /var/tmp /usr/bin /etc/systemd/system
+
+[Install]
+WantedBy=multi-user.target
+`
+
+const OPENRC_SCRIPT = `#!/sbin/openrc-run
+name="{{.DisplayName}}"
+description="{{.Description}}"
+
+command="{{.Path}}"
 command_user="pbsplus:pbsplus"
 pidfile="/run/pbs-plus-agent/pbs-plus-agent.pid"
 directory="/var/lib/pbs-plus-agent"
@@ -12,9 +40,6 @@ agent_env="/etc/pbs-plus-agent/agent.env"
 output_log="/var/log/pbs-plus-agent/agent.log"
 error_log="/var/log/pbs-plus-agent/agent.error.log"
 
-# Background execution & Resource management
-# --nicelevel 19: Lowest CPU priority
-# --ionice idle: Only perform I/O when system is idle (prevents disk lag)
 command_background="yes"
 start_stop_daemon_args="--nicelevel 19 --ionice idle"
 
@@ -41,20 +66,14 @@ start_pre() {
         done < "$agent_env"
     fi
 
-    # OpenRC doesn't manage caps, so we verify the install script did its job
     if command -v getcap >/dev/null 2>&1; then
         if ! getcap "$command" | grep -q "cap_dac_read_search"; then
-            ewarn "Warning: Binary lacks CAP_DAC_READ_SEARCH. Backups may fail to read root files."
+            ewarn "Warning: Binary lacks CAP_DAC_READ_SEARCH. Backups may fail."
         fi
     fi
-}
-
-reload() {
-    ebegin "Reloading ${name}"
-    start-stop-daemon --signal HUP --pidfile "${pidfile}"
-    eend $?
 }
 
 stop_post() {
     [ -f "${pidfile}" ] && rm -f "${pidfile}"
 }
+`

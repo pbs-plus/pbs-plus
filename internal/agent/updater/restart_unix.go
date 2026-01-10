@@ -1,4 +1,4 @@
-//go:build windows
+//go:build unix
 
 package updater
 
@@ -19,7 +19,7 @@ func restartCallback(_ Config) {
 	args := append([]string{exePath, "restart"}, os.Args[1:]...)
 	cmd := exec.Command(exePath, args[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | 0x00000008,
+		Setsid: true,
 	}
 	cmd.Stdout = nil
 	cmd.Stderr = nil
