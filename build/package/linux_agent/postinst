@@ -1,20 +1,13 @@
 #!/bin/sh
 set -e
 
-SERVICE_NAME="${SERVICE_NAME:-pbs-plus-agent}"
-BIN_PATH="${BIN_PATH:-/usr/bin/pbs-plus-agent}"
-
-STATE_DIR="${STATE_DIR:-/var/lib/pbs-plus-agent}"
-LOG_DIR="${LOG_DIR:-/var/log/pbs-plus-agent}"
-RUN_DIR="${RUN_DIR:-/run/pbs-plus-agent}"
-ETC_DIR="${ETC_DIR:-/etc/pbs-plus-agent}"
-
-CAP_PROFILE="${CAP_PROFILE:-tight}"
-ENABLE_LINGER="${ENABLE_LINGER:-true}"
+BIN_PATH="/usr/bin/pbs-plus-agent"
+STATE_DIR="/var/lib/pbs-plus-agent"
+LOG_DIR="/var/log/pbs-plus-agent"
+ETC_DIR="/etc/pbs-plus-agent"
 
 is_cmd() { command -v "$1" >/dev/null 2>&1; }
 log() { echo "--> $@"; }
-warn() { echo "Warning: $@" >&2; }
 
 detect_system() {
   is_systemd=false
@@ -28,8 +21,7 @@ detect_system() {
 
 create_user() {
   if getent passwd pbsplus >/dev/null 2>&1; then return 0; fi
-
-  # Find available nologin shell
+  
   for s in /sbin/nologin /usr/sbin/nologin /bin/false; do
     [ -x "$s" ] && NOLOGIN_SHELL="$s" && break
   done
@@ -46,58 +38,9 @@ create_user() {
   elif is_cmd useradd; then
     useradd -r -g pbsplus -s "$NOLOGIN_SHELL" -d "$STATE_DIR" pbsplus
   fi
-  log "Created user/group: pbsplus"
-}
-
-create_directories() {
-  mkdir -p "$STATE_DIR" "$LOG_DIR" "$RUN_DIR" "$ETC_DIR"
-  chown -R pbsplus:pbsplus "$STATE_DIR" "$LOG_DIR" "$RUN_DIR" "$ETC_DIR"
-  chmod 0750 "$STATE_DIR" "$LOG_DIR" "$ETC_DIR"
-  chmod 0755 "$RUN_DIR"
-
-  env_file="$ETC_DIR/agent.env"
-
-  FINAL_URL=""
-  FINAL_TOKEN=""
-
-  if [ -f /usr/share/debconf/confmodule ]; then
-    . /usr/share/debconf/confmodule
-    db_get pbs-plus-agent/server_url || true
-    FINAL_URL="$RET"
-    db_get pbs-plus-agent/bootstrap_token || true
-    FINAL_TOKEN="$RET"
-  fi
-
-  [ -z "$FINAL_URL" ] && FINAL_URL="$PBS_PLUS_INIT_SERVER_URL"
-  [ -z "$FINAL_TOKEN" ] && FINAL_TOKEN="$PBS_PLUS_INIT_BOOTSTRAP_TOKEN"
-
-  if [ ! -e "$env_file" ] || [ -n "$FINAL_URL" ]; then
-    cat > "$env_file" <<EOF
-PBS_PLUS_INIT_SERVER_URL=${FINAL_URL}
-PBS_PLUS_INIT_BOOTSTRAP_TOKEN=${FINAL_TOKEN}
-EOF
-    chown pbsplus:pbsplus "$env_file"
-    chmod 0640 "$env_file"
-  fi
-}
-
-set_capabilities() {
-  if ! is_cmd setcap; then
-    warn "setcap not found; backup of root-owned files may fail."
-    return 0
-  fi
-  
-  caps="cap_dac_read_search,cap_dac_override+ep"
-  [ "$CAP_PROFILE" = "broad" ] && caps="cap_dac_read_search,cap_dac_override,cap_fowner,cap_sys_admin,cap_sys_ptrace,cap_sys_rawio,cap_mknod+ep"
-  
-  chown root:pbsplus "$BIN_PATH" 2>/dev/null || true
-  chmod 0755 "$BIN_PATH"
-  setcap "$caps" "$BIN_PATH"
-  log "Set capabilities ($CAP_PROFILE) on $BIN_PATH"
 }
 
 setup_permissions_for_updates() {
-  # Systemd/Polkit Path
   if $is_systemd && [ -d /etc/polkit-1/rules.d ]; then
     cat > /etc/polkit-1/rules.d/10-pbs-plus-agent.rules <<EOF
 polkit.addRule(function(action, subject) {
@@ -113,9 +56,7 @@ EOF
     log "Configured Polkit for systemd updates"
   fi
 
-  # OpenRC/Sudo Path (Fall-back for non-systemd restart)
   if is_cmd sudo && [ -d /etc/sudoers.d ]; then
-    # Allows the agent to restart itself via sudo rc-service or sudo systemctl
     echo "pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/rc-service $SERVICE_NAME *, /usr/bin/systemctl restart $SERVICE_NAME" > /etc/sudoers.d/pbs-plus-agent
     chmod 0440 /etc/sudoers.d/pbs-plus-agent
     log "Configured Sudoers fallback for service restarts"
@@ -123,34 +64,33 @@ EOF
 }
 
 setup_service() {
-  if $is_systemd; then
-    systemctl daemon-reload
-    systemctl enable "$SERVICE_NAME" || true
-    systemctl restart "$SERVICE_NAME" || true
-  elif $is_openrc; then
-    rc-update add "$SERVICE_NAME" default 2>/dev/null || true
-    rc-service "$SERVICE_NAME" restart 2>/dev/null || rc-service "$SERVICE_NAME" start 2>/dev/null || true
-  fi
-}
+  log "Installing service via pbs-plus-agent..."
+  
+  mkdir -p "$STATE_DIR" "$LOG_DIR" "$ETC_DIR"
+  chown -R pbsplus:pbsplus "$STATE_DIR" "$LOG_DIR" "$ETC_DIR"
+  
+  [ -f "$ETC_DIR/agent.env" ] || touch "$ETC_DIR/agent.env"
+  chown pbsplus:pbsplus "$ETC_DIR/agent.env"
+  chmod 0640 "$ETC_DIR/agent.env"
 
-show_status() {
-  log "Installation Complete."
-  if $is_systemd; then
-    log "Status: systemctl status $SERVICE_NAME"
-  else
-    log "Status: rc-service $SERVICE_NAME status"
+  chmod 0755 "$BIN_PATH"
+  
+  if is_cmd setcap; then
+    setcap "cap_dac_read_search,cap_dac_override+ep" "$BIN_PATH"
   fi
+
+  "$BIN_PATH" install
+  
+  "$BIN_PATH" restart || "$BIN_PATH" start
 }
 
 main() {
   detect_system
   create_user
-  create_directories
-  set_capabilities
   setup_permissions_for_updates
   [ "$ENABLE_LINGER" = "true" ] && is_cmd loginctl && loginctl enable-linger pbsplus 2>/dev/null || true
   setup_service
-  show_status
+  log "Installation Complete."
 }
 
 main
