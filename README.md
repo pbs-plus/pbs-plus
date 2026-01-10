@@ -29,7 +29,7 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 - [x] File-level exclusions for backups with agent
 - [x] Windows agent support for workstations
 - [x] Linux agent support for workstations
-- [ ] Containerized agent support for Docker/Kubernetes
+- [x] Containerized agent support for Docker/Kubernetes
 - [ ] Mac agent support for workstations 
 - [x] MySQL database backup/restore support (use pre-backup hook scripts to dump databases)
 - [x] PostgreSQL database backup/restore support (use pre-backup hook scripts to dump databases)
@@ -204,7 +204,7 @@ PBS Plus can back up databases (MySQL, PostgreSQL, etc.) and Directory Services 
 
 Add these scripts on your PBS Server (Disk Backup > Scripts > Add) and set them as the **PreScripts** in your Job configuration or as **Mount Scripts** (Disk Backup > Targets > Edit/Create Job > Mount Script).
 
-### 1. PostgreSQL Backup Script
+### PostgreSQL Backup Script
 
 ```bash
 #!/bin/bash
@@ -227,7 +227,7 @@ done
 exit 0
 ```
 
-### 2. MySQL / MariaDB Backup Script
+### MySQL / MariaDB Backup Script
 
 ```bash
 #!/bin/bash
@@ -247,7 +247,7 @@ mysqldump --host="$HOST" --user="$USER" --password="$PASS" \
 exit 0
 ```
 
-### 3. LDAP / Active Directory Backup Script
+### LDAP / Active Directory Backup Script
 For LDAP-based services, use `slapcat` (OpenLDAP) or `ldifde` (Windows/AD via agent-side scripts) to export the directory structure.
 
 **OpenLDAP Example:**
