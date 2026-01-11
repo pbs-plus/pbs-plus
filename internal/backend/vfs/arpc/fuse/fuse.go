@@ -4,6 +4,7 @@ package arpcfuse
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
 )
 
@@ -170,6 +172,10 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 }
 
 func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
+	if n.fs.Job.LegacyXattr {
+		return n.legacyGetxattr(ctx, attr, dest)
+	}
+
 	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
 	if err != nil {
 		return 0, syscall.ENOTSUP
@@ -212,6 +218,10 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 }
 
 func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
+	if n.fs.Job.LegacyXattr {
+		return n.legacyListxattr(ctx, dest)
+	}
+
 	fi, err := n.fs.ListXattr(ctx, n.getPath())
 	if err != nil {
 		return 0, syscall.ENOTSUP
@@ -234,6 +244,105 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 	for _, attr := range attrs {
 		list = append(list, attr...)
 		list = append(list, 0)
+	}
+
+	length := uint32(len(list))
+
+	if dest == nil {
+		return length, 0
+	}
+
+	if len(dest) < len(list) {
+		return length, syscall.E2BIG
+	}
+
+	copy(dest, list)
+	return length, 0
+}
+
+func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
+	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
+	if err != nil {
+		return 0, syscall.ENOTSUP
+	}
+
+	var data []byte
+	switch attr {
+	case "user.creationtime":
+		data = strconv.AppendInt(data, fi.CreationTime, 10)
+	case "user.lastaccesstime":
+		data = strconv.AppendInt(data, fi.LastAccessTime, 10)
+	case "user.lastwritetime":
+		data = strconv.AppendInt(data, fi.LastWriteTime, 10)
+	case "user.owner":
+		data = append(data, fi.Owner...)
+	case "user.group":
+		data = append(data, fi.Group...)
+	case "user.fileattributes":
+		data, err = json.Marshal(fi.FileAttributes)
+		if err != nil {
+			return 0, syscall.ENODATA
+		}
+	case "user.acls":
+		if fi.PosixACLs != nil {
+			data, err = cbor.Marshal(fi.PosixACLs)
+			if err != nil {
+				return 0, syscall.ENODATA
+			}
+		} else if fi.WinACLs != nil {
+			data, err = cbor.Marshal(fi.WinACLs)
+			if err != nil {
+				return 0, syscall.ENODATA
+			}
+		} else {
+			return 0, syscall.ENODATA
+		}
+	default:
+		return 0, syscall.ENODATA
+	}
+
+	length := uint32(len(data))
+
+	if dest == nil {
+		return length, 0
+	}
+
+	if len(dest) < len(data) {
+		return length, syscall.E2BIG
+	}
+
+	copy(dest, data)
+	return length, 0
+}
+
+func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
+	fi, err := n.fs.ListXattr(ctx, n.getPath())
+	if err != nil {
+		return 0, syscall.ENOTSUP
+	}
+
+	attrs := []string{
+		"user.creationtime",
+		"user.lastaccesstime",
+		"user.lastwritetime",
+		"user.owner",
+		"user.group",
+		"user.fileattributes",
+	}
+
+	// compatibility
+	if fi.PosixACLs == nil {
+		fi.PosixACLs = make([]types.PosixACL, 0)
+	}
+
+	if fi.PosixACLs != nil || fi.WinACLs != nil {
+		attrs = append(attrs, "user.acls")
+	}
+
+	var list []byte
+	for _, attr := range attrs {
+		list = append(list, attr...)
+		list = append(list, 0) // Add null terminator.
 	}
 
 	length := uint32(len(list))

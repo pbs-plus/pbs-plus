@@ -30,6 +30,7 @@ Ext.define("pbs-disk-backup-job-status", {
     "retry",
     "retry-interval",
     "include-xattr",
+    "legacy-xattr",
   ],
   idProperty: "id",
   proxy: {
