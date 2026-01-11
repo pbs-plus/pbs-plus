@@ -612,7 +612,7 @@ func (database *Database) GetAllQueuedJobs() ([]types.Job, error) {
 				PreScript:          preScript,
 				PostScript:         postScript,
 				IncludeXattr:       includeXAttr,
-				LegacyXattr:               legacyXAttr,
+				LegacyXattr:        legacyXAttr,
 			}
 			if driveUsedBytes.Valid {
 				job.ExpectedSize = int(driveUsedBytes.Int64)
