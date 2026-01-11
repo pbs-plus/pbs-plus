@@ -204,7 +204,7 @@ func ExtJsJobHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		legacyXattr, err := strconv.ParseBool(r.FormValue("legacy-xattr"))
 		if err != nil {
-			legacyXattr = true
+			legacyXattr = false
 		}
 
 		newJob := types.Job{
@@ -315,7 +315,7 @@ func ExtJsJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if r.FormValue("legacy-xattr") != "" {
 				legacyXattr, err := strconv.ParseBool(r.FormValue("legacy-xattr"))
 				if err != nil {
-					legacyXattr = true
+					legacyXattr = false
 				}
 				job.LegacyXattr = legacyXattr
 			}
