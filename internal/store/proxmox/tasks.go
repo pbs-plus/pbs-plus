@@ -9,9 +9,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
@@ -72,41 +75,87 @@ func GetJobTask(
 
 	searchString := fmt.Sprintf(":backup:%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
 
+	// This ensures we don't accidentally pick up an OLD task from the same host
 	initialUPIDs := make(map[string]struct{})
-	tasks, err := ListTasksJSON(ctx)
-	if err != nil {
-		return Task{}, err
+	if tasks, err := ListTasksJSON(ctx); err == nil {
+		for _, t := range tasks {
+			initialUPIDs[t.UPID] = struct{}{}
+		}
 	}
 
-	for _, t := range tasks {
-		initialUPIDs[t.UPID] = struct{}{}
+	activeFilePath := fmt.Sprintf("%s/active", constants.TaskLogsBasePath)
+	watcher, err := fsnotify.NewWatcher()
+	if err == nil {
+		defer watcher.Close()
+		_ = watcher.Add(filepath.Dir(activeFilePath))
 	}
 
 	syslog.L.Info().WithMessage("ready to start backup").Write()
 	close(readyChan)
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+
+	// Fast check: scan the 'active' file
+	scanActiveFile := func() (string, bool) {
+		data, err := os.ReadFile(activeFilePath)
+		if err != nil {
+			return "", false
+		}
+		for _, upid := range strings.Split(string(data), "\n") {
+			upid = strings.TrimSpace(upid)
+			if upid != "" && strings.Contains(upid, ":backup:") && strings.Contains(upid, searchString) {
+				if _, seen := initialUPIDs[upid]; !seen {
+					return upid, true
+				}
+			}
+		}
+		return "", false
+	}
+
+	// Deep check: scan the API (Active + History)
+	// This catches tasks that finished before we could see them in 'active'
+	scanAPI := func() (Task, bool) {
+		tasks, err := ListTasksJSON(ctx)
+		if err != nil {
+			return Task{}, false
+		}
+		for _, t := range tasks {
+			if strings.Contains(t.UPID, ":backup:") && strings.Contains(t.UPID, searchString) {
+				if _, seen := initialUPIDs[t.UPID]; !seen {
+					if task, err := GetTaskByUPID(t.UPID); err == nil {
+						return task, true
+					}
+				}
+			}
+		}
+		return Task{}, false
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return Task{}, ctx.Err()
 
-		case <-ticker.C:
-			tasks, err := ListTasksJSON(ctx)
-			if err != nil {
-				syslog.L.Error(err).Write()
+		case event, ok := <-watcher.Events:
+			if !ok {
 				continue
 			}
-
-			for _, t := range tasks {
-				if t.WorkerType == "backup" && strings.Contains(t.UPID, searchString) {
-					if _, seen := initialUPIDs[t.UPID]; seen {
-						continue // skip tasks in the initial set
-					}
-					return GetTaskByUPID(t.UPID)
+			// Atomic rename triggers a 'Create' or 'Write' event on the filename "active"
+			if strings.HasSuffix(event.Name, "active") {
+				if upid, found := scanActiveFile(); found {
+					return GetTaskByUPID(upid)
 				}
+			}
+
+		case <-ticker.C:
+			// Try the fast way first
+			if upid, found := scanActiveFile(); found {
+				return GetTaskByUPID(upid)
+			}
+			// Fallback to Deep Scan to catch ultra-fast/already-finished tasks
+			if task, found := scanAPI(); found {
+				return task, nil
 			}
 		}
 	}
