@@ -9,6 +9,7 @@ type Job struct {
 	Target                string      `json:"target"`
 	TargetPath            string      `json:"target-path"`
 	IncludeXattr          bool        `json:"include-xattr"`
+	LegacyXattr           bool        `json:"legacy-xattr"`
 	Subpath               string      `json:"subpath"`
 	Schedule              string      `json:"schedule"`
 	Comment               string      `json:"comment"`
