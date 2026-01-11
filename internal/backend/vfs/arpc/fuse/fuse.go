@@ -266,6 +266,10 @@ func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (ui
 		return 0, syscall.ENOTSUP
 	}
 
+	if fi.FileAttributes == nil {
+		fi.FileAttributes = make(map[string]bool, 0)
+	}
+
 	var data []byte
 	switch attr {
 	case "user.creationtime":
@@ -284,17 +288,12 @@ func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (ui
 			return 0, syscall.ENODATA
 		}
 	case "user.acls":
-		if fi.PosixACLs != nil {
-			data, err = cbor.Marshal(fi.PosixACLs)
-			if err != nil {
-				return 0, syscall.ENODATA
-			}
-		} else if fi.WinACLs != nil {
-			data, err = cbor.Marshal(fi.WinACLs)
-			if err != nil {
-				return 0, syscall.ENODATA
-			}
-		} else {
+		if fi.PosixACLs == nil {
+			fi.PosixACLs = make([]types.PosixACL, 0)
+		}
+
+		data, err = json.Marshal(fi.PosixACLs)
+		if err != nil {
 			return 0, syscall.ENODATA
 		}
 	default:
