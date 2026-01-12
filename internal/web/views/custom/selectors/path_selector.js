@@ -23,7 +23,7 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
       iconCls: "fa fa-folder-open-o",
       margin: "0 0 0 5",
       handler: function () {
-        let me = this.up("widget.pbsD2DSnapshotPathSelector");
+        let me = this;
         let ds = me.datastore;
         let snap = me.snapshot;
 
