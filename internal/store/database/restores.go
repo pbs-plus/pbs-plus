@@ -380,7 +380,7 @@ func (database *Database) GetAllRestores() ([]types.Restore, error) {
 		}
 
 		if targetPath.Valid {
-			restore.DestTargetPath = targetPath.String
+			restore.DestTargetPath = types.TargetPath(targetPath.String)
 		}
 		if namespace.Valid {
 			restore.Namespace = namespace.String
@@ -403,7 +403,7 @@ func (database *Database) GetAllRestores() ([]types.Restore, error) {
 func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 	query := `
         SELECT
-            j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, j.dest_path, j.comment,
+            j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, t.path, j.dest_path, j.comment,
             j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval
         FROM restores j
@@ -420,14 +420,14 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 	var restoreOrder []string
 
 	for rows.Next() {
-		var restoreID, store, snapshot, srcPath, destTarget, comment, lastRunUpid, lastSuccessfulUpid string
+		var restoreID, store, snapshot, srcPath, destTarget, destPath, comment, lastRunUpid, lastSuccessfulUpid string
 		var retry int
 		var retryInterval int
 		var currentPID int
 		var targetPath, namespace sql.NullString
 
 		err := rows.Scan(
-			&restoreID, &store, &namespace, &snapshot, &srcPath, &destTarget, &targetPath, &comment,
+			&restoreID, &store, &namespace, &snapshot, &srcPath, &destTarget, &targetPath, &destPath, &comment,
 			&currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval,
 		)
@@ -444,6 +444,7 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 				Snapshot:           snapshot,
 				SrcPath:            srcPath,
 				DestTarget:         destTarget,
+				DestPath:           destPath,
 				Comment:            comment,
 				CurrentPID:         currentPID,
 				LastRunUpid:        lastRunUpid,
@@ -457,7 +458,7 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 		}
 
 		if targetPath.Valid {
-			restore.DestTargetPath = targetPath.String
+			restore.DestTargetPath = types.TargetPath(targetPath.String)
 		}
 		if namespace.Valid {
 			restore.Namespace = namespace.String
