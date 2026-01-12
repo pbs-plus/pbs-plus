@@ -17,6 +17,7 @@ import (
 	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 const (
@@ -68,9 +69,13 @@ func NewS3FS(
 
 	return &S3FS{
 		VFSBase: &vfs.VFSBase{
-			Ctx:    s3ctx,
-			Cancel: cancel,
-			Job:    job,
+			Ctx:           s3ctx,
+			Cancel:        cancel,
+			Job:           job,
+			FileCount:     xsync.NewCounter(),
+			FolderCount:   xsync.NewCounter(),
+			TotalBytes:    xsync.NewCounter(),
+			StatCacheHits: xsync.NewCounter(),
 		},
 		client:    client,
 		bucket:    bucket,

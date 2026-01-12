@@ -20,6 +20,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 func (fs *ARPCFS) logError(fpath string, err error) {
@@ -62,11 +63,15 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 
 	fs := &ARPCFS{
 		VFSBase: &vfs.VFSBase{
-			BasePath: "/",
-			Ctx:      ctxFs,
-			Cancel:   cancel,
-			Job:      job,
-			Memcache: memcache.New(memcachePath),
+			BasePath:      "/",
+			Ctx:           ctxFs,
+			Cancel:        cancel,
+			Job:           job,
+			Memcache:      memcache.New(memcachePath),
+			FileCount:     xsync.NewCounter(),
+			FolderCount:   xsync.NewCounter(),
+			TotalBytes:    xsync.NewCounter(),
+			StatCacheHits: xsync.NewCounter(),
 		},
 		Hostname:     hostname,
 		backupMode:   backupMode,
