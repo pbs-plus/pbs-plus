@@ -290,5 +290,11 @@ func (fs *S3FS) Unmount(ctx context.Context) {
 	if fs.Fuse != nil {
 		_ = fs.Fuse.Unmount()
 	}
+
+	fs.TotalBytes.Reset()
+	fs.FolderCount.Reset()
+	fs.FileCount.Reset()
+	fs.StatCacheHits.Reset()
+
 	fs.Cancel()
 }

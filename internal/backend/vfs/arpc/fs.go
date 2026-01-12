@@ -94,6 +94,11 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 			Write()
 		fs.Memcache.DeleteAll()
 		fs.Memcache.Close()
+
+		fs.TotalBytes.Reset()
+		fs.FolderCount.Reset()
+		fs.FileCount.Reset()
+		fs.StatCacheHits.Reset()
 		stopMemLocal()
 	}()
 
