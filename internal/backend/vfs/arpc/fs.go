@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -21,6 +20,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 func (fs *ARPCFS) logError(fpath string, err error) {
@@ -63,11 +63,15 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 
 	fs := &ARPCFS{
 		VFSBase: &vfs.VFSBase{
-			BasePath: "/",
-			Ctx:      ctxFs,
-			Cancel:   cancel,
-			Job:      job,
-			Memcache: memcache.New(memcachePath),
+			BasePath:      "/",
+			Ctx:           ctxFs,
+			Cancel:        cancel,
+			Job:           job,
+			Memcache:      memcache.New(memcachePath),
+			FileCount:     xsync.NewCounter(),
+			FolderCount:   xsync.NewCounter(),
+			TotalBytes:    xsync.NewCounter(),
+			StatCacheHits: xsync.NewCounter(),
 		},
 		Hostname:     hostname,
 		backupMode:   backupMode,
@@ -90,6 +94,11 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 			Write()
 		fs.Memcache.DeleteAll()
 		fs.Memcache.Close()
+
+		fs.TotalBytes.Reset()
+		fs.FolderCount.Reset()
+		fs.FileCount.Reset()
+		fs.StatCacheHits.Reset()
 		stopMemLocal()
 	}()
 
@@ -223,7 +232,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 	var raw []byte
 	cached, err := fs.Memcache.Get("attr:" + memlocal.Key(filename))
 	if err == nil {
-		atomic.AddInt64(&fs.StatCacheHits, 1)
+		fs.StatCacheHits.Add(1)
 		raw = cached.Value
 		syslog.L.Debug().
 			WithMessage("Attr cache hit").
@@ -265,7 +274,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 			syslog.L.Debug().
 				WithMessage("Attr counted file and cleared cache").
 				WithField("path", filename).
-				WithField("fileCount", atomic.LoadInt64(&fs.FileCount)).
+				WithField("fileCount", fs.FileCount.Value()).
 				WithJob(fs.Job.ID).
 				Write()
 		}
