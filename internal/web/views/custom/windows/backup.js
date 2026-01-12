@@ -28,6 +28,14 @@ var xattrModes = Ext.create("Ext.data.Store", {
   ],
 });
 
+var legacyXattrModes = Ext.create("Ext.data.Store", {
+  fields: ["display", "value"],
+  data: [
+    { display: "Use broken xattr", value: "true" },
+    { display: "Use fixed xattr", value: "false" },
+  ],
+});
+
 Ext.define("PBS.D2DManagement.BackupJobEdit", {
   extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsDiskBackupJobEdit",
@@ -60,6 +68,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
     me.sourceModeValue = id ? null : "snapshot";
     me.readModeValue = id ? null : "standard";
     me.includeXAttrValue = id ? null : "true";
+    me.legacyXAttrValue = id ? null : "false";
     me.authid = id ? null : Proxmox.UserName;
     me.editDatastore = me.datastore === undefined && me.isCreate;
     return {};
@@ -244,6 +253,22 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             allowBlank: true,
             cbind: {
               value: "{includeXAttrValue}",
+            },
+          },
+          {
+            xtype: "combo",
+            fieldLabel: gettext("Xattr Migration"),
+            name: "legacy-xattr",
+            queryMode: "local",
+            store: legacyXattrModes,
+            displayField: "display",
+            valueField: "value",
+            editable: false,
+            anyMatch: true,
+            forceSelection: true,
+            allowBlank: true,
+            cbind: {
+              value: "{legacyXAttrValue}",
             },
           },
         ],

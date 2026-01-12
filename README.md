@@ -29,8 +29,8 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 - [x] File-level exclusions for backups with agent
 - [x] Windows agent support for workstations
 - [x] Linux agent support for workstations
-- [ ] Containerized agent support for Docker/Kubernetes
-- [ ] Mac agent support for workstations 
+- [x] Containerized agent support for Docker/Kubernetes
+- [ ] ~Mac agent support for workstations~ (unfortunately, I don't have a setup to develop for Mac but PRs will be accepted) 
 - [x] MySQL database backup/restore support (use pre-backup hook scripts to dump databases)
 - [x] PostgreSQL database backup/restore support (use pre-backup hook scripts to dump databases)
 - [x] Active Directory/LDAP backup/restore support (use pre-backup hook scripts to dump databases)
@@ -67,7 +67,7 @@ To install PBS Plus:
   - `PBS_PLUS_HOSTNAME`: agent's hostname/FQDN for mTLS certificate; this will be used to the target name in the server's database. Make sure this is unique across all your agents.
 - Restart the `pbs-plus-agent` service so it reads the env vars and initializes:
   - `systemctl restart pbs-plus-agent` (if using systemd)
-- As soon as the agent starts, it should persist config to `/etc/pbs-plus-agent/registry`, bootstrap mTLS, and you should see the client as Reachable in the Targets tab. If so, you should be good to go.
+- As soon as the agent starts, it should persist config to `/etc/pbs-plus-agent/registry.toml`, bootstrap mTLS, and you should see the client as Reachable in the Targets tab. If so, you should be good to go.
 
 ### Containerized Agent (Docker/Podman/Kubernetes)
 - You can run the agent as a container instead of installing a native package.
@@ -98,8 +98,9 @@ To install PBS Plus:
 PBS Plus currently consists of two main components: the server and the agent. The server should be installed on the PBS machine, while agents are installed on client workstations.
 
 ### Server
-- The server hosts an API server for its services on port `8017` to enable enhanced functionality.
-- The server hosts another endpoint solely for agent communications with mTLS on port `8008`.
+- The server hosts an API server for its services on port `TCP/8017` to enable enhanced functionality.
+- The server hosts another endpoint solely for agent communications with HTTPS on port `TCP/8018`.
+- The server hosts another endpoint solely for agent communications with aRPC over mTLS on port `TCP/8008`.
 - All new features, including remote file-level backups, can be managed through the "Disk Backup" page.
 
 ### Agent
@@ -195,6 +196,81 @@ MSG="Job ${JOB} completed: success=${STATUS}, warnings=${WARN}"
 logger -t pbs-plus "$MSG"
 exit 0
 ```
+
+## Database/Services Backup
+
+PBS Plus can back up databases (MySQL, PostgreSQL, etc.) and Directory Services (LDAP/Active Directory) by using hook scripts. Since the agent mounts the target filesystem to the PBS server, a script set up as a PreScript or Mount Script can trigger a dump to a local folder on the agent or a specific path on the server before the backup process begins.
+
+### How it works
+1. **PreScript/Mount Script Execution**: The PBS Server runs your script.
+2. **Data Export**: The script connects to your database/service and exports the data to a designated "Dump Directory".
+3. **Backup**: PBS Plus backs up the files in that directory as part of the job.
+
+Add these scripts on your PBS Server (Disk Backup > Scripts > Add) and set them as the **PreScripts** in your Job configuration or as **Mount Scripts** (Disk Backup > Targets > Edit/Create Job > Mount Script).
+
+### PostgreSQL Backup Script
+
+```bash
+#!/bin/bash
+# PostgreSQL Pre-Backup Hook
+HOST="localhost"
+PORT="5432"
+USER="postgres"
+export PGPASSWORD="your_password"
+DUMP_DIR="/mnt/backups/postgres" # Ensure PBS has write access
+
+mkdir -p "$DUMP_DIR"
+
+# Dump all databases individually for easier restoration
+DATABASES=$(psql -h "$HOST" -p "$PORT" -U "$USER" -Atc "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres';")
+
+for DB in $DATABASES; do
+    pg_dump -h "$HOST" -p "$PORT" -U "$USER" -F c -b -v -f "$DUMP_DIR/${DB}.dump" "$DB"
+done
+
+exit 0
+```
+
+### MySQL / MariaDB Backup Script
+
+```bash
+#!/bin/bash
+# MySQL Pre-Backup Hook
+HOST="localhost"
+USER="root"
+PASS="your_password"
+DUMP_DIR="/mnt/backups/mysql"
+
+mkdir -p "$DUMP_DIR"
+
+# Dump all databases with structure and routines
+mysqldump --host="$HOST" --user="$USER" --password="$PASS" \
+    --all-databases --single-transaction --quick --lock-tables=false \
+    --routines --triggers > "$DUMP_DIR/full_backup.sql"
+
+exit 0
+```
+
+### LDAP / Active Directory Backup Script
+For LDAP-based services, use `slapcat` (OpenLDAP) or `ldifde` (Windows/AD via agent-side scripts) to export the directory structure.
+
+**OpenLDAP Example:**
+```bash
+#!/bin/bash
+# LDAP Pre-Backup Hook
+DUMP_DIR="/mnt/backups/ldap"
+mkdir -p "$DUMP_DIR"
+
+# Export LDAP Directory to LDIF format
+slapcat -l "$DUMP_DIR/config.ldif" -n 0 # Config database
+slapcat -l "$DUMP_DIR/data.ldif" -n 1   # Main database
+
+exit 0
+```
+
+### Important Tips:
+- **Cleanup**: You can use a **PostScript** to delete the `.dump` or `.sql` files after the backup is successful to save local disk space.
+- **Error Handling**: If your dump script fails (e.g., database is down), ensure the script exits with a non-zero code (`exit 1`). This will prevent PBS Plus from backing up a partial or corrupted database dump.
 
 ## Contributing
 Contributions are welcome! Please fork the repository and create a pull request with your changes. Ensure code style consistency and include tests for any new features or bug fixes.

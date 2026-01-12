@@ -665,6 +665,12 @@ Ext.define("PBS.config.DiskBackupJobView", {
       sortable: true,
     },
     {
+      header: gettext("Legacy Xattr"),
+      dataIndex: "legacy-xattr",
+      width: 120,
+      sortable: true,
+    },
+    {
       header: gettext("Last Success"),
       dataIndex: "last-successful-endtime",
       renderer: PBS.Utils.render_optional_timestamp,

@@ -5,9 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand/v2"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -83,26 +81,20 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid server URL: %v", err)
-		syslog.L.Error(err).WithMessage("CmdBackup: GetEntry ServerURL failed").Write()
 		os.Exit(1)
 	}
 	uri, err := utils.ParseURI(serverUrl.Value)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid server URL: %v", err)
-		syslog.L.Error(err).WithMessage("CmdBackup: url.Parse failed").Write()
 		os.Exit(1)
 	}
-
 	tlsConfig, err := agent.GetTLSConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get TLS config for ARPC client: %v", err)
-		syslog.L.Error(err).WithMessage("CmdBackup: GetTLSConfig failed").Write()
 		os.Exit(1)
 	}
 
+	address := fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort)
 	headers := http.Header{}
-	headers.Add("X-PBS-Plus-JobId", *backupId)
+	headers.Add("X-PBS-Plus-BackupId", *backupId)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -111,34 +103,10 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 	winquit.SimulateSigTermOnQuit(done)
 
-	syslog.L.Info().WithMessage("CmdBackup: connecting to server").WithField("host", uri.Hostname()).WithField("backupId", *backupId).Write()
-	rpcSess, err := arpc.ConnectToServer(ctx, fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort), headers, tlsConfig)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to connect to server: %v", err)
-		syslog.L.Error(err).WithMessage("CmdBackup: ConnectToServer failed").Write()
-		os.Exit(1)
-	}
-	rpcSess.SetRouter(arpc.NewRouter())
-
-	backupMode, err := Backup(rpcSess, *sourceMode, *readMode, *drive, *backupId)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		syslog.L.Error(err).WithMessage("CmdBackup: Backup failed").WithField("backupId", *backupId).Write()
-		rpcSess.Close()
-		os.Exit(1)
-	}
-
-	fmt.Println(BACKUP_MODE_PREFIX + backupMode)
-	syslog.L.Info().WithMessage("CmdBackup: backup mode announced").WithField("mode", backupMode).WithField("backupId", *backupId).Write()
-
-	go func() {
-		sig := <-done
-		syslog.L.Info().WithMessage(fmt.Sprintf("CmdBackup: received signal %v, shutting down", sig)).WithField("backupId", *backupId).Write()
-		cancel()
-		rpcSess.Close()
-	}()
-
 	var wg sync.WaitGroup
+	backupInitiated := make(chan struct{})
+	var backupInitiatedOnce sync.Once
+
 	wg.Go(func() {
 		defer syslog.L.Info().WithMessage("CmdBackup: ARPC session handler shutting down").Write()
 
@@ -148,51 +116,61 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 		jitter := 0.2
 		backoff := base
 
-		session := rpcSess
+		var session *arpc.StreamPipe
 
 		for {
 			select {
 			case <-ctx.Done():
-				session.Close()
+				if session != nil {
+					session.Close()
+				}
 				return
 			default:
-				if err := session.Serve(); err != nil {
-					if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
-						syslog.L.Info().WithMessage("ARPC connection closed gracefully").Write()
-					} else {
-						syslog.L.Warn().WithMessage("ARPC connection error").WithField("error", err.Error()).Write()
-					}
+				if session == nil {
+					syslog.L.Info().WithMessage("CmdBackup: Attempting connection").WithField("backupId", *backupId).Write()
 
-					mult := 1 + jitter*(2*rand.Float64()-1)
-					sleep := time.Duration(float64(backoff) * mult)
-					if sleep > maxWait {
-						sleep = maxWait
-					}
-
-					syslog.L.Info().WithMessage(fmt.Sprintf("Retrying connection after %v", sleep)).Write()
-
-					select {
-					case <-ctx.Done():
-						session.Close()
-						return
-					case <-time.After(sleep):
-					}
-
-					next := time.Duration(float64(backoff) * factor)
-					if next > maxWait {
-						next = maxWait
-					}
-					backoff = next
-
-					newS, err := session.Reconnect(ctx)
+					var err error
+					session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 					if err != nil {
-						syslog.L.Warn().WithMessage("ARPC reconnection error").WithField("error", err.Error()).Write()
-						continue
-					}
+						mult := 1 + jitter*(2*rand.Float64()-1)
+						sleep := min(time.Duration(float64(backoff)*mult), maxWait)
 
-					syslog.L.Info().WithMessage("ARPC connection restored").Write()
-					session = newS
+						syslog.L.Warn().WithMessage(fmt.Sprintf("Connection failed, retrying in %v", sleep)).WithField("error", err.Error()).Write()
+
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(sleep):
+							backoff = min(time.Duration(float64(backoff)*factor), maxWait)
+							continue
+						}
+					}
+					session.SetRouter(arpc.NewRouter())
+					syslog.L.Info().WithMessage("ARPC connection established").Write()
 					backoff = base
+				}
+
+				backupInitiatedOnce.Do(func() {
+					backupMode, err := Backup(session, *sourceMode, *readMode, *drive, *backupId)
+					if err != nil {
+						fmt.Fprintln(os.Stderr, "Backup initiation failed:", err)
+						syslog.L.Error(err).WithMessage("CmdBackup: Backup initiation failed").Write()
+						cancel()
+						return
+					}
+					fmt.Println(BACKUP_MODE_PREFIX + backupMode)
+					close(backupInitiated)
+				})
+
+				if err := session.Serve(); err != nil {
+					syslog.L.Warn().WithMessage("ARPC connection lost, attempting recovery").WithField("error", err.Error()).Write()
+
+					if newS, err := session.Reconnect(ctx); err == nil {
+						session = newS
+						syslog.L.Info().WithMessage("ARPC connection restored via Reconnect").Write()
+					} else {
+						session = nil // Force fresh connection on next loop iteration
+					}
 				} else {
 					return
 				}
@@ -200,13 +178,19 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 		}
 	})
 
+	go func() {
+		sig := <-done
+		syslog.L.Info().WithMessage(fmt.Sprintf("CmdBackup: received signal %v", sig)).Write()
+		cancel()
+	}()
+
 	wg.Wait()
 
 	if session, ok := activeSessions.Get(*backupId); ok {
 		session.Close()
 	}
 
-	syslog.L.Info().WithMessage("CmdBackup: background RPC goroutine finished").WithField("backupId", *backupId).Write()
+	syslog.L.Info().WithMessage("CmdBackup: finished").Write()
 	os.Exit(0)
 }
 
