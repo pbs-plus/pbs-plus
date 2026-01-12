@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -176,7 +175,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		return 0, io.EOF
 	}
 
-	atomic.AddInt64(&f.fs.TotalBytes, int64(n))
+	f.fs.TotalBytes.Add(int64(n))
 
 	syslog.L.Debug().
 		WithMessage("ReadAt completed").
