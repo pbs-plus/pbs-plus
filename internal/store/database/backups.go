@@ -508,7 +508,7 @@ func (database *Database) GetAllBackups() ([]types.Backup, error) {
 		}
 
 		if targetPath.Valid {
-			backup.TargetPath = targetPath.String
+			backup.TargetPath = types.TargetPath(targetPath.String)
 		}
 
 		if mountScript.Valid {

@@ -7,7 +7,7 @@ type Backup struct {
 	ReadMode              string      `json:"readmode"`
 	Mode                  string      `json:"mode"`
 	Target                string      `json:"target"`
-	TargetPath            string      `json:"target-path"`
+	TargetPath            TargetPath  `json:"target-path"`
 	IncludeXattr          bool        `json:"include-xattr"`
 	LegacyXattr           bool        `json:"legacy-xattr"`
 	Subpath               string      `json:"subpath"`
