@@ -37,7 +37,7 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
 
         let listURL = `/api2/json/admin/datastore/${ds}/catalog`;
 
-        Ext.create("PBS.window.PathSelector", {
+        Ext.create("PBS.window.D2DPathSelector", {
           listURL: listURL,
           extraParams: {
             snapshot: snap,
