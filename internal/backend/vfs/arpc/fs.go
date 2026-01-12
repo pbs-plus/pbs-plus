@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -223,7 +222,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 	var raw []byte
 	cached, err := fs.Memcache.Get("attr:" + memlocal.Key(filename))
 	if err == nil {
-		atomic.AddInt64(&fs.StatCacheHits, 1)
+		fs.StatCacheHits.Add(1)
 		raw = cached.Value
 		syslog.L.Debug().
 			WithMessage("Attr cache hit").
@@ -265,7 +264,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 			syslog.L.Debug().
 				WithMessage("Attr counted file and cleared cache").
 				WithField("path", filename).
-				WithField("fileCount", atomic.LoadInt64(&fs.FileCount)).
+				WithField("fileCount", fs.FileCount.Value()).
 				WithJob(fs.Job.ID).
 				Write()
 		}
