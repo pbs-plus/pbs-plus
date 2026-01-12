@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 var (
 	ErrManagerClosed = errors.New("manager is closed")
-	ErrOneInstance   = errors.New("a job is still running; only one instance allowed")
 	ErrCanceled      = errors.New("operation canceled")
+	ErrOneInstance   = errors.New("a job is still running; only one instance allowed")
 )
 
 type Operation interface {
@@ -25,6 +27,11 @@ type Operation interface {
 	Context() context.Context
 }
 
+type contextPair struct {
+	cancel context.CancelFunc
+	ctx    context.Context
+}
+
 type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -32,10 +39,9 @@ type Manager struct {
 	taskMonitorQueue chan Operation
 	executionSem     chan struct{}
 
-	mu              sync.Mutex
 	detectionMu     sync.Mutex
 	singleExecution bool
-	runningJobs     map[string]context.CancelFunc
+	runningJobs     *safemap.Map[string, contextPair]
 }
 
 func NewManager(ctx context.Context, maxConcurrent int, queueSize int, singleExecution bool) *Manager {
@@ -46,7 +52,7 @@ func NewManager(ctx context.Context, maxConcurrent int, queueSize int, singleExe
 		cancel:           cancel,
 		taskMonitorQueue: make(chan Operation, queueSize),
 		executionSem:     make(chan struct{}, maxConcurrent),
-		runningJobs:      make(map[string]context.CancelFunc),
+		runningJobs:      safemap.New[string, contextPair](),
 		singleExecution:  singleExecution,
 	}
 
@@ -64,16 +70,12 @@ func (m *Manager) Enqueue(op Operation) error {
 
 	jobID := op.GetID()
 
-	m.mu.Lock()
-	if _, exists := m.runningJobs[jobID]; exists {
-		m.mu.Unlock()
-		op.OnError(ErrOneInstance)
-		return ErrOneInstance
+	if _, exists := m.runningJobs.Get(jobID); exists {
+		return fmt.Errorf("Job %s is already running/in queue.", jobID)
 	}
 
 	ctx, cancel := context.WithCancel(m.ctx)
-	m.runningJobs[jobID] = cancel
-	m.mu.Unlock()
+	m.runningJobs.Set(jobID, contextPair{ctx: ctx, cancel: cancel})
 
 	op.SetContext(ctx, cancel)
 
@@ -174,37 +176,31 @@ func (m *Manager) runJob(op Operation) {
 }
 
 func (m *Manager) StopJob(jobID string) error {
-	m.mu.Lock()
-	cancel, exists := m.runningJobs[jobID]
-	m.mu.Unlock()
-
+	pair, exists := m.runningJobs.Get(jobID)
 	if !exists {
-		return fmt.Errorf("no such job: %s", jobID)
+		return fmt.Errorf("Job %s is not running", jobID)
 	}
 
-	cancel()
+	if pair.ctx.Err() != nil {
+		return fmt.Errorf("Job %s is currently stopping and cleaning up", jobID)
+	}
+
+	pair.cancel()
 	return nil
 }
 
 func (m *Manager) cleanup(op Operation) {
 	op.Cleanup()
-
-	m.mu.Lock()
-	delete(m.runningJobs, op.GetID())
-	m.mu.Unlock()
+	m.runningJobs.Del(op.GetID())
 }
 
 func (m *Manager) IsRunning(jobID string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	_, exists := m.runningJobs[jobID]
+	_, exists := m.runningJobs.Get(jobID)
 	return exists
 }
 
 func (m *Manager) RunningCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.runningJobs)
+	return m.runningJobs.Len()
 }
 
 func (m *Manager) Close() {

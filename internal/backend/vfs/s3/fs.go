@@ -8,7 +8,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 const (
@@ -69,9 +69,13 @@ func NewS3FS(
 
 	return &S3FS{
 		VFSBase: &vfs.VFSBase{
-			Ctx:    s3ctx,
-			Cancel: cancel,
-			Backup: backup,
+			Ctx:           s3ctx,
+			Cancel:        cancel,
+			Backup:        backup,
+			FileCount:     xsync.NewCounter(),
+			FolderCount:   xsync.NewCounter(),
+			TotalBytes:    xsync.NewCounter(),
+			StatCacheHits: xsync.NewCounter(),
 		},
 		client:    client,
 		bucket:    bucket,
@@ -132,7 +136,7 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 			value:     &result,
 			expiresAt: time.Now().Add(metaCacheTTL),
 		})
-		atomic.AddInt64(&fs.FileCount, 1)
+		fs.FileCount.Add(1)
 		return result, nil
 	}
 
@@ -165,7 +169,7 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 			value:     &result,
 			expiresAt: time.Now().Add(metaCacheTTL),
 		})
-		atomic.AddInt64(&fs.FolderCount, 1)
+		fs.FolderCount.Add(1)
 		return result, nil
 	}
 
@@ -286,5 +290,11 @@ func (fs *S3FS) Unmount(ctx context.Context) {
 	if fs.Fuse != nil {
 		_ = fs.Fuse.Unmount()
 	}
+
+	fs.TotalBytes.Reset()
+	fs.FolderCount.Reset()
+	fs.FileCount.Reset()
+	fs.StatCacheHits.Reset()
+
 	fs.Cancel()
 }

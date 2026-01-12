@@ -6,38 +6,22 @@ import (
 	"context"
 	"io"
 	"os"
-	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3"
 )
 
-var nodePool = &sync.Pool{
-	New: func() any {
-		return &Node{}
-	},
-}
-
-var pathBuilderPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]string, 128)
-	},
-}
-
 func newRoot(fs *s3fs.S3FS) fs.InodeEmbedder {
-	rootNode := nodePool.Get().(*Node)
+	rootNode := &Node{}
 	rootNode.fs = fs
-	rootNode.fullPathCache = ""
 	rootNode.name = ""
 	rootNode.parent = nil
 	return rootNode
 }
 
-// Mount mounts the billy filesystem at the specified mountpoint
 func Mount(
 	mountpoint string,
 	fsName string,
@@ -75,80 +59,13 @@ func Mount(
 // Node represents a file or directory in the filesystem
 type Node struct {
 	fs.Inode
-	fs            *s3fs.S3FS
-	name          string
-	fullPathCache string
-	parent        *Node
+	fs     *s3fs.S3FS
+	name   string
+	parent *Node
 }
 
 func (n *Node) getPath() string {
-	if n.fullPathCache != "" || n.parent == nil {
-		return n.fullPathCache
-	}
-
-	// Check if parent's path is cached to build the current path directly
-	if parentPath := n.parent.fullPathCache; parentPath != "" {
-		const maxStackBuffer = 256
-		totalLen := len(parentPath) + 1 + len(n.name)
-		if totalLen <= maxStackBuffer {
-			var buffer [maxStackBuffer]byte
-			b := buffer[:0]
-			b = append(b, parentPath...)
-			b = append(b, '/')
-			b = append(b, n.name...)
-			n.fullPathCache = string(b)
-		} else {
-			b := make([]byte, 0, totalLen)
-			b = append(b, parentPath...)
-			b = append(b, '/')
-			b = append(b, n.name...)
-			n.fullPathCache = string(b)
-		}
-		return n.fullPathCache
-	}
-
-	// Collect path components by traversing to the root
-	var partsStorage [128]string
-	parts := partsStorage[:0]
-	for current := n; current != nil; current = current.parent {
-		if current.parent != nil {
-			parts = append(parts, current.name)
-		}
-	}
-
-	// Calculate total length needed for the path
-	totalLen := 0
-	for i := len(parts) - 1; i >= 0; i-- {
-		totalLen += len(parts[i])
-		if i > 0 {
-			totalLen++
-		}
-	}
-
-	// Use stack-allocated buffer for common path lengths
-	const maxPathBuffer = 4096
-	var buffer []byte
-	if totalLen <= maxPathBuffer {
-		var stackBuffer [maxPathBuffer]byte
-		buffer = stackBuffer[:0]
-	} else {
-		buffer = make([]byte, 0, totalLen)
-	}
-
-	// Build the path from collected parts
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := parts[i]
-		buffer = append(buffer, part...)
-		if i > 0 {
-			buffer = append(buffer, '/')
-		}
-	}
-
-	n.fullPathCache = unsafe.String(
-		unsafe.SliceData(buffer[:totalLen]),
-		totalLen,
-	)
-	return n.fullPathCache
+	return "/" + n.Inode.Path(nil)
 }
 
 var _ = (fs.NodeGetattrer)((*Node)(nil))
@@ -186,8 +103,6 @@ func (n *Node) Release(
 		return fh.Release(ctx)
 	}
 
-	nodePool.Put(n)
-
 	return 0
 }
 
@@ -198,7 +113,6 @@ func (n *Node) Statx(
 	mask uint32,
 	out *fuse.StatxOut,
 ) syscall.Errno {
-	// Get file stats the regular way, then populate StatxOut
 	var attrOut fuse.AttrOut
 	errno := n.Getattr(ctx, f, &attrOut)
 	if errno != 0 {
@@ -269,17 +183,23 @@ func (n *Node) Lookup(
 	name string,
 	out *fuse.EntryOut,
 ) (*fs.Inode, syscall.Errno) {
-	childNode := nodePool.Get().(*Node)
-	childNode.fs = n.fs
-	childNode.parent = n
-	childNode.name = name
-	childNode.fullPathCache = ""
+	parentPath := n.getPath()
+	var fullPath string
+	if parentPath == "/" {
+		fullPath = "/" + name
+	} else {
+		fullPath = parentPath + "/" + name
+	}
 
-	path := childNode.getPath()
-	fi, err := childNode.fs.Attr(path)
+	fi, err := n.fs.Attr(fullPath)
 	if err != nil {
-		nodePool.Put(childNode) // Return to pool on error
 		return nil, s3ErrorToErrno(err)
+	}
+
+	childNode := &Node{
+		fs:     n.fs,
+		name:   name,
+		parent: n,
 	}
 
 	mode := fi.Mode

@@ -2,12 +2,12 @@ package vfs
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 type VFSBase struct {
@@ -19,10 +19,10 @@ type VFSBase struct {
 
 	Memcache *memcache.Client
 
-	FileCount     int64
-	FolderCount   int64
-	TotalBytes    int64
-	StatCacheHits int64
+	FileCount     *xsync.Counter
+	FolderCount   *xsync.Counter
+	TotalBytes    *xsync.Counter
+	StatCacheHits *xsync.Counter
 
 	lastAccessTime  int64
 	lastBytesTime   int64
@@ -31,38 +31,42 @@ type VFSBase struct {
 	lastTotalBytes  int64
 }
 
+func NewVFSBase() *VFSBase {
+	return &VFSBase{
+		FileCount:     xsync.NewCounter(),
+		FolderCount:   xsync.NewCounter(),
+		TotalBytes:    xsync.NewCounter(),
+		StatCacheHits: xsync.NewCounter(),
+	}
+}
+
 func (fs *VFSBase) GetStats() VFSStats {
-	// Get the current time in nanoseconds.
 	currentTime := time.Now().UnixNano()
 
-	// Atomically load the current counters.
-	currentFileCount := atomic.LoadInt64(&fs.FileCount)
-	currentFolderCount := atomic.LoadInt64(&fs.FolderCount)
+	currentFileCount := fs.FileCount.Value()
+	currentFolderCount := fs.FolderCount.Value()
 	totalAccessed := currentFileCount + currentFolderCount
 
-	// Swap out the previous access statistics.
-	lastATime := atomic.SwapInt64(&fs.lastAccessTime, currentTime)
-	lastFileCount := atomic.SwapInt64(&fs.lastFileCount, currentFileCount)
-	lastFolderCount := atomic.SwapInt64(&fs.lastFolderCount, currentFolderCount)
-
-	// Calculate the elapsed time in seconds.
-	elapsed := float64(currentTime-lastATime) / 1e9
+	elapsed := float64(currentTime-fs.lastAccessTime) / 1e9
 	var accessSpeed float64
-	if elapsed > 0 {
-		accessDelta := (currentFileCount + currentFolderCount) - (lastFileCount + lastFolderCount)
+	if elapsed > 0 && fs.lastAccessTime > 0 {
+		accessDelta := (currentFileCount + currentFolderCount) - (fs.lastFileCount + fs.lastFolderCount)
 		accessSpeed = float64(accessDelta) / elapsed
 	}
 
-	// Similarly, for byte counters (if you're tracking totalBytes elsewhere).
-	currentTotalBytes := atomic.LoadInt64(&fs.TotalBytes)
-	lastBTime := atomic.SwapInt64(&fs.lastBytesTime, currentTime)
-	lastTotalBytes := atomic.SwapInt64(&fs.lastTotalBytes, currentTotalBytes)
+	fs.lastAccessTime = currentTime
+	fs.lastFileCount = currentFileCount
+	fs.lastFolderCount = currentFolderCount
 
-	secDiff := float64(currentTime-lastBTime) / 1e9
+	currentTotalBytes := fs.TotalBytes.Value()
+	secDiff := float64(currentTime-fs.lastBytesTime) / 1e9
 	var bytesSpeed float64
-	if secDiff > 0 {
-		bytesSpeed = float64(currentTotalBytes-lastTotalBytes) / secDiff
+	if secDiff > 0 && fs.lastBytesTime > 0 {
+		bytesSpeed = float64(currentTotalBytes-fs.lastTotalBytes) / secDiff
 	}
+
+	fs.lastBytesTime = currentTime
+	fs.lastTotalBytes = currentTotalBytes
 
 	return VFSStats{
 		FilesAccessed:   currentFileCount,
@@ -71,7 +75,7 @@ func (fs *VFSBase) GetStats() VFSStats {
 		FileAccessSpeed: accessSpeed,
 		TotalBytes:      uint64(currentTotalBytes),
 		ByteReadSpeed:   bytesSpeed,
-		StatCacheHits:   atomic.LoadInt64(&fs.StatCacheHits),
+		StatCacheHits:   fs.StatCacheHits.Value(),
 	}
 }
 

@@ -202,6 +202,11 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			includeXattr = true
 		}
 
+		legacyXattr, err := strconv.ParseBool(r.FormValue("legacy-xattr"))
+		if err != nil {
+			legacyXattr = false
+		}
+
 		newBackup := types.Backup{
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
@@ -221,6 +226,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			PreScript:        r.FormValue("pre_script"),
 			PostScript:       r.FormValue("post_script"),
 			IncludeXattr:     includeXattr,
+			LegacyXattr:      legacyXattr,
 		}
 
 		rawExclusions := r.FormValue("rawexclusions")
@@ -304,6 +310,14 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					includeXattr = true
 				}
 				backup.IncludeXattr = includeXattr
+			}
+
+			if r.FormValue("legacy-xattr") != "" {
+				legacyXattr, err := strconv.ParseBool(r.FormValue("legacy-xattr"))
+				if err != nil {
+					legacyXattr = false
+				}
+				backup.LegacyXattr = legacyXattr
 			}
 
 			backup.PreScript = r.FormValue("pre_script")
