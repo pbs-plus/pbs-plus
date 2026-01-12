@@ -8,7 +8,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -132,7 +131,7 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 			value:     &result,
 			expiresAt: time.Now().Add(metaCacheTTL),
 		})
-		atomic.AddInt64(&fs.FileCount, 1)
+		fs.FileCount.Add(1)
 		return result, nil
 	}
 
@@ -165,7 +164,7 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 			value:     &result,
 			expiresAt: time.Now().Add(metaCacheTTL),
 		})
-		atomic.AddInt64(&fs.FolderCount, 1)
+		fs.FolderCount.Add(1)
 		return result, nil
 	}
 
