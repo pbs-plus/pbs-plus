@@ -47,18 +47,28 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
       let me = this;
       let nsSelector = me.lookup("namespace");
       let snapSelector = me.lookup("snapshot");
+      let pathSelector = me.lookup("pathSelector");
 
       nsSelector.setDatastore(value);
       snapSelector.setDatastore(value);
+      pathSelector.setDatastore(value);
       snapSelector.setValue(null);
     },
 
     nsChange: function (field, value) {
       let me = this;
       let snapSelector = me.lookup("snapshot");
+      let pathSelector = me.lookup("pathSelector");
 
       snapSelector.setNamespace(value);
+      pathSelector.setNamespace(value);
       snapSelector.setValue(null);
+    },
+
+    snapshotChange: function (field, value) {
+      let me = this;
+      let pathSelector = me.lookup("pathSelector");
+      pathSelector.setSnapshot(value);
     },
   },
 
@@ -130,9 +140,9 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
             },
           },
           {
-            xtype: "proxmoxtextfield",
-            fieldLabel: gettext("Path to restore from snapshot"),
-            emptyText: gettext("/"),
+            xtype: "pbsD2DSnapshotPathSelector",
+            fieldLabel: gettext("Path to restore"),
+            reference: "pathSelector",
             name: "src-path",
           },
           {
