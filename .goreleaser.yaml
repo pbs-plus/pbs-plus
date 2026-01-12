@@ -23,7 +23,7 @@ builds:
 
   # Linux Agent
   - id: linux-agent
-    main: ./cmd/unix_agent
+    main: ./cmd/agent
     binary: pbs-plus-agent
     goos:
       - linux
@@ -45,7 +45,7 @@ builds:
 
   # BSD Agent
   - id: freebsd-agent
-    main: ./cmd/unix_agent
+    main: ./cmd/agent
     binary: pbs-plus-agent
     env:
       - GOEXPERIMENT=greenteagc
@@ -61,7 +61,7 @@ builds:
 
   # Windows Agent
   - id: windows-agent
-    main: ./cmd/windows_agent
+    main: ./cmd/agent
     binary: pbs-plus-agent
     env:
       - GOEXPERIMENT=greenteagc
@@ -168,10 +168,6 @@ nfpms:
     license: MIT
     formats:
       - deb
-    contents:
-      - src: ./build/package/linux_agent/systemd/pbs-plus-agent.service
-        dst: /lib/systemd/system/pbs-plus-agent.service
-        type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
     overrides:
@@ -193,10 +189,6 @@ nfpms:
     license: MIT
     formats:
       - rpm
-    contents:
-      - src: ./build/package/linux_agent/systemd/pbs-plus-agent.service
-        dst: /usr/lib/systemd/system/pbs-plus-agent.service
-        type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
     overrides:
@@ -215,12 +207,6 @@ nfpms:
     license: MIT
     formats:
       - apk
-    contents:
-      - src: ./build/package/linux_agent/openrc/pbs-plus-agent
-        dst: /etc/init.d/pbs-plus-agent
-        type: config
-        file_info:
-          mode: 0755
     scripts:
       postinstall: ./build/package/linux_agent/postinst
     overrides:

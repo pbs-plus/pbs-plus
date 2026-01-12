@@ -128,12 +128,12 @@ func (database *Database) CreateBackup(tx *sql.Tx, backup types.Backup) (err err
         INSERT INTO backups (
             id, store, mode, source_mode, read_mode, target, subpath, schedule, comment,
             notification_mode, namespace, current_pid, last_run_upid, last_successful_upid, retry,
-            retry_interval, max_dir_entries, pre_script, post_script, include_xattr
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            retry_interval, max_dir_entries, pre_script, post_script, include_xattr, legacy_xattr
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, backup.ID, backup.Store, backup.Mode, backup.SourceMode, backup.ReadMode, backup.Target, backup.Subpath,
 		backup.Schedule, backup.Comment, backup.NotificationMode, backup.Namespace, backup.CurrentPID,
 		backup.LastRunUpid, backup.LastSuccessfulUpid, backup.Retry, backup.RetryInterval,
-		backup.MaxDirEntries, backup.PreScript, backup.PostScript, backup.IncludeXattr)
+		backup.MaxDirEntries, backup.PreScript, backup.PostScript, backup.IncludeXattr, backup.LegacyXattr)
 	if err != nil {
 		return fmt.Errorf("CreateBackup: error inserting backup: %w", err)
 	}
@@ -173,7 +173,7 @@ func (database *Database) GetBackup(id string) (types.Backup, error) {
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes, t.mount_script, j.include_xattr
+            t.drive_used_bytes, t.mount_script, j.include_xattr, j.legacy_xattr
         FROM backups j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
@@ -201,7 +201,7 @@ func (database *Database) GetBackup(id string) (types.Backup, error) {
 			&backup.NotificationMode, &backup.Namespace, &backup.CurrentPID, &backup.LastRunUpid,
 			&backup.LastSuccessfulUpid, &backup.Retry, &backup.RetryInterval, &backup.MaxDirEntries,
 			&backup.PreScript, &backup.PostScript, &exclusionPath, &driveUsedBytes,
-			&mountScript, &backup.IncludeXattr,
+			&mountScript, &backup.IncludeXattr, &backup.LegacyXattr,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetBackup: error scanning backup data: %w", err)).
@@ -338,13 +338,13 @@ func (database *Database) UpdateBackup(tx *sql.Tx, backup types.Backup) (err err
             subpath = ?, schedule = ?, comment = ?, notification_mode = ?,
             namespace = ?, current_pid = ?, last_run_upid = ?, retry = ?,
             retry_interval = ?, last_successful_upid = ?, pre_script = ?, post_script = ?,
-            max_dir_entries = ?, include_xattr = ?
+            max_dir_entries = ?, include_xattr = ?, legacy_xattr = ?
         WHERE id = ?
     `, backup.Store, backup.Mode, backup.SourceMode, backup.ReadMode, backup.Target, backup.Subpath,
 		backup.Schedule, backup.Comment, backup.NotificationMode, backup.Namespace,
 		backup.CurrentPID, backup.LastRunUpid, backup.Retry, backup.RetryInterval,
 		backup.LastSuccessfulUpid, backup.PreScript, backup.PostScript, backup.MaxDirEntries,
-		backup.IncludeXattr, backup.ID)
+		backup.IncludeXattr, backup.LegacyXattr, backup.ID)
 	if err != nil {
 		return fmt.Errorf("UpdateBackup: error updating backup: %w", err)
 	}
@@ -436,7 +436,7 @@ func (database *Database) GetAllBackups() ([]types.Backup, error) {
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes, t.mount_script, t.path, j.include_xattr
+            t.drive_used_bytes, t.mount_script, t.path, j.include_xattr, j.legacy_xattr
         FROM backups j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
@@ -457,7 +457,7 @@ func (database *Database) GetAllBackups() ([]types.Backup, error) {
 		var retry, maxDirEntries int
 		var retryInterval int
 		var currentPID int
-		var includeXAttr bool
+		var includeXAttr, legacyXAttr bool
 		var targetPath, exclusionPath sql.NullString
 		var driveUsedBytes sql.NullInt64
 		var mountScript sql.NullString
@@ -466,7 +466,7 @@ func (database *Database) GetAllBackups() ([]types.Backup, error) {
 			&backupID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
 			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval, &maxDirEntries, &preScript, &postScript,
-			&exclusionPath, &driveUsedBytes, &mountScript, &targetPath, &includeXAttr,
+			&exclusionPath, &driveUsedBytes, &mountScript, &targetPath, &includeXAttr, &legacyXAttr,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllBackups: error scanning row: %w", err)).Write()
@@ -497,6 +497,7 @@ func (database *Database) GetAllBackups() ([]types.Backup, error) {
 				PreScript:          preScript,
 				PostScript:         postScript,
 				IncludeXattr:       includeXAttr,
+				LegacyXattr:        legacyXAttr,
 			}
 			if driveUsedBytes.Valid {
 				backup.ExpectedSize = int(driveUsedBytes.Int64)
@@ -549,7 +550,7 @@ func (database *Database) GetAllQueuedBackups() ([]types.Backup, error) {
             j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
             e.path,
-            t.drive_used_bytes, t.mount_script, j.include_xattr
+            t.drive_used_bytes, t.mount_script, j.include_xattr, j.legacy_xattr
         FROM backups j
         LEFT JOIN exclusions e ON j.id = e.job_id
         LEFT JOIN targets t ON j.target = t.name
@@ -571,7 +572,7 @@ func (database *Database) GetAllQueuedBackups() ([]types.Backup, error) {
 		var retry, maxDirEntries int
 		var retryInterval int
 		var currentPID int
-		var includeXAttr bool
+		var includeXAttr, legacyXAttr bool
 		var exclusionPath sql.NullString
 		var driveUsedBytes sql.NullInt64
 		var mountScript sql.NullString
@@ -580,7 +581,7 @@ func (database *Database) GetAllQueuedBackups() ([]types.Backup, error) {
 			&backupID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
 			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
 			&retry, &retryInterval, &maxDirEntries, &preScript, &postScript,
-			&exclusionPath, &driveUsedBytes, &mountScript, &includeXAttr,
+			&exclusionPath, &driveUsedBytes, &mountScript, &includeXAttr, &legacyXAttr,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllQueuedBackups: error scanning row: %w", err)).Write()
@@ -611,6 +612,7 @@ func (database *Database) GetAllQueuedBackups() ([]types.Backup, error) {
 				PreScript:          preScript,
 				PostScript:         postScript,
 				IncludeXattr:       includeXAttr,
+				LegacyXattr:        legacyXAttr,
 			}
 			if driveUsedBytes.Valid {
 				backup.ExpectedSize = int(driveUsedBytes.Int64)

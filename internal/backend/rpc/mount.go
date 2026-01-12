@@ -267,30 +267,30 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	childKey := args.TargetHostname + "|" + args.BackupId
 	vfssessions.DisconnectSession(childKey)
 
-	// Create a 30-second timeout context.
-	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()
-
-	// Try to acquire an ARPC session for the target.
-	arpcSess, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
-	if !exists {
-		reply.Status = 500
-		reply.Message = "failed to send closure request to target"
-		return fmt.Errorf("cleanup: unable to reach target for backup %s", args.BackupId)
-	}
-
-	// Create a cleanup request (using the BackupReq type).
-	cleanupReq := types.BackupReq{
-		Drive:    args.Drive,
-		BackupId: args.BackupId,
-	}
 
 	ctxCancel, ok := s.jobCtxCancels.GetAndDel(args.BackupId)
 	if ok {
 		ctxCancel()
 	}
 
-	// Instruct the target to perform its cleanup.
+	arpcSess, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
+	if !exists {
+		syslog.L.Info().
+			WithMessage("Target unreachable, assuming cleanup successful.").
+			WithField("jobId", args.BackupId).
+			Write()
+		reply.Status = 200
+		reply.Message = "Target unreachable, assuming cleanup successful."
+		return nil
+	}
+
+	cleanupReq := types.BackupReq{
+		Drive:    args.Drive,
+		BackupId: args.BackupId,
+	}
+
 	_, err := arpcSess.CallMessage(ctx, "cleanup", &cleanupReq)
 	if err != nil {
 		syslog.L.Error(err).Write()
@@ -345,8 +345,8 @@ func StartRPCServer(watcher chan struct{}, ctx context.Context, socketPath strin
 	}
 
 	service := &MountRPCService{
-		ctx:        ctx,
-		Store:      storeInstance,
+		ctx:           ctx,
+		Store:         storeInstance,
 		jobCtxCancels: safemap.New[string, context.CancelFunc](),
 	}
 

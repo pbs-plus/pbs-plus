@@ -8,26 +8,19 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
 )
 
-var nodePool = &sync.Pool{
-	New: func() any {
-		return &Node{}
-	},
-}
-
 func newRoot(fs *arpcfs.ARPCFS) fs.InodeEmbedder {
-	rootNode := nodePool.Get().(*Node)
+	rootNode := &Node{}
 	rootNode.fs = fs
-	rootNode.fullPathCache = ""
 	rootNode.name = ""
 	rootNode.parent = nil
 	return rootNode
@@ -67,77 +60,17 @@ func Mount(mountpoint string, fsName string, afs *arpcfs.ARPCFS) (*fuse.Server, 
 // Node represents a file or directory in the filesystem
 type Node struct {
 	fs.Inode
-	fs            *arpcfs.ARPCFS
-	name          string
-	fullPathCache string
-	parent        *Node
+	fs     *arpcfs.ARPCFS
+	name   string
+	parent *Node
 }
 
 func (n *Node) getPath() string {
-	if n.fullPathCache != "" || n.parent == nil {
-		return n.fullPathCache
+	path := n.Inode.Path(nil)
+	if path == "" {
+		return "/"
 	}
-
-	// Check if parent's path is cached to build the current path directly
-	if parentPath := n.parent.fullPathCache; parentPath != "" {
-		const maxStackBuffer = 256
-		totalLen := len(parentPath) + 1 + len(n.name)
-		if totalLen <= maxStackBuffer {
-			var buffer [maxStackBuffer]byte
-			b := buffer[:0]
-			b = append(b, parentPath...)
-			b = append(b, '/')
-			b = append(b, n.name...)
-			n.fullPathCache = string(b)
-		} else {
-			b := make([]byte, 0, totalLen)
-			b = append(b, parentPath...)
-			b = append(b, '/')
-			b = append(b, n.name...)
-			n.fullPathCache = string(b)
-		}
-		return n.fullPathCache
-	}
-
-	// Collect path components by traversing to the root
-	var partsStorage [128]string
-	parts := partsStorage[:0]
-	for current := n; current != nil; current = current.parent {
-		if current.parent != nil {
-			parts = append(parts, current.name)
-		}
-	}
-
-	// Calculate total length needed for the path
-	totalLen := 0
-	for i := len(parts) - 1; i >= 0; i-- {
-		totalLen += len(parts[i])
-		if i > 0 {
-			totalLen++
-		}
-	}
-
-	// Use stack-allocated buffer for common path lengths
-	const maxPathBuffer = 4096
-	var buffer []byte
-	if totalLen <= maxPathBuffer {
-		var stackBuffer [maxPathBuffer]byte
-		buffer = stackBuffer[:0]
-	} else {
-		buffer = make([]byte, 0, totalLen)
-	}
-
-	// Build the path from collected parts
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := parts[i]
-		buffer = append(buffer, part...)
-		if i > 0 {
-			buffer = append(buffer, '/')
-		}
-	}
-
-	n.fullPathCache = string(buffer)
-	return n.fullPathCache
+	return "/" + path
 }
 
 var _ = (fs.NodeGetattrer)((*Node)(nil))
@@ -153,7 +86,6 @@ var _ = (fs.NodeReleaser)((*Node)(nil))
 var _ = (fs.NodeStatxer)((*Node)(nil))
 
 func (n *Node) Access(ctx context.Context, mask uint32) syscall.Errno {
-	// For read-only filesystem, deny write access (bit 1)
 	if mask&2 != 0 { // 2 = write bit (traditional W_OK)
 		return syscall.EROFS
 	}
@@ -173,8 +105,6 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 	if fh, ok := f.(fs.FileReleaser); ok {
 		return fh.Release(ctx)
 	}
-
-	nodePool.Put(n)
 
 	return 0
 }
@@ -242,12 +172,100 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 }
 
 func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
+	if n.fs.Job.LegacyXattr {
+		return n.legacyGetxattr(ctx, attr, dest)
+	}
+
 	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
 	if err != nil {
 		return 0, syscall.ENOTSUP
 	}
 
-	// compatibility
+	var data []byte
+	switch attr {
+	case "user.creationtime":
+		data = []byte(strconv.FormatInt(fi.CreationTime, 10))
+	case "user.owner":
+		data = []byte(fi.Owner)
+	case "user.fileattributes":
+		data, _ = cbor.Marshal(fi.FileAttributes)
+	case "user.acls":
+		if fi.PosixACLs != nil {
+			data, _ = cbor.Marshal(fi.PosixACLs)
+		} else if fi.WinACLs != nil {
+			data, _ = cbor.Marshal(fi.WinACLs)
+		} else {
+			return 0, syscall.ENODATA
+		}
+	default:
+		return 0, syscall.ENODATA
+	}
+
+	if data == nil {
+		return 0, syscall.ENODATA
+	}
+
+	if dest == nil {
+		return uint32(len(data)), 0
+	}
+
+	if len(dest) < len(data) {
+		return uint32(len(data)), syscall.ERANGE
+	}
+
+	nCopied := copy(dest, data)
+	return uint32(nCopied), 0
+}
+
+func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
+	if n.fs.Job.LegacyXattr {
+		return n.legacyListxattr(ctx, dest)
+	}
+
+	fi, err := n.fs.ListXattr(ctx, n.getPath())
+	if err != nil {
+		return 0, syscall.ENOTSUP
+	}
+
+	attrs := []string{
+		"user.creationtime",
+		"user.lastaccesstime",
+		"user.lastwritetime",
+		"user.owner",
+		"user.group",
+		"user.fileattributes",
+	}
+
+	if fi.PosixACLs != nil || fi.WinACLs != nil {
+		attrs = append(attrs, "user.acls")
+	}
+
+	var list []byte
+	for _, attr := range attrs {
+		list = append(list, attr...)
+		list = append(list, 0)
+	}
+
+	length := uint32(len(list))
+
+	if dest == nil {
+		return length, 0
+	}
+
+	if len(dest) < len(list) {
+		return length, syscall.E2BIG
+	}
+
+	copy(dest, list)
+	return length, 0
+}
+
+func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
+	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
+	if err != nil {
+		return 0, syscall.ENOTSUP
+	}
+
 	if fi.FileAttributes == nil {
 		fi.FileAttributes = make(map[string]bool, 0)
 	}
@@ -270,7 +288,6 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 			return 0, syscall.ENODATA
 		}
 	case "user.acls":
-		// temporary compatibility setting
 		if fi.PosixACLs == nil {
 			fi.PosixACLs = make([]types.PosixACL, 0)
 		}
@@ -279,21 +296,6 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 		if err != nil {
 			return 0, syscall.ENODATA
 		}
-		/*
-			if fi.PosixACLs != nil {
-				data, err = json.Marshal(fi.PosixACLs)
-				if err != nil {
-					return 0, syscall.ENODATA
-				}
-			} else if fi.WinACLs != nil {
-				data, err = json.Marshal(fi.WinACLs)
-				if err != nil {
-					return 0, syscall.ENODATA
-				}
-			} else {
-				return 0, syscall.ENODATA
-			}
-		*/
 	default:
 		return 0, syscall.ENODATA
 	}
@@ -312,14 +314,12 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 	return length, 0
 }
 
-func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
-	// Retrieve extended attribute information for the node.
+func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
 	fi, err := n.fs.ListXattr(ctx, n.getPath())
 	if err != nil {
 		return 0, syscall.ENOTSUP
 	}
 
-	// Build our list of supported attribute keys.
 	attrs := []string{
 		"user.creationtime",
 		"user.lastaccesstime",
@@ -334,12 +334,10 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 		fi.PosixACLs = make([]types.PosixACL, 0)
 	}
 
-	// Only add ACLs if available.
 	if fi.PosixACLs != nil || fi.WinACLs != nil {
 		attrs = append(attrs, "user.acls")
 	}
 
-	// Create the null-terminated list of attribute names.
 	var list []byte
 	for _, attr := range attrs {
 		list = append(list, attr...)
@@ -348,33 +346,37 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 	length := uint32(len(list))
 
-	// If dest is nil, just return the required length.
 	if dest == nil {
 		return length, 0
 	}
 
-	// If the provided dest slice is too small, return ERANGE.
 	if len(dest) < len(list) {
 		return length, syscall.E2BIG
 	}
 
-	// Copy the extended attribute list into dest.
 	copy(dest, list)
 	return length, 0
 }
 
 // Lookup implements NodeLookuper
 func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	childNode := nodePool.Get().(*Node)
-	childNode.fs = n.fs
-	childNode.parent = n
-	childNode.name = name
-	childNode.fullPathCache = ""
+	parentPath := n.getPath()
+	var fullPath string
+	if parentPath == "/" {
+		fullPath = "/" + name
+	} else {
+		fullPath = parentPath + "/" + name
+	}
 
-	path := childNode.getPath()
-	fi, err := childNode.fs.Attr(ctx, path, true)
+	fi, err := n.fs.Attr(ctx, fullPath, true)
 	if err != nil {
 		return nil, fs.ToErrno(err)
+	}
+
+	childNode := &Node{
+		fs:     n.fs,
+		name:   name,
+		parent: n,
 	}
 
 	mode := fi.Mode

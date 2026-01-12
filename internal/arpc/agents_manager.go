@@ -37,7 +37,7 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 		clientID = clientCertificate.Subject.CommonName
 	}
 
-	jobIdHeader := headers.Get("X-PBS-Plus-JobId")
+	jobIdHeader := headers.Get("X-PBS-Plus-BackupId")
 	if jobIdHeader != "" {
 		clientID = clientID + "|" + jobIdHeader
 	}
