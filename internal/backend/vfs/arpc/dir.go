@@ -259,9 +259,9 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 		if attrBytes, err := cbor.Marshal(currAttr); err == nil {
 			if !currAttr.IsDir {
-				atomic.AddInt64(&s.fs.FileCount, 1)
+				s.fs.FileCount.Add(1)
 			} else {
-				atomic.AddInt64(&s.fs.FolderCount, 1)
+				s.fs.FolderCount.Add(1)
 			}
 			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(fullPath), Value: attrBytes, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
