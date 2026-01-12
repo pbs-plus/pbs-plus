@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -34,13 +33,8 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for i, backup := range allBackups {
+			// TODO: finish migrating to targetpath class
 			isS3 := false
-			isAgent := strings.HasPrefix(backup.TargetPath, "agent://")
-			s3Parsed, err := s3url.Parse(backup.TargetPath)
-			if err == nil {
-				isS3 = true
-			}
-
 			var stats vfs.VFSStats
 			if isAgent {
 				splittedTargetName := strings.Split(backup.Target, " - ")

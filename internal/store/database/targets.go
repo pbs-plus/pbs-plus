@@ -50,8 +50,8 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err err
 		return fmt.Errorf("target path empty")
 	}
 
-	_, s3Err := s3url.Parse(target.Path)
-	if !utils.ValidateTargetPath(target.Path) && s3Err != nil {
+	_, s3Err := s3url.Parse(string(target.Path))
+	if !utils.ValidateTargetPath(string(target.Path)) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -116,8 +116,8 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 		return fmt.Errorf("target path empty")
 	}
 
-	_, s3Err := s3url.Parse(target.Path)
-	if !utils.ValidateTargetPath(target.Path) && s3Err != nil {
+	_, s3Err := s3url.Parse(string(target.Path))
+	if !utils.ValidateTargetPath(string(target.Path)) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -268,8 +268,8 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 	}
 
 	target.JobCount = jobCount
-	target.IsAgent = strings.HasPrefix(target.Path, "agent://")
-	_, err = s3url.Parse(target.Path)
+	target.IsAgent = strings.HasPrefix(string(target.Path), "agent://")
+	_, err = s3url.Parse(string(target.Path))
 	if err == nil {
 		target.IsS3 = true
 	}
@@ -374,11 +374,6 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 		}
 
 		target.JobCount = jobCount
-		target.IsAgent = strings.HasPrefix(target.Path, "agent://")
-		_, err = s3url.Parse(target.Path)
-		if err == nil {
-			target.IsS3 = true
-		}
 
 		targets = append(targets, target)
 	}
