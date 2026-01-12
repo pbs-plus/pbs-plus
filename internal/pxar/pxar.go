@@ -209,54 +209,46 @@ func (c *PxarReader) sendRequest(reqVariant string, reqData any) (Response, erro
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var reqBytes []byte
-	var err error
+	// Rust expects externally tagged enum: {"Variant": payload}
+	// Even for no-arg variants, use {"GetRoot": nil}
+	reqMap := map[string]any{reqVariant: reqData}
 
-	if reqData == nil {
-		reqBytes, err = c.enc.Marshal(reqVariant)
-	} else {
-		reqMap := map[string]any{
-			reqVariant: reqData,
-		}
-		reqBytes, err = c.enc.Marshal(reqMap)
-	}
-
+	reqBytes, err := c.enc.Marshal(reqMap)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, err
 	}
 
 	length := uint32(len(reqBytes))
 	if err := binary.Write(c.conn, binary.LittleEndian, length); err != nil {
-		return nil, fmt.Errorf("failed to write request length: %w", err)
+		return nil, err
 	}
 
 	if _, err := c.conn.Write(reqBytes); err != nil {
-		return nil, fmt.Errorf("failed to write request: %w", err)
+		return nil, err
 	}
 
 	var respLength uint32
 	if err := binary.Read(c.conn, binary.LittleEndian, &respLength); err != nil {
-		return nil, fmt.Errorf("failed to read response length: %w", err)
+		return nil, err
 	}
 
 	respData := make([]byte, respLength)
 	if _, err := io.ReadFull(c.conn, respData); err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, err
 	}
 
 	var resp Response
 	if err := c.dec.Unmarshal(respData, &resp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		return nil, err
 	}
 
-	// Check for error response
 	if errData, ok := resp["Error"]; ok {
 		if errMap, ok := errData.(map[any]any); ok {
 			if errno, ok := errMap["errno"].(int64); ok {
 				return nil, syscall.Errno(errno)
 			}
 		}
-		return nil, fmt.Errorf("unknown error response")
+		return nil, fmt.Errorf("pxar-socket error")
 	}
 
 	return resp, nil
@@ -315,49 +307,29 @@ func (c *PxarReader) LookupByPath(path string) (*EntryInfo, error) {
 
 func (c *PxarReader) ReadDir(entryEnd uint64) ([]EntryInfo, error) {
 	c.task.WriteString(fmt.Sprintf("reading directory [entryEnd: %d]", entryEnd))
-
-	reqData := map[string]any{
-		"entry_end": entryEnd,
-	}
-
-	resp, err := c.sendRequest("ReadDir", reqData)
+	resp, err := c.sendRequest("ReadDir", map[string]any{"entry_end": entryEnd})
 	if err != nil {
 		return nil, err
 	}
 
-	dirData, ok := resp["DirEntries"]
+	dirData, ok := resp["DirEntries"].(map[any]any)
 	if !ok {
-		return nil, fmt.Errorf("unexpected response type")
+		return nil, fmt.Errorf("invalid response")
 	}
 
-	dirMap, ok := dirData.(map[any]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid dir entries data")
-	}
-
-	entriesData, ok := dirMap["entries"]
-	if !ok {
-		return nil, fmt.Errorf("missing entries field")
-	}
-
-	entriesBytes, err := c.enc.Marshal(entriesData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to re-encode entries: %w", err)
-	}
-
+	entriesBytes, _ := c.enc.Marshal(dirData["entries"])
 	var entries []EntryInfo
 	if err := c.dec.Unmarshal(entriesBytes, &entries); err != nil {
-		return nil, fmt.Errorf("failed to decode entries: %w", err)
+		return nil, err
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() {
+	for i := range entries {
+		if entries[i].IsDir() {
 			atomic.AddInt64(&c.FolderCount, 1)
 		} else {
 			atomic.AddInt64(&c.FileCount, 1)
 		}
 	}
-
 	return entries, nil
 }
 
@@ -526,4 +498,3 @@ func extractEntryInfo(c *PxarReader, resp Response) (*EntryInfo, error) {
 
 	return &info, nil
 }
-
