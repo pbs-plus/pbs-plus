@@ -24,12 +24,6 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
       handler: function (btn) {
         let me = btn.up("pbsD2DSnapshotPathSelector");
 
-        console.log("PathSelector DEBUG:", {
-          datastore: me.datastore,
-          snapshot: me.snapshot,
-          ns: me.ns,
-        });
-
         if (!me.datastore || !me.snapshot) {
           Ext.Msg.alert(
             gettext("Error"),
@@ -38,12 +32,16 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
           return;
         }
 
-        let listURL = `/api2/json/admin/datastore/${me.datastore}/catalog`;
+        let snapData = JSON.parse(me.snapshot);
+
+        let listURL = `/api2/json/admin/datastore/${encodeURIComponent(me.datastore)}/catalog`;
 
         Ext.create("PBS.window.D2DPathSelector", {
           listURL: listURL,
           extraParams: {
-            snapshot: me.snapshot,
+            "backup-type": snapData.type,
+            "backup-id": snapData.id,
+            "backup-time": snapData.time,
             ns: me.ns || "",
           },
           listeners: {

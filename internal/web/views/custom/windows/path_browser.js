@@ -14,10 +14,18 @@ Ext.define("PBS.window.D2DPathSelector", {
       let me = this;
       let tree = me.lookup("tree");
       let selection = tree.getSelection();
+
       if (selection && selection.length > 0) {
         let data = selection[0].data;
-        let path = atob(data.filepath);
-        me.getView().fireEvent("select", path);
+
+        let decodedPath = atob(data.filepath);
+
+        decodedPath = decodedPath.replace(/\/+/g, "/");
+        if (!decodedPath.startsWith("/")) {
+          decodedPath = "/" + decodedPath;
+        }
+
+        me.getView().fireEvent("select", decodedPath);
         me.getView().close();
       }
     },
