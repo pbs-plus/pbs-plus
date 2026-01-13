@@ -20,24 +20,29 @@ detect_system() {
 }
 
 create_user() {
-  if getent passwd pbsplus >/dev/null 2>&1; then return 0; fi
+  if getent passwd pbsplus >/dev/null 2>&1; then 
+    log "User pbsplus already exists, skipping creation."
+    return 0
+  fi
   
   for s in /sbin/nologin /usr/sbin/nologin /bin/false; do
     [ -x "$s" ] && NOLOGIN_SHELL="$s" && break
   done
 
-  if is_cmd groupadd; then
-    groupadd -r pbsplus
-  elif is_cmd addgroup; then
-    addgroup -S pbsplus 2>/dev/null || addgroup pbsplus
+  if ! getent group pbsplus >/dev/null 2>&1; then
+    if is_cmd groupadd; then
+      groupadd -r pbsplus || true
+    elif is_cmd addgroup; then
+      addgroup -S pbsplus 2>/dev/null || addgroup pbsplus || true
+    fi
   fi
 
   if is_cmd useradd; then
     useradd -r -g pbsplus -s "$NOLOGIN_SHELL" -d "$STATE_DIR" -M pbsplus 2>/dev/null || \
-    useradd -r -g pbsplus -s "$NOLOGIN_SHELL" -d "$STATE_DIR" pbsplus
+    useradd -r -g pbsplus -s "$NOLOGIN_SHELL" -d "$STATE_DIR" pbsplus || true
   elif is_cmd adduser; then
     adduser -S -D -H -s "$NOLOGIN_SHELL" -h "$STATE_DIR" -G pbsplus pbsplus 2>/dev/null || \
-    adduser --system --ingroup pbsplus --home "$STATE_DIR" --shell "$NOLOGIN_SHELL" --disabled-password pbsplus
+    adduser --system --ingroup pbsplus --home "$STATE_DIR" --shell "$NOLOGIN_SHELL" --disabled-password pbsplus || true
   fi
 }
 
