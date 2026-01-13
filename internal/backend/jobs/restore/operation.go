@@ -146,7 +146,7 @@ func (b *RestoreOperation) Execute() error {
 			destPath = filepath.FromSlash(destPath)
 		}
 	} else {
-		return errors.New("only agent-based restores are supported for now")
+		return fmt.Errorf("only agent-based restores are supported for now (%s)", b.job.DestTargetPath)
 	}
 
 	restoreReq := agenttypes.RestoreReq{
