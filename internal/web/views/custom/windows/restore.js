@@ -42,37 +42,37 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
         change: "nsChange",
       },
       "pbsD2DSnapshotSelector[name=snapshot]": {
-        change: "snapChange",
+        change: "snapshotChange",
       },
     },
 
     storeChange: function (field, value) {
       let me = this;
-      let nsSelector = me.lookup("namespace");
-      let snapSelector = me.lookup("snapshot");
-      let pathSelector = me.lookup("pathSelector");
+      me.lookup("namespace").setDatastore(value);
+      me.lookup("snapshot").setDatastore(value);
 
-      nsSelector.setDatastore(value);
-      snapSelector.setDatastore(value);
-      pathSelector.setDatastore(value);
-      snapSelector.setValue(null);
+      let pathSel = me.lookup("pathSelector");
+      if (pathSel) pathSel.setDatastore(value);
+
+      me.lookup("snapshot").setValue(null);
     },
 
     nsChange: function (field, value) {
       let me = this;
-      let snapSelector = me.lookup("snapshot");
-      let pathSelector = me.lookup("pathSelector");
+      me.lookup("snapshot").setNamespace(value);
 
-      snapSelector.setNamespace(value);
-      pathSelector.setNamespace(value);
-      snapSelector.setValue(null);
+      let pathSel = me.lookup("pathSelector");
+      if (pathSel) pathSel.setNamespace(value);
+
+      me.lookup("snapshot").setValue(null);
     },
 
     snapshotChange: function (field, value) {
       let me = this;
-      let pathSelector = me.lookup("pathSelector");
-      if (pathSelector && pathSelector.setSnapshot) {
-        pathSelector.setSnapshot(value);
+      console.log("Main Controller: Snapshot changed to", value);
+      let pathSel = me.lookup("pathSelector");
+      if (pathSel) {
+        pathSel.setSnapshot(value);
       }
     },
   },
