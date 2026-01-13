@@ -369,14 +369,14 @@ func (b *BackupOperation) getAndValidateTarget() (types.Target, error) {
 		return target, nil
 	}
 
-	if target.IsAgent {
+	if target.Path.IsAgent() {
 		targetSplit := strings.Split(target.Name, " - ")
 		_, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(targetSplit[0])
 		if !exists {
 			return target, fmt.Errorf("%w: %s", ErrTargetUnreachable, targetID)
 		}
-	} else if !target.IsS3 {
-		if _, err := os.Stat(target.Path); err != nil {
+	} else if !target.Path.IsS3() {
+		if _, err := os.Stat(target.Path.String()); err != nil {
 			return target, fmt.Errorf("%w: %s (%v)", ErrTargetUnreachable, targetID, err)
 		}
 	}
@@ -431,7 +431,7 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 	job := b.job
 	b.mu.RUnlock()
 
-	if target.IsAgent {
+	if target.Path.IsAgent() {
 		if job.SourceMode == "snapshot" {
 			b.queueTask.UpdateDescription("waiting for agent to finish snapshot")
 		}

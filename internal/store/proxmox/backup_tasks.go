@@ -33,7 +33,7 @@ func GetBackupTask(
 	}
 
 	backupId := hostname
-	if target.IsAgent {
+	if target.Path.IsAgent() {
 		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
 	}
 	backupId = NormalizeHostname(backupId)

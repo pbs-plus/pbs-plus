@@ -36,7 +36,7 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			// TODO: finish migrating to targetpath class
 			isS3 := false
 			var stats vfs.VFSStats
-			if isAgent {
+			if backup.TargetPath.IsAgent() {
 				splittedTargetName := strings.Split(backup.Target, " - ")
 				targetHostname := splittedTargetName[0]
 				childKey := targetHostname + "|" + backup.ID
@@ -46,7 +46,7 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 
 				stats = session.GetStats()
-			} else if isS3 {
+			} else if backup.TargetPath.IsS3() {
 				childKey := s3Parsed.Endpoint + "|" + backup.ID
 				session := vfssessions.GetSessionS3FS(childKey)
 				if session == nil {

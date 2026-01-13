@@ -32,10 +32,8 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for i, restore := range allRestores {
-			isAgent := strings.HasPrefix(restore.DestTargetPath, "agent://")
-
 			var stats pxar.PxarReaderStats
-			if isAgent {
+			if restore.DestTargetPath.IsAgent() {
 				splittedTargetName := strings.Split(restore.DestTarget, " - ")
 				targetHostname := splittedTargetName[0]
 				childKey := targetHostname + "|" + restore.ID + "|restore"

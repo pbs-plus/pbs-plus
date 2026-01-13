@@ -9,6 +9,19 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
+func (n *TargetName) GetHostname() string {
+	splittedTargetName := strings.Split(n.String(), " - ")
+	return splittedTargetName[0]
+}
+
+func (t *TargetName) String() string {
+	return string(*t)
+}
+
+func (t *TargetPath) String() string {
+	return string(*t)
+}
+
 func (t *TargetPath) IsAgent() bool {
 	if strings.HasPrefix(string(*t), "agent://") {
 		return true
@@ -58,10 +71,11 @@ func (t *TargetPath) GetPathInfo() PathInfo {
 		}
 	}
 
-	if _, err := s3url.Parse(string(*t)); err == nil {
+	if s3, err := s3url.Parse(string(*t)); err == nil {
 		return PathInfo{
 			Type:    TargetTypeS3,
 			RawPath: string(*t),
+			S3Url:   s3,
 		}
 	}
 

@@ -1,7 +1,9 @@
 package types
 
+import s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
+
 type Target struct {
-	Name             string     `json:"name"`
+	Name             TargetName `json:"name"`
 	Path             TargetPath `json:"path"`
 	MountScript      string     `json:"mount-script"`
 	AgentVersion     string     `json:"agent_version"`
@@ -23,6 +25,7 @@ type Target struct {
 
 type TargetPath string
 type TargetType string
+type TargetName string
 
 const (
 	TargetTypeLocal TargetType = "local"
@@ -35,4 +38,5 @@ type PathInfo struct {
 	RawPath string
 	// HostPath: "/" for unix, "C:\" for windows, or "" if not an agent
 	HostPath string
+	S3Url    *s3url.S3Url
 }
