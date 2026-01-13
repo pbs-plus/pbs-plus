@@ -164,7 +164,7 @@ Ext.define("PBS.config.DiskRestoreJobView", {
           recs.forEach((rec) => {
             PBS.PlusUtils.API2Request({
               url:
-                "/api2/extjs/config/disk-restore-job/" +
+                "/api2/extjs/config/disk-restore/" +
                 encodeURIComponent(encodePathValue(rec.getId())),
               method: "DELETE",
               waitMsgTarget: view,
