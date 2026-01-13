@@ -64,6 +64,7 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
               type: record.data["backup-type"] || "host",
               id: record.data["backup-id"],
               time: record.data["backup-time"],
+              files: record.data["files"] || [],
             });
           },
         },
