@@ -137,13 +137,25 @@ func (b *RestoreOperation) Execute() error {
 		return errors.New("destination target is unreachable")
 	}
 
+	destPath := b.job.DestPath
+
+	targetInfo := b.job.DestTargetPath.GetPathInfo()
+	if b.job.DestTargetPath.IsAgent() {
+		destPath = filepath.Join(targetInfo.HostPath, destPath)
+		if targetInfo.IsWindows {
+			destPath = filepath.FromSlash(destPath)
+		}
+	} else {
+		return errors.New("only agent-based restores are supported for now")
+	}
+
 	restoreReq := agenttypes.RestoreReq{
 		RestoreId: b.job.ID,
 		SrcPath:   b.job.SrcPath,
-		DestPath:  b.job.DestPath,
+		DestPath:  destPath,
 	}
 
-	b.task.WriteString(fmt.Sprintf("calling restore to %s", b.job.DestTarget))
+	b.task.WriteString(fmt.Sprintf("calling restore to %s (%s)", b.job.DestTarget, destPath))
 
 	_, err := arpcSess.CallMessage(preCtx, "restore", &restoreReq)
 	if err != nil {
