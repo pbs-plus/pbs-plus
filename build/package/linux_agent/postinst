@@ -1,6 +1,7 @@
 #!/bin/sh
 set -e
 
+SERVICE_NAME="pbs-plus-agent"
 BIN_PATH="/usr/bin/pbs-plus-agent"
 STATE_DIR="/var/lib/pbs-plus-agent"
 LOG_DIR="/var/log/pbs-plus-agent"
@@ -38,10 +39,13 @@ create_user() {
   fi
 
   if is_cmd useradd; then
+    # -r: system, -g: group, -M: no home, -d: home path
     useradd -r -g pbsplus -s "$NOLOGIN_SHELL" -d "$STATE_DIR" -M pbsplus 2>/dev/null || \
     useradd -r -g pbsplus -s "$NOLOGIN_SHELL" -d "$STATE_DIR" pbsplus || true
   elif is_cmd adduser; then
+    # Alpine/Busybox syntax
     adduser -S -D -H -s "$NOLOGIN_SHELL" -h "$STATE_DIR" -G pbsplus pbsplus 2>/dev/null || \
+    # Debian/Ubuntu fallback
     adduser --system --ingroup pbsplus --home "$STATE_DIR" --shell "$NOLOGIN_SHELL" --disabled-password pbsplus || true
   fi
 }
@@ -70,7 +74,7 @@ EOF
 }
 
 setup_service() {
-  log "Installing service via pbs-plus-agent..."
+  log "Configuring directories..."
   
   mkdir -p "$STATE_DIR" "$LOG_DIR" "$ETC_DIR"
   chown -R pbsplus:pbsplus "$STATE_DIR" "$LOG_DIR" "$ETC_DIR"
@@ -79,22 +83,36 @@ setup_service() {
   chown pbsplus:pbsplus "$ETC_DIR/agent.env"
   chmod 0640 "$ETC_DIR/agent.env"
 
+  # Permissions for the binary
+  # To allow self-update (rename/replace), pbsplus must own the binary.
+  # Note: Replacing files in /usr/bin requires directory write access.
+  # We handle that in the Systemd unit via ReadWritePaths=/usr/bin
+  chown pbsplus:pbsplus "$BIN_PATH"
   chmod 0755 "$BIN_PATH"
   
   if is_cmd setcap; then
-    setcap "cap_dac_read_search,cap_dac_override+ep" "$BIN_PATH"
+    # Set capabilities (Must be after chown, as chown strips caps)
+    setcap "cap_dac_read_search,cap_dac_override+ep" "$BIN_PATH" || true
   fi
 
+  log "Running service installation..."
   "$BIN_PATH" install
   
-  "$BIN_PATH" restart || "$BIN_PATH" start
+  if $is_systemd; then
+    systemctl daemon-reload || true
+  fi
+
+  "$BIN_PATH" restart || "$BIN_PATH" start || true
 }
 
 main() {
   detect_system
   create_user
   setup_permissions_for_updates
+  
+  # Linger allows the user to run services without being logged in
   [ "$ENABLE_LINGER" = "true" ] && is_cmd loginctl && loginctl enable-linger pbsplus 2>/dev/null || true
+  
   setup_service
   log "Installation Complete."
 }
