@@ -57,11 +57,12 @@ func GetRestoreTask(
 		return nil, err
 	}
 
-	active, err := os.OpenFile(constants.ActiveLogsPath, os.O_APPEND|os.O_WRONLY, 0644)
+	active, err := os.OpenFile(constants.ActiveLogsPath, os.O_APPEND|os.O_WRONLY, 0664)
 	if err != nil {
 		return nil, err
 	}
 	defer active.Close()
+	_ = os.Chown(constants.ActiveLogsPath, 34, 34)
 
 	if _, err := active.WriteString(upid + "\n"); err != nil {
 		return nil, err
