@@ -62,7 +62,6 @@ func GetRestoreTask(
 		return nil, err
 	}
 	defer active.Close()
-	_ = os.Chown(constants.ActiveLogsPath, 34, 34)
 
 	if _, err := active.WriteString(upid + "\n"); err != nil {
 		return nil, err
@@ -119,11 +118,16 @@ func (t *RestoreTask) removeActiveTask() error {
 	}
 	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 
-	f, err := os.Open(filePath)
+	originalInfo, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
+		return err
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
 		return err
 	}
 	defer f.Close()
@@ -141,6 +145,16 @@ func (t *RestoreTask) removeActiveTask() error {
 			os.Remove(tempPath)
 		}
 	}()
+
+	if err := tempFile.Chmod(originalInfo.Mode()); err != nil {
+		return err
+	}
+
+	if stat, ok := originalInfo.Sys().(*syscall.Stat_t); ok {
+		if err := tempFile.Chown(int(stat.Uid), int(stat.Gid)); err != nil {
+			return err
+		}
+	}
 
 	scanner := bufio.NewScanner(f)
 	writer := bufio.NewWriter(tempFile)
