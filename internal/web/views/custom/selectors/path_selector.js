@@ -32,7 +32,7 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
           return;
         }
 
-        let snapData = JSON.parse(me.snapshot)?.data;
+        let snapData = JSON.parse(me.snapshot);
         let listURL = `/api2/json/admin/datastore/${encodeURIComponent(me.datastore)}/catalog`;
 
         let archive =
