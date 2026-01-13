@@ -341,7 +341,7 @@ func TestConcurrentOperations(t *testing.T) {
 				defer wg.Done()
 				target := types.Target{
 					Name: fmt.Sprintf("concurrent-target-%d", idx),
-					Path: fmt.Sprintf("/path/to/target-%d", idx),
+					Path: types.TargetPath(fmt.Sprintf("/path/to/target-%d", idx)),
 				}
 				err := store.Database.CreateTarget(nil, target)
 				assert.NoError(t, err)
@@ -373,7 +373,7 @@ func TestConcurrentOperations(t *testing.T) {
 				default:
 					target := types.Target{
 						Name: fmt.Sprintf("concurrent-target-%d", i),
-						Path: fmt.Sprintf("/path/to/target-%d", i),
+						Path: types.TargetPath(fmt.Sprintf("/path/to/target-%d", i)),
 					}
 					_ = store.Database.CreateTarget(nil, target)
 				}
