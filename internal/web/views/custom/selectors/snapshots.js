@@ -2,128 +2,59 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
   extend: "Ext.form.field.ComboBox",
   alias: "widget.pbsD2DSnapshotSelector",
 
-  config: {
-    datastore: null,
-    namespace: null,
-  },
+  config: { datastore: null, namespace: null },
 
-  allowBlank: false,
-  autoSelect: false,
   valueField: "value",
   displayField: "display",
-  emptyText: gettext("Select Snapshot"),
-  editable: true,
+  queryMode: "local",
   anyMatch: true,
   forceSelection: false,
-  queryMode: "local",
-  matchFieldWidth: false,
-  listConfig: {
-    minWidth: 170,
-    maxWidth: 500,
-    minHeight: 30,
-    emptyText: `<div class="x-grid-empty">${gettext(
-      "No snapshots accessible.",
-    )}</div>`,
-  },
-
-  triggers: {
-    clear: {
-      cls: "pmx-clear-trigger",
-      weight: -1,
-      hidden: true,
-      handler: function () {
-        this.triggers.clear.setVisible(false);
-        this.setValue("");
-      },
-    },
-  },
-
-  listeners: {
-    change: function (field, value) {
-      field.triggers.clear.setVisible(value !== "");
-    },
-    store: {
-      load: function () {
-        let me = this;
-        let val = me.getValue();
-        if (val) {
-          me.setValue(val);
-        }
-      },
-    },
-  },
+  autoSelect: false,
 
   initComponent: function () {
     let me = this;
 
     me.store = Ext.create("Ext.data.Store", {
-      fields: [
-        "backup-id",
-        "backup-time",
-        "backup-type",
-        "files",
-        {
-          name: "value",
-          convert: function (v, record) {
-            return `${record.data["backup-type"] || "host"}/${record.data["backup-id"]}/${record.data["backup-time"]}`;
-          },
-        },
-        {
-          name: "display",
-          convert: function (v, record) {
-            if (record.data["backup-time"]) {
-              let time = new Date(record.data["backup-time"] * 1000);
-              let timeStr = Ext.Date.format(time, "Y-m-d H:i:s");
-              return `${timeStr} | ${record.data["backup-id"]}`;
-            }
-
-            if (record.data.value && typeof record.data.value === "string") {
-              return record.data.value.replace(/^host\//, "");
-            }
-
-            return v;
-          },
-        },
-      ],
+      model: "pbs-model-d2d-snapshots",
       autoLoad: !!me.getDatastore(),
       proxy: {
         type: "proxmox",
-        timeout: 30 * 1000,
         url: me.getDatastore()
           ? `/api2/json/admin/datastore/${me.getDatastore()}/snapshots`
           : null,
-        extraParams: {
-          "backup-type": "host",
-          ns: me.getNamespace() || null,
+        extraParams: { "backup-type": "host", ns: me.getNamespace() || null },
+      },
+      listeners: {
+        load: function () {
+          // This forces the UI to re-map the raw ID to the display date once loaded
+          let val = me.getValue();
+          if (val) me.setValue(val);
         },
       },
     });
 
     me.setDisabled(!me.getDatastore());
-
     me.callParent();
   },
 
-  updateDatastore: function (newDatastore, oldDatastore) {
+  updateDatastore: function (newDatastore) {
     let me = this;
     if (newDatastore) {
       me.setDisabled(false);
-      let proxy = me.store.getProxy();
-      proxy.setUrl(`/api2/json/admin/datastore/${newDatastore}/snapshots`);
+      me.store
+        .getProxy()
+        .setUrl(`/api2/json/admin/datastore/${newDatastore}/snapshots`);
       me.store.load();
-      me.validate();
     } else {
       me.setDisabled(true);
       me.store.removeAll();
     }
   },
 
-  updateNamespace: function (newNamespace, oldNamespace) {
+  updateNamespace: function (newNamespace) {
     let me = this;
-    let ds = me.getDatastore();
-    if (ds) {
-      let proxy = me.store.getProxy();
-      proxy.setExtraParam("ns", newNamespace || null);
+    if (me.getDatastore()) {
+      me.store.getProxy().setExtraParam("ns", newNamespace || null);
       me.store.load();
     }
   },
