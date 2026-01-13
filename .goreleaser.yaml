@@ -237,6 +237,7 @@ release:
   name_template: "PBS Plus {{ .Version }}"
   draft: false
   prerelease: auto
+  replace_existing_artifacts: true
   mode: replace
 
 changelog:
