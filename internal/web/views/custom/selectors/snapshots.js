@@ -53,19 +53,10 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
         "backup-time",
         "backup-type",
         "files",
-        "protected",
-        "comment",
-        "owner",
-        "size",
         {
           name: "value",
           convert: function (v, record) {
-            return JSON.stringify({
-              type: record.data["backup-type"] || "host",
-              id: record.data["backup-id"],
-              time: record.data["backup-time"],
-              files: record.data["files"] || [],
-            });
+            return `${record.data["backup-type"] || "host"}/${record.data["backup-id"]}/${record.data["backup-time"]}`;
           },
         },
         {

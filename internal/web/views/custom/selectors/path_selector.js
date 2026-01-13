@@ -24,46 +24,45 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
       handler: function (btn) {
         let me = btn.up("pbsD2DSnapshotPathSelector");
 
-        if (!me.datastore || !me.snapshot) {
+        let editWindow = btn.up("pbsDiskRestoreJobEdit");
+        let snapSelector = editWindow.lookup("snapshot");
+        let snapRecord = snapSelector.getSelection(); // Gets the actual store record
+
+        if (!me.datastore || !me.snapshot || !snapRecord) {
           Ext.Msg.alert(
             gettext("Error"),
-            gettext("Please select a datastore and snapshot first."),
+            gettext("Please select a valid snapshot first."),
           );
           return;
         }
 
-        let snapData = JSON.parse(me.snapshot);
-        let listURL = `/api2/json/admin/datastore/${encodeURIComponent(me.datastore)}/catalog`;
-
+        let files = snapRecord.get("files");
         let archive =
-          snapData.files.find((f) => f.filename.endsWith(".mpxar.didx")) ||
-          snapData.files.find((f) => f.filename.endsWith(".pxar.didx"));
+          files.find((f) => f.filename.endsWith(".mpxar.didx")) ||
+          files.find((f) => f.filename.endsWith(".pxar.didx"));
 
         if (!archive) {
           Ext.Msg.alert(
             gettext("Error"),
-            gettext("No browsable archives found in this snapshot."),
+            gettext("No browsable archives found."),
           );
           return;
         }
 
+        let parts = me.snapshot.split("/");
+
         Ext.create("PBS.window.D2DPathSelector", {
-          listURL: listURL,
+          listURL: `/api2/json/admin/datastore/${encodeURIComponent(me.datastore)}/catalog`,
           extraParams: {
-            "backup-type": snapData.type,
-            "backup-id": snapData.id,
-            "backup-time": snapData.time,
+            "backup-type": parts[0],
+            "backup-id": parts[1],
+            "backup-time": parts[2],
             "archive-name": archive.filename,
             ns: me.ns || "",
           },
           listeners: {
             select: function (path) {
-              let field = me.down("proxmoxtextfield[reference=pathField]");
-              if (field) {
-                field.setValue(path);
-              } else {
-                console.error("Could not find pathField reference");
-              }
+              me.down("proxmoxtextfield[reference=pathField]").setValue(path);
             },
           },
         }).show();
