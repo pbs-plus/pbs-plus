@@ -41,6 +41,9 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
       "pbsD2DNamespaceSelector[name=ns]": {
         change: "nsChange",
       },
+      "pbsD2DSnapshotSelector[name=snapshot]": {
+        change: "snapChange",
+      },
     },
 
     storeChange: function (field, value) {
