@@ -67,7 +67,7 @@ func TestBackupCRUD(t *testing.T) {
 		backup := types.Backup{
 			ID:               "test-backup-1",
 			Store:            "local",
-			Target:           "test-target",
+			Target:           types.WrapTargetName("test-target"),
 			Subpath:          "backups/test",
 			Schedule:         "daily",
 			Comment:          "Test backup backup",
@@ -120,7 +120,7 @@ func TestBackupCRUD(t *testing.T) {
 				backup := types.Backup{
 					ID:               fmt.Sprintf("concurrent-backup-%d", idx),
 					Store:            "local",
-					Target:           "test-target",
+					Target:           types.WrapTargetName("test-target"),
 					Subpath:          fmt.Sprintf("backups/test-%d", idx),
 					Schedule:         `mon..fri *-*-* 00:00:00`,
 					Comment:          fmt.Sprintf("Concurrent test backup %d", idx),
@@ -143,7 +143,7 @@ func TestBackupCRUD(t *testing.T) {
 		backup := types.Backup{
 			ID:               "test-backup-special-!@#$%^",
 			Store:            "local",
-			Target:           "test-target",
+			Target:           types.WrapTargetName("test-target"),
 			Subpath:          "backups/test/special/!@#$%^",
 			Schedule:         `mon..fri *-*-* 00:00:00`,
 			Comment:          "Test backup with special characters !@#$%^",
@@ -169,7 +169,7 @@ func TestBackupValidation(t *testing.T) {
 			backup: types.Backup{
 				ID:               "test-valid",
 				Store:            "local",
-				Target:           "test",
+				Target:           types.WrapTargetName("test"),
 				Subpath:          "valid/path",
 				Schedule:         `*-*-* 00:00:00`,
 				Comment:          "Valid test backup",
@@ -183,7 +183,7 @@ func TestBackupValidation(t *testing.T) {
 			backup: types.Backup{
 				ID:        "test-invalid-cron",
 				Store:     "local",
-				Target:    "test",
+				Target:    types.WrapTargetName("test"),
 				Schedule:  "invalid-cron",
 				Namespace: "test",
 			},
@@ -227,24 +227,24 @@ func TestTargetValidation(t *testing.T) {
 		{
 			name: "valid local target",
 			target: types.Target{
-				Name: "local-target",
-				Path: "/valid/path",
+				Name: types.WrapTargetName("local-target"),
+				Path: types.WrapTargetPath("/valid/path"),
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid agent target",
 			target: types.Target{
-				Name: "agent-target",
-				Path: "agent://192.168.1.100/C",
+				Name: types.WrapTargetName("agent-target"),
+				Path: types.WrapTargetPath("agent://192.168.1.100/C"),
 			},
 			wantErr: false,
 		},
 		{
 			name: "invalid agent URL",
 			target: types.Target{
-				Name: "invalid-agent",
-				Path: "agent:/invalid-url",
+				Name: types.WrapTargetName("invalid-agent"),
+				Path: types.WrapTargetPath("agent:/invalid-url"),
 			},
 			wantErr: true,
 			errMsg:  "invalid target path",
@@ -252,8 +252,8 @@ func TestTargetValidation(t *testing.T) {
 		{
 			name: "empty path",
 			target: types.Target{
-				Name: "empty-path",
-				Path: "",
+				Name: types.WrapTargetName("empty-path"),
+				Path: types.WrapTargetPath(""),
 			},
 			wantErr: true,
 			errMsg:  "empty",
@@ -340,8 +340,8 @@ func TestConcurrentOperations(t *testing.T) {
 			go func(idx int) {
 				defer wg.Done()
 				target := types.Target{
-					Name: fmt.Sprintf("concurrent-target-%d", idx),
-					Path: types.TargetPath(fmt.Sprintf("/path/to/target-%d", idx)),
+					Name: types.WrapTargetName(fmt.Sprintf("concurrent-target-%d", idx)),
+					Path: types.WrapTargetPath(fmt.Sprintf("/path/to/target-%d", idx)),
 				}
 				err := store.Database.CreateTarget(nil, target)
 				assert.NoError(t, err)
@@ -372,8 +372,8 @@ func TestConcurrentOperations(t *testing.T) {
 					return
 				default:
 					target := types.Target{
-						Name: fmt.Sprintf("concurrent-target-%d", i),
-						Path: types.TargetPath(fmt.Sprintf("/path/to/target-%d", i)),
+						Name: types.WrapTargetName(fmt.Sprintf("concurrent-target-%d", i)),
+						Path: types.WrapTargetPath(fmt.Sprintf("/path/to/target-%d", i)),
 					}
 					_ = store.Database.CreateTarget(nil, target)
 				}

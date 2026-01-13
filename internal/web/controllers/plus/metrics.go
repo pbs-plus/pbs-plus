@@ -371,7 +371,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 	for _, backup := range backups {
 		labels := prometheus.Labels{
 			"backup_id": backup.ID,
-			"target":    backup.Target,
+			"target":    backup.Target.String(),
 			"store":     backup.Store,
 			"mode":      backup.Mode,
 			"schedule":  backup.Schedule,
@@ -398,7 +398,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		m.backupLastRunSuccess.With(labels).Set(successValue)
 
 		// Update target statistics
-		stats := targetStats[backup.Target]
+		stats := targetStats[backup.Target.String()]
 		if isSuccess {
 			stats.successfulCount++
 			// Track the most recent successful timestamp for this target
@@ -408,7 +408,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		} else if successValue == 0 {
 			stats.failedCount++
 		}
-		targetStats[backup.Target] = stats
+		targetStats[backup.Target.String()] = stats
 
 		// Timestamps
 		if backup.LastRunEndtime > 0 {
@@ -510,14 +510,14 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 
 	for _, target := range targets {
 		driveLabels := prometheus.Labels{
-			"target_name": target.Name,
+			"target_name": target.Name.String(),
 			"drive_name":  target.DriveName,
 			"drive_type":  target.DriveType,
 			"drive_fs":    target.DriveFS,
 			"os":          target.OperatingSystem,
 		}
 
-		currentTargetLabels[target.Name+"-"+target.DriveName] = driveLabels
+		currentTargetLabels[target.Name.String()+"-"+target.DriveName] = driveLabels
 
 		// Drive capacity metrics
 		if target.DriveTotalBytes > 0 {
@@ -538,12 +538,12 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 
 		// Backup count
 		backupCountLabels := prometheus.Labels{
-			"target_name": target.Name,
+			"target_name": target.Name.String(),
 		}
 		m.targetBackupCount.With(backupCountLabels).Set(float64(target.JobCount))
 
 		// Target-specific backup statistics
-		if stats, exists := targetStats[target.Name]; exists {
+		if stats, exists := targetStats[target.Name.String()]; exists {
 			if stats.lastSuccessfulTimestamp > 0 {
 				m.targetLastSuccessfulBackupTimestamp.With(backupCountLabels).Set(float64(stats.lastSuccessfulTimestamp))
 				m.targetTimeSinceLastSuccessfulBackup.With(backupCountLabels).Set(float64(now - stats.lastSuccessfulTimestamp))
@@ -566,22 +566,22 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 
 		// Target info (metadata)
 		isAgent := "false"
-		if target.IsAgent {
+		if target.Path.IsAgent() {
 			isAgent = "true"
 			agentCount++
 		}
 		isS3 := "false"
-		if target.IsS3 {
+		if target.Path.IsS3() {
 			isS3 = "true"
 			s3Count++
 		}
-		if !target.IsAgent && !target.IsS3 {
+		if !target.Path.IsAgent() && !target.Path.IsS3() {
 			localCount++
 		}
 
 		infoLabels := prometheus.Labels{
-			"target_name": target.Name,
-			"path":        target.Path,
+			"target_name": target.Name.String(),
+			"path":        target.Path.String(),
 			"auth":        target.Auth,
 			"drive_type":  target.DriveType,
 			"drive_name":  target.DriveName,
@@ -591,7 +591,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			"is_s3":       isS3,
 		}
 
-		currentTargetInfoLabels[target.Name+"-"+target.DriveName] = infoLabels
+		currentTargetInfoLabels[target.Name.String()+"-"+target.DriveName] = infoLabels
 		m.targetInfo.With(infoLabels).Set(1)
 	}
 

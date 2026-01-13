@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
 
 func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -146,17 +146,10 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				DriveUsed:       drive.Used,
 				DriveTotal:      drive.Total,
 				OperatingSystem: drive.OperatingSystem,
-				IsAgent:         true,
 			}
 
-			switch drive.OperatingSystem {
-			case "windows":
-				newTarget.Name = fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter)
-				newTarget.Path = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
-			default:
-				newTarget.Name = fmt.Sprintf("%s - Root", reqParsed.Hostname)
-				newTarget.Path = fmt.Sprintf("agent://%s/root", clientIP)
-			}
+			newTarget.Name = types.NewTargetName(types.TargetTypeAgent, reqParsed.Hostname, drive.Letter, drive.OperatingSystem)
+			newTarget.Path = types.NewTargetPath(types.TargetTypeAgent, clientIP, drive.Letter, drive.OperatingSystem)
 
 			existingTarget, err := storeInstance.Database.GetTarget(newTarget.Name)
 			if err == nil {
@@ -275,17 +268,8 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for _, drive := range reqParsed.Drives {
-			var targetName string
-			var targetPath string
-
-			switch drive.OperatingSystem {
-			case "windows":
-				targetName = fmt.Sprintf("%s - %s", reqParsed.Hostname, drive.Letter)
-				targetPath = fmt.Sprintf("agent://%s/%s", clientIP, drive.Letter)
-			default:
-				targetName = fmt.Sprintf("%s - Root", reqParsed.Hostname)
-				targetPath = fmt.Sprintf("agent://%s/root", clientIP)
-			}
+			targetName := types.NewTargetName(types.TargetTypeAgent, reqParsed.Hostname, drive.Letter, drive.OperatingSystem)
+			targetPath := types.NewTargetPath(types.TargetTypeAgent, clientIP, drive.Letter, drive.OperatingSystem)
 
 			existingTarget, err := storeInstance.Database.GetTarget(targetName)
 			if err != nil {
@@ -296,7 +280,6 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			updatedTarget := types.Target{
 				Name:            targetName,
 				Path:            targetPath,
-				IsAgent:         true,
 				Auth:            encodedCert,
 				TokenUsed:       existingTarget.TokenUsed,
 				DriveType:       drive.Type,
@@ -313,7 +296,6 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				AgentVersion:     existingTarget.AgentVersion,
 				ConnectionStatus: existingTarget.ConnectionStatus,
 				MountScript:      existingTarget.MountScript,
-				IsS3:             existingTarget.IsS3,
 				DriveName:        existingTarget.DriveName,
 			}
 

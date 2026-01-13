@@ -370,8 +370,7 @@ func (b *BackupOperation) getAndValidateTarget() (types.Target, error) {
 	}
 
 	if target.Path.IsAgent() {
-		targetSplit := strings.Split(target.Name, " - ")
-		_, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(targetSplit[0])
+		_, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(targetID.GetHostname())
 		if !exists {
 			return target, fmt.Errorf("%w: %s", ErrTargetUnreachable, targetID)
 		}
@@ -422,7 +421,7 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 
 	b.queueTask.UpdateDescription("mounting target to server")
 
-	srcPath := target.Path
+	srcPath := target.Path.String()
 	var agentMount *mount.AgentMount
 	var s3Mount *mount.S3Mount
 	var err error
@@ -463,7 +462,7 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 		if agentMount.IsEmpty() {
 			return "", agentMount, nil, ErrMountEmpty
 		}
-	} else if target.IsS3 {
+	} else if target.Path.IsS3() {
 		timedCtx, timedCtxCancel := context.WithTimeout(b.Context(), 5*time.Minute)
 		defer timedCtxCancel()
 
@@ -492,7 +491,7 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 		}
 	}
 
-	if !target.IsS3 {
+	if !target.Path.IsS3() {
 		srcPath = filepath.Join(srcPath, job.Subpath)
 	}
 
@@ -513,7 +512,7 @@ func (b *BackupOperation) startBackup(srcPath string, target types.Target) (*exe
 	extraExclusions := b.extraExclusions
 	b.mu.RUnlock()
 
-	cmd, err := prepareBackupCommand(b.Context(), job, b.storeInstance, srcPath, target.IsAgent, extraExclusions)
+	cmd, err := prepareBackupCommand(b.Context(), job, b.storeInstance, srcPath, target.Path.IsAgent(), extraExclusions)
 	if err != nil {
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
 	}

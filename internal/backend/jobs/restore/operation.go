@@ -132,7 +132,7 @@ func (b *RestoreOperation) Execute() error {
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", b.job.DestTarget))
 
-	arpcSess, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.DestTarget)
+	arpcSess, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.DestTarget.GetHostname())
 	if !exists {
 		return errors.New("destination target is unreachable")
 	}
@@ -151,7 +151,7 @@ func (b *RestoreOperation) Execute() error {
 	}
 
 	// The child session key is "targetHostname|restoreId|restore".
-	childKey := b.job.DestTarget + "|" + b.job.ID + "|restore"
+	childKey := b.job.GetStreamID()
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", childKey))
 
@@ -242,7 +242,7 @@ func (b *RestoreOperation) createOK(err error) {
 			"Restore ID: " + b.job.ID,
 			"Snapshot: " + b.job.Snapshot,
 			"Store: " + b.job.Store,
-			"Destination: " + b.job.DestTarget,
+			"Destination: " + b.job.DestTarget.String(),
 			"Response: " + err.Error(),
 		},
 	)

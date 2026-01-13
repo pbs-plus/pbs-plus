@@ -23,7 +23,7 @@ import (
 
 // generateUniqueJobId produces a unique backup id based on the backup’s target.
 func (database *Database) generateUniqueJobId(backup types.Backup) (string, error) {
-	baseID := utils.Slugify(backup.Target)
+	baseID := utils.Slugify(backup.Target.String())
 	if baseID == "" {
 		return "", fmt.Errorf("invalid target: slugified value is empty")
 	}
@@ -90,7 +90,7 @@ func (database *Database) CreateBackup(tx *sql.Tx, backup types.Backup) (err err
 		backup.ID = id
 	}
 
-	if backup.Target == "" {
+	if backup.Target.String() == "" {
 		return errors.New("target is empty")
 	}
 	if backup.Store == "" {
@@ -305,7 +305,7 @@ func (database *Database) UpdateBackup(tx *sql.Tx, backup types.Backup) (err err
 	if !utils.IsValidID(backup.ID) && backup.ID != "" {
 		return fmt.Errorf("UpdateBackup: invalid id string -> %s", backup.ID)
 	}
-	if backup.Target == "" {
+	if backup.Target.String() == "" {
 		return errors.New("target is empty")
 	}
 	if backup.Store == "" {
@@ -481,7 +481,7 @@ func (database *Database) GetAllBackups() ([]types.Backup, error) {
 				Mode:               mode,
 				SourceMode:         sourceMode,
 				ReadMode:           readMode,
-				Target:             target,
+				Target:             types.WrapTargetName(target),
 				Subpath:            subpath,
 				Schedule:           schedule,
 				Comment:            comment,
@@ -508,7 +508,7 @@ func (database *Database) GetAllBackups() ([]types.Backup, error) {
 		}
 
 		if targetPath.Valid {
-			backup.TargetPath = types.TargetPath(targetPath.String)
+			backup.TargetPath = types.WrapTargetPath(targetPath.String)
 		}
 
 		if mountScript.Valid {
@@ -596,7 +596,7 @@ func (database *Database) GetAllQueuedBackups() ([]types.Backup, error) {
 				Mode:               mode,
 				SourceMode:         sourceMode,
 				ReadMode:           readMode,
-				Target:             target,
+				Target:             types.WrapTargetName(target),
 				Subpath:            subpath,
 				Schedule:           schedule,
 				Comment:            comment,

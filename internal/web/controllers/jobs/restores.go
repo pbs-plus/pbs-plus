@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -34,10 +33,7 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 		for i, restore := range allRestores {
 			var stats pxar.PxarReaderStats
 			if restore.DestTargetPath.IsAgent() {
-				splittedTargetName := strings.Split(restore.DestTarget, " - ")
-				targetHostname := splittedTargetName[0]
-				childKey := targetHostname + "|" + restore.ID + "|restore"
-				session := vfssessions.GetSessionPxarReader(childKey)
+				session := vfssessions.GetSessionPxarReader(restore.GetStreamID())
 				if session == nil {
 					continue
 				}
@@ -169,7 +165,7 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			Namespace:     r.FormValue("ns"),
 			Snapshot:      r.FormValue("snapshot"),
 			SrcPath:       r.FormValue("src-path"),
-			DestTarget:    r.FormValue("dest-target"),
+			DestTarget:    types.WrapTargetName(r.FormValue("dest-target")),
 			DestPath:      r.FormValue("dest-path"),
 			Comment:       r.FormValue("comment"),
 			Retry:         retry,
@@ -224,7 +220,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				restore.SrcPath = r.FormValue("src-path")
 			}
 			if r.FormValue("dest-target") != "" {
-				restore.DestTarget = r.FormValue("dest-target")
+				restore.DestTarget = types.WrapTargetName(r.FormValue("dest-target"))
 			}
 			if r.FormValue("dest-path") != "" {
 				restore.DestPath = r.FormValue("dest-path")
@@ -258,7 +254,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					case "src-path":
 						restore.SrcPath = ""
 					case "dest-target":
-						restore.DestTarget = ""
+						restore.DestTarget.Raw = ""
 					case "dest-path":
 						restore.DestPath = ""
 					case "comment":

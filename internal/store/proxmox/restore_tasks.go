@@ -19,7 +19,7 @@ import (
 func GetRestoreTask(
 	job types.Restore,
 ) (*RestoreTask, error) {
-	targetName := strings.TrimSpace(strings.Split(job.DestTarget, " - ")[0])
+	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
@@ -251,7 +251,7 @@ func (t *RestoreTask) CloseWarn(warning int) {
 }
 
 func GenerateRestoreTaskErrorFile(job types.Restore, pbsError error, additionalData []string) (Task, error) {
-	targetName := strings.TrimSpace(strings.Split(job.DestTarget, " - ")[0])
+	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
@@ -351,7 +351,7 @@ func GenerateRestoreTaskErrorFile(job types.Restore, pbsError error, additionalD
 }
 
 func GenerateRestoreTaskOKFile(job types.Restore, additionalData []string) (Task, error) {
-	targetName := strings.TrimSpace(strings.Split(job.DestTarget, " - ")[0])
+	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
