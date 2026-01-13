@@ -112,3 +112,32 @@ Ext.define("pbs-model-scripts", {
   fields: ["path", "description", "job_count", "target_count"],
   idProperty: "path",
 });
+
+Ext.define("pbs-model-d2d-snapshots", {
+  extend: "Ext.data.Model",
+  fields: [
+    "backup-id",
+    "backup-time",
+    "backup-type",
+    "files",
+    {
+      name: "value",
+      convert: function (v, record) {
+        if (v) return v;
+        if (!record.data["backup-id"]) return "";
+        let type = record.data["backup-type"] || "host";
+        return `${type}/${record.data["backup-id"]}/${record.data["backup-time"]}`;
+      },
+    },
+    {
+      name: "display",
+      convert: function (v, record) {
+        if (record.data["backup-time"]) {
+          let time = new Date(record.data["backup-time"] * 1000);
+          return `${Ext.Date.format(time, "Y-m-d H:i:s")} | ${record.data["backup-id"]}`;
+        }
+        return v || record.data.value || "";
+      },
+    },
+  ],
+});
