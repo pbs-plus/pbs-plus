@@ -8,13 +8,13 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
   },
 
   allowBlank: false,
-  autoSelect: true,
+  autoSelect: false,
   valueField: "value",
   displayField: "display",
   emptyText: gettext("Select Snapshot"),
   editable: true,
   anyMatch: true,
-  forceSelection: true,
+  forceSelection: false,
   queryMode: "local",
   matchFieldWidth: false,
   listConfig: {
@@ -103,11 +103,11 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
 
   updateNamespace: function (newNamespace, oldNamespace) {
     let me = this;
-    if (me.getDatastore()) {
+    let ds = me.getDatastore();
+    if (ds) {
       let proxy = me.store.getProxy();
       proxy.setExtraParam("ns", newNamespace || null);
       me.store.load();
-      me.validate();
     }
   },
 });

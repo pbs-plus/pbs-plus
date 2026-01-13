@@ -48,33 +48,36 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
 
     storeChange: function (field, value) {
       let me = this;
-      let view = me.getView();
-      me.lookup("namespace").setDatastore(value);
-      me.lookup("snapshot").setDatastore(value);
+      let nsSelector = me.lookup("namespace");
+      let snapSelector = me.lookup("snapshot");
+
+      nsSelector.setDatastore(value);
+      snapSelector.setDatastore(value);
 
       let pathSel = me.lookup("pathSelector");
       if (pathSel) pathSel.setDatastore(value);
 
-      if (!view.isCreate && !me.firstLoadDone) {
-        // do nothing
-      } else {
-        me.lookup("snapshot").setValue(null);
+      if (field.isDirty()) {
+        snapSelector.setValue(null);
       }
     },
 
     nsChange: function (field, value) {
       let me = this;
-      me.lookup("snapshot").setNamespace(value);
+      let snapSelector = me.lookup("snapshot");
+
+      snapSelector.setNamespace(value);
 
       let pathSel = me.lookup("pathSelector");
       if (pathSel) pathSel.setNamespace(value);
 
-      me.lookup("snapshot").setValue(null);
+      if (field.isDirty()) {
+        snapSelector.setValue(null);
+      }
     },
 
     snapshotChange: function (field, value) {
       let me = this;
-      console.log("Main Controller: Snapshot changed to", value);
       let pathSel = me.lookup("pathSelector");
       if (pathSel) {
         pathSel.setSnapshot(value);
