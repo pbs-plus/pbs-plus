@@ -71,7 +71,9 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
     snapshotChange: function (field, value) {
       let me = this;
       let pathSelector = me.lookup("pathSelector");
-      pathSelector.setSnapshot(value);
+      if (pathSelector && pathSelector.setSnapshot) {
+        pathSelector.setSnapshot(value);
+      }
     },
   },
 
