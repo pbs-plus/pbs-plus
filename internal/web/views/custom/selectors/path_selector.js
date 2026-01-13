@@ -16,14 +16,14 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
       reference: "pathField",
       flex: 1,
       emptyText: gettext("/"),
-      allowBlank: true,
     },
     {
       xtype: "button",
       iconCls: "fa fa-folder-open-o",
       margin: "0 0 0 5",
-      handler: function () {
-        let me = this;
+      handler: function (btn) {
+        let me = btn.up("pbsD2DSnapshotPathSelector");
+
         let ds = me.datastore;
         let snap = me.snapshot;
 
@@ -45,7 +45,7 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
           },
           listeners: {
             select: function (path) {
-              me.lookup("pathField").setValue(path);
+              me.lookupReference("pathField").setValue(path);
             },
           },
         }).show();
