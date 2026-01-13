@@ -20,6 +20,7 @@ RuntimeDirectoryMode=0755
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 NoNewPrivileges=yes
+LimitNOFILE=1048576
 
 ProtectSystem=full
 ProtectHome=no
