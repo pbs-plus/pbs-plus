@@ -268,11 +268,6 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 	}
 
 	target.JobCount = jobCount
-	target.IsAgent = strings.HasPrefix(string(target.Path), "agent://")
-	_, err = s3url.Parse(string(target.Path))
-	if err == nil {
-		target.IsS3 = true
-	}
 
 	return target, nil
 }
@@ -413,9 +408,6 @@ func (database *Database) GetAllTargetsByIP(clientIP string) ([]types.Target, er
 			syslog.L.Error(fmt.Errorf("GetAllTargetsByIP: error scanning target row: %w", err)).Write()
 			continue
 		}
-
-		// JobCount is not fetched here, default is 0
-		target.IsAgent = true // We are querying specifically for agent paths
 
 		targets = append(targets, target)
 	}

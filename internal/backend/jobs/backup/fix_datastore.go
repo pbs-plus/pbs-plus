@@ -81,8 +81,7 @@ func GetOwnerFilePath(backup types.Backup, storeInstance *store.Store) (string, 
 		return "", fmt.Errorf("GetCurrentOwner -> %w", err)
 	}
 
-	isAgent := strings.HasPrefix(target.Path, "agent://")
-	backupId, err := getBackupId(isAgent, backup.Target)
+	backupId, err := getBackupId(target.Path.IsAgent(), backup.Target)
 	if err != nil {
 		return "", fmt.Errorf("GetCurrentOwner: failed to get backup ID: %w", err)
 	}

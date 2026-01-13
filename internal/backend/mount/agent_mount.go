@@ -33,10 +33,6 @@ func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup types.
 	// Parse target information
 	splittedTargetName := strings.Split(target.Name, " - ")
 	targetHostname := splittedTargetName[0]
-	agentPath := strings.TrimPrefix(target.Path, "agent://")
-	agentPathParts := strings.Split(agentPath, "/")
-	agentDrive := agentPathParts[1]
-
 	agentMount := &AgentMount{
 		BackupId: backup.ID,
 		Hostname: targetHostname,
