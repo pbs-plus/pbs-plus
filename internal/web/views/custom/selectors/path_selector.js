@@ -58,7 +58,12 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
           },
           listeners: {
             select: function (path) {
-              me.lookupReference("pathField").setValue(path);
+              let field = me.down("proxmoxtextfield[reference=pathField]");
+              if (field) {
+                field.setValue(path);
+              } else {
+                console.error("Could not find pathField reference");
+              }
             },
           },
         }).show();
