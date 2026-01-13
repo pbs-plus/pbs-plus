@@ -1,7 +1,6 @@
 Ext.define("PBS.form.D2DSnapshotPathSelector", {
   extend: "Ext.form.FieldContainer",
   alias: "widget.pbsD2DSnapshotPathSelector",
-  mixins: ["Proxmox.Mixin.CBind"],
 
   layout: "hbox",
 
@@ -16,6 +15,7 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
       reference: "pathField",
       flex: 1,
       emptyText: gettext("/"),
+      allowBlank: true,
     },
     {
       xtype: "button",
@@ -24,10 +24,13 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
       handler: function (btn) {
         let me = btn.up("pbsD2DSnapshotPathSelector");
 
-        let ds = me.datastore;
-        let snap = me.snapshot;
+        console.log("PathSelector DEBUG:", {
+          datastore: me.datastore,
+          snapshot: me.snapshot,
+          ns: me.ns,
+        });
 
-        if (!ds || !snap) {
+        if (!me.datastore || !me.snapshot) {
           Ext.Msg.alert(
             gettext("Error"),
             gettext("Please select a datastore and snapshot first."),
@@ -35,12 +38,12 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
           return;
         }
 
-        let listURL = `/api2/json/admin/datastore/${ds}/catalog`;
+        let listURL = `/api2/json/admin/datastore/${me.datastore}/catalog`;
 
         Ext.create("PBS.window.D2DPathSelector", {
           listURL: listURL,
           extraParams: {
-            snapshot: snap,
+            snapshot: me.snapshot,
             ns: me.ns || "",
           },
           listeners: {
@@ -54,12 +57,15 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
   ],
 
   setDatastore: function (ds) {
+    console.log("PathSelector: setting datastore to", ds);
     this.datastore = ds;
   },
   setSnapshot: function (snap) {
+    console.log("PathSelector: setting snapshot to", snap);
     this.snapshot = snap;
   },
   setNamespace: function (ns) {
+    console.log("PathSelector: setting ns to", ns);
     this.ns = ns;
   },
 });
