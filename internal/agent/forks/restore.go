@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -62,7 +62,6 @@ func (s *restoreSession) Close() {
 	syslog.L.Info().WithMessage("restoreSession.Close: done").WithField("restoreId", s.restoreId).Write()
 }
 
-// TODO: needs target as well to determine basePath of destPath
 func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 	if *restoreId == "" || *srcPath == "" || *destPath == "" {
 		fmt.Fprintln(os.Stderr, "Error: missing required flags: restoreId, srcPath, and destPath are required")
@@ -72,105 +71,125 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid server URL: %v", err)
 		syslog.L.Error(err).WithMessage("CmdRestore: GetEntry ServerURL failed").Write()
 		os.Exit(1)
 	}
 	uri, err := utils.ParseURI(serverUrl.Value)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid server URL: %v", err)
 		syslog.L.Error(err).WithMessage("CmdRestore: url.Parse failed").Write()
 		os.Exit(1)
 	}
-
 	tlsConfig, err := agent.GetTLSConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get TLS config for ARPC client: %v", err)
 		syslog.L.Error(err).WithMessage("CmdRestore: GetTLSConfig failed").Write()
 		os.Exit(1)
 	}
 
+	address := fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort)
 	headers := http.Header{}
 	headers.Add("X-PBS-Plus-RestoreId", *restoreId)
 
-	syslog.L.Info().WithMessage("CmdRestore: connecting to server").WithField("host", uri.Hostname()).WithField("restoreId", *restoreId).Write()
-	rpcSess, err := arpc.ConnectToServer(context.Background(), fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort), headers, tlsConfig)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to connect to server: %v", err)
-		syslog.L.Error(err).WithMessage("CmdRestore: ConnectToServer failed").Write()
-		os.Exit(1)
-	}
-
-	var signalReceived atomic.Bool
-	signalReceived.Store(false)
-
-	router := arpc.NewRouter()
-	router.Handle("server_ready", func(req *arpc.Request) (arpc.Response, error) {
-		go func() {
-			if signalReceived.Load() {
-				return
-			}
-
-			signalReceived.Store(true)
-			err = Restore(rpcSess, *restoreId, *srcPath, *destPath)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err.Error())
-				syslog.L.Error(err).WithMessage("CmdRestore: Restore failed").WithField("restoreId", *restoreId).Write()
-				os.Exit(1)
-			}
-
-			syslog.L.Info().WithMessage("CmdRestore: restore goroutine finished").WithField("restoreId", *restoreId).Write()
-			rpcSess.Close()
-
-			if session, ok := activeRestoreSessions.Get(*restoreId); ok {
-				session.Close()
-			}
-
-			time.Sleep(100 * time.Millisecond)
-			os.Exit(0)
-		}()
-
-		return arpc.Response{
-			Status:  200,
-			Message: "success",
-		}, nil
-	})
-
-	rpcSess.SetRouter(router)
-	syslog.L.Info().WithMessage("CmdRestore: ARPC session established").WithField("restoreId", *restoreId).Write()
-
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		syslog.L.Info().WithMessage("CmdRestore: RPC Serve starting").WithField("restoreId", *restoreId).Write()
-		if err := rpcSess.Serve(); err != nil {
-			syslog.L.Error(err).WithMessage("CmdRestore: RPC Serve returned error").WithField("restoreId", *restoreId).Write()
-			if session, ok := activeRestoreSessions.Get(*restoreId); ok {
-				session.Close()
-			}
-		}
-		syslog.L.Info().WithMessage("CmdRestore: RPC Serve exited").WithField("restoreId", *restoreId).Write()
-	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 	winquit.SimulateSigTermOnQuit(done)
 
+	var wg sync.WaitGroup
+	var restoreInitiatedOnce sync.Once
+
+	wg.Go(func() {
+		defer syslog.L.Info().WithMessage("CmdRestore: ARPC session handler shutting down").Write()
+
+		base := 500 * time.Millisecond
+		maxWait := 30 * time.Second
+		factor := 2.0
+		jitter := 0.2
+		backoff := base
+
+		var session *arpc.StreamPipe
+
+		for {
+			select {
+			case <-ctx.Done():
+				if session != nil {
+					session.Close()
+				}
+				return
+			default:
+				if session == nil {
+					syslog.L.Info().WithMessage("CmdRestore: Attempting connection").WithField("restoreId", *restoreId).Write()
+
+					var err error
+					session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
+					if err != nil {
+						mult := 1 + jitter*(2*rand.Float64()-1)
+						sleep := min(time.Duration(float64(backoff)*mult), maxWait)
+
+						syslog.L.Warn().WithMessage(fmt.Sprintf("Connection failed, retrying in %v", sleep)).WithField("error", err.Error()).Write()
+
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(sleep):
+							backoff = min(time.Duration(float64(backoff)*factor), maxWait)
+							continue
+						}
+					}
+
+					router := arpc.NewRouter()
+					router.Handle("server_ready", func(req *arpc.Request) (arpc.Response, error) {
+						restoreInitiatedOnce.Do(func() {
+							go func() {
+								err := Restore(session, *restoreId, *srcPath, *destPath)
+								if err != nil {
+									fmt.Fprintln(os.Stderr, "Restore failed:", err)
+									syslog.L.Error(err).WithMessage("CmdRestore: Restore execution failed").Write()
+									cancel()
+									return
+								}
+								syslog.L.Info().WithMessage("CmdRestore: Restore completed successfully").Write()
+								cancel()
+							}()
+						})
+						return arpc.Response{Status: 200, Message: "success"}, nil
+					})
+
+					session.SetRouter(router)
+					syslog.L.Info().WithMessage("ARPC connection established").Write()
+					backoff = base
+				}
+
+				if err := session.Serve(); err != nil {
+					syslog.L.Warn().WithMessage("ARPC connection lost, attempting recovery").WithField("error", err.Error()).Write()
+
+					if newS, err := session.Reconnect(ctx); err == nil {
+						session = newS
+						syslog.L.Info().WithMessage("ARPC connection restored via Reconnect").Write()
+					} else {
+						session = nil // Force fresh connection on next loop iteration
+					}
+				} else {
+					return
+				}
+			}
+		}
+	})
+
 	go func() {
 		sig := <-done
-		syslog.L.Info().WithMessage(fmt.Sprintf("CmdRestore: received signal %v, shutting down gracefully", sig)).WithField("restoreId", *restoreId).Write()
-
-		rpcSess.Close()
-
-		if session, ok := activeRestoreSessions.Get(*restoreId); ok {
-			session.Close()
-		}
-
-		time.Sleep(100 * time.Millisecond)
-		os.Exit(0)
+		syslog.L.Info().WithMessage(fmt.Sprintf("CmdRestore: received signal %v", sig)).Write()
+		cancel()
 	}()
 
 	wg.Wait()
-	syslog.L.Info().WithMessage("CmdRestore: background RPC goroutine finished").WithField("restoreId", *restoreId).Write()
+
+	if session, ok := activeRestoreSessions.Get(*restoreId); ok {
+		session.Close()
+	}
+
+	syslog.L.Info().WithMessage("CmdRestore: finished").Write()
 	os.Exit(0)
 }
 

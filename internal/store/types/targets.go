@@ -48,6 +48,7 @@ type PathInfo struct {
 	Type    TargetType
 	RawPath string
 	// HostPath: "/" for unix, "C:\" for windows, or "" if not an agent
-	HostPath string
-	S3Url    *s3url.S3Url
+	HostPath  string
+	IsWindows bool
+	S3Url     *s3url.S3Url
 }
