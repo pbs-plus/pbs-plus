@@ -13,15 +13,16 @@ WorkingDirectory=/var/lib/pbs-plus-agent
 ExecStart={{.Path}}
 Restart=on-failure
 EnvironmentFile=-/etc/pbs-plus-agent/agent.env
+
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 NoNewPrivileges=yes
-Nice=19
-IOSchedulingClass=idle
+
 ProtectSystem=full
-ProtectHome=read-only
+ProtectHome=no
 PrivateTmp=yes
-ReadWritePaths=/var/lib/pbs-plus-agent /var/log/pbs-plus-agent /run/pbs-plus-agent /etc/pbs-plus-agent /tmp /var/tmp /usr/bin /etc/systemd/system
+
+ReadWritePaths=/usr/bin /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /etc/pbs-plus-agent /run/pbs-plus-agent
 
 [Install]
 WantedBy=multi-user.target
