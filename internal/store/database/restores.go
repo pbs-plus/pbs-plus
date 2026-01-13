@@ -134,11 +134,12 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
 func (database *Database) GetRestore(id string) (types.Restore, error) {
 	query := `
         SELECT
-            j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, j.dest_path, j.comment,
+            j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, t.path, j.dest_path, j.comment,
             j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval
         FROM restores j
         WHERE j.id = ?
+        LEFT JOIN targets t ON j.dest_target = t.name
     `
 	rows, err := database.readDb.Query(query, id)
 	if err != nil {
@@ -152,7 +153,7 @@ func (database *Database) GetRestore(id string) (types.Restore, error) {
 	for rows.Next() {
 		found = true
 		err := rows.Scan(
-			&restore.ID, &restore.Store, &restore.Namespace, &restore.Snapshot, &restore.SrcPath, &restore.DestTarget,
+			&restore.ID, &restore.Store, &restore.Namespace, &restore.Snapshot, &restore.SrcPath, &restore.DestTarget, &restore.DestTargetPath,
 			&restore.DestPath, &restore.Comment, &restore.CurrentPID, &restore.LastRunUpid,
 			&restore.LastSuccessfulUpid, &restore.Retry, &restore.RetryInterval)
 		if err != nil {
@@ -408,6 +409,7 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
             j.retry, j.retry_interval
         FROM restores j
 				WHERE j.last_run_upid LIKE "%pbsplusgen-queue%"
+        LEFT JOIN targets t ON j.dest_target = t.name
         ORDER BY j.id
     `
 	rows, err := database.readDb.Query(query)
