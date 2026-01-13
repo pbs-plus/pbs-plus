@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -71,20 +72,31 @@ func NewPxarReader(socketPath, pbsStore, namespace, snapshot string, proxmoxTask
 		return nil, fmt.Errorf("failed to get datastore: %w", err)
 	}
 
-	snapSplit := strings.Split(snapshot, "|")
-	if len(snapSplit) != 2 {
-		return nil, fmt.Errorf("invalid snapshot string: %s", snapshot)
+	snapSplit := strings.Split(snapshot, "/")
+	if len(snapSplit) != 3 {
+		return nil, fmt.Errorf("invalid snapshot string (expected type/id/time): %s", snapshot)
 	}
 
-	snapshotTimeRaw := snapSplit[0]
+	backupType := snapSplit[0]
 	snapshotId := snapSplit[1]
-	parsedTime, err := time.Parse(time.RFC3339, snapshotTimeRaw)
-	if err != nil {
-		return nil, fmt.Errorf("invalid backup-time format: %w", err)
-	}
-	snapshotTime := parsedTime.Format("2006-01-02_15-04-05")
+	timestampRaw := snapSplit[2]
 
-	mpxarPath, ppxarPath, isSplit, err := proxmox.BuildPxarPaths(dsInfo.Path, namespace, "host", snapshotId, snapshotTime, "")
+	unixTime, err := strconv.ParseInt(timestampRaw, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid unix timestamp in snapshot: %w", err)
+	}
+
+	t := time.Unix(unixTime, 0).UTC()
+	snapshotTime := t.Format(time.RFC3339)
+
+	mpxarPath, ppxarPath, isSplit, err := proxmox.BuildPxarPaths(
+		dsInfo.Path,
+		namespace,
+		backupType,
+		snapshotId,
+		snapshotTime,
+		"",
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build pxar paths: %w", err)
 	}
@@ -100,6 +112,7 @@ func NewPxarReader(socketPath, pbsStore, namespace, snapshot string, proxmoxTask
 
 	exp := time.NewTimer(5 * time.Second)
 	interval := time.NewTicker(500 * time.Millisecond)
+	defer interval.Stop()
 
 	var conn net.Conn
 	for {
