@@ -138,8 +138,8 @@ func (database *Database) GetRestore(id string) (types.Restore, error) {
             j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval
         FROM restores j
-        WHERE j.id = ?
         LEFT JOIN targets t ON j.dest_target = t.name
+        WHERE j.id = ?
     `
 	rows, err := database.readDb.Query(query, id)
 	if err != nil {
@@ -408,8 +408,8 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
             j.current_pid, j.last_run_upid, j.last_successful_upid,
             j.retry, j.retry_interval
         FROM restores j
-				WHERE j.last_run_upid LIKE "%pbsplusgen-queue%"
         LEFT JOIN targets t ON j.dest_target = t.name
+				WHERE j.last_run_upid LIKE "%pbsplusgen-queue%"
         ORDER BY j.id
     `
 	rows, err := database.readDb.Query(query)
