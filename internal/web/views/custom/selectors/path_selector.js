@@ -33,8 +33,19 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
         }
 
         let snapData = JSON.parse(me.snapshot);
-
         let listURL = `/api2/json/admin/datastore/${encodeURIComponent(me.datastore)}/catalog`;
+
+        let archive =
+          snapData.files.find((f) => f.filename.endsWith(".mpxar.didx")) ||
+          snapData.files.find((f) => f.filename.endsWith(".pxar.didx"));
+
+        if (!archive) {
+          Ext.Msg.alert(
+            gettext("Error"),
+            gettext("No browsable archives found in this snapshot."),
+          );
+          return;
+        }
 
         Ext.create("PBS.window.D2DPathSelector", {
           listURL: listURL,
@@ -42,6 +53,7 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
             "backup-type": snapData.type,
             "backup-id": snapData.id,
             "backup-time": snapData.time,
+            "archive-name": archive.filename,
             ns: me.ns || "",
           },
           listeners: {
