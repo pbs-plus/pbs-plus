@@ -15,12 +15,12 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func getBackupId(isAgent bool, targetName string) (string, error) {
+func getBackupId(isAgent bool, target types.TargetName) (string, error) {
 	if isAgent {
-		if targetName == "" {
+		if target.String() == "" {
 			return "", fmt.Errorf("target name is required for agent backup")
 		}
-		return strings.TrimSpace(strings.Split(targetName, " - ")[0]), nil
+		return target.GetHostname(), nil
 	}
 
 	hostname, err := os.Hostname()
@@ -68,7 +68,7 @@ func prepareBackupCommand(ctx context.Context, backup types.Backup, storeInstanc
 	cmdArgs = append(cmdArgs, []string{
 		"/usr/bin/proxmox-backup-client",
 		"backup",
-		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(backup.Target), srcPath),
+		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(backup.Target.String()), srcPath),
 		"--repository", backupStore,
 		detectionMode,
 		"--entries-max", fmt.Sprintf("%d", backup.MaxDirEntries+1024),

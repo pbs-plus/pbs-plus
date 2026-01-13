@@ -7,7 +7,6 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +25,7 @@ type QueuedTask struct {
 }
 
 func GenerateBackupQueuedTask(job types.Backup, web bool) (QueuedTask, error) {
-	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
+	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
@@ -87,7 +86,7 @@ func GenerateBackupQueuedTask(job types.Backup, web bool) (QueuedTask, error) {
 }
 
 func GenerateRestoreQueuedTask(job types.Restore, web bool) (QueuedTask, error) {
-	targetName := strings.TrimSpace(strings.Split(job.DestTarget, " - ")[0])
+	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 

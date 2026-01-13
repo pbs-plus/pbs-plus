@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
@@ -31,12 +30,10 @@ type AgentMount struct {
 
 func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup types.Backup, target types.Target) (*AgentMount, error) {
 	// Parse target information
-	splittedTargetName := strings.Split(target.Name, " - ")
-	targetHostname := splittedTargetName[0]
 	agentMount := &AgentMount{
 		BackupId: backup.ID,
-		Hostname: targetHostname,
-		Drive:    agentDrive,
+		Hostname: target.Name.GetHostname(),
+		Drive:    target.Name.GetVolume(),
 	}
 
 	// Setup mount path
@@ -61,8 +58,8 @@ func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup types.
 
 	args := &rpcmount.BackupArgs{
 		BackupId:       backup.ID,
-		TargetHostname: targetHostname,
-		Drive:          agentDrive,
+		TargetHostname: target.Name.GetHostname(),
+		Drive:          target.Name.GetVolume(),
 	}
 	var reply rpcmount.BackupReply
 

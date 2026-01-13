@@ -21,7 +21,7 @@ import (
 
 // generateUniqueRestoreID produces a unique restore id based on the restore’s target.
 func (database *Database) generateUniqueRestoreID(restore types.Restore) (string, error) {
-	baseID := utils.Slugify(restore.DestTarget)
+	baseID := utils.Slugify(restore.DestTarget.String())
 	if baseID == "" {
 		return "", fmt.Errorf("invalid target: slugified value is empty")
 	}
@@ -88,7 +88,7 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
 		restore.ID = id
 	}
 
-	if restore.DestTarget == "" {
+	if restore.DestTarget.String() == "" {
 		return errors.New("dest target is empty")
 	}
 	if restore.Snapshot == "" {
@@ -229,7 +229,7 @@ func (database *Database) UpdateRestore(tx *sql.Tx, restore types.Restore) (err 
 	if !utils.IsValidID(restore.ID) && restore.ID != "" {
 		return fmt.Errorf("UpdateRestore: invalid id string -> %s", restore.ID)
 	}
-	if restore.DestTarget == "" {
+	if restore.DestTarget.String() == "" {
 		return errors.New("dest target is empty")
 	}
 	if restore.Snapshot == "" {
@@ -365,7 +365,7 @@ func (database *Database) GetAllRestores() ([]types.Restore, error) {
 				Store:              store,
 				Snapshot:           snapshot,
 				SrcPath:            srcPath,
-				DestTarget:         destTarget,
+				DestTarget:         types.WrapTargetName(destTarget),
 				DestPath:           destPath,
 				Comment:            comment,
 				CurrentPID:         currentPID,
@@ -380,7 +380,7 @@ func (database *Database) GetAllRestores() ([]types.Restore, error) {
 		}
 
 		if targetPath.Valid {
-			restore.DestTargetPath = types.TargetPath(targetPath.String)
+			restore.DestTargetPath = types.WrapTargetPath(targetPath.String)
 		}
 		if namespace.Valid {
 			restore.Namespace = namespace.String
@@ -443,7 +443,7 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 				Store:              store,
 				Snapshot:           snapshot,
 				SrcPath:            srcPath,
-				DestTarget:         destTarget,
+				DestTarget:         types.WrapTargetName(destTarget),
 				DestPath:           destPath,
 				Comment:            comment,
 				CurrentPID:         currentPID,
@@ -458,7 +458,7 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 		}
 
 		if targetPath.Valid {
-			restore.DestTargetPath = types.TargetPath(targetPath.String)
+			restore.DestTargetPath = types.WrapTargetPath(targetPath.String)
 		}
 		if namespace.Valid {
 			restore.Namespace = namespace.String
