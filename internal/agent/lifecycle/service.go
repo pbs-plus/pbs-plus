@@ -18,9 +18,9 @@ CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 NoNewPrivileges=yes
 
-ProtectSystem=full
+ProtectSystem=true
 ProtectHome=no
-PrivateTmp=yes
+PrivateTmp=no
 
 ReadWritePaths=/usr/bin /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /etc/pbs-plus-agent /run/pbs-plus-agent
 
