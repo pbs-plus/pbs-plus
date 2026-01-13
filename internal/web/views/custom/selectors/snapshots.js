@@ -42,6 +42,15 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
     change: function (field, value) {
       field.triggers.clear.setVisible(value !== "");
     },
+    store: {
+      load: function () {
+        let me = this;
+        let val = me.getValue();
+        if (val) {
+          me.setValue(val);
+        }
+      },
+    },
   },
 
   initComponent: function () {
@@ -62,9 +71,17 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
         {
           name: "display",
           convert: function (v, record) {
-            let time = new Date(record.data["backup-time"] * 1000);
-            let timeStr = Ext.Date.format(time, "Y-m-d H:i:s");
-            return `${timeStr} | ${record.data["backup-id"]}`;
+            if (record.data["backup-time"]) {
+              let time = new Date(record.data["backup-time"] * 1000);
+              let timeStr = Ext.Date.format(time, "Y-m-d H:i:s");
+              return `${timeStr} | ${record.data["backup-id"]}`;
+            }
+
+            if (record.data.value && typeof record.data.value === "string") {
+              return record.data.value.replace(/^host\//, "");
+            }
+
+            return v;
           },
         },
       ],
