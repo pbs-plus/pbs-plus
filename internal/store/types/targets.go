@@ -1,6 +1,8 @@
 package types
 
-import s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
+import (
+	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
+)
 
 type Target struct {
 	Name             TargetName `json:"name"`
@@ -23,9 +25,18 @@ type Target struct {
 	OperatingSystem  string     `json:"os"`
 }
 
-type TargetPath string
 type TargetType string
-type TargetName string
+
+type TargetName struct {
+	Raw      string
+	hostname string
+	volume   string
+}
+
+type TargetPath struct {
+	Raw  string
+	info *PathInfo
+}
 
 const (
 	TargetTypeLocal TargetType = "local"

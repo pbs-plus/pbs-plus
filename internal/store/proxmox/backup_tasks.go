@@ -34,7 +34,7 @@ func GetBackupTask(
 
 	backupId := hostname
 	if target.Path.IsAgent() {
-		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
+		backupId = target.Name.GetHostname()
 	}
 	backupId = NormalizeHostname(backupId)
 
@@ -81,7 +81,7 @@ func GetBackupTask(
 }
 
 func GenerateBackupTaskErrorFile(job types.Backup, pbsError error, additionalData []string) (Task, error) {
-	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
+	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
@@ -181,7 +181,7 @@ func GenerateBackupTaskErrorFile(job types.Backup, pbsError error, additionalDat
 }
 
 func GenerateBackupTaskOKFile(job types.Backup, additionalData []string) (Task, error) {
-	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
+	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 

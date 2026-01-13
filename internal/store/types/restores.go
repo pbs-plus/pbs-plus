@@ -6,7 +6,7 @@ type Restore struct {
 	Snapshot              string     `json:"snapshot"`
 	Namespace             string     `json:"ns"`
 	SrcPath               string     `json:"src-path"`
-	DestTarget            string     `json:"dest-target"`
+	DestTarget            TargetName `json:"dest-target"`
 	DestTargetPath        TargetPath `json:"dest-target-path"`
 	DestPath              string     `json:"dest-path"`
 	Comment               string     `json:"comment"`

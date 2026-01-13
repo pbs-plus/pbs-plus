@@ -46,12 +46,12 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err err
 		}()
 	}
 
-	if target.Path == "" {
+	if target.Path.String() == "" {
 		return fmt.Errorf("target path empty")
 	}
 
-	_, s3Err := s3url.Parse(string(target.Path))
-	if !utils.ValidateTargetPath(string(target.Path)) && s3Err != nil {
+	_, s3Err := s3url.Parse(target.Path.String())
+	if !utils.ValidateTargetPath(target.Path.String()) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -112,12 +112,12 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 		}()
 	}
 
-	if target.Path == "" {
+	if target.Path.String() == "" {
 		return fmt.Errorf("target path empty")
 	}
 
-	_, s3Err := s3url.Parse(string(target.Path))
-	if !utils.ValidateTargetPath(string(target.Path)) && s3Err != nil {
+	_, s3Err := s3url.Parse(target.Path.String())
+	if !utils.ValidateTargetPath(target.Path.String()) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -144,7 +144,7 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 	return nil
 }
 
-func (database *Database) AddS3Secret(tx *sql.Tx, targetName, secret string) (err error) {
+func (database *Database) AddS3Secret(tx *sql.Tx, targetName types.TargetName, secret string) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
@@ -192,7 +192,7 @@ func (database *Database) AddS3Secret(tx *sql.Tx, targetName, secret string) (er
 }
 
 // DeleteTarget removes a target.
-func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
+func (database *Database) DeleteTarget(tx *sql.Tx, name types.TargetName) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
@@ -236,7 +236,7 @@ func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
 }
 
 // GetTarget retrieves a target by name along with its associated job count.
-func (database *Database) GetTarget(name string) (types.Target, error) {
+func (database *Database) GetTarget(name types.TargetName) (types.Target, error) {
 	row := database.readDb.QueryRow(`
         SELECT
             t.name, t.path, t.auth, t.token_used, t.drive_type, t.drive_name,
@@ -303,7 +303,7 @@ func (database *Database) GetUniqueAuthByHostname(hostname string) ([]string, er
 	return authList, nil
 }
 
-func (database *Database) GetS3Secret(name string) (string, error) {
+func (database *Database) GetS3Secret(name types.TargetName) (string, error) {
 	row := database.readDb.QueryRow(`
         SELECT
             t.secret_s3

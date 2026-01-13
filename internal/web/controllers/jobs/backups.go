@@ -33,22 +33,9 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for i, backup := range allBackups {
-			// TODO: finish migrating to targetpath class
-			isS3 := false
 			var stats vfs.VFSStats
-			if backup.TargetPath.IsAgent() {
-				splittedTargetName := strings.Split(backup.Target, " - ")
-				targetHostname := splittedTargetName[0]
-				childKey := targetHostname + "|" + backup.ID
-				session := vfssessions.GetSessionARPCFS(childKey)
-				if session == nil {
-					continue
-				}
-
-				stats = session.GetStats()
-			} else if backup.TargetPath.IsS3() {
-				childKey := s3Parsed.Endpoint + "|" + backup.ID
-				session := vfssessions.GetSessionS3FS(childKey)
+			if backup.TargetPath.IsAgent() || backup.TargetPath.IsS3() {
+				session := vfssessions.GetSessionARPCFS(backup.GetStreamID())
 				if session == nil {
 					continue
 				}
@@ -207,7 +194,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			SourceMode:       r.FormValue("sourcemode"),
 			ReadMode:         r.FormValue("readmode"),
 			Mode:             r.FormValue("mode"),
-			Target:           r.FormValue("target"),
+			Target:           types.WrapTargetName(r.FormValue("target")),
 			Subpath:          r.FormValue("subpath"),
 			Schedule:         r.FormValue("schedule"),
 			Comment:          r.FormValue("comment"),
@@ -286,7 +273,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				backup.ReadMode = r.FormValue("readmode")
 			}
 			if r.FormValue("target") != "" {
-				backup.Target = r.FormValue("target")
+				backup.Target = types.WrapTargetName(r.FormValue("target"))
 			}
 			if r.FormValue("schedule") != "" {
 				backup.Schedule = r.FormValue("schedule")
@@ -369,7 +356,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					case "readmode":
 						backup.ReadMode = ""
 					case "target":
-						backup.Target = ""
+						backup.Target.Raw = ""
 					case "subpath":
 						backup.Subpath = ""
 					case "schedule":

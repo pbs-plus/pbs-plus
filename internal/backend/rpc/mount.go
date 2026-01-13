@@ -147,14 +147,10 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		}
 	}
 
-	// Retrieve or initialize an ARPCFS instance.
-	// The child session key is "targetHostname|backupId".
-	childKey := args.TargetHostname + "|" + args.BackupId
-
 	backupCtx, backupCancel := context.WithCancel(s.ctx)
 	s.jobCtxCancels.Set(args.BackupId, backupCancel)
 
-	arpcFS := arpcfs.NewARPCFS(backupCtx, s.Store.ARPCAgentsManager, childKey, args.TargetHostname, backup, backupMode)
+	arpcFS := arpcfs.NewARPCFS(backupCtx, s.Store.ARPCAgentsManager, backup.GetStreamID(), args.TargetHostname, backup, backupMode)
 	if arpcFS == nil {
 		reply.Status = 500
 		reply.Message = "failed to send create ARPCFS"
@@ -171,7 +167,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	vfssessions.CreateARPCFSMount(childKey, arpcFS)
+	vfssessions.CreateARPCFSMount(backup.GetStreamID(), arpcFS)
 
 	// Set the reply values.
 	reply.Status = 200
@@ -214,8 +210,6 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	childKey := args.Endpoint + "|" + args.BackupId
-
 	backupCtx, backupCancel := context.WithCancel(s.ctx)
 	s.jobCtxCancels.Set(args.BackupId, backupCancel)
 
@@ -226,7 +220,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return errors.New(reply.Message)
 	}
 
-	vfssessions.CreateS3FSMount(childKey, s3FS)
+	vfssessions.CreateS3FSMount(backup.GetStreamID(), s3FS)
 
 	// Set up the local mount path.
 	mntPath := filepath.Join(constants.AgentMountBasePath, args.BackupId)

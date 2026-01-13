@@ -14,7 +14,6 @@ import (
 	"time"
 
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -36,10 +35,7 @@ type S3Mount struct {
 
 func S3FSMount(ctx context.Context, storeInstance *store.Store, backup types.Backup, target types.Target) (*S3Mount, error) {
 	// Parse target information
-	parsedS3, err := s3url.Parse(target.Path)
-	if err != nil {
-		return nil, fmt.Errorf("invalid S3 url \"%s\" -> %w", target.Path, err)
-	}
+	parsedS3 := target.Path.GetPathInfo().S3Url
 
 	s3Mount := &S3Mount{
 		BackupId:  backup.ID,
@@ -55,7 +51,7 @@ func S3FSMount(ctx context.Context, storeInstance *store.Store, backup types.Bac
 	s3Mount.Unmount() // Ensure clean mount point
 
 	// Create mount directory if it doesn't exist
-	err = os.MkdirAll(s3Mount.Path, 0700)
+	err := os.MkdirAll(s3Mount.Path, 0700)
 	if err != nil {
 		return nil, fmt.Errorf("error creating directory \"%s\" -> %w", s3Mount.Path, err)
 	}

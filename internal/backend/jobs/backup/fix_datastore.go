@@ -210,7 +210,7 @@ func CleanUnfinishedSnapshot(backup types.Backup, backupId string) error {
 		return nil
 	}
 
-	expectedPxarName := proxmox.NormalizeHostname(backup.Target)
+	expectedPxarName := proxmox.NormalizeHostname(backup.Target.String())
 	tmpSuffixes := map[string]struct{}{
 		expectedPxarName + ".mpxar.tmp_didx": {},
 		expectedPxarName + ".ppxar.tmp_didx": {},
