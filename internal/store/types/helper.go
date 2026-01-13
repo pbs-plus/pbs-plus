@@ -130,6 +130,7 @@ func (t TargetPath) IsLocal() bool {
 }
 
 func (t TargetPath) parsePathInfo() *PathInfo {
+	isWindows := false
 	if strings.HasPrefix(t.Raw, "agent://") {
 		trimmed := t.Raw[8:]
 		lastSlash := strings.LastIndex(trimmed, "/")
@@ -141,11 +142,12 @@ func (t TargetPath) parsePathInfo() *PathInfo {
 				hostPath = "/"
 			case len(res) == 1:
 				hostPath = res + ":\\"
+				isWindows = true
 			default:
 				hostPath = res
 			}
 		}
-		return &PathInfo{Type: TargetTypeAgent, RawPath: t.Raw, HostPath: hostPath}
+		return &PathInfo{Type: TargetTypeAgent, RawPath: t.Raw, HostPath: hostPath, IsWindows: isWindows}
 	}
 
 	if strings.Contains(t.Raw, "://") {
