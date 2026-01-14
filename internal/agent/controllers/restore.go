@@ -24,6 +24,10 @@ func RestoreFileTreeHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.R
 	}
 
 	safeRequestedPath := filepath.Clean(reqData.SubPath)
+	if safeRequestedPath == "/" {
+		safeRequestedPath = ""
+	}
+
 	localFullPath := filepath.Join(reqData.HostPath, safeRequestedPath)
 
 	syslog.L.Info().WithMessage("received filetree request").WithField("path", localFullPath).Write()
