@@ -135,71 +135,39 @@ func CleanupPbsPlusActiveTasks() error {
 	filePath := constants.ActiveLogsPath
 	targetNode := "pbsplus"
 
-	lockPath := filepath.Join(filepath.Dir(filePath), "."+filepath.Base(filePath)+".lock")
-	lockFile, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0600)
+	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("could not create/open lock file: %w", err)
-	}
-	defer lockFile.Close()
-
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("could not acquire lock: %w", err)
-	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
-
-	originalInfo, err := os.Stat(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // Nothing to clean
-		}
-		return err
-	}
-
-	f, err := os.Open(filePath)
-	if err != nil {
-		return err
+		return fmt.Errorf("could not open file: %w", err)
 	}
 	defer f.Close()
 
-	tempFile, err := os.CreateTemp(filepath.Dir(filePath), "active_cleanup_*.tmp")
-	if err != nil {
-		return err
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("could not acquire lock: %w", err)
 	}
-	tempPath := tempFile.Name()
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 
-	success := false
-	defer func() {
-		if !success {
-			tempFile.Close()
-			os.Remove(tempPath)
-		}
-	}()
-
-	if err := tempFile.Chmod(originalInfo.Mode()); err != nil {
-		return err
-	}
-	if stat, ok := originalInfo.Sys().(*syscall.Stat_t); ok {
-		_ = tempFile.Chown(int(stat.Uid), int(stat.Gid))
-	}
-
+	var filteredLines []string
 	scanner := bufio.NewScanner(f)
-	writer := bufio.NewWriter(tempFile)
-
-	// UPID Format: UPID:NODE:PID:PSTART:TASKID:STARTTIME:WTYPE:WID:USER:
-	// Index 1 (splitting by ':') is the Node.
 	for scanner.Scan() {
 		line := scanner.Text()
 		parts := strings.Split(line, ":")
-
-		isPbsPlusTask := false
 		if len(parts) > 1 && parts[1] == targetNode {
-			isPbsPlusTask = true
+			continue // Skip this line
 		}
+		filteredLines = append(filteredLines, line)
+	}
 
-		if !isPbsPlusTask {
-			if _, err := writer.WriteString(line + "\n"); err != nil {
-				return err
-			}
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
+
+	writer := bufio.NewWriter(f)
+	for _, line := range filteredLines {
+		if _, err := writer.WriteString(line + "\n"); err != nil {
+			return err
 		}
 	}
 
@@ -207,15 +175,5 @@ func CleanupPbsPlusActiveTasks() error {
 		return err
 	}
 
-	if err := tempFile.Sync(); err != nil {
-		return err
-	}
-	tempFile.Close()
-
-	if err := os.Rename(tempPath, filePath); err != nil {
-		return err
-	}
-
-	success = true
-	return nil
+	return f.Sync()
 }
