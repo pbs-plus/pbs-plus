@@ -36,7 +36,6 @@ func (p *pbsService) Start(s service.Service) error {
 			MinConstraint: ">= 0.52.0", PollInterval: 2 * time.Minute, FetchOnStart: true,
 			UpgradeConfirm: func(v string) bool { return true },
 			Exit:           func(err error) {},
-			Service:        s,
 		})
 	}
 	go p.run()
