@@ -149,7 +149,7 @@ func (b *RestoreOperation) Execute() error {
 		return fmt.Errorf("only agent-based restores are supported for now (%s)", b.job.DestTargetPath)
 	}
 
-	srcPath := ""
+	srcPath := b.job.SrcPath
 	if strings.TrimSpace(b.job.SrcPath) == "" {
 		srcPath = "/"
 	}

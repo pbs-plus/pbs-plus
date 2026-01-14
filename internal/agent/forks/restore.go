@@ -165,11 +165,24 @@ func ExecRestore(id, srcPath, destPath string) (int, error) {
 		return -1, err
 	}
 
+	if id != "" {
+		syslog.L.Error(errors.New("missing restoreId")).WithMessage("ExecRestore: cmd failed").Write()
+		return -1, err
+	}
+	if srcPath != "" {
+		syslog.L.Error(errors.New("missing srcPath")).WithMessage("ExecRestore: cmd failed").Write()
+		return -1, err
+	}
+	if destPath != "" {
+		syslog.L.Error(errors.New("missing destPath")).WithMessage("ExecRestore: cmd failed").Write()
+		return -1, err
+	}
+
 	args := []string{
 		"--cmdMode=restore",
-		"--restoreId=" + id,
-		"--srcPath=" + srcPath,
-		"--destPath=" + destPath,
+		"--restoreId", id,
+		"--srcPath", srcPath,
+		"--destPath", destPath,
 	}
 
 	cmd := exec.Command(execCmd, args...)
