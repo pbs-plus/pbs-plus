@@ -35,7 +35,8 @@ func RestoreFileTreeHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.R
 
 	syslog.L.Info().
 		WithMessage("received filetree request").
-		WithField("path", localFullPath).
+		WithField("path", safeRequestedPath).
+		WithField("resolved", localFullPath).
 		Write()
 
 	entries, err := os.ReadDir(localFullPath)
