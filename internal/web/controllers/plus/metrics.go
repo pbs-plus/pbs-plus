@@ -596,21 +596,25 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 	}
 
 	// Delete metrics for targets that no longer exist
-	for targetID, labels := range m.previousTargetLabels {
-		if _, exists := currentTargetLabels[targetID]; !exists {
+	for targetKey, labels := range m.previousTargetLabels {
+		if _, exists := currentTargetLabels[targetKey]; !exists {
 			m.targetDriveTotalBytes.Delete(labels)
 			m.targetDriveUsedBytes.Delete(labels)
 			m.targetDriveFreeBytes.Delete(labels)
 			m.targetDriveUsagePercent.Delete(labels)
-			m.targetBackupCount.Delete(prometheus.Labels{"target_name": labels["target_name"]}) // BackupCount uses only target_name
-			if infoLabels, exists := m.previousTargetInfoLabels[targetID]; exists {
+
+			if infoLabels, exists := m.previousTargetInfoLabels[targetKey]; exists {
 				m.targetInfo.Delete(infoLabels)
 			}
-			m.targetLastSuccessfulBackupTimestamp.Delete(prometheus.Labels{"target_name": labels["target_name"]})
-			m.targetTimeSinceLastSuccessfulBackup.Delete(prometheus.Labels{"target_name": labels["target_name"]})
-			m.targetHasFailedBackups.Delete(prometheus.Labels{"target_name": labels["target_name"]})
-			m.targetFailedBackupCount.Delete(prometheus.Labels{"target_name": labels["target_name"]})
-			m.targetSuccessfulBackupCount.Delete(prometheus.Labels{"target_name": labels["target_name"]})
+
+			targetOnlyLabels := prometheus.Labels{"target_name": labels["target_name"]}
+
+			m.targetBackupCount.Delete(targetOnlyLabels)
+			m.targetLastSuccessfulBackupTimestamp.Delete(targetOnlyLabels)
+			m.targetTimeSinceLastSuccessfulBackup.Delete(targetOnlyLabels)
+			m.targetHasFailedBackups.Delete(targetOnlyLabels)
+			m.targetFailedBackupCount.Delete(targetOnlyLabels)
+			m.targetSuccessfulBackupCount.Delete(targetOnlyLabels)
 		}
 	}
 
