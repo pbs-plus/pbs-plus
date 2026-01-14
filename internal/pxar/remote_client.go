@@ -95,6 +95,9 @@ func (c *RemoteClient) ListXAttrs(ctx context.Context, entryStart, entryEnd uint
 }
 
 func (c *RemoteClient) Close() error {
+	if err := c.pipe.Call(context.Background(), "pxar.Done", nil, nil); err != nil {
+		return err
+	}
 	if c.pipe != nil {
 		c.pipe.Close()
 	}
