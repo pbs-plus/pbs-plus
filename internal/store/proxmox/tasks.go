@@ -3,6 +3,7 @@
 package proxmox
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,12 +12,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
+
+func init() {
+	CleanupPbsPlusActiveTasks()
+}
 
 // ListTasksJSON shells out to the CLI and unmarshals into []Task.
 func ListTasksJSON(ctx context.Context) ([]Task, error) {
@@ -127,4 +133,93 @@ func IsUPIDRunning(upid string) bool {
 
 	// If output is not empty, the UPID was found.
 	return strings.TrimSpace(string(output)) != ""
+}
+
+func CleanupPbsPlusActiveTasks() error {
+	filePath := constants.ActiveLogsPath
+	targetNode := "pbsplus"
+
+	lockPath := filepath.Join(filepath.Dir(filePath), "."+filepath.Base(filePath)+".lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return fmt.Errorf("could not create/open lock file: %w", err)
+	}
+	defer lockFile.Close()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("could not acquire lock: %w", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+
+	originalInfo, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // Nothing to clean
+		}
+		return err
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	tempFile, err := os.CreateTemp(filepath.Dir(filePath), "active_cleanup_*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+
+	success := false
+	defer func() {
+		if !success {
+			tempFile.Close()
+			os.Remove(tempPath)
+		}
+	}()
+
+	if err := tempFile.Chmod(originalInfo.Mode()); err != nil {
+		return err
+	}
+	if stat, ok := originalInfo.Sys().(*syscall.Stat_t); ok {
+		_ = tempFile.Chown(int(stat.Uid), int(stat.Gid))
+	}
+
+	scanner := bufio.NewScanner(f)
+	writer := bufio.NewWriter(tempFile)
+
+	// UPID Format: UPID:NODE:PID:PSTART:TASKID:STARTTIME:WTYPE:WID:USER:
+	// Index 1 (splitting by ':') is the Node.
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Split(line, ":")
+
+		isPbsPlusTask := false
+		if len(parts) > 1 && parts[1] == targetNode {
+			isPbsPlusTask = true
+		}
+
+		if !isPbsPlusTask {
+			if _, err := writer.WriteString(line + "\n"); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+
+	if err := tempFile.Sync(); err != nil {
+		return err
+	}
+	tempFile.Close()
+
+	if err := os.Rename(tempPath, filePath); err != nil {
+		return err
+	}
+
+	success = true
+	return nil
 }
