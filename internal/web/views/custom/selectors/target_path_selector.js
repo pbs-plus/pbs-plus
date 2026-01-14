@@ -49,7 +49,7 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
   ],
 
   setTarget: function (target) {
-    console.log("DestPathSelector: setting target to", ds);
+    console.log("DestPathSelector: setting target to", target);
     this.target = target;
   },
 });
