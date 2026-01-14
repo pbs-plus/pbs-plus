@@ -13,7 +13,7 @@ func CmdForkEntry() {
 	drive := flag.String("drive", "", "Drive or path for backup job")
 	backupId := flag.String("backupId", "", "Unique job identifier for the backup job")
 	restoreId := flag.String("restoreId", "", "Unique job identifier for the restore job")
-	srcPath := flag.String("srcPath", "", "Path to be restored within snapshot")
+	srcPath := flag.String("srcPath", "/", "Path to be restored within snapshot")
 	destPath := flag.String("destPath", "", "Destination path of files to be restored from snapshot")
 	flag.Parse()
 
