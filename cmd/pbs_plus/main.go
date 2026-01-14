@@ -358,6 +358,7 @@ func main() {
 	apiMux.HandleFunc("/api2/json/d2d/target", mw.ServerOnly(storeInstance, targets.D2DTargetHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/script", mw.ServerOnly(storeInstance, scripts.D2DScriptHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/token", mw.ServerOnly(storeInstance, tokens.D2DTokenHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/filetree/{target}", mw.ServerOnly(storeInstance, jobs.D2DRestoreFileTree(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/exclusion", mw.AgentOrServer(storeInstance, exclusions.D2DExclusionHandler(storeInstance)))
 
 	// ExtJS routes with path parameters

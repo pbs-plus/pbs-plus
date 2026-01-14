@@ -4,11 +4,14 @@ package jobs
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
 
+	"github.com/fxamacker/cbor/v2"
+	arpcTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -16,6 +19,56 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
+
+func D2DRestoreFileTree(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		target, err := storeInstance.Database.GetTarget(types.WrapTargetName(utils.DecodePath(r.PathValue("target"))))
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		subPath := ""
+		if r.PathValue("filepath") != "" {
+			subPath = utils.DecodePath(r.PathValue("filepath"))
+		}
+
+		if !target.Path.IsAgent() {
+			controllers.WriteErrorResponse(w, errors.ErrUnsupported)
+			return
+		}
+
+		targetInfo := target.Path.GetPathInfo()
+
+		arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(target.Name.GetHostname())
+		if !ok {
+			controllers.WriteErrorResponse(w, errors.New("target unreachable"))
+			return
+		}
+
+		reqData := arpcTypes.FileTreeReq{HostPath: targetInfo.HostPath, SubPath: subPath}
+		resp, err := arpcSess.CallData(r.Context(), "filetree", &reqData)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		var respData arpcTypes.FileTreeResp
+		err = cbor.Unmarshal(resp, &respData)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(respData)
+	}
+}
 
 func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
