@@ -1,0 +1,56 @@
+[package]
+name = "pxar-direct-mount"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "pxar-direct-mount"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+env_logger = "0.11"
+futures = "0.3"
+hex = "0.4.3"
+libc = "0.2"
+log = "0.4.17"
+nix = "0.29"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1.6", features = ["rt-multi-thread", "signal", "macros", "fs", "io-util", "io-std", "net", "parking_lot", "process", "rt", "time"] }
+
+pbs-api-types  = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-io     = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-lang   = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-fuse   = { git = "https://git.proxmox.com/git/proxmox-fuse.git" }
+proxmox-sys = { git = "https://git.proxmox.com/git/proxmox.git" }
+pbs-datastore  = { git = "https://git.proxmox.com/git/proxmox-backup.git" }
+pbs-tools      = { git = "https://git.proxmox.com/git/proxmox-backup.git" }
+pbs-key-config = { git = "https://git.proxmox.com/git/proxmox-backup.git" }
+pxar = { git = "https://git.proxmox.com/git/pxar.git" }
+
+[patch.crates-io]
+pbs-api-types = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-io     = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-lang   = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-async  = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-base64 = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-borrow = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-http = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-human-byte = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-notify = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-router = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-s3-client = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-schema = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-section-config = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-serde = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-shared-memory = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-sys = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-systemd = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-time = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-uuid = { git = "https://git.proxmox.com/git/proxmox.git" }
+proxmox-worker-task = { git = "https://git.proxmox.com/git/proxmox.git" }
+pxar = { git = "https://git.proxmox.com/git/pxar.git" }
+pathpatterns = { git = "https://git.proxmox.com/git/pathpatterns.git" }

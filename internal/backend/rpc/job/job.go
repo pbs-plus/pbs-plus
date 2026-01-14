@@ -10,18 +10,27 @@ import (
 	"net/rpc"
 	"os"
 
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/restore"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-type QueueArgs struct {
-	Job             types.Job
+type BackupQueueArgs struct {
+	Job             types.Backup
 	SkipCheck       bool
 	Web             bool
 	Stop            bool
 	ExtraExclusions []string
+}
+
+type RestoreQueueArgs struct {
+	Job       types.Restore
+	SkipCheck bool
+	Web       bool
+	Stop      bool
 }
 
 type QueueReply struct {
@@ -32,10 +41,10 @@ type QueueReply struct {
 type JobRPCService struct {
 	ctx     context.Context
 	Store   *store.Store
-	Manager *backup.Manager
+	Manager *jobs.Manager
 }
 
-func (s *JobRPCService) Queue(args *QueueArgs, reply *QueueReply) error {
+func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 	if args.Stop {
 		err := s.Manager.StopJob(args.Job.ID)
 		if err != nil {
@@ -55,7 +64,32 @@ func (s *JobRPCService) Queue(args *QueueArgs, reply *QueueReply) error {
 	return nil
 }
 
-func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, manager *backup.Manager, storeInstance *store.Store) error {
+func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error {
+	if args.Stop {
+		err := s.Manager.StopJob(args.Job.ID)
+		if err != nil {
+			reply.Status = 500
+			reply.Message = err.Error()
+			return nil
+		}
+
+		reply.Status = 200
+		return nil
+	}
+
+	job, err := restore.NewRestoreOperation(args.Job, s.Store, args.SkipCheck, args.Web)
+	if err != nil {
+		reply.Status = 500
+		reply.Message = err.Error()
+		return nil
+	}
+	s.Manager.Enqueue(job)
+	reply.Status = 200
+
+	return nil
+}
+
+func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
 	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
 	listener, err := net.Listen("unix", socketPath)
@@ -95,7 +129,7 @@ func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath st
 	return nil
 }
 
-func RunJobRPCServer(ctx context.Context, socketPath string, manager *backup.Manager, storeInstance *store.Store) error {
+func RunJobRPCServer(ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
 	watcher := make(chan struct{}, 1)
 	err := StartJobRPCServer(watcher, ctx, socketPath, manager, storeInstance)
 	if err != nil {

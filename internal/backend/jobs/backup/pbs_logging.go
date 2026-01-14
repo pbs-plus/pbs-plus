@@ -22,7 +22,7 @@ var (
 	errorPathRegex = regexp.MustCompile(`upload failed: error at "([^"]+)"`)
 )
 
-func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.BackupLogger, customErr error) (bool, bool, int, string, error) {
+func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.JobLogger, customErr error) (bool, bool, int, string, error) {
 	logFilePath := utils.GetTaskLogPath(upid)
 	inFile, err := os.Open(logFilePath)
 	if err != nil {

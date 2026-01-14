@@ -16,7 +16,7 @@ import (
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
-type BackupLogger struct {
+type JobLogger struct {
 	*os.File
 	Path      string
 	jobId     string
@@ -26,12 +26,12 @@ type BackupLogger struct {
 	sync.Mutex
 }
 
-var backupLoggers = xsync.NewMapOf[string, *BackupLogger]()
+var jobLoggers = xsync.NewMapOf[string, *JobLogger]()
 
-func CreateBackupLogger(jobId string) *BackupLogger {
-	logger, _ := backupLoggers.Compute(jobId, func(_ *BackupLogger, _ bool) (*BackupLogger, bool) {
+func CreateJobLogger(jobId string) *JobLogger {
+	logger, _ := jobLoggers.Compute(jobId, func(_ *JobLogger, _ bool) (*JobLogger, bool) {
 		tempDir := os.TempDir()
-		fileName := fmt.Sprintf("backup-%s-stdout", jobId)
+		fileName := fmt.Sprintf("job-%s-stdout", jobId)
 		filePath := filepath.Join(tempDir, fileName)
 
 		clientLogFile, err := os.Create(filePath)
@@ -39,7 +39,7 @@ func CreateBackupLogger(jobId string) *BackupLogger {
 			return nil, true
 		}
 
-		return &BackupLogger{
+		return &JobLogger{
 			File:      clientLogFile,
 			Path:      filePath,
 			jobId:     jobId,
@@ -51,10 +51,10 @@ func CreateBackupLogger(jobId string) *BackupLogger {
 	return logger
 }
 
-func GetExistingBackupLogger(jobId string) *BackupLogger {
-	logger, _ := backupLoggers.LoadOrCompute(jobId, func() *BackupLogger {
+func GetExistingJobLogger(jobId string) *JobLogger {
+	logger, _ := jobLoggers.LoadOrCompute(jobId, func() *JobLogger {
 		tempDir := os.TempDir()
-		fileName := fmt.Sprintf("backup-%s-stdout", jobId)
+		fileName := fmt.Sprintf("job-%s-stdout", jobId)
 		filePath := filepath.Join(tempDir, fileName)
 
 		flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
@@ -65,7 +65,7 @@ func GetExistingBackupLogger(jobId string) *BackupLogger {
 			return nil
 		}
 
-		return &BackupLogger{
+		return &JobLogger{
 			File:      clientLogFile,
 			Path:      filePath,
 			jobId:     jobId,
@@ -76,7 +76,7 @@ func GetExistingBackupLogger(jobId string) *BackupLogger {
 	return logger
 }
 
-func (b *BackupLogger) Write(in []byte) (n int, err error) {
+func (b *JobLogger) Write(in []byte) (n int, err error) {
 	b.Lock()
 	defer b.Unlock()
 
@@ -100,17 +100,7 @@ func (b *BackupLogger) Write(in []byte) (n int, err error) {
 		return 0, fmt.Errorf("error scanning input for lines: %w", scanErr)
 	}
 
-	// Only write to the internal buffer if there was actual content processed.
-	// This avoids writing empty strings if `in` was empty or only whitespace
-	// that scanner might skip (though default scanner processes empty lines).
 	if hasContent || (len(in) > 0 && stringBuilder.Len() == 0) {
-		// The second condition (len(in) > 0 && stringBuilder.Len() == 0)
-		// handles cases like `in` being just "\n". Scanner produces one empty line,
-		// which Fprintf formats as "timestamp: \n". So `stringBuilder.Len()` would be > 0.
-		// If `in` is `[]byte{}`, `hasContent` is false, `stringBuilder` is empty. Nothing written.
-		// This logic ensures that if `in` was not empty, we attempt to write *something*
-		// (even if it's just timestamped newlines).
-
 		formattedLogMessage := stringBuilder.String()
 		if len(formattedLogMessage) > 0 { // Ensure we actually have something to write
 			if b.Writer == nil {
@@ -118,7 +108,6 @@ func (b *BackupLogger) Write(in []byte) (n int, err error) {
 			}
 			_, writeErr := b.Writer.WriteString(formattedLogMessage)
 			if writeErr != nil {
-				// Don't attempt to flush if WriteString itself failed.
 				return 0, fmt.Errorf(
 					"error writing formatted message to logger's internal buffer: %w",
 					writeErr,
@@ -127,8 +116,6 @@ func (b *BackupLogger) Write(in []byte) (n int, err error) {
 
 			flushErr := b.Writer.Flush()
 			if flushErr != nil {
-				// Data made it to buffer but not to disk.
-				// Return 0 because the write operation to the final destination failed.
 				return 0, fmt.Errorf(
 					"error flushing logger buffer to file: %w",
 					flushErr,
@@ -136,20 +123,17 @@ func (b *BackupLogger) Write(in []byte) (n int, err error) {
 			}
 		}
 	}
-
-	// If all operations were successful (or if `in` was empty and nothing needed to be written),
-	// we report that we have processed all bytes from the input slice `in`.
 	return bytesConsumedFromInput, nil
 }
 
-func (b *BackupLogger) Flush() error {
+func (b *JobLogger) Flush() error {
 	b.Lock()
 	defer b.Unlock()
 
 	return b.Writer.Flush()
 }
 
-func (b *BackupLogger) Close() error {
+func (b *JobLogger) Close() error {
 	b.Lock()
 	defer b.Unlock()
 
@@ -171,7 +155,7 @@ func (b *BackupLogger) Close() error {
 	}
 
 	// Always try to remove from map and delete file
-	backupLoggers.Delete(b.jobId)
+	jobLoggers.Delete(b.jobId)
 
 	if b.Path != "" {
 		if err := os.RemoveAll(b.Path); err != nil {

@@ -39,6 +39,9 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 To install PBS Plus:
 ### PBS Plus
 - Install the `.deb` package in the release and install it in your Proxmox Backup Server machine.
+- RECOMMENDED: Install the latest `.deb` packages in the release for `pxar-direct-mount` and `pxar-socket-api` and install it in your Proxmox Backup Server machine.
+  - `pxar-direct-mount` is required for mounting snapshots.
+  - `pxar-socket-api` is required for restoring files directly to targets.
 - Edit `/etc/proxmox-backup/pbs-plus/pbs-plus.env` and add the following required environment variables:
   - `PBS_PLUS_HOSTNAME`: server's hostname/FQDN for mTLS certificate
 - Restart the `pbs-plus` service so it reads the env vars and initializes:

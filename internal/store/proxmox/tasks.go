@@ -3,16 +3,19 @@
 package proxmox
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
@@ -45,71 +48,6 @@ func ListTasksJSON(ctx context.Context) ([]Task, error) {
 		)
 	}
 	return tasks, nil
-}
-
-func GetJobTask(
-	ctx context.Context,
-	readyChan chan struct{},
-	job types.Job,
-	target types.Target,
-) (Task, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostnameFile, err := os.ReadFile("/etc/hostname")
-		if err != nil {
-			hostname = "localhost"
-		} else {
-			hostname = strings.TrimSpace(string(hostnameFile))
-		}
-	}
-
-	isAgent := strings.HasPrefix(target.Path, "agent://")
-	backupId := hostname
-	if isAgent {
-		backupId = strings.TrimSpace(strings.Split(target.Name, " - ")[0])
-	}
-	backupId = NormalizeHostname(backupId)
-
-	searchString := fmt.Sprintf(":backup:%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(backupId))
-
-	initialUPIDs := make(map[string]struct{})
-	tasks, err := ListTasksJSON(ctx)
-	if err != nil {
-		return Task{}, err
-	}
-
-	for _, t := range tasks {
-		initialUPIDs[t.UPID] = struct{}{}
-	}
-
-	syslog.L.Info().WithMessage("ready to start backup").Write()
-	close(readyChan)
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return Task{}, ctx.Err()
-
-		case <-ticker.C:
-			tasks, err := ListTasksJSON(ctx)
-			if err != nil {
-				syslog.L.Error(err).Write()
-				continue
-			}
-
-			for _, t := range tasks {
-				if t.WorkerType == "backup" && strings.Contains(t.UPID, searchString) {
-					if _, seen := initialUPIDs[t.UPID]; seen {
-						continue // skip tasks in the initial set
-					}
-					return GetTaskByUPID(t.UPID)
-				}
-			}
-		}
-	}
 }
 
 type TaskCache struct {
@@ -174,4 +112,68 @@ func GetTaskEndTime(task Task) (int64, error) {
 	}
 
 	return -1, fmt.Errorf("GetTaskEndTime: error getting tasks: not found (%s) -> %w", logPath, err)
+}
+
+func IsUPIDRunning(upid string) bool {
+	activePath := filepath.Join(constants.TaskLogsBasePath, "active")
+	cmd := exec.Command("grep", "-F", upid, activePath)
+	output, err := cmd.Output()
+	if err != nil {
+		// If grep exits with a non-zero status, it means the UPID was not found.
+		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
+			return false
+		}
+		syslog.L.Error(err).WithField("upid", upid)
+		return false
+	}
+
+	// If output is not empty, the UPID was found.
+	return strings.TrimSpace(string(output)) != ""
+}
+
+func CleanupPbsPlusActiveTasks() error {
+	filePath := constants.ActiveLogsPath
+	targetNode := "pbsplus"
+
+	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("could not open file: %w", err)
+	}
+	defer f.Close()
+
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("could not acquire lock: %w", err)
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+
+	var filteredLines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Split(line, ":")
+		if len(parts) > 1 && parts[1] == targetNode {
+			continue // Skip this line
+		}
+		filteredLines = append(filteredLines, line)
+	}
+
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
+
+	writer := bufio.NewWriter(f)
+	for _, line := range filteredLines {
+		if _, err := writer.WriteString(line + "\n"); err != nil {
+			return err
+		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+
+	return f.Sync()
 }

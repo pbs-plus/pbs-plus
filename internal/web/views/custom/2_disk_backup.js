@@ -20,6 +20,12 @@ Ext.define("PBS.D2DManagement", {
       iconCls: "fa fa-floppy-o",
     },
     {
+      xtype: "pbsDiskRestoreJobView",
+      title: gettext("Restore Jobs"),
+      itemId: "d2d-restore-jobs",
+      iconCls: "fa fa-download",
+    },
+    {
       xtype: "pbsDiskTokenPanel",
       title: "Agent Bootstrap",
       itemId: "tokens",
@@ -45,4 +51,3 @@ Ext.define("PBS.D2DManagement", {
     },
   ],
 });
-

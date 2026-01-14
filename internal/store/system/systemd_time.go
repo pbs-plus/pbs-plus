@@ -19,21 +19,21 @@ import (
 
 func sanitizeUnitName(id string) (string, error) {
 	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
-		return "", fmt.Errorf("invalid job ID: %s", id)
+		return "", fmt.Errorf("invalid backup ID: %s", id)
 	}
 	return strings.ReplaceAll(id, " ", "-"), nil
 }
 
-func getUnitName(jobID string) (string, error) {
-	sanitized, err := sanitizeUnitName(jobID)
+func getUnitName(backupID string) (string, error) {
+	sanitized, err := sanitizeUnitName(backupID)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("pbs-plus-backup-%s", sanitized), nil
 }
 
-func getRetryUnitName(jobID string, attempt int) (string, error) {
-	sanitized, err := sanitizeUnitName(jobID)
+func getRetryUnitName(backupID string, attempt int) (string, error) {
+	sanitized, err := sanitizeUnitName(backupID)
 	if err != nil {
 		return "", err
 	}
@@ -73,7 +73,7 @@ func stopAllRetries(ctx context.Context, sanitized string) {
 	}
 }
 
-func SetSchedule(ctx context.Context, backup types.Job) error {
+func SetSchedule(ctx context.Context, backup types.Backup) error {
 	unitName, err := createScheduleUnits(ctx, backup)
 
 	conn, err := getConn()
@@ -92,7 +92,7 @@ func SetSchedule(ctx context.Context, backup types.Job) error {
 	return err
 }
 
-func createScheduleUnits(ctx context.Context, backup types.Job) (string, error) {
+func createScheduleUnits(ctx context.Context, backup types.Backup) (string, error) {
 	unitName, err := getUnitName(backup.ID)
 	if err != nil {
 		return "", fmt.Errorf("SetSchedule: %w", err)
@@ -168,13 +168,13 @@ func DeleteSchedule(ctx context.Context, id string) error {
 	return nil
 }
 
-func SetRetrySchedule(ctx context.Context, backup types.Job, extraExclusions []string) error {
+func SetBackupRetrySchedule(ctx context.Context, backup types.Backup, extraExclusions []string) error {
 	sanitized, err := sanitizeUnitName(backup.ID)
 	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: %w", err)
+		return fmt.Errorf("SetBackupRetrySchedule: %w", err)
 	}
 
-	currentAttempt := getCurrentRetryAttempt(ctx, sanitized)
+	currentAttempt := getCurrentBackupRetryAttempt(ctx, sanitized)
 	newAttempt := currentAttempt + 1
 
 	if newAttempt > backup.Retry {
@@ -188,14 +188,14 @@ func SetRetrySchedule(ctx context.Context, backup types.Job, extraExclusions []s
 
 	retryUnitName, err := getRetryUnitName(backup.ID, newAttempt)
 	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: %w", err)
+		return fmt.Errorf("SetBackupRetrySchedule: %w", err)
 	}
 
 	timerName := retryUnitName + ".timer"
 	serviceName := retryUnitName + ".service"
 	delay := fmt.Sprintf("%dm", backup.RetryInterval)
 
-	execArgs := []string{"/usr/bin/pbs-plus", "-job=" + backup.ID, "-retry=" + strconv.Itoa(newAttempt)}
+	execArgs := []string{"/usr/bin/pbs-plus", "-backup-job=" + backup.ID, "-retry=" + strconv.Itoa(newAttempt)}
 	for _, exclusion := range extraExclusions {
 		if !strings.Contains(exclusion, `"`) {
 			execArgs = append(execArgs, "-skip="+exclusion)
@@ -231,7 +231,7 @@ ExecStart=%s
 
 	_, err = conn.StartTransientUnitContext(ctx, timerName, "replace", timerProps, nil)
 	if err != nil {
-		return fmt.Errorf("SetRetrySchedule: error creating timer: %w", err)
+		return fmt.Errorf("SetBackupRetrySchedule: error creating timer: %w", err)
 	}
 
 	fmt.Printf("Scheduled retry %d/%d for backup %s in %s\n",
@@ -239,7 +239,7 @@ ExecStart=%s
 	return nil
 }
 
-func getCurrentRetryAttempt(ctx context.Context, sanitized string) int {
+func getCurrentBackupRetryAttempt(ctx context.Context, sanitized string) int {
 	conn, err := getConn()
 	if err != nil {
 		return 0
@@ -276,12 +276,12 @@ func getCurrentRetryAttempt(ctx context.Context, sanitized string) int {
 	return maxAttempt
 }
 
-func RemoveAllRetrySchedules(ctx context.Context, backup types.Job) {
+func RemoveAllRetrySchedules(ctx context.Context, backup types.Backup) {
 	sanitized, _ := sanitizeUnitName(backup.ID)
 	stopAllRetries(ctx, sanitized)
 }
 
-func GetNextSchedule(ctx context.Context, backup types.Job) (*time.Time, error) {
+func GetNextSchedule(ctx context.Context, backup types.Backup) (*time.Time, error) {
 	conn, err := getConn()
 	if err != nil {
 		return nil, err
@@ -373,7 +373,7 @@ func PurgeAllLegacyUnits(ctx context.Context) error {
 	return nil
 }
 
-func SetBatchSchedules(ctx context.Context, jobs []types.Job) error {
+func SetBatchSchedules(ctx context.Context, jobs []types.Backup) error {
 	unitNames := make([]string, 0, len(jobs))
 
 	for _, job := range jobs {

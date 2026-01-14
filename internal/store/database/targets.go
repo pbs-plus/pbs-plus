@@ -46,12 +46,12 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err err
 		}()
 	}
 
-	if target.Path == "" {
+	if target.Path.String() == "" {
 		return fmt.Errorf("target path empty")
 	}
 
-	_, s3Err := s3url.Parse(target.Path)
-	if !utils.ValidateTargetPath(target.Path) && s3Err != nil {
+	_, s3Err := s3url.Parse(target.Path.String())
+	if !utils.ValidateTargetPath(target.Path.String()) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -112,12 +112,12 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 		}()
 	}
 
-	if target.Path == "" {
+	if target.Path.String() == "" {
 		return fmt.Errorf("target path empty")
 	}
 
-	_, s3Err := s3url.Parse(target.Path)
-	if !utils.ValidateTargetPath(target.Path) && s3Err != nil {
+	_, s3Err := s3url.Parse(target.Path.String())
+	if !utils.ValidateTargetPath(target.Path.String()) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -144,7 +144,7 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 	return nil
 }
 
-func (database *Database) AddS3Secret(tx *sql.Tx, targetName, secret string) (err error) {
+func (database *Database) AddS3Secret(tx *sql.Tx, targetName types.TargetName, secret string) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
@@ -192,7 +192,7 @@ func (database *Database) AddS3Secret(tx *sql.Tx, targetName, secret string) (er
 }
 
 // DeleteTarget removes a target.
-func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
+func (database *Database) DeleteTarget(tx *sql.Tx, name types.TargetName) (err error) {
 	var commitNeeded bool = false
 	if tx == nil {
 		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
@@ -236,7 +236,7 @@ func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
 }
 
 // GetTarget retrieves a target by name along with its associated job count.
-func (database *Database) GetTarget(name string) (types.Target, error) {
+func (database *Database) GetTarget(name types.TargetName) (types.Target, error) {
 	row := database.readDb.QueryRow(`
         SELECT
             t.name, t.path, t.auth, t.token_used, t.drive_type, t.drive_name,
@@ -244,7 +244,7 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
             t.drive_total, t.drive_used, t.drive_free, t.mount_script, t.os,
             COUNT(j.id) as job_count
         FROM targets t
-        LEFT JOIN jobs j ON t.name = j.target
+        LEFT JOIN backups j ON t.name = j.target
         WHERE t.name = ?
         GROUP BY t.name
     `, name) // Grouping by primary key (or unique key) is sufficient
@@ -268,11 +268,6 @@ func (database *Database) GetTarget(name string) (types.Target, error) {
 	}
 
 	target.JobCount = jobCount
-	target.IsAgent = strings.HasPrefix(target.Path, "agent://")
-	_, err = s3url.Parse(target.Path)
-	if err == nil {
-		target.IsS3 = true
-	}
 
 	return target, nil
 }
@@ -308,7 +303,7 @@ func (database *Database) GetUniqueAuthByHostname(hostname string) ([]string, er
 	return authList, nil
 }
 
-func (database *Database) GetS3Secret(name string) (string, error) {
+func (database *Database) GetS3Secret(name types.TargetName) (string, error) {
 	row := database.readDb.QueryRow(`
         SELECT
             t.secret_s3
@@ -345,7 +340,7 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
             t.drive_total, t.drive_used, t.drive_free, t.mount_script, t.os,
             COUNT(j.id) as job_count
         FROM targets t
-        LEFT JOIN jobs j ON t.name = j.target
+        LEFT JOIN backups j ON t.name = j.target
         GROUP BY t.name, t.path, t.auth, t.token_used, t.drive_type, t.drive_name,
                  t.drive_fs, t.drive_total_bytes, t.drive_used_bytes, t.drive_free_bytes,
                  t.drive_total, t.drive_used, t.drive_free, t.mount_script, t.os
@@ -374,11 +369,6 @@ func (database *Database) GetAllTargets() ([]types.Target, error) {
 		}
 
 		target.JobCount = jobCount
-		target.IsAgent = strings.HasPrefix(target.Path, "agent://")
-		_, err = s3url.Parse(target.Path)
-		if err == nil {
-			target.IsS3 = true
-		}
 
 		targets = append(targets, target)
 	}
@@ -418,9 +408,6 @@ func (database *Database) GetAllTargetsByIP(clientIP string) ([]types.Target, er
 			syslog.L.Error(fmt.Errorf("GetAllTargetsByIP: error scanning target row: %w", err)).Write()
 			continue
 		}
-
-		// JobCount is not fetched here, default is 0
-		target.IsAgent = true // We are querying specifically for agent paths
 
 		targets = append(targets, target)
 	}
