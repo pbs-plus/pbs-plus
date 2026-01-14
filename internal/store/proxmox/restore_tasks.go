@@ -142,74 +142,44 @@ func (t *RestoreTask) addActiveTask() error {
 	filePath := constants.ActiveLogsPath
 	target := t.UPID
 
-	lockPath := filepath.Join(filepath.Dir(filePath), "."+filepath.Base(filePath)+".lock")
-	lockFile, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0600)
+	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		return fmt.Errorf("could not create/open lock file: %w", err)
+		return fmt.Errorf("could not open active tasks file: %w", err)
 	}
-	defer lockFile.Close()
+	defer f.Close()
 
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("could not acquire lock: %w", err)
 	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 
-	tempFile, err := os.CreateTemp(filepath.Dir(filePath), "active_add_*.tmp")
-	if err != nil {
+	var lines []string
+	alreadyExists := false
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, target) {
+			alreadyExists = true
+		}
+		lines = append(lines, line)
+	}
+
+	if alreadyExists {
+		return nil // Task already registered
+	}
+
+	lines = append(lines, target)
+
+	if err := f.Truncate(0); err != nil {
 		return err
 	}
-	tempPath := tempFile.Name()
-
-	success := false
-	defer func() {
-		if !success {
-			tempFile.Close()
-			os.Remove(tempPath)
-		}
-	}()
-
-	exists := true
-	f, err := os.Open(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			exists = false
-		} else {
-			return err
-		}
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
 	}
 
-	if exists {
-		originalInfo, _ := os.Stat(filePath)
-		if err := tempFile.Chmod(originalInfo.Mode()); err != nil {
-			return err
-		}
-		if stat, ok := originalInfo.Sys().(*syscall.Stat_t); ok {
-			_ = tempFile.Chown(int(stat.Uid), int(stat.Gid))
-		}
-	} else {
-		_ = tempFile.Chmod(0644)
-	}
-
-	alreadyExists := false
-	writer := bufio.NewWriter(tempFile)
-
-	if exists {
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.Contains(line, target) {
-				alreadyExists = true
-			}
-			if _, err := writer.WriteString(line + "\n"); err != nil {
-				f.Close()
-				return err
-			}
-		}
-		f.Close()
-	}
-
-	if !alreadyExists {
-		if _, err := writer.WriteString(target + "\n"); err != nil {
+	writer := bufio.NewWriter(f)
+	for _, line := range lines {
+		if _, err := writer.WriteString(line + "\n"); err != nil {
 			return err
 		}
 	}
@@ -217,100 +187,61 @@ func (t *RestoreTask) addActiveTask() error {
 	if err := writer.Flush(); err != nil {
 		return err
 	}
-
-	if err := tempFile.Sync(); err != nil {
-		return err
-	}
-	tempFile.Close()
-
-	if err := os.Rename(tempPath, filePath); err != nil {
-		return err
-	}
-
-	success = true
-	return nil
+	return f.Sync()
 }
 
 func (t *RestoreTask) removeActiveTask() error {
 	filePath := constants.ActiveLogsPath
 	target := t.UPID
 
-	lockPath := filepath.Join(filepath.Dir(filePath), "."+filepath.Base(filePath)+".lock")
-	lockFile, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		return fmt.Errorf("could not create/open lock file: %w", err)
-	}
-	defer lockFile.Close()
-
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("could not acquire lock: %w", err)
-	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
-
-	originalInfo, err := os.Stat(filePath)
+	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-
-	f, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
 	defer f.Close()
 
-	tempFile, err := os.CreateTemp(filepath.Dir(filePath), "active_update_*.tmp")
-	if err != nil {
-		return err
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("could not acquire lock: %w", err)
 	}
-	tempPath := tempFile.Name()
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 
-	success := false
-	defer func() {
-		if !success {
-			tempFile.Close()
-			os.Remove(tempPath)
-		}
-	}()
-
-	if err := tempFile.Chmod(originalInfo.Mode()); err != nil {
-		return err
-	}
-
-	if stat, ok := originalInfo.Sys().(*syscall.Stat_t); ok {
-		if err := tempFile.Chown(int(stat.Uid), int(stat.Gid)); err != nil {
-			return err
-		}
-	}
-
+	var lines []string
+	found := false
 	scanner := bufio.NewScanner(f)
-	writer := bufio.NewWriter(tempFile)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.Contains(line, target) {
-			if _, err := writer.WriteString(line + "\n"); err != nil {
-				return err
-			}
+		if strings.Contains(line, target) {
+			found = true
+			continue // Skip the line to be removed
+		}
+		lines = append(lines, line)
+	}
+
+	if !found {
+		return nil // Nothing changed
+	}
+
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
+
+	writer := bufio.NewWriter(f)
+	for _, line := range lines {
+		if _, err := writer.WriteString(line + "\n"); err != nil {
+			return err
 		}
 	}
 
 	if err := writer.Flush(); err != nil {
 		return err
 	}
-
-	if err := tempFile.Sync(); err != nil {
-		return err
-	}
-	tempFile.Close()
-
-	if err := os.Rename(tempPath, filePath); err != nil {
-		return err
-	}
-
-	success = true
-	return nil
+	return f.Sync()
 }
 
 func (t *RestoreTask) CloseOK() {
