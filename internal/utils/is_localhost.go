@@ -6,6 +6,12 @@ import (
 )
 
 func IsLocalhost(r *http.Request) bool {
+	// If these headers are present, the request went through a proxy.
+	// Even if the proxy is local, the original user is NOT.
+	if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "" {
+		return false
+	}
+
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -16,50 +22,6 @@ func IsLocalhost(r *http.Request) bool {
 		return false
 	}
 
-	if ip.IsLoopback() {
-		return true
-	}
-
-	if isLocalInterfaceIP(ip) {
-		return true
-	}
-
-	return false
+	return ip.IsLoopback()
 }
 
-func isLocalInterfaceIP(ip net.IP) bool {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return false
-	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			var ipNet *net.IPNet
-			switch v := a.(type) {
-			case *net.IPNet:
-				ipNet = v
-			case *net.IPAddr:
-				ipNet = &net.IPNet{IP: v.IP, Mask: net.CIDRMask(128, 128)} // exact match
-			default:
-				continue
-			}
-			if ipNet == nil || ipNet.IP == nil {
-				continue
-			}
-			if (ip.To4() != nil && ipNet.IP.To4() == nil) || (ip.To4() == nil && ipNet.IP.To4() != nil) {
-				continue
-			}
-			if ipNet.Contains(ip) {
-				return true
-			}
-		}
-	}
-	return false
-}
