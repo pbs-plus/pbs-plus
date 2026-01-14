@@ -167,9 +167,12 @@ func (b *RestoreOperation) Execute() error {
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", childKey))
 
-	agentRPC, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(childKey)
-	if !exists {
-		return errors.New("child destination target is unreachable")
+	pipeCtx, pipeCtxCancel := context.WithTimeout(b.ctx, time.Second*10)
+	defer pipeCtxCancel()
+
+	agentRPC, err := b.storeInstance.ARPCAgentsManager.WaitStreamPipe(pipeCtx, childKey)
+	if err != nil {
+		return err
 	}
 
 	socketPath := filepath.Join(constants.RestoreSocketPath, strings.ReplaceAll(childKey, "|", "-")+".sock")

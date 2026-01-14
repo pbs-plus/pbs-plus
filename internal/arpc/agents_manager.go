@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -84,6 +85,26 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 
 func (sm *AgentsManager) GetStreamPipe(clientID string) (*StreamPipe, bool) {
 	return sm.sessions.Get(clientID)
+}
+
+func (sm *AgentsManager) WaitStreamPipe(ctx context.Context, clientID string) (*StreamPipe, error) {
+	if pipe, ok := sm.sessions.Get(clientID); ok {
+		return pipe, nil
+	}
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if pipe, ok := sm.sessions.Get(clientID); ok {
+				return pipe, nil
+			}
+		}
+	}
 }
 
 func (sm *AgentsManager) unregisterStreamPipe(clientID string) {
