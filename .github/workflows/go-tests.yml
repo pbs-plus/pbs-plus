@@ -1,0 +1,32 @@
+name: Go tests workflow
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        required: true
+        type: string
+
+jobs:
+  go-tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+      - run: go mod download
+      - name: Run Linux tests
+        shell: bash
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -v -race ./... -count=1 -timeout 1m
+      - name: Run Windows tests
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          go test -v -race ./internal/agent/agentfs/... -tags=windows -count=1 -timeout 3m
+
