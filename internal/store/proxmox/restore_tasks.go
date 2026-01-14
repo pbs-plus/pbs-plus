@@ -57,21 +57,15 @@ func GetRestoreTask(
 		return nil, err
 	}
 
-	active, err := os.OpenFile(constants.ActiveLogsPath, os.O_APPEND|os.O_WRONLY, 0664)
-	if err != nil {
-		return nil, err
-	}
-	defer active.Close()
-
-	if _, err := active.WriteString(upid + "\n"); err != nil {
-		return nil, err
-	}
-
-	return &RestoreTask{
+	rTask := &RestoreTask{
 		Task:    task,
 		file:    file,
 		restore: job,
-	}, nil
+	}
+
+	rTask.addActiveTask()
+
+	return rTask, nil
 }
 
 func (t *RestoreTask) WriteString(data string) {
@@ -100,6 +94,99 @@ func (t *RestoreTask) close() {
 	t.removeActiveTask()
 
 	t.closed.Store(true)
+}
+
+func (t *RestoreTask) addActiveTask() error {
+	filePath := constants.ActiveLogsPath
+	target := t.UPID
+
+	lockPath := filepath.Join(filepath.Dir(filePath), "."+filepath.Base(filePath)+".lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return fmt.Errorf("could not create/open lock file: %w", err)
+	}
+	defer lockFile.Close()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("could not acquire lock: %w", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+
+	tempFile, err := os.CreateTemp(filepath.Dir(filePath), "active_add_*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+
+	success := false
+	defer func() {
+		if !success {
+			tempFile.Close()
+			os.Remove(tempPath)
+		}
+	}()
+
+	exists := true
+	f, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			exists = false
+		} else {
+			return err
+		}
+	}
+
+	if exists {
+		originalInfo, _ := os.Stat(filePath)
+		if err := tempFile.Chmod(originalInfo.Mode()); err != nil {
+			return err
+		}
+		if stat, ok := originalInfo.Sys().(*syscall.Stat_t); ok {
+			_ = tempFile.Chown(int(stat.Uid), int(stat.Gid))
+		}
+	} else {
+		_ = tempFile.Chmod(0644)
+	}
+
+	alreadyExists := false
+	writer := bufio.NewWriter(tempFile)
+
+	if exists {
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.Contains(line, target) {
+				alreadyExists = true
+			}
+			if _, err := writer.WriteString(line + "\n"); err != nil {
+				f.Close()
+				return err
+			}
+		}
+		f.Close()
+	}
+
+	if !alreadyExists {
+		if _, err := writer.WriteString(target + "\n"); err != nil {
+			return err
+		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+
+	if err := tempFile.Sync(); err != nil {
+		return err
+	}
+	tempFile.Close()
+
+	if err := os.Rename(tempPath, filePath); err != nil {
+		return err
+	}
+
+	success = true
+	return nil
 }
 
 func (t *RestoreTask) removeActiveTask() error {
