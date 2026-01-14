@@ -44,6 +44,9 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
       "pbsD2DSnapshotSelector[name=snapshot]": {
         change: "snapshotChange",
       },
+      "pbsD2DTargetSelector[name=dest-target]": {
+        change: "targetChange",
+      },
     },
 
     storeChange: function (field, value) {
@@ -81,6 +84,14 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
       let pathSel = me.lookup("pathSelector");
       if (pathSel) {
         pathSel.setSnapshot(value);
+      }
+    },
+
+    targetChange: function (field, value) {
+      let me = this;
+      let pathSel = me.lookup("pathSelectorDestination");
+      if (pathSel) {
+        pathSel.setTarget(value);
       }
     },
   },
@@ -162,11 +173,12 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
             xtype: "pbsD2DTargetSelector",
             fieldLabel: "Target restore destination",
             name: "dest-target",
+            reference: "dest-target",
           },
           {
-            xtype: "proxmoxtextfield",
+            xtype: "pbsD2DTargetPathSelector",
             fieldLabel: gettext("Path to destination"),
-            emptyText: gettext("/"),
+            reference: "pathSelectorDestination",
             name: "dest-path",
           },
         ],

@@ -54,6 +54,25 @@ type (
 		Extras    string `cbor:"extras,omitempty"`
 	}
 
+	FileTreeReq struct {
+		HostPath string `cbor:"host_path"`
+		SubPath  string `cbor:"subpath"`
+		Extras   string `cbor:"extras,omitempty"`
+	}
+
+	FileTreeEntry struct {
+		Filepath string `json:"filepath"`
+		Leaf     bool   `json:"leaf"`
+		Text     string `json:"text"`
+		Type     string `json:"type"`
+		Mtime    int64  `json:"mtime,omitempty"`
+		Size     int64  `json:"size,omitempty"`
+	}
+
+	FileTreeResp struct {
+		Data []FileTreeEntry `json:"data"`
+	}
+
 	LseekReq struct {
 		HandleID FileHandleId `cbor:"handle_id"`
 		Offset   int64        `cbor:"offset"`
