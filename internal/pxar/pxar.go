@@ -214,8 +214,13 @@ func runSocket(socketPath, pbsStore, mpxarPath, ppxarPath, keyFile string) (*exe
 }
 
 func (c *PxarReader) Close() error {
-	_ = c.conn.Close()
-	return c.cmd.Cancel()
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
+	if c.cmd != nil {
+		c.cmd.Cancel()
+	}
+	return nil
 }
 
 func (c *PxarReader) sendRequest(reqVariant string, reqData any) (Response, error) {
