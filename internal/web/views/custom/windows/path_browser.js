@@ -3,6 +3,7 @@ Ext.define("PBS.window.D2DPathSelector", {
   alias: "widget.pbsD2DPathSelector",
 
   title: gettext("Select Path"),
+  isFromRoot: true,
 
   controller: {
     xclass: "Ext.app.ViewController",
@@ -83,8 +84,10 @@ Ext.define("PBS.window.D2DPathSelector", {
         let data = selection[0].data;
         try {
           let path = atob(data.filepath);
-          if (!path.startsWith("/")) {
-            path = "/" + path;
+          if (me.isFromRoot) {
+            if (!path.startsWith("/")) {
+              path = "/" + path;
+            }
           }
           me.getView().fireEvent("select", path);
           me.getView().close();
