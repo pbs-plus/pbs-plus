@@ -34,8 +34,8 @@ func D2DRestoreFileTree(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		subPath := ""
-		if r.PathValue("filepath") != "" {
-			subPath = utils.DecodePath(r.PathValue("filepath"))
+		if r.FormValue("filepath") != "" {
+			subPath = utils.DecodePath(r.FormValue("filepath"))
 		}
 
 		if !target.Path.IsAgent() {
