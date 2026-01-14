@@ -27,6 +27,13 @@ Ext.define("PBS.window.D2DPathSelector", {
       proxy.setUrl(view.listURL);
       proxy.setTimeout(60 * 1000);
       proxy.setExtraParams(view.extraParams);
+      proxy.setWithCredentials(true);
+
+      proxy.setHeaders(
+        Ext.apply(proxy.getHeaders() || {}, {
+          Accept: "application/json",
+        }),
+      );
 
       tree.mon(store, "beforeload", () => {
         Proxmox.Utils.setErrorMask(tree, true);
