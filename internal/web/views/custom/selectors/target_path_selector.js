@@ -37,6 +37,7 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
         Ext.create("PBS.window.D2DPathSelector", {
           listURL: `${pbsPlusBaseUrl}/api2/json/d2d/filetree/${encodeURIComponent(encodePathValue(me.target))}`,
           prependSlash: false,
+          onlyDirs: true,
           listeners: {
             select: function (path) {
               me.down("proxmoxtextfield[reference=destPathField]").setValue(

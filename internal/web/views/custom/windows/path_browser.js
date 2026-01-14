@@ -6,6 +6,7 @@ Ext.define("PBS.window.D2DPathSelector", {
 
   config: {
     prependSlash: true,
+    onlyDirs: false,
   },
 
   controller: {
@@ -74,9 +75,20 @@ Ext.define("PBS.window.D2DPathSelector", {
 
     fileChanged: function () {
       let me = this;
+      let view = me.getView();
       let tree = me.lookup("tree");
       let selection = tree.getSelection();
-      me.lookup("selectBtn").setDisabled(!selection || selection.length < 1);
+
+      let canSelect = selection && selection.length > 0;
+
+      if (canSelect && view.getOnlyDirs()) {
+        let rec = selection[0];
+        if (rec.get("leaf") === true) {
+          canSelect = false;
+        }
+      }
+
+      me.lookup("selectBtn").setDisabled(!canSelect);
     },
 
     onSelect: function () {
@@ -86,7 +98,13 @@ Ext.define("PBS.window.D2DPathSelector", {
       let selection = tree.getSelection();
 
       if (selection && selection.length > 0) {
-        let data = selection[0].data;
+        let rec = selection[0];
+
+        if (view.getOnlyDirs() && rec.get("leaf") === true) {
+          return;
+        }
+
+        let data = rec.data;
         try {
           let path = atob(data.filepath);
 
@@ -105,6 +123,11 @@ Ext.define("PBS.window.D2DPathSelector", {
     control: {
       treepanel: {
         selectionchange: "fileChanged",
+        itemdblclick: function (v, rec) {
+          if (!this.getView().getOnlyDirs() || rec.get("leaf") !== true) {
+            this.onSelect();
+          }
+        },
       },
     },
   },
