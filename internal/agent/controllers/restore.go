@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,14 +24,19 @@ func RestoreFileTreeHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.R
 		return arpc.Response{}, err
 	}
 
-	safeRequestedPath := filepath.Clean(reqData.SubPath)
-	if safeRequestedPath == "/" {
+	rawPath := filepath.Clean(reqData.SubPath)
+	rawPath = strings.TrimPrefix(rawPath, filepath.VolumeName(rawPath))
+	safeRequestedPath := strings.TrimLeft(rawPath, string(filepath.Separator))
+	if safeRequestedPath == "." {
 		safeRequestedPath = ""
 	}
 
 	localFullPath := filepath.Join(reqData.HostPath, safeRequestedPath)
 
-	syslog.L.Info().WithMessage("received filetree request").WithField("path", localFullPath).Write()
+	syslog.L.Info().
+		WithMessage("received filetree request").
+		WithField("path", localFullPath).
+		Write()
 
 	entries, err := os.ReadDir(localFullPath)
 	if err != nil {
@@ -45,7 +51,6 @@ func RestoreFileTreeHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.R
 		}
 
 		virtualItemPath := filepath.Join(safeRequestedPath, entry.Name())
-
 		encodedPath := utils.EncodePath(virtualItemPath)
 
 		item := types.FileTreeEntry{
