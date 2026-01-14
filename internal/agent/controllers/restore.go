@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -52,7 +51,7 @@ func RestoreFileTreeHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.R
 			continue
 		}
 
-		virtualItemPath := path.Join(filepath.ToSlash(safeRequestedPath), entry.Name())
+		virtualItemPath := filepath.Join(safeRequestedPath, entry.Name())
 		encodedPath := utils.EncodePath(virtualItemPath)
 
 		item := types.FileTreeEntry{
