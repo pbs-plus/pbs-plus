@@ -101,7 +101,7 @@ Ext.define("PBS.config.DiskRestoreJobView", {
       Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
         if (btn !== "yes") return;
 
-        const plusIds = plusJobs
+        const plusIds = jobs
           .map((j) => "job=" + encodeURIComponent(encodePathValue(j.id)))
           .join("&");
         PBS.PlusUtils.API2Request({
