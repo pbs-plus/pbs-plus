@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	ErrJobMutexCreation = errors.New("failed to create job mutex")
+	ErrOneInstance = errors.New("a job is still running; only one instance allowed")
 
 	ErrStdoutTempCreation = errors.New("failed to create stdout temp file")
 
@@ -51,8 +51,8 @@ var (
 	ErrTaskDetectionTimedOut = errors.New("task detection timed out")
 	ErrMountEmpty            = errors.New("target directory is empty, skipping backup")
 
-	ErrJobStatusUpdateFailed = errors.New("failed to update job status")
-	ErrCanceled              = errors.New("operation canceled")
+	ErrBackupStatusUpdateFailed = errors.New("failed to update job status")
+	ErrCanceled                 = errors.New("operation canceled")
 )
 
 type BackupOperation struct {
@@ -65,9 +65,9 @@ type BackupOperation struct {
 	waitGroup *sync.WaitGroup
 	err       error
 
-	logger *syslog.BackupLogger
+	logger *syslog.JobLogger
 
-	job             types.Job
+	job             types.Backup
 	storeInstance   *store.Store
 	skipCheck       bool
 	web             bool
@@ -86,7 +86,7 @@ type BackupOperation struct {
 var _ jobs.Operation = (*BackupOperation)(nil)
 
 func NewBackupOperation(
-	job types.Job,
+	job types.Backup,
 	storeInstance *store.Store,
 	skipCheck bool,
 	web bool,
@@ -97,7 +97,7 @@ func NewBackupOperation(
 		storeInstance:    storeInstance,
 		skipCheck:        skipCheck,
 		web:              web,
-		logger:           syslog.CreateBackupLogger(job.ID),
+		logger:           syslog.CreateJobLogger(job.ID),
 		extraExclusions:  extraExclusions,
 		waitGroup:        &sync.WaitGroup{},
 		errorMonitorDone: make(chan struct{}, 1),
@@ -118,11 +118,11 @@ func (b *BackupOperation) Context() context.Context {
 }
 
 func (b *BackupOperation) PreExecute() error {
-	queueTask, err := proxmox.GenerateQueuedTask(b.job, b.web)
+	queueTask, err := proxmox.GenerateBackupQueuedTask(b.job, b.web)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
 	} else {
-		if err := updateJobStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
+		if err := updateBackupStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
 			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
 		}
 	}
@@ -167,7 +167,7 @@ func (b *BackupOperation) Execute() error {
 	b.Task = task
 	b.mu.Unlock()
 
-	if err := updateJobStatus(false, 0, b.job, task, b.storeInstance); err != nil {
+	if err := updateBackupStatus(false, 0, b.job, task, b.storeInstance); err != nil {
 		if currOwner != "" {
 			_ = SetDatastoreOwner(b.job, b.storeInstance, currOwner)
 		}
@@ -211,7 +211,7 @@ func (b *BackupOperation) processPBSLogs(logErr error) (bool, int) {
 	currentJob := b.job
 	b.mu.RUnlock()
 
-	if err := updateJobStatus(succeeded, warningsNum, currentJob, b.Task, b.storeInstance); err != nil {
+	if err := updateBackupStatus(succeeded, warningsNum, currentJob, b.Task, b.storeInstance); err != nil {
 		syslog.L.Error(err).WithMessage("failed to update job status - post cmd.Wait").Write()
 	}
 
@@ -223,7 +223,7 @@ func (b *BackupOperation) processPBSLogs(logErr error) (bool, int) {
 		b.mu.RLock()
 		excl := b.extraExclusions
 		b.mu.RUnlock()
-		_ = system.SetRetrySchedule(b.Context(), currentJob, excl)
+		_ = system.SetBackupRetrySchedule(b.Context(), currentJob, excl)
 	}
 
 	return succeeded, warningsNum
@@ -246,22 +246,22 @@ func (b *BackupOperation) OnError(err error) {
 		return
 	}
 
-	task, terr := proxmox.GenerateTaskErrorFile(
+	task, terr := proxmox.GenerateBackupTaskErrorFile(
 		b.job,
 		err,
 		[]string{
 			"Error handling from a scheduled job run request",
-			"Job ID: " + b.job.ID,
+			"Backup ID: " + b.job.ID,
 			"Source Mode: " + b.job.SourceMode,
 		},
 	)
 	if terr != nil {
 		syslog.L.Error(terr).WithField("jobId", b.job.ID).Write()
 	} else {
-		b.updateJobWithTask(task)
+		b.updateBackupWithTask(task)
 	}
 
-	if rerr := system.SetRetrySchedule(b.ctx, b.job, b.extraExclusions); rerr != nil {
+	if rerr := system.SetBackupRetrySchedule(b.ctx, b.job, b.extraExclusions); rerr != nil {
 		syslog.L.Error(rerr).WithField("jobId", b.job.ID).Write()
 	}
 }
@@ -333,12 +333,13 @@ func (b *BackupOperation) runPreScript() error {
 
 	if newNs, ok := modEnvVars["PBS_PLUS__NAMESPACE"]; ok {
 		b.mu.Lock()
-		latestJob, err := b.storeInstance.Database.GetJob(b.job.ID)
+		latestBackup, err := b.storeInstance.Database.GetBackup(b.job.ID)
 		if err == nil {
-			b.job = latestJob
+			b.job = latestBackup
 		}
 		b.job.Namespace = newNs
-		_ = b.storeInstance.Database.UpdateJob(nil, b.job)
+
+		_ = b.storeInstance.Database.UpdateBackup(nil, b.job)
 		b.mu.Unlock()
 	}
 
@@ -368,14 +369,13 @@ func (b *BackupOperation) getAndValidateTarget() (types.Target, error) {
 		return target, nil
 	}
 
-	if target.IsAgent {
-		targetSplit := strings.Split(target.Name, " - ")
-		_, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(targetSplit[0])
+	if target.Path.IsAgent() {
+		_, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(targetID.GetHostname())
 		if !exists {
 			return target, fmt.Errorf("%w: %s", ErrTargetUnreachable, targetID)
 		}
-	} else if !target.IsS3 {
-		if _, err := os.Stat(target.Path); err != nil {
+	} else if !target.Path.IsS3() {
+		if _, err := os.Stat(target.Path.String()); err != nil {
 			return target, fmt.Errorf("%w: %s (%v)", ErrTargetUnreachable, targetID, err)
 		}
 	}
@@ -421,7 +421,7 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 
 	b.queueTask.UpdateDescription("mounting target to server")
 
-	srcPath := target.Path
+	srcPath := target.Path.String()
 	var agentMount *mount.AgentMount
 	var s3Mount *mount.S3Mount
 	var err error
@@ -430,7 +430,7 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 	job := b.job
 	b.mu.RUnlock()
 
-	if target.IsAgent {
+	if target.Path.IsAgent() {
 		if job.SourceMode == "snapshot" {
 			b.queueTask.UpdateDescription("waiting for agent to finish snapshot")
 		}
@@ -453,8 +453,8 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 		}
 
 		b.mu.Lock()
-		if latestJob, err := b.storeInstance.Database.GetJob(b.job.ID); err == nil {
-			b.job = latestJob
+		if latestBackup, err := b.storeInstance.Database.GetBackup(b.job.ID); err == nil {
+			b.job = latestBackup
 		}
 		job = b.job
 		b.mu.Unlock()
@@ -462,7 +462,7 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 		if agentMount.IsEmpty() {
 			return "", agentMount, nil, ErrMountEmpty
 		}
-	} else if target.IsS3 {
+	} else if target.Path.IsS3() {
 		timedCtx, timedCtxCancel := context.WithTimeout(b.Context(), 5*time.Minute)
 		defer timedCtxCancel()
 
@@ -480,8 +480,8 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 		}
 
 		b.mu.Lock()
-		if latestJob, err := b.storeInstance.Database.GetJob(b.job.ID); err == nil {
-			b.job = latestJob
+		if latestBackup, err := b.storeInstance.Database.GetBackup(b.job.ID); err == nil {
+			b.job = latestBackup
 		}
 		job = b.job
 		b.mu.Unlock()
@@ -491,7 +491,7 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 		}
 	}
 
-	if !target.IsS3 {
+	if !target.Path.IsS3() {
 		srcPath = filepath.Join(srcPath, job.Subpath)
 	}
 
@@ -512,7 +512,7 @@ func (b *BackupOperation) startBackup(srcPath string, target types.Target) (*exe
 	extraExclusions := b.extraExclusions
 	b.mu.RUnlock()
 
-	cmd, err := prepareBackupCommand(b.Context(), job, b.storeInstance, srcPath, target.IsAgent, extraExclusions)
+	cmd, err := prepareBackupCommand(b.Context(), job, b.storeInstance, srcPath, target.Path.IsAgent(), extraExclusions)
 	if err != nil {
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
 	}
@@ -579,10 +579,12 @@ func (b *BackupOperation) startTaskMonitoring(target types.Target) (chan proxmox
 	b.mu.RUnlock()
 
 	go func() {
+		defer syslog.L.Info().WithMessage("monitor goroutine closing").Write()
+
 		timedCtx, timedCancel := context.WithTimeout(b.Context(), 20*time.Second)
 		defer timedCancel()
 
-		task, err := proxmox.GetJobTask(timedCtx, readyChan, job, target)
+		task, err := proxmox.GetBackupTask(timedCtx, readyChan, job, target)
 		if err != nil {
 			errChan <- err
 			return
@@ -680,7 +682,7 @@ func (b *BackupOperation) createOK(err error) {
 	job := b.job
 	b.mu.RUnlock()
 
-	task, terr := proxmox.GenerateTaskOKFile(
+	task, terr := proxmox.GenerateBackupTaskOKFile(
 		job,
 		[]string{
 			"Done handling from a job run request",
@@ -695,7 +697,7 @@ func (b *BackupOperation) createOK(err error) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	latest, gerr := b.storeInstance.Database.GetJob(b.job.ID)
+	latest, gerr := b.storeInstance.Database.GetBackup(b.job.ID)
 	if gerr != nil {
 		latest = b.job
 	}
@@ -706,13 +708,13 @@ func (b *BackupOperation) createOK(err error) {
 	latest.LastSuccessfulUpid = task.UPID
 
 	b.job = latest
-	_ = b.storeInstance.Database.UpdateJob(nil, latest)
+	_ = b.storeInstance.Database.UpdateBackup(nil, latest)
 }
 
-func (b *BackupOperation) updateJobWithTask(task proxmox.Task) {
+func (b *BackupOperation) updateBackupWithTask(task proxmox.Task) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	latest, gerr := b.storeInstance.Database.GetJob(b.job.ID)
+	latest, gerr := b.storeInstance.Database.GetBackup(b.job.ID)
 	if gerr != nil {
 		latest = b.job
 	}
@@ -721,5 +723,10 @@ func (b *BackupOperation) updateJobWithTask(task proxmox.Task) {
 	latest.LastRunEndtime = task.EndTime
 
 	b.job = latest
-	_ = b.storeInstance.Database.UpdateJob(nil, latest)
+	if uerr := b.storeInstance.Database.UpdateBackup(nil, latest); uerr != nil {
+		syslog.L.Error(uerr).
+			WithField("jobId", latest.ID).
+			WithField("upid", task.UPID).
+			Write()
+	}
 }

@@ -13,7 +13,7 @@ runs:
       shell: bash
       run: |
         docker exec pbs-plus-test proxmox-backup-manager datastore create test /mnt/test
-        curl -k -X POST "https://localhost:8017/api2/extjs/config/disk-backup-job" \
+        curl -k -X POST "https://localhost:8017/api2/extjs/config/disk-backup" \
           -H "Content-Type: application/x-www-form-urlencoded" \
           -d "id=test-backup-job" \
           -d "target=test-host - Root" \
@@ -45,10 +45,10 @@ runs:
       shell: bash
       run: |
         PLUS_TOKEN=$(curl -k -s "https://localhost:8017/api2/json/d2d/token" -H "Accept: application/json" | jq -r '.data[0].token')
-        
+
         if [ -z "$PLUS_TOKEN" ] || [ "$PLUS_TOKEN" = "null" ]; then
           echo "PLUS_TOKEN is empty or null; failing the job."
           exit 1
         fi
-        
+
         echo "token=${PLUS_TOKEN}" >> "$GITHUB_OUTPUT"

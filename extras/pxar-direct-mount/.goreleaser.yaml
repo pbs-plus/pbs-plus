@@ -1,0 +1,66 @@
+version: 2
+
+project_name: pxar-direct-mount
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: pxar-direct-mount
+    builder: rust
+    tool: cargo
+    command: build
+    binary: pxar-direct-mount
+    targets:
+      - x86_64-unknown-linux-gnu
+    dir: extras/pxar-direct-mount
+    flags:
+      - --release
+
+archives:
+  - id: pxar-direct-mount
+    ids:
+      - pxar-direct-mount
+    name_template: "pxar-direct-mount-pbsplus{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
+checksum:
+  name_template: "{{ .ArtifactName }}.{{ .Algorithm }}"
+  algorithm: md5
+  split: true
+
+nfpms:
+  - id: pxar-direct-mount-deb
+    ids:
+      - pxar-direct-mount
+    package_name: "{{ .ProjectName }}"
+    vendor: Son Roy Almerol
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    maintainer: Son Roy Almerol <github@snry.me>
+    description: >
+      pxar-direct-mount is a proxmox-backup-client alternative without needing Proxmox Backup Server running.
+    license: MIT
+    formats:
+      - deb
+    overrides:
+      deb:
+        file_name_template: "{{ .PackageName }}-pbsplus{{ .Version }}-{{ .Arch }}"
+
+release:
+  github:
+    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+    name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
+  name_template: "PBS Plus {{ .Version }}"
+  draft: false
+  prerelease: auto
+  replace_existing_artifacts: true
+  mode: replace
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

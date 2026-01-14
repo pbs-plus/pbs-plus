@@ -56,7 +56,7 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 	_, err = tx.Exec(`
         INSERT INTO exclusions (job_id, path, comment)
         VALUES (?, ?, ?)
-    `, exclusion.JobID, exclusion.Path, exclusion.Comment)
+    `, exclusion.JobId, exclusion.Path, exclusion.Comment)
 	if err != nil {
 		// Consider checking for specific constraint errors if needed
 		return fmt.Errorf("CreateExclusion: error inserting exclusion: %w", err)
@@ -66,15 +66,15 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 	return nil
 }
 
-// GetAllJobExclusions returns all exclusions associated with a job.
+// GetAllBackupExclusions returns all exclusions associated with a backup.
 // Assumes an index exists on exclusions.job_id.
-func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, error) {
+func (database *Database) GetAllBackupExclusions(backupId string) ([]types.Exclusion, error) {
 	rows, err := database.readDb.Query(`
         SELECT job_id, path, comment FROM exclusions
         WHERE job_id = ?
-    `, jobId)
+    `, backupId)
 	if err != nil {
-		return nil, fmt.Errorf("GetAllJobExclusions: error querying exclusions: %w", err)
+		return nil, fmt.Errorf("GetAllBackupExclusions: error querying exclusions: %w", err)
 	}
 	defer rows.Close()
 
@@ -85,11 +85,11 @@ func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, 
 
 	for rows.Next() {
 		var excl types.Exclusion
-		if err := rows.Scan(&excl.JobID, &excl.Path, &excl.Comment); err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllJobExclusions: error scanning row: %w", err)).Write()
+		if err := rows.Scan(&excl.JobId, &excl.Path, &excl.Comment); err != nil {
+			syslog.L.Error(fmt.Errorf("GetAllBackupExclusions: error scanning row: %w", err)).Write()
 			continue
 		}
-		// Deduplicate based on path within this job's exclusions
+		// Deduplicate based on path within this backup's exclusions
 		if seenPaths[excl.Path] {
 			continue
 		}
@@ -98,13 +98,13 @@ func (database *Database) GetAllJobExclusions(jobId string) ([]types.Exclusion, 
 	}
 
 	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllJobExclusions: error iterating exclusion rows: %w", err)
+		return nil, fmt.Errorf("GetAllBackupExclusions: error iterating exclusion rows: %w", err)
 	}
 
 	return exclusions, nil
 }
 
-// GetAllGlobalExclusions returns all exclusions that are not tied to any job.
+// GetAllGlobalExclusions returns all exclusions that are not tied to any backup.
 // Assumes an index exists on exclusions.job_id or handles NULL checks efficiently.
 func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
 	rows, err := database.readDb.Query(`
@@ -124,12 +124,12 @@ func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
 	for rows.Next() {
 		var excl types.Exclusion
 		// Scan into NullString for job_id if it can truly be NULL
-		var jobID sql.NullString
-		if err := rows.Scan(&jobID, &excl.Path, &excl.Comment); err != nil {
+		var backupID sql.NullString
+		if err := rows.Scan(&backupID, &excl.Path, &excl.Comment); err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllGlobalExclusions: error scanning row: %w", err)).Write()
 			continue
 		}
-		excl.JobID = jobID.String // Assign empty string if NULL
+		excl.JobId = backupID.String // Assign empty string if NULL
 
 		// Deduplicate based on path within global exclusions
 		if seenPaths[excl.Path] {
@@ -154,8 +154,8 @@ func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
     `, path) // Added LIMIT 1 as path is expected to be unique for this operation
 
 	var excl types.Exclusion
-	var jobID sql.NullString // Handle potentially NULL job_id
-	err := row.Scan(&jobID, &excl.Path, &excl.Comment)
+	var backupID sql.NullString // Handle potentially NULL job_id
+	err := row.Scan(&backupID, &excl.Path, &excl.Comment)
 	if err != nil {
 		// Return sql.ErrNoRows directly if not found
 		if errors.Is(err, sql.ErrNoRows) {
@@ -163,7 +163,7 @@ func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
 		}
 		return nil, fmt.Errorf("GetExclusion: error fetching exclusion for path %s: %w", path, err)
 	}
-	excl.JobID = jobID.String // Assign empty string if NULL
+	excl.JobId = backupID.String // Assign empty string if NULL
 	return &excl, nil
 }
 
@@ -207,16 +207,16 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 	}
 
 	// Handle NULL job_id correctly
-	var jobIDArg any
-	if exclusion.JobID == "" {
-		jobIDArg = nil
+	var backupIDArg any
+	if exclusion.JobId == "" {
+		backupIDArg = nil
 	} else {
-		jobIDArg = exclusion.JobID
+		backupIDArg = exclusion.JobId
 	}
 
 	res, err := tx.Exec(`
         UPDATE exclusions SET job_id = ?, comment = ? WHERE path = ?
-    `, jobIDArg, exclusion.Comment, exclusion.Path)
+    `, backupIDArg, exclusion.Comment, exclusion.Path)
 	if err != nil {
 		return fmt.Errorf("UpdateExclusion: error updating exclusion: %w", err)
 	}

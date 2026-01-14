@@ -20,9 +20,9 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/helpers"
-	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
+	backend "github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
+	backuprpc "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -70,10 +70,12 @@ func main() {
 	defer mainCancel()
 
 	var extExclusions arrayFlags
-	var jobsRun arrayFlags
-	flag.Var(&jobsRun, "job", "Job ID/s to execute")
+	var backupsRun arrayFlags
+	var restoresRun arrayFlags
+	flag.Var(&backupsRun, "backup-job", "Backup ID/s to execute")
+	flag.Var(&restoresRun, "restore-job", "Restore ID/s to execute")
 	retryAttempts := flag.String("retry", "", "Current attempt number")
-	webRun := flag.Bool("web", false, "Job executed from Web UI")
+	webRun := flag.Bool("web", false, "Backup executed from Web UI")
 	stop := flag.Bool("stop", false, "Stop Job ID instead of executing")
 	flag.Var(&extExclusions, "skip", "Extra exclusions")
 	flag.Parse()
@@ -127,6 +129,7 @@ func main() {
 	if err := syslog.L.SetServiceLogger(); err != nil {
 		syslog.L.Error(err).Write()
 	}
+	_ = proxmox.GetToken()
 
 	storeInstance, err := store.Initialize(mainCtx, nil)
 	if err != nil {
@@ -134,50 +137,82 @@ func main() {
 		return
 	}
 
-	// Handle single job execution
-	if len(jobsRun) > 0 {
-		for _, jobRun := range jobsRun {
-			jobTask, err := storeInstance.Database.GetJob(jobRun)
+	// Handle backup execution
+	if len(backupsRun) > 0 || len(restoresRun) > 0 {
+		conn, err := net.DialTimeout("unix", constants.JobMutateSocketPath, 5*time.Minute)
+		if err != nil {
+			syslog.L.Error(err).
+				WithField("backups", backupsRun).
+				WithField("restores", restoresRun).
+				Write()
+			return
+		}
+		rpcClient := rpc.NewClient(conn)
+		defer rpcClient.Close()
+
+		for _, backupRun := range backupsRun {
+			backupTask, err := storeInstance.Database.GetBackup(backupRun)
 			if err != nil {
-				syslog.L.Error(err).WithField("jobId", jobRun).Write()
-				return
+				syslog.L.Error(err).WithField("backupId", backupRun).Write()
+				continue
 			}
 
 			if retryAttempts == nil || *retryAttempts == "" {
-				system.RemoveAllRetrySchedules(context.Background(), jobTask)
+				system.RemoveAllRetrySchedules(context.Background(), backupTask)
 			}
 
 			arrExtExc := []string(extExclusions)
 
-			args := &jobrpc.QueueArgs{
-				Job:             jobTask,
+			args := &backuprpc.BackupQueueArgs{
+				Job:             backupTask,
 				SkipCheck:       true,
 				Stop:            *stop,
 				Web:             *webRun,
 				ExtraExclusions: arrExtExc,
 			}
-			var reply jobrpc.QueueReply
+			var reply backuprpc.QueueReply
 
-			conn, err := net.DialTimeout("unix", constants.JobMutateSocketPath, 5*time.Minute)
+			err = rpcClient.Call("JobRPCService.BackupQueue", args, &reply)
 			if err != nil {
-				syslog.L.Error(err).WithField("jobId", jobRun).Write()
-				return
-			} else {
-				rpcClient := rpc.NewClient(conn)
-				err = rpcClient.Call("JobRPCService.Queue", args, &reply)
-				rpcClient.Close()
-				if err != nil {
-					syslog.L.Error(err).WithField("jobId", jobRun).Write()
-					return
-				}
-				if reply.Status != 200 {
-					syslog.L.Error(err).WithField("jobId", jobRun).Write()
-					return
-				}
+				syslog.L.Error(err).WithField("backupId", backupRun).Write()
+				continue
+			}
+			if reply.Status != 200 {
+				syslog.L.Error(err).WithField("backupId", backupRun).Write()
+				continue
 			}
 		}
+
+		for _, restoreRun := range restoresRun {
+			restoreTask, err := storeInstance.Database.GetRestore(restoreRun)
+			if err != nil {
+				syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
+				continue
+			}
+
+			args := &backuprpc.RestoreQueueArgs{
+				Job:       restoreTask,
+				SkipCheck: true,
+				Stop:      *stop,
+				Web:       *webRun,
+			}
+			var reply backuprpc.QueueReply
+
+			err = rpcClient.Call("JobRPCService.RestoreQueue", args, &reply)
+			if err != nil {
+				syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
+				continue
+			}
+			if reply.Status != 200 {
+				syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
+				continue
+			}
+		}
+
 		return
 	}
+
+	proxmox.CleanupPbsPlusActiveTasks()
 
 	hn, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
 	if !ok {
@@ -195,27 +230,27 @@ func main() {
 		return
 	}
 
-	// cleanup previously queued jobs
-	queuedJobs, err := storeInstance.Database.GetAllQueuedJobs()
+	// cleanup previously queued backups
+	queuedBackups, err := storeInstance.Database.GetAllQueuedBackups()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to get all queued jobs").Write()
+		syslog.L.Error(err).WithMessage("failed to get all queued backups").Write()
 	}
 
 	tx, err := storeInstance.Database.NewTransaction()
 	if err == nil {
-		for _, queuedJob := range queuedJobs {
-			task, err := proxmox.GenerateTaskErrorFile(queuedJob, fmt.Errorf("server was restarted before job started during queue"), nil)
+		for _, queuedBackup := range queuedBackups {
+			task, err := proxmox.GenerateBackupTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
 			if err != nil {
 				continue
 			}
 
-			queueTaskPath, err := proxmox.GetLogPath(queuedJob.LastRunUpid)
+			queueTaskPath, err := proxmox.GetLogPath(queuedBackup.LastRunUpid)
 			if err == nil {
 				os.Remove(queueTaskPath)
 			}
 
-			queuedJob.LastRunUpid = task.UPID
-			err = storeInstance.Database.UpdateJob(tx, queuedJob)
+			queuedBackup.LastRunUpid = task.UPID
+			err = storeInstance.Database.UpdateBackup(tx, queuedBackup)
 			if err != nil {
 				continue
 			}
@@ -300,17 +335,17 @@ func main() {
 		}
 	}()
 
-	backupManager := backup.NewManager(mainCtx)
+	manager := backend.NewManager(mainCtx, utils.MaxConcurrentClients, 100, true)
 
 	go func() {
 		for {
 			select {
 			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("job rpc server cancelled")
+				syslog.L.Error(mainCtx.Err()).WithMessage("backup rpc server cancelled")
 				return
 			default:
-				if err := jobrpc.RunJobRPCServer(mainCtx, constants.JobMutateSocketPath, backupManager, storeInstance); err != nil {
-					syslog.L.Error(err).WithMessage("job rpc server failed, restarting")
+				if err := backuprpc.RunJobRPCServer(mainCtx, constants.JobMutateSocketPath, manager, storeInstance); err != nil {
+					syslog.L.Error(err).WithMessage("backup rpc server failed, restarting")
 				}
 			}
 		}
@@ -320,14 +355,17 @@ func main() {
 	apiMux := http.NewServeMux()
 
 	// API routes
-	apiMux.HandleFunc("/api2/json/d2d/backup", mw.ServerOnly(storeInstance, jobs.D2DJobHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/backup", mw.ServerOnly(storeInstance, jobs.D2DBackupHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/restore", mw.ServerOnly(storeInstance, jobs.D2DRestoreHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/target", mw.ServerOnly(storeInstance, targets.D2DTargetHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/script", mw.ServerOnly(storeInstance, scripts.D2DScriptHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/token", mw.ServerOnly(storeInstance, tokens.D2DTokenHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/filetree/{target}", mw.ServerOnly(storeInstance, jobs.D2DRestoreFileTree(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/exclusion", mw.AgentOrServer(storeInstance, exclusions.D2DExclusionHandler(storeInstance)))
 
 	// ExtJS routes with path parameters
-	apiMux.HandleFunc("/api2/extjs/d2d/backup", mw.ServerOnly(storeInstance, jobs.ExtJsJobRunHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/d2d/backup", mw.ServerOnly(storeInstance, jobs.ExtJsBackupRunHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/d2d/restore", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreRunHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target", mw.ServerOnly(storeInstance, targets.ExtJsTargetHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}", mw.ServerOnly(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}/s3-secret", mw.ServerOnly(storeInstance, targets.ExtJsTargetS3SecretHandler(storeInstance)))
@@ -340,8 +378,10 @@ func main() {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-token/{token}", mw.ServerOnly(storeInstance, tokens.ExtJsTokenSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion", mw.ServerOnly(storeInstance, exclusions.ExtJsExclusionHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", mw.ServerOnly(storeInstance, exclusions.ExtJsExclusionSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup-job", mw.ServerOnly(storeInstance, jobs.ExtJsJobHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup-job/{job}", mw.ServerOnly(storeInstance, jobs.ExtJsJobSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-backup", mw.ServerOnly(storeInstance, jobs.ExtJsBackupHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}", mw.ServerOnly(storeInstance, jobs.ExtJsBackupSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-restore", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreSingleHandler(storeInstance)))
 
 	// Agent routes
 	agentMux.HandleFunc("/api2/json/plus/version", plus.VersionHandler(storeInstance, Version))

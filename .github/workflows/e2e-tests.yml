@@ -1,0 +1,63 @@
+name: E2E tests workflow
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        required: true
+        type: string
+      timeout-seconds:
+        required: false
+        type: number
+        default: 20
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Build images
+        uses: ./.github/actions/build-images
+
+      - name: Setup PBS Plus server
+        uses: ./.github/actions/setup-pbs-server
+        with:
+          timeout-seconds: ${{ inputs.timeout-seconds }}
+
+      - name: Test HTTPS endpoints
+        uses: ./.github/actions/test-endpoints
+
+      - name: Initialize PBS Plus
+        uses: ./.github/actions/init-pbs
+        id: init-pbs
+
+      - name: Setup and run agent
+        uses: ./.github/actions/setup-agent
+        with:
+          plus-token: ${{ steps.init-pbs.outputs.plus-token }}
+          timeout-seconds: ${{ inputs.timeout-seconds }}
+
+      - name: Run backup test
+        uses: ./.github/actions/run-backup
+        with:
+          timeout-seconds: ${{ inputs.timeout-seconds }}
+
+      - name: Run restore test
+        uses: ./.github/actions/run-restore
+        with:
+          timeout-seconds: ${{ inputs.timeout-seconds }}
+
+      - name: Show logs
+        if: always()
+        uses: ./.github/actions/show-logs
+
+      - name: Cleanup
+        if: always()
+        uses: ./.github/actions/cleanup

@@ -105,7 +105,7 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-	forks.CmdBackup()
+	forks.CmdForkEntry()
 	constants.Version = Version
 	svcConfig := &service.Config{
 		Name:        "pbs-plus-agent",

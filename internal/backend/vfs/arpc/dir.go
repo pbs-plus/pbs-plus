@@ -34,15 +34,15 @@ func (s *DirStream) HasNext() bool {
 		WithField("closed", atomic.LoadInt32(&s.closed)).
 		WithField("curIdx", atomic.LoadUint64(&s.curIdx)).
 		WithField("totalReturned", atomic.LoadUint64(&s.totalReturned)).
-		WithField("maxDirEntries", s.fs.Job.MaxDirEntries).
-		WithJob(s.fs.Job.ID).
+		WithField("maxDirEntries", s.fs.Backup.MaxDirEntries).
+		WithJob(s.fs.Backup.ID).
 		Write()
 
 	if atomic.LoadInt32(&s.closed) != 0 {
 		syslog.L.Debug().
 			WithMessage("HasNext early return: stream closed").
 			WithField("path", s.path).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return false
 	}
@@ -50,13 +50,13 @@ func (s *DirStream) HasNext() bool {
 	s.lastRespMu.Lock()
 	defer s.lastRespMu.Unlock()
 
-	if atomic.LoadUint64(&s.totalReturned) >= uint64(s.fs.Job.MaxDirEntries) {
+	if atomic.LoadUint64(&s.totalReturned) >= uint64(s.fs.Backup.MaxDirEntries) {
 		if atomic.SwapInt32(&s.maxedOut, 1) == 0 {
 			syslog.L.Warn().
 				WithMessage("maximum directory entries limit reached - stopping enumeration").
 				WithField("path", s.path).
-				WithField("maxDirEntries", s.fs.Job.MaxDirEntries).
-				WithJob(s.fs.Job.ID).
+				WithField("maxDirEntries", s.fs.Backup.MaxDirEntries).
+				WithJob(s.fs.Backup.ID).
 				Write()
 		}
 		return false
@@ -69,7 +69,7 @@ func (s *DirStream) HasNext() bool {
 			WithField("path", s.path).
 			WithField("curIdx", curIdx).
 			WithField("lastRespLen", len(s.lastResp)).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return true
 	}
@@ -78,7 +78,7 @@ func (s *DirStream) HasNext() bool {
 		WithMessage("HasNext needs new batch - issuing ReadDir RPC").
 		WithField("path", s.path).
 		WithField("handleId", s.handleId).
-		WithJob(s.fs.Job.ID).
+		WithJob(s.fs.Backup.ID).
 		Write()
 
 	req := types.ReadDirReq{HandleID: s.handleId}
@@ -89,18 +89,18 @@ func (s *DirStream) HasNext() bool {
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("arpc session is nil").
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return false
 	}
 
-	bytesRead, err := pipe.CallBinary(s.fs.Ctx, s.fs.Job.ID+"/ReadDir", &req, readBuf)
+	bytesRead, err := pipe.CallBinary(s.fs.Ctx, s.fs.Backup.ID+"/ReadDir", &req, readBuf)
 	syslog.L.Debug().
 		WithMessage("HasNext RPC completed").
 		WithField("bytesRead", bytesRead).
 		WithField("error", err).
 		WithField("path", s.path).
-		WithJob(s.fs.Job.ID).
+		WithJob(s.fs.Backup.ID).
 		Write()
 
 	if err != nil {
@@ -109,14 +109,14 @@ func (s *DirStream) HasNext() bool {
 			syslog.L.Debug().
 				WithMessage("HasNext: process done received, closing dirstream").
 				WithField("path", s.path).
-				WithJob(s.fs.Job.ID).
+				WithJob(s.fs.Backup.ID).
 				Write()
 		} else {
 			syslog.L.Error(err).
 				WithMessage("HasNext: RPC error, closing dirstream").
 				WithField("path", s.path).
 				WithField("handleId", s.handleId).
-				WithJob(s.fs.Job.ID).
+				WithJob(s.fs.Backup.ID).
 				Write()
 		}
 		return false
@@ -127,7 +127,7 @@ func (s *DirStream) HasNext() bool {
 		syslog.L.Debug().
 			WithMessage("HasNext: no bytes read, marking closed").
 			WithField("path", s.path).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return false
 	}
@@ -140,7 +140,7 @@ func (s *DirStream) HasNext() bool {
 		WithField("path", s.path).
 		WithField("bytesRead", bytesRead).
 		WithField("oldBatchLen", oldLen).
-		WithJob(s.fs.Job.ID).
+		WithJob(s.fs.Backup.ID).
 		Write()
 
 	err = cbor.Unmarshal(readBuf[:bytesRead], &s.lastResp)
@@ -150,7 +150,7 @@ func (s *DirStream) HasNext() bool {
 			WithMessage("HasNext: decode failed, closing dirstream").
 			WithField("path", s.path).
 			WithField("bytesRead", bytesRead).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return false
 	}
@@ -162,7 +162,7 @@ func (s *DirStream) HasNext() bool {
 		WithMessage("HasNext decoded batch").
 		WithField("entries", newBatchLen).
 		WithField("path", s.path).
-		WithJob(s.fs.Job.ID).
+		WithJob(s.fs.Backup.ID).
 		Write()
 
 	if newBatchLen == 0 {
@@ -170,7 +170,7 @@ func (s *DirStream) HasNext() bool {
 		syslog.L.Debug().
 			WithMessage("HasNext: empty batch received, closing").
 			WithField("path", s.path).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return false
 	}
@@ -180,7 +180,7 @@ func (s *DirStream) HasNext() bool {
 		WithField("path", s.path).
 		WithField("batchSize", newBatchLen).
 		WithField("curIdx", atomic.LoadUint64(&s.curIdx)).
-		WithJob(s.fs.Job.ID).
+		WithJob(s.fs.Backup.ID).
 		Write()
 
 	return true
@@ -191,7 +191,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		syslog.L.Debug().
 			WithMessage("Next called on closed stream").
 			WithField("path", s.path).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return fuse.DirEntry{}, syscall.EBADF
 	}
@@ -200,7 +200,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		syslog.L.Debug().
 			WithMessage("Next called on maxed out stream").
 			WithField("path", s.path).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return fuse.DirEntry{}, syscall.EBADF
 	}
@@ -215,7 +215,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 			WithField("path", s.path).
 			WithField("curIdx", curIdxVal).
 			WithField("lastRespLen", len(s.lastResp)).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return fuse.DirEntry{}, syscall.EBADF
 	}
@@ -232,7 +232,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		WithField("curIdx", curIdxVal).
 		WithField("lastRespLen", len(s.lastResp)).
 		WithField("totalReturned", atomic.LoadUint64(&s.totalReturned)).
-		WithJob(s.fs.Job.ID).
+		WithJob(s.fs.Backup.ID).
 		Write()
 
 	mode := os.FileMode(curr.Mode)
@@ -268,13 +268,13 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 					WithMessage("memcache set attr failed").
 					WithField("path", fullPath).
 					WithField("error", mcErr.Error()).
-					WithJob(s.fs.Job.ID).
+					WithJob(s.fs.Backup.ID).
 					Write()
 			} else {
 				syslog.L.Debug().
 					WithMessage("memcache set attr").
 					WithField("path", fullPath).
-					WithJob(s.fs.Job.ID).
+					WithJob(s.fs.Backup.ID).
 					Write()
 			}
 		} else {
@@ -282,7 +282,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 				WithMessage("encode attr failed").
 				WithField("path", fullPath).
 				WithField("error", err.Error()).
-				WithJob(s.fs.Job.ID).
+				WithJob(s.fs.Backup.ID).
 				Write()
 		}
 	}
@@ -301,13 +301,13 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 					WithMessage("memcache set xattr failed").
 					WithField("path", fullPath).
 					WithField("error", mcErr.Error()).
-					WithJob(s.fs.Job.ID).
+					WithJob(s.fs.Backup.ID).
 					Write()
 			} else {
 				syslog.L.Debug().
 					WithMessage("memcache set xattr").
 					WithField("path", fullPath).
-					WithJob(s.fs.Job.ID).
+					WithJob(s.fs.Backup.ID).
 					Write()
 			}
 		} else {
@@ -315,7 +315,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 				WithMessage("encode xattr failed").
 				WithField("path", fullPath).
 				WithField("error", err.Error()).
-				WithJob(s.fs.Job.ID).
+				WithJob(s.fs.Backup.ID).
 				Write()
 		}
 	}
@@ -328,7 +328,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		WithField("path", s.path).
 		WithField("newCurIdx", atomic.LoadUint64(&s.curIdx)).
 		WithField("newTotalReturned", atomic.LoadUint64(&s.totalReturned)).
-		WithJob(s.fs.Job.ID).
+		WithJob(s.fs.Backup.ID).
 		Write()
 
 	return fuse.DirEntry{
@@ -343,7 +343,7 @@ func (s *DirStream) Close() {
 			WithMessage("Close called on already closed stream").
 			WithField("path", s.path).
 			WithField("handleId", s.handleId).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return
 	}
@@ -352,7 +352,7 @@ func (s *DirStream) Close() {
 		WithMessage("Closing DirStream").
 		WithField("path", s.path).
 		WithField("handleId", s.handleId).
-		WithJob(s.fs.Job.ID).
+		WithJob(s.fs.Backup.ID).
 		Write()
 
 	ctxN, cancelN := context.WithTimeout(context.Background(), 1*time.Minute)
@@ -363,25 +363,25 @@ func (s *DirStream) Close() {
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("arpc session is nil").
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 		return
 	}
 
-	_, err = pipe.CallData(ctxN, s.fs.Job.ID+"/Close", &closeReq)
+	_, err = pipe.CallData(ctxN, s.fs.Backup.ID+"/Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithMessage("DirStream close RPC failed").
 			WithField("path", s.path).
 			WithField("handleId", s.handleId).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 	} else {
 		syslog.L.Debug().
 			WithMessage("DirStream closed successfully").
 			WithField("path", s.path).
 			WithField("handleId", s.handleId).
-			WithJob(s.fs.Job.ID).
+			WithJob(s.fs.Backup.ID).
 			Write()
 	}
 }

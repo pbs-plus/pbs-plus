@@ -104,7 +104,7 @@ func (p *pbsService) Stop(s service.Service) error {
 }
 
 func main() {
-	forks.CmdBackup()
+	forks.CmdForkEntry()
 	constants.Version = Version
 	svcConfig := &service.Config{
 		Name: "PBSPlusAgent", DisplayName: "PBS Plus Agent",

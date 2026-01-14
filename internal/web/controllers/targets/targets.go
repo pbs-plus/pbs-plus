@@ -50,16 +50,12 @@ func CheckTargetStatusBatch(
 
 			result := TargetStatusResult{Index: idx}
 
-			targetSplit := strings.Split(tgt.Name, " - ")
-			if len(targetSplit) < 2 {
+			if !tgt.Path.IsAgent() {
 				results[idx] = result
 				return
 			}
 
-			hostname := targetSplit[0]
-			drive := targetSplit[1]
-
-			arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(hostname)
+			arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(tgt.Name.GetHostname())
 			if !ok {
 				results[idx] = result
 				return
@@ -75,7 +71,7 @@ func CheckTargetStatusBatch(
 				respMsg, err := arpcSess.CallMessage(
 					timeoutCtx,
 					"target_status",
-					&reqTypes.TargetStatusReq{Drive: drive},
+					&reqTypes.TargetStatusReq{Drive: tgt.Name.GetVolume()},
 				)
 				if err == nil && strings.HasPrefix(respMsg, "reachable") {
 					result.ConnectionStatus = true
@@ -116,16 +112,16 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		agentIndices := make([]int, 0)
 
 		for i := range all {
-			if all[i].IsAgent {
+			if all[i].Path.IsAgent() {
 				agentTargets = append(agentTargets, all[i])
 				agentIndices = append(agentIndices, i)
-			} else if all[i].IsS3 {
+			} else if all[i].Path.IsS3() {
 				all[i].ConnectionStatus = true
 				all[i].AgentVersion = "N/A (S3 target)"
 			} else {
 				all[i].AgentVersion = "N/A (local target)"
-				_, err := os.Stat(all[i].Path)
-				all[i].ConnectionStatus = err == nil && utils.IsValid(all[i].Path)
+				_, err := os.Stat(all[i].Path.String())
+				all[i].ConnectionStatus = err == nil && utils.IsValid(all[i].Path.String())
 			}
 		}
 
@@ -223,26 +219,16 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}()
 
-		existingTargetsMap := make(map[string]types.Target)
+		existingTargetsMap := make(map[types.TargetName]types.Target)
 		for _, target := range existingTargets {
 			existingTargetsMap[target.Name] = target
 		}
 
-		processedTargetNames := make(map[string]bool)
+		processedTargetNames := make(map[types.TargetName]bool)
 
 		for _, parsedDrive := range reqParsed.Drives {
-			var targetName string
-			var targetPath string
-
-			switch parsedDrive.OperatingSystem {
-			case "windows":
-				driveLetter := parsedDrive.Letter
-				targetName = reqParsed.Hostname + " - " + driveLetter
-				targetPath = "agent://" + clientIP + "/" + driveLetter
-			default:
-				targetName = reqParsed.Hostname + " - Root"
-				targetPath = "agent://" + clientIP + "/root"
-			}
+			targetName := types.NewTargetName(types.TargetTypeAgent, reqParsed.Hostname, parsedDrive.Letter, parsedDrive.OperatingSystem)
+			targetPath := types.NewTargetPath(types.TargetTypeAgent, clientIP, parsedDrive.Letter, parsedDrive.OperatingSystem)
 
 			processedTargetNames[targetName] = true
 
@@ -281,7 +267,6 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 					DriveUsed:       parsedDrive.Used,
 					DriveTotal:      parsedDrive.Total,
 					OperatingSystem: parsedDrive.OperatingSystem,
-					IsAgent:         true,
 				}
 
 				err = storeInstance.Database.CreateTarget(tx, targetData)
@@ -289,20 +274,6 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 					w.WriteHeader(http.StatusInternalServerError)
 					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to create target %s: %w", targetName, err))
 					return
-				}
-			}
-		}
-
-		for _, existingTarget := range existingTargets {
-			if _, processed := processedTargetNames[existingTarget.Name]; !processed {
-				expectedPrefix := reqParsed.Hostname + " - "
-				if strings.HasPrefix(existingTarget.Name, expectedPrefix) {
-					err = storeInstance.Database.DeleteTarget(tx, existingTarget.Name)
-					if err != nil {
-						w.WriteHeader(http.StatusInternalServerError)
-						controllers.WriteErrorResponse(w, fmt.Errorf("Failed to delete target %s: %w", existingTarget.Name, err))
-						return
-					}
 				}
 			}
 		}
@@ -343,17 +314,10 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		path := r.FormValue("path")
-		_, s3Err := s3url.Parse(path)
-		if !utils.IsValid(path) && s3Err != nil {
-			controllers.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", path))
-			return
-		}
-
 		newTarget := types.Target{
-			Name:        r.FormValue("name"),
-			Path:        path,
+			Name:        types.WrapTargetName(r.FormValue("name")),
+			Path:        types.WrapTargetPath(path),
 			MountScript: r.FormValue("mount_script"),
-			IsS3:        s3Err == nil,
 		}
 
 		err = storeInstance.Database.CreateTarget(nil, newTarget)
@@ -394,19 +358,17 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
+			target, err := storeInstance.Database.GetTarget(types.WrapTargetName(utils.DecodePath(r.PathValue("target"))))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
 
 			if r.FormValue("name") != "" {
-				target.Name = r.FormValue("name")
+				target.Name = types.WrapTargetName(r.FormValue("name"))
 			}
 			if path != "" {
-				target.Path = path
-				_, s3Err := s3url.Parse(path)
-				target.IsS3 = s3Err == nil
+				target.Path = types.WrapTargetPath(path)
 			}
 
 			target.MountScript = r.FormValue("mount_script")
@@ -415,10 +377,9 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				for _, attr := range delArr {
 					switch attr {
 					case "name":
-						target.Name = ""
+						target.Name.Raw = ""
 					case "path":
-						target.Path = ""
-						target.IsS3 = false
+						target.Path.Raw = ""
 					case "mount_script":
 						target.MountScript = ""
 					}
@@ -439,47 +400,44 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
+			target, err := storeInstance.Database.GetTarget(types.WrapTargetName(utils.DecodePath(r.PathValue("target"))))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
 
-			if target.IsAgent {
-				targetSplit := strings.Split(target.Name, " - ")
-				if len(targetSplit) > 0 {
-					arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(targetSplit[0])
-					if ok {
-						target.AgentVersion = arpcSess.GetVersion()
-						target.ConnectionStatus = false
+			if target.Path.IsAgent() {
+				arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(target.Name.GetHostname())
+				if ok {
+					target.AgentVersion = arpcSess.GetVersion()
+					target.ConnectionStatus = false
 
-						if strings.ToLower(r.FormValue("status")) == "true" {
-							respMsg, err := arpcSess.CallMessage(
-								r.Context(),
-								"target_status",
-								&reqTypes.TargetStatusReq{Drive: targetSplit[1]},
-							)
-							if err == nil && strings.HasPrefix(respMsg, "reachable") {
-								target.ConnectionStatus = true
-								splittedMsg := strings.Split(respMsg, "|")
-								if len(splittedMsg) > 1 {
-									target.AgentVersion = splittedMsg[1]
-								}
+					if strings.ToLower(r.FormValue("status")) == "true" {
+						respMsg, err := arpcSess.CallMessage(
+							r.Context(),
+							"target_status",
+							&reqTypes.TargetStatusReq{Drive: target.Name.GetVolume()},
+						)
+						if err == nil && strings.HasPrefix(respMsg, "reachable") {
+							target.ConnectionStatus = true
+							splittedMsg := strings.Split(respMsg, "|")
+							if len(splittedMsg) > 1 {
+								target.AgentVersion = splittedMsg[1]
 							}
 						}
 					}
 				}
-			} else if target.IsS3 {
+			} else if target.Path.IsS3() {
 				target.ConnectionStatus = true
 				target.AgentVersion = "N/A (S3 target)"
 			} else {
 				target.AgentVersion = "N/A (local target)"
 
-				_, err := os.Stat(target.Path)
+				_, err := os.Stat(target.Path.String())
 				if err != nil {
 					target.ConnectionStatus = false
 				} else {
-					target.ConnectionStatus = utils.IsValid(target.Path)
+					target.ConnectionStatus = utils.IsValid(target.Path.String())
 				}
 			}
 
@@ -492,7 +450,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.Database.DeleteTarget(nil, utils.DecodePath(r.PathValue("target")))
+			err := storeInstance.Database.DeleteTarget(nil, types.WrapTargetName(utils.DecodePath(r.PathValue("target"))))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -522,15 +480,9 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
+		target, err := storeInstance.Database.GetTarget(types.WrapTargetName(utils.DecodePath(r.PathValue("target"))))
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
-			return
-		}
-
-		_, s3Err := s3url.Parse(target.Path)
-		if s3Err != nil {
-			controllers.WriteErrorResponse(w, errors.New("target is not a valid S3 path"))
 			return
 		}
 

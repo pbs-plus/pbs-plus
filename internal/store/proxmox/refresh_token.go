@@ -53,10 +53,6 @@ const AUTH_USER = "plus-user@pbs"
 const AUTH_TOKEN = "server"
 const AUTH_ID = AUTH_USER + "!" + AUTH_TOKEN
 
-func init() {
-	_ = GetToken()
-}
-
 func runCommandAndIgnoreExists(cmd *exec.Cmd, alreadyExistsKeywords []string) error {
 	cmd.Env = os.Environ()
 	outputBytes, err := cmd.CombinedOutput()

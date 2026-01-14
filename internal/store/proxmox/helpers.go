@@ -5,19 +5,16 @@ package proxmox
 import (
 	"bytes"
 	"fmt"
-	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -68,7 +65,7 @@ func ParseUPID(upid string) (Task, error) {
 			if err != nil {
 				return Task{}, fmt.Errorf("failed to parse PStart: %w", err)
 			}
-			task.PStart = int(pstart)
+			task.PStart = uint64(pstart)
 		case "starttime":
 			// Convert StartTime from hex to int64.
 			startTime, err := strconv.ParseInt(matches[i], 16, 64)
@@ -112,77 +109,8 @@ func (task *Task) GenerateUPID() string {
 
 var pstart = atomic.Int32{}
 
-func getPStart() int {
-	return int(pstart.Add(1))
-}
-
-type QueuedTask struct {
-	Task
-	sync.Mutex
-	closed atomic.Bool
-	path   string
-	job    types.Job
-}
-
-func GenerateQueuedTask(job types.Job, web bool) (QueuedTask, error) {
-	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
-	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
-	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
-
-	wtype := "backup"
-	node := "pbsplusgen-queue"
-
-	task := Task{
-		Node:       node,
-		PID:        os.Getpid(),
-		PStart:     getPStart(),
-		StartTime:  time.Now().Unix(),
-		WorkerType: wtype,
-		WID:        wid,
-		User:       AUTH_ID,
-	}
-
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, AUTH_ID)
-
-	task.UPID = upid
-
-	path, err := GetLogPath(upid)
-	if err != nil {
-		return QueuedTask{}, err
-	}
-
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	_ = os.Chown(filepath.Dir(path), 34, 34)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return QueuedTask{}, err
-	}
-
-	err = file.Chown(34, 34)
-	if err != nil {
-		return QueuedTask{}, err
-	}
-	defer file.Close()
-
-	timestamp := time.Now().Format(time.RFC3339)
-	statusLine := fmt.Sprintf("%s: TASK QUEUED: ", timestamp)
-	if web {
-		statusLine += "job started from web UI\n"
-	} else {
-		statusLine += "job started from schedule\n"
-	}
-
-	if _, err := file.WriteString(statusLine); err != nil {
-		return QueuedTask{}, fmt.Errorf("failed to write status line: %w", err)
-	}
-
-	task.Status = "running"
-
-	return QueuedTask{Task: task, job: job, path: path}, nil
+func getPStart() uint64 {
+	return uint64(pstart.Add(1))
 }
 
 func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
@@ -218,234 +146,6 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 	_ = os.Symlink(newPath, path)
 
 	return newUpid, nil
-}
-
-func (task *QueuedTask) UpdateDescription(desc string) error {
-	if task.closed.Load() {
-		return nil
-	}
-
-	task.Lock()
-	defer task.Unlock()
-
-	file, err := os.OpenFile(task.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	timestamp := time.Now().Format(time.RFC3339)
-	statusLine := fmt.Sprintf("%s: TASK QUEUED: ", timestamp)
-	statusLine += desc + "\n"
-
-	if _, err := file.WriteString(statusLine); err != nil {
-		return fmt.Errorf("failed to write status line: %w", err)
-	}
-
-	syslog.L.Info().WithJob(task.job.ID).WithMessage(desc).Write()
-
-	return nil
-}
-
-func (task *QueuedTask) Close() {
-	task.Lock()
-	defer task.Unlock()
-
-	_ = os.Remove(task.path)
-	task.closed.Store(true)
-}
-
-func GenerateTaskErrorFile(job types.Job, pbsError error, additionalData []string) (Task, error) {
-	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
-	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
-	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
-
-	wtype := "backup"
-	node := "pbsplusgen-error"
-
-	task := Task{
-		Node:       node,
-		PID:        os.Getpid(),
-		PStart:     getPStart(),
-		StartTime:  time.Now().Unix(),
-		WorkerType: wtype,
-		WID:        wid,
-		User:       AUTH_ID,
-	}
-
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, AUTH_ID)
-
-	task.UPID = upid
-
-	path, err := GetLogPath(upid)
-	if err != nil {
-		return Task{}, err
-	}
-
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	_ = os.Chown(filepath.Dir(path), 34, 34)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return Task{}, err
-	}
-
-	err = file.Chown(34, 34)
-	if err != nil {
-		return Task{}, err
-	}
-	defer file.Close()
-
-	timestamp := time.Now().Format(time.RFC3339)
-
-	for _, data := range additionalData {
-		dataLine := fmt.Sprintf("%s: %s\n", timestamp, data)
-		if _, err := file.WriteString(dataLine); err != nil {
-			return Task{}, fmt.Errorf("failed to write additional data line: %w", err)
-		}
-	}
-
-	fullError := pbsError.Error()
-	errorLines := strings.Split(fullError, "\n")
-
-	firstNonEmptyLine := ""
-	for _, line := range errorLines {
-		if trimmed := strings.TrimSpace(line); trimmed != "" {
-			firstNonEmptyLine = trimmed
-			break
-		}
-	}
-
-	if firstNonEmptyLine == "" {
-		firstNonEmptyLine = fullError
-	}
-
-	for _, line := range errorLines {
-		if line != "" {
-			errorDetailLine := fmt.Sprintf("%s: %s\n", timestamp, line)
-			if _, err := file.WriteString(errorDetailLine); err != nil {
-				return Task{}, fmt.Errorf("failed to write error detail line: %w", err)
-			}
-		}
-	}
-
-	errorLine := fmt.Sprintf("%s: TASK ERROR: %s\n", timestamp, firstNonEmptyLine)
-	if _, err := file.WriteString(errorLine); err != nil {
-		return Task{}, fmt.Errorf("failed to write error line: %w", err)
-	}
-
-	archive, err := os.OpenFile(filepath.Join(constants.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return Task{}, fmt.Errorf("failed to open file archive: %w", err)
-	}
-	defer archive.Close()
-
-	archiveLine := fmt.Sprintf("%s %s %s\n", upid, startTime, firstNonEmptyLine)
-	if _, err := archive.WriteString(archiveLine); err != nil {
-		return Task{}, fmt.Errorf("failed to write archive line: %w", err)
-	}
-
-	task.Status = "stopped"
-	task.ExitStatus = firstNonEmptyLine
-	task.EndTime = time.Now().Unix()
-
-	return task, nil
-}
-
-func GenerateTaskOKFile(job types.Job, additionalData []string) (Task, error) {
-	targetName := strings.TrimSpace(strings.Split(job.Target, " - ")[0])
-	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
-	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
-
-	wtype := "backup"
-	node := "pbsplusgen-ok"
-
-	task := Task{
-		Node:       node,
-		PID:        os.Getpid(),
-		PStart:     getPStart(),
-		StartTime:  time.Now().Unix(),
-		WorkerType: wtype,
-		WID:        wid,
-		User:       AUTH_ID,
-	}
-
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, AUTH_ID)
-
-	task.UPID = upid
-
-	path, err := GetLogPath(upid)
-	if err != nil {
-		return Task{}, err
-	}
-
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	_ = os.Chown(filepath.Dir(path), 34, 34)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return Task{}, err
-	}
-
-	err = file.Chown(34, 34)
-	if err != nil {
-		return Task{}, err
-	}
-	defer file.Close()
-
-	timestamp := time.Now().Format(time.RFC3339)
-
-	for _, data := range additionalData {
-		dataLine := fmt.Sprintf("%s: %s\n", timestamp, data)
-		if _, err := file.WriteString(dataLine); err != nil {
-			return Task{}, fmt.Errorf("failed to write additional data line: %w", err)
-		}
-	}
-
-	errorLine := fmt.Sprintf("%s: TASK OK\n", timestamp)
-	if _, err := file.WriteString(errorLine); err != nil {
-		return Task{}, fmt.Errorf("failed to write ok line: %w", err)
-	}
-
-	archive, err := os.OpenFile(filepath.Join(constants.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return Task{}, fmt.Errorf("failed to open file archive: %w", err)
-	}
-	defer archive.Close()
-
-	archiveLine := fmt.Sprintf("%s %s OK\n", upid, startTime)
-	if _, err := archive.WriteString(archiveLine); err != nil {
-		return Task{}, fmt.Errorf("failed to write archive line: %w", err)
-	}
-
-	task.Status = "stopped"
-	task.ExitStatus = "OK"
-	task.EndTime = time.Now().Unix()
-
-	return task, nil
-}
-
-func IsUPIDRunning(upid string) bool {
-	activePath := filepath.Join(constants.TaskLogsBasePath, "active")
-	cmd := exec.Command("grep", "-F", upid, activePath)
-	output, err := cmd.Output()
-	if err != nil {
-		// If grep exits with a non-zero status, it means the UPID was not found.
-		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
-			return false
-		}
-		syslog.L.Error(err).WithField("upid", upid)
-		return false
-	}
-
-	// If output is not empty, the UPID was found.
-	return strings.TrimSpace(string(output)) != ""
 }
 
 func encodeToHexEscapes(input string) string {
@@ -496,4 +196,96 @@ func parseLastLogMessage(upid string) (string, error) {
 	message := re.ReplaceAllString(lastLine, "")
 
 	return strings.TrimSpace(message), nil
+}
+
+func buildGroupPath(ns, backupType, backupID, backupTime string) string {
+	var parts []string
+
+	if ns != "" {
+		nsParts := strings.Split(ns, "/")
+		for _, nsPart := range nsParts {
+			if nsPart != "" {
+				parts = append(parts, "ns", nsPart)
+			}
+		}
+	}
+
+	parts = append(parts, backupType, backupID, backupTime)
+
+	return filepath.Join(parts...)
+}
+
+// BuildPxarPaths constructs the full filesystem paths for pxar/mpxar/ppxar files.
+// Returns (mpxarPath, ppxarPath, isMetadataSplit, error).
+// For non-split pxar: ppxarPath is empty, mpxarPath contains the .pxar.didx path.
+// For split pxar: both mpxarPath and ppxarPath are populated.
+// If fileName is empty, scans the backup directory for .pxar.didx or .mpxar.didx files.
+func BuildPxarPaths(pbsStoreRoot, ns, backupType, backupID, backupTime, fileName string) (mpxarPath, ppxarPath string, isMetadataSplit bool, err error) {
+	groupPath := buildGroupPath(ns, backupType, backupID, backupTime)
+	groupDir := filepath.Join(pbsStoreRoot, groupPath)
+
+	// If fileName is empty, scan directory for pxar files
+	if fileName == "" {
+		entries, err := os.ReadDir(groupDir)
+		if err != nil {
+			return "", "", false, fmt.Errorf("failed to read backup directory: %w", err)
+		}
+
+		// Look for .mpxar.didx first (prefer split archives), then .pxar.didx
+		var foundMpxar, foundPxar string
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if strings.HasSuffix(name, ".mpxar.didx") && foundMpxar == "" {
+				foundMpxar = name
+			} else if strings.HasSuffix(name, ".pxar.didx") && foundPxar == "" {
+				foundPxar = name
+			}
+		}
+
+		if foundMpxar != "" {
+			fileName = foundMpxar
+		} else if foundPxar != "" {
+			fileName = foundPxar
+		} else {
+			return "", "", false, fmt.Errorf("no .pxar.didx or .mpxar.didx file found in %s", groupDir)
+		}
+	}
+
+	if !strings.HasSuffix(fileName, ".mpxar.didx") &&
+		!strings.HasSuffix(fileName, ".pxar.didx") &&
+		!strings.HasSuffix(fileName, ".ppxar.didx") {
+		return "", "", false, fmt.Errorf("file-name must end with .pxar.didx, .mpxar.didx, or .ppxar.didx")
+	}
+
+	switch {
+	case strings.HasSuffix(fileName, ".pxar.didx"):
+		// Non-split archive
+		mpxarPath = filepath.Join(groupDir, fileName)
+		return mpxarPath, "", false, nil
+
+	case strings.HasSuffix(fileName, ".mpxar.didx"):
+		// Metadata file provided, need to find payload
+		mpxarPath = filepath.Join(groupDir, fileName)
+		ppxarName := strings.TrimSuffix(fileName, ".mpxar.didx") + ".ppxar.didx"
+		ppxarPath = filepath.Join(groupDir, ppxarName)
+		if _, err := os.Stat(ppxarPath); err != nil {
+			return "", "", false, fmt.Errorf("payload index not found: %s", ppxarPath)
+		}
+		return mpxarPath, ppxarPath, true, nil
+
+	case strings.HasSuffix(fileName, ".ppxar.didx"):
+		// Payload file provided, need to find metadata
+		ppxarPath = filepath.Join(groupDir, fileName)
+		mpxarName := strings.TrimSuffix(fileName, ".ppxar.didx") + ".mpxar.didx"
+		mpxarPath = filepath.Join(groupDir, mpxarName)
+		if _, err := os.Stat(mpxarPath); err != nil {
+			return "", "", false, fmt.Errorf("metadata index not found: %s", mpxarPath)
+		}
+		return mpxarPath, ppxarPath, true, nil
+	}
+
+	return "", "", false, fmt.Errorf("unexpected file-name format")
 }

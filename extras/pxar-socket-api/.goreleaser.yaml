@@ -1,0 +1,66 @@
+version: 2
+
+project_name: pxar-socket-api
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: pxar-socket-api
+    builder: rust
+    tool: cargo
+    command: build
+    binary: pxar-socket-api
+    targets:
+      - x86_64-unknown-linux-gnu
+    dir: extras/pxar-socket-api
+    flags:
+      - --release
+
+archives:
+  - id: pxar-socket-api
+    ids:
+      - pxar-socket-api
+    name_template: "pxar-socket-api-pbsplus{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
+checksum:
+  name_template: "{{ .ArtifactName }}.{{ .Algorithm }}"
+  algorithm: md5
+  split: true
+
+nfpms:
+  - id: pxar-socket-api-deb
+    ids:
+      - pxar-socket-api
+    package_name: "{{ .ProjectName }}"
+    vendor: Son Roy Almerol
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    maintainer: Son Roy Almerol <github@snry.me>
+    description: >
+      pxar-socket-api is simply an interface to interact with files within PXAR archives via unix sockets.
+    license: MIT
+    formats:
+      - deb
+    overrides:
+      deb:
+        file_name_template: "{{ .PackageName }}-pbsplus{{ .Version }}-{{ .Arch }}"
+
+release:
+  github:
+    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+    name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
+  name_template: "PBS Plus {{ .Version }}"
+  draft: false
+  prerelease: auto
+  replace_existing_artifacts: true
+  mode: replace
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

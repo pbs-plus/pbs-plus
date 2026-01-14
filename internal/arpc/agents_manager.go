@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -37,9 +38,18 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 		clientID = clientCertificate.Subject.CommonName
 	}
 
-	jobIdHeader := headers.Get("X-PBS-Plus-JobId")
+	jobIdHeader := headers.Get("X-PBS-Plus-BackupId")
 	if jobIdHeader != "" {
 		clientID = clientID + "|" + jobIdHeader
+	}
+
+	restoreIdHeader := headers.Get("X-PBS-Plus-RestoreId")
+	if restoreIdHeader != "" {
+		clientID = clientID + "|" + restoreIdHeader + "|restore"
+	}
+
+	if existingSession, exists := sm.sessions.Get(clientID); exists {
+		existingSession.Close()
 	}
 
 	pipe, err := AcceptConnection(ctx, smuxTun, conn)
@@ -75,6 +85,26 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 
 func (sm *AgentsManager) GetStreamPipe(clientID string) (*StreamPipe, bool) {
 	return sm.sessions.Get(clientID)
+}
+
+func (sm *AgentsManager) WaitStreamPipe(ctx context.Context, clientID string) (*StreamPipe, error) {
+	if pipe, ok := sm.sessions.Get(clientID); ok {
+		return pipe, nil
+	}
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if pipe, ok := sm.sessions.Get(clientID); ok {
+				return pipe, nil
+			}
+		}
+	}
 }
 
 func (sm *AgentsManager) unregisterStreamPipe(clientID string) {

@@ -27,13 +27,13 @@ import (
 )
 
 type BackupArgs struct {
-	JobId          string
+	BackupId       string
 	TargetHostname string
 	Drive          string
 }
 
 type S3BackupArgs struct {
-	JobId        string
+	BackupId     string
 	Endpoint     string
 	AccessKey    string
 	SecretKey    string
@@ -52,7 +52,7 @@ type BackupReply struct {
 }
 
 type StatusArgs struct {
-	JobId          string
+	BackupId       string
 	TargetHostname string
 }
 
@@ -65,7 +65,7 @@ type VFSStatusArgs struct {
 }
 
 type CleanupArgs struct {
-	JobId          string
+	BackupId       string
 	TargetHostname string
 	Drive          string
 }
@@ -76,7 +76,7 @@ type CleanupReply struct {
 }
 
 type WarnCountArgs struct {
-	JobId string
+	BackupId string
 }
 
 type WarnCountReply struct {
@@ -93,16 +93,16 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	syslog.L.Info().
 		WithMessage("Received backup request").
 		WithFields(map[string]any{
-			"jobId":  args.JobId,
-			"target": args.TargetHostname,
-			"drive":  args.Drive,
+			"backupId": args.BackupId,
+			"target":   args.TargetHostname,
+			"drive":    args.Drive,
 		}).Write()
 
-	// Retrieve the job from the database.
-	job, err := s.Store.Database.GetJob(args.JobId)
+	// Retrieve the backup from the database.
+	backup, err := s.Store.Database.GetBackup(args.BackupId)
 	if err != nil {
 		reply.Status = 404
-		reply.Message = "unable to get job from id"
+		reply.Message = "unable to get backup from id"
 		return fmt.Errorf("backup: %w", err)
 	}
 
@@ -121,9 +121,9 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	// Prepare the backup request (using the types.BackupReq structure).
 	backupReq := types.BackupReq{
 		Drive:      args.Drive,
-		JobId:      args.JobId,
-		SourceMode: job.SourceMode,
-		ReadMode:   job.ReadMode,
+		BackupId:   args.BackupId,
+		SourceMode: backup.SourceMode,
+		ReadMode:   backup.ReadMode,
 	}
 
 	// Call the target's backup method via ARPC.
@@ -139,22 +139,18 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	backupRespSplit := strings.Split(respMsg, "|")
 	backupMode := backupRespSplit[0]
 
-	// If a namespace is provided in the backup response, update the job.
+	// If a namespace is provided in the backup response, update the backup.
 	if len(backupRespSplit) == 2 && backupRespSplit[1] != "" {
-		job.Namespace = backupRespSplit[1]
-		if err := s.Store.Database.UpdateJob(nil, job); err != nil {
+		backup.Namespace = backupRespSplit[1]
+		if err := s.Store.Database.UpdateBackup(nil, backup); err != nil {
 			syslog.L.Error(err).WithField("namespace", backupRespSplit[1]).Write()
 		}
 	}
 
-	// Retrieve or initialize an ARPCFS instance.
-	// The child session key is "targetHostname|jobId".
-	childKey := args.TargetHostname + "|" + args.JobId
+	backupCtx, backupCancel := context.WithCancel(s.ctx)
+	s.jobCtxCancels.Set(args.BackupId, backupCancel)
 
-	jobCtx, jobCancel := context.WithCancel(s.ctx)
-	s.jobCtxCancels.Set(args.JobId, jobCancel)
-
-	arpcFS := arpcfs.NewARPCFS(jobCtx, s.Store.ARPCAgentsManager, childKey, args.TargetHostname, job, backupMode)
+	arpcFS := arpcfs.NewARPCFS(backupCtx, s.Store.ARPCAgentsManager, backup.GetStreamID(), args.TargetHostname, backup, backupMode)
 	if arpcFS == nil {
 		reply.Status = 500
 		reply.Message = "failed to send create ARPCFS"
@@ -162,7 +158,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	}
 
 	// Set up the local mount path.
-	mntPath := filepath.Join(constants.AgentMountBasePath, args.JobId)
+	mntPath := filepath.Join(constants.AgentMountBasePath, args.BackupId)
 
 	if err := arpcmount.Mount(arpcFS, mntPath); err != nil {
 		syslog.L.Error(err).Write()
@@ -171,19 +167,19 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	vfssessions.CreateARPCFSMount(childKey, arpcFS)
+	vfssessions.CreateARPCFSMount(backup.GetStreamID(), arpcFS)
 
 	// Set the reply values.
 	reply.Status = 200
-	reply.Message = backupMode + "|" + job.Namespace
+	reply.Message = backupMode + "|" + backup.Namespace
 	reply.BackupMode = backupMode
 
 	syslog.L.Info().
 		WithMessage("Mounting successful").
 		WithFields(map[string]any{
-			"jobId":  args.JobId,
-			"mount":  mntPath,
-			"backup": backupMode,
+			"backupId": args.BackupId,
+			"mount":    mntPath,
+			"backup":   backupMode,
 		}).Write()
 
 	return nil
@@ -193,43 +189,41 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 	syslog.L.Info().
 		WithMessage("Received S3 backup request").
 		WithFields(map[string]any{
-			"jobId":    args.JobId,
+			"backupId": args.BackupId,
 			"endpoint": args.Endpoint,
 			"bucket":   args.Bucket,
 			"prefix":   args.Prefix,
 		}).Write()
 
-	// Retrieve the job from the database.
-	job, err := s.Store.Database.GetJob(args.JobId)
+	// Retrieve the backup from the database.
+	backup, err := s.Store.Database.GetBackup(args.BackupId)
 	if err != nil {
 		reply.Status = 404
-		reply.Message = "unable to get job from id"
+		reply.Message = "unable to get backup from id"
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	secretKey, err := s.Store.Database.GetS3Secret(job.Target)
+	secretKey, err := s.Store.Database.GetS3Secret(backup.Target)
 	if err != nil {
 		reply.Status = 404
 		reply.Message = "unable to get secret key of target"
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	childKey := args.Endpoint + "|" + args.JobId
+	backupCtx, backupCancel := context.WithCancel(s.ctx)
+	s.jobCtxCancels.Set(args.BackupId, backupCancel)
 
-	jobCtx, jobCancel := context.WithCancel(s.ctx)
-	s.jobCtxCancels.Set(args.JobId, jobCancel)
-
-	s3FS := s3fs.NewS3FS(jobCtx, job, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
+	s3FS := s3fs.NewS3FS(backupCtx, backup, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
 	if s3FS == nil {
 		reply.Status = 500
 		reply.Message = "failed to send create S3FS"
 		return errors.New(reply.Message)
 	}
 
-	vfssessions.CreateS3FSMount(childKey, s3FS)
+	vfssessions.CreateS3FSMount(backup.GetStreamID(), s3FS)
 
 	// Set up the local mount path.
-	mntPath := filepath.Join(constants.AgentMountBasePath, args.JobId)
+	mntPath := filepath.Join(constants.AgentMountBasePath, args.BackupId)
 
 	if err := s3mount.Mount(s3FS, mntPath); err != nil {
 		syslog.L.Error(err).Write()
@@ -240,12 +234,12 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 
 	// Set the reply values.
 	reply.Status = 200
-	reply.Message = job.Namespace
+	reply.Message = backup.Namespace
 
 	syslog.L.Info().
 		WithMessage("Mounting successful").
 		WithFields(map[string]any{
-			"jobId":    args.JobId,
+			"backupId": args.BackupId,
 			"mount":    mntPath,
 			"endpoint": args.Endpoint,
 			"bucket":   args.Bucket,
@@ -259,18 +253,18 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	syslog.L.Info().
 		WithMessage("Received cleanup request").
 		WithFields(map[string]any{
-			"jobId":  args.JobId,
-			"target": args.TargetHostname,
-			"drive":  args.Drive,
+			"backupId": args.BackupId,
+			"target":   args.TargetHostname,
+			"drive":    args.Drive,
 		}).Write()
 
-	childKey := args.TargetHostname + "|" + args.JobId
+	childKey := args.TargetHostname + "|" + args.BackupId
 	vfssessions.DisconnectSession(childKey)
 
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()
 
-	ctxCancel, ok := s.jobCtxCancels.GetAndDel(args.JobId)
+	ctxCancel, ok := s.jobCtxCancels.GetAndDel(args.BackupId)
 	if ok {
 		ctxCancel()
 	}
@@ -279,7 +273,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	if !exists {
 		syslog.L.Info().
 			WithMessage("Target unreachable, assuming cleanup successful.").
-			WithField("jobId", args.JobId).
+			WithField("jobId", args.BackupId).
 			Write()
 		reply.Status = 200
 		reply.Message = "Target unreachable, assuming cleanup successful."
@@ -287,8 +281,8 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	}
 
 	cleanupReq := types.BackupReq{
-		Drive: args.Drive,
-		JobId: args.JobId,
+		Drive:    args.Drive,
+		BackupId: args.BackupId,
 	}
 
 	_, err := arpcSess.CallMessage(ctx, "cleanup", &cleanupReq)
@@ -304,7 +298,7 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 
 	syslog.L.Info().
 		WithMessage("Cleanup successful").
-		WithField("jobId", args.JobId).
+		WithField("backupId", args.BackupId).
 		Write()
 
 	return nil
@@ -314,8 +308,8 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 	syslog.L.Info().
 		WithMessage("Received status request").
 		WithFields(map[string]any{
-			"jobId":  args.JobId,
-			"target": args.TargetHostname,
+			"backupId": args.BackupId,
+			"target":   args.TargetHostname,
 		}).Write()
 
 	// Retrieve the ARPC session for the target.
@@ -325,7 +319,7 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 		return nil
 	}
 
-	childKey := args.TargetHostname + "|" + args.JobId
+	childKey := args.TargetHostname + "|" + args.BackupId
 	_, exists = s.Store.ARPCAgentsManager.GetStreamPipe(childKey)
 	if !exists {
 		reply.Connected = false

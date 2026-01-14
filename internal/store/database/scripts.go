@@ -170,7 +170,7 @@ func (database *Database) GetScript(path string) (types.Script, error) {
             COUNT(j.id) as job_count,
             COUNT(t.name) as target_count
         FROM scripts s
-        LEFT JOIN jobs j ON
+        LEFT JOIN backups j ON
 					s.path = j.pre_script
 					OR s.path = j.post_script
         LEFT JOIN targets t ON
@@ -208,7 +208,7 @@ func (database *Database) GetAllScripts() ([]types.Script, error) {
             COUNT(j.id) as job_count,
             COUNT(t.name) as target_count
         FROM scripts s
-        LEFT JOIN jobs j ON
+        LEFT JOIN backups j ON
 					s.path = j.pre_script
 					OR s.path = j.post_script
         LEFT JOIN targets t ON

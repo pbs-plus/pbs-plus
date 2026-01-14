@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
@@ -22,29 +21,23 @@ import (
 )
 
 type AgentMount struct {
-	JobId    string
+	BackupId string
 	Hostname string
 	Drive    string
 	Path     string
 	isEmpty  bool
 }
 
-func AgentFSMount(ctx context.Context, storeInstance *store.Store, job types.Job, target types.Target) (*AgentMount, error) {
+func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup types.Backup, target types.Target) (*AgentMount, error) {
 	// Parse target information
-	splittedTargetName := strings.Split(target.Name, " - ")
-	targetHostname := splittedTargetName[0]
-	agentPath := strings.TrimPrefix(target.Path, "agent://")
-	agentPathParts := strings.Split(agentPath, "/")
-	agentDrive := agentPathParts[1]
-
 	agentMount := &AgentMount{
-		JobId:    job.ID,
-		Hostname: targetHostname,
-		Drive:    agentDrive,
+		BackupId: backup.ID,
+		Hostname: target.Name.GetHostname(),
+		Drive:    target.Name.GetVolume(),
 	}
 
 	// Setup mount path
-	agentMount.Path = filepath.Join(constants.AgentMountBasePath, job.ID)
+	agentMount.Path = filepath.Join(constants.AgentMountBasePath, backup.ID)
 	agentMount.Unmount() // Ensure clean mount point
 
 	// Create mount directory if it doesn't exist
@@ -64,9 +57,9 @@ func AgentFSMount(ctx context.Context, storeInstance *store.Store, job types.Job
 	}
 
 	args := &rpcmount.BackupArgs{
-		JobId:          job.ID,
-		TargetHostname: targetHostname,
-		Drive:          agentDrive,
+		BackupId:       backup.ID,
+		TargetHostname: target.Name.GetHostname(),
+		Drive:          target.Name.GetVolume(),
 	}
 	var reply rpcmount.BackupReply
 
@@ -126,7 +119,7 @@ func (a *AgentMount) IsEmpty() bool {
 
 func (a *AgentMount) IsConnected() bool {
 	args := &rpcmount.StatusArgs{
-		JobId:          a.JobId,
+		BackupId:       a.BackupId,
 		TargetHostname: a.Hostname,
 	}
 	var reply rpcmount.StatusReply
@@ -167,7 +160,7 @@ func (a *AgentMount) Unmount() {
 
 func (a *AgentMount) CloseMount() {
 	args := &rpcmount.CleanupArgs{
-		JobId:          a.JobId,
+		BackupId:       a.BackupId,
 		TargetHostname: a.Hostname,
 		Drive:          a.Drive,
 	}

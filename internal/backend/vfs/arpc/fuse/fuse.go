@@ -172,7 +172,7 @@ func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut)
 }
 
 func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
-	if n.fs.Job.LegacyXattr {
+	if n.fs.Backup.LegacyXattr {
 		return n.legacyGetxattr(ctx, attr, dest)
 	}
 
@@ -218,7 +218,7 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 }
 
 func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
-	if n.fs.Job.LegacyXattr {
+	if n.fs.Backup.LegacyXattr {
 		return n.legacyListxattr(ctx, dest)
 	}
 

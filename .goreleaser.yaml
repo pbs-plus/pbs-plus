@@ -21,18 +21,6 @@ builds:
     ldflags:
       - -X 'main.Version=v{{.Version}}'
 
-  # Proxmox Backup PXAR Mount (Linux)
-  - id: pxar-mount
-    builder: rust
-    tool: cargo
-    command: build
-    binary: proxmox-backup-pxar-mount
-    targets:
-      - x86_64-unknown-linux-gnu
-    dir: extras/proxmox-backup-pxar-mount
-    flags:
-      - --release
-
   # Linux Agent
   - id: linux-agent
     main: ./cmd/agent
@@ -110,13 +98,6 @@ archives:
     formats:
       - binary
 
-  - id: pxar-mount
-    ids:
-      - pxar-mount
-    name_template: "proxmox-backup-pxar-mount-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
-    formats:
-      - binary
-
   - id: linux-agent
     ids:
       - linux-agent
@@ -147,7 +128,6 @@ nfpms:
   - id: server-deb
     ids:
       - server
-      - pxar-mount
     package_name: "{{ .ProjectName }}"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
@@ -163,6 +143,9 @@ nfpms:
       - proxmox-backup-client (>= 3.2.5)
       - fuse3
       - memcached
+    recommends:
+      - pxar-direct-mount
+      - pxar-socket-api
     contents:
       - src: ./build/package/server/pbs-plus.service
         dst: /lib/systemd/system/pbs-plus.service

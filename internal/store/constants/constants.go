@@ -6,7 +6,7 @@ const (
 	ProxyTargetURL = "https://127.0.0.1:8007" // The target server URL
 
 	ARPCServerPort   = ":8008"
-	AgentAPIPort   = ":8018"
+	AgentAPIPort     = ":8018"
 	ServerAPIExtPort = ":8017"
 
 	ModifiedFilePath       = "/js/proxmox-backup-gui.js"     // The specific JS file to modify
@@ -32,11 +32,14 @@ const (
 	RestoreMountBasePath = "/mnt/pbs-plus-restores"
 	LogsBasePath         = "/var/log/proxmox-backup"
 	TaskLogsBasePath     = LogsBasePath + "/tasks"
-	JobLogsBasePath      = "/var/log/pbs-plus"
+	ActiveLogsPath       = TaskLogsBasePath + "/active"
+	BackupLogsBasePath   = "/var/log/pbs-plus"
+	RestoreLogsBasePath  = "/var/log/pbs-plus/restores"
 	ScriptsBasePath      = "/var/lib/pbs-plus/scripts"
 	SecretsKeyPath       = "/var/lib/pbs-plus/.secret.key"
 	MountSocketPath      = "/var/run/pbs_agent_mount.sock"
 	JobMutateSocketPath  = "/var/run/pbs_agent_job_mutate.sock"
+	RestoreSocketPath    = "/var/run/pbs_plus_restore"
 	LockSocketPath       = "/var/run/pbs_plus_locker.sock"
 	MemcachedSocketPath  = "/var/run/pbs_plus_memcached"
 	PBSAuthKeyPath       = "/etc/proxmox-backup/authkey.key"

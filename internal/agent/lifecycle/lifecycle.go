@@ -140,8 +140,15 @@ func ConnectARPC(ctx context.Context, version string) error {
 					router.Handle("backup", func(req *arpc.Request) (arpc.Response, error) {
 						return controllers.BackupStartHandler(req, session)
 					})
+					router.Handle("restore", func(req *arpc.Request) (arpc.Response, error) {
+						return controllers.RestoreStartHandler(req, session)
+					})
+					router.Handle("filetree", func(req *arpc.Request) (arpc.Response, error) {
+						return controllers.RestoreFileTreeHandler(req, session)
+					})
 					router.Handle("target_status", controllers.StatusHandler)
 					router.Handle("cleanup", controllers.BackupCloseHandler)
+					router.Handle("cleanup_restore", controllers.RestoreCloseHandler)
 					session.SetRouter(router)
 					backoff = base
 				}

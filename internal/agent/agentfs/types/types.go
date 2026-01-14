@@ -40,11 +40,41 @@ type (
 	}
 
 	BackupReq struct {
-		JobId      string `cbor:"job_id"`
+		BackupId   string `cbor:"job_id"`
 		Drive      string `cbor:"drive"`
 		SourceMode string `cbor:"source_mode,omitempty"`
 		ReadMode   string `cbor:"read_mode,omitempty"`
 		Extras     string `cbor:"extras,omitempty"`
+	}
+
+	RestoreReq struct {
+		RestoreId string `cbor:"job_id"`
+		SrcPath   string `cbor:"src_path"`
+		DestPath  string `cbor:"dest_path"`
+		Extras    string `cbor:"extras,omitempty"`
+	}
+
+	RestoreCloseReq struct {
+		RestoreId string `cbor:"job_id"`
+	}
+
+	FileTreeReq struct {
+		HostPath string `cbor:"host_path"`
+		SubPath  string `cbor:"subpath"`
+		Extras   string `cbor:"extras,omitempty"`
+	}
+
+	FileTreeEntry struct {
+		Filepath string `json:"filepath"`
+		Leaf     bool   `json:"leaf"`
+		Text     string `json:"text"`
+		Type     string `json:"type"`
+		Mtime    int64  `json:"mtime,omitempty"`
+		Size     int64  `json:"size,omitempty"`
+	}
+
+	FileTreeResp struct {
+		Data []FileTreeEntry `json:"data"`
 	}
 
 	LseekReq struct {

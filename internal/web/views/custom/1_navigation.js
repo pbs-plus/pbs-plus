@@ -1,4 +1,4 @@
-Ext.onReady(function() {
+Ext.onReady(function () {
   let store = Ext.getStore("NavigationStore");
 
   if (store) {
@@ -10,7 +10,7 @@ Ext.onReady(function() {
       let index = root.indexOf(notesNode);
 
       root.insertChild(index, {
-        text: "Disk Backup",
+        text: "Disk Backup / Restore",
         iconCls: "fa fa-hdd-o",
         id: "backup_targets",
         path: "pbsD2DManagement",
@@ -18,10 +18,10 @@ Ext.onReady(function() {
         children: [],
       });
       root.insertChild(index + 1, {
-        text: "Disk Restore",
-        iconCls: "fa fa-download",
-        id: "backup_restore",
-        path: "pbsD2DRestore",
+        text: "Snapshot Mount",
+        iconCls: "fa fa-hdd-o",
+        id: "snapshot_mount",
+        path: "pbsD2DSnapshotMount",
         expanded: true,
         children: [],
       });
