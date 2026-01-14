@@ -71,7 +71,7 @@ func GetRestoreTask(
 	task := Task{
 		Node:       node,
 		PID:        proxyPID,
-		PStart:     int(proxyPStart),
+		PStart:     proxyPStart,
 		StartTime:  time.Now().Unix(),
 		WorkerType: wtype,
 		WID:        wid,

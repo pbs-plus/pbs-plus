@@ -65,7 +65,7 @@ func ParseUPID(upid string) (Task, error) {
 			if err != nil {
 				return Task{}, fmt.Errorf("failed to parse PStart: %w", err)
 			}
-			task.PStart = int(pstart)
+			task.PStart = uint64(pstart)
 		case "starttime":
 			// Convert StartTime from hex to int64.
 			startTime, err := strconv.ParseInt(matches[i], 16, 64)
@@ -109,8 +109,8 @@ func (task *Task) GenerateUPID() string {
 
 var pstart = atomic.Int32{}
 
-func getPStart() int {
-	return int(pstart.Add(1))
+func getPStart() uint64 {
+	return uint64(pstart.Add(1))
 }
 
 func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
