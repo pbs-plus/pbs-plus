@@ -54,6 +54,10 @@ type (
 		Extras    string `cbor:"extras,omitempty"`
 	}
 
+	RestoreCloseReq struct {
+		RestoreId string `cbor:"job_id"`
+	}
+
 	FileTreeReq struct {
 		HostPath string `cbor:"host_path"`
 		SubPath  string `cbor:"subpath"`

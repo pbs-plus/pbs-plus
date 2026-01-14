@@ -123,7 +123,7 @@ func RestoreStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Resp
 }
 
 func RestoreCloseHandler(req *arpc.Request) (arpc.Response, error) {
-	var reqData types.RestoreReq
+	var reqData types.RestoreCloseReq
 	err := cbor.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{}, err
