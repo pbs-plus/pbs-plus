@@ -3,7 +3,10 @@ Ext.define("PBS.window.D2DPathSelector", {
   alias: "widget.pbsD2DPathSelector",
 
   title: gettext("Select Path"),
-  isFromRoot: true,
+
+  config: {
+    prependSlash: true,
+  },
 
   controller: {
     xclass: "Ext.app.ViewController",
@@ -78,19 +81,21 @@ Ext.define("PBS.window.D2DPathSelector", {
 
     onSelect: function () {
       let me = this;
+      let view = me.getView();
       let tree = me.lookup("tree");
       let selection = tree.getSelection();
+
       if (selection && selection.length > 0) {
         let data = selection[0].data;
         try {
           let path = atob(data.filepath);
-          if (me.isFromRoot) {
-            if (!path.startsWith("/")) {
-              path = "/" + path;
-            }
+
+          if (view.getPrependSlash() && !path.startsWith("/")) {
+            path = "/" + path;
           }
-          me.getView().fireEvent("select", path);
-          me.getView().close();
+
+          view.fireEvent("select", path);
+          view.close();
         } catch (e) {
           console.error("Failed to decode path:", data.filepath);
         }
