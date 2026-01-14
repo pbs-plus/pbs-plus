@@ -178,7 +178,7 @@ func (b *RestoreOperation) Execute() error {
 	socketPath := filepath.Join(constants.RestoreSocketPath, strings.ReplaceAll(childKey, "|", "-")+".sock")
 
 	b.task.WriteString(fmt.Sprintf("running pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
-	reader, err := pxar.NewPxarReader(socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task)
+	reader, err := pxar.NewPxarReader(b.ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task)
 	if err != nil {
 		return err
 	}

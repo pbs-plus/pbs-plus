@@ -4,6 +4,7 @@ package pxar
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -66,7 +67,7 @@ func (r *PxarReader) GetStats() PxarReaderStats {
 	}
 }
 
-func NewPxarReader(socketPath, pbsStore, namespace, snapshot string, proxmoxTask *proxmox.RestoreTask) (*PxarReader, error) {
+func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapshot string, proxmoxTask *proxmox.RestoreTask) (*PxarReader, error) {
 	dsInfo, err := proxmox.GetDatastoreInfo(pbsStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore: %w", err)
@@ -105,7 +106,7 @@ func NewPxarReader(socketPath, pbsStore, namespace, snapshot string, proxmoxTask
 		return nil, fmt.Errorf(".pxar.didx found, only split archives are supported for now")
 	}
 
-	cmd, err := runSocket(socketPath, dsInfo.Path, mpxarPath, ppxarPath, "")
+	cmd, err := runSocket(ctx, socketPath, dsInfo.Path, mpxarPath, ppxarPath, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to serve socket: %w", err)
 	}
@@ -147,7 +148,7 @@ func NewPxarReader(socketPath, pbsStore, namespace, snapshot string, proxmoxTask
 	}, nil
 }
 
-func runSocket(socketPath, pbsStore, mpxarPath, ppxarPath, keyFile string) (*exec.Cmd, error) {
+func runSocket(ctx context.Context, socketPath, pbsStore, mpxarPath, ppxarPath, keyFile string) (*exec.Cmd, error) {
 	socketDir := filepath.Dir(socketPath)
 	if err := os.MkdirAll(socketDir, 0755); err != nil {
 		syslog.L.Error(err).WithMessage("pxar-socket: failed to create socket directory").Write()
@@ -165,7 +166,7 @@ func runSocket(socketPath, pbsStore, mpxarPath, ppxarPath, keyFile string) (*exe
 		args = append(args, "--keyfile", keyFile)
 	}
 
-	cmd := exec.Command("/usr/bin/pxar-socket-api", args...)
+	cmd := exec.CommandContext(ctx, "/usr/bin/pxar-socket-api", args...)
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("pxar-socket: StdoutPipe failed").Write()
@@ -216,9 +217,6 @@ func runSocket(socketPath, pbsStore, mpxarPath, ppxarPath, keyFile string) (*exe
 func (c *PxarReader) Close() error {
 	if c.conn != nil {
 		_ = c.conn.Close()
-	}
-	if c.cmd != nil {
-		c.cmd.Cancel()
 	}
 	return nil
 }
