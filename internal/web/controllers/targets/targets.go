@@ -280,8 +280,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, existingTarget := range existingTargets {
 			if _, processed := processedTargetNames[existingTarget.Name]; !processed {
-				expectedPrefix := reqParsed.Hostname + " - "
-				if strings.HasPrefix(existingTarget.Name.String(), expectedPrefix) {
+				if existingTarget.Name.GetHostname() == reqParsed.Hostname {
 					err = storeInstance.Database.DeleteTarget(tx, existingTarget.Name)
 					if err != nil {
 						w.WriteHeader(http.StatusInternalServerError)
