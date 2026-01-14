@@ -278,19 +278,6 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
-		for _, existingTarget := range existingTargets {
-			if _, processed := processedTargetNames[existingTarget.Name]; !processed {
-				if existingTarget.Name.GetHostname() == reqParsed.Hostname {
-					err = storeInstance.Database.DeleteTarget(tx, existingTarget.Name)
-					if err != nil {
-						w.WriteHeader(http.StatusInternalServerError)
-						controllers.WriteErrorResponse(w, fmt.Errorf("Failed to delete target %s: %w", existingTarget.Name, err))
-						return
-					}
-				}
-			}
-		}
-
 		err = tx.Commit()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
