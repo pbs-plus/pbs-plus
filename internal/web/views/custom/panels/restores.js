@@ -84,11 +84,8 @@ Ext.define("PBS.config.DiskRestoreJobView", {
         .map((r) => {
           const d = r.data;
           const upid = d["last-run-upid"] || "";
-          const hasPlus = (d["last-run-state"] || "").startsWith("QUEUED:");
           const hasPBSTask = !!upid;
-          return hasPlus || hasPBSTask
-            ? { id: r.getId(), upid, hasPlus, hasPBSTask }
-            : null;
+          return hasPBSTask ? { id: r.getId(), upid, hasPBSTask } : null;
         })
         .filter(Boolean);
       if (!jobs.length) return;
@@ -104,48 +101,22 @@ Ext.define("PBS.config.DiskRestoreJobView", {
       Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
         if (btn !== "yes") return;
 
-        // 1) delete the “Plus” queue entry for all jobs in one request
-        const plusJobs = jobs.filter((j) => j.hasPlus);
-        if (plusJobs.length > 0) {
-          const plusIds = plusJobs
-            .map((j) => "job=" + encodeURIComponent(encodePathValue(j.id)))
-            .join("&");
-          PBS.PlusUtils.API2Request({
-            url: "/api2/extjs/d2d/restore?" + plusIds,
-            method: "DELETE",
-            waitMsgTarget: view,
-            success: () => {
-              // Only reload if there are no PBSTasks to stop
-              if (!jobs.some((j) => j.hasPBSTask)) {
-                me.reload();
-              }
-            },
-            failure: () => {
-              // ignore, but still attempt PBSTask below
-            },
-          });
-        }
-
-        // 2) delete the PBS-side task for each job as before (no batch API for this)
-        jobs.forEach((job) => {
-          if (job.hasPBSTask) {
-            const task = Proxmox.Utils.parse_task_upid(job.upid);
-            Proxmox.Utils.API2Request({
-              url:
-                "/api2/extjs/nodes/" +
-                task.node +
-                "/tasks/" +
-                encodeURIComponent(job.upid),
-              method: "DELETE",
-              waitMsgTarget: view,
-              success: () => {
-                me.reload();
-              },
-              failure: (resp) => {
-                Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
-              },
-            });
-          }
+        const plusIds = plusJobs
+          .map((j) => "job=" + encodeURIComponent(encodePathValue(j.id)))
+          .join("&");
+        PBS.PlusUtils.API2Request({
+          url: "/api2/extjs/d2d/restore?" + plusIds,
+          method: "DELETE",
+          waitMsgTarget: view,
+          success: () => {
+            // Only reload if there are no PBSTasks to stop
+            if (!jobs.some((j) => j.hasPBSTask)) {
+              me.reload();
+            }
+          },
+          failure: () => {
+            // ignore, but still attempt PBSTask below
+          },
         });
       });
     },
