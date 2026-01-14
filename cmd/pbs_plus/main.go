@@ -212,6 +212,8 @@ func main() {
 		return
 	}
 
+	proxmox.CleanupPbsPlusActiveTasks()
+
 	hn, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
 	if !ok {
 		syslog.L.Error(fmt.Errorf("PBS_PLUS_HOSTNAME is not set.")).WithMessage("a required environment variable is not set. you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables").Write()

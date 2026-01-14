@@ -20,10 +20,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
-func init() {
-	CleanupPbsPlusActiveTasks()
-}
-
 // ListTasksJSON shells out to the CLI and unmarshals into []Task.
 func ListTasksJSON(ctx context.Context) ([]Task, error) {
 	cmd := exec.CommandContext(
