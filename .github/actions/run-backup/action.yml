@@ -13,7 +13,7 @@ runs:
     - name: Start backup
       shell: bash
       run: |
-        curl -k -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=dGVzdC1iYWNrdXAtam9i" \
+        docker exec pbs-plus-test curl -k -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=dGVzdC1iYWNrdXAtam9i" \
           -H "Content-Type: application/x-www-form-urlencoded"
 
     - name: Wait for backup completion
