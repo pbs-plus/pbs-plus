@@ -21,6 +21,10 @@ import (
 //go:embed install-agent.ps1
 var scriptFS embed.FS
 
+func init() {
+	_ = os.RemoveAll(getCacheDir())
+}
+
 func getCacheDir() string {
 	base := os.TempDir()
 	dir := filepath.Join(base, "pbs-plus-binaries")
