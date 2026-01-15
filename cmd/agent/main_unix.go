@@ -20,6 +20,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+
+	_ "github.com/KimMachineGun/automemlimit"
 )
 
 var Version = "v0.0.0"
