@@ -21,8 +21,10 @@
              Description="PBS Plus Agent for Windows"
              Manufacturer="$(var.Manufacturer)" />
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
-                  AllowSameVersionUpgrades="yes" />
+    <MajorUpgrade 
+      DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+      AllowSameVersionUpgrades="yes" 
+      Schedule="afterInstallInitialize" />
     
     <MediaTemplate EmbedCab="yes" />
 
