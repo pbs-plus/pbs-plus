@@ -27,12 +27,12 @@ const (
 
 func GetUnixACLs(path string, fd int) ([]types.PosixACL, error) {
 	access, err := getACL(path, fd, XATTR_NAME_ACL_ACCESS)
-	if err != nil && err != unix.ENODATA && err != unix.EOPNOTSUPP {
+	if err != nil && !isNoAttr(err) {
 		return nil, err
 	}
 
 	defaultAcl, err := getACL(path, fd, XATTR_NAME_ACL_DEFAULT)
-	if err != nil && err != unix.ENODATA && err != unix.EOPNOTSUPP {
+	if err != nil && !isNoAttr(err) {
 		return access, nil
 	}
 
