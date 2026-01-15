@@ -54,7 +54,6 @@
                   KeyPath="yes"
                   Checksum="yes" />
             
-            <!-- This writes the properties to the registry -->
             <RegistryKey Root="HKLM" Key="SOFTWARE\PBSPlus\Config">
               <RegistryValue Type="string" Name="ServerURL" Value="[SERVERURL]" />
               <RegistryValue Type="string" Name="BootstrapToken" Value="[BOOTSTRAPTOKEN]" />
@@ -77,14 +76,8 @@
                 ResetPeriodInDays="0" />
             </ServiceInstall>
 
-            <!-- 
-              Note: Start is set to "no" to prevent the installer from failing 
-              if the agent validates config and exits immediately upon first run.
-              The service will start on next boot or can be started via script.
-            -->
             <ServiceControl Id="StartPBSPlusAgent"
                            Name="PBSPlusAgent"
-                           Start="no" 
                            Stop="both"
                            Remove="uninstall"
                            Wait="yes" />
@@ -125,7 +118,6 @@
         </Control>
         
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next">
-          <!-- Only progress if both fields have values -->
           <Publish Event="NewDialog" Value="VerifyReadyDlg"><![CDATA[SERVERURL AND BOOTSTRAPTOKEN]]></Publish>
         </Control>
         
@@ -134,12 +126,10 @@
         </Control>
       </Dialog>
       
-      <!-- Re-wire the UI Sequence -->
       <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ConfigurationDlg" Order="5">1</Publish>
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ConfigurationDlg" Order="5">NOT Installed</Publish>
     </UI>
 
-    <!-- Custom Actions for Cleanup -->
     <CustomAction Id="StopOldService"
                   Directory="INSTALLFOLDER"
                   ExeCommand='cmd.exe /c "net stop PBSPlusAgent 2>nul &amp; net stop PBSPlusUpdater 2>nul"'
