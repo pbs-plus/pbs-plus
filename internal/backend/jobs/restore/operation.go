@@ -301,7 +301,7 @@ func (b *RestoreOperation) localExecute() error {
 	destPath := b.job.DestPath
 
 	targetInfo := b.job.DestTargetPath.GetPathInfo()
-	destPath = filepath.Join(targetInfo.HostPath, destPath)
+	destPath = filepath.Join(targetInfo.RawPath, destPath)
 
 	srcPath := b.job.SrcPath
 	if strings.TrimSpace(b.job.SrcPath) == "" {
