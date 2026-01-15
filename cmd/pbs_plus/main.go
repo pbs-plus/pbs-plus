@@ -385,6 +385,7 @@ func main() {
 
 	// Agent routes
 	agentMux.HandleFunc("/api2/json/plus/version", plus.VersionHandler(storeInstance, Version))
+	agentMux.HandleFunc("/api2/json/plus/msi", plus.DownloadMsi(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/plus/binary", plus.DownloadBinary(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/plus/binary/sig", plus.DownloadSig(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/plus/binary/checksum", plus.DownloadChecksum(storeInstance, Version))
