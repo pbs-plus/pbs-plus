@@ -205,16 +205,7 @@ func (b *RestoreOperation) PreExecute() error {
 	return nil
 }
 
-func (b *RestoreOperation) Execute() error {
-	b.updateRestoreWithTask(b.task.Task)
-
-	syslog.L.Info().
-		WithMessage("Received restore request").
-		WithFields(map[string]any{
-			"restoreId": b.job.ID,
-			"target":    b.job.DestTarget,
-		}).Write()
-
+func (b *RestoreOperation) agentExecute() error {
 	preCtx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
 	defer cancel()
 
@@ -228,13 +219,9 @@ func (b *RestoreOperation) Execute() error {
 	destPath := b.job.DestPath
 
 	targetInfo := b.job.DestTargetPath.GetPathInfo()
-	if b.job.DestTargetPath.IsAgent() {
-		destPath = filepath.Join(targetInfo.HostPath, destPath)
-		if targetInfo.IsWindows {
-			destPath = filepath.FromSlash(destPath)
-		}
-	} else {
-		return fmt.Errorf("only agent-based restores are supported for now (%s)", b.job.DestTargetPath)
+	destPath = filepath.Join(targetInfo.HostPath, destPath)
+	if targetInfo.IsWindows {
+		destPath = filepath.FromSlash(destPath)
 	}
 
 	srcPath := b.job.SrcPath
@@ -308,6 +295,88 @@ func (b *RestoreOperation) Execute() error {
 	}
 
 	return nil
+}
+
+func (b *RestoreOperation) localExecute() error {
+	destPath := b.job.DestPath
+
+	targetInfo := b.job.DestTargetPath.GetPathInfo()
+	destPath = filepath.Join(targetInfo.RawPath, destPath)
+
+	srcPath := b.job.SrcPath
+	if strings.TrimSpace(b.job.SrcPath) == "" {
+		srcPath = "/"
+	}
+
+	childKey := b.job.GetStreamID()
+	socketPath := filepath.Join(constants.RestoreSocketPath, strings.ReplaceAll(childKey, "|", "-")+".sock")
+
+	b.task.WriteString(fmt.Sprintf("running pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
+	reader, err := pxar.NewPxarReader(b.ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task)
+	if err != nil {
+		return err
+	}
+
+	vfssessions.CreatePxarReader(childKey, reader)
+
+	syslog.L.Info().
+		WithMessage("Restore request sent").
+		WithFields(map[string]any{
+			"restoreId": b.job.ID,
+		}).Write()
+
+	b.task.WriteString("starting local restore")
+
+	results := make(chan []error, 1)
+	defer close(results)
+
+	go pxar.LocalRestore(b.ctx, reader, []string{srcPath}, destPath, results)
+
+	defer func() {
+		b.task.WriteString(fmt.Sprintf("ending session of %s", childKey))
+		vfssessions.DisconnectSession(childKey)
+	}()
+
+	numErrs := 0
+	select {
+	case <-b.ctx.Done():
+		return b.ctx.Err()
+	case errs := <-results:
+		for _, err := range errs {
+			numErrs++
+			b.task.WriteString(fmt.Sprintf("error: %s", err.Error()))
+		}
+	}
+
+	if numErrs > 0 {
+		return fmt.Errorf("local restore has encountered %d errors", numErrs)
+	}
+
+	return nil
+}
+
+func (b *RestoreOperation) Execute() error {
+	b.updateRestoreWithTask(b.task.Task)
+
+	syslog.L.Info().
+		WithMessage("Received restore request").
+		WithFields(map[string]any{
+			"restoreId": b.job.ID,
+			"target":    b.job.DestTarget,
+		}).Write()
+
+	info := b.job.DestTargetPath.GetPathInfo()
+
+	switch info.Type {
+	case types.TargetTypeAgent:
+		return b.agentExecute()
+	case types.TargetTypeLocal:
+		return b.localExecute()
+	case types.TargetTypeS3:
+		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTargetPath)
+	}
+
+	return fmt.Errorf("only agent and local restores are supported for now (%s)", b.job.DestTargetPath)
 }
 
 func (b *RestoreOperation) OnError(err error) {
