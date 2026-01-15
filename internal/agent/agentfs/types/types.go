@@ -100,9 +100,10 @@ type (
 	}
 
 	PosixACL struct {
-		Tag   string `cbor:"tag"`
-		ID    int32  `cbor:"id"`
-		Perms uint8  `cbor:"perms"`
+		Tag       string `cbor:"tag"`
+		ID        int32  `cbor:"id"`
+		Perms     uint8  `cbor:"perms"`
+		IsDefault bool   `cbor:"is_default"`
 	}
 
 	AgentFileInfo struct {
