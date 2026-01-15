@@ -25,24 +25,8 @@
     
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- 
-      Initialize properties with empty values. 
-      This prevents 'Launch Condition' evaluation failures if the property is checked early.
-    -->
-    <Property Id="SERVERURL" Secure="yes" Value=" " />
-    <Property Id="BOOTSTRAPTOKEN" Secure="yes" Value=" " />
-
-    <!-- Registry Search: Load existing values if they exist -->
-    <Property Id="EXISTING_SERVERURL" Secure="yes">
-      <RegistrySearch Id="ServerURLSearch"
-                      Root="HKLM"
-                      Key="SOFTWARE\PBSPlus\Config"
-                      Name="ServerURL"
-                      Type="raw" />
-    </Property>
-
-    <!-- Set the working property to the existing one if found -->
-    <SetProperty Id="SERVERURL" Value="[EXISTING_SERVERURL]" After="AppSearch">EXISTING_SERVERURL</SetProperty>
+    <Property Id="SERVERURL" Secure="yes" />
+    <Property Id="BOOTSTRAPTOKEN" Secure="yes" />
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
 
@@ -63,20 +47,12 @@
             <ServiceInstall Id="PBSPlusAgentService"
                            Name="PBSPlusAgent"
                            DisplayName="PBS Plus Agent"
-                           Description="Agent for orchestrating backups with PBS Plus"
                            Type="ownProcess"
                            Start="auto"
                            ErrorControl="normal"
-                           Account="LocalSystem">
-              <util:ServiceConfig
-                FirstFailureActionType="restart"
-                SecondFailureActionType="restart"
-                ThirdFailureActionType="restart"
-                RestartServiceDelayInSeconds="5"
-                ResetPeriodInDays="0" />
-            </ServiceInstall>
+                           Account="LocalSystem" />
 
-            <ServiceControl Id="StartPBSPlusAgent"
+            <ServiceControl Id="StopPBSPlusAgent"
                            Name="PBSPlusAgent"
                            Stop="both"
                            Remove="uninstall"
@@ -92,45 +68,33 @@
 
     <UI>
       <UIRef Id="WixUI_InstallDir" />
-      <UIRef Id="WixUI_ErrorProgressText" />
-      
       <Dialog Id="ConfigurationDlg" Width="370" Height="270" Title="[ProductName] Configuration">
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
-        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
-        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
-        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes">
-          <Text>{\WixUI_Font_Title}Server Configuration</Text>
-        </Control>
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes">
-          <Text>Please enter your PBS Plus server details.</Text>
-        </Control>
-        
-        <Control Id="ServerURLLabel" Type="Text" X="25" Y="60" Width="100" Height="15" TabSkip="no" Text="Server URL:" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" Text="{\WixUI_Font_Title}Server Configuration" />
+        <Control Id="ServerURLLabel" Type="Text" X="25" Y="60" Width="100" Height="15" Text="Server URL:" />
         <Control Id="ServerURLEdit" Type="Edit" X="25" Y="75" Width="320" Height="18" Property="SERVERURL" />
-        
-        <Control Id="BootstrapTokenLabel" Type="Text" X="25" Y="100" Width="100" Height="15" TabSkip="no" Text="Bootstrap Token:" />
+        <Control Id="BootstrapTokenLabel" Type="Text" X="25" Y="100" Width="100" Height="15" Text="Bootstrap Token:" />
         <Control Id="BootstrapTokenEdit" Type="Edit" X="25" Y="115" Width="320" Height="18" Property="BOOTSTRAPTOKEN" Password="yes" />
-        
-        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
-          <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
-        </Control>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back"><Publish Event="NewDialog" Value="InstallDirDlg">1</Publish></Control>
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next">
-          <!-- Validate that user didn't leave them as just a space or empty -->
-          <Publish Event="NewDialog" Value="VerifyReadyDlg"><![CDATA[SERVERURL <> " " AND BOOTSTRAPTOKEN <> " "]]></Publish>
+          <Publish Event="NewDialog" Value="VerifyReadyDlg">SERVERURL AND BOOTSTRAPTOKEN</Publish>
         </Control>
-        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
-          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
-        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel"><Publish Event="SpawnDialog" Value="CancelDlg">1</Publish></Control>
       </Dialog>
-      
       <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ConfigurationDlg" Order="5">1</Publish>
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ConfigurationDlg" Order="5">NOT Installed</Publish>
     </UI>
 
-    <CustomAction Id="SetFailureReset" Directory="INSTALLFOLDER" ExeCommand='sc.exe failure PBSPlusAgent reset= 300' Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="StartServiceManual"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand='cmd.exe /c "sc start PBSPlusAgent"'
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="SetFailureReset" After="InstallServices">NOT REMOVE</Custom>
+      <Custom Action="StartServiceManual" After="InstallFiles">NOT REMOVE</Custom>
     </InstallExecuteSequence>
+
   </Product>
 </Wix>
