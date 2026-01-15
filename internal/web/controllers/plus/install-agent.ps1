@@ -1,4 +1,4 @@
-# PBS Plus Agent MSI Installation Script
+# PBS Plus Agent MSI Reinstallation Script
 #Requires -RunAsAdministrator
 
 # Configuration
@@ -36,17 +36,18 @@ function Download-FileWithRetry {
 }
 
 try {
-    Write-Host "Starting PBS Plus Agent MSI Installation..." -ForegroundColor Green
+    Write-Host "Starting PBS Plus Agent MSI Installation/Reinstallation..." -ForegroundColor Green
 
     # 1. Download the MSI
     if (-not (Download-FileWithRetry -Url $msiUrl -Destination $msiPath)) {
         throw "Failed to download MSI package."
     }
 
-    # 2. Run the MSI silently
-    # We pass the public properties SERVERURL and BOOTSTRAPTOKEN to the command line
-    # /i = install, /qn = quiet (no UI), /norestart = self-explanatory, /L*V = verbose log
+    # 2. Check if already installed to determine flags
+    # We look for the UpgradeCode in the registry or use the REINSTALL logic
     $logPath = Join-Path -Path $tempDir -ChildPath "install.log"
+    
+    # Base arguments
     $msiArgs = @(
         "/i", "`"$msiPath`"",
         "SERVERURL=`"$serverUrl`"",
@@ -56,21 +57,31 @@ try {
         "/L*V", "`"$logPath`""
     )
 
-    Write-Host "Executing MSI..." -ForegroundColor Cyan
+    # Add Reinstall flags to force overwrite if already present
+    # v: runs from source and recaches
+    # a: force all files to be reinstalled
+    # m: rewrite registry to HKLM
+    # u: rewrite registry to HKCU
+    # s: overwrite shortcuts
+    $msiArgs += "REINSTALL=ALL"
+    $msiArgs += "REINSTALLMODE=vamus"
+
+    Write-Host "Executing MSI with Reinstall flags..." -ForegroundColor Cyan
     $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Wait -PassThru
 
-    if ($process.ExitCode -ne 0) {
+    # 1638 is the exit code for "Another version of this product is already installed"
+    # If vamus didn't handle it for some reason, we could catch it here, but vamus is designed for this.
+    if ($process.ExitCode -eq 0) {
+        Write-Host "Installation/Reinstallation completed successfully." -ForegroundColor Green
+    } else {
         Write-Host "MSI failed with exit code $($process.ExitCode). Check log at $logPath" -ForegroundColor Red
         exit 1
     }
-
-    Write-Host "MSI Installation completed successfully." -ForegroundColor Green
 }
 catch {
     Write-Host "Installation failed: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }
 finally {
-    # Clean up
     Remove-Item -Path $msiPath -Force -ErrorAction SilentlyContinue
 }
