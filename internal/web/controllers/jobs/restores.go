@@ -220,6 +220,8 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			SrcPath:       r.FormValue("src-path"),
 			DestTarget:    types.WrapTargetName(r.FormValue("dest-target")),
 			DestPath:      r.FormValue("dest-path"),
+			PreScript:     r.FormValue("pre_script"),
+			PostScript:    r.FormValue("post_script"),
 			Comment:       r.FormValue("comment"),
 			Retry:         retry,
 			RetryInterval: retryInterval,
@@ -282,6 +284,9 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				restore.Comment = r.FormValue("comment")
 			}
 
+			restore.PreScript = r.FormValue("pre_script")
+			restore.PostScript = r.FormValue("post_script")
+
 			retry, err := strconv.Atoi(r.FormValue("retry"))
 			if err != nil {
 				retry = 0
@@ -310,6 +315,10 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						restore.DestTarget.Raw = ""
 					case "dest-path":
 						restore.DestPath = ""
+					case "pre_script":
+						restore.PreScript = ""
+					case "post_script":
+						restore.PostScript = ""
 					case "comment":
 						restore.Comment = ""
 					case "retry":
