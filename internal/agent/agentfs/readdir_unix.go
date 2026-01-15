@@ -12,7 +12,6 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 	"golang.org/x/sys/unix"
 )
 
@@ -21,17 +20,8 @@ const (
 	defaultTargetEncodedLen = 1024 * 1024
 )
 
-var (
-	idCache = safemap.New[uint32, string]()
-)
-
 func getIDString(id uint32) string {
-	if s, ok := idCache.Get(id); ok {
-		return s
-	}
-	s := strconv.Itoa(int(id))
-	idCache.Set(id, s)
-	return s
+	return strconv.Itoa(int(id))
 }
 
 type DirReaderUnix struct {
@@ -130,11 +120,11 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 
 func (r *DirReaderUnix) Close() error {
 	var firstErr error
-	if r.fd != 0 {
+	if r.fd != -1 {
 		if err := unix.Close(r.fd); err != nil && !errors.Is(err, syscall.EBADF) {
 			firstErr = fmt.Errorf("failed to close directory '%s': %w", r.path, err)
 		}
-		r.fd = 0
+		r.fd = -1
 	}
 	if r.buf != nil {
 		bufferPool.Put(r.buf)
