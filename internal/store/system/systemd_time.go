@@ -112,7 +112,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/pbs-plus -job=%s
+ExecStart=/usr/bin/pbs-plus -backup-job=%s
 `, backup.ID, backup.ID)
 
 	timerContent := fmt.Sprintf(`[Unit]
