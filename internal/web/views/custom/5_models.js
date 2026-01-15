@@ -49,6 +49,8 @@ Ext.define("pbs-disk-restore-job-status", {
     "src-path",
     "dest-target",
     "dest-path",
+    "pre_script",
+    "post_script",
     "comment",
     "duration",
     "current_bytes_total",

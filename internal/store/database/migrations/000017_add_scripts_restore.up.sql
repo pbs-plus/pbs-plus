@@ -1,0 +1,2 @@
+ALTER TABLE restores ADD COLUMN pre_script TEXT NOT NULL DEFAULT '';
+ALTER TABLE restores ADD COLUMN post_script TEXT NOT NULL DEFAULT '';

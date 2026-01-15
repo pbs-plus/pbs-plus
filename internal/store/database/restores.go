@@ -117,11 +117,11 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
         INSERT INTO restores (
             id, store, namespace, snapshot, src_path, dest_target, dest_path, comment,
             current_pid, last_run_upid, last_successful_upid, retry,
-            retry_interval
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            retry_interval, pre_script, post_script
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, restore.ID, restore.Store, restore.Namespace, restore.Snapshot, restore.SrcPath, restore.DestTarget, restore.DestPath,
 		restore.Comment, restore.CurrentPID, restore.LastRunUpid, restore.LastSuccessfulUpid, restore.Retry,
-		restore.RetryInterval)
+		restore.RetryInterval, restore.PreScript, restore.PostScript)
 	if err != nil {
 		return fmt.Errorf("CreateRestore: error inserting restore: %w", err)
 	}
@@ -136,7 +136,7 @@ func (database *Database) GetRestore(id string) (types.Restore, error) {
         SELECT
             j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, t.path, j.dest_path, j.comment,
             j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval
+            j.retry, j.retry_interval, j.pre_script, j.post_script
         FROM restores j
         LEFT JOIN targets t ON j.dest_target = t.name
         WHERE j.id = ?
@@ -155,7 +155,7 @@ func (database *Database) GetRestore(id string) (types.Restore, error) {
 		err := rows.Scan(
 			&restore.ID, &restore.Store, &restore.Namespace, &restore.Snapshot, &restore.SrcPath, &restore.DestTarget, &restore.DestTargetPath,
 			&restore.DestPath, &restore.Comment, &restore.CurrentPID, &restore.LastRunUpid,
-			&restore.LastSuccessfulUpid, &restore.Retry, &restore.RetryInterval)
+			&restore.LastSuccessfulUpid, &restore.Retry, &restore.RetryInterval, &restore.PreScript, &restore.PostScript)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetRestore: error scanning restore data: %w", err)).
 				WithField("id", id).
@@ -258,11 +258,11 @@ func (database *Database) UpdateRestore(tx *sql.Tx, restore types.Restore) (err 
 	_, err = tx.Exec(`
         UPDATE restores SET store = ?, namespace = ?, snapshot = ?, src_path = ?, dest_target = ?, dest_path = ?,
             comment = ?, current_pid = ?, last_run_upid = ?, retry = ?,
-            retry_interval = ?, last_successful_upid = ?
+            retry_interval = ?, last_successful_upid = ?, pre_script = ?, post_script = ?
         WHERE id = ?
     `, restore.Store, restore.Namespace, restore.Snapshot, restore.SrcPath, restore.DestTarget, restore.DestPath,
 		restore.Comment, restore.CurrentPID, restore.LastRunUpid, restore.Retry, restore.RetryInterval,
-		restore.LastSuccessfulUpid, restore.ID)
+		restore.LastSuccessfulUpid, restore.PreScript, restore.PostScript, restore.ID)
 	if err != nil {
 		return fmt.Errorf("UpdateRestore: error updating restore: %w", err)
 	}
@@ -328,7 +328,7 @@ func (database *Database) GetAllRestores() ([]types.Restore, error) {
         SELECT
             j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, t.path, j.dest_path, j.comment,
             j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval
+            j.retry, j.retry_interval, j.pre_script, j.post_script
         FROM restores j
         LEFT JOIN targets t ON j.dest_target = t.name
         ORDER BY j.id
@@ -346,13 +346,14 @@ func (database *Database) GetAllRestores() ([]types.Restore, error) {
 		var restoreID, store, snapshot, srcPath, destTarget, destPath, comment, lastRunUpid, lastSuccessfulUpid string
 		var retry int
 		var retryInterval int
+		var preScript, postScript string
 		var targetPath, namespace sql.NullString
 		var currentPID int
 
 		err := rows.Scan(
 			&restoreID, &store, &namespace, &snapshot, &srcPath, &destTarget, &targetPath, &destPath, &comment,
 			&currentPID, &lastRunUpid, &lastSuccessfulUpid,
-			&retry, &retryInterval,
+			&retry, &retryInterval, &preScript, &postScript,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllRestores: error scanning row: %w", err)).Write()
@@ -368,6 +369,8 @@ func (database *Database) GetAllRestores() ([]types.Restore, error) {
 				SrcPath:            srcPath,
 				DestTarget:         types.WrapTargetName(destTarget),
 				DestPath:           destPath,
+				PreScript:          preScript,
+				PostScript:         postScript,
 				Comment:            comment,
 				CurrentPID:         currentPID,
 				LastRunUpid:        lastRunUpid,
@@ -406,7 +409,7 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
         SELECT
             j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, t.path, j.dest_path, j.comment,
             j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval
+            j.retry, j.retry_interval, j.pre_script, j.post_script
         FROM restores j
         LEFT JOIN targets t ON j.dest_target = t.name
 				WHERE j.last_run_upid LIKE "%pbsplusgen-queue%"
@@ -423,6 +426,7 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 
 	for rows.Next() {
 		var restoreID, store, snapshot, srcPath, destTarget, destPath, comment, lastRunUpid, lastSuccessfulUpid string
+		var preScript, postScript string
 		var retry int
 		var retryInterval int
 		var currentPID int
@@ -431,7 +435,7 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 		err := rows.Scan(
 			&restoreID, &store, &namespace, &snapshot, &srcPath, &destTarget, &targetPath, &destPath, &comment,
 			&currentPID, &lastRunUpid, &lastSuccessfulUpid,
-			&retry, &retryInterval,
+			&retry, &retryInterval, &preScript, &postScript,
 		)
 		if err != nil {
 			syslog.L.Error(fmt.Errorf("GetAllRestores: error scanning row: %w", err)).Write()
@@ -447,6 +451,8 @@ func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
 				SrcPath:            srcPath,
 				DestTarget:         types.WrapTargetName(destTarget),
 				DestPath:           destPath,
+				PreScript:          preScript,
+				PostScript:         postScript,
 				Comment:            comment,
 				CurrentPID:         currentPID,
 				LastRunUpid:        lastRunUpid,

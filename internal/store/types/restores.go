@@ -9,6 +9,8 @@ type Restore struct {
 	DestTarget            TargetName `json:"dest-target"`
 	DestTargetPath        TargetPath `json:"dest-target-path"`
 	DestPath              string     `json:"dest-path"`
+	PreScript             string     `json:"pre_script"`
+	PostScript            string     `json:"post_script"`
 	Comment               string     `json:"comment"`
 	Retry                 int        `json:"retry"`
 	RetryInterval         int        `json:"retry-interval"`

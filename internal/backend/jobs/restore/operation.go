@@ -20,6 +20,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 var (
@@ -56,6 +57,7 @@ var (
 type RestoreOperation struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	mu     sync.RWMutex
 
 	task      *proxmox.RestoreTask
 	queueTask *proxmox.QueuedTask
@@ -103,6 +105,88 @@ func (b *RestoreOperation) Context() context.Context {
 	return b.ctx
 }
 
+func (b *RestoreOperation) runPreScript() error {
+	if strings.TrimSpace(b.job.PreScript) == "" {
+		return nil
+	}
+
+	select {
+	case <-b.Context().Done():
+		return jobs.ErrCanceled
+	default:
+	}
+
+	b.queueTask.UpdateDescription("running pre-restore script")
+	b.task.WriteString(fmt.Sprintf("running pre-restore script %s", b.job.PreScript))
+
+	envVars, err := utils.StructToEnvVars(b.job)
+
+	if err != nil {
+		envVars = []string{}
+	}
+
+	scriptOut, _, err := utils.RunShellScript(b.Context(), b.job.PreScript, envVars)
+	syslog.L.Info().WithJob(b.job.ID).WithMessage(scriptOut).WithField("script", b.job.PreScript).Write()
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			syslog.L.Info().WithJob(b.job.ID).WithMessage("pre-restore script canceled").Write()
+			return jobs.ErrCanceled
+		}
+		b.task.WriteString(err.Error())
+		b.task.WriteString(fmt.Sprintf("encountered error while running %s", b.job.PreScript))
+
+		syslog.L.Error(err).WithJob(b.job.ID).WithMessage("error encountered while running job pre-restore script").Write()
+		return err
+	}
+
+	b.task.WriteString(scriptOut)
+
+	return nil
+}
+
+func (b *RestoreOperation) runPostScript() {
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
+
+	if job.PostScript == "" {
+		return
+	}
+
+	if b.queueTask != nil {
+		b.queueTask.UpdateDescription("running post-restore script")
+	}
+
+	b.task.WriteString(fmt.Sprintf("running post-restore script %s", b.job.PostScript))
+	syslog.L.Info().
+		WithMessage("running post-restore script").
+		WithField("script", job.PostScript).
+		WithJob(job.ID).
+		Write()
+
+	envVars, err := utils.StructToEnvVars(job)
+	if err != nil {
+		envVars = []string{}
+	}
+
+	scriptOut, _, err := utils.RunShellScript(b.Context(), job.PostScript, envVars)
+	if err != nil {
+		b.task.WriteString(err.Error())
+		b.task.WriteString(fmt.Sprintf("encountered error while running %s", b.job.PostScript))
+		syslog.L.Error(err).
+			WithMessage("error encountered while running job post-restore script").
+			WithJob(job.ID).
+			Write()
+	}
+
+	b.task.WriteString(scriptOut)
+	syslog.L.Info().
+		WithMessage(scriptOut).
+		WithField("script", job.PostScript).
+		WithJob(job.ID).
+		Write()
+}
+
 func (b *RestoreOperation) PreExecute() error {
 	queueTask, err := proxmox.GenerateRestoreQueuedTask(b.job, b.web)
 	if err != nil {
@@ -113,6 +197,10 @@ func (b *RestoreOperation) PreExecute() error {
 		}
 	}
 	b.queueTask = &queueTask
+
+	if err := b.runPreScript(); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -251,6 +339,9 @@ func (b *RestoreOperation) Wait() error {
 	if b.waitGroup != nil {
 		b.waitGroup.Wait()
 	}
+
+	b.runPostScript()
+
 	return b.err
 }
 
