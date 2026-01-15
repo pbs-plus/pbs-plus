@@ -169,6 +169,9 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
             reference: "pathSelector",
             name: "src-path",
           },
+        ],
+
+        column2: [
           {
             xtype: "pbsD2DTargetSelector",
             fieldLabel: "Target restore destination",
@@ -183,21 +186,6 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
           },
         ],
 
-        column2: [
-          {
-            xtype: "proxmoxtextfield",
-            fieldLabel: gettext("Number of retries"),
-            emptyText: gettext("0"),
-            name: "retry",
-          },
-          {
-            xtype: "proxmoxtextfield",
-            fieldLabel: gettext("Retry interval (minutes)"),
-            emptyText: gettext("1"),
-            name: "retry-interval",
-          },
-        ],
-
         columnB: [
           {
             fieldLabel: gettext("Comment"),
@@ -206,6 +194,16 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
             cbind: {
               deleteEmpty: "{!isCreate}",
             },
+          },
+          {
+            xtype: "pbsD2DScriptSelector",
+            fieldLabel: "Pre-Restore Script",
+            name: "pre_script",
+          },
+          {
+            xtype: "pbsD2DScriptSelector",
+            fieldLabel: "Post-Restore Script",
+            name: "post_script",
           },
         ],
       },
