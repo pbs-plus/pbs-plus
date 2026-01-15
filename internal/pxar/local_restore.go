@@ -4,6 +4,7 @@ package pxar
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -16,27 +17,40 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func LocalRestore(pr *PxarReader, sourceDirs []string, destDir string) []error {
+func LocalRestore(
+	ctx context.Context,
+	pr *PxarReader,
+	sourceDirs []string,
+	destDir string,
+	errChan chan []error,
+) {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		return []error{fmt.Errorf("mkdir root: %w", err)}
+		errChan <- []error{fmt.Errorf("mkdir root: %w", err)}
+		return
 	}
 
 	errors := make([]error, 0, len(sourceDirs))
 	for _, source := range sourceDirs {
+		if err := ctx.Err(); err != nil {
+			errors = append(errors, err)
+			break
+		}
+
 		sourceAttr, err := pr.LookupByPath(source)
 		if err != nil {
 			errors = append(errors, err)
 			continue
 		}
+
 		if sourceAttr.IsDir() {
-			err = localRestoreDir(pr, destDir, sourceAttr)
+			err = localRestoreDir(ctx, pr, destDir, sourceAttr)
 			if err != nil {
 				errors = append(errors, err)
 				continue
 			}
 		} else {
 			path := filepath.Join(destDir, sourceAttr.Name())
-			err = localRestoreFile(pr, path, sourceAttr)
+			err = localRestoreFile(ctx, pr, path, sourceAttr)
 			if err != nil {
 				errors = append(errors, err)
 				continue
@@ -44,10 +58,15 @@ func LocalRestore(pr *PxarReader, sourceDirs []string, destDir string) []error {
 		}
 	}
 
-	return errors
+	errChan <- errors
 }
 
-func localRestoreFile(pr *PxarReader, path string, e *EntryInfo) error {
+func localRestoreFile(
+	ctx context.Context,
+	pr *PxarReader,
+	path string,
+	e *EntryInfo,
+) error {
 	mode := os.FileMode(e.Mode & 0777)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
@@ -61,6 +80,10 @@ func localRestoreFile(pr *PxarReader, path string, e *EntryInfo) error {
 		buf := make([]byte, 1<<20)
 
 		for off < e.Size {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
 			size := uint(len(buf))
 			remain := e.Size - off
 			if remain < uint64(size) {
@@ -83,7 +106,16 @@ func localRestoreFile(pr *PxarReader, path string, e *EntryInfo) error {
 	return localApplyMeta(pr, path, e)
 }
 
-func localRestoreSymlink(pr *PxarReader, path string, e *EntryInfo) error {
+func localRestoreSymlink(
+	ctx context.Context,
+	pr *PxarReader,
+	path string,
+	e *EntryInfo,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	target, err := pr.ReadLink(e.EntryRangeStart, e.EntryRangeEnd)
 	if err != nil {
 		return fmt.Errorf("readlink data %q: %w", path, err)
