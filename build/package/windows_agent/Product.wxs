@@ -26,6 +26,7 @@
     
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- Registry Search: Load existing values if they exist -->
     <Property Id="SERVERURL" Secure="yes">
       <RegistrySearch Id="ServerURLSearch"
                       Root="HKLM"
@@ -53,6 +54,7 @@
                   KeyPath="yes"
                   Checksum="yes" />
             
+            <!-- This writes the properties to the registry -->
             <RegistryKey Root="HKLM" Key="SOFTWARE\PBSPlus\Config">
               <RegistryValue Type="string" Name="ServerURL" Value="[SERVERURL]" />
               <RegistryValue Type="string" Name="BootstrapToken" Value="[BOOTSTRAPTOKEN]" />
@@ -75,9 +77,14 @@
                 ResetPeriodInDays="0" />
             </ServiceInstall>
 
+            <!-- 
+              Note: Start is set to "no" to prevent the installer from failing 
+              if the agent validates config and exits immediately upon first run.
+              The service will start on next boot or can be started via script.
+            -->
             <ServiceControl Id="StartPBSPlusAgent"
                            Name="PBSPlusAgent"
-                           Start="install"
+                           Start="no" 
                            Stop="both"
                            Remove="uninstall"
                            Wait="yes" />
@@ -86,17 +93,14 @@
       </Directory>
     </Directory>
 
-    <!-- Features -->
     <Feature Id="ProductFeature" Title="PBS Plus Agent" Level="1">
       <ComponentRef Id="AgentExecutable" />
     </Feature>
 
-    <!-- UI -->
     <UI>
       <UIRef Id="WixUI_InstallDir" />
       <UIRef Id="WixUI_ErrorProgressText" />
       
-      <!-- Custom dialog for Server URL and Bootstrap Token -->
       <Dialog Id="ConfigurationDlg" Width="370" Height="270" Title="[ProductName] Configuration">
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
@@ -121,7 +125,8 @@
         </Control>
         
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next">
-          <Publish Event="NewDialog" Value="VerifyReadyDlg">SERVERURL AND BOOTSTRAPTOKEN</Publish>
+          <!-- Only progress if both fields have values -->
+          <Publish Event="NewDialog" Value="VerifyReadyDlg"><![CDATA[SERVERURL AND BOOTSTRAPTOKEN]]></Publish>
         </Control>
         
         <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
@@ -129,10 +134,12 @@
         </Control>
       </Dialog>
       
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ConfigurationDlg" Order="4">1</Publish>
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ConfigurationDlg" Order="2">NOT Installed</Publish>
+      <!-- Re-wire the UI Sequence -->
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ConfigurationDlg" Order="5">1</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ConfigurationDlg" Order="5">NOT Installed</Publish>
     </UI>
 
+    <!-- Custom Actions for Cleanup -->
     <CustomAction Id="StopOldService"
                   Directory="INSTALLFOLDER"
                   ExeCommand='cmd.exe /c "net stop PBSPlusAgent 2>nul &amp; net stop PBSPlusUpdater 2>nul"'
@@ -159,5 +166,6 @@
       <Custom Action="CleanupOldFiles" After="StopOldService">NOT REMOVE</Custom>
       <Custom Action="SetFailureReset" After="InstallServices">NOT REMOVE</Custom>
     </InstallExecuteSequence>
+
   </Product>
 </Wix>
