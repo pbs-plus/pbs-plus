@@ -136,6 +136,27 @@ func buildFilename(component, version string, platform PlatformInfo) string {
 	return fmt.Sprintf("%s-%s-%s-%s%s", component, version, platform.OS, platform.Arch, platform.Ext)
 }
 
+func DownloadMsi(storeInstance *store.Store, version string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if version == "v0.0.0" {
+			version = "dev"
+		}
+
+		platform := parsePlatformParams(r)
+		filename := fmt.Sprintf("%s-%s-%s-%s%s", "pbs-plus-agent", version, platform.OS, platform.Arch, ".msi")
+
+		// Construct the passthrough URL
+		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
+
+		proxyUrl(targetURL, w, r)
+	}
+}
+
 func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
