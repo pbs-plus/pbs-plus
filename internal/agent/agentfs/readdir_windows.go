@@ -81,6 +81,7 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 
 	hasEntries := false
 	batchFull := false
+	entryCount := 0
 
 	for !batchFull {
 		if r.bufPos >= r.bufEnd {
@@ -95,6 +96,8 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 
 			if ntErr != nil {
 				if errors.Is(ntErr, os.ErrExist) {
+					syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: enumeration completed (empty)").
+						WithField("path", r.path).Write()
 					r.noMoreFiles = true
 					break
 				}
@@ -110,7 +113,12 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 			}
 
 			r.bufPos = 0
-			r.bufEnd = len(r.buf)
+			r.bufEnd = int(r.ioStatus.Information)
+
+			if r.bufEnd == 0 {
+				r.noMoreFiles = true
+				break
+			}
 		}
 
 		for r.bufPos < r.bufEnd {
@@ -164,6 +172,7 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 						return nil, err
 					}
 					hasEntries = true
+					entryCount++
 
 					if r.encodeBuf.Len() >= r.targetEncoded {
 						batchFull = true
@@ -199,7 +208,6 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 
 	encodedResult := r.encodeBuf.Bytes()
 
-	entryCount := 0
 	syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: batch encoded").
 		WithField("path", r.path).
 		WithField("bytes", len(encodedResult)).
