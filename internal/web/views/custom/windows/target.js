@@ -51,7 +51,7 @@ Ext.define("PBS.D2DManagement.TargetEditWindow", {
 });
 
 Ext.define("PBS.D2DManagement.TargetS3Secret", {
-  extend: "PBS.plusWindow.Edit",
+  extend: "PBS.plusWindow.Create",
   alias: "widget.pbsTargetS3Secret",
   mixins: ["Proxmox.Mixin.CBind"],
 
