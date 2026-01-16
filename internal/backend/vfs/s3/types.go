@@ -3,6 +3,7 @@
 package s3fs
 
 import (
+	"io"
 	"sync"
 
 	"github.com/minio/minio-go/v7"
@@ -21,8 +22,9 @@ type S3File struct {
 	fs  *S3FS
 	key string
 
-	mu     sync.Mutex
-	size   int64
-	buf    []byte
-	bufOff int64
+	mu   sync.Mutex
+	size int64
+
+	body    io.ReadCloser
+	currPos int64
 }

@@ -3,10 +3,8 @@
 package s3fs
 
 import (
-	"context"
 	"io"
 	"syscall"
-	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -33,69 +31,50 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Check local read-ahead buffer
-	if f.buf != nil && off >= f.bufOff && off < f.bufOff+int64(len(f.buf)) {
-		n := copy(buf, f.buf[off-f.bufOff:])
-		if n == len(buf) {
-			return n, nil
-		}
-		remainingBuf, err := f.readRemote(buf[n:], off+int64(n))
-		return n + remainingBuf, err
-	}
-
 	return f.readRemote(buf, off)
 }
 
 func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
-	fetchSize := int64(len(buf))
-	if fetchSize < readAheadSize {
-		fetchSize = readAheadSize
-	}
-	if off+fetchSize > f.size {
-		fetchSize = f.size - off
+	if f.body != nil && off != f.currPos {
+		f.body.Close()
+		f.body = nil
 	}
 
-	ctx, cancel := context.WithTimeout(f.fs.Ctx, 30*time.Second)
-	defer cancel()
+	if f.body == nil {
+		opts := minio.GetObjectOptions{}
+		// Request from off to the end to keep the stream alive
+		_ = opts.SetRange(off, f.size-1)
 
-	opts := minio.GetObjectOptions{}
-	_ = opts.SetRange(off, off+fetchSize-1)
-
-	obj, err := f.fs.client.GetObject(ctx, f.fs.bucket, f.key, opts)
-	if err != nil {
-		syslog.L.Error(err).WithField("key", f.key).WithMessage("S3 GetObject failed").Write()
-		return 0, err
-	}
-	defer obj.Close()
-
-	data, err := io.ReadAll(obj)
-	if err != nil && err != io.EOF {
-		return 0, err
+		obj, err := f.fs.client.GetObject(f.fs.Ctx, f.fs.bucket, f.key, opts)
+		if err != nil {
+			return 0, err
+		}
+		f.body = obj
+		f.currPos = off
 	}
 
-	f.buf = data
-	f.bufOff = off
+	bytesToRead := len(buf)
+	if off+int64(bytesToRead) > f.size {
+		bytesToRead = int(f.size - off)
+	}
 
-	n := copy(buf, data)
+	n, err := io.ReadAtLeast(f.body, buf[:bytesToRead], bytesToRead)
+
+	f.currPos += int64(n)
 	f.fs.TotalBytes.Add(int64(n))
 
-	syslog.L.Debug().
-		WithMessage("ReadAt completed").
-		WithField("key", f.key).
-		WithField("bytesRead", n).
-		WithField("totalBytes", f.fs.TotalBytes.Value()).
-		Write()
-
-	if n < len(buf) && off+int64(n) >= f.size {
-		return n, io.EOF
-	}
-	return n, nil
+	return n, err
 }
 
 func (f *S3File) Close() error {
 	syslog.L.Debug().WithMessage("Close file").WithField("key", f.key).Write()
 	f.mu.Lock()
-	f.buf = nil
-	f.mu.Unlock()
-	return nil
+	defer f.mu.Unlock()
+
+	var err error
+	if f.body != nil {
+		err = f.body.Close()
+		f.body = nil
+	}
+	return err
 }

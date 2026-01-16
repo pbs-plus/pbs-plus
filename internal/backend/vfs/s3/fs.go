@@ -27,8 +27,7 @@ import (
 )
 
 const (
-	readAheadSize = 1024 * 1024
-	attrPrefix    = "attr:"
+	attrPrefix = "attr:"
 )
 
 func NewS3FS(
