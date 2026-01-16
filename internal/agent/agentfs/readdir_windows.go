@@ -134,7 +134,15 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 			entry := (*FileDirectoryInformation)(unsafe.Pointer(&r.buf[r.bufPos]))
 
 			if entry.FileAttributes&excludedAttrs == 0 {
-				name := windows.UTF16PtrToString(&entry.FileName)
+				fileNameLen := entry.FileNameLength / 2
+				fileNamePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
+
+				if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) >
+					uintptr(unsafe.Pointer(&r.buf[0]))+uintptr(len(r.buf)) {
+					return nil, fmt.Errorf("filename data exceeds buffer bounds")
+				}
+
+				name := windows.UTF16ToString(unsafe.Slice((*uint16)(fileNamePtr), fileNameLen))
 
 				if name != "." && name != ".." {
 					info := types.AgentFileInfo{
