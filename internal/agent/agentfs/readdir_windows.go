@@ -216,7 +216,7 @@ func (r *DirReaderNT) Close() error {
 		return nil
 	}
 	if r.buf != nil {
-		readBufPool.Put(r.buf)
+		bufferPool.Put(r.buf)
 		r.buf = nil
 	}
 
