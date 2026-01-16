@@ -4,7 +4,10 @@ package tokens
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
@@ -63,7 +66,20 @@ func ExtJsTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 			Comment: r.FormValue("comment"),
 		}
 
-		err = storeInstance.Database.CreateToken(newToken.Comment)
+		duration := time.Hour * 24
+		durationStr := strings.TrimSpace(r.FormValue("duration"))
+		if durationStr != "" {
+			duration, err = time.ParseDuration(durationStr)
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+			if duration < 0 {
+				controllers.WriteErrorResponse(w, errors.New("duration value can only be > 0"))
+			}
+		}
+
+		err = storeInstance.Database.CreateToken(duration, newToken.Comment)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return

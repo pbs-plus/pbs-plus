@@ -99,7 +99,14 @@ Ext.define("pbs-model-targets", {
 
 Ext.define("pbs-model-tokens", {
   extend: "Ext.data.Model",
-  fields: ["token", "comment", "created_at", "revoked", "win_install"],
+  fields: [
+    "token",
+    "comment",
+    "created_at",
+    "revoked",
+    "win_install",
+    "duration",
+  ],
   idProperty: "token",
 });
 

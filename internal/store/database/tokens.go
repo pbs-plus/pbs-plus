@@ -29,8 +29,8 @@ func generateWinInstall(token string) string {
 }
 
 // CreateToken generates a new token using the manager and stores it.
-func (database *Database) CreateToken(comment string) error {
-	tokenStr, err := database.TokenManager.GenerateToken()
+func (database *Database) CreateToken(expiration time.Duration, comment string) error {
+	tokenStr, err := database.TokenManager.GenerateToken(expiration)
 	if err != nil {
 		return fmt.Errorf("CreateToken: error generating token: %w", err)
 	}
@@ -67,6 +67,8 @@ func (database *Database) GetToken(tokenStr string) (types.AgentToken, error) {
 		// Do not mutate DB here; just reflect effective validity.
 		tokenProp.Revoked = true
 	}
+
+	tokenProp.Duration = database.TokenManager.GetTokenRemainingDuration(tokenStr).String()
 
 	tokenProp.WinInstall = generateWinInstall(tokenProp.Token)
 	return tokenProp, nil
@@ -109,6 +111,7 @@ func (database *Database) GetAllTokens(includeRevoked bool) ([]types.AgentToken,
 		if !includeRevoked && tokenProp.Revoked {
 			continue
 		}
+		tokenProp.Duration = database.TokenManager.GetTokenRemainingDuration(tokenStr).String()
 		tokenProp.WinInstall = generateWinInstall(tokenProp.Token)
 		tokens = append(tokens, tokenProp)
 	}
