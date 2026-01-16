@@ -26,24 +26,20 @@ const (
 )
 
 func GetUnixACLs(path string, fd int) ([]types.PosixACL, error) {
-	access, err := getACL(path, fd, XATTR_NAME_ACL_ACCESS)
+	access, err := getACL(path, fd, XATTR_NAME_ACL_ACCESS, false)
 	if err != nil && !isNoAttr(err) {
 		return nil, err
 	}
 
-	defaultAcl, err := getACL(path, fd, XATTR_NAME_ACL_DEFAULT)
+	defaultAcl, err := getACL(path, fd, XATTR_NAME_ACL_DEFAULT, true)
 	if err != nil && !isNoAttr(err) {
 		return access, nil
 	}
 
-	if len(defaultAcl) > 0 {
-		access = append(access, defaultAcl...)
-	}
-
-	return access, nil
+	return append(access, defaultAcl...), nil
 }
 
-func getACL(path string, fd int, attr string) ([]types.PosixACL, error) {
+func getACL(path string, fd int, attr string, isDefault bool) ([]types.PosixACL, error) {
 	var size int
 	var err error
 	if fd > 0 {
@@ -52,11 +48,8 @@ func getACL(path string, fd int, attr string) ([]types.PosixACL, error) {
 		size, err = unix.Lgetxattr(path, attr, nil)
 	}
 
-	if err != nil {
+	if err != nil || size == 0 {
 		return nil, err
-	}
-	if size == 0 {
-		return nil, nil
 	}
 
 	buf := make([]byte, size)
@@ -69,10 +62,10 @@ func getACL(path string, fd int, attr string) ([]types.PosixACL, error) {
 		return nil, err
 	}
 
-	return parseUnixACL(buf, attr)
+	return parseUnixACL(buf, isDefault)
 }
 
-func parseUnixACL(buf []byte, attr string) ([]types.PosixACL, error) {
+func parseUnixACL(buf []byte, isDefault bool) ([]types.PosixACL, error) {
 	if len(buf) < 4 {
 		return nil, fmt.Errorf("ACL too short")
 	}
@@ -82,7 +75,6 @@ func parseUnixACL(buf []byte, attr string) ([]types.PosixACL, error) {
 		return nil, fmt.Errorf("unsupported ACL version: %d", version)
 	}
 
-	// Each entry is 8 bytes: tag (2), perms (2), id (4)
 	buf = buf[4:]
 	if len(buf)%8 != 0 {
 		return nil, fmt.Errorf("malformed ACL entries")
@@ -97,7 +89,7 @@ func parseUnixACL(buf []byte, attr string) ([]types.PosixACL, error) {
 		perms := binary.LittleEndian.Uint16(buf[off+2 : off+4])
 		id := int32(binary.LittleEndian.Uint32(buf[off+4 : off+8]))
 
-		tagStr := ""
+		var tagStr string
 		switch tag {
 		case ACL_USER_OBJ:
 			tagStr = "user_obj"
@@ -112,14 +104,14 @@ func parseUnixACL(buf []byte, attr string) ([]types.PosixACL, error) {
 		case ACL_OTHER:
 			tagStr = "other"
 		default:
-			continue // Skip undefined tags
+			continue
 		}
 
 		result = append(result, types.PosixACL{
 			Tag:       tagStr,
 			ID:        id,
 			Perms:     uint8(perms),
-			IsDefault: attr == XATTR_NAME_ACL_DEFAULT,
+			IsDefault: isDefault,
 		})
 	}
 

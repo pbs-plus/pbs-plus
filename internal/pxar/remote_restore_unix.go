@@ -44,15 +44,7 @@ func remoteApplyMeta(ctx context.Context, client *RemoteClient, path string, e E
 
 		_ = os.Chown(path, uid, gid)
 
-		if data, ok := xattrs["user.fileattributes"]; ok {
-			var attrs map[string]bool
-			if err := json.Unmarshal(data, &attrs); err == nil {
-				if attrs["immutable"] {
-					_ = applyImmutable(path, true)
-				}
-			}
-			delete(xattrs, "user.fileattributes")
-		}
+		delete(xattrs, "user.fileattributes")
 
 		if data, ok := xattrs["user.acls"]; ok {
 			var entries []types.PosixACL

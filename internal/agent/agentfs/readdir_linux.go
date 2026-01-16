@@ -56,7 +56,6 @@ func (r *DirReaderUnix) fillAttrs(info *types.AgentFileInfo) error {
 	if r.FetchFullAttrs {
 		mask |= unix.STATX_SIZE | unix.STATX_MTIME | unix.STATX_BLOCKS | unix.STATX_UID | unix.STATX_GID
 	}
-	// Use AT_STATX_DONT_SYNC to avoid network latency on distributed filesystems
 	if err := unix.Statx(r.fd, info.Name, unix.AT_SYMLINK_NOFOLLOW|unix.AT_STATX_DONT_SYNC, int(mask), &stx); err != nil {
 		return err
 	}
@@ -68,9 +67,8 @@ func (r *DirReaderUnix) fillAttrs(info *types.AgentFileInfo) error {
 		info.Blocks = uint64(stx.Blocks)
 		info.LastAccessTime = time.Unix(int64(stx.Atime.Sec), int64(stx.Atime.Nsec)).Unix()
 		info.LastWriteTime = time.Unix(int64(stx.Mtime.Sec), int64(stx.Mtime.Nsec)).Unix()
-		info.Owner = getIDString(stx.Uid)
-		info.Group = getIDString(stx.Gid)
-		info.FileAttributes = make(map[string]bool)
+		r.writeIDString(&info.Owner, stx.Uid)
+		r.writeIDString(&info.Group, stx.Gid)
 	}
 	return nil
 }
