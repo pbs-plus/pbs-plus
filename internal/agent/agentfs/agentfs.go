@@ -24,6 +24,7 @@ type AgentFSServer struct {
 	statFs           types.StatFS
 	allocGranularity uint32
 	readMode         string
+	idBuf            []byte
 }
 
 func NewAgentFSServer(jobId string, readMode string, snapshot snapshots.Snapshot) *AgentFSServer {
@@ -43,6 +44,7 @@ func NewAgentFSServer(jobId string, readMode string, snapshot snapshots.Snapshot
 		handleIdGen:      idgen.NewIDGenerator(),
 		allocGranularity: uint32(allocGranularity),
 		readMode:         readMode,
+		idBuf:            make([]byte, 0, 16),
 	}
 
 	if err := s.initializeStatFS(); err != nil && syslog.L != nil {

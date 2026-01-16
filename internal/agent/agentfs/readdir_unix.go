@@ -16,13 +16,9 @@ import (
 )
 
 const (
-	defaultBufSize          = 1024 * 1024 // 1 MiB
+	defaultBufSize          = 1024 * 1024
 	defaultTargetEncodedLen = 1024 * 1024
 )
-
-func getIDString(id uint32) string {
-	return strconv.Itoa(int(id))
-}
 
 type DirReaderUnix struct {
 	fd              int
@@ -31,14 +27,11 @@ type DirReaderUnix struct {
 	bufEnd          int
 	noMoreFiles     bool
 	path            string
-	basep           uintptr // FreeBSD only
+	basep           uintptr
 	targetEncoded   int
 	reusableEntries types.ReadDirEntries
-
-	// Controls whether to fetch full attrs (size, mtime, blocks) for each entry.
-	// If false, only Name, Mode, and IsDir are filled (IsDir inferred from d_type
-	// or via a selective stat/fstatat only for DT_UNKNOWN).
-	FetchFullAttrs bool
+	idBuf           []byte
+	FetchFullAttrs  bool
 }
 
 var bufferPool = sync.Pool{
@@ -54,8 +47,14 @@ func NewDirReaderUnix(fd int, path string) (*DirReaderUnix, error) {
 		path:           path,
 		basep:          0,
 		targetEncoded:  defaultTargetEncodedLen,
+		idBuf:          make([]byte, 0, 16),
 		FetchFullAttrs: true,
 	}, nil
+}
+
+func (r *DirReaderUnix) writeIDString(dst *string, id uint32) {
+	r.idBuf = strconv.AppendUint(r.idBuf[:0], uint64(id), 10)
+	*dst = string(r.idBuf)
 }
 
 func (r *DirReaderUnix) NextBatch() ([]byte, error) {
