@@ -6,7 +6,7 @@ Ext.define("PBS.D2DManagement.TokenEditWindow", {
   isCreate: true,
   isAdd: true,
   subject: "Agent Bootstrap Token",
-  cbindData: function(initialConfig) {
+  cbindData: function (initialConfig) {
     let me = this;
 
     let contentid = initialConfig.contentid;
@@ -22,6 +22,24 @@ Ext.define("PBS.D2DManagement.TokenEditWindow", {
   },
 
   items: [
+    {
+      fieldLabel: gettext("Duration"),
+      name: "duration",
+      xtype: "pmxDisplayEditField",
+      renderer: Ext.htmlEncode,
+      allowBlank: false,
+      emptyText: "24h",
+      cbind: {
+        editable: "{isCreate}",
+      },
+    },
+    {
+      xtype: "displayfield",
+      userCls: "pmx-hint",
+      value: gettext(
+        "Format: Use a Go duration string (e.g., '2h', '30m', '1h30m'). Use '0' for a token that never expires.",
+      ),
+    },
     {
       fieldLabel: gettext("Comment"),
       name: "comment",

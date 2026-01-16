@@ -22,7 +22,6 @@
              Manufacturer="$(var.Manufacturer)" />
 
     <MajorUpgrade 
-      DowngradeErrorMessage="A newer version of [ProductName] is already installed."
       AllowDowngrades="yes"
       Schedule="afterInstallInitialize" />
     
