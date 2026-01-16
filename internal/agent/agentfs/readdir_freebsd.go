@@ -37,7 +37,6 @@ func (r *DirReaderUnix) parseDirent() ([]byte, byte, int, bool, error) {
 		return nil, 0, 0, false, syscall.EBADF
 	}
 
-	// FreeBSD d_name is a flexible array; safe slicing logic:
 	nameStart := r.bufPos + nameOff
 	raw := r.buf[nameStart : nameStart+namelen]
 
@@ -67,10 +66,8 @@ func (r *DirReaderUnix) fillAttrs(info *types.AgentFileInfo) error {
 		info.LastAccessTime = time.Unix(int64(st.Atimespec.Sec), int64(st.Atimespec.Nsec)).Unix()
 		info.LastWriteTime = time.Unix(int64(st.Mtimespec.Sec), int64(st.Mtimespec.Nsec)).Unix()
 
-		info.Owner = getIDString(st.Uid)
-		info.Group = getIDString(st.Gid)
-
-		info.FileAttributes = make(map[string]bool)
+		r.writeIDString(&info.Owner, st.Uid)
+		r.writeIDString(&info.Group, st.Gid)
 	}
 	return nil
 }

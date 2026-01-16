@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,11 @@ var readBufPool = sync.Pool{
 		b := make([]byte, 1024*1024)
 		return &b
 	},
+}
+
+func (s *AgentFSServer) writeIDString(dst *string, id uint32) {
+	s.idBuf = strconv.AppendUint(s.idBuf[:0], uint64(id), 10)
+	*dst = string(s.idBuf)
 }
 
 func (s *AgentFSServer) abs(filename string) (string, error) {
@@ -298,18 +304,16 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	owner := getIDString(stx.Uid)
-	group := getIDString(stx.Gid)
+	owner := ""
+	group := ""
+
+	s.writeIDString(&owner, stx.Uid)
+	s.writeIDString(&group, stx.Gid)
 
 	acls, err := GetUnixACLs(fullPath, -1)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("handleXattr: GetUnixACLs failed").WithField("path", fullPath).Write()
 		return arpc.Response{}, err
-	}
-
-	fileAttributes := make(map[string]bool)
-	if (stx.Attributes_mask & unix.STATX_ATTR_IMMUTABLE) != 0 {
-		fileAttributes["immutable"] = (stx.Attributes & unix.STATX_ATTR_IMMUTABLE) != 0
 	}
 
 	info := types.AgentFileInfo{
@@ -319,7 +323,6 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 		Owner:          owner,
 		Group:          group,
 		PosixACLs:      acls,
-		FileAttributes: fileAttributes,
 	}
 
 	data, err := cbor.Marshal(info)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,11 @@ var readBufPool = sync.Pool{
 		b := make([]byte, 1024*1024)
 		return &b
 	},
+}
+
+func (s *AgentFSServer) writeIDString(dst *string, id uint32) {
+	s.idBuf = strconv.AppendUint(s.idBuf[:0], uint64(id), 10)
+	*dst = string(s.idBuf)
 }
 
 func (s *AgentFSServer) abs(filename string) (string, error) {
@@ -295,8 +301,11 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	owner := getIDString(st.Uid)
-	group := getIDString(st.Gid)
+	owner := ""
+	group := ""
+
+	s.writeIDString(&owner, st.Uid)
+	s.writeIDString(&group, st.Gid)
 
 	acls, err := GetUnixACLs(fullPath, -1)
 	if err != nil {
@@ -311,7 +320,6 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 		Owner:          owner,
 		Group:          group,
 		PosixACLs:      acls,
-		FileAttributes: make(map[string]bool),
 	}
 
 	data, err := cbor.Marshal(info)
