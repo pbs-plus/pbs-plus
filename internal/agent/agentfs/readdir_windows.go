@@ -82,6 +82,7 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 	hasEntries := false
 	batchFull := false
 	entryCount := 0
+	firstCall := r.bufPos == 0 && r.bufEnd == 0
 
 	for !batchFull {
 		if r.bufPos >= r.bufEnd {
@@ -198,10 +199,6 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		}
 	}
 
-	if !hasEntries && r.noMoreFiles {
-		return nil, os.ErrProcessDone
-	}
-
 	if err := enc.EndIndefinite(); err != nil {
 		return nil, err
 	}
@@ -213,6 +210,10 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		WithField("bytes", len(encodedResult)).
 		WithField("entries_count", entryCount).
 		Write()
+
+	if !hasEntries && r.noMoreFiles && !firstCall {
+		return nil, os.ErrProcessDone
+	}
 
 	return encodedResult, nil
 }
