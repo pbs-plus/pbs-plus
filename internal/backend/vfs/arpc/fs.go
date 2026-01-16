@@ -23,6 +23,9 @@ import (
 	"github.com/puzpuzpuz/xsync/v4"
 )
 
+const attrPrefix = "attr:"
+const xattrPrefix = "xattr:"
+
 func (fs *ARPCFS) logError(fpath string, err error) {
 	if !strings.HasSuffix(fpath, ".pxarexclude") {
 		syslog.L.Error(err).
@@ -179,7 +182,7 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	raw, err := pipe.CallData(ctxN, fs.Backup.ID+"/OpenFile", &req)
+	raw, err := pipe.CallData(ctxN, "OpenFile", &req)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return ARPCFile{}, syscall.ENOENT
@@ -224,13 +227,19 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
+	var sb strings.Builder
+	sb.WriteString(attrPrefix)
+	sb.WriteString(memlocal.Key(filename))
+
+	cacheKey := sb.String()
+
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
 	req := types.StatReq{Path: filename}
 
 	var raw []byte
-	cached, err := fs.Memcache.Get("attr:" + memlocal.Key(filename))
+	cached, err := fs.Memcache.Get(cacheKey)
 	if err == nil {
 		fs.StatCacheHits.Add(1)
 		raw = cached.Value
@@ -245,13 +254,13 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 			WithField("path", filename).
 			WithField("backupId", fs.Backup.ID).
 			Write()
-		raw, err = pipe.CallData(ctxN, fs.Backup.ID+"/Attr", &req)
+		raw, err = pipe.CallData(ctxN, "Attr", &req)
 		if err != nil {
 			fs.logError(req.Path, err)
 			return types.AgentFileInfo{}, syscall.ENOENT
 		}
 		if isLookup {
-			if mcErr := fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(filename), Value: raw, Expiration: 0}); mcErr != nil {
+			if mcErr := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: raw, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("Attr cache set failed").
 					WithField("path", filename).
@@ -270,7 +279,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 
 	if !isLookup {
 		if !fi.IsDir {
-			fs.Memcache.Delete("attr:" + memlocal.Key(filename))
+			fs.Memcache.Delete(cacheKey)
 			syslog.L.Debug().
 				WithMessage("Attr counted file and cleared cache").
 				WithField("path", filename).
@@ -302,6 +311,12 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
+	var sb strings.Builder
+	sb.WriteString(xattrPrefix)
+	sb.WriteString(memlocal.Key(filename))
+
+	cacheKey := sb.String()
+
 	var fi types.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
@@ -315,7 +330,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 	var fiCached types.AgentFileInfo
 	req := types.StatReq{Path: filename}
 
-	rawCached, err := fs.Memcache.Get("xattr:" + memlocal.Key(filename))
+	rawCached, err := fs.Memcache.Get(cacheKey)
 	if err == nil {
 		req.AclOnly = true
 		_ = cbor.Unmarshal(rawCached.Value, &fiCached)
@@ -326,7 +341,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 			Write()
 	}
 
-	raw, err := pipe.CallData(ctxN, fs.Backup.ID+"/Xattr", &req)
+	raw, err := pipe.CallData(ctxN, "Xattr", &req)
 	if err != nil {
 		fs.logError(req.Path, err)
 		return types.AgentFileInfo{}, syscall.ENOTSUP
@@ -355,7 +370,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
-	fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(filename), Value: xattrBytes, Expiration: 5})
+	fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: xattrBytes, Expiration: 5})
 
 	return fi, nil
 }
@@ -377,8 +392,14 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (type
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
+	var sb strings.Builder
+	sb.WriteString(xattrPrefix)
+	sb.WriteString(memlocal.Key(filename))
+
+	cacheKey := sb.String()
+
 	var fiCached types.AgentFileInfo
-	rawCached, err := fs.Memcache.Get("xattr:" + memlocal.Key(filename))
+	rawCached, err := fs.Memcache.Get(cacheKey)
 	if err != nil {
 		return fs.ListXattr(ctx, filename)
 	}
@@ -447,6 +468,12 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
+	var sb strings.Builder
+	sb.WriteString(attrPrefix)
+	sb.WriteString(memlocal.Key(path))
+
+	cacheKey := sb.String()
+
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
 		syslog.L.Error(err).
@@ -458,7 +485,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 
 	var handleId types.FileHandleId
 	openReq := types.OpenFileReq{Path: path}
-	raw, err := pipe.CallData(ctxN, fs.Backup.ID+"/OpenFile", &openReq)
+	raw, err := pipe.CallData(ctxN, "OpenFile", &openReq)
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("ReadDir open failed").
@@ -477,7 +504,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 		return DirStream{}, syscall.ENOENT
 	}
 
-	fs.Memcache.Delete("attr:" + memlocal.Key(path))
+	fs.Memcache.Delete(cacheKey)
 
 	syslog.L.Debug().
 		WithMessage("ReadDir opened directory").
