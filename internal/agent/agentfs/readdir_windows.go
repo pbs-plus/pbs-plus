@@ -82,21 +82,23 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		WithField("buffer_len", len(buffer)).
 		Write()
 
-	err := ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan)
+	ntErr := ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan)
 	r.restartScan = false
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
+
+	if ntErr != nil {
+		if errors.Is(ntErr, os.ErrExist) {
 			return nil, nil
 		}
-		if errors.Is(err, os.ErrProcessDone) {
+		if errors.Is(ntErr, os.ErrProcessDone) {
 			syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: enumeration completed").
 				WithField("path", r.path).Write()
 			r.noMoreFiles = true
-			return nil, err
+			// Do not return yet; we must encode at least an empty CBOR array.
+		} else {
+			syslog.L.Error(ntErr).WithMessage("DirReaderNT.NextBatch: ntDirectoryCall failed").
+				WithField("path", r.path).Write()
+			return nil, ntErr
 		}
-		syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: ntDirectoryCall failed").
-			WithField("path", r.path).Write()
-		return nil, err
 	}
 
 	r.encodeBuf.Reset()
@@ -105,80 +107,76 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		return nil, err
 	}
 
-	hasEntries := false
 	entryCount := 0
 	offset := 0
 	if blockSize == 0 {
 		blockSize = 4096
 	}
 
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		if offset+int(unsafe.Sizeof(FileDirectoryInformation{})) > len(buffer) {
-			return nil, fmt.Errorf("offset exceeded buffer length")
-		}
-
-		entry := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[offset]))
-
-		if entry.FileAttributes&excludedAttrs == 0 {
-			fileNameLen := entry.FileNameLength / 2
-			fileNamePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
-
-			if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) >
-				uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
-				return nil, fmt.Errorf("filename data exceeds buffer bounds")
+	if ntErr == nil {
+		for {
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
 
-			fileNameSlice := unsafe.Slice((*uint16)(fileNamePtr), fileNameLen)
-			name := string(utf16.Decode(fileNameSlice))
+			if offset+int(unsafe.Sizeof(FileDirectoryInformation{})) > len(buffer) {
+				return nil, fmt.Errorf("offset exceeded buffer length")
+			}
 
-			if name != "." && name != ".." {
-				info := types.AgentFileInfo{
-					Name:           name,
-					Mode:           windowsFileModeFromHandle(0, entry.FileAttributes),
-					IsDir:          (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0,
-					Size:           entry.EndOfFile,
-					ModTime:        unixNanoFromWin(entry.LastWriteTime),
-					CreationTime:   unixFromWin(entry.CreationTime),
-					LastAccessTime: unixFromWin(entry.LastAccessTime),
-					LastWriteTime:  unixFromWin(entry.LastWriteTime),
-					FileAttributes: parseFileAttributes(entry.FileAttributes),
+			entry := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[offset]))
+
+			if entry.FileAttributes&excludedAttrs == 0 {
+				fileNameLen := entry.FileNameLength / 2
+				fileNamePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
+
+				if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) >
+					uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
+					return nil, fmt.Errorf("filename data exceeds buffer bounds")
 				}
 
-				if !info.IsDir {
-					alloc := entry.AllocationSize
-					if alloc < 0 {
-						alloc = 0
+				fileNameSlice := unsafe.Slice((*uint16)(fileNamePtr), fileNameLen)
+				name := string(utf16.Decode(fileNameSlice))
+
+				if name != "." && name != ".." {
+					info := types.AgentFileInfo{
+						Name:           name,
+						Mode:           windowsFileModeFromHandle(0, entry.FileAttributes),
+						IsDir:          (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0,
+						Size:           entry.EndOfFile,
+						ModTime:        unixNanoFromWin(entry.LastWriteTime),
+						CreationTime:   unixFromWin(entry.CreationTime),
+						LastAccessTime: unixFromWin(entry.LastAccessTime),
+						LastWriteTime:  unixFromWin(entry.LastWriteTime),
+						FileAttributes: parseFileAttributes(entry.FileAttributes),
 					}
-					info.Blocks = uint64((alloc + int64(blockSize) - 1) / int64(blockSize))
-				}
 
-				if err := enc.Encode(info); err != nil {
-					syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: encode failed").
-						WithField("path", r.path).Write()
-					return nil, err
+					if !info.IsDir {
+						alloc := entry.AllocationSize
+						if alloc < 0 {
+							alloc = 0
+						}
+						info.Blocks = uint64((alloc + int64(blockSize) - 1) / int64(blockSize))
+					}
+
+					if err := enc.Encode(info); err != nil {
+						syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: encode failed").
+							WithField("path", r.path).Write()
+						return nil, err
+					}
+					entryCount++
 				}
-				hasEntries = true
-				entryCount++
 			}
-		}
 
-		if entry.NextEntryOffset == 0 {
-			break
+			if entry.NextEntryOffset == 0 {
+				break
+			}
+			nextOffset := offset + int(entry.NextEntryOffset)
+			if nextOffset <= offset || nextOffset > len(buffer) {
+				return nil, fmt.Errorf("invalid NextEntryOffset: %d from offset %d",
+					entry.NextEntryOffset, offset)
+			}
+			offset = nextOffset
 		}
-		nextOffset := offset + int(entry.NextEntryOffset)
-		if nextOffset <= offset || nextOffset > len(buffer) {
-			return nil, fmt.Errorf("invalid NextEntryOffset: %d from offset %d",
-				entry.NextEntryOffset, offset)
-		}
-		offset = nextOffset
-	}
-
-	if !hasEntries {
-		return nil, os.ErrProcessDone
 	}
 
 	if err := enc.EndIndefinite(); err != nil {
