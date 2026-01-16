@@ -45,6 +45,7 @@ type DirReaderNT struct {
 	bufEnd        int
 	targetEncoded int
 	encodeBuf     bytes.Buffer
+	nameConvBuf   []uint16
 }
 
 type UnicodeString struct {
