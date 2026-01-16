@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"unicode/utf16"
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -21,12 +20,12 @@ var (
 )
 
 func openForAttrs(path string) (windows.Handle, error) {
-	pathUTF16 := utf16.Encode([]rune(path))
-	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
-		pathUTF16 = append(pathUTF16, 0)
+	pathUTF16, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
 	}
 	return windows.CreateFile(
-		&pathUTF16[0],
+		pathUTF16,
 		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
@@ -52,14 +51,13 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 
 	var sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters uint32
 
-	rootPath := utf16.Encode([]rune(path))
-	if len(rootPath) == 0 || rootPath[len(rootPath)-1] != 0 {
-		rootPath = append(rootPath, 0)
+	rootPath, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return types.StatFS{}, err
 	}
-	rootPathPtr := &rootPath[0]
 
 	ret, _, err := procGetDiskFreeSpace.Call(
-		uintptr(unsafe.Pointer(rootPathPtr)),
+		uintptr(unsafe.Pointer(rootPath)),
 		uintptr(unsafe.Pointer(&sectorsPerCluster)),
 		uintptr(unsafe.Pointer(&bytesPerSector)),
 		uintptr(unsafe.Pointer(&numberOfFreeClusters)),
