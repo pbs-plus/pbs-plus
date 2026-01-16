@@ -23,7 +23,6 @@
 
     <MajorUpgrade 
       DowngradeErrorMessage="A newer version of [ProductName] is already installed."
-      AllowSameVersionUpgrades="yes" 
       AllowDowngrades="yes"
       Schedule="afterInstallInitialize" />
     
