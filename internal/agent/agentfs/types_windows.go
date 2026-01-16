@@ -33,14 +33,18 @@ type FileHandle struct {
 }
 
 type DirReaderNT struct {
-	handle      uintptr
-	ioStatus    IoStatusBlock
-	restartScan bool
-	noMoreFiles bool
-	path        string
-	closed      bool
-	mu          sync.Mutex
-	encodeBuf   bytes.Buffer
+	handle        uintptr
+	ioStatus      IoStatusBlock
+	restartScan   bool
+	noMoreFiles   bool
+	path          string
+	closed        bool
+	mu            sync.Mutex
+	buf           []byte
+	bufPos        int
+	bufEnd        int
+	targetEncoded int
+	encodeBuf     bytes.Buffer
 }
 
 type UnicodeString struct {
