@@ -220,8 +220,6 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return errors.New(reply.Message)
 	}
 
-	vfssessions.CreateS3FSMount(backup.GetStreamID(), s3FS)
-
 	// Set up the local mount path.
 	mntPath := filepath.Join(constants.AgentMountBasePath, args.BackupId)
 
@@ -231,6 +229,8 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		reply.Message = fmt.Sprintf("Failed to create fuse connection for target -> %v", err)
 		return fmt.Errorf("backup: %w", err)
 	}
+
+	vfssessions.CreateS3FSMount(backup.GetStreamID(), s3FS)
 
 	// Set the reply values.
 	reply.Status = 200
