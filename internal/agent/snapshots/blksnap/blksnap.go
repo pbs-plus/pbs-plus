@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	BlksnapControlDevice = "/dev/blksnap-control"
-	BlksnapImageName     = "blksnap"
+	BlksnapControlDevice = "/dev/veeamblksnap"
+	BlksnapImageName     = "vbsnap"
 	BlkfilterNameLength  = 32
 	ImageDiskNameLen     = 32
+	ModNameLimit         = 32
 
 	SectorShift = 9
 	SectorSize  = 1 << SectorShift
@@ -66,12 +67,15 @@ var (
 )
 
 var (
-	IOCTL_BLKSNAP_VERSION             = _IOR(blksnapMagic, 0, unsafe.Sizeof(Version{}))
-	IOCTL_BLKSNAP_SNAPSHOT_CREATE     = _IOWR(blksnapMagic, 1, unsafe.Sizeof(snapshotCreate{}))
-	IOCTL_BLKSNAP_SNAPSHOT_DESTROY    = _IOW(blksnapMagic, 2, unsafe.Sizeof(UUID{}))
-	IOCTL_BLKSNAP_SNAPSHOT_TAKE       = _IOW(blksnapMagic, 3, unsafe.Sizeof(UUID{}))
-	IOCTL_BLKSNAP_SNAPSHOT_COLLECT    = _IOR(blksnapMagic, 4, unsafe.Sizeof(snapshotCollect{}))
-	IOCTL_BLKSNAP_SNAPSHOT_WAIT_EVENT = _IOR(blksnapMagic, 5, unsafe.Sizeof(snapshotEvent{}))
+	IOCTL_BLKSNAP_VERSION                 = _IOR(blksnapMagic, 0, unsafe.Sizeof(Version{}))
+	IOCTL_BLKSNAP_SNAPSHOT_CREATE         = _IOWR(blksnapMagic, 1, unsafe.Sizeof(snapshotCreate{}))
+	IOCTL_BLKSNAP_SNAPSHOT_DESTROY        = _IOW(blksnapMagic, 2, unsafe.Sizeof(UUID{}))
+	IOCTL_BLKSNAP_SNAPSHOT_TAKE           = _IOW(blksnapMagic, 3, unsafe.Sizeof(UUID{}))
+	IOCTL_BLKSNAP_SNAPSHOT_COLLECT        = _IOR(blksnapMagic, 4, unsafe.Sizeof(snapshotCollect{}))
+	IOCTL_BLKSNAP_SNAPSHOT_WAIT_EVENT     = _IOR(blksnapMagic, 5, unsafe.Sizeof(snapshotEvent{}))
+	IOCTL_BLKSNAP_MOD                     = _IOR(blksnapMagic, 32, unsafe.Sizeof(Mod{}))
+	IOCTL_BLKSNAP_SETLOG                  = _IOW(blksnapMagic, 33, unsafe.Sizeof(SetLog{}))
+	IOCTL_BLKSNAP_SNAPSHOT_APPEND_STORAGE = _IOW(blksnapMagic, 34, unsafe.Sizeof(snapshotAppendStorage{}))
 )
 
 const (
@@ -83,8 +87,16 @@ const (
 )
 
 const (
-	BlksnapEventCodeCorrupted = 0
-	BlksnapEventCodeNoSpace   = 1
+	BlksnapEventCodeCorrupted    = 0
+	BlksnapEventCodeNoSpace      = 1
+	BlksnapEventCodeLowFreeSpace = 2
+)
+
+const (
+	LogLevelDisable = 0
+	LogLevelErr     = 3
+	LogLevelWarn    = 4
+	LogLevelDebug   = 7
 )
 
 type Version struct {
@@ -184,6 +196,18 @@ func (e *Event) GetNoSpace() EventNoSpace {
 	}
 }
 
+type Mod struct {
+	CompatibilityFlags uint64
+	Name               [ModNameLimit]byte
+}
+
+type SetLog struct {
+	TzMinuteswest int32
+	Level         int32
+	FilepathSize  uint32
+	Filepath      uint64
+}
+
 type blkfilterAttach struct {
 	Name   [BlkfilterNameLength]byte
 	Opt    uint64
@@ -235,4 +259,12 @@ type cbtDirty struct {
 
 type snapshotAdd struct {
 	ID UUID
+}
+
+type snapshotAppendStorage struct {
+	ID      UUID
+	Devpath uint64
+	Count   uint32
+	_       uint32
+	Ranges  uint64
 }
