@@ -11,25 +11,46 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-// ReadAt reads len(buf) bytes from the file starting at byte offset off.
 func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	if len(buf) == 0 {
 		return 0, nil
 	}
-
 	if off < 0 {
 		return 0, syscall.EINVAL
+	}
+	if off >= f.size {
+		return 0, io.EOF
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.buf != nil && off >= f.bufOff && off < f.bufOff+int64(len(f.buf)) {
+		n := copy(buf, f.buf[off-f.bufOff:])
+		if n == len(buf) {
+			return n, nil
+		}
+		remainingBuf, err := f.readRemote(buf[n:], off+int64(n))
+		return n + remainingBuf, err
+	}
+
+	return f.readRemote(buf, off)
+}
+
+func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
+	fetchSize := int64(len(buf))
+	if fetchSize < readAheadSize {
+		fetchSize = readAheadSize
+	}
+	if off+fetchSize > f.size {
+		fetchSize = f.size - off
 	}
 
 	ctx, cancel := context.WithTimeout(f.fs.Ctx, 30*time.Second)
 	defer cancel()
 
-	// Use range request for the specific offset and length
 	opts := minio.GetObjectOptions{}
-	err := opts.SetRange(off, off+int64(len(buf))-1)
-	if err != nil {
-		return 0, err
-	}
+	_ = opts.SetRange(off, off+fetchSize-1)
 
 	obj, err := f.fs.client.GetObject(ctx, f.fs.bucket, f.key, opts)
 	if err != nil {
@@ -37,29 +58,26 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	}
 	defer obj.Close()
 
-	// Read the data
-	n, err := io.ReadFull(obj, buf)
-
-	// Handle partial reads at end of file
-	if err == io.ErrUnexpectedEOF {
-		return n, io.EOF
+	data, err := io.ReadAll(obj)
+	if err != nil && err != io.EOF {
+		return 0, err
 	}
 
-	if err != nil {
-		return n, err
-	}
+	f.buf = data
+	f.bufOff = off
 
+	n := copy(buf, data)
 	f.fs.TotalBytes.Add(int64(n))
 
-	// If we read less than requested, it means we hit EOF
-	if n < len(buf) {
+	if n < len(buf) && off+int64(n) >= f.size {
 		return n, io.EOF
 	}
-
 	return n, nil
 }
 
-// Close closes the file.
 func (f *S3File) Close() error {
+	f.mu.Lock()
+	f.buf = nil
+	f.mu.Unlock()
 	return nil
 }

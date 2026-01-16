@@ -4,6 +4,8 @@ package s3fs
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -21,9 +23,10 @@ import (
 )
 
 const (
-	metaCacheTTL    = 30 * time.Second
-	dirCacheTTL     = 30 * time.Second
-	maxCacheEntries = 2048
+	metaCacheTTL    = 60 * time.Second
+	dirCacheTTL     = 60 * time.Second
+	maxCacheEntries = 4096
+	readAheadSize   = 1024 * 1024
 )
 
 type cacheEntry[T any] struct {
@@ -37,7 +40,7 @@ func (e cacheEntry[T]) expired() bool {
 
 var seenNamesPool = sync.Pool{
 	New: func() any {
-		m := make(map[string]bool, 64)
+		m := make(map[string]bool, 128)
 		return &m
 	},
 }
@@ -48,10 +51,24 @@ func NewS3FS(
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
 ) *S3FS {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
-		Secure: useSSL,
-		Region: region,
+		Creds:     credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure:    useSSL,
+		Region:    region,
+		Transport: transport,
 	})
 	if err != nil {
 		return nil
@@ -112,21 +129,24 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 	key := fs.fullKey(fpath)
 
 	if val, ok := fs.metaCache.Get(key); ok && !val.expired() {
+		if val.value == nil {
+			return agentTypes.AgentFileInfo{}, syscall.ENOENT
+		}
+		fs.StatCacheHits.Add(1)
 		return *val.value, nil
 	}
 
 	ctx, cancel := context.WithTimeout(fs.Ctx, 5*time.Second)
 	defer cancel()
 
-	// Try to get object info directly (for files)
-	if objInfo, err := fs.client.StatObject(ctx, fs.bucket, key, minio.StatObjectOptions{}); err == nil {
+	objInfo, err := fs.client.StatObject(ctx, fs.bucket, key, minio.StatObjectOptions{})
+	if err == nil {
 		mod := objInfo.LastModified.Unix()
-		blocks := uint64((objInfo.Size + 511) / 512)
 		result := agentTypes.AgentFileInfo{
 			IsDir:          false,
 			Mode:           0644,
 			Size:           objInfo.Size,
-			Blocks:         blocks,
+			Blocks:         uint64((objInfo.Size + 511) / 512),
 			CreationTime:   mod,
 			LastAccessTime: mod,
 			LastWriteTime:  mod,
@@ -140,7 +160,6 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 		return result, nil
 	}
 
-	// Check if it's a directory by listing with prefix
 	dirKey := key
 	if !strings.HasSuffix(dirKey, "/") {
 		dirKey += "/"
@@ -173,19 +192,12 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 		return result, nil
 	}
 
-	return agentTypes.AgentFileInfo{}, syscall.ENOENT
-}
+	fs.metaCache.Add(key, cacheEntry[agentTypes.AgentFileInfo]{
+		value:     nil,
+		expiresAt: time.Now().Add(10 * time.Second),
+	})
 
-func (fs *S3FS) StatFS() (agentTypes.StatFS, error) {
-	return agentTypes.StatFS{
-		Bsize:   4096,
-		Blocks:  1 << 50,
-		Bfree:   1 << 49,
-		Bavail:  1 << 49,
-		Files:   1 << 40,
-		Ffree:   1 << 39,
-		NameLen: 1024,
-	}, nil
+	return agentTypes.AgentFileInfo{}, syscall.ENOENT
 }
 
 func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
@@ -204,7 +216,7 @@ func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 		return &S3DirStream{entries: *val.value}, nil
 	}
 
-	ctx, cancel := context.WithTimeout(fs.Ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(fs.Ctx, 15*time.Second)
 	defer cancel()
 
 	opts := minio.ListObjectsOptions{
@@ -212,7 +224,7 @@ func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 		Recursive: false,
 	}
 
-	entries := make(agentTypes.ReadDirEntries, 0, 64)
+	entries := make(agentTypes.ReadDirEntries, 0, 128)
 	seenNames := *(seenNamesPool.Get().(*map[string]bool))
 	for k := range seenNames {
 		delete(seenNames, k)
@@ -239,14 +251,29 @@ func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 		}
 		seenNames[name] = true
 
+		mod := obj.LastModified.Unix()
 		mode := uint32(0644)
 		if isDir {
 			mode = uint32(os.ModeDir | 0555)
 		}
 
-		entries = append(entries, agentTypes.AgentFileInfo{
-			Name: name,
-			Mode: mode,
+		entry := agentTypes.AgentFileInfo{
+			Name:           name,
+			IsDir:          isDir,
+			Mode:           mode,
+			Size:           obj.Size,
+			Blocks:         uint64((obj.Size + 511) / 512),
+			CreationTime:   mod,
+			LastAccessTime: mod,
+			LastWriteTime:  mod,
+		}
+
+		entries = append(entries, entry)
+
+		cachePath := path.Join(fpath, name)
+		fs.metaCache.Add(fs.fullKey(cachePath), cacheEntry[agentTypes.AgentFileInfo]{
+			value:     &entry,
+			expiresAt: time.Now().Add(metaCacheTTL),
 		})
 	}
 
@@ -259,16 +286,10 @@ func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 	return &S3DirStream{entries: entries}, nil
 }
 
-func (fs *S3FS) OpenFile(
-	fpath string,
-	flag int,
-	_ os.FileMode,
-) (*S3File, error) {
+func (fs *S3FS) OpenFile(fpath string, flag int, _ os.FileMode) (*S3File, error) {
 	if flag&(os.O_WRONLY|os.O_RDWR) != 0 {
 		return nil, syscall.EROFS
 	}
-
-	key := fs.fullKey(fpath)
 
 	info, err := fs.Attr(fpath)
 	if err != nil {
@@ -281,7 +302,7 @@ func (fs *S3FS) OpenFile(
 
 	return &S3File{
 		fs:   fs,
-		key:  key,
+		key:  fs.fullKey(fpath),
 		size: info.Size,
 	}, nil
 }
@@ -290,11 +311,5 @@ func (fs *S3FS) Unmount(ctx context.Context) {
 	if fs.Fuse != nil {
 		_ = fs.Fuse.Unmount()
 	}
-
-	fs.TotalBytes.Reset()
-	fs.FolderCount.Reset()
-	fs.FileCount.Reset()
-	fs.StatCacheHits.Reset()
-
 	fs.Cancel()
 }

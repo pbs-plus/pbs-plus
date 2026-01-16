@@ -3,6 +3,8 @@
 package s3fs
 
 import (
+	"sync"
+
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/minio/minio-go/v7"
 	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -20,9 +22,11 @@ type S3FS struct {
 }
 
 type S3File struct {
-	fs     *S3FS
-	key    string
-	offset int64
+	fs  *S3FS
+	key string
+
+	mu     sync.Mutex
 	size   int64
-	jobId  string
+	buf    []byte
+	bufOff int64
 }
