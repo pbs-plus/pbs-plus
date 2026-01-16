@@ -480,13 +480,9 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	fh.mu.Unlock()
 
 	encodedBatch, err := dirReader.NextBatch(req.Context, s.statFs.Bsize)
-	if err != nil {
+	isDone := errors.Is(err, os.ErrProcessDone)
+	if err != nil && !isDone {
 		fh.releaseOp()
-		if !errors.Is(err, os.ErrProcessDone) {
-			syslog.L.Error(err).WithMessage("handleReadDir: error reading batch").WithField("handle_id", payload.HandleID).Write()
-		} else {
-			syslog.L.Debug().WithMessage("handleReadDir: directory read complete").WithField("handle_id", payload.HandleID).Write()
-		}
 		return arpc.Response{}, err
 	}
 
@@ -497,6 +493,10 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 
 		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader via binary stream").WithField("handle_id", payload.HandleID).Write()
+		}
+
+		if isDone {
+			s.handleDirClose(uint64(payload.HandleID), fh)
 		}
 	}
 
@@ -790,6 +790,23 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: respBytes}, nil
 }
 
+func (s *AgentFSServer) handleDirClose(id uint64, fh *FileHandle) {
+	if !fh.beginClose() {
+		return
+	}
+
+	fh.mu.Lock()
+	if fh.dirReader != nil {
+		_ = fh.dirReader.Close()
+		fh.dirReader = nil
+	}
+	fh.mu.Unlock()
+
+	s.handles.Del(id)
+	syslog.L.Debug().WithMessage("handleDirClose: handle closed and removed").
+		WithField("handle_id", id).Write()
+}
+
 func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleClose: decoding request").Write()
 	var payload types.CloseReq
@@ -828,8 +845,8 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	} else {
 		if handle.dirReader != nil {
 			handle.dirReader.Close()
+			handle.dirReader = nil
 		}
-		windows.CloseHandle(handle.handle)
 		syslog.L.Debug().WithMessage("handleClose: dir handle closed").
 			WithField("handle_id", payload.HandleID).Write()
 	}
