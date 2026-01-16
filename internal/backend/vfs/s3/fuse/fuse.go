@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path"
 	"syscall"
 	"time"
 
@@ -65,7 +66,11 @@ type Node struct {
 }
 
 func (n *Node) getPath() string {
-	return "/" + n.Inode.Path(nil)
+	path := n.Inode.Path(nil)
+	if path == "" {
+		return "/"
+	}
+	return "/" + path
 }
 
 var _ = (fs.NodeGetattrer)((*Node)(nil))
@@ -183,13 +188,7 @@ func (n *Node) Lookup(
 	name string,
 	out *fuse.EntryOut,
 ) (*fs.Inode, syscall.Errno) {
-	parentPath := n.getPath()
-	var fullPath string
-	if parentPath == "/" {
-		fullPath = "/" + name
-	} else {
-		fullPath = parentPath + "/" + name
-	}
+	fullPath := path.Join(n.getPath(), name)
 
 	fi, err := n.fs.Attr(ctx, fullPath, true)
 	if err != nil {
