@@ -9,7 +9,7 @@ COPY . .
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
-ARG VERSION=0.0.0
+ARG VERSION=v0.0.0
 
 ENV CGO_ENABLED=0 \
   GOEXPERIMENT=greenteagc \
@@ -18,7 +18,7 @@ ENV CGO_ENABLED=0 \
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH \
   go build \
   -trimpath \
-  -ldflags="-s -w -X 'main.Version=v${VERSION}'" \
+  -ldflags="-s -w -X 'main.Version=${VERSION}'" \
   -o /out/pbs-plus-agent ./cmd/agent
 
 FROM alpine:3.23
