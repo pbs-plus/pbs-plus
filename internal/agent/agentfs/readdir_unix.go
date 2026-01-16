@@ -8,17 +8,11 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"sync"
 	"syscall"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"golang.org/x/sys/unix"
-)
-
-const (
-	defaultBufSize          = 1024 * 1024
-	defaultTargetEncodedLen = 1024 * 1024
 )
 
 type DirReaderUnix struct {
@@ -33,12 +27,6 @@ type DirReaderUnix struct {
 	encodeBuf      bytes.Buffer
 	idBuf          []byte
 	FetchFullAttrs bool
-}
-
-var bufferPool = sync.Pool{
-	New: func() any {
-		return make([]byte, defaultBufSize)
-	},
 }
 
 func NewDirReaderUnix(fd int, path string) (*DirReaderUnix, error) {
