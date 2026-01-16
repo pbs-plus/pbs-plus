@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,18 +195,32 @@ func terminateProcessGroup(p *os.Process) error {
 	return nil
 }
 
-const memcachedKeyLimit = 250
+const memcachedKeyLimit = 240
 
 func Key(originalKey string) string {
 	if originalKey == "" {
-		originalKey = "/"
-	}
-	encodedKey := url.QueryEscape(originalKey)
-
-	if len(encodedKey) > memcachedKeyLimit {
-		sum := sha256.Sum256([]byte(encodedKey))
-		return hex.EncodeToString(sum[:])
+		return "/"
 	}
 
-	return encodedKey
+	if len(originalKey) > memcachedKeyLimit || !isSafe(originalKey) {
+		return hashString(originalKey)
+	}
+
+	return originalKey
+}
+
+func hashString(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func isSafe(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') &&
+			c != '-' && c != '.' && c != '_' && c != '*' {
+			return false
+		}
+	}
+	return true
 }

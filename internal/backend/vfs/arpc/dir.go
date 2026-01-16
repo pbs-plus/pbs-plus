@@ -17,7 +17,6 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -94,7 +93,7 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	bytesRead, err := pipe.CallBinary(s.fs.Ctx, s.fs.Backup.ID+"/ReadDir", &req, readBuf)
+	bytesRead, err := pipe.CallBinary(s.fs.Ctx, "ReadDir", &req, readBuf)
 	syslog.L.Debug().
 		WithMessage("HasNext RPC completed").
 		WithField("bytesRead", bytesRead).
@@ -248,6 +247,10 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	}
 
 	fullPath := filepath.Join(s.path, curr.Name)
+
+	attrKey := s.fs.GetCacheKey(attrPrefix, fullPath)
+	xattrKey := s.fs.GetCacheKey(xattrPrefix, fullPath)
+
 	if !time.Unix(0, curr.ModTime).IsZero() {
 		currAttr := types.AgentFileInfo{
 			Name:    curr.Name,
@@ -263,7 +266,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 			} else {
 				s.fs.FolderCount.Add(1)
 			}
-			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: "attr:" + memlocal.Key(fullPath), Value: attrBytes, Expiration: 0}); mcErr != nil {
+			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: attrKey, Value: attrBytes, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("memcache set attr failed").
 					WithField("path", fullPath).
@@ -296,7 +299,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		}
 
 		if xattrBytes, err := cbor.Marshal(currXAttr); err == nil {
-			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: "xattr:" + memlocal.Key(fullPath), Value: xattrBytes, Expiration: 0}); mcErr != nil {
+			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: xattrKey, Value: xattrBytes, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("memcache set xattr failed").
 					WithField("path", fullPath).
@@ -368,7 +371,7 @@ func (s *DirStream) Close() {
 		return
 	}
 
-	_, err = pipe.CallData(ctxN, s.fs.Backup.ID+"/Close", &closeReq)
+	_, err = pipe.CallData(ctxN, "Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		syslog.L.Error(err).
 			WithMessage("DirStream close RPC failed").
