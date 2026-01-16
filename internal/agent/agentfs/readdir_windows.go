@@ -67,7 +67,8 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 
 func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, error) {
 	if r.noMoreFiles {
-		syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: no more files (cached)").WithField("path", r.path).Write()
+		syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: no more files (cached)").
+			WithField("path", r.path).Write()
 		return nil, os.ErrProcessDone
 	}
 
@@ -88,17 +89,29 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 			return nil, nil
 		}
 		if errors.Is(err, os.ErrProcessDone) {
-			syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: enumeration completed").WithField("path", r.path).Write()
+			syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: enumeration completed").
+				WithField("path", r.path).Write()
 			r.noMoreFiles = true
 			return nil, err
 		}
-		syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: ntDirectoryCall failed").WithField("path", r.path).Write()
+		syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: ntDirectoryCall failed").
+			WithField("path", r.path).Write()
 		return nil, err
 	}
 
-	var entries types.ReadDirEntries
+	r.encodeBuf.Reset()
+	enc := cbor.NewEncoder(&r.encodeBuf)
+	if err := enc.StartIndefiniteArray(); err != nil {
+		return nil, err
+	}
 
+	hasEntries := false
+	entryCount := 0
 	offset := 0
+	if blockSize == 0 {
+		blockSize = 4096
+	}
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -111,12 +124,9 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		entry := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[offset]))
 
 		if entry.FileAttributes&excludedAttrs == 0 {
-			fileNameLen := entry.FileNameLength / 2 // length in uint16 code units
-			fileNamePtr := unsafe.Pointer(
-				uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName),
-			)
+			fileNameLen := entry.FileNameLength / 2
+			fileNamePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
 
-			// Bounds check filename region inside the buffer
 			if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) >
 				uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
 				return nil, fmt.Errorf("filename data exceeds buffer bounds")
@@ -126,55 +136,33 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 			name := string(utf16.Decode(fileNameSlice))
 
 			if name != "." && name != ".." {
-				mode := windowsFileModeFromHandle(0, entry.FileAttributes)
-				isDir := (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
-				size := entry.EndOfFile
-
-				modTime := filetimeToTime(windows.Filetime{
-					LowDateTime:  uint32(uint64(entry.LastWriteTime) & 0xFFFFFFFF),
-					HighDateTime: uint32(uint64(entry.LastWriteTime) >> 32),
-				})
-
-				if blockSize == 0 {
-					blockSize = 4096
+				info := types.AgentFileInfo{
+					Name:           name,
+					Mode:           windowsFileModeFromHandle(0, entry.FileAttributes),
+					IsDir:          (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0,
+					Size:           entry.EndOfFile,
+					ModTime:        unixNanoFromWin(entry.LastWriteTime),
+					CreationTime:   unixFromWin(entry.CreationTime),
+					LastAccessTime: unixFromWin(entry.LastAccessTime),
+					LastWriteTime:  unixFromWin(entry.LastWriteTime),
+					FileAttributes: parseFileAttributes(entry.FileAttributes),
 				}
 
-				var blocks uint64
-				if !isDir {
+				if !info.IsDir {
 					alloc := entry.AllocationSize
 					if alloc < 0 {
 						alloc = 0
 					}
-					blocks = uint64((alloc + int64(blockSize) - 1) / int64(blockSize))
+					info.Blocks = uint64((alloc + int64(blockSize) - 1) / int64(blockSize))
 				}
 
-				creationTime := filetimeToUnix(windows.Filetime{
-					LowDateTime:  uint32(uint64(entry.CreationTime) & 0xFFFFFFFF),
-					HighDateTime: uint32(uint64(entry.CreationTime) >> 32),
-				})
-				lastAccessTime := filetimeToUnix(windows.Filetime{
-					LowDateTime:  uint32(uint64(entry.LastAccessTime) & 0xFFFFFFFF),
-					HighDateTime: uint32(uint64(entry.LastAccessTime) >> 32),
-				})
-				lastWriteTime := filetimeToUnix(windows.Filetime{
-					LowDateTime:  uint32(uint64(entry.LastWriteTime) & 0xFFFFFFFF),
-					HighDateTime: uint32(uint64(entry.LastWriteTime) >> 32),
-				})
-
-				fileAttributes := parseFileAttributes(entry.FileAttributes)
-
-				entries = append(entries, types.AgentFileInfo{
-					Name:           name,
-					Mode:           mode,
-					IsDir:          isDir,
-					Size:           size,
-					ModTime:        modTime.UnixNano(),
-					Blocks:         blocks,
-					CreationTime:   creationTime,
-					LastAccessTime: lastAccessTime,
-					LastWriteTime:  lastWriteTime,
-					FileAttributes: fileAttributes,
-				})
+				if err := enc.Encode(info); err != nil {
+					syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: encode failed").
+						WithField("path", r.path).Write()
+					return nil, err
+				}
+				hasEntries = true
+				entryCount++
 			}
 		}
 
@@ -183,30 +171,29 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		}
 		nextOffset := offset + int(entry.NextEntryOffset)
 		if nextOffset <= offset || nextOffset > len(buffer) {
-			return nil, fmt.Errorf(
-				"invalid NextEntryOffset: %d from offset %d",
-				entry.NextEntryOffset,
-				offset,
-			)
+			return nil, fmt.Errorf("invalid NextEntryOffset: %d from offset %d",
+				entry.NextEntryOffset, offset)
 		}
 		offset = nextOffset
 	}
 
-	if err := ctx.Err(); err != nil {
+	if !hasEntries {
+		return nil, os.ErrProcessDone
+	}
+
+	if err := enc.EndIndefinite(); err != nil {
 		return nil, err
 	}
 
-	encodedBatch, err := cbor.Marshal(entries)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: encode failed").WithField("path", r.path).Write()
-		return nil, fmt.Errorf("failed to encode batch for path '%s': %w", r.path, err)
-	}
+	encodedResult := r.encodeBuf.Bytes()
+
 	syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: batch encoded").
 		WithField("path", r.path).
-		WithField("bytes", len(encodedBatch)).
-		WithField("entries", entries).
+		WithField("bytes", len(encodedResult)).
+		WithField("entries_count", entryCount).
 		Write()
-	return encodedBatch, nil
+
+	return encodedResult, nil
 }
 
 func (r *DirReaderNT) Close() error {

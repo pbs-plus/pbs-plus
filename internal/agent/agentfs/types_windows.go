@@ -3,6 +3,7 @@
 package agentfs
 
 import (
+	"bytes"
 	"sync"
 
 	"golang.org/x/sys/windows"
@@ -39,6 +40,7 @@ type DirReaderNT struct {
 	path        string
 	closed      bool
 	mu          sync.Mutex
+	encodeBuf   bytes.Buffer
 }
 
 type UnicodeString struct {
