@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,6 +13,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+
+	"gitlab.com/go-extension/tls"
 )
 
 var (

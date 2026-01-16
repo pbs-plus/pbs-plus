@@ -2,7 +2,6 @@ package arpc
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
+	"gitlab.com/go-extension/tls"
 )
 
 type StreamPipe struct {

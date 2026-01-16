@@ -3,7 +3,6 @@ package mtls
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -15,6 +14,8 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"time"
+
+	"gitlab.com/go-extension/tls"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
@@ -184,6 +185,8 @@ func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, ne
 			}
 
 			return &tls.Config{
+				KernelTX:                 true,
+				KernelRX:                 true,
 				MinVersion:               uint16(tlsVers),
 				Certificates:             []tls.Certificate{*currentCerts},
 				ClientCAs:                currentCAs,
@@ -216,6 +219,8 @@ func BuildClientTLS(clientCertPEM, clientKeyPEM, caPEM []byte, legacyCaPEM []byt
 	}
 
 	return &tls.Config{
+		KernelTX:     true,
+		KernelRX:     true,
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      rootCAs,

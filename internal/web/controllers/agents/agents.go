@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -14,6 +13,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
+
+	"gitlab.com/go-extension/http"
 )
 
 func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -26,7 +27,7 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 		err := syslog.ParseAndLogWindowsEntry(r.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			return
 		}
 
@@ -34,7 +35,7 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 		err = json.NewEncoder(w).Encode(map[string]string{"success": "true"})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			return
 		}
 	}
@@ -57,7 +58,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		authHeaderSplit := strings.Split(authHeader, " ")
 		if len(authHeaderSplit) != 2 || authHeaderSplit[0] != "Bearer" {
 			w.WriteHeader(http.StatusUnauthorized)
-			controllers.WriteErrorResponse(w, fmt.Errorf("[%s]: unauthorized bearer access: %s", r.RemoteAddr, authHeader))
+			controllers.WriteErrorResponseExt(w, fmt.Errorf("[%s]: unauthorized bearer access: %s", r.RemoteAddr, authHeader))
 			syslog.L.Error(fmt.Errorf("[%s]: unauthorized bearer access: %s", r.RemoteAddr, authHeader)).Write()
 			return
 		}
@@ -66,14 +67,14 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		token, err := storeInstance.Database.GetToken(tokenStr)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
-			controllers.WriteErrorResponse(w, fmt.Errorf("[%s]: token not found", r.RemoteAddr))
+			controllers.WriteErrorResponseExt(w, fmt.Errorf("[%s]: token not found", r.RemoteAddr))
 			syslog.L.Error(fmt.Errorf("[%s]: token not found", r.RemoteAddr)).Write()
 			return
 		}
 
 		if token.Revoked {
 			w.WriteHeader(http.StatusUnauthorized)
-			controllers.WriteErrorResponse(w, fmt.Errorf("[%s]: token already revoked", r.RemoteAddr))
+			controllers.WriteErrorResponseExt(w, fmt.Errorf("[%s]: token already revoked", r.RemoteAddr))
 			syslog.L.Error(fmt.Errorf("[%s]: token already revoked", r.RemoteAddr)).Write()
 			return
 		}
@@ -82,14 +83,14 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		err = json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
 
 		if len(reqParsed.Drives) == 0 {
 			w.WriteHeader(http.StatusBadRequest)
-			controllers.WriteErrorResponse(w, fmt.Errorf("no drives provided"))
+			controllers.WriteErrorResponseExt(w, fmt.Errorf("no drives provided"))
 			syslog.L.Error(fmt.Errorf("no drives provided")).Write()
 			return
 		}
@@ -97,7 +98,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		decodedCSR, err := base64.StdEncoding.DecodeString(reqParsed.CSR)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
@@ -105,7 +106,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		cert, ca, err := storeInstance.SignAgentCSR(decodedCSR)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
@@ -126,7 +127,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
@@ -161,7 +162,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				if err != nil {
 					tx.Rollback()
 					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, err)
+					controllers.WriteErrorResponseExt(w, err)
 					syslog.L.Error(err).Write()
 					return
 				}
@@ -170,7 +171,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				if err != nil {
 					tx.Rollback()
 					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, err)
+					controllers.WriteErrorResponseExt(w, err)
 					syslog.L.Error(err).Write()
 					return
 				}
@@ -180,7 +181,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				if err != nil {
 					tx.Rollback()
 					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, err)
+					controllers.WriteErrorResponseExt(w, err)
 					syslog.L.Error(err).Write()
 					return
 				}
@@ -192,7 +193,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
@@ -201,7 +202,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		err = json.NewEncoder(w).Encode(map[string]string{"ca": encodedCA, "cert": encodedCert})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
@@ -219,14 +220,14 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		err := json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
 
 		if len(reqParsed.Drives) == 0 {
 			w.WriteHeader(http.StatusBadRequest)
-			controllers.WriteErrorResponse(w, fmt.Errorf("no drives provided"))
+			controllers.WriteErrorResponseExt(w, fmt.Errorf("no drives provided"))
 			syslog.L.Error(fmt.Errorf("no drives provided")).Write()
 			return
 		}
@@ -234,7 +235,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		decodedCSR, err := base64.StdEncoding.DecodeString(reqParsed.CSR)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
@@ -242,7 +243,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		cert, ca, err := storeInstance.SignAgentCSR(decodedCSR)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
@@ -262,7 +263,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
@@ -303,7 +304,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			if err != nil {
 				tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
-				controllers.WriteErrorResponse(w, err)
+				controllers.WriteErrorResponseExt(w, err)
 				syslog.L.Error(err).Write()
 				return
 			}
@@ -312,7 +313,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			if err != nil {
 				tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
-				controllers.WriteErrorResponse(w, err)
+				controllers.WriteErrorResponseExt(w, err)
 				syslog.L.Error(err).Write()
 				return
 			}
@@ -324,7 +325,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}
@@ -333,7 +334,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		err = json.NewEncoder(w).Encode(map[string]string{"ca": encodedCA, "cert": encodedCert})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, err)
+			controllers.WriteErrorResponseExt(w, err)
 			syslog.L.Error(err).Write()
 			return
 		}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -23,6 +22,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/xtaci/smux"
+	"gitlab.com/go-extension/tls"
 )
 
 type testPKI struct {

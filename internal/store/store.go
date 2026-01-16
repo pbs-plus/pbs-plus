@@ -4,10 +4,8 @@ package store
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -19,6 +17,9 @@ import (
 	sqlite "github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
+
+	"gitlab.com/go-extension/http"
+	"gitlab.com/go-extension/tls"
 
 	_ "modernc.org/sqlite"
 )

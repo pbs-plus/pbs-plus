@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	extHttp "gitlab.com/go-extension/http"
+
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -25,6 +27,24 @@ import (
 )
 
 func getClientInfo(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if ips := strings.Split(xff, ","); len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func getClientInfoExt(r *extHttp.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if ips := strings.Split(xff, ","); len(ips) > 0 {
 			return strings.TrimSpace(ips[0])
@@ -199,14 +219,14 @@ func alphabetHint(s string) string {
 	return fmt.Sprintf("+/=%t/%t, -_=%t/%t", hasPlus, hasSlash, hasDash, hasUnderscore)
 }
 
-func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
-	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := checkAgentAuth(store, r); err != nil {
+func AgentOnly(store *store.Store, next extHttp.Handler) extHttp.HandlerFunc {
+	return ExtCORS(store, extHttp.HandlerFunc(func(w extHttp.ResponseWriter, r *extHttp.Request) {
+		if err := checkAgentAuthExt(store, r); err != nil {
 			syslog.L.Error(err).
 				WithField("mode", "agent_only").
-				WithField("hostname", getClientInfo(r)).
+				WithField("hostname", getClientInfoExt(r)).
 				Write()
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			extHttp.Error(w, "authentication failed - no authentication credentials provided", extHttp.StatusUnauthorized)
 			return
 		}
 
@@ -260,6 +280,30 @@ func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
 }
 
 func checkAgentAuth(store *store.Store, r *http.Request) error {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return fmt.Errorf("CheckAgentAuth: client certificate required")
+	}
+
+	clientCert := r.TLS.PeerCertificates[0]
+
+	agentHostname := clientCert.Subject.CommonName
+	if agentHostname == "" {
+		return fmt.Errorf("CheckAgentAuth: missing certificate subject common name")
+	}
+
+	trustedCert, err := loadTrustedCert(store, agentHostname)
+	if err != nil {
+		return fmt.Errorf("CheckAgentAuth: certificate not trusted")
+	}
+
+	if !clientCert.Equal(trustedCert) {
+		return fmt.Errorf("certificate does not match pinned certificate")
+	}
+
+	return nil
+}
+
+func checkAgentAuthExt(store *store.Store, r *extHttp.Request) error {
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
 		return fmt.Errorf("CheckAgentAuth: client certificate required")
 	}

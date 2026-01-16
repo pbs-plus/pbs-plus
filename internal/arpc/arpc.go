@@ -2,13 +2,13 @@ package arpc
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
+	"gitlab.com/go-extension/tls"
 )
 
 func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {

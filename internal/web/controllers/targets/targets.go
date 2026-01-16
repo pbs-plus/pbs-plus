@@ -19,6 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
+	extHttp "gitlab.com/go-extension/http"
 )
 
 type TargetStatusResult struct {
@@ -163,10 +164,10 @@ type NewAgentHostnameRequest struct {
 	Drives   []utils.DriveInfo `json:"drives"`
 }
 
-func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func D2DTargetAgentHandler(storeInstance *store.Store) extHttp.HandlerFunc {
+	return func(w extHttp.ResponseWriter, r *extHttp.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			extHttp.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -174,13 +175,13 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		err := json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to parse request body: %w", err))
+			controllers.WriteErrorResponseExt(w, fmt.Errorf("Failed to parse request body: %w", err))
 			return
 		}
 
 		if reqParsed.Hostname == "" {
 			w.WriteHeader(http.StatusBadRequest)
-			controllers.WriteErrorResponse(w, fmt.Errorf("Hostname is required in request body"))
+			controllers.WriteErrorResponseExt(w, fmt.Errorf("Hostname is required in request body"))
 			return
 		}
 
@@ -198,7 +199,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		existingTargets, err := storeInstance.Database.GetAllTargetsByIP(clientIP)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to get existing targets: %w", err))
+			controllers.WriteErrorResponseExt(w, fmt.Errorf("Failed to get existing targets: %w", err))
 			return
 		}
 
@@ -210,7 +211,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to start transaction: %w", err))
+			controllers.WriteErrorResponseExt(w, fmt.Errorf("Failed to start transaction: %w", err))
 			return
 		}
 		defer func() {
@@ -248,7 +249,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				err = storeInstance.Database.UpdateTarget(tx, updatedTarget)
 				if err != nil {
 					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to update target %s: %w", targetName, err))
+					controllers.WriteErrorResponseExt(w, fmt.Errorf("Failed to update target %s: %w", targetName, err))
 					return
 				}
 			} else {
@@ -272,7 +273,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				err = storeInstance.Database.CreateTarget(tx, targetData)
 				if err != nil {
 					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to create target %s: %w", targetName, err))
+					controllers.WriteErrorResponseExt(w, fmt.Errorf("Failed to create target %s: %w", targetName, err))
 					return
 				}
 			}
@@ -281,7 +282,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		err = tx.Commit()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to commit transaction: %w", err))
+			controllers.WriteErrorResponseExt(w, fmt.Errorf("Failed to commit transaction: %w", err))
 			return
 		}
 		tx = nil

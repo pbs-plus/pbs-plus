@@ -2,12 +2,10 @@ package agent
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -15,6 +13,9 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+
+	"gitlab.com/go-extension/http"
+	"gitlab.com/go-extension/tls"
 )
 
 type BootstrapRequest struct {

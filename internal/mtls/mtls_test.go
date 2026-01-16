@@ -3,19 +3,20 @@ package mtls
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"gitlab.com/go-extension/http"
+	"gitlab.com/go-extension/tls"
 )
 
 type bootstrapResp struct {
@@ -293,6 +294,8 @@ func TestEndToEndMTLSWithCSRBootstrap(t *testing.T) {
 		noCertClient := &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
+					KernelTX:   true,
+					KernelRX:   true,
 					MinVersion: tls.VersionTLS12,
 					RootCAs:    rootCAs,
 					// no client certs
@@ -352,6 +355,8 @@ func waitForServer(hostport string, caPEM []byte, timeout time.Duration) error {
 	}
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
+			KernelTX:   true,
+			KernelRX:   true,
 			MinVersion: tls.VersionTLS12,
 			RootCAs:    rootCAs,
 		},

@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	extHttp "gitlab.com/go-extension/http"
+
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/helpers"
@@ -351,7 +353,7 @@ func main() {
 		}
 	}()
 
-	agentMux := http.NewServeMux()
+	agentMux := extHttp.NewServeMux()
 	apiMux := http.NewServeMux()
 
 	// API routes
@@ -396,7 +398,6 @@ func main() {
 	agentMux.HandleFunc("/plus/agent/bootstrap", agents.AgentBootstrapHandler(storeInstance))
 	agentMux.HandleFunc("/plus/agent/renew", mw.AgentOnly(storeInstance, agents.AgentRenewHandler(storeInstance)))
 	agentMux.HandleFunc("/plus/agent/install/win", plus.AgentInstallScriptHandler(storeInstance, Version))
-	agentMux.HandleFunc("/plus/metrics", plus.PrometheusMetricsHandler(storeInstance))
 
 	// pprof routes
 	apiMux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -404,6 +405,7 @@ func main() {
 	apiMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	apiMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	apiMux.HandleFunc("/plus/metrics", plus.PrometheusMetricsHandler(storeInstance))
 
 	apiServer := &http.Server{
 		Addr:           constants.ServerAPIExtPort,
@@ -414,7 +416,7 @@ func main() {
 		MaxHeaderBytes: constants.HTTPMaxHeaderBytes,
 	}
 
-	agentServer := &http.Server{
+	agentServer := &extHttp.Server{
 		Addr:           constants.AgentAPIPort,
 		Handler:        agentMux,
 		TLSConfig:      serverConfig,
