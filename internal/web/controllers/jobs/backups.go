@@ -34,14 +34,24 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for i, backup := range allBackups {
 			var stats vfs.VFSStats
-			if backup.TargetPath.IsAgent() || backup.TargetPath.IsS3() {
+			switch backup.TargetPath.GetPathInfo().Type {
+			case types.TargetTypeAgent:
 				session := vfssessions.GetSessionARPCFS(backup.GetStreamID())
 				if session == nil {
 					continue
 				}
 
 				stats = session.GetStats()
-			} else {
+			case types.TargetTypeS3:
+				session := vfssessions.GetSessionS3FS(backup.GetStreamID())
+				if session == nil {
+					continue
+				}
+
+				stats = session.GetStats()
+			case types.TargetTypeLocal:
+				continue
+			default:
 				continue
 			}
 

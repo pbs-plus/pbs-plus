@@ -74,7 +74,6 @@ func NewS3FS(
 	}
 
 	s3ctx, cancel := context.WithCancel(ctx)
-
 	memcachePath := filepath.Join(constants.MemcachedSocketPath, fmt.Sprintf("%s.sock", backup.ID))
 
 	syslog.L.Debug().
@@ -115,7 +114,6 @@ func NewS3FS(
 			Write()
 		fs.Memcache.DeleteAll()
 		fs.Memcache.Close()
-
 		fs.TotalBytes.Reset()
 		fs.FolderCount.Reset()
 		fs.FileCount.Reset()
@@ -146,7 +144,6 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 		Write()
 
 	now := time.Now().Unix()
-
 	if fpath == "/" || fpath == "" {
 		return agentTypes.AgentFileInfo{
 			IsDir:          true,
@@ -165,9 +162,19 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 	if err == nil {
 		fs.StatCacheHits.Add(1)
 		if err := cbor.Unmarshal(cached.Value, &fi); err == nil {
+			syslog.L.Debug().
+				WithMessage("Attr cache hit").
+				WithField("path", fpath).
+				WithField("backupId", fs.Backup.ID).
+				Write()
 			return fi, nil
 		}
 	}
+
+	syslog.L.Debug().
+		WithMessage("Attr cache miss, issuing S3 Stat").
+		WithField("path", fpath).
+		Write()
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
@@ -190,13 +197,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 		if !strings.HasSuffix(dirKey, "/") {
 			dirKey += "/"
 		}
-
-		opts := minio.ListObjectsOptions{
-			Prefix:    dirKey,
-			Recursive: false,
-			MaxKeys:   1,
-		}
-
+		opts := minio.ListObjectsOptions{Prefix: dirKey, Recursive: false, MaxKeys: 1}
 		objects := fs.client.ListObjects(ctxN, fs.bucket, opts)
 		_, ok := <-objects
 
@@ -220,17 +221,25 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 		}
 	}
 
-	if !isLookup && !fi.IsDir {
-		fs.Memcache.Delete(cacheKey)
-		fs.FileCount.Add(1)
-	} else if !isLookup && fi.IsDir {
-		fs.FolderCount.Add(1)
+	if !isLookup {
+		if !fi.IsDir {
+			fs.Memcache.Delete(cacheKey)
+			fs.FileCount.Add(1)
+			syslog.L.Debug().
+				WithMessage("Attr counted file and cleared cache").
+				WithField("path", fpath).
+				WithField("fileCount", fs.FileCount.Value()).
+				Write()
+		} else {
+			fs.FolderCount.Add(1)
+		}
 	}
 
 	return fi, nil
 }
 
 func (fs *S3FS) StatFS(ctx context.Context) (agentTypes.StatFS, error) {
+	syslog.L.Debug().WithMessage("StatFS called").WithField("backupId", fs.Backup.ID).Write()
 	return agentTypes.StatFS{
 		Bsize:   4096,
 		Blocks:  1 << 50,
@@ -281,22 +290,18 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 		}
 	}
 
-	cacheKey := fs.GetCacheKey(attrPrefix, prefix)
-	fs.Memcache.Delete(cacheKey)
+	fs.Memcache.Delete(fs.GetCacheKey(attrPrefix, prefix))
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	opts := minio.ListObjectsOptions{
-		Prefix:    prefix,
-		Recursive: false,
-	}
-
+	opts := minio.ListObjectsOptions{Prefix: prefix, Recursive: false}
 	entries := make(agentTypes.ReadDirEntries, 0)
 	seenNames := make(map[string]bool)
 
 	for obj := range fs.client.ListObjects(ctxN, fs.bucket, opts) {
 		if obj.Err != nil {
+			syslog.L.Error(obj.Err).WithMessage("ReadDir S3 List failed").Write()
 			return nil, obj.Err
 		}
 
@@ -339,6 +344,12 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 			fs.Memcache.Set(&memcache.Item{Key: itemKey, Value: raw, Expiration: 0})
 		}
 	}
+
+	syslog.L.Debug().
+		WithMessage("ReadDir completed").
+		WithField("path", fpath).
+		WithField("count", len(entries)).
+		Write()
 
 	return &S3DirStream{entries: entries}, nil
 }
