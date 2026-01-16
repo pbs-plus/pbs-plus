@@ -200,6 +200,18 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 	return agentTypes.AgentFileInfo{}, syscall.ENOENT
 }
 
+func (fs *S3FS) StatFS() (agentTypes.StatFS, error) {
+	return agentTypes.StatFS{
+		Bsize:   4096,
+		Blocks:  1 << 50,
+		Bfree:   1 << 49,
+		Bavail:  1 << 49,
+		Files:   1 << 40,
+		Ffree:   1 << 39,
+		NameLen: 1024,
+	}, nil
+}
+
 func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 	var prefix string
 	if fpath == "/" || fpath == "" {
