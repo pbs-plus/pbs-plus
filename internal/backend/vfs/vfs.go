@@ -6,9 +6,12 @@ import (
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/puzpuzpuz/xsync/v4"
 )
+
+var keyPool = NewMemcachedKeyPool()
 
 type VFSBase struct {
 	Ctx      context.Context
@@ -31,13 +34,24 @@ type VFSBase struct {
 	lastTotalBytes  int64
 }
 
-func NewVFSBase() *VFSBase {
-	return &VFSBase{
-		FileCount:     xsync.NewCounter(),
-		FolderCount:   xsync.NewCounter(),
-		TotalBytes:    xsync.NewCounter(),
-		StatCacheHits: xsync.NewCounter(),
-	}
+func InjectBase(base VFSBase) *VFSBase {
+	base.FileCount = xsync.NewCounter()
+	base.FolderCount = xsync.NewCounter()
+	base.TotalBytes = xsync.NewCounter()
+	base.StatCacheHits = xsync.NewCounter()
+
+	return &base
+}
+
+func (fs *VFSBase) GetCacheKey(prefix string, pathKey string) string {
+	sb := keyPool.Get()
+	sb.WriteString(prefix)
+	sb.WriteString(memlocal.Key(pathKey))
+
+	key := sb.String()
+	keyPool.Put(sb)
+
+	return key
 }
 
 func (fs *VFSBase) GetStats() VFSStats {
