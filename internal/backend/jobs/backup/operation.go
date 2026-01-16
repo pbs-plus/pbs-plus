@@ -282,6 +282,7 @@ func (b *BackupOperation) Cleanup() {
 		}
 		if b.s3Mount != nil {
 			b.s3Mount.Unmount()
+			b.s3Mount.CloseMount()
 		}
 		if b.logger != nil {
 			_ = b.logger.Close()
@@ -475,6 +476,7 @@ func (b *BackupOperation) mountSource(target types.Target) (string, *mount.Agent
 		select {
 		case <-b.Context().Done():
 			s3Mount.Unmount()
+			s3Mount.CloseMount()
 			return "", nil, nil, jobs.ErrCanceled
 		default:
 		}
