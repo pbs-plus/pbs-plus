@@ -70,14 +70,14 @@ func safeHandler(fn func(req *arpc.Request) (arpc.Response, error)) func(req *ar
 }
 
 func (s *AgentFSServer) RegisterHandlers(r *arpc.Router) {
-	r.Handle(s.jobId+"/OpenFile", safeHandler(s.handleOpenFile))
-	r.Handle(s.jobId+"/Attr", safeHandler(s.handleAttr))
-	r.Handle(s.jobId+"/Xattr", safeHandler(s.handleXattr))
-	r.Handle(s.jobId+"/ReadDir", safeHandler(s.handleReadDir))
-	r.Handle(s.jobId+"/ReadAt", safeHandler(s.handleReadAt))
-	r.Handle(s.jobId+"/Lseek", safeHandler(s.handleLseek))
-	r.Handle(s.jobId+"/Close", safeHandler(s.handleClose))
-	r.Handle(s.jobId+"/StatFS", safeHandler(s.handleStatFS))
+	r.Handle("OpenFile", safeHandler(s.handleOpenFile))
+	r.Handle("Attr", safeHandler(s.handleAttr))
+	r.Handle("Xattr", safeHandler(s.handleXattr))
+	r.Handle("ReadDir", safeHandler(s.handleReadDir))
+	r.Handle("ReadAt", safeHandler(s.handleReadAt))
+	r.Handle("Lseek", safeHandler(s.handleLseek))
+	r.Handle("Close", safeHandler(s.handleClose))
+	r.Handle("StatFS", safeHandler(s.handleStatFS))
 
 	s.arpcRouter = r
 }
@@ -85,14 +85,14 @@ func (s *AgentFSServer) RegisterHandlers(r *arpc.Router) {
 func (s *AgentFSServer) Close() {
 	if s.arpcRouter != nil {
 		r := s.arpcRouter
-		r.CloseHandle(s.jobId + "/OpenFile")
-		r.CloseHandle(s.jobId + "/Attr")
-		r.CloseHandle(s.jobId + "/Xattr")
-		r.CloseHandle(s.jobId + "/ReadDir")
-		r.CloseHandle(s.jobId + "/ReadAt")
-		r.CloseHandle(s.jobId + "/Lseek")
-		r.CloseHandle(s.jobId + "/Close")
-		r.CloseHandle(s.jobId + "/StatFS")
+		r.CloseHandle("OpenFile")
+		r.CloseHandle("Attr")
+		r.CloseHandle("Xattr")
+		r.CloseHandle("ReadDir")
+		r.CloseHandle("ReadAt")
+		r.CloseHandle("Lseek")
+		r.CloseHandle("Close")
+		r.CloseHandle("StatFS")
 	}
 
 	s.closeFileHandles()

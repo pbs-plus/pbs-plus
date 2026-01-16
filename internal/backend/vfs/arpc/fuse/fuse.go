@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path"
 	"strconv"
 	"syscall"
 	"time"
@@ -240,24 +241,26 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 		attrs = append(attrs, "user.acls")
 	}
 
-	var list []byte
-	for _, attr := range attrs {
-		list = append(list, attr...)
-		list = append(list, 0)
+	var totalLen int
+	for _, a := range attrs {
+		totalLen += len(a) + 1 // +1 for null terminator
 	}
-
-	length := uint32(len(list))
 
 	if dest == nil {
-		return length, 0
+		return uint32(totalLen), 0
+	}
+	if len(dest) < totalLen {
+		return uint32(totalLen), syscall.E2BIG
 	}
 
-	if len(dest) < len(list) {
-		return length, syscall.E2BIG
+	offset := 0
+	for _, a := range attrs {
+		offset += copy(dest[offset:], a)
+		dest[offset] = 0
+		offset++
 	}
 
-	copy(dest, list)
-	return length, 0
+	return uint32(totalLen), 0
 }
 
 func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
@@ -360,13 +363,7 @@ func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscal
 
 // Lookup implements NodeLookuper
 func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	parentPath := n.getPath()
-	var fullPath string
-	if parentPath == "/" {
-		fullPath = "/" + name
-	} else {
-		fullPath = parentPath + "/" + name
-	}
+	fullPath := path.Join(n.getPath(), name)
 
 	fi, err := n.fs.Attr(ctx, fullPath, true)
 	if err != nil {
@@ -388,16 +385,14 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 		mode |= syscall.S_IFREG
 	}
 
-	stable := fs.StableAttr{
-		Mode: mode,
-	}
-
+	stable := fs.StableAttr{Mode: mode}
 	child := n.NewInode(ctx, childNode, stable)
 
 	out.Mode = mode
 	out.Size = uint64(fi.Size)
-	mtime := time.Unix(0, fi.ModTime)
-	out.SetTimes(nil, &mtime, nil)
+	out.SetTimes(nil, &time.Time{}, nil)
+	out.Mtime = uint64(fi.ModTime / 1e9)
+	out.Mtimensec = uint32(fi.ModTime % 1e9)
 
 	return child, 0
 }
