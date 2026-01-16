@@ -3,6 +3,7 @@
 package agentfs
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -21,17 +22,17 @@ const (
 )
 
 type DirReaderUnix struct {
-	fd              int
-	buf             []byte
-	bufPos          int
-	bufEnd          int
-	noMoreFiles     bool
-	path            string
-	basep           uintptr
-	targetEncoded   int
-	reusableEntries types.ReadDirEntries
-	idBuf           []byte
-	FetchFullAttrs  bool
+	fd             int
+	buf            []byte
+	bufPos         int
+	bufEnd         int
+	noMoreFiles    bool
+	path           string
+	basep          uintptr
+	targetEncoded  int
+	encodeBuf      bytes.Buffer
+	idBuf          []byte
+	FetchFullAttrs bool
 }
 
 var bufferPool = sync.Pool{
@@ -61,24 +62,31 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 	if r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
-	if r.reusableEntries == nil {
-		r.reusableEntries = make(types.ReadDirEntries, 0, 512)
+
+	r.encodeBuf.Reset()
+	enc := cbor.NewEncoder(&r.encodeBuf)
+	if err := enc.StartIndefiniteArray(); err != nil {
+		return nil, err
 	}
-	r.reusableEntries = r.reusableEntries[:0]
+
 	target := r.targetEncoded
 	if target <= 0 {
 		target = defaultTargetEncodedLen
 	}
-	encodedSizeEstimate := 4
-	for {
+
+	hasEntries := false
+	batchFull := false
+
+	for !batchFull {
 		if r.bufPos >= r.bufEnd {
 			n, err := r.getdents()
 			if err != nil || n == 0 {
 				r.noMoreFiles = true
-				break
+				break // Exit outer loop
 			}
 			r.bufPos, r.bufEnd = 0, n
 		}
+
 		for r.bufPos < r.bufEnd {
 			nameBytes, typ, reclen, ok, perr := r.parseDirent()
 			if perr != nil {
@@ -86,13 +94,18 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 			}
 			if !ok || reclen == 0 {
 				r.bufPos = r.bufEnd
-				break
+				break // Exit inner loop to fetch more dents
 			}
 			r.bufPos += reclen
+
 			if isDot(nameBytes) || isDotDot(nameBytes) || typ == unix.DT_LNK || typ == unix.DT_UNKNOWN {
 				continue
 			}
-			info := types.AgentFileInfo{Name: string(nameBytes)}
+
+			info := types.AgentFileInfo{
+				Name: bytesToString(nameBytes),
+			}
+
 			if r.FetchFullAttrs {
 				if err := r.fillAttrs(&info); err != nil {
 					if err == unix.ENOENT || err == unix.EACCES {
@@ -101,20 +114,28 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 					return nil, err
 				}
 			}
-			r.reusableEntries = append(r.reusableEntries, info)
-			encodedSizeEstimate += 12 + len(info.Name)
-			if encodedSizeEstimate >= target {
-				return cbor.Marshal(r.reusableEntries)
+
+			if err := enc.Encode(info); err != nil {
+				return nil, err
+			}
+			hasEntries = true
+
+			if r.encodeBuf.Len() >= target {
+				batchFull = true
+				break
 			}
 		}
-		if len(r.reusableEntries) > 0 {
-			break
-		}
 	}
-	if len(r.reusableEntries) == 0 {
+
+	if !hasEntries && r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
-	return cbor.Marshal(r.reusableEntries)
+
+	if err := enc.EndIndefinite(); err != nil {
+		return nil, err
+	}
+
+	return r.encodeBuf.Bytes(), nil
 }
 
 func (r *DirReaderUnix) Close() error {

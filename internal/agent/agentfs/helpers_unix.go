@@ -5,9 +5,14 @@ package agentfs
 import (
 	"os"
 	"strings"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
+
+func bytesToString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
 
 func lastPathElem(p string) string {
 	if i := strings.LastIndexByte(p, '/'); i >= 0 {
