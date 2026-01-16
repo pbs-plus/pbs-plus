@@ -31,15 +31,15 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 		ntPath += "\\"
 	}
 
-	pathUTF16 := utf16.Encode([]rune(ntPath))
-	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
-		pathUTF16 = append(pathUTF16, 0)
+	pathUTF16, err := windows.UTF16PtrFromString(ntPath)
+	if err != nil {
+		return nil, err
 	}
 
 	var unicodeString UnicodeString
 	rtlInitUnicodeString.Call(
 		uintptr(unsafe.Pointer(&unicodeString)),
-		uintptr(unsafe.Pointer(&pathUTF16[0])),
+		uintptr(unsafe.Pointer(pathUTF16)),
 	)
 
 	var objectAttributes ObjectAttributes
