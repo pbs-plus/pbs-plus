@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"unicode/utf16"
 	"unsafe"
 
 	"github.com/fxamacker/cbor/v2"
@@ -135,16 +134,7 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 			entry := (*FileDirectoryInformation)(unsafe.Pointer(&r.buf[r.bufPos]))
 
 			if entry.FileAttributes&excludedAttrs == 0 {
-				fileNameLen := entry.FileNameLength / 2
-				fileNamePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
-
-				if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) >
-					uintptr(unsafe.Pointer(&r.buf[0]))+uintptr(len(r.buf)) {
-					return nil, fmt.Errorf("filename data exceeds buffer bounds")
-				}
-
-				fileNameSlice := unsafe.Slice((*uint16)(fileNamePtr), fileNameLen)
-				name := string(utf16.Decode(fileNameSlice))
+				name := windows.UTF16PtrToString(&entry.FileName)
 
 				if name != "." && name != ".." {
 					info := types.AgentFileInfo{
