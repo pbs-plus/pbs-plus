@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -486,9 +487,10 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		syslog.L.Debug().WithMessage("handleReadAt: handle not found").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Warn().WithMessage("handleReadAt: handle not found").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
+
 	if fh.isDir {
 		syslog.L.Debug().WithMessage("handleReadAt: attempted read on directory handle").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, os.ErrInvalid
@@ -500,27 +502,17 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	fh.mu.Lock()
-	fileSize := fh.fileSize
 	handle := fh.handle
+	fileSize := fh.fileSize
+	readMode := s.readMode
 	fh.mu.Unlock()
-
-	if err := req.Context.Err(); err != nil {
-		fh.releaseOp()
-		syslog.L.Debug().WithMessage("handleReadAt: context cancelled before read").WithField("handle_id", payload.HandleID).Write()
-		return arpc.Response{}, err
-	}
 
 	if payload.Offset >= fileSize {
 		fh.releaseOp()
-		syslog.L.Debug().WithMessage("handleReadAt: offset beyond EOF, sending empty").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("size", fileSize).Write()
-		return arpc.Response{
-			Status: 213,
-			RawStream: func(stream *smux.Stream) {
-				if err := binarystream.SendDataFromReader(bytes.NewReader(nil), 0, stream); err != nil {
-					syslog.L.Error(err).WithMessage("handleReadAt: failed sending empty reader").WithField("handle_id", payload.HandleID).Write()
-				}
-			},
-		}, nil
+		syslog.L.Debug().WithMessage("handleReadAt: offset beyond EOF").WithField("handle_id", payload.HandleID).Write()
+		return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
+			_ = binarystream.SendDataFromReader(bytes.NewReader(nil), 0, stream)
+		}}, nil
 	}
 
 	maxEnd := fileSize
@@ -528,124 +520,67 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	if reqEnd > maxEnd {
 		reqEnd = maxEnd
 	}
-	if reqEnd <= payload.Offset {
-		fh.releaseOp()
-		syslog.L.Debug().WithMessage("handleReadAt: empty range after clamping").WithField("handle_id", payload.HandleID).Write()
-		return arpc.Response{
-			Status: 213,
-			RawStream: func(stream *smux.Stream) {
-				if err := binarystream.SendDataFromReader(bytes.NewReader(nil), 0, stream); err != nil {
-					syslog.L.Error(err).WithMessage("handleReadAt: failed sending empty reader").WithField("handle_id", payload.HandleID).Write()
-				}
-			},
-		}, nil
-	}
 	reqLen := int(reqEnd - payload.Offset)
 
-	const maxChunk = 1024 * 1024
+	if readMode == "mmap" {
+		syslog.L.Debug().WithMessage("handleReadAt: attempting memory-mapped read").WithField("handle_id", payload.HandleID).Write()
 
-	ranges, err := queryAllocatedRanges(handle, payload.Offset, int64(reqLen))
-	if err != nil || len(ranges) == 0 {
-		syslog.L.Debug().WithMessage("handleReadAt: treating file as contiguous").WithField("handle_id", payload.HandleID).Write()
-		ranges = []allocatedRange{{FileOffset: payload.Offset, Length: int64(reqLen)}}
+		mappingHandle, err := windows.CreateFileMapping(
+			windows.Handle(handle),
+			nil,
+			windows.PAGE_READONLY,
+			0, 0,
+			nil,
+		)
+		if err == nil {
+			defer windows.CloseHandle(mappingHandle)
+
+			addr, err := windows.MapViewOfFile(
+				mappingHandle,
+				windows.FILE_MAP_READ,
+				uint32(payload.Offset>>32),
+				uint32(payload.Offset),
+				uintptr(reqLen),
+			)
+			if err == nil {
+				data := unsafe.Slice((*byte)(unsafe.Pointer(addr)), reqLen)
+				return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
+					defer fh.releaseOp()
+					defer windows.UnmapViewOfFile(addr)
+					_ = binarystream.SendDataFromReader(bytes.NewReader(data), len(data), stream)
+					syslog.L.Debug().WithMessage("handleReadAt: stream completed (mmap)").WithField("bytes", len(data)).Write()
+				}}, nil
+			}
+		}
+		syslog.L.Warn().WithMessage("handleReadAt: mmap failed, falling back to overlapped I/O").Write()
 	}
 
-	streamFn := func(stream *smux.Stream) {
+	bptr := readBufPool.Get().(*[]byte)
+	workBuf := *bptr
+	isTemporary := false
+	if len(workBuf) < reqLen {
+		workBuf = make([]byte, reqLen)
+		isTemporary = true
+	}
+
+	n, err := readAtOverlapped(handle, payload.Offset, workBuf[:reqLen])
+	if err != nil && err != io.EOF {
+		if !isTemporary {
+			readBufPool.Put(bptr)
+		}
+		fh.releaseOp()
+		syslog.L.Error(err).WithMessage("handleReadAt: overlapped read failed").Write()
+		return arpc.Response{}, err
+	}
+
+	return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
 		defer fh.releaseOp()
-
-		bufPtr := readBufPool.Get().(*[]byte)
-		defer readBufPool.Put(bufPtr)
-		buf := *bufPtr
-
-		var stackZero [4096]byte
-
-		writeZeros := func(n int64) error {
-			for n > 0 {
-				chunk := int64(len(stackZero))
-				if n < chunk {
-					chunk = n
-				}
-				if err := binarystream.SendDataFromReader(bytes.NewReader(stackZero[:chunk]), int(chunk), stream); err != nil {
-					return err
-				}
-				n -= chunk
-			}
-			return nil
+		if !isTemporary {
+			defer readBufPool.Put(bptr)
 		}
-
-		pos := payload.Offset
-		end := reqEnd
-
-		for _, r := range ranges {
-			rStart := r.FileOffset
-			rEnd := r.FileOffset + r.Length
-			if rEnd <= pos {
-				continue
-			}
-			if rStart < pos {
-				rStart = pos
-			}
-			if rEnd > end {
-				rEnd = end
-			}
-			if rStart >= rEnd {
-				continue
-			}
-
-			if rStart > pos {
-				gap := rStart - pos
-				syslog.L.Debug().WithMessage("handleReadAt: writing zero gap").WithField("handle_id", payload.HandleID).WithField("gap_bytes", gap).Write()
-				if err := writeZeros(gap); err != nil {
-					syslog.L.Error(err).WithMessage("handleReadAt: stream write gap failed").WithField("handle_id", payload.HandleID).Write()
-					return
-				}
-				pos = rStart
-			}
-
-			cur := rStart
-			for cur < rEnd {
-				toRead := rEnd - cur
-				if toRead > int64(len(buf)) {
-					toRead = int64(len(buf))
-				}
-
-				n, rerr := readAtOverlapped(handle, cur, buf[:toRead])
-				if rerr != nil && rerr != io.EOF {
-					syslog.L.Error(rerr).WithMessage("handleReadAt: overlapped read error").WithField("handle_id", payload.HandleID).Write()
-					return
-				}
-				if n > 0 {
-					if err := binarystream.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream); err != nil {
-						syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed").WithField("handle_id", payload.HandleID).Write()
-						return
-					}
-					cur += int64(n)
-				}
-				if rerr == io.EOF && n == 0 {
-					syslog.L.Debug().WithMessage("handleReadAt: unexpected EOF in allocated range").WithField("handle_id", payload.HandleID).Write()
-					return
-				}
-			}
-			pos = rEnd
-		}
-
-		if pos < end {
-			gap := end - pos
-			syslog.L.Debug().WithMessage("handleReadAt: writing trailing zero gap").WithField("handle_id", payload.HandleID).WithField("gap_bytes", gap).Write()
-			if err := writeZeros(gap); err != nil {
-				syslog.L.Error(err).WithMessage("handleReadAt: stream write tail gap failed").WithField("handle_id", payload.HandleID).Write()
-				return
-			}
-		}
-
-		syslog.L.Debug().WithMessage("handleReadAt: stream completed successfully").WithField("handle_id", payload.HandleID).Write()
-	}
-
-	syslog.L.Debug().WithMessage("handleReadAt: starting stream").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("length", reqLen).Write()
-	return arpc.Response{
-		Status:    213,
-		RawStream: streamFn,
-	}, nil
+		_ = binarystream.SendDataFromReader(bytes.NewReader(workBuf[:n]), n, stream)
+		syslog.L.Debug().WithMessage("handleReadAt: stream completed").WithField("bytes", n).Write()
+	}}, nil
 }
 
 func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
