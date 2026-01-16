@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -23,26 +22,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var (
-	utf16PathBufPool = sync.Pool{
-		New: func() interface{} {
-			buf := make([]uint16, 512)
-			return &buf
-		},
-	}
-	zeroBufPool = sync.Pool{
-		New: func() interface{} {
-			buf := make([]byte, 512*1024)
-			return &buf
-		},
-	}
-)
-
 func NewFileHandle(handle windows.Handle) *FileHandle {
-	fh := &FileHandle{
+	return &FileHandle{
 		handle: handle,
 	}
-	return fh
 }
 
 func (fh *FileHandle) acquireOp() bool {
@@ -109,39 +92,19 @@ func (s *AgentFSServer) abs(filename string) (string, error) {
 	return path, nil
 }
 
-func toUTF16Z(s string, buf []uint16) []uint16 {
-	runes := []rune(s)
-	needed := len(runes) + 1
-	if cap(buf) < needed {
-		buf = make([]uint16, needed)
-	} else {
-		buf = buf[:needed]
-	}
-	n := 0
-	for _, r := range runes {
-		if r < 0x10000 {
-			buf[n] = uint16(r)
-			n++
-		} else {
-			r -= 0x10000
-			buf[n] = uint16(0xD800 + (r >> 10))
-			buf[n+1] = uint16(0xDC00 + (r & 0x3FF))
-			n += 2
-		}
-	}
-	buf[n] = 0
-	return buf[:n+1]
-}
-
 func (s *AgentFSServer) absUNC(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
 	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
-		unc := "\\\\?\\" + s.snapshot.Path
+		unc := `\\?\` + s.snapshot.Path
 		syslog.L.Debug().WithMessage("absUNC: returning UNC snapshot path for root").WithField("path", unc).Write()
 		return unc, nil
 	}
 	path := pathjoin.Join(s.snapshot.Path, windowsDir)
-	unc := "\\\\?\\" + path
+	var b strings.Builder
+	b.Grow(4 + len(path))
+	b.WriteString(`\\?\`)
+	b.WriteString(path)
+	unc := b.String()
 	syslog.L.Debug().WithMessage("absUNC: joined UNC path").WithField("path", unc).Write()
 	return unc, nil
 }
@@ -214,7 +177,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 
 	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		syslog.L.Debug().WithMessage("handleOpenFile: write operation attempted and blocked").WithField("path", payload.Path).Write()
-		errStr := "write operations not allowed"
+		const errStr = "write operations not allowed"
 		errBytes, err := cbor.Marshal(errStr)
 		if err != nil {
 			syslog.L.Error(err).WithMessage("handleOpenFile: encode error message failed").Write()
@@ -232,8 +195,11 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		return arpc.Response{}, err
 	}
 
-	bufPtr := utf16PathBufPool.Get().(*[]uint16)
-	pathUTF16 := toUTF16Z(path, *bufPtr)
+	pathUTF16, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("handleOpenFile: UTF16 conversion failed").WithField("path", path).Write()
+		return arpc.Response{}, err
+	}
 
 	desiredAccess := uint32(windows.GENERIC_READ)
 	share := uint32(
@@ -245,7 +211,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 
 	syslog.L.Debug().WithMessage("handleOpenFile: CreateFile").WithField("path", path).Write()
 	handle, err := windows.CreateFile(
-		&pathUTF16[0],
+		pathUTF16,
 		desiredAccess,
 		share,
 		nil,
@@ -253,7 +219,6 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		flags,
 		0,
 	)
-	utf16PathBufPool.Put(bufPtr)
 
 	if err != nil {
 		syslog.L.Error(err).WithMessage("handleOpenFile: CreateFile failed").WithField("path", path).Write()
@@ -487,11 +452,11 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	}
 
 	syslog.L.Debug().WithMessage("handleReadDir: sending batch").WithField("handle_id", payload.HandleID).WithField("bytes", len(encodedBatch)).Write()
-	byteReader := bytes.NewReader(encodedBatch)
+
 	streamCallback := func(stream *smux.Stream) {
 		defer fh.releaseOp()
 
-		if err := binarystream.SendDataFromReader(byteReader, int(len(encodedBatch)), stream); err != nil {
+		if err := binarystream.SendDataFromReader(bytes.NewReader(encodedBatch), len(encodedBatch), stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader via binary stream").WithField("handle_id", payload.HandleID).Write()
 		}
 
@@ -548,11 +513,10 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	if payload.Offset >= fileSize {
 		fh.releaseOp()
 		syslog.L.Debug().WithMessage("handleReadAt: offset beyond EOF, sending empty").WithField("handle_id", payload.HandleID).WithField("offset", payload.Offset).WithField("size", fileSize).Write()
-		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
 			RawStream: func(stream *smux.Stream) {
-				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
+				if err := binarystream.SendDataFromReader(bytes.NewReader(nil), 0, stream); err != nil {
 					syslog.L.Error(err).WithMessage("handleReadAt: failed sending empty reader").WithField("handle_id", payload.HandleID).Write()
 				}
 			},
@@ -567,11 +531,10 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	if reqEnd <= payload.Offset {
 		fh.releaseOp()
 		syslog.L.Debug().WithMessage("handleReadAt: empty range after clamping").WithField("handle_id", payload.HandleID).Write()
-		emptyReader := bytes.NewReader(nil)
 		return arpc.Response{
 			Status: 213,
 			RawStream: func(stream *smux.Stream) {
-				if err := binarystream.SendDataFromReader(emptyReader, 0, stream); err != nil {
+				if err := binarystream.SendDataFromReader(bytes.NewReader(nil), 0, stream); err != nil {
 					syslog.L.Error(err).WithMessage("handleReadAt: failed sending empty reader").WithField("handle_id", payload.HandleID).Write()
 				}
 			},
@@ -579,7 +542,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	}
 	reqLen := int(reqEnd - payload.Offset)
 
-	const maxChunk = 512 * 1024
+	const maxChunk = 1024 * 1024
 
 	ranges, err := queryAllocatedRanges(handle, payload.Offset, int64(reqLen))
 	if err != nil || len(ranges) == 0 {
@@ -590,12 +553,24 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	streamFn := func(stream *smux.Stream) {
 		defer fh.releaseOp()
 
-		zeroBufPtr := zeroBufPool.Get().(*[]byte)
-		defer zeroBufPool.Put(zeroBufPtr)
-		zeroBuf := *zeroBufPtr
+		bufPtr := readBufPool.Get().(*[]byte)
+		defer readBufPool.Put(bufPtr)
+		buf := *bufPtr
 
-		write := func(p []byte) error {
-			return binarystream.SendDataFromReader(bytes.NewReader(p), len(p), stream)
+		var stackZero [4096]byte
+
+		writeZeros := func(n int64) error {
+			for n > 0 {
+				chunk := int64(len(stackZero))
+				if n < chunk {
+					chunk = n
+				}
+				if err := binarystream.SendDataFromReader(bytes.NewReader(stackZero[:chunk]), int(chunk), stream); err != nil {
+					return err
+				}
+				n -= chunk
+			}
+			return nil
 		}
 
 		pos := payload.Offset
@@ -620,34 +595,27 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 			if rStart > pos {
 				gap := rStart - pos
 				syslog.L.Debug().WithMessage("handleReadAt: writing zero gap").WithField("handle_id", payload.HandleID).WithField("gap_bytes", gap).Write()
-				for gap > 0 {
-					ch := int64(maxChunk)
-					if gap < ch {
-						ch = gap
-					}
-					if err := write(zeroBuf[:ch]); err != nil {
-						syslog.L.Error(err).WithMessage("handleReadAt: stream write gap failed").WithField("handle_id", payload.HandleID).Write()
-						return
-					}
-					gap -= ch
+				if err := writeZeros(gap); err != nil {
+					syslog.L.Error(err).WithMessage("handleReadAt: stream write gap failed").WithField("handle_id", payload.HandleID).Write()
+					return
 				}
 				pos = rStart
 			}
 
 			cur := rStart
 			for cur < rEnd {
-				ch := int64(maxChunk)
-				if rEnd-cur < ch {
-					ch = rEnd - cur
+				toRead := rEnd - cur
+				if toRead > int64(len(buf)) {
+					toRead = int64(len(buf))
 				}
-				buf := make([]byte, ch)
-				n, rerr := readAtOverlapped(handle, cur, buf)
+
+				n, rerr := readAtOverlapped(handle, cur, buf[:toRead])
 				if rerr != nil && rerr != io.EOF {
 					syslog.L.Error(rerr).WithMessage("handleReadAt: overlapped read error").WithField("handle_id", payload.HandleID).Write()
 					return
 				}
 				if n > 0 {
-					if err := write(buf[:n]); err != nil {
+					if err := binarystream.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream); err != nil {
 						syslog.L.Error(err).WithMessage("handleReadAt: stream write data failed").WithField("handle_id", payload.HandleID).Write()
 						return
 					}
@@ -664,16 +632,9 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		if pos < end {
 			gap := end - pos
 			syslog.L.Debug().WithMessage("handleReadAt: writing trailing zero gap").WithField("handle_id", payload.HandleID).WithField("gap_bytes", gap).Write()
-			for gap > 0 {
-				ch := int64(maxChunk)
-				if gap < ch {
-					ch = gap
-				}
-				if err := write(zeroBuf[:ch]); err != nil {
-					syslog.L.Error(err).WithMessage("handleReadAt: stream write tail gap failed").WithField("handle_id", payload.HandleID).Write()
-					return
-				}
-				gap -= ch
+			if err := writeZeros(gap); err != nil {
+				syslog.L.Error(err).WithMessage("handleReadAt: stream write tail gap failed").WithField("handle_id", payload.HandleID).Write()
+				return
 			}
 		}
 
@@ -854,7 +815,7 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 
 	s.handles.Del(uint64(payload.HandleID))
 
-	closed := "closed"
+	const closed = "closed"
 	data, err := cbor.Marshal(closed)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("handleClose: encode close message failed").
