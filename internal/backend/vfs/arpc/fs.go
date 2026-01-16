@@ -20,7 +20,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/puzpuzpuz/xsync/v4"
 )
 
 const attrPrefix = "attr:"
@@ -65,17 +64,13 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 	}
 
 	fs := &ARPCFS{
-		VFSBase: &vfs.VFSBase{
-			BasePath:      "/",
-			Ctx:           ctxFs,
-			Cancel:        cancel,
-			Backup:        backup,
-			Memcache:      memcache.New(memcachePath),
-			FileCount:     xsync.NewCounter(),
-			FolderCount:   xsync.NewCounter(),
-			TotalBytes:    xsync.NewCounter(),
-			StatCacheHits: xsync.NewCounter(),
-		},
+		VFSBase: vfs.InjectBase(vfs.VFSBase{
+			BasePath: "/",
+			Ctx:      ctxFs,
+			Cancel:   cancel,
+			Backup:   backup,
+			Memcache: memcache.New(memcachePath),
+		}),
 		Hostname:     hostname,
 		backupMode:   backupMode,
 		agentManager: agentManager,
@@ -227,11 +222,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 		return types.AgentFileInfo{}, syscall.ENOENT
 	}
 
-	var sb strings.Builder
-	sb.WriteString(attrPrefix)
-	sb.WriteString(memlocal.Key(filename))
-
-	cacheKey := sb.String()
+	cacheKey := fs.GetCacheKey(attrPrefix, filename)
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
@@ -311,11 +302,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	var sb strings.Builder
-	sb.WriteString(xattrPrefix)
-	sb.WriteString(memlocal.Key(filename))
-
-	cacheKey := sb.String()
+	cacheKey := fs.GetCacheKey(xattrPrefix, filename)
 
 	var fi types.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
@@ -392,11 +379,7 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (type
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
-	var sb strings.Builder
-	sb.WriteString(xattrPrefix)
-	sb.WriteString(memlocal.Key(filename))
-
-	cacheKey := sb.String()
+	cacheKey := fs.GetCacheKey(xattrPrefix, filename)
 
 	var fiCached types.AgentFileInfo
 	rawCached, err := fs.Memcache.Get(cacheKey)
@@ -468,11 +451,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	var sb strings.Builder
-	sb.WriteString(attrPrefix)
-	sb.WriteString(memlocal.Key(path))
-
-	cacheKey := sb.String()
+	cacheKey := fs.GetCacheKey(attrPrefix, path)
 
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {

@@ -4,46 +4,32 @@ package s3fs
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/fxamacker/cbor/v2"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
+	"github.com/pbs-plus/pbs-plus/internal/memlocal"
+	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
-	"github.com/puzpuzpuz/xsync/v4"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const (
-	metaCacheTTL    = 60 * time.Second
-	dirCacheTTL     = 60 * time.Second
-	maxCacheEntries = 4096
-	readAheadSize   = 1024 * 1024
+	readAheadSize = 1024 * 1024
+	attrPrefix    = "attr:"
 )
-
-type cacheEntry[T any] struct {
-	value     *T
-	expiresAt time.Time
-}
-
-func (e cacheEntry[T]) expired() bool {
-	return time.Now().After(e.expiresAt)
-}
-
-var seenNamesPool = sync.Pool{
-	New: func() any {
-		m := make(map[string]bool, 128)
-		return &m
-	},
-}
 
 func NewS3FS(
 	ctx context.Context,
@@ -51,6 +37,13 @@ func NewS3FS(
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
 ) *S3FS {
+	syslog.L.Debug().
+		WithMessage("NewS3FS called").
+		WithField("endpoint", endpoint).
+		WithField("bucket", bucket).
+		WithField("backupId", backup.ID).
+		Write()
+
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -71,6 +64,7 @@ func NewS3FS(
 		Transport: transport,
 	})
 	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to create minio client").Write()
 		return nil
 	}
 
@@ -79,27 +73,57 @@ func NewS3FS(
 		prefix += "/"
 	}
 
-	metaCache, _ := lru.New[string, cacheEntry[agentTypes.AgentFileInfo]](maxCacheEntries)
-	dirCache, _ := lru.New[string, cacheEntry[agentTypes.ReadDirEntries]](maxCacheEntries)
-
 	s3ctx, cancel := context.WithCancel(ctx)
 
-	return &S3FS{
-		VFSBase: &vfs.VFSBase{
-			Ctx:           s3ctx,
-			Cancel:        cancel,
-			Backup:        backup,
-			FileCount:     xsync.NewCounter(),
-			FolderCount:   xsync.NewCounter(),
-			TotalBytes:    xsync.NewCounter(),
-			StatCacheHits: xsync.NewCounter(),
-		},
-		client:    client,
-		bucket:    bucket,
-		prefix:    prefix,
-		metaCache: metaCache,
-		dirCache:  dirCache,
+	memcachePath := filepath.Join(constants.MemcachedSocketPath, fmt.Sprintf("%s.sock", backup.ID))
+
+	syslog.L.Debug().
+		WithMessage("Starting local memcached").
+		WithField("socketPath", memcachePath).
+		WithField("backupId", backup.ID).
+		Write()
+
+	stopMemLocal, err := memlocal.StartMemcachedOnUnixSocket(s3ctx, memlocal.MemcachedConfig{
+		SocketPath:     memcachePath,
+		MemoryMB:       1024,
+		MaxConnections: 0,
+	})
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to run memcached server").Write()
+		cancel()
+		return nil
 	}
+
+	fs := &S3FS{
+		VFSBase: vfs.InjectBase(vfs.VFSBase{
+			BasePath: "/",
+			Ctx:      s3ctx,
+			Cancel:   cancel,
+			Backup:   backup,
+			Memcache: memcache.New(memcachePath),
+		}),
+		client: client,
+		bucket: bucket,
+		prefix: prefix,
+	}
+
+	go func() {
+		<-s3ctx.Done()
+		syslog.L.Debug().
+			WithMessage("Context done, cleaning up memcache and memlocal").
+			WithField("backupId", fs.Backup.ID).
+			Write()
+		fs.Memcache.DeleteAll()
+		fs.Memcache.Close()
+
+		fs.TotalBytes.Reset()
+		fs.FolderCount.Reset()
+		fs.FileCount.Reset()
+		fs.StatCacheHits.Reset()
+		stopMemLocal()
+	}()
+
+	return fs
 }
 
 func (fs *S3FS) fullKey(fpath string) string {
@@ -113,7 +137,14 @@ func (fs *S3FS) fullKey(fpath string) string {
 	return fs.prefix + p
 }
 
-func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
+func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTypes.AgentFileInfo, error) {
+	syslog.L.Debug().
+		WithMessage("Attr called").
+		WithField("path", fpath).
+		WithField("isLookup", isLookup).
+		WithField("backupId", fs.Backup.ID).
+		Write()
+
 	now := time.Now().Unix()
 
 	if fpath == "/" || fpath == "" {
@@ -127,22 +158,25 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 	}
 
 	key := fs.fullKey(fpath)
+	cacheKey := fs.GetCacheKey(attrPrefix, key)
 
-	if val, ok := fs.metaCache.Get(key); ok && !val.expired() {
-		if val.value == nil {
-			return agentTypes.AgentFileInfo{}, syscall.ENOENT
-		}
+	var fi agentTypes.AgentFileInfo
+	cached, err := fs.Memcache.Get(cacheKey)
+	if err == nil {
 		fs.StatCacheHits.Add(1)
-		return *val.value, nil
+		if err := cbor.Unmarshal(cached.Value, &fi); err == nil {
+			return fi, nil
+		}
 	}
 
-	ctx, cancel := context.WithTimeout(fs.Ctx, 5*time.Second)
-	defer cancel()
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
 
-	objInfo, err := fs.client.StatObject(ctx, fs.bucket, key, minio.StatObjectOptions{})
+	objInfo, err := fs.client.StatObject(ctxN, fs.bucket, key, minio.StatObjectOptions{})
 	if err == nil {
 		mod := objInfo.LastModified.Unix()
-		result := agentTypes.AgentFileInfo{
+		fi = agentTypes.AgentFileInfo{
+			Name:           path.Base(fpath),
 			IsDir:          false,
 			Mode:           0644,
 			Size:           objInfo.Size,
@@ -151,56 +185,52 @@ func (fs *S3FS) Attr(fpath string) (agentTypes.AgentFileInfo, error) {
 			LastAccessTime: mod,
 			LastWriteTime:  mod,
 		}
-
-		fs.metaCache.Add(key, cacheEntry[agentTypes.AgentFileInfo]{
-			value:     &result,
-			expiresAt: time.Now().Add(metaCacheTTL),
-		})
-		fs.FileCount.Add(1)
-		return result, nil
-	}
-
-	dirKey := key
-	if !strings.HasSuffix(dirKey, "/") {
-		dirKey += "/"
-	}
-
-	opts := minio.ListObjectsOptions{
-		Prefix:    dirKey,
-		Recursive: false,
-		MaxKeys:   1,
-	}
-
-	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
-		if obj.Err != nil {
-			return agentTypes.AgentFileInfo{}, obj.Err
+	} else {
+		dirKey := key
+		if !strings.HasSuffix(dirKey, "/") {
+			dirKey += "/"
 		}
 
-		result := agentTypes.AgentFileInfo{
+		opts := minio.ListObjectsOptions{
+			Prefix:    dirKey,
+			Recursive: false,
+			MaxKeys:   1,
+		}
+
+		objects := fs.client.ListObjects(ctxN, fs.bucket, opts)
+		_, ok := <-objects
+
+		if !ok {
+			return agentTypes.AgentFileInfo{}, syscall.ENOENT
+		}
+
+		fi = agentTypes.AgentFileInfo{
+			Name:           path.Base(fpath),
 			IsDir:          true,
 			Mode:           uint32(os.ModeDir | 0555),
 			CreationTime:   now,
 			LastAccessTime: now,
 			LastWriteTime:  now,
 		}
-
-		fs.metaCache.Add(key, cacheEntry[agentTypes.AgentFileInfo]{
-			value:     &result,
-			expiresAt: time.Now().Add(metaCacheTTL),
-		})
-		fs.FolderCount.Add(1)
-		return result, nil
 	}
 
-	fs.metaCache.Add(key, cacheEntry[agentTypes.AgentFileInfo]{
-		value:     nil,
-		expiresAt: time.Now().Add(10 * time.Second),
-	})
+	if raw, err := cbor.Marshal(fi); err == nil {
+		if isLookup {
+			fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: raw, Expiration: 0})
+		}
+	}
 
-	return agentTypes.AgentFileInfo{}, syscall.ENOENT
+	if !isLookup && !fi.IsDir {
+		fs.Memcache.Delete(cacheKey)
+		fs.FileCount.Add(1)
+	} else if !isLookup && fi.IsDir {
+		fs.FolderCount.Add(1)
+	}
+
+	return fi, nil
 }
 
-func (fs *S3FS) StatFS() (agentTypes.StatFS, error) {
+func (fs *S3FS) StatFS(ctx context.Context) (agentTypes.StatFS, error) {
 	return agentTypes.StatFS{
 		Bsize:   4096,
 		Blocks:  1 << 50,
@@ -212,7 +242,34 @@ func (fs *S3FS) StatFS() (agentTypes.StatFS, error) {
 	}, nil
 }
 
-func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
+func (fs *S3FS) OpenFile(ctx context.Context, fpath string, flag int, perm os.FileMode) (*S3File, error) {
+	if flag&(os.O_WRONLY|os.O_RDWR) != 0 {
+		return nil, syscall.EROFS
+	}
+
+	info, err := fs.Attr(ctx, fpath, false)
+	if err != nil {
+		return nil, err
+	}
+
+	if info.IsDir {
+		return nil, syscall.EISDIR
+	}
+
+	return &S3File{
+		fs:   fs,
+		key:  fs.fullKey(fpath),
+		size: info.Size,
+	}, nil
+}
+
+func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error) {
+	syslog.L.Debug().
+		WithMessage("ReadDir called").
+		WithField("path", fpath).
+		WithField("backupId", fs.Backup.ID).
+		Write()
+
 	var prefix string
 	if fpath == "/" || fpath == "" {
 		prefix = fs.prefix
@@ -224,27 +281,22 @@ func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 		}
 	}
 
-	if val, ok := fs.dirCache.Get(prefix); ok && !val.expired() {
-		return &S3DirStream{entries: *val.value}, nil
-	}
+	cacheKey := fs.GetCacheKey(attrPrefix, prefix)
+	fs.Memcache.Delete(cacheKey)
 
-	ctx, cancel := context.WithTimeout(fs.Ctx, 15*time.Second)
-	defer cancel()
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
 
 	opts := minio.ListObjectsOptions{
 		Prefix:    prefix,
 		Recursive: false,
 	}
 
-	entries := make(agentTypes.ReadDirEntries, 0, 128)
-	seenNames := *(seenNamesPool.Get().(*map[string]bool))
-	for k := range seenNames {
-		delete(seenNames, k)
-	}
+	entries := make(agentTypes.ReadDirEntries, 0)
+	seenNames := make(map[string]bool)
 
-	for obj := range fs.client.ListObjects(ctx, fs.bucket, opts) {
+	for obj := range fs.client.ListObjects(ctxN, fs.bucket, opts) {
 		if obj.Err != nil {
-			seenNamesPool.Put(&seenNames)
 			return nil, obj.Err
 		}
 
@@ -282,41 +334,17 @@ func (fs *S3FS) ReadDir(fpath string) (*S3DirStream, error) {
 
 		entries = append(entries, entry)
 
-		cachePath := path.Join(fpath, name)
-		fs.metaCache.Add(fs.fullKey(cachePath), cacheEntry[agentTypes.AgentFileInfo]{
-			value:     &entry,
-			expiresAt: time.Now().Add(metaCacheTTL),
-		})
+		itemKey := fs.GetCacheKey(attrPrefix, fs.fullKey(path.Join(fpath, name)))
+		if raw, err := cbor.Marshal(entry); err == nil {
+			fs.Memcache.Set(&memcache.Item{Key: itemKey, Value: raw, Expiration: 0})
+		}
 	}
 
-	seenNamesPool.Put(&seenNames)
-
-	fs.dirCache.Add(prefix, cacheEntry[agentTypes.ReadDirEntries]{
-		value:     &entries,
-		expiresAt: time.Now().Add(dirCacheTTL),
-	})
 	return &S3DirStream{entries: entries}, nil
 }
 
-func (fs *S3FS) OpenFile(fpath string, flag int, _ os.FileMode) (*S3File, error) {
-	if flag&(os.O_WRONLY|os.O_RDWR) != 0 {
-		return nil, syscall.EROFS
-	}
-
-	info, err := fs.Attr(fpath)
-	if err != nil {
-		return nil, err
-	}
-
-	if info.IsDir {
-		return nil, syscall.EISDIR
-	}
-
-	return &S3File{
-		fs:   fs,
-		key:  fs.fullKey(fpath),
-		size: info.Size,
-	}, nil
+func (fs *S3FS) Root() string {
+	return fs.BasePath
 }
 
 func (fs *S3FS) Unmount(ctx context.Context) {

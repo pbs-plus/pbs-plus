@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -18,7 +17,6 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -250,19 +248,8 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 	fullPath := filepath.Join(s.path, curr.Name)
 
-	commonKey := memlocal.Key(fullPath)
-
-	var sb strings.Builder
-	sb.WriteString(attrPrefix)
-	sb.WriteString(commonKey)
-
-	cacheKey := sb.String()
-
-	var sb2 strings.Builder
-	sb2.WriteString(xattrPrefix)
-	sb.WriteString(commonKey)
-
-	cacheKey2 := sb.String()
+	attrKey := s.fs.GetCacheKey(attrPrefix, fullPath)
+	xattrKey := s.fs.GetCacheKey(xattrPrefix, fullPath)
 
 	if !time.Unix(0, curr.ModTime).IsZero() {
 		currAttr := types.AgentFileInfo{
@@ -279,7 +266,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 			} else {
 				s.fs.FolderCount.Add(1)
 			}
-			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: attrBytes, Expiration: 0}); mcErr != nil {
+			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: attrKey, Value: attrBytes, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("memcache set attr failed").
 					WithField("path", fullPath).
@@ -312,7 +299,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		}
 
 		if xattrBytes, err := cbor.Marshal(currXAttr); err == nil {
-			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: cacheKey2, Value: xattrBytes, Expiration: 0}); mcErr != nil {
+			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: xattrKey, Value: xattrBytes, Expiration: 0}); mcErr != nil {
 				syslog.L.Debug().
 					WithMessage("memcache set xattr failed").
 					WithField("path", fullPath).

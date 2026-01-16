@@ -195,7 +195,7 @@ func terminateProcessGroup(p *os.Process) error {
 	return nil
 }
 
-const memcachedKeyLimit = 250
+const memcachedKeyLimit = 240
 
 func Key(originalKey string) string {
 	if originalKey == "" {
