@@ -295,7 +295,6 @@ func TestEndToEndMTLSWithCSRBootstrap(t *testing.T) {
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					KernelTX:   true,
-					KernelRX:   true,
 					MinVersion: tls.VersionTLS12,
 					RootCAs:    rootCAs,
 					// no client certs
@@ -356,7 +355,6 @@ func waitForServer(hostport string, caPEM []byte, timeout time.Duration) error {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			KernelTX:   true,
-			KernelRX:   true,
 			MinVersion: tls.VersionTLS12,
 			RootCAs:    rootCAs,
 		},

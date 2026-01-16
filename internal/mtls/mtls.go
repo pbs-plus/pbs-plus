@@ -186,7 +186,6 @@ func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, ne
 
 			return &tls.Config{
 				KernelTX:                 true,
-				KernelRX:                 true,
 				MinVersion:               uint16(tlsVers),
 				Certificates:             []tls.Certificate{*currentCerts},
 				ClientCAs:                currentCAs,
@@ -220,7 +219,6 @@ func BuildClientTLS(clientCertPEM, clientKeyPEM, caPEM []byte, legacyCaPEM []byt
 
 	return &tls.Config{
 		KernelTX:     true,
-		KernelRX:     true,
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      rootCAs,
