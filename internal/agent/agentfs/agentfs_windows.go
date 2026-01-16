@@ -533,8 +533,6 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 			nil,
 		)
 		if err == nil {
-			defer windows.CloseHandle(mappingHandle)
-
 			addr, err := windows.MapViewOfFile(
 				mappingHandle,
 				windows.FILE_MAP_READ,
@@ -546,10 +544,15 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 				data := unsafe.Slice((*byte)(unsafe.Pointer(addr)), reqLen)
 				return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
 					defer fh.releaseOp()
+
+					defer windows.CloseHandle(mappingHandle)
 					defer windows.UnmapViewOfFile(addr)
+
 					_ = binarystream.SendDataFromReader(bytes.NewReader(data), len(data), stream)
 					syslog.L.Debug().WithMessage("handleReadAt: stream completed (mmap)").WithField("bytes", len(data)).Write()
 				}}, nil
+			} else {
+				defer windows.CloseHandle(mappingHandle)
 			}
 		}
 		syslog.L.Warn().WithMessage("handleReadAt: mmap failed, falling back to overlapped I/O").Write()
