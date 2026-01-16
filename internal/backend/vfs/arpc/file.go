@@ -47,7 +47,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	_, err = pipe.CallData(ctxN, f.backupId+"/Close", &req)
+	_, err = pipe.CallData(ctxN, "Close", &req)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		syslog.L.Error(err).
 			WithJob(f.backupId).
@@ -97,7 +97,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	respBytes, err := pipe.CallData(ctxN, f.backupId+"/Lseek", &req)
+	respBytes, err := pipe.CallData(ctxN, "Lseek", &req)
 	if err != nil {
 		syslog.L.Error(err).
 			WithJob(f.backupId).
@@ -163,7 +163,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		Length:   len(p),
 	}
 
-	n, err := pipe.CallBinary(f.fs.Ctx, f.backupId+"/ReadAt", &req, p)
+	n, err := pipe.CallBinary(f.fs.Ctx, "ReadAt", &req, p)
 	if err != nil {
 		syslog.L.Error(err).WithJob(f.backupId).
 			WithMessage("failed to handle read request").
