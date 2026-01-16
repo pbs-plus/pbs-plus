@@ -53,6 +53,7 @@ func S3FSMount(ctx context.Context, storeInstance *store.Store, backup types.Bac
 	// Create mount directory if it doesn't exist
 	err := os.MkdirAll(s3Mount.Path, 0700)
 	if err != nil {
+		s3Mount.CloseMount()
 		return nil, fmt.Errorf("error creating directory \"%s\" -> %w", s3Mount.Path, err)
 	}
 
@@ -61,6 +62,7 @@ func S3FSMount(ctx context.Context, storeInstance *store.Store, backup types.Bac
 	const retryDelay = 2 * time.Second
 
 	errCleanup := func() {
+		s3Mount.CloseMount()
 		s3Mount.Unmount()
 	}
 
@@ -140,9 +142,11 @@ func (a *S3Mount) Unmount() {
 		}
 	}
 
-	vfssessions.DisconnectSession(a.Endpoint + "|" + a.BackupId)
-
 	_ = os.RemoveAll(a.Path)
+}
+
+func (a *S3Mount) CloseMount() {
+	vfssessions.DisconnectSession(a.Endpoint + "|" + a.BackupId)
 }
 
 func (a *S3Mount) IsEmpty() bool {
