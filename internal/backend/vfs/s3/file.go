@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/minio/minio-go/v7"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
@@ -22,9 +23,17 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 		return 0, io.EOF
 	}
 
+	syslog.L.Debug().
+		WithMessage("ReadAt called").
+		WithField("key", f.key).
+		WithField("offset", off).
+		WithField("length", len(buf)).
+		Write()
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	// Check local read-ahead buffer
 	if f.buf != nil && off >= f.bufOff && off < f.bufOff+int64(len(f.buf)) {
 		n := copy(buf, f.buf[off-f.bufOff:])
 		if n == len(buf) {
@@ -54,6 +63,7 @@ func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
 
 	obj, err := f.fs.client.GetObject(ctx, f.fs.bucket, f.key, opts)
 	if err != nil {
+		syslog.L.Error(err).WithField("key", f.key).WithMessage("S3 GetObject failed").Write()
 		return 0, err
 	}
 	defer obj.Close()
@@ -69,6 +79,13 @@ func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
 	n := copy(buf, data)
 	f.fs.TotalBytes.Add(int64(n))
 
+	syslog.L.Debug().
+		WithMessage("ReadAt completed").
+		WithField("key", f.key).
+		WithField("bytesRead", n).
+		WithField("totalBytes", f.fs.TotalBytes.Value()).
+		Write()
+
 	if n < len(buf) && off+int64(n) >= f.size {
 		return n, io.EOF
 	}
@@ -76,6 +93,7 @@ func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
 }
 
 func (f *S3File) Close() error {
+	syslog.L.Debug().WithMessage("Close file").WithField("key", f.key).Write()
 	f.mu.Lock()
 	f.buf = nil
 	f.mu.Unlock()
