@@ -72,13 +72,6 @@ func (fh *FileHandle) beginClose() bool {
 	return true
 }
 
-var readBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 1024*1024)
-		return &b
-	},
-}
-
 func (s *AgentFSServer) writeIDString(dst *string, id uint32) {
 	s.idBuf = strconv.AppendUint(s.idBuf[:0], uint64(id), 10)
 	*dst = string(s.idBuf)
