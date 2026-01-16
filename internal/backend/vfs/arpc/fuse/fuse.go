@@ -390,9 +390,8 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 
 	out.Mode = mode
 	out.Size = uint64(fi.Size)
-	out.SetTimes(nil, &time.Time{}, nil)
-	out.Mtime = uint64(fi.ModTime / 1e9)
-	out.Mtimensec = uint32(fi.ModTime % 1e9)
+	mtime := time.Unix(0, fi.ModTime)
+	out.SetTimes(nil, &mtime, nil)
 
 	return child, 0
 }
