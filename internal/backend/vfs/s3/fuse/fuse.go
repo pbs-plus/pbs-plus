@@ -151,7 +151,7 @@ func (n *Node) Getattr(
 	fh fs.FileHandle,
 	out *fuse.AttrOut,
 ) syscall.Errno {
-	fi, err := n.fs.Attr(n.getPath())
+	fi, err := n.fs.Attr(ctx, n.getPath(), false)
 	if err != nil {
 		return s3ErrorToErrno(err)
 	}
@@ -191,7 +191,7 @@ func (n *Node) Lookup(
 		fullPath = parentPath + "/" + name
 	}
 
-	fi, err := n.fs.Attr(fullPath)
+	fi, err := n.fs.Attr(ctx, fullPath, true)
 	if err != nil {
 		return nil, s3ErrorToErrno(err)
 	}
@@ -231,7 +231,7 @@ func (n *Node) Lookup(
 
 // Readdir implements NodeReaddirer
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	entries, err := n.fs.ReadDir(n.getPath())
+	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
 		return nil, s3ErrorToErrno(err)
 	}
@@ -244,7 +244,7 @@ func (n *Node) Open(
 	ctx context.Context,
 	flags uint32,
 ) (fs.FileHandle, uint32, syscall.Errno) {
-	file, err := n.fs.OpenFile(n.getPath(), int(flags), 0)
+	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
 	if err != nil {
 		return nil, 0, s3ErrorToErrno(err)
 	}
@@ -259,7 +259,7 @@ func (n *Node) Statfs(
 	ctx context.Context,
 	out *fuse.StatfsOut,
 ) syscall.Errno {
-	stat, err := n.fs.StatFS()
+	stat, err := n.fs.StatFS(ctx)
 	if err != nil {
 		return s3ErrorToErrno(err)
 	}
