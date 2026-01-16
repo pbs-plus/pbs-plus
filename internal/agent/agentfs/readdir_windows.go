@@ -50,11 +50,12 @@ func NewDirReaderNT(path string) (*DirReaderNT, error) {
 
 	syslog.L.Debug().WithMessage("NewDirReaderNT: directory handle opened").WithField("path", path).WithField("handle", handle).Write()
 	return &DirReaderNT{
-		handle:      handle,
-		ioStatus:    ioStatusBlock,
-		restartScan: true,
-		noMoreFiles: false,
-		path:        path,
+		handle:        handle,
+		ioStatus:      ioStatusBlock,
+		restartScan:   true,
+		noMoreFiles:   false,
+		targetEncoded: defaultTargetEncodedLen,
+		path:          path,
 	}, nil
 }
 
