@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 )
 
@@ -54,46 +53,18 @@ func windowsFileModeFromHandle(h windows.Handle, fileAttributes uint32) uint32 {
 	return uint32(m)
 }
 
-func windowsAttributesToFileMode(attrs uint32) uint32 {
-	var mode os.FileMode = 0
-
-	if attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		mode |= os.ModeDir
-	}
-
-	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		mode |= os.ModeSymlink
-	}
-
-	if attrs&windows.FILE_ATTRIBUTE_DEVICE != 0 {
-		mode |= os.ModeDevice
-	}
-
-	if mode == 0 {
-		mode |= 0644
-	} else if mode&os.ModeDir != 0 {
-		mode |= 0755
-	}
-
-	return uint32(mode)
+func unixNanoFromWin(wt int64) int64 {
+	return filetimeToTime(windows.Filetime{
+		LowDateTime:  uint32(uint64(wt) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(wt) >> 32),
+	}).UnixNano()
 }
 
-func mapWinError(err error, helper string) error {
-	switch err {
-	case windows.ERROR_FILE_NOT_FOUND:
-		return os.ErrNotExist
-	case windows.ERROR_PATH_NOT_FOUND:
-		return os.ErrNotExist
-	case windows.ERROR_ACCESS_DENIED:
-		return os.ErrPermission
-	default:
-		syslog.L.Error(err).WithMessage("unknown windows error").WithField("helper", helper).Write()
-		return &os.PathError{
-			Op:   "access",
-			Path: "",
-			Err:  err,
-		}
-	}
+func unixFromWin(wt int64) int64 {
+	return filetimeToUnix(windows.Filetime{
+		LowDateTime:  uint32(uint64(wt) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(wt) >> 32),
+	})
 }
 
 func parseFileAttributes(attr uint32) map[string]bool {
