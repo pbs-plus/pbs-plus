@@ -11,6 +11,8 @@ import (
 	"github.com/puzpuzpuz/xsync/v4"
 )
 
+var keyPool = NewMemcachedKeyPool()
+
 type VFSBase struct {
 	Ctx      context.Context
 	Cancel   context.CancelFunc
@@ -19,7 +21,6 @@ type VFSBase struct {
 	BasePath string
 
 	Memcache *memcache.Client
-	keyPool  *MemcachedKeyPool
 
 	FileCount     *xsync.Counter
 	FolderCount   *xsync.Counter
@@ -34,7 +35,6 @@ type VFSBase struct {
 }
 
 func InjectBase(base VFSBase) *VFSBase {
-	base.keyPool = NewMemcachedKeyPool()
 	base.FileCount = xsync.NewCounter()
 	base.FolderCount = xsync.NewCounter()
 	base.TotalBytes = xsync.NewCounter()
@@ -44,12 +44,12 @@ func InjectBase(base VFSBase) *VFSBase {
 }
 
 func (fs *VFSBase) GetCacheKey(prefix string, pathKey string) string {
-	sb := fs.keyPool.Get()
+	sb := keyPool.Get()
 	sb.WriteString(prefix)
 	sb.WriteString(memlocal.Key(pathKey))
 
 	key := sb.String()
-	fs.keyPool.Put(sb)
+	keyPool.Put(sb)
 
 	return key
 }
