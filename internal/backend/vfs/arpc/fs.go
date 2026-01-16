@@ -415,8 +415,7 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
 	}
 
 	var fsStat types.StatFS
-	raw, err := pipe.CallData(ctxN,
-		fs.Backup.ID+"/StatFS", nil)
+	raw, err := pipe.CallData(ctxN, "StatFS", nil)
 	if err != nil {
 		syslog.L.Error(err).
 			WithJob(fs.Backup.ID).
