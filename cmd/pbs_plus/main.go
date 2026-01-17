@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/system"
+	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web"
@@ -458,6 +460,17 @@ func main() {
 			syslog.L.Error(err).WithMessage("failed to build server TLS config").Write()
 			return
 		}
+
+		storeInstance.ARPCAgentsManager.SetExtraExpectFunc(func(id string) bool {
+			idArr := strings.Split(id, "|")
+
+			_, err := storeInstance.Database.GetTarget(types.WrapTargetName(idArr[0]))
+			if err != nil {
+				return false
+			}
+
+			return true
+		})
 
 		if err := arpc.ListenAndServe(storeInstance.Ctx, constants.ARPCServerPort, storeInstance.ARPCAgentsManager, arpcTlsConfig, router); err != nil {
 			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed")
