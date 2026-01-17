@@ -1,6 +1,7 @@
 package arpc
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 
@@ -41,4 +42,27 @@ func defaultConfig() *smux.Config {
 	defaults.MaxFrameSize = 65535
 
 	return defaults
+}
+
+func writeVarint(w io.Writer, v uint64) error {
+	var buf [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(buf[:], v)
+	_, err := w.Write(buf[:n])
+
+	return err
+
+}
+
+func readVarint(r io.Reader) (uint64, error) {
+	return binary.ReadUvarint(&byteReader{r: r})
+}
+
+type byteReader struct {
+	r io.Reader
+}
+
+func (b *byteReader) ReadByte() (byte, error) {
+	var buf [1]byte
+	_, err := b.r.Read(buf[:])
+	return buf[0], err
 }

@@ -155,6 +155,11 @@ func newTestARPCServer(t *testing.T, router arpc.Router) (addr string, cleanup f
 	}
 
 	agentsManager := arpc.NewAgentsManager()
+	// Allow all connections by default for tests
+	agentsManager.SetExtraExpectFunc(func(clientID string) bool {
+		return true
+	})
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
