@@ -126,6 +126,8 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		ReadMode:   backup.ReadMode,
 	}
 
+	s.Store.ARPCAgentsManager.Expect(backup.GetStreamID())
+
 	// Call the target's backup method via ARPC.
 	respMsg, err := arpcSess.CallMessage(ctx, "backup", &backupReq)
 	if err != nil {
@@ -249,7 +251,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 	return nil
 }
 
-func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error {
+func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) error {
 	syslog.L.Info().
 		WithMessage("Received cleanup request").
 		WithFields(map[string]any{
@@ -268,6 +270,8 @@ func (s *MountRPCService) Cleanup(args *CleanupArgs, reply *CleanupReply) error 
 	if ok {
 		ctxCancel()
 	}
+
+	s.Store.ARPCAgentsManager.NotExpect(childKey)
 
 	arpcSess, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
 	if !exists {

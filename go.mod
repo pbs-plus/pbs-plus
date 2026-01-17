@@ -19,7 +19,6 @@ require (
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang-migrate/migrate/v4 v4.19.0
 	github.com/hanwen/go-fuse/v2 v2.9.0
-	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kardianos/service v1.2.4
 	github.com/minio/minio-go/v7 v7.0.97
 	github.com/mxk/go-vss v1.2.0

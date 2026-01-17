@@ -110,14 +110,19 @@ func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
 	pipeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	primaryUpCount := 0
+
 	for {
 		session, exists := fs.agentManager.GetStreamPipe(fs.sessionId)
 		if exists {
 			return session, nil
 		}
 
-		if _, exists := fs.agentManager.GetStreamPipe(fs.Hostname); !exists {
-			return nil, fmt.Errorf("primary agent for %s is unreachable", fs.Hostname)
+		if _, exists := fs.agentManager.GetStreamPipe(fs.Hostname); exists {
+			primaryUpCount++
+			if primaryUpCount > 4 {
+				return nil, fmt.Errorf("primary agent for %s is reachable but the backup session is severed; agent crashed without graceful exit", fs.Hostname)
+			}
 		}
 
 		select {

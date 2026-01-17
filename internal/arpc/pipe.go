@@ -103,6 +103,11 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return nil, fmt.Errorf("failed to write headers: %w", werr)
 	}
 
+	if err := readHandshakeResponse(stream); err != nil {
+		pipe.Close()
+		return nil, err
+	}
+
 	return pipe, nil
 }
 
