@@ -66,6 +66,8 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		return nil, os.ErrProcessDone
 	}
 
+	firstCall := r.restartScan
+
 	buffer := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buffer)
 
@@ -191,7 +193,7 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		return nil, err
 	}
 
-	if !hasEntries && r.noMoreFiles {
+	if !hasEntries && r.noMoreFiles && !firstCall {
 		return nil, os.ErrProcessDone
 	}
 
