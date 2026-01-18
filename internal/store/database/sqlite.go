@@ -101,12 +101,26 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 type Transaction struct {
 	*sql.Tx
 	database *Database
+	released bool
 }
 
 func (t *Transaction) Commit() error {
-	defer t.database.writeMu.Unlock()
+	err := t.Tx.Commit()
+	t.release()
+	return err
+}
 
-	return t.Tx.Commit()
+func (t *Transaction) Rollback() error {
+	err := t.Tx.Rollback()
+	t.release()
+	return err
+}
+
+func (t *Transaction) release() {
+	if !t.released {
+		t.database.writeMu.Unlock()
+		t.released = true
+	}
 }
 
 func (d *Database) NewTransaction() (*Transaction, error) {
