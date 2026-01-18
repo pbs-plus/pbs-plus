@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
 
 func D2DScriptHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -74,7 +74,7 @@ func ExtJsScriptHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newScript := types.Script{
+		newScript := database.Script{
 			Path:        path,
 			Description: r.FormValue("description"),
 		}

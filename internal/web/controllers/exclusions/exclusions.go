@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
 
 func D2DExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -62,7 +62,7 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newExclusion := types.Exclusion{
+		newExclusion := database.Exclusion{
 			Path:    r.FormValue("path"),
 			Comment: r.FormValue("comment"),
 		}

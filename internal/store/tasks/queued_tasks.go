@@ -1,6 +1,6 @@
 //go:build linux
 
-package proxmox
+package tasks
 
 import (
 	"fmt"
@@ -11,46 +11,47 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
+	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type QueuedTask struct {
-	Task
+	proxmox.Task
 	sync.Mutex
 	closed  atomic.Bool
 	path    string
-	backup  types.Backup
-	restore types.Restore
+	backup  database.Backup
+	restore database.Restore
 }
 
-func GenerateBackupQueuedTask(job types.Backup, web bool) (QueuedTask, error) {
+func GenerateBackupQueuedTask(job database.Backup, web bool) (QueuedTask, error) {
 	targetName := job.Target.GetHostname()
-	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
+	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
 	wtype := "backup"
 	node := "pbsplusgen-queue"
 
-	task := Task{
+	task := proxmox.Task{
 		Node:       node,
 		PID:        os.Getpid(),
-		PStart:     getPStart(),
+		PStart:     proxmox.GetPStart(),
 		StartTime:  time.Now().Unix(),
 		WorkerType: wtype,
 		WID:        wid,
-		User:       AUTH_ID,
+		User:       proxmox.AUTH_ID,
 	}
 
 	pid := fmt.Sprintf("%08X", task.PID)
 	pstart := fmt.Sprintf("%08X", task.PStart)
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
 
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, AUTH_ID)
+	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, proxmox.AUTH_ID)
 
 	task.UPID = upid
 
-	path, err := GetLogPath(upid)
+	path, err := proxmox.GetLogPath(upid)
 	if err != nil {
 		return QueuedTask{}, err
 	}
@@ -85,33 +86,33 @@ func GenerateBackupQueuedTask(job types.Backup, web bool) (QueuedTask, error) {
 	return QueuedTask{Task: task, backup: job, path: path}, nil
 }
 
-func GenerateRestoreQueuedTask(job types.Restore, web bool) (QueuedTask, error) {
+func GenerateRestoreQueuedTask(job database.Restore, web bool) (QueuedTask, error) {
 	targetName := job.DestTarget.GetHostname()
-	wid := fmt.Sprintf("%s%shost-%s", encodeToHexEscapes(job.Store), encodeToHexEscapes(":"), encodeToHexEscapes(targetName))
+	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
 	wtype := "reader"
 	node := "pbsplusgen-queue"
 
-	task := Task{
+	task := proxmox.Task{
 		Node:       node,
 		PID:        os.Getpid(),
-		PStart:     getPStart(),
+		PStart:     proxmox.GetPStart(),
 		StartTime:  time.Now().Unix(),
 		WorkerType: wtype,
 		WID:        wid,
-		User:       AUTH_ID,
+		User:       proxmox.AUTH_ID,
 	}
 
 	pid := fmt.Sprintf("%08X", task.PID)
 	pstart := fmt.Sprintf("%08X", task.PStart)
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
 
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, AUTH_ID)
+	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, proxmox.AUTH_ID)
 
 	task.UPID = upid
 
-	path, err := GetLogPath(upid)
+	path, err := proxmox.GetLogPath(upid)
 	if err != nil {
 		return QueuedTask{}, err
 	}

@@ -1,27 +1,26 @@
 //go:build linux
 
-package sqlite
+package database
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 
 	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
-	simplebox "github.com/pbs-plus/pbs-plus/internal/store/database/secrets"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	secrets "github.com/pbs-plus/pbs-plus/internal/store/database/secrets"
+	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
-	_ "modernc.org/sqlite"
 )
 
-// CreateTarget inserts a new target or updates if it exists.
-func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err error) {
+func (database *Database) CreateTarget(tx *sql.Tx, target Target) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("CreateTarget: failed to begin transaction: %w", err)
 		}
@@ -44,37 +43,50 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err err
 				}
 			}
 		}()
+		q = database.queries.WithTx(tx)
 	}
 
-	if target.Path.String() == "" {
-		return fmt.Errorf("target path empty")
+	// Validation
+	if target.Path == "" && target.AgentHost.Name == "" {
+		return fmt.Errorf("target path empty and no agent host specified")
 	}
 
-	_, s3Err := s3url.Parse(target.Path.String())
-	if !utils.ValidateTargetPath(target.Path.String()) && s3Err != nil {
+	if target.AgentHost.Name != "" {
+		_, err := database.GetAgentHost(target.AgentHost.Name)
+		if err != nil {
+			return fmt.Errorf("agent host not found: %w", err)
+		}
+	}
+
+	_, s3Err := s3url.Parse(target.Path)
+	if target.Path != "" && !utils.ValidateTargetPath(target.Path) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
-	_, err = tx.Exec(`
-        INSERT INTO targets (name, path, auth, token_used, drive_type, drive_name, drive_fs, drive_total_bytes,
-					drive_used_bytes, drive_free_bytes, drive_total, drive_used, drive_free, mount_script, os)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-		target.Name, target.Path, target.Auth, target.TokenUsed,
-		target.DriveType, target.DriveName, target.DriveFS,
-		target.DriveTotalBytes, target.DriveUsedBytes, target.DriveFreeBytes,
-		target.DriveTotal, target.DriveUsed, target.DriveFree, target.MountScript,
-		target.OperatingSystem,
-	)
+	err = q.CreateTarget(database.ctx, sqlc.CreateTargetParams{
+		Name:             target.Name,
+		Path:             target.Path,
+		AgentHost:        toNullString(target.AgentHost.Name),
+		VolumeID:         toNullString(target.VolumeID),
+		VolumeType:       toNullString(target.VolumeType),
+		VolumeName:       toNullString(target.VolumeName),
+		VolumeFs:         toNullString(target.VolumeFS),
+		VolumeTotalBytes: toNullInt64(target.VolumeTotalBytes),
+		VolumeUsedBytes:  toNullInt64(target.VolumeUsedBytes),
+		VolumeFreeBytes:  toNullInt64(target.VolumeFreeBytes),
+		VolumeTotal:      toNullString(target.VolumeTotal),
+		VolumeUsed:       toNullString(target.VolumeUsed),
+		VolumeFree:       toNullString(target.VolumeFree),
+		MountScript:      target.MountScript,
+	})
+
 	if err != nil {
-		// Use specific error check if possible, otherwise string contains is fallback
-		// For modernc.org/sqlite, check for sqlite3.ErrConstraintUnique or similar
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") { // Consider more robust error checking
-			err = database.UpdateTarget(tx, target) // Use the existing transaction
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			err = database.UpdateTarget(tx, target)
 			if err == nil {
-				commitNeeded = true // Mark for commit if update succeeds
+				commitNeeded = true
 			}
-			return err // Return the result of UpdateTarget
+			return err
 		}
 		return fmt.Errorf("CreateTarget: error inserting target: %w", err)
 	}
@@ -83,11 +95,12 @@ func (database *Database) CreateTarget(tx *sql.Tx, target types.Target) (err err
 	return nil
 }
 
-// UpdateTarget updates an existing target.
-func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err error) {
+func (database *Database) UpdateTarget(tx *sql.Tx, target Target) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("UpdateTarget: failed to begin transaction: %w", err)
 		}
@@ -110,32 +123,43 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 				}
 			}
 		}()
+		q = database.queries.WithTx(tx)
 	}
 
-	if target.Path.String() == "" {
-		return fmt.Errorf("target path empty")
+	// Validation
+	if target.Path == "" && target.AgentHost.Name == "" {
+		return fmt.Errorf("target path empty and no agent host specified")
 	}
 
-	_, s3Err := s3url.Parse(target.Path.String())
-	if !utils.ValidateTargetPath(target.Path.String()) && s3Err != nil {
+	if target.AgentHost.Name != "" {
+		_, err := database.GetAgentHost(target.AgentHost.Name)
+		if err != nil {
+			return fmt.Errorf("agent host not found: %w", err)
+		}
+	}
+
+	_, s3Err := s3url.Parse(target.Path)
+	if target.Path != "" && !utils.ValidateTargetPath(target.Path) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
-	_, err = tx.Exec(`
-        UPDATE targets SET
-					path = ?, auth = ?, token_used = ?, drive_type = ?,
-					drive_name = ?, drive_fs = ?, drive_total_bytes = ?,
-					drive_used_bytes = ?, drive_free_bytes = ?, drive_total = ?,
-					drive_used = ?, drive_free = ?, mount_script = ?, os = ?
-        WHERE name = ?
-    `,
-		target.Path, target.Auth, target.TokenUsed,
-		target.DriveType, target.DriveName, target.DriveFS,
-		target.DriveTotalBytes, target.DriveUsedBytes, target.DriveFreeBytes,
-		target.DriveTotal, target.DriveUsed, target.DriveFree, target.MountScript,
-		target.OperatingSystem,
-		target.Name,
-	)
+	err = q.UpdateTarget(database.ctx, sqlc.UpdateTargetParams{
+		Path:             target.Path,
+		AgentHost:        toNullString(target.AgentHost.Name),
+		VolumeID:         toNullString(target.VolumeID),
+		VolumeType:       toNullString(target.VolumeType),
+		VolumeName:       toNullString(target.VolumeName),
+		VolumeFs:         toNullString(target.VolumeFS),
+		VolumeTotalBytes: toNullInt64(target.VolumeTotalBytes),
+		VolumeUsedBytes:  toNullInt64(target.VolumeUsedBytes),
+		VolumeFreeBytes:  toNullInt64(target.VolumeFreeBytes),
+		VolumeTotal:      toNullString(target.VolumeTotal),
+		VolumeUsed:       toNullString(target.VolumeUsed),
+		VolumeFree:       toNullString(target.VolumeFree),
+		MountScript:      target.MountScript,
+		Name:             target.Name,
+	})
+
 	if err != nil {
 		return fmt.Errorf("UpdateTarget: error updating target: %w", err)
 	}
@@ -144,12 +168,14 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target types.Target) (err err
 	return nil
 }
 
-func (database *Database) AddS3Secret(tx *sql.Tx, targetName types.TargetName, secret string) (err error) {
+func (database *Database) AddS3Secret(tx *sql.Tx, targetName string, secret string) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
 		if err != nil {
-			return fmt.Errorf("AddSecret: failed to begin transaction: %w", err)
+			return fmt.Errorf("AddS3Secret: failed to begin transaction: %w", err)
 		}
 		defer func() {
 			if p := recover(); p != nil {
@@ -157,45 +183,45 @@ func (database *Database) AddS3Secret(tx *sql.Tx, targetName types.TargetName, s
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("AddSecret: failed to rollback transaction: %w", rbErr)).Write()
+					syslog.L.Error(fmt.Errorf("AddS3Secret: failed to rollback transaction: %w", rbErr)).Write()
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
-					err = fmt.Errorf("AddSecret: failed to commit transaction: %w", cErr)
+					err = fmt.Errorf("AddS3Secret: failed to commit transaction: %w", cErr)
 					syslog.L.Error(err).Write()
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("AddSecret: failed to rollback transaction: %w", rbErr)).Write()
+					syslog.L.Error(fmt.Errorf("AddS3Secret: failed to rollback transaction: %w", rbErr)).Write()
 				}
 			}
 		}()
+		q = database.queries.WithTx(tx)
 	}
 
-	encrypted, err := simplebox.Encrypt(secret)
+	encrypted, err := secrets.Encrypt(secret)
 	if err != nil {
-		return fmt.Errorf("AddSecret: error encrypting secret: %w", err)
+		return fmt.Errorf("AddS3Secret: error encrypting secret: %w", err)
 	}
 
-	_, err = tx.Exec(`
-        UPDATE targets SET secret_s3 = ? WHERE name = ?
-    `,
-		encrypted,
-		targetName,
-	)
+	err = q.UpdateTargetS3Secret(database.ctx, sqlc.UpdateTargetS3SecretParams{
+		SecretS3: encrypted,
+		Name:     targetName,
+	})
 	if err != nil {
-		return fmt.Errorf("AddSecret: error adding secret to target: %w", err)
+		return fmt.Errorf("AddS3Secret: error adding secret to target: %w", err)
 	}
 
 	commitNeeded = true
 	return nil
 }
 
-// DeleteTarget removes a target.
-func (database *Database) DeleteTarget(tx *sql.Tx, name types.TargetName) (err error) {
+func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("DeleteTarget: failed to begin transaction: %w", err)
 		}
@@ -218,16 +244,15 @@ func (database *Database) DeleteTarget(tx *sql.Tx, name types.TargetName) (err e
 				}
 			}
 		}()
+		q = database.queries.WithTx(tx)
 	}
 
-	res, err := tx.Exec("DELETE FROM targets WHERE name = ?", name)
+	rowsAffected, err := q.DeleteTarget(database.ctx, name)
 	if err != nil {
 		return fmt.Errorf("DeleteTarget: error deleting target: %w", err)
 	}
 
-	rowsAffected, _ := res.RowsAffected()
 	if rowsAffected == 0 {
-		// Return sql.ErrNoRows if the target wasn't found
 		return ErrTargetNotFound
 	}
 
@@ -235,95 +260,58 @@ func (database *Database) DeleteTarget(tx *sql.Tx, name types.TargetName) (err e
 	return nil
 }
 
-// GetTarget retrieves a target by name along with its associated job count.
-func (database *Database) GetTarget(name types.TargetName) (types.Target, error) {
-	row := database.readDb.QueryRow(`
-        SELECT
-            t.name, t.path, t.auth, t.token_used, t.drive_type, t.drive_name,
-            t.drive_fs, t.drive_total_bytes, t.drive_used_bytes, t.drive_free_bytes,
-            t.drive_total, t.drive_used, t.drive_free, t.mount_script, t.os,
-            COUNT(j.id) as job_count
-        FROM targets t
-        LEFT JOIN backups j ON t.name = j.target
-        WHERE t.name = ?
-        GROUP BY t.name
-    `, name) // Grouping by primary key (or unique key) is sufficient
-
-	var target types.Target
-	var jobCount int
-	err := row.Scan(
-		&target.Name, &target.Path, &target.Auth, &target.TokenUsed,
-		&target.DriveType, &target.DriveName, &target.DriveFS,
-		&target.DriveTotalBytes, &target.DriveUsedBytes, &target.DriveFreeBytes,
-		&target.DriveTotal, &target.DriveUsed, &target.DriveFree, &target.MountScript,
-		&target.OperatingSystem,
-		&jobCount,
-	)
+func (database *Database) GetTarget(name string) (Target, error) {
+	row, err := database.readQueries.GetTarget(database.ctx, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Target{}, ErrTargetNotFound
+	}
 	if err != nil {
-		// Don't wrap sql.ErrNoRows, return it directly
-		if errors.Is(err, sql.ErrNoRows) {
-			return types.Target{}, ErrTargetNotFound
-		}
-		return types.Target{}, fmt.Errorf("GetTarget: error fetching target: %w", err)
+		return Target{}, fmt.Errorf("GetTarget: error fetching target: %w", err)
 	}
 
-	target.JobCount = jobCount
+	target := Target{
+		Name: row.Name,
+		Path: row.Path,
+		AgentHost: AgentHost{
+			Name:            row.AgentName.String,
+			IP:              row.AgentIp.String,
+			Auth:            row.AgentAuth.String,
+			TokenUsed:       row.AgentTokenUsed.String,
+			OperatingSystem: row.AgentOs.String,
+		},
+		VolumeID:         fromNullString(row.VolumeID),
+		VolumeType:       fromNullString(row.VolumeType),
+		VolumeName:       fromNullString(row.VolumeName),
+		VolumeFS:         fromNullString(row.VolumeFs),
+		VolumeTotalBytes: fromNullInt64(row.VolumeTotalBytes),
+		VolumeUsedBytes:  fromNullInt64(row.VolumeUsedBytes),
+		VolumeFreeBytes:  fromNullInt64(row.VolumeFreeBytes),
+		VolumeTotal:      fromNullString(row.VolumeTotal),
+		VolumeUsed:       fromNullString(row.VolumeUsed),
+		VolumeFree:       fromNullString(row.VolumeFree),
+		MountScript:      row.MountScript,
+		JobCount:         int(row.JobCount),
+	}
+
+	target.populateInfo()
 
 	return target, nil
 }
 
-func (database *Database) GetUniqueAuthByHostname(hostname string) ([]string, error) {
-	rows, err := database.readDb.Query(`
-        SELECT DISTINCT t.auth
-        FROM targets t
-        WHERE substr(t.name, 1, instr(t.name, ' - ') - 1) = ?
-        AND t.auth IS NOT NULL AND t.auth != ''
-        ORDER BY t.auth
-    `, hostname)
+func (database *Database) GetS3Secret(name string) (string, error) {
+	encrypted, err := database.readQueries.GetTargetS3Secret(database.ctx, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrSecretNotFound
+	}
 	if err != nil {
-		return nil, fmt.Errorf("GetUniqueAuthByHostname: error querying auth values: %w", err)
-	}
-	defer rows.Close()
-
-	var authList []string
-	for rows.Next() {
-		var auth string
-		err := rows.Scan(&auth)
-		if err != nil {
-			return nil, fmt.Errorf("GetUniqueAuthByHostname: error scanning auth value: %w", err)
-		}
-		authList = append(authList, auth)
-	}
-
-	// Check for errors during iteration
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetUniqueAuthByHostname: error iterating rows: %w", err)
-	}
-
-	return authList, nil
-}
-
-func (database *Database) GetS3Secret(name types.TargetName) (string, error) {
-	row := database.readDb.QueryRow(`
-        SELECT
-            t.secret_s3
-        FROM targets t
-        WHERE t.name = ?
-    `, name)
-
-	var encrypted string
-	err := row.Scan(
-		&encrypted,
-	)
-	if err != nil {
-		// Don't wrap sql.ErrNoRows, return it directly
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", ErrSecretNotFound
-		}
 		return "", fmt.Errorf("GetS3Secret: error fetching target: %w", err)
 	}
 
-	decrypted, err := simplebox.Decrypt(encrypted)
+	if encrypted == "" {
+		return "", ErrSecretNotFound
+	}
+
+	decrypted, err := secrets.Decrypt(encrypted)
 	if err != nil {
 		return "", fmt.Errorf("GetS3Secret: failed to decrypt secret: %w", err)
 	}
@@ -331,90 +319,131 @@ func (database *Database) GetS3Secret(name types.TargetName) (string, error) {
 	return decrypted, nil
 }
 
-// GetAllTargets returns all targets along with their associated job counts.
-func (database *Database) GetAllTargets() ([]types.Target, error) {
-	rows, err := database.readDb.Query(`
-        SELECT
-            t.name, t.path, t.auth, t.token_used, t.drive_type, t.drive_name,
-            t.drive_fs, t.drive_total_bytes, t.drive_used_bytes, t.drive_free_bytes,
-            t.drive_total, t.drive_used, t.drive_free, t.mount_script, t.os,
-            COUNT(j.id) as job_count
-        FROM targets t
-        LEFT JOIN backups j ON t.name = j.target
-        GROUP BY t.name, t.path, t.auth, t.token_used, t.drive_type, t.drive_name,
-                 t.drive_fs, t.drive_total_bytes, t.drive_used_bytes, t.drive_free_bytes,
-                 t.drive_total, t.drive_used, t.drive_free, t.mount_script, t.os
-        ORDER BY t.name
-    `) // Group by all non-aggregated columns
+func (database *Database) GetAllTargets() ([]Target, error) {
+	rows, err := database.readQueries.ListAllTargets(database.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllTargets: error querying targets: %w", err)
 	}
-	defer rows.Close()
 
-	var targets []types.Target
-	for rows.Next() {
-		var target types.Target
-		var jobCount int
-		err := rows.Scan(
-			&target.Name, &target.Path, &target.Auth, &target.TokenUsed,
-			&target.DriveType, &target.DriveName, &target.DriveFS,
-			&target.DriveTotalBytes, &target.DriveUsedBytes, &target.DriveFreeBytes,
-			&target.DriveTotal, &target.DriveUsed, &target.DriveFree, &target.MountScript,
-			&target.OperatingSystem,
-			&jobCount,
-		)
-		if err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllTargets: error scanning target row: %w", err)).Write()
-			continue
+	targets := make([]Target, 0, len(rows))
+	for _, row := range rows {
+		target := Target{
+			Name: row.Name,
+			Path: row.Path,
+			AgentHost: AgentHost{
+				Name:            row.AgentName.String,
+				IP:              row.AgentIp.String,
+				Auth:            row.AgentAuth.String,
+				TokenUsed:       row.AgentTokenUsed.String,
+				OperatingSystem: row.AgentOs.String,
+			},
+			VolumeID:         fromNullString(row.VolumeID),
+			VolumeType:       fromNullString(row.VolumeType),
+			VolumeName:       fromNullString(row.VolumeName),
+			VolumeFS:         fromNullString(row.VolumeFs),
+			VolumeTotalBytes: fromNullInt64(row.VolumeTotalBytes),
+			VolumeUsedBytes:  fromNullInt64(row.VolumeUsedBytes),
+			VolumeFreeBytes:  fromNullInt64(row.VolumeFreeBytes),
+			VolumeTotal:      fromNullString(row.VolumeTotal),
+			VolumeUsed:       fromNullString(row.VolumeUsed),
+			VolumeFree:       fromNullString(row.VolumeFree),
+			MountScript:      row.MountScript,
+			JobCount:         int(row.JobCount),
 		}
 
-		target.JobCount = jobCount
-
+		target.populateInfo()
 		targets = append(targets, target)
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllTargets: error iterating target rows: %w", err)
 	}
 
 	return targets, nil
 }
 
-// GetAllTargetsByIP returns all agent targets matching the given client IP.
-func (database *Database) GetAllTargetsByIP(clientIP string) ([]types.Target, error) {
-	// This query doesn't need job count, so no JOIN needed here.
-	rows, err := database.readDb.Query(`
-		SELECT name, path, auth, token_used, drive_type, drive_name, drive_fs, drive_total_bytes,
-			drive_used_bytes, drive_free_bytes, drive_total, drive_used, drive_free, mount_script, os FROM targets
-		WHERE path LIKE ?
-		ORDER BY name
-		`, fmt.Sprintf("agent://%s%%", clientIP)) // Ensure clientIP is properly escaped if needed
+func (database *Database) GetAllTargetsByAgentHost(hostname string) ([]Target, error) {
+	rows, err := database.readQueries.ListTargetsByAgentHost(database.ctx, toNullString(hostname))
 	if err != nil {
-		return nil, fmt.Errorf("GetAllTargetsByIP: error querying targets: %w", err)
+		return nil, fmt.Errorf("GetAllTargetsByAgentHost: error querying targets: %w", err)
 	}
-	defer rows.Close()
 
-	var targets []types.Target
-	for rows.Next() {
-		var target types.Target
-		err := rows.Scan(
-			&target.Name, &target.Path, &target.Auth, &target.TokenUsed,
-			&target.DriveType, &target.DriveName, &target.DriveFS,
-			&target.DriveTotalBytes, &target.DriveUsedBytes, &target.DriveFreeBytes,
-			&target.DriveTotal, &target.DriveUsed, &target.DriveFree, &target.MountScript,
-			&target.OperatingSystem,
-		)
-		if err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllTargetsByIP: error scanning target row: %w", err)).Write()
-			continue
+	targets := make([]Target, 0, len(rows))
+	for _, row := range rows {
+		target := Target{
+			Name: row.Name,
+			Path: row.Path,
+			AgentHost: AgentHost{
+				Name:            row.AgentName.String,
+				IP:              row.AgentIp.String,
+				Auth:            row.AgentAuth.String,
+				TokenUsed:       row.AgentTokenUsed.String,
+				OperatingSystem: row.AgentOs.String,
+			},
+			VolumeID:         fromNullString(row.VolumeID),
+			VolumeType:       fromNullString(row.VolumeType),
+			VolumeName:       fromNullString(row.VolumeName),
+			VolumeFS:         fromNullString(row.VolumeFs),
+			VolumeTotalBytes: fromNullInt64(row.VolumeTotalBytes),
+			VolumeUsedBytes:  fromNullInt64(row.VolumeUsedBytes),
+			VolumeFreeBytes:  fromNullInt64(row.VolumeFreeBytes),
+			VolumeTotal:      fromNullString(row.VolumeTotal),
+			VolumeUsed:       fromNullString(row.VolumeUsed),
+			VolumeFree:       fromNullString(row.VolumeFree),
+			MountScript:      row.MountScript,
 		}
 
+		target.populateInfo()
 		targets = append(targets, target)
 	}
 
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllTargetsByIP: error iterating target rows: %w", err)
+	return targets, nil
+}
+
+func (t *Target) populateInfo() {
+	if t.Path != "" {
+		if strings.Contains(t.Path, "://") {
+			if s3, err := s3url.Parse(t.Path); err == nil {
+				t.S3Info = s3
+				t.Type = TargetTypeS3
+			} else if utils.IsValid(t.Path) {
+				t.Type = TargetTypeLocal
+			}
+		}
+	} else if t.AgentHost.Name != "" {
+		t.Type = TargetTypeAgent
+	}
+}
+
+func (t *Target) GetAgentHostPath() string {
+	hostPath := ""
+	if t.AgentHost.Name != "" {
+		res := strings.ToLower(t.VolumeID)
+		switch {
+		case res == "root":
+			hostPath = "/"
+		case t.AgentHost.OperatingSystem == "windows":
+			hostPath = res + ":\\"
+		default:
+			hostPath = res
+		}
 	}
 
-	return targets, nil
+	return hostPath
+}
+
+func (t *Target) GetHostname() string {
+	if t.AgentHost.Name != "" {
+		return t.AgentHost.Name
+	}
+
+	return t.Name
+}
+
+func (t *Target) IsAgent() bool {
+	return t.Type == TargetTypeAgent
+}
+
+func (t *Target) IsS3() bool {
+	return t.Type == TargetTypeS3
+}
+
+func (t *Target) IsLocal() bool {
+	return t.Type == TargetTypeLocal
 }

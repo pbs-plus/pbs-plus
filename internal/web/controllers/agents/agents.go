@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
@@ -41,9 +41,10 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 }
 
 type BootstrapRequest struct {
-	Hostname string            `json:"hostname"`
-	CSR      string            `json:"csr"`
-	Drives   []utils.DriveInfo `json:"drives"`
+	Hostname        string            `json:"hostname"`
+	CSR             string            `json:"csr"`
+	OperatingSystem string            `json:"os"`
+	Drives          []utils.DriveInfo `json:"drives"`
 }
 
 func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -131,25 +132,41 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		host := database.AgentHost{
+			Name:            reqParsed.Hostname,
+			IP:              clientIP,
+			Auth:            encodedCert,
+			TokenUsed:       tokenStr,
+			OperatingSystem: reqParsed.OperatingSystem,
+		}
+
+		err = storeInstance.Database.CreateAgentHost(tx, host)
+		if err != nil {
+			tx.Rollback()
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
+			return
+		}
+
 		for _, drive := range reqParsed.Drives {
 			syslog.L.Info().WithMessage("bootstrapping drive").WithFields(map[string]any{"drive": drive}).Write()
 
-			newTarget := types.Target{
-				Auth:            encodedCert,
-				TokenUsed:       tokenStr,
-				DriveType:       drive.Type,
-				DriveFS:         drive.FileSystem,
-				DriveFreeBytes:  int(drive.FreeBytes),
-				DriveUsedBytes:  int(drive.UsedBytes),
-				DriveTotalBytes: int(drive.TotalBytes),
-				DriveFree:       drive.Free,
-				DriveUsed:       drive.Used,
-				DriveTotal:      drive.Total,
-				OperatingSystem: drive.OperatingSystem,
+			newTarget := database.Target{
+				AgentHost:        database.AgentHost{Name: reqParsed.Hostname},
+				VolumeID:         drive.Letter,
+				VolumeType:       drive.Type,
+				VolumeFS:         drive.FileSystem,
+				VolumeFreeBytes:  int(drive.FreeBytes),
+				VolumeUsedBytes:  int(drive.UsedBytes),
+				VolumeTotalBytes: int(drive.TotalBytes),
+				VolumeFree:       drive.Free,
+				VolumeUsed:       drive.Used,
+				VolumeTotal:      drive.Total,
+				VolumeName:       drive.VolumeName,
 			}
 
-			newTarget.Name = types.NewTargetName(types.TargetTypeAgent, reqParsed.Hostname, drive.Letter, drive.OperatingSystem)
-			newTarget.Path = types.NewTargetPath(types.TargetTypeAgent, clientIP, drive.Letter, drive.OperatingSystem)
+			newTarget.Name = database.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
 
 			existingTarget, err := storeInstance.Database.GetTarget(newTarget.Name)
 			if err == nil {
@@ -267,9 +284,34 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		currentHost, err := storeInstance.Database.GetAgentHost(reqParsed.Hostname)
+		if err != nil {
+			tx.Rollback()
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
+			return
+		}
+
+		host := database.AgentHost{
+			Name:            reqParsed.Hostname,
+			IP:              clientIP,
+			Auth:            currentHost.Auth,
+			TokenUsed:       currentHost.TokenUsed,
+			OperatingSystem: reqParsed.OperatingSystem,
+		}
+
+		err = storeInstance.Database.UpdateAgentHost(nil, host)
+		if err != nil {
+			tx.Rollback()
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
+			return
+		}
+
 		for _, drive := range reqParsed.Drives {
-			targetName := types.NewTargetName(types.TargetTypeAgent, reqParsed.Hostname, drive.Letter, drive.OperatingSystem)
-			targetPath := types.NewTargetPath(types.TargetTypeAgent, clientIP, drive.Letter, drive.OperatingSystem)
+			targetName := database.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
 
 			existingTarget, err := storeInstance.Database.GetTarget(targetName)
 			if err != nil {
@@ -277,26 +319,24 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				continue
 			}
 
-			updatedTarget := types.Target{
-				Name:            targetName,
-				Path:            targetPath,
-				Auth:            encodedCert,
-				TokenUsed:       existingTarget.TokenUsed,
-				DriveType:       drive.Type,
-				DriveFS:         drive.FileSystem,
-				DriveFreeBytes:  int(drive.FreeBytes),
-				DriveUsedBytes:  int(drive.UsedBytes),
-				DriveTotalBytes: int(drive.TotalBytes),
-				DriveFree:       drive.Free,
-				DriveUsed:       drive.Used,
-				DriveTotal:      drive.Total,
-				OperatingSystem: drive.OperatingSystem,
+			updatedTarget := database.Target{
+				Name:             targetName,
+				AgentHost:        database.AgentHost{Name: reqParsed.Hostname},
+				VolumeID:         drive.Letter,
+				VolumeType:       drive.Type,
+				VolumeFS:         drive.FileSystem,
+				VolumeFreeBytes:  int(drive.FreeBytes),
+				VolumeUsedBytes:  int(drive.UsedBytes),
+				VolumeTotalBytes: int(drive.TotalBytes),
+				VolumeFree:       drive.Free,
+				VolumeUsed:       drive.Used,
+				VolumeTotal:      drive.Total,
+				VolumeName:       drive.VolumeName,
 				// Preserve existing operational data
 				JobCount:         existingTarget.JobCount,
 				AgentVersion:     existingTarget.AgentVersion,
 				ConnectionStatus: existingTarget.ConnectionStatus,
 				MountScript:      existingTarget.MountScript,
-				DriveName:        existingTarget.DriveName,
 			}
 
 			err = storeInstance.Database.DeleteTarget(tx, targetName)

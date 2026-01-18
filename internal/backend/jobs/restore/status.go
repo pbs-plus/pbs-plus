@@ -7,14 +7,14 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var restoreMutexes sync.Map
 
-func updateRestoreStatus(succeeded bool, warningsNum int, restore types.Restore, task proxmox.Task, storeInstance *store.Store) error {
+func updateRestoreStatus(succeeded bool, warningsNum int, restore database.Restore, task proxmox.Task, storeInstance *store.Store) error {
 	value, _ := restoreMutexes.LoadOrStore(restore.ID, &sync.Mutex{})
 	mu := value.(*sync.Mutex)
 
@@ -34,17 +34,17 @@ func updateRestoreStatus(succeeded bool, warningsNum int, restore types.Restore,
 	}
 
 	latestRestore.CurrentPID = restore.CurrentPID
-	latestRestore.LastRunUpid = taskFound.UPID
-	latestRestore.LastRunState = taskFound.Status
-	latestRestore.LastRunEndtime = taskFound.EndTime
+	latestRestore.History.LastRunUpid = taskFound.UPID
+	latestRestore.History.LastRunState = taskFound.Status
+	latestRestore.History.LastRunEndtime = taskFound.EndTime
 
 	if warningsNum > 0 && succeeded {
-		latestRestore.LastRunState = fmt.Sprintf("WARNINGS: %d", warningsNum)
+		latestRestore.History.LastRunState = fmt.Sprintf("WARNINGS: %d", warningsNum)
 	}
 
 	if succeeded {
-		latestRestore.LastSuccessfulUpid = taskFound.UPID
-		latestRestore.LastSuccessfulEndtime = task.EndTime
+		latestRestore.History.LastSuccessfulUpid = taskFound.UPID
+		latestRestore.History.LastSuccessfulEndtime = task.EndTime
 	}
 
 	if err := storeInstance.Database.UpdateRestore(nil, latestRestore); err != nil {

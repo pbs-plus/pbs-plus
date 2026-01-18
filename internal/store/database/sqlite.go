@@ -1,6 +1,6 @@
 //go:build linux
 
-package sqlite
+package database
 
 import (
 	"context"
@@ -16,26 +16,23 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const maxAttempts = 100
 
-// Database is our SQLite-backed store.
 type Database struct {
 	ctx          context.Context
 	readDb       *sql.DB
 	writeDb      *sql.DB
+	queries      *sqlc.Queries
+	readQueries  *sqlc.Queries
 	writeMu      sync.Mutex
 	dbPath       string
 	TokenManager *mtls.TokenManager
 }
 
-// Initialize opens (or creates) the SQLite database at dbPath,
-// creates all necessary tables if they do not exist,
-// and then (optionally) fills any default items.
-// It returns a pointer to a Database instance.
 func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 	if dbPath == "" {
 		dbPath = "/etc/proxmox-backup/pbs-plus/plus.db"
@@ -66,13 +63,14 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 	}
 
 	database := &Database{
-		ctx:     ctx,
-		dbPath:  dbPath,
-		readDb:  readDb,
-		writeDb: writeDb,
+		ctx:         ctx,
+		dbPath:      dbPath,
+		readDb:      readDb,
+		writeDb:     writeDb,
+		queries:     sqlc.New(writeDb),
+		readQueries: sqlc.New(readDb),
 	}
 
-	// Auto migrate on initialization
 	if err := database.Migrate(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
 	}
@@ -83,10 +81,12 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 			return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
 		}
 
+		qtx := database.queries.WithTx(tx)
 		for _, exclusion := range constants.DefaultExclusions {
-			err = database.CreateExclusion(tx, types.Exclusion{
+			err = qtx.CreateExclusion(ctx, sqlc.CreateExclusionParams{
+				JobID:   sql.NullString{},
 				Path:    exclusion,
-				Comment: "Generated exclusion from default list",
+				Comment: sql.NullString{String: "Generated exclusion from default list", Valid: true},
 			})
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				syslog.L.Error(err).WithField("path", exclusion).Write()
