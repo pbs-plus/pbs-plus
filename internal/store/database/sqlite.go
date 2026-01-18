@@ -51,7 +51,7 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
 	}
 
-	writeDb, err := sql.Open("sqlite", dbPath+"?mode=rw")
+	writeDb, err := sql.Open("sqlite", dbPath+"?mode=rw&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
 	}
@@ -128,6 +128,7 @@ func (d *Database) NewTransaction() (*Transaction, error) {
 
 	tx, err := d.writeDb.BeginTx(d.ctx, nil)
 	if err != nil {
+		d.writeMu.Unlock()
 		return nil, err
 	}
 
