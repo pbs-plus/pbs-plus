@@ -12,8 +12,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/system"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
@@ -34,33 +33,33 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for i, backup := range allBackups {
 			var stats vfs.VFSStats
-			switch backup.TargetPath.GetPathInfo().Type {
-			case types.TargetTypeAgent:
+			switch backup.Target.Type {
+			case database.TargetTypeAgent:
 				session := vfssessions.GetSessionARPCFS(backup.GetStreamID())
 				if session == nil {
 					continue
 				}
 
 				stats = session.GetStats()
-			case types.TargetTypeS3:
+			case database.TargetTypeS3:
 				session := vfssessions.GetSessionS3FS(backup.GetStreamID())
 				if session == nil {
 					continue
 				}
 
 				stats = session.GetStats()
-			case types.TargetTypeLocal:
+			case database.TargetTypeLocal:
 				continue
 			default:
 				continue
 			}
 
-			allBackups[i].CurrentFileCount = int(stats.FilesAccessed)
-			allBackups[i].CurrentFolderCount = int(stats.FoldersAccessed)
-			allBackups[i].CurrentBytesTotal = int(stats.TotalBytes)
-			allBackups[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
-			allBackups[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
-			allBackups[i].StatCacheHits = int(stats.StatCacheHits)
+			allBackups[i].CurrentStats.CurrentFileCount = int(stats.FilesAccessed)
+			allBackups[i].CurrentStats.CurrentFolderCount = int(stats.FoldersAccessed)
+			allBackups[i].CurrentStats.CurrentBytesTotal = int(stats.TotalBytes)
+			allBackups[i].CurrentStats.CurrentBytesSpeed = int(stats.ByteReadSpeed)
+			allBackups[i].CurrentStats.CurrentFilesSpeed = int(stats.FileAccessSpeed)
+			allBackups[i].CurrentStats.StatCacheHits = int(stats.StatCacheHits)
 		}
 
 		digest, err := utils.CalculateDigest(allBackups)
@@ -106,7 +105,7 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
-			system.RemoveAllRetrySchedules(r.Context(), backup)
+			backup.RemoveAllRetrySchedules(r.Context())
 		}
 
 		execPath, err := os.Executable()
@@ -198,13 +197,13 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			legacyXattr = false
 		}
 
-		newBackup := types.Backup{
+		newBackup := database.Backup{
 			ID:               r.FormValue("id"),
 			Store:            r.FormValue("store"),
 			SourceMode:       r.FormValue("sourcemode"),
 			ReadMode:         r.FormValue("readmode"),
 			Mode:             r.FormValue("mode"),
-			Target:           types.WrapTargetName(r.FormValue("target")),
+			Target:           database.Target{Name: r.FormValue("target")},
 			Subpath:          r.FormValue("subpath"),
 			Schedule:         r.FormValue("schedule"),
 			Comment:          r.FormValue("comment"),
@@ -213,7 +212,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			NotificationMode: r.FormValue("notification-mode"),
 			Retry:            retry,
 			RetryInterval:    retryInterval,
-			Exclusions:       []types.Exclusion{},
+			Exclusions:       []database.Exclusion{},
 			PreScript:        r.FormValue("pre_script"),
 			PostScript:       r.FormValue("post_script"),
 			IncludeXattr:     includeXattr,
@@ -227,7 +226,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 				continue
 			}
 
-			exclusionInst := types.Exclusion{
+			exclusionInst := database.Exclusion{
 				Path:  exclusion,
 				JobId: newBackup.ID,
 			}
@@ -283,7 +282,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				backup.ReadMode = r.FormValue("readmode")
 			}
 			if r.FormValue("target") != "" {
-				backup.Target = types.WrapTargetName(r.FormValue("target"))
+				backup.Target.Name = r.FormValue("target")
 			}
 			if r.FormValue("schedule") != "" {
 				backup.Schedule = r.FormValue("schedule")
@@ -335,7 +334,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			backup.Subpath = r.FormValue("subpath")
 			backup.Namespace = r.FormValue("ns")
-			backup.Exclusions = []types.Exclusion{}
+			backup.Exclusions = []database.Exclusion{}
 
 			if r.FormValue("rawexclusions") != "" {
 				rawExclusions := r.FormValue("rawexclusions")
@@ -345,7 +344,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						continue
 					}
 
-					exclusionInst := types.Exclusion{
+					exclusionInst := database.Exclusion{
 						Path:  exclusion,
 						JobId: backup.ID,
 					}
@@ -366,7 +365,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					case "readmode":
 						backup.ReadMode = ""
 					case "target":
-						backup.Target.Raw = ""
+						backup.Target.Name = ""
 					case "subpath":
 						backup.Subpath = ""
 					case "schedule":
@@ -388,7 +387,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					case "post_script":
 						backup.PostScript = ""
 					case "rawexclusions":
-						backup.Exclusions = []types.Exclusion{}
+						backup.Exclusions = []database.Exclusion{}
 					}
 				}
 			}

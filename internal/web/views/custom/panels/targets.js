@@ -8,18 +8,18 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
   controller: {
     xclass: "Ext.app.ViewController",
 
-    onAdd: function() {
+    onAdd: function () {
       let me = this;
       Ext.create("PBS.D2DManagement.TargetEditWindow", {
         listeners: {
-          destroy: function() {
+          destroy: function () {
             me.reload();
           },
         },
       }).show();
     },
 
-    addJob: function() {
+    addJob: function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -34,14 +34,14 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
         autoShow: true,
         jobData: { target: targetName },
         listeners: {
-          destroy: function() {
+          destroy: function () {
             me.reload();
           },
         },
       }).show();
     },
 
-    removeTargets: function() {
+    removeTargets: function () {
       const me = this;
       const view = me.getView();
       const recs = view.getSelection();
@@ -64,11 +64,11 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
               success: () => me.reload(),
             });
           });
-        }
+        },
       );
     },
 
-    onEdit: function() {
+    onEdit: function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -84,7 +84,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }).show();
     },
 
-    setS3Secret: function() {
+    setS3Secret: function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -100,19 +100,19 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }).show();
     },
 
-    reload: function() {
+    reload: function () {
       this.getView().getStore().rstore.load();
     },
 
-    stopStore: function() {
+    stopStore: function () {
       this.getView().getStore().rstore.stopUpdate();
     },
 
-    startStore: function() {
+    startStore: function () {
       this.getView().getStore().rstore.startUpdate();
     },
 
-    render_status: function(value) {
+    render_status: function (value) {
       if (value.toString() == "true") {
         icon = "check good";
         text = "Reachable";
@@ -124,19 +124,16 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       return `<i class="fa fa-${icon}"></i> ${text}`;
     },
 
-    init: function(view) {
+    init: function (view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
 
-      // Apply custom grouper for "ns" on initialization
       const store = view.getStore();
       store.setGrouper({
         property: "path",
-        groupFn: function(record) {
-          let ns = record.get("path");
-          let name = record.get("name");
-          if (ns.startsWith("agent://")) {
-            host = name.split(" - ")[0];
-            return "Agent - " + host;
+        groupFn: function (record) {
+          let hostname = record.get("agent_hostname");
+          if (hostname) {
+            return "Agent - " + hostname;
           }
           return "Non-Agent";
         },
@@ -172,12 +169,10 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       groupers: [
         {
           property: "path",
-          groupFn: function(record) {
-            let ns = record.get("path");
-            let name = record.get("name");
-            if (ns.startsWith("agent://")) {
-              host = name.split(" - ")[0];
-              return "Agent - " + host;
+          groupFn: function (record) {
+            let hostname = record.get("agent_hostname");
+            if (hostname) {
+              return "Agent - " + hostname;
             }
             return "Non-Agent";
           },
@@ -186,7 +181,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       groupHeaderTpl: [
         '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
         {
-          formatNS: function(group) {
+          formatNS: function (group) {
             return group || "Unassigned";
           },
         },
@@ -224,7 +219,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       xtype: "proxmoxButton",
       text: gettext("Remove"),
       handler: "removeTargets",
-      enableFn: function() {
+      enableFn: function () {
         let recs = this.up("grid").getSelection();
         return recs.length > 0;
       },
@@ -265,7 +260,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     {
       text: gettext("Used Size"),
       dataIndex: "drive_used_bytes",
-      renderer: function(value) {
+      renderer: function (value) {
         if (!value && value !== 0) {
           return "-";
         }
@@ -276,7 +271,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     {
       text: gettext("Total Size"),
       dataIndex: "drive_total_bytes",
-      renderer: function(value) {
+      renderer: function (value) {
         if (!value && value !== 0) {
           return "-";
         }

@@ -2,19 +2,17 @@
 
 package jobs
 
-import (
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
-)
+import "github.com/pbs-plus/pbs-plus/internal/store/database"
 
 type BackupsResponse struct {
-	Data   []types.Backup `json:"data"`
-	Digest string         `json:"digest"`
+	Data   []database.Backup `json:"data"`
+	Digest string            `json:"digest"`
 }
 
 type BackupConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    types.Backup      `json:"data"`
+	Data    database.Backup   `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }
@@ -28,14 +26,14 @@ type BackupRunResponse struct {
 }
 
 type RestoresResponse struct {
-	Data   []types.Restore `json:"data"`
-	Digest string          `json:"digest"`
+	Data   []database.Restore `json:"data"`
+	Digest string             `json:"digest"`
 }
 
 type RestoreConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    types.Restore     `json:"data"`
+	Data    database.Restore  `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }

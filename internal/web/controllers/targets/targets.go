@@ -16,7 +16,7 @@ import (
 	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
@@ -31,7 +31,7 @@ type TargetStatusResult struct {
 func CheckTargetStatusBatch(
 	ctx context.Context,
 	storeInstance *store.Store,
-	targets []types.Target,
+	targets []database.Target,
 	checkStatus bool,
 	timeout time.Duration,
 ) []TargetStatusResult {
@@ -42,7 +42,7 @@ func CheckTargetStatusBatch(
 
 	for i, target := range targets {
 		wg.Add(1)
-		go func(idx int, tgt types.Target) {
+		go func(idx int, tgt database.Target) {
 			defer wg.Done()
 
 			sem <- struct{}{}
@@ -50,12 +50,12 @@ func CheckTargetStatusBatch(
 
 			result := TargetStatusResult{Index: idx}
 
-			if !tgt.Path.IsAgent() {
+			if !tgt.IsAgent() {
 				results[idx] = result
 				return
 			}
 
-			arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(tgt.Name.GetHostname())
+			arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(tgt.GetHostname())
 			if !ok {
 				results[idx] = result
 				return
@@ -71,7 +71,7 @@ func CheckTargetStatusBatch(
 				respMsg, err := arpcSess.CallMessage(
 					timeoutCtx,
 					"target_status",
-					&reqTypes.TargetStatusReq{Drive: tgt.Name.GetVolume()},
+					&reqTypes.TargetStatusReq{Drive: tgt.VolumeID},
 				)
 				if err == nil && strings.HasPrefix(respMsg, "reachable") {
 					result.ConnectionStatus = true
@@ -108,20 +108,20 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		checkStatus := strings.ToLower(r.FormValue("status")) == "true"
 
 		// Separate agent targets from others for batch processing
-		agentTargets := make([]types.Target, 0)
+		agentTargets := make([]database.Target, 0)
 		agentIndices := make([]int, 0)
 
 		for i := range all {
-			if all[i].Path.IsAgent() {
+			if all[i].IsAgent() {
 				agentTargets = append(agentTargets, all[i])
 				agentIndices = append(agentIndices, i)
-			} else if all[i].Path.IsS3() {
+			} else if all[i].IsS3() {
 				all[i].ConnectionStatus = true
 				all[i].AgentVersion = "N/A (S3 target)"
 			} else {
 				all[i].AgentVersion = "N/A (local target)"
-				_, err := os.Stat(all[i].Path.String())
-				all[i].ConnectionStatus = err == nil && utils.IsValid(all[i].Path.String())
+				_, err := os.Stat(all[i].Path)
+				all[i].ConnectionStatus = err == nil && utils.IsValid(all[i].Path)
 			}
 		}
 
@@ -159,8 +159,9 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 }
 
 type NewAgentHostnameRequest struct {
-	Hostname string            `json:"hostname"`
-	Drives   []utils.DriveInfo `json:"drives"`
+	Hostname        string            `json:"hostname"`
+	Drives          []utils.DriveInfo `json:"drives"`
+	OperatingSystem string            `json:"os"`
 }
 
 func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -195,16 +196,11 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			clientIP = strings.Split(clientIP, ":")[0]
 		}
 
-		existingTargets, err := storeInstance.Database.GetAllTargetsByIP(clientIP)
+		existingTargets, err := storeInstance.Database.GetAllTargetsByAgentHost(reqParsed.Hostname)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to get existing targets: %w", err))
 			return
-		}
-
-		var targetTemplate types.Target
-		if len(existingTargets) > 0 {
-			targetTemplate = existingTargets[0]
 		}
 
 		tx, err := storeInstance.Database.NewTransaction()
@@ -219,31 +215,29 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}()
 
-		existingTargetsMap := make(map[types.TargetName]types.Target)
+		existingTargetsMap := make(map[string]database.Target)
 		for _, target := range existingTargets {
 			existingTargetsMap[target.Name] = target
 		}
 
-		processedTargetNames := make(map[types.TargetName]bool)
+		processedTargetNames := make(map[string]bool)
 
 		for _, parsedDrive := range reqParsed.Drives {
-			targetName := types.NewTargetName(types.TargetTypeAgent, reqParsed.Hostname, parsedDrive.Letter, parsedDrive.OperatingSystem)
-			targetPath := types.NewTargetPath(types.TargetTypeAgent, clientIP, parsedDrive.Letter, parsedDrive.OperatingSystem)
+			targetName := database.GetAgentTargetName(reqParsed.Hostname, parsedDrive.Letter, reqParsed.OperatingSystem)
 
 			processedTargetNames[targetName] = true
 
 			if existingTarget, found := existingTargetsMap[targetName]; found {
 				updatedTarget := existingTarget
-				updatedTarget.DriveType = parsedDrive.Type
-				updatedTarget.DriveName = parsedDrive.VolumeName
-				updatedTarget.DriveFS = parsedDrive.FileSystem
-				updatedTarget.DriveFreeBytes = int(parsedDrive.FreeBytes)
-				updatedTarget.DriveUsedBytes = int(parsedDrive.UsedBytes)
-				updatedTarget.DriveTotalBytes = int(parsedDrive.TotalBytes)
-				updatedTarget.DriveFree = parsedDrive.Free
-				updatedTarget.DriveUsed = parsedDrive.Used
-				updatedTarget.DriveTotal = parsedDrive.Total
-				updatedTarget.OperatingSystem = parsedDrive.OperatingSystem
+				updatedTarget.VolumeType = parsedDrive.Type
+				updatedTarget.VolumeName = parsedDrive.VolumeName
+				updatedTarget.VolumeFS = parsedDrive.FileSystem
+				updatedTarget.VolumeFreeBytes = int(parsedDrive.FreeBytes)
+				updatedTarget.VolumeUsedBytes = int(parsedDrive.UsedBytes)
+				updatedTarget.VolumeTotalBytes = int(parsedDrive.TotalBytes)
+				updatedTarget.VolumeFree = parsedDrive.Free
+				updatedTarget.VolumeUsed = parsedDrive.Used
+				updatedTarget.VolumeTotal = parsedDrive.Total
 
 				err = storeInstance.Database.UpdateTarget(tx, updatedTarget)
 				if err != nil {
@@ -252,21 +246,17 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 					return
 				}
 			} else {
-				targetData := types.Target{
-					Name:            targetName,
-					Path:            targetPath,
-					Auth:            targetTemplate.Auth,
-					TokenUsed:       targetTemplate.TokenUsed,
-					DriveType:       parsedDrive.Type,
-					DriveName:       parsedDrive.VolumeName,
-					DriveFS:         parsedDrive.FileSystem,
-					DriveFreeBytes:  int(parsedDrive.FreeBytes),
-					DriveUsedBytes:  int(parsedDrive.UsedBytes),
-					DriveTotalBytes: int(parsedDrive.TotalBytes),
-					DriveFree:       parsedDrive.Free,
-					DriveUsed:       parsedDrive.Used,
-					DriveTotal:      parsedDrive.Total,
-					OperatingSystem: parsedDrive.OperatingSystem,
+				targetData := database.Target{
+					Name:             targetName,
+					VolumeType:       parsedDrive.Type,
+					VolumeName:       parsedDrive.VolumeName,
+					VolumeFS:         parsedDrive.FileSystem,
+					VolumeFreeBytes:  int(parsedDrive.FreeBytes),
+					VolumeUsedBytes:  int(parsedDrive.UsedBytes),
+					VolumeTotalBytes: int(parsedDrive.TotalBytes),
+					VolumeFree:       parsedDrive.Free,
+					VolumeUsed:       parsedDrive.Used,
+					VolumeTotal:      parsedDrive.Total,
 				}
 
 				err = storeInstance.Database.CreateTarget(tx, targetData)
@@ -313,10 +303,9 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		path := r.FormValue("path")
-		newTarget := types.Target{
-			Name:        types.WrapTargetName(r.FormValue("name")),
-			Path:        types.WrapTargetPath(path),
+		newTarget := database.Target{
+			Name:        r.FormValue("name"),
+			Path:        r.FormValue("path"),
 			MountScript: r.FormValue("mount_script"),
 		}
 
@@ -358,17 +347,17 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			target, err := storeInstance.Database.GetTarget(types.WrapTargetName(utils.DecodePath(r.PathValue("target"))))
+			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
 
 			if r.FormValue("name") != "" {
-				target.Name = types.WrapTargetName(r.FormValue("name"))
+				target.Name = r.FormValue("name")
 			}
 			if path != "" {
-				target.Path = types.WrapTargetPath(path)
+				target.Path = path
 			}
 
 			target.MountScript = r.FormValue("mount_script")
@@ -377,9 +366,9 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				for _, attr := range delArr {
 					switch attr {
 					case "name":
-						target.Name.Raw = ""
+						target.Name = ""
 					case "path":
-						target.Path.Raw = ""
+						target.Path = ""
 					case "mount_script":
 						target.MountScript = ""
 					}
@@ -400,14 +389,14 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			target, err := storeInstance.Database.GetTarget(types.WrapTargetName(utils.DecodePath(r.PathValue("target"))))
+			target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
 
-			if target.Path.IsAgent() {
-				arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(target.Name.GetHostname())
+			if target.IsAgent() {
+				arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(target.GetHostname())
 				if ok {
 					target.AgentVersion = arpcSess.GetVersion()
 					target.ConnectionStatus = false
@@ -416,7 +405,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						respMsg, err := arpcSess.CallMessage(
 							r.Context(),
 							"target_status",
-							&reqTypes.TargetStatusReq{Drive: target.Name.GetVolume()},
+							&reqTypes.TargetStatusReq{Drive: target.VolumeID},
 						)
 						if err == nil && strings.HasPrefix(respMsg, "reachable") {
 							target.ConnectionStatus = true
@@ -427,17 +416,17 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						}
 					}
 				}
-			} else if target.Path.IsS3() {
+			} else if target.IsS3() {
 				target.ConnectionStatus = true
 				target.AgentVersion = "N/A (S3 target)"
 			} else {
 				target.AgentVersion = "N/A (local target)"
 
-				_, err := os.Stat(target.Path.String())
+				_, err := os.Stat(target.Path)
 				if err != nil {
 					target.ConnectionStatus = false
 				} else {
-					target.ConnectionStatus = utils.IsValid(target.Path.String())
+					target.ConnectionStatus = utils.IsValid(target.Path)
 				}
 			}
 
@@ -450,7 +439,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.Database.DeleteTarget(nil, types.WrapTargetName(utils.DecodePath(r.PathValue("target"))))
+			err := storeInstance.Database.DeleteTarget(nil, utils.DecodePath(r.PathValue("target")))
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -480,7 +469,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		target, err := storeInstance.Database.GetTarget(types.WrapTargetName(utils.DecodePath(r.PathValue("target"))))
+		target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return

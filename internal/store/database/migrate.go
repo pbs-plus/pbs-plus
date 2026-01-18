@@ -1,6 +1,6 @@
 //go:build linux
 
-package sqlite
+package database
 
 import (
 	"embed"

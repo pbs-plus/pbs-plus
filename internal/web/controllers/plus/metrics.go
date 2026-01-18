@@ -45,10 +45,10 @@ type metrics struct {
 	backupsLastRunFailedTotal           prometheus.Gauge
 	backupsLastRunSuccessTotal          prometheus.Gauge
 	targetsTotal                        prometheus.Gauge
-	targetDriveTotalBytes               *prometheus.GaugeVec
-	targetDriveUsedBytes                *prometheus.GaugeVec
-	targetDriveFreeBytes                *prometheus.GaugeVec
-	targetDriveUsagePercent             *prometheus.GaugeVec
+	targetVolumeTotalBytes              *prometheus.GaugeVec
+	targetVolumeUsedBytes               *prometheus.GaugeVec
+	targetVolumeFreeBytes               *prometheus.GaugeVec
+	targetVolumeUsagePercent            *prometheus.GaugeVec
 	targetBackupCount                   *prometheus.GaugeVec
 	targetInfo                          *prometheus.GaugeVec
 	targetsAgentTotal                   prometheus.Gauge
@@ -195,33 +195,33 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 			Name: "pbsplus_targets_total",
 			Help: "Total number of backup targets",
 		}),
-		targetDriveTotalBytes: prometheus.NewGaugeVec(
+		targetVolumeTotalBytes: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_target_drive_total_bytes",
+				Name: "pbsplus_target_volume_total_bytes",
 				Help: "Total capacity of target drive in bytes",
 			},
-			[]string{"target_name", "drive_name", "drive_type", "drive_fs", "os"},
+			[]string{"target_name", "volume_name", "volume_type", "volume_fs", "os"},
 		),
-		targetDriveUsedBytes: prometheus.NewGaugeVec(
+		targetVolumeUsedBytes: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_target_drive_used_bytes",
+				Name: "pbsplus_target_volume_used_bytes",
 				Help: "Used capacity of target drive in bytes",
 			},
-			[]string{"target_name", "drive_name", "drive_type", "drive_fs", "os"},
+			[]string{"target_name", "volume_name", "volume_type", "volume_fs", "os"},
 		),
-		targetDriveFreeBytes: prometheus.NewGaugeVec(
+		targetVolumeFreeBytes: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_target_drive_free_bytes",
+				Name: "pbsplus_target_volume_free_bytes",
 				Help: "Free capacity of target drive in bytes",
 			},
-			[]string{"target_name", "drive_name", "drive_type", "drive_fs", "os"},
+			[]string{"target_name", "volume_name", "volume_type", "volume_fs", "os"},
 		),
-		targetDriveUsagePercent: prometheus.NewGaugeVec(
+		targetVolumeUsagePercent: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pbsplus_target_drive_usage_percent",
-				Help: "Drive usage percentage (0-100)",
+				Name: "pbsplus_target_volume_usage_percent",
+				Help: "Volume usage percentage (0-100)",
 			},
-			[]string{"target_name", "drive_name", "drive_type", "drive_fs", "os"},
+			[]string{"target_name", "volume_name", "volume_type", "volume_fs", "os"},
 		),
 		targetBackupCount: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -235,7 +235,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 				Name: "pbsplus_target_info",
 				Help: "Target metadata (always 1, use labels for info)",
 			},
-			[]string{"target_name", "path", "auth", "drive_type", "drive_name", "drive_fs", "os", "is_agent", "is_s3"},
+			[]string{"target_name", "path", "auth", "volume_type", "volume_name", "volume_fs", "os", "is_agent", "is_s3"},
 		),
 		targetsAgentTotal: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "pbsplus_targets_agent_total",
@@ -311,10 +311,10 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		m.backupsLastRunFailedTotal,
 		m.backupsLastRunSuccessTotal,
 		m.targetsTotal,
-		m.targetDriveTotalBytes,
-		m.targetDriveUsedBytes,
-		m.targetDriveFreeBytes,
-		m.targetDriveUsagePercent,
+		m.targetVolumeTotalBytes,
+		m.targetVolumeUsedBytes,
+		m.targetVolumeFreeBytes,
+		m.targetVolumeUsagePercent,
 		m.targetBackupCount,
 		m.targetInfo,
 		m.targetsAgentTotal,
@@ -371,7 +371,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 	for _, backup := range backups {
 		labels := prometheus.Labels{
 			"backup_id": backup.ID,
-			"target":    backup.Target.String(),
+			"target":    backup.Target.Name,
 			"store":     backup.Store,
 			"mode":      backup.Mode,
 			"schedule":  backup.Schedule,
@@ -382,15 +382,15 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		// Consider successful if LastRunEndtime == LastSuccessfulEndtime OR if LastRunState == "OK"
 		successValue := float64(-1)
 		isSuccess := false
-		if backup.LastRunEndtime > 0 && backup.LastSuccessfulEndtime > 0 && backup.LastRunEndtime == backup.LastSuccessfulEndtime {
+		if backup.History.LastRunEndtime > 0 && backup.History.LastSuccessfulEndtime > 0 && backup.History.LastRunEndtime == backup.History.LastSuccessfulEndtime {
 			successValue = 1
 			successCount++
 			isSuccess = true
-		} else if backup.LastRunState == "OK" {
+		} else if backup.History.LastRunState == "OK" {
 			successValue = 1
 			successCount++
 			isSuccess = true
-		} else if backup.LastRunEndtime > 0 || backup.LastRunState != "" {
+		} else if backup.History.LastRunEndtime > 0 || backup.History.LastRunState != "" {
 			// If we have a last run but it's not successful, mark as failed
 			successValue = 0
 			failedCount++
@@ -398,33 +398,33 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		m.backupLastRunSuccess.With(labels).Set(successValue)
 
 		// Update target statistics
-		stats := targetStats[backup.Target.String()]
+		stats := targetStats[backup.Target.Name]
 		if isSuccess {
 			stats.successfulCount++
 			// Track the most recent successful timestamp for this target
-			if backup.LastSuccessfulEndtime > stats.lastSuccessfulTimestamp {
-				stats.lastSuccessfulTimestamp = backup.LastSuccessfulEndtime
+			if backup.History.LastSuccessfulEndtime > stats.lastSuccessfulTimestamp {
+				stats.lastSuccessfulTimestamp = backup.History.LastSuccessfulEndtime
 			}
 		} else if successValue == 0 {
 			stats.failedCount++
 		}
-		targetStats[backup.Target.String()] = stats
+		targetStats[backup.Target.Name] = stats
 
 		// Timestamps
-		if backup.LastRunEndtime > 0 {
-			m.backupLastRunTimestamp.With(labels).Set(float64(backup.LastRunEndtime))
+		if backup.History.LastRunEndtime > 0 {
+			m.backupLastRunTimestamp.With(labels).Set(float64(backup.History.LastRunEndtime))
 		}
-		if backup.LastSuccessfulEndtime > 0 {
-			m.backupLastSuccessfulTimestamp.With(labels).Set(float64(backup.LastSuccessfulEndtime))
-			m.backupTimeSinceLastSuccess.With(labels).Set(float64(now - backup.LastSuccessfulEndtime))
+		if backup.History.LastSuccessfulEndtime > 0 {
+			m.backupLastSuccessfulTimestamp.With(labels).Set(float64(backup.History.LastSuccessfulEndtime))
+			m.backupTimeSinceLastSuccess.With(labels).Set(float64(now - backup.History.LastSuccessfulEndtime))
 		}
 		if backup.NextRun > 0 {
 			m.backupNextRunTimestamp.With(labels).Set(float64(backup.NextRun))
 		}
 
 		// Duration
-		if backup.Duration > 0 {
-			m.backupDuration.With(labels).Set(float64(backup.Duration))
+		if backup.History.Duration > 0 {
+			m.backupDuration.With(labels).Set(float64(backup.History.Duration))
 		}
 
 		// Running status
@@ -437,33 +437,33 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 
 		// Queued status
 		isQueued := float64(0)
-		if strings.Contains(backup.LastRunUpid, "pbsplusgen-queue") {
+		if strings.Contains(backup.History.LastRunUpid, "pbsplusgen-queue") {
 			isQueued = 1
 			queuedCount++
 		}
 		m.backupQueued.With(labels).Set(isQueued)
 
 		// Size metrics
-		if backup.ExpectedSize > 0 {
-			m.backupExpectedSize.With(labels).Set(float64(backup.ExpectedSize))
+		if backup.Target.VolumeUsedBytes > 0 {
+			m.backupExpectedSize.With(labels).Set(float64(backup.Target.VolumeUsedBytes))
 		}
-		if backup.CurrentBytesTotal > 0 {
-			m.backupCurrentBytesTotal.With(labels).Set(float64(backup.CurrentBytesTotal))
+		if backup.CurrentStats.CurrentBytesTotal > 0 {
+			m.backupCurrentBytesTotal.With(labels).Set(float64(backup.CurrentStats.CurrentBytesTotal))
 		}
-		if backup.CurrentBytesSpeed > 0 {
-			m.backupCurrentBytesSpeed.With(labels).Set(float64(backup.CurrentBytesSpeed))
+		if backup.CurrentStats.CurrentBytesSpeed > 0 {
+			m.backupCurrentBytesSpeed.With(labels).Set(float64(backup.CurrentStats.CurrentBytesSpeed))
 		}
-		if backup.CurrentFilesSpeed > 0 {
-			m.backupCurrentFilesSpeed.With(labels).Set(float64(backup.CurrentFilesSpeed))
+		if backup.CurrentStats.CurrentFilesSpeed > 0 {
+			m.backupCurrentFilesSpeed.With(labels).Set(float64(backup.CurrentStats.CurrentFilesSpeed))
 		}
-		if backup.CurrentFileCount > 0 {
-			m.backupCurrentFileCount.With(labels).Set(float64(backup.CurrentFileCount))
+		if backup.CurrentStats.CurrentFileCount > 0 {
+			m.backupCurrentFileCount.With(labels).Set(float64(backup.CurrentStats.CurrentFileCount))
 		}
-		if backup.CurrentFolderCount > 0 {
-			m.backupCurrentFolderCount.With(labels).Set(float64(backup.CurrentFolderCount))
+		if backup.CurrentStats.CurrentFolderCount > 0 {
+			m.backupCurrentFolderCount.With(labels).Set(float64(backup.CurrentStats.CurrentFolderCount))
 		}
-		if backup.LatestSnapshotSize > 0 {
-			m.backupLatestSnapshotSize.With(labels).Set(float64(backup.LatestSnapshotSize))
+		if backup.History.LatestSnapshotSize > 0 {
+			m.backupLatestSnapshotSize.With(labels).Set(float64(backup.History.LatestSnapshotSize))
 		}
 	}
 
@@ -510,40 +510,40 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 
 	for _, target := range targets {
 		driveLabels := prometheus.Labels{
-			"target_name": target.Name.String(),
-			"drive_name":  target.DriveName,
-			"drive_type":  target.DriveType,
-			"drive_fs":    target.DriveFS,
-			"os":          target.OperatingSystem,
+			"target_name": target.Name,
+			"volume_name": target.VolumeName,
+			"volume_type": target.VolumeType,
+			"volume_fs":   target.VolumeFS,
+			"os":          target.AgentHost.OperatingSystem,
 		}
 
-		currentTargetLabels[target.Name.String()+"-"+target.DriveName] = driveLabels
+		currentTargetLabels[target.Name+"-"+target.VolumeName] = driveLabels
 
-		// Drive capacity metrics
-		if target.DriveTotalBytes > 0 {
-			m.targetDriveTotalBytes.With(driveLabels).Set(float64(target.DriveTotalBytes))
+		// Volume capacity metrics
+		if target.VolumeTotalBytes > 0 {
+			m.targetVolumeTotalBytes.With(driveLabels).Set(float64(target.VolumeTotalBytes))
 		}
-		if target.DriveUsedBytes > 0 {
-			m.targetDriveUsedBytes.With(driveLabels).Set(float64(target.DriveUsedBytes))
+		if target.VolumeUsedBytes > 0 {
+			m.targetVolumeUsedBytes.With(driveLabels).Set(float64(target.VolumeUsedBytes))
 		}
-		if target.DriveFreeBytes > 0 {
-			m.targetDriveFreeBytes.With(driveLabels).Set(float64(target.DriveFreeBytes))
+		if target.VolumeFreeBytes > 0 {
+			m.targetVolumeFreeBytes.With(driveLabels).Set(float64(target.VolumeFreeBytes))
 		}
 
 		// Calculate usage percentage
-		if target.DriveTotalBytes > 0 {
-			usagePercent := float64(target.DriveUsedBytes) / float64(target.DriveTotalBytes) * 100
-			m.targetDriveUsagePercent.With(driveLabels).Set(usagePercent)
+		if target.VolumeTotalBytes > 0 {
+			usagePercent := float64(target.VolumeUsedBytes) / float64(target.VolumeTotalBytes) * 100
+			m.targetVolumeUsagePercent.With(driveLabels).Set(usagePercent)
 		}
 
 		// Backup count
 		backupCountLabels := prometheus.Labels{
-			"target_name": target.Name.String(),
+			"target_name": target.Name,
 		}
 		m.targetBackupCount.With(backupCountLabels).Set(float64(target.JobCount))
 
 		// Target-specific backup statistics
-		if stats, exists := targetStats[target.Name.String()]; exists {
+		if stats, exists := targetStats[target.Name]; exists {
 			if stats.lastSuccessfulTimestamp > 0 {
 				m.targetLastSuccessfulBackupTimestamp.With(backupCountLabels).Set(float64(stats.lastSuccessfulTimestamp))
 				m.targetTimeSinceLastSuccessfulBackup.With(backupCountLabels).Set(float64(now - stats.lastSuccessfulTimestamp))
@@ -566,42 +566,41 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 
 		// Target info (metadata)
 		isAgent := "false"
-		if target.Path.IsAgent() {
+		if target.IsAgent() {
 			isAgent = "true"
 			agentCount++
 		}
 		isS3 := "false"
-		if target.Path.IsS3() {
+		if target.IsS3() {
 			isS3 = "true"
 			s3Count++
 		}
-		if !target.Path.IsAgent() && !target.Path.IsS3() {
+		if target.IsLocal() {
 			localCount++
 		}
 
 		infoLabels := prometheus.Labels{
-			"target_name": target.Name.String(),
-			"path":        target.Path.String(),
-			"auth":        target.Auth,
-			"drive_type":  target.DriveType,
-			"drive_name":  target.DriveName,
-			"drive_fs":    target.DriveFS,
-			"os":          target.OperatingSystem,
+			"target_name": target.Name,
+			"path":        target.Path,
+			"volume_type": target.VolumeType,
+			"volume_name": target.VolumeName,
+			"volume_fs":   target.VolumeFS,
+			"os":          target.AgentHost.OperatingSystem,
 			"is_agent":    isAgent,
 			"is_s3":       isS3,
 		}
 
-		currentTargetInfoLabels[target.Name.String()+"-"+target.DriveName] = infoLabels
+		currentTargetInfoLabels[target.Name+"-"+target.VolumeName] = infoLabels
 		m.targetInfo.With(infoLabels).Set(1)
 	}
 
 	// Delete metrics for targets that no longer exist
 	for targetKey, labels := range m.previousTargetLabels {
 		if _, exists := currentTargetLabels[targetKey]; !exists {
-			m.targetDriveTotalBytes.Delete(labels)
-			m.targetDriveUsedBytes.Delete(labels)
-			m.targetDriveFreeBytes.Delete(labels)
-			m.targetDriveUsagePercent.Delete(labels)
+			m.targetVolumeTotalBytes.Delete(labels)
+			m.targetVolumeUsedBytes.Delete(labels)
+			m.targetVolumeFreeBytes.Delete(labels)
+			m.targetVolumeUsagePercent.Delete(labels)
 
 			if infoLabels, exists := m.previousTargetInfoLabels[targetKey]; exists {
 				m.targetInfo.Delete(infoLabels)

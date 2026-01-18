@@ -36,15 +36,15 @@ Ext.define("PBS.form.D2DTargetSelector", {
         renderer: Ext.String.htmlEncode,
       },
       {
-        text: "Path",
-        dataIndex: "path",
+        text: "Agent Host",
+        dataIndex: "agent_hostname",
         sortable: true,
         flex: 3,
         renderer: Ext.String.htmlEncode,
       },
       {
-        text: "Type",
-        dataIndex: "drive_type",
+        text: "Path",
+        dataIndex: "path",
         sortable: true,
         flex: 3,
         renderer: Ext.String.htmlEncode,
@@ -52,7 +52,7 @@ Ext.define("PBS.form.D2DTargetSelector", {
     ],
   },
 
-  initComponent: function() {
+  initComponent: function () {
     let me = this;
 
     if (me.changer) {
