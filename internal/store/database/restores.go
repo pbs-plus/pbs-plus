@@ -42,7 +42,7 @@ func (database *Database) generateUniqueRestoreID(restore Restore) (string, erro
 	return "", fmt.Errorf("failed to generate a unique restore ID after %d attempts", maxAttempts)
 }
 
-func (database *Database) CreateRestore(tx *sql.Tx, restore Restore) (err error) {
+func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -70,7 +70,7 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore Restore) (err error)
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	if restore.ID == "" {
@@ -212,7 +212,7 @@ func (database *Database) populateRestoreExtras(restore *Restore) {
 	}
 }
 
-func (database *Database) UpdateRestore(tx *sql.Tx, restore Restore) (err error) {
+func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -240,7 +240,7 @@ func (database *Database) UpdateRestore(tx *sql.Tx, restore Restore) (err error)
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	// Validation
@@ -446,7 +446,7 @@ func (database *Database) GetAllQueuedRestores() ([]Restore, error) {
 	return restores, nil
 }
 
-func (database *Database) DeleteRestore(tx *sql.Tx, id string) (err error) {
+func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -474,7 +474,7 @@ func (database *Database) DeleteRestore(tx *sql.Tx, id string) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	rowsAffected, err := q.DeleteRestore(database.ctx, id)

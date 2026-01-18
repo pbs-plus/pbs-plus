@@ -43,7 +43,7 @@ func (database *Database) generateUniqueJobId(backup Backup) (string, error) {
 	return "", fmt.Errorf("failed to generate a unique backup ID after %d attempts", maxAttempts)
 }
 
-func (database *Database) CreateBackup(tx *sql.Tx, backup Backup) (err error) {
+func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -71,7 +71,7 @@ func (database *Database) CreateBackup(tx *sql.Tx, backup Backup) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	if backup.ID == "" {
@@ -276,7 +276,7 @@ func (database *Database) populateBackupExtras(backup *Backup) {
 	}
 }
 
-func (database *Database) UpdateBackup(tx *sql.Tx, backup Backup) (err error) {
+func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -304,7 +304,7 @@ func (database *Database) UpdateBackup(tx *sql.Tx, backup Backup) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	// Validation
@@ -604,7 +604,7 @@ func (database *Database) GetAllQueuedBackups() ([]Backup, error) {
 	return backups, nil
 }
 
-func (database *Database) DeleteBackup(tx *sql.Tx, id string) (err error) {
+func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -632,7 +632,7 @@ func (database *Database) DeleteBackup(tx *sql.Tx, id string) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	err = q.DeleteBackupExclusions(database.ctx, toNullString(id))

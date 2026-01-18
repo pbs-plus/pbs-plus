@@ -12,7 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func (database *Database) CreateAgentHost(tx *sql.Tx, host AgentHost) (err error) {
+func (database *Database) CreateAgentHost(tx *Transaction, host AgentHost) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -40,7 +40,7 @@ func (database *Database) CreateAgentHost(tx *sql.Tx, host AgentHost) (err error
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	err = q.CreateAgentHost(database.ctx, sqlc.CreateAgentHostParams{
@@ -66,7 +66,7 @@ func (database *Database) CreateAgentHost(tx *sql.Tx, host AgentHost) (err error
 	return nil
 }
 
-func (database *Database) UpdateAgentHost(tx *sql.Tx, host AgentHost) (err error) {
+func (database *Database) UpdateAgentHost(tx *Transaction, host AgentHost) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -94,7 +94,7 @@ func (database *Database) UpdateAgentHost(tx *sql.Tx, host AgentHost) (err error
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	err = q.UpdateAgentHost(database.ctx, sqlc.UpdateAgentHostParams{

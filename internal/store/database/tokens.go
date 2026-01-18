@@ -176,12 +176,12 @@ func (database *Database) pruneOldTokensKeepLastValid(keep int) error {
 		return nil
 	}
 
-	tx, err := database.writeDb.Begin()
+	tx, err := database.NewTransaction()
 	if err != nil {
 		return fmt.Errorf("pruneOldTokensKeepLastValid: begin tx: %w", err)
 	}
 
-	qtx := database.queries.WithTx(tx)
+	qtx := database.queries.WithTx(tx.Tx)
 	for _, t := range toDelete {
 		if err := qtx.DeleteToken(database.ctx, t); err != nil {
 			_ = tx.Rollback()
