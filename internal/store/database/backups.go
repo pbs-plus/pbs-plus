@@ -210,11 +210,11 @@ func (database *Database) GetBackup(id string) (Backup, error) {
 			VolumeUsed:       row.VolumeUsed.String,
 			VolumeFree:       row.VolumeFree.String,
 		},
-		Subpath:          interfaceToString(row.Subpath),
-		Schedule:         interfaceToString(row.Schedule),
-		Comment:          interfaceToString(row.Comment),
-		NotificationMode: interfaceToString(row.NotificationMode),
-		Namespace:        interfaceToString(row.Namespace),
+		Subpath:          row.Subpath.String,
+		Schedule:         row.Schedule.String,
+		Comment:          row.Comment.String,
+		NotificationMode: row.NotificationMode.String,
+		Namespace:        row.Namespace.String,
 		CurrentPID:       fromNullStringToInt(row.CurrentPid),
 		History: JobHistory{
 			LastRunUpid:        fromNullString(row.LastRunUpid),
@@ -495,11 +495,11 @@ func (database *Database) GetAllBackups() ([]Backup, error) {
 				VolumeUsed:       row.VolumeUsed.String,
 				VolumeFree:       row.VolumeFree.String,
 			},
-			Subpath:          interfaceToString(row.Subpath),
-			Schedule:         interfaceToString(row.Schedule),
-			Comment:          interfaceToString(row.Comment),
-			NotificationMode: interfaceToString(row.NotificationMode),
-			Namespace:        interfaceToString(row.Namespace),
+			Subpath:          row.Subpath.String,
+			Schedule:         row.Schedule.String,
+			Comment:          row.Comment.String,
+			NotificationMode: row.NotificationMode.String,
+			Namespace:        row.Namespace.String,
 			CurrentPID:       fromNullStringToInt(row.CurrentPid),
 			History: JobHistory{
 				LastRunUpid:        fromNullString(row.LastRunUpid),
@@ -567,11 +567,11 @@ func (database *Database) GetAllQueuedBackups() ([]Backup, error) {
 				MountScript:     row.MountScript.String,
 				VolumeUsedBytes: int(row.VolumeUsedBytes.Int64),
 			},
-			Subpath:          interfaceToString(row.Subpath),
-			Schedule:         interfaceToString(row.Schedule),
-			Comment:          interfaceToString(row.Comment),
-			NotificationMode: interfaceToString(row.NotificationMode),
-			Namespace:        interfaceToString(row.Namespace),
+			Subpath:          row.Subpath.String,
+			Schedule:         row.Schedule.String,
+			Comment:          row.Comment.String,
+			NotificationMode: row.NotificationMode.String,
+			Namespace:        row.Namespace.String,
 			CurrentPID:       fromNullStringToInt(row.CurrentPid),
 			History: JobHistory{
 				LastRunUpid:        fromNullString(row.LastRunUpid),
@@ -682,4 +682,3 @@ func (b *Backup) GetStreamID() string {
 
 	return b.Target.AgentHost.Name + "|" + b.ID
 }
-
