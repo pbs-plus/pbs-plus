@@ -140,7 +140,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			OperatingSystem: reqParsed.OperatingSystem,
 		}
 
-		err = storeInstance.Database.CreateAgentHost(nil, host)
+		err = storeInstance.Database.CreateAgentHost(tx, host)
 		if err != nil {
 			tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
