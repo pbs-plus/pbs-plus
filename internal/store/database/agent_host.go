@@ -53,11 +53,10 @@ func (database *Database) CreateAgentHost(tx *Transaction, host AgentHost) (err 
 
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			err = database.UpdateAgentHost(tx, host)
-			if err == nil {
-				commitNeeded = true
+			if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+				return fmt.Errorf("CreateAgentHost: failed to rollback before update: %w", rbErr)
 			}
-			return err
+			return database.UpdateAgentHost(nil, host)
 		}
 		return fmt.Errorf("CreateAgentHost: error inserting agent host: %w", err)
 	}

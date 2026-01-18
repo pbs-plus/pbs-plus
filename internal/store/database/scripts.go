@@ -53,11 +53,10 @@ func (database *Database) CreateScript(tx *Transaction, script Script) (err erro
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			err = database.UpdateScript(tx, script)
-			if err == nil {
-				commitNeeded = true
+			if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+				return fmt.Errorf("CreateScript: failed to rollback before update: %w", rbErr)
 			}
-			return err
+			return database.UpdateScript(nil, script)
 		}
 		return fmt.Errorf("CreateScript: error inserting script: %w", err)
 	}
