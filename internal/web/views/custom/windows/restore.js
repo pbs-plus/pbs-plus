@@ -182,7 +182,7 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
             xtype: "pbsD2DTargetPathSelector",
             fieldLabel: gettext("Path to destination"),
             reference: "pathSelectorDestination",
-            name: "dest-path",
+            name: "dest-subpath",
           },
         ],
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ func UpdateDrives() error {
 	reqBody, err := json.Marshal(map[string]any{
 		"hostname": hostname,
 		"drives":   drives,
+		"os":       runtime.GOOS,
 	})
 	if err != nil {
 		return err

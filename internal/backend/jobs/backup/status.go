@@ -7,14 +7,14 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var backupMutexes sync.Map
 
-func updateBackupStatus(succeeded bool, warningsNum int, backup types.Backup, task proxmox.Task, storeInstance *store.Store) error {
+func updateBackupStatus(succeeded bool, warningsNum int, backup database.Backup, task proxmox.Task, storeInstance *store.Store) error {
 	value, _ := backupMutexes.LoadOrStore(backup.ID, &sync.Mutex{})
 	mu := value.(*sync.Mutex)
 
@@ -34,17 +34,17 @@ func updateBackupStatus(succeeded bool, warningsNum int, backup types.Backup, ta
 	}
 
 	latestBackup.CurrentPID = backup.CurrentPID
-	latestBackup.LastRunUpid = taskFound.UPID
-	latestBackup.LastRunState = taskFound.Status
-	latestBackup.LastRunEndtime = taskFound.EndTime
+	latestBackup.History.LastRunUpid = taskFound.UPID
+	latestBackup.History.LastRunState = taskFound.Status
+	latestBackup.History.LastRunEndtime = taskFound.EndTime
 
 	if warningsNum > 0 && succeeded {
-		latestBackup.LastRunState = fmt.Sprintf("WARNINGS: %d", warningsNum)
+		latestBackup.History.LastRunState = fmt.Sprintf("WARNINGS: %d", warningsNum)
 	}
 
 	if succeeded {
-		latestBackup.LastSuccessfulUpid = taskFound.UPID
-		latestBackup.LastSuccessfulEndtime = task.EndTime
+		latestBackup.History.LastSuccessfulUpid = taskFound.UPID
+		latestBackup.History.LastSuccessfulEndtime = task.EndTime
 	}
 
 	if err := storeInstance.Database.UpdateBackup(nil, latestBackup); err != nil {

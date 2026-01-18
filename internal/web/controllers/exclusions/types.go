@@ -2,19 +2,17 @@
 
 package exclusions
 
-import (
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
-)
+import "github.com/pbs-plus/pbs-plus/internal/store/database"
 
 type ExclusionsResponse struct {
-	Data   []types.Exclusion `json:"data"`
-	Digest string            `json:"digest"`
+	Data   []database.Exclusion `json:"data"`
+	Digest string               `json:"digest"`
 }
 
 type ExclusionConfigResponse struct {
-	Errors  map[string]string `json:"errors"`
-	Message string            `json:"message"`
-	Data    *types.Exclusion  `json:"data"`
-	Status  int               `json:"status"`
-	Success bool              `json:"success"`
+	Errors  map[string]string   `json:"errors"`
+	Message string              `json:"message"`
+	Data    *database.Exclusion `json:"data"`
+	Status  int                 `json:"status"`
+	Success bool                `json:"success"`
 }

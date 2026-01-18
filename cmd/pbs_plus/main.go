@@ -27,7 +27,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/system"
+	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web"
@@ -158,7 +158,7 @@ func main() {
 			}
 
 			if retryAttempts == nil || *retryAttempts == "" {
-				system.RemoveAllRetrySchedules(context.Background(), backupTask)
+				backupTask.RemoveAllRetrySchedules(context.Background())
 			}
 
 			arrExtExc := []string(extExclusions)
@@ -239,17 +239,17 @@ func main() {
 	tx, err := storeInstance.Database.NewTransaction()
 	if err == nil {
 		for _, queuedBackup := range queuedBackups {
-			task, err := proxmox.GenerateBackupTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
+			task, err := tasks.GenerateBackupTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
 			if err != nil {
 				continue
 			}
 
-			queueTaskPath, err := proxmox.GetLogPath(queuedBackup.LastRunUpid)
+			queueTaskPath, err := proxmox.GetLogPath(queuedBackup.History.LastRunUpid)
 			if err == nil {
 				os.Remove(queueTaskPath)
 			}
 
-			queuedBackup.LastRunUpid = task.UPID
+			queuedBackup.History.LastRunUpid = task.UPID
 			err = storeInstance.Database.UpdateBackup(tx, queuedBackup)
 			if err != nil {
 				continue

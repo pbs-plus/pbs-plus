@@ -1,9 +1,8 @@
 //go:build linux
 
-package sqlite
+package database
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -13,17 +12,14 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/system"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
-	_ "modernc.org/sqlite"
 )
 
-// generateUniqueJobId produces a unique backup id based on the backup’s target.
-func (database *Database) generateUniqueJobId(backup types.Backup) (string, error) {
-	baseID := utils.Slugify(backup.Target.String())
+func (database *Database) generateUniqueJobId(backup Backup) (string, error) {
+	baseID := utils.Slugify(backup.Target.Name)
 	if baseID == "" {
 		return "", fmt.Errorf("invalid target: slugified value is empty")
 	}
@@ -35,51 +31,47 @@ func (database *Database) generateUniqueJobId(backup types.Backup) (string, erro
 		} else {
 			newID = fmt.Sprintf("%s-%d", baseID, idx)
 		}
-		var exists int
-		err := database.readDb.
-			QueryRow("SELECT 1 FROM backups WHERE id = ? LIMIT 1", newID).
-			Scan(&exists)
 
+		_, err := database.readQueries.BackupExists(database.ctx, newID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return newID, nil
 		}
 		if err != nil {
-			return "", fmt.Errorf(
-				"generateUniqueJobId: error checking backup existence: %w", err)
+			return "", fmt.Errorf("generateUniqueJobId: error checking backup existence: %w", err)
 		}
 	}
-	return "", fmt.Errorf("failed to generate a unique backup ID after %d attempts",
-		maxAttempts)
+	return "", fmt.Errorf("failed to generate a unique backup ID after %d attempts", maxAttempts)
 }
 
-// CreateBackup creates a new backup record and adds any associated exclusions.
-func (database *Database) CreateBackup(tx *sql.Tx, backup types.Backup) (err error) {
+func (database *Database) CreateBackup(tx *sql.Tx, backup Backup) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("CreateBackup: failed to begin transaction: %w", err)
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback() // Rollback on panic
-				panic(p)          // Re-panic after rollback
+				_ = tx.Rollback()
+				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
 					syslog.L.Error(fmt.Errorf("CreateBackup: failed to rollback transaction: %w", rbErr)).Write()
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
-					err = fmt.Errorf("CreateBackup: failed to commit transaction: %w", cErr) // Assign commit error back
+					err = fmt.Errorf("CreateBackup: failed to commit transaction: %w", cErr)
 					syslog.L.Error(err).Write()
 				}
 			} else {
-				// Rollback if commit isn't explicitly needed (e.g., early return without error)
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
 					syslog.L.Error(fmt.Errorf("CreateBackup: failed to rollback transaction: %w", rbErr)).Write()
 				}
 			}
 		}()
+		q = database.queries.WithTx(tx)
 	}
 
 	if backup.ID == "" {
@@ -90,7 +82,8 @@ func (database *Database) CreateBackup(tx *sql.Tx, backup types.Backup) (err err
 		backup.ID = id
 	}
 
-	if backup.Target.String() == "" {
+	// Validation
+	if backup.Target.Name == "" {
 		return errors.New("target is empty")
 	}
 	if backup.Store == "" {
@@ -108,6 +101,7 @@ func (database *Database) CreateBackup(tx *sql.Tx, backup types.Backup) (err err
 	if !utils.IsValidPathString(backup.Subpath) {
 		return fmt.Errorf("invalid subpath string: %s", backup.Subpath)
 	}
+
 	if backup.RetryInterval <= 0 {
 		backup.RetryInterval = 1
 	}
@@ -124,16 +118,29 @@ func (database *Database) CreateBackup(tx *sql.Tx, backup types.Backup) (err err
 		backup.SourceMode = "snapshot"
 	}
 
-	_, err = tx.Exec(`
-        INSERT INTO backups (
-            id, store, mode, source_mode, read_mode, target, subpath, schedule, comment,
-            notification_mode, namespace, current_pid, last_run_upid, last_successful_upid, retry,
-            retry_interval, max_dir_entries, pre_script, post_script, include_xattr, legacy_xattr
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, backup.ID, backup.Store, backup.Mode, backup.SourceMode, backup.ReadMode, backup.Target, backup.Subpath,
-		backup.Schedule, backup.Comment, backup.NotificationMode, backup.Namespace, backup.CurrentPID,
-		backup.LastRunUpid, backup.LastSuccessfulUpid, backup.Retry, backup.RetryInterval,
-		backup.MaxDirEntries, backup.PreScript, backup.PostScript, backup.IncludeXattr, backup.LegacyXattr)
+	err = q.CreateBackup(database.ctx, sqlc.CreateBackupParams{
+		ID:                 backup.ID,
+		Store:              backup.Store,
+		Mode:               toNullString(backup.Mode),
+		SourceMode:         toNullString(backup.SourceMode),
+		ReadMode:           toNullString(backup.ReadMode),
+		Target:             backup.Target.Name,
+		Subpath:            toNullString(backup.Subpath),
+		Schedule:           toNullString(backup.Schedule),
+		Comment:            toNullString(backup.Comment),
+		NotificationMode:   toNullString(backup.NotificationMode),
+		Namespace:          toNullString(backup.Namespace),
+		CurrentPid:         intToNullString(backup.CurrentPID),
+		LastRunUpid:        toNullString(backup.History.LastRunUpid),
+		LastSuccessfulUpid: toNullString(backup.History.LastSuccessfulUpid),
+		Retry:              toNullInt64(backup.Retry),
+		RetryInterval:      toNullInt64(backup.RetryInterval),
+		MaxDirEntries:      toNullInt64(backup.MaxDirEntries),
+		PreScript:          backup.PreScript,
+		PostScript:         backup.PostScript,
+		IncludeXattr:       sql.NullInt64{Int64: boolToInt64(backup.IncludeXattr), Valid: true},
+		LegacyXattr:        sql.NullInt64{Int64: boolToInt64(backup.LegacyXattr), Valid: true},
+	})
 	if err != nil {
 		return fmt.Errorf("CreateBackup: error inserting backup: %w", err)
 	}
@@ -142,104 +149,101 @@ func (database *Database) CreateBackup(tx *sql.Tx, backup types.Backup) (err err
 		if exclusion.JobId == "" {
 			exclusion.JobId = backup.ID
 		}
-		// Assuming CreateExclusion uses the provided tx
-		if err = database.CreateExclusion(tx, exclusion); err != nil {
+		err = q.CreateExclusion(database.ctx, sqlc.CreateExclusionParams{
+			JobID:   toNullString(exclusion.JobId),
+			Path:    exclusion.Path,
+			Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
+		})
+		if err != nil {
 			syslog.L.Error(fmt.Errorf("CreateBackup: failed to create exclusion: %w", err)).
 				WithField("backup_id", backup.ID).
 				WithField("path", exclusion.Path).
 				Write()
-			// Return the first error encountered during exclusion creation
 			return fmt.Errorf("CreateBackup: failed to create exclusion '%s': %w", exclusion.Path, err)
 		}
 	}
 
-	if err = system.SetSchedule(database.ctx, backup); err != nil {
+	if err = backup.setSchedule(database.ctx); err != nil {
 		syslog.L.Error(fmt.Errorf("CreateBackup: failed to set schedule: %w", err)).
 			WithField("id", backup.ID).
 			Write()
-		// Decide if schedule setting failure should rollback the DB transaction
-		// return fmt.Errorf("CreateBackup: failed to set schedule: %w", err) // Uncomment to rollback
 	}
 
 	commitNeeded = true
 	return nil
 }
 
-// GetBackup retrieves a backup by id and assembles its exclusions.
-func (database *Database) GetBackup(id string) (types.Backup, error) {
-	query := `
-        SELECT
-            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
-            j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
-            e.path,
-            t.drive_used_bytes, t.mount_script, j.include_xattr, j.legacy_xattr
-        FROM backups j
-        LEFT JOIN exclusions e ON j.id = e.job_id
-        LEFT JOIN targets t ON j.target = t.name
-        WHERE j.id = ?
-    `
-	rows, err := database.readDb.Query(query, id)
+func (database *Database) GetBackup(id string) (Backup, error) {
+	row, err := database.readQueries.GetBackup(database.ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Backup{}, ErrBackupNotFound
+	}
 	if err != nil {
-		return types.Backup{}, fmt.Errorf("GetBackup: error querying backup data: %w", err)
-	}
-	defer rows.Close()
-
-	var backup types.Backup
-	var exclusionPaths []string
-	var found bool = false
-
-	for rows.Next() {
-		found = true
-		var exclusionPath sql.NullString
-		var driveUsedBytes sql.NullInt64
-		var mountScript sql.NullString
-
-		err := rows.Scan(
-			&backup.ID, &backup.Store, &backup.Mode, &backup.SourceMode, &backup.ReadMode,
-			&backup.Target, &backup.Subpath, &backup.Schedule, &backup.Comment,
-			&backup.NotificationMode, &backup.Namespace, &backup.CurrentPID, &backup.LastRunUpid,
-			&backup.LastSuccessfulUpid, &backup.Retry, &backup.RetryInterval, &backup.MaxDirEntries,
-			&backup.PreScript, &backup.PostScript, &exclusionPath, &driveUsedBytes,
-			&mountScript, &backup.IncludeXattr, &backup.LegacyXattr,
-		)
-		if err != nil {
-			syslog.L.Error(fmt.Errorf("GetBackup: error scanning backup data: %w", err)).
-				WithField("id", id).
-				Write()
-			return types.Backup{}, fmt.Errorf("GetBackup: error scanning backup data for id %s: %w", id, err)
-		}
-
-		if mountScript.Valid {
-			backup.TargetMountScript = mountScript.String
-		} else {
-			// Optionally, handle the NULL case, e.g., set to an empty string
-			backup.TargetMountScript = ""
-		}
-
-		if exclusionPath.Valid && exclusionPath.String != "" {
-			exclusionPaths = append(exclusionPaths, exclusionPath.String)
-		}
-		// Only set ExpectedSize once from the first row (or any row) where it's valid
-		if driveUsedBytes.Valid && backup.ExpectedSize == 0 {
-			backup.ExpectedSize = int(driveUsedBytes.Int64)
-		}
+		return Backup{}, fmt.Errorf("GetBackup: error querying backup: %w", err)
 	}
 
-	if err = rows.Err(); err != nil {
-		return types.Backup{}, fmt.Errorf("GetBackup: error iterating backup results: %w", err)
+	backup := Backup{
+		ID:         row.ID,
+		Store:      row.Store,
+		Mode:       interfaceToString(row.Mode),
+		SourceMode: interfaceToString(row.SourceMode),
+		ReadMode:   interfaceToString(row.ReadMode),
+		Target: Target{
+			Name: row.Target,
+			Path: row.Path.String,
+			AgentHost: AgentHost{
+				Name:            row.AgentName.String,
+				IP:              row.AgentIp.String,
+				Auth:            row.AgentAuth.String,
+				TokenUsed:       row.AgentTokenUsed.String,
+				OperatingSystem: row.AgentOs.String,
+			},
+			VolumeID:         row.VolumeID.String,
+			MountScript:      row.MountScript.String,
+			VolumeType:       row.VolumeType.String,
+			VolumeName:       row.VolumeName.String,
+			VolumeFS:         row.VolumeFs.String,
+			VolumeTotalBytes: int(row.VolumeTotalBytes.Int64),
+			VolumeUsedBytes:  int(row.VolumeUsedBytes.Int64),
+			VolumeFreeBytes:  int(row.VolumeFreeBytes.Int64),
+			VolumeTotal:      row.VolumeTotal.String,
+			VolumeUsed:       row.VolumeUsed.String,
+			VolumeFree:       row.VolumeFree.String,
+		},
+		Subpath:          interfaceToString(row.Subpath),
+		Schedule:         interfaceToString(row.Schedule),
+		Comment:          interfaceToString(row.Comment),
+		NotificationMode: interfaceToString(row.NotificationMode),
+		Namespace:        interfaceToString(row.Namespace),
+		CurrentPID:       fromNullStringToInt(row.CurrentPid),
+		History: JobHistory{
+			LastRunUpid:        fromNullString(row.LastRunUpid),
+			LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+		},
+		Retry:         fromNullInt64(row.Retry),
+		RetryInterval: fromNullInt64(row.RetryInterval),
+		MaxDirEntries: fromNullInt64(row.MaxDirEntries),
+		PreScript:     row.PreScript,
+		PostScript:    row.PostScript,
+		IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
+		LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
 	}
 
-	if !found {
-		return types.Backup{}, ErrBackupNotFound
+	exclusions, err := database.readQueries.GetBackupExclusions(database.ctx, toNullString(id))
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Backup{}, fmt.Errorf("GetBackup: error getting exclusions: %w", err)
 	}
 
-	backup.Exclusions = make([]types.Exclusion, 0, len(exclusionPaths))
-	for _, path := range exclusionPaths {
-		backup.Exclusions = append(backup.Exclusions, types.Exclusion{
-			JobId: backup.ID,
-			Path:  path,
-		})
+	backup.Target.populateInfo()
+
+	backup.Exclusions = make([]Exclusion, len(exclusions))
+	exclusionPaths := make([]string, len(exclusions))
+	for i, excl := range exclusions {
+		backup.Exclusions[i] = Exclusion{
+			JobId: excl.JobID.String,
+			Path:  excl.Path,
+		}
+		exclusionPaths[i] = excl.Path
 	}
 	backup.RawExclusions = strings.Join(exclusionPaths, "\n")
 
@@ -248,36 +252,36 @@ func (database *Database) GetBackup(id string) (types.Backup, error) {
 	return backup, nil
 }
 
-// populateBackupExtras fills in details not directly from the database tables.
-func (database *Database) populateBackupExtras(backup *types.Backup) {
-	if backup.LastRunUpid != "" {
-		task, err := proxmox.GetTaskByUPID(backup.LastRunUpid)
+func (database *Database) populateBackupExtras(backup *Backup) {
+	if backup.History.LastRunUpid != "" {
+		task, err := proxmox.GetTaskByUPID(backup.History.LastRunUpid)
 		if err == nil {
-			backup.LastRunEndtime = task.EndTime
+			backup.History.LastRunEndtime = task.EndTime
 			if task.Status == "stopped" {
-				backup.LastRunState = task.ExitStatus
-				backup.Duration = task.EndTime - task.StartTime
+				backup.History.LastRunState = task.ExitStatus
+				backup.History.Duration = task.EndTime - task.StartTime
 			} else if task.StartTime > 0 {
-				backup.Duration = time.Now().Unix() - task.StartTime
+				backup.History.Duration = time.Now().Unix() - task.StartTime
 			}
 		}
 	}
-	if backup.LastSuccessfulUpid != "" {
-		if successTask, err := proxmox.GetTaskByUPID(backup.LastSuccessfulUpid); err == nil {
-			backup.LastSuccessfulEndtime = successTask.EndTime
+	if backup.History.LastSuccessfulUpid != "" {
+		if successTask, err := proxmox.GetTaskByUPID(backup.History.LastSuccessfulUpid); err == nil {
+			backup.History.LastSuccessfulEndtime = successTask.EndTime
 		}
 	}
 
-	if nextSchedule, err := system.GetNextSchedule(database.ctx, *backup); err == nil && nextSchedule != nil {
+	if nextSchedule, err := backup.getNextSchedule(database.ctx); err == nil && nextSchedule != nil {
 		backup.NextRun = nextSchedule.Unix()
 	}
 }
 
-// UpdateBackup updates an existing backup and its exclusions.
-func (database *Database) UpdateBackup(tx *sql.Tx, backup types.Backup) (err error) {
+func (database *Database) UpdateBackup(tx *sql.Tx, backup Backup) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("UpdateBackup: failed to begin transaction: %w", err)
 		}
@@ -300,12 +304,14 @@ func (database *Database) UpdateBackup(tx *sql.Tx, backup types.Backup) (err err
 				}
 			}
 		}()
+		q = database.queries.WithTx(tx)
 	}
 
+	// Validation
 	if !utils.IsValidID(backup.ID) && backup.ID != "" {
 		return fmt.Errorf("UpdateBackup: invalid id string -> %s", backup.ID)
 	}
-	if backup.Target.String() == "" {
+	if backup.Target.Name == "" {
 		return errors.New("target is empty")
 	}
 	if backup.Store == "" {
@@ -333,30 +339,45 @@ func (database *Database) UpdateBackup(tx *sql.Tx, backup types.Backup) (err err
 		backup.SourceMode = "snapshot"
 	}
 
-	_, err = tx.Exec(`
-        UPDATE backups SET store = ?, mode = ?, source_mode = ?, read_mode = ?, target = ?,
-            subpath = ?, schedule = ?, comment = ?, notification_mode = ?,
-            namespace = ?, current_pid = ?, last_run_upid = ?, retry = ?,
-            retry_interval = ?, last_successful_upid = ?, pre_script = ?, post_script = ?,
-            max_dir_entries = ?, include_xattr = ?, legacy_xattr = ?
-        WHERE id = ?
-    `, backup.Store, backup.Mode, backup.SourceMode, backup.ReadMode, backup.Target, backup.Subpath,
-		backup.Schedule, backup.Comment, backup.NotificationMode, backup.Namespace,
-		backup.CurrentPID, backup.LastRunUpid, backup.Retry, backup.RetryInterval,
-		backup.LastSuccessfulUpid, backup.PreScript, backup.PostScript, backup.MaxDirEntries,
-		backup.IncludeXattr, backup.LegacyXattr, backup.ID)
+	err = q.UpdateBackup(database.ctx, sqlc.UpdateBackupParams{
+		Store:              backup.Store,
+		Mode:               backup.Mode,
+		SourceMode:         backup.SourceMode,
+		ReadMode:           backup.ReadMode,
+		Target:             backup.Target.Name,
+		Subpath:            toNullString(backup.Subpath),
+		Schedule:           toNullString(backup.Schedule),
+		Comment:            toNullString(backup.Comment),
+		NotificationMode:   toNullString(backup.NotificationMode),
+		Namespace:          toNullString(backup.Namespace),
+		CurrentPid:         intToNullString(backup.CurrentPID),
+		LastRunUpid:        toNullString(backup.History.LastRunUpid),
+		Retry:              toNullInt64(backup.Retry),
+		RetryInterval:      toNullInt64(backup.RetryInterval),
+		LastSuccessfulUpid: toNullString(backup.History.LastSuccessfulUpid),
+		PreScript:          backup.PreScript,
+		PostScript:         backup.PostScript,
+		MaxDirEntries:      toNullInt64(backup.MaxDirEntries),
+		IncludeXattr:       boolToNullInt64(backup.IncludeXattr),
+		LegacyXattr:        boolToNullInt64(backup.LegacyXattr),
+		ID:                 backup.ID,
+	})
 	if err != nil {
 		return fmt.Errorf("UpdateBackup: error updating backup: %w", err)
 	}
 
-	_, err = tx.Exec(`DELETE FROM exclusions WHERE job_id = ?`, backup.ID)
+	err = q.DeleteBackupExclusions(database.ctx, toNullString(backup.ID))
 	if err != nil {
-		return fmt.Errorf("UpdateBackup: error removing old exclusions for backup %s: %w", backup.ID, err)
+		return fmt.Errorf("UpdateBackup: error removing old exclusions: %w", err)
 	}
 
 	for _, exclusion := range backup.Exclusions {
-		exclusion.JobId = backup.ID // Ensure correct JobId
-		if err = database.CreateExclusion(tx, exclusion); err != nil {
+		err = q.CreateExclusion(database.ctx, sqlc.CreateExclusionParams{
+			JobID:   toNullString(backup.ID),
+			Path:    exclusion.Path,
+			Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
+		})
+		if err != nil {
 			syslog.L.Error(fmt.Errorf("UpdateBackup: failed to create exclusion: %w", err)).
 				WithField("backup_id", backup.ID).
 				WithField("path", exclusion.Path).
@@ -365,23 +386,20 @@ func (database *Database) UpdateBackup(tx *sql.Tx, backup types.Backup) (err err
 		}
 	}
 
-	if err = system.SetSchedule(database.ctx, backup); err != nil {
+	if err = backup.setSchedule(database.ctx); err != nil {
 		syslog.L.Error(fmt.Errorf("UpdateBackup: failed to set schedule: %w", err)).
 			WithField("id", backup.ID).
 			Write()
-		// Decide if schedule setting failure should rollback the DB transaction
-		// return fmt.Errorf("UpdateBackup: failed to set schedule: %w", err) // Uncomment to rollback
 	}
 
-	if backup.LastRunUpid != "" {
-		go database.linkBackupLog(backup.ID, backup.LastRunUpid)
+	if backup.History.LastRunUpid != "" {
+		go database.linkBackupLog(backup.ID, backup.History.LastRunUpid)
 	}
 
 	commitNeeded = true
 	return nil
 }
 
-// linkBackupLog handles the asynchronous log linking.
 func (database *Database) linkBackupLog(backupID, upid string) {
 	backupLogsPath := filepath.Join(constants.BackupLogsBasePath, backupID)
 	if err := os.MkdirAll(backupLogsPath, 0755); err != nil {
@@ -409,7 +427,7 @@ func (database *Database) linkBackupLog(backupID, upid string) {
 	}
 
 	if _, err := os.Stat(origLogPath); err != nil {
-		syslog.L.Error(fmt.Errorf("linkBackupLog: original log path does not exist or error stating: %w", err)).
+		syslog.L.Error(fmt.Errorf("linkBackupLog: original log path does not exist: %w", err)).
 			WithField("orig_path", origLogPath).
 			WithField("id", backupID).
 			Write()
@@ -428,237 +446,170 @@ func (database *Database) linkBackupLog(backupID, upid string) {
 	}
 }
 
-// GetAllBackups returns all backup records.
-func (database *Database) GetAllBackups() ([]types.Backup, error) {
-	query := `
-        SELECT
-            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
-            j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
-            e.path,
-            t.drive_used_bytes, t.mount_script, t.path, j.include_xattr, j.legacy_xattr
-        FROM backups j
-        LEFT JOIN exclusions e ON j.id = e.job_id
-        LEFT JOIN targets t ON j.target = t.name
-        ORDER BY j.id
-    `
-	rows, err := database.readDb.Query(query)
+func (database *Database) GetAllBackups() ([]Backup, error) {
+	rows, err := database.readQueries.ListAllBackups(database.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllBackups: error querying backups: %w", err)
 	}
-	defer rows.Close()
 
-	backupsMap := make(map[string]*types.Backup)
-	var backupOrder []string
-
-	for rows.Next() {
-		var backupID, store, mode, sourceMode, readMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
-		var preScript, postScript string
-		var retry, maxDirEntries int
-		var retryInterval int
-		var currentPID int
-		var includeXAttr, legacyXAttr bool
-		var targetPath, exclusionPath sql.NullString
-		var driveUsedBytes sql.NullInt64
-		var mountScript sql.NullString
-
-		err := rows.Scan(
-			&backupID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
-			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
-			&retry, &retryInterval, &maxDirEntries, &preScript, &postScript,
-			&exclusionPath, &driveUsedBytes, &mountScript, &targetPath, &includeXAttr, &legacyXAttr,
-		)
-		if err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllBackups: error scanning row: %w", err)).Write()
-			continue
-		}
-
-		backup, exists := backupsMap[backupID]
-		if !exists {
-			backup = &types.Backup{
-				ID:                 backupID,
-				Store:              store,
-				Mode:               mode,
-				SourceMode:         sourceMode,
-				ReadMode:           readMode,
-				Target:             types.WrapTargetName(target),
-				Subpath:            subpath,
-				Schedule:           schedule,
-				Comment:            comment,
-				NotificationMode:   notificationMode,
-				Namespace:          namespace,
-				CurrentPID:         currentPID,
-				LastRunUpid:        lastRunUpid,
-				LastSuccessfulUpid: lastSuccessfulUpid,
-				Retry:              retry,
-				RetryInterval:      retryInterval,
-				MaxDirEntries:      maxDirEntries,
-				Exclusions:         make([]types.Exclusion, 0),
-				PreScript:          preScript,
-				PostScript:         postScript,
-				IncludeXattr:       includeXAttr,
-				LegacyXattr:        legacyXAttr,
-			}
-			if driveUsedBytes.Valid {
-				backup.ExpectedSize = int(driveUsedBytes.Int64)
-			}
-			backupsMap[backupID] = backup
-			backupOrder = append(backupOrder, backupID)
-			database.populateBackupExtras(backup) // Populate non-SQL extras once per backup
-		}
-
-		if targetPath.Valid {
-			backup.TargetPath = types.WrapTargetPath(targetPath.String)
-		}
-
-		if mountScript.Valid {
-			backup.TargetMountScript = mountScript.String
-		} else {
-			backup.TargetMountScript = ""
-		}
-
-		if exclusionPath.Valid && exclusionPath.String != "" {
-			backup.Exclusions = append(backup.Exclusions, types.Exclusion{
-				JobId: backupID,
-				Path:  exclusionPath.String,
-			})
-		}
+	allExclusions, err := database.readQueries.ListAllBackupExclusions(database.ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("GetAllBackups: error querying exclusions: %w", err)
 	}
 
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllBackups: error iterating backup results: %w", err)
+	exclusionsByJob := make(map[string][]Exclusion)
+	for _, excl := range allExclusions {
+		exclusionsByJob[fromNullString(excl.JobID)] = append(exclusionsByJob[fromNullString(excl.JobID)], Exclusion{
+			JobId: fromNullString(excl.JobID),
+			Path:  excl.Path,
+		})
 	}
 
-	backups := make([]types.Backup, len(backupOrder))
-	for i, backupID := range backupOrder {
-		backup := backupsMap[backupID]
+	backups := make([]Backup, len(rows))
+	for i, row := range rows {
+		backup := Backup{
+			ID:         row.ID,
+			Store:      row.Store,
+			Mode:       interfaceToString(row.Mode),
+			SourceMode: interfaceToString(row.SourceMode),
+			ReadMode:   interfaceToString(row.ReadMode),
+			Target: Target{
+				Name: row.Target,
+				Path: row.Path.String,
+				AgentHost: AgentHost{
+					Name:            row.AgentName.String,
+					IP:              row.AgentIp.String,
+					Auth:            row.AgentAuth.String,
+					TokenUsed:       row.AgentTokenUsed.String,
+					OperatingSystem: row.AgentOs.String,
+				},
+				VolumeID:         row.VolumeID.String,
+				MountScript:      row.MountScript.String,
+				VolumeType:       row.VolumeType.String,
+				VolumeName:       row.VolumeName.String,
+				VolumeFS:         row.VolumeFs.String,
+				VolumeTotalBytes: int(row.VolumeTotalBytes.Int64),
+				VolumeUsedBytes:  int(row.VolumeUsedBytes.Int64),
+				VolumeFreeBytes:  int(row.VolumeFreeBytes.Int64),
+				VolumeTotal:      row.VolumeTotal.String,
+				VolumeUsed:       row.VolumeUsed.String,
+				VolumeFree:       row.VolumeFree.String,
+			},
+			Subpath:          interfaceToString(row.Subpath),
+			Schedule:         interfaceToString(row.Schedule),
+			Comment:          interfaceToString(row.Comment),
+			NotificationMode: interfaceToString(row.NotificationMode),
+			Namespace:        interfaceToString(row.Namespace),
+			CurrentPID:       fromNullStringToInt(row.CurrentPid),
+			History: JobHistory{
+				LastRunUpid:        fromNullString(row.LastRunUpid),
+				LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+			},
+			Retry:         fromNullInt64(row.Retry),
+			RetryInterval: fromNullInt64(row.RetryInterval),
+			MaxDirEntries: fromNullInt64(row.MaxDirEntries),
+			PreScript:     row.PreScript,
+			PostScript:    row.PostScript,
+			IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
+			LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
+		}
+
+		backup.Exclusions = exclusionsByJob[row.ID]
+		if backup.Exclusions == nil {
+			backup.Exclusions = make([]Exclusion, 0)
+		}
+
+		backup.Target.populateInfo()
+
 		pathSlice := make([]string, len(backup.Exclusions))
 		for k, exclusion := range backup.Exclusions {
 			pathSlice[k] = exclusion.Path
 		}
 		backup.RawExclusions = strings.Join(pathSlice, "\n")
-		backups[i] = *backup
+
+		database.populateBackupExtras(&backup)
+		backups[i] = backup
 	}
 
 	return backups, nil
 }
 
-func (database *Database) GetAllQueuedBackups() ([]types.Backup, error) {
-	query := `
-        SELECT
-            j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, j.schedule, j.comment,
-            j.notification_mode, j.namespace, j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval, j.max_dir_entries, j.pre_script, j.post_script,
-            e.path,
-            t.drive_used_bytes, t.mount_script, j.include_xattr, j.legacy_xattr
-        FROM backups j
-        LEFT JOIN exclusions e ON j.id = e.job_id
-        LEFT JOIN targets t ON j.target = t.name
-				WHERE j.last_run_upid LIKE "%pbsplusgen-queue%"
-        ORDER BY j.id
-    `
-	rows, err := database.readDb.Query(query)
+func (database *Database) GetAllQueuedBackups() ([]Backup, error) {
+	rows, err := database.readQueries.ListQueuedBackups(database.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllQueuedBackups: error querying backups: %w", err)
 	}
-	defer rows.Close()
 
-	backupsMap := make(map[string]*types.Backup)
-	var backupOrder []string
-
-	for rows.Next() {
-		var backupID, store, mode, sourceMode, readMode, target, subpath, schedule, comment, notificationMode, namespace, lastRunUpid, lastSuccessfulUpid string
-		var preScript, postScript string
-		var retry, maxDirEntries int
-		var retryInterval int
-		var currentPID int
-		var includeXAttr, legacyXAttr bool
-		var exclusionPath sql.NullString
-		var driveUsedBytes sql.NullInt64
-		var mountScript sql.NullString
-
-		err := rows.Scan(
-			&backupID, &store, &mode, &sourceMode, &readMode, &target, &subpath, &schedule, &comment,
-			&notificationMode, &namespace, &currentPID, &lastRunUpid, &lastSuccessfulUpid,
-			&retry, &retryInterval, &maxDirEntries, &preScript, &postScript,
-			&exclusionPath, &driveUsedBytes, &mountScript, &includeXAttr, &legacyXAttr,
-		)
-		if err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllQueuedBackups: error scanning row: %w", err)).Write()
-			continue
-		}
-
-		backup, exists := backupsMap[backupID]
-		if !exists {
-			backup = &types.Backup{
-				ID:                 backupID,
-				Store:              store,
-				Mode:               mode,
-				SourceMode:         sourceMode,
-				ReadMode:           readMode,
-				Target:             types.WrapTargetName(target),
-				Subpath:            subpath,
-				Schedule:           schedule,
-				Comment:            comment,
-				NotificationMode:   notificationMode,
-				Namespace:          namespace,
-				CurrentPID:         currentPID,
-				LastRunUpid:        lastRunUpid,
-				LastSuccessfulUpid: lastSuccessfulUpid,
-				Retry:              retry,
-				RetryInterval:      retryInterval,
-				MaxDirEntries:      maxDirEntries,
-				Exclusions:         make([]types.Exclusion, 0),
-				PreScript:          preScript,
-				PostScript:         postScript,
-				IncludeXattr:       includeXAttr,
-				LegacyXattr:        legacyXAttr,
-			}
-			if driveUsedBytes.Valid {
-				backup.ExpectedSize = int(driveUsedBytes.Int64)
-			}
-			backupsMap[backupID] = backup
-			backupOrder = append(backupOrder, backupID)
-			database.populateBackupExtras(backup) // Populate non-SQL extras once per backup
-		}
-
-		if mountScript.Valid {
-			backup.TargetMountScript = mountScript.String
-		} else {
-			backup.TargetMountScript = ""
-		}
-
-		if exclusionPath.Valid && exclusionPath.String != "" {
-			backup.Exclusions = append(backup.Exclusions, types.Exclusion{
-				JobId: backupID,
-				Path:  exclusionPath.String,
-			})
-		}
+	allExclusions, err := database.readQueries.ListAllBackupExclusions(database.ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("GetAllQueuedBackups: error querying exclusions: %w", err)
 	}
 
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllQueuedBackups: error iterating backup results: %w", err)
+	exclusionsByJob := make(map[string][]Exclusion)
+	for _, excl := range allExclusions {
+		exclusionsByJob[fromNullString(excl.JobID)] = append(exclusionsByJob[fromNullString(excl.JobID)], Exclusion{
+			JobId: fromNullString(excl.JobID),
+			Path:  excl.Path,
+		})
 	}
 
-	backups := make([]types.Backup, len(backupOrder))
-	for i, backupID := range backupOrder {
-		backup := backupsMap[backupID]
+	backups := make([]Backup, len(rows))
+	for i, row := range rows {
+		backup := Backup{
+			ID:         row.ID,
+			Store:      row.Store,
+			Mode:       interfaceToString(row.Mode),
+			SourceMode: interfaceToString(row.SourceMode),
+			ReadMode:   interfaceToString(row.ReadMode),
+			Target: Target{
+				Name:            row.Target,
+				AgentHost:       AgentHost{},
+				MountScript:     row.MountScript.String,
+				VolumeUsedBytes: int(row.VolumeUsedBytes.Int64),
+			},
+			Subpath:          interfaceToString(row.Subpath),
+			Schedule:         interfaceToString(row.Schedule),
+			Comment:          interfaceToString(row.Comment),
+			NotificationMode: interfaceToString(row.NotificationMode),
+			Namespace:        interfaceToString(row.Namespace),
+			CurrentPID:       fromNullStringToInt(row.CurrentPid),
+			History: JobHistory{
+				LastRunUpid:        fromNullString(row.LastRunUpid),
+				LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+			},
+			Retry:         fromNullInt64(row.Retry),
+			RetryInterval: fromNullInt64(row.RetryInterval),
+			MaxDirEntries: fromNullInt64(row.MaxDirEntries),
+			PreScript:     row.PreScript,
+			PostScript:    row.PostScript,
+			IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
+			LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
+		}
+
+		backup.Exclusions = exclusionsByJob[row.ID]
+		if backup.Exclusions == nil {
+			backup.Exclusions = make([]Exclusion, 0)
+		}
+
 		pathSlice := make([]string, len(backup.Exclusions))
 		for k, exclusion := range backup.Exclusions {
 			pathSlice[k] = exclusion.Path
 		}
 		backup.RawExclusions = strings.Join(pathSlice, "\n")
-		backups[i] = *backup
+
+		database.populateBackupExtras(&backup)
+		backups[i] = backup
 	}
 
 	return backups, nil
 }
 
-// DeleteBackup deletes a backup and any related exclusions.
 func (database *Database) DeleteBackup(tx *sql.Tx, id string) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
 		if err != nil {
 			return fmt.Errorf("DeleteBackup: failed to begin transaction: %w", err)
 		}
@@ -681,48 +632,54 @@ func (database *Database) DeleteBackup(tx *sql.Tx, id string) (err error) {
 				}
 			}
 		}()
+		q = database.queries.WithTx(tx)
 	}
 
-	// Delete associated exclusions first (or rely on ON DELETE CASCADE)
-	_, err = tx.Exec("DELETE FROM exclusions WHERE job_id = ?", id)
+	err = q.DeleteBackupExclusions(database.ctx, toNullString(id))
 	if err != nil {
 		syslog.L.Error(fmt.Errorf("DeleteBackup: error deleting exclusions: %w", err)).
 			WithField("id", id).
 			Write()
-		// Return error if exclusions deletion fails
-		return fmt.Errorf("DeleteBackup: error deleting exclusions for backup %s: %w", id, err)
+		return fmt.Errorf("DeleteBackup: error deleting exclusions: %w", err)
 	}
 
-	// Delete the backup itself
-	res, err := tx.Exec("DELETE FROM backups WHERE id = ?", id)
+	rowsAffected, err := q.DeleteBackup(database.ctx, id)
 	if err != nil {
 		return fmt.Errorf("DeleteBackup: error deleting backup %s: %w", id, err)
 	}
 
-	rowsAffected, _ := res.RowsAffected()
 	if rowsAffected == 0 {
 		return ErrBackupNotFound
 	}
 
-	// Filesystem and system operations outside transaction
 	backupLogsPath := filepath.Join(constants.BackupLogsBasePath, id)
 	if err := os.RemoveAll(backupLogsPath); err != nil {
 		if !os.IsNotExist(err) {
 			syslog.L.Error(fmt.Errorf("DeleteBackup: failed removing backup logs: %w", err)).
 				WithField("id", id).
 				Write()
-			// Decide if this failure should prevent commit (if tx was passed in)
-			// or just be logged. Currently just logged.
 		}
 	}
 
-	if err := system.DeleteSchedule(database.ctx, id); err != nil {
+	if err := deleteBackupSchedule(database.ctx, id); err != nil {
 		syslog.L.Error(fmt.Errorf("DeleteBackup: failed deleting schedule: %w", err)).
 			WithField("id", id).
 			Write()
-		// Decide if this failure should prevent commit or just be logged.
 	}
 
 	commitNeeded = true
 	return nil
 }
+
+func (b *Backup) GetStreamID() string {
+	if b.Target.Type == TargetTypeLocal {
+		return ""
+	}
+
+	if b.Target.Type == TargetTypeS3 {
+		return b.Target.S3Info.Endpoint + "|" + b.ID
+	}
+
+	return b.Target.AgentHost.Name + "|" + b.ID
+}
+
