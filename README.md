@@ -24,8 +24,8 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 
 ## Planned Features/Roadmap
 - [x] Execute remote backups directly from Proxmox Backup Server Web UI
-- [x] File backup from bare-metal workstations with agent
-- [x] File restore to bare-metal workstations with agent
+- [x] File-level backup from bare-metal workstations with agent
+- [x] File-level restore to bare-metal workstations with agent
 - [x] File-level exclusions for backups with agent
 - [x] Windows agent support for workstations
 - [x] Linux agent support for workstations
@@ -34,6 +34,8 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 - [x] MySQL database backup/restore support (use pre-backup hook scripts to dump databases)
 - [x] PostgreSQL database backup/restore support (use pre-backup hook scripts to dump databases)
 - [x] Active Directory/LDAP backup/restore support (use pre-backup hook scripts to dump databases)
+- [ ] Support for Linux block-level snapshots with `veeam/blksnap`
+- [ ] Volume-level backup from bare-metal workstations with agent
 
 ## Installation
 To install PBS Plus:
