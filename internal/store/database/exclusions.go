@@ -19,7 +19,7 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion Exclusion) (err 
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("CreateExclusion: failed to begin transaction: %w", err)
 		}
@@ -148,7 +148,7 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion Exclusion) (err 
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("UpdateExclusion: failed to begin transaction: %w", err)
 		}
@@ -205,7 +205,7 @@ func (database *Database) DeleteExclusion(tx *sql.Tx, path string) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("DeleteExclusion: failed to begin transaction: %w", err)
 		}

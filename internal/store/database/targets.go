@@ -20,7 +20,7 @@ func (database *Database) CreateTarget(tx *sql.Tx, target Target) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("CreateTarget: failed to begin transaction: %w", err)
 		}
@@ -100,7 +100,7 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target Target) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("UpdateTarget: failed to begin transaction: %w", err)
 		}
@@ -173,7 +173,7 @@ func (database *Database) AddS3Secret(tx *sql.Tx, targetName string, secret stri
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("AddS3Secret: failed to begin transaction: %w", err)
 		}
@@ -221,7 +221,7 @@ func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("DeleteTarget: failed to begin transaction: %w", err)
 		}
