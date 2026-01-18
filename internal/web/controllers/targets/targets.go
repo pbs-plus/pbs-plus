@@ -248,6 +248,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			} else {
 				targetData := database.Target{
 					Name:             targetName,
+					AgentHost:        database.AgentHost{Name: reqParsed.Hostname},
 					VolumeType:       parsedDrive.Type,
 					VolumeName:       parsedDrive.VolumeName,
 					VolumeFS:         parsedDrive.FileSystem,
