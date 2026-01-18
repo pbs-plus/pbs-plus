@@ -17,7 +17,7 @@ func (database *Database) CreateScript(tx *sql.Tx, script Script) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("CreateScript: failed to begin transaction: %w", err)
 		}
@@ -71,7 +71,7 @@ func (database *Database) UpdateScript(tx *sql.Tx, script Script) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("UpdateScript: failed to begin transaction: %w", err)
 		}
@@ -118,7 +118,7 @@ func (database *Database) DeleteScript(tx *sql.Tx, name string) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("DeleteScript: failed to begin transaction: %w", err)
 		}

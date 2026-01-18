@@ -48,7 +48,7 @@ func (database *Database) CreateBackup(tx *sql.Tx, backup Backup) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("CreateBackup: failed to begin transaction: %w", err)
 		}
@@ -281,7 +281,7 @@ func (database *Database) UpdateBackup(tx *sql.Tx, backup Backup) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("UpdateBackup: failed to begin transaction: %w", err)
 		}
@@ -609,7 +609,7 @@ func (database *Database) DeleteBackup(tx *sql.Tx, id string) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("DeleteBackup: failed to begin transaction: %w", err)
 		}
