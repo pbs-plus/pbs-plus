@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func (database *Database) CreateExclusion(tx *sql.Tx, exclusion Exclusion) (err error) {
+func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -42,7 +42,7 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion Exclusion) (err 
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	if exclusion.Path == "" {
@@ -143,7 +143,7 @@ func (database *Database) GetExclusion(path string) (*Exclusion, error) {
 	return excl, nil
 }
 
-func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion Exclusion) (err error) {
+func (database *Database) UpdateExclusion(tx *Transaction, exclusion Exclusion) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -171,7 +171,7 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion Exclusion) (err 
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	if exclusion.Path == "" {
@@ -200,7 +200,7 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion Exclusion) (err 
 	return nil
 }
 
-func (database *Database) DeleteExclusion(tx *sql.Tx, path string) (err error) {
+func (database *Database) DeleteExclusion(tx *Transaction, path string) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -228,7 +228,7 @@ func (database *Database) DeleteExclusion(tx *sql.Tx, path string) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	path = strings.ReplaceAll(path, "\\", "/")

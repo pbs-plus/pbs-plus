@@ -12,7 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func (database *Database) CreateScript(tx *sql.Tx, script Script) (err error) {
+func (database *Database) CreateScript(tx *Transaction, script Script) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -40,7 +40,7 @@ func (database *Database) CreateScript(tx *sql.Tx, script Script) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	if script.Path == "" {
@@ -66,7 +66,7 @@ func (database *Database) CreateScript(tx *sql.Tx, script Script) (err error) {
 	return nil
 }
 
-func (database *Database) UpdateScript(tx *sql.Tx, script Script) (err error) {
+func (database *Database) UpdateScript(tx *Transaction, script Script) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -94,7 +94,7 @@ func (database *Database) UpdateScript(tx *sql.Tx, script Script) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	if script.Path == "" {
@@ -113,7 +113,7 @@ func (database *Database) UpdateScript(tx *sql.Tx, script Script) (err error) {
 	return nil
 }
 
-func (database *Database) DeleteScript(tx *sql.Tx, name string) (err error) {
+func (database *Database) DeleteScript(tx *Transaction, name string) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -141,7 +141,7 @@ func (database *Database) DeleteScript(tx *sql.Tx, name string) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	rowsAffected, err := q.DeleteScript(database.ctx, name)
