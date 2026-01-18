@@ -99,5 +99,15 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 }
 
 func (d *Database) NewTransaction() (*sql.Tx, error) {
-	return d.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+	tx, err := d.writeDb.BeginTx(d.ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.ExecContext(d.ctx, "BEGIN IMMEDIATE")
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
 }
+

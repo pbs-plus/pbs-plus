@@ -371,8 +371,8 @@ func TestConcurrentOperations(t *testing.T) {
 					return
 				default:
 					target := sqlite.Target{
-						Name: (fmt.Sprintf("concurrent-target-%d", i)),
-						Path: (fmt.Sprintf("/path/to/target-%d", i)),
+						Name: fmt.Sprintf("concurrent-target-%d", i),
+						Path: fmt.Sprintf("/path/to/target-%d", i),
 					}
 					_ = store.Database.CreateTarget(nil, target)
 				}

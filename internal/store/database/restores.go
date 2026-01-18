@@ -47,7 +47,7 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore Restore) (err error)
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("CreateRestore: failed to begin transaction: %w", err)
 		}
@@ -217,7 +217,7 @@ func (database *Database) UpdateRestore(tx *sql.Tx, restore Restore) (err error)
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("UpdateRestore: failed to begin transaction: %w", err)
 		}
@@ -451,7 +451,7 @@ func (database *Database) DeleteRestore(tx *sql.Tx, id string) (err error) {
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("DeleteRestore: failed to begin transaction: %w", err)
 		}

@@ -140,18 +140,13 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			OperatingSystem: reqParsed.OperatingSystem,
 		}
 
-		_, err = storeInstance.Database.GetAgentHost(reqParsed.Hostname)
+		err = storeInstance.Database.CreateAgentHost(nil, host)
 		if err != nil {
-			err = storeInstance.Database.CreateAgentHost(nil, host)
-			if err != nil {
-				tx.Rollback()
-				w.WriteHeader(http.StatusInternalServerError)
-				controllers.WriteErrorResponse(w, err)
-				syslog.L.Error(err).Write()
-				return
-			}
-		} else {
-			_ = storeInstance.Database.UpdateAgentHost(nil, host)
+			tx.Rollback()
+			w.WriteHeader(http.StatusInternalServerError)
+			controllers.WriteErrorResponse(w, err)
+			syslog.L.Error(err).Write()
+			return
 		}
 
 		for _, drive := range reqParsed.Drives {

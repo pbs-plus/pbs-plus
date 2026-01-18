@@ -17,7 +17,7 @@ func (database *Database) CreateAgentHost(tx *sql.Tx, host AgentHost) (err error
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("CreateAgentHost: failed to begin transaction: %w", err)
 		}
@@ -71,7 +71,7 @@ func (database *Database) UpdateAgentHost(tx *sql.Tx, host AgentHost) (err error
 	q := database.queries
 
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(database.ctx, &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("UpdateAgentHost: failed to begin transaction: %w", err)
 		}
