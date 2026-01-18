@@ -98,13 +98,24 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 	return database, nil
 }
 
-func (d *Database) NewTransaction() (*sql.Tx, error) {
+type Transaction struct {
+	*sql.Tx
+	database *Database
+}
+
+func (t *Transaction) Commit() error {
+	defer t.database.writeMu.Unlock()
+
+	return t.Tx.Commit()
+}
+
+func (d *Database) NewTransaction() (*Transaction, error) {
 	d.writeMu.Lock()
-	defer d.writeMu.Unlock()
 
 	tx, err := d.writeDb.BeginTx(d.ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	return tx, nil
+
+	return &Transaction{Tx: tx, database: d}, nil
 }

@@ -15,7 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
-func (database *Database) CreateTarget(tx *sql.Tx, target Target) (err error) {
+func (database *Database) CreateTarget(tx *Transaction, target Target) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -43,7 +43,7 @@ func (database *Database) CreateTarget(tx *sql.Tx, target Target) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	// Validation
@@ -95,7 +95,7 @@ func (database *Database) CreateTarget(tx *sql.Tx, target Target) (err error) {
 	return nil
 }
 
-func (database *Database) UpdateTarget(tx *sql.Tx, target Target) (err error) {
+func (database *Database) UpdateTarget(tx *Transaction, target Target) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -123,7 +123,7 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target Target) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	// Validation
@@ -168,7 +168,7 @@ func (database *Database) UpdateTarget(tx *sql.Tx, target Target) (err error) {
 	return nil
 }
 
-func (database *Database) AddS3Secret(tx *sql.Tx, targetName string, secret string) (err error) {
+func (database *Database) AddS3Secret(tx *Transaction, targetName string, secret string) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -196,7 +196,7 @@ func (database *Database) AddS3Secret(tx *sql.Tx, targetName string, secret stri
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	encrypted, err := secrets.Encrypt(secret)
@@ -216,7 +216,7 @@ func (database *Database) AddS3Secret(tx *sql.Tx, targetName string, secret stri
 	return nil
 }
 
-func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
+func (database *Database) DeleteTarget(tx *Transaction, name string) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
 
@@ -244,7 +244,7 @@ func (database *Database) DeleteTarget(tx *sql.Tx, name string) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx)
+		q = database.queries.WithTx(tx.Tx)
 	}
 
 	rowsAffected, err := q.DeleteTarget(database.ctx, name)
