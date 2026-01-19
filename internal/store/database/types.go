@@ -27,9 +27,15 @@ type Backup struct {
 	CurrentPID       int         `json:"current_pid"`
 	Exclusions       []Exclusion `json:"exclusions"`
 	RawExclusions    string      `json:"rawexclusions"`
-	UPIDs            []string    `json:"upids"`
+	UPIDs            []Tasks     `json:"upids"`
 	CurrentStats     JobStats    `json:"current-stats"`
 	History          JobHistory  `json:"history"`
+}
+
+type Tasks struct {
+	UPID    string `json:"upid"`
+	Endtime int64  `json:"endtime"`
+	Status  string `json:"status"`
 }
 
 type Exclusion struct {
@@ -110,8 +116,8 @@ type Target struct {
 type AgentHost struct {
 	Name            string `json:"name"`
 	IP              string `json:"ip"`
-	Auth            string `json:"auth"`
-	TokenUsed       string `json:"token_used"`
+	Auth            string `json:"-"`
+	TokenUsed       string `json:"-"`
 	OperatingSystem string `json:"os"`
 }
 
