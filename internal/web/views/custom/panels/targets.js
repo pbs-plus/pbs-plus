@@ -307,6 +307,10 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       Ext.Ajax.request({
         url: pbsPlusBaseUrl + "/api2/json/d2d/target?status=true",
         method: "GET",
+        withCredentials: true,
+        headers: {
+          Accept: "application/json",
+        },
         success: function (response) {
           let data = Ext.decode(response.responseText);
           let rawTargets = data.data || [];
