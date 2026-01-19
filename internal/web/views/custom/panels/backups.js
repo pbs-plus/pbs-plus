@@ -305,23 +305,34 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
           // Create a store for the UPIDs
           const upidStore = Ext.create("Ext.data.Store", {
-            fields: ["upid", "starttime", "endtime", "status"],
+            fields: ["upid", "starttime", "endtime", "status", "duration"],
             data: upids.map((item) => {
               const task = Proxmox.Utils.parse_task_upid(item.upid);
+              const duration =
+                item.endtime && task.starttime
+                  ? item.endtime - task.starttime
+                  : null;
               return {
                 upid: item.upid,
                 starttime: task.starttime,
                 endtime: item.endtime,
                 status: item.status,
+                duration: duration,
               };
             }),
+            sorters: [
+              {
+                property: "starttime",
+                direction: "DESC",
+              },
+            ],
           });
 
           // Create a window with a grid showing all UPIDs
           Ext.create("Ext.window.Window", {
             title:
               gettext("Task Logs for Job: ") + Ext.String.htmlEncode(jobId),
-            width: 800,
+            width: 900,
             height: 400,
             modal: true,
             layout: "fit",
@@ -344,6 +355,16 @@ Ext.define("PBS.config.DiskBackupJobView", {
                     renderer: function (value) {
                       return value
                         ? Proxmox.Utils.render_timestamp(value)
+                        : "-";
+                    },
+                    flex: 1,
+                  },
+                  {
+                    text: gettext("Duration"),
+                    dataIndex: "duration",
+                    renderer: function (value) {
+                      return value !== null
+                        ? Proxmox.Utils.format_duration_long(value)
                         : "-";
                     },
                     flex: 1,
