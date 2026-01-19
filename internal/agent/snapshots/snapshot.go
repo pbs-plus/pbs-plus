@@ -7,6 +7,7 @@ import (
 
 type Snapshot struct {
 	Path         string          `json:"path"`
+	Id           string          `json:"id"`
 	TimeStarted  time.Time       `json:"time_started"`
 	SourcePath   string          `json:"source_path"`
 	Direct       bool            `json:"direct"`
