@@ -412,12 +412,17 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
         this.getController().onEdit();
       }
     },
-    selectionchange: function (model, selected) {
+    selectionchange: function (selModel, selected) {
       let me = this;
-      me.query("proxmoxButton").forEach((btn) => {
-        btn.updateSelected(model, selected);
+      let rec = selected[0] || null;
+
+      me.query('proxmoxButton').forEach(btn => {
+        if (btn.enableFn) {
+          btn.setDisabled(!btn.enableFn(rec));
+        } else if (btn.selModel !== false) {
+            btn.setDisabled(!rec);
+        }
       });
-    },
   },
 
   tbar: [
