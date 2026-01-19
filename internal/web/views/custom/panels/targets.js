@@ -10,8 +10,6 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
   rowLines: true,
 
   controller: {
-    xclass: "controller",
-
     onAdd: function () {
       let me = this;
       Ext.create("PBS.D2DManagement.TargetEditWindow", {
