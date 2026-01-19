@@ -117,14 +117,6 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
     });
   },
 
-  setValues: function (data) {
-    let me = this;
-    let inputPanel = me.down("inputpanel");
-    if (inputPanel && inputPanel.setValues) {
-      inputPanel.setValues(data);
-    }
-  },
-
   items: {
     xtype: "tabpanel",
     bodyPadding: 10,
@@ -133,6 +125,12 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
       {
         title: gettext("Options"),
         xtype: "inputpanel",
+        setValues: function (values) {
+          if (values.target && typeof values.target === "object") {
+            values.target = values.target.name;
+          }
+          this.callParent([values]);
+        },
         onGetValues: function (values) {
           let me = this;
 
