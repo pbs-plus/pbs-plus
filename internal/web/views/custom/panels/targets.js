@@ -412,82 +412,87 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }
     },
   },
+  initComponent: function () {
+    var me = this;
 
-  tbar: [
-    {
-      text: gettext("Add"),
-      xtype: "proxmoxButton",
-      handler: "onAdd",
-      selModel: false,
-    },
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Create Job"),
-      handler: "addJob",
-      disabled: true,
-      selModel: this.selModel,
-      enableFn: function (rec) {
-        return rec && !rec.data.isGroup;
+    me.tbar = [
+      {
+        text: gettext("Add"),
+        xtype: "proxmoxButton",
+        handler: "onAdd",
+        selModel: false,
       },
-    },
-    "-",
-    {
-      text: gettext("Edit"),
-      xtype: "proxmoxButton",
-      handler: "onEdit",
-      disabled: true,
-      selModel: this.selModel,
-      enableFn: function (rec) {
-        return rec && !rec.data.isGroup;
-      },
-    },
-    {
-      text: gettext("Set S3 Secret Key"),
-      xtype: "proxmoxButton",
-      handler: "setS3Secret",
-      disabled: true,
-      selModel: this.selModel,
-      enableFn: function (rec) {
-        return rec && !rec.data.isGroup && rec.data.target_type === "s3";
-      },
-    },
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Remove"),
-      handler: "removeItems",
-      selModel: this.selModel,
-      enableFn: function () {
-        let view = this.up("treepanel");
-        let selections = view.getSelection();
-        return selections.some(
-          (rec) =>
-            !rec.data.isGroup ||
-            (rec.data.isGroup && rec.data.groupType === "agent"),
-        );
-      },
-      disabled: true,
-    },
-    "->",
-    {
-      xtype: "textfield",
-      itemId: "targetSearchField",
-      emptyText: gettext("Search targets..."),
-      width: 250,
-      enableKeyEvents: true,
-      triggers: {
-        clear: {
-          cls: "x-form-clear-trigger",
-          handler: "onClearSearch",
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Create Job"),
+        handler: "addJob",
+        disabled: true,
+        selModel: me.selModel,
+        enableFn: function (rec) {
+          return rec && !rec.data.isGroup;
         },
       },
-      listeners: {
-        change: {
-          fn: "onSearch",
-          buffer: 300,
+      "-",
+      {
+        text: gettext("Edit"),
+        xtype: "proxmoxButton",
+        handler: "onEdit",
+        disabled: true,
+        selModel: me.selModel,
+        enableFn: function (rec) {
+          return rec && !rec.data.isGroup;
         },
       },
-    },
-  ],
+      {
+        text: gettext("Set S3 Secret Key"),
+        xtype: "proxmoxButton",
+        handler: "setS3Secret",
+        disabled: true,
+        selModel: me.selModel,
+        enableFn: function (rec) {
+          return rec && !rec.data.isGroup && rec.data.target_type === "s3";
+        },
+      },
+      {
+        xtype: "proxmoxButton",
+        text: gettext("Remove"),
+        handler: "removeItems",
+        selModel: me.selModel,
+        enableFn: function () {
+          let view = this.up("treepanel");
+          let selections = view.getSelection();
+          return selections.some(
+            (rec) =>
+              !rec.data.isGroup ||
+              (rec.data.isGroup && rec.data.groupType === "agent"),
+          );
+        },
+        disabled: true,
+      },
+      "->",
+      {
+        xtype: "textfield",
+        itemId: "targetSearchField",
+        emptyText: gettext("Search targets..."),
+        width: 250,
+        enableKeyEvents: true,
+        triggers: {
+          clear: {
+            cls: "x-form-clear-trigger",
+            handler: "onClearSearch",
+          },
+        },
+        listeners: {
+          change: {
+            fn: "onSearch",
+            buffer: 300,
+          },
+        },
+      },
+    ];
+
+    me.callParent();
+  },
 
   columns: [
     {
