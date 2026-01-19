@@ -78,11 +78,15 @@ Ext.define("pbs-disk-backup-status", {
       mapping: "current-stats",
       convert: (v) => (v ? v.current_bytes_total : 0),
     },
-
     {
       name: "target",
       mapping: "target",
-      convert: (v) => (v ? v.name : null),
+      convert: function (v) {
+        if (Ext.isObject(v)) {
+          return v.name;
+        }
+        return v;
+      },
     },
   ],
 
@@ -113,38 +117,85 @@ Ext.define("pbs-disk-restore-job-status", {
     "retry",
     "retry-interval",
     "expected_size",
-    { name: "last-run-upid", mapping: "history.last-run-upid" },
-    { name: "last-run-state", mapping: "history.last-run-state" },
-    { name: "last-run-endtime", mapping: "history.last-run-endtime" },
+
+    {
+      name: "last-run-upid",
+      mapping: "history",
+      convert: (v) => (v ? v["last-run-upid"] : null),
+    },
+    {
+      name: "last-run-state",
+      mapping: "history",
+      convert: (v) => (v ? v["last-run-state"] : null),
+    },
+    {
+      name: "last-run-endtime",
+      mapping: "history",
+      convert: (v) => (v ? v["last-run-endtime"] : null),
+    },
     {
       name: "last-successful-endtime",
-      mapping: "history.last-successful-endtime",
+      mapping: "history",
+      convert: (v) => (v ? v["last-successful-endtime"] : null),
     },
-    { name: "last-successful-upid", mapping: "history.last-successful-upid" },
-    { name: "duration", mapping: "history.duration" },
-    { name: "current_file_count", mapping: "current-stats.current_file_count" },
+    {
+      name: "last-successful-upid",
+      mapping: "history",
+      convert: (v) => (v ? v["last-successful-upid"] : null),
+    },
+    {
+      name: "duration",
+      mapping: "history",
+      convert: (v) => (v ? v.duration : 0),
+    },
+
+    // Current Stats Mappings
+    {
+      name: "current_file_count",
+      mapping: "current-stats",
+      convert: (v) => (v ? v.current_file_count : 0),
+    },
     {
       name: "current_folder_count",
-      mapping: "current-stats.current_folder_count",
+      mapping: "current-stats",
+      convert: (v) => (v ? v.current_folder_count : 0),
     },
     {
       name: "current_files_speed",
-      mapping: "current-stats.current_files_speed",
+      mapping: "current-stats",
+      convert: (v) => (v ? v.current_files_speed : 0),
     },
     {
       name: "current_bytes_speed",
-      mapping: "current-stats.current_bytes_speed",
+      mapping: "current-stats",
+      convert: (v) => (v ? v.current_bytes_speed : 0),
     },
     {
       name: "current_bytes_total",
-      mapping: "current-stats.current_bytes_total",
+      mapping: "current-stats",
+      convert: (v) => (v ? v.current_bytes_total : 0),
     },
-    { name: "dest-target", mapping: "dest-target.name" },
+    {
+      name: "dest-target",
+      mapping: "dest-target",
+      convert: function (v) {
+        if (Ext.isObject(v)) {
+          return v.name;
+        }
+        return v;
+      },
+    },
   ],
+
   idProperty: "id",
+
   proxy: {
     type: "pbsplus",
     url: pbsPlusBaseUrl + "/api2/json/d2d/restore",
+    reader: {
+      type: "json",
+      rootProperty: "data",
+    },
   },
 });
 
@@ -156,11 +207,9 @@ Ext.define("pbs-model-targets", {
     "target_type",
     "mount_script",
     "volume_id",
-
     "job_count",
     "agent_version",
     "connection_status",
-
     "volume_type",
     "volume_name",
     "volume_fs",
@@ -171,25 +220,26 @@ Ext.define("pbs-model-targets", {
     "volume_used",
     "volume_free",
 
-    { name: "agent_hostname", mapping: "agent_host.name" },
-    { name: "os", mapping: "agent_host.os" },
-    { name: "agent_ip", mapping: "agent_host.ip" },
+    {
+      name: "agent_hostname",
+      mapping: "agent_host",
+      convert: (v) => (v ? v.name : null),
+    },
+    {
+      name: "os",
+      mapping: "agent_host",
+      convert: (v) => (v ? v.os : null),
+    },
+    {
+      name: "agent_ip",
+      mapping: "agent_host",
+      convert: (v) => (v ? v.ip : null),
+    },
 
     "text",
     "isGroup",
     "groupType",
     "iconCls",
-
-    // Legacy mappings for backward compatibility
-    { name: "drive_type", mapping: "target_type" },
-    { name: "drive_name", mapping: "volume_name" },
-    { name: "drive_fs", mapping: "volume_fs" },
-    { name: "drive_total_bytes", mapping: "volume_total_bytes" },
-    { name: "drive_used_bytes", mapping: "volume_used_bytes" },
-    { name: "drive_free_bytes", mapping: "volume_free_bytes" },
-    { name: "drive_total", mapping: "volume_total" },
-    { name: "drive_used", mapping: "volume_used" },
-    { name: "drive_free", mapping: "volume_free" },
   ],
   idProperty: "name",
 });
