@@ -13,7 +13,7 @@ var (
 	connMutex  sync.Mutex
 )
 
-func getConn() (*dbus.Conn, error) {
+func GetSystemdConn() (*dbus.Conn, error) {
 	connMutex.Lock()
 	defer connMutex.Unlock()
 

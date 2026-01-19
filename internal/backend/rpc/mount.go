@@ -203,7 +203,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	secretKey, err := s.Store.Database.GetS3Secret(backup.Target)
+	secretKey, err := s.Store.Database.GetS3Secret(backup.Target.Name)
 	if err != nil {
 		reply.Status = 404
 		reply.Message = "unable to get secret key of target"
