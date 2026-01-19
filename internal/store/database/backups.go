@@ -71,8 +71,8 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if backup.ID == "" {
 		id, err := database.generateUniqueJobId(backup)
@@ -304,8 +304,8 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	// Validation
 	if !utils.IsValidID(backup.ID) && backup.ID != "" {
@@ -632,8 +632,8 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	err = q.DeleteBackupExclusions(database.ctx, toNullString(id))
 	if err != nil {

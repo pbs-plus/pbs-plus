@@ -42,8 +42,8 @@ func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) 
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if exclusion.Path == "" {
 		return errors.New("path is empty")
@@ -171,8 +171,8 @@ func (database *Database) UpdateExclusion(tx *Transaction, exclusion Exclusion) 
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if exclusion.Path == "" {
 		return errors.New("path is empty")
@@ -228,8 +228,8 @@ func (database *Database) DeleteExclusion(tx *Transaction, path string) (err err
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	path = strings.ReplaceAll(path, "\\", "/")
 
