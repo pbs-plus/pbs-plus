@@ -20,84 +20,51 @@ Ext.define("pbs-disk-backup-status", {
     "rawexclusions",
     "include-xattr",
     "legacy-xattr",
-
-    {
-      name: "last-run-upid",
-      mapping: "history",
-      convert: (v) => (v ? v["last-run-upid"] : null),
-    },
-    {
-      name: "last-run-state",
-      mapping: "history",
-      convert: (v) => (v ? v["last-run-state"] : null),
-    },
-    {
-      name: "last-run-endtime",
-      mapping: "history",
-      convert: (v) => (v ? v["last-run-endtime"] : null),
-    },
-    {
-      name: "last-successful-endtime",
-      mapping: "history",
-      convert: (v) => (v ? v["last-successful-endtime"] : null),
-    },
-    {
-      name: "last-successful-upid",
-      mapping: "history",
-      convert: (v) => (v ? v["last-successful-upid"] : null),
-    },
-    {
-      name: "duration",
-      mapping: "history",
-      convert: (v) => (v ? v.duration : 0),
-    },
-
-    // Current Stats Mappings
-    {
-      name: "current_file_count",
-      mapping: "current-stats",
-      convert: (v) => (v ? v.current_file_count : 0),
-    },
-    {
-      name: "current_folder_count",
-      mapping: "current-stats",
-      convert: (v) => (v ? v.current_folder_count : 0),
-    },
-    {
-      name: "current_files_speed",
-      mapping: "current-stats",
-      convert: (v) => (v ? v.current_files_speed : 0),
-    },
-    {
-      name: "current_bytes_speed",
-      mapping: "current-stats",
-      convert: (v) => (v ? v.current_bytes_speed : 0),
-    },
-    {
-      name: "current_bytes_total",
-      mapping: "current-stats",
-      convert: (v) => (v ? v.current_bytes_total : 0),
-    },
-    {
-      name: "target",
-      mapping: "target",
-      convert: function (v) {
-        if (v && Ext.isObject(v)) {
-          return v.name;
-        }
-        return v;
-      },
-    },
+    "last-run-upid",
+    "last-run-state",
+    "last-run-endtime",
+    "last-successful-endtime",
+    "last-successful-upid",
+    "duration",
+    "current_file_count",
+    "current_folder_count",
+    "current_files_speed",
+    "current_bytes_speed",
+    "current_bytes_total",
+    "target",
   ],
-
   idProperty: "id",
-
   proxy: {
     type: "pbsplus",
     url: pbsPlusBaseUrl + "/api2/json/d2d/backup",
     reader: {
       type: "json",
       rootProperty: "data",
+      transform: function (data) {
+        return data.map((item) => {
+          if (item.history) {
+            item["last-run-upid"] = item.history["last-run-upid"];
+            item["last-run-state"] = item.history["last-run-state"];
+            item["last-run-endtime"] = item.history["last-run-endtime"];
+            item["last-successful-endtime"] =
+              item.history["last-successful-endtime"];
+            item["last-successful-upid"] = item.history["last-successful-upid"];
+            item["duration"] = item.history["duration"] || 0;
+          }
+          if (item["current-stats"]) {
+            let s = item["current-stats"];
+            item.current_file_count = s.current_file_count || 0;
+            item.current_folder_count = s.current_folder_count || 0;
+            item.current_files_speed = s.current_files_speed || 0;
+            item.current_bytes_speed = s.current_bytes_speed || 0;
+            item.current_bytes_total = s.current_bytes_total || 0;
+          }
+          if (item.target && Ext.isObject(item.target)) {
+            item.target = item.target.name;
+          }
+          return item;
+        });
+      },
     },
   },
 });
@@ -117,84 +84,51 @@ Ext.define("pbs-disk-restore-job-status", {
     "retry",
     "retry-interval",
     "expected_size",
-
-    {
-      name: "last-run-upid",
-      mapping: "history",
-      convert: (v) => (v ? v["last-run-upid"] : null),
-    },
-    {
-      name: "last-run-state",
-      mapping: "history",
-      convert: (v) => (v ? v["last-run-state"] : null),
-    },
-    {
-      name: "last-run-endtime",
-      mapping: "history",
-      convert: (v) => (v ? v["last-run-endtime"] : null),
-    },
-    {
-      name: "last-successful-endtime",
-      mapping: "history",
-      convert: (v) => (v ? v["last-successful-endtime"] : null),
-    },
-    {
-      name: "last-successful-upid",
-      mapping: "history",
-      convert: (v) => (v ? v["last-successful-upid"] : null),
-    },
-    {
-      name: "duration",
-      mapping: "history",
-      convert: (v) => (v ? v.duration : 0),
-    },
-
-    // Current Stats Mappings
-    {
-      name: "current_file_count",
-      mapping: "current-stats",
-      convert: (v) => (v ? v.current_file_count : 0),
-    },
-    {
-      name: "current_folder_count",
-      mapping: "current-stats",
-      convert: (v) => (v ? v.current_folder_count : 0),
-    },
-    {
-      name: "current_files_speed",
-      mapping: "current-stats",
-      convert: (v) => (v ? v.current_files_speed : 0),
-    },
-    {
-      name: "current_bytes_speed",
-      mapping: "current-stats",
-      convert: (v) => (v ? v.current_bytes_speed : 0),
-    },
-    {
-      name: "current_bytes_total",
-      mapping: "current-stats",
-      convert: (v) => (v ? v.current_bytes_total : 0),
-    },
-    {
-      name: "dest-target",
-      mapping: "dest-target",
-      convert: function (v) {
-        if (v && Ext.isObject(v)) {
-          return v.name;
-        }
-        return v;
-      },
-    },
+    "last-run-upid",
+    "last-run-state",
+    "last-run-endtime",
+    "last-successful-endtime",
+    "last-successful-upid",
+    "duration",
+    "current_file_count",
+    "current_folder_count",
+    "current_files_speed",
+    "current_bytes_speed",
+    "current_bytes_total",
+    "dest-target",
   ],
-
   idProperty: "id",
-
   proxy: {
     type: "pbsplus",
     url: pbsPlusBaseUrl + "/api2/json/d2d/restore",
     reader: {
       type: "json",
       rootProperty: "data",
+      transform: function (data) {
+        return data.map((item) => {
+          if (item.history) {
+            item["last-run-upid"] = item.history["last-run-upid"];
+            item["last-run-state"] = item.history["last-run-state"];
+            item["last-run-endtime"] = item.history["last-run-endtime"];
+            item["last-successful-endtime"] =
+              item.history["last-successful-endtime"];
+            item["last-successful-upid"] = item.history["last-successful-upid"];
+            item["duration"] = item.history["duration"] || 0;
+          }
+          if (item["current-stats"]) {
+            let s = item["current-stats"];
+            item.current_file_count = s.current_file_count || 0;
+            item.current_folder_count = s.current_folder_count || 0;
+            item.current_files_speed = s.current_files_speed || 0;
+            item.current_bytes_speed = s.current_bytes_speed || 0;
+            item.current_bytes_total = s.current_bytes_total || 0;
+          }
+          if (item["dest-target"] && Ext.isObject(item["dest-target"])) {
+            item["dest-target"] = item["dest-target"].name;
+          }
+          return item;
+        });
+      },
     },
   },
 });
@@ -219,54 +153,37 @@ Ext.define("pbs-model-targets", {
     "volume_total",
     "volume_used",
     "volume_free",
-
-    {
-      name: "agent_hostname",
-      mapping: "agent_host",
-      convert: (v) => (v ? v.name : null),
-    },
-    {
-      name: "os",
-      mapping: "agent_host",
-      convert: (v) => (v ? v.os : null),
-    },
-    {
-      name: "agent_ip",
-      mapping: "agent_host",
-      convert: (v) => (v ? v.ip : null),
-    },
-
+    "agent_hostname",
+    "os",
+    "agent_ip",
     "text",
     "isGroup",
     "groupType",
     "iconCls",
   ],
   idProperty: "name",
-});
-
-Ext.define("pbs-model-tokens", {
-  extend: "Ext.data.Model",
-  fields: [
-    "token",
-    "comment",
-    "created_at",
-    "revoked",
-    "win_install",
-    "duration",
-  ],
-  idProperty: "token",
-});
-
-Ext.define("pbs-model-exclusions", {
-  extend: "Ext.data.Model",
-  fields: ["path", "comment"],
-  idProperty: "path",
-});
-
-Ext.define("pbs-model-scripts", {
-  extend: "Ext.data.Model",
-  fields: ["path", "description", "job_count", "target_count"],
-  idProperty: "path",
+  proxy: {
+    type: "memory",
+    reader: {
+      type: "json",
+      transform: function (data) {
+        let transformNode = (node) => {
+          if (node.agent_host) {
+            node.agent_hostname = node.agent_host.name;
+            node.os = node.agent_host.os;
+            node.agent_ip = node.agent_host.ip;
+          }
+          if (node.children) {
+            node.children.forEach(transformNode);
+          }
+          return node;
+        };
+        return Array.isArray(data)
+          ? data.map(transformNode)
+          : transformNode(data);
+      },
+    },
+  },
 });
 
 Ext.define("pbs-model-d2d-snapshots", {
@@ -276,24 +193,24 @@ Ext.define("pbs-model-d2d-snapshots", {
     "backup-time",
     "backup-type",
     "files",
-    {
-      name: "value",
-      convert: function (v, record) {
-        if (v) return v;
-        if (!record.data["backup-id"]) return "";
-        let type = record.data["backup-type"] || "host";
-        return `${type}/${record.data["backup-id"]}/${record.data["backup-time"]}`;
-      },
-    },
-    {
-      name: "display",
-      convert: function (v, record) {
-        if (record.data["backup-time"]) {
-          let time = new Date(record.data["backup-time"] * 1000);
-          return `${Ext.Date.format(time, "Y-m-d H:i:s")} | ${record.data["backup-id"]}`;
-        }
-        return v || record.data.value || "";
-      },
-    },
+    "value",
+    "display",
   ],
+  proxy: {
+    type: "memory",
+    reader: {
+      type: "json",
+      transform: function (data) {
+        return data.map((item) => {
+          let type = item["backup-type"] || "host";
+          item.value = `${type}/${item["backup-id"]}/${item["backup-time"]}`;
+          if (item["backup-time"]) {
+            let time = new Date(item["backup-time"] * 1000);
+            item.display = `${Ext.Date.format(time, "Y-m-d H:i:s")} | ${item["backup-id"]}`;
+          }
+          return item;
+        });
+      },
+    },
+  },
 });
