@@ -16,8 +16,9 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
 	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
@@ -59,12 +60,12 @@ type RestoreOperation struct {
 	cancel context.CancelFunc
 	mu     sync.RWMutex
 
-	task      *proxmox.RestoreTask
-	queueTask *proxmox.QueuedTask
+	task      *tasks.RestoreTask
+	queueTask *tasks.QueuedTask
 	waitGroup *sync.WaitGroup
 	err       error
 
-	job           types.Restore
+	job           database.Restore
 	storeInstance *store.Store
 	skipCheck     bool
 	web           bool
@@ -73,12 +74,12 @@ type RestoreOperation struct {
 var _ jobs.Operation = (*RestoreOperation)(nil)
 
 func NewRestoreOperation(
-	job types.Restore,
+	job database.Restore,
 	storeInstance *store.Store,
 	skipCheck bool,
 	web bool,
 ) (*RestoreOperation, error) {
-	task, err := proxmox.GetRestoreTask(job)
+	task, err := tasks.GetRestoreTask(job)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +189,7 @@ func (b *RestoreOperation) runPostScript() {
 }
 
 func (b *RestoreOperation) PreExecute() error {
-	queueTask, err := proxmox.GenerateRestoreQueuedTask(b.job, b.web)
+	queueTask, err := tasks.GenerateRestoreQueuedTask(b.job, b.web)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
 	} else {
@@ -209,18 +210,17 @@ func (b *RestoreOperation) agentExecute() error {
 	preCtx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
 	defer cancel()
 
-	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", b.job.DestTarget))
+	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", b.job.DestTarget.Name))
 
 	arpcSess, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.DestTarget.GetHostname())
 	if !exists {
 		return errors.New("destination target is unreachable")
 	}
 
-	destPath := b.job.DestPath
+	destPath := b.job.DestSubpath
 
-	targetInfo := b.job.DestTargetPath.GetPathInfo()
-	destPath = filepath.Join(targetInfo.HostPath, destPath)
-	if targetInfo.IsWindows {
+	destPath = filepath.Join(b.job.DestTarget.GetAgentHostPath(), destPath)
+	if b.job.DestTarget.AgentHost.OperatingSystem == "windows" {
 		destPath = filepath.FromSlash(destPath)
 	}
 
@@ -235,7 +235,7 @@ func (b *RestoreOperation) agentExecute() error {
 		DestPath:  destPath,
 	}
 
-	b.task.WriteString(fmt.Sprintf("calling restore to %s (%s)", b.job.DestTarget, destPath))
+	b.task.WriteString(fmt.Sprintf("calling restore to %s (%s)", b.job.DestTarget.Name, destPath))
 
 	_, err := arpcSess.CallMessage(preCtx, "restore", &restoreReq)
 	if err != nil {
@@ -298,10 +298,9 @@ func (b *RestoreOperation) agentExecute() error {
 }
 
 func (b *RestoreOperation) localExecute() error {
-	destPath := b.job.DestPath
+	destPath := b.job.DestSubpath
 
-	targetInfo := b.job.DestTargetPath.GetPathInfo()
-	destPath = filepath.Join(targetInfo.RawPath, destPath)
+	destPath = filepath.Join(b.job.DestTarget.Path, destPath)
 
 	srcPath := b.job.SrcPath
 	if strings.TrimSpace(b.job.SrcPath) == "" {
@@ -365,18 +364,16 @@ func (b *RestoreOperation) Execute() error {
 			"target":    b.job.DestTarget,
 		}).Write()
 
-	info := b.job.DestTargetPath.GetPathInfo()
-
-	switch info.Type {
-	case types.TargetTypeAgent:
+	switch b.job.DestTarget.Type {
+	case database.TargetTypeAgent:
 		return b.agentExecute()
-	case types.TargetTypeLocal:
+	case database.TargetTypeLocal:
 		return b.localExecute()
-	case types.TargetTypeS3:
-		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTargetPath)
+	case database.TargetTypeS3:
+		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
+	default:
+		return ErrTargetNotFound
 	}
-
-	return fmt.Errorf("only agent and local restores are supported for now (%s)", b.job.DestTargetPath)
 }
 
 func (b *RestoreOperation) OnError(err error) {
@@ -415,14 +412,14 @@ func (b *RestoreOperation) Wait() error {
 }
 
 func (b *RestoreOperation) createOK(err error) {
-	task, terr := proxmox.GenerateRestoreTaskOKFile(
+	task, terr := tasks.GenerateRestoreTaskOKFile(
 		b.job,
 		[]string{
 			"Done handling from a job run request",
 			"Restore ID: " + b.job.ID,
 			"Snapshot: " + b.job.Snapshot,
 			"Store: " + b.job.Store,
-			"Destination: " + b.job.DestTarget.String(),
+			"Destination: " + b.job.DestTarget.Name,
 			"Response: " + err.Error(),
 		},
 	)
@@ -435,11 +432,11 @@ func (b *RestoreOperation) createOK(err error) {
 	if gerr != nil {
 		latest = b.job
 	}
-	latest.LastRunUpid = task.UPID
-	latest.LastRunState = task.Status
-	latest.LastRunEndtime = task.EndTime
-	latest.LastSuccessfulEndtime = task.EndTime
-	latest.LastSuccessfulUpid = task.UPID
+	latest.History.LastRunUpid = task.UPID
+	latest.History.LastRunState = task.Status
+	latest.History.LastRunEndtime = task.EndTime
+	latest.History.LastSuccessfulEndtime = task.EndTime
+	latest.History.LastSuccessfulUpid = task.UPID
 
 	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
 		syslog.L.Error(uerr).
@@ -454,9 +451,9 @@ func (b *RestoreOperation) updateRestoreWithTask(task proxmox.Task) {
 	if gerr != nil {
 		latest = b.job
 	}
-	latest.LastRunUpid = task.UPID
-	latest.LastRunState = task.Status
-	latest.LastRunEndtime = task.EndTime
+	latest.History.LastRunUpid = task.UPID
+	latest.History.LastRunState = task.Status
+	latest.History.LastRunEndtime = task.EndTime
 
 	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
 		syslog.L.Error(uerr).

@@ -32,7 +32,7 @@ Ext.define("PBS.config.DiskRestoreJobView", {
             re.test(rec.get("src-path")) ||
             re.test(rec.get("dest-target")) ||
             re.test(rec.get("comment")) ||
-            re.test(rec.get("dest-path"))
+            re.test(rec.get("dest-subpath"))
           );
         });
       }

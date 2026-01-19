@@ -1,9 +1,8 @@
 //go:build linux
 
-package sqlite
+package database
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -12,16 +11,14 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
-	_ "modernc.org/sqlite"
 )
 
-// generateUniqueRestoreID produces a unique restore id based on the restore’s target.
-func (database *Database) generateUniqueRestoreID(restore types.Restore) (string, error) {
-	baseID := utils.Slugify(restore.DestTarget.String())
+func (database *Database) generateUniqueRestoreID(restore Restore) (string, error) {
+	baseID := utils.Slugify(restore.DestTarget.Name)
 	if baseID == "" {
 		return "", fmt.Errorf("invalid target: slugified value is empty")
 	}
@@ -33,52 +30,48 @@ func (database *Database) generateUniqueRestoreID(restore types.Restore) (string
 		} else {
 			newID = fmt.Sprintf("%s-%d", baseID, idx)
 		}
-		var exists int
-		err := database.readDb.
-			QueryRow("SELECT 1 FROM restores WHERE id = ? LIMIT 1", newID).
-			Scan(&exists)
 
+		_, err := database.readQueries.RestoreExists(database.ctx, newID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return newID, nil
 		}
 		if err != nil {
-			return "", fmt.Errorf(
-				"generateUniqueRestoreID: error checking restore existence: %w", err)
+			return "", fmt.Errorf("generateUniqueRestoreID: error checking restore existence: %w", err)
 		}
 	}
-	return "", fmt.Errorf("failed to generate a unique restore ID after %d attempts",
-		maxAttempts)
+	return "", fmt.Errorf("failed to generate a unique restore ID after %d attempts", maxAttempts)
 }
 
-// CreateRestore creates a new restore record and adds any associated exclusions.
-func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err error) {
+func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("CreateRestore: failed to begin transaction: %w", err)
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback() // Rollback on panic
-				panic(p)          // Re-panic after rollback
+				_ = tx.Rollback()
+				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
 					syslog.L.Error(fmt.Errorf("CreateRestore: failed to rollback transaction: %w", rbErr)).Write()
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
-					err = fmt.Errorf("CreateRestore: failed to commit transaction: %w", cErr) // Assign commit error back
+					err = fmt.Errorf("CreateRestore: failed to commit transaction: %w", cErr)
 					syslog.L.Error(err).Write()
 				}
 			} else {
-				// Rollback if commit isn't explicitly needed (e.g., early return without error)
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
 					syslog.L.Error(fmt.Errorf("CreateRestore: failed to rollback transaction: %w", rbErr)).Write()
 				}
 			}
 		}()
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if restore.ID == "" {
 		id, err := database.generateUniqueRestoreID(restore)
@@ -88,7 +81,8 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
 		restore.ID = id
 	}
 
-	if restore.DestTarget.String() == "" {
+	// Validation
+	if restore.DestTarget.Name == "" {
 		return errors.New("dest target is empty")
 	}
 	if restore.Snapshot == "" {
@@ -103,8 +97,8 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
 	if !utils.IsValidPathString(restore.SrcPath) {
 		return fmt.Errorf("invalid source path string: %s", restore.SrcPath)
 	}
-	if !utils.IsValidPathString(restore.DestPath) {
-		return fmt.Errorf("invalid dest path string: %s", restore.DestPath)
+	if !utils.IsValidPathString(restore.DestSubpath) {
+		return fmt.Errorf("invalid dest path string: %s", restore.DestSubpath)
 	}
 	if restore.RetryInterval <= 0 {
 		restore.RetryInterval = 1
@@ -113,15 +107,23 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
 		restore.Retry = 0
 	}
 
-	_, err = tx.Exec(`
-        INSERT INTO restores (
-            id, store, namespace, snapshot, src_path, dest_target, dest_path, comment,
-            current_pid, last_run_upid, last_successful_upid, retry,
-            retry_interval, pre_script, post_script
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, restore.ID, restore.Store, restore.Namespace, restore.Snapshot, restore.SrcPath, restore.DestTarget, restore.DestPath,
-		restore.Comment, restore.CurrentPID, restore.LastRunUpid, restore.LastSuccessfulUpid, restore.Retry,
-		restore.RetryInterval, restore.PreScript, restore.PostScript)
+	err = q.CreateRestore(database.ctx, sqlc.CreateRestoreParams{
+		ID:                 restore.ID,
+		Store:              restore.Store,
+		Namespace:          sql.NullString{String: restore.Namespace, Valid: restore.Namespace != ""},
+		Snapshot:           restore.Snapshot,
+		SrcPath:            restore.SrcPath,
+		DestTarget:         restore.DestTarget.Name,
+		DestSubpath:        toNullString(restore.DestSubpath),
+		Comment:            toNullString(restore.Comment),
+		CurrentPid:         intToNullString(restore.CurrentPID),
+		LastRunUpid:        toNullString(restore.History.LastRunUpid),
+		LastSuccessfulUpid: toNullString(restore.History.LastSuccessfulUpid),
+		Retry:              toNullInt64(restore.Retry),
+		RetryInterval:      toNullInt64(restore.RetryInterval),
+		PreScript:          restore.PreScript,
+		PostScript:         restore.PostScript,
+	})
 	if err != nil {
 		return fmt.Errorf("CreateRestore: error inserting restore: %w", err)
 	}
@@ -130,46 +132,59 @@ func (database *Database) CreateRestore(tx *sql.Tx, restore types.Restore) (err 
 	return nil
 }
 
-// GetRestore retrieves a restore by id and assembles its exclusions.
-func (database *Database) GetRestore(id string) (types.Restore, error) {
-	query := `
-        SELECT
-            j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, t.path, j.dest_path, j.comment,
-            j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval, j.pre_script, j.post_script
-        FROM restores j
-        LEFT JOIN targets t ON j.dest_target = t.name
-        WHERE j.id = ?
-    `
-	rows, err := database.readDb.Query(query, id)
+func (database *Database) GetRestore(id string) (Restore, error) {
+	row, err := database.readQueries.GetRestore(database.ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Restore{}, ErrRestoreNotFound
+	}
 	if err != nil {
-		return types.Restore{}, fmt.Errorf("GetRestore: error querying restore data: %w", err)
-	}
-	defer rows.Close()
-
-	var restore types.Restore
-	var found bool = false
-
-	for rows.Next() {
-		found = true
-		err := rows.Scan(
-			&restore.ID, &restore.Store, &restore.Namespace, &restore.Snapshot, &restore.SrcPath, &restore.DestTarget, &restore.DestTargetPath,
-			&restore.DestPath, &restore.Comment, &restore.CurrentPID, &restore.LastRunUpid,
-			&restore.LastSuccessfulUpid, &restore.Retry, &restore.RetryInterval, &restore.PreScript, &restore.PostScript)
-		if err != nil {
-			syslog.L.Error(fmt.Errorf("GetRestore: error scanning restore data: %w", err)).
-				WithField("id", id).
-				Write()
-			return types.Restore{}, fmt.Errorf("GetRestore: error scanning restore data for id %s: %w", id, err)
-		}
+		return Restore{}, fmt.Errorf("GetRestore: error querying restore: %w", err)
 	}
 
-	if err = rows.Err(); err != nil {
-		return types.Restore{}, fmt.Errorf("GetRestore: error iterating restore results: %w", err)
+	restore := Restore{
+		ID:       row.ID,
+		Store:    row.Store,
+		Snapshot: row.Snapshot,
+		SrcPath:  row.SrcPath,
+		DestTarget: Target{
+			Name: row.DestTarget,
+			Path: row.Path.String,
+			AgentHost: AgentHost{
+				Name:            row.AgentName.String,
+				IP:              row.AgentIp.String,
+				Auth:            row.AgentAuth.String,
+				TokenUsed:       row.AgentTokenUsed.String,
+				OperatingSystem: row.AgentOs.String,
+			},
+			VolumeID:         row.VolumeID.String,
+			MountScript:      row.MountScript.String,
+			VolumeType:       row.VolumeType.String,
+			VolumeName:       row.VolumeName.String,
+			VolumeFS:         row.VolumeFs.String,
+			VolumeTotalBytes: int(row.VolumeTotalBytes.Int64),
+			VolumeUsedBytes:  int(row.VolumeUsedBytes.Int64),
+			VolumeFreeBytes:  int(row.VolumeFreeBytes.Int64),
+			VolumeTotal:      row.VolumeTotal.String,
+			VolumeUsed:       row.VolumeUsed.String,
+			VolumeFree:       row.VolumeFree.String,
+		},
+		DestSubpath: fromNullString(row.DestSubpath),
+		Comment:     fromNullString(row.Comment),
+		CurrentPID:  fromNullStringToInt(row.CurrentPid),
+		History: JobHistory{
+			LastRunUpid:        fromNullString(row.LastRunUpid),
+			LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+		},
+		Retry:         fromNullInt64(row.Retry),
+		RetryInterval: fromNullInt64(row.RetryInterval),
+		PreScript:     row.PreScript,
+		PostScript:    row.PostScript,
 	}
 
-	if !found {
-		return types.Restore{}, ErrRestoreNotFound
+	restore.DestTarget.populateInfo()
+
+	if row.Namespace.Valid {
+		restore.Namespace = row.Namespace.String
 	}
 
 	database.populateRestoreExtras(&restore)
@@ -177,32 +192,32 @@ func (database *Database) GetRestore(id string) (types.Restore, error) {
 	return restore, nil
 }
 
-// populateRestoreExtras fills in details not directly from the database tables.
-func (database *Database) populateRestoreExtras(restore *types.Restore) {
-	if restore.LastRunUpid != "" {
-		task, err := proxmox.GetTaskByUPID(restore.LastRunUpid)
+func (database *Database) populateRestoreExtras(restore *Restore) {
+	if restore.History.LastRunUpid != "" {
+		task, err := proxmox.GetTaskByUPID(restore.History.LastRunUpid)
 		if err == nil {
-			restore.LastRunEndtime = task.EndTime
+			restore.History.LastRunEndtime = task.EndTime
 			if task.Status == "stopped" {
-				restore.LastRunState = task.ExitStatus
-				restore.Duration = task.EndTime - task.StartTime
+				restore.History.LastRunState = task.ExitStatus
+				restore.History.Duration = task.EndTime - task.StartTime
 			} else if task.StartTime > 0 {
-				restore.Duration = time.Now().Unix() - task.StartTime
+				restore.History.Duration = time.Now().Unix() - task.StartTime
 			}
 		}
 	}
-	if restore.LastSuccessfulUpid != "" {
-		if successTask, err := proxmox.GetTaskByUPID(restore.LastSuccessfulUpid); err == nil {
-			restore.LastSuccessfulEndtime = successTask.EndTime
+	if restore.History.LastSuccessfulUpid != "" {
+		if successTask, err := proxmox.GetTaskByUPID(restore.History.LastSuccessfulUpid); err == nil {
+			restore.History.LastSuccessfulEndtime = successTask.EndTime
 		}
 	}
 }
 
-// UpdateRestore updates an existing restore and its exclusions.
-func (database *Database) UpdateRestore(tx *sql.Tx, restore types.Restore) (err error) {
+func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("UpdateRestore: failed to begin transaction: %w", err)
 		}
@@ -226,11 +241,13 @@ func (database *Database) UpdateRestore(tx *sql.Tx, restore types.Restore) (err 
 			}
 		}()
 	}
+	q = database.queries.WithTx(tx.Tx)
 
+	// Validation
 	if !utils.IsValidID(restore.ID) && restore.ID != "" {
 		return fmt.Errorf("UpdateRestore: invalid id string -> %s", restore.ID)
 	}
-	if restore.DestTarget.String() == "" {
+	if restore.DestTarget.Name == "" {
 		return errors.New("dest target is empty")
 	}
 	if restore.Snapshot == "" {
@@ -239,14 +256,11 @@ func (database *Database) UpdateRestore(tx *sql.Tx, restore types.Restore) (err 
 	if restore.Store == "" {
 		return errors.New("datastore is empty")
 	}
-	if !utils.IsValidID(restore.ID) && restore.ID != "" {
-		return fmt.Errorf("CreateRestore: invalid id string -> %s", restore.ID)
-	}
 	if !utils.IsValidPathString(restore.SrcPath) {
 		return fmt.Errorf("invalid source path string: %s", restore.SrcPath)
 	}
-	if !utils.IsValidPathString(restore.DestPath) {
-		return fmt.Errorf("invalid dest path string: %s", restore.DestPath)
+	if !utils.IsValidPathString(restore.DestSubpath) {
+		return fmt.Errorf("invalid dest path string: %s", restore.DestSubpath)
 	}
 	if restore.RetryInterval <= 0 {
 		restore.RetryInterval = 1
@@ -255,27 +269,35 @@ func (database *Database) UpdateRestore(tx *sql.Tx, restore types.Restore) (err 
 		restore.Retry = 0
 	}
 
-	_, err = tx.Exec(`
-        UPDATE restores SET store = ?, namespace = ?, snapshot = ?, src_path = ?, dest_target = ?, dest_path = ?,
-            comment = ?, current_pid = ?, last_run_upid = ?, retry = ?,
-            retry_interval = ?, last_successful_upid = ?, pre_script = ?, post_script = ?
-        WHERE id = ?
-    `, restore.Store, restore.Namespace, restore.Snapshot, restore.SrcPath, restore.DestTarget, restore.DestPath,
-		restore.Comment, restore.CurrentPID, restore.LastRunUpid, restore.Retry, restore.RetryInterval,
-		restore.LastSuccessfulUpid, restore.PreScript, restore.PostScript, restore.ID)
+	err = q.UpdateRestore(database.ctx, sqlc.UpdateRestoreParams{
+		Store:              restore.Store,
+		Namespace:          sql.NullString{String: restore.Namespace, Valid: restore.Namespace != ""},
+		Snapshot:           restore.Snapshot,
+		SrcPath:            restore.SrcPath,
+		DestTarget:         restore.DestTarget.Name,
+		DestSubpath:        toNullString(restore.DestSubpath),
+		Comment:            toNullString(restore.Comment),
+		CurrentPid:         intToNullString(restore.CurrentPID),
+		LastRunUpid:        toNullString(restore.History.LastRunUpid),
+		LastSuccessfulUpid: toNullString(restore.History.LastSuccessfulUpid),
+		Retry:              toNullInt64(restore.Retry),
+		RetryInterval:      toNullInt64(restore.RetryInterval),
+		PreScript:          restore.PreScript,
+		PostScript:         restore.PostScript,
+		ID:                 restore.ID,
+	})
 	if err != nil {
 		return fmt.Errorf("UpdateRestore: error updating restore: %w", err)
 	}
 
-	if restore.LastRunUpid != "" {
-		go database.linkRestoreLog(restore.ID, restore.LastRunUpid)
+	if restore.History.LastRunUpid != "" {
+		go database.linkRestoreLog(restore.ID, restore.History.LastRunUpid)
 	}
 
 	commitNeeded = true
 	return nil
 }
 
-// linkRestoreLog handles the asynchronous log linking.
 func (database *Database) linkRestoreLog(restoreID, upid string) {
 	restoreLogsPath := filepath.Join(constants.RestoreLogsBasePath, restoreID)
 	if err := os.MkdirAll(restoreLogsPath, 0755); err != nil {
@@ -303,7 +325,7 @@ func (database *Database) linkRestoreLog(restoreID, upid string) {
 	}
 
 	if _, err := os.Stat(origLogPath); err != nil {
-		syslog.L.Error(fmt.Errorf("linkRestoreLog: original log path does not exist or error stating: %w", err)).
+		syslog.L.Error(fmt.Errorf("linkRestoreLog: original log path does not exist: %w", err)).
 			WithField("orig_path", origLogPath).
 			WithField("id", restoreID).
 			Write()
@@ -322,175 +344,114 @@ func (database *Database) linkRestoreLog(restoreID, upid string) {
 	}
 }
 
-// GetAllRestores returns all restore records.
-func (database *Database) GetAllRestores() ([]types.Restore, error) {
-	query := `
-        SELECT
-            j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, t.path, j.dest_path, j.comment,
-            j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval, j.pre_script, j.post_script
-        FROM restores j
-        LEFT JOIN targets t ON j.dest_target = t.name
-        ORDER BY j.id
-    `
-	rows, err := database.readDb.Query(query)
+func (database *Database) GetAllRestores() ([]Restore, error) {
+	rows, err := database.readQueries.ListAllRestores(database.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllRestores: error querying restores: %w", err)
 	}
-	defer rows.Close()
 
-	restoresMap := make(map[string]*types.Restore)
-	var restoreOrder []string
-
-	for rows.Next() {
-		var restoreID, store, snapshot, srcPath, destTarget, destPath, comment, lastRunUpid, lastSuccessfulUpid string
-		var retry int
-		var retryInterval int
-		var preScript, postScript string
-		var targetPath, namespace sql.NullString
-		var currentPID int
-
-		err := rows.Scan(
-			&restoreID, &store, &namespace, &snapshot, &srcPath, &destTarget, &targetPath, &destPath, &comment,
-			&currentPID, &lastRunUpid, &lastSuccessfulUpid,
-			&retry, &retryInterval, &preScript, &postScript,
-		)
-		if err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllRestores: error scanning row: %w", err)).Write()
-			continue
+	restores := make([]Restore, len(rows))
+	for i, row := range rows {
+		restore := Restore{
+			ID:       row.ID,
+			Store:    row.Store,
+			Snapshot: row.Snapshot,
+			SrcPath:  row.SrcPath,
+			DestTarget: Target{
+				Name: row.DestTarget,
+				Path: row.Path.String,
+				AgentHost: AgentHost{
+					Name:            row.AgentName.String,
+					IP:              row.AgentIp.String,
+					Auth:            row.AgentAuth.String,
+					TokenUsed:       row.AgentTokenUsed.String,
+					OperatingSystem: row.AgentOs.String,
+				},
+				VolumeID:         row.VolumeID.String,
+				MountScript:      row.MountScript.String,
+				VolumeType:       row.VolumeType.String,
+				VolumeName:       row.VolumeName.String,
+				VolumeFS:         row.VolumeFs.String,
+				VolumeTotalBytes: int(row.VolumeTotalBytes.Int64),
+				VolumeUsedBytes:  int(row.VolumeUsedBytes.Int64),
+				VolumeFreeBytes:  int(row.VolumeFreeBytes.Int64),
+				VolumeTotal:      row.VolumeTotal.String,
+				VolumeUsed:       row.VolumeUsed.String,
+				VolumeFree:       row.VolumeFree.String,
+			},
+			DestSubpath: fromNullString(row.DestSubpath),
+			Comment:     fromNullString(row.Comment),
+			CurrentPID:  fromNullStringToInt(row.CurrentPid),
+			History: JobHistory{
+				LastRunUpid:        fromNullString(row.LastRunUpid),
+				LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+			},
+			Retry:         fromNullInt64(row.Retry),
+			RetryInterval: fromNullInt64(row.RetryInterval),
+			PreScript:     row.PreScript,
+			PostScript:    row.PostScript,
 		}
 
-		restore, exists := restoresMap[restoreID]
-		if !exists {
-			restore = &types.Restore{
-				ID:                 restoreID,
-				Store:              store,
-				Snapshot:           snapshot,
-				SrcPath:            srcPath,
-				DestTarget:         types.WrapTargetName(destTarget),
-				DestPath:           destPath,
-				PreScript:          preScript,
-				PostScript:         postScript,
-				Comment:            comment,
-				CurrentPID:         currentPID,
-				LastRunUpid:        lastRunUpid,
-				LastSuccessfulUpid: lastSuccessfulUpid,
-				Retry:              retry,
-				RetryInterval:      retryInterval,
-			}
-			restoresMap[restoreID] = restore
-			restoreOrder = append(restoreOrder, restoreID)
-			database.populateRestoreExtras(restore) // Populate non-SQL extras once per restore
+		if row.Namespace.Valid {
+			restore.Namespace = row.Namespace.String
 		}
 
-		if targetPath.Valid {
-			restore.DestTargetPath = types.WrapTargetPath(targetPath.String)
-		}
-		if namespace.Valid {
-			restore.Namespace = namespace.String
-		}
-	}
+		restore.DestTarget.populateInfo()
 
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllRestores: error iterating restore results: %w", err)
-	}
-
-	restores := make([]types.Restore, len(restoreOrder))
-	for i, restoreID := range restoreOrder {
-		restore := restoresMap[restoreID]
-		restores[i] = *restore
+		database.populateRestoreExtras(&restore)
+		restores[i] = restore
 	}
 
 	return restores, nil
 }
 
-func (database *Database) GetAllQueuedRestores() ([]types.Restore, error) {
-	query := `
-        SELECT
-            j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, t.path, j.dest_path, j.comment,
-            j.current_pid, j.last_run_upid, j.last_successful_upid,
-            j.retry, j.retry_interval, j.pre_script, j.post_script
-        FROM restores j
-        LEFT JOIN targets t ON j.dest_target = t.name
-				WHERE j.last_run_upid LIKE "%pbsplusgen-queue%"
-        ORDER BY j.id
-    `
-	rows, err := database.readDb.Query(query)
+func (database *Database) GetAllQueuedRestores() ([]Restore, error) {
+	rows, err := database.readQueries.ListQueuedRestores(database.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllQueuedRestores: error querying restores: %w", err)
 	}
-	defer rows.Close()
 
-	restoresMap := make(map[string]*types.Restore)
-	var restoreOrder []string
-
-	for rows.Next() {
-		var restoreID, store, snapshot, srcPath, destTarget, destPath, comment, lastRunUpid, lastSuccessfulUpid string
-		var preScript, postScript string
-		var retry int
-		var retryInterval int
-		var currentPID int
-		var targetPath, namespace sql.NullString
-
-		err := rows.Scan(
-			&restoreID, &store, &namespace, &snapshot, &srcPath, &destTarget, &targetPath, &destPath, &comment,
-			&currentPID, &lastRunUpid, &lastSuccessfulUpid,
-			&retry, &retryInterval, &preScript, &postScript,
-		)
-		if err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllRestores: error scanning row: %w", err)).Write()
-			continue
+	restores := make([]Restore, len(rows))
+	for i, row := range rows {
+		restore := Restore{
+			ID:       row.ID,
+			Store:    row.Store,
+			Snapshot: row.Snapshot,
+			SrcPath:  row.SrcPath,
+			DestTarget: Target{
+				Name:      row.DestTarget,
+				AgentHost: AgentHost{},
+			},
+			DestSubpath: fromNullString(row.DestSubpath),
+			Comment:     fromNullString(row.Comment),
+			CurrentPID:  fromNullStringToInt(row.CurrentPid),
+			History: JobHistory{
+				LastRunUpid:        fromNullString(row.LastRunUpid),
+				LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+			},
+			Retry:         fromNullInt64(row.Retry),
+			RetryInterval: fromNullInt64(row.RetryInterval),
+			PreScript:     row.PreScript,
+			PostScript:    row.PostScript,
 		}
 
-		restore, exists := restoresMap[restoreID]
-		if !exists {
-			restore = &types.Restore{
-				ID:                 restoreID,
-				Store:              store,
-				Snapshot:           snapshot,
-				SrcPath:            srcPath,
-				DestTarget:         types.WrapTargetName(destTarget),
-				DestPath:           destPath,
-				PreScript:          preScript,
-				PostScript:         postScript,
-				Comment:            comment,
-				CurrentPID:         currentPID,
-				LastRunUpid:        lastRunUpid,
-				LastSuccessfulUpid: lastSuccessfulUpid,
-				Retry:              retry,
-				RetryInterval:      retryInterval,
-			}
-			restoresMap[restoreID] = restore
-			restoreOrder = append(restoreOrder, restoreID)
-			database.populateRestoreExtras(restore) // Populate non-SQL extras once per restore
+		if row.Namespace.Valid {
+			restore.Namespace = row.Namespace.String
 		}
 
-		if targetPath.Valid {
-			restore.DestTargetPath = types.WrapTargetPath(targetPath.String)
-		}
-		if namespace.Valid {
-			restore.Namespace = namespace.String
-		}
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllQueuedRestores: error iterating restore results: %w", err)
-	}
-
-	restores := make([]types.Restore, len(restoreOrder))
-	for i, restoreID := range restoreOrder {
-		restore := restoresMap[restoreID]
-		restores[i] = *restore
+		database.populateRestoreExtras(&restore)
+		restores[i] = restore
 	}
 
 	return restores, nil
 }
 
-// DeleteRestore deletes a restore and any related exclusions.
-func (database *Database) DeleteRestore(tx *sql.Tx, id string) (err error) {
+func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("DeleteRestore: failed to begin transaction: %w", err)
 		}
@@ -514,13 +475,13 @@ func (database *Database) DeleteRestore(tx *sql.Tx, id string) (err error) {
 			}
 		}()
 	}
+	q = database.queries.WithTx(tx.Tx)
 
-	res, err := tx.Exec("DELETE FROM restores WHERE id = ?", id)
+	rowsAffected, err := q.DeleteRestore(database.ctx, id)
 	if err != nil {
 		return fmt.Errorf("DeleteRestore: error deleting restore %s: %w", id, err)
 	}
 
-	rowsAffected, _ := res.RowsAffected()
 	if rowsAffected == 0 {
 		return ErrRestoreNotFound
 	}
@@ -536,4 +497,16 @@ func (database *Database) DeleteRestore(tx *sql.Tx, id string) (err error) {
 
 	commitNeeded = true
 	return nil
+}
+
+func (r *Restore) GetStreamID() string {
+	if r.DestTarget.Type == TargetTypeLocal {
+		return ""
+	}
+
+	if r.DestTarget.Type == TargetTypeS3 {
+		return r.DestTarget.S3Info.Endpoint + "|" + r.ID + "|restore"
+	}
+
+	return r.DestTarget.AgentHost.Name + "|" + r.ID + "|restore"
 }
