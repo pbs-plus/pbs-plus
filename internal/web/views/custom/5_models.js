@@ -50,15 +50,15 @@ Ext.define("pbs-disk-backup-status", {
             item["last-successful-endtime"] =
               item.history["last-successful-endtime"];
             item["last-successful-upid"] = item.history["last-successful-upid"];
-            item["duration"] = item.history["duration"] || 0;
+            item["duration"] = item.history["duration"] || null;
           }
           if (item["current-stats"]) {
             let s = item["current-stats"];
-            item.current_file_count = s.current_file_count || 0;
-            item.current_folder_count = s.current_folder_count || 0;
-            item.current_files_speed = s.current_files_speed || 0;
-            item.current_bytes_speed = s.current_bytes_speed || 0;
-            item.current_bytes_total = s.current_bytes_total || 0;
+            item.current_file_count = s.current_file_count || null;
+            item.current_folder_count = s.current_folder_count || null;
+            item.current_files_speed = s.current_files_speed || null;
+            item.current_bytes_speed = s.current_bytes_speed || null;
+            item.current_bytes_total = s.current_bytes_total || null;
           }
           if (item.target && Ext.isObject(item.target)) {
             item.target = item.target.name;
@@ -115,15 +115,15 @@ Ext.define("pbs-disk-restore-job-status", {
             item["last-successful-endtime"] =
               item.history["last-successful-endtime"];
             item["last-successful-upid"] = item.history["last-successful-upid"];
-            item["duration"] = item.history["duration"] || 0;
+            item["duration"] = item.history["duration"] || null;
           }
           if (item["current-stats"]) {
             let s = item["current-stats"];
-            item.current_file_count = s.current_file_count || 0;
-            item.current_folder_count = s.current_folder_count || 0;
-            item.current_files_speed = s.current_files_speed || 0;
-            item.current_bytes_speed = s.current_bytes_speed || 0;
-            item.current_bytes_total = s.current_bytes_total || 0;
+            item.current_file_count = s.current_file_count || null;
+            item.current_folder_count = s.current_folder_count || null;
+            item.current_files_speed = s.current_files_speed || null;
+            item.current_bytes_speed = s.current_bytes_speed || null;
+            item.current_bytes_total = s.current_bytes_total || null;
           }
           if (item["dest-target"] && Ext.isObject(item["dest-target"])) {
             item["dest-target"] = item["dest-target"].name;
