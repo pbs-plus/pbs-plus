@@ -47,7 +47,7 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
           html: '<div style="height: 100%;"></div>',
           listeners: {
             afterrender: function (component) {
-              Proxmox.Utils.LoadCodeMirror(function () {
+              PBS.PlusUtils.LoadCodeMirror(function () {
                 let isDark =
                   window.matchMedia &&
                   window.matchMedia("(prefers-color-scheme: dark)").matches;
