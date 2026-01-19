@@ -84,7 +84,7 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		qtx := database.queries.WithTx(tx)
 		for _, exclusion := range constants.DefaultExclusions {
 			err = qtx.CreateExclusion(ctx, sqlc.CreateExclusionParams{
-				JobID:   sql.NullString{},
+				JobID:   "",
 				Path:    exclusion,
 				Comment: sql.NullString{String: "Generated exclusion from default list", Valid: true},
 			})
