@@ -214,3 +214,28 @@ Ext.define("pbs-model-d2d-snapshots", {
     },
   },
 });
+
+Ext.define("pbs-model-tokens", {
+  extend: "Ext.data.Model",
+  fields: [
+    "token",
+    "comment",
+    "created_at",
+    "revoked",
+    "win_install",
+    "duration",
+  ],
+  idProperty: "token",
+});
+
+Ext.define("pbs-model-exclusions", {
+  extend: "Ext.data.Model",
+  fields: ["path", "comment"],
+  idProperty: "path",
+});
+
+Ext.define("pbs-model-scripts", {
+  extend: "Ext.data.Model",
+  fields: ["path", "description", "job_count", "target_count"],
+  idProperty: "path",
+});
