@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	_ "modernc.org/sqlite"
 
@@ -27,6 +28,7 @@ type Database struct {
 	writeDb      *sql.DB
 	queries      *sqlc.Queries
 	readQueries  *sqlc.Queries
+	writeMu      sync.Mutex
 	dbPath       string
 	TokenManager *mtls.TokenManager
 }
@@ -116,13 +118,17 @@ func (t *Transaction) Rollback() error {
 
 func (t *Transaction) release() {
 	if !t.released {
+		t.database.writeMu.Unlock()
 		t.released = true
 	}
 }
 
 func (d *Database) NewTransaction() (*Transaction, error) {
+	d.writeMu.Lock()
+
 	tx, err := d.writeDb.BeginTx(d.ctx, nil)
 	if err != nil {
+		d.writeMu.Unlock()
 		return nil, err
 	}
 

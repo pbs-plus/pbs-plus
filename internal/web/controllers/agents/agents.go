@@ -123,7 +123,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		clientIP = strings.Split(clientIP, ":")[0]
 
-		syslog.L.Info().WithMessage("bootstrapping target").WithFields(map[string]any{"target": reqParsed.Hostname}).Write()
+		syslog.L.Info().WithMessage("bootstrapping target").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives}).Write()
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -142,7 +142,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		_, err = storeInstance.Database.GetAgentHost(reqParsed.Hostname)
 		if err == nil {
-			syslog.L.Info().WithMessage("updating host target details").WithFields(map[string]any{"target": reqParsed.Hostname}).Write()
+			syslog.L.Info().WithMessage("updating host target details").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives}).Write()
 			err = storeInstance.Database.UpdateAgentHost(tx, host)
 			if err != nil {
 				tx.Rollback()
@@ -152,7 +152,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 		} else {
-			syslog.L.Info().WithMessage("creating new host target").WithFields(map[string]any{"target": reqParsed.Hostname}).Write()
+			syslog.L.Info().WithMessage("creating new host target").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives, "error": err.Error()}).Write()
 			err = storeInstance.Database.CreateAgentHost(tx, host)
 			if err != nil {
 				tx.Rollback()
