@@ -39,8 +39,8 @@ func (database *Database) CreateScript(tx *Transaction, script Script) (err erro
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if script.Path == "" {
 		return fmt.Errorf("script path empty")
@@ -86,8 +86,8 @@ func (database *Database) UpdateScript(tx *Transaction, script Script) (err erro
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if script.Path == "" {
 		return fmt.Errorf("script path empty")
@@ -133,8 +133,8 @@ func (database *Database) DeleteScript(tx *Transaction, name string) (err error)
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	rowsAffected, err := q.DeleteScript(database.ctx, name)
 	if err != nil {
