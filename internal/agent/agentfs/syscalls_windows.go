@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"unicode/utf16"
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -21,12 +20,12 @@ var (
 )
 
 func openForAttrs(path string) (windows.Handle, error) {
-	pathUTF16 := utf16.Encode([]rune(path))
-	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
-		pathUTF16 = append(pathUTF16, 0)
+	pathUTF16, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
 	}
 	return windows.CreateFile(
-		&pathUTF16[0],
+		pathUTF16,
 		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
@@ -52,14 +51,13 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 
 	var sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters uint32
 
-	rootPath := utf16.Encode([]rune(path))
-	if len(rootPath) == 0 || rootPath[len(rootPath)-1] != 0 {
-		rootPath = append(rootPath, 0)
+	rootPath, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return types.StatFS{}, err
 	}
-	rootPathPtr := &rootPath[0]
 
 	ret, _, err := procGetDiskFreeSpace.Call(
-		uintptr(unsafe.Pointer(rootPathPtr)),
+		uintptr(unsafe.Pointer(rootPath)),
 		uintptr(unsafe.Pointer(&sectorsPerCluster)),
 		uintptr(unsafe.Pointer(&bytesPerSector)),
 		uintptr(unsafe.Pointer(&numberOfFreeClusters)),
@@ -228,55 +226,3 @@ func readAtOverlapped(h windows.Handle, off int64, buf []byte) (int, error) {
 	return int(n), nil
 }
 
-func queryAllocatedRanges(h windows.Handle, off, length int64) ([]allocatedRange, error) {
-	in := allocatedRange{FileOffset: off, Length: length}
-
-	// Start with a reasonable capacity.
-	out := make([]allocatedRange, 64)
-
-	call := func(dst []allocatedRange) (int, error) {
-		var br uint32
-		err := windows.DeviceIoControl(
-			h,
-			windows.FSCTL_QUERY_ALLOCATED_RANGES,
-			(*byte)(unsafe.Pointer(&in)),
-			uint32(unsafe.Sizeof(in)),
-			(*byte)(unsafe.Pointer(&dst[0])),
-			uint32(len(dst))*uint32(unsafe.Sizeof(dst[0])),
-			&br,
-			nil,
-		)
-		if err != nil {
-			// ERROR_INSUFFICIENT_BUFFER is not typical here; ERROR_MORE_DATA can occur.
-			if err == windows.ERROR_MORE_DATA {
-				return int(br), err
-			}
-			return 0, err
-		}
-		return int(br), nil
-	}
-
-	br, err := call(out)
-	if err == windows.ERROR_MORE_DATA {
-		need := br / int(unsafe.Sizeof(out[0]))
-		if need <= len(out) {
-			need = len(out) * 2
-		}
-		out = make([]allocatedRange, need)
-		// Second attempt
-		br, err = call(out)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	count := br / int(unsafe.Sizeof(out[0]))
-	res := make([]allocatedRange, 0, count)
-	for i := 0; i < count; i++ {
-		res = append(res, allocatedRange{
-			FileOffset: out[i].FileOffset,
-			Length:     out[i].Length,
-		})
-	}
-	return res, nil
-}

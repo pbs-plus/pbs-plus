@@ -22,18 +22,17 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const (
-	readAheadSize = 1024 * 1024
-	attrPrefix    = "attr:"
+	attrPrefix = "attr:"
 )
 
 func NewS3FS(
 	ctx context.Context,
-	backup storeTypes.Backup,
+	backup database.Backup,
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
 ) *S3FS {

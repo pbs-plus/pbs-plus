@@ -9,7 +9,7 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
   items: [
     {
       xtype: "proxmoxtextfield",
-      name: "dest-path",
+      name: "dest-subpath",
       reference: "destPathField",
       flex: 1,
       emptyText: gettext("/"),

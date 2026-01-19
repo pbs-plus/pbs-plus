@@ -16,7 +16,7 @@ import (
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 )
 
@@ -33,9 +33,9 @@ type S3Mount struct {
 	isEmpty   bool
 }
 
-func S3FSMount(ctx context.Context, storeInstance *store.Store, backup types.Backup, target types.Target) (*S3Mount, error) {
+func S3FSMount(ctx context.Context, storeInstance *store.Store, backup database.Backup, target database.Target) (*S3Mount, error) {
 	// Parse target information
-	parsedS3 := target.Path.GetPathInfo().S3Url
+	parsedS3 := target.S3Info
 
 	s3Mount := &S3Mount{
 		BackupId:  backup.ID,

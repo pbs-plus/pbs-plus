@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
@@ -12,6 +13,13 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils/idgen"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
+
+var readBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 1024*1024)
+		return &b
+	},
+}
 
 type AgentFSServer struct {
 	ctx              context.Context
