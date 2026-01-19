@@ -421,6 +421,8 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
           btn.setDisabled(!btn.enableFn(rec));
         } else if (btn.selModel !== false) {
           btn.setDisabled(!rec);
+        } else {
+          btn.setDisabled(false);
         }
       });
     },
@@ -431,7 +433,9 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       text: gettext("Add"),
       xtype: "proxmoxButton",
       handler: "onAdd",
-      selModel: false,
+      enableFn: function (rec) {
+        return true;
+      },
     },
     {
       xtype: "proxmoxButton",
