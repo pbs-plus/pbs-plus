@@ -416,13 +416,14 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       let me = this;
       let rec = selected[0] || null;
 
-      me.query('proxmoxButton').forEach(btn => {
+      me.query("proxmoxButton").forEach((btn) => {
         if (btn.enableFn) {
           btn.setDisabled(!btn.enableFn(rec));
         } else if (btn.selModel !== false) {
-            btn.setDisabled(!rec);
+          btn.setDisabled(!rec);
         }
       });
+    },
   },
 
   tbar: [
