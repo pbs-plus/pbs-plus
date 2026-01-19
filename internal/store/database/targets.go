@@ -51,13 +51,6 @@ func (database *Database) CreateTarget(tx *Transaction, target Target) (err erro
 		return fmt.Errorf("target path empty and no agent host specified")
 	}
 
-	if target.AgentHost.Name != "" {
-		_, err := database.GetAgentHost(target.AgentHost.Name)
-		if err != nil {
-			return fmt.Errorf("agent host not found: %w", err)
-		}
-	}
-
 	_, s3Err := s3url.Parse(target.Path)
 	if target.Path != "" && !utils.ValidateTargetPath(target.Path) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
@@ -122,13 +115,6 @@ func (database *Database) UpdateTarget(tx *Transaction, target Target) (err erro
 	// Validation
 	if target.Path == "" && target.AgentHost.Name == "" {
 		return fmt.Errorf("target path empty and no agent host specified")
-	}
-
-	if target.AgentHost.Name != "" {
-		_, err := database.GetAgentHost(target.AgentHost.Name)
-		if err != nil {
-			return fmt.Errorf("agent host not found: %w", err)
-		}
 	}
 
 	_, s3Err := s3url.Parse(target.Path)
