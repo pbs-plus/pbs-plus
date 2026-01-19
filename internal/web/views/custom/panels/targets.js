@@ -397,101 +397,89 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
   useArrows: true,
   rowLines: true,
 
-  selModel: {
-    selType: "rowmodel",
-    mode: "SINGLE",
-  },
+  selModel: "checkboxmodel",
 
   listeners: {
+    itemdblclick: "onEdit",
     beforedestroy: "stopStore",
     deactivate: "stopStore",
     activate: "startStore",
-    itemdblclick: function (view, record) {
-      if (!record.data.isGroup) {
-        this.getController().onEdit();
-      }
-    },
   },
 
-  initComponent: function () {
+  tbar: [
+    {
+      text: gettext("Add"),
+      xtype: "proxmoxButton",
+      handler: "onAdd",
+      selModel: false,
+    },
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Create Job"),
+      handler: "addJob",
+      disabled: true,
+      enableFn: (rec) => rec && !rec.get("isGroup"),
+    },
+    "-",
+    {
+      text: gettext("Edit"),
+      xtype: "proxmoxButton",
+      handler: "onEdit",
+      disabled: true,
+      enableFn: (rec) => rec && !rec.get("isGroup"),
+    },
+    {
+      text: gettext("Set S3 Secret Key"),
+      xtype: "proxmoxButton",
+      handler: "setS3Secret",
+      disabled: true,
+      enableFn: (rec) =>
+        rec && !rec.get("isGroup") && rec.get("target_type") === "s3",
+    },
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Remove"),
+      handler: "removeItems",
+      disabled: true,
+      enableFn: (rec) => {
+        if (!rec) return false;
+        return (
+          !rec.get("isGroup") ||
+          (rec.get("isGroup") && rec.get("groupType") === "agent")
+        );
+      },
+    },
+    "->",
+    {
+      xtype: "textfield",
+      itemId: "targetSearchField",
+      emptyText: gettext("Search targets..."),
+      width: 250,
+      enableKeyEvents: true,
+      triggers: {
+        clear: {
+          cls: "x-form-clear-trigger",
+          handler: "onClearSearch",
+        },
+      },
+      listeners: {
+        change: {
+          fn: "onSearch",
+          buffer: 300,
+        },
+      },
+    },
+  ],
+
+  afterRender: function () {
     let me = this;
-
-    Ext.apply(me, {
-      tbar: [
-        {
-          text: gettext("Add"),
-          xtype: "proxmoxButton",
-          handler: "onAdd",
-          selModel: false,
-        },
-        {
-          xtype: "proxmoxButton",
-          text: gettext("Create Job"),
-          handler: "addJob",
-          disabled: true,
-          selModel: me.selModel,
-          enableFn: (rec) => rec && !rec.get("isGroup"),
-        },
-        "-",
-        {
-          text: gettext("Edit"),
-          xtype: "proxmoxButton",
-          handler: "onEdit",
-          disabled: true,
-          selModel: me.selModel,
-          enableFn: (rec) => rec && !rec.get("isGroup"),
-        },
-        {
-          text: gettext("Set S3 Secret Key"),
-          xtype: "proxmoxButton",
-          handler: "setS3Secret",
-          disabled: true,
-          selModel: me.selModel,
-          enableFn: (rec) =>
-            rec && !rec.get("isGroup") && rec.get("target_type") === "s3",
-        },
-        {
-          xtype: "proxmoxButton",
-          text: gettext("Remove"),
-          handler: "removeItems",
-          disabled: true,
-          selModel: me.selModel,
-          enableFn: (rec) => {
-            if (!rec) return false;
-            return (
-              !rec.get("isGroup") ||
-              (rec.get("isGroup") && rec.get("groupType") === "agent")
-            );
-          },
-        },
-        "->",
-        {
-          xtype: "textfield",
-          itemId: "targetSearchField",
-          emptyText: gettext("Search targets..."),
-          width: 250,
-          enableKeyEvents: true,
-          triggers: {
-            clear: {
-              cls: "x-form-clear-trigger",
-              handler: function () {
-                this.setValue("");
-                // Manually calling controller because 'this' is the textfield
-                me.getController().onClearSearch();
-              },
-            },
-          },
-          listeners: {
-            change: {
-              fn: "onSearch",
-              buffer: 300,
-            },
-          },
-        },
-      ],
-    });
-
     me.callParent();
+    let menuButtons = me.down("toolbar").query("proxmoxButton");
+    menuButtons.forEach((btn) => {
+      if (btn.selModel !== false) {
+        btn.setSelectionModel(me.getSelectionModel());
+      }
+    });
   },
 
   columns: [
