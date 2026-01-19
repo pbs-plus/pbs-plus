@@ -36,6 +36,7 @@ func (b *BtrfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (
 		Path:        snapshotPath,
 		TimeStarted: timeStarted,
 		SourcePath:  sourcePath,
+		JobId:       jobId,
 		Handler:     b,
 	}, nil
 }

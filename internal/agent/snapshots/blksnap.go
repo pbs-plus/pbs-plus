@@ -6,17 +6,21 @@ import (
 	"errors"
 )
 
-type BlksnapSnapshotHandler struct {
+type KernelSnapshotHandler struct {
 }
 
-func (b *BlksnapSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
+func (b *KernelSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
 	return Snapshot{}, errors.New("unsupported")
 }
 
-func (b *BlksnapSnapshotHandler) DeleteSnapshot(snapshot Snapshot) error {
+func (b *KernelSnapshotHandler) DeleteSnapshot(snapshot Snapshot) error {
 	return nil
 }
 
-func (b *BlksnapSnapshotHandler) IsSupported(sourcePath string) bool {
+func (b *KernelSnapshotHandler) IsSupported(sourcePath string) bool {
 	return false
+}
+
+func NewKernelSnapshotHandler() *KernelSnapshotHandler {
+	return nil
 }

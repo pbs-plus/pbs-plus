@@ -38,6 +38,7 @@ func (z *ZFSSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Sn
 		Id:          snapshotFullIdentifier,
 		Path:        snapshotMountPath,
 		TimeStarted: timeStarted,
+		JobId:       jobId,
 		SourcePath:  sourcePath,
 		Handler:     z,
 	}, nil

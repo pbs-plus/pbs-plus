@@ -54,6 +54,7 @@ func (w *NtfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (S
 		Path:        snapshotPath,
 		TimeStarted: timeStarted,
 		SourcePath:  sourcePath,
+		JobId:       jobId,
 		Handler:     w,
 	}, nil
 }
