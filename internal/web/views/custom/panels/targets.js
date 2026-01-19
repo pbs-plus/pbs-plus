@@ -217,25 +217,42 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       targets.forEach((target) => {
         let targetData = target.getData();
 
-        if (targetData.target_type === "agent" && targetData.agent_hostname) {
-          let hostname = targetData.agent_hostname;
-          if (!agentGroups[hostname]) {
-            agentGroups[hostname] = {
-              text: hostname,
-              os: targetData.os,
-              children: [],
-              isGroup: true,
-              groupType: "agent",
-              iconCls: "fa fa-server",
-              expanded: true,
-            };
+        if (targetData.target_type === "agent") {
+          let hostname =
+            targetData.agent_hostname ||
+            (targetData.agent_host && targetData.agent_host.name);
+          let os =
+            targetData.os ||
+            (targetData.agent_host && targetData.agent_host.os);
+
+          if (hostname) {
+            if (!agentGroups[hostname]) {
+              agentGroups[hostname] = {
+                text: hostname,
+                os: os,
+                children: [],
+                isGroup: true,
+                groupType: "agent",
+                iconCls: "fa fa-server",
+                expanded: true,
+              };
+            }
+            agentGroups[hostname].children.push({
+              ...targetData,
+              agent_hostname: hostname, // Ensure it's set
+              os: os, // Ensure it's set
+              leaf: true,
+              isGroup: false,
+              iconCls: "fa fa-hdd-o",
+            });
+          } else {
+            localTargets.push({
+              ...targetData,
+              leaf: true,
+              isGroup: false,
+              iconCls: "fa fa-hdd-o",
+            });
           }
-          agentGroups[hostname].children.push({
-            ...targetData,
-            leaf: true,
-            isGroup: false,
-            iconCls: "fa fa-hdd-o",
-          });
         } else if (targetData.target_type === "s3") {
           s3Targets.push({
             ...targetData,
