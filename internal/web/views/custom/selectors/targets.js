@@ -63,20 +63,6 @@ Ext.define("PBS.form.D2DTargetSelector", {
           return value ? Ext.String.htmlEncode(value) : "-";
         },
       },
-      {
-        header: gettext("Status"),
-        dataIndex: "connection_status",
-        sortable: true,
-        width: 80,
-        renderer: function (value) {
-          if (value === true) {
-            return '<i class="fa fa-check good"></i>';
-          } else if (value === false) {
-            return '<i class="fa fa-times critical"></i>';
-          }
-          return "-";
-        },
-      },
     ],
   },
 

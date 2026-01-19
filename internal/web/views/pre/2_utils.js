@@ -1,6 +1,41 @@
 Ext.define("PBS.PlusUtils", {
   singleton: true,
 
+  LoadCodeMirror: function (callback) {
+    if (window.CodeMirror) {
+      callback();
+      return;
+    }
+
+    let loadCSS = (href) => {
+      return new Promise((resolve) => {
+        let link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = href;
+        link.onload = resolve;
+        document.head.appendChild(link);
+      });
+    };
+
+    let loadJS = (src) => {
+      return new Promise((resolve) => {
+        let script = document.createElement("script");
+        script.src = src;
+        script.onload = resolve;
+        document.head.appendChild(script);
+      });
+    };
+
+    let baseURL = "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16";
+
+    Promise.all([
+      loadCSS(`${baseURL}/codemirror.min.css`),
+      loadJS(`${baseURL}/codemirror.min.js`),
+    ])
+      .then(() => loadJS(`${baseURL}/mode/shell/shell.min.js`))
+      .then(callback);
+  },
+
   API2Request: function (reqOpts) {
     var newopts = Ext.apply(
       {
