@@ -40,8 +40,9 @@ Ext.define("pbs-disk-backup-status", {
     reader: {
       type: "json",
       rootProperty: "data",
-      transform: function (data) {
-        return data.map((item) => {
+      transform: function (raw) {
+        let rows = raw.data || [];
+        return rows.map((item) => {
           if (item.history) {
             item["last-run-upid"] = item.history["last-run-upid"];
             item["last-run-state"] = item.history["last-run-state"];
@@ -104,8 +105,9 @@ Ext.define("pbs-disk-restore-job-status", {
     reader: {
       type: "json",
       rootProperty: "data",
-      transform: function (data) {
-        return data.map((item) => {
+      transform: function (raw) {
+        let rows = raw.data || [];
+        return rows.map((item) => {
           if (item.history) {
             item["last-run-upid"] = item.history["last-run-upid"];
             item["last-run-state"] = item.history["last-run-state"];
@@ -162,28 +164,6 @@ Ext.define("pbs-model-targets", {
     "iconCls",
   ],
   idProperty: "name",
-  proxy: {
-    type: "memory",
-    reader: {
-      type: "json",
-      transform: function (data) {
-        let transformNode = (node) => {
-          if (node.agent_host) {
-            node.agent_hostname = node.agent_host.name;
-            node.os = node.agent_host.os;
-            node.agent_ip = node.agent_host.ip;
-          }
-          if (node.children) {
-            node.children.forEach(transformNode);
-          }
-          return node;
-        };
-        return Array.isArray(data)
-          ? data.map(transformNode)
-          : transformNode(data);
-      },
-    },
-  },
 });
 
 Ext.define("pbs-model-d2d-snapshots", {
@@ -200,8 +180,9 @@ Ext.define("pbs-model-d2d-snapshots", {
     type: "memory",
     reader: {
       type: "json",
-      transform: function (data) {
-        return data.map((item) => {
+      transform: function (raw) {
+        let rows = Array.isArray(raw) ? raw : raw.data || [];
+        return rows.map((item) => {
           let type = item["backup-type"] || "host";
           item.value = `${type}/${item["backup-id"]}/${item["backup-time"]}`;
           if (item["backup-time"]) {
