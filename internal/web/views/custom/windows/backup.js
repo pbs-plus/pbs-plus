@@ -36,6 +36,18 @@ var legacyXattrModes = Ext.create("Ext.data.Store", {
   ],
 });
 
+Ext.define("PBS.D2DManagement.BackupJobInputPanel", {
+  extend: "Proxmox.panel.InputPanel",
+  xtype: "pbsD2DBackupInputPanel",
+
+  setValues: function (values) {
+    if (values.target && typeof values.target === "object") {
+      values.target = values.target.name;
+    }
+    this.callParent([values]);
+  },
+});
+
 Ext.define("PBS.D2DManagement.BackupJobEdit", {
   extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsDiskBackupJobEdit",
@@ -119,14 +131,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
     items: [
       {
         title: gettext("Options"),
-        xtype: "inputpanel",
-        listeners: {
-          beforesetvalues: function (panel, values) {
-            if (values.target && typeof values.target === "object") {
-              values.target = values.target.name;
-            }
-          },
-        },
+        xtype: "pbsD2DBackupInputPanel",
         onGetValues: function (values) {
           let me = this;
 
