@@ -69,10 +69,10 @@ Ext.define("PBS.form.D2DTargetSelector", {
         sortable: true,
         width: 80,
         renderer: function (value) {
-          if (value === true || value === "true") {
-            return '<i class="fa fa-check-circle text-green"></i>';
-          } else if (value === false || value === "false") {
-            return '<i class="fa fa-times-circle text-red"></i>';
+          if (value === true) {
+            return '<i class="fa fa-check good"></i>';
+          } else if (value === false) {
+            return '<i class="fa fa-times critical"></i>';
           }
           return "-";
         },
