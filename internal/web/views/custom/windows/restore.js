@@ -105,16 +105,23 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
       if (data.target && typeof data.target === "object") {
         data.target = data.target.name;
       }
-      me.down("inputpanel").setValues(data);
+      me.setValues(data);
     }
 
-    if (me.autoLoad) {
-      me.on("afterload", function (data) {
-        if (data.target && typeof data.target === "object") {
-          data.target = data.target.name;
-          me.down("inputpanel").setValues(data);
-        }
-      });
+    me.on("afterload", function (success, data) {
+      if (success && data && data.target && typeof data.target === "object") {
+        data.target = data.target.name;
+
+        me.setValues(data);
+      }
+    });
+  },
+
+  setValues: function (data) {
+    let me = this;
+    let inputPanel = me.down("inputpanel");
+    if (inputPanel && inputPanel.setValues) {
+      inputPanel.setValues(data);
     }
   },
 
