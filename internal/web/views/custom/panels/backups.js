@@ -276,7 +276,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       }).show();
     },
 
-    showLogList: function () {
+    showJobHistory: function () {
       const me = this;
       const view = me.getView();
       const selection = view.getSelection();
@@ -694,8 +694,8 @@ Ext.define("PBS.config.DiskBackupJobView", {
     },
     {
       xtype: "proxmoxButton",
-      text: gettext("Show Log List"),
-      handler: "showLogList",
+      text: gettext("Show job history"),
+      handler: "showJobHistory",
       enableFn: function () {
         let recs = this.up("grid").getSelection();
         return recs.length === 1;
