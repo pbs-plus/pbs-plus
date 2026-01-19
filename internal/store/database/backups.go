@@ -150,7 +150,7 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 			exclusion.JobId = backup.ID
 		}
 		err = q.CreateExclusion(database.ctx, sqlc.CreateExclusionParams{
-			JobID:   toNullString(exclusion.JobId),
+			JobID:   exclusion.JobId,
 			Path:    exclusion.Path,
 			Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
 		})
@@ -229,7 +229,7 @@ func (database *Database) GetBackup(id string) (Backup, error) {
 		LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
 	}
 
-	exclusions, err := database.readQueries.GetBackupExclusions(database.ctx, toNullString(id))
+	exclusions, err := database.readQueries.GetBackupExclusions(database.ctx, id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Backup{}, fmt.Errorf("GetBackup: error getting exclusions: %w", err)
 	}
@@ -240,7 +240,7 @@ func (database *Database) GetBackup(id string) (Backup, error) {
 	exclusionPaths := make([]string, len(exclusions))
 	for i, excl := range exclusions {
 		backup.Exclusions[i] = Exclusion{
-			JobId: excl.JobID.String,
+			JobId: excl.JobID,
 			Path:  excl.Path,
 		}
 		exclusionPaths[i] = excl.Path
@@ -366,14 +366,14 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 		return fmt.Errorf("UpdateBackup: error updating backup: %w", err)
 	}
 
-	err = q.DeleteBackupExclusions(database.ctx, toNullString(backup.ID))
+	err = q.DeleteBackupExclusions(database.ctx, backup.ID)
 	if err != nil {
 		return fmt.Errorf("UpdateBackup: error removing old exclusions: %w", err)
 	}
 
 	for _, exclusion := range backup.Exclusions {
 		err = q.CreateExclusion(database.ctx, sqlc.CreateExclusionParams{
-			JobID:   toNullString(backup.ID),
+			JobID:   backup.ID,
 			Path:    exclusion.Path,
 			Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
 		})
@@ -459,8 +459,8 @@ func (database *Database) GetAllBackups() ([]Backup, error) {
 
 	exclusionsByJob := make(map[string][]Exclusion)
 	for _, excl := range allExclusions {
-		exclusionsByJob[fromNullString(excl.JobID)] = append(exclusionsByJob[fromNullString(excl.JobID)], Exclusion{
-			JobId: fromNullString(excl.JobID),
+		exclusionsByJob[excl.JobID] = append(exclusionsByJob[excl.JobID], Exclusion{
+			JobId: excl.JobID,
 			Path:  excl.Path,
 		})
 	}
@@ -547,8 +547,8 @@ func (database *Database) GetAllQueuedBackups() ([]Backup, error) {
 
 	exclusionsByJob := make(map[string][]Exclusion)
 	for _, excl := range allExclusions {
-		exclusionsByJob[fromNullString(excl.JobID)] = append(exclusionsByJob[fromNullString(excl.JobID)], Exclusion{
-			JobId: fromNullString(excl.JobID),
+		exclusionsByJob[excl.JobID] = append(exclusionsByJob[excl.JobID], Exclusion{
+			JobId: excl.JobID,
 			Path:  excl.Path,
 		})
 	}
@@ -635,7 +635,7 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 	}
 	q = database.queries.WithTx(tx.Tx)
 
-	err = q.DeleteBackupExclusions(database.ctx, toNullString(id))
+	err = q.DeleteBackupExclusions(database.ctx, id)
 	if err != nil {
 		syslog.L.Error(fmt.Errorf("DeleteBackup: error deleting exclusions: %w", err)).
 			WithField("id", id).
