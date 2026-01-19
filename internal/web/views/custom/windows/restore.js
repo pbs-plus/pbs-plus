@@ -114,15 +114,20 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
 
     if (me.jobData) {
       let data = Ext.apply({}, me.jobData);
-      if (data.target && typeof data.target === "object") {
-        data.target = data.target.name;
+      if (data["dest-target"] && typeof data["dest-target"] === "object") {
+        data["dest-target"] = data["dest-target"].name;
       }
       me.setValues(data);
     }
 
     me.on("afterload", function (success, data) {
-      if (success && data && data.target && typeof data.target === "object") {
-        data.target = data.target.name;
+      if (
+        success &&
+        data &&
+        data["dest-target"] &&
+        typeof data["dest-target"] === "object"
+      ) {
+        data["dest-target"] = data["dest-target"].name;
 
         me.setValues(data);
       }
