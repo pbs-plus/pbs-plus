@@ -683,7 +683,7 @@ func (b *Backup) GetStreamID() string {
 	return b.Target.AgentHost.Name + "|" + b.ID
 }
 
-func (b *Backup) GetAllUPIDs() []string {
+func (b *Backup) GetAllUPIDs() []Tasks {
 	backupLogsPath := filepath.Join(constants.BackupLogsBasePath, b.ID)
 	if err := os.MkdirAll(backupLogsPath, 0755); err != nil {
 		syslog.L.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err)).
@@ -700,10 +700,18 @@ func (b *Backup) GetAllUPIDs() []string {
 		return nil
 	}
 
-	upids := make([]string, 0, len(logs))
+	upids := make([]Tasks, 0, len(logs))
 
 	for _, log := range logs {
-		upids = append(upids, log.Name())
+		task, err := proxmox.GetTaskByUPID(log.Name())
+		if err != nil {
+			continue
+		}
+		upids = append(upids, Tasks{
+			UPID:    task.UPID,
+			Endtime: task.EndTime,
+			Status:  task.Status,
+		})
 	}
 
 	return upids
