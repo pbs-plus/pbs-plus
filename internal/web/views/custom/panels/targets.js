@@ -485,17 +485,6 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     },
   ],
 
-  afterRender: function () {
-    let me = this;
-    me.callParent();
-    let menuButtons = me.down("toolbar").query("proxmoxButton");
-    menuButtons.forEach((btn) => {
-      if (btn.selModel !== false) {
-        btn.setSelectionModel(me.getSelectionModel());
-      }
-    });
-  },
-
   columns: [
     {
       xtype: "treecolumn",
