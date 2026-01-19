@@ -710,7 +710,7 @@ func (b *Backup) GetAllUPIDs() []Tasks {
 		upids = append(upids, Tasks{
 			UPID:    task.UPID,
 			Endtime: task.EndTime,
-			Status:  task.Status,
+			Status:  task.ExitStatus,
 		})
 	}
 

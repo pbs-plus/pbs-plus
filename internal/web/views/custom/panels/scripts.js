@@ -8,18 +8,18 @@ Ext.define("PBS.D2DManagement.ScriptPanel", {
   controller: {
     xclass: "Ext.app.ViewController",
 
-    onAdd: function() {
+    onAdd: function () {
       let me = this;
       Ext.create("PBS.D2DManagement.ScriptEditWindow", {
         listeners: {
-          destroy: function() {
+          destroy: function () {
             me.reload();
           },
         },
       }).show();
     },
 
-    onEdit: function() {
+    onEdit: function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
@@ -35,7 +35,7 @@ Ext.define("PBS.D2DManagement.ScriptPanel", {
       }).show();
     },
 
-    removeScripts: function() {
+    removeScripts: function () {
       const me = this;
       const view = me.getView();
       const recs = view.getSelection();
@@ -58,23 +58,23 @@ Ext.define("PBS.D2DManagement.ScriptPanel", {
               success: () => me.reload(),
             });
           });
-        }
+        },
       );
     },
 
-    reload: function() {
+    reload: function () {
       this.getView().getStore().rstore.load();
     },
 
-    stopStore: function() {
+    stopStore: function () {
       this.getView().getStore().rstore.stopUpdate();
     },
 
-    startStore: function() {
+    startStore: function () {
       this.getView().getStore().rstore.startUpdate();
     },
 
-    init: function(view) {
+    init: function (view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
     },
   },
@@ -100,8 +100,7 @@ Ext.define("PBS.D2DManagement.ScriptPanel", {
     sorters: "path",
   },
 
-  features: [
-  ],
+  features: [],
 
   tbar: [
     {
@@ -121,7 +120,7 @@ Ext.define("PBS.D2DManagement.ScriptPanel", {
       xtype: "proxmoxButton",
       text: gettext("Remove"),
       handler: "removeScripts",
-      enableFn: function() {
+      enableFn: function () {
         let recs = this.up("grid").getSelection();
         return recs.length > 0;
       },
