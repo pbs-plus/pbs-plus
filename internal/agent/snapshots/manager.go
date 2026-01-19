@@ -2,9 +2,9 @@ package snapshots
 
 import (
 	"fmt"
+	"path/filepath"
 )
 
-// SnapshotManager manages snapshot operations based on filesystem and OS detection
 type SnapshotManager struct {
 	handlerMap map[string]SnapshotHandler
 }
@@ -14,19 +14,34 @@ var Manager = &SnapshotManager{
 		"btrfs": &BtrfsSnapshotHandler{},
 		"zfs":   &ZFSSnapshotHandler{},
 		"lvm":   &LVMSnapshotHandler{},
-		"ext4":  &EXT4XFSHandler{}, // EXT4 delegates to LVM
-		"xfs":   &EXT4XFSHandler{}, // XFS delegates to LVM
+		"ext4":  nil,
+		"xfs":   nil,
 		"ntfs":  &NtfsSnapshotHandler{},
 		"refs":  &NtfsSnapshotHandler{},
-		"fat32": nil, // FAT32 does not support snapshots
-		"exfat": nil, // exFAT does not support snapshots
-		"hfs+":  nil, // HFS+ does not support snapshots
+		"fat32": nil,
+		"exfat": nil,
+		"hfs+":  nil,
 	},
 }
 
-// CreateSnapshot detects the filesystem and delegates to the appropriate handler
+func getRelativePath(sourcePath, mountPointPath string) (string, error) {
+	source := filepath.Clean(sourcePath)
+	mount := filepath.Clean(mountPointPath)
+
+	rel, err := filepath.Rel(mount, source)
+	if err != nil {
+		return "", fmt.Errorf("failed to get relative path: %w", err)
+	}
+
+	if rel == "." {
+		return "", nil
+	}
+
+	return rel, nil
+}
+
 func (m *SnapshotManager) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
-	fsType, err := detectFilesystem(sourcePath)
+	fsType, mountPointPath, err := detectFilesystem(sourcePath)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("failed to detect filesystem: %w", err)
 	}
@@ -36,12 +51,23 @@ func (m *SnapshotManager) CreateSnapshot(jobId string, sourcePath string) (Snaps
 		return Snapshot{}, fmt.Errorf("no snapshot handler available for filesystem type: %s", fsType)
 	}
 
-	return handler.CreateSnapshot(jobId, sourcePath)
+	relPath, err := getRelativePath(sourcePath, mountPointPath)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("failed to detect relative path to mount point: %w", err)
+	}
+
+	snap, err := handler.CreateSnapshot(jobId, mountPointPath)
+	if err != nil {
+		return Snapshot{}, err
+	}
+
+	snap.RelativePath = relPath
+
+	return snap, nil
 }
 
-// DeleteSnapshot delegates the deletion to the appropriate handler
 func (m *SnapshotManager) DeleteSnapshot(snapshot Snapshot) error {
-	fsType, err := detectFilesystem(snapshot.SourcePath)
+	fsType, _, err := detectFilesystem(snapshot.SourcePath)
 	if err != nil {
 		return fmt.Errorf("failed to detect filesystem: %w", err)
 	}
