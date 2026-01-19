@@ -235,7 +235,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 				Name: "pbsplus_target_info",
 				Help: "Target metadata (always 1, use labels for info)",
 			},
-			[]string{"target_name", "path", "auth", "volume_type", "volume_name", "volume_fs", "os", "is_agent", "is_s3"},
+			[]string{"target_name", "path", "volume_type", "volume_name", "volume_fs", "os", "is_agent", "is_s3"},
 		),
 		targetsAgentTotal: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "pbsplus_targets_agent_total",
