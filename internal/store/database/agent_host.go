@@ -39,8 +39,8 @@ func (database *Database) CreateAgentHost(tx *Transaction, host AgentHost) (err 
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	err = q.CreateAgentHost(database.ctx, sqlc.CreateAgentHostParams{
 		Name:      host.Name,
@@ -86,8 +86,8 @@ func (database *Database) UpdateAgentHost(tx *Transaction, host AgentHost) (err 
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	err = q.UpdateAgentHost(database.ctx, sqlc.UpdateAgentHostParams{
 		Ip:        host.IP,

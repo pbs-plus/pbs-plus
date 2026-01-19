@@ -43,8 +43,8 @@ func (database *Database) CreateTarget(tx *Transaction, target Target) (err erro
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	// Validation
 	if target.Path == "" && target.AgentHost.Name == "" {
@@ -116,8 +116,8 @@ func (database *Database) UpdateTarget(tx *Transaction, target Target) (err erro
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	// Validation
 	if target.Path == "" && target.AgentHost.Name == "" {
@@ -189,8 +189,8 @@ func (database *Database) AddS3Secret(tx *Transaction, targetName string, secret
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	encrypted, err := secrets.Encrypt(secret)
 	if err != nil {
@@ -237,8 +237,8 @@ func (database *Database) DeleteTarget(tx *Transaction, name string) (err error)
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	rowsAffected, err := q.DeleteTarget(database.ctx, name)
 	if err != nil {

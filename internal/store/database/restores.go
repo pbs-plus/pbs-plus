@@ -70,8 +70,8 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if restore.ID == "" {
 		id, err := database.generateUniqueRestoreID(restore)
@@ -240,8 +240,8 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	// Validation
 	if !utils.IsValidID(restore.ID) && restore.ID != "" {
@@ -474,8 +474,8 @@ func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) 
 				}
 			}
 		}()
-		q = database.queries.WithTx(tx.Tx)
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	rowsAffected, err := q.DeleteRestore(database.ctx, id)
 	if err != nil {
@@ -510,4 +510,3 @@ func (r *Restore) GetStreamID() string {
 
 	return r.DestTarget.AgentHost.Name + "|" + r.ID + "|restore"
 }
-
