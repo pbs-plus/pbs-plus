@@ -8,6 +8,8 @@ import (
 type Snapshot struct {
 	Path         string          `json:"path"`
 	Id           string          `json:"id"`
+	JobId        string          `json:"job_id"`
+	SnapBlock    string          `json:"snap_block"`
 	TimeStarted  time.Time       `json:"time_started"`
 	SourcePath   string          `json:"source_path"`
 	Direct       bool            `json:"direct"`
