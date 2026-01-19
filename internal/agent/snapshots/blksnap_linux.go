@@ -107,13 +107,9 @@ func (b *BlksnapSnapshotHandler) DeleteSnapshot(snapshot Snapshot) error {
 	defer ctrl.Close()
 
 	uuid, err := blksnap.ParseUUID(snapshot.Id)
-	if err != nil {
-		return fmt.Errorf("failed to get blksnap uuid: %w", err)
-	}
-
-	snapshotBlk := ctrl.OpenSnapshot(uuid)
-	if err := snapshotBlk.Destroy(); err != nil {
-		return fmt.Errorf("failed to destroy blksnap %s: %w", snapshot.Id, err)
+	if err == nil {
+		snapshotBlk := ctrl.OpenSnapshot(uuid)
+		_ = snapshotBlk.Destroy()
 	}
 
 	diffPath := filepath.Join(b.DiffStorageDir, snapshot.JobId+".diff")
@@ -128,7 +124,13 @@ func (b *BlksnapSnapshotHandler) IsSupported(sourcePath string) bool {
 		return false
 	}
 	ctrl.Close()
-	return true
+
+	dev, err := b.getDeviceForPath(sourcePath)
+	if err != nil {
+		return false
+	}
+
+	return strings.HasPrefix(dev, "/dev/")
 }
 
 func (b *BlksnapSnapshotHandler) getDeviceForPath(path string) (string, error) {
