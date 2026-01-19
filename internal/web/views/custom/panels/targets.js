@@ -418,12 +418,14 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       text: gettext("Add"),
       xtype: "proxmoxButton",
       handler: "onAdd",
+      selModel: false,
     },
     {
       xtype: "proxmoxButton",
       text: gettext("Create Job"),
       handler: "addJob",
       disabled: true,
+      selModel: me.selModel,
       enableFn: function (rec) {
         return rec && !rec.data.isGroup;
       },
@@ -434,6 +436,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       xtype: "proxmoxButton",
       handler: "onEdit",
       disabled: true,
+      selModel: me.selModel,
       enableFn: function (rec) {
         return rec && !rec.data.isGroup;
       },
@@ -443,6 +446,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       xtype: "proxmoxButton",
       handler: "setS3Secret",
       disabled: true,
+      selModel: me.selModel,
       enableFn: function (rec) {
         return rec && !rec.data.isGroup && rec.data.target_type === "s3";
       },
@@ -451,6 +455,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       xtype: "proxmoxButton",
       text: gettext("Remove"),
       handler: "removeItems",
+      selModel: me.selModel,
       enableFn: function () {
         let view = this.up("treepanel");
         let selections = view.getSelection();
