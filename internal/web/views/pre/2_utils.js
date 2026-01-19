@@ -141,7 +141,9 @@ Ext.define("PBS.PlusUtils", {
 
     if (
       !record.data["last-run-endtime"] &&
-      !store.getById("last-run-endtime")?.data.value
+      !store.getById("last-run-endtime")?.data.value &&
+      !record.data.endtime &&
+      !store.getById("endtime")?.data.value
     ) {
       metadata.tdCls = "x-grid-row-loading";
       return "";
