@@ -20,38 +20,81 @@ Ext.define("pbs-disk-backup-status", {
     "rawexclusions",
     "include-xattr",
     "legacy-xattr",
-    { name: "last-run-upid", mapping: "history.last-run-upid" },
-    { name: "last-run-state", mapping: "history.last-run-state" },
-    { name: "last-run-endtime", mapping: "history.last-run-endtime" },
+
+    {
+      name: "last-run-upid",
+      mapping: "history",
+      convert: (v) => (v ? v["last-run-upid"] : null),
+    },
+    {
+      name: "last-run-state",
+      mapping: "history",
+      convert: (v) => (v ? v["last-run-state"] : null),
+    },
+    {
+      name: "last-run-endtime",
+      mapping: "history",
+      convert: (v) => (v ? v["last-run-endtime"] : null),
+    },
     {
       name: "last-successful-endtime",
-      mapping: "history.last-successful-endtime",
+      mapping: "history",
+      convert: (v) => (v ? v["last-successful-endtime"] : null),
     },
-    { name: "last-successful-upid", mapping: "history.last-successful-upid" },
-    { name: "duration", mapping: "history.duration" },
-    { name: "current_file_count", mapping: "current-stats.current_file_count" },
+    {
+      name: "last-successful-upid",
+      mapping: "history",
+      convert: (v) => (v ? v["last-successful-upid"] : null),
+    },
+    {
+      name: "duration",
+      mapping: "history",
+      convert: (v) => (v ? v.duration : 0),
+    },
+
+    // Current Stats Mappings
+    {
+      name: "current_file_count",
+      mapping: "current-stats",
+      convert: (v) => (v ? v.current_file_count : 0),
+    },
     {
       name: "current_folder_count",
-      mapping: "current-stats.current_folder_count",
+      mapping: "current-stats",
+      convert: (v) => (v ? v.current_folder_count : 0),
     },
     {
       name: "current_files_speed",
-      mapping: "current-stats.current_files_speed",
+      mapping: "current-stats",
+      convert: (v) => (v ? v.current_files_speed : 0),
     },
     {
       name: "current_bytes_speed",
-      mapping: "current-stats.current_bytes_speed",
+      mapping: "current-stats",
+      convert: (v) => (v ? v.current_bytes_speed : 0),
     },
     {
       name: "current_bytes_total",
-      mapping: "current-stats.current_bytes_total",
+      mapping: "current-stats",
+      convert: (v) => (v ? v.current_bytes_total : 0),
     },
-    { name: "target", mapping: "target.name" },
+
+    {
+      name: "target",
+      mapping: "target",
+      convert: (v) => (v ? v.name : null),
+    },
   ],
+
   idProperty: "id",
+
   proxy: {
     type: "pbsplus",
     url: pbsPlusBaseUrl + "/api2/json/d2d/backup",
+    reader: {
+      type: "json",
+      rootProperty: "data",
+    },
   },
 });
 
