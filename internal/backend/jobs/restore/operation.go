@@ -371,9 +371,9 @@ func (b *RestoreOperation) Execute() error {
 		return b.localExecute()
 	case database.TargetTypeS3:
 		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
+	default:
+		return ErrTargetNotFound
 	}
-
-	return fmt.Errorf("only agent and local restores are supported for now (%s)", b.job.DestTarget.Path)
 }
 
 func (b *RestoreOperation) OnError(err error) {
