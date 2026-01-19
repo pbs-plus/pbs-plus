@@ -82,7 +82,7 @@ Ext.define("pbs-disk-backup-status", {
       name: "target",
       mapping: "target",
       convert: function (v) {
-        if (Ext.isObject(v)) {
+        if (v && Ext.isObject(v)) {
           return v.name;
         }
         return v;
@@ -179,7 +179,7 @@ Ext.define("pbs-disk-restore-job-status", {
       name: "dest-target",
       mapping: "dest-target",
       convert: function (v) {
-        if (Ext.isObject(v)) {
+        if (v && Ext.isObject(v)) {
           return v.name;
         }
         return v;
