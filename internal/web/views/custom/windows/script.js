@@ -9,7 +9,7 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
   isCreate: true,
   isAdd: true,
   subject: "Script",
-  cbindData: function(initialConfig) {
+  cbindData: function (initialConfig) {
     let me = this;
 
     let contentid = initialConfig.contentid;
@@ -34,12 +34,31 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
       editable: true,
     },
     {
-      fieldLabel: gettext("Script Content"),
+      xtype: "component",
+      itemId: "scriptEditor",
       name: "script",
-      xtype: "textarea",
-      allowBlank: false,
-      height: 300,
-      fieldStyle: "font-family: monospace; white-space: pre;"
+      html: '<div style="height: 100%; border: 1px solid #ccc;"></div>',
+      listeners: {
+        afterrender: function (component) {
+          PBS.PlusUtils.loadCodeMirror(function () {
+            let editor = CodeMirror(component.el.dom.firstChild, {
+              mode: "shell",
+              lineNumbers: true,
+              indentUnit: 2,
+              tabSize: 2,
+              indentWithTabs: false,
+              lineWrapping: false,
+              theme: "default",
+            });
+
+            component.codeMirror = editor;
+            component.setValue = (val) => editor.setValue(val || "");
+            component.getValue = () => editor.getValue();
+            component.isValid = () => true;
+            component.validate = () => true;
+          });
+        },
+      },
     },
   ],
 });
