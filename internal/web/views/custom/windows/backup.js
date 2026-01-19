@@ -100,6 +100,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       if (inputPanel && inputPanel.setValues) {
         let data = Ext.apply({}, me.jobData);
         if (data.target && typeof data.target === "object") {
+          console.log(data.target);
           data.target = data.target.name;
         }
         inputPanel.setValues(data);
