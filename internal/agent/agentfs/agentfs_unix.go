@@ -88,7 +88,7 @@ func (s *AgentFSServer) abs(filename string) (string, bool, error) {
 
 	if cleanSource == "" {
 		p := pathjoin.Join(s.snapshot.Path, cleanReq)
-		return strings.TrimSuffix(p, "/"), false, nil
+		return p, false, nil
 	}
 
 	if cleanReq == "" || (len(cleanSource) > len(cleanReq) && strings.HasPrefix(cleanSource, cleanReq+"/")) {
@@ -98,7 +98,7 @@ func (s *AgentFSServer) abs(filename string) (string, bool, error) {
 	if cleanReq == cleanSource || strings.HasPrefix(cleanReq, cleanSource+"/") {
 		relPath := strings.TrimPrefix(strings.TrimPrefix(cleanReq, cleanSource), "/")
 		p := pathjoin.Join(s.snapshot.Path, relPath)
-		return strings.TrimSuffix(p, "/"), false, nil
+		return p, false, nil
 	}
 
 	return "", false, os.ErrNotExist
