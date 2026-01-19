@@ -20,7 +20,7 @@ type BackupConfigResponse struct {
 type BackupUPIDsResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    []string          `json:"data"`
+	Data    []database.Tasks  `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }
