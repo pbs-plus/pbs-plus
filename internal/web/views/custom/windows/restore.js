@@ -103,7 +103,11 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
     if (me.jobData) {
       let inputPanel = me.down("inputpanel");
       if (inputPanel && inputPanel.setValues) {
-        inputPanel.setValues(me.jobData);
+        let data = Ext.apply({}, me.jobData);
+        if (data.target && typeof data.target === "object") {
+          data.target = data.target.name;
+        }
+        inputPanel.setValues(data);
       }
     }
   },
