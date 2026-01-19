@@ -9,6 +9,11 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
   useArrows: true,
   rowLines: true,
 
+  selModel: {
+    selType: "treemodel",
+    mode: "MULTI",
+  },
+
   controller: {
     xclass: "Ext.app.ViewController",
 
@@ -446,13 +451,11 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       xtype: "proxmoxButton",
       text: gettext("Remove"),
       handler: "removeItems",
-      enableFn: function () {
-        let view = this.up("treepanel");
-        let selections = view.getSelection();
-        return selections.some(
-          (rec) =>
-            !rec.data.isGroup ||
-            (rec.data.isGroup && rec.data.groupType === "agent"),
+      enableFn: function (rec) {
+        // Enable if it's not a group node, OR if it's an agent group
+        return (
+          !rec.data.isGroup ||
+          (rec.data.isGroup && rec.data.groupType === "agent")
         );
       },
       disabled: true,
