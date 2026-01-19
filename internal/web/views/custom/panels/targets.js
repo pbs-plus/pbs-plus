@@ -397,11 +397,20 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
   useArrows: true,
   rowLines: true,
 
+  selModel: {
+    selType: "rowmodel",
+    mode: "SINGLE",
+  },
+
   listeners: {
-    itemdblclick: "onEdit",
     beforedestroy: "stopStore",
     deactivate: "stopStore",
     activate: "startStore",
+    itemdblclick: function (view, record) {
+      if (!record.data.isGroup) {
+        this.getController().onEdit();
+      }
+    },
   },
 
   tbar: [
@@ -416,7 +425,9 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       text: gettext("Create Job"),
       handler: "addJob",
       disabled: true,
-      enableFn: (rec) => rec && !rec.get("isGroup"),
+      enableFn: function (rec) {
+        return rec && !rec.data.isGroup;
+      },
     },
     "-",
     {
@@ -424,28 +435,33 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       xtype: "proxmoxButton",
       handler: "onEdit",
       disabled: true,
-      enableFn: (rec) => rec && !rec.get("isGroup"),
+      enableFn: function (rec) {
+        return rec && !rec.data.isGroup;
+      },
     },
     {
       text: gettext("Set S3 Secret Key"),
       xtype: "proxmoxButton",
       handler: "setS3Secret",
       disabled: true,
-      enableFn: (rec) =>
-        rec && !rec.get("isGroup") && rec.get("target_type") === "s3",
+      enableFn: function (rec) {
+        return rec && !rec.data.isGroup && rec.data.target_type === "s3";
+      },
     },
     {
       xtype: "proxmoxButton",
       text: gettext("Remove"),
       handler: "removeItems",
-      disabled: true,
-      enableFn: (rec) => {
-        if (!rec) return false;
-        return (
-          !rec.get("isGroup") ||
-          (rec.get("isGroup") && rec.get("groupType") === "agent")
+      enableFn: function () {
+        let view = this.up("treepanel");
+        let selections = view.getSelection();
+        return selections.some(
+          (rec) =>
+            !rec.data.isGroup ||
+            (rec.data.isGroup && rec.data.groupType === "agent"),
         );
       },
+      disabled: true,
     },
     "->",
     {
