@@ -315,7 +315,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			OperatingSystem: reqParsed.OperatingSystem,
 		}
 
-		err = storeInstance.Database.UpdateAgentHost(nil, host)
+		err = storeInstance.Database.UpdateAgentHost(tx, host)
 		if err != nil {
 			tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)

@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -52,12 +51,6 @@ func (database *Database) CreateAgentHost(tx *Transaction, host AgentHost) (err 
 	})
 
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-				return fmt.Errorf("CreateAgentHost: failed to rollback before update: %w", rbErr)
-			}
-			return database.UpdateAgentHost(nil, host)
-		}
 		return fmt.Errorf("CreateAgentHost: error inserting agent host: %w", err)
 	}
 
