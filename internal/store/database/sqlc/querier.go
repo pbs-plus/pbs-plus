@@ -21,7 +21,7 @@ type Querier interface {
 	CreateToken(ctx context.Context, arg CreateTokenParams) error
 	DeleteAgentHost(ctx context.Context, name string) (int64, error)
 	DeleteBackup(ctx context.Context, id string) (int64, error)
-	DeleteBackupExclusions(ctx context.Context, jobID sql.NullString) error
+	DeleteBackupExclusions(ctx context.Context, jobID string) error
 	DeleteExclusion(ctx context.Context, arg DeleteExclusionParams) error
 	DeleteRestore(ctx context.Context, id string) (int64, error)
 	DeleteScript(ctx context.Context, path string) (int64, error)
@@ -30,7 +30,7 @@ type Querier interface {
 	GetAgentHost(ctx context.Context, name string) (AgentHost, error)
 	GetAgentHostAuth(ctx context.Context, name string) (sql.NullString, error)
 	GetBackup(ctx context.Context, id string) (GetBackupRow, error)
-	GetBackupExclusions(ctx context.Context, jobID sql.NullString) ([]GetBackupExclusionsRow, error)
+	GetBackupExclusions(ctx context.Context, jobID string) ([]GetBackupExclusionsRow, error)
 	GetExclusion(ctx context.Context, arg GetExclusionParams) (GetExclusionRow, error)
 	GetRestore(ctx context.Context, id string) (GetRestoreRow, error)
 	GetScript(ctx context.Context, path string) (GetScriptRow, error)
