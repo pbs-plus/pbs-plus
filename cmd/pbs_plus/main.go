@@ -381,6 +381,7 @@ func main() {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", mw.ServerOnly(storeInstance, exclusions.ExtJsExclusionSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-backup", mw.ServerOnly(storeInstance, jobs.ExtJsBackupHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}", mw.ServerOnly(storeInstance, jobs.ExtJsBackupSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}/upids", mw.ServerOnly(storeInstance, jobs.ExtJsBackupUPIDsHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreSingleHandler(storeInstance)))
 

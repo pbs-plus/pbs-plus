@@ -682,3 +682,29 @@ func (b *Backup) GetStreamID() string {
 
 	return b.Target.AgentHost.Name + "|" + b.ID
 }
+
+func (b *Backup) GetAllUPIDs() []string {
+	backupLogsPath := filepath.Join(constants.BackupLogsBasePath, b.ID)
+	if err := os.MkdirAll(backupLogsPath, 0755); err != nil {
+		syslog.L.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err)).
+			WithField("id", b.ID).
+			Write()
+		return nil
+	}
+
+	logs, err := os.ReadDir(backupLogsPath)
+	if err != nil {
+		syslog.L.Error(fmt.Errorf("GetAllUPIDs: failed to read dir: %w", err)).
+			WithField("id", b.ID).
+			Write()
+		return nil
+	}
+
+	upids := make([]string, 0, len(logs))
+
+	for _, log := range logs {
+		upids = append(upids, log.Name())
+	}
+
+	return upids
+}
