@@ -397,8 +397,6 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
   useArrows: true,
   rowLines: true,
 
-  selModel: "checkboxmodel",
-
   listeners: {
     itemdblclick: "onEdit",
     beforedestroy: "stopStore",
