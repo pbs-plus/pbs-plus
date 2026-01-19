@@ -16,3 +16,11 @@ type TargetConfigResponse struct {
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }
+
+type AgentConfigResponse struct {
+	Errors  map[string]string  `json:"errors"`
+	Message string             `json:"message"`
+	Data    database.AgentHost `json:"data"`
+	Status  int                `json:"status"`
+	Success bool               `json:"success"`
+}

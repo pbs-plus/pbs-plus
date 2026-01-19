@@ -105,6 +105,50 @@ func (database *Database) UpdateAgentHost(tx *Transaction, host AgentHost) (err 
 	return nil
 }
 
+func (database *Database) DeleteAgentHost(tx *Transaction, name string) (err error) {
+	var commitNeeded bool = false
+	q := database.queries
+
+	if tx == nil {
+		tx, err = database.NewTransaction()
+		if err != nil {
+			return fmt.Errorf("DeleteAgentHost: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("DeleteAgentHost: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("DeleteAgentHost: failed to commit transaction: %w", cErr)
+					syslog.L.Error(err).Write()
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("DeleteAgentHost: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			}
+		}()
+	}
+	q = database.queries.WithTx(tx.Tx)
+
+	rowsAffected, err := q.DeleteAgentHost(database.ctx, name)
+	if err != nil {
+		return fmt.Errorf("DeleteAgentHost: error deleting target: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return ErrTargetNotFound
+	}
+
+	commitNeeded = true
+	return nil
+}
+
 func (database *Database) GetAgentHost(name string) (AgentHost, error) {
 	row, err := database.readQueries.GetAgentHost(database.ctx, name)
 	if errors.Is(err, sql.ErrNoRows) {

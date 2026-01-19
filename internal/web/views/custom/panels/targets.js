@@ -1,9 +1,13 @@
 Ext.define("PBS.D2DManagement.TargetPanel", {
-  extend: "Ext.grid.Panel",
+  extend: "Ext.tree.Panel",
   alias: "widget.pbsDiskTargetPanel",
 
   stateful: true,
   stateId: "grid-disk-backup-targets-v1",
+
+  rootVisible: false,
+  useArrows: true,
+  rowLines: true,
 
   controller: {
     xclass: "Ext.app.ViewController",
@@ -24,11 +28,11 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       let view = me.getView();
       let selection = view.getSelection();
 
-      if (!selection || selection.length < 1) {
+      if (!selection || selection.length < 1 || selection[0].data.isGroup) {
         return;
       }
 
-      targetName = selection[0].data.name;
+      let targetName = selection[0].data.name;
 
       Ext.create("PBS.D2DManagement.BackupJobEdit", {
         autoShow: true,
@@ -41,38 +45,84 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }).show();
     },
 
-    removeTargets: function () {
+    removeItems: function () {
       const me = this;
       const view = me.getView();
-      const recs = view.getSelection();
-      if (!recs.length) return;
+      const selections = view.getSelection();
 
-      Ext.Msg.confirm(
-        gettext("Confirm"),
-        gettext("Remove selected entries?"),
-        (btn) => {
-          if (btn !== "yes") return;
-          recs.forEach((rec) => {
-            PBS.PlusUtils.API2Request({
-              url:
-                "/api2/extjs/config/d2d-target/" +
-                encodeURIComponent(encodePathValue(rec.getId())),
-              method: "DELETE",
-              waitMsgTarget: view,
-              failure: (resp) =>
-                Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-              success: () => me.reload(),
-            });
-          });
-        },
+      if (!selections.length) return;
+
+      const agentHosts = selections.filter(
+        (rec) => rec.data.isGroup && rec.data.groupType === "agent",
       );
+      const targets = selections.filter((rec) => !rec.data.isGroup);
+
+      if (!agentHosts.length && !targets.length) return;
+
+      let confirmMsg = "";
+      if (agentHosts.length > 0 && targets.length > 0) {
+        confirmMsg = `Remove ${agentHosts.length} agent host(s) and ${targets.length} target(s)? This will delete all targets associated with the agent hosts.`;
+      } else if (agentHosts.length > 0) {
+        confirmMsg = `Remove ${agentHosts.length} agent host(s)? This will delete all targets associated with these hosts.`;
+      } else {
+        confirmMsg = `Remove ${targets.length} target(s)?`;
+      }
+
+      Ext.Msg.confirm(gettext("Confirm"), confirmMsg, (btn) => {
+        if (btn !== "yes") return;
+
+        let requestsCompleted = 0;
+        let totalRequests = agentHosts.length + targets.length;
+        let hasError = false;
+
+        const checkCompletion = () => {
+          requestsCompleted++;
+          if (requestsCompleted === totalRequests) {
+            if (!hasError) {
+              me.reload();
+            }
+          }
+        };
+
+        agentHosts.forEach((rec) => {
+          PBS.PlusUtils.API2Request({
+            url:
+              "/api2/extjs/config/d2d-agent/" +
+              encodeURIComponent(encodePathValue(rec.data.text)),
+            method: "DELETE",
+            waitMsgTarget: view,
+            failure: (resp) => {
+              hasError = true;
+              Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
+              checkCompletion();
+            },
+            success: () => checkCompletion(),
+          });
+        });
+
+        targets.forEach((rec) => {
+          PBS.PlusUtils.API2Request({
+            url:
+              "/api2/extjs/config/d2d-target/" +
+              encodeURIComponent(encodePathValue(rec.getId())),
+            method: "DELETE",
+            waitMsgTarget: view,
+            failure: (resp) => {
+              hasError = true;
+              Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
+              checkCompletion();
+            },
+            success: () => checkCompletion(),
+          });
+        });
+      });
     },
 
     onEdit: function () {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
-      if (!selection || selection.length < 1) {
+      if (!selection || selection.length < 1 || selection[0].data.isGroup) {
         return;
       }
       Ext.create("PBS.D2DManagement.TargetEditWindow", {
@@ -88,7 +138,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       let me = this;
       let view = me.getView();
       let selection = view.getSelection();
-      if (!selection || selection.length < 1) {
+      if (!selection || selection.length < 1 || selection[0].data.isGroup) {
         return;
       }
       Ext.create("PBS.D2DManagement.TargetS3Secret", {
@@ -100,44 +150,228 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }).show();
     },
 
-    reload: function () {
-      this.getView().getStore().rstore.load();
+    onSearch: function (field, value) {
+      let me = this;
+      me.searchValue = value.toLowerCase();
+      me.filterTree();
     },
 
-    stopStore: function () {
-      this.getView().getStore().rstore.stopUpdate();
-    },
+    onClearSearch: function () {
+      let me = this;
+      let view = me.getView();
+      let searchField = view.down("#targetSearchField");
 
-    startStore: function () {
-      this.getView().getStore().rstore.startUpdate();
-    },
-
-    render_status: function (value) {
-      if (value.toString() == "true") {
-        icon = "check good";
-        text = "Reachable";
-      } else {
-        icon = "times critical";
-        text = "Unreachable";
+      if (searchField) {
+        searchField.setValue("");
       }
 
-      return `<i class="fa fa-${icon}"></i> ${text}`;
+      me.searchValue = "";
+      me.filterTree();
+    },
+
+    filterTree: function () {
+      let me = this;
+      let view = me.getView();
+      let searchValue = me.searchValue || "";
+
+      if (!me.allTargetsData) {
+        return;
+      }
+
+      if (!searchValue) {
+        // No search, show all
+        me.buildTree(me.allTargetsData);
+        return;
+      }
+
+      // Filter targets based on search
+      let filteredTargets = me.allTargetsData.filter((target) => {
+        let targetData = target.getData();
+        return (
+          (targetData.name &&
+            targetData.name.toLowerCase().includes(searchValue)) ||
+          (targetData.path &&
+            targetData.path.toLowerCase().includes(searchValue)) ||
+          (targetData.agent_hostname &&
+            targetData.agent_hostname.toLowerCase().includes(searchValue)) ||
+          (targetData.volume_name &&
+            targetData.volume_name.toLowerCase().includes(searchValue)) ||
+          (targetData.volume_type &&
+            targetData.volume_type.toLowerCase().includes(searchValue)) ||
+          (targetData.target_type &&
+            targetData.target_type.toLowerCase().includes(searchValue))
+        );
+      });
+
+      me.buildTree(filteredTargets);
+    },
+
+    buildTree: function (targets) {
+      let me = this;
+      let view = me.getView();
+
+      let localTargets = [];
+      let agentGroups = {};
+      let s3Targets = [];
+
+      targets.forEach((target) => {
+        let targetData = target.getData();
+
+        if (targetData.target_type === "agent" && targetData.agent_hostname) {
+          let hostname = targetData.agent_hostname;
+          if (!agentGroups[hostname]) {
+            agentGroups[hostname] = {
+              text: hostname,
+              os: targetData.os,
+              children: [],
+              isGroup: true,
+              groupType: "agent",
+              iconCls: "fa fa-server",
+              expanded: true,
+            };
+          }
+          agentGroups[hostname].children.push({
+            ...targetData,
+            leaf: true,
+            isGroup: false,
+            iconCls: "fa fa-hdd-o",
+          });
+        } else if (targetData.target_type === "s3") {
+          s3Targets.push({
+            ...targetData,
+            leaf: true,
+            isGroup: false,
+            iconCls: "fa fa-cloud",
+          });
+        } else {
+          localTargets.push({
+            ...targetData,
+            leaf: true,
+            isGroup: false,
+            iconCls: "fa fa-folder",
+          });
+        }
+      });
+
+      let rootChildren = [];
+
+      if (localTargets.length > 0) {
+        rootChildren.push({
+          text: "Local Targets",
+          children: localTargets,
+          isGroup: true,
+          groupType: "local",
+          iconCls: "fa fa-desktop",
+          expanded: true,
+        });
+      }
+
+      if (Object.keys(agentGroups).length > 0) {
+        let agentRootNode = {
+          text: "Agent Targets",
+          children: Object.values(agentGroups),
+          isGroup: true,
+          groupType: "agent-root",
+          iconCls: "fa fa-sitemap",
+          expanded: true,
+        };
+        rootChildren.push(agentRootNode);
+      }
+
+      if (s3Targets.length > 0) {
+        rootChildren.push({
+          text: "S3 Targets",
+          children: s3Targets,
+          isGroup: true,
+          groupType: "s3",
+          iconCls: "fa fa-cloud",
+          expanded: true,
+        });
+      }
+
+      view.setRootNode({
+        text: "Root",
+        expanded: true,
+        children: rootChildren,
+      });
+    },
+
+    reload: function () {
+      this.loadData();
+    },
+
+    loadData: function () {
+      let me = this;
+      let view = me.getView();
+
+      Ext.Ajax.request({
+        url: pbsPlusBaseUrl + "/api2/json/d2d/target?status=true",
+        method: "GET",
+        success: function (response) {
+          let data = Ext.decode(response.responseText);
+          let rawTargets = data.data || [];
+
+          let targets = rawTargets.map((target) => {
+            return Ext.create("pbs-model-targets", target);
+          });
+
+          // Store all targets for filtering
+          me.allTargetsData = targets;
+
+          // Apply current filter if exists
+          me.filterTree();
+        },
+        failure: function (response) {
+          Ext.Msg.alert(gettext("Error"), gettext("Failed to load targets"));
+        },
+      });
+    },
+
+    stopStore: function () {},
+
+    startStore: function () {
+      this.loadData();
+    },
+
+    render_status: function (value, metaData, record) {
+      if (record.data.isGroup) {
+        return "";
+      }
+
+      if (value === true) {
+        return '<i class="fa fa-check good"></i> Reachable';
+      } else {
+        return '<i class="fa fa-times critical"></i> Unreachable';
+      }
+    },
+
+    render_path: function (value, metaData, record) {
+      if (record.data.isGroup) {
+        return "";
+      }
+      return value || "-";
+    },
+
+    render_bytes: function (value, metaData, record) {
+      if (record.data.isGroup) {
+        return "";
+      }
+      if (!value && value !== 0) {
+        return "-";
+      }
+      return humanReadableBytes(value);
+    },
+
+    render_field: function (value, metaData, record) {
+      if (record.data.isGroup) {
+        return "";
+      }
+      return value || "-";
     },
 
     init: function (view) {
-      Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
-
-      const store = view.getStore();
-      store.setGrouper({
-        property: "path",
-        groupFn: function (record) {
-          let hostname = record.get("agent_hostname");
-          if (hostname) {
-            return "Agent - " + hostname;
-          }
-          return "Non-Agent";
-        },
-      });
+      this.searchValue = "";
+      this.loadData();
     },
   },
 
@@ -145,49 +379,12 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     beforedestroy: "stopStore",
     deactivate: "stopStore",
     activate: "startStore",
-    itemdblclick: "onEdit",
-  },
-
-  store: {
-    type: "diff",
-    rstore: {
-      type: "update",
-      storeid: "proxmox-disk-targets",
-      model: "pbs-model-targets",
-      proxy: {
-        type: "pbsplus",
-        url: pbsPlusBaseUrl + "/api2/json/d2d/target?status=true",
-      },
+    itemdblclick: function (view, record) {
+      if (!record.data.isGroup) {
+        view.getController().onEdit();
+      }
     },
-    sorters: "name",
-    groupField: "path",
   },
-
-  features: [
-    {
-      ftype: "grouping",
-      groupers: [
-        {
-          property: "path",
-          groupFn: function (record) {
-            let hostname = record.get("agent_hostname");
-            if (hostname) {
-              return "Agent - " + hostname;
-            }
-            return "Non-Agent";
-          },
-        },
-      ],
-      groupHeaderTpl: [
-        '{name:this.formatNS} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
-        {
-          formatNS: function (group) {
-            return group || "Unassigned";
-          },
-        },
-      ],
-    },
-  ],
 
   tbar: [
     {
@@ -201,6 +398,9 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       text: gettext("Create Job"),
       handler: "addJob",
       disabled: true,
+      enableFn: function (rec) {
+        return rec && !rec.data.isGroup;
+      },
     },
     "-",
     {
@@ -208,75 +408,125 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       xtype: "proxmoxButton",
       handler: "onEdit",
       disabled: true,
+      enableFn: function (rec) {
+        return rec && !rec.data.isGroup;
+      },
     },
     {
       text: gettext("Set S3 Secret Key"),
       xtype: "proxmoxButton",
       handler: "setS3Secret",
       disabled: true,
+      enableFn: function (rec) {
+        return rec && !rec.data.isGroup && rec.data.target_type === "s3";
+      },
     },
     {
       xtype: "proxmoxButton",
       text: gettext("Remove"),
-      handler: "removeTargets",
+      handler: "removeItems",
       enableFn: function () {
-        let recs = this.up("grid").getSelection();
-        return recs.length > 0;
+        let view = this.up("treepanel");
+        let selections = view.getSelection();
+        return selections.some(
+          (rec) =>
+            !rec.data.isGroup ||
+            (rec.data.isGroup && rec.data.groupType === "agent"),
+        );
       },
       disabled: true,
     },
+    "->",
+    {
+      xtype: "textfield",
+      itemId: "targetSearchField",
+      emptyText: gettext("Search targets..."),
+      width: 250,
+      enableKeyEvents: true,
+      triggers: {
+        clear: {
+          cls: "x-form-clear-trigger",
+          handler: "onClearSearch",
+        },
+      },
+      listeners: {
+        change: {
+          fn: "onSearch",
+          buffer: 300,
+        },
+      },
+    },
   ],
+
   columns: [
     {
+      xtype: "treecolumn",
       text: gettext("Name"),
       dataIndex: "name",
       flex: 1,
+      renderer: function (value, metaData, record) {
+        if (record.data.isGroup) {
+          return record.data.text;
+        }
+        return value;
+      },
     },
     {
-      text: gettext("Path"),
+      text: gettext("Path / Volume"),
       dataIndex: "path",
       flex: 2,
+      renderer: function (value, metaData, record) {
+        if (record.data.isGroup) {
+          return "";
+        }
+        if (record.data.target_type === "agent") {
+          return record.data.volume_name || record.data.volume_id || "-";
+        }
+        return value || "-";
+      },
     },
     {
       text: gettext("Job Count"),
       dataIndex: "job_count",
       flex: 1,
+      renderer: "render_field",
     },
     {
-      text: gettext("Drive Type"),
-      dataIndex: "drive_type",
+      text: gettext("Type"),
+      dataIndex: "volume_type",
       flex: 1,
+      renderer: function (value, metaData, record) {
+        if (record.data.isGroup) {
+          if (record.data.groupType === "agent") {
+            return `<i class="fa fa-info-circle"></i> ${record.data.os || ""}`;
+          }
+          return "";
+        }
+        return value || record.data.target_type || "-";
+      },
     },
     {
       text: gettext("Drive Name"),
-      dataIndex: "drive_name",
+      dataIndex: "volume_name",
       flex: 1,
+      renderer: "render_field",
     },
     {
-      text: gettext("Drive FS"),
-      dataIndex: "drive_fs",
+      text: gettext("File System"),
+      dataIndex: "volume_fs",
       flex: 1,
+      renderer: "render_field",
     },
     {
       text: gettext("Used Size"),
-      dataIndex: "drive_used_bytes",
-      renderer: function (value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableBytes(value);
-      },
+      dataIndex: "volume_used_bytes",
+      renderer: "render_bytes",
       flex: 1,
     },
     {
       text: gettext("Total Size"),
-      dataIndex: "drive_total_bytes",
-      renderer: function (value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableBytes(value);
-      },
+      dataIndex: "volume_total_bytes",
+      renderer: "render_bytes",
       flex: 1,
     },
     {
@@ -286,14 +536,10 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       flex: 1,
     },
     {
-      text: gettext("Agent OS"),
-      dataIndex: "os",
-      flex: 1,
-    },
-    {
       text: gettext("Agent Version"),
       dataIndex: "agent_version",
       flex: 1,
+      renderer: "render_field",
     },
   ],
 });

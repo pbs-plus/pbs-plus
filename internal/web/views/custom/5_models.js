@@ -106,14 +106,38 @@ Ext.define("pbs-disk-restore-job-status", {
 });
 
 Ext.define("pbs-model-targets", {
-  extend: "Ext.data.Model",
+  extend: "Ext.data.TreeModel",
   fields: [
     "name",
     "path",
+    "target_type",
+    "mount_script",
+    "volume_id",
+
     "job_count",
     "agent_version",
     "connection_status",
-    "mount_script",
+
+    "volume_type",
+    "volume_name",
+    "volume_fs",
+    "volume_total_bytes",
+    "volume_used_bytes",
+    "volume_free_bytes",
+    "volume_total",
+    "volume_used",
+    "volume_free",
+
+    { name: "agent_hostname", mapping: "agent_host.name" },
+    { name: "os", mapping: "agent_host.os" },
+    { name: "agent_ip", mapping: "agent_host.ip" },
+
+    "text",
+    "isGroup",
+    "groupType",
+    "iconCls",
+
+    // Legacy mappings for backward compatibility
     { name: "drive_type", mapping: "target_type" },
     { name: "drive_name", mapping: "volume_name" },
     { name: "drive_fs", mapping: "volume_fs" },
@@ -123,8 +147,6 @@ Ext.define("pbs-model-targets", {
     { name: "drive_total", mapping: "volume_total" },
     { name: "drive_used", mapping: "volume_used" },
     { name: "drive_free", mapping: "volume_free" },
-    { name: "agent_hostname", mapping: "agent_host.name" },
-    { name: "os", mapping: "agent_host.os" },
   ],
   idProperty: "name",
 });
