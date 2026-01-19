@@ -3,13 +3,20 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
   alias: "widget.pbsScriptEditWindow",
   mixins: ["Proxmox.Mixin.CBind"],
 
+  width: "80%",
   height: "80%",
   resizable: true,
-  layout: "fit",
 
   isCreate: true,
   isAdd: true,
   subject: "Script",
+
+  bodyPadding: 10,
+
+  layout: {
+    type: "vbox",
+    align: "stretch",
+  },
 
   cbindData: function (initialConfig) {
     let me = this;
