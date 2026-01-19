@@ -81,12 +81,6 @@ func (database *Database) CreateTarget(tx *Transaction, target Target) (err erro
 	})
 
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-				return fmt.Errorf("CreateTarget: failed to rollback before update: %w", rbErr)
-			}
-			return database.UpdateTarget(nil, target)
-		}
 		return fmt.Errorf("CreateTarget: error inserting target: %w", err)
 	}
 

@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -52,12 +51,6 @@ func (database *Database) CreateScript(tx *Transaction, script Script) (err erro
 		Description: toNullString(script.Description),
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-				return fmt.Errorf("CreateScript: failed to rollback before update: %w", rbErr)
-			}
-			return database.UpdateScript(nil, script)
-		}
 		return fmt.Errorf("CreateScript: error inserting script: %w", err)
 	}
 
