@@ -16,7 +16,7 @@ VALUES (?, ?, ?)
 `
 
 type CreateExclusionParams struct {
-	JobID   sql.NullString `json:"job_id"`
+	JobID   string         `json:"job_id"`
 	Path    string         `json:"path"`
 	Comment sql.NullString `json:"comment"`
 }
@@ -30,7 +30,7 @@ const deleteBackupExclusions = `-- name: DeleteBackupExclusions :exec
 DELETE FROM exclusions WHERE job_id = ?
 `
 
-func (q *Queries) DeleteBackupExclusions(ctx context.Context, jobID sql.NullString) error {
+func (q *Queries) DeleteBackupExclusions(ctx context.Context, jobID string) error {
 	_, err := q.db.ExecContext(ctx, deleteBackupExclusions, jobID)
 	return err
 }
@@ -41,8 +41,8 @@ WHERE job_id = ? AND path = ?
 `
 
 type DeleteExclusionParams struct {
-	JobID sql.NullString `json:"job_id"`
-	Path  string         `json:"path"`
+	JobID string `json:"job_id"`
+	Path  string `json:"path"`
 }
 
 func (q *Queries) DeleteExclusion(ctx context.Context, arg DeleteExclusionParams) error {
@@ -58,12 +58,12 @@ ORDER BY path
 `
 
 type GetBackupExclusionsRow struct {
-	JobID   sql.NullString `json:"job_id"`
+	JobID   string         `json:"job_id"`
 	Path    string         `json:"path"`
 	Comment sql.NullString `json:"comment"`
 }
 
-func (q *Queries) GetBackupExclusions(ctx context.Context, jobID sql.NullString) ([]GetBackupExclusionsRow, error) {
+func (q *Queries) GetBackupExclusions(ctx context.Context, jobID string) ([]GetBackupExclusionsRow, error) {
 	rows, err := q.db.QueryContext(ctx, getBackupExclusions, jobID)
 	if err != nil {
 		return nil, err
@@ -94,12 +94,12 @@ LIMIT 1
 `
 
 type GetExclusionParams struct {
-	JobID sql.NullString `json:"job_id"`
-	Path  string         `json:"path"`
+	JobID string `json:"job_id"`
+	Path  string `json:"path"`
 }
 
 type GetExclusionRow struct {
-	JobID   sql.NullString `json:"job_id"`
+	JobID   string         `json:"job_id"`
 	Path    string         `json:"path"`
 	Comment sql.NullString `json:"comment"`
 }
@@ -118,8 +118,8 @@ ORDER BY job_id, path
 `
 
 type ListAllBackupExclusionsRow struct {
-	JobID sql.NullString `json:"job_id"`
-	Path  string         `json:"path"`
+	JobID string `json:"job_id"`
+	Path  string `json:"path"`
 }
 
 func (q *Queries) ListAllBackupExclusions(ctx context.Context) ([]ListAllBackupExclusionsRow, error) {
@@ -186,7 +186,7 @@ WHERE path = ?
 `
 
 type UpdateExclusionParams struct {
-	JobID   sql.NullString `json:"job_id"`
+	JobID   string         `json:"job_id"`
 	Comment sql.NullString `json:"comment"`
 	Path    string         `json:"path"`
 }

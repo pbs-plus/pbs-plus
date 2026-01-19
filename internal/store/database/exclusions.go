@@ -55,7 +55,7 @@ func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) 
 	}
 
 	err = q.CreateExclusion(database.ctx, sqlc.CreateExclusionParams{
-		JobID:   sql.NullString{String: exclusion.JobId, Valid: exclusion.JobId != ""},
+		JobID:   exclusion.JobId,
 		Path:    exclusion.Path,
 		Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
 	})
@@ -68,10 +68,7 @@ func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) 
 }
 
 func (database *Database) GetAllBackupExclusions(backupId string) ([]Exclusion, error) {
-	rows, err := database.readQueries.GetBackupExclusions(database.ctx, sql.NullString{
-		String: backupId,
-		Valid:  backupId != "",
-	})
+	rows, err := database.readQueries.GetBackupExclusions(database.ctx, backupId)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("GetAllBackupExclusions: error querying exclusions: %w", err)
 	}
@@ -87,7 +84,7 @@ func (database *Database) GetAllBackupExclusions(backupId string) ([]Exclusion, 
 		seenPaths[path] = true
 
 		excl := Exclusion{
-			JobId:   row.JobID.String,
+			JobId:   row.JobID,
 			Path:    path,
 			Comment: row.Comment.String,
 		}
@@ -126,7 +123,7 @@ func (database *Database) GetAllGlobalExclusions() ([]Exclusion, error) {
 
 func (database *Database) GetExclusion(path string) (*Exclusion, error) {
 	row, err := database.readQueries.GetExclusion(database.ctx, sqlc.GetExclusionParams{
-		JobID: toNullString(""),
+		JobID: "",
 		Path:  path,
 	})
 	if err != nil {
@@ -137,7 +134,7 @@ func (database *Database) GetExclusion(path string) (*Exclusion, error) {
 	}
 
 	excl := &Exclusion{
-		JobId:   row.JobID.String,
+		JobId:   row.JobID,
 		Path:    row.Path,
 		Comment: row.Comment.String,
 	}
@@ -185,7 +182,7 @@ func (database *Database) UpdateExclusion(tx *Transaction, exclusion Exclusion) 
 	}
 
 	affected, err := q.UpdateExclusion(database.ctx, sqlc.UpdateExclusionParams{
-		JobID:   sql.NullString{String: exclusion.JobId, Valid: exclusion.JobId != ""},
+		JobID:   exclusion.JobId,
 		Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
 		Path:    exclusion.Path,
 	})
@@ -235,7 +232,7 @@ func (database *Database) DeleteExclusion(tx *Transaction, path string) (err err
 	path = strings.ReplaceAll(path, "\\", "/")
 
 	err = q.DeleteExclusion(database.ctx, sqlc.DeleteExclusionParams{
-		JobID: toNullString(""),
+		JobID: "",
 		Path:  path,
 	})
 	if err != nil {

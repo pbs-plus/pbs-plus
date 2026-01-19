@@ -42,7 +42,7 @@ type Backup struct {
 
 type Exclusion struct {
 	Path    string         `json:"path"`
-	JobID   sql.NullString `json:"job_id"`
+	JobID   string         `json:"job_id"`
 	Comment sql.NullString `json:"comment"`
 }
 
