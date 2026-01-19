@@ -96,15 +96,20 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
     me.callParent();
 
     if (me.jobData) {
-      let inputPanel = me.down("inputpanel");
-      if (inputPanel && inputPanel.setValues) {
-        let data = Ext.apply({}, me.jobData);
-        if (data.target && typeof data.target === "object") {
-          console.log(data.target);
-          data.target = data.target.name;
-        }
-        inputPanel.setValues(data);
+      let data = Ext.apply({}, me.jobData);
+      if (data.target && typeof data.target === "object") {
+        data.target = data.target.name;
       }
+      me.down("inputpanel").setValues(data);
+    }
+
+    if (me.autoLoad) {
+      me.on("afterload", function (data) {
+        if (data.target && typeof data.target === "object") {
+          data.target = data.target.name;
+          me.down("inputpanel").setValues(data);
+        }
+      });
     }
   },
 
