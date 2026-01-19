@@ -120,11 +120,12 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       {
         title: gettext("Options"),
         xtype: "inputpanel",
-        setValues: function (values) {
-          if (values.target && typeof values.target === "object") {
-            values.target = values.target.name;
-          }
-          this.callParent([values]);
+        listeners: {
+          beforesetvalues: function (panel, values) {
+            if (values.target && typeof values.target === "object") {
+              values.target = values.target.name;
+            }
+          },
         },
         onGetValues: function (values) {
           let me = this;
