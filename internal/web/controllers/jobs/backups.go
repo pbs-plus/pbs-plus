@@ -434,3 +434,30 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 	}
 }
+
+func ExtJsBackupUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		response := BackupUPIDsResponse{}
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodGet {
+			backup, err := storeInstance.Database.GetBackup(utils.DecodePath(r.PathValue("backup")))
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			response.Status = http.StatusOK
+			response.Success = true
+			response.Data = backup.GetAllUPIDs()
+			json.NewEncoder(w).Encode(response)
+
+			return
+		}
+	}
+}
