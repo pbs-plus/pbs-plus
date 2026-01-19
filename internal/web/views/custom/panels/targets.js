@@ -400,6 +400,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
   selModel: {
     selType: "rowmodel",
     mode: "SINGLE",
+    allowDeselect: true,
   },
 
   listeners: {
@@ -410,6 +411,12 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       if (!record.data.isGroup) {
         this.getController().onEdit();
       }
+    },
+    selectionchange: function (model, selected) {
+      let me = this;
+      me.query("proxmoxButton").forEach((btn) => {
+        btn.updateSelected(model, selected);
+      });
     },
   },
 
