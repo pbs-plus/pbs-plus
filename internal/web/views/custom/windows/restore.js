@@ -1,3 +1,15 @@
+Ext.define("PBS.D2DManagement.RestoreJobInputPanel", {
+  extend: "Proxmox.panel.InputPanel",
+  xtype: "pbsD2DRestoreInputPanel",
+
+  setValues: function (values) {
+    if (values["dest-target"] && typeof values["dest-target"] === "object") {
+      values["dest-target"] = values["dest-target"].name;
+    }
+    this.callParent([values]);
+  },
+});
+
 Ext.define("PBS.D2DManagement.RestoreJobEdit", {
   extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsDiskRestoreJobEdit",
@@ -124,7 +136,7 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
     items: [
       {
         title: gettext("Options"),
-        xtype: "inputpanel",
+        xtype: "pbsD2DRestoreInputPanel",
         listeners: {
           beforesetvalues: function (panel, values) {
             if (values.target && typeof values.target === "object") {
