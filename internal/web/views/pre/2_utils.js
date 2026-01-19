@@ -30,6 +30,7 @@ Ext.define("PBS.PlusUtils", {
 
     Promise.all([
       loadCSS(`${baseURL}/codemirror.min.css`),
+      loadCSS(`${baseURL}/theme/material-darker.min.css`),
       loadJS(`${baseURL}/codemirror.min.js`),
     ])
       .then(() => loadJS(`${baseURL}/mode/shell/shell.min.js`))
