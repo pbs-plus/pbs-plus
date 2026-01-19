@@ -10,7 +10,11 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
 
       let jobCount = record.get("job_count");
 
-      if (!jobCount || jobCount === 0) {
+      if (
+        jobCount === undefined ||
+        jobCount === null ||
+        Number(jobCount) === 0
+      ) {
         return "pbs-row-warning-no-jobs";
       }
 
@@ -401,15 +405,11 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
       const style = document.createElement("style");
       style.id = "pbs-target-panel-styles";
       style.innerHTML = `
-          .pbs-row-warning-no-jobs {
-            background-color: #ffc107 !important;
-          }
           .pbs-row-warning-no-jobs .x-grid-cell {
             background-color: #ffc107 !important;
           }
           
           @media (prefers-color-scheme: dark) {
-            .pbs-row-warning-no-jobs,
             .pbs-row-warning-no-jobs .x-grid-cell {
               background-color: rgba(255, 193, 7, 0.35) !important;
             }
