@@ -1,6 +1,6 @@
 //go:build linux
 
-package system
+package database
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	godbus "github.com/godbus/dbus/v5"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/system"
 )
 
 func sanitizeUnitName(id string) (string, error) {
@@ -41,7 +41,7 @@ func getRetryUnitName(backupID string, attempt int) (string, error) {
 }
 
 func stopBackupTimer(ctx context.Context, sanitized string) {
-	conn, err := getConn()
+	conn, err := system.GetSystemdConn()
 	if err != nil {
 		return
 	}
@@ -51,7 +51,7 @@ func stopBackupTimer(ctx context.Context, sanitized string) {
 }
 
 func stopAllRetries(ctx context.Context, sanitized string) {
-	conn, err := getConn()
+	conn, err := system.GetSystemdConn()
 	if err != nil {
 		return
 	}
@@ -73,10 +73,10 @@ func stopAllRetries(ctx context.Context, sanitized string) {
 	}
 }
 
-func SetSchedule(ctx context.Context, backup types.Backup) error {
-	unitName, err := createScheduleUnits(ctx, backup)
+func (backup *Backup) setSchedule(ctx context.Context) error {
+	unitName, err := backup.createScheduleUnits(ctx)
 
-	conn, err := getConn()
+	conn, err := system.GetSystemdConn()
 	if err != nil {
 		return err
 	}
@@ -92,14 +92,14 @@ func SetSchedule(ctx context.Context, backup types.Backup) error {
 	return err
 }
 
-func createScheduleUnits(ctx context.Context, backup types.Backup) (string, error) {
+func (backup *Backup) createScheduleUnits(ctx context.Context) (string, error) {
 	unitName, err := getUnitName(backup.ID)
 	if err != nil {
 		return "", fmt.Errorf("SetSchedule: %w", err)
 	}
 
 	if backup.Schedule == "" {
-		_ = DeleteSchedule(ctx, backup.ID)
+		_ = deleteBackupSchedule(ctx, backup.ID)
 		return "", nil
 	}
 
@@ -142,7 +142,7 @@ WantedBy=timers.target
 	return unitName, nil
 }
 
-func DeleteSchedule(ctx context.Context, id string) error {
+func deleteBackupSchedule(ctx context.Context, id string) error {
 	sanitized, err := sanitizeUnitName(id)
 	if err != nil {
 		return fmt.Errorf("DeleteSchedule: %w", err)
@@ -161,14 +161,14 @@ func DeleteSchedule(ctx context.Context, id string) error {
 		_ = os.Remove(file)
 	}
 
-	if conn, err := getConn(); err == nil {
+	if conn, err := system.GetSystemdConn(); err == nil {
 		_ = conn.ReloadContext(ctx)
 	}
 
 	return nil
 }
 
-func SetBackupRetrySchedule(ctx context.Context, backup types.Backup, extraExclusions []string) error {
+func (backup *Backup) SetBackupRetrySchedule(ctx context.Context, extraExclusions []string) error {
 	sanitized, err := sanitizeUnitName(backup.ID)
 	if err != nil {
 		return fmt.Errorf("SetBackupRetrySchedule: %w", err)
@@ -180,7 +180,7 @@ func SetBackupRetrySchedule(ctx context.Context, backup types.Backup, extraExclu
 	if newAttempt > backup.Retry {
 		fmt.Printf("Backup %s reached max retry count (%d). No further retry scheduled.\n",
 			backup.ID, backup.Retry)
-		RemoveAllRetrySchedules(ctx, backup)
+		backup.RemoveAllRetrySchedules(ctx)
 		return nil
 	}
 
@@ -215,7 +215,7 @@ ExecStart=%s
 		return fmt.Errorf("SetRetrySchedule: error writing service: %w", err)
 	}
 
-	conn, err := getConn()
+	conn, err := system.GetSystemdConn()
 	if err != nil {
 		return fmt.Errorf("SetRetrySchedule: failed to connect to dbus: %w", err)
 	}
@@ -240,7 +240,7 @@ ExecStart=%s
 }
 
 func getCurrentBackupRetryAttempt(ctx context.Context, sanitized string) int {
-	conn, err := getConn()
+	conn, err := system.GetSystemdConn()
 	if err != nil {
 		return 0
 	}
@@ -276,13 +276,13 @@ func getCurrentBackupRetryAttempt(ctx context.Context, sanitized string) int {
 	return maxAttempt
 }
 
-func RemoveAllRetrySchedules(ctx context.Context, backup types.Backup) {
+func (backup *Backup) RemoveAllRetrySchedules(ctx context.Context) {
 	sanitized, _ := sanitizeUnitName(backup.ID)
 	stopAllRetries(ctx, sanitized)
 }
 
-func GetNextSchedule(ctx context.Context, backup types.Backup) (*time.Time, error) {
-	conn, err := getConn()
+func (backup *Backup) getNextSchedule(ctx context.Context) (*time.Time, error) {
+	conn, err := system.GetSystemdConn()
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +332,7 @@ func GetNextSchedule(ctx context.Context, backup types.Backup) (*time.Time, erro
 	return &earliest, nil
 }
 
-func PurgeAllLegacyUnits(ctx context.Context) error {
+func PurgeAllLegacyTimerUnits(ctx context.Context) error {
 	timerBasePath := "/etc/systemd/system"
 	pattern := filepath.Join(timerBasePath, "pbs-plus-job-*.timer")
 
@@ -345,7 +345,7 @@ func PurgeAllLegacyUnits(ctx context.Context) error {
 		return nil
 	}
 
-	conn, err := getConn()
+	conn, err := system.GetSystemdConn()
 	if err != nil {
 		return fmt.Errorf("failed to connect to dbus: %w", err)
 	}
@@ -373,18 +373,18 @@ func PurgeAllLegacyUnits(ctx context.Context) error {
 	return nil
 }
 
-func SetBatchSchedules(ctx context.Context, jobs []types.Backup) error {
+func SetBatchBackupSchedules(ctx context.Context, jobs []Backup) error {
 	unitNames := make([]string, 0, len(jobs))
 
 	for _, job := range jobs {
-		if unitName, err := createScheduleUnits(ctx, job); err != nil {
+		if unitName, err := job.createScheduleUnits(ctx); err != nil {
 			fmt.Printf("Batch error for %s: %v\n", job.ID, err)
 		} else if unitName != "" {
 			unitNames = append(unitNames, unitName)
 		}
 	}
 
-	conn, err := getConn()
+	conn, err := system.GetSystemdConn()
 	if err != nil {
 		return err
 	}

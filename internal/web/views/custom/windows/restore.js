@@ -1,3 +1,15 @@
+Ext.define("PBS.D2DManagement.RestoreJobInputPanel", {
+  extend: "Proxmox.panel.InputPanel",
+  xtype: "pbsD2DRestoreInputPanel",
+
+  setValues: function (values) {
+    if (values["dest-target"] && typeof values["dest-target"] === "object") {
+      values["dest-target"] = values["dest-target"].name;
+    }
+    this.callParent([values]);
+  },
+});
+
 Ext.define("PBS.D2DManagement.RestoreJobEdit", {
   extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsDiskRestoreJobEdit",
@@ -101,11 +113,25 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
     me.callParent();
 
     if (me.jobData) {
-      let inputPanel = me.down("inputpanel");
-      if (inputPanel && inputPanel.setValues) {
-        inputPanel.setValues(me.jobData);
+      let data = Ext.apply({}, me.jobData);
+      if (data["dest-target"] && typeof data["dest-target"] === "object") {
+        data["dest-target"] = data["dest-target"].name;
       }
+      me.setValues(data);
     }
+
+    me.on("afterload", function (success, data) {
+      if (
+        success &&
+        data &&
+        data["dest-target"] &&
+        typeof data["dest-target"] === "object"
+      ) {
+        data["dest-target"] = data["dest-target"].name;
+
+        me.setValues(data);
+      }
+    });
   },
 
   items: {
@@ -115,7 +141,14 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
     items: [
       {
         title: gettext("Options"),
-        xtype: "inputpanel",
+        xtype: "pbsD2DRestoreInputPanel",
+        listeners: {
+          beforesetvalues: function (panel, values) {
+            if (values.target && typeof values.target === "object") {
+              values.target = values.target.name;
+            }
+          },
+        },
         onGetValues: function (values) {
           let me = this;
 
@@ -182,7 +215,7 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
             xtype: "pbsD2DTargetPathSelector",
             fieldLabel: gettext("Path to destination"),
             reference: "pathSelectorDestination",
-            name: "dest-path",
+            name: "dest-subpath",
           },
         ],
 
