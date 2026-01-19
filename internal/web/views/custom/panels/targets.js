@@ -2,6 +2,21 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
   extend: "Ext.app.ViewController",
   alias: "controller.pbsDiskTargetPanel",
 
+  viewConfig: {
+    getRowClass: function (record) {
+      if (record.data.isGroup) {
+        return "";
+      }
+
+      let jobCount = record.get("job_count");
+
+      if (!jobCount || jobCount === 0) {
+        return "pbs-row-warning-no-jobs";
+      }
+
+      return "";
+    },
+  },
   onAdd: function () {
     let me = this;
     Ext.create("PBS.D2DManagement.TargetEditWindow", {
@@ -381,6 +396,28 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
 
   init: function () {
     this.searchValue = "";
+
+    if (!document.getElementById("pbs-target-panel-styles")) {
+      const style = document.createElement("style");
+      style.id = "pbs-target-panel-styles";
+      style.innerHTML = `
+          .pbs-row-warning-no-jobs {
+            background-color: #ffc107 !important;
+          }
+          .pbs-row-warning-no-jobs .x-grid-cell {
+            background-color: #ffc107 !important;
+          }
+          
+          @media (prefers-color-scheme: dark) {
+            .pbs-row-warning-no-jobs,
+            .pbs-row-warning-no-jobs .x-grid-cell {
+              background-color: rgba(255, 193, 7, 0.35) !important;
+            }
+          }
+        `;
+      document.head.appendChild(style);
+    }
+
     this.loadData();
   },
 });
@@ -530,7 +567,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       },
     },
     {
-      text: gettext("Job Count"),
+      text: gettext("Backup Job Count"),
       dataIndex: "job_count",
       flex: 1,
       renderer: "render_field",

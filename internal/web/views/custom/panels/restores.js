@@ -356,16 +356,6 @@ Ext.define("PBS.config.DiskRestoreJobView", {
       },
       disabled: true,
     },
-    {
-      xtype: "proxmoxButton",
-      text: gettext("Show last success log"),
-      handler: "openSuccessTaskLog",
-      enableFn: function () {
-        let recs = this.up("grid").getSelection();
-        return recs.length === 1 && !!recs[0].data["last-successful-upid"];
-      },
-      disabled: true,
-    },
     "-",
     {
       xtype: "proxmoxButton",
@@ -447,13 +437,6 @@ Ext.define("PBS.config.DiskRestoreJobView", {
       width: 120,
       sortable: true,
       hidden: true,
-    },
-    {
-      header: gettext("Last Success"),
-      dataIndex: "last-successful-endtime",
-      renderer: PBS.Utils.render_optional_timestamp,
-      width: 140,
-      sortable: true,
     },
     {
       header: gettext("Last Attempt"),
