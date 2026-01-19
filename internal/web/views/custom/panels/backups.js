@@ -373,12 +373,6 @@ Ext.define("PBS.config.DiskBackupJobView", {
                     text: gettext("Status"),
                     dataIndex: "status",
                     renderer: PBS.PlusUtils.render_task_status,
-                    flex: 1,
-                  },
-                  {
-                    text: gettext("UPID"),
-                    dataIndex: "upid",
-                    renderer: Ext.String.htmlEncode,
                     flex: 2,
                   },
                 ],
