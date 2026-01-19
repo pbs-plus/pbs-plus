@@ -396,8 +396,57 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     },
 
     init: function (view) {
-      this.searchValue = "";
-      this.loadData();
+      let me = this;
+      me.searchValue = "";
+      me.loadData();
+
+      // Add selection change listener
+      view.on("selectionchange", me.onSelectionChange, me);
+    },
+
+    onSelectionChange: function (selModel, selected) {
+      let me = this;
+      let view = me.getView();
+
+      // Get toolbar buttons
+      let editBtn = view.down("button[handler=onEdit]");
+      let createJobBtn = view.down("button[handler=addJob]");
+      let removeBtn = view.down("button[handler=removeItems]");
+      let s3SecretBtn = view.down("button[handler=setS3Secret]");
+
+      // Enable/disable based on selection
+      if (selected.length === 0) {
+        if (editBtn) editBtn.setDisabled(true);
+        if (createJobBtn) createJobBtn.setDisabled(true);
+        if (removeBtn) removeBtn.setDisabled(true);
+        if (s3SecretBtn) s3SecretBtn.setDisabled(true);
+      } else if (selected.length === 1) {
+        let rec = selected[0];
+        let isGroup = rec.data.isGroup;
+        let isS3 = rec.data.target_type === "s3";
+        let isAgentGroup = rec.data.groupType === "agent";
+
+        if (editBtn) editBtn.setDisabled(isGroup);
+        if (createJobBtn) createJobBtn.setDisabled(isGroup);
+        if (s3SecretBtn) s3SecretBtn.setDisabled(isGroup || !isS3);
+        if (removeBtn) {
+          removeBtn.setDisabled(isGroup && !isAgentGroup);
+        }
+      } else {
+        // Multiple selections
+        if (editBtn) editBtn.setDisabled(true);
+        if (createJobBtn) createJobBtn.setDisabled(true);
+        if (s3SecretBtn) s3SecretBtn.setDisabled(true);
+
+        if (removeBtn) {
+          let canRemove = selected.some(
+            (rec) =>
+              !rec.data.isGroup ||
+              (rec.data.isGroup && rec.data.groupType === "agent"),
+          );
+          removeBtn.setDisabled(!canRemove);
+        }
+      }
     },
   },
 
@@ -424,9 +473,6 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       text: gettext("Create Job"),
       handler: "addJob",
       disabled: true,
-      enableFn: function (rec) {
-        return rec && !rec.data.isGroup;
-      },
     },
     "-",
     {
@@ -434,30 +480,17 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       xtype: "proxmoxButton",
       handler: "onEdit",
       disabled: true,
-      enableFn: function (rec) {
-        return rec && !rec.data.isGroup;
-      },
     },
     {
       text: gettext("Set S3 Secret Key"),
       xtype: "proxmoxButton",
       handler: "setS3Secret",
       disabled: true,
-      enableFn: function (rec) {
-        return rec && !rec.data.isGroup && rec.data.target_type === "s3";
-      },
     },
     {
       xtype: "proxmoxButton",
       text: gettext("Remove"),
       handler: "removeItems",
-      enableFn: function (rec) {
-        // Enable if it's not a group node, OR if it's an agent group
-        return (
-          !rec.data.isGroup ||
-          (rec.data.isGroup && rec.data.groupType === "agent")
-        );
-      },
       disabled: true,
     },
     "->",
