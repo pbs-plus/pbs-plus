@@ -40,7 +40,7 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
       html: '<div style="height: 100%; border: 1px solid #ccc;"></div>',
       listeners: {
         afterrender: function (component) {
-          PBS.PlusUtils.loadCodeMirror(function () {
+          PBS.PlusUtils.LoadCodeMirror(function () {
             let editor = CodeMirror(component.el.dom.firstChild, {
               mode: "shell",
               lineNumbers: true,
