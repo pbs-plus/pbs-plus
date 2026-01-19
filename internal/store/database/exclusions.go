@@ -126,7 +126,8 @@ func (database *Database) GetAllGlobalExclusions() ([]Exclusion, error) {
 
 func (database *Database) GetExclusion(path string) (*Exclusion, error) {
 	row, err := database.readQueries.GetExclusion(database.ctx, sqlc.GetExclusionParams{
-		Path: path,
+		JobID: toNullString(""),
+		Path:  path,
 	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -234,7 +235,8 @@ func (database *Database) DeleteExclusion(tx *Transaction, path string) (err err
 	path = strings.ReplaceAll(path, "\\", "/")
 
 	err = q.DeleteExclusion(database.ctx, sqlc.DeleteExclusionParams{
-		Path: path,
+		JobID: toNullString(""),
+		Path:  path,
 	})
 	if err != nil {
 		return fmt.Errorf("DeleteExclusion: error deleting exclusion: %w", err)
