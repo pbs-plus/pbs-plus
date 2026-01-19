@@ -412,84 +412,84 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       }
     },
   },
-  initComponent: function () {
-    var me = this;
 
-    me.tbar = [
-      {
-        text: gettext("Add"),
-        xtype: "proxmoxButton",
-        handler: "onAdd",
-        selModel: false,
-      },
-      {
-        xtype: "proxmoxButton",
-        text: gettext("Create Job"),
-        handler: "addJob",
-        disabled: true,
-        selModel: me.selModel,
-        enableFn: function (rec) {
-          return rec && !rec.data.isGroup;
+  initComponent: function () {
+    let me = this;
+
+    Ext.apply(me, {
+      tbar: [
+        {
+          text: gettext("Add"),
+          xtype: "proxmoxButton",
+          handler: "onAdd",
+          selModel: false,
         },
-      },
-      "-",
-      {
-        text: gettext("Edit"),
-        xtype: "proxmoxButton",
-        handler: "onEdit",
-        disabled: true,
-        selModel: me.selModel,
-        enableFn: function (rec) {
-          return rec && !rec.data.isGroup;
+        {
+          xtype: "proxmoxButton",
+          text: gettext("Create Job"),
+          handler: "addJob",
+          disabled: true,
+          selModel: me.selModel,
+          enableFn: (rec) => rec && !rec.get("isGroup"),
         },
-      },
-      {
-        text: gettext("Set S3 Secret Key"),
-        xtype: "proxmoxButton",
-        handler: "setS3Secret",
-        disabled: true,
-        selModel: me.selModel,
-        enableFn: function (rec) {
-          return rec && !rec.data.isGroup && rec.data.target_type === "s3";
+        "-",
+        {
+          text: gettext("Edit"),
+          xtype: "proxmoxButton",
+          handler: "onEdit",
+          disabled: true,
+          selModel: me.selModel,
+          enableFn: (rec) => rec && !rec.get("isGroup"),
         },
-      },
-      {
-        xtype: "proxmoxButton",
-        text: gettext("Remove"),
-        handler: "removeItems",
-        selModel: me.selModel,
-        enableFn: function () {
-          let view = this.up("treepanel");
-          let selections = view.getSelection();
-          return selections.some(
-            (rec) =>
-              !rec.data.isGroup ||
-              (rec.data.isGroup && rec.data.groupType === "agent"),
-          );
+        {
+          text: gettext("Set S3 Secret Key"),
+          xtype: "proxmoxButton",
+          handler: "setS3Secret",
+          disabled: true,
+          selModel: me.selModel,
+          enableFn: (rec) =>
+            rec && !rec.get("isGroup") && rec.get("target_type") === "s3",
         },
-        disabled: true,
-      },
-      "->",
-      {
-        xtype: "textfield",
-        itemId: "targetSearchField",
-        emptyText: gettext("Search targets..."),
-        width: 250,
-        enableKeyEvents: true,
-        triggers: {
-          clear: {
-            cls: "x-form-clear-trigger",
-            handler: "onClearSearch",
+        {
+          xtype: "proxmoxButton",
+          text: gettext("Remove"),
+          handler: "removeItems",
+          disabled: true,
+          selModel: me.selModel,
+          enableFn: (rec) => {
+            if (!rec) return false;
+            return (
+              !rec.get("isGroup") ||
+              (rec.get("isGroup") && rec.get("groupType") === "agent")
+            );
           },
         },
-        listeners: {
-          change: {
-            fn: "onSearch",
-            buffer: 300,
+        "->",
+        {
+          xtype: "textfield",
+          itemId: "targetSearchField",
+          emptyText: gettext("Search targets..."),
+          width: 250,
+          enableKeyEvents: true,
+          triggers: {
+            clear: {
+              cls: "x-form-clear-trigger",
+              handler: function () {
+                this.setValue("");
+                // Manually calling controller because 'this' is the textfield
+                me.getController().onClearSearch();
+              },
+            },
+          },
+          listeners: {
+            change: {
+              fn: "onSearch",
+              buffer: 300,
+            },
           },
         },
-      },
-    ];
+      ],
+    });
 
     me.callParent();
   },
