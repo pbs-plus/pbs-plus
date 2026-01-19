@@ -40,7 +40,7 @@ func TestAbsPathResolution(t *testing.T) {
 			sourcePath:  "/home/sralmerol",
 			snapPath:    "/tmp/snap_123",
 			request:     "home/sralmerol",
-			wantPath:    "/tmp/snap_123",
+			wantPath:    "/tmp/snap_123/",
 			wantVirtual: false,
 		},
 		{
@@ -56,7 +56,7 @@ func TestAbsPathResolution(t *testing.T) {
 			sourcePath:  "",
 			snapPath:    "/tmp/snap_123",
 			request:     "/",
-			wantPath:    "/tmp/snap_123",
+			wantPath:    "/tmp/snap_123/",
 			wantVirtual: false,
 		},
 		{
