@@ -17,7 +17,6 @@ Ext.define("PBS.form.D2DTargetSelector", {
   value: null,
 
   store: {
-    model: "pbs-model-targets",
     proxy: {
       type: "pbsplus",
       url: pbsPlusBaseUrl + "/api2/json/d2d/target",
@@ -30,14 +29,14 @@ Ext.define("PBS.form.D2DTargetSelector", {
     width: 600,
     columns: [
       {
-        text: gettext("Name"),
+        header: gettext("Name"),
         dataIndex: "name",
         sortable: true,
-        flex: 3,
+        flex: 2,
         renderer: Ext.String.htmlEncode,
       },
       {
-        text: gettext("Type"),
+        header: gettext("Type"),
         dataIndex: "target_type",
         sortable: true,
         flex: 1,
@@ -47,20 +46,11 @@ Ext.define("PBS.form.D2DTargetSelector", {
             agent: '<i class="fa fa-server"></i> Agent',
             s3: '<i class="fa fa-cloud"></i> S3',
           };
-          return icons[value] || Ext.String.htmlEncode(value);
+          return icons[value] || Ext.String.htmlEncode(value || "");
         },
       },
       {
-        text: gettext("Agent Host"),
-        dataIndex: "agent_hostname",
-        sortable: true,
-        flex: 2,
-        renderer: function (value) {
-          return value ? Ext.String.htmlEncode(value) : "-";
-        },
-      },
-      {
-        text: gettext("Path / Volume"),
+        header: gettext("Path / Volume"),
         dataIndex: "path",
         sortable: true,
         flex: 3,
@@ -74,15 +64,15 @@ Ext.define("PBS.form.D2DTargetSelector", {
         },
       },
       {
-        text: gettext("Status"),
+        header: gettext("Status"),
         dataIndex: "connection_status",
         sortable: true,
-        flex: 1,
+        width: 80,
         renderer: function (value) {
-          if (value === true) {
-            return '<i class="fa fa-check good"></i>';
-          } else if (value === false) {
-            return '<i class="fa fa-times critical"></i>';
+          if (value === true || value === "true") {
+            return '<i class="fa fa-check-circle text-green"></i>';
+          } else if (value === false || value === "false") {
+            return '<i class="fa fa-times-circle text-red"></i>';
           }
           return "-";
         },
@@ -93,13 +83,7 @@ Ext.define("PBS.form.D2DTargetSelector", {
   initComponent: function () {
     let me = this;
 
-    if (me.changer) {
-      me.store.proxy.extraParams = {
-        changer: me.changer,
-      };
-    } else {
-      me.store.proxy.extraParams = {};
-    }
+    me.store.proxy.extraParams = me.changer ? { changer: me.changer } : {};
 
     me.callParent();
   },
