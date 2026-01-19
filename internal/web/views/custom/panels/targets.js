@@ -203,6 +203,7 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
           targetData.path.toLowerCase().includes(searchValue)) ||
         (targetData.agent_hostname &&
           targetData.agent_hostname.toLowerCase().includes(searchValue)) ||
+        (targetData.ip && targetData.ip.toLowerCase().includes(searchValue)) ||
         (targetData.volume_name &&
           targetData.volume_name.toLowerCase().includes(searchValue)) ||
         (targetData.volume_type &&
@@ -232,12 +233,15 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
           (targetData.agent_host && targetData.agent_host.name);
         let os =
           targetData.os || (targetData.agent_host && targetData.agent_host.os);
+        let ip =
+          targetData.ip || (targetData.agent_host && targetData.agent_host.ip);
 
         if (hostname) {
           if (!agentGroups[hostname]) {
             agentGroups[hostname] = {
               text: hostname,
               os: os,
+              ip: ip,
               children: [],
               isGroup: true,
               groupType: "agent",
@@ -247,8 +251,9 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
           }
           agentGroups[hostname].children.push({
             ...targetData,
-            agent_hostname: hostname, // Ensure it's set
-            os: os, // Ensure it's set
+            agent_hostname: hostname,
+            os: os,
+            ip: ip,
             leaf: true,
             isGroup: false,
             iconCls: "fa fa-hdd-o",
@@ -558,6 +563,9 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       flex: 2,
       renderer: function (value, metaData, record) {
         if (record.data.isGroup) {
+          if (record.data.groupType === "agent") {
+            return `<i class="fa fa-info-circle"></i> ${record.data.ip || ""}`;
+          }
           return "";
         }
         if (record.data.target_type === "agent") {
