@@ -36,6 +36,7 @@ CREATE TABLE targets_new (
   mount_script TEXT NOT NULL DEFAULT '',
   secret_s3 TEXT NOT NULL DEFAULT '',
   FOREIGN KEY (agent_host) REFERENCES agent_hosts(name)
+    ON DELETE CASCADE
 );
 
 INSERT INTO targets_new 

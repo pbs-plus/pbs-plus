@@ -369,6 +369,7 @@ func main() {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target", mw.ServerOnly(storeInstance, targets.ExtJsTargetHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}", mw.ServerOnly(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}/s3-secret", mw.ServerOnly(storeInstance, targets.ExtJsTargetS3SecretHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-agent/{agent}", mw.ServerOnly(storeInstance, targets.ExtJsAgentSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount/{datastore}", mw.ServerOnly(storeInstance, jobs.ExtJsMountHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount/{datastore}", mw.ServerOnly(storeInstance, jobs.ExtJsUnmountHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount-all/{datastore}", mw.ServerOnly(storeInstance, jobs.ExtJsUnmountAllHandler(storeInstance)))
