@@ -564,7 +564,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       renderer: function (value, metaData, record) {
         if (record.data.isGroup) {
           if (record.data.groupType === "agent") {
-            return `<i class="fa fa-info-circle"></i> ${record.data.ip || ""}`;
+            return `<i class="fa fa-info-circle"></i> Host IP: ${record.data.ip || ""}`;
           }
           return "";
         }
@@ -587,7 +587,7 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       renderer: function (value, metaData, record) {
         if (record.data.isGroup) {
           if (record.data.groupType === "agent") {
-            return `<i class="fa fa-info-circle"></i> ${record.data.os || ""}`;
+            return `<i class="fa fa-info-circle"></i> Host OS: ${record.data.os || ""}`;
           }
           return "";
         }
