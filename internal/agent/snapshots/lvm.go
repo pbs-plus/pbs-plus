@@ -59,6 +59,7 @@ func (l *LVMSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Sn
 		Path:        mountPath,
 		TimeStarted: timeStarted,
 		SourcePath:  sourcePath,
+		JobId:       jobId,
 		Handler:     l,
 	}, nil
 }
