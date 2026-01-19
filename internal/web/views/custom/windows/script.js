@@ -4,19 +4,11 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
   mixins: ["Proxmox.Mixin.CBind"],
 
   width: "80%",
-  height: "80%",
   resizable: true,
 
   isCreate: true,
   isAdd: true,
   subject: "Script",
-
-  bodyPadding: 10,
-
-  layout: {
-    type: "vbox",
-    align: "stretch",
-  },
 
   cbindData: function (initialConfig) {
     let me = this;
@@ -44,8 +36,7 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
     {
       xtype: "fieldcontainer",
       fieldLabel: gettext("Script Content"),
-      layout: "fit",
-      flex: 1,
+      layout: "anchor",
       items: [
         {
           xtype: "component",
@@ -87,11 +78,6 @@ Ext.define("PBS.D2DManagement.ScriptEditWindow", {
                 // Refresh editor to ensure proper rendering
                 setTimeout(() => editor.refresh(), 1);
               });
-            },
-            resize: function (component) {
-              if (component.codeMirror) {
-                component.codeMirror.refresh();
-              }
             },
           },
         },
