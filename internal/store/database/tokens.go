@@ -19,7 +19,7 @@ import (
 func generateWinInstall(token string) string {
 	hostname := os.Getenv("PBS_PLUS_HOSTNAME")
 	if utils.IsProxyCertValid(hostname) {
-		return fmt.Sprintf("irm https://%s:%s/plus/agent/install/win?t=%s | iex", hostname, constants.AgentAPIPort, token)
+		return fmt.Sprintf("irm https://%s%s/plus/agent/install/win?t=%s | iex", hostname, constants.AgentAPIPort, token)
 	}
 
 	return fmt.Sprintf(`[System.Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; `+
