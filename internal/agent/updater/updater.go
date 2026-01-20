@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -97,10 +99,15 @@ func New(cfg Config) (*Updater, error) {
 		}
 	}
 
+	params := url.Values{}
+	params.Add("os", runtime.GOOS)
+	params.Add("arch", runtime.GOARCH)
+	queryString := params.Encode()
+
 	src := &agentSource{
 		versionURL: "/api2/json/plus/version",
-		binaryURL:  "/api2/json/plus/binary",
-		sigURL:     "/api2/json/plus/binary/sig",
+		binaryURL:  fmt.Sprintf("/api2/json/plus/binary?%s", queryString),
+		sigURL:     fmt.Sprintf("/api2/json/plus/binary/sig?%s", queryString),
 		currentVer: constants.Version,
 		minConstr:  cfg.MinConstraint,
 	}
