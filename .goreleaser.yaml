@@ -173,9 +173,6 @@ nfpms:
       - src: ./build/package/linux_agent/apparmor
         dst: /usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent
         type: config
-      - src: ./build/package/linux_agent/selinux.pp
-        dst: /usr/share/selinux/packages/pbs-plus-agent.pp
-        type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
     overrides:
@@ -202,9 +199,6 @@ nfpms:
       - src: ./build/package/linux_agent/apparmor
         dst: /usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent
         type: config
-      - src: ./build/package/linux_agent/selinux.pp
-        dst: /usr/share/selinux/packages/pbs-plus-agent.pp
-        type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
     overrides:
@@ -227,9 +221,6 @@ nfpms:
     contents:
       - src: ./build/package/linux_agent/apparmor
         dst: /usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent
-        type: config
-      - src: ./build/package/linux_agent/selinux.pp
-        dst: /usr/share/selinux/packages/pbs-plus-agent.pp
         type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
