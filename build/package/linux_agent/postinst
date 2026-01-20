@@ -52,22 +52,36 @@ create_user() {
 setup_binary() {
   log "Setting up binary in $BIN_DIR..."
   
-  # Create /opt directory structure
   mkdir -p "$BIN_DIR"
-  
-  # Set ownership to pbsplus for self-update capability
-  chown -R pbsplus:pbsplus "$BIN_DIR"
+  chown pbsplus:pbsplus "$BIN_DIR"
   chmod 0755 "$BIN_DIR"
+  
+  if [ ! -f "$BIN_PATH" ]; then
+    log "ERROR: Binary not found at $BIN_PATH"
+    log "Available files in $BIN_DIR:"
+    ls -la "$BIN_DIR" || true
+    exit 1
+  fi
+  
+  chown pbsplus:pbsplus "$BIN_PATH"
   chmod 0755 "$BIN_PATH"
   
-  # Set capabilities if available (after chown, as chown strips caps)
+  if [ ! -x "$BIN_PATH" ]; then
+    log "ERROR: Binary at $BIN_PATH is not executable"
+    exit 1
+  fi
+  
   if is_cmd setcap; then
     setcap "cap_dac_read_search,cap_dac_override+ep" "$BIN_PATH" || true
   fi
   
-  # Create symlink in /usr/bin
-  rm -rf "$SYMLINK_PATH"
+  log "Creating symlink: $SYMLINK_PATH -> $BIN_PATH"
   ln -sf "$BIN_PATH" "$SYMLINK_PATH"
+  
+  if [ ! -L "$SYMLINK_PATH" ]; then
+    log "ERROR: Failed to create symlink at $SYMLINK_PATH"
+    exit 1
+  fi
   
   log "Binary installed at $BIN_PATH with symlink at $SYMLINK_PATH"
 }
