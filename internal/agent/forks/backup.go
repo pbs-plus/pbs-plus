@@ -72,7 +72,7 @@ func (s *backupSession) Close() {
 	syslog.L.Info().WithMessage("backupSession.Close: done").WithField("backupId", s.backupId).Write()
 }
 
-func cmdBackup(sourceMode, readMode, drive, backupId *string) {
+func cmdBackup(sourceMode, readMode, drive, subPath, backupId *string) {
 	if *sourceMode == "" || *drive == "" || *backupId == "" || *readMode == "" {
 		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and backupId are required")
 		syslog.L.Error(errors.New("missing required flags")).WithMessage("CmdBackup: validation failed").Write()
@@ -151,7 +151,7 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 				}
 
 				backupInitiatedOnce.Do(func() {
-					backupMode, err := Backup(session, *sourceMode, *readMode, *drive, *backupId)
+					backupMode, err := Backup(session, *sourceMode, *readMode, *drive, *subPath, *backupId)
 					if err != nil {
 						fmt.Fprintln(os.Stderr, "Backup initiation failed:", err)
 						syslog.L.Error(err).WithMessage("CmdBackup: Backup initiation failed").Write()
@@ -289,11 +289,12 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupId strin
 	return mode, cmd.Process.Pid, nil
 }
 
-func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, backupId string) (string, error) {
+func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, subPath string, backupId string) (string, error) {
 	syslog.L.Info().WithMessage("Backup: begin").
 		WithField("sourceMode", sourceMode).
 		WithField("readMode", readMode).
 		WithField("drive", drive).
+		WithField("subPath", subPath).
 		WithField("backupId", backupId).
 		Write()
 
@@ -335,54 +336,53 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 	var snapshot snapshots.Snapshot
 	backupMode := sourceMode
 
-	if runtime.GOOS == "windows" {
-		switch sourceMode {
-		case "direct":
-			path := drive
-			volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
-			path = volName + "\\"
-			snapshot = snapshots.Snapshot{
-				Path:        path,
-				TimeStarted: time.Now(),
-				SourcePath:  drive,
-				Direct:      true,
-			}
-			syslog.L.Info().WithMessage("Backup: configured direct mode snapshot").
-				WithField("path", path).
-				WithField("drive", drive).
-				Write()
-		default:
-			var err error
-			snapshot, err = snapshots.Manager.CreateSnapshot(backupId, drive)
-			if err != nil && snapshot == (snapshots.Snapshot{}) {
-				syslog.L.Error(err).WithMessage("Backup: VSS snapshot failed; switching to direct mode").WithField("drive", drive).Write()
-				backupMode = "direct"
+	os := runtime.GOOS
+	volumePath := ""
+	nonSnapshotMountPath := ""
 
-				path := drive
-				volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
-				path = volName + "\\"
+	switch os {
+	case "windows":
+		volumePath = drive
+		volName := filepath.VolumeName(fmt.Sprintf("%s:", volumePath))
+		nonSnapshotMountPath = volName + "\\"
+	default:
+		volumePath = filepath.Join("/", subPath)
+		nonSnapshotMountPath = "/"
+	}
 
-				snapshot = snapshots.Snapshot{
-					Path:        path,
-					TimeStarted: time.Now(),
-					SourcePath:  drive,
-					Direct:      true,
-				}
-			} else {
-				syslog.L.Info().WithMessage("Backup: snapshot created successfully").
-					WithField("path", snapshot.Path).
-					WithField("drive", drive).
-					Write()
-			}
-		}
-	} else {
+	switch sourceMode {
+	case "direct":
 		snapshot = snapshots.Snapshot{
-			Path:        "/",
-			TimeStarted: time.Now(),
-			SourcePath:  "/",
-			Direct:      true,
+			Path:         nonSnapshotMountPath,
+			TimeStarted:  time.Now(),
+			SourcePath:   volumePath,
+			RelativePath: "",
+			Direct:       true,
 		}
-		syslog.L.Info().WithMessage("Backup: non-Windows platform, using root snapshot").Write()
+		syslog.L.Info().WithMessage("Backup: configured direct mode snapshot").
+			WithField("path", nonSnapshotMountPath).
+			WithField("volume", volumePath).
+			Write()
+	default:
+		var err error
+		snapshot, err = snapshots.Manager.CreateSnapshot(backupId, volumePath)
+		if err != nil && snapshot == (snapshots.Snapshot{}) {
+			syslog.L.Error(err).WithMessage("Backup: snapshot failed; switching to direct mode").WithField("volume", volumePath).Write()
+			backupMode = "direct"
+
+			snapshot = snapshots.Snapshot{
+				Path:         nonSnapshotMountPath,
+				TimeStarted:  time.Now(),
+				SourcePath:   volumePath,
+				RelativePath: "",
+				Direct:       true,
+			}
+		} else {
+			syslog.L.Info().WithMessage("Backup: snapshot created successfully").
+				WithField("path", snapshot.Path).
+				WithField("volume", volumePath).
+				Write()
+		}
 	}
 
 	session.snapshot = snapshot

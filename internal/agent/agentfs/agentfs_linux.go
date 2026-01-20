@@ -25,14 +25,16 @@ import (
 
 type FileHandle struct {
 	sync.Mutex
-	file      *os.File
-	dirReader *DirReaderUnix
-	fileSize  int64
-	isDir     bool
-	curOffset int64
-	closing   bool
-	activeOps int
-	closeDone chan struct{}
+	file        *os.File
+	dirReader   *DirReaderUnix
+	fileSize    int64
+	isDir       bool
+	isVirtual   bool
+	virtualPath string
+	curOffset   int64
+	closing     bool
+	activeOps   int
+	closeDone   chan struct{}
 }
 
 func (fh *FileHandle) acquireOp() bool {
@@ -77,14 +79,28 @@ func (s *AgentFSServer) writeIDString(dst *string, id uint32) {
 	*dst = string(s.idBuf)
 }
 
-func (s *AgentFSServer) abs(filename string) (string, error) {
-	if filename == "" || filename == "." || filename == "/" {
-		syslog.L.Debug().WithMessage("abs: returning snapshot path for root").Write()
-		return s.snapshot.Path, nil
+func (s *AgentFSServer) abs(filename string) (string, bool, error) {
+	cleanReq := strings.Trim(filename, "/")
+	if filename == "." {
+		cleanReq = ""
 	}
-	path := pathjoin.Join(s.snapshot.Path, filename)
-	syslog.L.Debug().WithMessage("abs: joined path").WithField("path", path).Write()
-	return path, nil
+
+	cleanSource := strings.Trim(s.snapshot.SourcePath, "/")
+
+	if cleanSource == "" {
+		return pathjoin.Join(s.snapshot.Path, cleanReq), false, nil
+	}
+
+	if cleanReq == "" || (len(cleanSource) > len(cleanReq) && strings.HasPrefix(cleanSource, cleanReq+"/")) {
+		return cleanReq, true, nil
+	}
+
+	if cleanReq == cleanSource || strings.HasPrefix(cleanReq, cleanSource+"/") {
+		relPath := strings.TrimPrefix(strings.TrimPrefix(cleanReq, cleanSource), "/")
+		return pathjoin.Join(s.snapshot.Path, relPath), false, nil
+	}
+
+	return "", false, os.ErrNotExist
 }
 
 func (s *AgentFSServer) closeFileHandles() {
@@ -173,42 +189,46 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		return arpc.Response{Status: 403, Data: errBytes}, nil
 	}
 
-	path, err := s.abs(payload.Path)
+	path, isVirtual, err := s.abs(payload.Path)
 	if err != nil {
-		return arpc.Response{}, err
-	}
-
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("handleOpenFile: open failed").WithField("path", path).Write()
-		return arpc.Response{}, fmt.Errorf("open failed: %w", err)
-	}
-
-	var stx unix.Statx_t
-	mask := uint32(unix.STATX_TYPE | unix.STATX_SIZE)
-	if err := unix.Statx(fd, "", unix.AT_EMPTY_PATH|unix.AT_STATX_DONT_SYNC, int(mask), &stx); err != nil {
-		_ = unix.Close(fd)
-		syslog.L.Error(err).WithMessage("handleOpenFile: statx failed").Write()
 		return arpc.Response{}, err
 	}
 
 	handleId := s.handleIdGen.NextID()
-	isDir := (stx.Mode & unix.S_IFMT) == unix.S_IFDIR
+	fh := &FileHandle{}
 
-	fh := &FileHandle{
-		fileSize: int64(stx.Size),
-		isDir:    isDir,
-	}
-
-	if isDir {
-		reader, err := NewDirReaderUnix(fd, path)
+	if isVirtual {
+		fh.isDir = true
+		fh.isVirtual = true
+		fh.virtualPath = path
+	} else {
+		syslog.L.Debug().WithMessage("handleOpenFile: opening path").WithField("path", path).Write()
+		fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 		if err != nil {
+			syslog.L.Error(err).WithMessage("handleOpenFile: open failed").WithField("path", path).Write()
+			return arpc.Response{}, fmt.Errorf("open failed: %w", err)
+		}
+
+		var stx unix.Statx_t
+		if err := unix.Statx(fd, "", unix.AT_EMPTY_PATH|unix.AT_STATX_DONT_SYNC, unix.STATX_TYPE|unix.STATX_SIZE, &stx); err != nil {
 			_ = unix.Close(fd)
+			syslog.L.Error(err).WithMessage("handleOpenFile: statx failed").Write()
 			return arpc.Response{}, err
 		}
-		fh.dirReader = reader
-	} else {
-		fh.file = os.NewFile(uintptr(fd), path)
+
+		fh.fileSize = int64(stx.Size)
+		fh.isDir = (stx.Mode & unix.S_IFMT) == unix.S_IFDIR
+
+		if fh.isDir {
+			reader, err := NewDirReaderUnix(fd, path)
+			if err != nil {
+				_ = unix.Close(fd)
+				return arpc.Response{}, err
+			}
+			fh.dirReader = reader
+		} else {
+			fh.file = os.NewFile(uintptr(fd), path)
+		}
 	}
 
 	s.handles.Set(handleId, fh)
@@ -216,7 +236,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 
 	syslog.L.Debug().WithMessage("handleOpenFile: success").
 		WithField("handle_id", handleId).
-		WithField("is_dir", isDir).Write()
+		WithField("is_dir", fh.isDir).Write()
 
 	return arpc.Response{Status: 200, Data: dataBytes}, nil
 }
@@ -229,10 +249,20 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	fullPath, err := s.abs(payload.Path)
+	fullPath, isVirtual, err := s.abs(payload.Path)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("handleAttr: abs failed").WithField("path", payload.Path).Write()
 		return arpc.Response{}, err
+	}
+
+	if isVirtual {
+		info := types.AgentFileInfo{
+			Name:  lastPathElem(payload.Path),
+			Mode:  uint32(os.ModeDir | 0555),
+			IsDir: true,
+		}
+		data, _ := cbor.Marshal(info)
+		return arpc.Response{Status: 200, Data: data}, nil
 	}
 
 	var stx unix.Statx_t
@@ -283,10 +313,14 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 		syslog.L.Error(err).WithMessage("handleXattr: decode failed").Write()
 		return arpc.Response{}, err
 	}
-	fullPath, err := s.abs(payload.Path)
+	fullPath, isVirtual, err := s.abs(payload.Path)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("handleXattr: abs failed").WithField("path", payload.Path).Write()
 		return arpc.Response{}, err
+	}
+
+	if isVirtual {
+		return arpc.Response{}, fmt.Errorf("handleXattr: virtual dirs do not support xattr")
 	}
 
 	var stx unix.Statx_t
@@ -348,6 +382,38 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	}
 
 	fh.Lock()
+	if fh.isVirtual {
+		cleanSource := strings.Trim(s.snapshot.SourcePath, "/")
+		searchPath := strings.Trim(fh.virtualPath, "/")
+
+		subStr := cleanSource
+		if searchPath != "" {
+			subStr = strings.TrimPrefix(strings.TrimPrefix(cleanSource, searchPath), "/")
+		}
+
+		parts := strings.Split(subStr, "/")
+		if subStr == "" || len(parts) == 0 {
+			return arpc.Response{}, os.ErrNotExist
+		}
+
+		nextElem := parts[0]
+
+		fh.Unlock()
+
+		entry := types.AgentFileInfo{
+			Name:  nextElem,
+			IsDir: true,
+			Mode:  uint32(os.ModeDir | 0555),
+		}
+
+		encodedBatch, _ := cbor.Marshal([]types.AgentFileInfo{entry})
+
+		return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
+			defer fh.releaseOp()
+			binarystream.SendDataFromReader(bytes.NewReader(encodedBatch), len(encodedBatch), stream)
+			s.handleDirClose(uint64(payload.HandleID), fh)
+		}}, nil
+	}
 	dirReader := fh.dirReader
 	fh.Unlock()
 

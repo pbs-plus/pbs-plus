@@ -50,6 +50,76 @@ create_user() {
   fi
 }
 
+setup_snapshot_permissions() {
+  log "Configuring snapshot permissions..."
+  
+  if is_cmd sudo && [ -d /etc/sudoers.d ]; then
+    cat > /etc/sudoers.d/pbs-plus-snapshots <<'EOF'
+# BTRFS snapshot permissions
+pbsplus ALL=(ALL) NOPASSWD: /usr/bin/btrfs subvolume snapshot *
+pbsplus ALL=(ALL) NOPASSWD: /usr/bin/btrfs subvolume delete *
+pbsplus ALL=(ALL) NOPASSWD: /usr/bin/btrfs subvolume list *
+
+# ZFS snapshot permissions
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/zfs snapshot *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/zfs destroy *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/zfs list *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/zfs send *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/zfs receive *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/zfs clone *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/zfs hold *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/zfs release *
+
+# LVM snapshot permissions
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/lvcreate *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/lvremove *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/lvs *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/lvdisplay *
+
+# Mount/umount permissions
+pbsplus ALL=(ALL) NOPASSWD: /usr/bin/mount *
+pbsplus ALL=(ALL) NOPASSWD: /usr/bin/umount *
+pbsplus ALL=(ALL) NOPASSWD: /bin/mount *
+pbsplus ALL=(ALL) NOPASSWD: /bin/umount *
+
+# blksnap (if available)
+pbsplus ALL=(ALL) NOPASSWD: /usr/bin/blksnap *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/blksnap *
+
+# veeamsnap (if available)
+pbsplus ALL=(ALL) NOPASSWD: /usr/bin/veeamsnap *
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/veeamsnap *
+EOF
+    chmod 0440 /etc/sudoers.d/pbs-plus-snapshots
+    log "Configured sudoers for snapshot operations"
+  fi
+
+  if getent group disk >/dev/null 2>&1; then
+    if is_cmd usermod; then
+      usermod -a -G disk pbsplus 2>/dev/null || true
+    elif is_cmd adduser; then
+      adduser pbsplus disk 2>/dev/null || true
+    fi
+    log "Added pbsplus to disk group"
+  fi
+
+  if [ -d /etc/udev/rules.d ]; then
+    cat > /etc/udev/rules.d/99-pbs-plus-snapshots.rules <<'EOF'
+# Allow pbsplus user to access snapshot control devices
+KERNEL=="blksnap", MODE="0660", GROUP="pbsplus"
+KERNEL=="veeamsnap", MODE="0660", GROUP="pbsplus"
+SUBSYSTEM=="blksnap", MODE="0660", GROUP="pbsplus"
+SUBSYSTEM=="veeamsnap", MODE="0660", GROUP="pbsplus"
+EOF
+    
+    if is_cmd udevadm; then
+      udevadm control --reload-rules 2>/dev/null || true
+      udevadm trigger 2>/dev/null || true
+    fi
+    log "Configured udev rules for snapshot devices"
+  fi
+}
+
 setup_permissions_for_updates() {
   if $is_systemd && [ -d /etc/polkit-1/rules.d ]; then
     cat > /etc/polkit-1/rules.d/10-pbs-plus-agent.rules <<EOF
@@ -109,6 +179,7 @@ setup_service() {
 main() {
   detect_system
   create_user
+  setup_snapshot_permissions
   setup_permissions_for_updates
   
   # Linger allows the user to run services without being logged in

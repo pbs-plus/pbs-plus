@@ -20,12 +20,11 @@ import (
 type NtfsSnapshotHandler struct{}
 
 func (w *NtfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
-	// Extract the drive letter from the source path
 	if sourcePath == "" {
 		return Snapshot{}, errors.New("empty source path")
 	}
 
-	driveLetter := sourcePath[:1] // Assuming sourcePath is like "C:\\path\\to\\source"
+	driveLetter := sourcePath[:1]
 	volName := fmt.Sprintf("%s:", driveLetter)
 
 	vssFolder, err := getVSSFolder()
@@ -36,19 +35,16 @@ func (w *NtfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (S
 	snapshotPath := filepath.Join(vssFolder, jobId)
 	timeStarted := time.Now()
 
-	// Cleanup any existing snapshot
 	cleanupExistingSnapshot(snapshotPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Create the snapshot with retry logic
 	if err := createSnapshotWithRetry(ctx, snapshotPath, volName); err != nil {
 		cleanupExistingSnapshot(snapshotPath)
 		return Snapshot{}, fmt.Errorf("snapshot creation failed: %w", err)
 	}
 
-	// Validate the snapshot
 	_, err = vss.Get(snapshotPath)
 	if err != nil {
 		cleanupExistingSnapshot(snapshotPath)
@@ -59,17 +55,16 @@ func (w *NtfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (S
 		Path:        snapshotPath,
 		TimeStarted: timeStarted,
 		SourcePath:  sourcePath,
+		JobId:       jobId,
 		Handler:     w,
 	}, nil
 }
 
 func (w *NtfsSnapshotHandler) DeleteSnapshot(snapshot Snapshot) error {
-	// Remove the VSS snapshot
 	if err := vss.Remove(snapshot.Path); err != nil {
 		return fmt.Errorf("failed to delete VSS snapshot: %w", err)
 	}
 
-	// Cleanup the snapshot folder
 	if vssFolder, err := getVSSFolder(); err == nil {
 		if strings.HasPrefix(snapshot.Path, vssFolder) {
 			_ = os.Remove(snapshot.Path)
@@ -80,7 +75,6 @@ func (w *NtfsSnapshotHandler) DeleteSnapshot(snapshot Snapshot) error {
 }
 
 func (w *NtfsSnapshotHandler) IsSupported(sourcePath string) bool {
-	// Assume VSS is supported on Windows
 	return true
 }
 
@@ -93,12 +87,11 @@ func getVSSFolder() (string, error) {
 	return configBasePath, nil
 }
 
-// reregisterVSSWriters attempts to restart VSS services when needed
 func reregisterVSSWriters() error {
 	services := []string{
-		"Winmgmt", // Windows Management Instrumentation
-		"VSS",     // Volume Shadow Copy
-		"swprv",   // Microsoft Software Shadow Copy Provider
+		"Winmgmt",
+		"VSS",
+		"swprv",
 	}
 
 	for _, svc := range services {
@@ -126,15 +119,12 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 				return nil
 			} else if !strings.Contains(err.Error(), "shadow copy operation is already in progress") {
 				lastError = err
-				// If this is our first attempt and it's a VSS-related error,
-				// try re-registering writers
 				if attempts == 0 && (strings.Contains(err.Error(), "VSS") ||
 					strings.Contains(err.Error(), "shadow copy")) {
 					syslog.L.Error(err).WithMessage("vss error detected, attempting to re-register").Write()
 					if reregErr := reregisterVSSWriters(); reregErr != nil {
 						syslog.L.Error(reregErr).WithMessage("failed to re-register VSS writers")
 					}
-					// Break inner loop to start fresh after re-registration
 					break
 				}
 				return fmt.Errorf("%w: %v", ErrSnapshotCreation, err)

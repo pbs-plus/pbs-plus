@@ -22,7 +22,6 @@ func (b *BtrfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (
 	snapshotPath := filepath.Join(tmpDir, "pbs-plus-btrfs", jobId)
 	timeStarted := time.Now()
 
-	// Cleanup existing snapshot
 	_ = b.DeleteSnapshot(Snapshot{Path: snapshotPath})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -37,6 +36,7 @@ func (b *BtrfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (
 		Path:        snapshotPath,
 		TimeStarted: timeStarted,
 		SourcePath:  sourcePath,
+		JobId:       jobId,
 		Handler:     b,
 	}, nil
 }

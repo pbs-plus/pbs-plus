@@ -11,6 +11,7 @@ func CmdForkEntry() {
 	sourceMode := flag.String("sourceMode", "", "Restore source mode (direct or snapshot)")
 	readMode := flag.String("readMode", "", "File read mode (standard or mmap)")
 	drive := flag.String("drive", "", "Drive or path for backup job")
+	subPath := flag.String("subPath", "", "Path of files to be backed up")
 	backupId := flag.String("backupId", "", "Unique job identifier for the backup job")
 	restoreId := flag.String("restoreId", "", "Unique job identifier for the restore job")
 	srcPath := flag.String("srcPath", "/", "Path to be restored within snapshot")
@@ -22,6 +23,7 @@ func CmdForkEntry() {
 		WithField("sourceMode", *sourceMode).
 		WithField("readMode", *readMode).
 		WithField("drive", *drive).
+		WithField("subPath", *subPath).
 		WithField("backupId", *backupId).
 		WithField("restoreId", *restoreId).
 		WithField("srcPath", *srcPath).
@@ -35,7 +37,7 @@ func CmdForkEntry() {
 
 	switch *cmdMode {
 	case "backup":
-		cmdBackup(sourceMode, readMode, drive, backupId)
+		cmdBackup(sourceMode, readMode, drive, subPath, backupId)
 	case "restore":
 		cmdRestore(restoreId, srcPath, destPath)
 	}

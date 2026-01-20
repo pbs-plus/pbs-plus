@@ -3,6 +3,7 @@ package snapshots
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -16,36 +17,69 @@ func (l *LVMSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Sn
 		return Snapshot{}, fmt.Errorf("source path %q is not on an LVM volume", sourcePath)
 	}
 
-	// Extract volume group and logical volume from the source path
 	vgName, lvName, err := l.getVolumeGroupAndLogicalVolume(sourcePath)
 	if err != nil {
-		return Snapshot{}, fmt.Errorf("failed to get volume group and logical volume: %w", err)
+		return Snapshot{}, err
 	}
 
-	snapshotName := fmt.Sprintf("%s-snap-%s", lvName, jobId)
+	snapshotLVName := fmt.Sprintf("%s-snap-%s", lvName, jobId)
+	snapshotDev := fmt.Sprintf("/dev/%s/%s", vgName, snapshotLVName)
+
+	mountPath := filepath.Join(os.TempDir(), "pbs-plus-lvm", jobId)
+
 	timeStarted := time.Now()
+
+	_ = l.DeleteSnapshot(Snapshot{Id: snapshotDev, Path: mountPath})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "lvcreate", "--snapshot", "--name", snapshotName, "--size", "1G", fmt.Sprintf("/dev/%s/%s", vgName, lvName))
+	cmd := exec.CommandContext(ctx, "lvcreate",
+		"--snapshot",
+		"--name", snapshotLVName,
+		"-l", "10%ORIGIN",
+		fmt.Sprintf("/dev/%s/%s", vgName, lvName))
+
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return Snapshot{}, fmt.Errorf("failed to create LVM snapshot: %s, %w", string(output), err)
+		return Snapshot{}, fmt.Errorf("lvm lvcreate failed: %s, %w", string(output), err)
 	}
 
-	snapshotPath := filepath.Join("/dev", vgName, snapshotName)
+	if err := os.MkdirAll(mountPath, 0750); err != nil {
+		return Snapshot{}, fmt.Errorf("failed to create mount dir: %w", err)
+	}
+
+	mountCmd := exec.CommandContext(ctx, "mount", "-o", "ro,nouuid", snapshotDev, mountPath)
+	if output, err := mountCmd.CombinedOutput(); err != nil {
+		_ = exec.Command("lvremove", "-f", snapshotDev).Run()
+		return Snapshot{}, fmt.Errorf("failed to mount LVM snapshot: %s, %w", string(output), err)
+	}
+
 	return Snapshot{
-		Path:        snapshotPath,
+		Id:          snapshotDev,
+		Path:        mountPath,
 		TimeStarted: timeStarted,
 		SourcePath:  sourcePath,
+		JobId:       jobId,
 		Handler:     l,
 	}, nil
 }
 
 func (l *LVMSnapshotHandler) DeleteSnapshot(snapshot Snapshot) error {
-	cmd := exec.Command("lvremove", "-f", snapshot.Path)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to delete LVM snapshot: %s, %w", string(output), err)
+	if snapshot.Path != "" {
+		_ = exec.Command("umount", "-l", snapshot.Path).Run()
+		_ = os.Remove(snapshot.Path)
+	}
+
+	if snapshot.Id != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "lvremove", "-f", snapshot.Id)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			if !strings.Contains(string(output), "not found") {
+				return fmt.Errorf("failed to delete LVM LV: %s, %w", string(output), err)
+			}
+		}
 	}
 	return nil
 }
@@ -56,19 +90,29 @@ func (l *LVMSnapshotHandler) IsSupported(sourcePath string) bool {
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(string(output)) == "lvm"
+	return strings.Contains(string(output), "lvm")
 }
 
-func (l *LVMSnapshotHandler) getVolumeGroupAndLogicalVolume(sourcePath string) (string, string, error) {
-	cmd := exec.Command("lvs", "--noheadings", "-o", "vg_name,lv_name", sourcePath)
+func (l *LVMSnapshotHandler) getVolumeGroupAndLogicalVolume(path string) (string, string, error) {
+	cmd := exec.Command("lvs", "--noheadings", "-o", "vg_name,lv_name", "--select", fmt.Sprintf("path=%s", path))
+
 	output, err := cmd.Output()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get LVM details: %w", err)
+	if err != nil || len(strings.Fields(string(output))) < 2 {
+		findDev := exec.Command("df", "--output=source", path)
+		devOut, _ := findDev.Output()
+		lines := strings.Split(strings.TrimSpace(string(devOut)), "\n")
+		if len(lines) < 2 {
+			return "", "", fmt.Errorf("could not determine LVM device for path %s", path)
+		}
+		devPath := strings.TrimSpace(lines[1])
+
+		cmd = exec.Command("lvs", "--noheadings", "-o", "vg_name,lv_name", devPath)
+		output, err = cmd.Output()
 	}
 
 	parts := strings.Fields(string(output))
 	if len(parts) < 2 {
-		return "", "", fmt.Errorf("unexpected output from lvs command: %s", string(output))
+		return "", "", fmt.Errorf("path %s does not appear to be an LVM volume", path)
 	}
 
 	return parts[0], parts[1], nil
