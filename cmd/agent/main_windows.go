@@ -12,7 +12,7 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
-	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
+	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/agent/lifecycle"
 	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -103,7 +103,7 @@ func (p *pbsService) Stop(s service.Service) error {
 }
 
 func main() {
-	forks.CmdForkEntry()
+	cli.Entry()
 	constants.Version = Version
 	svcConfig := &service.Config{
 		Name: "PBSPlusAgent", DisplayName: "PBS Plus Agent",

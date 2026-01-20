@@ -1,4 +1,4 @@
-package forks
+package cli
 
 import (
 	"bufio"
@@ -35,7 +35,6 @@ var (
 
 func init() {
 	activeSessions = safemap.New[string, *backupSession]()
-	syslog.L.Info().WithMessage("forks.init: activeSessions map initialized").Write()
 }
 
 type backupSession struct {

@@ -19,7 +19,12 @@ func (l *Logger) SetServiceLogger() error {
 
 	l.hostname, _ = utils.GetAgentHostname()
 
-	sysWriter, err := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, "pbs-plus")
+	tag := "pbs-plus-agent"
+	if utils.IsServer {
+		tag = "pbs-plus"
+	}
+
+	sysWriter, err := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, tag)
 	if err != nil {
 		return err
 	}

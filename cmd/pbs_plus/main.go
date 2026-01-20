@@ -42,10 +42,7 @@ import (
 
 	"net/http/pprof"
 
-	// By default, it sets `GOMEMLIMIT` to 90% of cgroup's memory limit.
-	// This is equivalent to `memlimit.SetGoMemLimitWithOpts(memlimit.WithLogger(slog.Default()))`
-	// To disable logging, use `memlimit.SetGoMemLimitWithOpts` directly.
-	_ "github.com/KimMachineGun/automemlimit"
+	_ "github.com/pbs-plus/pbs-plus/internal/utils/memlimit"
 )
 
 var Version = "v0.0.0"

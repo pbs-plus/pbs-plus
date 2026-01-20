@@ -11,7 +11,7 @@ import (
 	"github.com/containers/winquit/pkg/winquit"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
+	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
@@ -90,7 +90,7 @@ func RestoreStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Resp
 	syslog.L.Info().WithMessage("received restore request for job").WithField("id", reqData.RestoreId).Write()
 
 	syslog.L.Info().WithMessage("forking process for restore job").WithField("id", reqData.RestoreId).Write()
-	pid, err := forks.ExecRestore(reqData.RestoreId, reqData.SrcPath, reqData.DestPath)
+	pid, err := cli.ExecRestore(reqData.RestoreId, reqData.SrcPath, reqData.DestPath)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("forking process for restore job").WithField("id", reqData.RestoreId).Write()
 		if pid != -1 {

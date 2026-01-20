@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -58,24 +59,42 @@ func New(cfg Config) (*Updater, error) {
 
 	selfupdate.LogError = func(format string, args ...any) {
 		err := fmt.Errorf(format, args...)
-		if strings.Contains(err.Error(), "on the latest version") {
-			syslog.L.Debug().WithMessage(err.Error()).WithField("source", "selfupdate").Write()
-			return
-		}
+		lineErrs := strings.SplitSeq(err.Error(), "\n")
+		for err := range lineErrs {
+			if strings.TrimSpace(err) == "" {
+				continue
+			}
+			if strings.Contains(err, "on the latest version") {
+				syslog.L.Debug().WithMessage(err).WithField("source", "selfupdate").Write()
+				return
+			}
 
-		syslog.L.Error(err).WithField("source", "selfupdate").Write()
+			syslog.L.Error(errors.New(err)).WithField("source", "selfupdate").Write()
+		}
 	}
 	selfupdate.LogInfo = func(format string, args ...any) {
 		info := fmt.Sprintf(format, args...)
-		if strings.Contains(info, "Scheduled upgrade check after") {
-			syslog.L.Debug().WithMessage(info).WithField("source", "selfupdate").Write()
-			return
-		}
+		lines := strings.SplitSeq(info, "\n")
+		for line := range lines {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if strings.Contains(line, "Scheduled upgrade check after") {
+				syslog.L.Debug().WithMessage(line).WithField("source", "selfupdate").Write()
+				return
+			}
 
-		syslog.L.Info().WithMessage(fmt.Sprintf(format, args...)).WithField("source", "selfupdate").Write()
+			syslog.L.Info().WithMessage(line).WithField("source", "selfupdate").Write()
+		}
 	}
 	selfupdate.LogDebug = func(format string, args ...any) {
-		syslog.L.Debug().WithMessage(fmt.Sprintf(format, args...)).WithField("source", "selfupdate").Write()
+		lines := strings.SplitSeq(fmt.Sprintf(format, args...), "\n")
+		for line := range lines {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			syslog.L.Debug().WithMessage(line).WithField("source", "selfupdate").Write()
+		}
 	}
 
 	src := &agentSource{
