@@ -101,17 +101,21 @@ EOF
 }
 
 setup_selinux() {
-  if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; then
-    log "Installing SELinux policy module..."
+  if is_cmd getenforce && [ "$(getenforce)" != "Disabled" ]; then
+    log "Configuring SELinux file contexts..."
     
-    # Check if policy module exists
-    if [ -f /usr/share/selinux/packages/pbs-plus-agent.pp ]; then
-      semodule -i /usr/share/selinux/packages/pbs-plus-agent.pp || true
-    fi
+    semanage fcontext -a -t bin_t "$BIN_DIR(/.*)?" 2>/dev/null || \
+      chcon -R -t bin_t "$BIN_DIR" 2>/dev/null || true
     
-    # Set proper contexts
-    semanage fcontext -a -t bin_t "$BIN_DIR(/.*)?" 2>/dev/null || true
-    restorecon -Rv "$BIN_DIR" || true
+    semanage fcontext -a -t var_lib_t "$STATE_DIR(/.*)?" 2>/dev/null || \
+      chcon -R -t var_lib_t "$STATE_DIR" 2>/dev/null || true
+    
+    semanage fcontext -a -t var_log_t "$LOG_DIR(/.*)?" 2>/dev/null || \
+      chcon -R -t var_log_t "$LOG_DIR" 2>/dev/null || true
+    
+    restorecon -Rv "$BIN_DIR" "$STATE_DIR" "$LOG_DIR" 2>/dev/null || true
+    
+    log "SELinux contexts applied. If issues persist, run: setenforce Permissive"
   fi
 }
 
