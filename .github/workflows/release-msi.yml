@@ -141,6 +141,7 @@ jobs:
           # Build WiX object file
           $candlePath = "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe"
           $wxsPath = "${{ github.workspace }}\build\package\windows_agent\Product.wxs"
+          $licensePath = "${{ github.workspace }}\build\package\windows_agent\license.rtf"
           $wixobjPath = "$outputDir\Product.wixobj"
 
           if (-not (Test-Path $candlePath)) {
@@ -177,6 +178,7 @@ jobs:
             -ext WixUIExtension `
             -ext WixUtilExtension `
             -cultures:en-US `
+            -dWixUILicenseRtf $licensePath `
             -out $msiPath `
             $wixobjPath `
             -sval
