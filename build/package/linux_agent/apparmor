@@ -1,0 +1,27 @@
+#include <tunables/global>
+
+/opt/pbs-plus-agent/pbs-plus-agent {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  # Allow binary execution and updates
+  /opt/pbs-plus-agent/pbs-plus-agent mr,
+  /opt/pbs-plus-agent/** rw,
+
+  # Allow systemd control
+  /bin/systemctl ix,
+  /usr/bin/systemctl ix,
+  
+  # State and config directories
+  /var/lib/pbs-plus-agent/** rw,
+  /var/log/pbs-plus-agent/** rw,
+  /etc/pbs-plus-agent/** r,
+  
+  # Network for updates
+  network inet stream,
+  network inet6 stream,
+  
+  # Capabilities needed
+  capability dac_override,
+  capability dac_read_search,
+}
