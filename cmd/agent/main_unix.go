@@ -13,7 +13,7 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
-	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
+	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/agent/lifecycle"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
@@ -21,7 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 
-	_ "github.com/KimMachineGun/automemlimit"
+	_ "github.com/pbs-plus/pbs-plus/internal/utils/memlimit"
 )
 
 var Version = "v0.0.0"
@@ -106,7 +106,7 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-	forks.CmdForkEntry()
+	cli.Entry()
 	constants.Version = Version
 	svcConfig := &service.Config{
 		Name:        "pbs-plus-agent",

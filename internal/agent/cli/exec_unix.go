@@ -1,7 +1,7 @@
 //go:build unix
 // +build unix
 
-package forks
+package cli
 
 import (
 	"os/exec"

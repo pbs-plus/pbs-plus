@@ -1,4 +1,4 @@
-package forks
+package cli
 
 import (
 	"flag"
@@ -6,7 +6,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func CmdForkEntry() {
+func Entry() {
 	cmdMode := flag.String("cmdMode", "", "Cmd Mode")
 	sourceMode := flag.String("sourceMode", "", "Restore source mode (direct or snapshot)")
 	readMode := flag.String("readMode", "", "File read mode (standard or mmap)")
@@ -17,7 +17,7 @@ func CmdForkEntry() {
 	destPath := flag.String("destPath", "", "Destination path of files to be restored from snapshot")
 	flag.Parse()
 
-	syslog.L.Info().WithMessage("CmdFork: invoked").
+	syslog.L.Debug().WithMessage("CmdFork: invoked").
 		WithField("cmdMode", *cmdMode).
 		WithField("sourceMode", *sourceMode).
 		WithField("readMode", *readMode).
@@ -29,7 +29,7 @@ func CmdForkEntry() {
 		Write()
 
 	if *cmdMode != "restore" && *cmdMode != "backup" {
-		syslog.L.Info().WithMessage("CmdRestore: cmdMode not valid, returning").WithField("cmdMode", *cmdMode).Write()
+		syslog.L.Debug().WithMessage("CLI: cmdMode invalid, returning").WithField("cmdMode", *cmdMode).Write()
 		return
 	}
 
