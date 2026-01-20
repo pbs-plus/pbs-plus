@@ -1,7 +1,7 @@
 //go:build windows
 // +build windows
 
-package forks
+package cli
 
 import "os/exec"
 

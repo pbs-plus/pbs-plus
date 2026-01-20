@@ -1,4 +1,4 @@
-package forks
+package cli
 
 import (
 	"bufio"
@@ -30,7 +30,6 @@ var (
 
 func init() {
 	activeRestoreSessions = safemap.New[string, *restoreSession]()
-	syslog.L.Info().WithMessage("forks.init: activeRestoreSessions map initialized").Write()
 }
 
 type restoreSession struct {
