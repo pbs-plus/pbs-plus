@@ -75,11 +75,8 @@ setup_binary() {
     setcap "cap_dac_read_search,cap_dac_override+ep" "$BIN_PATH" || true
   fi
   
-  log "Creating symlink: $SYMLINK_PATH -> $BIN_PATH"
-  ln -sf "$BIN_PATH" "$SYMLINK_PATH"
-  
   if [ ! -L "$SYMLINK_PATH" ]; then
-    log "ERROR: Failed to create symlink at $SYMLINK_PATH"
+    log "ERROR: Expected symlink not at $SYMLINK_PATH"
     exit 1
   fi
   
