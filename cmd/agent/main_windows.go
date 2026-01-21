@@ -83,7 +83,7 @@ func (p *pbsService) run() {
 		}
 	})
 
-	_ = lifecycle.ConnectARPC(p.ctx, Version)
+	_ = lifecycle.ConnectARPC(p.ctx, p.cancel, Version)
 	agent.SetStatus("Running")
 	<-p.ctx.Done()
 	agent.SetStatus("Stopping")
