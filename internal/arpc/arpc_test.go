@@ -443,7 +443,7 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 
 	_ = pipe.conn.Close()
 
-	pipe, err = pipe.Reconnect(t.Context())
+	pipe, err = ConnectToServer(t.Context(), addr, nil, clientTLS)
 	if err != nil {
 		t.Fatalf("Reconnect: %v", err)
 	}
@@ -898,12 +898,12 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 
 	const cycles = 10
 	for i := 0; i < cycles; i++ {
-		_ = pipe.conn.Close()
+		_ = pipe.tun.Close()
 		time.Sleep(50 * time.Millisecond)
 
-		pipe, err = pipe.Reconnect(t.Context())
+		pipe, err = ConnectToServer(t.Context(), addr, nil, clientTLS)
 		if err != nil {
-			t.Fatalf("Reconnect %d: %v", i, err)
+			t.Fatalf("ConnectToServer: %v", err)
 		}
 
 		var out string
