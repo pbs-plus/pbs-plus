@@ -173,57 +173,26 @@ Ext.define("pbs-model-d2d-snapshots", {
     "backup-time",
     "backup-type",
     "files",
-    "value",
-    "display",
-  ],
-  proxy: {
-    type: "memory",
-    reader: {
-      type: "json",
-      transform: function (raw) {
-        let rows = Array.isArray(raw) ? raw : raw.data || [];
-        return rows.map((item) => {
-          let type = item["backup-type"] || "host";
-          item.value = `${type}/${item["backup-id"]}/${item["backup-time"]}`;
-          if (item["backup-time"]) {
-            let time = new Date(item["backup-time"] * 1000);
-            item.display = `${Ext.Date.format(time, "Y-m-d H:i:s")} | ${item["backup-id"]}`;
-          }
-          return item;
-        });
+    {
+      name: "value",
+      convert: function (v, record) {
+        if (v) return v;
+        if (!record.data["backup-id"]) return "";
+        let type = record.data["backup-type"] || "host";
+        return `${type}/${record.data["backup-id"]}/${record.data["backup-time"]}`;
       },
     },
-  },
-});
-
-Ext.define("pbs-model-d2d-snapshots", {
-  extend: "Ext.data.Model",
-  fields: [
-    "backup-id",
-    "backup-time",
-    "backup-type",
-    "files",
-    "value",
-    "display",
-  ],
-  proxy: {
-    type: "memory",
-    reader: {
-      type: "json",
-      transform: function (raw) {
-        let rows = Array.isArray(raw) ? raw : raw.data || [];
-        return rows.map((item) => {
-          let type = item["backup-type"] || "host";
-          item.value = `${type}/${item["backup-id"]}/${item["backup-time"]}`;
-          if (item["backup-time"]) {
-            let time = new Date(item["backup-time"] * 1000);
-            item.display = `${Ext.Date.format(time, "Y-m-d H:i:s")} | ${item["backup-id"]}`;
-          }
-          return item;
-        });
+    {
+      name: "display",
+      convert: function (v, record) {
+        if (record.data["backup-time"]) {
+          let time = new Date(record.data["backup-time"] * 1000);
+          return `${Ext.Date.format(time, "Y-m-d H:i:s")} | ${record.data["backup-id"]}`;
+        }
+        return v || record.data.value || "";
       },
     },
-  },
+  ],
 });
 
 Ext.define("pbs-model-tokens", {
