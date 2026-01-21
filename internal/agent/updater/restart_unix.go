@@ -12,11 +12,16 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func restartCallback(_ Config) {
+func restartCallback(c Config) bool {
+	if c.Service != nil {
+		c.Service.Restart()
+		return false
+	}
+
 	exePath, err := os.Executable()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to get executable path for restart").Write()
-		return
+		return true
 	}
 
 	dir := filepath.Dir(exePath)
@@ -51,4 +56,6 @@ func restartCallback(_ Config) {
 			Write()
 		_ = cmd.Process.Release()
 	}
+
+	return false
 }

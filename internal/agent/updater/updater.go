@@ -16,6 +16,7 @@ import (
 
 	"github.com/Masterminds/semver"
 	"github.com/fynelabs/selfupdate"
+	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -30,6 +31,7 @@ type Config struct {
 	SystemdUnit    string
 	UpgradeConfirm func(newVersion string) bool
 	Exit           func(error)
+	Service        service.Service
 }
 
 type Updater struct {
@@ -137,8 +139,7 @@ func New(cfg Config) (*Updater, error) {
 			return cfg.UpgradeConfirm(src.pendingVersion)
 		},
 		RestartConfirmCallback: func() bool {
-			restartCallback(cfg)
-			return false
+			return restartCallback(cfg)
 		},
 		ExitCallback: func(err error) {
 			cfg.Exit(err)
