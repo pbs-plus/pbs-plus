@@ -18,7 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	storeTypes "github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -34,7 +34,7 @@ func (fs *ARPCFS) logError(fpath string, err error) {
 	}
 }
 
-func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId string, hostname string, backup storeTypes.Backup, backupMode string) *ARPCFS {
+func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId string, hostname string, backup database.Backup, backupMode string) *ARPCFS {
 	syslog.L.Debug().
 		WithMessage("NewARPCFS called").
 		WithField("hostname", hostname).

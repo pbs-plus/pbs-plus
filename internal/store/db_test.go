@@ -12,7 +12,6 @@ import (
 	"time"
 
 	sqlite "github.com/pbs-plus/pbs-plus/internal/store/database"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -64,10 +63,10 @@ func TestBackupCRUD(t *testing.T) {
 	store := setupTestStore(t)
 
 	t.Run("Basic CRUD Operations", func(t *testing.T) {
-		backup := types.Backup{
+		backup := sqlite.Backup{
 			ID:               "test-backup-1",
 			Store:            "local",
-			Target:           types.WrapTargetName("test-target"),
+			Target:           sqlite.Target{Name: "test-target"},
 			Subpath:          "backups/test",
 			Schedule:         "daily",
 			Comment:          "Test backup backup",
@@ -117,10 +116,10 @@ func TestBackupCRUD(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				backup := types.Backup{
+				backup := sqlite.Backup{
 					ID:               fmt.Sprintf("concurrent-backup-%d", idx),
 					Store:            "local",
-					Target:           types.WrapTargetName("test-target"),
+					Target:           sqlite.Target{Name: "test-target"},
 					Subpath:          fmt.Sprintf("backups/test-%d", idx),
 					Schedule:         `mon..fri *-*-* 00:00:00`,
 					Comment:          fmt.Sprintf("Concurrent test backup %d", idx),
@@ -140,10 +139,10 @@ func TestBackupCRUD(t *testing.T) {
 	})
 
 	t.Run("Special Characters", func(t *testing.T) {
-		backup := types.Backup{
+		backup := sqlite.Backup{
 			ID:               "test-backup-special-!@#$%^",
 			Store:            "local",
-			Target:           types.WrapTargetName("test-target"),
+			Target:           sqlite.Target{Name: "test-target"},
 			Subpath:          "backups/test/special/!@#$%^",
 			Schedule:         `mon..fri *-*-* 00:00:00`,
 			Comment:          "Test backup with special characters !@#$%^",
@@ -160,16 +159,16 @@ func TestBackupValidation(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		backup  types.Backup
+		backup  sqlite.Backup
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid backup with all fields",
-			backup: types.Backup{
+			backup: sqlite.Backup{
 				ID:               "test-valid",
 				Store:            "local",
-				Target:           types.WrapTargetName("test"),
+				Target:           sqlite.Target{Name: "test"},
 				Subpath:          "valid/path",
 				Schedule:         `*-*-* 00:00:00`,
 				Comment:          "Valid test backup",
@@ -180,10 +179,10 @@ func TestBackupValidation(t *testing.T) {
 		},
 		{
 			name: "invalid schedule string",
-			backup: types.Backup{
+			backup: sqlite.Backup{
 				ID:        "test-invalid-cron",
 				Store:     "local",
-				Target:    types.WrapTargetName("test"),
+				Target:    sqlite.Target{Name: "test"},
 				Schedule:  "invalid-cron",
 				Namespace: "test",
 			},
@@ -192,7 +191,7 @@ func TestBackupValidation(t *testing.T) {
 		},
 		{
 			name: "empty required fields",
-			backup: types.Backup{
+			backup: sqlite.Backup{
 				ID: "test-empty",
 			},
 			wantErr: true,
@@ -220,40 +219,40 @@ func TestTargetValidation(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		target  types.Target
+		target  sqlite.Target
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid local target",
-			target: types.Target{
-				Name: types.WrapTargetName("local-target"),
-				Path: types.WrapTargetPath("/valid/path"),
+			target: sqlite.Target{
+				Name: ("local-target"),
+				Path: ("/valid/path"),
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid agent target",
-			target: types.Target{
-				Name: types.WrapTargetName("agent-target"),
-				Path: types.WrapTargetPath("agent://192.168.1.100/C"),
+			target: sqlite.Target{
+				Name: ("agent-target"),
+				Path: ("agent://192.168.1.100/C"),
 			},
 			wantErr: false,
 		},
 		{
 			name: "invalid agent URL",
-			target: types.Target{
-				Name: types.WrapTargetName("invalid-agent"),
-				Path: types.WrapTargetPath("agent:/invalid-url"),
+			target: sqlite.Target{
+				Name: ("invalid-agent"),
+				Path: ("agent:/invalid-url"),
 			},
 			wantErr: true,
 			errMsg:  "invalid target path",
 		},
 		{
 			name: "empty path",
-			target: types.Target{
-				Name: types.WrapTargetName("empty-path"),
-				Path: types.WrapTargetPath(""),
+			target: sqlite.Target{
+				Name: ("empty-path"),
+				Path: (""),
 			},
 			wantErr: true,
 			errMsg:  "empty",
@@ -280,12 +279,12 @@ func TestExclusionPatternValidation(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		exclusion types.Exclusion
+		exclusion sqlite.Exclusion
 		wantErr   bool
 	}{
 		{
 			name: "valid glob pattern",
-			exclusion: types.Exclusion{
+			exclusion: sqlite.Exclusion{
 				Path:    "*.tmp",
 				Comment: "Temporary files",
 			},
@@ -293,7 +292,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 		},
 		{
 			name: "valid regex pattern",
-			exclusion: types.Exclusion{
+			exclusion: sqlite.Exclusion{
 				Path:    "^.*\\.bak$",
 				Comment: "Backup files",
 			},
@@ -301,7 +300,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 		},
 		{
 			name: "invalid pattern syntax",
-			exclusion: types.Exclusion{
+			exclusion: sqlite.Exclusion{
 				Path:    "[invalid[pattern",
 				Comment: "Invalid pattern",
 			},
@@ -309,7 +308,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 		},
 		{
 			name: "empty pattern",
-			exclusion: types.Exclusion{
+			exclusion: sqlite.Exclusion{
 				Path:    "",
 				Comment: "Empty pattern",
 			},
@@ -339,9 +338,9 @@ func TestConcurrentOperations(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				target := types.Target{
-					Name: types.WrapTargetName(fmt.Sprintf("concurrent-target-%d", idx)),
-					Path: types.WrapTargetPath(fmt.Sprintf("/path/to/target-%d", idx)),
+				target := sqlite.Target{
+					Name: (fmt.Sprintf("concurrent-target-%d", idx)),
+					Path: (fmt.Sprintf("/path/to/target-%d", idx)),
 				}
 				err := store.Database.CreateTarget(nil, target)
 				assert.NoError(t, err)
@@ -371,9 +370,9 @@ func TestConcurrentOperations(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					target := types.Target{
-						Name: types.WrapTargetName(fmt.Sprintf("concurrent-target-%d", i)),
-						Path: types.WrapTargetPath(fmt.Sprintf("/path/to/target-%d", i)),
+					target := sqlite.Target{
+						Name: fmt.Sprintf("concurrent-target-%d", i),
+						Path: fmt.Sprintf("/path/to/target-%d", i),
 					}
 					_ = store.Database.CreateTarget(nil, target)
 				}

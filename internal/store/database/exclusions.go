@@ -1,25 +1,25 @@
 //go:build linux
 
-package sqlite
+package database
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/pattern"
 	_ "modernc.org/sqlite"
 )
 
-// CreateExclusion inserts a new exclusion into the database.
-func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion) (err error) {
+func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("CreateExclusion: failed to begin transaction: %w", err)
 		}
@@ -43,6 +43,7 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 			}
 		}()
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if exclusion.Path == "" {
 		return errors.New("path is empty")
@@ -53,12 +54,12 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 		return fmt.Errorf("CreateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
-	_, err = tx.Exec(`
-        INSERT INTO exclusions (job_id, path, comment)
-        VALUES (?, ?, ?)
-    `, exclusion.JobId, exclusion.Path, exclusion.Comment)
+	err = q.CreateExclusion(database.ctx, sqlc.CreateExclusionParams{
+		JobID:   exclusion.JobId,
+		Path:    exclusion.Path,
+		Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
+	})
 	if err != nil {
-		// Consider checking for specific constraint errors if needed
 		return fmt.Errorf("CreateExclusion: error inserting exclusion: %w", err)
 	}
 
@@ -66,113 +67,86 @@ func (database *Database) CreateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 	return nil
 }
 
-// GetAllBackupExclusions returns all exclusions associated with a backup.
-// Assumes an index exists on exclusions.job_id.
-func (database *Database) GetAllBackupExclusions(backupId string) ([]types.Exclusion, error) {
-	rows, err := database.readDb.Query(`
-        SELECT job_id, path, comment FROM exclusions
-        WHERE job_id = ?
-    `, backupId)
-	if err != nil {
+func (database *Database) GetAllBackupExclusions(backupId string) ([]Exclusion, error) {
+	rows, err := database.readQueries.GetBackupExclusions(database.ctx, backupId)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("GetAllBackupExclusions: error querying exclusions: %w", err)
 	}
-	defer rows.Close()
 
-	var exclusions []types.Exclusion
-	// Using a map for deduplication based on path as per original logic.
-	// If (job_id, path) is unique in DB, this map is unnecessary.
+	exclusions := make([]Exclusion, 0, len(rows))
 	seenPaths := make(map[string]bool)
 
-	for rows.Next() {
-		var excl types.Exclusion
-		if err := rows.Scan(&excl.JobId, &excl.Path, &excl.Comment); err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllBackupExclusions: error scanning row: %w", err)).Write()
+	for _, row := range rows {
+		path := row.Path
+		if seenPaths[path] {
 			continue
 		}
-		// Deduplicate based on path within this backup's exclusions
-		if seenPaths[excl.Path] {
-			continue
-		}
-		seenPaths[excl.Path] = true
-		exclusions = append(exclusions, excl)
-	}
+		seenPaths[path] = true
 
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllBackupExclusions: error iterating exclusion rows: %w", err)
+		excl := Exclusion{
+			JobId:   row.JobID,
+			Path:    path,
+			Comment: row.Comment.String,
+		}
+		exclusions = append(exclusions, excl)
 	}
 
 	return exclusions, nil
 }
 
-// GetAllGlobalExclusions returns all exclusions that are not tied to any backup.
-// Assumes an index exists on exclusions.job_id or handles NULL checks efficiently.
-func (database *Database) GetAllGlobalExclusions() ([]types.Exclusion, error) {
-	rows, err := database.readDb.Query(`
-        SELECT job_id, path, comment FROM exclusions
-        WHERE job_id IS NULL OR job_id = ''
-    `)
-	if err != nil {
+func (database *Database) GetAllGlobalExclusions() ([]Exclusion, error) {
+	rows, err := database.readQueries.ListGlobalExclusions(database.ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("GetAllGlobalExclusions: error querying exclusions: %w", err)
 	}
-	defer rows.Close()
 
-	var exclusions []types.Exclusion
-	// Using a map for deduplication based on path as per original logic.
-	// If path is unique for global exclusions, this map is unnecessary.
+	exclusions := make([]Exclusion, 0, len(rows))
 	seenPaths := make(map[string]bool)
 
-	for rows.Next() {
-		var excl types.Exclusion
-		// Scan into NullString for job_id if it can truly be NULL
-		var backupID sql.NullString
-		if err := rows.Scan(&backupID, &excl.Path, &excl.Comment); err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllGlobalExclusions: error scanning row: %w", err)).Write()
+	for _, row := range rows {
+		path := row.Path
+		if seenPaths[path] {
 			continue
 		}
-		excl.JobId = backupID.String // Assign empty string if NULL
+		seenPaths[path] = true
 
-		// Deduplicate based on path within global exclusions
-		if seenPaths[excl.Path] {
-			continue
+		excl := Exclusion{
+			JobId:   "",
+			Path:    path,
+			Comment: row.Comment.String,
 		}
-		seenPaths[excl.Path] = true
 		exclusions = append(exclusions, excl)
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllGlobalExclusions: error iterating exclusion rows: %w", err)
 	}
 
 	return exclusions, nil
 }
 
-// GetExclusion retrieves a single exclusion by its path.
-// Assumes an index exists on exclusions.path.
-func (database *Database) GetExclusion(path string) (*types.Exclusion, error) {
-	row := database.readDb.QueryRow(`
-        SELECT job_id, path, comment FROM exclusions WHERE path = ? LIMIT 1
-    `, path) // Added LIMIT 1 as path is expected to be unique for this operation
-
-	var excl types.Exclusion
-	var backupID sql.NullString // Handle potentially NULL job_id
-	err := row.Scan(&backupID, &excl.Path, &excl.Comment)
+func (database *Database) GetExclusion(path string) (*Exclusion, error) {
+	row, err := database.readQueries.GetExclusion(database.ctx, sqlc.GetExclusionParams{
+		JobID: "",
+		Path:  path,
+	})
 	if err != nil {
-		// Return sql.ErrNoRows directly if not found
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, sql.ErrNoRows
 		}
 		return nil, fmt.Errorf("GetExclusion: error fetching exclusion for path %s: %w", path, err)
 	}
-	excl.JobId = backupID.String // Assign empty string if NULL
-	return &excl, nil
+
+	excl := &Exclusion{
+		JobId:   row.JobID,
+		Path:    row.Path,
+		Comment: row.Comment.String,
+	}
+	return excl, nil
 }
 
-// UpdateExclusion updates an existing exclusion identified by its path.
-// Assumes an index exists on exclusions.path.
-func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion) (err error) {
+func (database *Database) UpdateExclusion(tx *Transaction, exclusion Exclusion) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("UpdateExclusion: failed to begin transaction: %w", err)
 		}
@@ -196,6 +170,7 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 			}
 		}()
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if exclusion.Path == "" {
 		return errors.New("path is empty")
@@ -206,28 +181,16 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 		return fmt.Errorf("UpdateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
-	// Handle NULL job_id correctly
-	var backupIDArg any
-	if exclusion.JobId == "" {
-		backupIDArg = nil
-	} else {
-		backupIDArg = exclusion.JobId
-	}
-
-	res, err := tx.Exec(`
-        UPDATE exclusions SET job_id = ?, comment = ? WHERE path = ?
-    `, backupIDArg, exclusion.Comment, exclusion.Path)
+	affected, err := q.UpdateExclusion(database.ctx, sqlc.UpdateExclusionParams{
+		JobID:   exclusion.JobId,
+		Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
+		Path:    exclusion.Path,
+	})
 	if err != nil {
 		return fmt.Errorf("UpdateExclusion: error updating exclusion: %w", err)
 	}
 
-	affected, err := res.RowsAffected()
-	if err != nil {
-		// Log error getting rows affected but proceed to check count
-		syslog.L.Error(fmt.Errorf("UpdateExclusion: error getting rows affected: %w", err)).Write()
-	}
 	if affected == 0 {
-		// Return sql.ErrNoRows if the exclusion wasn't found to update
 		return sql.ErrNoRows
 	}
 
@@ -235,12 +198,12 @@ func (database *Database) UpdateExclusion(tx *sql.Tx, exclusion types.Exclusion)
 	return nil
 }
 
-// DeleteExclusion removes an exclusion from the database by its path.
-// Assumes an index exists on exclusions.path.
-func (database *Database) DeleteExclusion(tx *sql.Tx, path string) (err error) {
+func (database *Database) DeleteExclusion(tx *Transaction, path string) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("DeleteExclusion: failed to begin transaction: %w", err)
 		}
@@ -264,22 +227,16 @@ func (database *Database) DeleteExclusion(tx *sql.Tx, path string) (err error) {
 			}
 		}()
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	path = strings.ReplaceAll(path, "\\", "/")
-	res, err := tx.Exec(`
-        DELETE FROM exclusions WHERE path = ?
-    `, path)
+
+	err = q.DeleteExclusion(database.ctx, sqlc.DeleteExclusionParams{
+		JobID: "",
+		Path:  path,
+	})
 	if err != nil {
 		return fmt.Errorf("DeleteExclusion: error deleting exclusion: %w", err)
-	}
-
-	affected, err := res.RowsAffected()
-	if err != nil {
-		syslog.L.Error(fmt.Errorf("DeleteExclusion: error getting rows affected: %w", err)).Write()
-	}
-	if affected == 0 {
-		// Return sql.ErrNoRows if the exclusion wasn't found to delete
-		return sql.ErrNoRows
 	}
 
 	commitNeeded = true

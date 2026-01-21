@@ -168,6 +168,14 @@ nfpms:
     license: MIT
     formats:
       - deb
+    bindir: /opt/pbs-plus-agent
+    contents:
+      - src: /opt/pbs-plus-agent/pbs-plus-agent
+        dst: /usr/bin/pbs-plus-agent
+        type: symlink
+      - src: ./build/package/linux_agent/apparmor
+        dst: /usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent
+        type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
     overrides:
@@ -189,6 +197,14 @@ nfpms:
     license: MIT
     formats:
       - rpm
+    bindir: /opt/pbs-plus-agent
+    contents:
+      - src: /opt/pbs-plus-agent/pbs-plus-agent
+        dst: /usr/bin/pbs-plus-agent
+        type: symlink
+      - src: ./build/package/linux_agent/apparmor
+        dst: /usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent
+        type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
     overrides:
@@ -207,6 +223,14 @@ nfpms:
     license: MIT
     formats:
       - apk
+    bindir: /opt/pbs-plus-agent
+    contents:
+      - src: /opt/pbs-plus-agent/pbs-plus-agent
+        dst: /usr/bin/pbs-plus-agent
+        type: symlink
+      - src: ./build/package/linux_agent/apparmor
+        dst: /usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent
+        type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
     overrides:

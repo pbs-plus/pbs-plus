@@ -1,3 +1,5 @@
+//go:build linux
+
 package vfs
 
 import (
@@ -7,7 +9,7 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/memlocal"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/puzpuzpuz/xsync/v4"
 )
 
@@ -16,7 +18,7 @@ var keyPool = NewMemcachedKeyPool()
 type VFSBase struct {
 	Ctx      context.Context
 	Cancel   context.CancelFunc
-	Backup   types.Backup
+	Backup   database.Backup
 	Fuse     *fuse.Server
 	BasePath string
 
