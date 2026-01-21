@@ -128,7 +128,7 @@ func ConnectARPC(ctx context.Context, version string) error {
 					var err error
 					session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 					if err != nil {
-						if strings.HasPrefix(err.Error(), "(code 403)") {
+						if strings.Contains(err.Error(), "(code 403)") {
 							syslog.L.Error(err).
 								WithMessage("certificate invalid or expired, clearing credentials and re-bootstrapping").
 								Write()
