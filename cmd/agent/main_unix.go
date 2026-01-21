@@ -39,6 +39,7 @@ func (p *pbsService) Start(s service.Service) error {
 			UpgradeConfirm: func(v string) bool { return true },
 			Exit:           func(err error) {},
 			Service:        s,
+			ContextCancel:  p.cancel,
 		})
 	}
 	go p.run()
@@ -49,8 +50,6 @@ func (p *pbsService) run() {
 	_ = syslog.L.SetServiceLogger()
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerURL", Value: os.Getenv("PBS_PLUS_INIT_SERVER_URL")})
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "BootstrapToken", Value: os.Getenv("PBS_PLUS_INIT_BOOTSTRAP_TOKEN")})
-
-	p.ctx, p.cancel = context.WithCancel(context.Background())
 
 	if err := lifecycle.WaitForServerURL(p.ctx); err != nil {
 		return
@@ -123,6 +122,8 @@ func main() {
 		},
 	}
 	prg := &pbsService{}
+	prg.ctx, prg.cancel = context.WithCancel(context.Background())
+
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
 		log.Fatal(err)
