@@ -196,6 +196,36 @@ Ext.define("pbs-model-d2d-snapshots", {
   },
 });
 
+Ext.define("pbs-model-d2d-snapshots", {
+  extend: "Ext.data.Model",
+  fields: [
+    "backup-id",
+    "backup-time",
+    "backup-type",
+    "files",
+    "value",
+    "display",
+  ],
+  proxy: {
+    type: "memory",
+    reader: {
+      type: "json",
+      transform: function (raw) {
+        let rows = Array.isArray(raw) ? raw : raw.data || [];
+        return rows.map((item) => {
+          let type = item["backup-type"] || "host";
+          item.value = `${type}/${item["backup-id"]}/${item["backup-time"]}`;
+          if (item["backup-time"]) {
+            let time = new Date(item["backup-time"] * 1000);
+            item.display = `${Ext.Date.format(time, "Y-m-d H:i:s")} | ${item["backup-id"]}`;
+          }
+          return item;
+        });
+      },
+    },
+  },
+});
+
 Ext.define("pbs-model-tokens", {
   extend: "Ext.data.Model",
   fields: [
