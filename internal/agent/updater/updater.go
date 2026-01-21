@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -32,6 +33,7 @@ type Config struct {
 	UpgradeConfirm func(newVersion string) bool
 	Exit           func(error)
 	Service        service.Service
+	ContextCancel  context.CancelFunc
 }
 
 type Updater struct {
