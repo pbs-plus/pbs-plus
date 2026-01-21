@@ -1,6 +1,6 @@
 //go:build linux
 
-package sqlite
+package database
 
 import (
 	"database/sql"
@@ -11,16 +11,15 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
-	_ "modernc.org/sqlite"
 )
 
 func generateWinInstall(token string) string {
 	hostname := os.Getenv("PBS_PLUS_HOSTNAME")
 	if utils.IsProxyCertValid(hostname) {
-		return fmt.Sprintf("irm https://%s:%s/plus/agent/install/win?t=%s | iex", hostname, constants.AgentAPIPort, token)
+		return fmt.Sprintf("irm https://%s%s/plus/agent/install/win?t=%s | iex", hostname, constants.AgentAPIPort, token)
 	}
 
 	return fmt.Sprintf(`[System.Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; `+
@@ -28,118 +27,95 @@ func generateWinInstall(token string) string {
 		`iex(New-Object Net.WebClient).DownloadString("https://%s:%s/plus/agent/install/win?t=%s")`, hostname, strings.TrimPrefix(constants.AgentAPIPort, ":"), token)
 }
 
-// CreateToken generates a new token using the manager and stores it.
 func (database *Database) CreateToken(expiration time.Duration, comment string) error {
 	tokenStr, err := database.TokenManager.GenerateToken(expiration)
 	if err != nil {
 		return fmt.Errorf("CreateToken: error generating token: %w", err)
 	}
 	now := time.Now().Unix()
-	_, err = database.writeDb.Exec(`
-        INSERT INTO tokens (token, comment, created_at, revoked)
-        VALUES (?, ?, ?, ?)
-    `, tokenStr, comment, now, false)
+
+	err = database.queries.CreateToken(database.ctx, sqlc.CreateTokenParams{
+		Token:     tokenStr,
+		Comment:   toNullString(comment),
+		CreatedAt: toNullInt64(int(now)),
+		Revoked:   toNullBool(false),
+	})
 	if err != nil {
 		return fmt.Errorf("CreateToken: error inserting token: %w", err)
 	}
 	return nil
 }
 
-// GetToken retrieves a token’s entry and double-checks its validity.
-func (database *Database) GetToken(tokenStr string) (types.AgentToken, error) {
-	row := database.readDb.QueryRow(`
-        SELECT token, comment, created_at, revoked
-        FROM tokens
-        WHERE token = ?
-    `, tokenStr)
-
-	var tokenProp types.AgentToken
-	err := row.Scan(&tokenProp.Token, &tokenProp.Comment, &tokenProp.CreatedAt, &tokenProp.Revoked)
+func (database *Database) GetToken(tokenStr string) (AgentToken, error) {
+	row, err := database.readQueries.GetToken(database.ctx, tokenStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return types.AgentToken{}, fmt.Errorf("GetToken: not found")
+			return AgentToken{}, fmt.Errorf("GetToken: not found")
 		}
-		return types.AgentToken{}, fmt.Errorf("GetToken: error fetching token: %w", err)
+		return AgentToken{}, fmt.Errorf("GetToken: error fetching token: %w", err)
 	}
 
-	// Validate the token using the token manager.
+	tokenProp := AgentToken{
+		Token:     row.Token,
+		Comment:   fromNullString(row.Comment),
+		CreatedAt: fromNullInt64(row.CreatedAt),
+		Revoked:   fromNullBool(row.Revoked),
+	}
+
 	if err := database.TokenManager.ValidateToken(tokenStr); err != nil {
-		// Do not mutate DB here; just reflect effective validity.
 		tokenProp.Revoked = true
 	}
 
 	tokenProp.Duration = database.TokenManager.GetTokenRemainingDuration(tokenStr).String()
-
 	tokenProp.WinInstall = generateWinInstall(tokenProp.Token)
+
 	return tokenProp, nil
 }
 
-func (database *Database) GetAllTokens(includeRevoked bool) ([]types.AgentToken, error) {
-	var rows *sql.Rows
+func (database *Database) GetAllTokens(includeRevoked bool) ([]AgentToken, error) {
+	var rows []sqlc.Token
 	var err error
+
 	if includeRevoked {
-		rows, err = database.readDb.Query(`
-            SELECT token
-            FROM tokens
-            ORDER BY created_at DESC
-        `)
+		rows, err = database.readQueries.ListAllTokens(database.ctx)
 	} else {
-		rows, err = database.readDb.Query(`
-            SELECT token
-            FROM tokens
-            WHERE revoked = 0
-            ORDER BY created_at DESC
-        `)
+		rows, err = database.readQueries.ListNonRevokedTokens(database.ctx)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("GetAllTokens: error querying tokens: %w", err)
 	}
-	defer rows.Close()
 
-	var tokens []types.AgentToken
-	for rows.Next() {
-		var tokenStr string
-		if err := rows.Scan(&tokenStr); err != nil {
-			continue
-		}
-		tokenProp, err := database.GetToken(tokenStr)
+	var tokens []AgentToken
+	for _, row := range rows {
+		tokenProp, err := database.GetToken(row.Token)
 		if err != nil {
-			syslog.L.Error(err).WithField("id", tokenStr).Write()
+			syslog.L.Error(err).WithField("id", row.Token).Write()
 			continue
 		}
-		// If includeRevoked is false, filter out those that validate as revoked due to manager check.
 		if !includeRevoked && tokenProp.Revoked {
 			continue
 		}
-		tokenProp.Duration = database.TokenManager.GetTokenRemainingDuration(tokenStr).String()
+		tokenProp.Duration = database.TokenManager.GetTokenRemainingDuration(row.Token).String()
 		tokenProp.WinInstall = generateWinInstall(tokenProp.Token)
 		tokens = append(tokens, tokenProp)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllTokens: row iteration error: %w", err)
 	}
 
 	return tokens, nil
 }
 
-func (database *Database) RevokeToken(tokenData types.AgentToken) error {
+func (database *Database) RevokeToken(tokenData AgentToken) error {
 	current, err := database.GetToken(tokenData.Token)
 	if err != nil {
 		return fmt.Errorf("RevokeToken: fetch current token: %w", err)
 	}
 
-	if current.Revoked {
-		// Already effectively revoked; still proceed to pruning.
-	} else {
-		_, err = database.writeDb.Exec(`
-            UPDATE tokens SET revoked = 1 WHERE token = ?
-        `, current.Token)
+	if !current.Revoked {
+		err = database.queries.RevokeToken(database.ctx, current.Token)
 		if err != nil {
 			return fmt.Errorf("RevokeToken: error updating token: %w", err)
 		}
 	}
 
-	// Prune old tokens
 	if err := database.pruneOldTokensKeepLastValid(20); err != nil {
 		return fmt.Errorf("RevokeToken: prune error: %w", err)
 	}
@@ -148,14 +124,10 @@ func (database *Database) RevokeToken(tokenData types.AgentToken) error {
 }
 
 func (database *Database) pruneOldTokensKeepLastValid(keep int) error {
-	rows, err := database.readDb.Query(`
-        SELECT token, created_at, revoked
-        FROM tokens
-    `)
+	rows, err := database.readQueries.ListAllTokensWithDetails(database.ctx)
 	if err != nil {
 		return fmt.Errorf("pruneOldTokensKeepLastValid: query tokens: %w", err)
 	}
-	defer rows.Close()
 
 	type rowInfo struct {
 		Token     string
@@ -165,24 +137,14 @@ func (database *Database) pruneOldTokensKeepLastValid(keep int) error {
 	}
 
 	var all []rowInfo
-	for rows.Next() {
-		var t string
-		var c int64
-		var r bool
-		if err := rows.Scan(&t, &c, &r); err != nil {
-			continue
-		}
-		// Validate via TokenManager. Treat error as invalid.
-		valid := database.TokenManager.ValidateToken(t) == nil
+	for _, row := range rows {
+		valid := database.TokenManager.ValidateToken(row.Token) == nil
 		all = append(all, rowInfo{
-			Token:     t,
-			CreatedAt: c,
-			Revoked:   r,
+			Token:     row.Token,
+			CreatedAt: int64(fromNullInt64(row.CreatedAt)),
+			Revoked:   fromNullBool(row.Revoked),
 			ValidNow:  valid,
 		})
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("pruneOldTokensKeepLastValid: row iteration: %w", err)
 	}
 
 	var validNonRevoked []rowInfo
@@ -214,23 +176,19 @@ func (database *Database) pruneOldTokensKeepLastValid(keep int) error {
 		return nil
 	}
 
-	tx, err := database.writeDb.Begin()
+	tx, err := database.NewTransaction()
 	if err != nil {
 		return fmt.Errorf("pruneOldTokensKeepLastValid: begin tx: %w", err)
 	}
-	stmt, err := tx.Prepare(`DELETE FROM tokens WHERE token = ?`)
-	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("pruneOldTokensKeepLastValid: prepare delete: %w", err)
-	}
-	defer stmt.Close()
 
+	qtx := database.queries.WithTx(tx.Tx)
 	for _, t := range toDelete {
-		if _, err := stmt.Exec(t); err != nil {
+		if err := qtx.DeleteToken(database.ctx, t); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("pruneOldTokensKeepLastValid: delete %s: %w", t, err)
 		}
 	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("pruneOldTokensKeepLastValid: commit: %w", err)
 	}

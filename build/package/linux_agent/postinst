@@ -2,7 +2,9 @@
 set -e
 
 SERVICE_NAME="pbs-plus-agent"
-BIN_PATH="/usr/bin/pbs-plus-agent"
+BIN_DIR="/opt/pbs-plus-agent"
+BIN_PATH="$BIN_DIR/pbs-plus-agent"
+SYMLINK_PATH="/usr/bin/pbs-plus-agent"
 STATE_DIR="/var/lib/pbs-plus-agent"
 LOG_DIR="/var/log/pbs-plus-agent"
 ETC_DIR="/etc/pbs-plus-agent"
@@ -39,37 +41,111 @@ create_user() {
   fi
 
   if is_cmd useradd; then
-    # -r: system, -g: group, -M: no home, -d: home path
     useradd -r -g pbsplus -s "$NOLOGIN_SHELL" -d "$STATE_DIR" -M pbsplus 2>/dev/null || \
     useradd -r -g pbsplus -s "$NOLOGIN_SHELL" -d "$STATE_DIR" pbsplus || true
   elif is_cmd adduser; then
-    # Alpine/Busybox syntax
     adduser -S -D -H -s "$NOLOGIN_SHELL" -h "$STATE_DIR" -G pbsplus pbsplus 2>/dev/null || \
-    # Debian/Ubuntu fallback
     adduser --system --ingroup pbsplus --home "$STATE_DIR" --shell "$NOLOGIN_SHELL" --disabled-password pbsplus || true
   fi
 }
 
+setup_binary() {
+  log "Setting up binary in $BIN_DIR..."
+  
+  mkdir -p "$BIN_DIR"
+  chown pbsplus:pbsplus "$BIN_DIR"
+  chmod 0755 "$BIN_DIR"
+  
+  if [ ! -f "$BIN_PATH" ]; then
+    log "ERROR: Binary not found at $BIN_PATH"
+    log "Available files in $BIN_DIR:"
+    ls -la "$BIN_DIR" || true
+    exit 1
+  fi
+  
+  chown pbsplus:pbsplus "$BIN_PATH"
+  chmod 0755 "$BIN_PATH"
+  
+  if [ ! -x "$BIN_PATH" ]; then
+    log "ERROR: Binary at $BIN_PATH is not executable"
+    exit 1
+  fi
+  
+  if is_cmd setcap; then
+    setcap "cap_dac_read_search,cap_dac_override+ep" "$BIN_PATH" || true
+  fi
+  
+  if [ ! -L "$SYMLINK_PATH" ]; then
+    log "ERROR: Expected symlink not at $SYMLINK_PATH"
+    exit 1
+  fi
+  
+  log "Binary installed at $BIN_PATH with symlink at $SYMLINK_PATH"
+}
+
 setup_permissions_for_updates() {
+  # Grant pbsplus user permission to restart the service
   if $is_systemd && [ -d /etc/polkit-1/rules.d ]; then
-    cat > /etc/polkit-1/rules.d/10-pbs-plus-agent.rules <<EOF
+    cat > /etc/polkit-1/rules.d/10-pbs-plus-agent.rules <<'EOF'
 polkit.addRule(function(action, subject) {
     var actions = ["org.freedesktop.systemd1.manage-units", "org.freedesktop.systemd1.reload-daemon"];
     if (actions.indexOf(action.id) !== -1 && subject.user == "pbsplus") {
         var unit = action.lookup("unit");
-        if (!unit || unit == "$SERVICE_NAME.service" || action.id == "org.freedesktop.systemd1.reload-daemon") {
+        if (!unit || unit == "pbs-plus-agent.service" || action.id == "org.freedesktop.systemd1.reload-daemon") {
             return polkit.Result.YES;
         }
     }
 });
 EOF
-    log "Configured Polkit for systemd updates"
+    log "Configured Polkit for systemd service management"
   fi
 
   if is_cmd sudo && [ -d /etc/sudoers.d ]; then
-    echo "pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/rc-service $SERVICE_NAME *, /usr/bin/systemctl restart $SERVICE_NAME" > /etc/sudoers.d/pbs-plus-agent
+    cat > /etc/sudoers.d/pbs-plus-agent <<EOF
+pbsplus ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart $SERVICE_NAME
+pbsplus ALL=(ALL) NOPASSWD: /usr/bin/systemctl daemon-reload
+pbsplus ALL=(ALL) NOPASSWD: /usr/sbin/rc-service $SERVICE_NAME *
+EOF
     chmod 0440 /etc/sudoers.d/pbs-plus-agent
-    log "Configured Sudoers fallback for service restarts"
+    log "Configured sudoers for service management"
+  fi
+}
+
+setup_selinux() {
+  if is_cmd getenforce && [ "$(getenforce)" != "Disabled" ]; then
+    log "Configuring SELinux file contexts..."
+    
+    semanage fcontext -a -t bin_t "$BIN_DIR(/.*)?" 2>/dev/null || \
+      chcon -R -t bin_t "$BIN_DIR" 2>/dev/null || true
+    
+    semanage fcontext -a -t var_lib_t "$STATE_DIR(/.*)?" 2>/dev/null || \
+      chcon -R -t var_lib_t "$STATE_DIR" 2>/dev/null || true
+    
+    semanage fcontext -a -t var_log_t "$LOG_DIR(/.*)?" 2>/dev/null || \
+      chcon -R -t var_log_t "$LOG_DIR" 2>/dev/null || true
+    
+    restorecon -Rv "$BIN_DIR" "$STATE_DIR" "$LOG_DIR" 2>/dev/null || true
+    
+    log "SELinux contexts applied. If issues persist, run: setenforce Permissive"
+  fi
+}
+
+setup_apparmor() {
+  if command -v aa-status >/dev/null 2>&1; then
+    log "Installing AppArmor profile..."
+    
+    PROFILE_SRC="/usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent"
+    PROFILE_DST="/etc/apparmor.d/opt.pbs-plus-agent.pbs-plus-agent"
+    
+    if [ -f "$PROFILE_SRC" ]; then
+      cp "$PROFILE_SRC" "$PROFILE_DST"
+      
+      # Load the profile
+      apparmor_parser -r "$PROFILE_DST" || true
+      
+      # Set to enforce mode
+      aa-enforce "$PROFILE_DST" 2>/dev/null || true
+    fi
   fi
 }
 
@@ -82,18 +158,6 @@ setup_service() {
   [ -f "$ETC_DIR/agent.env" ] || touch "$ETC_DIR/agent.env"
   chown pbsplus:pbsplus "$ETC_DIR/agent.env"
   chmod 0640 "$ETC_DIR/agent.env"
-
-  # Permissions for the binary
-  # To allow self-update (rename/replace), pbsplus must own the binary.
-  # Note: Replacing files in /usr/bin requires directory write access.
-  # We handle that in the Systemd unit via ReadWritePaths=/usr/bin
-  chown pbsplus:pbsplus "$BIN_PATH"
-  chmod 0755 "$BIN_PATH"
-  
-  if is_cmd setcap; then
-    # Set capabilities (Must be after chown, as chown strips caps)
-    setcap "cap_dac_read_search,cap_dac_override+ep" "$BIN_PATH" || true
-  fi
 
   log "Running service installation..."
   "$BIN_PATH" install
@@ -109,13 +173,16 @@ setup_service() {
 main() {
   detect_system
   create_user
+  setup_binary
+  setup_selinux
+  setup_apparmor
   setup_permissions_for_updates
   
   # Linger allows the user to run services without being logged in
   [ "$ENABLE_LINGER" = "true" ] && is_cmd loginctl && loginctl enable-linger pbsplus 2>/dev/null || true
   
   setup_service
-  log "Installation Complete."
+  log "Installation complete. Binary: $BIN_PATH"
 }
 
 main

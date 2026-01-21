@@ -16,8 +16,8 @@ import (
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	sqlite "github.com/pbs-plus/pbs-plus/internal/store/database"
-	"github.com/pbs-plus/pbs-plus/internal/store/system"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 
 	_ "modernc.org/sqlite"
@@ -144,10 +144,10 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	}
 
 	go func() {
-		_ = system.PurgeAllLegacyUnits(ctx)
+		_ = database.PurgeAllLegacyTimerUnits(ctx)
 		jobs, err := db.GetAllBackups()
 		if err == nil {
-			system.SetBatchSchedules(ctx, jobs)
+			database.SetBatchBackupSchedules(ctx, jobs)
 		}
 	}()
 

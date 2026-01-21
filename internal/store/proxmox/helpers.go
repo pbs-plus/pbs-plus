@@ -109,7 +109,7 @@ func (task *Task) GenerateUPID() string {
 
 var pstart = atomic.Int32{}
 
-func getPStart() uint64 {
+func GetPStart() uint64 {
 	return uint64(pstart.Add(1))
 }
 
@@ -148,7 +148,7 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 	return newUpid, nil
 }
 
-func encodeToHexEscapes(input string) string {
+func EncodeToHexEscapes(input string) string {
 	var encoded strings.Builder
 	for _, char := range input {
 		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' {

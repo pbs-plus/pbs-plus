@@ -10,14 +10,14 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func getBackupId(isAgent bool, target types.TargetName) (string, error) {
-	if isAgent {
-		if target.String() == "" {
+func getBackupId(target database.Target) (string, error) {
+	if target.IsAgent() {
+		if target.Name == "" {
 			return "", fmt.Errorf("target name is required for agent backup")
 		}
 		return target.GetHostname(), nil
@@ -34,12 +34,12 @@ func getBackupId(isAgent bool, target types.TargetName) (string, error) {
 	return hostname, nil
 }
 
-func prepareBackupCommand(ctx context.Context, backup types.Backup, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
 
-	backupId, err := getBackupId(isAgent, backup.Target)
+	backupId, err := getBackupId(backup.Target)
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to get backup ID: %w", err)
 	}
@@ -68,7 +68,7 @@ func prepareBackupCommand(ctx context.Context, backup types.Backup, storeInstanc
 	cmdArgs = append(cmdArgs, []string{
 		"/usr/bin/proxmox-backup-client",
 		"backup",
-		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(backup.Target.String()), srcPath),
+		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(backup.Target.Name), srcPath),
 		"--repository", backupStore,
 		detectionMode,
 		"--entries-max", fmt.Sprintf("%d", backup.MaxDirEntries+1024),

@@ -121,7 +121,7 @@ Ext.define("PBS.config.DiskBackupJobView", {
       Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
         if (btn !== "yes") return;
 
-        // 1) delete the “Plus” queue entry for all jobs in one request
+        // 1) delete the "Plus" queue entry for all jobs in one request
         const plusJobs = jobs.filter((j) => j.hasPlus);
         if (plusJobs.length > 0) {
           const plusIds = plusJobs
@@ -274,6 +274,131 @@ Ext.define("PBS.config.DiskBackupJobView", {
       Ext.create("PBS.plusWindow.TaskViewer", {
         upid,
       }).show();
+    },
+
+    showJobHistory: function () {
+      const me = this;
+      const view = me.getView();
+      const selection = view.getSelection();
+      if (selection.length !== 1) return;
+
+      const jobId = selection[0].getId();
+
+      // Fetch UPIDs from API endpoint
+      PBS.PlusUtils.API2Request({
+        url:
+          "/api2/extjs/config/disk-backup/" +
+          encodeURIComponent(encodePathValue(jobId)) +
+          "/upids",
+        method: "GET",
+        waitMsgTarget: view,
+        success: function (response) {
+          const upids = response.result.data || [];
+
+          if (!upids.length) {
+            Ext.Msg.alert(
+              gettext("Info"),
+              gettext("No task logs found for this job."),
+            );
+            return;
+          }
+
+          // Create a store for the UPIDs
+          const upidStore = Ext.create("Ext.data.Store", {
+            fields: ["upid", "starttime", "endtime", "status", "duration"],
+            data: upids.map((item) => {
+              const task = Proxmox.Utils.parse_task_upid(item.upid);
+              const duration =
+                item.endtime && task.starttime
+                  ? item.endtime - task.starttime
+                  : null;
+              return {
+                upid: item.upid,
+                starttime: task.starttime,
+                endtime: item.endtime,
+                status: item.status,
+                duration: duration,
+              };
+            }),
+            sorters: [
+              {
+                property: "starttime",
+                direction: "DESC",
+              },
+            ],
+          });
+
+          // Create a window with a grid showing all UPIDs
+          Ext.create("Ext.window.Window", {
+            title:
+              gettext("Task Logs for Job: ") + Ext.String.htmlEncode(jobId),
+            width: 900,
+            height: 400,
+            modal: true,
+            layout: "fit",
+            items: [
+              {
+                xtype: "grid",
+                store: upidStore,
+                columns: [
+                  {
+                    text: gettext("Start Time"),
+                    dataIndex: "starttime",
+                    renderer: function (value) {
+                      return Proxmox.Utils.render_timestamp(value);
+                    },
+                    flex: 1,
+                  },
+                  {
+                    text: gettext("End Time"),
+                    dataIndex: "endtime",
+                    renderer: function (value) {
+                      return value
+                        ? Proxmox.Utils.render_timestamp(value)
+                        : "-";
+                    },
+                    flex: 1,
+                  },
+                  {
+                    text: gettext("Duration"),
+                    dataIndex: "duration",
+                    renderer: function (value) {
+                      return value !== null
+                        ? Proxmox.Utils.format_duration_long(value)
+                        : "-";
+                    },
+                    flex: 1,
+                  },
+                  {
+                    text: gettext("Status"),
+                    dataIndex: "status",
+                    renderer: PBS.PlusUtils.render_task_status,
+                    flex: 2,
+                  },
+                ],
+                listeners: {
+                  itemdblclick: function (grid, record) {
+                    Ext.create("PBS.plusWindow.TaskViewer", {
+                      upid: record.get("upid"),
+                    }).show();
+                  },
+                },
+              },
+            ],
+            buttons: [
+              {
+                text: gettext("Close"),
+                handler: function () {
+                  this.up("window").close();
+                },
+              },
+            ],
+          }).show();
+        },
+        failure: function (resp) {
+          Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
+        },
+      });
     },
 
     exportCSV: async function () {
@@ -564,6 +689,16 @@ Ext.define("PBS.config.DiskBackupJobView", {
       enableFn: function () {
         let recs = this.up("grid").getSelection();
         return recs.length === 1 && !!recs[0].data["last-successful-upid"];
+      },
+      disabled: true,
+    },
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Show job history"),
+      handler: "showJobHistory",
+      enableFn: function () {
+        let recs = this.up("grid").getSelection();
+        return recs.length === 1;
       },
       disabled: true,
     },

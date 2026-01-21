@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -18,9 +19,10 @@ import (
 )
 
 type BootstrapRequest struct {
-	Hostname string            `json:"hostname"`
-	CSR      string            `json:"csr"`
-	Drives   []utils.DriveInfo `json:"drives"`
+	Hostname        string            `json:"hostname"`
+	CSR             string            `json:"csr"`
+	Drives          []utils.DriveInfo `json:"drives"`
+	OperatingSystem string            `json:"os"`
 }
 
 type BootstrapResponse struct {
@@ -57,9 +59,10 @@ func Bootstrap() error {
 	}
 
 	reqBody, err := json.Marshal(&BootstrapRequest{
-		Hostname: hostname,
-		Drives:   drives,
-		CSR:      encodedCSR,
+		Hostname:        hostname,
+		Drives:          drives,
+		CSR:             encodedCSR,
+		OperatingSystem: runtime.GOOS,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal bootstrap request: %w", err)
