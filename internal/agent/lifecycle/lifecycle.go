@@ -87,7 +87,7 @@ func WaitForBootstrap(ctx context.Context) error {
 	}
 }
 
-func ConnectARPC(ctx context.Context, version string) error {
+func ConnectARPC(ctx context.Context, cancel context.CancelFunc, version string) error {
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
 		return err
@@ -112,9 +112,7 @@ func ConnectARPC(ctx context.Context, version string) error {
 
 	go func() {
 		base, maxWait, factor, jitter := 500*time.Millisecond, 30*time.Second, 2.0, 0.2
-		bootstrapBase, bootstrapMaxWait := 30*time.Second, 5*time.Minute
 		backoff := base
-		bootstrapBackoff := bootstrapBase
 		var session *arpc.StreamPipe
 		for {
 			select {
@@ -141,15 +139,8 @@ func ConnectARPC(ctx context.Context, version string) error {
 								syslog.L.Error(bootstrapErr).
 									WithMessage("failed to bootstrap agent").
 									Write()
-
-								sleep := min(time.Duration(float64(bootstrapBackoff)*(1+jitter*(2*rand.Float64()-1))), bootstrapMaxWait)
-								select {
-								case <-ctx.Done():
-									return
-								case <-time.After(sleep):
-									bootstrapBackoff = min(time.Duration(float64(bootstrapBackoff)*factor), bootstrapMaxWait)
-									continue
-								}
+								cancel()
+								return
 							}
 
 							newTlsConfig, tlsErr := agent.GetTLSConfig()
@@ -162,7 +153,6 @@ func ConnectARPC(ctx context.Context, version string) error {
 							}
 
 							backoff = base
-							bootstrapBackoff = bootstrapBase
 							continue
 						}
 						sleep := min(time.Duration(float64(backoff)*(1+jitter*(2*rand.Float64()-1))), maxWait)
@@ -193,7 +183,6 @@ func ConnectARPC(ctx context.Context, version string) error {
 					router.Handle("cleanup_restore", controllers.RestoreCloseHandler)
 					session.SetRouter(router)
 					backoff = base
-					bootstrapBackoff = bootstrapBase
 				}
 				if err := session.Serve(); err != nil {
 					if newS, err := session.Reconnect(ctx); err == nil {
