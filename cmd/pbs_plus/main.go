@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -457,6 +459,43 @@ func main() {
 			syslog.L.Error(err).WithMessage("failed to build server TLS config").Write()
 			return
 		}
+
+		storeInstance.ARPCAgentsManager.SetExtraExpectFunc(func(id string, certs []*x509.Certificate) bool {
+			// agent worker connections should already be validated before this point
+			if len(strings.Split(id, "|")) > 1 {
+				return false
+			}
+
+			syslog.L.Info().WithMessage("checking client authorization").WithField("id", id).Write()
+
+			if len(certs) == 0 {
+				syslog.L.Error(fmt.Errorf("no client certificates received")).WithMessage("client unauthorized").WithField("id", id).Write()
+				return false
+			}
+
+			trustedCert, err := storeInstance.Database.LoadAgentHostCert(id)
+			if err != nil {
+				syslog.L.Error(err).WithMessage("client unauthorized").WithField("id", id).Write()
+				return false
+			}
+
+			found := false
+			for _, cert := range certs {
+				if cert.Equal(trustedCert) {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				syslog.L.Error(fmt.Errorf("did not match trusted certificate")).WithMessage("client unauthorized").WithField("id", id).Write()
+				return false
+			}
+
+			syslog.L.Info().WithMessage("client authorized").WithField("id", id).Write()
+
+			return true
+		})
 
 		if err := arpc.ListenAndServe(storeInstance.Ctx, constants.ARPCServerPort, storeInstance.ARPCAgentsManager, arpcTlsConfig, router); err != nil {
 			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed")

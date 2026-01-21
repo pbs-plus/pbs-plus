@@ -16,7 +16,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
@@ -271,7 +270,7 @@ func checkAgentAuth(store *store.Store, r *http.Request) error {
 		return fmt.Errorf("CheckAgentAuth: missing certificate subject common name")
 	}
 
-	trustedCert, err := loadTrustedCert(store, agentHostname)
+	trustedCert, err := store.Database.LoadAgentHostCert(agentHostname)
 	if err != nil {
 		return fmt.Errorf("CheckAgentAuth: certificate not trusted")
 	}
@@ -307,43 +306,4 @@ func checkProxyAuth(r *http.Request) error {
 	}
 
 	return nil
-}
-
-func loadTrustedCert(store *store.Store, hostname string) (*x509.Certificate, error) {
-	authValue, err := store.Database.GetAgentHostAuth(hostname)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get auth values for hostname %s: %w", hostname, err)
-	}
-
-	decodedCert, err := base64.StdEncoding.DecodeString(authValue)
-	if err != nil {
-		return nil, fmt.Errorf("auth: failed to decode certificate: %w", err)
-	}
-
-	block, _ := pem.Decode(decodedCert)
-	if block != nil {
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("auth: failed to parse PEM certificate: %w", err)
-		}
-
-		now := time.Now()
-		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
-			return nil, fmt.Errorf("certificate for hostname %s is expired or not yet valid", hostname)
-		}
-
-		return cert, nil
-	}
-
-	cert, err := x509.ParseCertificate(decodedCert)
-	if err != nil {
-		return nil, fmt.Errorf("auth: failed to parse raw certificate: %w", err)
-	}
-
-	now := time.Now()
-	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
-		return nil, fmt.Errorf("certificate for hostname %s is expired or not yet valid", hostname)
-	}
-
-	return cert, nil
 }

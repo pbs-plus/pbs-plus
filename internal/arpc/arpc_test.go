@@ -128,7 +128,7 @@ func ensureGlobalCAs(t *testing.T) {
 	})
 }
 
-func newTestARPCServer(t *testing.T, router Router) (addr string, cleanup func(), serverTLS *tls.Config) {
+func newTestARPCServer(t *testing.T, router Router) (addr string, cleanup func(), serverTLS *tls.Config, agentsManager *AgentsManager) {
 	t.Helper()
 
 	ensureGlobalCAs(t)
@@ -146,7 +146,12 @@ func newTestARPCServer(t *testing.T, router Router) (addr string, cleanup func()
 		t.Fatalf("arpc listen: %v", err)
 	}
 
-	agentsManager := NewAgentsManager()
+	agentsManager = NewAgentsManager()
+	// Allow all connections by default for tests
+	agentsManager.SetExtraExpectFunc(func(clientID string, _ []*x509.Certificate) bool {
+		return true
+	})
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -164,7 +169,7 @@ func newTestARPCServer(t *testing.T, router Router) (addr string, cleanup func()
 		case <-time.After(300 * time.Millisecond):
 		}
 	}
-	return addr, cleanup, serverTLS
+	return addr, cleanup, serverTLS, agentsManager
 }
 
 func newTestClientTLS(t *testing.T) *tls.Config {
@@ -186,7 +191,7 @@ func TestRouterServeStream_Echo(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: req.Payload}, nil
 	})
 
-	addr, shutdown, serverTLS := newTestARPCServer(t, router)
+	addr, shutdown, serverTLS, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -223,7 +228,7 @@ func TestStreamPipeCall_Success(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -250,7 +255,7 @@ func TestStreamPipeCall_Concurrency(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -290,7 +295,7 @@ func TestCallWithTimeout_DeadlineExceeded(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -324,7 +329,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 		return Response{}, fmt.Errorf("test error")
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -358,7 +363,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 		return resp, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -397,7 +402,7 @@ func TestCall_RawStream_HandlerMissing(t *testing.T) {
 		return Response{Status: 213, RawStream: func(st *smux.Stream) {}}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -422,7 +427,7 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -440,7 +445,7 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 
 	pipe, err = pipe.Reconnect(t.Context())
 	if err != nil {
-		t.Fatalf("ConnectToServer: %v", err)
+		t.Fatalf("Reconnect: %v", err)
 	}
 	defer pipe.Close()
 
@@ -460,7 +465,7 @@ func TestStreamPipe_State_And_Reconnect(t *testing.T) {
 func TestRouter_NotFound_And_BadRequest(t *testing.T) {
 	router := NewRouter()
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -477,7 +482,7 @@ func TestRouter_NotFound_And_BadRequest(t *testing.T) {
 	}
 
 	router2 := NewRouter()
-	addr2, shutdown2, _ := newTestARPCServer(t, router2)
+	addr2, shutdown2, _, _ := newTestARPCServer(t, router2)
 	defer shutdown2()
 
 	pipe2, err := ConnectToServer(t.Context(), addr2, nil, clientTLS)
@@ -488,7 +493,7 @@ func TestRouter_NotFound_And_BadRequest(t *testing.T) {
 
 	st, err := pipe2.OpenStream()
 	if err != nil {
-		t.Fatalf("OpenStreamSync: %v", err)
+		t.Fatalf("OpenStream: %v", err)
 	}
 	defer st.Close()
 
@@ -502,6 +507,45 @@ func TestRouter_NotFound_And_BadRequest(t *testing.T) {
 	}
 	if resp.Status == http.StatusOK {
 		t.Fatalf("expected non-200 for bad request, got 200")
+	}
+}
+
+func TestConnectionRejection(t *testing.T) {
+	router := NewRouter()
+
+	addr, shutdown, _, agentsManager := newTestARPCServer(t, router)
+	defer shutdown()
+
+	// Override to reject all connections
+	agentsManager.SetExtraExpectFunc(func(clientID string, _ []*x509.Certificate) bool {
+		return false
+	})
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err == nil {
+		pipe.Close()
+		t.Fatal("expected connection rejection, got success")
+	}
+
+	// Check that we got a proper rejection error
+	if !strings.Contains(err.Error(), "connection rejected") && !strings.Contains(err.Error(), "not expected") {
+		t.Errorf("expected rejection error, got: %v", err)
+	}
+
+	// Re-enable connections and test successful connection
+	agentsManager.SetExtraExpectFunc(func(clientID string, _ []*x509.Certificate) bool {
+		return true
+	})
+
+	pipe, err = ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("expected successful connection after re-enabling, got: %v", err)
+	}
+	defer pipe.Close()
+
+	if pipe.GetState() != StateConnected {
+		t.Error("expected connected state")
 	}
 }
 
@@ -537,7 +581,7 @@ func TestStress_ConsecutiveCalls(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -580,7 +624,7 @@ func TestStress_BatchedSequences(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -624,7 +668,7 @@ func TestStreams_ProperlyClosed_NoExhaustion(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -692,7 +736,7 @@ func TestLeak_SimpleCallAndClose(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	baseline := goroutineSnapshot()
@@ -722,7 +766,7 @@ func TestLeak_MultipleConnections(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: req.Payload}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	baseline := goroutineSnapshot()
@@ -751,7 +795,6 @@ func TestLeak_MultipleConnections(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// More permissive tolerance for multiple connections
-	// Each connection creates: client Serve, server Serve, 2 smux goroutines, context watchers
 	waitForGoroutines(t, baseline, 5, 10*time.Second)
 }
 
@@ -764,7 +807,7 @@ func TestLeak_ConcurrentCalls(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -807,7 +850,7 @@ func TestLeak_TimeoutCalls(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -842,7 +885,7 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -860,7 +903,7 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 
 		pipe, err = pipe.Reconnect(t.Context())
 		if err != nil {
-			t.Fatalf("ConnectToServer: %v", err)
+			t.Fatalf("Reconnect %d: %v", i, err)
 		}
 
 		var out string
@@ -869,6 +912,7 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 		}
 	}
 
+	pipe.Close()
 	time.Sleep(300 * time.Millisecond)
 
 	waitForGoroutines(t, baseline, 5, 5*time.Second)
@@ -887,7 +931,7 @@ func TestLeak_RawStreamHandlers(t *testing.T) {
 		}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -924,7 +968,7 @@ func TestLeak_ErrorResponses(t *testing.T) {
 		return Response{}, fmt.Errorf("intentional error")
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -956,7 +1000,7 @@ func TestLeak_StreamExhaustion(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -996,7 +1040,7 @@ func TestLeak_CancelledContexts(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: b}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -1037,7 +1081,7 @@ func TestLeak_ServerServeLoop(t *testing.T) {
 
 	baseline := goroutineSnapshot()
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 
 	clientTLS := newTestClientTLS(t)
 	const numClients = 10
@@ -1071,7 +1115,7 @@ func TestLeak_MemoryPressure(t *testing.T) {
 		return Response{Status: http.StatusOK, Data: data}, nil
 	})
 
-	addr, shutdown, _ := newTestARPCServer(t, router)
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
 	defer shutdown()
 
 	clientTLS := newTestClientTLS(t)
@@ -1106,7 +1150,6 @@ func TestLeak_MemoryPressure(t *testing.T) {
 	runtime.ReadMemStats(&m2)
 
 	// Check that allocated memory hasn't grown excessively
-	// Use HeapAlloc for more accurate measurement
 	growth := int64(m2.HeapAlloc) - int64(m1.HeapAlloc)
 	if growth < 0 {
 		growth = 0
