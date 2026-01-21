@@ -7,11 +7,13 @@ import (
 )
 
 type Logger struct {
-	mu       sync.RWMutex
-	zlog     *zerolog.Logger
-	hostname string
-	Server   bool
-	disabled bool
+	mu           sync.RWMutex
+	zlog         *zerolog.Logger
+	hostname     string
+	Server       bool
+	disabled     bool
+	dedup        *Deduplicator
+	dedupEnabled bool
 }
 
 // LogEntry represents a structured log entry.
@@ -24,4 +26,5 @@ type LogEntry struct {
 	ErrString string         `json:"error,omitempty"`
 	Fields    map[string]any `json:"fields,omitempty"`
 	logger    *Logger        `json:"-"`
+	skipDedup bool
 }
