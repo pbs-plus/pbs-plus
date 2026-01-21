@@ -148,7 +148,7 @@ func newTestARPCServer(t *testing.T, router Router) (addr string, cleanup func()
 
 	agentsManager = NewAgentsManager()
 	// Allow all connections by default for tests
-	agentsManager.SetExtraExpectFunc(func(clientID string) bool {
+	agentsManager.SetExtraExpectFunc(func(clientID string, _ []*x509.Certificate) bool {
 		return true
 	})
 
@@ -517,7 +517,7 @@ func TestConnectionRejection(t *testing.T) {
 	defer shutdown()
 
 	// Override to reject all connections
-	agentsManager.SetExtraExpectFunc(func(clientID string) bool {
+	agentsManager.SetExtraExpectFunc(func(clientID string, _ []*x509.Certificate) bool {
 		return false
 	})
 
@@ -534,7 +534,7 @@ func TestConnectionRejection(t *testing.T) {
 	}
 
 	// Re-enable connections and test successful connection
-	agentsManager.SetExtraExpectFunc(func(clientID string) bool {
+	agentsManager.SetExtraExpectFunc(func(clientID string, _ []*x509.Certificate) bool {
 		return true
 	})
 

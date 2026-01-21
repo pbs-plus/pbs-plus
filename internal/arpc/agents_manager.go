@@ -3,6 +3,7 @@ package arpc
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
 	"net/http"
@@ -20,7 +21,7 @@ type AgentsManager struct {
 	sessions     *safemap.Map[string, *StreamPipe]
 
 	mu                sync.Mutex
-	customExpectCheck func(string) bool
+	customExpectCheck func(string, []*x509.Certificate) bool
 }
 
 func NewAgentsManager() *AgentsManager {
@@ -34,7 +35,7 @@ func (sm *AgentsManager) Expect(id string) {
 	sm.expectedList.Set(id, struct{}{})
 }
 
-func (sm *AgentsManager) SetExtraExpectFunc(custom func(string) bool) {
+func (sm *AgentsManager) SetExtraExpectFunc(custom func(string, []*x509.Certificate) bool) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.customExpectCheck = custom
@@ -44,7 +45,7 @@ func (sm *AgentsManager) NotExpect(id string) {
 	sm.expectedList.Del(id)
 }
 
-func (sm *AgentsManager) isExpected(id string) bool {
+func (sm *AgentsManager) isExpected(id string, cert []*x509.Certificate) bool {
 	_, expected := sm.expectedList.Get(id)
 
 	customExpected := false
@@ -54,7 +55,7 @@ func (sm *AgentsManager) isExpected(id string) bool {
 	sm.mu.Unlock()
 
 	if custom != nil {
-		customExpected = custom(id)
+		customExpected = custom(id, cert)
 	}
 
 	return expected || customExpected
@@ -95,7 +96,7 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 		existingSession.Close()
 	}
 
-	if !sm.isExpected(clientID) {
+	if !sm.isExpected(clientID, state.PeerCertificates) {
 		return nil, "", errors.New("connection is not expected by server")
 	}
 
