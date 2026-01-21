@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -125,6 +126,7 @@ func ConnectARPC(ctx context.Context, version string) error {
 					var err error
 					session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 					if err != nil {
+						syslog.L.Error(err).WithMessage("failed to connect to arpc").Write()
 						sleep := min(time.Duration(float64(backoff)*(1+jitter*(2*rand.Float64()-1))), maxWait)
 						select {
 						case <-ctx.Done():
