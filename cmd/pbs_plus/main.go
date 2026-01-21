@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"log"
@@ -458,12 +459,30 @@ func main() {
 			return
 		}
 
-		storeInstance.ARPCAgentsManager.SetExtraExpectFunc(func(id string) bool {
+		storeInstance.ARPCAgentsManager.SetExtraExpectFunc(func(id string, certs []*x509.Certificate) bool {
 			syslog.L.Info().WithMessage("checking client authorization").WithField("id", id).Write()
 
-			_, err := storeInstance.Database.GetTarget(id)
+			if len(certs) == 0 {
+				syslog.L.Error(fmt.Errorf("no client certificates received")).WithMessage("client unauthorized").WithField("id", id).Write()
+				return false
+			}
+
+			trustedCert, err := storeInstance.Database.LoadAgentHostCert(id)
 			if err != nil {
 				syslog.L.Error(err).WithMessage("client unauthorized").WithField("id", id).Write()
+				return false
+			}
+
+			found := false
+			for _, cert := range certs {
+				if cert.Equal(trustedCert) {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				syslog.L.Error(fmt.Errorf("did not match trusted certificate")).WithMessage("client unauthorized").WithField("id", id).Write()
 				return false
 			}
 
