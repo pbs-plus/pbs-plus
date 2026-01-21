@@ -3,9 +3,13 @@
 package database
 
 import (
+	"crypto/x509"
 	"database/sql"
+	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -197,4 +201,43 @@ func (database *Database) GetAgentHostAuth(hostname string) (string, error) {
 	}
 
 	return fromNullString(auth), nil
+}
+
+func (database *Database) LoadAgentHostCert(hostname string) (*x509.Certificate, error) {
+	authValue, err := database.GetAgentHostAuth(hostname)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get auth values for hostname %s: %w", hostname, err)
+	}
+
+	decodedCert, err := base64.StdEncoding.DecodeString(authValue)
+	if err != nil {
+		return nil, fmt.Errorf("auth: failed to decode certificate: %w", err)
+	}
+
+	block, _ := pem.Decode(decodedCert)
+	if block != nil {
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("auth: failed to parse PEM certificate: %w", err)
+		}
+
+		now := time.Now()
+		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+			return nil, fmt.Errorf("certificate for hostname %s is expired or not yet valid", hostname)
+		}
+
+		return cert, nil
+	}
+
+	cert, err := x509.ParseCertificate(decodedCert)
+	if err != nil {
+		return nil, fmt.Errorf("auth: failed to parse raw certificate: %w", err)
+	}
+
+	now := time.Now()
+	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		return nil, fmt.Errorf("certificate for hostname %s is expired or not yet valid", hostname)
+	}
+
+	return cert, nil
 }

@@ -91,12 +91,15 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 			if err == nil {
 				hdrs, rerr := readHeadersFrame(stream)
 				if rerr != nil {
-					syslog.L.Debug().WithMessage("closing tun and conn due to missing header frames").Write()
+					syslog.L.Debug().WithMessage("failed to read headers, sending rejection").Write()
+					_ = writeRejectionFrame(stream, RejectionFrame{
+						Message: "failed to parse headers",
+						Code:    400,
+					})
 					_ = stream.Close()
 					return
 				}
 				reqHeaders = hdrs
-				_ = stream.Close()
 			} else {
 				return
 			}
@@ -106,9 +109,27 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 
 			pipe, id, err := agentsManager.registerStreamPipe(pCtx, smuxS, c, reqHeaders)
 			if err != nil {
-				syslog.L.Debug().WithMessage("closing tun and conn due to stream pipe err reg").Write()
+				syslog.L.Debug().
+					WithField("error", err.Error()).
+					WithMessage("registration failed, sending rejection").
+					Write()
+
+				_ = writeRejectionFrame(stream, RejectionFrame{
+					Message: err.Error(),
+					Code:    403,
+				})
+				_ = stream.Close()
 				return
 			}
+
+			if err := writeHeadersSuccess(stream); err != nil {
+				syslog.L.Debug().WithMessage("failed to send success marker").Write()
+				_ = stream.Close()
+				pipe.Close()
+				agentsManager.unregisterStreamPipe(id)
+				return
+			}
+			_ = stream.Close()
 
 			defer func() {
 				pipe.Close()

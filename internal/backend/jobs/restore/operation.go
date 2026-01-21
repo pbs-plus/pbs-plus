@@ -248,6 +248,9 @@ func (b *RestoreOperation) agentExecute() error {
 		DestPath:  destPath,
 	}
 
+	b.storeInstance.ARPCAgentsManager.Expect(b.job.GetStreamID())
+	defer b.storeInstance.ARPCAgentsManager.NotExpect(b.job.GetStreamID())
+
 	b.task.WriteString(fmt.Sprintf("calling restore to %s (%s)", b.job.DestTarget.Name, destPath))
 
 	_, err = arpcSess.CallMessage(preCtx, "restore", &restoreReq)
