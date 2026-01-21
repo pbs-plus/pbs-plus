@@ -462,6 +462,8 @@ func main() {
 		storeInstance.ARPCAgentsManager.SetExtraExpectFunc(func(id string) bool {
 			idArr := strings.Split(id, "|")
 
+			syslog.L.Info().WithMessage("checking client authorization").WithField("id", id).Write()
+
 			_, err := storeInstance.Database.GetTarget(idArr[0])
 			if err != nil {
 				return false
