@@ -19,7 +19,8 @@ func restartCallback(c Config) bool {
 				syslog.L.Error(err).WithMessage("failed to trigger restart").Write()
 			}
 		}()
-		c.ContextCancel()
+		<-c.Context.Done()
+
 		return false
 	}
 
@@ -61,6 +62,8 @@ func restartCallback(c Config) bool {
 			Write()
 		_ = cmd.Process.Release()
 	}
+
+	<-c.Context.Done()
 
 	return false
 }
