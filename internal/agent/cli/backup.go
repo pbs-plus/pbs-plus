@@ -125,54 +125,52 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 				}
 				return
 			default:
-				if session == nil {
-					syslog.L.Info().WithMessage("CmdBackup: Attempting connection").WithField("backupId", *backupId).Write()
+				syslog.L.Info().WithMessage("CmdBackup: Attempting connection").WithField("backupId", *backupId).Write()
 
-					var err error
-					session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
-					if err != nil {
-						if strings.Contains(err.Error(), "(code 403)") {
-							syslog.L.Error(err).WithMessage("CmdBackup: Authorization failed, shutting down").Write()
-							return
-						}
-
-						mult := 1 + jitter*(2*rand.Float64()-1)
-						sleep := min(time.Duration(float64(backoff)*mult), maxWait)
-
-						syslog.L.Warn().WithMessage(fmt.Sprintf("Connection failed, retrying in %v", sleep)).WithField("error", err.Error()).Write()
-
-						select {
-						case <-ctx.Done():
-							return
-						case <-time.After(sleep):
-							backoff = min(time.Duration(float64(backoff)*factor), maxWait)
-							continue
-						}
-					}
-					session.SetRouter(arpc.NewRouter())
-					syslog.L.Info().WithMessage("ARPC connection established").Write()
-					backoff = base
-				}
-
-				backupInitiatedOnce.Do(func() {
-					backupMode, err := Backup(session, *sourceMode, *readMode, *drive, *backupId)
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Backup initiation failed:", err)
-						syslog.L.Error(err).WithMessage("CmdBackup: Backup initiation failed").Write()
-						cancel()
+				var err error
+				session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
+				if err != nil {
+					if strings.Contains(err.Error(), "(code 403)") {
+						syslog.L.Error(err).WithMessage("CmdBackup: Authorization failed, shutting down").Write()
 						return
 					}
-					fmt.Println(BACKUP_MODE_PREFIX + backupMode)
-					close(backupInitiated)
-				})
 
-				if err := session.Serve(); err != nil {
-					syslog.L.Warn().WithMessage("ARPC connection lost, attempting recovery").WithField("error", err.Error()).Write()
-					session.Close()
-					session = nil // Force fresh connection on next loop iteration
-				} else {
+					mult := 1 + jitter*(2*rand.Float64()-1)
+					sleep := min(time.Duration(float64(backoff)*mult), maxWait)
+
+					syslog.L.Warn().WithMessage(fmt.Sprintf("Connection failed, retrying in %v", sleep)).WithField("error", err.Error()).Write()
+
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(sleep):
+						backoff = min(time.Duration(float64(backoff)*factor), maxWait)
+						continue
+					}
+				}
+				session.SetRouter(arpc.NewRouter())
+				syslog.L.Info().WithMessage("ARPC connection established").Write()
+				backoff = base
+			}
+
+			backupInitiatedOnce.Do(func() {
+				backupMode, err := Backup(session, *sourceMode, *readMode, *drive, *backupId)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "Backup initiation failed:", err)
+					syslog.L.Error(err).WithMessage("CmdBackup: Backup initiation failed").Write()
+					cancel()
 					return
 				}
+				fmt.Println(BACKUP_MODE_PREFIX + backupMode)
+				close(backupInitiated)
+			})
+
+			if err := session.Serve(); err != nil {
+				syslog.L.Warn().WithMessage("ARPC connection lost, attempting recovery").WithField("error", err.Error()).Write()
+				session.Close()
+				session = nil // Force fresh connection on next loop iteration
+			} else {
+				return
 			}
 		}
 	})
