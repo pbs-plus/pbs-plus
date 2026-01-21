@@ -122,55 +122,53 @@ func ConnectARPC(ctx context.Context, cancel context.CancelFunc, version string)
 				}
 				return
 			default:
-				if session == nil {
-					var err error
-					session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
-					if err != nil {
-						if strings.Contains(err.Error(), "(code 403)") {
-							syslog.L.Error(err).
-								WithMessage("certificate invalid or expired, clearing credentials and exiting process").
-								Write()
+				var err error
+				session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
+				if err != nil {
+					if strings.Contains(err.Error(), "(code 403)") {
+						syslog.L.Error(err).
+							WithMessage("certificate invalid or expired, clearing credentials and exiting process").
+							Write()
 
-							_ = registry.DeleteEntry(registry.AUTH, "ServerCA")
-							_ = registry.DeleteEntry(registry.AUTH, "Cert")
-							_ = registry.DeleteEntry(registry.AUTH, "Priv")
+						_ = registry.DeleteEntry(registry.AUTH, "ServerCA")
+						_ = registry.DeleteEntry(registry.AUTH, "Cert")
+						_ = registry.DeleteEntry(registry.AUTH, "Priv")
 
-							cancel()
-							return
-						}
-						sleep := min(time.Duration(float64(backoff)*(1+jitter*(2*rand.Float64()-1))), maxWait)
-						select {
-						case <-ctx.Done():
-							return
-						case <-time.After(sleep):
-							backoff = min(time.Duration(float64(backoff)*factor), maxWait)
-							continue
-						}
+						cancel()
+						return
 					}
-					router := arpc.NewRouter()
-					router.Handle("ping", func(req *arpc.Request) (arpc.Response, error) {
-						b, _ := cbor.Marshal(map[string]string{"version": version, "hostname": clientId})
-						return arpc.Response{Status: 200, Data: b}, nil
-					})
-					router.Handle("backup", func(req *arpc.Request) (arpc.Response, error) {
-						return controllers.BackupStartHandler(req, session)
-					})
-					router.Handle("restore", func(req *arpc.Request) (arpc.Response, error) {
-						return controllers.RestoreStartHandler(req, session)
-					})
-					router.Handle("filetree", func(req *arpc.Request) (arpc.Response, error) {
-						return controllers.RestoreFileTreeHandler(req, session)
-					})
-					router.Handle("target_status", controllers.StatusHandler)
-					router.Handle("cleanup", controllers.BackupCloseHandler)
-					router.Handle("cleanup_restore", controllers.RestoreCloseHandler)
-					session.SetRouter(router)
-					backoff = base
+					sleep := min(time.Duration(float64(backoff)*(1+jitter*(2*rand.Float64()-1))), maxWait)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(sleep):
+						backoff = min(time.Duration(float64(backoff)*factor), maxWait)
+						continue
+					}
 				}
-				if err := session.Serve(); err != nil {
-					session.Close()
-					session = nil
-				}
+				router := arpc.NewRouter()
+				router.Handle("ping", func(req *arpc.Request) (arpc.Response, error) {
+					b, _ := cbor.Marshal(map[string]string{"version": version, "hostname": clientId})
+					return arpc.Response{Status: 200, Data: b}, nil
+				})
+				router.Handle("backup", func(req *arpc.Request) (arpc.Response, error) {
+					return controllers.BackupStartHandler(req, session)
+				})
+				router.Handle("restore", func(req *arpc.Request) (arpc.Response, error) {
+					return controllers.RestoreStartHandler(req, session)
+				})
+				router.Handle("filetree", func(req *arpc.Request) (arpc.Response, error) {
+					return controllers.RestoreFileTreeHandler(req, session)
+				})
+				router.Handle("target_status", controllers.StatusHandler)
+				router.Handle("cleanup", controllers.BackupCloseHandler)
+				router.Handle("cleanup_restore", controllers.RestoreCloseHandler)
+				session.SetRouter(router)
+				backoff = base
+			}
+			if err := session.Serve(); err != nil {
+				session.Close()
+				session = nil
 			}
 		}
 	}()
