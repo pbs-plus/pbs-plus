@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -46,9 +47,7 @@ func (p *pbsService) Start(s service.Service) error {
 func (p *pbsService) run() {
 	_ = syslog.L.SetServiceLogger()
 	_ = windows.SetPriorityClass(windows.CurrentProcess(), 0x00000040)
-	p.ctx, p.cancel = context.WithCancel(context.Background())
 
-	agent.SetStatus("Starting")
 	if err := lifecycle.WaitForServerURL(p.ctx); err != nil {
 		return
 	}
@@ -85,10 +84,11 @@ func (p *pbsService) run() {
 		}
 	})
 
-	_ = lifecycle.ConnectARPC(p.ctx, p.cancel, Version)
-	agent.SetStatus("Running")
+	err := lifecycle.ConnectARPC(p.ctx, p.cancel, Version)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to connect to arpc").Write()
+	}
 	<-p.ctx.Done()
-	agent.SetStatus("Stopping")
 }
 
 func (p *pbsService) Stop(s service.Service) error {
@@ -105,17 +105,27 @@ func (p *pbsService) Stop(s service.Service) error {
 }
 
 func main() {
-	cli.Entry()
+	defer func() {
+		if r := recover(); r != nil {
+			_ = os.WriteFile("panic.log", []byte(fmt.Sprintf("Panic: %v\n%s", r, debug.Stack())), 0644)
+			os.Exit(1)
+		}
+	}()
 	constants.Version = Version
+	cli.Entry()
+
 	svcConfig := &service.Config{
 		Name: "PBSPlusAgent", DisplayName: "PBS Plus Agent",
 		Option: service.KeyValue{"OnFailure": "restart", "OnFailureDelayDuration": "5s"},
 	}
 	prg := &pbsService{}
+	prg.ctx, prg.cancel = context.WithCancel(context.Background())
+
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	if len(os.Args) > 1 {
 		if os.Args[1] == "version" {
 			fmt.Print(Version)
@@ -124,9 +134,14 @@ func main() {
 		_ = service.Control(s, os.Args[1])
 		return
 	}
+
 	if service.Interactive() {
 		prg.run()
 		return
 	}
-	_ = s.Run()
+
+	err = s.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 }

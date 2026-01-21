@@ -89,6 +89,10 @@ func New(cfg Config) (*Updater, error) {
 				syslog.L.Debug().WithMessage(line).WithField("source", "selfupdate").Write()
 				return
 			}
+			if strings.Contains(line, "didn't confirm restarting") {
+				syslog.L.Debug().WithMessage(line).WithField("source", "selfupdate").Write()
+				return
+			}
 
 			syslog.L.Info().WithMessage(line).WithField("source", "selfupdate").Write()
 		}

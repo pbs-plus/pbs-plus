@@ -114,8 +114,9 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-	cli.Entry()
 	constants.Version = Version
+	cli.Entry()
+
 	svcConfig := &service.Config{
 		Name:        "pbs-plus-agent",
 		DisplayName: "PBS Plus Agent",
@@ -133,6 +134,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	if len(os.Args) > 1 {
 		if os.Args[1] == "version" {
 			fmt.Print(Version)
@@ -148,5 +150,9 @@ func main() {
 		prg.run()
 		return
 	}
-	_ = s.Run()
+
+	err = s.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
