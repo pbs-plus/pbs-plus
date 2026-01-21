@@ -14,7 +14,11 @@ import (
 
 func restartCallback(c Config) bool {
 	if c.Service != nil {
-		c.Service.Restart()
+		go func() {
+			if err := c.Service.Restart(); err != nil {
+				syslog.L.Error(err).WithMessage("failed to trigger restart").Write()
+			}
+		}()
 		return false
 	}
 

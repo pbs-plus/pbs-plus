@@ -168,17 +168,8 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 
 				if err := session.Serve(); err != nil {
 					syslog.L.Warn().WithMessage("ARPC connection lost, attempting recovery").WithField("error", err.Error()).Write()
-
-					if newS, err := session.Reconnect(ctx); err == nil {
-						session = newS
-						syslog.L.Info().WithMessage("ARPC connection restored via Reconnect").Write()
-					} else {
-						if strings.Contains(err.Error(), "(code 403)") {
-							syslog.L.Error(err).WithMessage("CmdBackup: Authorization failed, shutting down").Write()
-							return
-						}
-						session = nil // Force fresh connection on next loop iteration
-					}
+					session.Close()
+					session = nil // Force fresh connection on next loop iteration
 				} else {
 					return
 				}

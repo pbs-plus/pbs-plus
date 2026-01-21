@@ -128,32 +128,15 @@ func ConnectARPC(ctx context.Context, cancel context.CancelFunc, version string)
 					if err != nil {
 						if strings.Contains(err.Error(), "(code 403)") {
 							syslog.L.Error(err).
-								WithMessage("certificate invalid or expired, clearing credentials and re-bootstrapping").
+								WithMessage("certificate invalid or expired, clearing credentials and exiting process").
 								Write()
 
 							_ = registry.DeleteEntry(registry.AUTH, "ServerCA")
 							_ = registry.DeleteEntry(registry.AUTH, "Cert")
 							_ = registry.DeleteEntry(registry.AUTH, "Priv")
 
-							if bootstrapErr := agent.Bootstrap(); bootstrapErr != nil {
-								syslog.L.Error(bootstrapErr).
-									WithMessage("failed to bootstrap agent").
-									Write()
-								cancel()
-								return
-							}
-
-							newTlsConfig, tlsErr := agent.GetTLSConfig()
-							if tlsErr == nil {
-								tlsConfig = newTlsConfig
-							} else {
-								syslog.L.Error(tlsErr).
-									WithMessage("failed to generate tls config").
-									Write()
-							}
-
-							backoff = base
-							continue
+							cancel()
+							return
 						}
 						sleep := min(time.Duration(float64(backoff)*(1+jitter*(2*rand.Float64()-1))), maxWait)
 						select {
@@ -185,11 +168,8 @@ func ConnectARPC(ctx context.Context, cancel context.CancelFunc, version string)
 					backoff = base
 				}
 				if err := session.Serve(); err != nil {
-					if newS, err := session.Reconnect(ctx); err == nil {
-						session = newS
-					} else {
-						session = nil
-					}
+					session.Close()
+					session = nil
 				}
 			}
 		}
