@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
@@ -111,7 +112,9 @@ func ConnectARPC(ctx context.Context, version string) error {
 
 	go func() {
 		base, maxWait, factor, jitter := 500*time.Millisecond, 30*time.Second, 2.0, 0.2
+		bootstrapBase, bootstrapMaxWait := 30*time.Second, 5*time.Minute
 		backoff := base
+		bootstrapBackoff := bootstrapBase
 		var session *arpc.StreamPipe
 		for {
 			select {
@@ -125,6 +128,43 @@ func ConnectARPC(ctx context.Context, version string) error {
 					var err error
 					session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 					if err != nil {
+						if strings.HasPrefix(err.Error(), "(code 403)") {
+							syslog.L.Error(err).
+								WithMessage("certificate invalid or expired, clearing credentials and re-bootstrapping").
+								Write()
+
+							_ = registry.DeleteEntry(registry.AUTH, "ServerCA")
+							_ = registry.DeleteEntry(registry.AUTH, "Cert")
+							_ = registry.DeleteEntry(registry.AUTH, "Priv")
+
+							if bootstrapErr := agent.Bootstrap(); bootstrapErr != nil {
+								syslog.L.Error(bootstrapErr).
+									WithMessage("failed to bootstrap agent").
+									Write()
+
+								sleep := min(time.Duration(float64(bootstrapBackoff)*(1+jitter*(2*rand.Float64()-1))), bootstrapMaxWait)
+								select {
+								case <-ctx.Done():
+									return
+								case <-time.After(sleep):
+									bootstrapBackoff = min(time.Duration(float64(bootstrapBackoff)*factor), bootstrapMaxWait)
+									continue
+								}
+							}
+
+							newTlsConfig, tlsErr := agent.GetTLSConfig()
+							if tlsErr == nil {
+								tlsConfig = newTlsConfig
+							} else {
+								syslog.L.Error(tlsErr).
+									WithMessage("failed to generate tls config").
+									Write()
+							}
+
+							backoff = base
+							bootstrapBackoff = bootstrapBase
+							continue
+						}
 						sleep := min(time.Duration(float64(backoff)*(1+jitter*(2*rand.Float64()-1))), maxWait)
 						select {
 						case <-ctx.Done():
@@ -153,6 +193,7 @@ func ConnectARPC(ctx context.Context, version string) error {
 					router.Handle("cleanup_restore", controllers.RestoreCloseHandler)
 					session.SetRouter(router)
 					backoff = base
+					bootstrapBackoff = bootstrapBase
 				}
 				if err := session.Serve(); err != nil {
 					if newS, err := session.Reconnect(ctx); err == nil {
