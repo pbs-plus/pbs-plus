@@ -33,7 +33,7 @@ type Config struct {
 	UpgradeConfirm func(newVersion string) bool
 	Exit           func(error)
 	Service        service.Service
-	ContextCancel  context.CancelFunc
+	Context        context.Context
 }
 
 type Updater struct {
