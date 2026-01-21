@@ -12,7 +12,7 @@ import (
 	"github.com/containers/winquit/pkg/winquit"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/agent/forks"
+	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -37,7 +37,7 @@ func BackupStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respo
 	syslog.L.Info().WithMessage("received backup request for job").WithField("id", reqData.BackupId).Write()
 
 	syslog.L.Info().WithMessage("forking process for backup job").WithField("id", reqData.BackupId).Write()
-	backupMode, pid, err := forks.ExecBackup(reqData.SourceMode, reqData.ReadMode, reqData.Drive, reqData.BackupId)
+	backupMode, pid, err := cli.ExecBackup(reqData.SourceMode, reqData.ReadMode, reqData.Drive, reqData.BackupId)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("forking process for backup job").WithField("id", reqData.BackupId).Write()
 		if pid != -1 {

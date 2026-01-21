@@ -14,7 +14,7 @@ import (
 	arpcTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
@@ -27,7 +27,7 @@ func D2DRestoreFileTree(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		target, err := storeInstance.Database.GetTarget(types.WrapTargetName(utils.DecodePath(r.PathValue("target"))))
+		target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -38,20 +38,18 @@ func D2DRestoreFileTree(storeInstance *store.Store) http.HandlerFunc {
 			subPath = utils.DecodePath(r.FormValue("filepath"))
 		}
 
-		if !target.Path.IsAgent() {
+		if !target.IsAgent() {
 			controllers.WriteErrorResponse(w, errors.ErrUnsupported)
 			return
 		}
 
-		targetInfo := target.Path.GetPathInfo()
-
-		arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(target.Name.GetHostname())
+		arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(target.GetHostname())
 		if !ok {
 			controllers.WriteErrorResponse(w, errors.New("target unreachable"))
 			return
 		}
 
-		reqData := arpcTypes.FileTreeReq{HostPath: targetInfo.HostPath, SubPath: subPath}
+		reqData := arpcTypes.FileTreeReq{HostPath: target.GetAgentHostPath(), SubPath: subPath}
 		resp, err := arpcSess.CallData(r.Context(), "filetree", &reqData)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
@@ -85,7 +83,7 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for i, restore := range allRestores {
 			var stats pxar.PxarReaderStats
-			if restore.DestTargetPath.IsAgent() {
+			if restore.DestTarget.IsAgent() {
 				session := vfssessions.GetSessionPxarReader(restore.GetStreamID())
 				if session == nil {
 					continue
@@ -96,12 +94,12 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 				continue
 			}
 
-			allRestores[i].CurrentFileCount = int(stats.FilesAccessed)
-			allRestores[i].CurrentFolderCount = int(stats.FoldersAccessed)
-			allRestores[i].CurrentBytesTotal = int(stats.TotalBytes)
-			allRestores[i].CurrentBytesSpeed = int(stats.ByteReadSpeed)
-			allRestores[i].CurrentFilesSpeed = int(stats.FileAccessSpeed)
-			allRestores[i].StatCacheHits = int(stats.StatCacheHits)
+			allRestores[i].CurrentStats.CurrentFileCount = int(stats.FilesAccessed)
+			allRestores[i].CurrentStats.CurrentFolderCount = int(stats.FoldersAccessed)
+			allRestores[i].CurrentStats.CurrentBytesTotal = int(stats.TotalBytes)
+			allRestores[i].CurrentStats.CurrentBytesSpeed = int(stats.ByteReadSpeed)
+			allRestores[i].CurrentStats.CurrentFilesSpeed = int(stats.FileAccessSpeed)
+			allRestores[i].CurrentStats.StatCacheHits = int(stats.StatCacheHits)
 		}
 
 		digest, err := utils.CalculateDigest(allRestores)
@@ -212,14 +210,14 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
-		newRestore := types.Restore{
+		newRestore := database.Restore{
 			ID:            r.FormValue("id"),
 			Store:         r.FormValue("store"),
 			Namespace:     r.FormValue("ns"),
 			Snapshot:      r.FormValue("snapshot"),
 			SrcPath:       r.FormValue("src-path"),
-			DestTarget:    types.WrapTargetName(r.FormValue("dest-target")),
-			DestPath:      r.FormValue("dest-path"),
+			DestTarget:    database.Target{Name: r.FormValue("dest-target")},
+			DestSubpath:   r.FormValue("dest-subpath"),
 			PreScript:     r.FormValue("pre_script"),
 			PostScript:    r.FormValue("post_script"),
 			Comment:       r.FormValue("comment"),
@@ -275,10 +273,10 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				restore.SrcPath = r.FormValue("src-path")
 			}
 			if r.FormValue("dest-target") != "" {
-				restore.DestTarget = types.WrapTargetName(r.FormValue("dest-target"))
+				restore.DestTarget = database.Target{Name: r.FormValue("dest-target")}
 			}
-			if r.FormValue("dest-path") != "" {
-				restore.DestPath = r.FormValue("dest-path")
+			if r.FormValue("dest-subpath") != "" {
+				restore.DestSubpath = r.FormValue("dest-subpath")
 			}
 			if r.FormValue("comment") != "" {
 				restore.Comment = r.FormValue("comment")
@@ -312,9 +310,9 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					case "src-path":
 						restore.SrcPath = ""
 					case "dest-target":
-						restore.DestTarget.Raw = ""
-					case "dest-path":
-						restore.DestPath = ""
+						restore.DestTarget.Name = ""
+					case "dest-subpath":
+						restore.DestSubpath = ""
 					case "pre_script":
 						restore.PreScript = ""
 					case "post_script":

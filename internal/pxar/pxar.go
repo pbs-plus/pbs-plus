@@ -21,6 +21,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -67,7 +68,7 @@ func (r *PxarReader) GetStats() PxarReaderStats {
 	}
 }
 
-func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapshot string, proxmoxTask *proxmox.RestoreTask) (*PxarReader, error) {
+func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapshot string, proxmoxTask *tasks.RestoreTask) (*PxarReader, error) {
 	dsInfo, err := proxmox.GetDatastoreInfo(pbsStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore: %w", err)

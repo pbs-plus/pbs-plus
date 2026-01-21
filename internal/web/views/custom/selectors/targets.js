@@ -26,42 +26,50 @@ Ext.define("PBS.form.D2DTargetSelector", {
   },
 
   listConfig: {
-    width: 450,
+    width: 600,
     columns: [
       {
-        text: gettext("Name"),
+        header: gettext("Name"),
         dataIndex: "name",
         sortable: true,
-        flex: 3,
+        flex: 2,
         renderer: Ext.String.htmlEncode,
       },
       {
-        text: "Path",
+        header: gettext("Type"),
+        dataIndex: "target_type",
+        sortable: true,
+        flex: 1,
+        renderer: function (value) {
+          let icons = {
+            local: '<i class="fa fa-desktop"></i> Local',
+            agent: '<i class="fa fa-server"></i> Agent',
+            s3: '<i class="fa fa-cloud"></i> S3',
+          };
+          return icons[value] || Ext.String.htmlEncode(value || "");
+        },
+      },
+      {
+        header: gettext("Path / Volume"),
         dataIndex: "path",
         sortable: true,
         flex: 3,
-        renderer: Ext.String.htmlEncode,
-      },
-      {
-        text: "Type",
-        dataIndex: "drive_type",
-        sortable: true,
-        flex: 3,
-        renderer: Ext.String.htmlEncode,
+        renderer: function (value, metaData, record) {
+          if (record.get("target_type") === "agent") {
+            let volumeName = record.get("volume_name");
+            let volumeId = record.get("volume_id");
+            return Ext.String.htmlEncode(volumeName || volumeId || "-");
+          }
+          return value ? Ext.String.htmlEncode(value) : "-";
+        },
       },
     ],
   },
 
-  initComponent: function() {
+  initComponent: function () {
     let me = this;
 
-    if (me.changer) {
-      me.store.proxy.extraParams = {
-        changer: me.changer,
-      };
-    } else {
-      me.store.proxy.extraParams = {};
-    }
+    me.store.proxy.extraParams = me.changer ? { changer: me.changer } : {};
 
     me.callParent();
   },

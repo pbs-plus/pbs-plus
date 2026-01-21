@@ -4,7 +4,6 @@ package utils
 
 import (
 	"fmt"
-	"runtime"
 	"syscall"
 )
 
@@ -56,17 +55,16 @@ func GetLocalDrives() ([]DriveInfo, error) {
 
 	// Create a single drive representing the entire Linux filesystem
 	drive := DriveInfo{
-		Letter:          "Root",
-		Type:            "Fixed",
-		VolumeName:      "Root",
-		FileSystem:      "Root Filesystem",
-		TotalBytes:      totalBytes,
-		UsedBytes:       usedBytes,
-		FreeBytes:       freeBytes,
-		Total:           totalHuman,
-		Used:            usedHuman,
-		Free:            freeHuman,
-		OperatingSystem: runtime.GOOS,
+		Letter:     "Root",
+		Type:       "Fixed",
+		VolumeName: "Root",
+		FileSystem: "Root Filesystem",
+		TotalBytes: totalBytes,
+		UsedBytes:  usedBytes,
+		FreeBytes:  freeBytes,
+		Total:      totalHuman,
+		Used:       usedHuman,
+		Free:       freeHuman,
 	}
 
 	return []DriveInfo{drive}, nil

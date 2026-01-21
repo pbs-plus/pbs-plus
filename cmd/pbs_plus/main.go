@@ -28,8 +28,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/system"
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web"
@@ -44,10 +43,7 @@ import (
 
 	"net/http/pprof"
 
-	// By default, it sets `GOMEMLIMIT` to 90% of cgroup's memory limit.
-	// This is equivalent to `memlimit.SetGoMemLimitWithOpts(memlimit.WithLogger(slog.Default()))`
-	// To disable logging, use `memlimit.SetGoMemLimitWithOpts` directly.
-	_ "github.com/KimMachineGun/automemlimit"
+	_ "github.com/pbs-plus/pbs-plus/internal/utils/memlimit"
 )
 
 var Version = "v0.0.0"
@@ -160,7 +156,7 @@ func main() {
 			}
 
 			if retryAttempts == nil || *retryAttempts == "" {
-				system.RemoveAllRetrySchedules(context.Background(), backupTask)
+				backupTask.RemoveAllRetrySchedules(context.Background())
 			}
 
 			arrExtExc := []string(extExclusions)
@@ -241,17 +237,17 @@ func main() {
 	tx, err := storeInstance.Database.NewTransaction()
 	if err == nil {
 		for _, queuedBackup := range queuedBackups {
-			task, err := proxmox.GenerateBackupTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
+			task, err := tasks.GenerateBackupTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
 			if err != nil {
 				continue
 			}
 
-			queueTaskPath, err := proxmox.GetLogPath(queuedBackup.LastRunUpid)
+			queueTaskPath, err := proxmox.GetLogPath(queuedBackup.History.LastRunUpid)
 			if err == nil {
 				os.Remove(queueTaskPath)
 			}
 
-			queuedBackup.LastRunUpid = task.UPID
+			queuedBackup.History.LastRunUpid = task.UPID
 			err = storeInstance.Database.UpdateBackup(tx, queuedBackup)
 			if err != nil {
 				continue
@@ -371,6 +367,7 @@ func main() {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target", mw.ServerOnly(storeInstance, targets.ExtJsTargetHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}", mw.ServerOnly(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}/s3-secret", mw.ServerOnly(storeInstance, targets.ExtJsTargetS3SecretHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-agent/{agent}", mw.ServerOnly(storeInstance, targets.ExtJsAgentSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount/{datastore}", mw.ServerOnly(storeInstance, jobs.ExtJsMountHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount/{datastore}", mw.ServerOnly(storeInstance, jobs.ExtJsUnmountHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount-all/{datastore}", mw.ServerOnly(storeInstance, jobs.ExtJsUnmountAllHandler(storeInstance)))
@@ -382,6 +379,7 @@ func main() {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", mw.ServerOnly(storeInstance, exclusions.ExtJsExclusionSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-backup", mw.ServerOnly(storeInstance, jobs.ExtJsBackupHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}", mw.ServerOnly(storeInstance, jobs.ExtJsBackupSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}/upids", mw.ServerOnly(storeInstance, jobs.ExtJsBackupUPIDsHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreSingleHandler(storeInstance)))
 
@@ -464,7 +462,7 @@ func main() {
 		storeInstance.ARPCAgentsManager.SetExtraExpectFunc(func(id string) bool {
 			idArr := strings.Split(id, "|")
 
-			_, err := storeInstance.Database.GetTarget(types.WrapTargetName(idArr[0]))
+			_, err := storeInstance.Database.GetTarget(idArr[0])
 			if err != nil {
 				return false
 			}

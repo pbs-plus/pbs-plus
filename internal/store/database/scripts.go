@@ -1,24 +1,22 @@
 //go:build linux
 
-package sqlite
+package database
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/types"
+	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	_ "modernc.org/sqlite"
 )
 
-// CreateScript inserts a new script or updates if it exists.
-func (database *Database) CreateScript(tx *sql.Tx, script types.Script) (err error) {
+func (database *Database) CreateScript(tx *Transaction, script Script) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("CreateScript: failed to begin transaction: %w", err)
 		}
@@ -42,27 +40,17 @@ func (database *Database) CreateScript(tx *sql.Tx, script types.Script) (err err
 			}
 		}()
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if script.Path == "" {
 		return fmt.Errorf("script path empty")
 	}
 
-	_, err = tx.Exec(`
-        INSERT INTO scripts (path, description)
-        VALUES (?, ?)
-    `,
-		script.Path, script.Description,
-	)
+	err = q.CreateScript(database.ctx, sqlc.CreateScriptParams{
+		Path:        script.Path,
+		Description: toNullString(script.Description),
+	})
 	if err != nil {
-		// Use specific error check if possible, otherwise string contains is fallback
-		// For modernc.org/sqlite, check for sqlite3.ErrConstraintUnique or similar
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") { // Consider more robust error checking
-			err = database.UpdateScript(tx, script) // Use the existing transaction
-			if err == nil {
-				commitNeeded = true // Mark for commit if update succeeds
-			}
-			return err // Return the result of UpdateScript
-		}
 		return fmt.Errorf("CreateScript: error inserting script: %w", err)
 	}
 
@@ -70,11 +58,12 @@ func (database *Database) CreateScript(tx *sql.Tx, script types.Script) (err err
 	return nil
 }
 
-// UpdateScript updates an existing script.
-func (database *Database) UpdateScript(tx *sql.Tx, script types.Script) (err error) {
+func (database *Database) UpdateScript(tx *Transaction, script Script) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("UpdateScript: failed to begin transaction: %w", err)
 		}
@@ -98,18 +87,16 @@ func (database *Database) UpdateScript(tx *sql.Tx, script types.Script) (err err
 			}
 		}()
 	}
+	q = database.queries.WithTx(tx.Tx)
 
 	if script.Path == "" {
 		return fmt.Errorf("script path empty")
 	}
 
-	_, err = tx.Exec(`
-        UPDATE scripts SET
-					description = ?
-        WHERE path = ?
-    `,
-		script.Description, script.Path,
-	)
+	err = q.UpdateScript(database.ctx, sqlc.UpdateScriptParams{
+		Description: toNullString(script.Description),
+		Path:        script.Path,
+	})
 	if err != nil {
 		return fmt.Errorf("UpdateScript: error updating script: %w", err)
 	}
@@ -118,11 +105,12 @@ func (database *Database) UpdateScript(tx *sql.Tx, script types.Script) (err err
 	return nil
 }
 
-// DeleteScript removes a script.
-func (database *Database) DeleteScript(tx *sql.Tx, name string) (err error) {
+func (database *Database) DeleteScript(tx *Transaction, name string) (err error) {
 	var commitNeeded bool = false
+	q := database.queries
+
 	if tx == nil {
-		tx, err = database.writeDb.BeginTx(context.Background(), &sql.TxOptions{})
+		tx, err = database.NewTransaction()
 		if err != nil {
 			return fmt.Errorf("DeleteScript: failed to begin transaction: %w", err)
 		}
@@ -146,15 +134,14 @@ func (database *Database) DeleteScript(tx *sql.Tx, name string) (err error) {
 			}
 		}()
 	}
+	q = database.queries.WithTx(tx.Tx)
 
-	res, err := tx.Exec("DELETE FROM scripts WHERE path = ?", name)
+	rowsAffected, err := q.DeleteScript(database.ctx, name)
 	if err != nil {
 		return fmt.Errorf("DeleteScript: error deleting script: %w", err)
 	}
 
-	rowsAffected, _ := res.RowsAffected()
 	if rowsAffected == 0 {
-		// Return sql.ErrNoRows if the script wasn't found
 		return sql.ErrNoRows
 	}
 
@@ -162,87 +149,37 @@ func (database *Database) DeleteScript(tx *sql.Tx, name string) (err error) {
 	return nil
 }
 
-// GetScript retrieves a script by name along with its associated job count.
-func (database *Database) GetScript(path string) (types.Script, error) {
-	row := database.readDb.QueryRow(`
-        SELECT
-            s.path, s.description,
-            COUNT(j.id) as job_count,
-            COUNT(t.name) as target_count
-        FROM scripts s
-        LEFT JOIN backups j ON
-					s.path = j.pre_script
-					OR s.path = j.post_script
-        LEFT JOIN targets t ON
-					s.path = t.mount_script
-        WHERE s.path = ?
-        GROUP BY s.path
-    `, path) // Grouping by primary key (or unique key) is sufficient
-
-	var script types.Script
-	var jobCount int
-	var targetCount int
-	err := row.Scan(
-		&script.Path, &script.Description,
-		&jobCount, &targetCount,
-	)
+func (database *Database) GetScript(path string) (Script, error) {
+	row, err := database.readQueries.GetScript(database.ctx, path)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Script{}, sql.ErrNoRows
+	}
 	if err != nil {
-		// Don't wrap sql.ErrNoRows, return it directly
-		if errors.Is(err, sql.ErrNoRows) {
-			return types.Script{}, sql.ErrNoRows
-		}
-		return types.Script{}, fmt.Errorf("GetScript: error fetching script: %w", err)
+		return Script{}, fmt.Errorf("GetScript: error fetching script: %w", err)
 	}
 
-	script.JobCount = jobCount
-	script.TargetCount = targetCount
-
-	return script, nil
+	return Script{
+		Path:        row.Path,
+		Description: fromNullString(row.Description),
+		JobCount:    int(row.JobCount),
+		TargetCount: int(row.TargetCount),
+	}, nil
 }
 
-// GetAllScripts returns all scripts along with their associated job counts.
-func (database *Database) GetAllScripts() ([]types.Script, error) {
-	rows, err := database.readDb.Query(`
-        SELECT
-            s.path, s.description,
-            COUNT(j.id) as job_count,
-            COUNT(t.name) as target_count
-        FROM scripts s
-        LEFT JOIN backups j ON
-					s.path = j.pre_script
-					OR s.path = j.post_script
-        LEFT JOIN targets t ON
-					s.path = t.mount_script
-        GROUP BY s.path, s.description
-				ORDER BY s.path
-    `) // Group by all non-aggregated columns
+func (database *Database) GetAllScripts() ([]Script, error) {
+	rows, err := database.readQueries.ListAllScripts(database.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllScripts: error querying scripts: %w", err)
 	}
-	defer rows.Close()
 
-	var scripts []types.Script
-	for rows.Next() {
-		var script types.Script
-		var jobCount int
-		var targetCount int
-		err := rows.Scan(
-			&script.Path, &script.Description,
-			&jobCount, &targetCount,
-		)
-		if err != nil {
-			syslog.L.Error(fmt.Errorf("GetAllScripts: error scanning script row: %w", err)).Write()
-			continue
+	scripts := make([]Script, len(rows))
+	for i, row := range rows {
+		scripts[i] = Script{
+			Path:        row.Path,
+			Description: fromNullString(row.Description),
+			JobCount:    int(row.JobCount),
+			TargetCount: int(row.TargetCount),
 		}
-
-		script.JobCount = jobCount
-		script.TargetCount = targetCount
-
-		scripts = append(scripts, script)
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetAllScripts: error iterating script rows: %w", err)
 	}
 
 	return scripts, nil
