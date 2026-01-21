@@ -39,7 +39,7 @@ func (p *pbsService) Start(s service.Service) error {
 			UpgradeConfirm: func(v string) bool { return true },
 			Exit:           func(err error) {},
 			Service:        s,
-			ContextCancel:  p.cancel,
+			Context:        p.ctx,
 		})
 	}
 	go p.run()
@@ -98,7 +98,12 @@ func (p *pbsService) Stop(s service.Service) error {
 	if p.cancel != nil {
 		p.cancel()
 	}
-	p.wg.Wait()
+	done := make(chan struct{})
+	go func() { p.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+	}
 	return nil
 }
 
