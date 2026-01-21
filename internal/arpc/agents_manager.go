@@ -3,9 +3,11 @@ package arpc
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -15,22 +17,55 @@ import (
 )
 
 type AgentsManager struct {
-	sessions *safemap.Map[string, *StreamPipe]
+	expectedList *safemap.Map[string, struct{}]
+	sessions     *safemap.Map[string, *StreamPipe]
+
+	mu                sync.Mutex
+	customExpectCheck func(string, []*x509.Certificate) bool
 }
 
 func NewAgentsManager() *AgentsManager {
 	return &AgentsManager{
-		sessions: safemap.New[string, *StreamPipe](),
+		expectedList: safemap.New[string, struct{}](),
+		sessions:     safemap.New[string, *StreamPipe](),
 	}
 }
 
-func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.Session, conn net.Conn, headers http.Header) (*StreamPipe, string, error) {
-	tlsConn, ok := conn.(*tls.Conn)
-	if !ok {
-		return nil, "", errors.New("connection is not a TLS connection")
+func (sm *AgentsManager) Expect(id string) {
+	sm.expectedList.Set(id, struct{}{})
+}
+
+func (sm *AgentsManager) SetExtraExpectFunc(custom func(string, []*x509.Certificate) bool) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.customExpectCheck = custom
+}
+
+func (sm *AgentsManager) NotExpect(id string) {
+	sm.expectedList.Del(id)
+}
+
+func (sm *AgentsManager) isExpected(id string, cert []*x509.Certificate) bool {
+	_, expected := sm.expectedList.Get(id)
+
+	if expected {
+		return true
 	}
 
-	state := tlsConn.ConnectionState()
+	customExpected := false
+
+	sm.mu.Lock()
+	custom := sm.customExpectCheck
+	sm.mu.Unlock()
+
+	if custom != nil {
+		customExpected = custom(id, cert)
+	}
+
+	return customExpected
+}
+
+func (sm *AgentsManager) getClientId(state tls.ConnectionState, headers http.Header) string {
 	clientID := state.ServerName
 
 	if len(state.PeerCertificates) > 0 {
@@ -48,8 +83,25 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 		clientID = clientID + "|" + restoreIdHeader + "|restore"
 	}
 
+	return clientID
+}
+
+func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.Session, conn net.Conn, headers http.Header) (*StreamPipe, string, error) {
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		return nil, "", errors.New("connection is not a TLS connection")
+	}
+
+	state := tlsConn.ConnectionState()
+
+	clientID := sm.getClientId(state, headers)
+
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
 		existingSession.Close()
+	}
+
+	if !sm.isExpected(clientID, state.PeerCertificates) {
+		return nil, "", errors.New("connection is not expected by server")
 	}
 
 	pipe, err := AcceptConnection(ctx, smuxTun, conn)

@@ -131,6 +131,11 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 					var err error
 					session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 					if err != nil {
+						if strings.Contains(err.Error(), "(code 403)") {
+							syslog.L.Error(err).WithMessage("CmdBackup: Authorization failed, shutting down").Write()
+							return
+						}
+
 						mult := 1 + jitter*(2*rand.Float64()-1)
 						sleep := min(time.Duration(float64(backoff)*mult), maxWait)
 
@@ -168,6 +173,10 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 						session = newS
 						syslog.L.Info().WithMessage("ARPC connection restored via Reconnect").Write()
 					} else {
+						if strings.Contains(err.Error(), "(code 403)") {
+							syslog.L.Error(err).WithMessage("CmdBackup: Authorization failed, shutting down").Write()
+							return
+						}
 						session = nil // Force fresh connection on next loop iteration
 					}
 				} else {
