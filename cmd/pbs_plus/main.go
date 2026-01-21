@@ -466,7 +466,7 @@ func main() {
 				return false
 			}
 
-			syslog.L.Info().WithMessage("checking client authorization").WithField("id", id).Write()
+			syslog.L.Debug().WithMessage("checking client authorization").WithField("id", id).Write()
 
 			if len(certs) == 0 {
 				syslog.L.Error(fmt.Errorf("no client certificates received")).WithMessage("client unauthorized").WithField("id", id).Write()
@@ -492,7 +492,7 @@ func main() {
 				return false
 			}
 
-			syslog.L.Info().WithMessage("client authorized").WithField("id", id).Write()
+			syslog.L.Debug().WithMessage("client authorized").WithField("id", id).Write()
 
 			return true
 		})

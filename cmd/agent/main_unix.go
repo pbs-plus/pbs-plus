@@ -87,7 +87,7 @@ func (p *pbsService) run() {
 		}
 	})
 
-	err := lifecycle.ConnectARPC(p.ctx, Version)
+	err := lifecycle.ConnectARPC(p.ctx, p.cancel, Version)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to connect to arpc").Write()
 	}
