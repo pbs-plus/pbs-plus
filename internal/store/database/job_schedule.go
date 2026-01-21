@@ -193,7 +193,8 @@ func (backup *Backup) SetBackupRetrySchedule(ctx context.Context, extraExclusion
 
 	timerName := retryUnitName + ".timer"
 	serviceName := retryUnitName + ".service"
-	delay := fmt.Sprintf("%dm", backup.RetryInterval)
+
+	delayMicroseconds := uint64(backup.RetryInterval) * 60 * 1000000
 
 	execArgs := []string{"/usr/bin/pbs-plus", "-backup-job=" + backup.ID, "-retry=" + strconv.Itoa(newAttempt)}
 	for _, exclusion := range extraExclusions {
@@ -226,7 +227,8 @@ ExecStart=%s
 
 	timerProps := []dbus.Property{
 		dbus.PropDescription(fmt.Sprintf("%s Backup Retry Timer (Attempt %d)", backup.ID, newAttempt)),
-		{Name: "OnActiveSec", Value: godbus.MakeVariant(delay)},
+		{Name: "OnActiveSec", Value: godbus.MakeVariant(delayMicroseconds)},
+		{Name: "Unit", Value: godbus.MakeVariant(serviceName)},
 	}
 
 	_, err = conn.StartTransientUnitContext(ctx, timerName, "replace", timerProps, nil)
@@ -234,8 +236,8 @@ ExecStart=%s
 		return fmt.Errorf("SetBackupRetrySchedule: error creating timer: %w", err)
 	}
 
-	fmt.Printf("Scheduled retry %d/%d for backup %s in %s\n",
-		newAttempt, backup.Retry, backup.ID, delay)
+	fmt.Printf("Scheduled retry %d/%d for backup %s in %dm\n",
+		newAttempt, backup.Retry, backup.ID, backup.RetryInterval)
 	return nil
 }
 
