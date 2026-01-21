@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	agenttypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
@@ -214,7 +215,19 @@ func (b *RestoreOperation) agentExecute() error {
 
 	arpcSess, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.DestTarget.GetHostname())
 	if !exists {
-		return errors.New("destination target is unreachable")
+		return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.DestTarget.Name)
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+	defer cancel()
+
+	respMsg, err := arpcSess.CallMessage(
+		timeoutCtx,
+		"target_status",
+		&types.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
+	)
+	if err != nil || !strings.HasPrefix(respMsg, "reachable") {
+		return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
 
 	destPath := b.job.DestSubpath
@@ -237,7 +250,7 @@ func (b *RestoreOperation) agentExecute() error {
 
 	b.task.WriteString(fmt.Sprintf("calling restore to %s (%s)", b.job.DestTarget.Name, destPath))
 
-	_, err := arpcSess.CallMessage(preCtx, "restore", &restoreReq)
+	_, err = arpcSess.CallMessage(preCtx, "restore", &restoreReq)
 	if err != nil {
 		return err
 	}

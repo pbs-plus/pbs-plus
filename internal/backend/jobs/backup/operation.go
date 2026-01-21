@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/backend/mount"
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -360,8 +361,20 @@ func (b *BackupOperation) validateTargetConnection() error {
 
 	switch b.job.Target.Type {
 	case database.TargetTypeAgent:
-		_, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.Target.GetHostname())
+		sess, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.Target.GetHostname())
 		if !exists {
+			return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.Target.Name)
+		}
+
+		timeoutCtx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+		defer cancel()
+
+		respMsg, err := sess.CallMessage(
+			timeoutCtx,
+			"target_status",
+			&types.TargetStatusReq{Drive: b.job.Target.VolumeID},
+		)
+		if err != nil || !strings.HasPrefix(respMsg, "reachable") {
 			return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.Target.Name)
 		}
 	case database.TargetTypeLocal:
