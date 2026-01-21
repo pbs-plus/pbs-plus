@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -460,6 +461,11 @@ func main() {
 		}
 
 		storeInstance.ARPCAgentsManager.SetExtraExpectFunc(func(id string, certs []*x509.Certificate) bool {
+			// agent worker connections should already be validated before this point
+			if len(strings.Split(id, "|")) > 1 {
+				return false
+			}
+
 			syslog.L.Info().WithMessage("checking client authorization").WithField("id", id).Write()
 
 			if len(certs) == 0 {

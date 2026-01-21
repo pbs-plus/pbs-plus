@@ -48,6 +48,10 @@ func (sm *AgentsManager) NotExpect(id string) {
 func (sm *AgentsManager) isExpected(id string, cert []*x509.Certificate) bool {
 	_, expected := sm.expectedList.Get(id)
 
+	if expected {
+		return true
+	}
+
 	customExpected := false
 
 	sm.mu.Lock()
@@ -58,7 +62,7 @@ func (sm *AgentsManager) isExpected(id string, cert []*x509.Certificate) bool {
 		customExpected = custom(id, cert)
 	}
 
-	return expected || customExpected
+	return customExpected
 }
 
 func (sm *AgentsManager) getClientId(state tls.ConnectionState, headers http.Header) string {
