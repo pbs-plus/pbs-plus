@@ -152,21 +152,6 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, server
 	return pipe, nil
 }
 
-func (s *StreamPipe) Reconnect(ctx context.Context) (*StreamPipe, error) {
-	s.Close()
-	newS, err := ConnectToServer(ctx, s.serverAddr, s.headers, s.tlsConfig)
-	if err != nil {
-		return s, err
-	}
-
-	r := s.GetRouter()
-	if r != nil {
-		newS.SetRouter(*r)
-	}
-
-	return newS, nil
-}
-
 func (s *StreamPipe) CloseChan() <-chan struct{} {
 	return s.tun.CloseChan()
 }
