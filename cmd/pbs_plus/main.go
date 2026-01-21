@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -460,14 +459,15 @@ func main() {
 		}
 
 		storeInstance.ARPCAgentsManager.SetExtraExpectFunc(func(id string) bool {
-			idArr := strings.Split(id, "|")
-
 			syslog.L.Info().WithMessage("checking client authorization").WithField("id", id).Write()
 
-			_, err := storeInstance.Database.GetTarget(idArr[0])
+			_, err := storeInstance.Database.GetTarget(id)
 			if err != nil {
+				syslog.L.Error(err).WithMessage("client unauthorized").WithField("id", id).Write()
 				return false
 			}
+
+			syslog.L.Info().WithMessage("client authorized").WithField("id", id).Write()
 
 			return true
 		})
