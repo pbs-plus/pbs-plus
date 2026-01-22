@@ -4,9 +4,6 @@ package proxmox
 
 import (
 	"bufio"
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,36 +16,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
-
-// ListTasksJSON shells out to the CLI and unmarshals into []Task.
-func ListTasksJSON(ctx context.Context) ([]Task, error) {
-	cmd := exec.CommandContext(
-		ctx,
-		"proxmox-backup-manager",
-		"task", "list",
-		"--output-format=json",
-		"--all",
-	)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf(
-			"ListTasksJSON: command failed: %w, output=%q",
-			err, out.String(),
-		)
-	}
-
-	var tasks []Task
-	if err := json.Unmarshal(out.Bytes(), &tasks); err != nil {
-		return nil, fmt.Errorf(
-			"ListTasksJSON: unmarshal failed: %w, data=%q",
-			err, out.String(),
-		)
-	}
-	return tasks, nil
-}
 
 type TaskCache struct {
 	task      Task
