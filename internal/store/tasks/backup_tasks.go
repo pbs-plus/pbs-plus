@@ -98,7 +98,7 @@ func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Ta
 		fields := strings.Fields(line)
 
 		if task, err := proxmox.ParseUPID(fields[0]); err == nil {
-			if task.StartTime >= (threshold - 1) {
+			if task.StartTime >= (threshold-1) && task.WorkerType == "backup" {
 				return task, true
 			}
 		}
