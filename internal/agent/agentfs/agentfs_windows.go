@@ -23,7 +23,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func NewFileHandle(handle windows.Handle) *FileHandle {
+func NewFileHandle(handle *os.File) *FileHandle {
 	return &FileHandle{
 		handle: handle,
 	}
@@ -128,7 +128,9 @@ func (s *AgentFSServer) closeFileHandles() {
 		if fh.dirReader != nil {
 			fh.dirReader.Close()
 		}
-		windows.CloseHandle(fh.handle)
+		if fh.handle != nil {
+			fh.handle.Close()
+		}
 		syslog.L.Debug().WithMessage("closeFileHandles: closed file handle").WithField("handle_id", u).Write()
 		fh.mu.Unlock()
 		return true
@@ -208,10 +210,10 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 			windows.FILE_SHARE_WRITE |
 			windows.FILE_SHARE_DELETE,
 	)
-	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OVERLAPPED)
+	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OVERLAPPED | windows.FILE_FLAG_NO_BUFFERING)
 
 	syslog.L.Debug().WithMessage("handleOpenFile: CreateFile").WithField("path", path).Write()
-	handle, err := windows.CreateFile(
+	rawHandle, err := windows.CreateFile(
 		pathUTF16,
 		desiredAccess,
 		share,
@@ -220,6 +222,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		flags,
 		0,
 	)
+	handle := os.NewFile(uintptr(rawHandle), path)
 
 	if err != nil {
 		syslog.L.Error(err).WithMessage("handleOpenFile: CreateFile failed").WithField("path", path).Write()
@@ -227,8 +230,8 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	}
 
 	var std fileStandardInfo
-	if err := getFileStandardInfoByHandle(handle, &std); err != nil {
-		windows.CloseHandle(handle)
+	if err := getFileStandardInfoByHandle(windows.Handle(handle.Fd()), &std); err != nil {
+		handle.Close()
 		syslog.L.Error(err).WithMessage("handleOpenFile: getFileStandardInfoByHandle failed").WithField("path", path).Write()
 		return arpc.Response{}, err
 	}
@@ -241,13 +244,13 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	if fh.isDir {
 		dirPath, err := s.abs(payload.Path)
 		if err != nil {
-			windows.CloseHandle(handle)
+			handle.Close()
 			syslog.L.Error(err).WithMessage("handleOpenFile: abs failed for dir").WithField("path", payload.Path).Write()
 			return arpc.Response{}, err
 		}
 		reader, err := NewDirReaderNT(dirPath)
 		if err != nil {
-			windows.CloseHandle(handle)
+			handle.Close()
 			syslog.L.Error(err).WithMessage("handleOpenFile: NewDirReaderNT failed").WithField("path", dirPath).Write()
 			return arpc.Response{}, err
 		}
@@ -266,7 +269,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		if fh.mapping != 0 {
 			windows.CloseHandle(fh.mapping)
 		}
-		windows.CloseHandle(fh.handle)
+		fh.handle.Close()
 		syslog.L.Error(err).WithMessage("handleOpenFile: encode handle id failed").Write()
 		return arpc.Response{}, err
 	}
@@ -526,7 +529,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		syslog.L.Debug().WithMessage("handleReadAt: attempting memory-mapped read").WithField("handle_id", payload.HandleID).Write()
 
 		mappingHandle, err := windows.CreateFileMapping(
-			windows.Handle(handle),
+			windows.Handle(handle.Fd()),
 			nil,
 			windows.PAGE_READONLY,
 			0, 0,
@@ -564,8 +567,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		isTemporary = true
 	}
 
-	f := os.NewFile(uintptr(handle), "")
-	n, err := f.ReadAt(workBuf[:reqLen], payload.Offset)
+	n, err := handle.ReadAt(workBuf[:reqLen], payload.Offset)
 
 	if err != nil && err != io.EOF {
 		if !isTemporary {
@@ -622,62 +624,11 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 
-	var std fileStandardInfo
-	if err := getFileStandardInfoByHandle(fh.handle, &std); err != nil {
-		syslog.L.Error(err).WithMessage("handleLseek: getFileStandardInfoByHandle failed").WithField("handle_id", payload.HandleID).Write()
+	newOffset, err := fh.handle.Seek(payload.Offset, payload.Whence)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("handleLseek: Seek error").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, err
 	}
-	fileSize := std.EndOfFile
-
-	cur := fh.logicalOffset
-	var newOffset int64
-
-	switch payload.Whence {
-	case io.SeekStart:
-		if payload.Offset < 0 {
-			syslog.L.Debug().WithMessage("handleLseek: negative offset with SeekStart").WithField("offset", payload.Offset).Write()
-			return arpc.Response{}, os.ErrInvalid
-		}
-		newOffset = payload.Offset
-
-	case io.SeekCurrent:
-		if cur+payload.Offset < 0 {
-			syslog.L.Debug().WithMessage("handleLseek: negative resulting offset with SeekCurrent").WithField("current", cur).WithField("delta", payload.Offset).Write()
-			return arpc.Response{}, os.ErrInvalid
-		}
-		newOffset = cur + payload.Offset
-
-	case io.SeekEnd:
-		if fileSize+payload.Offset < 0 {
-			syslog.L.Debug().WithMessage("handleLseek: negative resulting offset with SeekEnd").WithField("file_size", fileSize).WithField("delta", payload.Offset).Write()
-			return arpc.Response{}, os.ErrInvalid
-		}
-		newOffset = fileSize + payload.Offset
-
-	case SeekData, SeekHole:
-		no, err := sparseSeekAllocatedRanges(
-			fh.handle,
-			payload.Offset,
-			payload.Whence,
-			fileSize,
-		)
-		if err != nil {
-			syslog.L.Error(err).WithMessage("handleLseek: sparseSeekAllocatedRanges failed").WithField("handle_id", payload.HandleID).Write()
-			return arpc.Response{}, err
-		}
-		newOffset = no
-
-	default:
-		syslog.L.Debug().WithMessage("handleLseek: invalid whence in default").Write()
-		return arpc.Response{}, os.ErrInvalid
-	}
-
-	if newOffset > fileSize {
-		syslog.L.Debug().WithMessage("handleLseek: newOffset beyond EOF").WithField("new_offset", newOffset).WithField("file_size", fileSize).Write()
-		return arpc.Response{}, os.ErrInvalid
-	}
-
-	fh.logicalOffset = newOffset
 
 	resp := types.LseekResp{NewOffset: newOffset}
 	respBytes, err := cbor.Marshal(resp)
@@ -738,7 +689,7 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 			WithField("handle_id", payload.HandleID).Write()
 	}
 	if !handle.isDir {
-		windows.CloseHandle(handle.handle)
+		handle.handle.Close()
 		syslog.L.Debug().WithMessage("handleClose: file handle closed").
 			WithField("handle_id", payload.HandleID).Write()
 	} else {
