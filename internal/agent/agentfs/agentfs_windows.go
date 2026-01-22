@@ -210,7 +210,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 			windows.FILE_SHARE_WRITE |
 			windows.FILE_SHARE_DELETE,
 	)
-	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OVERLAPPED | windows.FILE_FLAG_NO_BUFFERING)
+	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OVERLAPPED)
 
 	syslog.L.Debug().WithMessage("handleOpenFile: CreateFile").WithField("path", path).Write()
 	rawHandle, err := windows.CreateFile(
@@ -239,7 +239,6 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	fh := NewFileHandle(handle)
 	fh.fileSize = std.EndOfFile
 	fh.isDir = std.Directory != 0
-	fh.logicalOffset = 0
 
 	if fh.isDir {
 		dirPath, err := s.abs(payload.Path)
