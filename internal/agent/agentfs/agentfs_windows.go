@@ -208,7 +208,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 			windows.FILE_SHARE_WRITE |
 			windows.FILE_SHARE_DELETE,
 	)
-	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS)
+	flags := uint32(windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OVERLAPPED)
 
 	syslog.L.Debug().WithMessage("handleOpenFile: CreateFile").WithField("path", path).Write()
 	handle, err := windows.CreateFile(
@@ -553,7 +553,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 				}}, nil
 			}
 		}
-		syslog.L.Warn().WithMessage("handleReadAt: mmap failed, falling back to generic I/O").Write()
+		syslog.L.Warn().WithMessage("handleReadAt: mmap failed, falling back to overlapped I/O").Write()
 	}
 
 	bptr := readBufPool.Get().(*[]byte)
@@ -566,12 +566,13 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 	f := os.NewFile(uintptr(handle), "")
 	n, err := f.ReadAt(workBuf[:reqLen], payload.Offset)
+
 	if err != nil && err != io.EOF {
 		if !isTemporary {
 			readBufPool.Put(bptr)
 		}
 		fh.releaseOp()
-		syslog.L.Error(err).WithMessage("handleReadAt: file read failed").Write()
+		syslog.L.Error(err).WithMessage("handleReadAt: overlapped read failed").Write()
 		return arpc.Response{}, err
 	}
 
