@@ -204,25 +204,20 @@ func readAtOverlapped(h windows.Handle, off int64, buf []byte) (int, error) {
 
 	var n uint32
 	err = windows.ReadFile(h, buf, &n, &ov)
-	if err != nil {
-		if err == windows.ERROR_IO_PENDING {
-			_, werr := windows.WaitForSingleObject(evt, windows.INFINITE)
-			if werr != nil {
-				return int(n), werr
-			}
-			if gerr := windows.GetOverlappedResult(h, &ov, &n, false); gerr != nil {
-				// If EOF, return what we got (may be zero) as EOF.
-				if gerr == windows.ERROR_HANDLE_EOF {
-					return int(n), io.EOF
-				}
-				return int(n), gerr
-			}
-		} else if err == windows.ERROR_HANDLE_EOF {
+
+	if err != nil && err != windows.ERROR_IO_PENDING {
+		if err == windows.ERROR_HANDLE_EOF {
 			return int(n), io.EOF
-		} else {
-			return int(n), err
 		}
+		return int(n), err
 	}
+
+	if err := windows.GetOverlappedResult(h, &ov, &n, true); err != nil {
+		if err == windows.ERROR_HANDLE_EOF {
+			return int(n), io.EOF
+		}
+		return int(n), err
+	}
+
 	return int(n), nil
 }
-
