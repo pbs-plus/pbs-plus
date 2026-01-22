@@ -227,7 +227,9 @@ ExecStart=%s
 
 	timerProps := []dbus.Property{
 		dbus.PropDescription(fmt.Sprintf("%s Backup Retry Timer (Attempt %d)", backup.ID, newAttempt)),
-		{Name: "OnActiveSec", Value: godbus.MakeVariant(delayMicroseconds)},
+		{Name: "TimersMonotonic", Value: godbus.MakeVariant([][]interface{}{
+			{"OnActiveSec", delayMicroseconds},
+		})},
 		{Name: "Unit", Value: godbus.MakeVariant(serviceName)},
 	}
 
