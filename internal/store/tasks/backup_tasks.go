@@ -5,6 +5,7 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -14,7 +15,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func GetBackupTask(
@@ -33,6 +33,8 @@ func GetBackupTask(
 		}
 	}
 
+	startTimeThreshold := time.Now().Unix()
+
 	backupId := hostname
 	if target.IsAgent() {
 		backupId = target.GetHostname()
@@ -41,44 +43,67 @@ func GetBackupTask(
 
 	searchString := fmt.Sprintf(":backup:%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(backupId))
 
-	initialUPIDs := make(map[string]struct{})
-	tasks, err := proxmox.ListTasksJSON(ctx)
-	if err != nil {
-		return proxmox.Task{}, err
-	}
-
-	for _, t := range tasks {
-		initialUPIDs[t.UPID] = struct{}{}
-	}
-
-	syslog.L.Info().WithMessage("ready to start backup").Write()
 	close(readyChan)
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return proxmox.Task{}, ctx.Err()
-
 		case <-ticker.C:
-			tasks, err := proxmox.ListTasksJSON(ctx)
-			if err != nil {
-				syslog.L.Error(err).Write()
-				continue
+			if task, found := scanTaskFile(constants.ActiveLogsPath, searchString, startTimeThreshold); found {
+				return task, nil
 			}
 
-			for _, t := range tasks {
-				if t.WorkerType == "backup" && strings.Contains(t.UPID, searchString) {
-					if _, seen := initialUPIDs[t.UPID]; seen {
-						continue // skip tasks in the initial set
-					}
-					return proxmox.GetTaskByUPID(t.UPID)
-				}
+			if task, found := scanTaskFile(constants.ArchivedLogsPath, searchString, startTimeThreshold); found {
+				return task, nil
 			}
 		}
 	}
+}
+
+func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Task, bool) {
+	file, err := os.Open(path)
+	if err != nil {
+		return proxmox.Task{}, false
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil || stat.Size() == 0 {
+		return proxmox.Task{}, false
+	}
+
+	// Read last 64KB (safely handles very busy servers)
+	readSize := int64(65536)
+	if stat.Size() < readSize {
+		readSize = stat.Size()
+	}
+
+	buffer := make([]byte, readSize)
+	_, err = file.ReadAt(buffer, stat.Size()-readSize)
+	if err != nil && err != io.EOF {
+		return proxmox.Task{}, false
+	}
+
+	lines := strings.Split(string(buffer), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || !strings.Contains(line, searchString) {
+			continue
+		}
+
+		fields := strings.Fields(line)
+
+		if task, err := proxmox.ParseUPID(fields[0]); err == nil {
+			if task.StartTime >= (threshold - 1) {
+				return task, true
+			}
+		}
+	}
+	return proxmox.Task{}, false
 }
 
 func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
