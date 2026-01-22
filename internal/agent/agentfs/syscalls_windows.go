@@ -4,7 +4,6 @@ package agentfs
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"unsafe"
 
@@ -95,96 +94,4 @@ func getFileStandardInfoByHandle(h windows.Handle, out *fileStandardInfo) error 
 	size := uint32(unsafe.Sizeof(*out))
 	err := windows.GetFileInformationByHandleEx(h, fileStandardInfoClass, (*byte)(unsafe.Pointer(out)), size)
 	return err
-}
-
-// Sparse SEEK_DATA/SEEK_HOLE using FSCTL_QUERY_ALLOCATED_RANGES
-func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSize int64) (int64, error) {
-	if start < 0 {
-		return 0, os.ErrInvalid
-	}
-	if start >= fileSize {
-		return fileSize, nil
-	}
-
-	in := allocatedRange{
-		FileOffset: start,
-		Length:     fileSize - start,
-	}
-	// buffer for a handful of ranges
-	out := make([]allocatedRange, 32)
-	var bytesReturned uint32
-
-	err := windows.DeviceIoControl(
-		h,
-		windows.FSCTL_QUERY_ALLOCATED_RANGES,
-		(*byte)(unsafe.Pointer(&in)),
-		uint32(unsafe.Sizeof(in)),
-		(*byte)(unsafe.Pointer(&out[0])),
-		uint32(uintptr(len(out))*unsafe.Sizeof(out[0])),
-		&bytesReturned,
-		nil,
-	)
-
-	if err != nil && bytesReturned == 0 {
-		// Filesystem might not support it
-		if err == windows.ERROR_INVALID_FUNCTION {
-			if whence == SeekData {
-				return start, nil
-			}
-			return fileSize, nil
-		}
-		return 0, err
-	}
-
-	count := int(bytesReturned) / int(unsafe.Sizeof(out[0]))
-	if count == 0 {
-		// no allocated ranges after start
-		if whence == SeekData {
-			return fileSize, windows.ERROR_NO_MORE_FILES
-		}
-		return fileSize, nil
-	}
-
-	switch whence {
-	case SeekData:
-		// Find first range at or after start
-		for i := 0; i < count; i++ {
-			r := out[i]
-			if start < r.FileOffset {
-				return r.FileOffset, nil
-			}
-			if start >= r.FileOffset && start < r.FileOffset+r.Length {
-				return start, nil
-			}
-		}
-		return fileSize, windows.ERROR_NO_MORE_FILES
-	case SeekHole:
-		// If before first range, we're in a hole
-		first := out[0]
-		if start < first.FileOffset {
-			return start, nil
-		}
-		// If inside a range, hole begins at end of that range
-		for i := 0; i < count; i++ {
-			r := out[i]
-			if start >= r.FileOffset && start < r.FileOffset+r.Length {
-				return r.FileOffset + r.Length, nil
-			}
-			// Between ranges is a hole; if start lies there, return start
-			if i+1 < count {
-				next := out[i+1]
-				if start >= r.FileOffset+r.Length && start < next.FileOffset {
-					return start, nil
-				}
-			}
-		}
-		// After last range is a hole to EOF
-		last := out[count-1]
-		if start >= last.FileOffset+last.Length {
-			return start, nil
-		}
-		return last.FileOffset + last.Length, nil
-	default:
-		return 0, os.ErrInvalid
-	}
 }
