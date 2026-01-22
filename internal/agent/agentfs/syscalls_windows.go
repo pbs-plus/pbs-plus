@@ -4,7 +4,6 @@ package agentfs
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"unsafe"
@@ -188,36 +187,4 @@ func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSi
 	default:
 		return 0, os.ErrInvalid
 	}
-}
-
-func readAtOverlapped(h windows.Handle, off int64, buf []byte) (int, error) {
-	var ov windows.Overlapped
-	ov.Offset = uint32(off & 0xffffffff)
-	ov.OffsetHigh = uint32(uint64(off) >> 32)
-
-	evt, err := windows.CreateEvent(nil, 1, 0, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer windows.CloseHandle(evt)
-	ov.HEvent = evt
-
-	var n uint32
-	err = windows.ReadFile(h, buf, &n, &ov)
-
-	if err != nil && err != windows.ERROR_IO_PENDING {
-		if err == windows.ERROR_HANDLE_EOF {
-			return int(n), io.EOF
-		}
-		return int(n), err
-	}
-
-	if err := windows.GetOverlappedResult(h, &ov, &n, true); err != nil {
-		if err == windows.ERROR_HANDLE_EOF {
-			return int(n), io.EOF
-		}
-		return int(n), err
-	}
-
-	return int(n), nil
 }
