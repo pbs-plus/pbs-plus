@@ -4,6 +4,7 @@ package agentfs
 
 import (
 	"bytes"
+	"os"
 	"sync"
 
 	"golang.org/x/sys/windows"
@@ -19,7 +20,7 @@ type fileStandardInfo struct {
 }
 
 type FileHandle struct {
-	handle        windows.Handle
+	handle        *os.File
 	fileSize      int64
 	isDir         bool
 	dirReader     *DirReaderNT
