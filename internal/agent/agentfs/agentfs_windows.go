@@ -623,11 +623,62 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 
-	newOffset, err := fh.handle.Seek(payload.Offset, payload.Whence)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("handleLseek: Seek error").WithField("handle_id", payload.HandleID).Write()
+	var std fileStandardInfo
+	if err := getFileStandardInfoByHandle(windows.Handle(fh.handle.Fd()), &std); err != nil {
+		syslog.L.Error(err).WithMessage("handleLseek: getFileStandardInfoByHandle failed").WithField("handle_id", payload.HandleID).Write()
 		return arpc.Response{}, err
 	}
+	fileSize := std.EndOfFile
+
+	cur := fh.logicalOffset
+	var newOffset int64
+
+	switch payload.Whence {
+	case io.SeekStart:
+		if payload.Offset < 0 {
+			syslog.L.Debug().WithMessage("handleLseek: negative offset with SeekStart").WithField("offset", payload.Offset).Write()
+			return arpc.Response{}, os.ErrInvalid
+		}
+		newOffset = payload.Offset
+
+	case io.SeekCurrent:
+		if cur+payload.Offset < 0 {
+			syslog.L.Debug().WithMessage("handleLseek: negative resulting offset with SeekCurrent").WithField("current", cur).WithField("delta", payload.Offset).Write()
+			return arpc.Response{}, os.ErrInvalid
+		}
+		newOffset = cur + payload.Offset
+
+	case io.SeekEnd:
+		if fileSize+payload.Offset < 0 {
+			syslog.L.Debug().WithMessage("handleLseek: negative resulting offset with SeekEnd").WithField("file_size", fileSize).WithField("delta", payload.Offset).Write()
+			return arpc.Response{}, os.ErrInvalid
+		}
+		newOffset = fileSize + payload.Offset
+
+	case SeekData, SeekHole:
+		no, err := sparseSeekAllocatedRanges(
+			windows.Handle(fh.handle.Fd()),
+			payload.Offset,
+			payload.Whence,
+			fileSize,
+		)
+		if err != nil {
+			syslog.L.Error(err).WithMessage("handleLseek: sparseSeekAllocatedRanges failed").WithField("handle_id", payload.HandleID).Write()
+			return arpc.Response{}, err
+		}
+		newOffset = no
+
+	default:
+		syslog.L.Debug().WithMessage("handleLseek: invalid whence in default").Write()
+		return arpc.Response{}, os.ErrInvalid
+	}
+
+	if newOffset > fileSize {
+		syslog.L.Debug().WithMessage("handleLseek: newOffset beyond EOF").WithField("new_offset", newOffset).WithField("file_size", fileSize).Write()
+		return arpc.Response{}, os.ErrInvalid
+	}
+
+	fh.logicalOffset = newOffset
 
 	resp := types.LseekResp{NewOffset: newOffset}
 	respBytes, err := cbor.Marshal(resp)

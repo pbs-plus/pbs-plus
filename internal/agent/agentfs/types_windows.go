@@ -20,11 +20,12 @@ type fileStandardInfo struct {
 }
 
 type FileHandle struct {
-	handle    *os.File
-	fileSize  int64
-	isDir     bool
-	dirReader *DirReaderNT
-	mapping   windows.Handle
+	handle        *os.File
+	fileSize      int64
+	isDir         bool
+	dirReader     *DirReaderNT
+	mapping       windows.Handle
+	logicalOffset int64
 
 	mu        sync.Mutex
 	activeOps int32
