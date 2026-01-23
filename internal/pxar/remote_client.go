@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type RemoteClient struct {
@@ -18,6 +19,7 @@ func (c *RemoteClient) SendError(ctx context.Context, err error) error {
 	params := map[string]any{
 		"error": err.Error(),
 	}
+	syslog.L.Error(err).WithField("restore", "error").Write()
 	if err := c.pipe.Call(ctx, "pxar.Error", params, nil); err != nil {
 		return err
 	}
