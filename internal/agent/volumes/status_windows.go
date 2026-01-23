@@ -45,7 +45,7 @@ func CheckDriveStatus(drive string, subpath string) (TargetStatus, error) {
 	cleanDrive := filepath.VolumeName(drive)
 	if cleanDrive == "" {
 		if len(drive) == 1 {
-			cleanDrive = cleanDrive + ":"
+			cleanDrive = drive + ":"
 		} else {
 			return TargetStatus{IsReachable: false, Message: "invalid drive format"}, nil
 		}
