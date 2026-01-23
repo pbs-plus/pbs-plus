@@ -14,6 +14,16 @@ func NewRemoteClient(pipe *arpc.StreamPipe) *RemoteClient {
 	return &RemoteClient{pipe: pipe}
 }
 
+func (c *RemoteClient) SendError(ctx context.Context, err error) error {
+	params := map[string]any{
+		"error": err.Error(),
+	}
+	if err := c.pipe.Call(ctx, "pxar.Error", params, nil); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (c *RemoteClient) GetRoot(ctx context.Context) (EntryInfo, error) {
 	var info EntryInfo
 	if err := c.pipe.Call(ctx, "pxar.GetRoot", nil, &info); err != nil {

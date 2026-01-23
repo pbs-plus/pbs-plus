@@ -281,7 +281,7 @@ func (b *RestoreOperation) agentExecute() error {
 	}
 
 	b.task.WriteString(fmt.Sprintf("running remote pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
-	b.remoteServer = pxar.NewRemoteServer(reader)
+	b.remoteServer = pxar.NewRemoteServer(reader, b.task)
 	if b.remoteServer == nil {
 		return fmt.Errorf("b.remoteServer is nil")
 	}
