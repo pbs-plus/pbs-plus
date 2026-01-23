@@ -13,6 +13,27 @@ UPDATE targets SET
     volume_used = ?, volume_free = ?, mount_script = ?
 WHERE name = ?;
 
+-- name: UpsertTarget :exec
+INSERT INTO targets (
+    name, path, agent_host, volume_id, volume_type, volume_name, volume_fs,
+    volume_total_bytes, volume_used_bytes, volume_free_bytes,
+    volume_total, volume_used, volume_free, mount_script
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(name) DO UPDATE SET
+    path = excluded.path,
+    agent_host = excluded.agent_host,
+    volume_id = excluded.volume_id,
+    volume_type = excluded.volume_type,
+    volume_name = excluded.volume_name,
+    volume_fs = excluded.volume_fs,
+    volume_total_bytes = excluded.volume_total_bytes,
+    volume_used_bytes = excluded.volume_used_bytes,
+    volume_free_bytes = excluded.volume_free_bytes,
+    volume_total = excluded.volume_total,
+    volume_used = excluded.volume_used,
+    volume_free = excluded.volume_free,
+    mount_script = excluded.mount_script;
+
 -- name: UpdateTargetS3Secret :exec
 UPDATE targets SET secret_s3 = ? WHERE name = ?;
 

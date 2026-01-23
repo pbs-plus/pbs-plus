@@ -147,6 +147,71 @@ func (database *Database) UpdateTarget(tx *Transaction, target Target) (err erro
 	return nil
 }
 
+func (database *Database) UpsertTarget(tx *Transaction, target Target) (err error) {
+	var commitNeeded bool = false
+	q := database.queries
+
+	if tx == nil {
+		tx, err = database.NewTransaction()
+		if err != nil {
+			return fmt.Errorf("UpsertTarget: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("UpsertTarget: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("UpsertTarget: failed to commit transaction: %w", cErr)
+					syslog.L.Error(err).Write()
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					syslog.L.Error(fmt.Errorf("UpsertTarget: failed to rollback transaction: %w", rbErr)).Write()
+				}
+			}
+		}()
+	}
+	q = database.queries.WithTx(tx.Tx)
+
+	if target.Path == "" && target.AgentHost.Name == "" {
+		return fmt.Errorf("target path empty and no agent host specified")
+	}
+
+	_, s3Err := s3url.Parse(target.Path)
+	if target.Path != "" && !utils.ValidateTargetPath(target.Path) && s3Err != nil {
+		return fmt.Errorf("invalid target path: %s", target.Path)
+	}
+
+	err = q.UpsertTarget(database.ctx, sqlc.UpsertTargetParams{
+		Name:             target.Name,
+		Path:             target.Path,
+		AgentHost:        toNullString(target.AgentHost.Name),
+		VolumeID:         toNullString(target.VolumeID),
+		VolumeType:       toNullString(target.VolumeType),
+		VolumeName:       toNullString(target.VolumeName),
+		VolumeFs:         toNullString(target.VolumeFS),
+		VolumeTotalBytes: toNullInt64(target.VolumeTotalBytes),
+		VolumeUsedBytes:  toNullInt64(target.VolumeUsedBytes),
+		VolumeFreeBytes:  toNullInt64(target.VolumeFreeBytes),
+		VolumeTotal:      toNullString(target.VolumeTotal),
+		VolumeUsed:       toNullString(target.VolumeUsed),
+		VolumeFree:       toNullString(target.VolumeFree),
+		MountScript:      target.MountScript,
+	})
+
+	if err != nil {
+		return fmt.Errorf("UpsertTarget: error upserting target: %w", err)
+	}
+
+	commitNeeded = true
+	return nil
+}
+
 func (database *Database) AddS3Secret(tx *Transaction, targetName string, secret string) (err error) {
 	var commitNeeded bool = false
 	q := database.queries
