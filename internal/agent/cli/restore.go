@@ -294,9 +294,9 @@ func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string) error {
 		WithField("restoreId", restoreId).
 		Write()
 
-	errs := pxar.RemoteRestore(session.ctx, client, []string{source}, dest)
-	if len(errs) > 0 {
-		return fmt.Errorf("%v", errs)
+	err = pxar.RemoteRestore(session.ctx, client, []string{source}, dest)
+	if err != nil {
+		return fmt.Errorf("%v", err)
 	}
 
 	return nil
