@@ -10,7 +10,6 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -18,20 +17,21 @@ type RemoteServer struct {
 	reader *PxarReader
 	router *arpc.Router
 	isDone atomic.Bool
-	task   *tasks.RestoreTask
 	DoneCh chan struct{}
+	errCh  chan error
 }
 
-func NewRemoteServer(reader *PxarReader, task *tasks.RestoreTask) *RemoteServer {
+func NewRemoteServer(reader *PxarReader) (*RemoteServer, chan error) {
 	router := arpc.NewRouter()
+	errChan := make(chan error, 16)
 	s := &RemoteServer{
 		reader: reader,
 		router: &router,
-		task:   task,
 		DoneCh: make(chan struct{}, 1),
+		errCh:  errChan,
 	}
 	s.registerHandlers()
-	return s
+	return s, errChan
 }
 
 func (s *RemoteServer) Router() *arpc.Router {
@@ -58,8 +58,10 @@ func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	s.task.WriteString(fmt.Sprintf("client error: %s", params.Error))
-	syslog.L.Error(fmt.Errorf("client error: %s", params.Error)).WithField("taskId", s.task.TaskId).Write()
+	err := fmt.Errorf("client error: %s", params.Error)
+	syslog.L.Error(err).Write()
+
+	s.errCh <- err
 
 	return arpc.Response{
 		Status: 200,
