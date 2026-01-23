@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -65,6 +66,7 @@ type RestoreOperation struct {
 	queueTask *tasks.QueuedTask
 	waitGroup *sync.WaitGroup
 	err       error
+	errCount  atomic.Int32
 
 	job           database.Restore
 	remoteServer  *pxar.RemoteServer
@@ -137,6 +139,7 @@ func (b *RestoreOperation) runPreScript() error {
 		}
 		b.task.WriteString(err.Error())
 		b.task.WriteString(fmt.Sprintf("encountered error while running %s", b.job.PreScript))
+		b.errCount.Add(1)
 
 		syslog.L.Error(err).WithJob(b.job.ID).WithMessage("error encountered while running job pre-restore script").Write()
 		return err
@@ -176,6 +179,7 @@ func (b *RestoreOperation) runPostScript() {
 	if err != nil {
 		b.task.WriteString(err.Error())
 		b.task.WriteString(fmt.Sprintf("encountered error while running %s", b.job.PostScript))
+		b.errCount.Add(1)
 		syslog.L.Error(err).
 			WithMessage("error encountered while running job post-restore script").
 			WithJob(job.ID).
@@ -281,10 +285,25 @@ func (b *RestoreOperation) agentExecute() error {
 	}
 
 	b.task.WriteString(fmt.Sprintf("running remote pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
-	b.remoteServer = pxar.NewRemoteServer(reader, b.task)
+
+	var errCh chan error
+	b.remoteServer, errCh = pxar.NewRemoteServer(reader)
 	if b.remoteServer == nil {
 		return fmt.Errorf("b.remoteServer is nil")
 	}
+
+	go func() {
+		for {
+			select {
+			case <-b.ctx.Done():
+				return
+			case err := <-errCh:
+				b.task.WriteString(fmt.Sprintf("client error: %s", err))
+				b.errCount.Add(1)
+			}
+		}
+	}()
+
 	agentRPC.SetRouter(*b.remoteServer.Router())
 
 	vfssessions.CreatePxarReader(childKey, reader)
@@ -351,6 +370,7 @@ func (b *RestoreOperation) localExecute() error {
 				}
 				if err != nil {
 					b.task.WriteString(fmt.Sprintf("error: %s", err.Error()))
+					b.errCount.Add(1)
 				}
 			}
 		}
@@ -397,6 +417,12 @@ func (b *RestoreOperation) OnError(err error) {
 }
 
 func (b *RestoreOperation) OnSuccess() {
+	errCount := b.errCount.Load()
+	if errCount > 0 {
+		b.task.CloseWarn(int(errCount))
+		return
+	}
+
 	b.task.CloseOK()
 }
 
