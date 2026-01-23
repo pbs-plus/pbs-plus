@@ -220,12 +220,8 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			existingTargetsMap[target.Name] = target
 		}
 
-		processedTargetNames := make(map[string]bool)
-
 		for _, parsedDrive := range reqParsed.Drives {
 			targetName := database.GetAgentTargetName(reqParsed.Hostname, parsedDrive.Letter, reqParsed.OperatingSystem)
-
-			processedTargetNames[targetName] = true
 
 			if existingTarget, found := existingTargetsMap[targetName]; found {
 				updatedTarget := existingTarget

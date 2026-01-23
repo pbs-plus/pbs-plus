@@ -71,14 +71,20 @@ func (p *pbsService) run() {
 		}
 	})
 	p.wg.Go(func() {
-		_ = lifecycle.UpdateDrives()
+		err := lifecycle.UpdateDrives()
+		if err != nil {
+			syslog.L.Error(err).WithMessage("failed to update target inventory").Write()
+		}
 		ticker := time.NewTicker(utils.ComputeDelay())
 		for {
 			select {
 			case <-p.ctx.Done():
 				return
 			case <-ticker.C:
-				_ = lifecycle.UpdateDrives()
+				err := lifecycle.UpdateDrives()
+				if err != nil {
+					syslog.L.Error(err).WithMessage("failed to update target inventory").Write()
+				}
 				ticker.Reset(utils.ComputeDelay())
 			}
 		}
