@@ -3,9 +3,7 @@ package controllers
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
@@ -13,6 +11,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
+	"github.com/pbs-plus/pbs-plus/internal/agent/volumes"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -115,26 +114,25 @@ func BackupCloseHandler(req *arpc.Request) (arpc.Response, error) {
 
 func StatusHandler(req *arpc.Request) (arpc.Response, error) {
 	var reqData types.TargetStatusReq
-	err := cbor.Unmarshal(req.Payload, &reqData)
+	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
+		return arpc.Response{}, err
+	}
+
+	res, err := volumes.CheckDriveStatus(reqData.Drive, reqData.Subpath)
 	if err != nil {
 		return arpc.Response{}, err
 	}
 
-	prefix := reqData.Drive
-
-	if len(prefix) == 1 {
-		prefix += ":/"
+	if res.IsLocked {
+		return arpc.Response{}, fmt.Errorf("drive is locked/encrypted")
 	}
 
-	if strings.ToLower(reqData.Drive) == "root" {
-		prefix = "/"
+	if !res.IsReachable {
+		return arpc.Response{}, fmt.Errorf("drive is unreachable")
 	}
 
-	fullPath := filepath.Join(prefix, reqData.Subpath)
-
-	if _, err := os.Stat(fullPath); !os.IsNotExist(err) {
-		return arpc.Response{Status: 200, Message: fmt.Sprintf("reachable|%s", constants.Version)}, nil
-	} else {
-		return arpc.Response{}, err
-	}
+	return arpc.Response{
+		Status:  200,
+		Message: fmt.Sprintf("reachable|%s", constants.Version),
+	}, nil
 }
