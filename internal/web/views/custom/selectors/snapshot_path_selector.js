@@ -31,7 +31,9 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
         if (!me.datastore || !me.snapshot || !snapRecord) {
           Ext.Msg.alert(
             gettext("Error"),
-            gettext("Please select a valid snapshot first."),
+            gettext(
+              "Please select a valid snapshot first. A snapshot with an ongoing backup is considered invalid.",
+            ),
           );
           return;
         }
