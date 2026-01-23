@@ -384,12 +384,12 @@ func main() {
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/plus/agent/install/win", plus.AgentInstallScriptHandler(storeInstance, Version))
-	apiMux.HandleFunc("/api2/json/plus/msi", plus.DownloadMsi(storeInstance, Version))
 	apiMux.HandleFunc("/plus/metrics", plus.PrometheusMetricsHandler(storeInstance))
 
 	// Agent routes
 	agentMux.HandleFunc("/api2/json/plus/version", plus.VersionHandler(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/plus/binary", plus.DownloadBinary(storeInstance, Version))
+	agentMux.HandleFunc("/api2/json/plus/msi", plus.DownloadMsi(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/plus/binary/sig", plus.DownloadSig(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/plus/binary/checksum", plus.DownloadChecksum(storeInstance, Version))
 	agentMux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
