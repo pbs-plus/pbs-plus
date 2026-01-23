@@ -115,20 +115,26 @@ func BackupCloseHandler(req *arpc.Request) (arpc.Response, error) {
 func StatusHandler(req *arpc.Request) (arpc.Response, error) {
 	var reqData types.TargetStatusReq
 	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
+		syslog.L.Error(err).WithMessage("status handler unmarshal error").Write()
 		return arpc.Response{}, err
 	}
 
 	res, err := volumes.CheckDriveStatus(reqData.Drive, reqData.Subpath)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("check drive status error").Write()
 		return arpc.Response{}, err
 	}
 
 	if res.IsLocked {
-		return arpc.Response{}, fmt.Errorf("drive is locked/encrypted")
+		err = fmt.Errorf("drive is locked/encrypted")
+		syslog.L.Error(err).WithMessage("status handler unmarshal error").Write()
+		return arpc.Response{}, err
 	}
 
 	if !res.IsReachable {
-		return arpc.Response{}, fmt.Errorf("drive is unreachable")
+		err = fmt.Errorf("drive is unreachable")
+		syslog.L.Error(err).WithMessage("status handler unmarshal error").Write()
+		return arpc.Response{}, err
 	}
 
 	return arpc.Response{
