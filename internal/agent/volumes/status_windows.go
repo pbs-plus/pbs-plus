@@ -47,7 +47,7 @@ func CheckDriveStatus(drive string, subpath string) (TargetStatus, error) {
 		if len(drive) == 1 {
 			cleanDrive = drive + ":"
 		} else {
-			return TargetStatus{IsReachable: false, Message: "invalid drive format"}, nil
+			return TargetStatus{IsReachable: false, Message: fmt.Sprintf("invalid drive format (%s)", drive)}, nil
 		}
 	}
 	rootPath := cleanDrive + "\\"
