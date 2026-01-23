@@ -113,7 +113,7 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
         PBS.PlusUtils.API2Request({
           url:
             "/api2/extjs/config/d2d-target/" +
-            encodeURIComponent(encodePathValue(rec.getId())),
+            encodeURIComponent(encodePathValue(rec.get("name"))),
           method: "DELETE",
           waitMsgTarget: view,
           failure: (resp) => {
