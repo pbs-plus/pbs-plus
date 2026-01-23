@@ -47,6 +47,10 @@
               <RegistryValue Type="string" Name="BootstrapToken" Value="[BOOTSTRAPTOKEN]" />
             </RegistryKey>
 
+            <RemoveRegistryKey Root="HKLM" 
+                               Key="SOFTWARE\PBSPlus" 
+                               Action="removeOnUninstall" />
+
             <ServiceInstall Id="PBSPlusAgentService"
                            Name="PBSPlusAgent"
                            DisplayName="PBS Plus Agent"
