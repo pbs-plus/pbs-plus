@@ -17,8 +17,9 @@ import (
 )
 
 func generateWinInstall(token string) string {
+	forceDisableIrm := os.Getenv("PBS_PLUS_FORCE_DISABLE_IRM_GENERATE")
 	hostname := os.Getenv("PBS_PLUS_HOSTNAME")
-	if utils.IsProxyCertValid(hostname) {
+	if utils.IsProxyCertValid(hostname) && forceDisableIrm != "true" {
 		return fmt.Sprintf("irm https://%s%s/plus/agent/install/win?t=%s | iex", hostname, constants.ServerAPIExtPort, token)
 	}
 
