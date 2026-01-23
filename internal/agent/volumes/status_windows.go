@@ -44,7 +44,11 @@ func isVolumeLocked(drive string) (bool, error) {
 func CheckDriveStatus(drive string, subpath string) (TargetStatus, error) {
 	cleanDrive := filepath.VolumeName(drive)
 	if cleanDrive == "" {
-		return TargetStatus{IsReachable: false, Message: "invalid drive format"}, nil
+		if len(drive) == 1 {
+			cleanDrive = cleanDrive + ":"
+		} else {
+			return TargetStatus{IsReachable: false, Message: "invalid drive format"}, nil
+		}
 	}
 	rootPath := cleanDrive + "\\"
 
