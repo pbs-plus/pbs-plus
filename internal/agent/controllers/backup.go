@@ -126,14 +126,14 @@ func StatusHandler(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	if res.IsLocked {
-		err = fmt.Errorf("drive is locked/encrypted")
-		syslog.L.Error(err).WithMessage("status handler unmarshal error").Write()
+		err = fmt.Errorf("%s", res.Message)
+		syslog.L.Error(err).WithMessage("check drive status error").Write()
 		return arpc.Response{}, err
 	}
 
 	if !res.IsReachable {
-		err = fmt.Errorf("drive is unreachable")
-		syslog.L.Error(err).WithMessage("status handler unmarshal error").Write()
+		err = fmt.Errorf("%s", res.Message)
+		syslog.L.Error(err).WithMessage("check drive status error").Write()
 		return arpc.Response{}, err
 	}
 
