@@ -17,6 +17,12 @@ Ext.define("PBS.form.D2DSnapshotSelector", {
     me.store = Ext.create("Ext.data.Store", {
       model: "pbs-model-d2d-snapshots",
       autoLoad: !!me.getDatastore(),
+      sorters: [
+        {
+          property: "backup-time",
+          direction: "DESC",
+        },
+      ],
       proxy: {
         type: "proxmox",
         url: me.getDatastore()
