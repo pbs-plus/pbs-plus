@@ -19,12 +19,12 @@ import (
 func generateWinInstall(token string) string {
 	hostname := os.Getenv("PBS_PLUS_HOSTNAME")
 	if utils.IsProxyCertValid(hostname) {
-		return fmt.Sprintf("irm https://%s%s/plus/agent/install/win?t=%s | iex", hostname, constants.AgentAPIPort, token)
+		return fmt.Sprintf("irm https://%s%s/plus/agent/install/win?t=%s | iex", hostname, constants.ServerAPIExtPort, token)
 	}
 
 	return fmt.Sprintf(`[System.Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; `+
 		`[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; `+
-		`iex(New-Object Net.WebClient).DownloadString("https://%s:%s/plus/agent/install/win?t=%s")`, hostname, strings.TrimPrefix(constants.AgentAPIPort, ":"), token)
+		`iex(New-Object Net.WebClient).DownloadString("https://%s:%s/plus/agent/install/win?t=%s")`, hostname, strings.TrimPrefix(constants.ServerAPIExtPort, ":"), token)
 }
 
 func (database *Database) CreateToken(expiration time.Duration, comment string) error {

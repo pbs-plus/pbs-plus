@@ -383,6 +383,8 @@ func main() {
 	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}/upids", mw.ServerOnly(storeInstance, jobs.ExtJsBackupUPIDsHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/plus/agent/install/win", plus.AgentInstallScriptHandler(storeInstance, Version))
+	apiMux.HandleFunc("/plus/metrics", plus.PrometheusMetricsHandler(storeInstance))
 
 	// Agent routes
 	agentMux.HandleFunc("/api2/json/plus/version", plus.VersionHandler(storeInstance, Version))
@@ -396,8 +398,6 @@ func main() {
 	// Agent auth routes
 	agentMux.HandleFunc("/plus/agent/bootstrap", agents.AgentBootstrapHandler(storeInstance))
 	agentMux.HandleFunc("/plus/agent/renew", mw.AgentOnly(storeInstance, agents.AgentRenewHandler(storeInstance)))
-	agentMux.HandleFunc("/plus/agent/install/win", plus.AgentInstallScriptHandler(storeInstance, Version))
-	agentMux.HandleFunc("/plus/metrics", plus.PrometheusMetricsHandler(storeInstance))
 
 	// pprof routes
 	apiMux.HandleFunc("/debug/pprof/", pprof.Index)
