@@ -6,8 +6,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dirEntry EntryInfo) error {
@@ -27,25 +25,25 @@ func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dir
 		switch e.FileType {
 		case FileTypeDirectory:
 			if err := os.MkdirAll(target, os.FileMode(e.Mode&0777)); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mkdir").Write()
+				_ = client.SendError(ctx, err)
 				continue
 			}
 			if err := remoteRestoreDir(ctx, client, target, e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "dir").Write()
+				_ = client.SendError(ctx, err)
 				continue
 			}
 			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "meta").Write()
+				_ = client.SendError(ctx, err)
 				continue
 			}
 		case FileTypeFile:
 			if err := remoteRestoreFile(ctx, client, target, e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "file").Write()
+				_ = client.SendError(ctx, err)
 				continue
 			}
 		case FileTypeSymlink:
 			if err := remoteRestoreSymlink(ctx, client, target, e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "symlink").Write()
+				_ = client.SendError(ctx, err)
 				continue
 			}
 		case FileTypeFifo:
