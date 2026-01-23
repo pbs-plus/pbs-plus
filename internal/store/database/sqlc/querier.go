@@ -61,6 +61,7 @@ type Querier interface {
 	UpdateScript(ctx context.Context, arg UpdateScriptParams) error
 	UpdateTarget(ctx context.Context, arg UpdateTargetParams) error
 	UpdateTargetS3Secret(ctx context.Context, arg UpdateTargetS3SecretParams) error
+	UpsertTarget(ctx context.Context, arg UpsertTargetParams) error
 }
 
 var _ Querier = (*Queries)(nil)
