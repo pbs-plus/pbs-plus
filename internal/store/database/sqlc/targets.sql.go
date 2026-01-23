@@ -377,3 +377,62 @@ func (q *Queries) UpdateTargetS3Secret(ctx context.Context, arg UpdateTargetS3Se
 	_, err := q.db.ExecContext(ctx, updateTargetS3Secret, arg.SecretS3, arg.Name)
 	return err
 }
+
+const upsertTarget = `-- name: UpsertTarget :exec
+INSERT INTO targets (
+    name, path, agent_host, volume_id, volume_type, volume_name, volume_fs,
+    volume_total_bytes, volume_used_bytes, volume_free_bytes,
+    volume_total, volume_used, volume_free, mount_script
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(name) DO UPDATE SET
+    path = excluded.path,
+    agent_host = excluded.agent_host,
+    volume_id = excluded.volume_id,
+    volume_type = excluded.volume_type,
+    volume_name = excluded.volume_name,
+    volume_fs = excluded.volume_fs,
+    volume_total_bytes = excluded.volume_total_bytes,
+    volume_used_bytes = excluded.volume_used_bytes,
+    volume_free_bytes = excluded.volume_free_bytes,
+    volume_total = excluded.volume_total,
+    volume_used = excluded.volume_used,
+    volume_free = excluded.volume_free,
+    mount_script = excluded.mount_script
+`
+
+type UpsertTargetParams struct {
+	Name             string         `json:"name"`
+	Path             string         `json:"path"`
+	AgentHost        sql.NullString `json:"agent_host"`
+	VolumeID         sql.NullString `json:"volume_id"`
+	VolumeType       sql.NullString `json:"volume_type"`
+	VolumeName       sql.NullString `json:"volume_name"`
+	VolumeFs         sql.NullString `json:"volume_fs"`
+	VolumeTotalBytes sql.NullInt64  `json:"volume_total_bytes"`
+	VolumeUsedBytes  sql.NullInt64  `json:"volume_used_bytes"`
+	VolumeFreeBytes  sql.NullInt64  `json:"volume_free_bytes"`
+	VolumeTotal      sql.NullString `json:"volume_total"`
+	VolumeUsed       sql.NullString `json:"volume_used"`
+	VolumeFree       sql.NullString `json:"volume_free"`
+	MountScript      string         `json:"mount_script"`
+}
+
+func (q *Queries) UpsertTarget(ctx context.Context, arg UpsertTargetParams) error {
+	_, err := q.db.ExecContext(ctx, upsertTarget,
+		arg.Name,
+		arg.Path,
+		arg.AgentHost,
+		arg.VolumeID,
+		arg.VolumeType,
+		arg.VolumeName,
+		arg.VolumeFs,
+		arg.VolumeTotalBytes,
+		arg.VolumeUsedBytes,
+		arg.VolumeFreeBytes,
+		arg.VolumeTotal,
+		arg.VolumeUsed,
+		arg.VolumeFree,
+		arg.MountScript,
+	)
+	return err
+}

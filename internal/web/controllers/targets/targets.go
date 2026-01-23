@@ -196,13 +196,6 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			clientIP = strings.Split(clientIP, ":")[0]
 		}
 
-		existingTargets, err := storeInstance.Database.GetAllTargetsByAgentHost(reqParsed.Hostname)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			controllers.WriteErrorResponse(w, fmt.Errorf("Failed to get existing targets: %w", err))
-			return
-		}
-
 		tx, err := storeInstance.Database.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -215,55 +208,29 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}()
 
-		existingTargetsMap := make(map[string]database.Target)
-		for _, target := range existingTargets {
-			existingTargetsMap[target.Name] = target
-		}
-
 		for _, parsedDrive := range reqParsed.Drives {
 			targetName := database.GetAgentTargetName(reqParsed.Hostname, parsedDrive.Letter, reqParsed.OperatingSystem)
 
-			if existingTarget, found := existingTargetsMap[targetName]; found {
-				updatedTarget := existingTarget
-				updatedTarget.VolumeID = parsedDrive.Letter
-				updatedTarget.VolumeType = parsedDrive.Type
-				updatedTarget.VolumeName = parsedDrive.VolumeName
-				updatedTarget.VolumeFS = parsedDrive.FileSystem
-				updatedTarget.VolumeFreeBytes = int(parsedDrive.FreeBytes)
-				updatedTarget.VolumeUsedBytes = int(parsedDrive.UsedBytes)
-				updatedTarget.VolumeTotalBytes = int(parsedDrive.TotalBytes)
-				updatedTarget.VolumeFree = parsedDrive.Free
-				updatedTarget.VolumeUsed = parsedDrive.Used
-				updatedTarget.VolumeTotal = parsedDrive.Total
+			targetData := database.Target{
+				Name:             targetName,
+				AgentHost:        database.AgentHost{Name: reqParsed.Hostname},
+				VolumeID:         parsedDrive.Letter,
+				VolumeType:       parsedDrive.Type,
+				VolumeName:       parsedDrive.VolumeName,
+				VolumeFS:         parsedDrive.FileSystem,
+				VolumeFreeBytes:  int(parsedDrive.FreeBytes),
+				VolumeUsedBytes:  int(parsedDrive.UsedBytes),
+				VolumeTotalBytes: int(parsedDrive.TotalBytes),
+				VolumeFree:       parsedDrive.Free,
+				VolumeUsed:       parsedDrive.Used,
+				VolumeTotal:      parsedDrive.Total,
+			}
 
-				err = storeInstance.Database.UpdateTarget(tx, updatedTarget)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to update target %s: %w", targetName, err))
-					return
-				}
-			} else {
-				targetData := database.Target{
-					Name:             targetName,
-					AgentHost:        database.AgentHost{Name: reqParsed.Hostname},
-					VolumeID:         parsedDrive.Letter,
-					VolumeType:       parsedDrive.Type,
-					VolumeName:       parsedDrive.VolumeName,
-					VolumeFS:         parsedDrive.FileSystem,
-					VolumeFreeBytes:  int(parsedDrive.FreeBytes),
-					VolumeUsedBytes:  int(parsedDrive.UsedBytes),
-					VolumeTotalBytes: int(parsedDrive.TotalBytes),
-					VolumeFree:       parsedDrive.Free,
-					VolumeUsed:       parsedDrive.Used,
-					VolumeTotal:      parsedDrive.Total,
-				}
-
-				err = storeInstance.Database.CreateTarget(tx, targetData)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					controllers.WriteErrorResponse(w, fmt.Errorf("Failed to create target %s: %w", targetName, err))
-					return
-				}
+			err = storeInstance.Database.UpsertTarget(tx, targetData)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				controllers.WriteErrorResponse(w, fmt.Errorf("Failed to upsert target %s: %w", targetName, err))
+				return
 			}
 		}
 
