@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -49,7 +48,7 @@ func CheckDriveStatus(drive string, subpath string) (TargetStatus, error) {
 	}
 
 	fullPath := filepath.Join(cleanDrive, subpath)
-	if runtime.GOOS != "windows" && !filepath.IsAbs(fullPath) {
+	if !filepath.IsAbs(fullPath) {
 		fullPath = "/" + fullPath
 	}
 
