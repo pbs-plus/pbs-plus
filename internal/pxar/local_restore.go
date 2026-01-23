@@ -22,43 +22,40 @@ func LocalRestore(
 	pr *PxarReader,
 	sourceDirs []string,
 	destDir string,
-	errChan chan []error,
+	errChan chan error,
 ) {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		errChan <- []error{fmt.Errorf("mkdir root: %w", err)}
+		errChan <- fmt.Errorf("mkdir root: %w", err)
 		return
 	}
 
-	errors := make([]error, 0, len(sourceDirs))
 	for _, source := range sourceDirs {
 		if err := ctx.Err(); err != nil {
-			errors = append(errors, err)
+			errChan <- err
 			break
 		}
 
 		sourceAttr, err := pr.LookupByPath(source)
 		if err != nil {
-			errors = append(errors, err)
+			errChan <- err
 			continue
 		}
 
 		if sourceAttr.IsDir() {
 			err = localRestoreDir(ctx, pr, destDir, sourceAttr)
 			if err != nil {
-				errors = append(errors, err)
+				errChan <- err
 				continue
 			}
 		} else {
 			path := filepath.Join(destDir, sourceAttr.Name())
 			err = localRestoreFile(ctx, pr, path, sourceAttr)
 			if err != nil {
-				errors = append(errors, err)
+				errChan <- err
 				continue
 			}
 		}
 	}
-
-	errChan <- errors
 }
 
 func localRestoreFile(
