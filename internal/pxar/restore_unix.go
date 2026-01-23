@@ -4,10 +4,11 @@ package pxar
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dirEntry EntryInfo) error {
@@ -27,42 +28,53 @@ func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dir
 		switch e.FileType {
 		case FileTypeDirectory:
 			if err := os.MkdirAll(target, os.FileMode(e.Mode&0777)); err != nil {
-				return fmt.Errorf("mkdir %q: %w", target, err)
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mkdir").Write()
+				continue
 			}
 			if err := remoteRestoreDir(ctx, client, target, e); err != nil {
-				return err
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "dir").Write()
+				continue
 			}
 			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
-				return err
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "meta").Write()
+				continue
 			}
 		case FileTypeFile:
 			if err := remoteRestoreFile(ctx, client, target, e); err != nil {
-				return err
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "file").Write()
+				continue
 			}
 		case FileTypeSymlink:
 			if err := remoteRestoreSymlink(ctx, client, target, e); err != nil {
-				return err
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "symlink").Write()
+				continue
 			}
 		case FileTypeFifo:
 			if err := syscall.Mkfifo(target, uint32(e.Mode&0777)); err != nil && !os.IsExist(err) {
-				return fmt.Errorf("mkfifo %q: %w", target, err)
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mkfifo").Write()
+				continue
 			}
 			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
-				return err
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mkfifo").Write()
+				continue
 			}
 		case FileTypeSocket:
 			if err := syscall.Mknod(target, syscall.S_IFSOCK|uint32(e.Mode&0777), 0); err != nil && !os.IsExist(err) {
-				return fmt.Errorf("mksocket %q: %w", target, err)
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mknod").Write()
+				continue
 			}
 			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
-				return err
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mknod").Write()
+				continue
 			}
 		case FileTypeDevice:
 			if err := syscall.Mknod(target, syscall.S_IFCHR|uint32(e.Mode&0777), 0); err != nil && !os.IsExist(err) {
-				return fmt.Errorf("mknod %q: %w", target, err)
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mknod").Write()
+				continue
 			}
 			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
-				return err
+				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mknod").Write()
+				continue
 			}
 		case FileTypeHardlink:
 		}
