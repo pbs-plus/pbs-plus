@@ -55,7 +55,7 @@ func CheckDriveStatus(drive string, subpath string) (TargetStatus, error) {
 	// DRIVE_REMOVABLE = 2, DRIVE_FIXED = 3, DRIVE_CDROM = 5
 	driveType := windows.GetDriveType(windows.StringToUTF16Ptr(rootPath))
 	if driveType == windows.DRIVE_NO_ROOT_DIR {
-		return TargetStatus{IsReachable: false, Message: "drive not found"}, nil
+		return TargetStatus{IsReachable: false, Message: fmt.Sprintf("drive not found (code %d)", driveType)}, nil
 	}
 
 	oldMode := windows.SetErrorMode(windows.SEM_FAILCRITICALERRORS)
