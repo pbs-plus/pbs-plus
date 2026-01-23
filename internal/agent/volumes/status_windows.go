@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -47,36 +48,59 @@ func CheckDriveStatus(drive string, subpath string) (TargetStatus, error) {
 		if len(drive) == 1 {
 			cleanDrive = drive + ":"
 		} else {
-			return TargetStatus{IsReachable: false, Message: fmt.Sprintf("invalid drive format (%s)", drive)}, nil
+			return TargetStatus{
+				IsReachable: false,
+				Message:     fmt.Sprintf("invalid drive format (%s)", drive),
+			}, nil
 		}
 	}
 	rootPath := cleanDrive + "\\"
 
+	pathPtr, err := windows.UTF16PtrFromString(rootPath)
+	if err != nil {
+		return TargetStatus{IsReachable: false, Message: "invalid path encoding"}, nil
+	}
+
 	// DRIVE_REMOVABLE = 2, DRIVE_FIXED = 3, DRIVE_CDROM = 5
-	driveType := windows.GetDriveType(windows.StringToUTF16Ptr(rootPath))
+	driveType := windows.GetDriveType(pathPtr)
 	if driveType == windows.DRIVE_NO_ROOT_DIR {
-		return TargetStatus{IsReachable: false, Message: fmt.Sprintf("drive not found (code %d %s)", driveType, rootPath)}, nil
+		return TargetStatus{
+			IsReachable: false,
+			Message:     fmt.Sprintf("drive not found (code %d %s)", driveType, rootPath),
+		}, nil
 	}
 
 	oldMode := windows.SetErrorMode(windows.SEM_FAILCRITICALERRORS)
 	defer windows.SetErrorMode(oldMode)
 
 	var volName [windows.MAX_PATH + 1]uint16
-	err := windows.GetVolumeInformation(
-		windows.StringToUTF16Ptr(rootPath),
-		&volName[0],
-		uint32(len(volName)),
-		nil,
-		nil,
-		nil,
-		nil,
-		0,
-	)
+	maxRetries := 5
+	retryDelay := 500 * time.Millisecond
 
-	if err != nil {
+	var volErr error
+	for i := 0; i < maxRetries; i++ {
+		volErr = windows.GetVolumeInformation(
+			pathPtr,
+			&volName[0],
+			uint32(len(volName)),
+			nil,
+			nil,
+			nil,
+			nil,
+			0,
+		)
+
+		if volErr == windows.ERROR_NOT_READY {
+			time.Sleep(retryDelay)
+			continue
+		}
+		break
+	}
+
+	if volErr != nil {
 		return TargetStatus{
 			IsReachable: false,
-			Message:     fmt.Sprintf("drive not ready: %v", err),
+			Message:     fmt.Sprintf("drive not ready: %v", volErr),
 		}, nil
 	}
 
@@ -94,7 +118,8 @@ func CheckDriveStatus(drive string, subpath string) (TargetStatus, error) {
 	}
 
 	fullPath := filepath.Join(rootPath, subpath)
-	_, statErr := windows.GetFileAttributes(windows.StringToUTF16Ptr(fullPath))
+	fullPathPtr, _ := windows.UTF16PtrFromString(fullPath)
+	_, statErr := windows.GetFileAttributes(fullPathPtr)
 	if statErr != nil {
 		return TargetStatus{IsReachable: false, Message: "subpath not found"}, nil
 	}
