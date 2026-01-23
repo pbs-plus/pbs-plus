@@ -43,10 +43,12 @@ func findProxyProcess() (int, uint64, error) {
 			continue
 		}
 
-		comm, _ := os.ReadFile(filepath.Join("/proc", f.Name(), "comm"))
-		if strings.TrimSpace(string(comm)) == "proxmox-backup-" ||
-			strings.TrimSpace(string(comm)) == "proxmox-backup-proxy" {
+		cmdline, err := os.ReadFile(filepath.Join("/proc", f.Name(), "cmdline"))
+		if err != nil {
+			continue
+		}
 
+		if strings.Contains(string(cmdline), "proxmox-backup-proxy") {
 			statData, err := os.ReadFile(filepath.Join("/proc", f.Name(), "stat"))
 			if err != nil {
 				continue
