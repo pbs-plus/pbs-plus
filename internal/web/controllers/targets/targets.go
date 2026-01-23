@@ -229,6 +229,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			if existingTarget, found := existingTargetsMap[targetName]; found {
 				updatedTarget := existingTarget
+				updatedTarget.VolumeID = parsedDrive.Letter
 				updatedTarget.VolumeType = parsedDrive.Type
 				updatedTarget.VolumeName = parsedDrive.VolumeName
 				updatedTarget.VolumeFS = parsedDrive.FileSystem
@@ -249,6 +250,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				targetData := database.Target{
 					Name:             targetName,
 					AgentHost:        database.AgentHost{Name: reqParsed.Hostname},
+					VolumeID:         parsedDrive.Letter,
 					VolumeType:       parsedDrive.Type,
 					VolumeName:       parsedDrive.VolumeName,
 					VolumeFS:         parsedDrive.FileSystem,
