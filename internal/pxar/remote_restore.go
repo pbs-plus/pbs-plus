@@ -8,34 +8,33 @@ import (
 	"runtime"
 )
 
-func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, destDir string) []error {
+func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, destDir string) error {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		return []error{fmt.Errorf("mkdir root: %w", err)}
+		return fmt.Errorf("mkdir root: %w", err)
 	}
 
-	errors := make([]error, 0, len(sources))
 	for _, source := range sources {
 		sourceAttr, err := client.LookupByPath(ctx, source)
 		if err != nil {
-			errors = append(errors, err)
+			_ = client.SendError(ctx, err)
 			continue
 		}
 		if sourceAttr.IsDir() {
 			err = remoteRestoreDir(ctx, client, destDir, sourceAttr)
 			if err != nil {
-				errors = append(errors, err)
+				_ = client.SendError(ctx, err)
 				continue
 			}
 		} else {
 			path := filepath.Join(destDir, sourceAttr.Name())
 			err = remoteRestoreFile(ctx, client, path, sourceAttr)
 			if err != nil {
-				errors = append(errors, err)
+				_ = client.SendError(ctx, err)
 				continue
 			}
 		}
 	}
-	return errors
+	return nil
 }
 
 func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e EntryInfo) error {
