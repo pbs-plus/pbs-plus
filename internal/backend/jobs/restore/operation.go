@@ -404,6 +404,15 @@ func (b *RestoreOperation) Cleanup() {
 	if b.queueTask != nil {
 		b.queueTask.Close()
 	}
+
+	childKey := b.job.GetStreamID()
+	agentRPC, ok := b.storeInstance.ARPCAgentsManager.GetStreamPipe(childKey)
+	if ok {
+		agentRPC.Close()
+	}
+
+	b.task.WriteString(fmt.Sprintf("disconnecting stream pipe session of %s", childKey))
+	vfssessions.DisconnectSession(childKey)
 }
 
 func (b *RestoreOperation) Wait() error {
@@ -419,15 +428,6 @@ func (b *RestoreOperation) Wait() error {
 			b.task.WriteString("received done signal from agent")
 		}
 	}
-
-	childKey := b.job.GetStreamID()
-	agentRPC, ok := b.storeInstance.ARPCAgentsManager.GetStreamPipe(childKey)
-	if ok {
-		agentRPC.Close()
-	}
-
-	b.task.WriteString(fmt.Sprintf("disconnecting stream pipe session of %s", childKey))
-	vfssessions.DisconnectSession(childKey)
 
 	b.runPostScript()
 
