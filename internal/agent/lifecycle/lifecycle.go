@@ -39,6 +39,7 @@ func UpdateDrives() error {
 	if err != nil {
 		return err
 	}
+	syslog.L.Info().WithField("body", reqBody).WithMessage("updating target").Write()
 	resp, err := agent.AgentHTTPRequest(http.MethodPost, "/api2/json/d2d/target/agent", bytes.NewBuffer(reqBody), nil)
 	if err != nil {
 		return err
