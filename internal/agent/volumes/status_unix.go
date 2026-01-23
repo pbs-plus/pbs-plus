@@ -31,10 +31,15 @@ func isVolumeLocked(drive string) (bool, error) {
 }
 
 func CheckDriveStatus(drive string, subpath string) (TargetStatus, error) {
-	cleanDrive := strings.TrimSuffix(drive, "/")
-	cleanDrive = strings.TrimSuffix(cleanDrive, "\\")
+	prefix := drive
 
-	locked, err := isVolumeLocked(cleanDrive)
+	if strings.ToLower(drive) == "root" {
+		prefix = "/"
+	}
+
+	fullPath := filepath.Join(prefix, subpath)
+
+	locked, err := isVolumeLocked(fullPath)
 	if err != nil {
 		return TargetStatus{}, fmt.Errorf("platform check failed: %w", err)
 	}
@@ -47,18 +52,9 @@ func CheckDriveStatus(drive string, subpath string) (TargetStatus, error) {
 		}, nil
 	}
 
-	fullPath := filepath.Join(cleanDrive, subpath)
-	if !filepath.IsAbs(fullPath) {
-		fullPath = "/" + fullPath
-	}
-
-	_, err = os.Stat(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return TargetStatus{IsReachable: false, Message: "path does not exist"}, nil
-		}
+	if _, err := os.Stat(fullPath); !os.IsNotExist(err) {
+		return TargetStatus{IsReachable: true, Message: "ok"}, nil
+	} else {
 		return TargetStatus{IsReachable: false, Message: err.Error()}, err
 	}
-
-	return TargetStatus{IsReachable: true, Message: "ok"}, nil
 }
