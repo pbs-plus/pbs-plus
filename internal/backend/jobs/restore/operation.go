@@ -67,6 +67,7 @@ type RestoreOperation struct {
 	err       error
 
 	job           database.Restore
+	remoteServer  *pxar.RemoteServer
 	storeInstance *store.Store
 	skipCheck     bool
 	web           bool
@@ -280,8 +281,11 @@ func (b *RestoreOperation) agentExecute() error {
 	}
 
 	b.task.WriteString(fmt.Sprintf("running remote pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
-	srv := pxar.NewRemoteServer(reader)
-	agentRPC.SetRouter(*srv.Router())
+	b.remoteServer = pxar.NewRemoteServer(reader)
+	if b.remoteServer == nil {
+		return fmt.Errorf("b.remoteServer is nil")
+	}
+	agentRPC.SetRouter(*b.remoteServer.Router())
 
 	vfssessions.CreatePxarReader(childKey, reader)
 
@@ -295,19 +299,6 @@ func (b *RestoreOperation) agentExecute() error {
 	_, err = agentRPC.CallMessage(preCtx, "server_ready", &restoreReq)
 	if err != nil {
 		return err
-	}
-
-	defer func() {
-		b.task.WriteString(fmt.Sprintf("disconnecting stream pipe session of %s", childKey))
-		vfssessions.DisconnectSession(childKey)
-		agentRPC.Close()
-	}()
-
-	select {
-	case <-b.ctx.Done():
-		return b.ctx.Err()
-	case <-srv.DoneCh:
-		b.task.WriteString("received done signal from agent")
 	}
 
 	return nil
@@ -342,30 +333,28 @@ func (b *RestoreOperation) localExecute() error {
 
 	b.task.WriteString("starting local restore")
 
-	results := make(chan []error, 1)
-	defer close(results)
+	results := make(chan error, 1)
 
-	go pxar.LocalRestore(b.ctx, reader, []string{srcPath}, destPath, results)
+	b.waitGroup.Go(func() {
+		defer close(results)
+		pxar.LocalRestore(b.ctx, reader, []string{srcPath}, destPath, results)
+	})
 
-	defer func() {
-		b.task.WriteString(fmt.Sprintf("ending session of %s", childKey))
-		vfssessions.DisconnectSession(childKey)
-	}()
-
-	numErrs := 0
-	select {
-	case <-b.ctx.Done():
-		return b.ctx.Err()
-	case errs := <-results:
-		for _, err := range errs {
-			numErrs++
-			b.task.WriteString(fmt.Sprintf("error: %s", err.Error()))
+	go func() {
+		for {
+			select {
+			case <-b.ctx.Done():
+				return
+			case err, ok := <-results:
+				if !ok {
+					return
+				}
+				if err != nil {
+					b.task.WriteString(fmt.Sprintf("error: %s", err.Error()))
+				}
+			}
 		}
-	}
-
-	if numErrs > 0 {
-		return fmt.Errorf("local restore has encountered %d errors", numErrs)
-	}
+	}()
 
 	return nil
 }
@@ -421,6 +410,24 @@ func (b *RestoreOperation) Wait() error {
 	if b.waitGroup != nil {
 		b.waitGroup.Wait()
 	}
+
+	if b.remoteServer != nil {
+		select {
+		case <-b.ctx.Done():
+			return b.ctx.Err()
+		case <-b.remoteServer.DoneCh:
+			b.task.WriteString("received done signal from agent")
+		}
+	}
+
+	childKey := b.job.GetStreamID()
+	agentRPC, ok := b.storeInstance.ARPCAgentsManager.GetStreamPipe(childKey)
+	if ok {
+		agentRPC.Close()
+	}
+
+	b.task.WriteString(fmt.Sprintf("disconnecting stream pipe session of %s", childKey))
+	vfssessions.DisconnectSession(childKey)
 
 	b.runPostScript()
 
