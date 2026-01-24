@@ -201,6 +201,9 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
             fieldLabel: gettext("Path to restore"),
             reference: "pathSelector",
             name: "src-path",
+            cbind: {
+              deleteEmpty: "{!isCreate}",
+            },
           },
         ],
 
@@ -216,6 +219,9 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
             fieldLabel: gettext("Path to destination"),
             reference: "pathSelectorDestination",
             name: "dest-subpath",
+            cbind: {
+              deleteEmpty: "{!isCreate}",
+            },
           },
         ],
 

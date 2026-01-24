@@ -6,6 +6,10 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
 
   target: undefined,
 
+  config: {
+    deleteEmpty: false,
+  },
+
   items: [
     {
       xtype: "proxmoxtextfield",
@@ -14,6 +18,9 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
       flex: 1,
       emptyText: gettext("/"),
       allowBlank: true,
+      cbind: {
+        deleteEmpty: "{deleteEmpty}",
+      },
     },
     {
       xtype: "button",
