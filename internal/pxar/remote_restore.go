@@ -61,8 +61,8 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 		return fmt.Errorf("mkdir root: %w", err)
 	}
 
-	numWorkers := runtime.NumCPU() * 2
-	jobs := make(chan restoreJob, 512)
+	numWorkers := runtime.NumCPU() * 4
+	jobs := make(chan restoreJob, 1024)
 	var wg sync.WaitGroup
 
 	for i := 0; i < numWorkers; i++ {
