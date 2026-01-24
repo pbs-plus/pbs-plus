@@ -140,13 +140,33 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 		return nil, fmt.Errorf("failed to create CBOR decoder: %w", err)
 	}
 
-	return &PxarReader{
-		conn: conn,
-		enc:  encMode,
-		dec:  decMode,
-		cmd:  cmd,
-		task: proxmoxTask,
-	}, nil
+	loggerCh := make(chan string, 100)
+
+	reader := &PxarReader{
+		conn:     conn,
+		enc:      encMode,
+		dec:      decMode,
+		cmd:      cmd,
+		task:     proxmoxTask,
+		loggerCh: loggerCh,
+	}
+
+	go func() {
+		defer close(loggerCh)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case log, ok := <-loggerCh:
+				if !ok {
+					return
+				}
+				proxmoxTask.WriteString(log)
+			}
+		}
+	}()
+
+	return reader, nil
 }
 
 func runSocket(ctx context.Context, socketPath, pbsStore, mpxarPath, ppxarPath, keyFile string) (*exec.Cmd, error) {
@@ -216,6 +236,9 @@ func runSocket(ctx context.Context, socketPath, pbsStore, mpxarPath, ppxarPath, 
 }
 
 func (c *PxarReader) Close() error {
+	if c.loggerCh != nil {
+		close(c.loggerCh)
+	}
 	if c.conn != nil {
 		_ = c.conn.Close()
 	}
@@ -340,8 +363,12 @@ func (c *PxarReader) ReadDir(entryEnd uint64) ([]EntryInfo, error) {
 	}
 
 	for i := range entries {
-		c.task.WriteString(fmt.Sprintf("restoring entry: %s", entries[i].Name()))
 		if entries[i].IsDir() {
+			select {
+			case c.loggerCh <- fmt.Sprintf("restoring entries of dir: %s", entries[i].Name()):
+			default:
+			}
+
 			atomic.AddInt64(&c.FolderCount, 1)
 		} else {
 			atomic.AddInt64(&c.FileCount, 1)

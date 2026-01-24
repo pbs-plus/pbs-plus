@@ -12,12 +12,13 @@ import (
 )
 
 type PxarReader struct {
-	conn net.Conn
-	mu   sync.Mutex
-	enc  cbor.EncMode
-	dec  cbor.DecMode
-	cmd  *exec.Cmd
-	task *tasks.RestoreTask
+	conn     net.Conn
+	mu       sync.Mutex
+	enc      cbor.EncMode
+	dec      cbor.DecMode
+	cmd      *exec.Cmd
+	task     *tasks.RestoreTask
+	loggerCh chan string
 
 	FileCount   int64
 	FolderCount int64
