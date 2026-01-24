@@ -323,7 +323,6 @@ func (c *PxarReader) LookupByPath(path string) (*EntryInfo, error) {
 }
 
 func (c *PxarReader) ReadDir(entryEnd uint64) ([]EntryInfo, error) {
-	c.task.WriteString(fmt.Sprintf("reading directory [entryEnd: %d]", entryEnd))
 	resp, err := c.sendRequest("ReadDir", map[string]any{"entry_end": entryEnd})
 	if err != nil {
 		return nil, err
@@ -351,8 +350,6 @@ func (c *PxarReader) ReadDir(entryEnd uint64) ([]EntryInfo, error) {
 }
 
 func (c *PxarReader) GetAttr(entryStart, entryEnd uint64) (*EntryInfo, error) {
-	c.task.WriteString(fmt.Sprintf("getting file attributes [entryStart: %d, entryEnd: %d]", entryStart, entryEnd))
-
 	reqData := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
@@ -378,8 +375,6 @@ func (c *PxarReader) GetAttr(entryStart, entryEnd uint64) (*EntryInfo, error) {
 }
 
 func (c *PxarReader) Read(contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
-	c.task.WriteString(fmt.Sprintf("reading source content [start: %d, end: %d, offset: %d, size %d]", contentStart, contentEnd, offset, size))
-
 	reqData := map[string]any{
 		"content_start": contentStart,
 		"content_end":   contentEnd,
@@ -413,8 +408,6 @@ func (c *PxarReader) Read(contentStart, contentEnd, offset uint64, size uint) ([
 }
 
 func (c *PxarReader) ReadLink(entryStart, entryEnd uint64) ([]byte, error) {
-	c.task.WriteString(fmt.Sprintf("reading source link [start: %d, end: %d]", entryStart, entryEnd))
-
 	reqData := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
@@ -444,8 +437,6 @@ func (c *PxarReader) ReadLink(entryStart, entryEnd uint64) ([]byte, error) {
 }
 
 func (c *PxarReader) ListXAttrs(entryStart, entryEnd uint64) (map[string][]byte, error) {
-	c.task.WriteString(fmt.Sprintf("listing xattrs [start: %d, end: %d]", entryStart, entryEnd))
-
 	reqData := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
@@ -512,6 +503,8 @@ func extractEntryInfo(c *PxarReader, resp Response) (*EntryInfo, error) {
 	if err := c.dec.Unmarshal(infoBytes, &info); err != nil {
 		return nil, fmt.Errorf("failed to decode info: %w", err)
 	}
+
+	c.task.WriteString(fmt.Sprintf("restoring entry: %s", info.Name()))
 
 	return &info, nil
 }

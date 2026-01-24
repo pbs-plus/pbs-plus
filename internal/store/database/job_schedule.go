@@ -168,6 +168,11 @@ func deleteBackupSchedule(ctx context.Context, id string) error {
 	return nil
 }
 
+type TimerValue struct {
+	Type  string
+	Value uint64
+}
+
 func (backup *Backup) SetBackupRetrySchedule(ctx context.Context, extraExclusions []string) error {
 	sanitized, err := sanitizeUnitName(backup.ID)
 	if err != nil {
@@ -216,10 +221,11 @@ ExecStart=%s
 		return fmt.Errorf("SetRetrySchedule: error writing service: %w", err)
 	}
 
-	conn, err := system.GetSystemdConn()
+	conn, err := dbus.NewSystemdConnectionContext(ctx)
 	if err != nil {
 		return fmt.Errorf("SetRetrySchedule: failed to connect to dbus: %w", err)
 	}
+	defer conn.Close()
 
 	if err := conn.ReloadContext(ctx); err != nil {
 		return fmt.Errorf("SetRetrySchedule: daemon-reload failed: %w", err)
@@ -227,10 +233,19 @@ ExecStart=%s
 
 	timerProps := []dbus.Property{
 		dbus.PropDescription(fmt.Sprintf("%s Backup Retry Timer (Attempt %d)", backup.ID, newAttempt)),
-		{Name: "TimersMonotonic", Value: godbus.MakeVariant([][]interface{}{
-			{"OnActiveSec", delayMicroseconds},
-		})},
-		{Name: "Unit", Value: godbus.MakeVariant(serviceName)},
+		{
+			Name: "TimersMonotonic",
+			Value: godbus.MakeVariant([]TimerValue{
+				{
+					Type:  "OnActiveSec",
+					Value: delayMicroseconds,
+				},
+			}),
+		},
+		{
+			Name:  "Unit",
+			Value: godbus.MakeVariant(serviceName),
+		},
 	}
 
 	_, err = conn.StartTransientUnitContext(ctx, timerName, "replace", timerProps, nil)
@@ -244,32 +259,35 @@ ExecStart=%s
 }
 
 func getCurrentBackupRetryAttempt(ctx context.Context, sanitized string) int {
-	conn, err := system.GetSystemdConn()
+	conn, err := dbus.NewSystemdConnectionContext(ctx)
 	if err != nil {
 		return 0
 	}
+	defer conn.Close()
 
 	pattern := fmt.Sprintf("pbs-plus-backup-%s-retry-*.timer", sanitized)
-	units, err := conn.ListUnitsByPatternsContext(ctx, nil, []string{pattern})
-	if err != nil {
-		return 0
-	}
 
 	maxAttempt := 0
 	parseAttempt := func(name string) {
 		parts := strings.Split(name, "-retry-")
-		if len(parts) == 2 {
-			attemptStr := strings.TrimSuffix(parts[1], ".timer")
-			if attemptInt, err := strconv.Atoi(attemptStr); err == nil {
-				if attemptInt > maxAttempt {
-					maxAttempt = attemptInt
-				}
+		if len(parts) != 2 {
+			return
+		}
+
+		attemptStr := strings.TrimSuffix(parts[1], ".timer")
+
+		if attemptInt, err := strconv.Atoi(attemptStr); err == nil {
+			if attemptInt > maxAttempt {
+				maxAttempt = attemptInt
 			}
 		}
 	}
 
-	for _, unit := range units {
-		parseAttempt(unit.Name)
+	units, err := conn.ListUnitsByPatternsContext(ctx, nil, []string{pattern})
+	if err == nil {
+		for _, unit := range units {
+			parseAttempt(unit.Name)
+		}
 	}
 
 	matches, _ := filepath.Glob(filepath.Join("/run/systemd/system", pattern))
