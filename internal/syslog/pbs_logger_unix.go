@@ -74,10 +74,10 @@ func CreateJobLogger(jobId string) (*JobLogger, error) {
 	return logger, nil
 }
 
-func GetExistingJobLogger(jobId string) (*JobLogger, error) {
+func GetExistingJobLogger(jobId string) *JobLogger {
 	filePath, err := safeJobLogPath(jobId)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 
 	logger, _ := jobLoggers.LoadOrCompute(jobId, func() *JobLogger {
@@ -99,10 +99,10 @@ func GetExistingJobLogger(jobId string) (*JobLogger, error) {
 	})
 
 	if logger == nil {
-		return nil, errors.New("failed to get or create job logger")
+		return nil
 	}
 
-	return logger, nil
+	return logger
 }
 
 func (b *JobLogger) Write(in []byte) (n int, err error) {
