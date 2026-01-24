@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -24,6 +25,36 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
+
+type PxarReader struct {
+	conn     net.Conn
+	mu       sync.Mutex
+	enc      cbor.EncMode
+	dec      cbor.DecMode
+	cmd      *exec.Cmd
+	task     *tasks.RestoreTask
+	loggerCh chan string
+
+	FileCount   int64
+	FolderCount int64
+	TotalBytes  int64
+
+	lastAccessTime  int64
+	lastBytesTime   int64
+	lastFileCount   int64
+	lastFolderCount int64
+	lastTotalBytes  int64
+}
+
+type PxarReaderStats struct {
+	ByteReadSpeed   float64
+	FileAccessSpeed float64
+	FilesAccessed   int64
+	FoldersAccessed int64
+	TotalAccessed   int64
+	TotalBytes      uint64
+	StatCacheHits   int64
+}
 
 func (r *PxarReader) GetStats() PxarReaderStats {
 	// Get the current time in nanoseconds.
@@ -241,6 +272,9 @@ func (c *PxarReader) Close() error {
 	}
 	if c.conn != nil {
 		_ = c.conn.Close()
+	}
+	if c.cmd != nil {
+		c.cmd.Cancel()
 	}
 	return nil
 }

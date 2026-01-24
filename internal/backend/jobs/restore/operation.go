@@ -72,6 +72,7 @@ type RestoreOperation struct {
 
 	job           database.Restore
 	remoteServer  *pxar.RemoteServer
+	localClient   *pxar.Client
 	storeInstance *store.Store
 	skipCheck     bool
 	web           bool
@@ -313,9 +314,14 @@ func (b *RestoreOperation) agentExecute() error {
 			select {
 			case <-b.ctx.Done():
 				return
-			case err := <-errCh:
-				b.task.WriteString(fmt.Sprintf("%s", err))
-				b.errCount.Add(1)
+			case err, ok := <-errCh:
+				if !ok {
+					return
+				}
+				if err != nil {
+					b.task.WriteString(fmt.Sprintf("%s", err))
+					b.errCount.Add(1)
+				}
 			}
 		}
 	}()
@@ -358,6 +364,8 @@ func (b *RestoreOperation) localExecute() error {
 		return err
 	}
 
+	var errCh chan error
+	b.localClient, errCh = pxar.NewLocalClient(reader)
 	vfssessions.CreatePxarReader(childKey, reader)
 
 	syslog.L.Info().
@@ -368,11 +376,8 @@ func (b *RestoreOperation) localExecute() error {
 
 	b.task.WriteString("starting local restore")
 
-	results := make(chan error, 16)
-
 	b.waitGroup.Go(func() {
-		defer close(results)
-		pxar.LocalRestore(b.ctx, reader, []string{srcPath}, destPath, results)
+		pxar.Restore(b.ctx, b.localClient, []string{srcPath}, destPath)
 	})
 
 	go func() {
@@ -380,7 +385,7 @@ func (b *RestoreOperation) localExecute() error {
 			select {
 			case <-b.ctx.Done():
 				return
-			case err, ok := <-results:
+			case err, ok := <-errCh:
 				if !ok {
 					return
 				}
@@ -451,6 +456,14 @@ func (b *RestoreOperation) Cleanup() {
 	agentRPC, ok := b.storeInstance.ARPCAgentsManager.GetStreamPipe(childKey)
 	if ok {
 		agentRPC.Close()
+	}
+
+	if b.localClient != nil {
+		b.localClient.Close()
+	}
+
+	if b.remoteServer != nil {
+		b.remoteServer.Close()
 	}
 
 	b.task.WriteString(fmt.Sprintf("disconnecting stream pipe session of %s", childKey))

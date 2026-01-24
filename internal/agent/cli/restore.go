@@ -38,7 +38,7 @@ type restoreSession struct {
 	cancel       context.CancelFunc
 	store        *agent.RestoreStore
 	once         sync.Once
-	remoteClient *pxar.RemoteClient
+	remoteClient *pxar.Client
 }
 
 func (s *restoreSession) Close() {
@@ -294,7 +294,7 @@ func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string) error {
 		WithField("restoreId", restoreId).
 		Write()
 
-	err = pxar.RemoteRestore(session.ctx, client, []string{source}, dest)
+	err = pxar.Restore(session.ctx, client, []string{source}, dest)
 	if err != nil {
 		return fmt.Errorf("%v", err)
 	}
