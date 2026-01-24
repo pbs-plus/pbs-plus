@@ -8,7 +8,6 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,42 +27,6 @@ type RestoreTask struct {
 	restore database.Restore
 }
 
-func findProxyProcess() (int, uint64, error) {
-	files, err := os.ReadDir("/proc")
-	if err != nil {
-		return 0, 0, err
-	}
-
-	for _, f := range files {
-		if !f.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(f.Name())
-		if err != nil {
-			continue
-		}
-
-		cmdline, err := os.ReadFile(filepath.Join("/proc", f.Name(), "cmdline"))
-		if err != nil {
-			continue
-		}
-
-		if strings.Contains(string(cmdline), "proxmox-backup-proxy") {
-			statData, err := os.ReadFile(filepath.Join("/proc", f.Name(), "stat"))
-			if err != nil {
-				continue
-			}
-			fields := strings.Fields(string(statData))
-			if len(fields) < 22 {
-				continue
-			}
-			pstart, _ := strconv.ParseUint(fields[21], 10, 64)
-			return pid, pstart, nil
-		}
-	}
-	return 0, 0, fmt.Errorf("proxmox-backup-proxy process not found")
-}
-
 func GetRestoreTask(
 	job database.Restore,
 ) (*RestoreTask, error) {
@@ -71,12 +34,8 @@ func GetRestoreTask(
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
 	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
 
-	proxyPID, proxyPStart, err := findProxyProcess()
-	if err != nil {
-		// Fallback to our own if proxy isn't found, though it likely won't persist
-		proxyPID = os.Getpid()
-		proxyPStart = uint64(proxmox.GetPStart())
-	}
+	proxyPID := os.Getpid()
+	proxyPStart := proxmox.GetPStart()
 
 	wtype := "reader"
 	node := "pbsplus"
