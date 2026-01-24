@@ -23,14 +23,15 @@ func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dir
 
 	for _, e := range entries {
 		target := filepath.Join(dst, e.Name())
+
 		wg.Add(1)
-		job := restoreJob{dest: target, info: e}
-		select {
-		case jobs <- job:
-		case <-ctx.Done():
-			wg.Done()
-			return ctx.Err()
-		}
+		go func(t string, info EntryInfo) {
+			select {
+			case jobs <- restoreJob{dest: t, info: info}:
+			case <-ctx.Done():
+				wg.Done()
+			}
+		}(target, e)
 	}
 
 	pathPtr, err := windows.UTF16PtrFromString(dst)
