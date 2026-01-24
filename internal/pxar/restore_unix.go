@@ -26,13 +26,13 @@ func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dir
 		switch e.FileType {
 		case FileTypeDirectory, FileTypeFile, FileTypeSymlink:
 			wg.Add(1)
-			job := restoreJob{dest: target, info: e}
-			select {
-			case jobs <- job:
-			case <-ctx.Done():
-				wg.Done()
-				return ctx.Err()
-			}
+			go func(t string, info EntryInfo) {
+				select {
+				case jobs <- restoreJob{dest: t, info: info}:
+				case <-ctx.Done():
+					wg.Done()
+				}
+			}(target, e)
 
 		case FileTypeFifo, FileTypeSocket:
 			var opErr error

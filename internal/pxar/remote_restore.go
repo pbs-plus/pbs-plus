@@ -76,16 +76,24 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 		}()
 	}
 
-	func() {
-		for _, source := range sources {
+	var sourcesWg sync.WaitGroup
+	for _, source := range sources {
+		if ctx.Err() != nil {
+			break
+		}
+
+		sourcesWg.Add(1)
+		go func(src string) {
+			defer sourcesWg.Done()
+
 			if ctx.Err() != nil {
 				return
 			}
 
-			sourceAttr, err := client.LookupByPath(ctx, source)
+			sourceAttr, err := client.LookupByPath(ctx, src)
 			if err != nil {
 				_ = client.SendError(ctx, err)
-				continue
+				return
 			}
 			path := filepath.Join(destDir, sourceAttr.Name())
 
@@ -96,8 +104,9 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 				wg.Done()
 				return
 			}
-		}
-	}()
+		}(source)
+	}
+	sourcesWg.Wait()
 
 	wg.Wait()
 	close(jobs)
