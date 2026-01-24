@@ -32,13 +32,13 @@ func localRestoreDir(
 
 		if e.IsDir() || e.IsFile() || e.IsSymlink() {
 			wg.Add(1)
-			job := localJob{dest: target, info: e}
-			select {
-			case jobs <- job:
-			case <-ctx.Done():
-				wg.Done()
-				return ctx.Err()
-			}
+			go func(t string, info EntryInfo) {
+				select {
+				case jobs <- localJob{dest: t, info: info}:
+				case <-ctx.Done():
+					wg.Done()
+				}
+			}(target, e)
 		} else {
 			if err := restoreSpecialFile(pr, target, e); err != nil {
 				errChan <- err
