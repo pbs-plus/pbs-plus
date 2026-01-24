@@ -241,15 +241,15 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	fh.isDir = std.Directory != 0
 
 	if fh.isDir {
+		fh.handle.Close()
+
 		dirPath, err := s.abs(payload.Path)
 		if err != nil {
-			handle.Close()
 			syslog.L.Error(err).WithMessage("handleOpenFile: abs failed for dir").WithField("path", payload.Path).Write()
 			return arpc.Response{}, err
 		}
 		reader, err := NewDirReaderNT(dirPath)
 		if err != nil {
-			handle.Close()
 			syslog.L.Error(err).WithMessage("handleOpenFile: NewDirReaderNT failed").WithField("path", dirPath).Write()
 			return arpc.Response{}, err
 		}
