@@ -35,6 +35,8 @@ type PxarReader struct {
 	task     *tasks.RestoreTask
 	loggerCh chan string
 
+	closed atomic.Bool
+
 	FileCount   int64
 	FolderCount int64
 	TotalBytes  int64
@@ -183,7 +185,6 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 	}
 
 	go func() {
-		defer close(loggerCh)
 		for {
 			select {
 			case <-ctx.Done():
@@ -267,6 +268,10 @@ func runSocket(ctx context.Context, socketPath, pbsStore, mpxarPath, ppxarPath, 
 }
 
 func (c *PxarReader) Close() error {
+	if c.closed.Swap(true) {
+		return nil
+	}
+
 	if c.loggerCh != nil {
 		close(c.loggerCh)
 	}

@@ -22,6 +22,7 @@ type RemoteServer struct {
 	isDone atomic.Bool
 	DoneCh chan struct{}
 	errCh  chan error
+	closed atomic.Bool
 }
 
 func NewRemoteServer(reader *PxarReader) (*RemoteServer, chan error) {
@@ -38,6 +39,10 @@ func NewRemoteServer(reader *PxarReader) (*RemoteServer, chan error) {
 }
 
 func (s *RemoteServer) Close() error {
+	if s.closed.Swap(true) {
+		return nil
+	}
+
 	close(s.errCh)
 
 	return s.reader.Close()

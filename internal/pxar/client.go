@@ -2,15 +2,17 @@ package pxar
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type Client struct {
-	pipe  *arpc.StreamPipe
-	pr    *PxarReader
-	errCh chan error
+	pipe   *arpc.StreamPipe
+	pr     *PxarReader
+	errCh  chan error
+	closed atomic.Bool
 }
 
 func NewRemoteClient(pipe *arpc.StreamPipe) *Client {
@@ -181,6 +183,10 @@ func (c *Client) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (m
 }
 
 func (c *Client) Close() error {
+	if c.closed.Swap(true) {
+		return nil
+	}
+
 	if c.pipe != nil {
 		if err := c.pipe.Call(context.Background(), "pxar.Done", nil, nil); err != nil {
 			return err
