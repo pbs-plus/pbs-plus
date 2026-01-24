@@ -50,9 +50,17 @@ func LocalRestore(
 
 	for i := 0; i < numWorkers; i++ {
 		go func() {
-			for job := range jobs {
-				processLocalJob(ctx, pr, job, jobs, &wg, errChan)
-				wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case job, ok := <-jobs:
+					if !ok {
+						return
+					}
+					processLocalJob(ctx, pr, job, jobs, &wg, errChan)
+					wg.Done()
+				}
 			}
 		}()
 	}
@@ -122,6 +130,7 @@ func localRestoreFile(ctx context.Context, pr *PxarReader, path string, e *Entry
 	if err != nil {
 		return fmt.Errorf("create file %q: %w", path, err)
 	}
+	defer f.Close()
 
 	if e.Size > 0 && e.ContentRange != nil {
 		bw := bufio.NewWriterSize(f, 1<<18)
@@ -133,7 +142,6 @@ func localRestoreFile(ctx context.Context, pr *PxarReader, path string, e *Entry
 		var off uint64
 		for off < e.Size {
 			if err := ctx.Err(); err != nil {
-				f.Close()
 				return err
 			}
 			size := uint(len(buf))
@@ -145,13 +153,11 @@ func localRestoreFile(ctx context.Context, pr *PxarReader, path string, e *Entry
 				break
 			}
 			if _, err := bw.Write(data); err != nil {
-				f.Close()
 				return err
 			}
 			off += uint64(len(data))
 		}
 		if err := bw.Flush(); err != nil {
-			f.Close()
 			return err
 		}
 	}
