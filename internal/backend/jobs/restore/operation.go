@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -236,10 +238,24 @@ func (b *RestoreOperation) agentExecute() error {
 	}
 
 	destPath := b.job.DestSubpath
+	basePath := b.job.DestTarget.GetAgentHostPath()
 
-	destPath = filepath.Join(b.job.DestTarget.GetAgentHostPath(), destPath)
+	fullPath := path.Join(basePath, destPath)
+
 	if b.job.DestTarget.AgentHost.OperatingSystem == "windows" {
-		destPath = filepath.FromSlash(destPath)
+		fullPath = strings.ReplaceAll(fullPath, "/", "\\")
+		if len(fullPath) >= 2 && fullPath[1] == ':' {
+			drive := strings.ToUpper(fullPath[:2])
+			remaining := fullPath[2:]
+			remaining = regexp.MustCompile(`\\+`).ReplaceAllString(remaining, "\\")
+			if !strings.HasPrefix(remaining, "\\") {
+				remaining = "\\" + remaining
+			}
+			fullPath = drive + remaining
+		}
+		destPath = fullPath
+	} else {
+		destPath = fullPath
 	}
 
 	srcPath := b.job.SrcPath
