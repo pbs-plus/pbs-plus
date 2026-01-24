@@ -6,80 +6,115 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 )
+
+var (
+	copyBufPool = sync.Pool{New: func() any { return make([]byte, 1<<20) }}
+)
+
+type restoreJob struct {
+	dest string
+	info EntryInfo
+}
 
 func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, destDir string) error {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir root: %w", err)
 	}
 
+	numWorkers := runtime.NumCPU() * 2
+	jobs := make(chan restoreJob, 512)
+	var wg sync.WaitGroup
+
+	reportErr := func(err error) {
+		_ = client.SendError(ctx, err)
+	}
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Go(func() {
+			for job := range jobs {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				var err error
+				if job.info.IsDir() {
+					err = remoteRestoreDir(ctx, client, job.dest, job.info, jobs, &wg)
+				} else if job.info.IsSymlink() {
+					err = remoteRestoreSymlink(ctx, client, job.dest, job.info)
+				} else if job.info.IsFile() {
+					err = remoteRestoreFile(ctx, client, job.dest, job.info)
+				}
+
+				if err != nil {
+					reportErr(err)
+				}
+			}
+		})
+	}
+
 	for _, source := range sources {
 		sourceAttr, err := client.LookupByPath(ctx, source)
 		if err != nil {
-			_ = client.SendError(ctx, err)
+			reportErr(err)
 			continue
 		}
-		if sourceAttr.IsDir() {
-			err = remoteRestoreDir(ctx, client, destDir, sourceAttr)
-			if err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-		} else {
-			path := filepath.Join(destDir, sourceAttr.Name())
-			err = remoteRestoreFile(ctx, client, path, sourceAttr)
-			if err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-		}
+		path := filepath.Join(destDir, sourceAttr.Name())
+
+		wg.Add(1)
+		jobs <- restoreJob{dest: path, info: sourceAttr}
 	}
+
+	wg.Wait()
+	close(jobs)
+
 	return nil
 }
 
 func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e EntryInfo) error {
-	mode := os.FileMode(e.Mode & 0777)
-	if runtime.GOOS == "windows" {
-		mode = 0666
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0666)
 	if err != nil {
 		return fmt.Errorf("create file %q: %w", path, err)
 	}
-	defer f.Close()
 
-	if e.ContentRange != nil {
-		start, end := e.ContentRange[0], e.ContentRange[1]
+	if e.Size > 0 && e.ContentRange != nil {
+		buf := copyBufPool.Get().([]byte)
+		defer copyBufPool.Put(buf)
+
 		var off uint64
-		buf := make([]byte, 1<<20)
-
+		start, end := e.ContentRange[0], e.ContentRange[1]
 		for off < e.Size {
-			select {
-			case <-ctx.Done():
+			if ctx.Err() != nil {
+				f.Close()
 				return ctx.Err()
-			default:
 			}
 
-			size := uint(len(buf))
-			remain := e.Size - off
-			if remain < uint64(size) {
-				size = uint(remain)
+			readSize := uint(len(buf))
+			if remain := e.Size - off; remain < uint64(readSize) {
+				readSize = uint(remain)
 			}
-			data, err := client.Read(ctx, start, end, off, size)
+
+			n, err := client.Read(ctx, start, end, off, readSize, buf)
 			if err != nil {
-				return fmt.Errorf("read content %q: %w", path, err)
+				f.Close()
+				return fmt.Errorf("read remote: %w", err)
 			}
-			if len(data) == 0 {
+			if n == 0 {
 				break
 			}
-			if _, err := f.Write(data); err != nil {
-				return fmt.Errorf("write content %q: %w", path, err)
+
+			if _, err := f.Write(buf[:n]); err != nil {
+				f.Close()
+				return err
 			}
-			off += uint64(len(data))
+			off += uint64(n)
 		}
 	}
 
-	return remoteApplyMeta(ctx, client, path, e)
+	return remoteApplyMeta(ctx, client, f, e)
 }
 
 func remoteRestoreSymlink(ctx context.Context, client *RemoteClient, path string, e EntryInfo) error {

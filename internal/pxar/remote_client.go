@@ -68,18 +68,14 @@ func (c *RemoteClient) GetAttr(ctx context.Context, entryStart, entryEnd uint64)
 	return info, nil
 }
 
-func (c *RemoteClient) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
+func (c *RemoteClient) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint, data []byte) (int, error) {
 	params := map[string]any{
 		"content_start": contentStart,
 		"content_end":   contentEnd,
 		"offset":        offset,
 		"size":          size,
 	}
-	var data []byte
-	if err := c.pipe.Call(ctx, "pxar.Read", params, &data); err != nil {
-		return nil, err
-	}
-	return data, nil
+	return c.pipe.CallBinary(ctx, "pxar.Read", params, data)
 }
 
 func (c *RemoteClient) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
