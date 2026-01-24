@@ -6,76 +6,53 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 )
 
-func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dirEntry EntryInfo) error {
+func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dirEntry EntryInfo, jobs chan<- restoreJob, wg *sync.WaitGroup) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+
 	entries, err := client.ReadDir(ctx, dirEntry.EntryRangeEnd)
 	if err != nil {
 		return err
 	}
 
 	for _, e := range entries {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		target := filepath.Join(dst, e.Name())
+
 		switch e.FileType {
-		case FileTypeDirectory:
-			if err := os.MkdirAll(target, os.FileMode(e.Mode&0777)); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
+		case FileTypeDirectory, FileTypeFile, FileTypeSymlink:
+			wg.Add(1)
+			select {
+			case jobs <- restoreJob{dest: target, info: e}:
+			case <-ctx.Done():
+				wg.Done()
+				return ctx.Err()
 			}
-			if err := remoteRestoreDir(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
+
+		case FileTypeFifo, FileTypeSocket:
+			var opErr error
+			mode := uint32(e.Mode & 0777)
+			if e.FileType == FileTypeFifo {
+				opErr = syscall.Mkfifo(target, mode)
+			} else {
+				opErr = syscall.Mknod(target, syscall.S_IFSOCK|mode, 0)
 			}
-			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
+
+			if opErr == nil || os.IsExist(opErr) {
+				if f, openErr := os.OpenFile(target, os.O_RDONLY, 0); openErr == nil {
+					_ = remoteApplyMeta(ctx, client, f, e)
+				}
 			}
-		case FileTypeFile:
-			if err := remoteRestoreFile(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-		case FileTypeSymlink:
-			if err := remoteRestoreSymlink(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-		case FileTypeFifo:
-			if err := syscall.Mkfifo(target, uint32(e.Mode&0777)); err != nil && !os.IsExist(err) {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-		case FileTypeSocket:
-			if err := syscall.Mknod(target, syscall.S_IFSOCK|uint32(e.Mode&0777), 0); err != nil && !os.IsExist(err) {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-		case FileTypeDevice:
-			if err := syscall.Mknod(target, syscall.S_IFCHR|uint32(e.Mode&0777), 0); err != nil && !os.IsExist(err) {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-		case FileTypeHardlink:
 		}
 	}
-	return nil
+
+	df, err := os.Open(dst)
+	if err != nil {
+		return err
+	}
+	return remoteApplyMeta(ctx, client, df, dirEntry)
 }
