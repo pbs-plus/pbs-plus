@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
-
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func localRestoreDir(
@@ -16,6 +14,7 @@ func localRestoreDir(
 	pr *PxarReader,
 	dst string,
 	dirEntry *EntryInfo,
+	errCh chan error,
 ) error {
 	entries, err := pr.ReadDir(dirEntry.EntryRangeEnd)
 	if err != nil {
@@ -31,36 +30,35 @@ func localRestoreDir(
 		switch e.FileType {
 		case FileTypeDirectory:
 			if err := os.MkdirAll(target, os.FileMode(e.Mode&0777)); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mkdir").Write()
+				errCh <- err
 				continue
 			}
-			// Pass context into recursive call
-			if err := localRestoreDir(ctx, pr, target, &e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "dir").Write()
+			if err := localRestoreDir(ctx, pr, target, &e, errCh); err != nil {
+				errCh <- err
 				continue
 			}
 			if err := localApplyMeta(pr, target, &e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "meta").Write()
+				errCh <- err
 				continue
 			}
 		case FileTypeFile:
 			if err := localRestoreFile(ctx, pr, target, &e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "file").Write()
+				errCh <- err
 				continue
 			}
 		case FileTypeSymlink:
 			if err := localRestoreSymlink(ctx, pr, target, &e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "symlink").Write()
+				errCh <- err
 				continue
 			}
 		case FileTypeFifo:
 			if err := syscall.Mkfifo(target, uint32(e.Mode&0777)); err != nil &&
 				!os.IsExist(err) {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mkfifo").Write()
+				errCh <- err
 				continue
 			}
 			if err := localApplyMeta(pr, target, &e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mkfifo").Write()
+				errCh <- err
 				continue
 			}
 		case FileTypeSocket:
@@ -69,11 +67,11 @@ func localRestoreDir(
 				syscall.S_IFSOCK|uint32(e.Mode&0777),
 				0,
 			); err != nil && !os.IsExist(err) {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mknod").Write()
+				errCh <- err
 				continue
 			}
 			if err := localApplyMeta(pr, target, &e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mknod").Write()
+				errCh <- err
 				continue
 			}
 		case FileTypeDevice:
@@ -82,16 +80,17 @@ func localRestoreDir(
 				syscall.S_IFCHR|uint32(e.Mode&0777),
 				0,
 			); err != nil && !os.IsExist(err) {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mknod").Write()
+				errCh <- err
 				continue
 			}
 			if err := localApplyMeta(pr, target, &e); err != nil {
-				syslog.L.Error(err).WithField("restore", dst).WithField("op", "mknod").Write()
+				errCh <- err
 				continue
 			}
 		case FileTypeHardlink:
 			// Implementation for hardlinks would go here if applicable
 		}
 	}
+
 	return nil
 }

@@ -42,7 +42,7 @@ func LocalRestore(
 		}
 
 		if sourceAttr.IsDir() {
-			err = localRestoreDir(ctx, pr, destDir, sourceAttr)
+			err = localRestoreDir(ctx, pr, destDir, sourceAttr, errChan)
 			if err != nil {
 				errChan <- err
 				continue

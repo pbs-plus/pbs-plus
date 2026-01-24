@@ -298,7 +298,7 @@ func (b *RestoreOperation) agentExecute() error {
 			case <-b.ctx.Done():
 				return
 			case err := <-errCh:
-				b.task.WriteString(fmt.Sprintf("client error: %s", err))
+				b.task.WriteString(fmt.Sprintf("%s", err))
 				b.errCount.Add(1)
 			}
 		}
@@ -352,7 +352,7 @@ func (b *RestoreOperation) localExecute() error {
 
 	b.task.WriteString("starting local restore")
 
-	results := make(chan error, 1)
+	results := make(chan error, 16)
 
 	b.waitGroup.Go(func() {
 		defer close(results)
@@ -369,7 +369,7 @@ func (b *RestoreOperation) localExecute() error {
 					return
 				}
 				if err != nil {
-					b.task.WriteString(fmt.Sprintf("error: %s", err.Error()))
+					b.task.WriteString(fmt.Sprintf("client error: %s", err.Error()))
 					b.errCount.Add(1)
 				}
 			}
