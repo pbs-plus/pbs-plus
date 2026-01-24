@@ -10,16 +10,6 @@ import (
 	"sync"
 )
 
-const copyBufSize = 1 << 20
-
-type copyBuffer [copyBufSize]byte
-
-var copyBufPool = sync.Pool{
-	New: func() any {
-		return new(copyBuffer)
-	},
-}
-
 type rangeReader struct {
 	ctx          context.Context
 	client       *RemoteClient
@@ -61,7 +51,7 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 		return fmt.Errorf("mkdir root: %w", err)
 	}
 
-	numWorkers := runtime.NumCPU() * 4
+	numWorkers := runtime.NumCPU() * 2
 	jobs := make(chan restoreJob, 1024)
 	var wg sync.WaitGroup
 
@@ -141,9 +131,6 @@ func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e
 	defer f.Close()
 
 	if e.Size > 0 && e.ContentRange != nil {
-		bufPtr := copyBufPool.Get().(*copyBuffer)
-		defer copyBufPool.Put(bufPtr)
-
 		rr := &rangeReader{
 			ctx:          ctx,
 			client:       client,
@@ -152,7 +139,7 @@ func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e
 			totalSize:    e.Size,
 		}
 
-		if _, err := io.CopyBuffer(f, rr, bufPtr[:]); err != nil {
+		if _, err := io.Copy(f, rr); err != nil {
 			return fmt.Errorf("copy data %q: %w", path, err)
 		}
 	}
