@@ -4,6 +4,10 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
 
   layout: "hbox",
 
+  config: {
+    deleteEmpty: false,
+  },
+
   datastore: undefined,
   snapshot: undefined,
   ns: undefined,
@@ -16,6 +20,9 @@ Ext.define("PBS.form.D2DSnapshotPathSelector", {
       flex: 1,
       emptyText: gettext("/"),
       allowBlank: true,
+      cbind: {
+        deleteEmpty: "{deleteEmpty}",
+      },
     },
     {
       xtype: "button",
