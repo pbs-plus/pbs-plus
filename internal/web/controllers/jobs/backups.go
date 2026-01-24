@@ -98,6 +98,12 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, backupID := range backupIDs {
 			decoded := utils.DecodePath(backupID)
+
+			if err := utils.ValidateJobId(decoded); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
 			decodedBackupIDs = append(decodedBackupIDs, decoded)
 
 			backup, err := storeInstance.Database.GetBackup(decoded)
@@ -197,24 +203,66 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			legacyXattr = false
 		}
 
+		id := r.FormValue("id")
+		err = utils.ValidateJobId(id)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		namespace := r.FormValue("ns")
+		err = utils.ValidateNamespace(namespace)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		datastore := r.FormValue("store")
+		err = utils.ValidateDatastore(datastore)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		subpath := r.FormValue("subpath")
+		err = utils.ValidateSubpath("subpath", subpath)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		preScript := r.FormValue("pre_script")
+		err = utils.ValidateScriptPath("pre_script", preScript)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		postScript := r.FormValue("post_script")
+		err = utils.ValidateScriptPath("post_script", postScript)
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
 		newBackup := database.Backup{
-			ID:               r.FormValue("id"),
-			Store:            r.FormValue("store"),
+			ID:               id,
+			Store:            datastore,
 			SourceMode:       r.FormValue("sourcemode"),
 			ReadMode:         r.FormValue("readmode"),
 			Mode:             r.FormValue("mode"),
 			Target:           database.Target{Name: r.FormValue("target")},
-			Subpath:          r.FormValue("subpath"),
+			Subpath:          subpath,
 			Schedule:         r.FormValue("schedule"),
 			Comment:          r.FormValue("comment"),
-			Namespace:        r.FormValue("ns"),
+			Namespace:        namespace,
 			MaxDirEntries:    maxDirEntries,
 			NotificationMode: r.FormValue("notification-mode"),
 			Retry:            retry,
 			RetryInterval:    retryInterval,
 			Exclusions:       []database.Exclusion{},
-			PreScript:        r.FormValue("pre_script"),
-			PostScript:       r.FormValue("post_script"),
+			PreScript:        preScript,
+			PostScript:       postScript,
 			IncludeXattr:     includeXattr,
 			LegacyXattr:      legacyXattr,
 		}
@@ -224,6 +272,11 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			exclusion = strings.TrimSpace(exclusion)
 			if exclusion == "" {
 				continue
+			}
+
+			if err := utils.ValidateExclusionPath(exclusion); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
 			}
 
 			exclusionInst := database.Exclusion{
@@ -257,7 +310,13 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodPut {
-			backup, err := storeInstance.Database.GetBackup(utils.DecodePath(r.PathValue("backup")))
+			backupID := utils.DecodePath(r.PathValue("backup"))
+			if err := utils.ValidateJobId(backupID); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			backup, err := storeInstance.Database.GetBackup(backupID)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -270,6 +329,10 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			if r.FormValue("store") != "" {
+				if err := utils.ValidateDatastore(r.FormValue("store")); err != nil {
+					controllers.WriteErrorResponse(w, err)
+					return
+				}
 				backup.Store = r.FormValue("store")
 			}
 			if r.FormValue("mode") != "" {
@@ -310,8 +373,19 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				backup.LegacyXattr = legacyXattr
 			}
 
-			backup.PreScript = r.FormValue("pre_script")
-			backup.PostScript = r.FormValue("post_script")
+			preScript := r.FormValue("pre_script")
+			if err := utils.ValidateScriptPath("pre_script", preScript); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+			backup.PreScript = preScript
+
+			postScript := r.FormValue("post_script")
+			if err := utils.ValidateScriptPath("post_script", postScript); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+			backup.PostScript = postScript
 
 			retry, err := strconv.Atoi(r.FormValue("retry"))
 			if err != nil {
@@ -328,12 +402,24 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				maxDirEntries = 1048576
 			}
 
+			namespace := r.FormValue("ns")
+			err = utils.ValidateNamespace(namespace)
+			if err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
 			backup.Retry = retry
 			backup.RetryInterval = retryInterval
 			backup.MaxDirEntries = maxDirEntries
 
-			backup.Subpath = r.FormValue("subpath")
-			backup.Namespace = r.FormValue("ns")
+			subpath := r.FormValue("subpath")
+			if err := utils.ValidateSubpath("subpath", subpath); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+			backup.Subpath = subpath
+			backup.Namespace = namespace
 			backup.Exclusions = []database.Exclusion{}
 
 			if r.FormValue("rawexclusions") != "" {
@@ -342,6 +428,11 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					exclusion = strings.TrimSpace(exclusion)
 					if exclusion == "" {
 						continue
+					}
+
+					if err := utils.ValidateExclusionPath(exclusion); err != nil {
+						controllers.WriteErrorResponse(w, err)
+						return
 					}
 
 					exclusionInst := database.Exclusion{
@@ -406,7 +497,13 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			backup, err := storeInstance.Database.GetBackup(utils.DecodePath(r.PathValue("backup")))
+			backupID := utils.DecodePath(r.PathValue("backup"))
+			if err := utils.ValidateJobId(backupID); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			backup, err := storeInstance.Database.GetBackup(backupID)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -421,7 +518,13 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.Database.DeleteBackup(nil, utils.DecodePath(r.PathValue("backup")))
+			backupID := utils.DecodePath(r.PathValue("backup"))
+			if err := utils.ValidateJobId(backupID); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			err := storeInstance.Database.DeleteBackup(nil, backupID)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -446,7 +549,13 @@ func ExtJsBackupUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodGet {
-			backup, err := storeInstance.Database.GetBackup(utils.DecodePath(r.PathValue("backup")))
+			backupID := utils.DecodePath(r.PathValue("backup"))
+			if err := utils.ValidateJobId(backupID); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			backup, err := storeInstance.Database.GetBackup(backupID)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
