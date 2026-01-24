@@ -3,6 +3,7 @@
 package pxar
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -10,12 +11,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"golang.org/x/sys/unix"
 )
+
+var localCopyBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 1<<20)
+		return &b
+	},
+}
+
+type localJob struct {
+	dest string
+	info EntryInfo
+}
 
 func LocalRestore(
 	ctx context.Context,
@@ -29,177 +44,194 @@ func LocalRestore(
 		return
 	}
 
-	for _, source := range sourceDirs {
-		if err := ctx.Err(); err != nil {
-			errChan <- err
-			break
-		}
+	numWorkers := runtime.NumCPU() * 2
+	jobs := make(chan localJob, 512)
+	var wg sync.WaitGroup
 
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			for job := range jobs {
+				processLocalJob(ctx, pr, job, jobs, &wg, errChan)
+				wg.Done()
+			}
+		}()
+	}
+
+	for _, source := range sourceDirs {
 		sourceAttr, err := pr.LookupByPath(source)
 		if err != nil {
 			errChan <- err
 			continue
 		}
 
-		if sourceAttr.IsDir() {
-			err = localRestoreDir(ctx, pr, destDir, sourceAttr, errChan)
-			if err != nil {
-				errChan <- err
-				continue
-			}
-		} else {
-			path := filepath.Join(destDir, sourceAttr.Name())
-			err = localRestoreFile(ctx, pr, path, sourceAttr)
-			if err != nil {
-				errChan <- err
-				continue
-			}
+		path := filepath.Join(destDir, sourceAttr.Name())
+		wg.Add(1)
+		select {
+		case jobs <- localJob{dest: path, info: *sourceAttr}:
+		case <-ctx.Done():
+			wg.Done()
+			return
 		}
+	}
+
+	wg.Wait()
+	close(jobs)
+}
+
+func processLocalJob(ctx context.Context, pr *PxarReader, job localJob, jobs chan<- localJob, wg *sync.WaitGroup, errChan chan error) {
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	var err error
+	switch {
+	case job.info.IsDir():
+		err = localRestoreDir(ctx, pr, job.dest, &job.info, jobs, wg, errChan)
+	case job.info.IsSymlink():
+		err = localRestoreSymlink(ctx, pr, job.dest, &job.info)
+	case job.info.IsFile():
+		err = localRestoreFile(ctx, pr, job.dest, &job.info)
+	}
+
+	if err != nil {
+		errChan <- err
 	}
 }
 
-func localRestoreFile(
-	ctx context.Context,
-	pr *PxarReader,
-	path string,
-	e *EntryInfo,
-) error {
-	mode := os.FileMode(e.Mode & 0777)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+func restoreSpecialFile(pr *PxarReader, target string, e EntryInfo) error {
+	var opErr error
+	mode := uint32(e.Mode & 0777)
+	if e.FileType == FileTypeFifo {
+		opErr = unix.Mkfifo(target, mode)
+	} else {
+		opErr = unix.Mknod(target, unix.S_IFSOCK|mode, 0)
+	}
+
+	if opErr == nil || os.IsExist(opErr) {
+		if f, openErr := os.OpenFile(target, os.O_RDONLY, 0); openErr == nil {
+			return localApplyMeta(pr, f, &e)
+		}
+	}
+	return opErr
+}
+
+func localRestoreFile(ctx context.Context, pr *PxarReader, path string, e *EntryInfo) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(e.Mode&0777))
 	if err != nil {
 		return fmt.Errorf("create file %q: %w", path, err)
 	}
-	defer f.Close()
 
-	if e.ContentRange != nil {
+	if e.Size > 0 && e.ContentRange != nil {
+		bw := bufio.NewWriterSize(f, 1<<18)
+		bufPtr := localCopyBufPool.Get().(*[]byte)
+		defer localCopyBufPool.Put(bufPtr)
+		buf := *bufPtr
+
 		start, end := e.ContentRange[0], e.ContentRange[1]
 		var off uint64
-		buf := make([]byte, 1<<20)
-
 		for off < e.Size {
 			if err := ctx.Err(); err != nil {
+				f.Close()
 				return err
 			}
-
 			size := uint(len(buf))
-			remain := e.Size - off
-			if remain < uint64(size) {
+			if remain := e.Size - off; remain < uint64(size) {
 				size = uint(remain)
 			}
 			data, err := pr.Read(start, end, off, size)
-			if err != nil {
-				return fmt.Errorf("read content %q: %w", path, err)
-			}
-			if len(data) == 0 {
+			if err != nil || len(data) == 0 {
 				break
 			}
-			if _, err := f.Write(data); err != nil {
-				return fmt.Errorf("write content %q: %w", path, err)
+			if _, err := bw.Write(data); err != nil {
+				f.Close()
+				return err
 			}
 			off += uint64(len(data))
 		}
+		if err := bw.Flush(); err != nil {
+			f.Close()
+			return err
+		}
 	}
 
-	return localApplyMeta(pr, path, e)
+	return localApplyMeta(pr, f, e)
 }
 
-func localRestoreSymlink(
-	ctx context.Context,
-	pr *PxarReader,
-	path string,
-	e *EntryInfo,
-) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	target, err := pr.ReadLink(e.EntryRangeStart, e.EntryRangeEnd)
-	if err != nil {
-		return fmt.Errorf("readlink data %q: %w", path, err)
-	}
-	if err := os.Symlink(string(target), path); err != nil {
-		return fmt.Errorf("symlink %q: %w", path, err)
-	}
-	return localApplyMetaSymlink(pr, path, e)
-}
-
-func localApplyMeta(pr *PxarReader, path string, e *EntryInfo) error {
-	_ = os.Chmod(path, os.FileMode(e.Mode&0777))
+func localApplyMeta(pr *PxarReader, f *os.File, e *EntryInfo) error {
+	defer f.Close()
+	fd := int(f.Fd())
 
 	uid, gid := int(e.UID), int(e.GID)
-	xattrs, err := pr.ListXAttrs(e.EntryRangeStart, e.EntryRangeEnd)
+	atime := time.Unix(e.MtimeSecs, int64(e.MtimeNsecs))
+	mtime := atime
 
+	xattrs, err := pr.ListXAttrs(e.EntryRangeStart, e.EntryRangeEnd)
 	if err == nil && len(xattrs) > 0 {
-		if data, ok := xattrs["user.owner"]; ok {
-			if parsed, err := strconv.Atoi(string(data)); err == nil {
-				uid = parsed
+		if d, ok := xattrs["user.owner"]; ok {
+			if id, err := strconv.Atoi(string(d)); err == nil {
+				uid = id
 			}
 			delete(xattrs, "user.owner")
 		}
-		if data, ok := xattrs["user.group"]; ok {
-			if parsed, err := strconv.Atoi(string(data)); err == nil {
-				gid = parsed
+		if d, ok := xattrs["user.group"]; ok {
+			if id, err := strconv.Atoi(string(d)); err == nil {
+				gid = id
 			}
 			delete(xattrs, "user.group")
 		}
-
-		_ = os.Chown(path, uid, gid)
-
-		delete(xattrs, "user.fileattributes")
-
-		if data, ok := xattrs["user.acls"]; ok {
+		if d, ok := xattrs["user.acls"]; ok {
 			var entries []types.PosixACL
-			if err := json.Unmarshal(data, &entries); err == nil {
-				_ = applyUnixACLs(path, entries)
+			if json.Unmarshal(d, &entries) == nil {
+				applyUnixACLsFd(fd, entries)
 			}
 			delete(xattrs, "user.acls")
 		}
-
-		var atime, mtime time.Time
-		hasAtime, hasMtime := false, false
-
-		if data, ok := xattrs["user.lastaccesstime"]; ok {
-			if ts, err := binary.ReadVarint(bytes.NewReader(data)); err == nil {
+		if d, ok := xattrs["user.lastaccesstime"]; ok {
+			if ts, err := binary.ReadVarint(bytes.NewReader(d)); err == nil {
 				atime = time.Unix(ts, 0)
-				hasAtime = true
 			}
 			delete(xattrs, "user.lastaccesstime")
 		}
-
-		if data, ok := xattrs["user.lastwritetime"]; ok {
-			if ts, err := binary.ReadVarint(bytes.NewReader(data)); err == nil {
+		if d, ok := xattrs["user.lastwritetime"]; ok {
+			if ts, err := binary.ReadVarint(bytes.NewReader(d)); err == nil {
 				mtime = time.Unix(ts, 0)
-				hasMtime = true
 			}
 			delete(xattrs, "user.lastwritetime")
 		}
 
-		if hasAtime || hasMtime {
-			if !hasAtime {
-				atime = time.Unix(e.MtimeSecs, int64(e.MtimeNsecs))
-			}
-			if !hasMtime {
-				mtime = time.Unix(e.MtimeSecs, int64(e.MtimeNsecs))
-			}
-			_ = os.Chtimes(path, atime, mtime)
-		} else {
-			mt := time.Unix(e.MtimeSecs, int64(e.MtimeNsecs))
-			_ = os.Chtimes(path, mt, mt)
-		}
-
-		for name, value := range xattrs {
-			if name == "user.creationtime" {
+		for name, val := range xattrs {
+			if name == "user.creationtime" || name == "user.fileattributes" {
 				continue
 			}
-			_ = unix.Setxattr(path, name, value, 0)
+			_ = unix.Fsetxattr(fd, name, val, 0)
 		}
-	} else {
-		_ = os.Chown(path, uid, gid)
-		mt := time.Unix(e.MtimeSecs, int64(e.MtimeNsecs))
-		_ = os.Chtimes(path, mt, mt)
 	}
 
+	_ = unix.Fchown(fd, uid, gid)
+	_ = unix.Fchmod(fd, uint32(e.Mode&0777))
+
+	ts := []unix.Timespec{
+		unix.NsecToTimespec(atime.UnixNano()),
+		unix.NsecToTimespec(mtime.UnixNano()),
+	}
+	_ = unix.UtimesNanoAt(fd, "", ts, 0)
+
 	return nil
+}
+
+func localRestoreSymlink(ctx context.Context, pr *PxarReader, path string, e *EntryInfo) error {
+	target, err := pr.ReadLink(e.EntryRangeStart, e.EntryRangeEnd)
+	if err != nil {
+		return err
+	}
+	if err := os.Symlink(string(target), path); err != nil {
+		if !os.IsExist(err) {
+			return err
+		}
+	}
+	return localApplyMetaSymlink(pr, path, e)
 }
 
 func localApplyMetaSymlink(pr *PxarReader, path string, e *EntryInfo) error {
@@ -207,30 +239,30 @@ func localApplyMetaSymlink(pr *PxarReader, path string, e *EntryInfo) error {
 	xattrs, err := pr.ListXAttrs(e.EntryRangeStart, e.EntryRangeEnd)
 
 	if err == nil && len(xattrs) > 0 {
-		if data, ok := xattrs["user.owner"]; ok {
-			if parsed, err := strconv.Atoi(string(data)); err == nil {
-				uid = parsed
+		if d, ok := xattrs["user.owner"]; ok {
+			if id, err := strconv.Atoi(string(d)); err == nil {
+				uid = id
 			}
 		}
-		if data, ok := xattrs["user.group"]; ok {
-			if parsed, err := strconv.Atoi(string(data)); err == nil {
-				gid = parsed
+		if d, ok := xattrs["user.group"]; ok {
+			if id, err := strconv.Atoi(string(d)); err == nil {
+				gid = id
 			}
 		}
 	}
 
-	_ = os.Lchown(path, uid, gid)
+	_ = unix.Lchown(path, uid, gid)
 
-	if err == nil && len(xattrs) > 0 {
-		for name, value := range xattrs {
-			if name == "user.owner" || name == "user.group" || name == "user.acls" ||
-				name == "user.fileattributes" || name == "user.lastaccesstime" ||
-				name == "user.lastwritetime" || name == "user.creationtime" {
+	if err == nil {
+		for name, val := range xattrs {
+			switch name {
+			case "user.owner", "user.group", "user.acls", "user.fileattributes",
+				"user.lastaccesstime", "user.lastwritetime", "user.creationtime":
 				continue
+			default:
+				_ = unix.Lsetxattr(path, name, val, 0)
 			}
-			_ = unix.Lsetxattr(path, name, value, 0)
 		}
 	}
-
 	return nil
 }

@@ -6,51 +6,51 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
+
+	"golang.org/x/sys/windows"
 )
 
-func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dirEntry EntryInfo) error {
+func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dirEntry EntryInfo, jobs chan<- restoreJob, wg *sync.WaitGroup) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+
 	entries, err := client.ReadDir(ctx, dirEntry.EntryRangeEnd)
 	if err != nil {
 		return err
 	}
 
 	for _, e := range entries {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		target := filepath.Join(dst, e.Name())
-		switch e.FileType {
-		case FileTypeDirectory:
-			if err := os.MkdirAll(target, os.FileMode(e.Mode&0777)); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-			if err := remoteRestoreDir(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-			if err := remoteApplyMeta(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-		case FileTypeFile:
-			if err := remoteRestoreFile(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-		case FileTypeSymlink:
-			if err := remoteRestoreSymlink(ctx, client, target, e); err != nil {
-				_ = client.SendError(ctx, err)
-				continue
-			}
-		case FileTypeFifo:
-		case FileTypeSocket:
-		case FileTypeDevice:
-		case FileTypeHardlink:
+
+		wg.Add(1)
+		select {
+		case jobs <- restoreJob{dest: target, info: e}:
+		case <-ctx.Done():
+			wg.Done()
+			return ctx.Err()
 		}
 	}
-	return nil
+
+	pathPtr, err := windows.UTF16PtrFromString(dst)
+	if err != nil {
+		return err
+	}
+
+	h, err := windows.CreateFile(
+		pathPtr,
+		windows.FILE_WRITE_ATTRIBUTES|windows.WRITE_DAC|windows.WRITE_OWNER,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+	if err != nil {
+		return err
+	}
+
+	df := os.NewFile(uintptr(h), dst)
+	return remoteApplyMeta(ctx, client, df, dirEntry)
 }

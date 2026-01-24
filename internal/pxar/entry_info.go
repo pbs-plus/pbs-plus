@@ -41,10 +41,12 @@ func (e *EntryInfo) ToFileInfo() os.FileInfo {
 
 type fileInfo struct{ entry *EntryInfo }
 
-func (fi *fileInfo) Name() string { return fi.entry.Name() }
-func (fi *fileInfo) Size() int64  { return int64(fi.entry.Size) }
-func (fi *fileInfo) IsDir() bool  { return fi.entry.IsDir() }
-func (fi *fileInfo) Sys() any     { return fi.entry }
+func (fi *fileInfo) Name() string    { return fi.entry.Name() }
+func (fi *fileInfo) Size() int64     { return int64(fi.entry.Size) }
+func (e *EntryInfo) IsFile() bool    { return e.FileType == FileTypeFile }
+func (fi *fileInfo) IsDir() bool     { return fi.entry.IsDir() }
+func (e *EntryInfo) IsSymlink() bool { return e.FileType == FileTypeSymlink }
+func (fi *fileInfo) Sys() any        { return fi.entry }
 
 func (fi *fileInfo) ModTime() time.Time {
 	return time.Unix(fi.entry.MtimeSecs, int64(fi.entry.MtimeNsecs))
