@@ -71,53 +71,54 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 
 	for i := 0; i < numWorkers; i++ {
 		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case job, ok := <-jobs:
-					if !ok {
-						return
-					}
-					if err := processRemoteJob(ctx, client, job, jobs, &wg); err != nil {
-						reportErr(err)
-					}
-					wg.Done()
+			for job := range jobs {
+				if err := processRemoteJob(ctx, client, job, jobs, &wg); err != nil {
+					reportErr(err)
 				}
+				wg.Done()
 			}
 		}()
 	}
 
-	err := func() error {
-		for _, source := range sources {
-			sourceAttr, err := client.LookupByPath(ctx, source)
-			if err != nil {
-				return err
-			}
-			path := filepath.Join(destDir, sourceAttr.Name())
-
-			wg.Add(1)
-			select {
-			case jobs <- restoreJob{dest: path, info: sourceAttr}:
-			case <-ctx.Done():
-				wg.Done()
-				return ctx.Err()
-			}
-		}
-		return nil
+	go func() {
+		wg.Wait()
+		close(jobs)
 	}()
 
-	if err != nil {
-		reportErr(err)
+	var stop bool
+	for _, source := range sources {
+		if stop {
+			break
+		}
+
+		sourceAttr, err := client.LookupByPath(ctx, source)
+		if err != nil {
+			reportErr(err)
+			continue
+		}
+		path := filepath.Join(destDir, sourceAttr.Name())
+
+		wg.Add(1)
+		select {
+		case jobs <- restoreJob{dest: path, info: sourceAttr}:
+		case <-ctx.Done():
+			wg.Done()
+			stop = true
+		}
 	}
 
-	close(jobs)
 	wg.Wait()
 
 	return ctx.Err()
 }
 
 func processRemoteJob(ctx context.Context, client *RemoteClient, job restoreJob, jobs chan<- restoreJob, wg *sync.WaitGroup) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	if job.info.IsDir() {
 		return remoteRestoreDir(ctx, client, job.dest, job.info, jobs, wg)
 	}
@@ -150,7 +151,7 @@ func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e
 		}
 
 		if _, err := io.CopyBuffer(f, rr, bufPtr[:]); err != nil {
-			return fmt.Errorf("copy data: %w", err)
+			return fmt.Errorf("copy data %q: %w", path, err)
 		}
 	}
 
