@@ -46,10 +46,10 @@ func safeJobLogPath(jobId string) (string, error) {
 	return cleanPath, nil
 }
 
-func CreateJobLogger(jobId string) (*JobLogger, error) {
+func CreateJobLogger(jobId string) *JobLogger {
 	filePath, err := safeJobLogPath(jobId)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 
 	logger, _ := jobLoggers.Compute(jobId, func(_ *JobLogger, _ bool) (*JobLogger, bool) {
@@ -67,11 +67,7 @@ func CreateJobLogger(jobId string) (*JobLogger, error) {
 		}, false
 	})
 
-	if logger == nil {
-		return nil, errors.New("failed to create job logger")
-	}
-
-	return logger, nil
+	return logger
 }
 
 func GetExistingJobLogger(jobId string) *JobLogger {
