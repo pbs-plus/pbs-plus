@@ -64,6 +64,7 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 	numWorkers := runtime.NumCPU() * 2
 	jobs := make(chan restoreJob, 512)
 	var wg sync.WaitGroup
+	done := make(chan struct{})
 
 	reportErr := func(err error) {
 		_ = client.SendError(ctx, err)
@@ -83,11 +84,11 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 	go func() {
 		wg.Wait()
 		close(jobs)
+		close(done)
 	}()
 
-	var stop bool
 	for _, source := range sources {
-		if stop {
+		if ctx.Err() != nil {
 			break
 		}
 
@@ -103,12 +104,10 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 		case jobs <- restoreJob{dest: path, info: sourceAttr}:
 		case <-ctx.Done():
 			wg.Done()
-			stop = true
 		}
 	}
 
-	wg.Wait()
-
+	<-done
 	return ctx.Err()
 }
 
