@@ -32,31 +32,31 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 	}
 
 	for i := 0; i < numWorkers; i++ {
-		wg.Go(func() {
-			for job := range jobs {
+		go func() {
+			for {
 				select {
 				case <-ctx.Done():
 					return
-				default:
-				}
-
-				var err error
-				if job.info.IsDir() {
-					err = remoteRestoreDir(ctx, client, job.dest, job.info, jobs, &wg)
-				} else if job.info.IsSymlink() {
-					err = remoteRestoreSymlink(ctx, client, job.dest, job.info)
-				} else if job.info.IsFile() {
-					err = remoteRestoreFile(ctx, client, job.dest, job.info)
-				}
-
-				if err != nil {
-					reportErr(err)
+				case job, ok := <-jobs:
+					if !ok {
+						return
+					}
+					err := processRemoteJob(ctx, client, job, jobs, &wg)
+					if err != nil {
+						reportErr(err)
+					}
+					wg.Done()
 				}
 			}
-		})
+		}()
 	}
 
+	stopped := false
 	for _, source := range sources {
+		if stopped {
+			break
+		}
+
 		sourceAttr, err := client.LookupByPath(ctx, source)
 		if err != nil {
 			reportErr(err)
@@ -65,12 +65,34 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 		path := filepath.Join(destDir, sourceAttr.Name())
 
 		wg.Add(1)
-		jobs <- restoreJob{dest: path, info: sourceAttr}
+		select {
+		case jobs <- restoreJob{dest: path, info: sourceAttr}:
+		case <-ctx.Done():
+			wg.Done()
+			stopped = true
+		}
 	}
 
 	wg.Wait()
 	close(jobs)
 
+	return ctx.Err()
+}
+
+func processRemoteJob(ctx context.Context, client *RemoteClient, job restoreJob, jobs chan<- restoreJob, wg *sync.WaitGroup) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if job.info.IsDir() {
+		return remoteRestoreDir(ctx, client, job.dest, job.info, jobs, wg)
+	} else if job.info.IsSymlink() {
+		return remoteRestoreSymlink(ctx, client, job.dest, job.info)
+	} else if job.info.IsFile() {
+		return remoteRestoreFile(ctx, client, job.dest, job.info)
+	}
 	return nil
 }
 
@@ -79,6 +101,7 @@ func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e
 	if err != nil {
 		return fmt.Errorf("create file %q: %w", path, err)
 	}
+	defer f.Close()
 
 	if e.Size > 0 && e.ContentRange != nil {
 		buf := copyBufPool.Get().([]byte)
@@ -88,7 +111,6 @@ func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e
 		start, end := e.ContentRange[0], e.ContentRange[1]
 		for off < e.Size {
 			if ctx.Err() != nil {
-				f.Close()
 				return ctx.Err()
 			}
 
@@ -99,7 +121,6 @@ func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e
 
 			n, err := client.Read(ctx, start, end, off, readSize, buf)
 			if err != nil {
-				f.Close()
 				return fmt.Errorf("read remote: %w", err)
 			}
 			if n == 0 {
@@ -107,7 +128,6 @@ func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e
 			}
 
 			if _, err := f.Write(buf[:n]); err != nil {
-				f.Close()
 				return err
 			}
 			off += uint64(n)
