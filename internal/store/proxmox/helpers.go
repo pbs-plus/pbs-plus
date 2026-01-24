@@ -110,7 +110,21 @@ func (task *Task) GenerateUPID() string {
 var pstart = atomic.Int32{}
 
 func GetPStart() uint64 {
-	return uint64(pstart.Add(1))
+	data, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		return uint64(pstart.Add(1))
+	}
+
+	fields := strings.Fields(string(data))
+	if len(fields) < 22 {
+		return uint64(pstart.Add(1))
+	}
+
+	pstartA, err := strconv.ParseUint(fields[21], 10, 64)
+	if err != nil {
+		return uint64(pstart.Add(1))
+	}
+	return pstartA
 }
 
 func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
