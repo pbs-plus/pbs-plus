@@ -25,13 +25,20 @@ func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dir
 		target := filepath.Join(dst, e.Name())
 
 		wg.Add(1)
-		go func(t string, info EntryInfo) {
-			select {
-			case jobs <- restoreJob{dest: t, info: info}:
-			case <-ctx.Done():
-				wg.Done()
-			}
-		}(target, e)
+		job := restoreJob{dest: target, info: e}
+		select {
+		case jobs <- job:
+			// Success, sent without blocking
+		default:
+			// Channel is full, spawn goroutine to avoid deadlock.
+			go func(j restoreJob) {
+				select {
+				case jobs <- j:
+				case <-ctx.Done():
+					wg.Done()
+				}
+			}(job)
+		}
 	}
 
 	pathPtr, err := windows.UTF16PtrFromString(dst)

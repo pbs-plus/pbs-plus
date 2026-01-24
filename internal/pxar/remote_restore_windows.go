@@ -4,13 +4,13 @@ package pxar
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
 	"syscall"
 	"unsafe"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"golang.org/x/sys/windows"
 )
@@ -60,7 +60,7 @@ func remoteApplyMeta(ctx context.Context, client *RemoteClient, file *os.File, e
 	if xattrs != nil {
 		if d, ok := xattrs["user.fileattributes"]; ok {
 			var fa map[string]bool
-			if json.Unmarshal(d, &fa) == nil {
+			if cbor.Unmarshal(d, &fa) == nil {
 				if attr := buildFileAttributes(fa); attr != 0 {
 					_ = setFileAttributesByHandle(h, attr)
 				}
@@ -109,7 +109,7 @@ func restoreWindowsACLsFromHandle(h windows.Handle, xattrs map[string][]byte) {
 	}
 	if d, ok := xattrs["user.acls"]; ok {
 		var winACLs []types.WinACL
-		if json.Unmarshal(d, &winACLs) == nil {
+		if cbor.Unmarshal(d, &winACLs) == nil {
 			if a, err := buildDACLFromACEs(winACLs); err == nil {
 				dacl = a
 				secInfo |= windows.DACL_SECURITY_INFORMATION

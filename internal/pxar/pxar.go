@@ -340,6 +340,7 @@ func (c *PxarReader) ReadDir(entryEnd uint64) ([]EntryInfo, error) {
 	}
 
 	for i := range entries {
+		c.task.WriteString(fmt.Sprintf("restoring entry: %s", entries[i].Name()))
 		if entries[i].IsDir() {
 			atomic.AddInt64(&c.FolderCount, 1)
 		} else {
@@ -503,8 +504,6 @@ func extractEntryInfo(c *PxarReader, resp Response) (*EntryInfo, error) {
 	if err := c.dec.Unmarshal(infoBytes, &info); err != nil {
 		return nil, fmt.Errorf("failed to decode info: %w", err)
 	}
-
-	c.task.WriteString(fmt.Sprintf("restoring entry: %s", info.Name()))
 
 	return &info, nil
 }

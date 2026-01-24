@@ -6,11 +6,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"golang.org/x/sys/unix"
 )
@@ -64,7 +64,7 @@ func remoteApplyMeta(ctx context.Context, client *RemoteClient, file *os.File, e
 
 		if d, ok := xattrs["user.acls"]; ok {
 			var entries []types.PosixACL
-			if json.Unmarshal(d, &entries) == nil {
+			if cbor.Unmarshal(d, &entries) == nil {
 				applyUnixACLsFd(fd, entries)
 			}
 			delete(xattrs, "user.acls")
