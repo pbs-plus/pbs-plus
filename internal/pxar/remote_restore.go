@@ -64,50 +64,44 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 	numWorkers := runtime.NumCPU() * 2
 	jobs := make(chan restoreJob, 512)
 	var wg sync.WaitGroup
-	done := make(chan struct{})
-
-	reportErr := func(err error) {
-		_ = client.SendError(ctx, err)
-	}
 
 	for i := 0; i < numWorkers; i++ {
 		go func() {
 			for job := range jobs {
 				if err := processRemoteJob(ctx, client, job, jobs, &wg); err != nil {
-					reportErr(err)
+					_ = client.SendError(ctx, err)
 				}
 				wg.Done()
 			}
 		}()
 	}
 
-	go func() {
-		wg.Wait()
-		close(jobs)
-		close(done)
+	func() {
+		for _, source := range sources {
+			if ctx.Err() != nil {
+				return
+			}
+
+			sourceAttr, err := client.LookupByPath(ctx, source)
+			if err != nil {
+				_ = client.SendError(ctx, err)
+				continue
+			}
+			path := filepath.Join(destDir, sourceAttr.Name())
+
+			wg.Add(1)
+			select {
+			case jobs <- restoreJob{dest: path, info: sourceAttr}:
+			case <-ctx.Done():
+				wg.Done()
+				return
+			}
+		}
 	}()
 
-	for _, source := range sources {
-		if ctx.Err() != nil {
-			break
-		}
+	wg.Wait()
+	close(jobs)
 
-		sourceAttr, err := client.LookupByPath(ctx, source)
-		if err != nil {
-			reportErr(err)
-			continue
-		}
-		path := filepath.Join(destDir, sourceAttr.Name())
-
-		wg.Add(1)
-		select {
-		case jobs <- restoreJob{dest: path, info: sourceAttr}:
-		case <-ctx.Done():
-			wg.Done()
-		}
-	}
-
-	<-done
 	return ctx.Err()
 }
 
