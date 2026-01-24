@@ -23,21 +23,13 @@ func remoteRestoreDir(ctx context.Context, client *RemoteClient, dst string, dir
 
 	for _, e := range entries {
 		target := filepath.Join(dst, e.Name())
-
 		wg.Add(1)
 		job := restoreJob{dest: target, info: e}
 		select {
 		case jobs <- job:
-			// Success, sent without blocking
-		default:
-			// Channel is full, spawn goroutine to avoid deadlock.
-			go func(j restoreJob) {
-				select {
-				case jobs <- j:
-				case <-ctx.Done():
-					wg.Done()
-				}
-			}(job)
+		case <-ctx.Done():
+			wg.Done()
+			return ctx.Err()
 		}
 	}
 
