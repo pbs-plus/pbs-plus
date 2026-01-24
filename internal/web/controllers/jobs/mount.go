@@ -23,19 +23,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/web/controllers"
 )
 
-func isPathWithin(base, p string) bool {
-	base = filepath.Clean(base)
-	p = filepath.Clean(p)
-	if base == p {
-		return true
-	}
-	rel, err := filepath.Rel(base, p)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
 func parseMountPoints() ([]string, error) {
 	f, err := os.Open("/proc/self/mountinfo")
 	if err != nil {
@@ -84,7 +71,7 @@ func removeEmptyDirsToBase(path, basePath string) {
 	basePath = filepath.Clean(basePath)
 
 	for {
-		if path == basePath || path == "/" || !isPathWithin(basePath, path) {
+		if path == basePath || path == "/" || !utils.IsPathWithin(basePath, path) {
 			break
 		}
 
@@ -114,13 +101,18 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		datastore := utils.DecodePath(r.PathValue("datastore"))
+		if err := utils.ValidateDatastore(datastore); err != nil {
+			controllers.WriteErrorResponse(w, fmt.Errorf("invalid datastore: %w", err))
+			return
+		}
+
 		dsInfo, err := proxmox.GetDatastoreInfo(datastore)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
 		}
 		pbsStoreRoot := dsInfo.Path
-		if datastore == "" || pbsStoreRoot == "" {
+		if pbsStoreRoot == "" {
 			controllers.WriteErrorResponse(w, fmt.Errorf("invalid datastore configuration"))
 			return
 		}
@@ -131,8 +123,20 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		fileName := strings.TrimSpace(r.FormValue("file-name"))
 		ns := strings.TrimSpace(r.FormValue("ns"))
 
-		if backupType == "" || backupID == "" || backupTime == "" || fileName == "" {
-			http.Error(w, "missing required parameters", http.StatusBadRequest)
+		if err := utils.ValidateBackupType(backupType); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+		if err := utils.ValidateBackupID(backupID); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+		if err := utils.ValidateFileName(fileName); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+		if err := utils.ValidateNamespace(ns); err != nil {
+			controllers.WriteErrorResponse(w, err)
 			return
 		}
 
@@ -150,6 +154,11 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			fmt.Sprintf("%s-%s", backupType, backupID),
 			safeTime,
 		))
+
+		if err := utils.SanitizeMountPoint(mountPoint, constants.RestoreMountBasePath); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
 
 		serviceName := system.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
 
@@ -219,15 +228,31 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		datastore := utils.DecodePath(r.PathValue("datastore"))
 		backupType := strings.TrimSpace(r.FormValue("backup-type"))
 		backupID := strings.TrimSpace(r.FormValue("backup-id"))
 		backupTime := strings.TrimSpace(r.FormValue("backup-time"))
 		fileName := strings.TrimSpace(r.FormValue("file-name"))
 		ns := strings.TrimSpace(r.FormValue("ns"))
-		datastore := utils.DecodePath(r.PathValue("datastore"))
 
-		if backupType == "" || backupID == "" || backupTime == "" || fileName == "" {
-			controllers.WriteErrorResponse(w, fmt.Errorf("provide snapshot identifiers to unmount"))
+		if err := utils.ValidateDatastore(datastore); err != nil {
+			controllers.WriteErrorResponse(w, fmt.Errorf("invalid datastore: %w", err))
+			return
+		}
+		if err := utils.ValidateBackupType(backupType); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+		if err := utils.ValidateBackupID(backupID); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+		if err := utils.ValidateFileName(fileName); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+		if err := utils.ValidateNamespace(ns); err != nil {
+			controllers.WriteErrorResponse(w, err)
 			return
 		}
 
@@ -245,6 +270,11 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			fmt.Sprintf("%s-%s", backupType, backupID),
 			safeTime,
 		))
+
+		if err := utils.SanitizeMountPoint(mountPoint, constants.RestoreMountBasePath); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
 
 		basePath := filepath.Clean(filepath.Join(
 			constants.RestoreMountBasePath,
@@ -282,14 +312,28 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		ns := strings.TrimSpace(r.FormValue("ns"))
 		datastore := utils.DecodePath(r.PathValue("datastore"))
+		ns := strings.TrimSpace(r.FormValue("ns"))
+
+		if err := utils.ValidateDatastore(datastore); err != nil {
+			controllers.WriteErrorResponse(w, fmt.Errorf("invalid datastore: %w", err))
+			return
+		}
+		if err := utils.ValidateNamespace(ns); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
 
 		base := filepath.Clean(filepath.Join(
 			constants.RestoreMountBasePath,
 			datastore,
 			ns,
 		))
+
+		if err := utils.SanitizeMountPoint(base, constants.RestoreMountBasePath); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
 
 		services, err := system.ListMountServices(r.Context())
 		if err != nil {
@@ -317,7 +361,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 		var targets []string
 		for _, mp := range allMPs {
 			clean := filepath.Clean(mp)
-			if clean == base || isPathWithin(base, clean) {
+			if clean == base || utils.IsPathWithin(base, clean) {
 				targets = append(targets, clean)
 			}
 		}
