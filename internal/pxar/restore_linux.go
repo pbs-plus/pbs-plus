@@ -32,11 +32,19 @@ func localRestoreDir(
 
 		if e.IsDir() || e.IsFile() || e.IsSymlink() {
 			wg.Add(1)
+			job := localJob{dest: target, info: e}
 			select {
-			case jobs <- localJob{dest: target, info: e}:
-			case <-ctx.Done():
-				wg.Done()
-				return ctx.Err()
+			case jobs <- job:
+				// Success, sent without blocking
+			default:
+				// Channel is full, spawn goroutine to avoid deadlock.
+				go func(j localJob) {
+					select {
+					case jobs <- j:
+					case <-ctx.Done():
+						wg.Done()
+					}
+				}(job)
 			}
 		} else {
 			if err := restoreSpecialFile(pr, target, e); err != nil {

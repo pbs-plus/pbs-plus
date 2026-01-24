@@ -3,15 +3,53 @@ package pxar
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
 )
 
-var (
-	copyBufPool = sync.Pool{New: func() any { return make([]byte, 1<<20) }}
-)
+const copyBufSize = 1 << 20
+
+type copyBuffer [copyBufSize]byte
+
+var copyBufPool = sync.Pool{
+	New: func() any {
+		return new(copyBuffer)
+	},
+}
+
+type rangeReader struct {
+	ctx          context.Context
+	client       *RemoteClient
+	contentStart uint64
+	contentEnd   uint64
+	totalSize    uint64
+	offset       uint64
+}
+
+func (r *rangeReader) Read(p []byte) (int, error) {
+	if r.offset >= r.totalSize {
+		return 0, io.EOF
+	}
+
+	readSize := uint(len(p))
+	if remain := r.totalSize - r.offset; remain < uint64(readSize) {
+		readSize = uint(remain)
+	}
+
+	n, err := r.client.Read(r.ctx, r.contentStart, r.contentEnd, r.offset, readSize, p)
+	if err != nil {
+		return n, err
+	}
+	if n == 0 && readSize > 0 {
+		return 0, io.EOF
+	}
+
+	r.offset += uint64(n)
+	return n, nil
+}
 
 type restoreJob struct {
 	dest string
@@ -41,8 +79,7 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 					if !ok {
 						return
 					}
-					err := processRemoteJob(ctx, client, job, jobs, &wg)
-					if err != nil {
+					if err := processRemoteJob(ctx, client, job, jobs, &wg); err != nil {
 						reportErr(err)
 					}
 					wg.Done()
@@ -51,46 +88,43 @@ func RemoteRestore(ctx context.Context, client *RemoteClient, sources []string, 
 		}()
 	}
 
-	stopped := false
-	for _, source := range sources {
-		if stopped {
-			break
-		}
+	err := func() error {
+		for _, source := range sources {
+			sourceAttr, err := client.LookupByPath(ctx, source)
+			if err != nil {
+				return err
+			}
+			path := filepath.Join(destDir, sourceAttr.Name())
 
-		sourceAttr, err := client.LookupByPath(ctx, source)
-		if err != nil {
-			reportErr(err)
-			continue
+			wg.Add(1)
+			select {
+			case jobs <- restoreJob{dest: path, info: sourceAttr}:
+			case <-ctx.Done():
+				wg.Done()
+				return ctx.Err()
+			}
 		}
-		path := filepath.Join(destDir, sourceAttr.Name())
+		return nil
+	}()
 
-		wg.Add(1)
-		select {
-		case jobs <- restoreJob{dest: path, info: sourceAttr}:
-		case <-ctx.Done():
-			wg.Done()
-			stopped = true
-		}
+	if err != nil {
+		reportErr(err)
 	}
 
-	wg.Wait()
 	close(jobs)
+	wg.Wait()
 
 	return ctx.Err()
 }
 
 func processRemoteJob(ctx context.Context, client *RemoteClient, job restoreJob, jobs chan<- restoreJob, wg *sync.WaitGroup) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-
 	if job.info.IsDir() {
 		return remoteRestoreDir(ctx, client, job.dest, job.info, jobs, wg)
-	} else if job.info.IsSymlink() {
+	}
+	if job.info.IsSymlink() {
 		return remoteRestoreSymlink(ctx, client, job.dest, job.info)
-	} else if job.info.IsFile() {
+	}
+	if job.info.IsFile() {
 		return remoteRestoreFile(ctx, client, job.dest, job.info)
 	}
 	return nil
@@ -104,33 +138,19 @@ func remoteRestoreFile(ctx context.Context, client *RemoteClient, path string, e
 	defer f.Close()
 
 	if e.Size > 0 && e.ContentRange != nil {
-		buf := copyBufPool.Get().([]byte)
-		defer copyBufPool.Put(buf)
+		bufPtr := copyBufPool.Get().(*copyBuffer)
+		defer copyBufPool.Put(bufPtr)
 
-		var off uint64
-		start, end := e.ContentRange[0], e.ContentRange[1]
-		for off < e.Size {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
+		rr := &rangeReader{
+			ctx:          ctx,
+			client:       client,
+			contentStart: e.ContentRange[0],
+			contentEnd:   e.ContentRange[1],
+			totalSize:    e.Size,
+		}
 
-			readSize := uint(len(buf))
-			if remain := e.Size - off; remain < uint64(readSize) {
-				readSize = uint(remain)
-			}
-
-			n, err := client.Read(ctx, start, end, off, readSize, buf)
-			if err != nil {
-				return fmt.Errorf("read remote: %w", err)
-			}
-			if n == 0 {
-				break
-			}
-
-			if _, err := f.Write(buf[:n]); err != nil {
-				return err
-			}
-			off += uint64(n)
+		if _, err := io.CopyBuffer(f, rr, bufPtr[:]); err != nil {
+			return fmt.Errorf("copy data: %w", err)
 		}
 	}
 
