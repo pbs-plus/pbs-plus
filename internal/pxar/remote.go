@@ -37,6 +37,12 @@ func NewRemoteServer(reader *PxarReader) (*RemoteServer, chan error) {
 	return s, errChan
 }
 
+func (s *RemoteServer) Close() error {
+	close(s.errCh)
+
+	return s.reader.Close()
+}
+
 func (s *RemoteServer) Router() *arpc.Router {
 	return s.router
 }
