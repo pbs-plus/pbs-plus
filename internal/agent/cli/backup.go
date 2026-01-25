@@ -80,12 +80,6 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 		os.Exit(1)
 	}
 
-	if err := utils.ValidateDrivePath(*drive); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid drive: %v\n", err)
-		syslog.L.Error(err).WithMessage("CmdBackup: drive validation failed").Write()
-		os.Exit(1)
-	}
-
 	if err := utils.ValidateJobId(*backupId); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid backupId: %v\n", err)
 		syslog.L.Error(err).WithMessage("CmdBackup: backupId validation failed").Write()
@@ -227,11 +221,6 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupId strin
 		WithField("backupId", backupId).
 		Write()
 
-	if err := utils.ValidateDrivePath(drive); err != nil {
-		syslog.L.Error(err).WithMessage("ExecBackup: drive validation failed").Write()
-		return "", -1, fmt.Errorf("invalid drive: %w", err)
-	}
-
 	if err := utils.ValidateJobId(backupId); err != nil {
 		syslog.L.Error(err).WithMessage("ExecBackup: backupId validation failed").Write()
 		return "", -1, fmt.Errorf("invalid backupId: %w", err)
@@ -348,11 +337,6 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 		WithField("drive", drive).
 		WithField("backupId", backupId).
 		Write()
-
-	if err := utils.ValidateDrivePath(drive); err != nil {
-		syslog.L.Error(err).WithMessage("Backup: drive validation failed").Write()
-		return "", fmt.Errorf("invalid drive: %w", err)
-	}
 
 	if err := utils.ValidateJobId(backupId); err != nil {
 		syslog.L.Error(err).WithMessage("Backup: backupId validation failed").Write()
