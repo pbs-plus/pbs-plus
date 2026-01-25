@@ -202,14 +202,6 @@ func ValidateExclusionPath(path string) error {
 		return errors.New("exclusion path contains path traversal")
 	}
 
-	isGlobPattern := strings.HasPrefix(path, "*") || strings.HasPrefix(path, "?")
-
-	isAbsolute := strings.HasPrefix(path, "/") || strings.HasPrefix(path, "\\")
-
-	if !isAbsolute && !isGlobPattern {
-		return errors.New("exclusion path must be absolute or a valid glob pattern")
-	}
-
 	return nil
 }
 
