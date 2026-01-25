@@ -31,6 +31,7 @@ func NewAgentsManager() *AgentsManager {
 	return &AgentsManager{
 		expectedList: safemap.New[string, struct{}](),
 		sessions:     safemap.New[string, *StreamPipe](),
+		rateLimiters: safemap.New[string, *rate.Limiter](),
 	}
 }
 
