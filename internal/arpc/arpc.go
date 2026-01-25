@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
@@ -47,6 +48,9 @@ func Listen(ctx context.Context, addr string, tlsConfig *tls.Config) (net.Listen
 }
 
 func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Listener, router Router) error {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -64,7 +68,9 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 			}
 		}
 
+		wg.Add(1)
 		go func(c net.Conn) {
+			defer wg.Done()
 			defer c.Close()
 
 			tlsConn, ok := c.(*tls.Conn)
@@ -73,10 +79,6 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 			}
 
 			if err := tlsConn.Handshake(); err != nil {
-				return
-			}
-
-			if len(tlsConn.ConnectionState().PeerCertificates) == 0 {
 				return
 			}
 

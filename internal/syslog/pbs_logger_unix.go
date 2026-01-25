@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
@@ -28,14 +29,32 @@ type JobLogger struct {
 
 var jobLoggers = xsync.NewMapOf[string, *JobLogger]()
 
-func CreateJobLogger(jobId string) *JobLogger {
-	logger, _ := jobLoggers.Compute(jobId, func(_ *JobLogger, _ bool) (*JobLogger, bool) {
-		tempDir := os.TempDir()
-		fileName := fmt.Sprintf("job-%s-stdout", jobId)
-		filePath := filepath.Join(tempDir, fileName)
+func safeJobLogPath(jobId string) (string, error) {
+	if err := utils.ValidateJobId(jobId); err != nil {
+		return "", fmt.Errorf("invalid jobId: %w", err)
+	}
 
-		clientLogFile, err := os.Create(filePath)
-		if err != nil {
+	tempDir := os.TempDir()
+	fileName := fmt.Sprintf("job-%s-stdout", jobId)
+	filePath := filepath.Join(tempDir, fileName)
+
+	cleanPath := filepath.Clean(filePath)
+	if !strings.HasPrefix(cleanPath, filepath.Clean(tempDir)) {
+		return "", errors.New("path traversal detected")
+	}
+
+	return cleanPath, nil
+}
+
+func CreateJobLogger(jobId string) *JobLogger {
+	filePath, err := safeJobLogPath(jobId)
+	if err != nil {
+		return nil
+	}
+
+	logger, _ := jobLoggers.Compute(jobId, func(_ *JobLogger, _ bool) (*JobLogger, bool) {
+		clientLogFile, createErr := os.Create(filePath)
+		if createErr != nil {
 			return nil, true
 		}
 
@@ -52,16 +71,17 @@ func CreateJobLogger(jobId string) *JobLogger {
 }
 
 func GetExistingJobLogger(jobId string) *JobLogger {
-	logger, _ := jobLoggers.LoadOrCompute(jobId, func() *JobLogger {
-		tempDir := os.TempDir()
-		fileName := fmt.Sprintf("job-%s-stdout", jobId)
-		filePath := filepath.Join(tempDir, fileName)
+	filePath, err := safeJobLogPath(jobId)
+	if err != nil {
+		return nil
+	}
 
+	logger, _ := jobLoggers.LoadOrCompute(jobId, func() *JobLogger {
 		flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
 		perm := os.FileMode(0666)
 
-		clientLogFile, err := os.OpenFile(filePath, flags, perm)
-		if err != nil {
+		clientLogFile, openErr := os.OpenFile(filePath, flags, perm)
+		if openErr != nil {
 			return nil
 		}
 
@@ -73,6 +93,11 @@ func GetExistingJobLogger(jobId string) *JobLogger {
 			StartTime: time.Now(),
 		}
 	})
+
+	if logger == nil {
+		return nil
+	}
+
 	return logger
 }
 
@@ -102,7 +127,7 @@ func (b *JobLogger) Write(in []byte) (n int, err error) {
 
 	if hasContent || (len(in) > 0 && stringBuilder.Len() == 0) {
 		formattedLogMessage := stringBuilder.String()
-		if len(formattedLogMessage) > 0 { // Ensure we actually have something to write
+		if len(formattedLogMessage) > 0 {
 			if b.Writer == nil {
 				return 0, errors.New("logger closed")
 			}
@@ -149,17 +174,19 @@ func (b *JobLogger) Close() error {
 		if err := b.File.Close(); err != nil {
 			multiError = append(multiError, fmt.Sprintf("file close error: %v", err))
 		}
-		// Mark as nil so subsequent calls to Write/Flush/Close on this instance might fail clearly
 		b.File = nil
 		b.Writer = nil
 	}
 
-	// Always try to remove from map and delete file
 	jobLoggers.Delete(b.jobId)
 
 	if b.Path != "" {
-		if err := os.RemoveAll(b.Path); err != nil {
-			multiError = append(multiError, fmt.Sprintf("file remove error (%s): %v", b.Path, err))
+		if strings.HasPrefix(filepath.Clean(b.Path), filepath.Clean(os.TempDir())) {
+			if err := os.RemoveAll(b.Path); err != nil {
+				multiError = append(multiError, fmt.Sprintf("file remove error (%s): %v", b.Path, err))
+			}
+		} else {
+			multiError = append(multiError, fmt.Sprintf("refusing to delete file outside temp directory: %s", b.Path))
 		}
 	}
 

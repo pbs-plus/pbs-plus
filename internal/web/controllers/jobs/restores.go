@@ -27,7 +27,8 @@ func D2DRestoreFileTree(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		target, err := storeInstance.Database.GetTarget(utils.DecodePath(r.PathValue("target")))
+		targetName := utils.DecodePath(r.PathValue("target"))
+		target, err := storeInstance.Database.GetTarget(targetName)
 		if err != nil {
 			controllers.WriteErrorResponse(w, err)
 			return
@@ -36,6 +37,10 @@ func D2DRestoreFileTree(storeInstance *store.Store) http.HandlerFunc {
 		subPath := ""
 		if r.FormValue("filepath") != "" {
 			subPath = utils.DecodePath(r.FormValue("filepath"))
+			if err := utils.ValidateSubpath("filepath", subPath); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
 		}
 
 		if !target.IsAgent() {
@@ -138,6 +143,12 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, restoreID := range restoreIDs {
 			decoded := utils.DecodePath(restoreID)
+
+			if err := utils.ValidateJobId(decoded); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
 			decodedRestoreIDs = append(decodedRestoreIDs, decoded)
 		}
 
@@ -210,16 +221,64 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
+		id := r.FormValue("id")
+		if err := utils.ValidateJobId(id); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		store := r.FormValue("store")
+		if err := utils.ValidateDatastore(store); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		namespace := r.FormValue("ns")
+		if err := utils.ValidateNamespace(namespace); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		snapshot := r.FormValue("snapshot")
+		if err := utils.ValidateSnapshot(snapshot); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		srcPath := r.FormValue("src-path")
+		if err := utils.ValidateSubpath("src-path", srcPath); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		destSubpath := r.FormValue("dest-subpath")
+		if err := utils.ValidateSubpath("dest-subpath", destSubpath); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		preScript := r.FormValue("pre_script")
+		if err := utils.ValidateScriptPath("pre_script", preScript); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		postScript := r.FormValue("post_script")
+		if err := utils.ValidateScriptPath("post_script", postScript); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
 		newRestore := database.Restore{
-			ID:            r.FormValue("id"),
-			Store:         r.FormValue("store"),
-			Namespace:     r.FormValue("ns"),
-			Snapshot:      r.FormValue("snapshot"),
-			SrcPath:       r.FormValue("src-path"),
+			ID:            id,
+			Store:         store,
+			Namespace:     namespace,
+			Snapshot:      snapshot,
+			SrcPath:       srcPath,
 			DestTarget:    database.Target{Name: r.FormValue("dest-target")},
-			DestSubpath:   r.FormValue("dest-subpath"),
-			PreScript:     r.FormValue("pre_script"),
-			PostScript:    r.FormValue("post_script"),
+			DestSubpath:   destSubpath,
+			PreScript:     preScript,
+			PostScript:    postScript,
 			Comment:       r.FormValue("comment"),
 			Retry:         retry,
 			RetryInterval: retryInterval,
@@ -248,7 +307,13 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodPut {
-			restore, err := storeInstance.Database.GetRestore(utils.DecodePath(r.PathValue("restore")))
+			restoreID := utils.DecodePath(r.PathValue("restore"))
+			if err := utils.ValidateJobId(restoreID); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			restore, err := storeInstance.Database.GetRestore(restoreID)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -261,29 +326,60 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			if r.FormValue("store") != "" {
+				if err := utils.ValidateDatastore(r.FormValue("store")); err != nil {
+					controllers.WriteErrorResponse(w, err)
+					return
+				}
 				restore.Store = r.FormValue("store")
 			}
 			if r.FormValue("ns") != "" {
+				if err := utils.ValidateNamespace(r.FormValue("ns")); err != nil {
+					controllers.WriteErrorResponse(w, err)
+					return
+				}
 				restore.Namespace = r.FormValue("ns")
 			}
 			if r.FormValue("snapshot") != "" {
+				if err := utils.ValidateSnapshot(r.FormValue("snapshot")); err != nil {
+					controllers.WriteErrorResponse(w, err)
+					return
+				}
 				restore.Snapshot = r.FormValue("snapshot")
 			}
 			if r.FormValue("src-path") != "" {
+				if err := utils.ValidateSubpath("src-path", r.FormValue("src-path")); err != nil {
+					controllers.WriteErrorResponse(w, err)
+					return
+				}
 				restore.SrcPath = r.FormValue("src-path")
 			}
 			if r.FormValue("dest-target") != "" {
 				restore.DestTarget = database.Target{Name: r.FormValue("dest-target")}
 			}
 			if r.FormValue("dest-subpath") != "" {
+				if err := utils.ValidateSubpath("dest-subpath", r.FormValue("dest-subpath")); err != nil {
+					controllers.WriteErrorResponse(w, err)
+					return
+				}
 				restore.DestSubpath = r.FormValue("dest-subpath")
 			}
 			if r.FormValue("comment") != "" {
 				restore.Comment = r.FormValue("comment")
 			}
 
-			restore.PreScript = r.FormValue("pre_script")
-			restore.PostScript = r.FormValue("post_script")
+			preScript := r.FormValue("pre_script")
+			if err := utils.ValidateScriptPath("pre_script", preScript); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+			restore.PreScript = preScript
+
+			postScript := r.FormValue("post_script")
+			if err := utils.ValidateScriptPath("post_script", postScript); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+			restore.PostScript = postScript
 
 			retry, err := strconv.Atoi(r.FormValue("retry"))
 			if err != nil {
@@ -341,7 +437,13 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			restore, err := storeInstance.Database.GetRestore(utils.DecodePath(r.PathValue("restore")))
+			restoreID := utils.DecodePath(r.PathValue("restore"))
+			if err := utils.ValidateJobId(restoreID); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			restore, err := storeInstance.Database.GetRestore(restoreID)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
@@ -356,7 +458,13 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.Database.DeleteRestore(nil, utils.DecodePath(r.PathValue("restore")))
+			restoreID := utils.DecodePath(r.PathValue("restore"))
+			if err := utils.ValidateJobId(restoreID); err != nil {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+
+			err := storeInstance.Database.DeleteRestore(nil, restoreID)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return

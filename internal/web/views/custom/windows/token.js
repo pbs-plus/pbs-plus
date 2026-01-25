@@ -27,7 +27,7 @@ Ext.define("PBS.D2DManagement.TokenEditWindow", {
       name: "duration",
       xtype: "pmxDisplayEditField",
       renderer: Ext.htmlEncode,
-      allowBlank: false,
+      allowBlank: true,
       emptyText: "24h",
       cbind: {
         editable: "{isCreate}",
