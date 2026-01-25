@@ -3,59 +3,59 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
   alias: "widget.pbsD2DTargetPathSelector",
 
   layout: "hbox",
-
   target: undefined,
 
-  config: {
-    deleteEmpty: false,
-  },
+  deleteEmpty: false,
 
-  items: [
-    {
-      xtype: "proxmoxtextfield",
-      name: "dest-subpath",
-      reference: "destPathField",
-      flex: 1,
-      emptyText: gettext("/"),
-      allowBlank: true,
-      cbind: {
-        deleteEmpty: "{deleteEmpty}",
+  initComponent: function () {
+    let me = this;
+
+    me.items = [
+      {
+        xtype: "proxmoxtextfield",
+        name: "dest-subpath",
+        reference: "destPathField",
+        flex: 1,
+        emptyText: gettext("/"),
+        allowBlank: true,
+        deleteEmpty: me.deleteEmpty,
       },
-    },
-    {
-      xtype: "button",
-      iconCls: "fa fa-folder-open-o",
-      margin: "0 0 0 5",
-      handler: function (btn) {
-        let me = btn.up("pbsD2DTargetPathSelector");
+      {
+        xtype: "button",
+        iconCls: "fa fa-folder-open-o",
+        margin: "0 0 0 5",
+        handler: function (btn) {
+          let me = btn.up("pbsD2DTargetPathSelector");
+          let editWindow = btn.up("pbsDiskRestoreJobEdit");
+          let targetSelector = editWindow.lookup("dest-target");
+          let targetRecord = targetSelector.getSelection();
 
-        let editWindow = btn.up("pbsDiskRestoreJobEdit");
-        let targetSelector = editWindow.lookup("dest-target");
-        let targetRecord = targetSelector.getSelection(); // Gets the actual store record
+          if (!me.target || !targetRecord) {
+            Ext.Msg.alert(
+              gettext("Error"),
+              gettext("Please select a target first."),
+            );
+            return;
+          }
 
-        if (!me.target || !targetRecord) {
-          Ext.Msg.alert(
-            gettext("Error"),
-            gettext("Please select a target first."),
-          );
-          return;
-        }
-
-        Ext.create("PBS.window.D2DPathSelector", {
-          listURL: `${pbsPlusBaseUrl}/api2/json/d2d/filetree/${encodeURIComponent(encodePathValue(me.target))}`,
-          prependSlash: false,
-          onlyDirs: true,
-          listeners: {
-            select: function (path) {
-              me.down("proxmoxtextfield[reference=destPathField]").setValue(
-                path,
-              );
+          Ext.create("PBS.window.D2DPathSelector", {
+            listURL: `${pbsPlusBaseUrl}/api2/json/d2d/filetree/${encodeURIComponent(encodePathValue(me.target))}`,
+            prependSlash: false,
+            onlyDirs: true,
+            listeners: {
+              select: function (path) {
+                me.down("proxmoxtextfield[reference=destPathField]").setValue(
+                  path,
+                );
+              },
             },
-          },
-        }).show();
+          }).show();
+        },
       },
-    },
-  ],
+    ];
+
+    me.callParent();
+  },
 
   setTarget: function (target) {
     console.log("DestPathSelector: setting target to", target);
