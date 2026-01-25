@@ -257,7 +257,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupId strin
 		"--sourceMode=" + sourceMode,
 		"--readMode=" + readMode,
 		"--drive=" + drive,
-		"--backupId=" + backupId,
+		"--id=" + backupId,
 		"--token=" + token,
 	}
 

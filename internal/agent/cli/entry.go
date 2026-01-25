@@ -14,8 +14,7 @@ func Entry() {
 	sourceMode := flag.String("sourceMode", "", "Restore source mode (direct or snapshot)")
 	readMode := flag.String("readMode", "", "File read mode (standard or mmap)")
 	drive := flag.String("drive", "", "Drive or path for backup job")
-	backupId := flag.String("backupId", "", "Unique job identifier for the backup job")
-	restoreId := flag.String("restoreId", "", "Unique job identifier for the restore job")
+	id := flag.String("id", "", "Unique job identifier for the job")
 	srcPath := flag.String("srcPath", "/", "Path to be restored within snapshot")
 	destPath := flag.String("destPath", "", "Destination path of files to be restored from snapshot")
 	token := flag.String("token", "", "Auth Token")
@@ -36,13 +35,12 @@ func Entry() {
 		WithField("sourceMode", *sourceMode).
 		WithField("readMode", *readMode).
 		WithField("drive", *drive).
-		WithField("backupId", *backupId).
-		WithField("restoreId", *restoreId).
+		WithField("id", *id).
 		WithField("srcPath", *srcPath).
 		WithField("destPath", *destPath).
 		Write()
 
-	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-%s-%s", *cmdMode, *backupId))
+	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-%s-%s", *cmdMode, *id))
 	expectedToken, err := os.ReadFile(tokenFile)
 	os.Remove(tokenFile)
 	if err != nil {
@@ -58,8 +56,8 @@ func Entry() {
 
 	switch *cmdMode {
 	case "backup":
-		cmdBackup(sourceMode, readMode, drive, backupId)
+		cmdBackup(sourceMode, readMode, drive, id)
 	case "restore":
-		cmdRestore(restoreId, srcPath, destPath)
+		cmdRestore(id, srcPath, destPath)
 	}
 }
