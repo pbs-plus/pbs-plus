@@ -21,6 +21,11 @@ func Entry() {
 	token := flag.String("token", "", "Auth Token")
 	flag.Parse()
 
+	if *cmdMode != "restore" && *cmdMode != "backup" {
+		syslog.L.Debug().WithMessage("CLI: cmdMode invalid, returning").WithField("cmdMode", *cmdMode).Write()
+		return
+	}
+
 	if *token == "" {
 		fmt.Fprintln(os.Stderr, "Error: token required")
 		os.Exit(1)
@@ -36,11 +41,6 @@ func Entry() {
 		WithField("srcPath", *srcPath).
 		WithField("destPath", *destPath).
 		Write()
-
-	if *cmdMode != "restore" && *cmdMode != "backup" {
-		syslog.L.Debug().WithMessage("CLI: cmdMode invalid, returning").WithField("cmdMode", *cmdMode).Write()
-		return
-	}
 
 	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-%s-%s", *cmdMode, *backupId))
 	expectedToken, err := os.ReadFile(tokenFile)
