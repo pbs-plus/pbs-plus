@@ -109,6 +109,6 @@
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ConfigurationDlg" Order="5">NOT Installed</Publish>
     </UI>
 
-    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicensePath)" />
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
   </Product>
 </Wix>
