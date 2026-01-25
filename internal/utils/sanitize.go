@@ -141,6 +141,9 @@ func ValidateSubpath(name, subpath string) error {
 		return nil
 	}
 
+	subpath = strings.TrimPrefix(subpath, "/")
+	subpath = strings.TrimPrefix(subpath, "\\")
+
 	if err := ValidatePathComponent(name, subpath, subpathRegex, 4096); err != nil {
 		return err
 	}
