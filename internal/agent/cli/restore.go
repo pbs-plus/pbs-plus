@@ -219,7 +219,7 @@ func ExecRestore(id, srcPath, destPath string) (int, error) {
 
 	args := []string{
 		"--cmdMode=restore",
-		"--restoreId=" + id,
+		"--id=" + id,
 		"--srcPath=" + srcPath,
 		"--destPath=" + destPath,
 		"--token=" + token,
