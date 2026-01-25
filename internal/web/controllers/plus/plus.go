@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"text/template"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -20,6 +21,21 @@ import (
 
 //go:embed install-agent.ps1
 var scriptFS embed.FS
+
+var (
+	validOS = map[string]bool{
+		"windows": true,
+		"linux":   true,
+		"darwin":  true,
+	}
+	validArch = map[string]bool{
+		"amd64": true,
+		"arm64": true,
+		"386":   true,
+	}
+	// Prevent path traversal in version strings
+	versionRegex = regexp.MustCompile(`^[a-zA-Z0-9\._-]+$`)
+)
 
 func init() {
 	_ = os.RemoveAll(getCacheDir())
@@ -146,19 +162,37 @@ type PlatformInfo struct {
 	Ext  string
 }
 
-func parsePlatformParams(r *http.Request) PlatformInfo {
+func validateVersion(version string) error {
+	if !versionRegex.MatchString(version) {
+		return fmt.Errorf("invalid version format: %s", version)
+	}
+	return nil
+}
+
+func parsePlatformParams(r *http.Request) (PlatformInfo, error) {
 	os := r.URL.Query().Get("os")
 	if os == "" {
 		os = "windows"
 	}
-	platform := PlatformInfo{OS: os, Arch: "amd64", Ext: ".exe"}
-	if arch := r.URL.Query().Get("arch"); arch != "" {
-		platform.Arch = arch
+
+	if !validOS[os] {
+		return PlatformInfo{}, fmt.Errorf("invalid os parameter: %s", os)
 	}
+
+	arch := r.URL.Query().Get("arch")
+	if arch == "" {
+		arch = "amd64"
+	}
+
+	if !validArch[arch] {
+		return PlatformInfo{}, fmt.Errorf("invalid arch parameter: %s", arch)
+	}
+
+	platform := PlatformInfo{OS: os, Arch: arch, Ext: ".exe"}
 	if platform.OS != "windows" {
 		platform.Ext = ""
 	}
-	return platform
+	return platform, nil
 }
 
 func buildFilename(component, version string, platform PlatformInfo) string {
@@ -173,7 +207,20 @@ func DownloadMsi(storeInstance *store.Store, version string) http.HandlerFunc {
 		if version == "v0.0.0" {
 			version = "dev"
 		}
-		platform := parsePlatformParams(r)
+
+		if err := validateVersion(version); err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, "Invalid version", http.StatusBadRequest)
+			return
+		}
+
+		platform, err := parsePlatformParams(r)
+		if err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.msi", version, platform.OS, platform.Arch)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 		getCachedOrFetch(targetURL, filename, w, r)
@@ -185,7 +232,20 @@ func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc
 		if version == "v0.0.0" {
 			version = "dev"
 		}
-		platform := parsePlatformParams(r)
+
+		if err := validateVersion(version); err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, "Invalid version", http.StatusBadRequest)
+			return
+		}
+
+		platform, err := parsePlatformParams(r)
+		if err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		filename := buildFilename("pbs-plus-agent", version, platform)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 		getCachedOrFetch(targetURL, filename, w, r)
@@ -197,7 +257,20 @@ func DownloadSig(storeInstance *store.Store, version string) http.HandlerFunc {
 		if version == "v0.0.0" {
 			version = "dev"
 		}
-		platform := parsePlatformParams(r)
+
+		if err := validateVersion(version); err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, "Invalid version", http.StatusBadRequest)
+			return
+		}
+
+		platform, err := parsePlatformParams(r)
+		if err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.sig", version, platform.OS, platform.Arch)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 		getCachedOrFetch(targetURL, filename, w, r)
@@ -209,7 +282,20 @@ func DownloadChecksum(storeInstance *store.Store, version string) http.HandlerFu
 		if version == "v0.0.0" {
 			version = "dev"
 		}
-		platform := parsePlatformParams(r)
+
+		if err := validateVersion(version); err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, "Invalid version", http.StatusBadRequest)
+			return
+		}
+
+		platform, err := parsePlatformParams(r)
+		if err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		filename := buildFilename("pbs-plus-agent", version, platform) + ".md5"
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 		getCachedOrFetch(targetURL, filename, w, r)
