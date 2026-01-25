@@ -25,6 +25,7 @@ Ext.define("pbs-disk-backup-status", {
     "last-run-endtime",
     "last-successful-endtime",
     "last-successful-upid",
+    "expected_size",
     "duration",
     "current_file_count",
     "current_folder_count",
@@ -62,6 +63,7 @@ Ext.define("pbs-disk-backup-status", {
           }
           if (item.target && Ext.isObject(item.target)) {
             item.target = item.target.name;
+            item.expected_size = item.target.volume_used_bytes;
           }
           return item;
         });
@@ -127,6 +129,7 @@ Ext.define("pbs-disk-restore-job-status", {
           }
           if (item["dest-target"] && Ext.isObject(item["dest-target"])) {
             item["dest-target"] = item["dest-target"].name;
+            item.expected_size = item["dest-target"].volume_used_bytes;
           }
           return item;
         });
