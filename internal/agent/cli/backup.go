@@ -3,6 +3,8 @@ package cli
 import (
 	"bufio"
 	"context"
+	cryptoRand "crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -75,6 +77,32 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 	if *sourceMode == "" || *drive == "" || *backupId == "" || *readMode == "" {
 		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and backupId are required")
 		syslog.L.Error(errors.New("missing required flags")).WithMessage("CmdBackup: validation failed").Write()
+		os.Exit(1)
+	}
+
+	if err := utils.ValidateDrivePath(*drive); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid drive: %v\n", err)
+		syslog.L.Error(err).WithMessage("CmdBackup: drive validation failed").Write()
+		os.Exit(1)
+	}
+
+	if err := utils.ValidateJobId(*backupId); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid backupId: %v\n", err)
+		syslog.L.Error(err).WithMessage("CmdBackup: backupId validation failed").Write()
+		os.Exit(1)
+	}
+
+	validSourceModes := map[string]bool{"snapshot": true, "direct": true}
+	if !validSourceModes[*sourceMode] {
+		fmt.Fprintf(os.Stderr, "Error: invalid sourceMode: %s\n", *sourceMode)
+		syslog.L.Error(errors.New("invalid sourceMode")).WithMessage("CmdBackup: sourceMode validation failed").Write()
+		os.Exit(1)
+	}
+
+	validReadModes := map[string]bool{"standard": true, "mmap": true}
+	if !validReadModes[*readMode] {
+		fmt.Fprintf(os.Stderr, "Error: invalid readMode: %s\n", *readMode)
+		syslog.L.Error(errors.New("invalid readMode")).WithMessage("CmdBackup: readMode validation failed").Write()
 		os.Exit(1)
 	}
 
@@ -168,7 +196,7 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 			if err := session.Serve(); err != nil {
 				syslog.L.Warn().WithMessage("ARPC connection lost, attempting recovery").WithField("error", err.Error()).Write()
 				session.Close()
-				session = nil // Force fresh connection on next loop iteration
+				session = nil
 			} else {
 				return
 			}
@@ -199,6 +227,32 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupId strin
 		WithField("backupId", backupId).
 		Write()
 
+	if err := utils.ValidateDrivePath(drive); err != nil {
+		syslog.L.Error(err).WithMessage("ExecBackup: drive validation failed").Write()
+		return "", -1, fmt.Errorf("invalid drive: %w", err)
+	}
+
+	if err := utils.ValidateJobId(backupId); err != nil {
+		syslog.L.Error(err).WithMessage("ExecBackup: backupId validation failed").Write()
+		return "", -1, fmt.Errorf("invalid backupId: %w", err)
+	}
+
+	tokenBytes := make([]byte, 32)
+	if _, err := cryptoRand.Read(tokenBytes); err != nil {
+		return "", -1, err
+	}
+	token := base64.StdEncoding.EncodeToString(tokenBytes)
+
+	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-backup-%s", backupId))
+	if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
+		return "", -1, err
+	}
+
+	defer func() {
+		time.Sleep(5 * time.Second)
+		os.Remove(tokenFile)
+	}()
+
 	execCmd, err := os.Executable()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("ExecBackup: os.Executable failed").Write()
@@ -215,6 +269,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupId strin
 		"--readMode=" + readMode,
 		"--drive=" + drive,
 		"--backupId=" + backupId,
+		"--token=" + token,
 	}
 
 	cmd := exec.Command(execCmd, args...)
@@ -293,6 +348,16 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 		WithField("drive", drive).
 		WithField("backupId", backupId).
 		Write()
+
+	if err := utils.ValidateDrivePath(drive); err != nil {
+		syslog.L.Error(err).WithMessage("Backup: drive validation failed").Write()
+		return "", fmt.Errorf("invalid drive: %w", err)
+	}
+
+	if err := utils.ValidateJobId(backupId); err != nil {
+		syslog.L.Error(err).WithMessage("Backup: backupId validation failed").Write()
+		return "", fmt.Errorf("invalid backupId: %w", err)
+	}
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
