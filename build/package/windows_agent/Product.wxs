@@ -108,5 +108,7 @@
       <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ConfigurationDlg" Order="5">1</Publish>
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ConfigurationDlg" Order="5">NOT Installed</Publish>
     </UI>
+
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicensePath)" />
   </Product>
 </Wix>
