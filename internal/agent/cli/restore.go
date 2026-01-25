@@ -3,15 +3,19 @@ package cli
 import (
 	"bufio"
 	"context"
+	cryptoRand "crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/containers/winquit/pkg/winquit"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
@@ -63,6 +67,24 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 	if *restoreId == "" || *srcPath == "" || *destPath == "" {
 		fmt.Fprintln(os.Stderr, "Error: missing required flags: restoreId, srcPath, and destPath are required")
 		syslog.L.Error(errors.New("missing required flags")).WithMessage("CmdRestore: validation failed").Write()
+		os.Exit(1)
+	}
+
+	if err := utils.ValidateJobId(*restoreId); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid restoreId: %v\n", err)
+		syslog.L.Error(err).WithMessage("CmdRestore: restoreId validation failed").Write()
+		os.Exit(1)
+	}
+
+	if err := utils.ValidateRestorePath("srcPath", *srcPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid srcPath: %v\n", err)
+		syslog.L.Error(err).WithMessage("CmdRestore: srcPath validation failed").Write()
+		os.Exit(1)
+	}
+
+	if err := utils.ValidateRestorePath("destPath", *destPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid destPath: %v\n", err)
+		syslog.L.Error(err).WithMessage("CmdRestore: destPath validation failed").Write()
 		os.Exit(1)
 	}
 
@@ -158,30 +180,49 @@ func ExecRestore(id, srcPath, destPath string) (int, error) {
 		WithField("restoreId", id).
 		Write()
 
+	if err := utils.ValidateJobId(id); err != nil {
+		syslog.L.Error(err).WithMessage("ExecRestore: restoreId validation failed").Write()
+		return -1, fmt.Errorf("invalid restoreId: %w", err)
+	}
+
+	if err := utils.ValidateRestorePath("srcPath", srcPath); err != nil {
+		syslog.L.Error(err).WithMessage("ExecRestore: srcPath validation failed").Write()
+		return -1, fmt.Errorf("invalid srcPath: %w", err)
+	}
+
+	if err := utils.ValidateRestorePath("destPath", destPath); err != nil {
+		syslog.L.Error(err).WithMessage("ExecRestore: destPath validation failed").Write()
+		return -1, fmt.Errorf("invalid destPath: %w", err)
+	}
+
 	execCmd, err := os.Executable()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("ExecRestore: os.Executable failed").Write()
 		return -1, err
 	}
 
-	if id == "" {
-		syslog.L.Error(errors.New("missing restoreId")).WithMessage("ExecRestore: cmd failed").Write()
+	tokenBytes := make([]byte, 32)
+	if _, err := cryptoRand.Read(tokenBytes); err != nil {
 		return -1, err
 	}
-	if srcPath == "" {
-		syslog.L.Error(errors.New("missing srcPath")).WithMessage("ExecRestore: cmd failed").Write()
+	token := base64.StdEncoding.EncodeToString(tokenBytes)
+
+	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-restore-%s", id))
+	if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
 		return -1, err
 	}
-	if destPath == "" {
-		syslog.L.Error(errors.New("missing destPath")).WithMessage("ExecRestore: cmd failed").Write()
-		return -1, err
-	}
+
+	defer func() {
+		time.Sleep(5 * time.Second)
+		os.Remove(tokenFile)
+	}()
 
 	args := []string{
 		"--cmdMode=restore",
 		"--restoreId=" + id,
 		"--srcPath=" + srcPath,
 		"--destPath=" + destPath,
+		"--token=" + token,
 	}
 
 	cmd := exec.Command(execCmd, args...)
@@ -246,6 +287,21 @@ func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string) error {
 	syslog.L.Info().WithMessage("Restore: begin").
 		WithField("restoreId", restoreId).
 		Write()
+
+	if err := utils.ValidateJobId(restoreId); err != nil {
+		syslog.L.Error(err).WithMessage("Restore: restoreId validation failed").Write()
+		return fmt.Errorf("invalid restoreId: %w", err)
+	}
+
+	if err := utils.ValidateRestorePath("source", source); err != nil {
+		syslog.L.Error(err).WithMessage("Restore: source validation failed").Write()
+		return fmt.Errorf("invalid source: %w", err)
+	}
+
+	if err := utils.ValidateRestorePath("dest", dest); err != nil {
+		syslog.L.Error(err).WithMessage("Restore: dest validation failed").Write()
+		return fmt.Errorf("invalid dest: %w", err)
+	}
 
 	store, err := agent.NewRestoreStore()
 	if err != nil {

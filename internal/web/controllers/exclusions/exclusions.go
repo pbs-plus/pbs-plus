@@ -4,8 +4,10 @@ package exclusions
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
@@ -62,9 +64,22 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		path := strings.TrimSpace(r.FormValue("path"))
+		comment := strings.TrimSpace(r.FormValue("comment"))
+
+		if err := utils.ValidateExclusionPath(path); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		if len(comment) > 1024 {
+			controllers.WriteErrorResponse(w, fmt.Errorf("comment exceeds maximum length"))
+			return
+		}
+
 		newExclusion := database.Exclusion{
-			Path:    r.FormValue("path"),
-			Comment: r.FormValue("comment"),
+			Path:    path,
+			Comment: comment,
 		}
 
 		err = storeInstance.Database.CreateExclusion(nil, newExclusion)
@@ -84,9 +99,21 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		response := ExclusionConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+
+		pathDecoded, err := url.QueryUnescape(utils.DecodePath(r.PathValue("exclusion")))
+		if err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
+
+		if err := utils.ValidateExclusionPath(pathDecoded); err != nil {
+			controllers.WriteErrorResponse(w, err)
+			return
+		}
 
 		if r.Method == http.MethodPut {
 			err := r.ParseForm()
@@ -95,22 +122,29 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			pathDecoded, err := url.QueryUnescape(utils.DecodePath(r.PathValue("exclusion")))
-			if err != nil {
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
 			exclusion, err := storeInstance.Database.GetExclusion(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
 			}
 
-			if r.FormValue("path") != "" {
-				exclusion.Path = r.FormValue("path")
+			newPath := strings.TrimSpace(r.FormValue("path"))
+			newComment := strings.TrimSpace(r.FormValue("comment"))
+
+			if newPath != "" {
+				if err := utils.ValidateExclusionPath(newPath); err != nil {
+					controllers.WriteErrorResponse(w, err)
+					return
+				}
+				exclusion.Path = newPath
 			}
-			if r.FormValue("comment") != "" {
-				exclusion.Comment = r.FormValue("comment")
+
+			if newComment != "" {
+				if len(newComment) > 1024 {
+					controllers.WriteErrorResponse(w, fmt.Errorf("comment exceeds maximum length"))
+					return
+				}
+				exclusion.Comment = newComment
 			}
 
 			if delArr, ok := r.Form["delete"]; ok {
@@ -138,12 +172,6 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			pathDecoded, err := url.QueryUnescape(utils.DecodePath(r.PathValue("exclusion")))
-			if err != nil {
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
-
 			exclusion, err := storeInstance.Database.GetExclusion(pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
@@ -159,12 +187,6 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			pathDecoded, err := url.QueryUnescape(utils.DecodePath(r.PathValue("exclusion")))
-			if err != nil {
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
-
 			err = storeInstance.Database.DeleteExclusion(nil, pathDecoded)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)

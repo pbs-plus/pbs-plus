@@ -21,6 +21,10 @@
              Description="PBS Plus Agent for Windows"
              Manufacturer="$(var.Manufacturer)" />
 
+    <Condition Message="You must run this installer as Administrator.">
+      Privileged
+    </Condition>
+
     <MajorUpgrade 
       AllowDowngrades="yes"
       Schedule="afterInstallInitialize" />

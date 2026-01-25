@@ -16,7 +16,7 @@ type ErrorReponse struct {
 }
 
 func WriteErrorResponse(w http.ResponseWriter, err error) {
-	syslog.L.Error(err)
+	syslog.L.Error(err).Write()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(&ErrorReponse{

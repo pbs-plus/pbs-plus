@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -14,11 +15,13 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 	"github.com/xtaci/smux"
+	"golang.org/x/time/rate"
 )
 
 type AgentsManager struct {
 	expectedList *safemap.Map[string, struct{}]
 	sessions     *safemap.Map[string, *StreamPipe]
+	rateLimiters *safemap.Map[string, *rate.Limiter]
 
 	mu                sync.Mutex
 	customExpectCheck func(string, []*x509.Certificate) bool
@@ -28,6 +31,7 @@ func NewAgentsManager() *AgentsManager {
 	return &AgentsManager{
 		expectedList: safemap.New[string, struct{}](),
 		sessions:     safemap.New[string, *StreamPipe](),
+		rateLimiters: safemap.New[string, *rate.Limiter](),
 	}
 }
 
@@ -86,7 +90,38 @@ func (sm *AgentsManager) getClientId(state tls.ConnectionState, headers http.Hea
 	return clientID
 }
 
+func (sm *AgentsManager) validateClientCert(state tls.ConnectionState) error {
+	if len(state.PeerCertificates) == 0 {
+		return errors.New("no client certificate provided")
+	}
+
+	cert := state.PeerCertificates[0]
+
+	now := time.Now()
+	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		return fmt.Errorf("certificate expired or not yet valid")
+	}
+
+	if len(state.VerifiedChains) == 0 {
+		return errors.New("certificate chain verification failed")
+	}
+
+	return nil
+}
+
+func (sm *AgentsManager) checkRateLimit(clientID string) error {
+	limiter, _ := sm.rateLimiters.GetOrSet(clientID, rate.NewLimiter(rate.Limit(10), 20))
+
+	if !limiter.Allow() {
+		return errors.New("rate limit exceeded")
+	}
+	return nil
+}
+
 func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.Session, conn net.Conn, headers http.Header) (*StreamPipe, string, error) {
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	defer conn.SetReadDeadline(time.Time{})
+
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
 		return nil, "", errors.New("connection is not a TLS connection")
@@ -94,7 +129,15 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 
 	state := tlsConn.ConnectionState()
 
+	if err := sm.validateClientCert(state); err != nil {
+		return nil, "", err
+	}
+
 	clientID := sm.getClientId(state, headers)
+
+	if err := sm.checkRateLimit(clientID); err != nil {
+		return nil, "", err
+	}
 
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
 		existingSession.Close()
@@ -164,4 +207,5 @@ func (sm *AgentsManager) unregisterStreamPipe(clientID string) {
 	if exists {
 		syslog.L.Info().WithMessage("agent disconnected").WithField("hostname", clientID).Write()
 	}
+	sm.rateLimiters.Del(clientID)
 }

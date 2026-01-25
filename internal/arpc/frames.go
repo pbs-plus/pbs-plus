@@ -1,6 +1,7 @@
 package arpc
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,7 +80,32 @@ func readHandshakeResponse(s *smux.Stream) error {
 	}
 }
 
+func validateHeaders(headers http.Header) error {
+	const maxHeaderSize = 8192
+	const maxHeaderCount = 50
+
+	if len(headers) > maxHeaderCount {
+		return fmt.Errorf("too many headers: %d > %d", len(headers), maxHeaderCount)
+	}
+
+	totalSize := 0
+	for k, vals := range headers {
+		totalSize += len(k)
+		for _, v := range vals {
+			totalSize += len(v)
+		}
+		if totalSize > maxHeaderSize {
+			return errors.New("headers exceed size limit")
+		}
+	}
+	return nil
+}
+
 func writeHeadersFrame(s *smux.Stream, hdr http.Header) error {
+	if err := validateHeaders(hdr); err != nil {
+		return err
+	}
+
 	if err := writeVarint(s, uint64(len(hdr))); err != nil {
 		return err
 	}
@@ -113,6 +139,11 @@ func readHeadersFrame(s *smux.Stream) (http.Header, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if n > 50 {
+		return nil, errors.New("too many headers")
+	}
+
 	for i := uint64(0); i < n; i++ {
 		kl, err := readVarint(s)
 		if err != nil {
