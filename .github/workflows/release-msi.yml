@@ -156,6 +156,7 @@ jobs:
           & $candlePath `
             -arch x64 `
             -ext WixUtilExtension `
+            "-dLicensePath=$licensePath" `
             -out $wixobjPath `
             $wxsPath
 
@@ -178,7 +179,6 @@ jobs:
             -ext WixUIExtension `
             -ext WixUtilExtension `
             -cultures:en-US `
-            -dWixUILicenseRtf $licensePath `
             -out $msiPath `
             $wixobjPath `
             -sval
