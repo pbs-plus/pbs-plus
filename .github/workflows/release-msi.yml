@@ -144,6 +144,9 @@ jobs:
           $licensePath = "${{ github.workspace }}\build\package\windows_agent\license.rtf"
           $wixobjPath = "$outputDir\Product.wixobj"
 
+          Copy-Item "$licensePath" -Destination "$outputDir\license.rtf"
+          Write-Host "✓ License copied to build directory"
+
           if (-not (Test-Path $candlePath)) {
             throw "candle.exe not found at $candlePath"
           }
@@ -156,7 +159,6 @@ jobs:
           & $candlePath `
             -arch x64 `
             -ext WixUtilExtension `
-            "-dLicensePath=$licensePath" `
             -out $wixobjPath `
             $wxsPath
 
