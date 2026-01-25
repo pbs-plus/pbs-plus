@@ -213,36 +213,6 @@ func ValidateExclusionPath(path string) error {
 	return nil
 }
 
-func ValidateDrivePath(drive string) error {
-	if drive == "" {
-		return errors.New("drive cannot be empty")
-	}
-
-	if len(drive) > 255 {
-		return errors.New("drive path exceeds maximum length")
-	}
-
-	if len(drive) == 1 && ((drive[0] >= 'A' && drive[0] <= 'Z') || (drive[0] >= 'a' && drive[0] <= 'z')) {
-		return nil
-	}
-
-	if strings.HasPrefix(drive, "/") {
-		driveRegex := regexp.MustCompile(`^[a-zA-Z0-9/_.-]+$`)
-		if !driveRegex.MatchString(drive) {
-			return errors.New("drive path contains invalid characters")
-		}
-
-		cleaned := filepath.Clean(drive)
-		if strings.Contains(cleaned, "..") {
-			return errors.New("drive path contains path traversal")
-		}
-
-		return nil
-	}
-
-	return errors.New("drive must be a valid drive letter or absolute path")
-}
-
 func ValidateRestorePath(name, path string) error {
 	if path == "" {
 		return fmt.Errorf("%s cannot be empty", name)
