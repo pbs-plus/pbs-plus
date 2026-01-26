@@ -88,7 +88,7 @@ func createZipForSource(ctx context.Context, client *Client, source, destDir str
 		return fmt.Errorf("lookup source %q: %w", source, err)
 	}
 
-	zipName := sourceAttr.Name() + ".zip"
+	zipName := client.name + ".zip"
 	zipPath := filepath.Join(destDir, zipName)
 
 	zipFile, err := os.Create(zipPath)

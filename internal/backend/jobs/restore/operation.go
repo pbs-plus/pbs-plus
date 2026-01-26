@@ -367,7 +367,7 @@ func (b *RestoreOperation) localExecute() error {
 	}
 
 	var errCh chan error
-	b.localClient, errCh = pxar.NewLocalClient(reader)
+	b.localClient, errCh = pxar.NewLocalClient(reader, b.job.ID)
 	vfssessions.CreatePxarReader(childKey, reader)
 
 	syslog.L.Info().
