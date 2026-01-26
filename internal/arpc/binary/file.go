@@ -22,6 +22,18 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 		return err
 	}
 
+	if length < 0 {
+		err := fmt.Errorf("length must be non-negative, got %d", length)
+		syslog.L.Error(err).WithMessage("SendDataFromReader: negative length").Write()
+		return err
+	}
+
+	if length > maxLength {
+		err := fmt.Errorf("length %d exceeds maximum allowed %d", length, maxLength)
+		syslog.L.Error(err).WithMessage("SendDataFromReader: length exceeds limit").Write()
+		return err
+	}
+
 	syslog.L.Debug().WithMessage("SendDataFromReader: start").
 		WithField("length", length).
 		Write()
@@ -90,11 +102,33 @@ func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 		return 0, err
 	}
 
-	toRead := int64(totalLength)
-	dstCap := int64(len(dst))
-	if toRead > dstCap {
-		toRead = dstCap
+	if totalLength > uint64(len(dst)) {
+		toRead := len(dst)
+
+		if toRead > 0 {
+			if _, err := io.ReadFull(stream, dst); err != nil {
+				e := fmt.Errorf("failed to read payload: %w", err)
+				syslog.L.Error(e).WithMessage("ReceiveDataInto: payload read failed").Write()
+				return 0, e
+			}
+		}
+
+		remaining := int64(totalLength) - int64(toRead)
+		if remaining > 0 {
+			if _, err := io.CopyN(io.Discard, stream, remaining); err != nil {
+				e := fmt.Errorf("failed to drain payload remainder: %w", err)
+				syslog.L.Error(e).WithMessage("ReceiveDataInto: payload drain failed").Write()
+				return toRead, e
+			}
+		}
+
+		syslog.L.Debug().WithMessage("ReceiveDataInto: completed").
+			WithField("total_read", toRead).
+			Write()
+		return toRead, nil
 	}
+
+	toRead := int(totalLength)
 
 	if toRead > 0 {
 		if _, err := io.ReadFull(stream, dst[:toRead]); err != nil {
@@ -104,17 +138,8 @@ func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
 		}
 	}
 
-	remaining := int64(totalLength) - toRead
-	if remaining > 0 {
-		if _, err := io.CopyN(io.Discard, stream, remaining); err != nil {
-			e := fmt.Errorf("failed to drain payload remainder: %w", err)
-			syslog.L.Error(e).WithMessage("ReceiveDataInto: payload drain failed").Write()
-			return int(toRead), e
-		}
-	}
-
 	syslog.L.Debug().WithMessage("ReceiveDataInto: completed").
 		WithField("total_read", toRead).
 		Write()
-	return int(toRead), nil
+	return toRead, nil
 }
