@@ -49,6 +49,7 @@ type Restore struct {
 	Store         string     `json:"store"`
 	Snapshot      string     `json:"snapshot"`
 	Namespace     string     `json:"ns"`
+	Mode          int        `json:"mode"`
 	SrcPath       string     `json:"src-path"`
 	DestTarget    Target     `json:"dest-target"`
 	DestSubpath   string     `json:"dest-subpath"`

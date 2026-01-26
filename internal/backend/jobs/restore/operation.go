@@ -268,6 +268,7 @@ func (b *RestoreOperation) agentExecute() error {
 		RestoreId: b.job.ID,
 		SrcPath:   srcPath,
 		DestPath:  destPath,
+		Mode:      b.job.Mode,
 	}
 
 	b.storeInstance.ARPCAgentsManager.Expect(b.job.GetStreamID())
@@ -377,7 +378,10 @@ func (b *RestoreOperation) localExecute() error {
 	b.task.WriteString("starting local restore")
 
 	b.waitGroup.Go(func() {
-		pxar.Restore(b.ctx, b.localClient, []string{srcPath}, destPath)
+		pxar.RestoreWithOptions(b.ctx, b.localClient, []string{srcPath}, pxar.RestoreOptions{
+			DestDir: destPath,
+			Mode:    pxar.RestoreMode(b.job.Mode),
+		})
 	})
 
 	go func() {

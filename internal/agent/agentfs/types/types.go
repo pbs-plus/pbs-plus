@@ -51,6 +51,7 @@ type (
 		RestoreId string `cbor:"job_id"`
 		SrcPath   string `cbor:"src_path"`
 		DestPath  string `cbor:"dest_path"`
+		Mode      int    `cbor:"mode"`
 		Extras    string `cbor:"extras,omitempty"`
 	}
 
