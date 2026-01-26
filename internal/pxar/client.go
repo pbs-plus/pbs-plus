@@ -13,15 +13,16 @@ type Client struct {
 	pr     *PxarReader
 	errCh  chan error
 	closed atomic.Bool
+	name   string
 }
 
-func NewRemoteClient(pipe *arpc.StreamPipe) *Client {
-	return &Client{pipe: pipe}
+func NewRemoteClient(pipe *arpc.StreamPipe, name string) *Client {
+	return &Client{pipe: pipe, name: name}
 }
 
-func NewLocalClient(pr *PxarReader) (*Client, chan error) {
+func NewLocalClient(pr *PxarReader, name string) (*Client, chan error) {
 	errCh := make(chan error, 16)
-	return &Client{pr: pr, errCh: errCh}, errCh
+	return &Client{pr: pr, errCh: errCh, name: name}, errCh
 }
 
 func (c *Client) SendError(ctx context.Context, err error) error {

@@ -349,7 +349,7 @@ func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string, mode pxar
 		return err
 	}
 
-	client := pxar.NewRemoteClient(rpcSess)
+	client := pxar.NewRemoteClient(rpcSess, restoreId)
 	if client == nil {
 		syslog.L.Error(errors.New("client is nil")).WithMessage("Restore: NewRemoteClient returned nil").Write()
 		return fmt.Errorf("client is nil")
