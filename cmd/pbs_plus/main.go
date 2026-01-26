@@ -177,7 +177,7 @@ func main() {
 				continue
 			}
 			if reply.Status != 200 {
-				syslog.L.Error(err).WithField("backupId", backupRun).Write()
+				syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("backupId", backupRun).Write()
 				continue
 			}
 		}
