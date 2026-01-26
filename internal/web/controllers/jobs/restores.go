@@ -222,7 +222,7 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		id := r.FormValue("id")
-		if err := utils.ValidateJobId(id); err != nil {
+		if err := utils.ValidateJobId(id); err != nil && id != "" {
 			controllers.WriteErrorResponse(w, err)
 			return
 		}
