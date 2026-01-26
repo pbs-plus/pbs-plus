@@ -221,6 +221,16 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
+		mode, err := strconv.Atoi(r.FormValue("mode"))
+		if err != nil {
+			if r.FormValue("mode") == "" {
+				mode = 0
+			} else {
+				controllers.WriteErrorResponse(w, err)
+				return
+			}
+		}
+
 		id := r.FormValue("id")
 		if err := utils.ValidateJobId(id); err != nil && id != "" {
 			controllers.WriteErrorResponse(w, err)
@@ -275,6 +285,7 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			Namespace:     namespace,
 			Snapshot:      snapshot,
 			SrcPath:       srcPath,
+			Mode:          mode,
 			DestTarget:    database.Target{Name: r.FormValue("dest-target")},
 			DestSubpath:   destSubpath,
 			PreScript:     preScript,
@@ -381,6 +392,13 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			restore.PostScript = postScript
 
+			mode, err := strconv.Atoi(r.FormValue("mode"))
+			if err != nil {
+				mode = 0
+			}
+
+			restore.Mode = mode
+
 			retry, err := strconv.Atoi(r.FormValue("retry"))
 			if err != nil {
 				retry = 0
@@ -415,6 +433,8 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						restore.PostScript = ""
 					case "comment":
 						restore.Comment = ""
+					case "mode":
+						restore.Mode = 0
 					case "retry":
 						restore.Retry = 0
 					case "retry-interval":
