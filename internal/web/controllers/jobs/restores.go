@@ -88,16 +88,12 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for i, restore := range allRestores {
 			var stats pxar.PxarReaderStats
-			if restore.DestTarget.IsAgent() {
-				session := vfssessions.GetSessionPxarReader(restore.GetStreamID())
-				if session == nil {
-					continue
-				}
-
-				stats = session.GetStats()
-			} else {
+			session := vfssessions.GetSessionPxarReader(restore.GetStreamID())
+			if session == nil {
 				continue
 			}
+
+			stats = session.GetStats()
 
 			allRestores[i].CurrentStats.CurrentFileCount = int(stats.FilesAccessed)
 			allRestores[i].CurrentStats.CurrentFolderCount = int(stats.FoldersAccessed)

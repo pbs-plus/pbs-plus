@@ -51,7 +51,7 @@ func (c *Client) GetRoot(ctx context.Context) (EntryInfo, error) {
 		return info, nil
 	}
 
-	info, err := c.pr.GetRoot()
+	info, err := c.pr.GetRoot(ctx)
 	if err != nil {
 		return EntryInfo{}, err
 	}
@@ -71,7 +71,7 @@ func (c *Client) LookupByPath(ctx context.Context, path string) (EntryInfo, erro
 		return info, nil
 	}
 
-	info, err := c.pr.LookupByPath(path)
+	info, err := c.pr.LookupByPath(ctx, path)
 	if err != nil {
 		return EntryInfo{}, err
 	}
@@ -91,7 +91,7 @@ func (c *Client) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, err
 		return entries, nil
 	}
 
-	info, err := c.pr.ReadDir(entryEnd)
+	info, err := c.pr.ReadDir(ctx, entryEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (c *Client) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (Entr
 		return info, nil
 	}
 
-	info, err := c.pr.GetAttr(entryStart, entryEnd)
+	info, err := c.pr.GetAttr(ctx, entryStart, entryEnd)
 	if err != nil {
 		return EntryInfo{}, err
 	}
@@ -131,7 +131,7 @@ func (c *Client) Read(ctx context.Context, contentStart, contentEnd, offset uint
 		return c.pipe.CallBinary(ctx, "pxar.Read", params, data)
 	}
 
-	raw, err := c.pr.Read(contentStart, contentEnd, offset, size)
+	raw, err := c.pr.Read(ctx, contentStart, contentEnd, offset, size)
 	if err != nil {
 		return 0, err
 	}
@@ -154,7 +154,7 @@ func (c *Client) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]b
 		return target, nil
 	}
 
-	info, err := c.pr.ReadLink(entryStart, entryEnd)
+	info, err := c.pr.ReadLink(ctx, entryStart, entryEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (c *Client) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (m
 		return xattrs, nil
 	}
 
-	info, err := c.pr.ListXAttrs(entryStart, entryEnd)
+	info, err := c.pr.ListXAttrs(ctx, entryStart, entryEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -197,8 +197,6 @@ func (c *Client) Close() error {
 		}
 		return nil
 	}
-
-	close(c.errCh)
 
 	return c.pr.Close()
 }
