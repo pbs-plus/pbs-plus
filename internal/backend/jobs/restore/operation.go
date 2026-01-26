@@ -64,12 +64,13 @@ type RestoreOperation struct {
 	cancel context.CancelFunc
 	mu     sync.RWMutex
 
-	task      *tasks.RestoreTask
-	queueTask *tasks.QueuedTask
-	waitGroup *sync.WaitGroup
-	err       error
-	errCh     chan error
-	errCount  atomic.Int32
+	task        *tasks.RestoreTask
+	queueTask   *tasks.QueuedTask
+	waitGroup   *sync.WaitGroup
+	err         error
+	errChClosed atomic.Bool
+	errCh       chan error
+	errCount    atomic.Int32
 
 	job           database.Restore
 	remoteServer  *pxar.RemoteServer
@@ -490,7 +491,9 @@ func (b *RestoreOperation) Cleanup() {
 	}
 
 	if b.errCh != nil {
-		close(b.errCh)
+		if !b.errChClosed.Swap(true) {
+			close(b.errCh)
+		}
 	}
 
 	vfssessions.DisconnectSession(childKey)

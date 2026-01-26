@@ -43,8 +43,6 @@ func (s *RemoteServer) Close() error {
 		return nil
 	}
 
-	close(s.errCh)
-
 	return s.reader.Close()
 }
 
