@@ -205,7 +205,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		id := r.FormValue("id")
 		err = utils.ValidateJobId(id)
-		if err != nil {
+		if err != nil && id != "" {
 			controllers.WriteErrorResponse(w, err)
 			return
 		}
