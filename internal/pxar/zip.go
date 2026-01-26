@@ -128,9 +128,15 @@ func (aw *asyncWriter) Close() error {
 }
 
 func restoreAsZips(ctx context.Context, client *Client, sources []string, opts RestoreOptions) error {
-	var sourcesWg sync.WaitGroup
-	errCh := make(chan error, len(sources))
+	errCh := make(chan error, 100)
+	var errWg sync.WaitGroup
+	errWg.Go(func() {
+		for err := range errCh {
+			_ = client.SendError(ctx, err)
+		}
+	})
 
+	var sourcesWg sync.WaitGroup
 	for _, source := range sources {
 		if ctx.Err() != nil {
 			break
@@ -140,10 +146,9 @@ func restoreAsZips(ctx context.Context, client *Client, sources []string, opts R
 		go func(src string) {
 			defer sourcesWg.Done()
 
-			if err := createZipForSource(ctx, client, src, opts); err != nil {
+			if err := createZipForSource(ctx, client, src, opts, errCh); err != nil {
 				select {
 				case errCh <- err:
-					_ = client.SendError(ctx, err)
 				default:
 				}
 			}
@@ -152,20 +157,12 @@ func restoreAsZips(ctx context.Context, client *Client, sources []string, opts R
 
 	sourcesWg.Wait()
 	close(errCh)
-
-	var errors []error
-	for err := range errCh {
-		errors = append(errors, err)
-	}
-
-	if len(errors) > 0 {
-		return errors[0]
-	}
+	errWg.Wait()
 
 	return ctx.Err()
 }
 
-func createZipForSource(ctx context.Context, client *Client, source string, opts RestoreOptions) error {
+func createZipForSource(ctx context.Context, client *Client, source string, opts RestoreOptions, errCh chan<- error) error {
 	sourceAttr, err := client.LookupByPath(ctx, source)
 	if err != nil {
 		return fmt.Errorf("lookup source %q: %w", source, err)
@@ -192,23 +189,20 @@ func createZipForSource(ctx context.Context, client *Client, source string, opts
 		client: client,
 		writer: zipWriter,
 		base:   sourceAttr.Name(),
+		errCh:  errCh,
 	}
 
-	var addErr error
 	if sourceAttr.IsDir() {
-		addErr = zc.addDirectory("", sourceAttr)
+		zc.addDirectory("", sourceAttr)
 	} else if sourceAttr.IsFile() {
-		addErr = zc.addFile("", sourceAttr)
+		zc.addFile("", sourceAttr)
 	} else if sourceAttr.IsSymlink() {
-		addErr = zc.addSymlink("", sourceAttr)
+		zc.addSymlink("", sourceAttr)
 	}
 
 	zipErr := zipWriter.Close()
 	asyncErr := asyncWriter.Close()
 
-	if addErr != nil {
-		return addErr
-	}
 	if zipErr != nil {
 		return zipErr
 	}
@@ -224,11 +218,13 @@ type zipContext struct {
 	client *Client
 	writer *zip.Writer
 	base   string
+	errCh  chan<- error
 }
 
-func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) error {
+func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) {
 	if err := validatePath(dirEntry.Name()); err != nil {
-		return err
+		zc.sendError(fmt.Errorf("validate dir path %q: %w", dirEntry.Name(), err))
+		return
 	}
 
 	dirPath := filepath.Join(relPath, dirEntry.Name()) + "/"
@@ -241,42 +237,37 @@ func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) error {
 	header.SetMode(os.FileMode(dirEntry.Mode) | os.ModeDir)
 
 	if _, err := zc.writer.CreateHeader(header); err != nil {
-		return fmt.Errorf("create dir header %q: %w", dirPath, err)
+		zc.sendError(fmt.Errorf("create dir header %q: %w", dirPath, err))
+		return
 	}
 
 	entries, err := zc.client.ReadDir(zc.ctx, dirEntry.EntryRangeEnd)
 	if err != nil {
-		return fmt.Errorf("read dir %q: %w", dirPath, err)
+		zc.sendError(fmt.Errorf("read dir %q: %w", dirPath, err))
+		return
 	}
 
 	for _, e := range entries {
 		if zc.ctx.Err() != nil {
-			return zc.ctx.Err()
+			return
 		}
 
 		currentPath := dirPath[:len(dirPath)-1]
 
 		if e.IsDir() {
-			if err := zc.addDirectory(currentPath, e); err != nil {
-				return err
-			}
+			zc.addDirectory(currentPath, e)
 		} else if e.IsFile() {
-			if err := zc.addFile(currentPath, e); err != nil {
-				return err
-			}
+			zc.addFile(currentPath, e)
 		} else if e.IsSymlink() {
-			if err := zc.addSymlink(currentPath, e); err != nil {
-				return err
-			}
+			zc.addSymlink(currentPath, e)
 		}
 	}
-
-	return nil
 }
 
-func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) error {
+func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) {
 	if err := validatePath(fileEntry.Name()); err != nil {
-		return err
+		zc.sendError(fmt.Errorf("validate file path %q: %w", fileEntry.Name(), err))
+		return
 	}
 
 	filePath := filepath.Join(relPath, fileEntry.Name())
@@ -290,7 +281,8 @@ func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) error {
 
 	writer, err := zc.writer.CreateHeader(header)
 	if err != nil {
-		return fmt.Errorf("create file header %q: %w", filePath, err)
+		zc.sendError(fmt.Errorf("create file header %q: %w", filePath, err))
+		return
 	}
 
 	if fileEntry.Size > 0 && fileEntry.ContentRange != nil {
@@ -303,23 +295,24 @@ func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) error {
 		}
 
 		if _, err := io.Copy(writer, rr); err != nil {
-			return fmt.Errorf("copy file data %q: %w", filePath, err)
+			zc.sendError(fmt.Errorf("copy file data %q: %w", filePath, err))
+			return
 		}
 	}
-
-	return nil
 }
 
-func (zc *zipContext) addSymlink(relPath string, symlinkEntry EntryInfo) error {
+func (zc *zipContext) addSymlink(relPath string, symlinkEntry EntryInfo) {
 	if err := validatePath(symlinkEntry.Name()); err != nil {
-		return err
+		zc.sendError(fmt.Errorf("validate symlink path %q: %w", symlinkEntry.Name(), err))
+		return
 	}
 
 	linkPath := filepath.Join(relPath, symlinkEntry.Name())
 
 	target, err := zc.client.ReadLink(zc.ctx, symlinkEntry.EntryRangeStart, symlinkEntry.EntryRangeEnd)
 	if err != nil {
-		return fmt.Errorf("read symlink %q: %w", linkPath, err)
+		zc.sendError(fmt.Errorf("read symlink %q: %w", linkPath, err))
+		return
 	}
 
 	header := &zip.FileHeader{
@@ -331,14 +324,21 @@ func (zc *zipContext) addSymlink(relPath string, symlinkEntry EntryInfo) error {
 
 	writer, err := zc.writer.CreateHeader(header)
 	if err != nil {
-		return fmt.Errorf("create symlink header %q: %w", linkPath, err)
+		zc.sendError(fmt.Errorf("create symlink header %q: %w", linkPath, err))
+		return
 	}
 
 	if _, err := writer.Write(target); err != nil {
-		return fmt.Errorf("write symlink target %q: %w", linkPath, err)
+		zc.sendError(fmt.Errorf("write symlink target %q: %w", linkPath, err))
+		return
 	}
+}
 
-	return nil
+func (zc *zipContext) sendError(err error) {
+	select {
+	case zc.errCh <- err:
+	default:
+	}
 }
 
 func validatePath(name string) error {
