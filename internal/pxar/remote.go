@@ -95,7 +95,7 @@ func (s *RemoteServer) handleDone(req *arpc.Request) (arpc.Response, error) {
 }
 
 func (s *RemoteServer) handleGetRoot(req *arpc.Request) (arpc.Response, error) {
-	info, err := s.reader.GetRoot()
+	info, err := s.reader.GetRoot(req.Context)
 	if err != nil {
 		return makeErrorResponse(err)
 	}
@@ -119,7 +119,7 @@ func (s *RemoteServer) handleLookupByPath(req *arpc.Request) (arpc.Response, err
 		return arpc.Response{}, err
 	}
 
-	info, err := s.reader.LookupByPath(params.Path)
+	info, err := s.reader.LookupByPath(req.Context, params.Path)
 	if err != nil {
 		return makeErrorResponse(err)
 	}
@@ -143,7 +143,7 @@ func (s *RemoteServer) handleReadDir(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	entries, err := s.reader.ReadDir(params.EntryEnd)
+	entries, err := s.reader.ReadDir(req.Context, params.EntryEnd)
 	if err != nil {
 		return makeErrorResponse(err)
 	}
@@ -168,7 +168,7 @@ func (s *RemoteServer) handleGetAttr(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	info, err := s.reader.GetAttr(params.EntryStart, params.EntryEnd)
+	info, err := s.reader.GetAttr(req.Context, params.EntryStart, params.EntryEnd)
 	if err != nil {
 		return makeErrorResponse(err)
 	}
@@ -195,7 +195,7 @@ func (s *RemoteServer) handleRead(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	data, err := s.reader.Read(params.ContentStart, params.ContentEnd, params.Offset, params.Size)
+	data, err := s.reader.Read(req.Context, params.ContentStart, params.ContentEnd, params.Offset, params.Size)
 	if err != nil {
 		return makeErrorResponse(err)
 	}
@@ -214,7 +214,7 @@ func (s *RemoteServer) handleReadLink(req *arpc.Request) (arpc.Response, error) 
 		return arpc.Response{}, err
 	}
 
-	target, err := s.reader.ReadLink(params.EntryStart, params.EntryEnd)
+	target, err := s.reader.ReadLink(req.Context, params.EntryStart, params.EntryEnd)
 	if err != nil {
 		return makeErrorResponse(err)
 	}
@@ -234,7 +234,7 @@ func (s *RemoteServer) handleListXAttrs(req *arpc.Request) (arpc.Response, error
 		return arpc.Response{}, err
 	}
 
-	xattrs, err := s.reader.ListXAttrs(params.EntryStart, params.EntryEnd)
+	xattrs, err := s.reader.ListXAttrs(req.Context, params.EntryStart, params.EntryEnd)
 	if err != nil {
 		return makeErrorResponse(err)
 	}
