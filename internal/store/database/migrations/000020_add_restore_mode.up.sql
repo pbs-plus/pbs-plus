@@ -1,0 +1,1 @@
+ALTER TABLE restores ADD COLUMN restore_mode INT NOT NULL DEFAULT 0;

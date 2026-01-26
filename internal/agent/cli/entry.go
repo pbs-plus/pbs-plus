@@ -13,6 +13,7 @@ func Entry() {
 	cmdMode := flag.String("cmdMode", "", "Cmd Mode")
 	sourceMode := flag.String("sourceMode", "", "Restore source mode (direct or snapshot)")
 	readMode := flag.String("readMode", "", "File read mode (standard or mmap)")
+	restoreMode := flag.Int("restoreMode", 0, "Restore mode")
 	drive := flag.String("drive", "", "Drive or path for backup job")
 	id := flag.String("id", "", "Unique job identifier for the job")
 	srcPath := flag.String("srcPath", "/", "Path to be restored within snapshot")
@@ -34,6 +35,7 @@ func Entry() {
 		WithField("cmdMode", *cmdMode).
 		WithField("sourceMode", *sourceMode).
 		WithField("readMode", *readMode).
+		WithField("restoreMode", *restoreMode).
 		WithField("drive", *drive).
 		WithField("id", *id).
 		WithField("srcPath", *srcPath).
@@ -58,6 +60,6 @@ func Entry() {
 	case "backup":
 		cmdBackup(sourceMode, readMode, drive, id)
 	case "restore":
-		cmdRestore(id, srcPath, destPath)
+		cmdRestore(id, srcPath, destPath, restoreMode)
 	}
 }
