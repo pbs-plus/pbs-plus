@@ -206,7 +206,7 @@ func buildDACLFromACEs(winACLs []types.WinACL) (*windows.ACL, error) {
 	return newACL, nil
 }
 
-func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryInfo, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup) error {
+func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryInfo, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup, noAttr bool) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
@@ -227,6 +227,10 @@ func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryI
 				wg.Done()
 			}
 		}(target, e)
+	}
+
+	if noAttr {
+		return nil
 	}
 
 	pathPtr, err := windows.UTF16PtrFromString(dst)

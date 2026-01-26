@@ -16,6 +16,7 @@ type RestoreMode int
 const (
 	RestoreModeNormal RestoreMode = iota
 	RestoreModeZip
+	RestoreModeNoAttr
 )
 
 type RestoreOptions struct {
@@ -44,7 +45,8 @@ func RestoreWithOptions(ctx context.Context, client *Client, sources []string, o
 		return restoreAsZips(ctx, client, sources, opts.DestDir)
 	}
 
-	return restoreNormal(ctx, client, sources, opts.DestDir)
+	noAttr := opts.Mode == RestoreModeNoAttr
+	return restoreNormal(ctx, client, sources, opts.DestDir, noAttr)
 }
 
 func restoreAsZips(ctx context.Context, client *Client, sources []string, destDir string) error {
@@ -229,7 +231,7 @@ func (zc *zipContext) addSymlink(relPath string, symlinkEntry EntryInfo) error {
 	return nil
 }
 
-func restoreNormal(ctx context.Context, client *Client, sources []string, destDir string) error {
+func restoreNormal(ctx context.Context, client *Client, sources []string, destDir string, noAttr bool) error {
 	fsCap := getFilesystemCapabilities(destDir)
 
 	numCPU := runtime.NumCPU()
@@ -248,7 +250,7 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 	for i := 0; i < numWorkers; i++ {
 		workersWg.Go(func() {
 			for job := range jobs {
-				if err := processJob(workerCtx, client, job, jobs, fsCap, &wg); err != nil {
+				if err := processJob(workerCtx, client, job, jobs, fsCap, &wg, noAttr); err != nil {
 					_ = client.SendError(workerCtx, err)
 				}
 				wg.Done()
@@ -293,7 +295,7 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 	return ctx.Err()
 }
 
-func processJob(ctx context.Context, client *Client, job restoreJob, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup) error {
+func processJob(ctx context.Context, client *Client, job restoreJob, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup, noAttr bool) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -301,18 +303,18 @@ func processJob(ctx context.Context, client *Client, job restoreJob, jobs chan<-
 	}
 
 	if job.info.IsDir() {
-		return restoreDir(ctx, client, job.dest, job.info, jobs, fsCap, wg)
+		return restoreDir(ctx, client, job.dest, job.info, jobs, fsCap, wg, noAttr)
 	}
 	if job.info.IsSymlink() {
-		return restoreSymlink(ctx, client, job.dest, job.info, fsCap)
+		return restoreSymlink(ctx, client, job.dest, job.info, fsCap, noAttr)
 	}
 	if job.info.IsFile() {
-		return restoreFile(ctx, client, job.dest, job.info, fsCap)
+		return restoreFile(ctx, client, job.dest, job.info, fsCap, noAttr)
 	}
 	return nil
 }
 
-func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, fsCap filesystemCapabilities) error {
+func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, fsCap filesystemCapabilities, noAttr bool) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0666)
 	if err != nil {
 		return fmt.Errorf("create file %q: %w", path, err)
@@ -333,10 +335,15 @@ func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, 
 		}
 	}
 
+	if noAttr {
+		f.Close()
+		return nil
+	}
+
 	return applyMeta(ctx, client, f, e, fsCap)
 }
 
-func restoreSymlink(ctx context.Context, client *Client, path string, e EntryInfo, fsCap filesystemCapabilities) error {
+func restoreSymlink(ctx context.Context, client *Client, path string, e EntryInfo, fsCap filesystemCapabilities, noAttr bool) error {
 	target, err := client.ReadLink(ctx, e.EntryRangeStart, e.EntryRangeEnd)
 	if err != nil {
 		return fmt.Errorf("readlink data %q: %w", path, err)
@@ -344,5 +351,10 @@ func restoreSymlink(ctx context.Context, client *Client, path string, e EntryInf
 	if err := os.Symlink(string(target), path); err != nil {
 		return fmt.Errorf("symlink %q: %w", path, err)
 	}
+
+	if noAttr {
+		return nil
+	}
+
 	return applyMetaSymlink(ctx, client, path, e, fsCap)
 }
