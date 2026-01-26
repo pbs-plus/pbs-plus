@@ -2,6 +2,7 @@ package pxar
 
 import (
 	"archive/zip"
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -9,123 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
-
-const ZipBufferSize = 16 * 1024 * 1024
-
-type asyncWriter struct {
-	file      *os.File
-	bufSize   int
-	writeCh   chan []byte
-	errCh     chan error
-	closeOnce sync.Once
-	wg        sync.WaitGroup
-	stopped   atomic.Bool
-	bufPool   *sync.Pool
-}
-
-func newAsyncWriter(file *os.File) *asyncWriter {
-	aw := &asyncWriter{
-		file:    file,
-		bufSize: ZipBufferSize,
-		writeCh: make(chan []byte, 8),
-		errCh:   make(chan error, 8),
-		bufPool: &sync.Pool{
-			New: func() any {
-				buf := make([]byte, 0, ZipBufferSize)
-				return &buf
-			},
-		},
-	}
-
-	aw.wg.Go(func() {
-		aw.writerLoop()
-	})
-
-	return aw
-}
-
-func (aw *asyncWriter) writerLoop() {
-	bufPtr := aw.bufPool.Get().(*[]byte)
-	buffer := (*bufPtr)[:0]
-	defer aw.bufPool.Put(bufPtr)
-	defer close(aw.errCh)
-
-	flush := func() error {
-		if len(buffer) == 0 {
-			return nil
-		}
-		_, err := aw.file.Write(buffer)
-		buffer = buffer[:0]
-		return err
-	}
-
-	for data := range aw.writeCh {
-		if len(buffer)+len(data) > cap(buffer) {
-			if err := flush(); err != nil {
-				aw.stopped.Store(true)
-				select {
-				case aw.errCh <- err:
-				default:
-				}
-				for range aw.writeCh {
-				}
-				return
-			}
-		}
-
-		buffer = append(buffer, data...)
-	}
-
-	if err := flush(); err != nil {
-		aw.stopped.Store(true)
-		select {
-		case aw.errCh <- err:
-		default:
-		}
-	}
-}
-
-func (aw *asyncWriter) Write(p []byte) (n int, err error) {
-	if aw.stopped.Load() {
-		select {
-		case err := <-aw.errCh:
-			return 0, err
-		default:
-			return 0, fmt.Errorf("writer stopped")
-		}
-	}
-
-	data := make([]byte, len(p))
-	copy(data, p)
-
-	select {
-	case aw.writeCh <- data:
-		return len(p), nil
-	case err := <-aw.errCh:
-		return 0, err
-	}
-}
-
-func (aw *asyncWriter) Close() error {
-	var closeErr error
-	aw.closeOnce.Do(func() {
-		close(aw.writeCh)
-		aw.wg.Wait()
-
-		for err := range aw.errCh {
-			if closeErr == nil {
-				closeErr = err
-			}
-		}
-
-		if err := aw.file.Close(); err != nil && closeErr == nil {
-			closeErr = err
-		}
-	})
-	return closeErr
-}
 
 func restoreAsZips(ctx context.Context, client *Client, sources []string, opts RestoreOptions) error {
 	errCh := make(chan error, 100)
@@ -173,16 +58,15 @@ func createZipForSource(ctx context.Context, client *Client, source string, opts
 		baseName = client.name
 	}
 
-	zipName := baseName + ".zip"
-	zipPath := filepath.Join(opts.DestDir, zipName)
-
+	zipPath := filepath.Join(opts.DestDir, baseName+".zip")
 	zipFile, err := os.Create(zipPath)
 	if err != nil {
 		return fmt.Errorf("create zip %q: %w", zipPath, err)
 	}
+	defer zipFile.Close()
 
-	asyncWriter := newAsyncWriter(zipFile)
-	zipWriter := zip.NewWriter(asyncWriter)
+	bufferedWriter := bufio.NewWriterSize(zipFile, 16*1024*1024)
+	zipWriter := zip.NewWriter(bufferedWriter)
 
 	zc := &zipContext{
 		ctx:    ctx,
@@ -194,23 +78,19 @@ func createZipForSource(ctx context.Context, client *Client, source string, opts
 
 	if sourceAttr.IsDir() {
 		zc.addDirectory("", sourceAttr)
-	} else if sourceAttr.IsFile() {
-		zc.addFile("", sourceAttr)
-	} else if sourceAttr.IsSymlink() {
-		zc.addSymlink("", sourceAttr)
+	} else {
+		if sourceAttr.IsFile() {
+			zc.addFile("", sourceAttr)
+		} else if sourceAttr.IsSymlink() {
+			zc.addSymlink("", sourceAttr)
+		}
 	}
 
-	zipErr := zipWriter.Close()
-	asyncErr := asyncWriter.Close()
-
-	if zipErr != nil {
-		return zipErr
-	}
-	if asyncErr != nil {
-		return asyncErr
+	if err := zipWriter.Close(); err != nil {
+		return err
 	}
 
-	return nil
+	return bufferedWriter.Flush()
 }
 
 type zipContext struct {
