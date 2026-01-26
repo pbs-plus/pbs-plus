@@ -446,9 +446,9 @@ func (t *Target) populateInfo() {
 			if s3, err := s3url.Parse(t.Path); err == nil {
 				t.S3Info = s3
 				t.Type = TargetTypeS3
-			} else if utils.IsValid(t.Path) {
-				t.Type = TargetTypeLocal
 			}
+		} else if utils.IsValid(t.Path) {
+			t.Type = TargetTypeLocal
 		}
 	} else if t.AgentHost.Name != "" {
 		t.Type = TargetTypeAgent
