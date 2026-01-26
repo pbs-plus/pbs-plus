@@ -494,7 +494,11 @@ func (b *RestoreOperation) Wait() error {
 
 	b.runPostScript()
 
-	return b.err
+	if b.err != nil {
+		return b.err
+	}
+
+	return b.ctx.Err()
 }
 
 func (b *RestoreOperation) createOK(err error) {
