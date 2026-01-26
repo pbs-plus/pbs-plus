@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -63,7 +64,7 @@ func (s *restoreSession) Close() {
 	syslog.L.Info().WithMessage("restoreSession.Close: done").WithField("restoreId", s.restoreId).Write()
 }
 
-func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
+func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMode *int) {
 	if *restoreId == "" || *srcPath == "" || *destPath == "" {
 		fmt.Fprintln(os.Stderr, "Error: missing required flags: restoreId, srcPath, and destPath are required")
 		syslog.L.Error(errors.New("missing required flags")).WithMessage("CmdRestore: validation failed").Write()
@@ -86,6 +87,18 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 		fmt.Fprintf(os.Stderr, "Error: invalid destPath: %v\n", err)
 		syslog.L.Error(err).WithMessage("CmdRestore: destPath validation failed").Write()
 		os.Exit(1)
+	}
+
+	var mode pxar.RestoreMode
+
+	if restoreMode != nil {
+		mode = pxar.RestoreMode(*restoreMode)
+		switch mode {
+		case pxar.RestoreModeNormal:
+		case pxar.RestoreModeZip:
+		default:
+			mode = pxar.RestoreModeNormal
+		}
 	}
 
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
@@ -135,7 +148,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 		router.Handle("server_ready", func(req *arpc.Request) (arpc.Response, error) {
 			restoreInitiatedOnce.Do(func() {
 				go func() {
-					err := Restore(session, *restoreId, *srcPath, *destPath)
+					err := Restore(session, *restoreId, *srcPath, *destPath, mode)
 					if err != nil {
 						fmt.Fprintln(os.Stderr, "Restore failed:", err)
 						syslog.L.Error(err).WithMessage("CmdRestore: Restore execution failed").Write()
@@ -175,7 +188,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string) {
 	os.Exit(0)
 }
 
-func ExecRestore(id, srcPath, destPath string) (int, error) {
+func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 	syslog.L.Info().WithMessage("ExecRestore: begin").
 		WithField("restoreId", id).
 		Write()
@@ -219,6 +232,7 @@ func ExecRestore(id, srcPath, destPath string) (int, error) {
 
 	args := []string{
 		"--cmdMode=restore",
+		"--restoreMode=" + strconv.Itoa(mode),
 		"--id=" + id,
 		"--srcPath=" + srcPath,
 		"--destPath=" + destPath,
@@ -283,7 +297,7 @@ func ExecRestore(id, srcPath, destPath string) (int, error) {
 	return cmd.Process.Pid, nil
 }
 
-func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string) error {
+func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string, mode pxar.RestoreMode) error {
 	syslog.L.Info().WithMessage("Restore: begin").
 		WithField("restoreId", restoreId).
 		Write()
@@ -350,7 +364,10 @@ func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string) error {
 		WithField("restoreId", restoreId).
 		Write()
 
-	err = pxar.Restore(session.ctx, client, []string{source}, dest)
+	err = pxar.RestoreWithOptions(session.ctx, client, []string{source}, pxar.RestoreOptions{
+		DestDir: dest,
+		Mode:    mode,
+	})
 	if err != nil {
 		return fmt.Errorf("%v", err)
 	}
