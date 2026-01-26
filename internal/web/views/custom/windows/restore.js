@@ -15,6 +15,7 @@ var restoreModes = Ext.create("Ext.data.Store", {
   data: [
     { display: "Normal", value: "0" },
     { display: "Zipped", value: "1" },
+    { display: "No Attributes", value: "2" },
   ],
 });
 
