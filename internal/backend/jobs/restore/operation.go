@@ -311,7 +311,7 @@ func (b *RestoreOperation) agentExecute() error {
 		return fmt.Errorf("b.remoteServer is nil")
 	}
 
-	b.waitGroup.Go(func() {
+	go func() {
 		for {
 			select {
 			case <-b.ctx.Done():
@@ -326,7 +326,7 @@ func (b *RestoreOperation) agentExecute() error {
 				}
 			}
 		}
-	})
+	}()
 
 	agentRPC.SetRouter(*b.remoteServer.Router())
 
@@ -383,7 +383,7 @@ func (b *RestoreOperation) localExecute() error {
 		})
 	})
 
-	b.waitGroup.Go(func() {
+	go func() {
 		for {
 			select {
 			case <-b.ctx.Done():
@@ -398,7 +398,7 @@ func (b *RestoreOperation) localExecute() error {
 				}
 			}
 		}
-	})
+	}()
 
 	vfssessions.CreatePxarReader(childKey, reader)
 
