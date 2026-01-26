@@ -10,6 +10,13 @@ import (
 	"github.com/xtaci/smux"
 )
 
+const (
+	maxHeaderSize       = 8192
+	maxHeaderCount      = 50
+	maxRejectionSize    = 4096
+	maxSingleHeaderSize = 2048
+)
+
 type RejectionFrame struct {
 	Message string `cbor:"message"`
 	Code    int    `cbor:"code"`
@@ -30,6 +37,10 @@ func writeRejectionFrame(s *smux.Stream, rejection RejectionFrame) error {
 		return err
 	}
 
+	if len(data) > maxRejectionSize {
+		return fmt.Errorf("rejection frame too large: %d > %d", len(data), maxRejectionSize)
+	}
+
 	if err := writeVarint(s, uint64(len(data))); err != nil {
 		return err
 	}
@@ -46,7 +57,12 @@ func readRejectionFrame(s *smux.Stream) (RejectionFrame, error) {
 		return rejection, err
 	}
 
-	data := make([]byte, length)
+	if length > maxRejectionSize {
+		return rejection, fmt.Errorf("rejection frame too large: %d > %d", length, maxRejectionSize)
+	}
+
+	dataLen := int(length)
+	data := make([]byte, dataLen)
 	if _, err := io.ReadFull(s, data); err != nil {
 		return rejection, err
 	}
@@ -81,9 +97,6 @@ func readHandshakeResponse(s *smux.Stream) error {
 }
 
 func validateHeaders(headers http.Header) error {
-	const maxHeaderSize = 8192
-	const maxHeaderCount = 50
-
 	if len(headers) > maxHeaderCount {
 		return fmt.Errorf("too many headers: %d > %d", len(headers), maxHeaderCount)
 	}
@@ -140,32 +153,63 @@ func readHeadersFrame(s *smux.Stream) (http.Header, error) {
 		return nil, err
 	}
 
-	if n > 50 {
-		return nil, errors.New("too many headers")
+	if n > maxHeaderCount {
+		return nil, fmt.Errorf("too many headers: %d > %d", n, maxHeaderCount)
 	}
+
+	totalSize := 0
 
 	for i := uint64(0); i < n; i++ {
 		kl, err := readVarint(s)
 		if err != nil {
 			return nil, err
 		}
-		kb := make([]byte, kl)
+
+		if kl > maxSingleHeaderSize {
+			return nil, fmt.Errorf("header key too large: %d > %d", kl, maxSingleHeaderSize)
+		}
+
+		keyLen := int(kl)
+		kb := make([]byte, keyLen)
 		if _, err := io.ReadFull(s, kb); err != nil {
 			return nil, err
 		}
+
+		totalSize += keyLen
+		if totalSize > maxHeaderSize {
+			return nil, errors.New("headers exceed size limit")
+		}
+
 		vn, err := readVarint(s)
 		if err != nil {
 			return nil, err
 		}
+
+		if vn > maxHeaderCount {
+			return nil, fmt.Errorf("too many values for header: %d > %d", vn, maxHeaderCount)
+		}
+
 		for j := uint64(0); j < vn; j++ {
 			vl, err := readVarint(s)
 			if err != nil {
 				return nil, err
 			}
-			vb := make([]byte, vl)
+
+			if vl > maxSingleHeaderSize {
+				return nil, fmt.Errorf("header value too large: %d > %d", vl, maxSingleHeaderSize)
+			}
+
+			valLen := int(vl)
+			vb := make([]byte, valLen)
 			if _, err := io.ReadFull(s, vb); err != nil {
 				return nil, err
 			}
+
+			totalSize += valLen
+			if totalSize > maxHeaderSize {
+				return nil, errors.New("headers exceed size limit")
+			}
+
 			h.Add(string(kb), string(vb))
 		}
 	}
