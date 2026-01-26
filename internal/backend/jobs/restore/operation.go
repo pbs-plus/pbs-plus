@@ -492,7 +492,9 @@ func (b *RestoreOperation) Wait() error {
 		}
 	}
 
-	b.runPostScript()
+	if b.ctx.Err() == nil {
+		b.runPostScript()
+	}
 
 	if b.err != nil {
 		return b.err
