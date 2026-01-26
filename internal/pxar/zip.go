@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 const ZipBufferSize = 16 * 1024 * 1024
@@ -17,9 +19,10 @@ type asyncWriter struct {
 	bufSize   int
 	writeCh   chan []byte
 	errCh     chan error
-	closeCh   chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
+	stopped   atomic.Bool
+	bufPool   *sync.Pool
 }
 
 func newAsyncWriter(file *os.File) *asyncWriter {
@@ -27,20 +30,26 @@ func newAsyncWriter(file *os.File) *asyncWriter {
 		file:    file,
 		bufSize: ZipBufferSize,
 		writeCh: make(chan []byte, 8),
-		errCh:   make(chan error, 1),
-		closeCh: make(chan struct{}),
+		errCh:   make(chan error, 8),
+		bufPool: &sync.Pool{
+			New: func() any {
+				buf := make([]byte, 0, ZipBufferSize)
+				return &buf
+			},
+		},
 	}
 
-	aw.wg.Add(1)
-	go aw.writerLoop()
+	aw.wg.Go(func() {
+		aw.writerLoop()
+	})
 
 	return aw
 }
 
 func (aw *asyncWriter) writerLoop() {
-	defer aw.wg.Done()
-
-	buffer := make([]byte, 0, aw.bufSize)
+	bufPtr := aw.bufPool.Get().(*[]byte)
+	buffer := (*bufPtr)[:0]
+	defer aw.bufPool.Put(bufPtr)
 
 	flush := func() error {
 		if len(buffer) == 0 {
@@ -51,61 +60,40 @@ func (aw *asyncWriter) writerLoop() {
 		return err
 	}
 
-	for {
-		select {
-		case data, ok := <-aw.writeCh:
-			if !ok {
-				if err := flush(); err != nil {
-					select {
-					case aw.errCh <- err:
-					default:
-					}
-				}
-				return
-			}
-
-			if len(buffer)+len(data) > cap(buffer) {
-				if err := flush(); err != nil {
-					select {
-					case aw.errCh <- err:
-					default:
-					}
-					return
-				}
-			}
-
-			buffer = append(buffer, data...)
-
-		case <-aw.closeCh:
-			for len(aw.writeCh) > 0 {
-				data := <-aw.writeCh
-				if len(buffer)+len(data) > cap(buffer) {
-					if err := flush(); err != nil {
-						select {
-						case aw.errCh <- err:
-						default:
-						}
-						return
-					}
-				}
-				buffer = append(buffer, data...)
-			}
+	for data := range aw.writeCh {
+		if len(buffer)+len(data) > cap(buffer) {
 			if err := flush(); err != nil {
+				aw.stopped.Store(true)
 				select {
 				case aw.errCh <- err:
 				default:
 				}
+				for range aw.writeCh {
+				}
+				return
 			}
-			return
+		}
+
+		buffer = append(buffer, data...)
+	}
+
+	if err := flush(); err != nil {
+		aw.stopped.Store(true)
+		select {
+		case aw.errCh <- err:
+		default:
 		}
 	}
 }
 
 func (aw *asyncWriter) Write(p []byte) (n int, err error) {
-	select {
-	case err := <-aw.errCh:
-		return 0, err
-	default:
+	if aw.stopped.Load() {
+		select {
+		case err := <-aw.errCh:
+			return 0, err
+		default:
+			return 0, fmt.Errorf("writer stopped")
+		}
 	}
 
 	data := make([]byte, len(p))
@@ -125,10 +113,10 @@ func (aw *asyncWriter) Close() error {
 		close(aw.writeCh)
 		aw.wg.Wait()
 
-		select {
-		case err := <-aw.errCh:
-			closeErr = err
-		default:
+		for err := range aw.errCh {
+			if closeErr == nil {
+				closeErr = err
+			}
 		}
 
 		if err := aw.file.Close(); err != nil && closeErr == nil {
@@ -164,8 +152,13 @@ func restoreAsZips(ctx context.Context, client *Client, sources []string, opts R
 	sourcesWg.Wait()
 	close(errCh)
 
+	var errors []error
 	for err := range errCh {
-		return err
+		errors = append(errors, err)
+	}
+
+	if len(errors) > 0 {
+		return errors[0]
 	}
 
 	return ctx.Err()
@@ -177,7 +170,12 @@ func createZipForSource(ctx context.Context, client *Client, source string, opts
 		return fmt.Errorf("lookup source %q: %w", source, err)
 	}
 
-	zipName := sourceAttr.Name() + ".zip"
+	baseName := sourceAttr.Name()
+	if strings.TrimSpace(baseName) == "" {
+		baseName = client.name
+	}
+
+	zipName := baseName + ".zip"
 	zipPath := filepath.Join(opts.DestDir, zipName)
 
 	zipFile, err := os.Create(zipPath)
@@ -186,10 +184,7 @@ func createZipForSource(ctx context.Context, client *Client, source string, opts
 	}
 
 	asyncWriter := newAsyncWriter(zipFile)
-	defer asyncWriter.Close()
-
 	zipWriter := zip.NewWriter(asyncWriter)
-	defer zipWriter.Close()
 
 	zc := &zipContext{
 		ctx:    ctx,
@@ -198,12 +193,26 @@ func createZipForSource(ctx context.Context, client *Client, source string, opts
 		base:   sourceAttr.Name(),
 	}
 
+	var addErr error
 	if sourceAttr.IsDir() {
-		return zc.addDirectory("", sourceAttr)
+		addErr = zc.addDirectory("", sourceAttr)
 	} else if sourceAttr.IsFile() {
-		return zc.addFile("", sourceAttr)
+		addErr = zc.addFile("", sourceAttr)
 	} else if sourceAttr.IsSymlink() {
-		return zc.addSymlink("", sourceAttr)
+		addErr = zc.addSymlink("", sourceAttr)
+	}
+
+	zipErr := zipWriter.Close()
+	asyncErr := asyncWriter.Close()
+
+	if addErr != nil {
+		return addErr
+	}
+	if zipErr != nil {
+		return zipErr
+	}
+	if asyncErr != nil {
+		return asyncErr
 	}
 
 	return nil
@@ -217,10 +226,11 @@ type zipContext struct {
 }
 
 func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) error {
-	dirPath := filepath.Join(relPath, dirEntry.Name()) + "/"
-	if relPath == "" {
-		dirPath = dirEntry.Name() + "/"
+	if err := validatePath(dirEntry.Name()); err != nil {
+		return err
 	}
+
+	dirPath := filepath.Join(relPath, dirEntry.Name()) + "/"
 
 	header := &zip.FileHeader{
 		Name:     dirPath,
@@ -243,7 +253,7 @@ func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) error {
 			return zc.ctx.Err()
 		}
 
-		currentPath := dirPath[:len(dirPath)-1] // remove trailing slash
+		currentPath := dirPath[:len(dirPath)-1]
 
 		if e.IsDir() {
 			if err := zc.addDirectory(currentPath, e); err != nil {
@@ -264,6 +274,10 @@ func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) error {
 }
 
 func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) error {
+	if err := validatePath(fileEntry.Name()); err != nil {
+		return err
+	}
+
 	filePath := filepath.Join(relPath, fileEntry.Name())
 
 	header := &zip.FileHeader{
@@ -296,6 +310,10 @@ func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) error {
 }
 
 func (zc *zipContext) addSymlink(relPath string, symlinkEntry EntryInfo) error {
+	if err := validatePath(symlinkEntry.Name()); err != nil {
+		return err
+	}
+
 	linkPath := filepath.Join(relPath, symlinkEntry.Name())
 
 	target, err := zc.client.ReadLink(zc.ctx, symlinkEntry.EntryRangeStart, symlinkEntry.EntryRangeEnd)
@@ -319,5 +337,12 @@ func (zc *zipContext) addSymlink(relPath string, symlinkEntry EntryInfo) error {
 		return fmt.Errorf("write symlink target %q: %w", linkPath, err)
 	}
 
+	return nil
+}
+
+func validatePath(name string) error {
+	if strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
+		return fmt.Errorf("invalid path: %s", name)
+	}
 	return nil
 }
