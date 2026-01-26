@@ -475,7 +475,6 @@ func (b *RestoreOperation) Cleanup() {
 		close(b.errCh)
 	}
 
-	b.task.WriteString(fmt.Sprintf("disconnecting stream pipe session of %s", childKey))
 	vfssessions.DisconnectSession(childKey)
 }
 
