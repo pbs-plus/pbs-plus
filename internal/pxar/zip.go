@@ -50,6 +50,7 @@ func (aw *asyncWriter) writerLoop() {
 	bufPtr := aw.bufPool.Get().(*[]byte)
 	buffer := (*bufPtr)[:0]
 	defer aw.bufPool.Put(bufPtr)
+	defer close(aw.errCh)
 
 	flush := func() error {
 		if len(buffer) == 0 {
