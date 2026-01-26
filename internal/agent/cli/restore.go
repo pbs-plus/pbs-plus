@@ -93,12 +93,8 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 
 	if restoreMode != nil {
 		mode = pxar.RestoreMode(*restoreMode)
-		switch mode {
-		case pxar.RestoreModeNormal:
-		case pxar.RestoreModeZip:
-		default:
-			mode = pxar.RestoreModeNormal
-		}
+	} else {
+		mode = pxar.RestoreModeNormal
 	}
 
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
