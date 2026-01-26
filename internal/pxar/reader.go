@@ -26,7 +26,7 @@ func (r *rangeReader) Read(p []byte) (int, error) {
 
 	n, err := r.client.Read(r.ctx, r.contentStart, r.contentEnd, r.offset, readSize, p)
 	if err != nil {
-		return n, err
+		return n, io.EOF
 	}
 	if n == 0 && readSize > 0 {
 		return 0, io.EOF
