@@ -169,7 +169,7 @@ func applyMetaSymlink(ctx context.Context, client *Client, path string, e EntryI
 	return nil
 }
 
-func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryInfo, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup) error {
+func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryInfo, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup, noAttr bool) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
@@ -204,10 +204,18 @@ func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryI
 
 			if opErr == nil || os.IsExist(opErr) {
 				if f, openErr := os.OpenFile(target, os.O_RDONLY, 0); openErr == nil {
-					_ = applyMeta(ctx, client, f, e, fsCap)
+					if !noAttr {
+						_ = applyMeta(ctx, client, f, e, fsCap)
+					} else {
+						f.Close()
+					}
 				}
 			}
 		}
+	}
+
+	if noAttr {
+		return nil
 	}
 
 	df, err := os.Open(dst)
