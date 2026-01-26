@@ -96,6 +96,7 @@ func NewRestoreOperation(
 		storeInstance: storeInstance,
 		skipCheck:     skipCheck,
 		web:           web,
+		waitGroup:     &sync.WaitGroup{},
 		task:          task,
 	}, nil
 }
