@@ -90,7 +90,7 @@ func RestoreStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Resp
 	syslog.L.Info().WithMessage("received restore request for job").WithField("id", reqData.RestoreId).Write()
 
 	syslog.L.Info().WithMessage("forking process for restore job").WithField("id", reqData.RestoreId).Write()
-	pid, err := cli.ExecRestore(reqData.RestoreId, reqData.SrcPath, reqData.DestPath)
+	pid, err := cli.ExecRestore(reqData.RestoreId, reqData.SrcPath, reqData.DestPath, reqData.Mode)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("forking process for restore job").WithField("id", reqData.RestoreId).Write()
 		if pid != -1 {

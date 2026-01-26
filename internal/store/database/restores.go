@@ -106,6 +106,9 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 	if restore.Retry < 0 {
 		restore.Retry = 0
 	}
+	if restore.Mode < 0 {
+		restore.Mode = 0
+	}
 
 	err = q.CreateRestore(database.ctx, sqlc.CreateRestoreParams{
 		ID:                 restore.ID,
@@ -123,6 +126,7 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 		RetryInterval:      toNullInt64(restore.RetryInterval),
 		PreScript:          restore.PreScript,
 		PostScript:         restore.PostScript,
+		RestoreMode:        int64(restore.Mode),
 	})
 	if err != nil {
 		return fmt.Errorf("CreateRestore: error inserting restore: %w", err)
@@ -177,6 +181,7 @@ func (database *Database) GetRestore(id string) (Restore, error) {
 		},
 		Retry:         fromNullInt64(row.Retry),
 		RetryInterval: fromNullInt64(row.RetryInterval),
+		Mode:          int(row.RestoreMode),
 		PreScript:     row.PreScript,
 		PostScript:    row.PostScript,
 	}
@@ -268,12 +273,16 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 	if restore.Retry < 0 {
 		restore.Retry = 0
 	}
+	if restore.Mode < 0 {
+		restore.Mode = 0
+	}
 
 	err = q.UpdateRestore(database.ctx, sqlc.UpdateRestoreParams{
 		Store:              restore.Store,
 		Namespace:          sql.NullString{String: restore.Namespace, Valid: restore.Namespace != ""},
 		Snapshot:           restore.Snapshot,
 		SrcPath:            restore.SrcPath,
+		RestoreMode:        int64(restore.Mode),
 		DestTarget:         restore.DestTarget.Name,
 		DestSubpath:        toNullString(restore.DestSubpath),
 		Comment:            toNullString(restore.Comment),
@@ -357,6 +366,7 @@ func (database *Database) GetAllRestores() ([]Restore, error) {
 			Store:    row.Store,
 			Snapshot: row.Snapshot,
 			SrcPath:  row.SrcPath,
+			Mode:     int(row.RestoreMode),
 			DestTarget: Target{
 				Name: row.DestTarget,
 				Path: row.Path.String,
@@ -418,6 +428,7 @@ func (database *Database) GetAllQueuedRestores() ([]Restore, error) {
 			Store:    row.Store,
 			Snapshot: row.Snapshot,
 			SrcPath:  row.SrcPath,
+			Mode:     int(row.RestoreMode),
 			DestTarget: Target{
 				Name:      row.DestTarget,
 				AgentHost: AgentHost{},

@@ -10,6 +10,14 @@ Ext.define("PBS.D2DManagement.RestoreJobInputPanel", {
   },
 });
 
+var restoreModes = Ext.create("Ext.data.Store", {
+  fields: ["display", "value"],
+  data: [
+    { display: "Normal", value: "0" },
+    { display: "Zipped", value: "1" },
+  ],
+});
+
 Ext.define("PBS.D2DManagement.RestoreJobEdit", {
   extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsDiskRestoreJobEdit",
@@ -38,6 +46,7 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
     me.method = id ? "PUT" : "POST";
     me.autoLoad = !!id;
     me.authid = id ? null : Proxmox.UserName;
+    me.restoreModeValue = id ? null : "0";
     me.editDatastore = me.datastore === undefined && me.isCreate;
     return {};
   },
@@ -170,6 +179,22 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
             allowBlank: true,
             cbind: {
               editable: "{isCreate}",
+            },
+          },
+          {
+            xtype: "combo",
+            fieldLabel: gettext("Restore Mode"),
+            name: "mode",
+            queryMode: "local",
+            store: restoreModes,
+            displayField: "display",
+            valueField: "value",
+            editable: false,
+            anyMatch: true,
+            forceSelection: true,
+            allowBlank: true,
+            cbind: {
+              value: "{restoreModeValue}",
             },
           },
           {

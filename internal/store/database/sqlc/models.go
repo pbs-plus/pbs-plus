@@ -63,6 +63,7 @@ type Restore struct {
 	RetryInterval      sql.NullInt64  `json:"retry_interval"`
 	PreScript          string         `json:"pre_script"`
 	PostScript         string         `json:"post_script"`
+	RestoreMode        int64          `json:"restore_mode"`
 }
 
 type Script struct {
