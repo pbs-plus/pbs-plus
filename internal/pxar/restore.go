@@ -104,12 +104,28 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 		}(source)
 	}
 
-	sourcesWg.Wait()
-	wg.Wait()
-	close(jobs)
-	workersWg.Wait()
+	sourcesDone := make(chan struct{})
+	go func() {
+		sourcesWg.Wait()
+		close(sourcesDone)
+	}()
 
-	return ctx.Err()
+	workDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(jobs)
+		workersWg.Wait()
+		close(workDone)
+	}()
+
+	select {
+	case <-workerCtx.Done():
+		<-sourcesDone
+		close(jobs)
+		return workerCtx.Err()
+	case <-workDone:
+		return nil
+	}
 }
 
 func processJob(ctx context.Context, client *Client, job restoreJob, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup, noAttr bool) error {
