@@ -284,12 +284,16 @@ func (c *PxarReader) Close() error {
 	return nil
 }
 
-func (c *PxarReader) sendRequest(reqVariant string, reqData any) (Response, error) {
+func (c *PxarReader) sendRequest(ctx context.Context, reqVariant string, reqData any) (Response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Rust expects externally tagged enum: {"Variant": payload}
-	// Even for no-arg variants, use {"GetRoot": nil}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	reqMap := map[string]any{reqVariant: reqData}
 
 	reqBytes, err := c.enc.Marshal(reqMap)
@@ -306,14 +310,29 @@ func (c *PxarReader) sendRequest(reqVariant string, reqData any) (Response, erro
 		return nil, err
 	}
 
+	if deadline, ok := ctx.Deadline(); ok {
+		c.conn.SetReadDeadline(deadline)
+	}
+	defer c.conn.SetReadDeadline(time.Time{})
+
 	var respLength uint32
 	if err := binary.Read(c.conn, binary.LittleEndian, &respLength); err != nil {
-		return nil, err
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			return nil, err
+		}
 	}
 
 	respData := make([]byte, respLength)
 	if _, err := io.ReadFull(c.conn, respData); err != nil {
-		return nil, err
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			return nil, err
+		}
 	}
 
 	var resp Response
@@ -333,10 +352,10 @@ func (c *PxarReader) sendRequest(reqVariant string, reqData any) (Response, erro
 	return resp, nil
 }
 
-func (c *PxarReader) GetRoot() (*EntryInfo, error) {
+func (c *PxarReader) GetRoot(ctx context.Context) (*EntryInfo, error) {
 	c.task.WriteString("get root of source")
 
-	resp, err := c.sendRequest("GetRoot", nil)
+	resp, err := c.sendRequest(ctx, "GetRoot", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -369,14 +388,14 @@ func (c *PxarReader) GetRoot() (*EntryInfo, error) {
 	return &info, nil
 }
 
-func (c *PxarReader) LookupByPath(path string) (*EntryInfo, error) {
+func (c *PxarReader) LookupByPath(ctx context.Context, path string) (*EntryInfo, error) {
 	c.task.WriteString(fmt.Sprintf("looking up path: %s", path))
 
 	reqData := map[string]any{
 		"path": []byte(path),
 	}
 
-	resp, err := c.sendRequest("LookupByPath", reqData)
+	resp, err := c.sendRequest(ctx, "LookupByPath", reqData)
 	if err != nil {
 		return nil, err
 	}
@@ -384,8 +403,8 @@ func (c *PxarReader) LookupByPath(path string) (*EntryInfo, error) {
 	return extractEntryInfo(c, resp)
 }
 
-func (c *PxarReader) ReadDir(entryEnd uint64) ([]EntryInfo, error) {
-	resp, err := c.sendRequest("ReadDir", map[string]any{"entry_end": entryEnd})
+func (c *PxarReader) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, error) {
+	resp, err := c.sendRequest(ctx, "ReadDir", map[string]any{"entry_end": entryEnd})
 	if err != nil {
 		return nil, err
 	}
@@ -416,13 +435,13 @@ func (c *PxarReader) ReadDir(entryEnd uint64) ([]EntryInfo, error) {
 	return entries, nil
 }
 
-func (c *PxarReader) GetAttr(entryStart, entryEnd uint64) (*EntryInfo, error) {
+func (c *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (*EntryInfo, error) {
 	reqData := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
 	}
 
-	resp, err := c.sendRequest("GetAttr", reqData)
+	resp, err := c.sendRequest(ctx, "GetAttr", reqData)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +460,7 @@ func (c *PxarReader) GetAttr(entryStart, entryEnd uint64) (*EntryInfo, error) {
 	return entry, nil
 }
 
-func (c *PxarReader) Read(contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
+func (c *PxarReader) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
 	reqData := map[string]any{
 		"content_start": contentStart,
 		"content_end":   contentEnd,
@@ -449,7 +468,7 @@ func (c *PxarReader) Read(contentStart, contentEnd, offset uint64, size uint) ([
 		"size":          size,
 	}
 
-	resp, err := c.sendRequest("Read", reqData)
+	resp, err := c.sendRequest(ctx, "Read", reqData)
 	if err != nil {
 		return nil, err
 	}
@@ -474,13 +493,13 @@ func (c *PxarReader) Read(contentStart, contentEnd, offset uint64, size uint) ([
 	return data, nil
 }
 
-func (c *PxarReader) ReadLink(entryStart, entryEnd uint64) ([]byte, error) {
+func (c *PxarReader) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
 	reqData := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
 	}
 
-	resp, err := c.sendRequest("ReadLink", reqData)
+	resp, err := c.sendRequest(ctx, "ReadLink", reqData)
 	if err != nil {
 		return nil, err
 	}
@@ -503,13 +522,13 @@ func (c *PxarReader) ReadLink(entryStart, entryEnd uint64) ([]byte, error) {
 	return target, nil
 }
 
-func (c *PxarReader) ListXAttrs(entryStart, entryEnd uint64) (map[string][]byte, error) {
+func (c *PxarReader) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (map[string][]byte, error) {
 	reqData := map[string]any{
 		"entry_start": entryStart,
 		"entry_end":   entryEnd,
 	}
 
-	resp, err := c.sendRequest("ListXAttrs", reqData)
+	resp, err := c.sendRequest(ctx, "ListXAttrs", reqData)
 	if err != nil {
 		return nil, err
 	}

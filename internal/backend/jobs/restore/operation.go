@@ -68,6 +68,7 @@ type RestoreOperation struct {
 	queueTask *tasks.QueuedTask
 	waitGroup *sync.WaitGroup
 	err       error
+	errCh     chan error
 	errCount  atomic.Int32
 
 	job           database.Restore
@@ -305,18 +306,17 @@ func (b *RestoreOperation) agentExecute() error {
 
 	b.task.WriteString(fmt.Sprintf("running remote pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
 
-	var errCh chan error
-	b.remoteServer, errCh = pxar.NewRemoteServer(reader)
+	b.remoteServer, b.errCh = pxar.NewRemoteServer(reader)
 	if b.remoteServer == nil {
 		return fmt.Errorf("b.remoteServer is nil")
 	}
 
-	go func() {
+	b.waitGroup.Go(func() {
 		for {
 			select {
 			case <-b.ctx.Done():
 				return
-			case err, ok := <-errCh:
+			case err, ok := <-b.errCh:
 				if !ok {
 					return
 				}
@@ -326,7 +326,7 @@ func (b *RestoreOperation) agentExecute() error {
 				}
 			}
 		}
-	}()
+	})
 
 	agentRPC.SetRouter(*b.remoteServer.Router())
 
@@ -366,9 +366,7 @@ func (b *RestoreOperation) localExecute() error {
 		return err
 	}
 
-	var errCh chan error
-	b.localClient, errCh = pxar.NewLocalClient(reader, b.job.ID)
-	vfssessions.CreatePxarReader(childKey, reader)
+	b.localClient, b.errCh = pxar.NewLocalClient(reader, b.job.ID)
 
 	syslog.L.Info().
 		WithMessage("Restore request sent").
@@ -385,12 +383,12 @@ func (b *RestoreOperation) localExecute() error {
 		})
 	})
 
-	go func() {
+	b.waitGroup.Go(func() {
 		for {
 			select {
 			case <-b.ctx.Done():
 				return
-			case err, ok := <-errCh:
+			case err, ok := <-b.errCh:
 				if !ok {
 					return
 				}
@@ -400,7 +398,9 @@ func (b *RestoreOperation) localExecute() error {
 				}
 			}
 		}
-	}()
+	})
+
+	vfssessions.CreatePxarReader(childKey, reader)
 
 	return nil
 }
@@ -469,6 +469,10 @@ func (b *RestoreOperation) Cleanup() {
 
 	if b.remoteServer != nil {
 		b.remoteServer.Close()
+	}
+
+	if b.errCh != nil {
+		close(b.errCh)
 	}
 
 	b.task.WriteString(fmt.Sprintf("disconnecting stream pipe session of %s", childKey))
