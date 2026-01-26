@@ -223,6 +223,10 @@ jobs:
           # Create output directory
           New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\msi-output" | Out-Null
 
+          $licensePath = "${{ github.workspace }}\build\package\windows_agent\license.rtf"
+          Copy-Item "$licensePath" -Destination "${{ github.workspace }}\msi-output\license.rtf"
+          Write-Host "✓ License copied to build directory"
+
           # Build WiX object file
           $candlePath = "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe"
           if (-not (Test-Path $candlePath)) {
