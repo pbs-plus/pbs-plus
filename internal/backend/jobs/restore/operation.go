@@ -443,7 +443,7 @@ func (b *RestoreOperation) OnError(err error) {
 	b.task.WriteString("Restore job summary:")
 	b.task.WriteString(fmt.Sprintf(" - %d total files", atomic.LoadInt64(&r.FileCount)))
 	b.task.WriteString(fmt.Sprintf(" - %d total folders", atomic.LoadInt64(&r.FolderCount)))
-	b.task.WriteString(fmt.Sprintf(" - %d bytes total", atomic.LoadInt64(&r.TotalBytes)))
+	b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(atomic.LoadInt64(&r.TotalBytes))))
 	b.task.WriteString(fmt.Sprintf("End Time: %s\n", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 
 	b.task.CloseErr(err)
@@ -455,7 +455,7 @@ func (b *RestoreOperation) OnSuccess() {
 	b.task.WriteString("Restore job summary:")
 	b.task.WriteString(fmt.Sprintf(" - %d total files", atomic.LoadInt64(&r.FileCount)))
 	b.task.WriteString(fmt.Sprintf(" - %d total folders", atomic.LoadInt64(&r.FolderCount)))
-	b.task.WriteString(fmt.Sprintf(" - %d bytes total", atomic.LoadInt64(&r.TotalBytes)))
+	b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(atomic.LoadInt64(&r.TotalBytes))))
 	b.task.WriteString(fmt.Sprintf("End Time: %s\n", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 
 	errCount := b.errCount.Load()
