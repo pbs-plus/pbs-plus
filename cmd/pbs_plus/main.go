@@ -203,7 +203,7 @@ func main() {
 				continue
 			}
 			if reply.Status != 200 {
-				syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
+				syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("restoreId", restoreRun).Write()
 				continue
 			}
 		}
