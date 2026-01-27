@@ -94,12 +94,23 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
       "pbsDataStoreSelector[name=store]": {
         change: "storeChange",
       },
+      "pbsD2DTargetSelector[name=target]": {
+        change: "targetChange",
+      },
     },
 
     storeChange: function (field, value) {
       let me = this;
       let nsSelector = me.lookup("namespace");
       nsSelector.setDatastore(value);
+    },
+
+    targetChange: function (field, value) {
+      let me = this;
+      let pathSel = me.lookup("pathSelectorSubpath");
+      if (pathSel) {
+        pathSel.setTarget(value);
+      }
     },
   },
 
@@ -159,12 +170,16 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             xtype: "pbsD2DTargetSelector",
             fieldLabel: "Target",
             name: "target",
+            reference: "target",
           },
           {
-            xtype: "proxmoxtextfield",
+            xtype: "pbsD2DTargetPathSelector",
             fieldLabel: gettext("Subpath"),
-            emptyText: gettext("/"),
+            reference: "pathSelectorSubpath",
             name: "subpath",
+            cbind: {
+              deleteEmpty: "{!isCreate}",
+            },
           },
           {
             xtype: "pbsDataStoreSelector",
