@@ -2,9 +2,7 @@ package controllers
 
 import (
 	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
@@ -14,71 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
-
-func RestoreFileTreeHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {
-	var reqData types.FileTreeReq
-	err := cbor.Unmarshal(req.Payload, &reqData)
-	if err != nil {
-		return arpc.Response{}, err
-	}
-
-	rawPath := filepath.Clean(reqData.SubPath)
-	rawPath = strings.TrimPrefix(rawPath, filepath.VolumeName(rawPath))
-	safeRequestedPath := strings.TrimLeft(rawPath, string(filepath.Separator))
-	if safeRequestedPath == "." {
-		safeRequestedPath = ""
-	}
-
-	localFullPath := filepath.Join(reqData.HostPath, safeRequestedPath)
-
-	syslog.L.Info().
-		WithMessage("received filetree request").
-		WithField("path", safeRequestedPath).
-		WithField("resolved", localFullPath).
-		Write()
-
-	entries, err := os.ReadDir(localFullPath)
-	if err != nil {
-		return arpc.Response{}, err
-	}
-
-	var catalog []types.FileTreeEntry
-	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		virtualItemPath := filepath.Join(safeRequestedPath, entry.Name())
-		encodedPath := utils.EncodePath(virtualItemPath)
-
-		item := types.FileTreeEntry{
-			Filepath: encodedPath,
-			Text:     entry.Name(),
-			Leaf:     !entry.IsDir(),
-			Type:     "f",
-		}
-
-		if entry.IsDir() {
-			item.Type = "d"
-		} else {
-			item.Mtime = info.ModTime().Unix()
-			item.Size = info.Size()
-		}
-
-		catalog = append(catalog, item)
-	}
-	resp := types.FileTreeResp{Data: catalog}
-
-	encoded, err := cbor.Marshal(resp)
-	if err != nil {
-		return arpc.Response{}, err
-	}
-
-	return arpc.Response{Status: 200, Data: encoded}, nil
-}
 
 func RestoreStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {
 	var reqData types.RestoreReq

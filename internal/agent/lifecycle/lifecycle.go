@@ -159,7 +159,7 @@ func ConnectARPC(ctx context.Context, cancel context.CancelFunc, version string)
 					return controllers.RestoreStartHandler(req, session)
 				})
 				router.Handle("filetree", func(req *arpc.Request) (arpc.Response, error) {
-					return controllers.RestoreFileTreeHandler(req, session)
+					return controllers.FileTreeHandler(req, session)
 				})
 				router.Handle("target_status", controllers.StatusHandler)
 				router.Handle("cleanup", controllers.BackupCloseHandler)
