@@ -5,6 +5,7 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
   layout: "hbox",
   target: undefined,
 
+  targetLookup: "",
   deleteEmpty: false,
 
   initComponent: function () {
@@ -25,10 +26,7 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
         iconCls: "fa fa-folder-open-o",
         margin: "0 0 0 5",
         handler: function (btn) {
-          let me = btn.up("pbsD2DTargetPathSelector");
-          let editWindow = btn.up("pbsDiskRestoreJobEdit");
-          let targetSelector = editWindow.lookup("dest-target");
-          let targetRecord = targetSelector.getSelection();
+          let targetRecord = me.getSelection();
 
           if (!me.target || !targetRecord) {
             Ext.Msg.alert(
@@ -39,14 +37,14 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
           }
 
           Ext.create("PBS.window.D2DPathSelector", {
-            listURL: `${pbsPlusBaseUrl}/api2/json/d2d/filetree/${encodeURIComponent(encodePathValue(me.target))}`,
+            listURL: `${pbsPlusBaseUrl}/api2/json/d2d/filetree/${encodeURIComponent(encodePathValue(me2.target))}`,
             prependSlash: false,
             onlyDirs: true,
             listeners: {
               select: function (path) {
-                me.down("proxmoxtextfield[reference=destPathField]").setValue(
-                  path,
-                );
+                me2
+                  .down("proxmoxtextfield[reference=destPathField]")
+                  .setValue(path);
               },
             },
           }).show();
