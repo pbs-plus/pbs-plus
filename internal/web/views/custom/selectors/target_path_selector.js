@@ -26,9 +26,7 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
         iconCls: "fa fa-folder-open-o",
         margin: "0 0 0 5",
         handler: function (btn) {
-          let targetRecord = me.getSelection();
-
-          if (!me.target || !targetRecord) {
+          if (!me.target) {
             Ext.Msg.alert(
               gettext("Error"),
               gettext("Please select a target first."),
@@ -37,14 +35,14 @@ Ext.define("PBS.form.D2DTargetPathSelector", {
           }
 
           Ext.create("PBS.window.D2DPathSelector", {
-            listURL: `${pbsPlusBaseUrl}/api2/json/d2d/filetree/${encodeURIComponent(encodePathValue(me2.target))}`,
+            listURL: `${pbsPlusBaseUrl}/api2/json/d2d/filetree/${encodeURIComponent(encodePathValue(me.target))}`,
             prependSlash: false,
             onlyDirs: true,
             listeners: {
               select: function (path) {
-                me2
-                  .down("proxmoxtextfield[reference=destPathField]")
-                  .setValue(path);
+                me.down("proxmoxtextfield[reference=destPathField]").setValue(
+                  path,
+                );
               },
             },
           }).show();
