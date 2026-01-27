@@ -1,7 +1,6 @@
 package pxar
 
 import (
-	"archive/zip"
 	"bufio"
 	"context"
 	"fmt"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/klauspost/compress/zip"
 )
 
 func restoreAsZips(ctx context.Context, client *Client, sources []string, opts RestoreOptions) error {
