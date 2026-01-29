@@ -51,7 +51,7 @@ func GetBackupTask(
 	for {
 		select {
 		case <-ctx.Done():
-			return proxmox.Task{}, ctx.Err()
+			return proxmox.Task{}, fmt.Errorf("timed out")
 		case <-ticker.C:
 			if task, found := scanTaskFile(constants.ActiveLogsPath, searchString, startTimeThreshold); found {
 				return task, nil

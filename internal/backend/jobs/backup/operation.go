@@ -48,12 +48,13 @@ var (
 	ErrProxmoxBackupClientStart = errors.New("proxmox-backup-client start error")
 
 	ErrNilTask               = errors.New("received nil task")
-	ErrTaskDetectionFailed   = errors.New("task detection failed")
+	ErrTaskDetectionFailed   = errors.New("failed while waiting for backup to start")
 	ErrTaskDetectionTimedOut = errors.New("task detection timed out")
 	ErrMountEmpty            = errors.New("target directory is empty, skipping backup")
 
 	ErrBackupStatusUpdateFailed = errors.New("failed to update job status")
 	ErrCanceled                 = errors.New("operation canceled")
+	ErrUnexpected               = errors.New("unknown, view logs for details")
 )
 
 type BackupOperation struct {

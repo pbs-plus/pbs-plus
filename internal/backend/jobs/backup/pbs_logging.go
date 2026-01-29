@@ -20,9 +20,18 @@ import (
 
 var (
 	errorPathRegex = regexp.MustCompile(`upload failed: error at "([^"]+)"`)
+	commonErrorMap = map[string]string{
+		"exit status 255": "lost connection with backup agent",
+		"signal: killed":  ErrCanceled.Error(),
+	}
 )
 
 func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.JobLogger, customErr error) (bool, bool, int, string, error) {
+	customErrStr := customErr.Error()
+	if mapped, ok := commonErrorMap[customErrStr]; ok {
+		customErrStr = mapped
+	}
+
 	logFilePath := utils.GetTaskLogPath(upid)
 	inFile, err := os.Open(logFilePath)
 	if err != nil {
@@ -147,7 +156,11 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 	} else if incomplete || disconnected {
 		tmpWriter.WriteString(timestamp)
 		tmpWriter.WriteString(": TASK ERROR: ")
-		tmpWriter.WriteString(ErrCanceled.Error())
+		if customErr != nil {
+			tmpWriter.WriteString(customErrStr)
+		} else {
+			tmpWriter.WriteString(ErrUnexpected.Error())
+		}
 		cancelled = true
 	} else {
 		tmpWriter.WriteString(timestamp)
@@ -163,10 +176,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 				tmpWriter.WriteString(": TASK ERROR: Agent crashed unexpectedly")
 			}
 		}
-	}
-
-	if customErr != nil && !succeeded {
-		fmt.Fprintf(tmpWriter, " [%s]", customErr.Error())
 	}
 
 	tmpWriter.WriteByte('\n')
