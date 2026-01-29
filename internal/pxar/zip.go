@@ -223,8 +223,15 @@ func (zc *zipContext) sendError(err error) {
 }
 
 func validatePath(name string) error {
-	if strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
-		return fmt.Errorf("invalid path: %s", name)
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
+		return fmt.Errorf("invalid path: absolute paths not allowed: %s", name)
 	}
+
+	cleaned := filepath.Clean(name)
+
+	if strings.HasPrefix(cleaned, "..") {
+		return fmt.Errorf("invalid path: traversal detected: %s", name)
+	}
+
 	return nil
 }
