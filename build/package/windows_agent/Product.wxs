@@ -53,7 +53,7 @@
 
             <RemoveRegistryKey Root="HKLM" 
                                Key="SOFTWARE\PBSPlus" 
-                               Action="removeOnUninstall" />
+                               Action="removeOnInstall" />
 
             <ServiceInstall Id="PBSPlusAgentService"
                            Name="PBSPlusAgent"
