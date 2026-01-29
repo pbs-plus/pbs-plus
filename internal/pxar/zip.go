@@ -103,11 +103,6 @@ type zipContext struct {
 }
 
 func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) {
-	if err := validatePath(dirEntry.Name()); err != nil {
-		zc.sendError(fmt.Errorf("validate dir path %q: %w", dirEntry.Name(), err))
-		return
-	}
-
 	dirPath := filepath.Join(relPath, dirEntry.Name()) + "/"
 
 	header := &zip.FileHeader{
@@ -146,11 +141,6 @@ func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) {
 }
 
 func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) {
-	if err := validatePath(fileEntry.Name()); err != nil {
-		zc.sendError(fmt.Errorf("validate file path %q: %w", fileEntry.Name(), err))
-		return
-	}
-
 	filePath := filepath.Join(relPath, fileEntry.Name())
 
 	header := &zip.FileHeader{
@@ -183,11 +173,6 @@ func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) {
 }
 
 func (zc *zipContext) addSymlink(relPath string, symlinkEntry EntryInfo) {
-	if err := validatePath(symlinkEntry.Name()); err != nil {
-		zc.sendError(fmt.Errorf("validate symlink path %q: %w", symlinkEntry.Name(), err))
-		return
-	}
-
 	linkPath := filepath.Join(relPath, symlinkEntry.Name())
 
 	target, err := zc.client.ReadLink(zc.ctx, symlinkEntry.EntryRangeStart, symlinkEntry.EntryRangeEnd)
@@ -220,18 +205,4 @@ func (zc *zipContext) sendError(err error) {
 	case zc.errCh <- err:
 	default:
 	}
-}
-
-func validatePath(name string) error {
-	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
-		return fmt.Errorf("invalid path: absolute paths not allowed: %s", name)
-	}
-
-	cleaned := filepath.Clean(name)
-
-	if strings.HasPrefix(cleaned, "..") {
-		return fmt.Errorf("invalid path: traversal detected: %s", name)
-	}
-
-	return nil
 }
