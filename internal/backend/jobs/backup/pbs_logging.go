@@ -27,9 +27,12 @@ var (
 )
 
 func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.JobLogger, customErr error) (bool, bool, int, string, error) {
-	customErrStr := customErr.Error()
-	if mapped, ok := commonErrorMap[customErrStr]; ok {
-		customErrStr = mapped
+	customErrStr := ""
+	if customErr != nil {
+		customErrStr = customErr.Error()
+		if mapped, ok := commonErrorMap[customErrStr]; ok {
+			customErrStr = mapped
+		}
 	}
 
 	logFilePath := utils.GetTaskLogPath(upid)
