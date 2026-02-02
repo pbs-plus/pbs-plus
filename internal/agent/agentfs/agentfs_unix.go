@@ -26,7 +26,7 @@ import (
 type FileHandle struct {
 	sync.Mutex
 	file      *os.File
-	dirReader *DirReaderUnix
+	dirReader *DirReader
 	fileSize  int64
 	isDir     bool
 	curOffset int64
@@ -201,17 +201,16 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	fh := &FileHandle{
 		fileSize: int64(st.Size),
 		isDir:    isDir,
+		file:     os.NewFile(uintptr(fd), path),
 	}
 
 	if isDir {
-		reader, err := NewDirReaderUnix(fd, path)
+		reader, err := NewDirReader(fh.file, path)
 		if err != nil {
-			_ = unix.Close(fd)
+			_ = fh.file.Close()
 			return arpc.Response{}, err
 		}
 		fh.dirReader = reader
-	} else {
-		fh.file = os.NewFile(uintptr(fd), path)
 	}
 
 	s.handles.Set(handleId, fh)
@@ -345,7 +344,7 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	fh.Lock()
 	defer fh.Unlock()
 
-	encodedBatch, err := fh.dirReader.NextBatch()
+	encodedBatch, err := fh.dirReader.NextBatch(req.Context, s.statFs.Bsize)
 	isDone := errors.Is(err, os.ErrProcessDone)
 	if err != nil && !isDone {
 		fh.releaseOp()

@@ -3,7 +3,6 @@
 package agentfs
 
 import (
-	"bytes"
 	"os"
 	"sync"
 
@@ -31,16 +30,6 @@ type FileHandle struct {
 	activeOps int32
 	closing   bool
 	closeDone chan struct{}
-}
-
-type DirReader struct {
-	file          *os.File
-	path          string
-	encodeBuf     bytes.Buffer
-	targetEncoded int
-	noMoreFiles   bool
-	mu            sync.Mutex
-	closed        bool
 }
 
 type UnicodeString struct {

@@ -82,17 +82,6 @@ func (fh *FileHandle) waitForOps(timeout time.Duration) bool {
 	}
 }
 
-func (s *AgentFSServer) abs(filename string) (string, error) {
-	windowsDir := filepath.FromSlash(filename)
-	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
-		syslog.L.Debug().WithMessage("abs: returning snapshot path for root").Write()
-		return s.snapshot.Path, nil
-	}
-	path := pathjoin.Join(s.snapshot.Path, windowsDir)
-	syslog.L.Debug().WithMessage("abs: joined path").WithField("path", path).Write()
-	return path, nil
-}
-
 func (s *AgentFSServer) absUNC(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
 	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
@@ -241,16 +230,9 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	fh.isDir = std.Directory != 0
 
 	if fh.isDir {
-		fh.handle.Close()
-
-		dirPath, err := s.abs(payload.Path)
+		reader, err := NewDirReader(fh.handle, path)
 		if err != nil {
-			syslog.L.Error(err).WithMessage("handleOpenFile: abs failed for dir").WithField("path", payload.Path).Write()
-			return arpc.Response{}, err
-		}
-		reader, err := NewDirReader(dirPath)
-		if err != nil {
-			syslog.L.Error(err).WithMessage("handleOpenFile: NewDirReader failed").WithField("path", dirPath).Write()
+			syslog.L.Error(err).WithMessage("handleOpenFile: NewDirReader failed").WithField("path", path).Write()
 			return arpc.Response{}, err
 		}
 		fh.dirReader = reader
