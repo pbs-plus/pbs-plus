@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -118,6 +119,15 @@ func filetimeToTime(ft windows.Filetime) time.Time {
 }
 
 func filetimeToUnix(ft windows.Filetime) int64 {
+	const (
+		winToUnixEpochDiff = 116444736000000000
+		hundredNano        = 10000000
+	)
+	t := (int64(ft.HighDateTime) << 32) | int64(ft.LowDateTime)
+	return (t - winToUnixEpochDiff) / hundredNano
+}
+
+func filetimeSyscallToUnix(ft syscall.Filetime) int64 {
 	const (
 		winToUnixEpochDiff = 116444736000000000
 		hundredNano        = 10000000

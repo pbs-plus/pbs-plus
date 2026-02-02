@@ -6,11 +6,11 @@ import (
 	"context"
 	"io"
 	"os"
+	"syscall"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"golang.org/x/sys/windows"
 )
 
 func NewDirReader(handle *os.File, path string) (*DirReader, error) {
@@ -70,7 +70,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 				return nil, err
 			}
 
-			sys := entry.Sys().(*windows.Win32FileAttributeData)
+			sys := entry.Sys().(*syscall.Win32FileAttributeData)
 
 			if sys.FileAttributes&excludedAttrs != 0 {
 				continue
@@ -84,9 +84,9 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 				IsDir:          entry.IsDir(),
 				Size:           fileSize,
 				ModTime:        entry.ModTime().UnixNano(),
-				CreationTime:   filetimeToUnix(sys.CreationTime),
-				LastAccessTime: filetimeToUnix(sys.LastAccessTime),
-				LastWriteTime:  filetimeToUnix(sys.LastWriteTime),
+				CreationTime:   filetimeSyscallToUnix(sys.CreationTime),
+				LastAccessTime: filetimeSyscallToUnix(sys.LastAccessTime),
+				LastWriteTime:  filetimeSyscallToUnix(sys.LastWriteTime),
 				FileAttributes: parseFileAttributes(sys.FileAttributes),
 			}
 
