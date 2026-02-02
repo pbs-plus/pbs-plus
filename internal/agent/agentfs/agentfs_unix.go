@@ -1,4 +1,4 @@
-//go:build unix && !linux
+//go:build unix
 
 package agentfs
 
@@ -307,7 +307,7 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	info := types.AgentFileInfo{
-		CreationTime:   getBirthTime(&st),
+		CreationTime:   time.Unix(int64(st.Ctim.Sec), int64(st.Ctim.Nsec)).Unix(),
 		LastAccessTime: time.Unix(int64(st.Atim.Sec), int64(st.Atim.Nsec)).Unix(),
 		LastWriteTime:  time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)).Unix(),
 		Owner:          owner,
