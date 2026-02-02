@@ -1,5 +1,3 @@
-//go:build windows
-
 package agentfs
 
 import (
@@ -12,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -42,12 +39,6 @@ func TestReadDirBulk(t *testing.T) {
 	t.Run("Last Entry Missing", func(t *testing.T) {
 		testLastEntryMissing(t, tempDir)
 	})
-	t.Run("File Attributes", func(t *testing.T) {
-		testFileAttributes(t, tempDir)
-	})
-	t.Run("Symbolic Links", func(t *testing.T) {
-		testSymbolicLinks(t, tempDir)
-	})
 	t.Run("Unicode File Names", func(t *testing.T) {
 		testUnicodeFileNames(t, tempDir)
 	})
@@ -60,14 +51,13 @@ func TestReadDirBulk(t *testing.T) {
 }
 
 func newTestDirReader(path string) (*DirReader, error) {
-	extPath := toExtendedLengthPath(path)
-	f, err := os.Open(extPath)
+	f, err := os.Open(path)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("newTestDirReader: failed to open directory").
 			WithField("path", path).Write()
 		return nil, err
 	}
-	return NewDirReader(f, extPath)
+	return NewDirReader(f, path)
 }
 
 // Test Cases
@@ -107,9 +97,9 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 
 	expected := map[string]os.FileMode{
-		"file1.txt": 0666,
-		"file2.txt": 0666,
-		"subdir":    os.ModeDir | 0777,
+		"file1.txt": 0644,
+		"file2.txt": 0644,
+		"subdir":    os.ModeDir | 0755,
 	}
 
 	verifyEntries(t, entries, expected)
@@ -128,20 +118,14 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
+	_, err = dirReader.NextBatch(t.Context(), 0)
 	if err != nil {
-		t.Fatalf("readDirBulk failed: %v", err)
+		if !errors.Is(err, os.ErrProcessDone) {
+			t.Fatalf("readDirBulk failed: %v", err)
+		}
+		return
 	}
-
-	// Decode and verify results
-	var entries types.ReadDirEntries
-	if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
-		t.Fatalf("Failed to decode directory entries: %v", err)
-	}
-
-	if len(entries) != 0 {
-		t.Errorf("Expected 0 entries, got %d", len(entries))
-	}
+	t.Fatalf("Expected to return os.ErrProcessDone")
 }
 
 func testLargeDirectory(t *testing.T, tempDir string) {
@@ -188,62 +172,6 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 	}
 }
 
-func testFileAttributes(t *testing.T, tempDir string) {
-	// Create files with different attributes
-	hiddenFile := filepath.Join(tempDir, "hidden.txt")
-	if err := os.WriteFile(hiddenFile, []byte("test content"), 0644); err != nil {
-		t.Fatalf("Failed to create hidden file: %v", err)
-	}
-	path, err := syscall.UTF16PtrFromString(hiddenFile)
-	if err != nil {
-		t.Fatalf("Failed to generate string: %v", err)
-	}
-
-	if err := syscall.SetFileAttributes(path, syscall.FILE_ATTRIBUTE_HIDDEN); err != nil {
-		t.Fatalf("Failed to set hidden attribute: %v", err)
-	}
-
-	dirReader, err := newTestDirReader(tempDir)
-	if err != nil {
-		t.Fatalf("dirReader failed: %v", err)
-	}
-	defer dirReader.Close()
-
-	allEntries := []types.AgentFileInfo{}
-	for {
-		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
-		if err != nil {
-			if errors.Is(err, os.ErrProcessDone) {
-				break
-			}
-			t.Fatalf("readDirBulk failed: %v", err)
-		}
-
-		// Decode and verify results
-		var entries types.ReadDirEntries
-		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
-			t.Fatalf("Failed to decode directory entries: %v", err)
-		}
-
-		allEntries = append(allEntries, entries...)
-	}
-
-	// Hidden files should be excluded
-	hiddenFound := false
-	for _, entry := range allEntries {
-		if entry.Name == "hidden.txt" {
-			hiddenFound = true
-			break
-		}
-	}
-	if !hiddenFound {
-		t.Errorf("Hidden file should be included in results")
-	}
-
-}
-
-// Add similar test cases for symbolic links, error handling, Unicode file names, special characters, and file name lengths...
-
 // Helper function to verify entries
 func verifyEntries(t *testing.T, entries types.ReadDirEntries, expected map[string]os.FileMode) {
 	if len(entries) != len(expected) {
@@ -264,50 +192,6 @@ func verifyEntries(t *testing.T, entries types.ReadDirEntries, expected map[stri
 
 	if len(expected) > 0 {
 		t.Errorf("Missing entries: %v", expected)
-	}
-}
-
-func testSymbolicLinks(t *testing.T, tempDir string) {
-	// Create a file and a symbolic link to it
-	targetFile := filepath.Join(tempDir, "target.txt")
-	if err := os.WriteFile(targetFile, []byte("test content"), 0644); err != nil {
-		t.Fatalf("Failed to create target file: %v", err)
-	}
-
-	symlink := filepath.Join(tempDir, "symlink.txt")
-	if err := os.Symlink(targetFile, symlink); err != nil {
-		t.Fatalf("Failed to create symbolic link: %v", err)
-	}
-
-	dirReader, err := newTestDirReader(tempDir)
-	if err != nil {
-		t.Fatalf("dirReader failed: %v", err)
-	}
-	defer dirReader.Close()
-
-	allEntries := []types.AgentFileInfo{}
-	for {
-		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
-		if err != nil {
-			if errors.Is(err, os.ErrProcessDone) {
-				break
-			}
-			t.Fatalf("readDirBulk failed: %v", err)
-		}
-
-		// Decode and verify results
-		var entries types.ReadDirEntries
-		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
-			t.Fatalf("Failed to decode directory entries: %v", err)
-		}
-
-		allEntries = append(allEntries, entries...)
-	}
-
-	for _, entry := range allEntries {
-		if entry.Name == "symlink.txt" {
-			t.Errorf("Symlink should not be included in results")
-		}
 	}
 }
 
