@@ -3,8 +3,6 @@
 package agentfs
 
 import (
-	"fmt"
-	"os"
 	"syscall"
 	"unsafe"
 
@@ -13,11 +11,6 @@ import (
 
 var (
 	ntdll                      = syscall.NewLazyDLL("ntdll.dll")
-	ntCreateFile               = ntdll.NewProc("NtCreateFile")
-	procNtCancelIoFileEx       = ntdll.NewProc("NtCancelIoFileEx")
-	ntQueryDirectoryFile       = ntdll.NewProc("NtQueryDirectoryFile")
-	ntClose                    = ntdll.NewProc("NtClose")
-	rtlInitUnicodeString       = ntdll.NewProc("RtlInitUnicodeString")
 	procNtQueryInformationFile = ntdll.NewProc("NtQueryInformationFile")
 	procRtlNtStatusToDosError  = ntdll.NewProc("RtlNtStatusToDosError")
 )
@@ -61,55 +54,4 @@ func ntQueryFileNetworkOpenInformation(
 		uintptr(fileNetworkOpenInformationClass),
 	)
 	return ntStatusToError(r0)
-}
-
-func ntCreateFileCall(handle *uintptr, objectAttributes *ObjectAttributes, ioStatusBlock *IoStatusBlock) error {
-	status, _, _ := ntCreateFile.Call(
-		uintptr(unsafe.Pointer(handle)),
-		FILE_LIST_DIRECTORY|syscall.SYNCHRONIZE,
-		uintptr(unsafe.Pointer(objectAttributes)),
-		uintptr(unsafe.Pointer(ioStatusBlock)),
-		0,
-		0,
-		FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
-		OPEN_EXISTING,
-		FILE_DIRECTORY_FILE|FILE_SYNCHRONOUS_IO_NONALERT,
-		0,
-		0,
-	)
-	if status != 0 {
-		return fmt.Errorf(
-			"NtCreateFile failed with status: %x",
-			status,
-		)
-	}
-
-	return nil
-}
-
-func ntDirectoryCall(handle uintptr, ioStatusBlock *IoStatusBlock, buffer []byte, restartScan bool) error {
-	status, _, _ := ntQueryDirectoryFile.Call(
-		handle,
-		0,
-		0,
-		0,
-		uintptr(unsafe.Pointer(ioStatusBlock)),
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(len(buffer)),
-		uintptr(1),
-		uintptr(0),
-		0,
-		uintptr(boolToInt(restartScan)),
-	)
-
-	switch status {
-	case 0:
-		return nil
-	case STATUS_NO_MORE_FILES:
-		return os.ErrProcessDone
-	case STATUS_PENDING:
-		return fmt.Errorf("unexpected STATUS_PENDING with synchronous I/O")
-	default:
-		return fmt.Errorf("NtQueryDirectoryFile failed with status: 0x%x", status)
-	}
 }

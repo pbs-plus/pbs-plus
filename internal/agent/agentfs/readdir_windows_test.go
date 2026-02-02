@@ -77,7 +77,7 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 
 	// Call readDirBulk
-	dirReader, err := NewDirReaderNT(tempDir)
+	dirReader, err := NewDirReader(tempDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -110,7 +110,7 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 		t.Fatalf("Failed to create empty directory: %v", err)
 	}
 
-	dirReader, err := NewDirReaderNT(emptyDir)
+	dirReader, err := NewDirReader(emptyDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -146,7 +146,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 		}
 	}
 
-	dirReader, err := NewDirReaderNT(largeDir)
+	dirReader, err := NewDirReader(largeDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -191,7 +191,7 @@ func testFileAttributes(t *testing.T, tempDir string) {
 		t.Fatalf("Failed to set hidden attribute: %v", err)
 	}
 
-	dirReader, err := NewDirReaderNT(tempDir)
+	dirReader, err := NewDirReader(tempDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -267,7 +267,7 @@ func testSymbolicLinks(t *testing.T, tempDir string) {
 		t.Fatalf("Failed to create symbolic link: %v", err)
 	}
 
-	dirReader, err := NewDirReaderNT(tempDir)
+	dirReader, err := NewDirReader(tempDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -309,7 +309,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 		}
 	}
 
-	dirReader, err := NewDirReaderNT(tempDir)
+	dirReader, err := NewDirReader(tempDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -360,7 +360,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 		}
 	}
 
-	dirReader, err := NewDirReaderNT(tempDir)
+	dirReader, err := NewDirReader(tempDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -420,9 +420,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 		// Test that handles are properly closed after multiple iterations
 		iterations := 100
 		for i := 0; i < iterations; i++ {
-			dirReader, err := NewDirReaderNT(leakTestDir)
+			dirReader, err := NewDirReader(leakTestDir)
 			if err != nil {
-				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+				t.Fatalf("Iteration %d: NewDirReader failed: %v", i, err)
 			}
 
 			// Read all entries
@@ -448,9 +448,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 		// Test closing reader before consuming all entries
 		iterations := 50
 		for i := 0; i < iterations; i++ {
-			dirReader, err := NewDirReaderNT(leakTestDir)
+			dirReader, err := NewDirReader(leakTestDir)
 			if err != nil {
-				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+				t.Fatalf("Iteration %d: NewDirReader failed: %v", i, err)
 			}
 
 			// Read only first batch
@@ -470,9 +470,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 	t.Run("Context Cancellation Test", func(t *testing.T) {
 		iterations := 50
 		for i := 0; i < iterations; i++ {
-			dirReader, err := NewDirReaderNT(leakTestDir)
+			dirReader, err := NewDirReader(leakTestDir)
 			if err != nil {
-				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+				t.Fatalf("Iteration %d: NewDirReader failed: %v", i, err)
 			}
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -526,9 +526,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 			go func(goroutineID int) {
 				defer wg.Done()
 				for i := 0; i < iterations; i++ {
-					dirReader, err := NewDirReaderNT(leakTestDir)
+					dirReader, err := NewDirReader(leakTestDir)
 					if err != nil {
-						errChan <- fmt.Errorf("Goroutine %d, Iteration %d: NewDirReaderNT failed: %v", goroutineID, i, err)
+						errChan <- fmt.Errorf("Goroutine %d, Iteration %d: NewDirReader failed: %v", goroutineID, i, err)
 						return
 					}
 
@@ -568,9 +568,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 		// Test that buffer pool doesn't accumulate leaked buffers
 		iterations := 200
 		for i := 0; i < iterations; i++ {
-			dirReader, err := NewDirReaderNT(leakTestDir)
+			dirReader, err := NewDirReader(leakTestDir)
 			if err != nil {
-				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+				t.Fatalf("Iteration %d: NewDirReader failed: %v", i, err)
 			}
 
 			// Read entries - this uses the buffer pool
@@ -597,9 +597,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 		iterations := 10
 		for i := 0; i < iterations; i++ {
 			func() {
-				dirReader, err := NewDirReaderNT(leakTestDir)
+				dirReader, err := NewDirReader(leakTestDir)
 				if err != nil {
-					t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+					t.Fatalf("Iteration %d: NewDirReader failed: %v", i, err)
 				}
 				defer func() {
 					if r := recover(); r != nil {
@@ -624,9 +624,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 
 	t.Run("Double Close Test", func(t *testing.T) {
 		// Test that double-closing doesn't cause issues
-		dirReader, err := NewDirReaderNT(leakTestDir)
+		dirReader, err := NewDirReader(leakTestDir)
 		if err != nil {
-			t.Fatalf("NewDirReaderNT failed: %v", err)
+			t.Fatalf("NewDirReader failed: %v", err)
 		}
 
 		// First close
@@ -671,9 +671,9 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 		}
 
 		// Read directory
-		dirReader, err := NewDirReaderNT(boundaryDir)
+		dirReader, err := NewDirReader(boundaryDir)
 		if err != nil {
-			t.Fatalf("NewDirReaderNT failed: %v", err)
+			t.Fatalf("NewDirReader failed: %v", err)
 		}
 		defer dirReader.Close()
 
@@ -807,9 +807,9 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 			t.Fatalf("Failed to create final file: %v", err)
 		}
 
-		dirReader, err := NewDirReaderNT(singleDir)
+		dirReader, err := NewDirReader(singleDir)
 		if err != nil {
-			t.Fatalf("NewDirReaderNT failed: %v", err)
+			t.Fatalf("NewDirReader failed: %v", err)
 		}
 		defer dirReader.Close()
 

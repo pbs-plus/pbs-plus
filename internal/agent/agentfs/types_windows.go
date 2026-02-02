@@ -23,7 +23,7 @@ type FileHandle struct {
 	handle        *os.File
 	fileSize      int64
 	isDir         bool
-	dirReader     *DirReaderNT
+	dirReader     *DirReader
 	mapping       windows.Handle
 	logicalOffset int64
 
@@ -33,16 +33,14 @@ type FileHandle struct {
 	closeDone chan struct{}
 }
 
-type DirReaderNT struct {
-	handle        uintptr
-	ioStatus      IoStatusBlock
-	restartScan   bool
-	noMoreFiles   bool
+type DirReader struct {
+	file          *os.File
 	path          string
-	closed        bool
-	mu            sync.Mutex
-	targetEncoded int
 	encodeBuf     bytes.Buffer
+	targetEncoded int
+	noMoreFiles   bool
+	mu            sync.Mutex
+	closed        bool
 }
 
 type UnicodeString struct {

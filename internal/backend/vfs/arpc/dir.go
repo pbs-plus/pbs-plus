@@ -32,7 +32,7 @@ func (s *DirStream) HasNext() bool {
 		WithField("path", s.path).
 		WithField("closed", atomic.LoadInt32(&s.closed)).
 		WithField("curIdx", atomic.LoadUint64(&s.curIdx)).
-		WithField("totalReturned", atomic.LoadUint64(&s.totalReturned)).
+		WithField("entriesReturned", atomic.LoadUint64(&s.totalReturned)).
 		WithField("maxDirEntries", s.fs.Backup.MaxDirEntries).
 		WithJob(s.fs.Backup.ID).
 		Write()
@@ -46,14 +46,15 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	s.lastRespMu.Lock()
-	defer s.lastRespMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	if atomic.LoadUint64(&s.totalReturned) >= uint64(s.fs.Backup.MaxDirEntries) {
 		if atomic.SwapInt32(&s.maxedOut, 1) == 0 {
 			syslog.L.Warn().
-				WithMessage("maximum directory entries limit reached - stopping enumeration").
+				WithMessage("maximum directory entries limit reached - stopping enumeration for this directory").
 				WithField("path", s.path).
+				WithField("entriesReturned", atomic.LoadUint64(&s.totalReturned)).
 				WithField("maxDirEntries", s.fs.Backup.MaxDirEntries).
 				WithJob(s.fs.Backup.ID).
 				Write()
@@ -103,11 +104,11 @@ func (s *DirStream) HasNext() bool {
 		Write()
 
 	if err != nil {
-		atomic.StoreInt32(&s.closed, 1)
 		if errors.Is(err, os.ErrProcessDone) {
 			syslog.L.Debug().
 				WithMessage("HasNext: process done received, closing dirstream").
 				WithField("path", s.path).
+				WithField("entriesReturned", atomic.LoadUint64(&s.totalReturned)).
 				WithJob(s.fs.Backup.ID).
 				Write()
 		} else {
@@ -115,6 +116,7 @@ func (s *DirStream) HasNext() bool {
 				WithMessage("HasNext: RPC error, closing dirstream").
 				WithField("path", s.path).
 				WithField("handleId", s.handleId).
+				WithField("entriesReturned", atomic.LoadUint64(&s.totalReturned)).
 				WithJob(s.fs.Backup.ID).
 				Write()
 		}
@@ -122,10 +124,10 @@ func (s *DirStream) HasNext() bool {
 	}
 
 	if bytesRead == 0 {
-		atomic.StoreInt32(&s.closed, 1)
 		syslog.L.Debug().
-			WithMessage("HasNext: no bytes read, marking closed").
+			WithMessage("HasNext: no bytes read, end of directory reached").
 			WithField("path", s.path).
+			WithField("totalEntriesReturned", atomic.LoadUint64(&s.totalReturned)).
 			WithJob(s.fs.Backup.ID).
 			Write()
 		return false
@@ -144,17 +146,16 @@ func (s *DirStream) HasNext() bool {
 
 	err = cbor.Unmarshal(readBuf[:bytesRead], &s.lastResp)
 	if err != nil {
-		atomic.StoreInt32(&s.closed, 1)
 		syslog.L.Error(err).
 			WithMessage("HasNext: decode failed, closing dirstream").
 			WithField("path", s.path).
 			WithField("bytesRead", bytesRead).
+			WithField("entriesReturned", atomic.LoadUint64(&s.totalReturned)).
 			WithJob(s.fs.Backup.ID).
 			Write()
 		return false
 	}
 
-	atomic.StoreUint64(&s.curIdx, 0)
 	newBatchLen := len(s.lastResp)
 
 	syslog.L.Debug().
@@ -165,14 +166,35 @@ func (s *DirStream) HasNext() bool {
 		Write()
 
 	if newBatchLen == 0 {
-		atomic.StoreInt32(&s.closed, 1)
 		syslog.L.Debug().
-			WithMessage("HasNext: empty batch received, closing").
+			WithMessage("HasNext: empty batch received, end of directory").
 			WithField("path", s.path).
+			WithField("totalEntriesReturned", atomic.LoadUint64(&s.totalReturned)).
 			WithJob(s.fs.Backup.ID).
 			Write()
 		return false
 	}
+
+	currentReturned := atomic.LoadUint64(&s.totalReturned)
+	maxEntries := uint64(s.fs.Backup.MaxDirEntries)
+
+	if currentReturned+uint64(newBatchLen) > maxEntries {
+		allowedCount := maxEntries - currentReturned
+		s.lastResp = s.lastResp[:allowedCount]
+		syslog.L.Warn().
+			WithMessage("HasNext: batch truncated to fit per-directory limit").
+			WithField("path", s.path).
+			WithField("originalBatchSize", newBatchLen).
+			WithField("truncatedBatchSize", allowedCount).
+			WithField("currentReturned", currentReturned).
+			WithField("maxDirEntries", maxEntries).
+			WithField("entriesSkipped", newBatchLen-int(allowedCount)).
+			WithJob(s.fs.Backup.ID).
+			Write()
+		newBatchLen = int(allowedCount)
+	}
+
+	atomic.StoreUint64(&s.curIdx, 0)
 
 	syslog.L.Debug().
 		WithMessage("HasNext: returning true with new batch").
@@ -182,10 +204,13 @@ func (s *DirStream) HasNext() bool {
 		WithJob(s.fs.Backup.ID).
 		Write()
 
-	return true
+	return newBatchLen > 0
 }
 
 func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if atomic.LoadInt32(&s.closed) != 0 {
 		syslog.L.Debug().
 			WithMessage("Next called on closed stream").
@@ -199,13 +224,11 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		syslog.L.Debug().
 			WithMessage("Next called on maxed out stream").
 			WithField("path", s.path).
+			WithField("entriesReturned", atomic.LoadUint64(&s.totalReturned)).
 			WithJob(s.fs.Backup.ID).
 			Write()
 		return fuse.DirEntry{}, syscall.EBADF
 	}
-
-	s.lastRespMu.Lock()
-	defer s.lastRespMu.Unlock()
 
 	curIdxVal := atomic.LoadUint64(&s.curIdx)
 
@@ -230,7 +253,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		WithField("isDir", curr.IsDir).
 		WithField("curIdx", curIdxVal).
 		WithField("lastRespLen", len(s.lastResp)).
-		WithField("totalReturned", atomic.LoadUint64(&s.totalReturned)).
+		WithField("entriesReturned", atomic.LoadUint64(&s.totalReturned)).
 		WithJob(s.fs.Backup.ID).
 		Write()
 
@@ -330,7 +353,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		WithMessage("Next advanced indices").
 		WithField("path", s.path).
 		WithField("newCurIdx", atomic.LoadUint64(&s.curIdx)).
-		WithField("newTotalReturned", atomic.LoadUint64(&s.totalReturned)).
+		WithField("newEntriesReturned", atomic.LoadUint64(&s.totalReturned)).
 		WithJob(s.fs.Backup.ID).
 		Write()
 
@@ -355,6 +378,7 @@ func (s *DirStream) Close() {
 		WithMessage("Closing DirStream").
 		WithField("path", s.path).
 		WithField("handleId", s.handleId).
+		WithField("totalEntriesReturned", atomic.LoadUint64(&s.totalReturned)).
 		WithJob(s.fs.Backup.ID).
 		Write()
 
@@ -384,6 +408,7 @@ func (s *DirStream) Close() {
 			WithMessage("DirStream closed successfully").
 			WithField("path", s.path).
 			WithField("handleId", s.handleId).
+			WithField("totalEntriesReturned", atomic.LoadUint64(&s.totalReturned)).
 			WithJob(s.fs.Backup.ID).
 			Write()
 	}

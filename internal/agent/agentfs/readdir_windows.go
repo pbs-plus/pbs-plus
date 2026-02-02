@@ -4,12 +4,10 @@ package agentfs
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
-	"unicode/utf16"
-	"unsafe"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -17,59 +15,35 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func NewDirReaderNT(path string) (*DirReaderNT, error) {
-	syslog.L.Debug().WithMessage("NewDirReaderNT: initializing NT directory reader").WithField("path", path).Write()
-	ntPath := convertToNTPath(path)
-	if !strings.HasSuffix(ntPath, "\\") {
-		ntPath += "\\"
-	}
+func NewDirReader(path string) (*DirReader, error) {
+	syslog.L.Debug().WithMessage("NewDirReader: initializing directory reader").
+		WithField("path", path).Write()
 
-	pathUTF16 := utf16.Encode([]rune(ntPath))
-	if len(pathUTF16) == 0 || pathUTF16[len(pathUTF16)-1] != 0 {
-		pathUTF16 = append(pathUTF16, 0)
-	}
+	extPath := toExtendedLengthPath(path)
 
-	var unicodeString UnicodeString
-	rtlInitUnicodeString.Call(
-		uintptr(unsafe.Pointer(&unicodeString)),
-		uintptr(unsafe.Pointer(&pathUTF16[0])),
-	)
-
-	var objectAttributes ObjectAttributes
-	objectAttributes.Length = uint32(unsafe.Sizeof(objectAttributes))
-	objectAttributes.ObjectName = &unicodeString
-	objectAttributes.Attributes = OBJ_CASE_INSENSITIVE
-
-	var handle uintptr
-	var ioStatusBlock IoStatusBlock
-
-	if err := ntCreateFileCall(&handle, &objectAttributes, &ioStatusBlock); err != nil {
-		syslog.L.Error(err).WithMessage("NewDirReaderNT: ntCreateFileCall failed").WithField("path", path).Write()
+	f, err := os.Open(extPath)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("NewDirReader: failed to open directory").
+			WithField("path", path).Write()
 		return nil, err
 	}
 
-	syslog.L.Debug().WithMessage("NewDirReaderNT: directory handle opened").WithField("path", path).WithField("handle", handle).Write()
-	return &DirReaderNT{
-		handle:        handle,
-		ioStatus:      ioStatusBlock,
-		restartScan:   true,
-		noMoreFiles:   false,
-		targetEncoded: defaultTargetEncodedLen,
+	syslog.L.Debug().WithMessage("NewDirReader: directory opened").
+		WithField("path", path).Write()
+
+	return &DirReader{
+		file:          f,
 		path:          path,
+		targetEncoded: defaultTargetEncodedLen,
 	}, nil
 }
 
-func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, error) {
+func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, error) {
 	if r.noMoreFiles {
-		syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: no more files (cached)").
+		syslog.L.Debug().WithMessage("DirReader.NextBatch: no more files").
 			WithField("path", r.path).Write()
 		return nil, os.ErrProcessDone
 	}
-
-	firstCall := r.restartScan
-
-	buffer := bufferPool.Get().([]byte)
-	defer bufferPool.Put(buffer)
 
 	if blockSize == 0 {
 		blockSize = 4096
@@ -85,107 +59,62 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 	entryCount := 0
 
 	for r.encodeBuf.Len() < r.targetEncoded {
-		syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: querying directory batch").
-			WithField("path", r.path).
-			WithField("restart_scan", r.restartScan).
-			WithField("buffer_len", len(buffer)).
-			Write()
-
-		ntErr := ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan)
-		r.restartScan = false
-
-		if ntErr != nil {
-			if errors.Is(ntErr, os.ErrExist) {
-				syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: enumeration completed (empty)").
-					WithField("path", r.path).Write()
-				r.noMoreFiles = true
-				break
-			}
-			if errors.Is(ntErr, os.ErrProcessDone) {
-				syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: enumeration completed").
-					WithField("path", r.path).Write()
-				r.noMoreFiles = true
-				break
-			}
-			syslog.L.Error(ntErr).WithMessage("DirReaderNT.NextBatch: ntDirectoryCall failed").
-				WithField("path", r.path).Write()
-			return nil, ntErr
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 
-		bufEnd := int(r.ioStatus.Information)
-		if bufEnd == 0 {
+		entries, err := r.file.Readdir(128)
+		if err == io.EOF {
+			r.noMoreFiles = true
+			break
+		}
+		if err != nil {
+			syslog.L.Error(err).WithMessage("DirReader.NextBatch: read failed").
+				WithField("path", r.path).Write()
+			return nil, err
+		}
+
+		if len(entries) == 0 {
 			r.noMoreFiles = true
 			break
 		}
 
-		offset := 0
-		for offset < bufEnd {
+		for _, entry := range entries {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 
-			if offset+int(unsafe.Sizeof(FileDirectoryInformation{})) > bufEnd {
-				break
+			sys := entry.Sys().(*windows.Win32FileAttributeData)
+
+			if sys.FileAttributes&excludedAttrs != 0 {
+				continue
 			}
 
-			entry := (*FileDirectoryInformation)(unsafe.Pointer(&buffer[offset]))
+			fileSize := int64(sys.FileSizeHigh)<<32 | int64(sys.FileSizeLow)
 
-			if entry.FileAttributes&excludedAttrs == 0 {
-				fileNameLen := entry.FileNameLength / 2
-				fileNamePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
-
-				if uintptr(fileNamePtr)+uintptr(entry.FileNameLength) >
-					uintptr(unsafe.Pointer(&buffer[0]))+uintptr(len(buffer)) {
-					return nil, fmt.Errorf("filename data exceeds buffer bounds")
-				}
-
-				name := windows.UTF16ToString(unsafe.Slice((*uint16)(fileNamePtr), fileNameLen))
-
-				if name != "." && name != ".." {
-					info := types.AgentFileInfo{
-						Name:           name,
-						Mode:           windowsFileModeFromHandle(0, entry.FileAttributes),
-						IsDir:          (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0,
-						Size:           entry.EndOfFile,
-						ModTime:        unixNanoFromWin(entry.LastWriteTime),
-						CreationTime:   unixFromWin(entry.CreationTime),
-						LastAccessTime: unixFromWin(entry.LastAccessTime),
-						LastWriteTime:  unixFromWin(entry.LastWriteTime),
-						FileAttributes: parseFileAttributes(entry.FileAttributes),
-					}
-
-					if !info.IsDir {
-						alloc := entry.AllocationSize
-						if alloc < 0 {
-							alloc = 0
-						}
-						info.Blocks = uint64((alloc + int64(blockSize) - 1) / int64(blockSize))
-					}
-
-					if err := enc.Encode(info); err != nil {
-						syslog.L.Error(err).WithMessage("DirReaderNT.NextBatch: encode failed").
-							WithField("path", r.path).Write()
-						return nil, err
-					}
-					hasEntries = true
-					entryCount++
-				}
+			info := types.AgentFileInfo{
+				Name:           entry.Name(),
+				Mode:           uint32(entry.Mode()),
+				IsDir:          entry.IsDir(),
+				Size:           fileSize,
+				ModTime:        entry.ModTime().UnixNano(),
+				CreationTime:   filetimeToUnix(sys.CreationTime),
+				LastAccessTime: filetimeToUnix(sys.LastAccessTime),
+				LastWriteTime:  filetimeToUnix(sys.LastWriteTime),
+				FileAttributes: parseFileAttributes(sys.FileAttributes),
 			}
 
-			if entry.NextEntryOffset == 0 {
-				break
+			if !info.IsDir && fileSize > 0 {
+				info.Blocks = uint64((fileSize + int64(blockSize) - 1) / int64(blockSize))
 			}
 
-			nextOffset := offset + int(entry.NextEntryOffset)
-			if nextOffset <= offset || nextOffset > bufEnd {
-				return nil, fmt.Errorf("invalid NextEntryOffset: %d from offset %d",
-					entry.NextEntryOffset, offset)
+			if err := enc.Encode(info); err != nil {
+				syslog.L.Error(err).WithMessage("DirReader.NextBatch: encode failed").
+					WithField("path", r.path).Write()
+				return nil, err
 			}
-			offset = nextOffset
-		}
-
-		if r.noMoreFiles {
-			break
+			hasEntries = true
+			entryCount++
 		}
 	}
 
@@ -193,13 +122,14 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		return nil, err
 	}
 
-	if !hasEntries && r.noMoreFiles && !firstCall {
+	if !hasEntries && r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
 
-	encodedResult := r.encodeBuf.Bytes()
+	encodedResult := make([]byte, r.encodeBuf.Len())
+	copy(encodedResult, r.encodeBuf.Bytes())
 
-	syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: batch encoded").
+	syslog.L.Debug().WithMessage("DirReader.NextBatch: batch encoded").
 		WithField("path", r.path).
 		WithField("bytes", len(encodedResult)).
 		WithField("entries_count", entryCount).
@@ -208,7 +138,7 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 	return encodedResult, nil
 }
 
-func (r *DirReaderNT) Close() error {
+func (r *DirReader) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -216,19 +146,30 @@ func (r *DirReaderNT) Close() error {
 		return nil
 	}
 
-	syslog.L.Debug().WithMessage("DirReaderNT.Close: closing handle").
-		WithField("path", r.path).WithField("handle", r.handle).Write()
+	syslog.L.Debug().WithMessage("DirReader.Close: closing file").
+		WithField("path", r.path).Write()
 
-	status, _, _ := ntClose.Call(r.handle)
 	r.closed = true
+	return r.file.Close()
+}
 
-	if status != 0 {
-		err := fmt.Errorf("NtClose failed for path '%s' with status: 0x%x", r.path, status)
-		syslog.L.Error(err).WithMessage("DirReaderNT.Close: NtClose failed").
-			WithField("path", r.path).WithField("status_hex", fmt.Sprintf("0x%X", status)).Write()
-		return err
+func toExtendedLengthPath(path string) string {
+	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\??\`) {
+		return path
 	}
 
-	syslog.L.Debug().WithMessage("DirReaderNT.Close: success").WithField("path", r.path).Write()
-	return nil
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+
+	if len(absPath) >= 2 && absPath[1] == ':' {
+		return `\\?\` + absPath
+	}
+
+	if strings.HasPrefix(absPath, `\\`) {
+		return `\\?\UNC\` + absPath[2:]
+	}
+
+	return `\\?\` + absPath
 }
