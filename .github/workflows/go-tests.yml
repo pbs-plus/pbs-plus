@@ -11,7 +11,7 @@ jobs:
   go-tests:
     strategy:
       matrix:
-        os: [ubuntu-latest, blacksmith-4vcpu-windows-2025]
+        os: [blacksmith-4vcpu-ubuntu-2404, blacksmith-4vcpu-windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -29,4 +29,3 @@ jobs:
         shell: pwsh
         run: |
           go test -v -race ./internal/agent/agentfs/... -tags=windows -count=1 -timeout 3m
-
