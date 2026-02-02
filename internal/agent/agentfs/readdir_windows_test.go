@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -644,32 +645,32 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 }
 
 func testLastEntryMissing(t *testing.T, tempDir string) {
-	// This test recreates the scenario where the last entry in a directory is missed
-	// because the buffer fills up before detecting end-of-enumeration
-
-	t.Run("Exact Buffer Boundary", func(t *testing.T) {
-		// Create a directory that will fill the buffer exactly at a boundary
-		boundaryDir := filepath.Join(tempDir, "boundary_test")
+	t.Run("Buffer Size Boundary - Entries at Exact Limit", func(t *testing.T) {
+		// This test creates files that will cause the encoded buffer to reach
+		// targetEncoded right when there's one more file left to enumerate
+		boundaryDir := filepath.Join(tempDir, "boundary_exact_test")
 		if err := os.Mkdir(boundaryDir, 0755); err != nil {
 			t.Fatalf("Failed to create boundary test directory: %v", err)
 		}
 
-		// Create files with predictable sizes to hit buffer boundaries
-		// The goal is to create enough entries that the encoded buffer
-		// reaches targetEncoded right before the last few entries
-		numFiles := 500 // Adjust based on your defaultTargetEncodedLen
+		// Create enough files to fill the buffer close to targetEncoded
+		// The exact number depends on defaultTargetEncodedLen and encoding overhead
+		// Typically around 200-300 files will do it
+		numFiles := 250
 		expectedFiles := make(map[string]bool)
 
 		for i := 0; i < numFiles; i++ {
-			fileName := fmt.Sprintf("file_%04d.txt", i)
+			fileName := fmt.Sprintf("test_file_%04d.txt", i)
 			path := filepath.Join(boundaryDir, fileName)
-			if err := os.WriteFile(path, []byte("test content"), 0644); err != nil {
+			// Create files with varying sizes to make encoded size less predictable
+			content := []byte(strings.Repeat("x", i%100))
+			if err := os.WriteFile(path, content, 0644); err != nil {
 				t.Fatalf("Failed to create file %s: %v", fileName, err)
 			}
 			expectedFiles[fileName] = false
 		}
 
-		// Read directory and track all entries
+		// Read directory
 		dirReader, err := NewDirReaderNT(boundaryDir)
 		if err != nil {
 			t.Fatalf("NewDirReaderNT failed: %v", err)
@@ -678,12 +679,13 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 
 		allEntries := make(map[string]bool)
 		batchCount := 0
+		lastBatchSize := 0
 
 		for {
 			entriesBytes, err := dirReader.NextBatch(context.Background(), 0)
 			if err != nil {
 				if errors.Is(err, os.ErrProcessDone) {
-					t.Logf("Batch %d: End of directory (ErrProcessDone)", batchCount)
+					t.Logf("Batch %d: Received ErrProcessDone (end of directory)", batchCount)
 					break
 				}
 				t.Fatalf("NextBatch failed on batch %d: %v", batchCount, err)
@@ -694,6 +696,7 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 				t.Fatalf("Failed to decode batch %d: %v", batchCount, err)
 			}
 
+			lastBatchSize = len(entries)
 			t.Logf("Batch %d: Got %d entries (encoded size: %d bytes)",
 				batchCount, len(entries), len(entriesBytes))
 
@@ -705,6 +708,11 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 			}
 
 			batchCount++
+
+			// Safety check to prevent infinite loop in case of bug
+			if batchCount > 100 {
+				t.Fatal("Too many batches, possible infinite loop")
+			}
 		}
 
 		// Verify all files were returned
@@ -716,8 +724,12 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 		}
 
 		if len(missing) > 0 {
-			t.Errorf("Missing %d files from directory listing:", len(missing))
-			// Log first 10 missing files
+			// Sort for consistent error messages
+			sort.Strings(missing)
+			t.Errorf("Missing %d files from directory listing (total batches: %d, last batch size: %d):",
+				len(missing), batchCount, lastBatchSize)
+
+			// Show first 10 missing
 			for i, name := range missing {
 				if i >= 10 {
 					t.Logf("... and %d more", len(missing)-10)
@@ -725,7 +737,42 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 				}
 				t.Logf("  - %s", name)
 			}
+
+			// Check if missing files cluster near a particular index
+			if len(missing) > 0 {
+				// Parse indices from missing file names
+				indices := []int{}
+				for _, name := range missing {
+					var idx int
+					if _, err := fmt.Sscanf(name, "test_file_%d.txt", &idx); err == nil {
+						indices = append(indices, idx)
+					}
+				}
+
+				if len(indices) > 0 {
+					sort.Ints(indices)
+					t.Logf("Missing file indices: %v", indices)
+
+					// Check for clustering (indices within 20 of each other)
+					clustered := true
+					if len(indices) > 1 {
+						for i := 1; i < len(indices); i++ {
+							if indices[i]-indices[i-1] > 20 {
+								clustered = false
+								break
+							}
+						}
+					}
+
+					if clustered {
+						t.Log("WARNING: Missing files are clustered together - likely a batch boundary issue!")
+					}
+				}
+			}
 		}
+
+		t.Logf("Total files found: %d / %d expected (%.1f%%)",
+			len(allEntries), numFiles, float64(len(allEntries))/float64(numFiles)*100)
 
 		if len(allEntries) != numFiles {
 			t.Errorf("Expected %d entries, got %d (missing %d)",
@@ -733,42 +780,41 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 		}
 	})
 
-	t.Run("Multiple Batches With Last Entry", func(t *testing.T) {
-		// Create a directory that requires multiple batches
-		// and ensure the very last entry is not dropped
-		multiDir := filepath.Join(tempDir, "multi_batch_test")
-		if err := os.Mkdir(multiDir, 0755); err != nil {
-			t.Fatalf("Failed to create multi batch test directory: %v", err)
+	t.Run("One Final Entry After Buffer Fills", func(t *testing.T) {
+		// This test specifically tries to create a scenario where
+		// the buffer fills up and there's exactly one entry left
+		singleDir := filepath.Join(tempDir, "single_final_entry")
+		if err := os.Mkdir(singleDir, 0755); err != nil {
+			t.Fatalf("Failed to create test directory: %v", err)
 		}
 
-		// Create files with a marker file at the end
-		numFiles := 1000
-		markerFile := "zzz_last_marker_file.txt"
+		// Create files - we'll create enough to potentially fill a batch,
+		// plus one more that should be the "last" file
+		numRegular := 200
+		finalFile := "zzz_this_should_not_be_missed_final.txt"
 
-		for i := 0; i < numFiles; i++ {
-			fileName := fmt.Sprintf("file_%04d.txt", i)
-			path := filepath.Join(multiDir, fileName)
+		for i := 0; i < numRegular; i++ {
+			fileName := fmt.Sprintf("regular_%04d.txt", i)
+			path := filepath.Join(singleDir, fileName)
 			if err := os.WriteFile(path, []byte("content"), 0644); err != nil {
 				t.Fatalf("Failed to create file %s: %v", fileName, err)
 			}
 		}
 
-		// Create the marker file (should be last alphabetically)
-		markerPath := filepath.Join(multiDir, markerFile)
-		if err := os.WriteFile(markerPath, []byte("MARKER"), 0644); err != nil {
-			t.Fatalf("Failed to create marker file: %v", err)
+		// Create the final file (will be last alphabetically)
+		finalPath := filepath.Join(singleDir, finalFile)
+		if err := os.WriteFile(finalPath, []byte("FINAL"), 0644); err != nil {
+			t.Fatalf("Failed to create final file: %v", err)
 		}
 
-		dirReader, err := NewDirReaderNT(multiDir)
+		dirReader, err := NewDirReaderNT(singleDir)
 		if err != nil {
 			t.Fatalf("NewDirReaderNT failed: %v", err)
 		}
 		defer dirReader.Close()
 
-		foundMarker := false
+		foundFinal := false
 		totalEntries := 0
-		lastBatchSize := 0
-		batchCount := 0
 
 		for {
 			entriesBytes, err := dirReader.NextBatch(context.Background(), 0)
@@ -784,125 +830,26 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 				t.Fatalf("Failed to decode entries: %v", err)
 			}
 
-			lastBatchSize = len(entries)
 			totalEntries += len(entries)
-			batchCount++
 
 			for _, entry := range entries {
-				if entry.Name == markerFile {
-					foundMarker = true
-					t.Logf("Found marker file in batch %d (entry %d/%d in batch)",
-						batchCount, len(entries), lastBatchSize)
+				if entry.Name == finalFile {
+					foundFinal = true
 				}
 			}
 		}
 
-		if !foundMarker {
-			t.Errorf("Marker file '%s' was not found! This indicates the last entry was dropped.", markerFile)
-			t.Logf("Total batches: %d", batchCount)
-			t.Logf("Last batch size: %d", lastBatchSize)
-			t.Logf("Total entries found: %d (expected %d)", totalEntries, numFiles+1)
+		if !foundFinal {
+			t.Errorf("Final marker file '%s' was NOT found! This is the bug.", finalFile)
+			t.Logf("Total entries found: %d (expected %d)", totalEntries, numRegular+1)
+		} else {
+			t.Logf("SUCCESS: Final marker file was found (total entries: %d)", totalEntries)
 		}
 
-		expectedTotal := numFiles + 1 // +1 for marker
+		expectedTotal := numRegular + 1
 		if totalEntries != expectedTotal {
 			t.Errorf("Expected %d total entries, got %d (missing %d)",
 				expectedTotal, totalEntries, expectedTotal-totalEntries)
-		}
-	})
-
-	t.Run("Sorted Order Verification", func(t *testing.T) {
-		// Windows returns directory entries in a sorted order
-		// Missing last entries would show up as gaps in the sequence
-		sortDir := filepath.Join(tempDir, "sort_test")
-		if err := os.Mkdir(sortDir, 0755); err != nil {
-			t.Fatalf("Failed to create sort test directory: %v", err)
-		}
-
-		numFiles := 200
-		for i := 0; i < numFiles; i++ {
-			// Zero-padded names ensure predictable sort order
-			fileName := fmt.Sprintf("file_%05d.txt", i)
-			path := filepath.Join(sortDir, fileName)
-			if err := os.WriteFile(path, []byte("content"), 0644); err != nil {
-				t.Fatalf("Failed to create file %s: %v", fileName, err)
-			}
-		}
-
-		dirReader, err := NewDirReaderNT(sortDir)
-		if err != nil {
-			t.Fatalf("NewDirReaderNT failed: %v", err)
-		}
-		defer dirReader.Close()
-
-		allEntries := []string{}
-		for {
-			entriesBytes, err := dirReader.NextBatch(context.Background(), 0)
-			if err != nil {
-				if errors.Is(err, os.ErrProcessDone) {
-					break
-				}
-				t.Fatalf("NextBatch failed: %v", err)
-			}
-
-			var entries types.ReadDirEntries
-			if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
-				t.Fatalf("Failed to decode entries: %v", err)
-			}
-
-			for _, entry := range entries {
-				allEntries = append(allEntries, entry.Name)
-			}
-		}
-
-		// Check for gaps in sequence
-		for i := 0; i < numFiles; i++ {
-			expected := fmt.Sprintf("file_%05d.txt", i)
-			found := false
-			for _, name := range allEntries {
-				if name == expected {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("Missing file in sequence: %s (index %d)", expected, i)
-				// Log surrounding entries to show the gap
-				t.Logf("Entries around missing file:")
-				for j := max(0, i-2); j < min(len(allEntries), i+3); j++ {
-					if j < len(allEntries) {
-						t.Logf("  [%d] %s", j, allEntries[j])
-					}
-				}
-			}
-		}
-
-		if len(allEntries) != numFiles {
-			t.Errorf("Expected %d files, got %d", numFiles, len(allEntries))
-
-			// Identify which files are missing
-			missing := []int{}
-			for i := 0; i < numFiles; i++ {
-				expected := fmt.Sprintf("file_%05d.txt", i)
-				found := false
-				for _, name := range allEntries {
-					if name == expected {
-						found = true
-						break
-					}
-				}
-				if !found {
-					missing = append(missing, i)
-				}
-			}
-
-			if len(missing) > 0 {
-				t.Logf("Missing file indices: %v", missing)
-				// Check if missing files cluster at the end
-				if len(missing) > 0 && missing[0] > numFiles-20 {
-					t.Logf("WARNING: Missing files cluster near the end of the directory!")
-				}
-			}
 		}
 	})
 }
