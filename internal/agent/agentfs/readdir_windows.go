@@ -94,25 +94,30 @@ func (r *DirReaderNT) NextBatch(ctx context.Context, blockSize uint64) ([]byte, 
 		ntErr := ntDirectoryCall(r.handle, &r.ioStatus, buffer, r.restartScan)
 		r.restartScan = false
 
+		bufEnd := int(r.ioStatus.Information)
+
 		if ntErr != nil {
 			if errors.Is(ntErr, os.ErrExist) {
 				syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: enumeration completed (empty)").
 					WithField("path", r.path).Write()
 				r.noMoreFiles = true
-				break
-			}
-			if errors.Is(ntErr, os.ErrProcessDone) {
+				if bufEnd == 0 {
+					break
+				}
+			} else if errors.Is(ntErr, os.ErrProcessDone) {
 				syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: enumeration completed").
 					WithField("path", r.path).Write()
 				r.noMoreFiles = true
-				break
+				if bufEnd == 0 {
+					break
+				}
+			} else {
+				syslog.L.Error(ntErr).WithMessage("DirReaderNT.NextBatch: ntDirectoryCall failed").
+					WithField("path", r.path).Write()
+				return nil, ntErr
 			}
-			syslog.L.Error(ntErr).WithMessage("DirReaderNT.NextBatch: ntDirectoryCall failed").
-				WithField("path", r.path).Write()
-			return nil, ntErr
 		}
 
-		bufEnd := int(r.ioStatus.Information)
 		if bufEnd == 0 {
 			r.noMoreFiles = true
 			break
