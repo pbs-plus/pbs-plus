@@ -26,7 +26,7 @@ type DirStream struct {
 	handleId      types.FileHandleId
 	closed        int32
 	maxedOut      int32
-	lastRespMu    sync.Mutex
+	mu            sync.Mutex
 	lastResp      types.ReadDirEntries
 	curIdx        uint64
 	totalReturned uint64
