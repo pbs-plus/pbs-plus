@@ -61,128 +61,140 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	curIdx := atomic.LoadUint64(&s.curIdx)
-	if int(curIdx) < len(s.lastResp) {
+	if s.nextEntry != nil {
 		syslog.L.Debug().
-			WithMessage("HasNext hit in-memory entries").
+			WithMessage("HasNext returning cached entry").
 			WithField("path", s.path).
-			WithField("curIdx", curIdx).
-			WithField("lastRespLen", len(s.lastResp)).
 			WithJob(s.fs.Backup.ID).
 			Write()
 		return true
 	}
 
-	syslog.L.Debug().
-		WithMessage("HasNext needs new batch - issuing ReadDir RPC").
-		WithField("path", s.path).
-		WithField("handleId", s.handleId).
-		WithJob(s.fs.Backup.ID).
-		Write()
+	curIdx := atomic.LoadUint64(&s.curIdx)
 
-	req := types.ReadDirReq{HandleID: s.handleId}
-	readBuf := bufPool.Get().([]byte)
-	defer bufPool.Put(readBuf)
-
-	pipe, err := s.fs.getPipe(s.fs.Ctx)
-	if err != nil {
-		syslog.L.Error(err).
-			WithMessage("arpc session is nil").
+	if int(curIdx) >= len(s.lastResp) {
+		syslog.L.Debug().
+			WithMessage("HasNext needs new batch - issuing ReadDir RPC").
+			WithField("path", s.path).
+			WithField("handleId", s.handleId).
 			WithJob(s.fs.Backup.ID).
 			Write()
-		return false
-	}
 
-	bytesRead, err := pipe.CallBinary(s.fs.Ctx, "ReadDir", &req, readBuf)
-	syslog.L.Debug().
-		WithMessage("HasNext RPC completed").
-		WithField("bytesRead", bytesRead).
-		WithField("error", err).
-		WithField("path", s.path).
-		WithJob(s.fs.Backup.ID).
-		Write()
+		req := types.ReadDirReq{HandleID: s.handleId}
+		readBuf := bufPool.Get().([]byte)
+		defer bufPool.Put(readBuf)
 
-	if err != nil {
-		atomic.StoreInt32(&s.closed, 1)
-		if errors.Is(err, os.ErrProcessDone) {
-			syslog.L.Debug().
-				WithMessage("HasNext: process done received, closing dirstream").
-				WithField("path", s.path).
-				WithJob(s.fs.Backup.ID).
-				Write()
-		} else {
+		pipe, err := s.fs.getPipe(s.fs.Ctx)
+		if err != nil {
 			syslog.L.Error(err).
-				WithMessage("HasNext: RPC error, closing dirstream").
-				WithField("path", s.path).
-				WithField("handleId", s.handleId).
+				WithMessage("arpc session is nil").
 				WithJob(s.fs.Backup.ID).
 				Write()
+			return false
 		}
-		return false
-	}
 
-	if bytesRead == 0 {
-		atomic.StoreInt32(&s.closed, 1)
+		bytesRead, err := pipe.CallBinary(s.fs.Ctx, "ReadDir", &req, readBuf)
 		syslog.L.Debug().
-			WithMessage("HasNext: no bytes read, marking closed").
+			WithMessage("HasNext RPC completed").
+			WithField("bytesRead", bytesRead).
+			WithField("error", err).
 			WithField("path", s.path).
 			WithJob(s.fs.Backup.ID).
 			Write()
-		return false
-	}
 
-	oldLen := len(s.lastResp)
-	s.lastResp = nil
+		if err != nil {
+			atomic.StoreInt32(&s.closed, 1)
+			if errors.Is(err, os.ErrProcessDone) {
+				syslog.L.Debug().
+					WithMessage("HasNext: process done received, closing dirstream").
+					WithField("path", s.path).
+					WithJob(s.fs.Backup.ID).
+					Write()
+			} else {
+				syslog.L.Error(err).
+					WithMessage("HasNext: RPC error, closing dirstream").
+					WithField("path", s.path).
+					WithField("handleId", s.handleId).
+					WithJob(s.fs.Backup.ID).
+					Write()
+			}
+			return false
+		}
 
-	syslog.L.Debug().
-		WithMessage("HasNext: decoding new batch").
-		WithField("path", s.path).
-		WithField("bytesRead", bytesRead).
-		WithField("oldBatchLen", oldLen).
-		WithJob(s.fs.Backup.ID).
-		Write()
+		if bytesRead == 0 {
+			atomic.StoreInt32(&s.closed, 1)
+			syslog.L.Debug().
+				WithMessage("HasNext: no bytes read, marking closed").
+				WithField("path", s.path).
+				WithJob(s.fs.Backup.ID).
+				Write()
+			return false
+		}
 
-	err = cbor.Unmarshal(readBuf[:bytesRead], &s.lastResp)
-	if err != nil {
-		atomic.StoreInt32(&s.closed, 1)
-		syslog.L.Error(err).
-			WithMessage("HasNext: decode failed, closing dirstream").
+		oldLen := len(s.lastResp)
+		s.lastResp = nil
+
+		syslog.L.Debug().
+			WithMessage("HasNext: decoding new batch").
 			WithField("path", s.path).
 			WithField("bytesRead", bytesRead).
+			WithField("oldBatchLen", oldLen).
 			WithJob(s.fs.Backup.ID).
 			Write()
-		return false
-	}
 
-	atomic.StoreUint64(&s.curIdx, 0)
-	newBatchLen := len(s.lastResp)
+		safeBuf := make([]byte, bytesRead)
+		copy(safeBuf, readBuf[:bytesRead])
 
-	syslog.L.Debug().
-		WithMessage("HasNext decoded batch").
-		WithField("entries", newBatchLen).
-		WithField("path", s.path).
-		WithJob(s.fs.Backup.ID).
-		Write()
+		err = cbor.Unmarshal(safeBuf, &s.lastResp)
+		if err != nil {
+			atomic.StoreInt32(&s.closed, 1)
+			syslog.L.Error(err).
+				WithMessage("HasNext: decode failed, closing dirstream").
+				WithField("path", s.path).
+				WithField("bytesRead", bytesRead).
+				WithJob(s.fs.Backup.ID).
+				Write()
+			return false
+		}
 
-	if newBatchLen == 0 {
-		atomic.StoreInt32(&s.closed, 1)
+		atomic.StoreUint64(&s.curIdx, 0)
+		curIdx = 0
+		newBatchLen := len(s.lastResp)
+
 		syslog.L.Debug().
-			WithMessage("HasNext: empty batch received, closing").
+			WithMessage("HasNext decoded batch").
+			WithField("entries", newBatchLen).
 			WithField("path", s.path).
 			WithJob(s.fs.Backup.ID).
 			Write()
-		return false
+
+		if newBatchLen == 0 {
+			atomic.StoreInt32(&s.closed, 1)
+			syslog.L.Debug().
+				WithMessage("HasNext: empty batch received, closing").
+				WithField("path", s.path).
+				WithJob(s.fs.Backup.ID).
+				Write()
+			return false
+		}
 	}
 
-	syslog.L.Debug().
-		WithMessage("HasNext: returning true with new batch").
-		WithField("path", s.path).
-		WithField("batchSize", newBatchLen).
-		WithField("curIdx", atomic.LoadUint64(&s.curIdx)).
-		WithJob(s.fs.Backup.ID).
-		Write()
+	if int(curIdx) < len(s.lastResp) {
+		s.nextEntry = &s.lastResp[curIdx]
+		atomic.AddUint64(&s.curIdx, 1)
 
-	return true
+		syslog.L.Debug().
+			WithMessage("HasNext cached next entry").
+			WithField("path", s.path).
+			WithField("name", s.nextEntry.Name).
+			WithField("curIdx", atomic.LoadUint64(&s.curIdx)).
+			WithJob(s.fs.Backup.ID).
+			Write()
+
+		return true
+	}
+
+	return false
 }
 
 func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
@@ -207,19 +219,16 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	s.lastRespMu.Lock()
 	defer s.lastRespMu.Unlock()
 
-	curIdxVal := atomic.LoadUint64(&s.curIdx)
-
-	if int(curIdxVal) >= len(s.lastResp) {
-		syslog.L.Error(fmt.Errorf("internal state error: index out of bounds in Next")).
+	if s.nextEntry == nil {
+		syslog.L.Error(fmt.Errorf("internal state error: Next called without cached entry")).
 			WithField("path", s.path).
-			WithField("curIdx", curIdxVal).
-			WithField("lastRespLen", len(s.lastResp)).
 			WithJob(s.fs.Backup.ID).
 			Write()
 		return fuse.DirEntry{}, syscall.EBADF
 	}
 
-	curr := s.lastResp[curIdxVal]
+	curr := *s.nextEntry
+	s.nextEntry = nil
 
 	syslog.L.Debug().
 		WithMessage("Next returning entry").
@@ -228,8 +237,6 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		WithField("size", curr.Size).
 		WithField("mode", curr.Mode).
 		WithField("isDir", curr.IsDir).
-		WithField("curIdx", curIdxVal).
-		WithField("lastRespLen", len(s.lastResp)).
 		WithField("totalReturned", atomic.LoadUint64(&s.totalReturned)).
 		WithJob(s.fs.Backup.ID).
 		Write()
@@ -323,13 +330,11 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		}
 	}
 
-	atomic.AddUint64(&s.curIdx, 1)
 	atomic.AddUint64(&s.totalReturned, 1)
 
 	syslog.L.Debug().
-		WithMessage("Next advanced indices").
+		WithMessage("Next completed").
 		WithField("path", s.path).
-		WithField("newCurIdx", atomic.LoadUint64(&s.curIdx)).
 		WithField("newTotalReturned", atomic.LoadUint64(&s.totalReturned)).
 		WithJob(s.fs.Backup.ID).
 		Write()
