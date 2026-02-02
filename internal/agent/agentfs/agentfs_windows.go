@@ -248,9 +248,9 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 			syslog.L.Error(err).WithMessage("handleOpenFile: abs failed for dir").WithField("path", payload.Path).Write()
 			return arpc.Response{}, err
 		}
-		reader, err := NewDirReaderNT(dirPath)
+		reader, err := NewDirReader(dirPath)
 		if err != nil {
-			syslog.L.Error(err).WithMessage("handleOpenFile: NewDirReaderNT failed").WithField("path", dirPath).Write()
+			syslog.L.Error(err).WithMessage("handleOpenFile: NewDirReader failed").WithField("path", dirPath).Write()
 			return arpc.Response{}, err
 		}
 		fh.dirReader = reader
