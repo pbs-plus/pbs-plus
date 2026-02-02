@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,6 +101,13 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 		"file1.txt": 0644,
 		"file2.txt": 0644,
 		"subdir":    os.ModeDir | 0755,
+	}
+	if runtime.GOOS == "windows" {
+		expected = map[string]os.FileMode{
+			"file1.txt": 0666,
+			"file2.txt": 0666,
+			"subdir":    os.ModeDir | 0777,
+		}
 	}
 
 	verifyEntries(t, entries, expected)
