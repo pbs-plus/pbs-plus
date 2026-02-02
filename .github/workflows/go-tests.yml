@@ -11,7 +11,7 @@ jobs:
   go-tests:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, blacksmith-4vcpu-windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
