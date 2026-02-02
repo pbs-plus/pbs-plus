@@ -30,6 +30,7 @@ type DirStream struct {
 	lastResp      types.ReadDirEntries
 	curIdx        uint64
 	totalReturned uint64
+	nextEntry     *types.AgentFileInfo
 }
 
 type ARPCFile struct {
