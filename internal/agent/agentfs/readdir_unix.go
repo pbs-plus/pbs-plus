@@ -1,54 +1,38 @@
-//go:build unix
+//go:build !windows
 
 package agentfs
 
 import (
-	"bytes"
-	"errors"
-	"fmt"
+	"context"
+	"io"
 	"os"
-	"strconv"
-	"syscall"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/sys/unix"
 )
 
-type DirReaderUnix struct {
-	fd             int
-	buf            []byte
-	bufPos         int
-	bufEnd         int
-	noMoreFiles    bool
-	path           string
-	basep          uintptr
-	targetEncoded  int
-	encodeBuf      bytes.Buffer
-	idBuf          []byte
-	FetchFullAttrs bool
-}
+func NewDirReader(handle *os.File, path string) (*DirReader, error) {
+	syslog.L.Debug().WithMessage("NewDirReader: initializing directory reader").
+		WithField("path", path).Write()
 
-func NewDirReaderUnix(fd int, path string) (*DirReaderUnix, error) {
-	return &DirReaderUnix{
-		fd:             fd,
-		buf:            bufferPool.Get().([]byte),
-		path:           path,
-		basep:          0,
-		targetEncoded:  defaultTargetEncodedLen,
-		idBuf:          make([]byte, 0, 16),
-		FetchFullAttrs: true,
+	return &DirReader{
+		file:          handle,
+		path:          path,
+		targetEncoded: defaultTargetEncodedLen,
 	}, nil
 }
 
-func (r *DirReaderUnix) writeIDString(dst *string, id uint32) {
-	r.idBuf = strconv.AppendUint(r.idBuf[:0], uint64(id), 10)
-	*dst = string(r.idBuf)
-}
-
-func (r *DirReaderUnix) NextBatch() ([]byte, error) {
+func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, error) {
 	if r.noMoreFiles {
+		syslog.L.Debug().WithMessage("DirReader.NextBatch: no more files").
+			WithField("path", r.path).Write()
 		return nil, os.ErrProcessDone
+	}
+
+	if blockSize == 0 {
+		blockSize = 4096
 	}
 
 	r.encodeBuf.Reset()
@@ -57,86 +41,111 @@ func (r *DirReaderUnix) NextBatch() ([]byte, error) {
 		return nil, err
 	}
 
-	target := r.targetEncoded
-	if target <= 0 {
-		target = defaultTargetEncodedLen
-	}
-
 	hasEntries := false
-	batchFull := false
+	entryCount := 0
 
-	for !batchFull {
-		if r.bufPos >= r.bufEnd {
-			n, err := r.getdents()
-			if err != nil || n == 0 {
-				r.noMoreFiles = true
-				break // Exit outer loop
-			}
-			r.bufPos, r.bufEnd = 0, n
+	for r.encodeBuf.Len() < r.targetEncoded {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 
-		for r.bufPos < r.bufEnd {
-			nameBytes, typ, reclen, ok, perr := r.parseDirent()
-			if perr != nil {
-				return nil, perr
-			}
-			if !ok || reclen == 0 {
-				r.bufPos = r.bufEnd
-				break // Exit inner loop to fetch more dents
-			}
-			r.bufPos += reclen
+		entries, err := r.file.Readdir(defaultBatchSize)
+		if err == io.EOF {
+			r.noMoreFiles = true
+			break
+		}
+		if err != nil {
+			syslog.L.Error(err).WithMessage("DirReader.NextBatch: read failed").
+				WithField("path", r.path).Write()
+			return nil, err
+		}
 
-			if isDot(nameBytes) || isDotDot(nameBytes) || typ == unix.DT_LNK || typ == unix.DT_UNKNOWN {
-				continue
+		if len(entries) == 0 {
+			r.noMoreFiles = true
+			break
+		}
+
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
 
-			info := types.AgentFileInfo{
-				Name: bytesToString(nameBytes),
-			}
-
-			if r.FetchFullAttrs {
-				if err := r.fillAttrs(&info); err != nil {
-					if err == unix.ENOENT || err == unix.EACCES {
-						continue
-					}
-					return nil, err
-				}
-			}
+			info := buildFileInfo(entry, blockSize)
 
 			if err := enc.Encode(info); err != nil {
+				syslog.L.Error(err).WithMessage("DirReader.NextBatch: encode failed").
+					WithField("path", r.path).Write()
 				return nil, err
 			}
 			hasEntries = true
-
-			if r.encodeBuf.Len() >= target {
-				batchFull = true
-				break
-			}
+			entryCount++
 		}
-	}
-
-	if !hasEntries && r.noMoreFiles {
-		return nil, os.ErrProcessDone
 	}
 
 	if err := enc.EndIndefinite(); err != nil {
 		return nil, err
 	}
 
-	return r.encodeBuf.Bytes(), nil
+	if !hasEntries && r.noMoreFiles {
+		return nil, os.ErrProcessDone
+	}
+
+	encodedResult := make([]byte, r.encodeBuf.Len())
+	copy(encodedResult, r.encodeBuf.Bytes())
+
+	syslog.L.Debug().WithMessage("DirReader.NextBatch: batch encoded").
+		WithField("path", r.path).
+		WithField("bytes", len(encodedResult)).
+		WithField("entries_count", entryCount).
+		Write()
+
+	return encodedResult, nil
 }
 
-func (r *DirReaderUnix) Close() error {
-	var firstErr error
-	if r.fd != -1 {
-		if err := unix.Close(r.fd); err != nil && !errors.Is(err, syscall.EBADF) {
-			firstErr = fmt.Errorf("failed to close directory '%s': %w", r.path, err)
+func (r *DirReader) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.closed {
+		return nil
+	}
+
+	syslog.L.Debug().WithMessage("DirReader.Close: closing file").
+		WithField("path", r.path).Write()
+
+	r.closed = true
+	return r.file.Close()
+}
+
+func buildFileInfo(entry os.FileInfo, blockSize uint64) types.AgentFileInfo {
+	info := types.AgentFileInfo{
+		Name:    entry.Name(),
+		Mode:    uint32(entry.Mode()),
+		IsDir:   entry.IsDir(),
+		Size:    entry.Size(),
+		ModTime: entry.ModTime().UnixNano(),
+	}
+
+	if stat, ok := entry.Sys().(*unix.Stat_t); ok {
+		info.CreationTime = stat.Ctim.Sec
+		info.LastAccessTime = stat.Atim.Sec
+		info.LastWriteTime = stat.Mtim.Sec
+
+		if !info.IsDir && info.Size > 0 {
+			info.Blocks = uint64(stat.Blocks)
 		}
-		r.fd = -1
+	} else {
+		modTime := entry.ModTime().Unix()
+		info.CreationTime = modTime
+		info.LastAccessTime = modTime
+		info.LastWriteTime = modTime
+
+		if !info.IsDir && info.Size > 0 {
+			info.Blocks = uint64((info.Size + int64(blockSize) - 1) / int64(blockSize))
+		}
 	}
-	if r.buf != nil {
-		bufferPool.Put(r.buf)
-		r.buf = nil
-	}
-	return firstErr
+
+	info.FileAttributes = make(map[string]bool)
+
+	return info
 }

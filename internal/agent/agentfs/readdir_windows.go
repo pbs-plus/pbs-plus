@@ -6,8 +6,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -15,24 +13,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func NewDirReader(path string) (*DirReader, error) {
+func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 	syslog.L.Debug().WithMessage("NewDirReader: initializing directory reader").
 		WithField("path", path).Write()
 
-	extPath := toExtendedLengthPath(path)
-
-	f, err := os.Open(extPath)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("NewDirReader: failed to open directory").
-			WithField("path", path).Write()
-		return nil, err
-	}
-
-	syslog.L.Debug().WithMessage("NewDirReader: directory opened").
-		WithField("path", path).Write()
-
 	return &DirReader{
-		file:          f,
+		file:          handle,
 		path:          path,
 		targetEncoded: defaultTargetEncodedLen,
 	}, nil
@@ -63,7 +49,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			return nil, err
 		}
 
-		entries, err := r.file.Readdir(128)
+		entries, err := r.file.Readdir(defaultBatchSize)
 		if err == io.EOF {
 			r.noMoreFiles = true
 			break
@@ -151,25 +137,4 @@ func (r *DirReader) Close() error {
 
 	r.closed = true
 	return r.file.Close()
-}
-
-func toExtendedLengthPath(path string) string {
-	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\??\`) {
-		return path
-	}
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		absPath = path
-	}
-
-	if len(absPath) >= 2 && absPath[1] == ':' {
-		return `\\?\` + absPath
-	}
-
-	if strings.HasPrefix(absPath, `\\`) {
-		return `\\?\UNC\` + absPath[2:]
-	}
-
-	return `\\?\` + absPath
 }
