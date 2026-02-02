@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   check-tests-status:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       tests_passed: ${{ steps.check.outputs.passed }}
     steps:
@@ -50,7 +50,7 @@ jobs:
   goreleaser:
     needs: [check-tests-status, run-tests-if-needed]
     if: always() && (needs.check-tests-status.outputs.tests_passed == 'true' || needs.run-tests-if-needed.result == 'success')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -133,7 +133,7 @@ jobs:
 
   build-msi:
     needs: goreleaser
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -283,7 +283,7 @@ jobs:
   docker:
     needs: [check-tests-status, run-tests-if-needed]
     if: always() && (needs.check-tests-status.outputs.tests_passed == 'true' || needs.run-tests-if-needed.result == 'success')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       packages: write
@@ -296,8 +296,8 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -318,7 +318,7 @@ jobs:
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-rc') }}
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: useblacksmith/build-push-action@v2
         with:
           context: .
           file: ./Dockerfile
