@@ -52,6 +52,10 @@ func TestReadDirBulk(t *testing.T) {
 }
 
 func newTestDirReader(path string) (*DirReader, error) {
+	if runtime.GOOS == "windows" {
+		path = toExtendedLengthPath(path)
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("newTestDirReader: failed to open directory").
