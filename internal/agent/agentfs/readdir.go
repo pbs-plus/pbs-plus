@@ -40,6 +40,9 @@ func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 }
 
 func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if r.noMoreFiles {
 		syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: no more files (cached)").
 			WithField("path", r.path).Write()
@@ -125,6 +128,7 @@ func (r *DirReader) Close() error {
 	syslog.L.Debug().WithMessage("DirReader.Close: closing file").
 		WithField("path", r.path).Write()
 
+	r.encodeBuf.Reset()
 	r.closed = true
 	return r.file.Close()
 }
