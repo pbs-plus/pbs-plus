@@ -88,6 +88,10 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 				return nil, err
 			}
 			info := buildFileInfo(entry, blockSize)
+			if info.Name == "" {
+				continue
+			}
+
 			if err := enc.Encode(info); err != nil {
 				syslog.L.Error(err).WithMessage("DirReader.NextBatch: encode failed").
 					WithField("path", r.path).Write()
