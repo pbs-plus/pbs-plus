@@ -49,7 +49,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	defer r.mu.Unlock()
 
 	if r.noMoreFiles {
-		syslog.L.Debug().WithMessage("DirReaderNT.NextBatch: no more files (cached)").
+		syslog.L.Debug().WithMessage("DirReader.NextBatch: no more files (cached)").
 			WithField("path", r.path).Write()
 		return nil, os.ErrProcessDone
 	}
