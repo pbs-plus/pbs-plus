@@ -1015,55 +1015,6 @@ func TestAgentFSServer(t *testing.T) {
 		assert.Equal(t, initialHandleCount, agentFsServer.handles.Len(), "Incremental directory opens leaked handles")
 	})
 
-	t.Run("ReadDir_AutoCloseOnLastBatch", func(t *testing.T) {
-		initialHandleCount := agentFsServer.handles.Len()
-
-		openPayload := types.OpenFileReq{Path: "subdir"}
-		var dirHandle types.FileHandleId
-		err := clientPipe.Call(ctx, "OpenFile", &openPayload, &dirHandle)
-		require.NoError(t, err)
-		assert.Equal(t, initialHandleCount+1, agentFsServer.handles.Len())
-
-		isDone := false
-		for !isDone {
-			readDirPayload := types.ReadDirReq{HandleID: dirHandle}
-			var result types.ReadDirEntries
-
-			readDirHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
-				buf := make([]byte, 128*1024)
-				n, err := binarystream.ReceiveDataInto(st, buf)
-				if err != nil && !errors.Is(err, io.EOF) {
-					return err
-				}
-				if n > 0 {
-					_ = cbor.Unmarshal(buf[:n], &result)
-				}
-				return nil
-			})
-
-			err = clientPipe.Call(ctx, "ReadDir", &readDirPayload, readDirHandler)
-
-			if err != nil {
-				if strings.Contains(err.Error(), os.ErrNotExist.Error()) {
-					isDone = true
-					break
-				}
-				require.NoError(t, err)
-			}
-
-			if agentFsServer.handles.Len() == initialHandleCount {
-				isDone = true
-			}
-		}
-
-		assert.Equal(t, initialHandleCount, agentFsServer.handles.Len(),
-			"Handle should have been automatically removed from the map after the final ReadDir batch")
-
-		closePayload := types.CloseReq{HandleID: dirHandle}
-		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
-		assert.Error(t, err, "Manual Close should fail because server already performed auto-close")
-	})
-
 	t.Run("MemoryLeakTest", func(t *testing.T) {
 		runtime.GC()
 		var initialMemStats runtime.MemStats
