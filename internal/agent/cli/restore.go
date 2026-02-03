@@ -238,6 +238,8 @@ func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 	cmd := exec.Command(execCmd, args...)
 	setProcAttributes(cmd)
 
+	cmd.Env = os.Environ()
+
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("ExecRestore: StdoutPipe failed").Write()

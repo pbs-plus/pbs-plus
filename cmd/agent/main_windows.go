@@ -21,7 +21,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"golang.org/x/sys/windows"
 
-	"net/http"
 	_ "net/http/pprof"
 )
 
@@ -92,11 +91,6 @@ func (p *pbsService) run() {
 			}
 		}
 	})
-	if os.Getenv("PBS_PLUS_PPROF") == "true" {
-		go func() {
-			log.Println(http.ListenAndServe(":6060", nil))
-		}()
-	}
 
 	err := lifecycle.ConnectARPC(p.ctx, p.cancel, Version)
 	if err != nil {
