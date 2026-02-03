@@ -86,6 +86,4 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-replace github.com/hanwen/go-fuse/v2 v2.9.0 => github.com/pbs-plus/go-fuse/v2 v2.1.2
-
 tool golang.org/x/tools/cmd/deadcode

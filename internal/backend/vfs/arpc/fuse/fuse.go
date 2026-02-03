@@ -82,21 +82,12 @@ var _ = (fs.NodeReaddirer)((*Node)(nil))
 var _ = (fs.NodeOpener)((*Node)(nil))
 var _ = (fs.NodeStatfser)((*Node)(nil))
 var _ = (fs.NodeAccesser)((*Node)(nil))
-var _ = (fs.NodeOpendirer)((*Node)(nil))
 var _ = (fs.NodeReleaser)((*Node)(nil))
 var _ = (fs.NodeStatxer)((*Node)(nil))
 
 func (n *Node) Access(ctx context.Context, mask uint32) syscall.Errno {
 	if mask&2 != 0 { // 2 = write bit (traditional W_OK)
 		return syscall.EROFS
-	}
-
-	return 0
-}
-
-func (n *Node) Opendir(ctx context.Context) syscall.Errno {
-	if !n.IsDir() {
-		return syscall.ENOTDIR
 	}
 
 	return 0
