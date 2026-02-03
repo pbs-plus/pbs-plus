@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   check-tests-status:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       tests_passed: ${{ steps.check.outputs.passed }}
     steps:
@@ -51,7 +51,7 @@ jobs:
   goreleaser:
     needs: [check-tests-status, run-tests-if-needed]
     if: always() && (needs.check-tests-status.outputs.tests_passed == 'true' || needs.run-tests-if-needed.result == 'success')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -134,7 +134,7 @@ jobs:
 
   build-msi:
     needs: goreleaser
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -284,7 +284,7 @@ jobs:
   docker:
     needs: [check-tests-status, run-tests-if-needed]
     if: always() && (needs.check-tests-status.outputs.tests_passed == 'true' || needs.run-tests-if-needed.result == 'success')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write

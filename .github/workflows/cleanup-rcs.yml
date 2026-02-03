@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   delete-rc-tags:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout (fetch all tags)
         uses: actions/checkout@v4
