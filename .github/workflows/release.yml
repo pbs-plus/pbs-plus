@@ -57,9 +57,7 @@ jobs:
     needs: check-tests-status
     if: needs.check-tests-status.outputs.tests_passed == 'false'
     name: Run test workflows
-    uses: ./.github/workflows/tests.yml
-    with:
-      ref: ${{ inputs.tag_name || github.ref_name }}
+    uses: ./.github/workflows/tests.yml@${{ inputs.tag_name || github.ref_name }}
 
   goreleaser:
     needs: [check-tests-status, run-tests-if-needed]
