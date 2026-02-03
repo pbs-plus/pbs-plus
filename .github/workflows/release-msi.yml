@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build-msi:
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
