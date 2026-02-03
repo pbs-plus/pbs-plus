@@ -82,21 +82,34 @@ func (fh *FileHandle) waitForOps(timeout time.Duration) bool {
 	}
 }
 
-func (s *AgentFSServer) absUNC(filename string) (string, error) {
+func (s *AgentFSServer) abs(filename string) string {
 	windowsDir := filepath.FromSlash(filename)
 	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
 		unc := `\\?\` + s.snapshot.Path
-		syslog.L.Debug().WithMessage("absUNC: returning UNC snapshot path for root").WithField("path", unc).Write()
-		return unc, nil
+		syslog.L.Debug().WithMessage("abs: returning UNC snapshot path for root").WithField("path", unc).Write()
+		return unc
 	}
+
 	path := pathjoin.Join(s.snapshot.Path, windowsDir)
-	var b strings.Builder
-	b.Grow(4 + len(path))
-	b.WriteString(`\\?\`)
-	b.WriteString(path)
-	unc := b.String()
-	syslog.L.Debug().WithMessage("absUNC: joined UNC path").WithField("path", unc).Write()
-	return unc, nil
+
+	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\??\`) {
+		return path
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+
+	if len(absPath) >= 2 && absPath[1] == ':' {
+		return `\\?\` + absPath
+	}
+
+	if strings.HasPrefix(absPath, `\\`) {
+		return `\\?\UNC\` + absPath[2:]
+	}
+
+	return `\\?\` + absPath
 }
 
 func (s *AgentFSServer) closeFileHandles() {
@@ -181,11 +194,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		}, nil
 	}
 
-	path, err := s.absUNC(payload.Path)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("handleOpenFile: absUNC failed").WithField("path", payload.Path).Write()
-		return arpc.Response{}, err
-	}
+	path := s.abs(payload.Path)
 
 	pathUTF16, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -270,11 +279,7 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	fullPath, err := s.absUNC(payload.Path)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("handleAttr: absUNC failed").WithField("path", payload.Path).Write()
-		return arpc.Response{}, err
-	}
+	fullPath := s.abs(payload.Path)
 
 	h, err := openForAttrs(fullPath)
 	if err != nil {
@@ -341,11 +346,7 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	fullPath, err := s.absUNC(payload.Path)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("handleXattr: absUNC failed").WithField("path", payload.Path).Write()
-		return arpc.Response{}, err
-	}
+	fullPath := s.abs(payload.Path)
 
 	h, err := openForAttrs(fullPath)
 	if err != nil {
