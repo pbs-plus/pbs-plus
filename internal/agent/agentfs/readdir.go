@@ -8,12 +8,12 @@ import (
 	"sync"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const (
-	defaultBatchSize        = 128
-	defaultTargetEncodedLen = 1024 * 1024
+	defaultBatchSize = 1024
 )
 
 type DirReader struct {
@@ -31,16 +31,13 @@ func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 		WithField("path", path).Write()
 
 	return &DirReader{
-		file:          handle,
-		path:          path,
-		targetEncoded: defaultTargetEncodedLen,
+		file: handle,
+		path: path,
 	}, nil
 }
 
 func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, error) {
 	if r.noMoreFiles {
-		syslog.L.Debug().WithMessage("DirReader.NextBatch: no more files").
-			WithField("path", r.path).Write()
 		return nil, os.ErrProcessDone
 	}
 
@@ -48,16 +45,9 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 		blockSize = 4096
 	}
 
-	r.encodeBuf.Reset()
-	enc := cbor.NewEncoder(&r.encodeBuf)
-	if err := enc.StartIndefiniteArray(); err != nil {
-		return nil, err
-	}
+	var batch []types.AgentFileInfo
 
-	hasEntries := false
-	entryCount := 0
-
-	for r.encodeBuf.Len() < r.targetEncoded {
+	for len(batch) < defaultBatchSize {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -82,34 +72,24 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-
 			info := buildFileInfo(entry, blockSize)
-
-			if err := enc.Encode(info); err != nil {
-				syslog.L.Error(err).WithMessage("DirReader.NextBatch: encode failed").
-					WithField("path", r.path).Write()
-				return nil, err
-			}
-			hasEntries = true
-			entryCount++
+			batch = append(batch, info)
 		}
 	}
 
-	if err := enc.EndIndefinite(); err != nil {
-		return nil, err
-	}
-
-	if !hasEntries && r.noMoreFiles {
+	if len(batch) == 0 && r.noMoreFiles {
 		return nil, os.ErrProcessDone
 	}
 
-	encodedResult := make([]byte, r.encodeBuf.Len())
-	copy(encodedResult, r.encodeBuf.Bytes())
+	encodedResult, err := cbor.Marshal(batch)
+	if err != nil {
+		return nil, err
+	}
 
 	syslog.L.Debug().WithMessage("DirReader.NextBatch: batch encoded").
 		WithField("path", r.path).
 		WithField("bytes", len(encodedResult)).
-		WithField("entries_count", entryCount).
+		WithField("entries_count", len(batch)).
 		Write()
 
 	return encodedResult, nil
