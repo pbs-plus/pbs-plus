@@ -360,10 +360,6 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 		if err := binarystream.SendDataFromReader(byteReader, len(encodedBatch), stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader").WithField("handle_id", payload.HandleID).Write()
 		}
-
-		if isDone {
-			s.handleDirClose(uint64(payload.HandleID), fh)
-		}
 	}
 	return arpc.Response{Status: 213, RawStream: streamCallback}, nil
 }
@@ -493,27 +489,6 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: respBytes}, nil
 }
 
-func (s *AgentFSServer) handleDirClose(id uint64, fh *FileHandle) {
-	if !fh.beginClose() {
-		return
-	}
-
-	fh.Lock()
-	if fh.file != nil {
-		_ = fh.file.Close()
-		fh.file = nil
-	}
-	if fh.dirReader != nil {
-		_ = fh.dirReader.Close()
-		fh.dirReader = nil
-	}
-	fh.Unlock()
-
-	s.handles.Del(id)
-	syslog.L.Debug().WithMessage("autoCloseHandle: handle closed and removed").
-		WithField("handle_id", id).Write()
-}
-
 func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleClose: decoding request").Write()
 	var payload types.CloseReq
@@ -541,13 +516,13 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	handle.Lock()
 	defer handle.Unlock()
 
-	if handle.file != nil {
-		_ = handle.file.Close()
-		handle.file = nil
-	}
 	if handle.dirReader != nil {
 		_ = handle.dirReader.Close()
 		handle.dirReader = nil
+	}
+	if handle.file != nil {
+		_ = handle.file.Close()
+		handle.file = nil
 	}
 
 	s.handles.Del(uint64(payload.HandleID))
