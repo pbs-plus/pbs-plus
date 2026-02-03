@@ -1,4 +1,4 @@
-//go:build unix && !linux
+//go:build unix
 
 package agentfs
 
@@ -26,7 +26,7 @@ import (
 type FileHandle struct {
 	sync.Mutex
 	file      *os.File
-	dirReader *DirReaderUnix
+	dirReader *DirReader
 	fileSize  int64
 	isDir     bool
 	curOffset int64
@@ -201,17 +201,16 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	fh := &FileHandle{
 		fileSize: int64(st.Size),
 		isDir:    isDir,
+		file:     os.NewFile(uintptr(fd), path),
 	}
 
 	if isDir {
-		reader, err := NewDirReaderUnix(fd, path)
+		reader, err := NewDirReader(fh.file, path)
 		if err != nil {
-			_ = unix.Close(fd)
+			_ = fh.file.Close()
 			return arpc.Response{}, err
 		}
 		fh.dirReader = reader
-	} else {
-		fh.file = os.NewFile(uintptr(fd), path)
 	}
 
 	s.handles.Set(handleId, fh)
@@ -308,7 +307,7 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	info := types.AgentFileInfo{
-		CreationTime:   getBirthTime(&st),
+		CreationTime:   time.Unix(int64(st.Ctim.Sec), int64(st.Ctim.Nsec)).Unix(),
 		LastAccessTime: time.Unix(int64(st.Atim.Sec), int64(st.Atim.Nsec)).Unix(),
 		LastWriteTime:  time.Unix(int64(st.Mtim.Sec), int64(st.Mtim.Nsec)).Unix(),
 		Owner:          owner,
@@ -345,7 +344,7 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	fh.Lock()
 	defer fh.Unlock()
 
-	encodedBatch, err := fh.dirReader.NextBatch()
+	encodedBatch, err := fh.dirReader.NextBatch(req.Context, s.statFs.Bsize)
 	isDone := errors.Is(err, os.ErrProcessDone)
 	if err != nil && !isDone {
 		fh.releaseOp()
@@ -360,10 +359,6 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	streamCallback := func(stream *smux.Stream) {
 		if err := binarystream.SendDataFromReader(byteReader, len(encodedBatch), stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader").WithField("handle_id", payload.HandleID).Write()
-		}
-
-		if isDone {
-			s.handleDirClose(uint64(payload.HandleID), fh)
 		}
 	}
 	return arpc.Response{Status: 213, RawStream: streamCallback}, nil
@@ -494,27 +489,6 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: respBytes}, nil
 }
 
-func (s *AgentFSServer) handleDirClose(id uint64, fh *FileHandle) {
-	if !fh.beginClose() {
-		return
-	}
-
-	fh.Lock()
-	if fh.file != nil {
-		_ = fh.file.Close()
-		fh.file = nil
-	}
-	if fh.dirReader != nil {
-		_ = fh.dirReader.Close()
-		fh.dirReader = nil
-	}
-	fh.Unlock()
-
-	s.handles.Del(id)
-	syslog.L.Debug().WithMessage("autoCloseHandle: handle closed and removed").
-		WithField("handle_id", id).Write()
-}
-
 func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleClose: decoding request").Write()
 	var payload types.CloseReq
@@ -542,13 +516,13 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	handle.Lock()
 	defer handle.Unlock()
 
-	if handle.file != nil {
-		_ = handle.file.Close()
-		handle.file = nil
-	}
 	if handle.dirReader != nil {
 		_ = handle.dirReader.Close()
 		handle.dirReader = nil
+	}
+	if handle.file != nil {
+		_ = handle.file.Close()
+		handle.file = nil
 	}
 
 	s.handles.Del(uint64(payload.HandleID))

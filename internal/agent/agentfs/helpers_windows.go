@@ -4,6 +4,9 @@ package agentfs
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -124,14 +127,34 @@ func filetimeToUnix(ft windows.Filetime) int64 {
 	return (t - winToUnixEpochDiff) / hundredNano
 }
 
-func convertToNTPath(path string) string {
-	if len(path) >= 4 && path[:4] == "\\??\\" {
+func filetimeSyscallToUnix(ft syscall.Filetime) int64 {
+	const (
+		winToUnixEpochDiff = 116444736000000000
+		hundredNano        = 10000000
+	)
+	t := (int64(ft.HighDateTime) << 32) | int64(ft.LowDateTime)
+	return (t - winToUnixEpochDiff) / hundredNano
+}
+
+func toExtendedLengthPath(path string) string {
+	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\??\`) {
 		return path
 	}
-	if len(path) >= 2 && path[1] == ':' {
-		return "\\??\\" + path
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
 	}
-	return "\\??\\" + path
+
+	if len(absPath) >= 2 && absPath[1] == ':' {
+		return `\\?\` + absPath
+	}
+
+	if strings.HasPrefix(absPath, `\\`) {
+		return `\\?\UNC\` + absPath[2:]
+	}
+
+	return `\\?\` + absPath
 }
 
 func boolToInt(b bool) uint32 {
