@@ -20,10 +20,10 @@ func buildFileInfo(entry os.FileInfo, blockSize uint64) types.AgentFileInfo {
 
 	info := types.AgentFileInfo{
 		Name:           entry.Name(),
-		Mode:           uint32(entry.Mode()),
+		Mode:           windowsFileModeFromHandle(0, sys.FileAttributes),
 		IsDir:          entry.IsDir(),
 		Size:           fileSize,
-		ModTime:        entry.ModTime().UnixNano(),
+		ModTime:        unixNanoFromWinFiletime(sys.LastWriteTime),
 		CreationTime:   filetimeSyscallToUnix(sys.CreationTime),
 		LastAccessTime: filetimeSyscallToUnix(sys.LastAccessTime),
 		LastWriteTime:  filetimeSyscallToUnix(sys.LastWriteTime),
