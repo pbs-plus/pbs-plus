@@ -82,17 +82,6 @@ func (fh *FileHandle) waitForOps(timeout time.Duration) bool {
 	}
 }
 
-func (s *AgentFSServer) abs(filename string) (string, error) {
-	windowsDir := filepath.FromSlash(filename)
-	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
-		syslog.L.Debug().WithMessage("abs: returning snapshot path for root").Write()
-		return s.snapshot.Path, nil
-	}
-	path := pathjoin.Join(s.snapshot.Path, windowsDir)
-	syslog.L.Debug().WithMessage("abs: joined path").WithField("path", path).Write()
-	return path, nil
-}
-
 func (s *AgentFSServer) absUNC(filename string) (string, error) {
 	windowsDir := filepath.FromSlash(filename)
 	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
@@ -241,16 +230,9 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	fh.isDir = std.Directory != 0
 
 	if fh.isDir {
-		fh.handle.Close()
-
-		dirPath, err := s.abs(payload.Path)
+		reader, err := NewDirReader(fh.handle, path)
 		if err != nil {
-			syslog.L.Error(err).WithMessage("handleOpenFile: abs failed for dir").WithField("path", payload.Path).Write()
-			return arpc.Response{}, err
-		}
-		reader, err := NewDirReaderNT(dirPath)
-		if err != nil {
-			syslog.L.Error(err).WithMessage("handleOpenFile: NewDirReaderNT failed").WithField("path", dirPath).Write()
+			syslog.L.Error(err).WithMessage("handleOpenFile: NewDirReader failed").WithField("path", path).Write()
 			return arpc.Response{}, err
 		}
 		fh.dirReader = reader
@@ -461,10 +443,6 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 
 		if err := binarystream.SendDataFromReader(bytes.NewReader(encodedBatch), len(encodedBatch), stream); err != nil {
 			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader via binary stream").WithField("handle_id", payload.HandleID).Write()
-		}
-
-		if isDone {
-			s.handleDirClose(uint64(payload.HandleID), fh)
 		}
 	}
 
@@ -688,23 +666,6 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 	}
 	syslog.L.Debug().WithMessage("handleLseek: success").WithField("handle_id", payload.HandleID).WithField("new_offset", newOffset).Write()
 	return arpc.Response{Status: 200, Data: respBytes}, nil
-}
-
-func (s *AgentFSServer) handleDirClose(id uint64, fh *FileHandle) {
-	if !fh.beginClose() {
-		return
-	}
-
-	fh.mu.Lock()
-	if fh.dirReader != nil {
-		_ = fh.dirReader.Close()
-		fh.dirReader = nil
-	}
-	fh.mu.Unlock()
-
-	s.handles.Del(id)
-	syslog.L.Debug().WithMessage("handleDirClose: handle closed and removed").
-		WithField("handle_id", id).Write()
 }
 
 func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {

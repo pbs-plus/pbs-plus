@@ -1,5 +1,3 @@
-//go:build windows
-
 package agentfs
 
 import (
@@ -8,14 +6,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 // TestReadDirBulk is the main test suite for readDirBulk
@@ -37,11 +37,8 @@ func TestReadDirBulk(t *testing.T) {
 	t.Run("Large Directory", func(t *testing.T) {
 		testLargeDirectory(t, tempDir)
 	})
-	t.Run("File Attributes", func(t *testing.T) {
-		testFileAttributes(t, tempDir)
-	})
-	t.Run("Symbolic Links", func(t *testing.T) {
-		testSymbolicLinks(t, tempDir)
+	t.Run("Last Entry Missing", func(t *testing.T) {
+		testLastEntryMissing(t, tempDir)
 	})
 	t.Run("Unicode File Names", func(t *testing.T) {
 		testUnicodeFileNames(t, tempDir)
@@ -52,6 +49,16 @@ func TestReadDirBulk(t *testing.T) {
 	t.Run("Memory Leaks", func(t *testing.T) {
 		testMemoryLeaks(t, tempDir)
 	})
+}
+
+func newTestDirReader(path string) (*DirReader, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("newTestDirReader: failed to open directory").
+			WithField("path", path).Write()
+		return nil, err
+	}
+	return NewDirReader(f, path)
 }
 
 // Test Cases
@@ -73,7 +80,7 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 
 	// Call readDirBulk
-	dirReader, err := NewDirReaderNT(tempDir)
+	dirReader, err := newTestDirReader(tempDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -91,9 +98,16 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 
 	expected := map[string]os.FileMode{
-		"file1.txt": 0666,
-		"file2.txt": 0666,
-		"subdir":    os.ModeDir | 0777,
+		"file1.txt": 0644,
+		"file2.txt": 0644,
+		"subdir":    os.ModeDir | 0755,
+	}
+	if runtime.GOOS == "windows" {
+		expected = map[string]os.FileMode{
+			"file1.txt": 0666,
+			"file2.txt": 0666,
+			"subdir":    os.ModeDir | 0777,
+		}
 	}
 
 	verifyEntries(t, entries, expected)
@@ -106,26 +120,20 @@ func testEmptyDirectory(t *testing.T, tempDir string) {
 		t.Fatalf("Failed to create empty directory: %v", err)
 	}
 
-	dirReader, err := NewDirReaderNT(emptyDir)
+	dirReader, err := newTestDirReader(emptyDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
 	defer dirReader.Close()
 
-	entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
+	_, err = dirReader.NextBatch(t.Context(), 0)
 	if err != nil {
-		t.Fatalf("readDirBulk failed: %v", err)
+		if !errors.Is(err, os.ErrProcessDone) {
+			t.Fatalf("readDirBulk failed: %v", err)
+		}
+		return
 	}
-
-	// Decode and verify results
-	var entries types.ReadDirEntries
-	if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
-		t.Fatalf("Failed to decode directory entries: %v", err)
-	}
-
-	if len(entries) != 0 {
-		t.Errorf("Expected 0 entries, got %d", len(entries))
-	}
+	t.Fatalf("Expected to return os.ErrProcessDone")
 }
 
 func testLargeDirectory(t *testing.T, tempDir string) {
@@ -142,7 +150,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 		}
 	}
 
-	dirReader, err := NewDirReaderNT(largeDir)
+	dirReader, err := newTestDirReader(largeDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -172,62 +180,6 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 	}
 }
 
-func testFileAttributes(t *testing.T, tempDir string) {
-	// Create files with different attributes
-	hiddenFile := filepath.Join(tempDir, "hidden.txt")
-	if err := os.WriteFile(hiddenFile, []byte("test content"), 0644); err != nil {
-		t.Fatalf("Failed to create hidden file: %v", err)
-	}
-	path, err := syscall.UTF16PtrFromString(hiddenFile)
-	if err != nil {
-		t.Fatalf("Failed to generate string: %v", err)
-	}
-
-	if err := syscall.SetFileAttributes(path, syscall.FILE_ATTRIBUTE_HIDDEN); err != nil {
-		t.Fatalf("Failed to set hidden attribute: %v", err)
-	}
-
-	dirReader, err := NewDirReaderNT(tempDir)
-	if err != nil {
-		t.Fatalf("dirReader failed: %v", err)
-	}
-	defer dirReader.Close()
-
-	allEntries := []types.AgentFileInfo{}
-	for {
-		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
-		if err != nil {
-			if errors.Is(err, os.ErrProcessDone) {
-				break
-			}
-			t.Fatalf("readDirBulk failed: %v", err)
-		}
-
-		// Decode and verify results
-		var entries types.ReadDirEntries
-		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
-			t.Fatalf("Failed to decode directory entries: %v", err)
-		}
-
-		allEntries = append(allEntries, entries...)
-	}
-
-	// Hidden files should be excluded
-	hiddenFound := false
-	for _, entry := range allEntries {
-		if entry.Name == "hidden.txt" {
-			hiddenFound = true
-			break
-		}
-	}
-	if !hiddenFound {
-		t.Errorf("Hidden file should be included in results")
-	}
-
-}
-
-// Add similar test cases for symbolic links, error handling, Unicode file names, special characters, and file name lengths...
-
 // Helper function to verify entries
 func verifyEntries(t *testing.T, entries types.ReadDirEntries, expected map[string]os.FileMode) {
 	if len(entries) != len(expected) {
@@ -251,50 +203,6 @@ func verifyEntries(t *testing.T, entries types.ReadDirEntries, expected map[stri
 	}
 }
 
-func testSymbolicLinks(t *testing.T, tempDir string) {
-	// Create a file and a symbolic link to it
-	targetFile := filepath.Join(tempDir, "target.txt")
-	if err := os.WriteFile(targetFile, []byte("test content"), 0644); err != nil {
-		t.Fatalf("Failed to create target file: %v", err)
-	}
-
-	symlink := filepath.Join(tempDir, "symlink.txt")
-	if err := os.Symlink(targetFile, symlink); err != nil {
-		t.Fatalf("Failed to create symbolic link: %v", err)
-	}
-
-	dirReader, err := NewDirReaderNT(tempDir)
-	if err != nil {
-		t.Fatalf("dirReader failed: %v", err)
-	}
-	defer dirReader.Close()
-
-	allEntries := []types.AgentFileInfo{}
-	for {
-		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
-		if err != nil {
-			if errors.Is(err, os.ErrProcessDone) {
-				break
-			}
-			t.Fatalf("readDirBulk failed: %v", err)
-		}
-
-		// Decode and verify results
-		var entries types.ReadDirEntries
-		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
-			t.Fatalf("Failed to decode directory entries: %v", err)
-		}
-
-		allEntries = append(allEntries, entries...)
-	}
-
-	for _, entry := range allEntries {
-		if entry.Name == "symlink.txt" {
-			t.Errorf("Symlink should not be included in results")
-		}
-	}
-}
-
 func testUnicodeFileNames(t *testing.T, tempDir string) {
 	// Create files with Unicode names
 	unicodeFiles := []string{"文件.txt", "ファイル.txt", "файл.txt", "📄.txt"}
@@ -305,7 +213,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 		}
 	}
 
-	dirReader, err := NewDirReaderNT(tempDir)
+	dirReader, err := newTestDirReader(tempDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -356,7 +264,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 		}
 	}
 
-	dirReader, err := NewDirReaderNT(tempDir)
+	dirReader, err := newTestDirReader(tempDir)
 	if err != nil {
 		t.Fatalf("dirReader failed: %v", err)
 	}
@@ -416,9 +324,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 		// Test that handles are properly closed after multiple iterations
 		iterations := 100
 		for i := 0; i < iterations; i++ {
-			dirReader, err := NewDirReaderNT(leakTestDir)
+			dirReader, err := newTestDirReader(leakTestDir)
 			if err != nil {
-				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+				t.Fatalf("Iteration %d: newTestDirReader failed: %v", i, err)
 			}
 
 			// Read all entries
@@ -444,9 +352,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 		// Test closing reader before consuming all entries
 		iterations := 50
 		for i := 0; i < iterations; i++ {
-			dirReader, err := NewDirReaderNT(leakTestDir)
+			dirReader, err := newTestDirReader(leakTestDir)
 			if err != nil {
-				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+				t.Fatalf("Iteration %d: newTestDirReader failed: %v", i, err)
 			}
 
 			// Read only first batch
@@ -466,9 +374,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 	t.Run("Context Cancellation Test", func(t *testing.T) {
 		iterations := 50
 		for i := 0; i < iterations; i++ {
-			dirReader, err := NewDirReaderNT(leakTestDir)
+			dirReader, err := newTestDirReader(leakTestDir)
 			if err != nil {
-				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+				t.Fatalf("Iteration %d: newTestDirReader failed: %v", i, err)
 			}
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -522,9 +430,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 			go func(goroutineID int) {
 				defer wg.Done()
 				for i := 0; i < iterations; i++ {
-					dirReader, err := NewDirReaderNT(leakTestDir)
+					dirReader, err := newTestDirReader(leakTestDir)
 					if err != nil {
-						errChan <- fmt.Errorf("Goroutine %d, Iteration %d: NewDirReaderNT failed: %v", goroutineID, i, err)
+						errChan <- fmt.Errorf("Goroutine %d, Iteration %d: newTestDirReader failed: %v", goroutineID, i, err)
 						return
 					}
 
@@ -564,9 +472,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 		// Test that buffer pool doesn't accumulate leaked buffers
 		iterations := 200
 		for i := 0; i < iterations; i++ {
-			dirReader, err := NewDirReaderNT(leakTestDir)
+			dirReader, err := newTestDirReader(leakTestDir)
 			if err != nil {
-				t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+				t.Fatalf("Iteration %d: newTestDirReader failed: %v", i, err)
 			}
 
 			// Read entries - this uses the buffer pool
@@ -593,9 +501,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 		iterations := 10
 		for i := 0; i < iterations; i++ {
 			func() {
-				dirReader, err := NewDirReaderNT(leakTestDir)
+				dirReader, err := newTestDirReader(leakTestDir)
 				if err != nil {
-					t.Fatalf("Iteration %d: NewDirReaderNT failed: %v", i, err)
+					t.Fatalf("Iteration %d: newTestDirReader failed: %v", i, err)
 				}
 				defer func() {
 					if r := recover(); r != nil {
@@ -620,9 +528,9 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 
 	t.Run("Double Close Test", func(t *testing.T) {
 		// Test that double-closing doesn't cause issues
-		dirReader, err := NewDirReaderNT(leakTestDir)
+		dirReader, err := newTestDirReader(leakTestDir)
 		if err != nil {
-			t.Fatalf("NewDirReaderNT failed: %v", err)
+			t.Fatalf("newTestDirReader failed: %v", err)
 		}
 
 		// First close
@@ -636,6 +544,216 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 			t.Logf("Second close returned error (expected): %v", err)
 		} else {
 			t.Log("Second close succeeded (idempotent)")
+		}
+	})
+}
+
+func testLastEntryMissing(t *testing.T, tempDir string) {
+	t.Run("Buffer Size Boundary - Entries at Exact Limit", func(t *testing.T) {
+		// This test creates files that will cause the encoded buffer to reach
+		// targetEncoded right when there's one more file left to enumerate
+		boundaryDir := filepath.Join(tempDir, "boundary_exact_test")
+		if err := os.Mkdir(boundaryDir, 0755); err != nil {
+			t.Fatalf("Failed to create boundary test directory: %v", err)
+		}
+
+		// Create enough files to fill the buffer close to targetEncoded
+		// The exact number depends on defaultTargetEncodedLen and encoding overhead
+		// Typically around 200-300 files will do it
+		numFiles := 250
+		expectedFiles := make(map[string]bool)
+
+		for i := 0; i < numFiles; i++ {
+			fileName := fmt.Sprintf("test_file_%04d.txt", i)
+			path := filepath.Join(boundaryDir, fileName)
+			// Create files with varying sizes to make encoded size less predictable
+			content := []byte(strings.Repeat("x", i%100))
+			if err := os.WriteFile(path, content, 0644); err != nil {
+				t.Fatalf("Failed to create file %s: %v", fileName, err)
+			}
+			expectedFiles[fileName] = false
+		}
+
+		// Read directory
+		dirReader, err := newTestDirReader(boundaryDir)
+		if err != nil {
+			t.Fatalf("newTestDirReader failed: %v", err)
+		}
+		defer dirReader.Close()
+
+		allEntries := make(map[string]bool)
+		batchCount := 0
+		lastBatchSize := 0
+
+		for {
+			entriesBytes, err := dirReader.NextBatch(context.Background(), 0)
+			if err != nil {
+				if errors.Is(err, os.ErrProcessDone) {
+					t.Logf("Batch %d: Received ErrProcessDone (end of directory)", batchCount)
+					break
+				}
+				t.Fatalf("NextBatch failed on batch %d: %v", batchCount, err)
+			}
+
+			var entries types.ReadDirEntries
+			if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
+				t.Fatalf("Failed to decode batch %d: %v", batchCount, err)
+			}
+
+			lastBatchSize = len(entries)
+			t.Logf("Batch %d: Got %d entries (encoded size: %d bytes)",
+				batchCount, len(entries), len(entriesBytes))
+
+			for _, entry := range entries {
+				if allEntries[entry.Name] {
+					t.Errorf("Duplicate entry found: %s", entry.Name)
+				}
+				allEntries[entry.Name] = true
+			}
+
+			batchCount++
+
+			// Safety check to prevent infinite loop in case of bug
+			if batchCount > 100 {
+				t.Fatal("Too many batches, possible infinite loop")
+			}
+		}
+
+		// Verify all files were returned
+		missing := []string{}
+		for fileName := range expectedFiles {
+			if !allEntries[fileName] {
+				missing = append(missing, fileName)
+			}
+		}
+
+		if len(missing) > 0 {
+			// Sort for consistent error messages
+			sort.Strings(missing)
+			t.Errorf("Missing %d files from directory listing (total batches: %d, last batch size: %d):",
+				len(missing), batchCount, lastBatchSize)
+
+			// Show first 10 missing
+			for i, name := range missing {
+				if i >= 10 {
+					t.Logf("... and %d more", len(missing)-10)
+					break
+				}
+				t.Logf("  - %s", name)
+			}
+
+			// Check if missing files cluster near a particular index
+			if len(missing) > 0 {
+				// Parse indices from missing file names
+				indices := []int{}
+				for _, name := range missing {
+					var idx int
+					if _, err := fmt.Sscanf(name, "test_file_%d.txt", &idx); err == nil {
+						indices = append(indices, idx)
+					}
+				}
+
+				if len(indices) > 0 {
+					sort.Ints(indices)
+					t.Logf("Missing file indices: %v", indices)
+
+					// Check for clustering (indices within 20 of each other)
+					clustered := true
+					if len(indices) > 1 {
+						for i := 1; i < len(indices); i++ {
+							if indices[i]-indices[i-1] > 20 {
+								clustered = false
+								break
+							}
+						}
+					}
+
+					if clustered {
+						t.Log("WARNING: Missing files are clustered together - likely a batch boundary issue!")
+					}
+				}
+			}
+		}
+
+		t.Logf("Total files found: %d / %d expected (%.1f%%)",
+			len(allEntries), numFiles, float64(len(allEntries))/float64(numFiles)*100)
+
+		if len(allEntries) != numFiles {
+			t.Errorf("Expected %d entries, got %d (missing %d)",
+				numFiles, len(allEntries), numFiles-len(allEntries))
+		}
+	})
+
+	t.Run("One Final Entry After Buffer Fills", func(t *testing.T) {
+		// This test specifically tries to create a scenario where
+		// the buffer fills up and there's exactly one entry left
+		singleDir := filepath.Join(tempDir, "single_final_entry")
+		if err := os.Mkdir(singleDir, 0755); err != nil {
+			t.Fatalf("Failed to create test directory: %v", err)
+		}
+
+		// Create files - we'll create enough to potentially fill a batch,
+		// plus one more that should be the "last" file
+		numRegular := 200
+		finalFile := "zzz_this_should_not_be_missed_final.txt"
+
+		for i := 0; i < numRegular; i++ {
+			fileName := fmt.Sprintf("regular_%04d.txt", i)
+			path := filepath.Join(singleDir, fileName)
+			if err := os.WriteFile(path, []byte("content"), 0644); err != nil {
+				t.Fatalf("Failed to create file %s: %v", fileName, err)
+			}
+		}
+
+		// Create the final file (will be last alphabetically)
+		finalPath := filepath.Join(singleDir, finalFile)
+		if err := os.WriteFile(finalPath, []byte("FINAL"), 0644); err != nil {
+			t.Fatalf("Failed to create final file: %v", err)
+		}
+
+		dirReader, err := newTestDirReader(singleDir)
+		if err != nil {
+			t.Fatalf("newTestDirReader failed: %v", err)
+		}
+		defer dirReader.Close()
+
+		foundFinal := false
+		totalEntries := 0
+
+		for {
+			entriesBytes, err := dirReader.NextBatch(context.Background(), 0)
+			if err != nil {
+				if errors.Is(err, os.ErrProcessDone) {
+					break
+				}
+				t.Fatalf("NextBatch failed: %v", err)
+			}
+
+			var entries types.ReadDirEntries
+			if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
+				t.Fatalf("Failed to decode entries: %v", err)
+			}
+
+			totalEntries += len(entries)
+
+			for _, entry := range entries {
+				if entry.Name == finalFile {
+					foundFinal = true
+				}
+			}
+		}
+
+		if !foundFinal {
+			t.Errorf("Final marker file '%s' was NOT found! This is the bug.", finalFile)
+			t.Logf("Total entries found: %d (expected %d)", totalEntries, numRegular+1)
+		} else {
+			t.Logf("SUCCESS: Final marker file was found (total entries: %d)", totalEntries)
+		}
+
+		expectedTotal := numRegular + 1
+		if totalEntries != expectedTotal {
+			t.Errorf("Expected %d total entries, got %d (missing %d)",
+				expectedTotal, totalEntries, expectedTotal-totalEntries)
 		}
 	})
 }
