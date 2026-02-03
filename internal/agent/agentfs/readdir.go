@@ -16,30 +16,27 @@ const (
 	defaultBufSize   = 4 * 1024 * 1024
 )
 
-var bufferPool = sync.Pool{
-	New: func() any {
-		return make([]byte, defaultBufSize)
-	},
-}
-
 type DirReader struct {
-	file          *os.File
-	path          string
-	encodeBuf     bytes.Buffer
-	targetEncoded int
-	noMoreFiles   bool
-	mu            sync.Mutex
-	closed        bool
+	file        *os.File
+	path        string
+	encodeBuf   bytes.Buffer
+	noMoreFiles bool
+	mu          sync.Mutex
+	closed      bool
 }
 
 func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 	syslog.L.Debug().WithMessage("NewDirReader: initializing directory reader").
 		WithField("path", path).Write()
 
-	return &DirReader{
+	reader := &DirReader{
 		file: handle,
 		path: path,
-	}, nil
+	}
+
+	reader.encodeBuf.Grow(defaultBufSize)
+
+	return reader, nil
 }
 
 func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, error) {
@@ -48,9 +45,6 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			WithField("path", r.path).Write()
 		return nil, os.ErrProcessDone
 	}
-
-	buffer := bufferPool.Get().([]byte)
-	defer bufferPool.Put(buffer)
 
 	if blockSize == 0 {
 		blockSize = 4096
@@ -65,7 +59,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	hasEntries := false
 	entryCount := 0
 
-	for r.encodeBuf.Len() < r.targetEncoded {
+	for r.encodeBuf.Len() < defaultBufSize-(1024*1024) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
