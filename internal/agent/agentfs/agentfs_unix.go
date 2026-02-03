@@ -77,14 +77,14 @@ func (s *AgentFSServer) writeIDString(dst *string, id uint32) {
 	*dst = string(s.idBuf)
 }
 
-func (s *AgentFSServer) abs(filename string) (string, error) {
+func (s *AgentFSServer) abs(filename string) string {
 	if filename == "" || filename == "." || filename == "/" {
 		syslog.L.Debug().WithMessage("abs: returning snapshot path for root").Write()
-		return s.snapshot.Path, nil
+		return s.snapshot.Path
 	}
 	path := pathjoin.Join(s.snapshot.Path, filename)
 	syslog.L.Debug().WithMessage("abs: joined path").WithField("path", path).Write()
-	return path, nil
+	return path
 }
 
 func (s *AgentFSServer) closeFileHandles() {
@@ -176,10 +176,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 		return arpc.Response{Status: 403, Data: errBytes}, nil
 	}
 
-	path, err := s.abs(payload.Path)
-	if err != nil {
-		return arpc.Response{}, err
-	}
+	path := s.abs(payload.Path)
 
 	syslog.L.Debug().WithMessage("handleOpenFile: opening path").WithField("path", path).Write()
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
@@ -231,11 +228,7 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	fullPath, err := s.abs(payload.Path)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("handleAttr: abs failed").WithField("path", payload.Path).Write()
-		return arpc.Response{}, err
-	}
+	fullPath := s.abs(payload.Path)
 
 	var st unix.Stat_t
 	if err := unix.Fstatat(unix.AT_FDCWD, fullPath, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
@@ -282,11 +275,7 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 		syslog.L.Error(err).WithMessage("handleXattr: decode failed").Write()
 		return arpc.Response{}, err
 	}
-	fullPath, err := s.abs(payload.Path)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("handleXattr: abs failed").WithField("path", payload.Path).Write()
-		return arpc.Response{}, err
-	}
+	fullPath := s.abs(payload.Path)
 
 	var st unix.Stat_t
 	if err := unix.Fstatat(unix.AT_FDCWD, fullPath, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {

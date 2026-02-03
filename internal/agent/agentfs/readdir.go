@@ -5,8 +5,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/fxamacker/cbor/v2"
@@ -129,26 +127,4 @@ func (r *DirReader) Close() error {
 
 	r.closed = true
 	return r.file.Close()
-}
-
-// for windows
-func toExtendedLengthPath(path string) string {
-	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\??\`) {
-		return path
-	}
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		absPath = path
-	}
-
-	if len(absPath) >= 2 && absPath[1] == ':' {
-		return `\\?\` + absPath
-	}
-
-	if strings.HasPrefix(absPath, `\\`) {
-		return `\\?\UNC\` + absPath[2:]
-	}
-
-	return `\\?\` + absPath
 }
