@@ -54,18 +54,11 @@ func windowsFileModeFromHandle(h windows.Handle, fileAttributes uint32) uint32 {
 	return uint32(m)
 }
 
-func unixNanoFromWin(wt int64) int64 {
+func unixNanoFromWinFiletime(ft syscall.Filetime) int64 {
 	return filetimeToTime(windows.Filetime{
-		LowDateTime:  uint32(uint64(wt) & 0xFFFFFFFF),
-		HighDateTime: uint32(uint64(wt) >> 32),
+		LowDateTime:  ft.LowDateTime,
+		HighDateTime: ft.HighDateTime,
 	}).UnixNano()
-}
-
-func unixFromWin(wt int64) int64 {
-	return filetimeToUnix(windows.Filetime{
-		LowDateTime:  uint32(uint64(wt) & 0xFFFFFFFF),
-		HighDateTime: uint32(uint64(wt) >> 32),
-	})
 }
 
 func parseFileAttributes(attr uint32) map[string]bool {
