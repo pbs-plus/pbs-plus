@@ -319,36 +319,60 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 
 func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) {
 	syslog.L.Debug().WithMessage("handleReadDir: decoding request").Write()
+
 	var payload types.ReadDirReq
 	if err := cbor.Unmarshal(req.Payload, &payload); err != nil {
-		syslog.L.Error(err).WithMessage("handleReadDir: decode failed").Write()
+		syslog.L.Error(err).
+			WithMessage("handleReadDir: decode failed").
+			Write()
 		return arpc.Response{}, err
 	}
+
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		syslog.L.Warn().WithMessage("handleReadDir: handle not found").WithField("handle_id", payload.HandleID).Write()
+		syslog.L.Warn().
+			WithMessage("handleReadDir: handle not found").
+			WithField("handle_id", payload.HandleID).
+			Write()
 		return arpc.Response{}, os.ErrNotExist
 	}
-	fh.Lock()
-	defer fh.Unlock()
 
-	encodedBatch, err := fh.dirReader.NextBatch(req.Context, s.statFs.Bsize)
+	if !fh.acquireOp() {
+		syslog.L.Debug().
+			WithMessage("handleReadDir: handle is closing").
+			WithField("handle_id", payload.HandleID).
+			Write()
+		return arpc.Response{}, os.ErrClosed
+	}
+
+	fh.Lock()
+	dirReader := fh.dirReader
+	fh.Unlock()
+
+	encodedBatch, err := dirReader.NextBatch(req.Context, s.statFs.Bsize)
 	if err != nil {
 		fh.releaseOp()
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Debug().WithMessage("handleReadDir: sending batch").
+	syslog.L.Debug().
+		WithMessage("handleReadDir: sending batch").
 		WithField("handle_id", payload.HandleID).
+		WithField("bytes", len(encodedBatch)).
 		Write()
 
-	byteReader := bytes.NewReader(encodedBatch)
 	streamCallback := func(stream *smux.Stream) {
-		if err := binarystream.SendDataFromReader(byteReader, len(encodedBatch), stream); err != nil {
-			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader").WithField("handle_id", payload.HandleID).Write()
+		defer fh.releaseOp()
+
+		if err := binarystream.SendDataFromReader(bytes.NewReader(encodedBatch), len(encodedBatch), stream); err != nil {
+			syslog.L.Error(err).WithMessage("handleReadDir: failed sending data from reader via binary stream").WithField("handle_id", payload.HandleID).Write()
 		}
 	}
-	return arpc.Response{Status: 213, RawStream: streamCallback}, nil
+
+	return arpc.Response{
+		Status:    213,
+		RawStream: streamCallback,
+	}, nil
 }
 
 func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
