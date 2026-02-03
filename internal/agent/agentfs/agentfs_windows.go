@@ -4,7 +4,6 @@ package agentfs
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -424,8 +423,7 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	fh.mu.Unlock()
 
 	encodedBatch, err := dirReader.NextBatch(req.Context, s.statFs.Bsize)
-	isDone := errors.Is(err, os.ErrProcessDone)
-	if err != nil && !isDone {
+	if err != nil {
 		fh.releaseOp()
 		return arpc.Response{}, err
 	}

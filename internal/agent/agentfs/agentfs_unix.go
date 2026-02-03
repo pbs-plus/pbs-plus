@@ -4,7 +4,6 @@ package agentfs
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -334,15 +333,14 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	defer fh.Unlock()
 
 	encodedBatch, err := fh.dirReader.NextBatch(req.Context, s.statFs.Bsize)
-	isDone := errors.Is(err, os.ErrProcessDone)
-	if err != nil && !isDone {
+	if err != nil {
 		fh.releaseOp()
 		return arpc.Response{}, err
 	}
 
 	syslog.L.Debug().WithMessage("handleReadDir: sending batch").
 		WithField("handle_id", payload.HandleID).
-		WithField("is_last", isDone).Write()
+		Write()
 
 	byteReader := bytes.NewReader(encodedBatch)
 	streamCallback := func(stream *smux.Stream) {
