@@ -264,6 +264,8 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupId strin
 	cmd := exec.Command(execCmd, args...)
 	setProcAttributes(cmd)
 
+	cmd.Env = os.Environ()
+
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("ExecBackup: StdoutPipe failed").Write()

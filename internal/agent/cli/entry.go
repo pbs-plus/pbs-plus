@@ -3,6 +3,9 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"log"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -54,6 +57,28 @@ func Entry() {
 	if string(expectedToken) != *token {
 		fmt.Fprintln(os.Stderr, "Error: invalid token")
 		os.Exit(1)
+	}
+
+	if os.Getenv("PBS_PLUS_PPROF") == "true" {
+		go func() {
+			port := 6060
+			maxAttempts := 10
+
+			for i := 0; i < maxAttempts; i++ {
+				addr := fmt.Sprintf(":%d", port)
+				listener, err := net.Listen("tcp", addr)
+				if err != nil {
+					port++
+					continue
+				}
+
+				log.Printf("pprof server listening on http://localhost%s", addr)
+				log.Println(http.Serve(listener, nil))
+				return
+			}
+
+			log.Printf("failed to start pprof server after %d attempts", maxAttempts)
+		}()
 	}
 
 	switch *cmdMode {
