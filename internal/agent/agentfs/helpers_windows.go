@@ -4,8 +4,6 @@ package agentfs
 
 import (
 	"os"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -134,27 +132,6 @@ func filetimeSyscallToUnix(ft syscall.Filetime) int64 {
 	)
 	t := (int64(ft.HighDateTime) << 32) | int64(ft.LowDateTime)
 	return (t - winToUnixEpochDiff) / hundredNano
-}
-
-func toExtendedLengthPath(path string) string {
-	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\??\`) {
-		return path
-	}
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		absPath = path
-	}
-
-	if len(absPath) >= 2 && absPath[1] == ':' {
-		return `\\?\` + absPath
-	}
-
-	if strings.HasPrefix(absPath, `\\`) {
-		return `\\?\UNC\` + absPath[2:]
-	}
-
-	return `\\?\` + absPath
 }
 
 func boolToInt(b bool) uint32 {
