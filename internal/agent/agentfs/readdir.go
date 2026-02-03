@@ -16,10 +16,16 @@ const (
 	defaultBufSize   = 4 * 1024 * 1024
 )
 
+var bufferPool = sync.Pool{
+	New: func() any {
+		return bytes.NewBuffer(make([]byte, 0, defaultBufSize))
+	},
+}
+
 type DirReader struct {
 	file        *os.File
 	path        string
-	encodeBuf   bytes.Buffer
+	encodeBuf   *bytes.Buffer
 	noMoreFiles bool
 	mu          sync.Mutex
 	closed      bool
@@ -30,11 +36,10 @@ func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 		WithField("path", path).Write()
 
 	reader := &DirReader{
-		file: handle,
-		path: path,
+		file:      handle,
+		path:      path,
+		encodeBuf: bufferPool.Get().(*bytes.Buffer),
 	}
-
-	reader.encodeBuf.Grow(defaultBufSize)
 
 	return reader, nil
 }
@@ -54,7 +59,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	}
 
 	r.encodeBuf.Reset()
-	enc := cbor.NewEncoder(&r.encodeBuf)
+	enc := cbor.NewEncoder(r.encodeBuf)
 	if err := enc.StartIndefiniteArray(); err != nil {
 		return nil, err
 	}
@@ -133,6 +138,8 @@ func (r *DirReader) Close() error {
 		WithField("path", r.path).Write()
 
 	r.encodeBuf.Reset()
+	bufferPool.Put(r.encodeBuf)
+
 	r.closed = true
 	return r.file.Close()
 }
