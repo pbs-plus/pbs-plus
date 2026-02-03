@@ -83,14 +83,7 @@ func (fh *FileHandle) waitForOps(timeout time.Duration) bool {
 }
 
 func (s *AgentFSServer) abs(filename string) string {
-	windowsDir := filepath.FromSlash(filename)
-	if windowsDir == "" || windowsDir == "." || windowsDir == "/" {
-		unc := `\\?\` + s.snapshot.Path
-		syslog.L.Debug().WithMessage("abs: returning UNC snapshot path for root").WithField("path", unc).Write()
-		return unc
-	}
-
-	path := pathjoin.Join(s.snapshot.Path, windowsDir)
+	path := pathjoin.Join(s.snapshot.Path, filename)
 
 	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\??\`) {
 		return path
