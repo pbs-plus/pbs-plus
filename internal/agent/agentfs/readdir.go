@@ -45,7 +45,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 		blockSize = 4096
 	}
 
-	var batch []types.AgentFileInfo
+	batch := make([]types.AgentFileInfo, 0, defaultBatchSize)
 
 	for len(batch) < defaultBatchSize {
 		if err := ctx.Err(); err != nil {
