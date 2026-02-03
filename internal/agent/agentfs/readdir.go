@@ -13,7 +13,7 @@ import (
 
 const (
 	defaultBatchSize = 1024
-	defaultBufSize   = 4 * 1024 * 1024
+	defaultBufSize   = 1024 * 1024
 )
 
 var bufferPool = sync.Pool{
@@ -67,7 +67,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	hasEntries := false
 	entryCount := 0
 
-	for r.encodeBuf.Len() < defaultBufSize-(1024*1024) {
+	for r.encodeBuf.Len() < defaultBufSize-1024 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
