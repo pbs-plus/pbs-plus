@@ -51,6 +51,13 @@ func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
 	fh.fileSize = std.EndOfFile
 	fh.isDir = std.Directory != 0
 	if fh.isDir {
+		fh.file.Close()
+		fh.file = nil
+		raw, err := windows.CreateFile(pathUTF16, windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+		if err != nil {
+			return nil, err
+		}
+		f := os.NewFile(uintptr(raw), path)
 		reader, err := NewDirReader(f, path)
 		if err != nil {
 			f.Close()
