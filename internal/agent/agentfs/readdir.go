@@ -27,9 +27,9 @@ type DirReader struct {
 	path         string
 	encodeBuf    *bytes.Buffer
 	winFirstCall bool
-	unixBuf      []byte // The raw buffer from the kernel
-	unixBufp     int    // The current position in the buffer
-	unixNbuf     int
+	buf          []byte // The raw buffer from the kernel
+	bufp         int    // The current position in the buffer
+	nbuf         int
 	noMoreFiles  bool
 	mu           sync.Mutex
 	closed       bool

@@ -22,8 +22,8 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 		limit = int(^uint(0) >> 1)
 	}
 
-	if r.unixBuf == nil {
-		r.unixBuf = make([]byte, 64*1024)
+	if r.buf == nil {
+		r.buf = make([]byte, 64*1024)
 	}
 
 	fd := int(r.file.Fd())
@@ -33,30 +33,30 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 		unix.STATX_BLOCKS | unix.STATX_ATIME | unix.STATX_MTIME | unix.STATX_CTIME
 
 	for len(out) < limit {
-		if r.unixBufp >= r.unixNbuf {
-			r.unixBufp = 0
-			nread, err := unix.Getdents(fd, r.unixBuf)
+		if r.bufp >= r.nbuf {
+			r.bufp = 0
+			nread, err := unix.Getdents(fd, r.buf)
 			if err != nil {
 				if errors.Is(err, unix.EBADF) {
 					return nil, os.ErrClosed
 				}
 				return nil, err
 			}
-			r.unixNbuf = nread
+			r.nbuf = nread
 			if nread <= 0 {
 				r.noMoreFiles = true
 				break
 			}
 		}
 
-		remaining := r.unixBuf[r.unixBufp:r.unixNbuf]
+		remaining := r.buf[r.bufp:r.nbuf]
 		nb, _, names := unix.ParseDirent(remaining, limit-len(out), nil)
 
 		if nb == 0 {
 			break
 		}
 
-		r.unixBufp += nb
+		r.bufp += nb
 
 		for _, name := range names {
 			if name == "." || name == ".." {
