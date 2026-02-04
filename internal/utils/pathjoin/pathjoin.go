@@ -10,13 +10,30 @@ func Join(paths ...string) string {
 		return ""
 	}
 
-	separator := string(os.PathSeparator)
+	separator := byte(os.PathSeparator)
 	var result strings.Builder
 
-	for i, path := range paths {
-		if i > 0 && !strings.HasSuffix(result.String(), separator) && !strings.HasPrefix(path, separator) {
-			result.WriteString(separator)
+	for _, path := range paths {
+		if path == "" {
+			continue
 		}
+
+		if separator == '\\' && strings.ContainsRune(path, '/') {
+			path = strings.ReplaceAll(path, "/", "\\")
+		} else if separator == '/' && strings.ContainsRune(path, '\\') {
+			path = strings.ReplaceAll(path, "\\", "/")
+		}
+
+		if result.Len() > 0 {
+			lastChar := result.String()[result.Len()-1]
+			firstChar := path[0]
+			if lastChar != separator && firstChar != separator {
+				result.WriteByte(separator)
+			} else if lastChar == separator && firstChar == separator {
+				path = path[1:]
+			}
+		}
+
 		result.WriteString(path)
 	}
 
