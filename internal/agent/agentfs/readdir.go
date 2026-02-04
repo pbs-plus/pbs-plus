@@ -124,7 +124,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			break
 		}
 
-		for _, info := range entries {
+		for i, info := range entries {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -140,11 +140,10 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 
 			encodedSize := testBuf.Len()
 			if r.encodeWriter.Len()+encodedSize > cap(r.encodeBuf) {
-				r.pending = append(r.pending, info)
+				r.pending = append(r.pending, entries[i:]...)
 				break
 			}
 
-			// Safe to encode
 			if err := enc.Encode(info); err != nil {
 				syslog.L.Error(err).WithMessage("DirReader.NextBatch: encode failed").
 					WithField("path", r.path).Write()
@@ -154,7 +153,6 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			entryCount++
 		}
 
-		// If we added something to pending, stop reading more batches
 		if len(r.pending) > 0 {
 			break
 		}
