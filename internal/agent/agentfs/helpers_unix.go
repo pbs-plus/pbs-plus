@@ -5,14 +5,9 @@ package agentfs
 import (
 	"os"
 	"strings"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
-
-func bytesToString(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
-}
 
 func lastPathElem(p string) string {
 	if i := strings.LastIndexByte(p, '/'); i >= 0 {
@@ -39,6 +34,3 @@ func modeFromUnix(m uint32) uint32 {
 	}
 	return mode
 }
-
-func isDot(b []byte) bool    { return len(b) == 1 && b[0] == '.' }
-func isDotDot(b []byte) bool { return len(b) == 2 && b[0] == '.' && b[1] == '.' }
