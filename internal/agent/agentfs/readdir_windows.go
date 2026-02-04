@@ -27,22 +27,22 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	out := make([]types.AgentFileInfo, 0, min(limit, 128))
 	var iosb IoStatusBlock
 
+	fullByteBuf := unsafe.Slice((*byte)(unsafe.Pointer(&r.buf[0])), len(r.buf)*8)
+
 	for len(out) < limit {
 		if r.bufp >= r.nbuf {
-			byteBuf := unsafe.Slice((*byte)(unsafe.Pointer(&r.buf[0])), len(r.buf)*8)
-
-			err := ntDirectoryCall(uintptr(h), &iosb, byteBuf, r.winFirstCall)
+			r.bufp = 0
+			err := ntDirectoryCall(uintptr(h), &iosb, fullByteBuf, r.winFirstCall)
 			r.winFirstCall = false
 
 			if err != nil {
-				if errors.Is(err, os.ErrProcessDone) || errors.Is(err, io.EOF) {
+				if errors.Is(err, io.EOF) || errors.Is(err, os.ErrProcessDone) {
 					r.noMoreFiles = true
 					break
 				}
 				return nil, err
 			}
 			r.nbuf = int(iosb.Information)
-			r.bufp = 0
 			if r.nbuf <= 0 {
 				r.noMoreFiles = true
 				break
@@ -50,24 +50,32 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 		}
 
 		for r.bufp < r.nbuf && len(out) < limit {
-			byteBuf := unsafe.Slice((*byte)(unsafe.Pointer(&r.buf[0])), r.nbuf)
+			if r.bufp+int(unsafe.Offsetof(FileDirectoryInformation{}.FileName)) > r.nbuf {
+				break
+			}
 
-			entry := (*FileDirectoryInformation)(unsafe.Pointer(&byteBuf[r.bufp]))
+			entry := (*FileDirectoryInformation)(unsafe.Pointer(&fullByteBuf[r.bufp]))
 
 			nameLen := int(entry.FileNameLength / 2)
 			namePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
-
 			name := windows.UTF16ToString(unsafe.Slice((*uint16)(namePtr), nameLen))
 
-			if name != "." && name != ".." && (entry.FileAttributes&excludedAttrs == 0) {
+			if name != "." && name != ".." {
 				isDir := (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
 
-				mode := windowsFileModeFromHandle(h, entry.FileAttributes)
+				mode := uint32(0644)
+				if entry.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
+					mode = 0444
+				}
+				if isDir {
+					mode |= 0x80000000
+				}
+
 				info := types.AgentFileInfo{
 					Name:           name,
+					Size:           entry.EndOfFile,
 					Mode:           mode,
 					IsDir:          isDir,
-					Size:           entry.EndOfFile,
 					ModTime:        unixNanoFromWin(entry.LastWriteTime),
 					CreationTime:   unixNanoFromWin(entry.CreationTime),
 					LastAccessTime: unixNanoFromWin(entry.LastAccessTime),
