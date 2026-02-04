@@ -80,10 +80,10 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 				Size:           st.Size,
 				Mode:           mode,
 				IsDir:          isDir,
-				ModTime:        timespecToNano(st.Mtimespec),
+				ModTime:        timespecToNano(st.Mtim),
 				CreationTime:   getBirthTimeNano(&st),
-				LastAccessTime: timespecToNano(st.Atimespec),
-				LastWriteTime:  timespecToNano(st.Mtimespec),
+				LastAccessTime: timespecToNano(st.Atim),
+				LastWriteTime:  timespecToNano(st.Mtim),
 			}
 
 			if !isDir && blockSize > 0 {
@@ -111,9 +111,9 @@ func timespecToNano(ts unix.Timespec) int64 {
 
 func getBirthTimeNano(st *unix.Stat_t) int64 {
 	// FreeBSD and some BSDs have Birthtimespec
-	if st.Birthtimespec.Sec != 0 || st.Birthtimespec.Nsec != 0 {
-		return timespecToNano(st.Birthtimespec)
+	if st.Btim.Sec != 0 || st.Btim.Nsec != 0 {
+		return timespecToNano(st.Btim)
 	}
 	// Fallback to ctime
-	return timespecToNano(st.Ctimespec)
+	return timespecToNano(st.Ctim)
 }
