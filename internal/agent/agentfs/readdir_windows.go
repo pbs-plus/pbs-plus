@@ -61,41 +61,43 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 
 			entry := (*FileDirectoryInformation)(unsafe.Pointer(&fullByteBuf[r.bufp]))
 
-			nameLen := int(entry.FileNameLength / 2)
-			nameOffset := int(unsafe.Offsetof(entry.FileName))
-			totalEntrySize := nameOffset + int(entry.FileNameLength)
+			if entry.FileAttributes&excludedAttrs == 0 {
+				nameLen := int(entry.FileNameLength / 2)
+				nameOffset := int(unsafe.Offsetof(entry.FileName))
+				totalEntrySize := nameOffset + int(entry.FileNameLength)
 
-			if r.bufp+totalEntrySize > r.nbuf {
-				r.bufp = r.nbuf
-				break
-			}
-
-			namePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
-			name := windows.UTF16ToString(unsafe.Slice((*uint16)(namePtr), nameLen))
-
-			if name != "." && name != ".." {
-				isDir := (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
-
-				info := types.AgentFileInfo{
-					Name:           name,
-					Size:           entry.EndOfFile,
-					Mode:           windowsFileModeFromHandle(0, entry.FileAttributes),
-					IsDir:          isDir,
-					ModTime:        unixNanoFromWin(entry.LastWriteTime),
-					CreationTime:   unixNanoFromWin(entry.CreationTime),
-					LastAccessTime: unixNanoFromWin(entry.LastAccessTime),
-					LastWriteTime:  unixNanoFromWin(entry.LastWriteTime),
-					FileAttributes: parseFileAttributes(entry.FileAttributes),
+				if r.bufp+totalEntrySize > r.nbuf {
+					r.bufp = r.nbuf
+					break
 				}
 
-				if !isDir && blockSize > 0 {
-					alloc := entry.AllocationSize
-					if alloc < 0 {
-						alloc = 0
+				namePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
+				name := windows.UTF16ToString(unsafe.Slice((*uint16)(namePtr), nameLen))
+
+				if name != "." && name != ".." {
+					isDir := (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
+
+					info := types.AgentFileInfo{
+						Name:           name,
+						Size:           entry.EndOfFile,
+						Mode:           windowsFileModeFromHandle(0, entry.FileAttributes),
+						IsDir:          isDir,
+						ModTime:        unixNanoFromWin(entry.LastWriteTime),
+						CreationTime:   unixNanoFromWin(entry.CreationTime),
+						LastAccessTime: unixNanoFromWin(entry.LastAccessTime),
+						LastWriteTime:  unixNanoFromWin(entry.LastWriteTime),
+						FileAttributes: parseFileAttributes(entry.FileAttributes),
 					}
-					info.Blocks = uint64((alloc + int64(blockSize) - 1) / int64(blockSize))
+
+					if !isDir && blockSize > 0 {
+						alloc := entry.AllocationSize
+						if alloc < 0 {
+							alloc = 0
+						}
+						info.Blocks = uint64((alloc + int64(blockSize) - 1) / int64(blockSize))
+					}
+					out = append(out, info)
 				}
-				out = append(out, info)
 			}
 
 			if entry.NextEntryOffset == 0 {

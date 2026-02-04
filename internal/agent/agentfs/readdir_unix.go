@@ -12,6 +12,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func shouldExcludeStat(st *unix.Stat_t) bool {
+	fileType := st.Mode & unix.S_IFMT
+
+	if fileType == unix.S_IFSOCK || fileType == unix.S_IFBLK || fileType == unix.S_IFCHR {
+		return true
+	}
+
+	return false
+}
+
 func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, error) {
 	if r.closed {
 		return nil, os.ErrClosed
@@ -66,6 +76,10 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 					continue
 				}
 				return nil, err
+			}
+
+			if shouldExcludeStat(&st) {
+				continue
 			}
 
 			isDir := (st.Mode & unix.S_IFMT) == unix.S_IFDIR
