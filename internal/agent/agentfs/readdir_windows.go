@@ -32,6 +32,8 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	for len(out) < limit {
 		if r.bufp >= r.nbuf {
 			r.bufp = 0
+			r.nbuf = 0
+
 			err := ntDirectoryCall(uintptr(h), &iosb, fullByteBuf, r.winFirstCall)
 			r.winFirstCall = false
 
@@ -42,6 +44,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 				}
 				return nil, err
 			}
+
 			r.nbuf = int(iosb.Information)
 			if r.nbuf <= 0 {
 				r.noMoreFiles = true
@@ -110,7 +113,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 
 			r.bufp += int(entry.NextEntryOffset)
 
-			if r.bufp > r.nbuf {
+			if r.bufp > r.nbuf || r.bufp < 0 {
 				r.bufp = r.nbuf
 				break
 			}
