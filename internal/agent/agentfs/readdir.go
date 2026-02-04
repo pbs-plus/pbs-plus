@@ -16,16 +16,11 @@ const (
 	defaultBufSize   = 1024 * 1024
 )
 
-var bufferPool = sync.Pool{
-	New: func() any {
-		return bytes.NewBuffer(make([]byte, 0, defaultBufSize))
-	},
-}
-
 type DirReader struct {
 	file         *os.File
 	path         string
-	encodeBuf    *bytes.Buffer
+	encodeBuf    [defaultBufSize]byte
+	encodeWriter *bytes.Buffer
 	winFirstCall bool
 	buf          [8192]uint64 // The raw buffer from the kernel
 	bufp         int          // The current position in the buffer
@@ -43,7 +38,6 @@ func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 		file:         handle,
 		path:         path,
 		winFirstCall: true,
-		encodeBuf:    bufferPool.Get().(*bytes.Buffer),
 	}
 
 	return reader, nil
@@ -63,8 +57,13 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 		blockSize = 4096
 	}
 
-	r.encodeBuf.Reset()
-	enc := cbor.NewEncoder(r.encodeBuf)
+	if r.encodeWriter == nil {
+		r.encodeWriter = bytes.NewBuffer(r.encodeBuf[:])
+	}
+
+	r.encodeWriter.Reset()
+
+	enc := cbor.NewEncoder(r.encodeWriter)
 	if err := enc.StartIndefiniteArray(); err != nil {
 		return nil, err
 	}
@@ -72,7 +71,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	hasEntries := false
 	entryCount := 0
 
-	for r.encodeBuf.Len() < defaultBufSize-1024 {
+	for r.encodeWriter.Len() < defaultBufSize-1024 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -119,7 +118,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 		return nil, os.ErrProcessDone
 	}
 
-	encodedResult := r.encodeBuf.Bytes()
+	encodedResult := r.encodeWriter.Bytes()
 
 	syslog.L.Debug().WithMessage("DirReader.NextBatch: batch encoded").
 		WithField("path", r.path).
@@ -141,8 +140,7 @@ func (r *DirReader) Close() error {
 	syslog.L.Debug().WithMessage("DirReader.Close: closing file").
 		WithField("path", r.path).Write()
 
-	r.encodeBuf.Reset()
-	bufferPool.Put(r.encodeBuf)
+	r.encodeWriter.Reset()
 
 	r.closed = true
 	return r.file.Close()
