@@ -191,7 +191,9 @@ func (r *DirReader) Close() error {
 	syslog.L.Debug().WithMessage("DirReader.Close: closing file").
 		WithField("path", r.path).Write()
 
-	r.encodeWriter.Reset()
+	if r.encodeWriter != nil {
+		r.encodeWriter.Reset()
+	}
 
 	r.closed = true
 	return r.file.Close()
