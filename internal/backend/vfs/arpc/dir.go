@@ -274,76 +274,72 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	attrKey := s.fs.GetCacheKey(attrPrefix, fullPath)
 	xattrKey := s.fs.GetCacheKey(xattrPrefix, fullPath)
 
-	if !time.Unix(0, curr.ModTime).IsZero() {
-		currAttr := types.AgentFileInfo{
-			Name:    curr.Name,
-			Size:    curr.Size,
-			Mode:    curr.Mode,
-			ModTime: curr.ModTime,
-			IsDir:   curr.IsDir,
-		}
-
-		if attrBytes, err := cbor.Marshal(currAttr); err == nil {
-			if !currAttr.IsDir {
-				s.fs.FileCount.Add(1)
-			} else {
-				s.fs.FolderCount.Add(1)
-			}
-			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: attrKey, Value: attrBytes, Expiration: 0}); mcErr != nil {
-				syslog.L.Debug().
-					WithMessage("memcache set attr failed").
-					WithField("path", fullPath).
-					WithField("error", mcErr.Error()).
-					WithJob(s.fs.Backup.ID).
-					Write()
-			} else {
-				syslog.L.Debug().
-					WithMessage("memcache set attr").
-					WithField("path", fullPath).
-					WithJob(s.fs.Backup.ID).
-					Write()
-			}
-		} else {
-			syslog.L.Debug().
-				WithMessage("encode attr failed").
-				WithField("path", fullPath).
-				WithField("error", err.Error()).
-				WithJob(s.fs.Backup.ID).
-				Write()
-		}
+	currAttr := types.AgentFileInfo{
+		Name:    curr.Name,
+		Size:    curr.Size,
+		Mode:    curr.Mode,
+		ModTime: curr.ModTime,
+		IsDir:   curr.IsDir,
 	}
 
-	if curr.FileAttributes != nil {
-		currXAttr := types.AgentFileInfo{
-			CreationTime:   curr.CreationTime,
-			LastAccessTime: curr.LastAccessTime,
-			LastWriteTime:  curr.LastWriteTime,
-			FileAttributes: curr.FileAttributes,
+	if attrBytes, err := cbor.Marshal(currAttr); err == nil {
+		if !currAttr.IsDir {
+			s.fs.FileCount.Add(1)
+		} else {
+			s.fs.FolderCount.Add(1)
 		}
-
-		if xattrBytes, err := cbor.Marshal(currXAttr); err == nil {
-			if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: xattrKey, Value: xattrBytes, Expiration: 0}); mcErr != nil {
-				syslog.L.Debug().
-					WithMessage("memcache set xattr failed").
-					WithField("path", fullPath).
-					WithField("error", mcErr.Error()).
-					WithJob(s.fs.Backup.ID).
-					Write()
-			} else {
-				syslog.L.Debug().
-					WithMessage("memcache set xattr").
-					WithField("path", fullPath).
-					WithJob(s.fs.Backup.ID).
-					Write()
-			}
+		if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: attrKey, Value: attrBytes, Expiration: 0}); mcErr != nil {
+			syslog.L.Debug().
+				WithMessage("memcache set attr failed").
+				WithField("path", fullPath).
+				WithField("error", mcErr.Error()).
+				WithJob(s.fs.Backup.ID).
+				Write()
 		} else {
 			syslog.L.Debug().
-				WithMessage("encode xattr failed").
+				WithMessage("memcache set attr").
 				WithField("path", fullPath).
-				WithField("error", err.Error()).
 				WithJob(s.fs.Backup.ID).
 				Write()
 		}
+	} else {
+		syslog.L.Debug().
+			WithMessage("encode attr failed").
+			WithField("path", fullPath).
+			WithField("error", err.Error()).
+			WithJob(s.fs.Backup.ID).
+			Write()
+	}
+
+	currXAttr := types.AgentFileInfo{
+		CreationTime:   curr.CreationTime,
+		LastAccessTime: curr.LastAccessTime,
+		LastWriteTime:  curr.LastWriteTime,
+		FileAttributes: curr.FileAttributes,
+	}
+
+	if xattrBytes, err := cbor.Marshal(currXAttr); err == nil {
+		if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: xattrKey, Value: xattrBytes, Expiration: 0}); mcErr != nil {
+			syslog.L.Debug().
+				WithMessage("memcache set xattr failed").
+				WithField("path", fullPath).
+				WithField("error", mcErr.Error()).
+				WithJob(s.fs.Backup.ID).
+				Write()
+		} else {
+			syslog.L.Debug().
+				WithMessage("memcache set xattr").
+				WithField("path", fullPath).
+				WithJob(s.fs.Backup.ID).
+				Write()
+		}
+	} else {
+		syslog.L.Debug().
+			WithMessage("encode xattr failed").
+			WithField("path", fullPath).
+			WithField("error", err.Error()).
+			WithJob(s.fs.Backup.ID).
+			Write()
 	}
 
 	atomic.AddUint64(&s.curIdx, 1)

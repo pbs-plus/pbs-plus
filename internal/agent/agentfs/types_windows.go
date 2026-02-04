@@ -2,13 +2,6 @@
 
 package agentfs
 
-import (
-	"os"
-	"sync"
-
-	"golang.org/x/sys/windows"
-)
-
 type fileStandardInfo struct {
 	AllocationSize int64  // LARGE_INTEGER
 	EndOfFile      int64  // LARGE_INTEGER
@@ -16,20 +9,6 @@ type fileStandardInfo struct {
 	DeletePending  byte   // BOOLEAN
 	Directory      byte   // BOOLEAN
 	_              [2]byte
-}
-
-type FileHandle struct {
-	handle        *os.File
-	fileSize      int64
-	isDir         bool
-	dirReader     *DirReader
-	mapping       windows.Handle
-	logicalOffset int64
-
-	mu        sync.Mutex
-	activeOps int32
-	closing   bool
-	closeDone chan struct{}
 }
 
 type UnicodeString struct {
