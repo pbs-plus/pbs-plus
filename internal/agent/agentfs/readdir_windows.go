@@ -29,8 +29,9 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 
 	for len(out) < limit {
 		if r.bufp >= r.nbuf {
-			r.bufp = 0
-			err := ntDirectoryCall(uintptr(h), &iosb, r.buf[:], r.winFirstCall)
+			byteBuf := unsafe.Slice((*byte)(unsafe.Pointer(&r.buf[0])), len(r.buf)*8)
+
+			err := ntDirectoryCall(uintptr(h), &iosb, byteBuf, r.winFirstCall)
 			r.winFirstCall = false
 
 			if err != nil {
@@ -41,6 +42,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 				return nil, err
 			}
 			r.nbuf = int(iosb.Information)
+			r.bufp = 0
 			if r.nbuf <= 0 {
 				r.noMoreFiles = true
 				break
@@ -48,11 +50,9 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 		}
 
 		for r.bufp < r.nbuf && len(out) < limit {
-			if r.bufp+int(unsafe.Offsetof(FileDirectoryInformation{}.FileName)) > r.nbuf {
-				break
-			}
+			byteBuf := unsafe.Slice((*byte)(unsafe.Pointer(&r.buf[0])), r.nbuf)
 
-			entry := (*FileDirectoryInformation)(unsafe.Pointer(&r.buf[r.bufp]))
+			entry := (*FileDirectoryInformation)(unsafe.Pointer(&byteBuf[r.bufp]))
 
 			nameLen := int(entry.FileNameLength / 2)
 			namePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
