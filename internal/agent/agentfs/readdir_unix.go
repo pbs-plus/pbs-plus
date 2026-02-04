@@ -37,7 +37,5 @@ func buildFileInfo(entry os.FileInfo, blockSize uint64) types.AgentFileInfo {
 		}
 	}
 
-	info.FileAttributes = make(map[string]bool)
-
 	return info
 }
