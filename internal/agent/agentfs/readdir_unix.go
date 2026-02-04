@@ -22,10 +22,6 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 		limit = int(^uint(0) >> 1)
 	}
 
-	if r.buf == nil {
-		r.buf = make([]byte, 64*1024)
-	}
-
 	fd := int(r.file.Fd())
 	out := make([]types.AgentFileInfo, 0, min(limit, 128))
 
@@ -35,7 +31,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	for len(out) < limit {
 		if r.bufp >= r.nbuf {
 			r.bufp = 0
-			nread, err := unix.Getdents(fd, r.buf)
+			nread, err := unix.Getdents(fd, r.buf[:])
 			if err != nil {
 				if errors.Is(err, unix.EBADF) {
 					return nil, os.ErrClosed
