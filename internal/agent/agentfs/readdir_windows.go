@@ -23,10 +23,6 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 		limit = int(^uint(0) >> 1)
 	}
 
-	if r.buf == nil {
-		r.buf = make([]byte, 64*1024)
-	}
-
 	h := windows.Handle(r.file.Fd())
 	out := make([]types.AgentFileInfo, 0, min(limit, 128))
 	var iosb IoStatusBlock
@@ -34,7 +30,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	for len(out) < limit {
 		if r.bufp >= r.nbuf {
 			r.bufp = 0
-			err := ntDirectoryCall(uintptr(h), &iosb, r.buf, r.winFirstCall)
+			err := ntDirectoryCall(uintptr(h), &iosb, r.buf[:], r.winFirstCall)
 			r.winFirstCall = false
 
 			if err != nil {
