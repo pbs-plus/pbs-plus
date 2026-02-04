@@ -19,17 +19,21 @@ func (s *AgentFSServer) abs(filename string) string {
 	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\??\`) {
 		return path
 	}
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		absPath = path
+
+	if !filepath.IsAbs(path) {
+		wd, err := os.Getwd()
+		if err == nil {
+			path = pathjoin.Join(wd, path)
+		}
 	}
-	if len(absPath) >= 2 && absPath[1] == ':' {
-		return `\\?\` + absPath
+
+	if len(path) >= 2 && path[1] == ':' {
+		return `\\?\` + path
 	}
-	if strings.HasPrefix(absPath, `\\`) {
-		return `\\?\UNC\` + absPath[2:]
+	if strings.HasPrefix(path, `\\`) {
+		return `\\?\UNC\` + path[2:]
 	}
-	return `\\?\` + absPath
+	return `\\?\` + path
 }
 
 func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
