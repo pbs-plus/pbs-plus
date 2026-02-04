@@ -76,18 +76,10 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 			if name != "." && name != ".." {
 				isDir := (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
 
-				mode := uint32(0644)
-				if entry.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
-					mode = 0444
-				}
-				if isDir {
-					mode |= 0x80000000
-				}
-
 				info := types.AgentFileInfo{
 					Name:           name,
 					Size:           entry.EndOfFile,
-					Mode:           mode,
+					Mode:           windowsFileModeFromHandle(0, entry.FileAttributes),
 					IsDir:          isDir,
 					ModTime:        unixNanoFromWin(entry.LastWriteTime),
 					CreationTime:   unixNanoFromWin(entry.CreationTime),
