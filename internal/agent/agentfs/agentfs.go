@@ -103,6 +103,5 @@ func (s *AgentFSServer) Close() {
 		r.CloseHandle("StatFS")
 	}
 
-	s.closeFileHandles()
 	s.ctxCancel()
 }
