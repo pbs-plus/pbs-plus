@@ -4,7 +4,6 @@ package agentfs
 
 import (
 	"os"
-	"syscall"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -52,13 +51,6 @@ func windowsFileModeFromHandle(h windows.Handle, fileAttributes uint32) uint32 {
 	}
 
 	return uint32(m)
-}
-
-func unixNanoFromWinFiletime(ft syscall.Filetime) int64 {
-	return filetimeToTime(windows.Filetime{
-		LowDateTime:  ft.LowDateTime,
-		HighDateTime: ft.HighDateTime,
-	}).UnixNano()
 }
 
 func parseFileAttributes(attr uint32) map[string]bool {
@@ -118,13 +110,18 @@ func filetimeToUnix(ft windows.Filetime) int64 {
 	return (t - winToUnixEpochDiff) / hundredNano
 }
 
-func filetimeSyscallToUnix(ft syscall.Filetime) int64 {
-	const (
-		winToUnixEpochDiff = 116444736000000000
-		hundredNano        = 10000000
-	)
-	t := (int64(ft.HighDateTime) << 32) | int64(ft.LowDateTime)
-	return (t - winToUnixEpochDiff) / hundredNano
+func unixNanoFromWin(wt int64) int64 {
+	return filetimeToTime(windows.Filetime{
+		LowDateTime:  uint32(uint64(wt) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(wt) >> 32),
+	}).UnixNano()
+}
+
+func unixFromWin(wt int64) int64 {
+	return filetimeToUnix(windows.Filetime{
+		LowDateTime:  uint32(uint64(wt) & 0xFFFFFFFF),
+		HighDateTime: uint32(uint64(wt) >> 32),
+	})
 }
 
 func boolToInt(b bool) uint32 {

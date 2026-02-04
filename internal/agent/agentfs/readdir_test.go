@@ -29,25 +29,61 @@ func TestReadDirBulk(t *testing.T) {
 
 	// Run all test cases
 	t.Run("Basic Functionality", func(t *testing.T) {
-		testBasicFunctionality(t, tempDir)
+		// Create isolated large directory
+		tmp := filepath.Join(tempDir, t.Name())
+		if err := os.MkdirAll(tmp, 0755); err != nil {
+			t.Fatalf("Failed to create large directory: %v", err)
+		}
+		defer os.RemoveAll(tmp)
+		testBasicFunctionality(t, tmp)
 	})
 	t.Run("Empty Directory", func(t *testing.T) {
-		testEmptyDirectory(t, tempDir)
+		tmp := filepath.Join(tempDir, t.Name())
+		if err := os.MkdirAll(tmp, 0755); err != nil {
+			t.Fatalf("Failed to create large directory: %v", err)
+		}
+		defer os.RemoveAll(tmp)
+		testEmptyDirectory(t, tmp)
 	})
 	t.Run("Large Directory", func(t *testing.T) {
-		testLargeDirectory(t, tempDir)
+		tmp := filepath.Join(tempDir, t.Name())
+		if err := os.MkdirAll(tmp, 0755); err != nil {
+			t.Fatalf("Failed to create large directory: %v", err)
+		}
+		defer os.RemoveAll(tmp)
+		testLargeDirectory(t, tmp)
 	})
 	t.Run("Last Entry Missing", func(t *testing.T) {
-		testLastEntryMissing(t, tempDir)
+		tmp := filepath.Join(tempDir, t.Name())
+		if err := os.MkdirAll(tmp, 0755); err != nil {
+			t.Fatalf("Failed to create large directory: %v", err)
+		}
+		defer os.RemoveAll(tmp)
+		testLastEntryMissing(t, tmp)
 	})
 	t.Run("Unicode File Names", func(t *testing.T) {
-		testUnicodeFileNames(t, tempDir)
+		tmp := filepath.Join(tempDir, t.Name())
+		if err := os.MkdirAll(tmp, 0755); err != nil {
+			t.Fatalf("Failed to create large directory: %v", err)
+		}
+		defer os.RemoveAll(tmp)
+		testUnicodeFileNames(t, tmp)
 	})
 	t.Run("Special Characters in File Names", func(t *testing.T) {
-		testSpecialCharacters(t, tempDir)
+		tmp := filepath.Join(tempDir, t.Name())
+		if err := os.MkdirAll(tmp, 0755); err != nil {
+			t.Fatalf("Failed to create large directory: %v", err)
+		}
+		defer os.RemoveAll(tmp)
+		testSpecialCharacters(t, tmp)
 	})
 	t.Run("Memory Leaks", func(t *testing.T) {
-		testMemoryLeaks(t, tempDir)
+		tmp := filepath.Join(tempDir, t.Name())
+		if err := os.MkdirAll(tmp, 0755); err != nil {
+			t.Fatalf("Failed to create large directory: %v", err)
+		}
+		defer os.RemoveAll(tmp)
+		testMemoryLeaks(t, tmp)
 	})
 }
 

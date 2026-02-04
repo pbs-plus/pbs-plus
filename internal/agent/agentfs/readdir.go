@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -16,19 +17,19 @@ const (
 	defaultBufSize   = 1024 * 1024
 )
 
-var bufferPool = sync.Pool{
-	New: func() any {
-		return bytes.NewBuffer(make([]byte, 0, defaultBufSize))
-	},
-}
-
 type DirReader struct {
-	file        *os.File
-	path        string
-	encodeBuf   *bytes.Buffer
-	noMoreFiles bool
-	mu          sync.Mutex
-	closed      bool
+	file         *os.File
+	path         string
+	pending      []types.AgentFileInfo
+	encodeBuf    [defaultBufSize]byte
+	encodeWriter *bytes.Buffer
+	winFirstCall bool
+	buf          [8192]uint64 // The raw buffer from the kernel
+	bufp         int          // The current position in the buffer
+	nbuf         int
+	noMoreFiles  bool
+	mu           sync.Mutex
+	closed       bool
 }
 
 func NewDirReader(handle *os.File, path string) (*DirReader, error) {
@@ -36,9 +37,10 @@ func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 		WithField("path", path).Write()
 
 	reader := &DirReader{
-		file:      handle,
-		path:      path,
-		encodeBuf: bufferPool.Get().(*bytes.Buffer),
+		file:         handle,
+		pending:      make([]types.AgentFileInfo, 0, 8),
+		path:         path,
+		winFirstCall: true,
 	}
 
 	return reader, nil
@@ -48,7 +50,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.noMoreFiles {
+	if r.noMoreFiles && len(r.pending) == 0 {
 		syslog.L.Debug().WithMessage("DirReader.NextBatch: no more files (cached)").
 			WithField("path", r.path).Write()
 		return nil, os.ErrProcessDone
@@ -58,8 +60,13 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 		blockSize = 4096
 	}
 
-	r.encodeBuf.Reset()
-	enc := cbor.NewEncoder(r.encodeBuf)
+	if r.encodeWriter == nil {
+		r.encodeWriter = bytes.NewBuffer(r.encodeBuf[:])
+	}
+
+	r.encodeWriter.Reset()
+
+	enc := cbor.NewEncoder(r.encodeWriter)
 	if err := enc.StartIndefiniteArray(); err != nil {
 		return nil, err
 	}
@@ -67,12 +74,41 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	hasEntries := false
 	entryCount := 0
 
-	for r.encodeBuf.Len() < defaultBufSize-1024 {
+	for len(r.pending) > 0 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		entries, err := r.file.Readdir(defaultBatchSize)
+		info := r.pending[0]
+
+		testBuf := bytes.NewBuffer(nil)
+		testEnc := cbor.NewEncoder(testBuf)
+		if err := testEnc.Encode(info); err != nil {
+			return nil, err
+		}
+
+		encodedSize := testBuf.Len()
+		if r.encodeWriter.Len()+encodedSize > cap(r.encodeBuf) {
+			break
+		}
+
+		if err := enc.Encode(info); err != nil {
+			syslog.L.Error(err).WithMessage("DirReader.NextBatch: encode failed").
+				WithField("path", r.path).Write()
+			return nil, err
+		}
+
+		r.pending = r.pending[1:]
+		hasEntries = true
+		entryCount++
+	}
+
+	for len(r.pending) == 0 && !r.noMoreFiles {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		entries, err := r.readdir(defaultBatchSize, blockSize)
 		if err == io.EOF {
 			r.noMoreFiles = true
 			break
@@ -88,13 +124,24 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			break
 		}
 
-		for _, entry := range entries {
+		for i, info := range entries {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			info := buildFileInfo(entry, blockSize)
 			if info.Name == "" {
 				continue
+			}
+
+			testBuf := bytes.NewBuffer(nil)
+			testEnc := cbor.NewEncoder(testBuf)
+			if err := testEnc.Encode(info); err != nil {
+				return nil, err
+			}
+
+			encodedSize := testBuf.Len()
+			if r.encodeWriter.Len()+encodedSize > cap(r.encodeBuf) {
+				r.pending = append(r.pending, entries[i:]...)
+				break
 			}
 
 			if err := enc.Encode(info); err != nil {
@@ -105,22 +152,27 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			hasEntries = true
 			entryCount++
 		}
+
+		if len(r.pending) > 0 {
+			break
+		}
 	}
 
 	if err := enc.EndIndefinite(); err != nil {
 		return nil, err
 	}
 
-	if !hasEntries && r.noMoreFiles {
+	if !hasEntries && r.noMoreFiles && len(r.pending) == 0 {
 		return nil, os.ErrProcessDone
 	}
 
-	encodedResult := r.encodeBuf.Bytes()
+	encodedResult := r.encodeWriter.Bytes()
 
 	syslog.L.Debug().WithMessage("DirReader.NextBatch: batch encoded").
 		WithField("path", r.path).
 		WithField("bytes", len(encodedResult)).
 		WithField("entries_count", entryCount).
+		WithField("pending_count", len(r.pending)).
 		Write()
 
 	return encodedResult, nil
@@ -137,8 +189,9 @@ func (r *DirReader) Close() error {
 	syslog.L.Debug().WithMessage("DirReader.Close: closing file").
 		WithField("path", r.path).Write()
 
-	r.encodeBuf.Reset()
-	bufferPool.Put(r.encodeBuf)
+	if r.encodeWriter != nil {
+		r.encodeWriter.Reset()
+	}
 
 	r.closed = true
 	return r.file.Close()
