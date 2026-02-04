@@ -1,4 +1,4 @@
-//go:build !windows && !linux
+//go:build linux
 
 package agentfs
 
@@ -25,6 +25,9 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 
 	fd := int(r.file.Fd())
 	out := make([]types.AgentFileInfo, 0, min(limit, 128))
+
+	const statxMask = unix.STATX_TYPE | unix.STATX_MODE | unix.STATX_SIZE |
+		unix.STATX_BLOCKS | unix.STATX_ATIME | unix.STATX_MTIME | unix.STATX_CTIME
 
 	fullByteBuf := unsafe.Slice((*byte)(unsafe.Pointer(&r.buf[0])), len(r.buf)*8)
 
@@ -59,8 +62,8 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 				continue
 			}
 
-			var st unix.Stat_t
-			err := unix.Fstatat(fd, name, &st, unix.AT_SYMLINK_NOFOLLOW)
+			var sx unix.Statx_t
+			err := unix.Statx(fd, name, unix.AT_SYMLINK_NOFOLLOW|unix.AT_STATX_DONT_SYNC, statxMask, &sx)
 			if err != nil {
 				if errors.Is(err, unix.ENOENT) {
 					continue
@@ -68,30 +71,30 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 				return nil, err
 			}
 
-			isDir := (st.Mode & unix.S_IFMT) == unix.S_IFDIR
+			isDir := (sx.Mode & unix.S_IFMT) == unix.S_IFDIR
 
-			mode := uint32(st.Mode & 0777)
+			mode := uint32(sx.Mode & 0777)
 			if isDir {
 				mode |= 0x80000000
 			}
 
 			info := types.AgentFileInfo{
 				Name:           name,
-				Size:           st.Size,
+				Size:           int64(sx.Size),
 				Mode:           mode,
 				IsDir:          isDir,
-				ModTime:        timespecToNano(st.Mtimespec),
-				CreationTime:   getBirthTimeNano(&st),
-				LastAccessTime: timespecToNano(st.Atimespec),
-				LastWriteTime:  timespecToNano(st.Mtimespec),
+				ModTime:        statxTimestampToNano(sx.Mtime),
+				CreationTime:   statxBirthTimeNano(&sx),
+				LastAccessTime: statxTimestampToNano(sx.Atime),
+				LastWriteTime:  statxTimestampToNano(sx.Mtime),
 			}
 
 			if !isDir && blockSize > 0 {
-				if st.Blocks > 0 {
-					bytes := uint64(st.Blocks) * 512
+				if sx.Blocks > 0 {
+					bytes := uint64(sx.Blocks) * 512
 					info.Blocks = (bytes + blockSize - 1) / blockSize
 				} else {
-					sz := uint64(max(0, st.Size))
+					sz := uint64(max(0, int64(sx.Size)))
 					info.Blocks = (sz + blockSize - 1) / blockSize
 				}
 			}
@@ -105,15 +108,13 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	return out, nil
 }
 
-func timespecToNano(ts unix.Timespec) int64 {
+func statxTimestampToNano(ts unix.StatxTimestamp) int64 {
 	return int64(ts.Sec)*1e9 + int64(ts.Nsec)
 }
 
-func getBirthTimeNano(st *unix.Stat_t) int64 {
-	// FreeBSD and some BSDs have Birthtimespec
-	if st.Birthtimespec.Sec != 0 || st.Birthtimespec.Nsec != 0 {
-		return timespecToNano(st.Birthtimespec)
+func statxBirthTimeNano(sx *unix.Statx_t) int64 {
+	if sx.Mask&unix.STATX_BTIME != 0 {
+		return statxTimestampToNano(sx.Btime)
 	}
-	// Fallback to ctime
-	return timespecToNano(st.Ctimespec)
+	return statxTimestampToNano(sx.Ctime)
 }
