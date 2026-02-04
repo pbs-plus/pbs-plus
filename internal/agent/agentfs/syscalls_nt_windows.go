@@ -3,6 +3,8 @@
 package agentfs
 
 import (
+	"fmt"
+	"os"
 	"syscall"
 	"unsafe"
 
@@ -13,6 +15,7 @@ var (
 	ntdll                      = syscall.NewLazyDLL("ntdll.dll")
 	procNtQueryInformationFile = ntdll.NewProc("NtQueryInformationFile")
 	procRtlNtStatusToDosError  = ntdll.NewProc("RtlNtStatusToDosError")
+	ntQueryDirectoryFile       = ntdll.NewProc("NtQueryDirectoryFile")
 )
 
 const fileNetworkOpenInformationClass = 34
@@ -54,4 +57,31 @@ func ntQueryFileNetworkOpenInformation(
 		uintptr(fileNetworkOpenInformationClass),
 	)
 	return ntStatusToError(r0)
+}
+
+func ntDirectoryCall(handle uintptr, ioStatusBlock *IoStatusBlock, buffer []byte, restartScan bool) error {
+	status, _, _ := ntQueryDirectoryFile.Call(
+		handle,
+		0,
+		0,
+		0,
+		uintptr(unsafe.Pointer(ioStatusBlock)),
+		uintptr(unsafe.Pointer(&buffer[0])),
+		uintptr(len(buffer)),
+		uintptr(1),
+		uintptr(0),
+		0,
+		uintptr(boolToInt(restartScan)),
+	)
+
+	switch status {
+	case 0:
+		return nil
+	case STATUS_NO_MORE_FILES:
+		return os.ErrProcessDone
+	case STATUS_PENDING:
+		return fmt.Errorf("unexpected STATUS_PENDING with synchronous I/O")
+	default:
+		return fmt.Errorf("NtQueryDirectoryFile failed with status: 0x%x", status)
+	}
 }

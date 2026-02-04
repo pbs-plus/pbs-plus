@@ -23,12 +23,16 @@ var bufferPool = sync.Pool{
 }
 
 type DirReader struct {
-	file        *os.File
-	path        string
-	encodeBuf   *bytes.Buffer
-	noMoreFiles bool
-	mu          sync.Mutex
-	closed      bool
+	file         *os.File
+	path         string
+	encodeBuf    *bytes.Buffer
+	winFirstCall bool
+	unixBuf      []byte // The raw buffer from the kernel
+	unixBufp     int    // The current position in the buffer
+	unixNbuf     int
+	noMoreFiles  bool
+	mu           sync.Mutex
+	closed       bool
 }
 
 func NewDirReader(handle *os.File, path string) (*DirReader, error) {
@@ -36,9 +40,10 @@ func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 		WithField("path", path).Write()
 
 	reader := &DirReader{
-		file:      handle,
-		path:      path,
-		encodeBuf: bufferPool.Get().(*bytes.Buffer),
+		file:         handle,
+		path:         path,
+		winFirstCall: true,
+		encodeBuf:    bufferPool.Get().(*bytes.Buffer),
 	}
 
 	return reader, nil
@@ -72,7 +77,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			return nil, err
 		}
 
-		entries, err := r.file.Readdir(defaultBatchSize)
+		entries, err := r.readdir(defaultBatchSize, blockSize)
 		if err == io.EOF {
 			r.noMoreFiles = true
 			break
@@ -88,11 +93,10 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			break
 		}
 
-		for _, entry := range entries {
+		for _, info := range entries {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			info := buildFileInfo(entry, blockSize)
 			if info.Name == "" {
 				continue
 			}
