@@ -21,7 +21,7 @@ const (
 func shouldExcludeStatx(sx *unix.Statx_t) bool {
 	fileType := sx.Mode & unix.S_IFMT
 
-	if fileType == unix.S_IFSOCK || fileType == unix.S_IFBLK || fileType == unix.S_IFCHR {
+	if fileType == unix.S_IFSOCK || fileType == unix.S_IFBLK || fileType == unix.S_IFCHR || fileType == unix.S_IFLNK {
 		return true
 	}
 
