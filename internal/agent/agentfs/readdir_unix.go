@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"golang.org/x/sys/unix"
@@ -28,10 +29,11 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	const statxMask = unix.STATX_TYPE | unix.STATX_MODE | unix.STATX_SIZE |
 		unix.STATX_BLOCKS | unix.STATX_ATIME | unix.STATX_MTIME | unix.STATX_CTIME
 
+	fullByteBuf := unsafe.Slice((*byte)(unsafe.Pointer(&r.buf[0])), len(r.buf)*8)
+
 	for len(out) < limit {
 		if r.bufp >= r.nbuf {
-			r.bufp = 0
-			nread, err := unix.Getdents(fd, r.buf[:])
+			nread, err := unix.Getdents(int(r.file.Fd()), fullByteBuf)
 			if err != nil {
 				if errors.Is(err, unix.EBADF) {
 					return nil, os.ErrClosed
@@ -39,16 +41,17 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 				return nil, err
 			}
 			r.nbuf = nread
+			r.bufp = 0
 			if nread <= 0 {
 				r.noMoreFiles = true
 				break
 			}
 		}
 
-		remaining := r.buf[r.bufp:r.nbuf]
+		remaining := fullByteBuf[r.bufp:r.nbuf]
 		nb, _, names := unix.ParseDirent(remaining, limit-len(out), nil)
 
-		if nb == 0 {
+		if nb <= 0 {
 			break
 		}
 
