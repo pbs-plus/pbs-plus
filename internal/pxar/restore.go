@@ -132,32 +132,49 @@ func processJob(ctx context.Context, client *Client, job restoreJob, jobs chan<-
 }
 
 func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, fsCap filesystemCapabilities, noAttr bool) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0666)
+	needsUpdate, err := shouldUpdateFile(path, e)
 	if err != nil {
-		return fmt.Errorf("create file %q: %w", path, err)
+		return fmt.Errorf("check file %q: %w", path, err)
 	}
 
-	if e.Size > 0 && e.ContentRange != nil {
-		rr := &rangeReader{
-			ctx:          ctx,
-			client:       client,
-			contentStart: e.ContentRange[0],
-			contentEnd:   e.ContentRange[1],
-			totalSize:    e.Size,
+	if needsUpdate {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0666)
+		if err != nil {
+			return fmt.Errorf("create file %q: %w", path, err)
 		}
 
-		if _, err := io.Copy(f, rr); err != nil {
+		if e.Size > 0 && e.ContentRange != nil {
+			rr := &rangeReader{
+				ctx:          ctx,
+				client:       client,
+				contentStart: e.ContentRange[0],
+				contentEnd:   e.ContentRange[1],
+				totalSize:    e.Size,
+			}
+
+			if _, err := io.Copy(f, rr); err != nil {
+				f.Close()
+				return fmt.Errorf("copy data %q: %w", path, err)
+			}
+		}
+
+		if noAttr {
 			f.Close()
-			return fmt.Errorf("copy data %q: %w", path, err)
+			return nil
 		}
+
+		return applyMeta(ctx, client, f, e, fsCap)
 	}
 
-	if noAttr {
-		f.Close()
-		return nil
+	if !noAttr {
+		f, err := os.OpenFile(path, os.O_RDWR, 0666)
+		if err != nil {
+			return fmt.Errorf("open file %q: %w", path, err)
+		}
+		return applyMeta(ctx, client, f, e, fsCap)
 	}
 
-	return applyMeta(ctx, client, f, e, fsCap)
+	return nil
 }
 
 func restoreSymlink(ctx context.Context, client *Client, path string, e EntryInfo, fsCap filesystemCapabilities, noAttr bool) error {
@@ -165,6 +182,17 @@ func restoreSymlink(ctx context.Context, client *Client, path string, e EntryInf
 	if err != nil {
 		return fmt.Errorf("readlink data %q: %w", path, err)
 	}
+
+	if existingTarget, err := os.Readlink(path); err == nil {
+		if existingTarget == string(target) {
+			if !noAttr {
+				return applyMetaSymlink(ctx, client, path, e, fsCap)
+			}
+			return nil
+		}
+		_ = os.Remove(path)
+	}
+
 	if err := os.Symlink(string(target), path); err != nil {
 		return fmt.Errorf("symlink %q: %w", path, err)
 	}
@@ -174,4 +202,36 @@ func restoreSymlink(ctx context.Context, client *Client, path string, e EntryInf
 	}
 
 	return applyMetaSymlink(ctx, client, path, e, fsCap)
+}
+
+func shouldUpdateFile(path string, archiveInfo EntryInfo) (bool, error) {
+	stat, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	if stat.IsDir() != archiveInfo.IsDir() {
+		return true, nil
+	}
+	if (stat.Mode()&os.ModeSymlink != 0) != archiveInfo.IsSymlink() {
+		return true, nil
+	}
+
+	if archiveInfo.IsFile() {
+		if stat.Size() != int64(archiveInfo.Size) {
+			return true, nil
+		}
+		if stat.ModTime().Unix() != archiveInfo.MtimeSecs {
+			return true, nil
+		}
+	}
+
+	if archiveInfo.IsSymlink() {
+		return true, nil
+	}
+
+	return false, nil
 }
