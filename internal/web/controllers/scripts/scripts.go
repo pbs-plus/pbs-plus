@@ -41,8 +41,6 @@ func D2DScriptHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(toReturn)
-
-		return
 	}
 }
 
@@ -63,12 +61,12 @@ func ExtJsScriptHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		scriptValue := r.FormValue("script")
-		if !utils.IsValidShellScriptWithShebang(scriptValue) {
-			controllers.WriteErrorResponse(w, errors.New("invalid script, no shebang detected"))
+		if err := storeInstance.ValidateScript(scriptValue); err != nil {
+			controllers.WriteErrorResponse(w, err)
 			return
 		}
 
-		path, err := utils.SaveScriptToFile(scriptValue)
+		path, err := storeInstance.SaveScript(scriptValue)
 		if err != nil {
 			controllers.WriteErrorResponse(w, fmt.Errorf("failed to save script to file: %w", err))
 			return
@@ -115,8 +113,8 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			scriptValue := r.FormValue("script")
-			if !utils.IsValidShellScriptWithShebang(scriptValue) {
-				controllers.WriteErrorResponse(w, errors.New("invalid script, no shebang detected"))
+			if err := storeInstance.ValidateScript(scriptValue); err != nil {
+				controllers.WriteErrorResponse(w, err)
 				return
 			}
 
@@ -126,7 +124,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			err = utils.UpdateScriptContentToFile(script.Path, scriptValue)
+			err = storeInstance.UpdateScript(script.Path, scriptValue)
 			if err != nil {
 				controllers.WriteErrorResponse(w, fmt.Errorf("failed to save script to file: %w", err))
 				return
@@ -163,7 +161,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			scriptContent, err := utils.ReadScriptContentFromFile(currentPath)
+			scriptContent, err := storeInstance.ReadScript(currentPath)
 			if err != nil {
 				controllers.WriteErrorResponse(w, err)
 				return
