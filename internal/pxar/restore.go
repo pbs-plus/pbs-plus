@@ -1,6 +1,7 @@
 package pxar
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -142,6 +143,10 @@ func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, 
 		if err != nil {
 			return fmt.Errorf("create file %q: %w", path, err)
 		}
+		defer f.Close()
+
+		const bufSize = 256 * 1024 // 256KB buffer
+		bw := bufio.NewWriterSize(f, bufSize)
 
 		if e.Size > 0 && e.ContentRange != nil {
 			rr := &rangeReader{
@@ -152,14 +157,16 @@ func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, 
 				totalSize:    e.Size,
 			}
 
-			if _, err := io.Copy(f, rr); err != nil {
-				f.Close()
+			if _, err := io.Copy(bw, rr); err != nil {
 				return fmt.Errorf("copy data %q: %w", path, err)
 			}
 		}
 
+		if err := bw.Flush(); err != nil {
+			return fmt.Errorf("flush %q: %w", path, err)
+		}
+
 		if noAttr {
-			f.Close()
 			return nil
 		}
 
