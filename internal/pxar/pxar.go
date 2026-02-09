@@ -13,9 +13,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -27,15 +27,15 @@ import (
 )
 
 type PxarReader struct {
-	conn     net.Conn
-	mu       sync.Mutex
-	enc      cbor.EncMode
-	dec      cbor.DecMode
-	cmd      *exec.Cmd
-	task     *tasks.RestoreTask
-	loggerCh chan string
-
-	closed atomic.Bool
+	connPool   chan net.Conn
+	poolSize   int
+	socketPath string
+	enc        cbor.EncMode
+	dec        cbor.DecMode
+	cmd        *exec.Cmd
+	task       *tasks.RestoreTask
+	loggerCh   chan string
+	closed     atomic.Bool
 
 	FileCount   int64
 	FolderCount int64
@@ -149,16 +149,16 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 	interval := time.NewTicker(500 * time.Millisecond)
 	defer interval.Stop()
 
-	var conn net.Conn
+	var testConn net.Conn
 	for {
-		var err error
 		select {
 		case <-exp.C:
-			return nil, fmt.Errorf("failed to connect to socket: %w", err)
+			return nil, fmt.Errorf("failed to connect to socket: timeout")
 		case <-interval.C:
 		}
-		conn, err = net.Dial("unix", socketPath)
-		if err == nil && conn != nil {
+		testConn, err = net.Dial("unix", socketPath)
+		if err == nil && testConn != nil {
+			testConn.Close()
 			break
 		}
 	}
@@ -175,13 +175,32 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 
 	loggerCh := make(chan string, 100)
 
+	poolSize := runtime.NumCPU() * 2
+	if poolSize < 4 {
+		poolSize = 4
+	}
+	if poolSize > 16 {
+		poolSize = 16 // Cap at reasonable limit
+	}
+
 	reader := &PxarReader{
-		conn:     conn,
-		enc:      encMode,
-		dec:      decMode,
-		cmd:      cmd,
-		task:     proxmoxTask,
-		loggerCh: loggerCh,
+		connPool:   make(chan net.Conn, poolSize),
+		poolSize:   poolSize,
+		socketPath: socketPath,
+		enc:        encMode,
+		dec:        decMode,
+		cmd:        cmd,
+		task:       proxmoxTask,
+		loggerCh:   loggerCh,
+	}
+
+	for i := 0; i < poolSize; i++ {
+		conn, err := net.Dial("unix", socketPath)
+		if err != nil {
+			reader.Close()
+			return nil, fmt.Errorf("failed to create connection %d: %w", i, err)
+		}
+		reader.connPool <- conn
 	}
 
 	go func() {
@@ -275,18 +294,66 @@ func (c *PxarReader) Close() error {
 	if c.loggerCh != nil {
 		close(c.loggerCh)
 	}
-	if c.conn != nil {
-		_ = c.conn.Close()
+
+	close(c.connPool)
+	for conn := range c.connPool {
+		if conn != nil {
+			conn.Close()
+		}
 	}
+
 	if c.cmd != nil {
 		c.cmd.Cancel()
 	}
 	return nil
 }
 
+func (c *PxarReader) getConn(ctx context.Context) (net.Conn, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case conn := <-c.connPool:
+		conn.SetReadDeadline(time.Now().Add(1 * time.Millisecond))
+		one := []byte{0}
+		_, err := conn.Read(one)
+		conn.SetReadDeadline(time.Time{})
+
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return conn, nil
+		}
+
+		conn.Close()
+		newConn, err := net.Dial("unix", c.socketPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to recreate connection: %w", err)
+		}
+		return newConn, nil
+	}
+}
+
+func (c *PxarReader) putConn(conn net.Conn) {
+	if c.closed.Load() {
+		if conn != nil {
+			conn.Close()
+		}
+		return
+	}
+
+	select {
+	case c.connPool <- conn:
+		// Successfully returned to pool
+	default:
+		// Pool is full, close this connection
+		conn.Close()
+	}
+}
+
 func (c *PxarReader) sendRequest(ctx context.Context, reqVariant string, reqData any) (Response, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	conn, err := c.getConn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer c.putConn(conn)
 
 	select {
 	case <-ctx.Done():
@@ -302,21 +369,21 @@ func (c *PxarReader) sendRequest(ctx context.Context, reqVariant string, reqData
 	}
 
 	length := uint32(len(reqBytes))
-	if err := binary.Write(c.conn, binary.LittleEndian, length); err != nil {
+	if err := binary.Write(conn, binary.LittleEndian, length); err != nil {
 		return nil, err
 	}
 
-	if _, err := c.conn.Write(reqBytes); err != nil {
+	if _, err := conn.Write(reqBytes); err != nil {
 		return nil, err
 	}
 
 	if deadline, ok := ctx.Deadline(); ok {
-		c.conn.SetReadDeadline(deadline)
+		conn.SetReadDeadline(deadline)
 	}
-	defer c.conn.SetReadDeadline(time.Time{})
+	defer conn.SetReadDeadline(time.Time{})
 
 	var respLength uint32
-	if err := binary.Read(c.conn, binary.LittleEndian, &respLength); err != nil {
+	if err := binary.Read(conn, binary.LittleEndian, &respLength); err != nil {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -326,7 +393,7 @@ func (c *PxarReader) sendRequest(ctx context.Context, reqVariant string, reqData
 	}
 
 	respData := make([]byte, respLength)
-	if _, err := io.ReadFull(c.conn, respData); err != nil {
+	if _, err := io.ReadFull(conn, respData); err != nil {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
