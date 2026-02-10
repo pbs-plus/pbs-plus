@@ -16,6 +16,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	agenttypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -64,13 +65,15 @@ type RestoreOperation struct {
 	cancel context.CancelFunc
 	mu     sync.RWMutex
 
-	task        *tasks.RestoreTask
-	queueTask   *tasks.QueuedTask
-	waitGroup   *sync.WaitGroup
-	err         error
-	errChClosed atomic.Bool
-	errCh       chan error
-	errCount    atomic.Int32
+	task         *tasks.RestoreTask
+	queueTask    *tasks.QueuedTask
+	waitGroup    *sync.WaitGroup
+	err          error
+	errChClosed  atomic.Bool
+	errCh        chan error
+	errCount     atomic.Int32
+	receivedDone atomic.Bool
+	disconnected chan struct{}
 
 	job           database.Restore
 	remoteServer  *pxar.RemoteServer
@@ -100,6 +103,7 @@ func NewRestoreOperation(
 		web:           web,
 		waitGroup:     &sync.WaitGroup{},
 		task:          task,
+		disconnected:  make(chan struct{}, 1),
 	}, nil
 }
 
@@ -345,6 +349,21 @@ func (b *RestoreOperation) agentExecute() error {
 		return err
 	}
 
+	ticker := time.NewTicker(1 * time.Second)
+	go func() {
+		for {
+			select {
+			case <-b.ctx.Done():
+				return
+			case <-ticker.C:
+				if state := agentRPC.GetState(); state == arpc.StateDisconnected {
+					close(b.disconnected)
+					return
+				}
+			}
+		}
+	}()
+
 	return nil
 }
 
@@ -509,7 +528,13 @@ func (b *RestoreOperation) Wait() error {
 		case <-b.ctx.Done():
 			return b.ctx.Err()
 		case <-b.remoteServer.DoneCh:
+			b.receivedDone.Store(true)
 			b.task.WriteString("received done signal from agent")
+		case <-b.disconnected:
+			if !b.receivedDone.Load() {
+				b.task.WriteString("agent disconnected")
+				b.err = fmt.Errorf("lost connection to agent without receiving done signal")
+			}
 		}
 	}
 
