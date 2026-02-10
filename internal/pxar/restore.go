@@ -133,7 +133,7 @@ func processJob(ctx context.Context, client *Client, job restoreJob, jobs chan<-
 }
 
 func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, fsCap filesystemCapabilities, noAttr bool) error {
-	needsUpdate, err := shouldUpdateFile(path, e)
+	needsUpdate, err := shouldUpdateFile(path, e, noAttr)
 	if err != nil {
 		return fmt.Errorf("check file %q: %w", path, err)
 	}
@@ -211,7 +211,7 @@ func restoreSymlink(ctx context.Context, client *Client, path string, e EntryInf
 	return applyMetaSymlink(ctx, client, path, e, fsCap)
 }
 
-func shouldUpdateFile(path string, archiveInfo EntryInfo) (bool, error) {
+func shouldUpdateFile(path string, archiveInfo EntryInfo, noAttr bool) (bool, error) {
 	stat, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return true, nil
@@ -231,8 +231,10 @@ func shouldUpdateFile(path string, archiveInfo EntryInfo) (bool, error) {
 		if stat.Size() != int64(archiveInfo.Size) {
 			return true, nil
 		}
-		if stat.ModTime().Unix() != archiveInfo.MtimeSecs {
-			return true, nil
+		if !noAttr {
+			if stat.ModTime().Unix() != archiveInfo.MtimeSecs {
+				return true, nil
+			}
 		}
 	}
 
