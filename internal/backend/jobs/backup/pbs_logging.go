@@ -78,10 +78,16 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, maxCapacity)
 
+	hasError := false
+	incomplete := true
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if helpers.IsJunkLog(line) {
 			continue
+		}
+		if strings.Contains(line, "TASK OK") || strings.Contains(line, "backup finished successfully") {
+			incomplete = false
 		}
 		if line == "--- proxmox-backup-client log starts here ---" {
 			alreadyHasClientLogs = true
@@ -93,9 +99,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 		return false, false, 0, "", fmt.Errorf("scanning input file: %w", err)
 	}
 
-	hasError := false
-	incomplete := true
-	disconnected := false
 	var errorString string
 	var errorPath string
 	pbsWarningRawCount := 0
@@ -132,13 +135,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 				continue
 			}
 
-			if strings.Contains(line, "connection failed") || strings.Contains(line, "connection error: not connected") {
-				disconnected = true
-			}
-			if strings.Contains(line, "End Time:") || strings.Contains(line, "TASK OK") || strings.Contains(line, "backup finished successfully") {
-				incomplete = false
-			}
-
 			tmpWriter.WriteString(line)
 			tmpWriter.WriteByte('\n')
 		}
@@ -156,7 +152,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 
 	if hasError {
 		tmpWriter.WriteString(errorString)
-	} else if incomplete || disconnected {
+	} else if incomplete {
 		tmpWriter.WriteString(timestamp)
 		tmpWriter.WriteString(": TASK ERROR: ")
 		if customErr != nil {
