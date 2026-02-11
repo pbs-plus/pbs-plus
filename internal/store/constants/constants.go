@@ -12,6 +12,7 @@ const (
 	ModifiedFilePath       = "/js/proxmox-backup-gui.js"     // The specific JS file to modify
 	CertFile               = "/etc/proxmox-backup/proxy.pem" // Path to generated SSL certificate
 	KeyFile                = "/etc/proxmox-backup/proxy.key" // Path to generated private key
+	AppConfigFile          = "/etc/proxmox-backup/pbs-plus/config.toml"
 	AgentTLSCACertFile     = "/etc/proxmox-backup/pbs-plus/certs/ca.crt"
 	AgentTLSCAKeyFile      = "/etc/proxmox-backup/pbs-plus/certs/ca.key"
 	AgentTLSPrevCACertFile = "/etc/proxmox-backup/pbs-plus/certs/ca-prev.crt"
