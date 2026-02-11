@@ -36,11 +36,9 @@ impl Server {
     }
 
     async fn handle_connection(&self, mut stream: UnixStream) -> Result<(), Error> {
-        let mut len_buf = [0u8; 4];
-        let mut req_buf = Vec::with_capacity(8192);
-        let mut resp_buf = Vec::with_capacity(8192);
-
         loop {
+            // Read request length (4 bytes)
+            let mut len_buf = [0u8; 4];
             match stream.read_exact(&mut len_buf).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -48,17 +46,19 @@ impl Server {
             }
             let len = u32::from_le_bytes(len_buf) as usize;
 
-            req_buf.clear();
-            req_buf.resize(len, 0);
+            // Read request body
+            let mut req_buf = vec![0u8; len];
             stream.read_exact(&mut req_buf).await?;
 
             let request: Request = ciborium::de::from_reader(&req_buf[..])?;
             let response = self.handle_request(request).await;
 
-            resp_buf.clear();
+            // Serialize response
+            let mut resp_buf = Vec::new();
             ciborium::ser::into_writer(&response, &mut resp_buf)?;
             let resp_len = (resp_buf.len() as u32).to_le_bytes();
 
+            // Send response
             stream.write_all(&resp_len).await?;
             stream.write_all(&resp_buf).await?;
         }
@@ -89,7 +89,9 @@ impl Server {
             }
 
             Request::LookupByPath { path } => {
+                // Convert Vec<u8> to OsStr
                 let path_osstr = OsStr::from_bytes(&path);
+
                 let entry = self
                     .accessor
                     .open_root()
@@ -106,7 +108,7 @@ impl Server {
 
             Request::ReadDir { entry_end } => {
                 let dir = unsafe { self.accessor.open_dir_at_end(entry_end).await? };
-                let mut entries = Vec::with_capacity(64);
+                let mut entries = Vec::new();
 
                 let mut iter = dir.read_dir();
                 while let Some(file) = iter.next().await {
@@ -138,8 +140,8 @@ impl Server {
                 content_end,
                 offset,
                 size,
-                buf_capacity,
             } => {
+                // Open the file contents directly using the saved ranges
                 let entry_range =
                     pxar::accessor::EntryRangeInfo::toplevel(content_start..content_end);
                 let entry = unsafe { self.accessor.open_file_at_range(&entry_range).await? };
@@ -151,10 +153,6 @@ impl Server {
 
                 let total_size = entry.file_size().unwrap_or(0);
                 let read_size = std::cmp::min(size, (total_size.saturating_sub(offset)) as usize);
-
-                if read_size == 0 {
-                    return Ok(Response::Data { data: Vec::new() });
-                }
 
                 let mut buf = vec![0u8; read_size];
                 let mut pos = 0;
@@ -207,7 +205,7 @@ impl Server {
                 };
 
                 let metadata = entry.into_entry().into_metadata();
-                let mut xattrs = Vec::with_capacity(metadata.xattrs.len() + 1);
+                let mut xattrs = Vec::new();
 
                 for xattr in metadata.xattrs {
                     xattrs.push((xattr.name().to_bytes().to_vec(), xattr.value().to_vec()));
@@ -250,10 +248,14 @@ fn entry_to_info(
 
     let (file_type, content_range) = match entry.kind() {
         pxar::EntryKind::Directory => (FileType::Directory, None),
-        pxar::EntryKind::File { .. } => (
-            FileType::File,
-            Some((range.entry_range.start, range.entry_range.end)),
-        ),
+        pxar::EntryKind::File { .. } => {
+            // For files, we'll pass the entry range which can be used to re-open the file
+            // The client will use this same range to read content
+            (
+                FileType::File,
+                Some((range.entry_range.start, range.entry_range.end)),
+            )
+        }
         pxar::EntryKind::Symlink(_) => (FileType::Symlink, None),
         pxar::EntryKind::Hardlink(_) => (FileType::Hardlink, None),
         pxar::EntryKind::Device(_) => (FileType::Device, None),
@@ -318,6 +320,7 @@ async fn main() -> Result<(), Error> {
     let mpxar_didx = mpxar_didx.context("--mpxar-didx required")?;
     let ppxar_didx = ppxar_didx.context("--ppxar-didx required")?;
 
+    // Load encryption key if provided
     let crypt = if let Some(ref keyfile) = keyfile {
         let (key, _, _) = load_and_decrypt_key(Path::new(keyfile), &get_key_password)?;
         Some(Arc::new(CryptConfig::new(key)?))
@@ -325,6 +328,7 @@ async fn main() -> Result<(), Error> {
         None
     };
 
+    // Open indexes
     let meta_index = DynamicIndexReader::new(std::fs::File::open(mpxar_didx)?)?;
     let meta_store = LocalChunkStore::new(pbs_store, crypt.clone(), verify_chunks);
     let meta_buffered = DirectDynamicReader::new(meta_index, meta_store);
@@ -345,6 +349,7 @@ async fn main() -> Result<(), Error> {
 
     let server = Arc::new(Server::new(accessor));
 
+    // Remove existing socket if present
     let _ = std::fs::remove_file(socket_path);
 
     let listener = UnixListener::bind(socket_path)?;
