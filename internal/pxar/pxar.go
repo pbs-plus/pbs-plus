@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -168,7 +169,9 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 		return nil, fmt.Errorf("failed to create CBOR encoder: %w", err)
 	}
 
-	decMode, err := cbor.DecOptions{}.DecMode()
+	decMode, err := cbor.DecOptions{
+		MaxArrayElements: math.MaxInt32,
+	}.DecMode()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CBOR decoder: %w", err)
 	}
