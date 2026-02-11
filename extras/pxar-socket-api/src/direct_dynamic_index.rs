@@ -11,11 +11,10 @@ use pbs_datastore::dynamic_index::DynamicIndexReader;
 use pbs_datastore::index::IndexFile;
 use pbs_datastore::read_chunk::ReadChunk;
 
-/// Ephemeral decoded chunk used only to serve the current read.
 struct EphemeralChunk {
     start: u64,
     end: u64,
-    data: Vec<u8>, // plaintext for [start, end)
+    data: Vec<u8>,
 }
 
 impl EphemeralChunk {
@@ -31,19 +30,11 @@ impl EphemeralChunk {
     }
 }
 
-/// A “direct” dynamic reader with no persistent cache:
-/// - Decodes only the chunk(s) required for each read
-/// - Holds at most one decoded chunk at a time
-/// - Drop-in replacement for your DirectDynamicReader type
 pub struct DirectDynamicReader<S: ReadChunk> {
     store: S,
     index: DynamicIndexReader,
     archive_size: u64,
-
-    // Current logical read position for std::io::Read/Seek
     read_offset: u64,
-
-    // Keep a handle to the most recently decoded chunk for sequential fast path
     cur_chunk_idx: Option<usize>,
     cur_chunk: Option<EphemeralChunk>,
 }
@@ -81,7 +72,6 @@ impl<S: ReadChunk> DirectDynamicReader<S> {
             .chunk_info(idx)
             .ok_or_else(|| format_err!("chunk index out of range"))?;
 
-        // Decode plaintext for this chunk
         let data = self.store.read_chunk(&info.digest)?;
 
         let start = info.range.start;
@@ -105,14 +95,12 @@ impl<S: ReadChunk> DirectDynamicReader<S> {
             return Ok(());
         }
 
-        // If current chunk covers the offset, keep it.
         if let Some(c) = self.cur_chunk.as_ref() {
             if c.contains(offset) {
                 return Ok(());
             }
         }
 
-        // If we have a current index and the offset is beyond it, try next index
         if let Some(idx) = self.cur_chunk_idx {
             if let Some(c) = self.cur_chunk.as_ref() {
                 if offset >= c.end {
@@ -130,7 +118,6 @@ impl<S: ReadChunk> DirectDynamicReader<S> {
             }
         }
 
-        // General case: binary search + load
         let idx = self.locate_chunk_index(offset)?;
         let chunk = self.load_chunk(idx)?;
         self.cur_chunk_idx = Some(idx);
@@ -138,8 +125,6 @@ impl<S: ReadChunk> DirectDynamicReader<S> {
         Ok(())
     }
 
-    /// Return a slice from the current chunk starting at 'offset'. If the read must span
-    /// multiple chunks, the caller loops and calls this again after advancing 'offset'.
     fn buffered_slice_from(&mut self, offset: u64) -> Result<&[u8], Error> {
         if offset == self.archive_size {
             return Ok(&[]);
@@ -171,7 +156,7 @@ impl<S: ReadChunk> Read for DirectDynamicReader<S> {
             };
 
             if chunk_slice.is_empty() {
-                break; // EOF
+                break;
             }
 
             let n = min(chunk_slice.len(), out.len() - total);
@@ -205,8 +190,6 @@ impl<S: ReadChunk> Seek for DirectDynamicReader<S> {
         }
         self.read_offset = new_offset as u64;
 
-        // Optional: drop current chunk on non-sequential seek to free memory immediately.
-        // Keeping it can still help if caller seeks within same chunk.
         if let Some(c) = self.cur_chunk.as_ref() {
             if !c.contains(self.read_offset) {
                 self.cur_chunk = None;
@@ -218,8 +201,6 @@ impl<S: ReadChunk> Seek for DirectDynamicReader<S> {
     }
 }
 
-/// Direct adapter that matches your previous DirectLocalDynamicReadAt API.
-/// It serializes callers via a Mutex and blocks in place to perform the read.
 #[derive(Clone)]
 pub struct DirectLocalDynamicReadAt<R: ReadChunk> {
     inner: Arc<Mutex<DirectDynamicReader<R>>>,

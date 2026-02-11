@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/fxamacker/cbor/v2"
 	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/xtaci/smux"
 )
@@ -43,8 +42,8 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (*smu
 		return nil, nil, err
 	}
 
-	enc := cbor.NewEncoder(stream)
-	dec := cbor.NewDecoder(stream)
+	enc := s.cborEnc.NewEncoder(stream)
+	dec := s.cborDec.NewDecoder(stream)
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetDeadline(deadline)
@@ -56,7 +55,7 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (*smu
 		case []byte:
 			payloadBytes = p
 		default:
-			payloadBytes, err = cbor.Marshal(p)
+			payloadBytes, err = s.cborEnc.Marshal(p)
 			if err != nil {
 				return stream, nil, fmt.Errorf("marshal payload: %w", err)
 			}
@@ -117,7 +116,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	if resp.Status != http.StatusOK {
 		if len(resp.Data) > 0 {
 			var serErr SerializableError
-			if err := cbor.Unmarshal(resp.Data, &serErr); err == nil {
+			if err := s.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
 				return UnwrapError(serErr)
 			}
 		}
@@ -132,7 +131,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 		*dst = append((*dst)[:0], resp.Data...)
 		return nil
 	default:
-		return cbor.Unmarshal(resp.Data, out)
+		return s.cborDec.Unmarshal(resp.Data, out)
 	}
 }
 
@@ -158,7 +157,7 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	if resp.Status != http.StatusOK {
 		if len(resp.Data) > 0 {
 			var serErr SerializableError
-			if err := cbor.Unmarshal(resp.Data, &serErr); err == nil {
+			if err := s.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
 				return "", UnwrapError(serErr)
 			}
 		}
@@ -177,7 +176,7 @@ func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any,
 
 	if resp.Status != 213 {
 		var serErr SerializableError
-		if err := cbor.Unmarshal(resp.Data, &serErr); err == nil {
+		if err := s.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
 			return 0, UnwrapError(serErr)
 		}
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
