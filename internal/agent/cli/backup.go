@@ -125,8 +125,6 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 	winquit.SimulateSigTermOnQuit(done)
 
 	var wg sync.WaitGroup
-	backupInitiated := make(chan struct{})
-	var backupInitiatedOnce sync.Once
 
 	wg.Go(func() {
 		defer syslog.L.Info().WithMessage("CmdBackup: ARPC session handler shutting down").Write()
@@ -138,6 +136,9 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 		backoff := base
 
 		var session *arpc.StreamPipe
+
+		var currentSnap *snapshots.Snapshot
+		currentReadMode := *readMode
 
 		for {
 			select {
@@ -175,8 +176,8 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 				backoff = base
 			}
 
-			backupInitiatedOnce.Do(func() {
-				backupMode, err := Backup(session, *sourceMode, *readMode, *drive, *backupId)
+			if currentSnap == nil {
+				snap, backupMode, err := Backup(session, *sourceMode, currentReadMode, *drive, *backupId)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "Backup initiation failed:", err)
 					syslog.L.Error(err).WithMessage("CmdBackup: Backup initiation failed").Write()
@@ -184,8 +185,23 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 					return
 				}
 				fmt.Println(BACKUP_MODE_PREFIX + backupMode)
-				close(backupInitiated)
-			})
+				currentSnap = snap
+				currentReadMode = backupMode
+			}
+
+			fs := agentfs.NewAgentFSServer(*backupId, currentReadMode, *currentSnap)
+			router := session.GetRouter()
+			if router == nil {
+				session.SetRouter(arpc.NewRouter())
+				router = session.GetRouter()
+			}
+
+			fs.RegisterHandlers(router)
+			syslog.L.Info().WithMessage("Backup: AgentFSServer registered and session ready").
+				WithField("backupId", backupId).
+				WithField("mode", currentReadMode).
+				WithField("snapshot_path", currentSnap.Path).
+				Write()
 
 			if err := session.Serve(); err != nil {
 				syslog.L.Warn().WithMessage("ARPC connection lost, attempting recovery").WithField("error", err.Error()).Write()
@@ -332,7 +348,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupId strin
 	return mode, cmd.Process.Pid, nil
 }
 
-func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, backupId string) (string, error) {
+func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, backupId string) (*snapshots.Snapshot, string, error) {
 	syslog.L.Info().WithMessage("Backup: begin").
 		WithField("sourceMode", sourceMode).
 		WithField("readMode", readMode).
@@ -342,13 +358,13 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 
 	if err := utils.ValidateJobId(backupId); err != nil {
 		syslog.L.Error(err).WithMessage("Backup: backupId validation failed").Write()
-		return "", fmt.Errorf("invalid backupId: %w", err)
+		return nil, "", fmt.Errorf("invalid backupId: %w", err)
 	}
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Backup: NewBackupStore failed").WithField("backupId", backupId).Write()
-		return "", err
+		return nil, "", err
 	}
 	if existingSession, ok := activeSessions.Get(backupId); ok {
 		syslog.L.Info().WithMessage("Backup: closing existing session").WithField("backupId", backupId).Write()
@@ -356,19 +372,10 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 		_ = store.EndBackup(backupId)
 	}
 
-	sessionCtx, cancel := context.WithCancel(context.Background())
-	session := &backupSession{
-		backupId: backupId,
-		ctx:      sessionCtx,
-		cancel:   cancel,
-		store:    store,
-	}
-	activeSessions.Set(backupId, session)
-
 	if hasActive, err := store.HasActiveBackupForJob(backupId); hasActive || err != nil {
 		if err != nil {
 			syslog.L.Error(err).WithMessage("Backup: HasActiveBackupForJob failed").WithField("backupId", backupId).Write()
-			return "", err
+			return nil, "", err
 		}
 		syslog.L.Info().WithMessage("Backup: ending previous active backup").WithField("backupId", backupId).Write()
 		_ = store.EndBackup(backupId)
@@ -376,8 +383,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 
 	if err := store.StartBackup(backupId); err != nil {
 		syslog.L.Error(err).WithMessage("Backup: StartBackup failed").WithField("backupId", backupId).Write()
-		session.Close()
-		return "", err
+		return nil, "", err
 	}
 
 	var snapshot snapshots.Snapshot
@@ -433,27 +439,15 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 		syslog.L.Info().WithMessage("Backup: non-Windows platform, using root snapshot").Write()
 	}
 
-	session.snapshot = snapshot
-
-	fs := agentfs.NewAgentFSServer(backupId, readMode, snapshot)
-	if fs == nil {
-		syslog.L.Error(errors.New("fs is nil")).WithMessage("Backup: NewAgentFSServer returned nil").Write()
-		session.Close()
-		return "", fmt.Errorf("fs is nil")
+	sessionCtx, cancel := context.WithCancel(context.Background())
+	session := &backupSession{
+		backupId: backupId,
+		ctx:      sessionCtx,
+		cancel:   cancel,
+		store:    store,
+		snapshot: snapshot,
 	}
-	router := rpcSess.GetRouter()
-	if router == nil {
-		syslog.L.Error(errors.New("router is nil")).WithMessage("Backup: GetRouter returned nil").Write()
-		return "", fmt.Errorf("router is nil")
-	}
+	activeSessions.Set(backupId, session)
 
-	fs.RegisterHandlers(router)
-	session.fs = fs
-	syslog.L.Info().WithMessage("Backup: AgentFSServer registered and session ready").
-		WithField("backupId", backupId).
-		WithField("mode", backupMode).
-		WithField("snapshot_path", snapshot.Path).
-		Write()
-
-	return backupMode, nil
+	return &snapshot, backupMode, nil
 }
