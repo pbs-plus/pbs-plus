@@ -21,7 +21,6 @@ pub enum Request {
         content_end: u64,
         offset: u64,
         size: usize,
-        buf_capacity: usize,
     },
     ReadLink {
         entry_start: u64,

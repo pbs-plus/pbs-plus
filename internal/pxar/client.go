@@ -2,7 +2,6 @@ package pxar
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -36,18 +35,14 @@ func (c *Client) SendError(ctx context.Context, err error) error {
 		return nil
 	}
 
-	if c.errCh != nil {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case c.errCh <- err:
-			return nil
-		default:
-			return nil
-		}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case c.errCh <- err:
+		return nil
+	default:
+		return nil
 	}
-
-	return fmt.Errorf("no pipe or errCh available")
 }
 
 func (c *Client) GetRoot(ctx context.Context) (EntryInfo, error) {
@@ -59,15 +54,12 @@ func (c *Client) GetRoot(ctx context.Context) (EntryInfo, error) {
 		return info, nil
 	}
 
-	if c.pr != nil {
-		info, err := c.pr.GetRoot(ctx)
-		if err != nil {
-			return EntryInfo{}, err
-		}
-		return *info, nil
+	info, err := c.pr.GetRoot(ctx)
+	if err != nil {
+		return EntryInfo{}, err
 	}
 
-	return EntryInfo{}, fmt.Errorf("no pipe or pr available")
+	return *info, nil
 }
 
 func (c *Client) LookupByPath(ctx context.Context, path string) (EntryInfo, error) {
@@ -82,15 +74,12 @@ func (c *Client) LookupByPath(ctx context.Context, path string) (EntryInfo, erro
 		return info, nil
 	}
 
-	if c.pr != nil {
-		info, err := c.pr.LookupByPath(ctx, path)
-		if err != nil {
-			return EntryInfo{}, err
-		}
-		return *info, nil
+	info, err := c.pr.LookupByPath(ctx, path)
+	if err != nil {
+		return EntryInfo{}, err
 	}
 
-	return EntryInfo{}, fmt.Errorf("no pipe or pr available")
+	return *info, nil
 }
 
 func (c *Client) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, error) {
@@ -105,15 +94,12 @@ func (c *Client) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, err
 		return entries, nil
 	}
 
-	if c.pr != nil {
-		info, err := c.pr.ReadDir(ctx, entryEnd)
-		if err != nil {
-			return nil, err
-		}
-		return info, nil
+	info, err := c.pr.ReadDir(ctx, entryEnd)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf("no pipe or pr available")
+	return info, nil
 }
 
 func (c *Client) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (EntryInfo, error) {
@@ -129,15 +115,12 @@ func (c *Client) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (Entr
 		return info, nil
 	}
 
-	if c.pr != nil {
-		info, err := c.pr.GetAttr(ctx, entryStart, entryEnd)
-		if err != nil {
-			return EntryInfo{}, err
-		}
-		return *info, nil
+	info, err := c.pr.GetAttr(ctx, entryStart, entryEnd)
+	if err != nil {
+		return EntryInfo{}, err
 	}
 
-	return EntryInfo{}, fmt.Errorf("no pipe or pr available")
+	return *info, nil
 }
 
 func (c *Client) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint, data []byte) (int, error) {
@@ -147,21 +130,18 @@ func (c *Client) Read(ctx context.Context, contentStart, contentEnd, offset uint
 			"content_end":   contentEnd,
 			"offset":        offset,
 			"size":          size,
-			"buf_capacity":  len(data),
 		}
 		return c.pipe.CallBinary(ctx, "pxar.Read", params, data)
 	}
 
-	if c.pr != nil {
-		raw, err := c.pr.Read(ctx, contentStart, contentEnd, offset, size)
-		if err != nil {
-			return 0, err
-		}
-		n := copy(data, raw)
-		return n, nil
+	raw, err := c.pr.Read(ctx, contentStart, contentEnd, offset, size)
+	if err != nil {
+		return 0, err
 	}
 
-	return 0, fmt.Errorf("no pipe or pr available")
+	n := copy(data, raw)
+
+	return n, nil
 }
 
 func (c *Client) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
@@ -177,15 +157,12 @@ func (c *Client) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]b
 		return target, nil
 	}
 
-	if c.pr != nil {
-		info, err := c.pr.ReadLink(ctx, entryStart, entryEnd)
-		if err != nil {
-			return nil, err
-		}
-		return info, nil
+	info, err := c.pr.ReadLink(ctx, entryStart, entryEnd)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf("no pipe or pr available")
+	return info, nil
 }
 
 func (c *Client) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (map[string][]byte, error) {
@@ -201,15 +178,12 @@ func (c *Client) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (m
 		return xattrs, nil
 	}
 
-	if c.pr != nil {
-		info, err := c.pr.ListXAttrs(ctx, entryStart, entryEnd)
-		if err != nil {
-			return nil, err
-		}
-		return info, nil
+	info, err := c.pr.ListXAttrs(ctx, entryStart, entryEnd)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf("no pipe or pr available")
+	return info, nil
 }
 
 func (c *Client) Close() error {
@@ -217,13 +191,11 @@ func (c *Client) Close() error {
 		if err := c.pipe.Call(context.Background(), "pxar.Done", nil, nil); err != nil {
 			return err
 		}
-		c.pipe.Close()
+		if c.pipe != nil {
+			c.pipe.Close()
+		}
 		return nil
 	}
 
-	if c.pr != nil {
-		return c.pr.Close()
-	}
-
-	return fmt.Errorf("no pipe or pr available")
+	return c.pr.Close()
 }
