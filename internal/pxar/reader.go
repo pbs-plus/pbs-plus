@@ -59,15 +59,20 @@ func (r *rangeReader) Read(p []byte) (int, error) {
 	return totalRead, nil
 }
 
+func (r *rangeReader) Close() error {
+	r.buf = nil
+	return nil
+}
+
 const (
-	minReadAheadSize = 128 * 1024      // 128KB
-	maxReadAheadSize = 2 * 1024 * 1024 // 2MB
+	minReadAheadSize = 256 * 1024
+	maxReadAheadSize = 4 * 1024 * 1024
 )
 
 func (r *rangeReader) fillBuffer() error {
 	if r.currentBufSize == 0 {
 		r.currentBufSize = minReadAheadSize
-	} else if r.consecutiveReads > 3 && r.currentBufSize < maxReadAheadSize {
+	} else if r.consecutiveReads > 2 && r.currentBufSize < maxReadAheadSize {
 		r.currentBufSize = min(r.currentBufSize*2, maxReadAheadSize)
 	}
 

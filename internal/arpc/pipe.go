@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"sync"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
 )
@@ -27,6 +29,8 @@ type StreamPipe struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 	wg         sync.WaitGroup
+	cborEnc    cbor.EncMode
+	cborDec    cbor.DecMode
 }
 
 type ConnectionState int32
@@ -130,6 +134,14 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, server
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
+	cborDec, err := cbor.DecOptions{
+		MaxArrayElements: math.MaxInt32,
+	}.DecMode()
+	if err != nil {
+		cborDec, _ = cbor.DecOptions{}.DecMode()
+	}
+
+	cborEnc, _ := cbor.EncOptions{}.EncMode()
 
 	pipe := &StreamPipe{
 		ctx:          ctx,
@@ -139,6 +151,8 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, server
 		serverAddr:   serverAddr,
 		tlsConfig:    tlsConfig,
 		isServerSide: isServerSide,
+		cborDec:      cborDec,
+		cborEnc:      cborEnc,
 	}
 
 	go func() {
