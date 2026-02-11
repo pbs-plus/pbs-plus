@@ -185,7 +185,7 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 					return
 				}
 				fmt.Println(BACKUP_MODE_PREFIX + backupMode)
-				currentSnap = &snap
+				currentSnap = snap
 				currentReadMode = backupMode
 			}
 
@@ -348,7 +348,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupId strin
 	return mode, cmd.Process.Pid, nil
 }
 
-func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, backupId string) (snapshots.Snapshot, string, error) {
+func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, backupId string) (*snapshots.Snapshot, string, error) {
 	syslog.L.Info().WithMessage("Backup: begin").
 		WithField("sourceMode", sourceMode).
 		WithField("readMode", readMode).
@@ -358,13 +358,13 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 
 	if err := utils.ValidateJobId(backupId); err != nil {
 		syslog.L.Error(err).WithMessage("Backup: backupId validation failed").Write()
-		return snapshots.Snapshot{}, "", fmt.Errorf("invalid backupId: %w", err)
+		return nil, "", fmt.Errorf("invalid backupId: %w", err)
 	}
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("Backup: NewBackupStore failed").WithField("backupId", backupId).Write()
-		return snapshots.Snapshot{}, "", err
+		return nil, "", err
 	}
 	if existingSession, ok := activeSessions.Get(backupId); ok {
 		syslog.L.Info().WithMessage("Backup: closing existing session").WithField("backupId", backupId).Write()
@@ -372,19 +372,10 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 		_ = store.EndBackup(backupId)
 	}
 
-	sessionCtx, cancel := context.WithCancel(context.Background())
-	session := &backupSession{
-		backupId: backupId,
-		ctx:      sessionCtx,
-		cancel:   cancel,
-		store:    store,
-	}
-	activeSessions.Set(backupId, session)
-
 	if hasActive, err := store.HasActiveBackupForJob(backupId); hasActive || err != nil {
 		if err != nil {
 			syslog.L.Error(err).WithMessage("Backup: HasActiveBackupForJob failed").WithField("backupId", backupId).Write()
-			return snapshots.Snapshot{}, "", err
+			return nil, "", err
 		}
 		syslog.L.Info().WithMessage("Backup: ending previous active backup").WithField("backupId", backupId).Write()
 		_ = store.EndBackup(backupId)
@@ -392,8 +383,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 
 	if err := store.StartBackup(backupId); err != nil {
 		syslog.L.Error(err).WithMessage("Backup: StartBackup failed").WithField("backupId", backupId).Write()
-		session.Close()
-		return snapshots.Snapshot{}, "", err
+		return nil, "", err
 	}
 
 	var snapshot snapshots.Snapshot
@@ -449,5 +439,15 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 		syslog.L.Info().WithMessage("Backup: non-Windows platform, using root snapshot").Write()
 	}
 
-	return snapshot, backupMode, nil
+	sessionCtx, cancel := context.WithCancel(context.Background())
+	session := &backupSession{
+		backupId: backupId,
+		ctx:      sessionCtx,
+		cancel:   cancel,
+		store:    store,
+		snapshot: snapshot,
+	}
+	activeSessions.Set(backupId, session)
+
+	return &snapshot, backupMode, nil
 }
