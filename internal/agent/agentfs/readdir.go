@@ -21,11 +21,11 @@ type DirReader struct {
 	file         *os.File
 	path         string
 	pending      []types.AgentFileInfo
-	encodeBuf    [defaultBufSize]byte
 	encodeWriter *bytes.Buffer
+	scratch      bytes.Buffer
 	winFirstCall bool
-	buf          [8192]uint64 // The raw buffer from the kernel
-	bufp         int          // The current position in the buffer
+	buf          [8192]uint64
+	bufp         int
 	nbuf         int
 	noMoreFiles  bool
 	mu           sync.Mutex
@@ -38,12 +38,31 @@ func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 
 	reader := &DirReader{
 		file:         handle,
-		pending:      make([]types.AgentFileInfo, 0, 8),
+		pending:      make([]types.AgentFileInfo, 0, defaultBatchSize),
 		path:         path,
 		winFirstCall: true,
+		encodeWriter: bytes.NewBuffer(make([]byte, 0, defaultBufSize)),
 	}
 
 	return reader, nil
+}
+
+func (r *DirReader) tryEncode(enc *cbor.Encoder, info types.AgentFileInfo) (bool, error) {
+	r.scratch.Reset()
+	scratchEnc := cbor.NewEncoder(&r.scratch)
+	if err := scratchEnc.Encode(info); err != nil {
+		return false, err
+	}
+
+	if r.encodeWriter.Len()+r.scratch.Len() > defaultBufSize {
+		return false, nil
+	}
+
+	if err := enc.Encode(info); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, error) {
@@ -60,10 +79,6 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 		blockSize = 4096
 	}
 
-	if r.encodeWriter == nil {
-		r.encodeWriter = bytes.NewBuffer(r.encodeBuf[:])
-	}
-
 	r.encodeWriter.Reset()
 
 	enc := cbor.NewEncoder(r.encodeWriter)
@@ -74,33 +89,28 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	hasEntries := false
 	entryCount := 0
 
-	for len(r.pending) > 0 {
+	i := 0
+	for i < len(r.pending) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		info := r.pending[0]
-
-		testBuf := bytes.NewBuffer(nil)
-		testEnc := cbor.NewEncoder(testBuf)
-		if err := testEnc.Encode(info); err != nil {
+		ok, err := r.tryEncode(enc, r.pending[i])
+		if err != nil {
 			return nil, err
 		}
-
-		encodedSize := testBuf.Len()
-		if r.encodeWriter.Len()+encodedSize > cap(r.encodeBuf) {
+		if !ok {
 			break
 		}
 
-		if err := enc.Encode(info); err != nil {
-			syslog.L.Error(err).WithMessage("DirReader.NextBatch: encode failed").
-				WithField("path", r.path).Write()
-			return nil, err
-		}
-
-		r.pending = r.pending[1:]
 		hasEntries = true
 		entryCount++
+		i++
+	}
+
+	if i > 0 {
+		copy(r.pending, r.pending[i:])
+		r.pending = r.pending[:len(r.pending)-i]
 	}
 
 	for len(r.pending) == 0 && !r.noMoreFiles {
@@ -132,23 +142,15 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 				continue
 			}
 
-			testBuf := bytes.NewBuffer(nil)
-			testEnc := cbor.NewEncoder(testBuf)
-			if err := testEnc.Encode(info); err != nil {
+			ok, err := r.tryEncode(enc, info)
+			if err != nil {
 				return nil, err
 			}
-
-			encodedSize := testBuf.Len()
-			if r.encodeWriter.Len()+encodedSize > cap(r.encodeBuf) {
+			if !ok {
 				r.pending = append(r.pending, entries[i:]...)
 				break
 			}
 
-			if err := enc.Encode(info); err != nil {
-				syslog.L.Error(err).WithMessage("DirReader.NextBatch: encode failed").
-					WithField("path", r.path).Write()
-				return nil, err
-			}
 			hasEntries = true
 			entryCount++
 		}
@@ -166,16 +168,17 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 		return nil, os.ErrProcessDone
 	}
 
-	encodedResult := r.encodeWriter.Bytes()
+	result := make([]byte, r.encodeWriter.Len())
+	copy(result, r.encodeWriter.Bytes())
 
 	syslog.L.Debug().WithMessage("DirReader.NextBatch: batch encoded").
 		WithField("path", r.path).
-		WithField("bytes", len(encodedResult)).
+		WithField("bytes", len(result)).
 		WithField("entries_count", entryCount).
 		WithField("pending_count", len(r.pending)).
 		Write()
 
-	return encodedResult, nil
+	return result, nil
 }
 
 func (r *DirReader) Close() error {
@@ -189,10 +192,8 @@ func (r *DirReader) Close() error {
 	syslog.L.Debug().WithMessage("DirReader.Close: closing file").
 		WithField("path", r.path).Write()
 
-	if r.encodeWriter != nil {
-		r.encodeWriter.Reset()
-	}
-
+	r.encodeWriter.Reset()
+	r.pending = r.pending[:0]
 	r.closed = true
 	return r.file.Close()
 }
