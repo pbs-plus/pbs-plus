@@ -191,7 +191,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 				continue
 			}
 
-			tmpWriter.WriteString(line)
+			tmpWriter.WriteString(strings.TrimSpace(line))
 			tmpWriter.WriteByte('\n')
 		}
 
