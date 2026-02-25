@@ -28,7 +28,7 @@ func RunShellScript(
 	if err != nil {
 		fmt.Fprintf(
 			os.Stderr,
-			"warning: could not read shebang, defaulting to sh: %v\n",
+			"WARNING: could not read shebang, defaulting to sh: %v\n",
 			err,
 		)
 		interpreter = "sh"
@@ -75,7 +75,7 @@ func RunShellScript(
 	if readErr != nil {
 		fmt.Fprintf(
 			os.Stderr,
-			"warning: failed to read env file %s: %v\n",
+			"WARNING: failed to read env file %s: %v\n",
 			envFilePath,
 			readErr,
 		)

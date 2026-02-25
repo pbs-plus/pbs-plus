@@ -106,7 +106,7 @@ func (e *LogEntry) serverWrite() {
 			sb.WriteString("pbs-plus: ")
 
 			if e.Level == "error" {
-				sb.WriteString("warning: [non-fatal " + e.Level + "]")
+				sb.WriteString("WARNING: [non-fatal " + e.Level + "]")
 			} else {
 				sb.WriteString("[" + e.Level + "]")
 			}
