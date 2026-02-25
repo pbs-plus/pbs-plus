@@ -17,8 +17,8 @@ var (
 	fileNameRegex      = regexp.MustCompile(`^[a-zA-Z0-9_.-]+\.(pxar|img|fidx|didx)$`)
 	jobIdRegex         = regexp.MustCompile(`^(?:[A-Za-z0-9_][A-Za-z0-9._\-]*)$`)
 	snapshotRegex      = regexp.MustCompile(`^[a-zA-Z0-9/_:.-]+$`)
-	subpathRegex       = regexp.MustCompile(`^[a-zA-Z0-9/_. -]*$`)
-	exclusionPathRegex = regexp.MustCompile(`^[a-zA-Z0-9/_.\\ *?[\]{},-]+$`)
+	subpathRegex       = regexp.MustCompile(`^[a-zA-Z0-9/_.\\ :~@+()!,=\[\]{} -]*$`)
+	exclusionPathRegex = regexp.MustCompile(`^[a-zA-Z0-9/_.\\ :~@+()!,=\[\]{} *?-]+$`)
 )
 
 func IsValidNamespace(namespace string) bool {
