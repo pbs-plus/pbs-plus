@@ -191,15 +191,9 @@ func (b *BackupOperation) processPBSLogs(logErr error) (bool, int) {
 	}
 
 	_ = b.logger.Flush()
-	succeeded, cancelled, warningsNum, errorPath, err := processPBSProxyLogs(gracefulEnd, b.Task.UPID, b.logger, logErr)
+	succeeded, cancelled, warningsNum, err := processPBSProxyLogs(gracefulEnd, b.Task.UPID, b.logger, logErr)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to process logs").Write()
-	}
-
-	if errorPath != "" {
-		b.mu.Lock()
-		b.extraExclusions = append(b.extraExclusions, errorPath)
-		b.mu.Unlock()
 	}
 
 	syslog.L.Info().WithJob(b.job.ID).WithMessage("updating job status")
