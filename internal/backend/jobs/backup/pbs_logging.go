@@ -44,6 +44,24 @@ var (
 	}
 )
 
+func systemLocation() *time.Location {
+	target, err := os.Readlink("/etc/localtime")
+	if err != nil {
+		return time.Local
+	}
+	const prefix = "/usr/share/zoneinfo/"
+	idx := strings.Index(target, prefix)
+	if idx == -1 {
+		return time.Local
+	}
+	name := target[idx+len(prefix):]
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return time.Local
+	}
+	return loc
+}
+
 func containsAny(s string, markers []string) (string, bool) {
 	for _, m := range markers {
 		if strings.Contains(s, m) {
@@ -185,7 +203,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 	succeeded := false
 	cancelled := false
 	warningsNum := pbsWarningRawCount
-	timestamp := time.Now().Format(time.RFC3339)
+	timestamp := time.Now().In(systemLocation()).Format(time.RFC3339)
 
 	switch {
 	case hasError:
