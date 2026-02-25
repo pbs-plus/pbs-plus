@@ -144,7 +144,7 @@ func (s *DirStream) HasNext() bool {
 		WithJob(s.fs.Backup.ID).
 		Write()
 
-	err = cbor.Unmarshal(readBuf[:bytesRead], &s.lastResp)
+	err = s.cborDec.Unmarshal(readBuf[:bytesRead], &s.lastResp)
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("HasNext: decode failed, closing dirstream").
