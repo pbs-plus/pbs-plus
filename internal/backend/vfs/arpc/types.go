@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
@@ -30,6 +31,7 @@ type DirStream struct {
 	lastResp      types.ReadDirEntries
 	curIdx        uint64
 	totalReturned uint64
+	cborDec       cbor.DecMode
 }
 
 type ARPCFile struct {

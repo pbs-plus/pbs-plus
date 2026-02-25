@@ -5,6 +5,7 @@ package arpcfs
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -496,11 +497,25 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 		WithJob(fs.Backup.ID).
 		Write()
 
+	decOpts := cbor.DecOptions{
+		MaxArrayElements: math.MaxInt32,
+	}
+	defaultDec, err := decOpts.DecMode()
+	if err != nil {
+		syslog.L.Error(err).
+			WithMessage("ReadDir decoder failed").
+			WithField("path", path).
+			WithJob(fs.Backup.ID).
+			Write()
+		return DirStream{}, syscall.ENOENT
+	}
+
 	return DirStream{
 		fs:       fs,
 		path:     path,
 		handleId: handleId,
 		lastResp: types.ReadDirEntries{},
+		cborDec:  defaultDec,
 	}, nil
 }
 
