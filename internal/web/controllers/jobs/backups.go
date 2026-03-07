@@ -424,7 +424,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			if r.FormValue("rawexclusions") != "" {
 				rawExclusions := r.FormValue("rawexclusions")
-				for _, exclusion := range strings.Split(rawExclusions, "\n") {
+				for exclusion := range strings.SplitSeq(rawExclusions, "\n") {
 					exclusion = strings.TrimSpace(exclusion)
 					if exclusion == "" {
 						continue

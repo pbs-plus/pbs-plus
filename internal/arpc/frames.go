@@ -159,7 +159,7 @@ func readHeadersFrame(s *smux.Stream) (http.Header, error) {
 
 	totalSize := 0
 
-	for i := uint64(0); i < n; i++ {
+	for range n {
 		kl, err := readVarint(s)
 		if err != nil {
 			return nil, err
@@ -189,7 +189,7 @@ func readHeadersFrame(s *smux.Stream) (http.Header, error) {
 			return nil, fmt.Errorf("too many values for header: %d > %d", vn, maxHeaderCount)
 		}
 
-		for j := uint64(0); j < vn; j++ {
+		for range vn {
 			vl, err := readVarint(s)
 			if err != nil {
 				return nil, err

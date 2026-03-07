@@ -179,7 +179,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 		t.Fatalf("Failed to create large directory: %v", err)
 	}
 
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		fileName := filepath.Join(largeDir, "file"+strconv.Itoa(i))
 		if err := os.WriteFile(fileName, []byte("test content"), 0644); err != nil {
 			t.Fatalf("Failed to create file %s: %v", fileName, err)
@@ -349,7 +349,7 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 
 	// Create a reasonable number of files for testing
 	numFiles := 1000
-	for i := 0; i < numFiles; i++ {
+	for i := range numFiles {
 		fileName := filepath.Join(leakTestDir, "file"+strconv.Itoa(i)+".txt")
 		if err := os.WriteFile(fileName, []byte("test content"), 0644); err != nil {
 			t.Fatalf("Failed to create file %s: %v", fileName, err)
@@ -359,7 +359,7 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 	t.Run("Handle Leak Test", func(t *testing.T) {
 		// Test that handles are properly closed after multiple iterations
 		iterations := 100
-		for i := 0; i < iterations; i++ {
+		for i := range iterations {
 			dirReader, err := newTestDirReader(leakTestDir)
 			if err != nil {
 				t.Fatalf("Iteration %d: newTestDirReader failed: %v", i, err)
@@ -387,7 +387,7 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 	t.Run("Early Close Test", func(t *testing.T) {
 		// Test closing reader before consuming all entries
 		iterations := 50
-		for i := 0; i < iterations; i++ {
+		for i := range iterations {
 			dirReader, err := newTestDirReader(leakTestDir)
 			if err != nil {
 				t.Fatalf("Iteration %d: newTestDirReader failed: %v", i, err)
@@ -409,7 +409,7 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 
 	t.Run("Context Cancellation Test", func(t *testing.T) {
 		iterations := 50
-		for i := 0; i < iterations; i++ {
+		for i := range iterations {
 			dirReader, err := newTestDirReader(leakTestDir)
 			if err != nil {
 				t.Fatalf("Iteration %d: newTestDirReader failed: %v", i, err)
@@ -461,11 +461,11 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 		var wg sync.WaitGroup
 		errChan := make(chan error, numGoroutines*iterations)
 
-		for g := 0; g < numGoroutines; g++ {
+		for g := range numGoroutines {
 			wg.Add(1)
 			go func(goroutineID int) {
 				defer wg.Done()
-				for i := 0; i < iterations; i++ {
+				for i := range iterations {
 					dirReader, err := newTestDirReader(leakTestDir)
 					if err != nil {
 						errChan <- fmt.Errorf("Goroutine %d, Iteration %d: newTestDirReader failed: %v", goroutineID, i, err)
@@ -507,7 +507,7 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 	t.Run("Buffer Pool Test", func(t *testing.T) {
 		// Test that buffer pool doesn't accumulate leaked buffers
 		iterations := 200
-		for i := 0; i < iterations; i++ {
+		for i := range iterations {
 			dirReader, err := newTestDirReader(leakTestDir)
 			if err != nil {
 				t.Fatalf("Iteration %d: newTestDirReader failed: %v", i, err)
@@ -535,7 +535,7 @@ func testMemoryLeaks(t *testing.T, tempDir string) {
 		// Test that handles are cleaned up even with panics
 		// Note: This simulates cleanup patterns, actual panic handling depends on your implementation
 		iterations := 10
-		for i := 0; i < iterations; i++ {
+		for i := range iterations {
 			func() {
 				dirReader, err := newTestDirReader(leakTestDir)
 				if err != nil {
@@ -599,7 +599,7 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 		numFiles := 250
 		expectedFiles := make(map[string]bool)
 
-		for i := 0; i < numFiles; i++ {
+		for i := range numFiles {
 			fileName := fmt.Sprintf("test_file_%04d.txt", i)
 			path := filepath.Join(boundaryDir, fileName)
 			// Create files with varying sizes to make encoded size less predictable
@@ -733,7 +733,7 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 		numRegular := 200
 		finalFile := "zzz_this_should_not_be_missed_final.txt"
 
-		for i := 0; i < numRegular; i++ {
+		for i := range numRegular {
 			fileName := fmt.Sprintf("regular_%04d.txt", i)
 			path := filepath.Join(singleDir, fileName)
 			if err := os.WriteFile(path, []byte("content"), 0644); err != nil {

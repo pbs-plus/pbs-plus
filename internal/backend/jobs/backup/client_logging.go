@@ -2,12 +2,11 @@ package backup
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/exec"
-	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -15,7 +14,7 @@ import (
 
 var connectionFailedPattern = []byte("connection failed")
 
-func monitorPBSClientLogs(filePath string, cmd *exec.Cmd, done <-chan struct{}) {
+func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create watcher").Write()
@@ -41,70 +40,68 @@ func monitorPBSClientLogs(filePath string, cmd *exec.Cmd, done <-chan struct{}) 
 		return
 	}
 
-	var debounceTimerPtr unsafe.Pointer
+	buf := make([]byte, 32*1024)
+
+	var debounceTimer *time.Timer
+	defer func() {
+		if debounceTimer != nil {
+			debounceTimer.Stop()
+		}
+	}()
+
 	resetDebounce := func() <-chan time.Time {
-		newTimer := time.NewTimer(100 * time.Millisecond)
-		oldTimer := (*time.Timer)(atomic.SwapPointer(&debounceTimerPtr, unsafe.Pointer(newTimer)))
-		if oldTimer != nil {
-			oldTimer.Stop()
+		if debounceTimer != nil {
+			debounceTimer.Stop()
 			select {
-			case <-oldTimer.C:
+			case <-debounceTimer.C:
 			default:
 			}
 		}
-		return newTimer.C
+		debounceTimer = time.NewTimer(100 * time.Millisecond)
+		return debounceTimer.C
 	}
 
-	buf := make([]byte, 32*1024) // 32KB buffer
-
-	terminateCh := make(chan struct{})
-
-	go func() {
-		<-done
-		close(terminateCh)
-	}()
-
 	var debounceC <-chan time.Time
-	writeEventPending := false
 
 	for {
-		if writeEventPending && debounceC == nil {
-			debounceC = resetDebounce()
-			writeEventPending = false
-		}
-
 		select {
 		case event, ok := <-watcher.Events:
 			if !ok {
+				_, _ = processFileBuffer(file, offset, buf, cmd)
 				return
 			}
-
 			if event.Op&fsnotify.Write == fsnotify.Write {
-				writeEventPending = true
+				debounceC = resetDebounce()
 			}
-
-		case <-debounceC:
-			newOffset, errored := processFileBuffer(file, offset, buf, cmd)
-			if errored {
-				return
-			}
-			offset = newOffset
-			debounceC = nil
 
 		case err, ok := <-watcher.Errors:
 			if !ok {
+				_, _ = processFileBuffer(file, offset, buf, cmd)
 				return
 			}
 			syslog.L.Error(err).WithMessage("watcher error").Write()
 
-		case <-terminateCh:
+		case <-debounceC:
+			debounceC = nil
+			newOffset, errored := processFileBuffer(file, offset, buf, cmd)
+			offset = newOffset
+			if errored {
+				return
+			}
+
+		case <-ctx.Done():
 			_, _ = processFileBuffer(file, offset, buf, cmd)
 			return
 		}
 	}
 }
 
-func processFileBuffer(file *os.File, offset int64, buf []byte, cmd *exec.Cmd) (int64, bool) {
+func processFileBuffer(
+	file *os.File,
+	offset int64,
+	buf []byte,
+	cmd *exec.Cmd,
+) (int64, bool) {
 	currentPos, err := file.Seek(offset, io.SeekStart)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("seek error").Write()

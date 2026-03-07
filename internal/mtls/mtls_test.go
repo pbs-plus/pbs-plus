@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -107,9 +108,7 @@ func TestEndToEndMTLSWithCSRBootstrap(t *testing.T) {
 	mux.HandleFunc("/bootstrap", func(w http.ResponseWriter, r *http.Request) {
 		rec := &captureWriter{hdr: http.Header{}}
 		bootstrapHandler(rec, r)
-		for k, v := range rec.hdr {
-			w.Header()[k] = v
-		}
+		maps.Copy(w.Header(), rec.hdr)
 		if rec.status != 0 {
 			w.WriteHeader(rec.status)
 		}
@@ -251,7 +250,7 @@ func TestEndToEndMTLSWithCSRBootstrap(t *testing.T) {
 			}
 		}
 
-		for i := 0; i < 6; i++ {
+		for range 6 {
 			wg.Add(1)
 			go doReq()
 		}

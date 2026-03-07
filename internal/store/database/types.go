@@ -96,7 +96,7 @@ type Target struct {
 	Name             string       `json:"name"`
 	Type             TargetType   `json:"target_type"`
 	Path             string       `json:"path"`
-	AgentHost        AgentHost    `json:"agent_host,omitempty"`
+	AgentHost        AgentHost    `json:"agent_host"`
 	VolumeID         string       `json:"volume_id,omitempty"`
 	MountScript      string       `json:"mount_script"`
 	AgentVersion     string       `json:"agent_version"`

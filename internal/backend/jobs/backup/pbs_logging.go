@@ -18,7 +18,6 @@ import (
 )
 
 var (
-	// errorPathRegex = regexp.MustCompile(`upload failed: error at "([^"]+)"`)
 	commonErrorMap = map[string]string{
 		"exit status 255": "lost connection with backup agent",
 		"signal: killed":  ErrCanceled.Error(),
@@ -49,16 +48,19 @@ func systemLocation() *time.Location {
 	if err != nil {
 		return time.Local
 	}
+
 	const prefix = "/usr/share/zoneinfo/"
-	idx := strings.Index(target, prefix)
-	if idx == -1 {
+	_, after, ok := strings.Cut(target, prefix)
+	if !ok {
 		return time.Local
 	}
-	name := target[idx+len(prefix):]
+
+	name := after
 	loc, err := time.LoadLocation(name)
 	if err != nil {
 		return time.Local
 	}
+
 	return loc
 }
 
@@ -71,7 +73,12 @@ func containsAny(s string, markers []string) (string, bool) {
 	return "", false
 }
 
-func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.JobLogger, customErr error) (bool, bool, int, error) {
+func processPBSProxyLogs(
+	isGraceful bool,
+	upid string,
+	clientLogFile *syslog.JobLogger,
+	customErr error,
+) (bool, bool, int, error) {
 	customErrStr := ""
 	if customErr != nil {
 		customErrStr = customErr.Error()
@@ -81,6 +88,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 	}
 
 	logFilePath := utils.GetTaskLogPath(upid)
+
 	inFile, err := os.Open(logFilePath)
 	if err != nil {
 		return false, false, 0, fmt.Errorf("opening input log file: %w", err)
@@ -91,12 +99,18 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 	if err != nil {
 		return false, false, 0, fmt.Errorf("getting stat of file %s: %w", logFilePath, err)
 	}
+
 	origMode := info.Mode()
 	origModTime := info.ModTime()
+
 	statT, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return false, false, 0, fmt.Errorf("failed to retrieve underlying stat for file %s", logFilePath)
+		return false, false, 0, fmt.Errorf(
+			"failed to retrieve underlying stat for file %s",
+			logFilePath,
+		)
 	}
+
 	origUid := int(statT.Uid)
 	origGid := int(statT.Gid)
 	origAccessTime := time.Unix(statT.Atim.Sec, statT.Atim.Nsec)
@@ -106,6 +120,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 	if err != nil {
 		return false, false, 0, fmt.Errorf("creating temporary file: %w", err)
 	}
+
 	tmpName := tmpFile.Name()
 	defer func() {
 		if tmpFile != nil {
@@ -126,11 +141,14 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 	scanner.Buffer(buf, maxCapacity)
 
 	for scanner.Scan() {
-		skip := false
 		line := scanner.Text()
+
 		if helpers.IsJunkLog(line) {
 			continue
 		}
+
+		skip := false
+
 		if _, has := containsAny(line, pbsCompletionMarkers); has {
 			incomplete = false
 		} else if _, has := containsAny(line, pbsTaskErrorMarkers); has {
@@ -153,7 +171,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 		return false, false, 0, fmt.Errorf("scanning input file: %w", err)
 	}
 
-	var errorString string
 	pbsWarningRawCount := 0
 
 	clientFile, err := os.Open(clientLogFile.Path)
@@ -169,8 +186,8 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 		clientScanner.Buffer(buf, maxCapacity)
 
 		for clientScanner.Scan() {
-			skip := false
 			line := clientScanner.Text()
+			skip := false
 
 			if _, has := containsAny(line, pbsWarningMarkers); has {
 				pbsWarningRawCount++
@@ -206,9 +223,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 	timestamp := time.Now().In(systemLocation()).Format(time.RFC3339)
 
 	switch {
-	case hasError:
-		tmpWriter.WriteString(errorString)
-	case incomplete:
+	case hasError, incomplete:
 		tmpWriter.WriteString(timestamp)
 		tmpWriter.WriteString(": TASK ERROR: ")
 		if customErr != nil {
@@ -217,6 +232,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 			tmpWriter.WriteString(ErrUnexpected.Error())
 		}
 		cancelled = true
+
 	default:
 		tmpWriter.WriteString(timestamp)
 		succeeded = true
