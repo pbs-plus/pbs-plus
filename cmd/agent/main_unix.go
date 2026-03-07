@@ -37,11 +37,19 @@ type pbsService struct {
 func (p *pbsService) Start(s service.Service) error {
 	if os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE") != "true" && os.Getenv("PBS_PLUS__I_AM_INSIDE_CONTAINER") != "true" {
 		_, _ = updater.New(updater.Config{
-			MinConstraint: ">= 0.52.0", PollInterval: 2 * time.Minute, FetchOnStart: true,
+			MinConstraint:  ">= 0.52.0",
+			PollInterval:   2 * time.Minute,
+			FetchOnStart:   true,
 			UpgradeConfirm: func(v string) bool { return true },
-			Exit:           func(err error) {},
-			Service:        s,
-			Context:        p.ctx,
+			Exit: func(err error) {
+				if err != nil {
+					syslog.L.Error(err).WithMessage("updater exiting with error").Write()
+				}
+				syslog.L.Info().WithMessage("exiting for service manager to restart with updated binary").Write()
+				os.Exit(1)
+			},
+			Service: s,
+			Context: p.ctx,
 		})
 	}
 	go p.run()
