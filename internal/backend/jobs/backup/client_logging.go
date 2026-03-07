@@ -2,6 +2,7 @@ package backup
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -13,7 +14,7 @@ import (
 
 var connectionFailedPattern = []byte("connection failed")
 
-func monitorPBSClientLogs(filePath string, cmd *exec.Cmd, done <-chan struct{}) {
+func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create watcher").Write()
@@ -88,7 +89,7 @@ func monitorPBSClientLogs(filePath string, cmd *exec.Cmd, done <-chan struct{}) 
 				return
 			}
 
-		case <-done:
+		case <-ctx.Done():
 			_, _ = processFileBuffer(file, offset, buf, cmd)
 			return
 		}
