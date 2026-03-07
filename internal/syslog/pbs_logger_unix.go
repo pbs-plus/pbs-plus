@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/utils"
-	"github.com/puzpuzpuz/xsync/v4"
+	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 type JobLogger struct {
@@ -27,7 +27,7 @@ type JobLogger struct {
 	sync.Mutex
 }
 
-var jobLoggers = xsync.NewMap[string, *JobLogger]()
+var jobLoggers = safemap.New[string, *JobLogger]()
 
 func safeJobLogPath(jobId string) (string, error) {
 	if err := utils.ValidateJobId(jobId); err != nil {
@@ -52,10 +52,10 @@ func CreateJobLogger(jobId string) *JobLogger {
 		return nil
 	}
 
-	logger, _ := jobLoggers.Compute(jobId, func(_ *JobLogger, _ bool) (*JobLogger, xsync.ComputeOp) {
+	logger, _ := jobLoggers.GetOrCompute(jobId, func() *JobLogger {
 		clientLogFile, createErr := os.Create(filePath)
 		if createErr != nil {
-			return nil, xsync.CancelOp
+			return nil
 		}
 
 		return &JobLogger{
@@ -64,7 +64,7 @@ func CreateJobLogger(jobId string) *JobLogger {
 			jobId:     jobId,
 			Writer:    bufio.NewWriter(clientLogFile),
 			StartTime: time.Now(),
-		}, xsync.UpdateOp
+		}
 	})
 
 	return logger
@@ -76,13 +76,13 @@ func GetExistingJobLogger(jobId string) *JobLogger {
 		return nil
 	}
 
-	logger, _ := jobLoggers.LoadOrCompute(jobId, func() (*JobLogger, bool) {
+	logger, _ := jobLoggers.GetOrCompute(jobId, func() *JobLogger {
 		flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
 		perm := os.FileMode(0666)
 
 		clientLogFile, openErr := os.OpenFile(filePath, flags, perm)
 		if openErr != nil {
-			return nil, true
+			return nil
 		}
 
 		return &JobLogger{
@@ -91,7 +91,7 @@ func GetExistingJobLogger(jobId string) *JobLogger {
 			jobId:     jobId,
 			Writer:    bufio.NewWriter(clientLogFile),
 			StartTime: time.Now(),
-		}, false
+		}
 	})
 
 	if logger == nil {
@@ -178,7 +178,7 @@ func (b *JobLogger) Close() error {
 		b.Writer = nil
 	}
 
-	jobLoggers.Delete(b.jobId)
+	jobLoggers.Del(b.jobId)
 
 	if b.Path != "" {
 		if strings.HasPrefix(filepath.Clean(b.Path), filepath.Clean(os.TempDir())) {
