@@ -56,44 +56,98 @@ func (p *pbsService) run() {
 	if err := lifecycle.WaitForServerURL(p.ctx); err != nil {
 		return
 	}
-	if err := lifecycle.WaitForBootstrap(p.ctx); err != nil {
-		return
-	}
 
-	if store, err := agent.NewBackupStore(); err == nil {
-		_ = store.ClearAll()
-	}
+	for {
+		syslog.L.Info().
+			WithMessage("waiting for bootstrap").
+			Write()
 
-	p.wg.Go(func() {
-		ticker := time.NewTicker(time.Hour)
-		for {
+		if err := lifecycle.WaitForBootstrap(p.ctx); err != nil {
+			return
+		}
+
+		syslog.L.Info().
+			WithMessage("bootstrap complete, starting session").
+			Write()
+
+		if store, err := agent.NewBackupStore(); err == nil {
+			_ = store.ClearAll()
+		}
+
+		innerCtx, innerCancel := context.WithCancel(p.ctx)
+
+		var innerWg sync.WaitGroup
+
+		innerWg.Go(func() {
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-innerCtx.Done():
+					return
+				case <-ticker.C:
+					_ = agent.CheckAndRenewCertificate()
+				}
+			}
+		})
+
+		innerWg.Go(func() {
+			_ = lifecycle.UpdateDrives()
+			ticker := time.NewTicker(utils.ComputeDelay())
+			defer ticker.Stop()
+			for {
+				select {
+				case <-innerCtx.Done():
+					return
+				case <-ticker.C:
+					_ = lifecycle.UpdateDrives()
+					ticker.Reset(utils.ComputeDelay())
+				}
+			}
+		})
+
+		certErrCh, err := lifecycle.ConnectARPC(innerCtx, Version)
+		if err != nil {
+			syslog.L.Error(err).
+				WithMessage("failed to start arpc connection").
+				Write()
+			innerCancel()
+			innerWg.Wait()
+
 			select {
 			case <-p.ctx.Done():
 				return
-			case <-ticker.C:
-				_ = agent.CheckAndRenewCertificate()
+			case <-time.After(10 * time.Second):
+				continue
 			}
 		}
-	})
-	p.wg.Go(func() {
-		_ = lifecycle.UpdateDrives()
-		ticker := time.NewTicker(utils.ComputeDelay())
-		for {
+
+		select {
+		case <-p.ctx.Done():
+			innerCancel()
+			innerWg.Wait()
+			return
+
+		case certErr, ok := <-certErrCh:
+			innerCancel()
+			innerWg.Wait()
+
+			if !ok {
+				return
+			}
+
+			syslog.L.Error(certErr).
+				WithMessage("clearing certificates and re-bootstrapping").
+				Write()
+			lifecycle.ClearCertificates()
+
 			select {
 			case <-p.ctx.Done():
 				return
-			case <-ticker.C:
-				_ = lifecycle.UpdateDrives()
-				ticker.Reset(utils.ComputeDelay())
+			case <-time.After(5 * time.Second):
 			}
 		}
-	})
-
-	err := lifecycle.ConnectARPC(p.ctx, p.cancel, Version)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to connect to arpc").Write()
 	}
-	<-p.ctx.Done()
 }
 
 func (p *pbsService) Stop(s service.Service) error {

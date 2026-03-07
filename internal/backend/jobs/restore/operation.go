@@ -451,9 +451,9 @@ func (b *RestoreOperation) OnError(err error) {
 
 	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
 	if r != nil {
-		b.task.WriteString(fmt.Sprintf(" - %d total files", atomic.LoadInt64(&r.FileCount)))
-		b.task.WriteString(fmt.Sprintf(" - %d total folders", atomic.LoadInt64(&r.FolderCount)))
-		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(atomic.LoadInt64(&r.TotalBytes))))
+		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
+		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
+		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(r.TotalBytes.Value())))
 	}
 
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
@@ -465,9 +465,9 @@ func (b *RestoreOperation) OnSuccess() {
 
 	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
 	if r != nil {
-		b.task.WriteString(fmt.Sprintf(" - %d total files", atomic.LoadInt64(&r.FileCount)))
-		b.task.WriteString(fmt.Sprintf(" - %d total folders", atomic.LoadInt64(&r.FolderCount)))
-		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(atomic.LoadInt64(&r.TotalBytes))))
+		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
+		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
+		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(r.TotalBytes.Value())))
 	}
 
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
