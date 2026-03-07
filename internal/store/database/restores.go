@@ -23,7 +23,7 @@ func (database *Database) generateUniqueRestoreID(restore Restore) (string, erro
 		return "", fmt.Errorf("invalid target: slugified value is empty")
 	}
 
-	for idx := 0; idx < maxAttempts; idx++ {
+	for idx := range maxAttempts {
 		var newID string
 		if idx == 0 {
 			newID = baseID

@@ -64,7 +64,7 @@ func Entry() {
 			port := 6060
 			maxAttempts := 10
 
-			for i := 0; i < maxAttempts; i++ {
+			for range maxAttempts {
 				addr := fmt.Sprintf(":%d", port)
 				listener, err := net.Listen("tcp", addr)
 				if err != nil {

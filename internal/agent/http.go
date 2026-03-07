@@ -21,7 +21,7 @@ func AgentHTTPRequest(method, url string, body io.Reader, respBody any) (io.Read
 
 	var lastErr error
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		result, err := AgentHTTPRequestAttempt(method, url, body, respBody)
 		if err == nil {
 			return result, nil

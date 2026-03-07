@@ -178,10 +178,7 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 
 	loggerCh := make(chan string, 100)
 
-	poolSize := runtime.NumCPU() * 2
-	if poolSize < 4 {
-		poolSize = 4
-	}
+	poolSize := max(runtime.NumCPU()*2, 4)
 	if poolSize > 16 {
 		poolSize = 16 // Cap at reasonable limit
 	}

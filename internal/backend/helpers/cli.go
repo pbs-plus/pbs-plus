@@ -144,7 +144,7 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 		}
 	}
 
-	for i := 0; i < numWorkers; i++ {
+	for range numWorkers {
 		wg.Add(1)
 		go worker()
 	}
