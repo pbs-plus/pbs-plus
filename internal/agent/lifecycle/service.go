@@ -11,7 +11,8 @@ User=pbsplus
 Group=pbsplus
 WorkingDirectory=/var/lib/pbs-plus-agent
 ExecStart={{.Path}}
-Restart=on-failure
+Restart=always
+RestartSec=3
 EnvironmentFile=-/etc/pbs-plus-agent/agent.env
 
 RuntimeDirectory=pbs-plus-agent
@@ -26,7 +27,7 @@ ProtectSystem=full
 ProtectHome=no
 PrivateTmp=yes
 
-ReadWritePaths=/usr/bin /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /etc/pbs-plus-agent
+ReadWritePaths=/opt/pbs-plus-agent /var/lib/pbs-plus-agent /var/log/pbs-plus-agent /etc/pbs-plus-agent
 
 [Install]
 WantedBy=multi-user.target
@@ -38,15 +39,15 @@ description="{{.Description}}"
 
 command="{{.Path}}"
 command_user="pbsplus:pbsplus"
-pidfile="/run/pbs-plus-agent/pbs-plus-agent.pid"
 directory="/var/lib/pbs-plus-agent"
 agent_env="/etc/pbs-plus-agent/agent.env"
 
 output_log="/var/log/pbs-plus-agent/agent.log"
 error_log="/var/log/pbs-plus-agent/agent.error.log"
 
-command_background="yes"
-start_stop_daemon_args="--nicelevel 19 --ionice idle"
+supervisor=supervise-daemon
+respawn_delay=3
+respawn_max=0
 
 depend() {
     need net
@@ -76,9 +77,5 @@ start_pre() {
             ewarn "Warning: Binary lacks CAP_DAC_READ_SEARCH. Backups may fail."
         fi
     fi
-}
-
-stop_post() {
-    [ -f "${pidfile}" ] && rm -f "${pidfile}"
 }
 `
