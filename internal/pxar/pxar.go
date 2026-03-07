@@ -25,6 +25,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 type PxarReader struct {
@@ -38,9 +39,9 @@ type PxarReader struct {
 	loggerCh   chan string
 	closed     atomic.Bool
 
-	FileCount   int64
-	FolderCount int64
-	TotalBytes  int64
+	FileCount   *xsync.Counter
+	FolderCount *xsync.Counter
+	TotalBytes  *xsync.Counter
 
 	lastAccessTime  int64
 	lastBytesTime   int64
@@ -60,37 +61,32 @@ type PxarReaderStats struct {
 }
 
 func (r *PxarReader) GetStats() PxarReaderStats {
-	// Get the current time in nanoseconds.
 	currentTime := time.Now().UnixNano()
 
-	// Atomically load the current counters.
-	currentFileCount := atomic.LoadInt64(&r.FileCount)
-	currentFolderCount := atomic.LoadInt64(&r.FolderCount)
+	currentFileCount := r.FileCount.Value()
+	currentFolderCount := r.FolderCount.Value()
 	totalAccessed := currentFileCount + currentFolderCount
 
-	// Swap out the previous access statistics.
-	lastATime := atomic.SwapInt64(&r.lastAccessTime, currentTime)
-	lastFileCount := atomic.SwapInt64(&r.lastFileCount, currentFileCount)
-	lastFolderCount := atomic.SwapInt64(&r.lastFolderCount, currentFolderCount)
-
-	// Calculate the elapsed time in seconds.
-	elapsed := float64(currentTime-lastATime) / 1e9
+	elapsed := float64(currentTime-r.lastAccessTime) / 1e9
 	var accessSpeed float64
-	if elapsed > 0 {
-		accessDelta := (currentFileCount + currentFolderCount) - (lastFileCount + lastFolderCount)
+	if elapsed > 0 && r.lastAccessTime > 0 {
+		accessDelta := (currentFileCount + currentFolderCount) - (r.lastFileCount + r.lastFolderCount)
 		accessSpeed = float64(accessDelta) / elapsed
 	}
 
-	// Similarly, for byte counters (if you're tracking totalBytes elsewhere).
-	currentTotalBytes := atomic.LoadInt64(&r.TotalBytes)
-	lastBTime := atomic.SwapInt64(&r.lastBytesTime, currentTime)
-	lastTotalBytes := atomic.SwapInt64(&r.lastTotalBytes, currentTotalBytes)
+	r.lastAccessTime = currentTime
+	r.lastFileCount = currentFileCount
+	r.lastFolderCount = currentFolderCount
 
-	secDiff := float64(currentTime-lastBTime) / 1e9
+	currentTotalBytes := r.TotalBytes.Value()
+	secDiff := float64(currentTime-r.lastBytesTime) / 1e9
 	var bytesSpeed float64
-	if secDiff > 0 {
-		bytesSpeed = float64(currentTotalBytes-lastTotalBytes) / secDiff
+	if secDiff > 0 && r.lastBytesTime > 0 {
+		bytesSpeed = float64(currentTotalBytes-r.lastTotalBytes) / secDiff
 	}
+
+	r.lastBytesTime = currentTime
+	r.lastTotalBytes = currentTotalBytes
 
 	return PxarReaderStats{
 		FilesAccessed:   currentFileCount,
@@ -184,14 +180,17 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 	}
 
 	reader := &PxarReader{
-		connPool:   make(chan net.Conn, poolSize),
-		poolSize:   poolSize,
-		socketPath: socketPath,
-		enc:        encMode,
-		dec:        decMode,
-		cmd:        cmd,
-		task:       proxmoxTask,
-		loggerCh:   loggerCh,
+		connPool:    make(chan net.Conn, poolSize),
+		poolSize:    poolSize,
+		socketPath:  socketPath,
+		enc:         encMode,
+		dec:         decMode,
+		cmd:         cmd,
+		task:        proxmoxTask,
+		loggerCh:    loggerCh,
+		FileCount:   xsync.NewCounter(),
+		FolderCount: xsync.NewCounter(),
+		TotalBytes:  xsync.NewCounter(),
 	}
 
 	for i := 0; i < poolSize; i++ {
