@@ -95,8 +95,8 @@ func ValidateNamespace(ns string) error {
 		return err
 	}
 
-	parts := strings.Split(ns, "/")
-	for _, part := range parts {
+	parts := strings.SplitSeq(ns, "/")
+	for part := range parts {
 		if part == "." || part == ".." || part == "" {
 			return errors.New("namespace contains invalid path segments")
 		}

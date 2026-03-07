@@ -25,7 +25,6 @@ require (
 	github.com/mxk/go-vss v1.2.1
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/prometheus/client_golang v1.23.2
-	github.com/puzpuzpuz/xsync/v3 v3.5.1
 	github.com/puzpuzpuz/xsync/v4 v4.4.0
 	github.com/rclone/rclone v1.73.2
 	github.com/rs/zerolog v1.34.0

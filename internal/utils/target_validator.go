@@ -6,8 +6,8 @@ import (
 )
 
 func ValidateTargetPath(path string) bool {
-	if strings.HasPrefix(path, "agent://") {
-		trimmed := strings.TrimPrefix(path, "agent://")
+	if after, ok := strings.CutPrefix(path, "agent://"); ok {
+		trimmed := after
 
 		parts := strings.Split(trimmed, "/")
 		if len(parts) != 2 {
