@@ -174,10 +174,9 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 
 	loggerCh := make(chan string, 100)
 
-	poolSize := max(runtime.NumCPU()*2, 4)
-	if poolSize > 16 {
-		poolSize = 16 // Cap at reasonable limit
-	}
+	poolSize := min(max(runtime.NumCPU()*2, 4),
+		// Cap at reasonable limit
+		16)
 
 	reader := &PxarReader{
 		connPool:    make(chan net.Conn, poolSize),
@@ -193,7 +192,7 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 		TotalBytes:  xsync.NewCounter(),
 	}
 
-	for i := 0; i < poolSize; i++ {
+	for i := range poolSize {
 		conn, err := net.Dial("unix", socketPath)
 		if err != nil {
 			reader.Close()
@@ -493,9 +492,9 @@ func (c *PxarReader) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo,
 			default:
 			}
 
-			atomic.AddInt64(&c.FolderCount, 1)
+			c.FolderCount.Add(1)
 		} else {
-			atomic.AddInt64(&c.FileCount, 1)
+			c.FileCount.Add(1)
 		}
 	}
 	return entries, nil
@@ -518,9 +517,9 @@ func (c *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (
 	}
 
 	if entry.IsDir() {
-		atomic.AddInt64(&c.FolderCount, 1)
+		c.FolderCount.Add(1)
 	} else {
-		atomic.AddInt64(&c.FileCount, 1)
+		c.FileCount.Add(1)
 	}
 
 	return entry, nil
@@ -554,7 +553,7 @@ func (c *PxarReader) Read(ctx context.Context, contentStart, contentEnd, offset 
 		return nil, fmt.Errorf("invalid data field")
 	}
 
-	atomic.AddInt64(&c.TotalBytes, int64(len(data)))
+	c.TotalBytes.Add(int64(len(data)))
 
 	return data, nil
 }
