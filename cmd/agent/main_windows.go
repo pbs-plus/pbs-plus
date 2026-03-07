@@ -75,9 +75,7 @@ func (p *pbsService) run() {
 
 		var innerWg sync.WaitGroup
 
-		innerWg.Add(1)
-		go func() {
-			defer innerWg.Done()
+		innerWg.Go(func() {
 			ticker := time.NewTicker(time.Hour)
 			defer ticker.Stop()
 			for {
@@ -88,11 +86,9 @@ func (p *pbsService) run() {
 					_ = agent.CheckAndRenewCertificate()
 				}
 			}
-		}()
+		})
 
-		innerWg.Add(1)
-		go func() {
-			defer innerWg.Done()
+		innerWg.Go(func() {
 			_ = lifecycle.UpdateDrives()
 			ticker := time.NewTicker(utils.ComputeDelay())
 			defer ticker.Stop()
@@ -105,7 +101,7 @@ func (p *pbsService) run() {
 					ticker.Reset(utils.ComputeDelay())
 				}
 			}
-		}()
+		})
 
 		certErrCh, err := lifecycle.ConnectARPC(innerCtx, Version)
 		if err != nil {
