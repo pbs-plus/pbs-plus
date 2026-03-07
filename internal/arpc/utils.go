@@ -15,7 +15,7 @@ func writeErrorResponse(stream io.Writer, status int, err error) {
 
 	errBytes, encodeErr := cbor.Marshal(serErr)
 	if encodeErr != nil {
-		stream.Write([]byte(fmt.Sprintf("failed to encode error: %v", encodeErr)))
+		stream.Write(fmt.Appendf(nil, "failed to encode error: %v", encodeErr))
 		return
 	}
 
@@ -27,7 +27,7 @@ func writeErrorResponse(stream io.Writer, status int, err error) {
 
 	respBytes, encodeErr := cbor.Marshal(resp)
 	if encodeErr != nil {
-		stream.Write([]byte(fmt.Sprintf("failed to encode response: %v", encodeErr)))
+		stream.Write(fmt.Appendf(nil, "failed to encode response: %v", encodeErr))
 		return
 	}
 

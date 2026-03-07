@@ -50,12 +50,12 @@ func systemLocation() *time.Location {
 	}
 
 	const prefix = "/usr/share/zoneinfo/"
-	idx := strings.Index(target, prefix)
-	if idx == -1 {
+	_, after, ok := strings.Cut(target, prefix)
+	if !ok {
 		return time.Local
 	}
 
-	name := target[idx+len(prefix):]
+	name := after
 	loc, err := time.LoadLocation(name)
 	if err != nil {
 		return time.Local

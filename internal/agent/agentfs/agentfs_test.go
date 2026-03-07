@@ -223,7 +223,7 @@ func createLargeTestFile(t *testing.T, path string, size int) {
 	const bufferSize = 64 * 1024
 	buffer := make([]byte, bufferSize)
 
-	for i := 0; i < bufferSize; i++ {
+	for i := range bufferSize {
 		buffer[i] = byte(i % 251)
 	}
 
@@ -771,7 +771,7 @@ func TestAgentFSServer(t *testing.T) {
 		errorsList := make([]error, numGoroutines)
 
 		var wg sync.WaitGroup
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(goroutineID int) {
 				defer wg.Done()
@@ -817,10 +817,7 @@ func TestAgentFSServer(t *testing.T) {
 			if start >= len(expectedContent) {
 				expected = ""
 			} else {
-				end := start + readSize
-				if end > len(expectedContent) {
-					end = len(expectedContent)
-				}
+				end := min(start+readSize, len(expectedContent))
 				expected = expectedContent[start:end]
 			}
 			t.Logf("Goroutine %d: Expected=%q, Actual=%q", i, expected, result)
@@ -836,16 +833,16 @@ func TestAgentFSServer(t *testing.T) {
 		const numFiles = 10
 		const numIterations = 10
 
-		for i := 0; i < numFiles; i++ {
+		for i := range numFiles {
 			filePath := filepath.Join(testDir, fmt.Sprintf("stress_test_file_%d.txt", i))
-			err := os.WriteFile(filePath, []byte(fmt.Sprintf("content for file %d", i)), 0644)
+			err := os.WriteFile(filePath, fmt.Appendf(nil, "content for file %d", i), 0644)
 			require.NoError(t, err, "Failed to create test file %d", i)
 		}
 
-		for iteration := 0; iteration < numIterations; iteration++ {
+		for iteration := range numIterations {
 			t.Logf("Iteration %d: Opening and closing files", iteration)
 
-			for i := 0; i < numFiles; i++ {
+			for i := range numFiles {
 				filePath := fmt.Sprintf("stress_test_file_%d.txt", i)
 
 				payload := types.OpenFileReq{Path: filePath, Flag: 0, Perm: 0644}
@@ -936,7 +933,7 @@ func TestAgentFSServer(t *testing.T) {
 
 		const numFiles = 5
 		handles := make([]types.FileHandleId, numFiles)
-		for i := 0; i < numFiles; i++ {
+		for i := range numFiles {
 			payload := types.OpenFileReq{Path: "test1.txt"}
 			var openResult types.FileHandleId
 			err := clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
@@ -1006,7 +1003,7 @@ func TestAgentFSServer(t *testing.T) {
 	t.Run("ReadDir_ImplicitOpenLeak", func(t *testing.T) {
 		initialHandleCount := agentFsServer.handles.Len()
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			var h types.FileHandleId
 			require.NoError(t, clientPipe.Call(ctx, "OpenFile", &types.OpenFileReq{Path: "subdir"}, &h))
 			require.NoError(t, clientPipe.Call(ctx, "Close", &types.CloseReq{HandleID: h}, nil))
@@ -1023,7 +1020,7 @@ func TestAgentFSServer(t *testing.T) {
 		const iterations = 100
 		const readSize = 64 * 1024
 
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			payload := types.OpenFileReq{Path: "medium_file.bin", Flag: 0, Perm: 0644}
 			var openResult types.FileHandleId
 			err := clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
