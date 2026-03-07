@@ -60,8 +60,14 @@ func monitorPBSClientLogs(filePath string, cmd *exec.Cmd, done <-chan struct{}) 
 	terminateCh := make(chan struct{})
 
 	go func() {
-		<-done
-		close(terminateCh)
+		select {
+		case <-done:
+		}
+		select {
+		case <-terminateCh:
+		default:
+			close(terminateCh)
+		}
 	}()
 
 	var debounceC <-chan time.Time

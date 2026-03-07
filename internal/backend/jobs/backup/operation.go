@@ -63,6 +63,7 @@ type BackupOperation struct {
 	mu     sync.RWMutex
 
 	Task      proxmox.Task
+	currOwner string
 	queueTask *tasks.QueuedTask
 	waitGroup *sync.WaitGroup
 	err       error
@@ -175,10 +176,14 @@ func (b *BackupOperation) Execute() error {
 		}
 	}
 
+	b.mu.Lock()
+	b.currOwner = currOwner
+	b.mu.Unlock()
+
 	b.started.Store(true)
 
 	b.waitGroup.Go(func() {
-		b.waitForCompletion(cmd, currOwner)
+		b.waitForCompletion(cmd)
 	})
 
 	return nil
@@ -238,7 +243,10 @@ func (b *BackupOperation) OnError(err error) {
 	}
 
 	if b.started.Load() {
-		_, _ = b.processPBSLogs(err)
+		succeeded, warningsNum := b.processPBSLogs(err)
+
+		syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script")
+		b.runPostScript(succeeded, warningsNum)
 		return
 	}
 
@@ -263,6 +271,24 @@ func (b *BackupOperation) OnError(err error) {
 }
 
 func (b *BackupOperation) OnSuccess() {
+	b.mu.RLock()
+	job := b.job
+	extraExclusions := b.extraExclusions
+	b.mu.RUnlock()
+
+	for _, ext := range extraExclusions {
+		syslog.L.Warn().WithJob(job.ID).WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", ext)).Write()
+	}
+
+	succeeded, warningsNum := b.processPBSLogs(nil)
+
+	if b.currOwner != "" {
+		syslog.L.Info().WithJob(b.job.ID).WithMessage("setting owner to datastore owner")
+		_ = SetDatastoreOwner(b.job, b.storeInstance, b.currOwner)
+	}
+
+	syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script")
+	b.runPostScript(succeeded, warningsNum)
 }
 
 func (b *BackupOperation) Cleanup() {
@@ -593,12 +619,7 @@ func (b *BackupOperation) startTaskMonitoring(target database.Target) (chan prox
 	return taskChan, readyChan, errChan
 }
 
-func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, currOwner string) {
-	b.mu.RLock()
-	job := b.job
-	extraExclusions := b.extraExclusions
-	b.mu.RUnlock()
-
+func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd) {
 	done := make(chan error, 1)
 
 	go func() {
@@ -617,20 +638,6 @@ func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd, currOwner string) {
 		<-done
 		b.err = jobs.ErrCanceled
 	}
-
-	for _, ext := range extraExclusions {
-		syslog.L.Warn().WithJob(job.ID).WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", ext)).Write()
-	}
-
-	succeeded, warningsNum := b.processPBSLogs(nil)
-
-	if currOwner != "" {
-		syslog.L.Info().WithJob(b.job.ID).WithMessage("setting owner to datastore owner")
-		_ = SetDatastoreOwner(b.job, b.storeInstance, currOwner)
-	}
-
-	syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script")
-	b.runPostScript(succeeded, warningsNum)
 }
 
 func (b *BackupOperation) runPostScript(success bool, warningsNum int) {
