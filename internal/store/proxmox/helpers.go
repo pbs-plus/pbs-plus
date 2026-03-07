@@ -216,8 +216,8 @@ func buildGroupPath(ns, backupType, backupID, backupTime string) string {
 	var parts []string
 
 	if ns != "" {
-		nsParts := strings.Split(ns, "/")
-		for _, nsPart := range nsParts {
+		nsParts := strings.SplitSeq(ns, "/")
+		for nsPart := range nsParts {
 			if nsPart != "" {
 				parts = append(parts, "ns", nsPart)
 			}

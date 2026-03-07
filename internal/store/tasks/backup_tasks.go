@@ -77,10 +77,7 @@ func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Ta
 	}
 
 	// Read last 64KB (safely handles very busy servers)
-	readSize := int64(65536)
-	if stat.Size() < readSize {
-		readSize = stat.Size()
-	}
+	readSize := min(stat.Size(), int64(65536))
 
 	buffer := make([]byte, readSize)
 	_, err = file.ReadAt(buffer, stat.Size()-readSize)

@@ -194,7 +194,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		mountOK := false
-		for i := 0; i < 30; i++ {
+		for range 30 {
 			if utils.IsMounted(mountPoint) {
 				mountOK = true
 				break

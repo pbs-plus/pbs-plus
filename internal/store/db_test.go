@@ -112,7 +112,7 @@ func TestBackupCRUD(t *testing.T) {
 		backupCount := 10
 
 		// Concurrent creation
-		for i := 0; i < backupCount; i++ {
+		for i := range backupCount {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
@@ -334,7 +334,7 @@ func TestConcurrentOperations(t *testing.T) {
 
 	t.Run("Concurrent Target Operations", func(t *testing.T) {
 		targetCount := 10
-		for i := 0; i < targetCount; i++ {
+		for i := range targetCount {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
@@ -365,7 +365,7 @@ func TestConcurrentOperations(t *testing.T) {
 		// Writer goroutine
 		go func() {
 			<-readyCh
-			for i := 0; i < opCount; i++ {
+			for i := range opCount {
 				select {
 				case <-ctx.Done():
 					return
@@ -383,7 +383,7 @@ func TestConcurrentOperations(t *testing.T) {
 		// Reader goroutine
 		go func() {
 			<-readyCh
-			for i := 0; i < opCount; i++ {
+			for range opCount {
 				select {
 				case <-ctx.Done():
 					return
@@ -397,7 +397,7 @@ func TestConcurrentOperations(t *testing.T) {
 		close(readyCh)
 
 		// Wait with timeout
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			select {
 			case <-doneCh:
 				continue

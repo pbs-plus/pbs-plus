@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,7 +71,7 @@ func (d *Deduplicator) shouldLog(key [32]byte) bool {
 
 // Pre-allocate buffers for key generation
 var keyBufferPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		b := make([]byte, 0, 512) // Reasonable initial capacity
 		return &b
 	},
@@ -186,7 +187,7 @@ func (l *Logger) EnableDeduplication() {
 
 // Pre-allocated LogEntry pool
 var logEntryPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &LogEntry{
 			Fields: make(map[string]any, 8), // Pre-allocate some capacity
 		}
@@ -262,9 +263,7 @@ func (e *LogEntry) WithJSON(msg string) *LogEntry {
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
 		// Reuse existing map
-		for k, v := range parsed {
-			e.Fields[k] = v
-		}
+		maps.Copy(e.Fields, parsed)
 	} else {
 		e.Message = msg
 	}
@@ -279,9 +278,7 @@ func (e *LogEntry) WithField(key string, value any) *LogEntry {
 
 // WithFields adds multiple key-value pairs to the LogEntry.
 func (e *LogEntry) WithFields(fields map[string]any) *LogEntry {
-	for k, v := range fields {
-		e.Fields[k] = v
-	}
+	maps.Copy(e.Fields, fields)
 	return e
 }
 

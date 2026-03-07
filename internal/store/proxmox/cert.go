@@ -49,8 +49,8 @@ func GetProxmoxCertInfo() (*CertInfo, error) {
 	publicKeyTypeRx := regexp.MustCompile(`Public key type:\s*(.*)`)
 	publicKeyBitsRx := regexp.MustCompile(`Public key bits:\s*(\d+)`)
 
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(output, "\n")
+	for line := range lines {
 		if matches := subjectRx.FindStringSubmatch(line); len(matches) > 1 {
 			certInfo.Subject = strings.TrimSpace(matches[1])
 		} else if matches := dnsRx.FindStringSubmatch(line); len(matches) > 1 {
