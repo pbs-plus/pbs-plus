@@ -29,37 +29,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
-var (
-	ErrJobMutexCreation = errors.New("failed to create job mutex")
-	ErrOneInstance      = errors.New("a job is still running; only one instance allowed")
-
-	ErrStdoutTempCreation = errors.New("failed to create stdout temp file")
-
-	ErrRestoreMutexCreation = errors.New("failed to create restore mutex")
-	ErrRestoreMutexLock     = errors.New("failed to lock restore mutex")
-
-	ErrAPITokenRequired = errors.New("API token is required")
-
-	ErrTargetGet         = errors.New("failed to get target")
-	ErrTargetNotFound    = errors.New("target does not exist")
-	ErrTargetUnreachable = errors.New("target unreachable")
-
-	ErrPrepareRestoreCommand = errors.New("failed to prepare restore command")
-
-	ErrTaskMonitoringInitializationFailed = errors.New("task monitoring initialization failed")
-	ErrTaskMonitoringTimedOut             = errors.New("task monitoring initialization timed out")
-
-	ErrProxmoxRestoreClientStart = errors.New("proxmox-restore-client start error")
-
-	ErrNilTask               = errors.New("received nil task")
-	ErrTaskDetectionFailed   = errors.New("task detection failed")
-	ErrTaskDetectionTimedOut = errors.New("task detection timed out")
-	ErrMountEmpty            = errors.New("target directory is empty, skipping restore")
-
-	ErrJobStatusUpdateFailed = errors.New("failed to update job status")
-	ErrCanceled              = errors.New("operation canceled")
-)
-
 type RestoreOperation struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -135,7 +104,6 @@ func (b *RestoreOperation) runPreScript() error {
 	b.task.WriteString(fmt.Sprintf("running pre-restore script %s", b.job.PreScript))
 
 	envVars, err := utils.StructToEnvVars(b.job)
-
 	if err != nil {
 		envVars = []string{}
 	}
@@ -150,8 +118,10 @@ func (b *RestoreOperation) runPreScript() error {
 		b.task.WriteString(err.Error())
 		b.task.WriteString(fmt.Sprintf("encountered error while running %s", b.job.PreScript))
 		b.errCount.Add(1)
-
-		syslog.L.Error(err).WithJob(b.job.ID).WithMessage("error encountered while running job pre-restore script").Write()
+		syslog.L.Error(err).
+			WithJob(b.job.ID).
+			WithMessage("error encountered while running job pre-restore script").
+			Write()
 		return err
 	}
 
@@ -247,7 +217,6 @@ func (b *RestoreOperation) agentExecute() error {
 
 	destPath := b.job.DestSubpath
 	basePath := b.job.DestTarget.GetAgentHostPath()
-
 	fullPath := path.Join(basePath, destPath)
 
 	if b.job.DestTarget.AgentHost.OperatingSystem == "windows" {
@@ -288,12 +257,11 @@ func (b *RestoreOperation) agentExecute() error {
 		return err
 	}
 
-	// The child session key is "targetHostname|restoreId|restore".
 	childKey := b.job.GetStreamID()
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", childKey))
 
-	pipeCtx, pipeCtxCancel := context.WithTimeout(b.ctx, time.Second*10)
+	pipeCtx, pipeCtxCancel := context.WithTimeout(b.ctx, 10*time.Second)
 	defer pipeCtxCancel()
 
 	agentRPC, err := b.storeInstance.ARPCAgentsManager.WaitStreamPipe(pipeCtx, childKey)
@@ -301,15 +269,27 @@ func (b *RestoreOperation) agentExecute() error {
 		return err
 	}
 
-	socketPath := filepath.Join(constants.RestoreSocketPath, strings.ReplaceAll(childKey, "|", "-")+".sock")
+	socketPath := filepath.Join(
+		constants.RestoreSocketPath,
+		strings.ReplaceAll(childKey, "|", "-")+".sock",
+	)
 
-	b.task.WriteString(fmt.Sprintf("running pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
-	reader, err := pxar.NewPxarReader(b.ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task)
+	b.task.WriteString(fmt.Sprintf(
+		"running pxar reader [datastore: %s, namespace: %s, snapshot: %s]",
+		b.job.Store, b.job.Namespace, b.job.Snapshot,
+	))
+
+	reader, err := pxar.NewPxarReader(
+		b.ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task,
+	)
 	if err != nil {
 		return err
 	}
 
-	b.task.WriteString(fmt.Sprintf("running remote pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
+	b.task.WriteString(fmt.Sprintf(
+		"running remote pxar reader [datastore: %s, namespace: %s, snapshot: %s]",
+		b.job.Store, b.job.Namespace, b.job.Snapshot,
+	))
 
 	b.remoteServer, b.errCh = pxar.NewRemoteServer(reader)
 	if b.remoteServer == nil {
@@ -334,16 +314,15 @@ func (b *RestoreOperation) agentExecute() error {
 	}()
 
 	agentRPC.SetRouter(*b.remoteServer.Router())
-
 	vfssessions.CreatePxarReader(childKey, reader)
 
 	syslog.L.Info().
 		WithMessage("Restore request sent").
-		WithFields(map[string]any{
-			"restoreId": b.job.ID,
-		}).Write()
+		WithFields(map[string]any{"restoreId": b.job.ID}).
+		Write()
 
 	b.task.WriteString(fmt.Sprintf("sending ready signal to stream pipe of %s", childKey))
+
 	_, err = agentRPC.CallMessage(preCtx, "server_ready", &restoreReq)
 	if err != nil {
 		return err
@@ -354,10 +333,12 @@ func (b *RestoreOperation) agentExecute() error {
 		for {
 			select {
 			case <-b.ctx.Done():
+				ticker.Stop()
 				return
 			case <-ticker.C:
 				if state := agentRPC.GetState(); state == arpc.StateDisconnected {
 					close(b.disconnected)
+					ticker.Stop()
 					return
 				}
 			}
@@ -368,9 +349,7 @@ func (b *RestoreOperation) agentExecute() error {
 }
 
 func (b *RestoreOperation) localExecute() error {
-	destPath := b.job.DestSubpath
-
-	destPath = filepath.Join(b.job.DestTarget.Path, destPath)
+	destPath := filepath.Join(b.job.DestTarget.Path, b.job.DestSubpath)
 
 	srcPath := b.job.SrcPath
 	if strings.TrimSpace(b.job.SrcPath) == "" {
@@ -378,10 +357,19 @@ func (b *RestoreOperation) localExecute() error {
 	}
 
 	childKey := b.job.GetStreamID()
-	socketPath := filepath.Join(constants.RestoreSocketPath, strings.ReplaceAll(childKey, "|", "-")+".sock")
+	socketPath := filepath.Join(
+		constants.RestoreSocketPath,
+		strings.ReplaceAll(childKey, "|", "-")+".sock",
+	)
 
-	b.task.WriteString(fmt.Sprintf("running pxar reader [datastore: %s, namespace: %s, snapshot: %s]", b.job.Store, b.job.Namespace, b.job.Snapshot))
-	reader, err := pxar.NewPxarReader(b.ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task)
+	b.task.WriteString(fmt.Sprintf(
+		"running pxar reader [datastore: %s, namespace: %s, snapshot: %s]",
+		b.job.Store, b.job.Namespace, b.job.Snapshot,
+	))
+
+	reader, err := pxar.NewPxarReader(
+		b.ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task,
+	)
 	if err != nil {
 		return err
 	}
@@ -390,9 +378,8 @@ func (b *RestoreOperation) localExecute() error {
 
 	syslog.L.Info().
 		WithMessage("Restore request sent").
-		WithFields(map[string]any{
-			"restoreId": b.job.ID,
-		}).Write()
+		WithFields(map[string]any{"restoreId": b.job.ID}).
+		Write()
 
 	b.task.WriteString("starting local restore")
 
@@ -433,7 +420,8 @@ func (b *RestoreOperation) Execute() error {
 		WithFields(map[string]any{
 			"restoreId": b.job.ID,
 			"target":    b.job.DestTarget,
-		}).Write()
+		}).
+		Write()
 
 	switch b.job.DestTarget.Type {
 	case database.TargetTypeAgent:
@@ -460,25 +448,28 @@ func (b *RestoreOperation) OnError(err error) {
 	}
 
 	b.task.WriteString("Restore job summary:")
+
 	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
 	if r != nil {
 		b.task.WriteString(fmt.Sprintf(" - %d total files", atomic.LoadInt64(&r.FileCount)))
 		b.task.WriteString(fmt.Sprintf(" - %d total folders", atomic.LoadInt64(&r.FolderCount)))
 		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(atomic.LoadInt64(&r.TotalBytes))))
 	}
-	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 
+	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 	b.task.CloseErr(err)
 }
 
 func (b *RestoreOperation) OnSuccess() {
 	b.task.WriteString("Restore job summary:")
+
 	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
 	if r != nil {
 		b.task.WriteString(fmt.Sprintf(" - %d total files", atomic.LoadInt64(&r.FileCount)))
 		b.task.WriteString(fmt.Sprintf(" - %d total folders", atomic.LoadInt64(&r.FolderCount)))
 		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(atomic.LoadInt64(&r.TotalBytes))))
 	}
+
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 
 	errCount := b.errCount.Load()
@@ -496,6 +487,7 @@ func (b *RestoreOperation) Cleanup() {
 	}
 
 	childKey := b.job.GetStreamID()
+
 	agentRPC, ok := b.storeInstance.ARPCAgentsManager.GetStreamPipe(childKey)
 	if ok {
 		agentRPC.Close()
@@ -570,6 +562,7 @@ func (b *RestoreOperation) createOK(err error) {
 	if gerr != nil {
 		latest = b.job
 	}
+
 	latest.History.LastRunUpid = task.UPID
 	latest.History.LastRunState = task.Status
 	latest.History.LastRunEndtime = task.EndTime
@@ -589,6 +582,7 @@ func (b *RestoreOperation) updateRestoreWithTask(task proxmox.Task) {
 	if gerr != nil {
 		latest = b.job
 	}
+
 	latest.History.LastRunUpid = task.UPID
 	latest.History.LastRunState = task.Status
 	latest.History.LastRunEndtime = task.EndTime
