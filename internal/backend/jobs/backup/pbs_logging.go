@@ -153,7 +153,6 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 		return false, false, 0, fmt.Errorf("scanning input file: %w", err)
 	}
 
-	var errorString string
 	pbsWarningRawCount := 0
 
 	clientFile, err := os.Open(clientLogFile.Path)
@@ -207,7 +206,7 @@ func processPBSProxyLogs(isGraceful bool, upid string, clientLogFile *syslog.Job
 
 	switch {
 	case hasError:
-		tmpWriter.WriteString(errorString)
+		fallthrough
 	case incomplete:
 		tmpWriter.WriteString(timestamp)
 		tmpWriter.WriteString(": TASK ERROR: ")
