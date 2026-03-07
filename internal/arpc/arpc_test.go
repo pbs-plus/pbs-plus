@@ -269,7 +269,7 @@ func TestStreamPipeCall_Concurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numClients)
 
-	for i := 0; i < numClients; i++ {
+	for i := range numClients {
 		go func(id int) {
 			defer wg.Done()
 			payload := map[string]int{"client": id}
@@ -592,7 +592,7 @@ func TestStress_ConsecutiveCalls(t *testing.T) {
 	defer pipe.Close()
 
 	const total = 1000
-	for i := 0; i < total; i++ {
+	for i := range total {
 		var in int = int(i)
 		var out int
 		if err := pipe.Call(context.Background(), "inc", &in, &out); err != nil {
@@ -637,8 +637,8 @@ func TestStress_BatchedSequences(t *testing.T) {
 	const batches = 100
 	const perBatch = 40
 
-	for b := 0; b < batches; b++ {
-		for i := 0; i < perBatch; i++ {
+	for b := range batches {
+		for i := range perBatch {
 			msg := string(fmt.Sprintf("b%d-i%d", b, i))
 			var echoed string
 			if err := pipe.Call(context.Background(), "echo_str", &msg, &echoed); err != nil {
@@ -679,7 +679,7 @@ func TestStreams_ProperlyClosed_NoExhaustion(t *testing.T) {
 	defer pipe.Close()
 
 	const iters = 256
-	for i := 0; i < iters; i++ {
+	for i := range iters {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		var out string
 		err := pipe.Call(ctx, "short", nil, &out)
@@ -772,7 +772,7 @@ func TestLeak_MultipleConnections(t *testing.T) {
 	baseline := goroutineSnapshot()
 
 	const numConns = 20
-	for i := 0; i < numConns; i++ {
+	for i := range numConns {
 		clientTLS := newTestClientTLS(t)
 		pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
 		if err != nil {
@@ -823,7 +823,7 @@ func TestLeak_ConcurrentCalls(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numCalls)
 
-	for i := 0; i < numCalls; i++ {
+	for i := range numCalls {
 		go func(id int) {
 			defer wg.Done()
 			var out string
@@ -863,7 +863,7 @@ func TestLeak_TimeoutCalls(t *testing.T) {
 	baseline := goroutineSnapshot()
 
 	const numCalls = 20
-	for i := 0; i < numCalls; i++ {
+	for range numCalls {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		var out string
 		_ = pipe.Call(ctx, "slow", nil, &out)
@@ -897,7 +897,7 @@ func TestLeak_ReconnectCycle(t *testing.T) {
 	baseline := goroutineSnapshot()
 
 	const cycles = 10
-	for i := 0; i < cycles; i++ {
+	for i := range cycles {
 		_ = pipe.tun.Close()
 		time.Sleep(50 * time.Millisecond)
 
@@ -944,7 +944,7 @@ func TestLeak_RawStreamHandlers(t *testing.T) {
 	baseline := goroutineSnapshot()
 
 	const numCalls = 30
-	for i := 0; i < numCalls; i++ {
+	for range numCalls {
 		handler := RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, 1024)
 			_, err := st.Read(buf)
@@ -981,7 +981,7 @@ func TestLeak_ErrorResponses(t *testing.T) {
 	baseline := goroutineSnapshot()
 
 	const numCalls = 50
-	for i := 0; i < numCalls; i++ {
+	for range numCalls {
 		var out []byte
 		_ = pipe.Call(context.Background(), "error", nil, &out)
 		time.Sleep(10 * time.Millisecond)
@@ -1013,7 +1013,7 @@ func TestLeak_StreamExhaustion(t *testing.T) {
 	baseline := goroutineSnapshot()
 
 	const iters = 200
-	for i := 0; i < iters; i++ {
+	for i := range iters {
 		var out string
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		err := pipe.Call(ctx, "quick", nil, &out)
@@ -1053,7 +1053,7 @@ func TestLeak_CancelledContexts(t *testing.T) {
 	baseline := goroutineSnapshot()
 
 	const numCalls = 30
-	for i := 0; i < numCalls; i++ {
+	for range numCalls {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		go func() {
@@ -1085,7 +1085,7 @@ func TestLeak_ServerServeLoop(t *testing.T) {
 
 	clientTLS := newTestClientTLS(t)
 	const numClients = 10
-	for i := 0; i < numClients; i++ {
+	for i := range numClients {
 		pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
 		if err != nil {
 			t.Fatalf("ConnectToServer %d: %v", i, err)
@@ -1133,7 +1133,7 @@ func TestLeak_MemoryPressure(t *testing.T) {
 	runtime.ReadMemStats(&m1)
 
 	const numCalls = 50
-	for i := 0; i < numCalls; i++ {
+	for i := range numCalls {
 		var out []byte
 		if err := pipe.Call(context.Background(), "large", nil, &out); err != nil {
 			t.Fatalf("Call %d: %v", i, err)
@@ -1150,10 +1150,7 @@ func TestLeak_MemoryPressure(t *testing.T) {
 	runtime.ReadMemStats(&m2)
 
 	// Check that allocated memory hasn't grown excessively
-	growth := int64(m2.HeapAlloc) - int64(m1.HeapAlloc)
-	if growth < 0 {
-		growth = 0
-	}
+	growth := max(int64(m2.HeapAlloc)-int64(m1.HeapAlloc), 0)
 	maxExpectedGrowth := int64(10 * 1024 * 1024) // 10 MB tolerance
 
 	if growth > maxExpectedGrowth {
@@ -1168,7 +1165,7 @@ func TestLeak_RouterHandlerReplace(t *testing.T) {
 	baseline := goroutineSnapshot()
 
 	const cycles = 100
-	for i := 0; i < cycles; i++ {
+	for i := range cycles {
 		method := fmt.Sprintf("method-%d", i)
 		router.Handle(method, func(req *Request) (Response, error) {
 			var ok string = "ok"

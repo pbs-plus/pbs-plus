@@ -112,7 +112,7 @@ func (p *pbsService) Stop(s service.Service) error {
 func main() {
 	defer func() {
 		if r := recover(); r != nil {
-			_ = os.WriteFile("panic.log", []byte(fmt.Sprintf("Panic: %v\n%s", r, debug.Stack())), 0644)
+			_ = os.WriteFile("panic.log", fmt.Appendf(nil, "Panic: %v\n%s", r, debug.Stack()), 0644)
 			os.Exit(1)
 		}
 	}()

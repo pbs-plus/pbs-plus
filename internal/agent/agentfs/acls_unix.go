@@ -83,7 +83,7 @@ func parseUnixACL(buf []byte, isDefault bool) ([]types.PosixACL, error) {
 	count := len(buf) / 8
 	result := make([]types.PosixACL, 0, count)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		off := i * 8
 		tag := binary.LittleEndian.Uint16(buf[off : off+2])
 		perms := binary.LittleEndian.Uint16(buf[off+2 : off+4])

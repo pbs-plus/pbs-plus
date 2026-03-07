@@ -86,7 +86,7 @@ func int64ToBool(i int64) bool {
 	return i != 0
 }
 
-func interfaceToString(i interface{}) string {
+func interfaceToString(i any) string {
 	if i == nil {
 		return ""
 	}

@@ -12,7 +12,7 @@ func StructToEnvVars(s any) ([]string, error) {
 	v := reflect.ValueOf(s)
 
 	// Ensure it's a struct (or a pointer to a struct)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
