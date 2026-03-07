@@ -53,50 +53,98 @@ func (p *pbsService) run() {
 	if err := lifecycle.WaitForServerURL(p.ctx); err != nil {
 		return
 	}
-	if err := lifecycle.WaitForBootstrap(p.ctx); err != nil {
-		return
-	}
 
-	if store, err := agent.NewBackupStore(); err == nil {
-		_ = store.ClearAll()
-	}
+	for {
+		syslog.L.Info().
+			WithMessage("waiting for bootstrap").
+			Write()
 
-	p.wg.Go(func() {
-		ticker := time.NewTicker(time.Hour)
-		for {
-			select {
-			case <-p.ctx.Done():
-				return
-			case <-ticker.C:
-				_ = agent.CheckAndRenewCertificate()
-			}
+		if err := lifecycle.WaitForBootstrap(p.ctx); err != nil {
+			return
 		}
-	})
-	p.wg.Go(func() {
-		err := lifecycle.UpdateDrives()
-		if err != nil {
-			syslog.L.Error(err).WithMessage("failed to update target inventory").Write()
+
+		syslog.L.Info().
+			WithMessage("bootstrap complete, starting session").
+			Write()
+
+		if store, err := agent.NewBackupStore(); err == nil {
+			_ = store.ClearAll()
 		}
-		ticker := time.NewTicker(utils.ComputeDelay())
-		for {
-			select {
-			case <-p.ctx.Done():
-				return
-			case <-ticker.C:
-				err := lifecycle.UpdateDrives()
-				if err != nil {
-					syslog.L.Error(err).WithMessage("failed to update target inventory").Write()
+
+		innerCtx, innerCancel := context.WithCancel(p.ctx)
+
+		var innerWg sync.WaitGroup
+
+		innerWg.Go(func() {
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-innerCtx.Done():
+					return
+				case <-ticker.C:
+					_ = agent.CheckAndRenewCertificate()
 				}
-				ticker.Reset(utils.ComputeDelay())
+			}
+		})
+
+		innerWg.Go(func() {
+			_ = lifecycle.UpdateDrives()
+			ticker := time.NewTicker(utils.ComputeDelay())
+			defer ticker.Stop()
+			for {
+				select {
+				case <-innerCtx.Done():
+					return
+				case <-ticker.C:
+					_ = lifecycle.UpdateDrives()
+					ticker.Reset(utils.ComputeDelay())
+				}
+			}
+		})
+
+		certErrCh, err := lifecycle.ConnectARPC(innerCtx, Version)
+		if err != nil {
+			syslog.L.Error(err).
+				WithMessage("failed to start arpc connection").
+				Write()
+			innerCancel()
+			innerWg.Wait()
+
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-time.After(10 * time.Second):
+				continue
 			}
 		}
-	})
 
-	err := lifecycle.ConnectARPC(p.ctx, p.cancel, Version)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to connect to arpc").Write()
+		select {
+		case <-p.ctx.Done():
+			innerCancel()
+			innerWg.Wait()
+			return
+
+		case certErr, ok := <-certErrCh:
+			innerCancel()
+			innerWg.Wait()
+
+			if !ok {
+				return
+			}
+
+			syslog.L.Error(certErr).
+				WithMessage("clearing certificates and re-bootstrapping").
+				Write()
+			lifecycle.ClearCertificates()
+
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+		}
 	}
-	<-p.ctx.Done()
 }
 
 func (p *pbsService) Stop(s service.Service) error {
