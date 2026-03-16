@@ -14,13 +14,15 @@ runs:
       id: get-snapshot
       shell: bash
       run: |
-        SNAPSHOT=$(docker exec pbs-plus-test proxmox-backup-manager snapshot list test:test/host/test-host --output-format json | \
-          jq -r 'sort_by(.["backup-time"]) | last | "\(.["backup-type"])/\(.["backup-id"])/\(.["backup-time"])"')
+        SNAP_TIME=$(docker exec pbs-plus-test ls /mnt/test/ns/test/host/test-host/ | sort | tail -1)
 
-        if [ -z "$SNAPSHOT" ] || [ "$SNAPSHOT" = "null" ]; then
-          echo "✗ No snapshot found"
+        if [ -z "$SNAP_TIME" ]; then
+          echo "✗ No snapshot found in /mnt/test/ns/test/host/test-host/"
           exit 1
         fi
+
+        SNAP_TS=$(docker exec pbs-plus-test date -d "${SNAP_TIME}" +%s)
+        SNAPSHOT="host/test-host/${SNAP_TS}"
 
         echo "snapshot=${SNAPSHOT}" >> "$GITHUB_OUTPUT"
         echo "✓ Found snapshot: ${SNAPSHOT}"
