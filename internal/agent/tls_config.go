@@ -74,7 +74,7 @@ func GetTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-func invalidateTLSConfigCache() {
+func InvalidateTLSConfigCache() {
 	tlsConfigMutex.Lock()
 	defer tlsConfigMutex.Unlock()
 	tlsConfigCache = nil
@@ -210,7 +210,7 @@ func renewCertificate() error {
 		return fmt.Errorf("renewCertificate: error storing priv to registry -> %w", err)
 	}
 
-	invalidateTLSConfigCache()
+	InvalidateTLSConfigCache()
 
 	return nil
 }
