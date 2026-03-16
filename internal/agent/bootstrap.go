@@ -173,5 +173,7 @@ func Bootstrap() error {
 		return fmt.Errorf("Bootstrap: error storing priv to registry -> %w", err)
 	}
 
+	InvalidateTLSConfigCache()
+
 	return nil
 }

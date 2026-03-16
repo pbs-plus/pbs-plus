@@ -26,14 +26,14 @@ func isCertError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "x509:") ||
 		strings.Contains(msg, "tls:") ||
-		strings.Contains(msg, "certificate") ||
-		strings.Contains(msg, "(code 403)")
+		strings.Contains(msg, "certificate")
 }
 
 func ClearCertificates() {
 	_ = registry.DeleteEntry(registry.AUTH, "ServerCA")
 	_ = registry.DeleteEntry(registry.AUTH, "Cert")
 	_ = registry.DeleteEntry(registry.AUTH, "Priv")
+	agent.InvalidateTLSConfigCache()
 }
 
 func UpdateDrives() error {
