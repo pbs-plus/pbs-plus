@@ -14,7 +14,7 @@ runs:
       id: get-snapshot
       shell: bash
       run: |
-        SNAP_TIME=$(docker exec pbs-plus-test ls /mnt/test/ns/test/host/test-host/ | sort | tail -1)
+        SNAP_TIME=$(docker exec pbs-plus-test ls /mnt/test/ns/test/host/test-host/ | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1)
 
         if [ -z "$SNAP_TIME" ]; then
           echo "✗ No snapshot found in /mnt/test/ns/test/host/test-host/"
