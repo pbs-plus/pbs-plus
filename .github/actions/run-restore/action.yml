@@ -10,8 +10,79 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Get latest snapshot
+      id: get-snapshot
+      shell: bash
+      run: |
+        SNAP_TIME=$(docker exec pbs-plus-test ls /mnt/test/ns/test/host/test-host/ | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1)
+
+        if [ -z "$SNAP_TIME" ]; then
+          echo "✗ No snapshot found in /mnt/test/ns/test/host/test-host/"
+          exit 1
+        fi
+
+        SNAP_TS=$(docker exec pbs-plus-test date -d "${SNAP_TIME}" +%s)
+        SNAPSHOT="host/test-host/${SNAP_TS}"
+
+        echo "snapshot=${SNAPSHOT}" >> "$GITHUB_OUTPUT"
+        echo "✓ Found snapshot: ${SNAPSHOT}"
+
+    - name: Create restore job
+      shell: bash
+      run: |
+        docker exec pbs-plus-test curl -k -X POST "https://localhost:8017/api2/extjs/config/disk-restore" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-restore" \
+          -d "store=test" \
+          -d "ns=test" \
+          -d "snapshot=${{ steps.get-snapshot.outputs.snapshot }}" \
+          -d "src-path=/" \
+          -d "dest-target=test-host - Root" \
+          -d "dest-subpath=/tmp/pbs-plus-restore-test" \
+          -d "mode=0" \
+          -d "retry=0" \
+          -d "retry-interval=1"
+
     - name: Start restore
       shell: bash
       run: |
-        exit 0
+        docker exec pbs-plus-test curl -k -X POST "https://localhost:8017/api2/extjs/d2d/restore?job=dGVzdC1yZXN0b3Jl" \
+          -H "Content-Type: application/x-www-form-urlencoded"
 
+    - name: Wait for restore completion
+      shell: bash
+      run: |
+        echo "Waiting for restore to complete..."
+        timeout=$(( ${{ inputs.timeout-seconds }} * 6 ))
+        elapsed=0
+
+        while [ $elapsed -lt $timeout ]; do
+          if docker logs pbs-plus-agent 2>&1 | grep -q "CmdRestore: finished"; then
+            echo "✓ PBS Agent restore process finished"
+            break
+          fi
+          sleep 1
+          elapsed=$((elapsed + 1))
+          echo "Still waiting... (${elapsed}s)"
+        done
+
+        if [ $elapsed -ge $timeout ]; then
+          echo "✗ Timeout reached after ${timeout}s"
+          exit 1
+        fi
+
+    - name: Verify restore success
+      shell: bash
+      run: |
+        if ! docker logs pbs-plus-agent 2>&1 | grep -q "CmdRestore: Restore completed successfully"; then
+          echo "✗ Restore did not complete successfully"
+          exit 1
+        fi
+        echo "✓ Restore completed successfully"
+
+        RESTORED=$(docker exec pbs-plus-agent find /tmp/pbs-plus-restore-test -type f 2>/dev/null | wc -l)
+        if [ "$RESTORED" -eq 0 ]; then
+          echo "✗ No files found in restore destination"
+          exit 1
+        fi
+        echo "✓ ${RESTORED} file(s) restored to /tmp/pbs-plus-restore-test"
