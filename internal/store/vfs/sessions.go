@@ -16,7 +16,7 @@ type FSMount struct {
 	sync.Mutex
 	arpcfs *arpcfs.ARPCFS
 	s3fs   *s3fs.S3FS
-	pxar   *pxar.PxarReader
+	pxar   pxar.Reader
 }
 
 var activeMounts = safemap.New[string, *FSMount]()
@@ -29,7 +29,7 @@ func CreateARPCFSMount(connId string, fs *arpcfs.ARPCFS) {
 	activeMounts.Set(connId, conn)
 }
 
-func CreatePxarReader(connId string, r *pxar.PxarReader) {
+func CreatePxarReader(connId string, r pxar.Reader) {
 	conn := &FSMount{
 		pxar: r,
 	}
@@ -75,7 +75,7 @@ func GetSessionS3FS(connId string) *s3fs.S3FS {
 	}
 }
 
-func GetSessionPxarReader(connId string) *pxar.PxarReader {
+func GetSessionPxarReader(connId string) pxar.Reader {
 	if conn, ok := activeMounts.Get(connId); ok {
 		return conn.pxar
 	} else {

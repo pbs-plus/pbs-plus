@@ -17,7 +17,7 @@ import (
 )
 
 type RemoteServer struct {
-	reader *PxarReader
+	reader Reader
 	router *arpc.Router
 	isDone atomic.Bool
 	DoneCh chan struct{}
@@ -25,7 +25,7 @@ type RemoteServer struct {
 	closed atomic.Bool
 }
 
-func NewRemoteServer(reader *PxarReader) (*RemoteServer, chan error) {
+func NewRemoteServer(reader Reader) (*RemoteServer, chan error) {
 	router := arpc.NewRouter()
 	errChan := make(chan error, 16)
 	s := &RemoteServer{
