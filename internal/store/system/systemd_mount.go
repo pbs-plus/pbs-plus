@@ -32,7 +32,7 @@ func CreateMountService(ctx context.Context, serviceName, mountPoint string, arg
 		return err
 	}
 
-	execStart := append([]string{"/usr/bin/pxar-direct-mount"}, args...)
+	execStart := append([]string{"/usr/bin/pbs-plus", "mount-pxar"}, args...)
 
 	props := []dbus.Property{
 		dbus.PropDescription("PBS Plus restore mount for " + mountPoint),

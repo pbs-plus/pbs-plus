@@ -143,9 +143,6 @@ nfpms:
       - proxmox-backup-client (>= 3.2.5)
       - fuse3
       - memcached
-    recommends:
-      - pxar-direct-mount
-      - pxar-socket-api
     contents:
       - src: ./build/package/server/pbs-plus.service
         dst: /lib/systemd/system/pbs-plus.service
