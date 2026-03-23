@@ -1,0 +1,38 @@
+FROM golang:1.26-alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG VERSION=v0.0.0
+
+ENV CGO_ENABLED=0
+
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH \
+  go build \
+  -trimpath \
+  -ldflags="-s -w -X 'main.Version=${VERSION}'" \
+  -o /out/pbs-plus-operator ./cmd/operator
+
+FROM alpine:3.23
+
+ARG USER_NAME=pbsplus
+ARG USER_UID=1999
+ARG USER_GID=1999
+
+RUN apk add --no-cache ca-certificates tzdata
+
+RUN addgroup -g ${USER_GID} -S ${USER_NAME} && \
+  adduser -u ${USER_UID} -S -D -H -G ${USER_NAME} -s /sbin/nologin ${USER_NAME}
+
+COPY --from=builder /out/pbs-plus-operator /usr/bin/pbs-plus-operator
+RUN chmod 0755 /usr/bin/pbs-plus-operator && chown root:${USER_NAME} /usr/bin/pbs-plus-operator
+
+ENV USER=${USER_NAME}
+
+ENTRYPOINT ["/usr/bin/pbs-plus-operator"]
