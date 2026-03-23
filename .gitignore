@@ -1,3 +1,9 @@
 internal/vmware/test
 test
 target
+
+# Go binaries
+operator
+pbs-plus
+pbs-plus-agent
+*.exe
