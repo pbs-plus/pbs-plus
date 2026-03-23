@@ -75,6 +75,19 @@ builds:
       - -X 'main.Version=v{{.Version}}'
       - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
 
+  - id: operator
+    main: ./cmd/operator
+    binary: pbs-plus-operator
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X 'main.Version=v{{.Version}}'
+
 binary_signs:
   - id: ed25519
     cmd: /tmp/bin/signer
@@ -116,6 +129,13 @@ archives:
     ids:
       - windows-agent
     name_template: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
+  - id: operator
+    ids:
+      - operator
+    name_template: "{{ .ProjectName }}-operator-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - binary
 

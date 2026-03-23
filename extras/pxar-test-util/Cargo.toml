@@ -1,0 +1,27 @@
+[package]
+name = "pxar-test-util"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+bytes = "1.5"
+endian_trait = "0.6"
+hex = "0.4"
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+siphasher = "1.0"
+zstd = "0.13"
+
+[dependencies.pxar]
+git = "https://git.proxmox.com/git/proxmox-backup.git"
+tag = "v3.2.8"
+
+[dependencies.pbs-datastore]
+git = "https://git.proxmox.com/git/proxmox-backup.git"
+tag = "v3.2.8"
+
+[dependencies.pbs-tools]
+git = "https://git.proxmox.com/git/proxmox-backup.git"
+tag = "v3.2.8"
