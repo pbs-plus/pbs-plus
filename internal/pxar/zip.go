@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -103,7 +104,7 @@ type zipContext struct {
 }
 
 func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) {
-	dirPath := filepath.Join(relPath, dirEntry.Name()) + "/"
+	dirPath := path.Join(relPath, dirEntry.Name()) + "/"
 
 	header := &zip.FileHeader{
 		Name:     dirPath,
@@ -141,7 +142,7 @@ func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) {
 }
 
 func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) {
-	filePath := filepath.Join(relPath, fileEntry.Name())
+	filePath := path.Join(relPath, fileEntry.Name())
 
 	header := &zip.FileHeader{
 		Name:     filePath,
@@ -173,7 +174,7 @@ func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) {
 }
 
 func (zc *zipContext) addSymlink(relPath string, symlinkEntry EntryInfo) {
-	linkPath := filepath.Join(relPath, symlinkEntry.Name())
+	linkPath := path.Join(relPath, symlinkEntry.Name())
 
 	target, err := zc.client.ReadLink(zc.ctx, symlinkEntry.EntryRangeStart, symlinkEntry.EntryRangeEnd)
 	if err != nil {
