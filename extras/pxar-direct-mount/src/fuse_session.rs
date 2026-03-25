@@ -1,13 +1,17 @@
 use std::ffi::{OsStr, OsString};
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use anyhow::{format_err, Error};
 use futures::{channel::mpsc::UnboundedSender, select, SinkExt, StreamExt, TryStreamExt};
+use lru::LruCache;
+use parking_lot::RwLock;
 use proxmox_fuse::requests::{self, FuseRequest};
 use proxmox_fuse::{EntryParam, Fuse, ReplyBufState, Request, ROOT_ID};
 use proxmox_io::vec;
@@ -16,6 +20,16 @@ use pxar::accessor::{self, ContentRange, EntryRangeInfo, ReadAt};
 use pxar::EntryKind;
 
 const NON_DIRECTORY_INODE: u64 = 1u64 << 63;
+const DEFAULT_MAX_LOOKUPS: usize = 131072;
+const EVICTION_BATCH_SIZE: usize = 16;
+
+/// Offset cookie returned after the last regular entry; on the next kernel
+/// call with this offset we serve only "..".
+const DOT_NEXT: isize = isize::MAX - 1;
+/// Offset cookie returned after "."; on the next kernel call with this offset
+/// the directory listing is complete.
+const DOTDOT_NEXT: isize = isize::MAX;
+
 #[inline]
 fn is_dir_inode(inode: u64) -> bool {
     0 == (inode & NON_DIRECTORY_INODE)
@@ -38,6 +52,16 @@ impl Session {
         verbose: bool,
         path: &Path,
     ) -> Result<Self, Error> {
+        Self::mount_with_cache(accessor, options, verbose, path, DEFAULT_MAX_LOOKUPS)
+    }
+
+    pub fn mount_with_cache(
+        accessor: Accessor,
+        options: &OsStr,
+        verbose: bool,
+        path: &Path,
+        max_lookups: usize,
+    ) -> Result<Self, Error> {
         let fuse = Fuse::builder("pbs-pxar-mount")?
             .debug()
             .options_os(options)?
@@ -48,7 +72,7 @@ impl Session {
             .build()?
             .mount(path)?;
 
-        let session = SessionImpl::new(accessor, verbose);
+        let session = SessionImpl::new(accessor, verbose, max_lookups);
 
         Ok(Self {
             fut: Box::pin(session.main(fuse)),
@@ -70,8 +94,10 @@ macro_rules! io_return {
 }
 
 struct Lookup {
-    refs: std::sync::atomic::AtomicUsize,
-    inode: u64,
+    /// FUSE kernel reference count.  Incremented on every successful `lookup`
+    /// reply (via `LookupRef::leak`), decremented by `forget` syscalls.
+    /// Entries with `refs == 0` are candidates for eviction from the cache.
+    refs: AtomicUsize,
     parent: u64,
     entry_range_info: EntryRangeInfo,
     content_range: Option<ContentRange>,
@@ -79,14 +105,13 @@ struct Lookup {
 
 impl Lookup {
     fn new(
-        inode: u64,
+        _inode: u64,
         parent: u64,
         entry_range_info: EntryRangeInfo,
         content_range: Option<ContentRange>,
-    ) -> Box<Lookup> {
+    ) -> Box<Self> {
         Box::new(Self {
-            refs: std::sync::atomic::AtomicUsize::new(1),
-            inode,
+            refs: AtomicUsize::new(1),
             parent,
             entry_range_info,
             content_range,
@@ -94,90 +119,96 @@ impl Lookup {
     }
 
     fn forget(&self, count: usize) -> Result<(), Error> {
-        use std::sync::atomic::Ordering;
         loop {
             let old = self.refs.load(Ordering::Acquire);
             if count >= old {
                 return Err(io_format_err!("reference count underflow").into());
             }
             let new = old - count;
-            match self.refs.compare_exchange(
-                old,
-                new,
-                std::sync::atomic::Ordering::SeqCst,
-                std::sync::atomic::Ordering::SeqCst,
-            ) {
+            match self.refs.compare_exchange(old, new, Ordering::SeqCst, Ordering::SeqCst) {
                 Ok(_) => break Ok(()),
                 Err(_) => continue,
             }
-        }
-    }
-
-    fn get_ref<'a>(&self, session: &'a SessionImpl) -> LookupRef<'a> {
-        if self.refs.fetch_add(1, std::sync::atomic::Ordering::AcqRel) == 0 {
-            panic!("atomic refcount increased from 0 to 1");
-        }
-        LookupRef {
-            session,
-            lookup: self as *const Lookup,
         }
     }
 }
 
 struct LookupRef<'a> {
     session: &'a SessionImpl,
-    lookup: *const Lookup,
+    inode: u64,
 }
+
 unsafe impl Send for LookupRef<'_> {}
 unsafe impl Sync for LookupRef<'_> {}
+
 impl Clone for LookupRef<'_> {
     fn clone(&self) -> Self {
-        self.get_ref(self.session)
+        self.session
+            .get_lookup(self.inode)
+            .expect("lookup ref clone failed")
     }
 }
+
 impl std::ops::Deref for LookupRef<'_> {
     type Target = Lookup;
     fn deref(&self) -> &Self::Target {
-        unsafe { &*self.lookup }
+        // SAFETY: The `Box<Lookup>` for this inode lives at a stable heap
+        // address for as long as it remains in the LRU cache.  An entry is
+        // only evicted when `refs == 0`.  We hold a ref (incremented in
+        // `get_ref`/`make_lookup`), so the entry cannot be evicted while this
+        // `LookupRef` exists, and the pointer therefore remains valid.
+        let cache = self.session.lookups.read();
+        let lookup = cache.peek(&self.inode).expect("lookup ref deref: inode disappeared");
+        unsafe { &*(&**lookup as *const Lookup) }
     }
 }
+
 impl Drop for LookupRef<'_> {
     fn drop(&mut self) {
-        if self.lookup.is_null() {
-            return;
-        }
-        if self.refs.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
-            let inode = self.inode;
-            drop(self.session.lookups.write().unwrap().remove(&inode));
+        // Decrement the Rust-side ref count.  We leave the entry in the LRU
+        // cache even when refs reaches 0; evict_stale_entries will clean it up
+        // lazily when the cache is full.  This avoids a read→write lock
+        // upgrade in the hot path.
+        let cache = self.session.lookups.read();
+        if let Some(entry) = cache.peek(&self.inode) {
+            entry.refs.fetch_sub(1, Ordering::AcqRel);
         }
     }
 }
+
 impl<'a> LookupRef<'a> {
-    fn leak(mut self) -> &'a Lookup {
-        unsafe { &*std::mem::replace(&mut self.lookup, std::ptr::null()) }
+    /// Consume the `LookupRef` without decrementing `refs`.
+    ///
+    /// Used after a successful FUSE `lookup` reply so that the kernel's
+    /// lookup count is reflected in `refs` without dropping it.
+    fn leak(self) {
+        std::mem::forget(self);
     }
 }
 
 struct SessionImpl {
     accessor: Accessor,
     verbose: bool,
-    lookups: RwLock<std::collections::BTreeMap<u64, Box<Lookup>>>,
+    lookups: RwLock<LruCache<u64, Box<Lookup>>>,
+    max_lookups: usize,
 }
 
 impl SessionImpl {
-    fn new(accessor: Accessor, verbose: bool) -> Self {
+    fn new(accessor: Accessor, verbose: bool, max_lookups: usize) -> Self {
         let root = Lookup::new(
             ROOT_ID,
             ROOT_ID,
             EntryRangeInfo::toplevel(0..accessor.size()),
             None,
         );
-        let mut tree = std::collections::BTreeMap::new();
-        tree.insert(ROOT_ID, root);
+        let max = NonZeroUsize::new(max_lookups.max(1024)).unwrap();
+        let mut cache = LruCache::new(max);
+        cache.put(ROOT_ID, root);
         Self {
             accessor,
             verbose,
-            lookups: RwLock::new(tree),
+            lookups: RwLock::new(cache),
+            max_lookups,
         }
     }
 
@@ -200,14 +231,14 @@ impl SessionImpl {
     }
 
     async fn main(self, fuse: Fuse) -> Result<(), Error> {
-        let session = std::sync::Arc::new(self);
+        let session = Arc::new(self);
         let (err_send, mut err_recv) = futures::channel::mpsc::unbounded::<Error>();
         let mut fuse = fuse.fuse();
         loop {
             select! {
                 request = fuse.try_next() => match request? {
                     Some(request) => {
-                        let s = std::sync::Arc::clone(&session);
+                        let s = Arc::clone(&session);
                         let es = err_send.clone();
                         tokio::spawn(async move {
                             s.handle_request(request, es).await;
@@ -311,9 +342,15 @@ impl SessionImpl {
     }
 
     fn get_lookup(&self, inode: u64) -> Result<LookupRef<'_>, Error> {
-        let lookups = self.lookups.read().unwrap();
-        if let Some(lookup) = lookups.get(&inode) {
-            return Ok(lookup.get_ref(self));
+        let cache = self.lookups.read();
+        if let Some(lookup) = cache.peek(&inode) {
+            if lookup.refs.fetch_add(1, Ordering::AcqRel) == 0 {
+                return Err(io_format_err!("inode refcount was 0").into());
+            }
+            return Ok(LookupRef {
+                session: self,
+                inode,
+            });
         }
         io_return!(libc::ENOENT);
     }
@@ -350,31 +387,56 @@ impl SessionImpl {
         }
     }
 
+    /// Evict up to `EVICTION_BATCH_SIZE` entries whose FUSE kernel ref count
+    /// has dropped to zero.  Called under an existing write lock.
+    fn evict_stale_entries(&self, cache: &mut LruCache<u64, Box<Lookup>>) {
+        let mut to_evict = Vec::with_capacity(EVICTION_BATCH_SIZE.min(self.max_lookups / 8));
+        for (inode, entry) in cache.iter() {
+            if entry.refs.load(Ordering::Acquire) == 0 {
+                to_evict.push(*inode);
+                if to_evict.len() >= EVICTION_BATCH_SIZE {
+                    break;
+                }
+            }
+        }
+        for inode in to_evict {
+            cache.pop(&inode);
+        }
+    }
+
     fn make_lookup(
         &self,
         parent: u64,
         inode: u64,
         entry: &FileEntry,
     ) -> Result<LookupRef<'_>, Error> {
-        let lookups = self.lookups.read().unwrap();
-        if let Some(lookup) = lookups.get(&inode) {
-            return Ok(lookup.get_ref(self));
+        let mut cache = self.lookups.write();
+
+        if let Some(lookup) = cache.get_mut(&inode) {
+            lookup.refs.fetch_add(1, Ordering::AcqRel);
+            return Ok(LookupRef {
+                session: self,
+                inode,
+            });
         }
-        drop(lookups);
-        let entry = Lookup::new(
+
+        if cache.len() >= self.max_lookups {
+            self.evict_stale_entries(&mut cache);
+        }
+
+        let lookup = Lookup::new(
             inode,
             parent,
             entry.entry_range_info().clone(),
             entry.content_range()?,
         );
-        let reference = entry.get_ref(self);
-        entry.refs.store(1, std::sync::atomic::Ordering::Release);
-        let mut lookups = self.lookups.write().unwrap();
-        if let Some(lookup) = lookups.get(&inode) {
-            return Ok(lookup.get_ref(self));
-        }
-        lookups.insert(inode, entry);
-        Ok(reference)
+        lookup.refs.store(1, Ordering::Release);
+        cache.put(inode, lookup);
+
+        Ok(LookupRef {
+            session: self,
+            inode,
+        })
     }
 
     fn forget(&self, inode: u64, count: usize) -> Result<(), Error> {
@@ -423,38 +485,51 @@ impl SessionImpl {
         &'_ self,
         request: &mut requests::ReaddirPlus,
     ) -> Result<Vec<LookupRef<'_>>, Error> {
+        // We use two sentinel offset cookies (DOT_NEXT, DOTDOT_NEXT) so that
+        // we never need to count all directory entries upfront.  Regular
+        // entries are numbered 1..=N with N unknown; after iterating them all
+        // we emit "." with cookie DOT_NEXT, then ".." with cookie DOTDOT_NEXT.
+        //
+        // When the kernel resumes a partial readdir it passes back the last
+        // cookie we issued:
+        //   offset < DOT_NEXT   →  resume regular entries from `offset`, then "." and ".."
+        //   offset == DOT_NEXT  →  skip regular entries, emit only ".."
+        //   offset == DOTDOT_NEXT → nothing left to emit
+        //
+        // This avoids the former O(n) `dir.read_dir().count()` call which was
+        // catastrophic for directories with billions of entries.
+
         let mut lookups = Vec::new();
-        let offset = usize::try_from(request.offset)
-            .map_err(|_| io_format_err!("directory offset out of range"))?;
+        let offset = request.offset as isize;
 
         let dir = self.open_dir(request.inode).await?;
         let dir_lookup = self.get_lookup(request.inode)?;
 
-        let entry_count = dir.read_dir().count() as isize;
+        // Phase 1: regular entries (skipped when resuming at "." or "..").
+        if offset < DOT_NEXT {
+            let skip = offset as usize;
+            let mut next = offset;
+            let mut iter = dir.read_dir().skip(skip);
 
-        let mut next = offset as isize;
-        let mut iter = dir.read_dir().skip(offset);
-        while let Some(file) = iter.next().await {
-            next += 1;
-            let file = file?.decode_entry().await?;
-            let stat = to_stat(to_inode(&file), &file)?;
-            let name = file.file_name();
-            if request
-                .add_entry(name, &stat, next, 1, f64::MAX, f64::MAX)?
-                .is_full()
-            {
-                return Ok(lookups);
+            while let Some(file) = iter.next().await {
+                next += 1;
+                let file = file?.decode_entry().await?;
+                let stat = to_stat(to_inode(&file), &file)?;
+                let name = file.file_name();
+                if request
+                    .add_entry(name, &stat, next, 1, f64::MAX, f64::MAX)?
+                    .is_full()
+                {
+                    return Ok(lookups);
+                }
+                lookups.push(self.make_lookup(request.inode, stat.st_ino, &file)?);
             }
-            lookups.push(self.make_lookup(request.inode, stat.st_ino, &file)?);
-        }
 
-        if next == entry_count {
-            next += 1;
+            // Regular entries exhausted — add ".".
             let file = dir.lookup_self().await?;
             let stat = to_stat(to_inode(&file), &file)?;
-            let name = OsStr::new(".");
             if request
-                .add_entry(name, &stat, next, 1, f64::MAX, f64::MAX)?
+                .add_entry(OsStr::new("."), &stat, DOT_NEXT, 1, f64::MAX, f64::MAX)?
                 .is_full()
             {
                 return Ok(lookups);
@@ -462,15 +537,15 @@ impl SessionImpl {
             lookups.push(LookupRef::clone(&dir_lookup));
         }
 
-        if next == entry_count + 1 {
-            next += 1;
+        // Phase 2: ".." (skipped only when offset is already DOTDOT_NEXT,
+        // meaning the kernel received ".." in a previous call).
+        if offset < DOTDOT_NEXT {
             let lookup = self.get_lookup(dir_lookup.parent)?;
             let parent_dir = self.open_dir(lookup.inode).await?;
             let file = parent_dir.lookup_self().await?;
             let stat = to_stat(to_inode(&file), &file)?;
-            let name = OsStr::new("..");
             if request
-                .add_entry(name, &stat, next, 1, f64::MAX, f64::MAX)?
+                .add_entry(OsStr::new(".."), &stat, DOTDOT_NEXT, 1, f64::MAX, f64::MAX)?
                 .is_full()
             {
                 return Ok(lookups);
