@@ -1,5 +1,6 @@
 use std::cmp::min;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Context;
 
 use anyhow::{bail, format_err, Error};
@@ -16,10 +17,11 @@ use crate::local_chunk_store::ChunkCacheStore;
 /// `Arc<ConcurrentDynamicReader>` across any number of concurrent readers
 /// without any locking or cache-line contention.
 ///
-/// Sequential-read optimisation lives entirely inside `read_at_range` as a
-/// local variable: after finding the first chunk with a single O(log n) binary
-/// search, each subsequent chunk is reached with a plain `chunk_idx += 1` — no
-/// further searching, no shared state, no false sharing.
+/// Parallel loading: for each `read_at_range` call, all chunks spanning the
+/// requested byte range are identified up front. Chunks already in the cache
+/// are reused immediately via `peek_cached`. Remaining cache-miss chunks are
+/// loaded in parallel using `std::thread::scope`, so data starts flowing to
+/// the FUSE buffer as soon as the first needed chunk is ready.
 pub struct ConcurrentDynamicReader<S: ChunkCacheStore + Clone> {
     store: S,
     index: DynamicIndexReader,
@@ -53,25 +55,103 @@ impl<S: ChunkCacheStore + Clone> ConcurrentDynamicReader<S> {
             return Ok(0);
         }
 
+        // ── Phase 1: collect chunk metadata for the entire read range ─────────
+        // One binary search for the first chunk; subsequent chunks are adjacent.
+        let first_idx = self.locate_chunk_index(offset)?;
+
+        struct ChunkMeta {
+            digest: [u8; 32],
+            range_start: u64,
+        }
+
+        let mut chunks: Vec<ChunkMeta> = Vec::new();
+        {
+            let mut pos = offset;
+            let mut remaining = buf.len();
+            let mut chunk_idx = first_idx;
+
+            loop {
+                let info = self
+                    .index
+                    .chunk_info(chunk_idx)
+                    .ok_or_else(|| format_err!("chunk index out of range"))?;
+
+                let available = (info.range.end - pos) as usize;
+                let to_copy = min(available, remaining);
+
+                if to_copy == 0 {
+                    break;
+                }
+
+                chunks.push(ChunkMeta {
+                    digest: info.digest,
+                    range_start: info.range.start,
+                });
+
+                pos += to_copy as u64;
+                remaining -= to_copy;
+
+                if remaining == 0 || pos >= self.archive_size {
+                    break;
+                }
+
+                chunk_idx += 1;
+            }
+        }
+
+        if chunks.is_empty() {
+            return Ok(0);
+        }
+
+        // ── Phase 2: peek cache for all chunks ────────────────────────────────
+        // Avoid holding any lock while doing I/O: collect Arc refs first.
+        let mut loaded: Vec<Option<Arc<Vec<u8>>>> = chunks
+            .iter()
+            .map(|c| self.store.peek_cached(&c.digest))
+            .collect();
+
+        // ── Phase 3: parallel load for cache misses ───────────────────────────
+        // Identify which chunks need disk I/O.
+        let miss_indices: Vec<usize> = loaded
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| if v.is_none() { Some(i) } else { None })
+            .collect();
+
+        if miss_indices.len() == 1 {
+            // Single miss — load directly without thread overhead.
+            let i = miss_indices[0];
+            loaded[i] = Some(self.store.read_chunk_cached(&chunks[i].digest)?);
+        } else if miss_indices.len() > 1 {
+            // Multiple misses — load in parallel.
+            // Safety: each slot in `results` is written by exactly one thread.
+            let mut results: Vec<Option<Result<Arc<Vec<u8>>, Error>>> =
+                miss_indices.iter().map(|_| None).collect();
+
+            std::thread::scope(|s| {
+                for (slot, &ci) in results.iter_mut().zip(miss_indices.iter()) {
+                    let digest = &chunks[ci].digest;
+                    let store = &self.store;
+                    // Each thread writes into its own `slot`.
+                    *slot = Some(s
+                        .spawn(move || store.read_chunk_cached(digest))
+                        .join()
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("chunk load thread panicked"))));
+                }
+            });
+
+            for (slot_result, &ci) in results.into_iter().zip(miss_indices.iter()) {
+                loaded[ci] = Some(slot_result.unwrap()?);
+            }
+        }
+
+        // ── Phase 4: copy loaded chunks into the output buffer ────────────────
         let mut total = 0usize;
         let mut pos = offset;
 
-        // Binary search ONCE to find the chunk that contains `offset`.
-        // All subsequent chunks are reached by incrementing `chunk_idx`
-        // directly — sequential reads (the dominant pattern under SMB copy)
-        // never call `locate_chunk_index` again.
-        let mut chunk_idx = self.locate_chunk_index(pos)?;
-
-        loop {
-            let info = self
-                .index
-                .chunk_info(chunk_idx)
-                .ok_or_else(|| format_err!("chunk index out of range"))?;
-
-            // Arc clone from the sharded LRU — no extra Vec copy.
-            let data = self.store.read_chunk_cached(&info.digest)?;
-
-            let chunk_offset = (pos - info.range.start) as usize;
+        for (meta, data_opt) in chunks.iter().zip(loaded.iter()) {
+            let data = data_opt.as_ref().expect("all chunks must be loaded by now");
+            let chunk_offset = (pos - meta.range_start) as usize;
             let available = data.len().saturating_sub(chunk_offset);
             let to_copy = min(available, buf.len() - total);
 
@@ -83,13 +163,6 @@ impl<S: ChunkCacheStore + Clone> ConcurrentDynamicReader<S> {
                 .copy_from_slice(&data[chunk_offset..chunk_offset + to_copy]);
             total += to_copy;
             pos += to_copy as u64;
-
-            if total >= buf.len() || pos >= self.archive_size {
-                break;
-            }
-
-            // Advance to the next chunk without any search.
-            chunk_idx += 1;
         }
 
         Ok(total)
