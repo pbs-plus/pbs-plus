@@ -11,7 +11,7 @@ use std::task::{Context, Poll};
 use anyhow::{format_err, Error};
 use futures::{channel::mpsc::UnboundedSender, select, SinkExt, StreamExt, TryStreamExt};
 use lru::LruCache;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use proxmox_fuse::requests::{self, FuseRequest};
 use proxmox_fuse::{EntryParam, Fuse, ReplyBufState, Request, ROOT_ID};
 use proxmox_io::vec;
@@ -101,6 +101,8 @@ struct Lookup {
     parent: u64,
     entry_range_info: EntryRangeInfo,
     content_range: Option<ContentRange>,
+    /// Pre-computed stat; used by `getattr` to avoid re-opening the pxar entry.
+    stat: libc::stat,
 }
 
 impl Lookup {
@@ -109,12 +111,14 @@ impl Lookup {
         parent: u64,
         entry_range_info: EntryRangeInfo,
         content_range: Option<ContentRange>,
+        stat: libc::stat,
     ) -> Box<Self> {
         Box::new(Self {
             refs: AtomicUsize::new(1),
             parent,
             entry_range_info,
             content_range,
+            stat,
         })
     }
 
@@ -190,24 +194,37 @@ struct SessionImpl {
     accessor: Accessor,
     verbose: bool,
     lookups: RwLock<LruCache<u64, Box<Lookup>>>,
+    /// Secondary index: `(parent_inode, child_name) → child_inode`.
+    /// Populated by every `make_lookup` call (from both `lookup` and
+    /// `readdirplus`).  Lets `lookup()` skip the entire pxar directory
+    /// traversal on cache hit.  Stale entries are harmless — `get_lookup`
+    /// failing falls through to the slow path.
+    name_index: Mutex<LruCache<(u64, OsString), u64>>,
     max_lookups: usize,
 }
 
 impl SessionImpl {
     fn new(accessor: Accessor, verbose: bool, max_lookups: usize) -> Self {
+        let max = NonZeroUsize::new(max_lookups.max(1024)).unwrap();
+        // Root has no meaningful stat at construction time (we'd need to read
+        // the archive), so zero-fill; the kernel rarely calls getattr on root
+        // before any lookup anyway, and on miss we fall back to the slow path.
+        let root_stat: libc::stat = unsafe { std::mem::zeroed() };
         let root = Lookup::new(
             ROOT_ID,
             ROOT_ID,
             EntryRangeInfo::toplevel(0..accessor.size()),
             None,
+            root_stat,
         );
-        let max = NonZeroUsize::new(max_lookups.max(1024)).unwrap();
         let mut cache = LruCache::new(max);
         cache.put(ROOT_ID, root);
+        let name_cap = NonZeroUsize::new(max_lookups.max(1024)).unwrap();
         Self {
             accessor,
             verbose,
             lookups: RwLock::new(cache),
+            name_index: Mutex::new(LruCache::new(name_cap)),
             max_lookups,
         }
     }
@@ -408,12 +425,19 @@ impl SessionImpl {
         &self,
         parent: u64,
         inode: u64,
+        name: &OsStr,
         entry: &FileEntry,
     ) -> Result<LookupRef<'_>, Error> {
+        let stat = to_stat(inode, entry)?;
+
         let mut cache = self.lookups.write();
 
         if let Some(lookup) = cache.get_mut(&inode) {
             lookup.refs.fetch_add(1, Ordering::AcqRel);
+            drop(cache);
+            self.name_index
+                .lock()
+                .put((parent, name.to_owned()), inode);
             return Ok(LookupRef {
                 session: self,
                 inode,
@@ -429,9 +453,14 @@ impl SessionImpl {
             parent,
             entry.entry_range_info().clone(),
             entry.content_range()?,
+            stat,
         );
         lookup.refs.store(1, Ordering::Release);
         cache.put(inode, lookup);
+        drop(cache);
+        self.name_index
+            .lock()
+            .put((parent, name.to_owned()), inode);
 
         Ok(LookupRef {
             session: self,
@@ -450,6 +479,24 @@ impl SessionImpl {
         parent: u64,
         file_name: &OsStr,
     ) -> Result<(EntryParam, LookupRef<'_>), Error> {
+        // Fast path: if readdirplus (or a prior lookup) already indexed this
+        // name, skip the pxar directory traversal entirely.
+        let cached_inode = self
+            .name_index
+            .lock()
+            .get(&(parent, file_name.to_owned()))
+            .copied();
+        if let Some(inode) = cached_inode {
+            if let Ok(lookup_ref) = self.get_lookup(inode) {
+                // Copy stat out before the deref borrow ends.
+                let stat = lookup_ref.stat;
+                let entry_param = EntryParam::simple(inode, stat);
+                return Ok((entry_param, lookup_ref));
+            }
+            // Inode was evicted from lookup cache — fall through to slow path.
+        }
+
+        // Slow path: open the parent directory and search pxar.
         let dir = self.open_dir(parent).await?;
 
         let entry = match { dir }.lookup(file_name).await? {
@@ -467,15 +514,23 @@ impl SessionImpl {
             entry
         };
 
-        let response = to_entry(&entry)?;
-        let inode = response.inode;
-        Ok((response, self.make_lookup(parent, inode, &entry)?))
+        let inode = to_inode(&entry);
+        let response = to_entry_param(inode, &entry)?;
+        Ok((response, self.make_lookup(parent, inode, file_name, &entry)?))
     }
 
     async fn getattr(&self, inode: u64) -> Result<libc::stat, Error> {
+        let lookup = self.get_lookup(inode)?;
+        // Stat is pre-computed and cached in Lookup; no pxar I/O needed.
+        // For the root inode the stat was zero-filled at init time; if the
+        // kernel asks for root getattr before any lookup we fall back to a
+        // real read.
+        if inode != ROOT_ID || lookup.stat.st_mode != 0 {
+            return Ok(lookup.stat);
+        }
         let entry = unsafe {
             self.accessor
-                .open_file_at_range(&self.get_lookup(inode)?.entry_range_info)
+                .open_file_at_range(&lookup.entry_range_info)
                 .await?
         };
         to_stat(inode, &entry)
@@ -522,7 +577,7 @@ impl SessionImpl {
                 {
                     return Ok(lookups);
                 }
-                lookups.push(self.make_lookup(request.inode, stat.st_ino, &file)?);
+                lookups.push(self.make_lookup(request.inode, stat.st_ino, name, &file)?);
             }
 
             // Regular entries exhausted — add ".".
@@ -625,11 +680,6 @@ impl SessionImpl {
         }
         io_return!(libc::ENODATA);
     }
-}
-
-#[inline]
-fn to_entry(entry: &FileEntry) -> Result<EntryParam, Error> {
-    to_entry_param(to_inode(entry), entry)
 }
 
 #[inline]
