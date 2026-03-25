@@ -1,7 +1,6 @@
 use std::cmp::min;
-use std::io::{Read, Seek, SeekFrom};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Context;
 
 use anyhow::{bail, format_err, Error};
@@ -9,231 +8,118 @@ use pxar::accessor::{MaybeReady, ReadAt, ReadAtOperation};
 
 use pbs_datastore::dynamic_index::DynamicIndexReader;
 use pbs_datastore::index::IndexFile;
-use pbs_datastore::read_chunk::ReadChunk;
 
-/// Ephemeral decoded chunk used only to serve the current read.
-struct EphemeralChunk {
-    start: u64,
-    end: u64,
-    data: Vec<u8>, // plaintext for [start, end)
-}
+use crate::local_chunk_store::ChunkCacheStore;
 
-impl EphemeralChunk {
-    #[inline]
-    fn contains(&self, offset: u64) -> bool {
-        offset >= self.start && offset < self.end
-    }
-
-    #[inline]
-    fn slice_from(&self, offset: u64) -> &[u8] {
-        let off = (offset - self.start) as usize;
-        &self.data[off..]
-    }
-}
-
-/// A “direct” dynamic reader with no persistent cache:
-/// - Decodes only the chunk(s) required for each read
-/// - Holds at most one decoded chunk at a time
-/// - Drop-in replacement for your DirectDynamicReader type
-pub struct DirectDynamicReader<S: ReadChunk> {
+/// Concurrent, lock-free-read chunk reader over a dynamic index.
+///
+/// All caching is delegated to the underlying `ChunkCacheStore` (which uses a
+/// sharded LRU).  This reader adds only a single atomic `chunk_hint` to
+/// accelerate the common case of sequential reads: if the requested offset
+/// falls in the previously used chunk (or the next one), the binary search is
+/// skipped entirely.
+pub struct ConcurrentDynamicReader<S: ChunkCacheStore + Clone> {
     store: S,
     index: DynamicIndexReader,
     archive_size: u64,
-
-    // Current logical read position for std::io::Read/Seek
-    read_offset: u64,
-
-    // Keep a handle to the most recently decoded chunk for sequential fast path
-    cur_chunk_idx: Option<usize>,
-    cur_chunk: Option<EphemeralChunk>,
+    /// Best-guess chunk index for the next read (relaxed atomic, so stale under
+    /// concurrent access — that just falls back to binary search, which is safe).
+    chunk_hint: AtomicUsize,
 }
 
-impl<S: ReadChunk> DirectDynamicReader<S> {
+impl<S: ChunkCacheStore + Clone> ConcurrentDynamicReader<S> {
     pub fn new(index: DynamicIndexReader, store: S) -> Self {
         let archive_size = index.index_bytes();
         Self {
             store,
             index,
             archive_size,
-            read_offset: 0,
-            cur_chunk_idx: None,
-            cur_chunk: None,
+            chunk_hint: AtomicUsize::new(0),
         }
     }
 
-    pub fn archive_size(&self) -> u64 {
-        self.archive_size
-    }
-
+    /// Locate the chunk index for `offset`.
+    ///
+    /// Fast path: the hint covers the offset, or the hint+1 chunk does (the
+    /// common sequential case).  Slow path: binary search over the full index.
     #[inline]
     fn locate_chunk_index(&self, offset: u64) -> Result<usize, Error> {
-        if self.index.index().is_empty() {
+        let n = self.index.index().len();
+        if n == 0 {
             bail!("empty dynamic index");
         }
-        let end_idx = self.index.index().len() - 1;
-        let end = self.index.chunk_end(end_idx);
-        self.index.binary_search(0, 0, end_idx, end, offset)
-    }
 
-    fn load_chunk(&mut self, idx: usize) -> Result<EphemeralChunk, Error> {
-        let info = self
-            .index
-            .chunk_info(idx)
-            .ok_or_else(|| format_err!("chunk index out of range"))?;
+        let hint = self.chunk_hint.load(Ordering::Relaxed);
 
-        // Decode plaintext for this chunk
-        let data = self.store.read_chunk(&info.digest)?;
+        if hint < n {
+            let hint_end = self.index.chunk_end(hint);
+            let hint_start = if hint == 0 {
+                0
+            } else {
+                self.index.chunk_end(hint - 1)
+            };
 
-        let start = info.range.start;
-        let end = info.range.end;
-
-        if data.len() as u64 != end - start {
-            bail!(
-                "read chunk with wrong size ({} != {})",
-                data.len(),
-                end - start
-            );
-        }
-
-        Ok(EphemeralChunk { start, end, data })
-    }
-
-    fn ensure_chunk_for_offset(&mut self, offset: u64) -> Result<(), Error> {
-        if offset == self.archive_size {
-            self.cur_chunk = None;
-            self.cur_chunk_idx = None;
-            return Ok(());
-        }
-
-        // If current chunk covers the offset, keep it.
-        if let Some(c) = self.cur_chunk.as_ref() {
-            if c.contains(offset) {
-                return Ok(());
+            if offset >= hint_start && offset < hint_end {
+                return Ok(hint);
             }
-        }
 
-        // If we have a current index and the offset is beyond it, try next index
-        if let Some(idx) = self.cur_chunk_idx {
-            if let Some(c) = self.cur_chunk.as_ref() {
-                if offset >= c.end {
-                    let next_idx = idx + 1;
-                    if next_idx < self.index.index().len() {
-                        let next_end = self.index.chunk_end(next_idx);
-                        if offset < next_end {
-                            let chunk = self.load_chunk(next_idx)?;
-                            self.cur_chunk_idx = Some(next_idx);
-                            self.cur_chunk = Some(chunk);
-                            return Ok(());
-                        }
-                    }
+            // Try the immediately following chunk (sequential read pattern).
+            let next = hint + 1;
+            if next < n {
+                let next_end = self.index.chunk_end(next);
+                if offset >= hint_end && offset < next_end {
+                    self.chunk_hint.store(next, Ordering::Relaxed);
+                    return Ok(next);
                 }
             }
         }
 
-        // General case: binary search + load
-        let idx = self.locate_chunk_index(offset)?;
-        let chunk = self.load_chunk(idx)?;
-        self.cur_chunk_idx = Some(idx);
-        self.cur_chunk = Some(chunk);
-        Ok(())
+        // General case: O(log n) binary search.
+        let end_idx = n - 1;
+        let end = self.index.chunk_end(end_idx);
+        let idx = self.index.binary_search(0, 0, end_idx, end, offset)?;
+        self.chunk_hint.store(idx, Ordering::Relaxed);
+        Ok(idx)
     }
 
-    /// Return a slice from the current chunk starting at 'offset'. If the read must span
-    /// multiple chunks, the caller loops and calls this again after advancing 'offset'.
-    fn buffered_slice_from(&mut self, offset: u64) -> Result<&[u8], Error> {
-        if offset == self.archive_size {
-            return Ok(&[]);
-        }
-        self.ensure_chunk_for_offset(offset)?;
-        let c = self
-            .cur_chunk
-            .as_ref()
-            .ok_or_else(|| format_err!("no current chunk after ensure"))?;
-        Ok(c.slice_from(offset))
-    }
-}
-
-impl<S: ReadChunk> Read for DirectDynamicReader<S> {
-    fn read(&mut self, out: &mut [u8]) -> Result<usize, std::io::Error> {
-        use std::io::{Error, ErrorKind};
-
-        if out.is_empty() {
+    fn read_at_range(&self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
+        if offset >= self.archive_size {
             return Ok(0);
         }
 
         let mut total = 0usize;
-        let mut offset = self.read_offset;
+        let mut pos = offset;
 
-        while total < out.len() {
-            let chunk_slice = match self.buffered_slice_from(offset) {
-                Ok(s) => s,
-                Err(err) => return Err(Error::new(ErrorKind::Other, err.to_string())),
-            };
+        while total < buf.len() && pos < self.archive_size {
+            let chunk_idx = self.locate_chunk_index(pos)?;
+            let info = self
+                .index
+                .chunk_info(chunk_idx)
+                .ok_or_else(|| format_err!("chunk index out of range"))?;
 
-            if chunk_slice.is_empty() {
-                break; // EOF
+            // read_chunk_cached returns Arc<Vec<u8>> — no extra copy, just an
+            // Arc clone from the shared sharded LRU in LocalChunkStore.
+            let data = self.store.read_chunk_cached(&info.digest)?;
+
+            let chunk_offset = (pos - info.range.start) as usize;
+            let available = data.len().saturating_sub(chunk_offset);
+            let to_copy = min(available, buf.len() - total);
+
+            if to_copy == 0 {
+                break;
             }
 
-            let n = min(chunk_slice.len(), out.len() - total);
-            out[total..total + n].copy_from_slice(&chunk_slice[..n]);
-
-            total += n;
-            offset += n as u64;
+            buf[total..total + to_copy]
+                .copy_from_slice(&data[chunk_offset..chunk_offset + to_copy]);
+            total += to_copy;
+            pos += to_copy as u64;
         }
 
-        self.read_offset = offset;
         Ok(total)
     }
 }
 
-impl<S: ReadChunk> Seek for DirectDynamicReader<S> {
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64, std::io::Error> {
-        use std::io::{Error, ErrorKind};
-        let new_offset = match pos {
-            SeekFrom::Start(s) => s as i64,
-            SeekFrom::End(delta) => (self.archive_size as i64) + delta,
-            SeekFrom::Current(delta) => (self.read_offset as i64) + delta,
-        };
-        if new_offset < 0 || new_offset > (self.archive_size as i64) {
-            return Err(Error::new(
-                ErrorKind::Other,
-                format!(
-                    "seek is out of range {} ([0..{}])",
-                    new_offset, self.archive_size
-                ),
-            ));
-        }
-        self.read_offset = new_offset as u64;
-
-        // Optional: drop current chunk on non-sequential seek to free memory immediately.
-        // Keeping it can still help if caller seeks within same chunk.
-        if let Some(c) = self.cur_chunk.as_ref() {
-            if !c.contains(self.read_offset) {
-                self.cur_chunk = None;
-                self.cur_chunk_idx = None;
-            }
-        }
-
-        Ok(self.read_offset)
-    }
-}
-
-/// Direct adapter that matches your previous DirectLocalDynamicReadAt API.
-/// It serializes callers via a Mutex and blocks in place to perform the read.
-#[derive(Clone)]
-pub struct DirectLocalDynamicReadAt<R: ReadChunk> {
-    inner: Arc<Mutex<DirectDynamicReader<R>>>,
-}
-
-impl<R: ReadChunk> DirectLocalDynamicReadAt<R> {
-    pub fn new(inner: DirectDynamicReader<R>) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(inner)),
-        }
-    }
-}
-
-impl<R: ReadChunk> ReadAt for DirectLocalDynamicReadAt<R> {
+impl<S: ChunkCacheStore + Clone + Send + Sync + 'static> ReadAt for ConcurrentDynamicReader<S> {
     fn start_read_at<'a>(
         self: Pin<&'a Self>,
         _cx: &mut Context,
@@ -241,10 +127,8 @@ impl<R: ReadChunk> ReadAt for DirectLocalDynamicReadAt<R> {
         offset: u64,
     ) -> MaybeReady<std::io::Result<usize>, ReadAtOperation<'a>> {
         MaybeReady::Ready(tokio::task::block_in_place(move || {
-            use std::io::{Read, Seek, SeekFrom};
-            let mut reader = self.inner.lock().unwrap();
-            reader.seek(SeekFrom::Start(offset))?;
-            reader.read(buf)
+            self.read_at_range(offset, buf)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
         }))
     }
 
@@ -252,6 +136,8 @@ impl<R: ReadChunk> ReadAt for DirectLocalDynamicReadAt<R> {
         self: Pin<&'a Self>,
         _op: ReadAtOperation<'a>,
     ) -> MaybeReady<std::io::Result<usize>, ReadAtOperation<'a>> {
-        panic!("DirectLocalDynamicReadAt::start_read_at returned Pending");
+        panic!("ConcurrentDynamicReader::start_read_at returned Pending");
     }
 }
+
+pub type ConcurrentLocalReader<S> = ConcurrentDynamicReader<S>;
