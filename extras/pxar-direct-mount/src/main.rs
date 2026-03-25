@@ -15,36 +15,46 @@ use tokio::signal::unix::{signal, SignalKind};
 
 use pxar::accessor;
 
-use crate::direct_dynamic_index::{DirectDynamicReader, DirectLocalDynamicReadAt};
+use crate::direct_dynamic_index::ConcurrentLocalReader;
 use crate::fuse_session::{Accessor, Reader, Session};
 use crate::local_chunk_store::LocalChunkStore;
 
 use pbs_datastore::dynamic_index::DynamicIndexReader;
+use pbs_datastore::index::IndexFile;
 use pbs_key_config::load_and_decrypt_key;
 use pbs_tools::crypt_config::CryptConfig;
+
+const DEFAULT_LOOKUP_CACHE_SIZE: usize = 131072;
+const DEFAULT_CHUNK_CACHE_SIZE: usize = 4096;
 
 struct Args {
     mountpoint: String,
     verbose: bool,
-    // Datastore + two dynamic indexes:
     pbs_store: String,
     mpxar_didx: String,
     ppxar_didx: String,
     keyfile: Option<String>,
     verify_chunks: bool,
     options: String,
+    lookup_cache_size: usize,
+    chunk_cache_size: usize,
 }
 
 fn print_usage() {
     eprintln!("Usage (datastore-only, no local .mpxar needed):");
-    eprintln!("  pxar-direct-mount --pbs-store <datastore> --mpxar-didx <path/to/mpxar.didx> --ppxar-didx <path/to/ppxar.didx> <mountpoint> [--keyfile <path>] [--verify-chunks] [--options <opts>] [--verbose]");
-    eprintln!("Options:");
+    eprintln!("  pxar-direct-mount --pbs-store <datastore> --mpxar-didx <path/to/mpxar.didx> --ppxar-didx <path/to/ppxar.didx> <mountpoint> [options]");
+    eprintln!();
+    eprintln!("Required options:");
     eprintln!("  --pbs-store <DIR>        PBS datastore root (contains .chunks)");
     eprintln!("  --mpxar-didx <FILE>      Path to metadata dynamic index (mpxar.didx)");
     eprintln!("  --ppxar-didx <FILE>      Path to payload dynamic index (ppxar.didx)");
+    eprintln!();
+    eprintln!("Optional options:");
     eprintln!("  --keyfile <FILE>         Path to encryption key (if backup is encrypted)");
     eprintln!("  --verify-chunks          Verify chunk SHA256 on read");
     eprintln!("  --options <STR>          FUSE options (default: ro,default_permissions)");
+    eprintln!("  --lookup-cache <N>       Max cached inodes (default: 131072)");
+    eprintln!("  --chunk-cache <N>        Max cached chunks (default: 4096)");
     eprintln!("  --verbose                Verbose logging/foreground");
     eprintln!();
     eprintln!("Legacy modes:");
@@ -53,11 +63,6 @@ fn print_usage() {
 }
 
 fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
-    // We support both legacy positional modes and datastore-only mode.
-    // Modes:
-    //  A) Unified pxar: <archive.pxar> <mountpoint>
-    //  B) Split local:  <archive.mpxar> <mountpoint> --payload-input <ppxar>
-    //  C) Datastore:    --pbs-store <dir> --mpxar-didx <file> --ppxar-didx <file> <mountpoint>
     let mut it = env::args().skip(1);
 
     let mut positional: Vec<String> = Vec::new();
@@ -70,6 +75,8 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
     let mut keyfile: Option<String> = None;
     let mut verify_chunks = false;
     let mut options = "ro,default_permissions".to_string();
+    let mut lookup_cache_size = DEFAULT_LOOKUP_CACHE_SIZE;
+    let mut chunk_cache_size = DEFAULT_CHUNK_CACHE_SIZE;
 
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -110,15 +117,33 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
                     .next()
                     .ok_or_else(|| Error::msg("--options requires value"))?;
             }
+            "--lookup-cache" => {
+                lookup_cache_size = it
+                    .next()
+                    .ok_or_else(|| Error::msg("--lookup-cache requires value"))?
+                    .parse()
+                    .context("--lookup-cache must be a number")?;
+                if lookup_cache_size < 1024 {
+                    bail!("--lookup-cache must be at least 1024");
+                }
+            }
+            "--chunk-cache" => {
+                chunk_cache_size = it
+                    .next()
+                    .ok_or_else(|| Error::msg("--chunk-cache requires value"))?
+                    .parse()
+                    .context("--chunk-cache must be a number")?;
+                if chunk_cache_size < 64 {
+                    bail!("--chunk-cache must be at least 64");
+                }
+            }
             _ => positional.push(arg),
         }
     }
 
-    // Determine mode by presence of flags
     let ds_mode = pbs_store.is_some() || mpxar_didx.is_some() || ppxar_didx.is_some();
 
     if ds_mode {
-        // Datastore mode: require pbs_store, mpxar_didx, ppxar_didx and 1 positional (mountpoint)
         if pbs_store.is_none() || mpxar_didx.is_none() || ppxar_didx.is_none() {
             print_usage();
             bail!("datastore mode requires --pbs-store, --mpxar-didx and --ppxar-didx");
@@ -137,12 +162,12 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
             keyfile,
             verify_chunks,
             options,
+            lookup_cache_size,
+            chunk_cache_size,
         };
-        // Return None for legacy archive path, and payload_input for split-local may be None
         return Ok((None, payload_input, args));
     }
 
-    // Legacy modes
     if positional.len() < 2 {
         print_usage();
         bail!("missing required positional arguments");
@@ -157,8 +182,10 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
         mpxar_didx: String::new(),
         ppxar_didx: String::new(),
         keyfile,
-        verify_chunks, // ignored in legacy path
+        verify_chunks,
         options,
+        lookup_cache_size,
+        chunk_cache_size,
     };
 
     Ok((Some(archive), payload_input, args))
@@ -176,14 +203,10 @@ async fn main() -> Result<(), Error> {
 
     let (archive_opt, payload_input, args) = parse_args()?;
 
-    // If archive_opt is Some => legacy modes
-    // If archive_opt is None => datastore mode
     let mountpoint_path = Path::new(&args.mountpoint);
     let fuse_opts = OsStr::new(&args.options);
 
-    // Build pxar accessor
     let accessor: Accessor = if let Some(archive_path) = archive_opt {
-        // Legacy: unified or split local
         let meta_file = std::fs::File::open(&archive_path)
             .with_context(|| format!("failed to open archive {}", &archive_path))?;
         let meta_size = meta_file.metadata()?.len();
@@ -203,8 +226,6 @@ async fn main() -> Result<(), Error> {
             Accessor::new(pxar::PxarVariant::Unified(meta_reader), meta_size).await?
         }
     } else {
-        // Datastore mode: both streams from didx + .chunks
-        // Load key if provided
         let crypt = if let Some(ref keyfile) = args.keyfile {
             let (key, _, _fp) = load_and_decrypt_key(Path::new(keyfile), &get_key_password)?;
             Some(std::sync::Arc::new(CryptConfig::new(key)?))
@@ -212,7 +233,6 @@ async fn main() -> Result<(), Error> {
             None
         };
 
-        // Helper to decode a didx blob into a tempfile and parse the DynamicIndexReader
         let open_index = |path: &str| -> Result<DynamicIndexReader, Error> {
             let file = std::fs::File::open(path)
                 .with_context(|| format!("failed to open didx {}", path))?;
@@ -221,24 +241,36 @@ async fn main() -> Result<(), Error> {
             Ok(index)
         };
 
-        // Build metadata reader from mpxar.didx
+        use crate::local_chunk_store::ChunkCacheConfig;
+
         let meta_index = open_index(&args.mpxar_didx)?;
-        let meta_store = LocalChunkStore::new(&args.pbs_store, crypt.clone(), args.verify_chunks);
-        let meta_buffered = DirectDynamicReader::new(meta_index, meta_store);
-        let meta_size = meta_buffered.archive_size();
-        let meta_reader = DirectLocalDynamicReadAt::new(meta_buffered);
-        let meta_reader: Reader = std::sync::Arc::new(meta_reader);
+        let meta_store = LocalChunkStore::with_cache_config(
+            &args.pbs_store,
+            crypt.clone(),
+            args.verify_chunks,
+            ChunkCacheConfig {
+                max_entries: args.chunk_cache_size / 2,
+            },
+        );
 
-        // Build payload reader from ppxar.didx
         let payload_index = open_index(&args.ppxar_didx)?;
-        let payload_store =
-            LocalChunkStore::new(&args.pbs_store, crypt.clone(), args.verify_chunks);
-        let payload_buffered = DirectDynamicReader::new(payload_index, payload_store);
-        let payload_size = payload_buffered.archive_size();
-        let payload_reader = DirectLocalDynamicReadAt::new(payload_buffered);
-        let payload_reader: Reader = std::sync::Arc::new(payload_reader);
+        let payload_store = LocalChunkStore::with_cache_config(
+            &args.pbs_store,
+            crypt.clone(),
+            args.verify_chunks,
+            ChunkCacheConfig {
+                max_entries: args.chunk_cache_size / 2,
+            },
+        );
 
-        // Split pxar from two dynamic readers
+        let meta_size = meta_index.index_bytes();
+        let meta_reader: Reader =
+            std::sync::Arc::new(ConcurrentLocalReader::new(meta_index, meta_store));
+
+        let payload_size = payload_index.index_bytes();
+        let payload_reader: Reader =
+            std::sync::Arc::new(ConcurrentLocalReader::new(payload_index, payload_store));
+
         Accessor::new(
             pxar::PxarVariant::Split(meta_reader, (payload_reader, payload_size)),
             meta_size,
@@ -246,8 +278,14 @@ async fn main() -> Result<(), Error> {
         .await?
     };
 
-    let session = Session::mount(accessor, fuse_opts, args.verbose, mountpoint_path)
-        .map_err(|err| anyhow::format_err!("pxar mount failed: {}", err))?;
+    let session = Session::mount_with_cache(
+        accessor,
+        fuse_opts,
+        args.verbose,
+        mountpoint_path,
+        args.lookup_cache_size,
+    )
+    .map_err(|err| anyhow::format_err!("pxar mount failed: {}", err))?;
 
     let mut interrupt = signal(SignalKind::interrupt())?;
     select! {
