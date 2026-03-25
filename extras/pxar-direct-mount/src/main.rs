@@ -26,6 +26,7 @@ use pbs_tools::crypt_config::CryptConfig;
 
 const DEFAULT_LOOKUP_CACHE_SIZE: usize = 131072;
 const DEFAULT_CHUNK_CACHE_SIZE: usize = 4096;
+const DEFAULT_CHUNK_TTL_SECS: u64 = 300;
 
 struct Args {
     mountpoint: String,
@@ -38,6 +39,7 @@ struct Args {
     options: String,
     lookup_cache_size: usize,
     chunk_cache_size: usize,
+    chunk_ttl_secs: u64,
 }
 
 fn print_usage() {
@@ -55,6 +57,7 @@ fn print_usage() {
     eprintln!("  --options <STR>          FUSE options (default: ro,default_permissions)");
     eprintln!("  --lookup-cache <N>       Max cached inodes (default: 131072)");
     eprintln!("  --chunk-cache <N>        Max cached chunks (default: 4096)");
+    eprintln!("  --chunk-ttl <SECS>       Chunk cache TTL in seconds (default: 300)");
     eprintln!("  --verbose                Verbose logging/foreground");
     eprintln!();
     eprintln!("Legacy modes:");
@@ -77,6 +80,7 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
     let mut options = "ro,default_permissions".to_string();
     let mut lookup_cache_size = DEFAULT_LOOKUP_CACHE_SIZE;
     let mut chunk_cache_size = DEFAULT_CHUNK_CACHE_SIZE;
+    let mut chunk_ttl_secs = DEFAULT_CHUNK_TTL_SECS;
 
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -137,6 +141,13 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
                     bail!("--chunk-cache must be at least 64");
                 }
             }
+            "--chunk-ttl" => {
+                chunk_ttl_secs = it
+                    .next()
+                    .ok_or_else(|| Error::msg("--chunk-ttl requires value"))?
+                    .parse()
+                    .context("--chunk-ttl must be a number (seconds)")?;
+            }
             _ => positional.push(arg),
         }
     }
@@ -164,6 +175,7 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
             options,
             lookup_cache_size,
             chunk_cache_size,
+            chunk_ttl_secs,
         };
         return Ok((None, payload_input, args));
     }
@@ -186,6 +198,7 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
         options,
         lookup_cache_size,
         chunk_cache_size,
+        chunk_ttl_secs,
     };
 
     Ok((Some(archive), payload_input, args))
@@ -242,6 +255,11 @@ async fn main() -> Result<(), Error> {
         };
 
         use crate::local_chunk_store::ChunkCacheConfig;
+        use std::time::Duration;
+
+        let chunk_ttl = Duration::from_secs(args.chunk_ttl_secs);
+        // Use half the sweep interval of the TTL, capped at 60 s.
+        let sweep_interval = Duration::from_secs((args.chunk_ttl_secs / 2).max(10).min(60));
 
         let meta_index = open_index(&args.mpxar_didx)?;
         let meta_store = LocalChunkStore::with_cache_config(
@@ -250,6 +268,7 @@ async fn main() -> Result<(), Error> {
             args.verify_chunks,
             ChunkCacheConfig {
                 max_entries: args.chunk_cache_size / 2,
+                ttl: chunk_ttl,
             },
         );
 
@@ -260,8 +279,15 @@ async fn main() -> Result<(), Error> {
             args.verify_chunks,
             ChunkCacheConfig {
                 max_entries: args.chunk_cache_size / 2,
+                ttl: chunk_ttl,
             },
         );
+
+        // Clone handles for cleanup tasks before moving stores into readers.
+        let meta_cleanup = meta_store.clone();
+        let payload_cleanup = payload_store.clone();
+        tokio::spawn(meta_cleanup.run_cleanup(sweep_interval));
+        tokio::spawn(payload_cleanup.run_cleanup(sweep_interval));
 
         let meta_size = meta_index.index_bytes();
         let meta_reader: Reader =
