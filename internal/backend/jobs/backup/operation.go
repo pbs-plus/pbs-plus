@@ -359,7 +359,12 @@ func (b *BackupOperation) Cleanup() {
 		s3Mount := b.s3Mount
 		logger := b.logger
 		qt := b.queueTask
+		cancel := b.cancel
 		b.mu.Unlock()
+
+		if cancel != nil {
+			cancel()
+		}
 
 		if agentMount != nil {
 			agentMount.Unmount()
