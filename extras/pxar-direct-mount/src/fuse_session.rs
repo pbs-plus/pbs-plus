@@ -20,7 +20,6 @@ use pxar::accessor::{self, ContentRange, EntryRangeInfo, ReadAt};
 use pxar::EntryKind;
 
 const NON_DIRECTORY_INODE: u64 = 1u64 << 63;
-const DEFAULT_MAX_LOOKUPS: usize = 131072;
 const EVICTION_BATCH_SIZE: usize = 16;
 
 /// Offset cookie returned after the last regular entry; on the next kernel
@@ -46,19 +45,9 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn mount(
-        accessor: Accessor,
-        options: &OsStr,
-        verbose: bool,
-        path: &Path,
-    ) -> Result<Self, Error> {
-        Self::mount_with_cache(accessor, options, verbose, path, DEFAULT_MAX_LOOKUPS)
-    }
-
     pub fn mount_with_cache(
         accessor: Accessor,
         options: &OsStr,
-        verbose: bool,
         path: &Path,
         max_lookups: usize,
     ) -> Result<Self, Error> {
@@ -72,7 +61,7 @@ impl Session {
             .build()?
             .mount(path)?;
 
-        let session = SessionImpl::new(accessor, verbose, max_lookups);
+        let session = SessionImpl::new(accessor, max_lookups);
 
         Ok(Self {
             fut: Box::pin(session.main(fuse)),
@@ -112,8 +101,8 @@ impl Lookup {
         entry_range_info: EntryRangeInfo,
         content_range: Option<ContentRange>,
         stat: libc::stat,
-    ) -> Box<Self> {
-        Box::new(Self {
+    ) -> Arc<Self> {
+        Arc::new(Self {
             refs: AtomicUsize::new(1),
             parent,
             entry_range_info,
@@ -140,6 +129,10 @@ impl Lookup {
 struct LookupRef<'a> {
     session: &'a SessionImpl,
     inode: u64,
+    /// Owning Arc for the Lookup data.  Kept alive independently of the LRU
+    /// cache so that deref/drop never need to re-acquire the cache lock and
+    /// can never panic due to LRU eviction.
+    lookup: Arc<Lookup>,
 }
 
 unsafe impl Send for LookupRef<'_> {}
@@ -147,36 +140,32 @@ unsafe impl Sync for LookupRef<'_> {}
 
 impl Clone for LookupRef<'_> {
     fn clone(&self) -> Self {
-        self.session
-            .get_lookup(self.inode)
-            .expect("lookup ref clone failed")
+        // Increment the FUSE kernel ref count directly on the owned Arc —
+        // no cache lookup required, safe even if the LRU has evicted the entry.
+        self.lookup.refs.fetch_add(1, Ordering::AcqRel);
+        LookupRef {
+            session: self.session,
+            inode: self.inode,
+            lookup: Arc::clone(&self.lookup),
+        }
     }
 }
 
 impl std::ops::Deref for LookupRef<'_> {
     type Target = Lookup;
     fn deref(&self) -> &Self::Target {
-        // SAFETY: The `Box<Lookup>` for this inode lives at a stable heap
-        // address for as long as it remains in the LRU cache.  An entry is
-        // only evicted when `refs == 0`.  We hold a ref (incremented in
-        // `get_ref`/`make_lookup`), so the entry cannot be evicted while this
-        // `LookupRef` exists, and the pointer therefore remains valid.
-        let cache = self.session.lookups.read();
-        let lookup = cache.peek(&self.inode).expect("lookup ref deref: inode disappeared");
-        unsafe { &*(&**lookup as *const Lookup) }
+        // The Arc keeps the Lookup alive regardless of LRU eviction — no cache
+        // lookup, no lock, no possibility of panic.
+        &self.lookup
     }
 }
 
 impl Drop for LookupRef<'_> {
     fn drop(&mut self) {
-        // Decrement the Rust-side ref count.  We leave the entry in the LRU
-        // cache even when refs reaches 0; evict_stale_entries will clean it up
-        // lazily when the cache is full.  This avoids a read→write lock
-        // upgrade in the hot path.
-        let cache = self.session.lookups.read();
-        if let Some(entry) = cache.peek(&self.inode) {
-            entry.refs.fetch_sub(1, Ordering::AcqRel);
-        }
+        // Decrement the FUSE kernel ref count directly via the owned Arc.
+        // We leave the LRU entry in place (if it's still there); evict_stale_entries
+        // cleans it up lazily when the cache is full.
+        self.lookup.refs.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -192,8 +181,7 @@ impl<'a> LookupRef<'a> {
 
 struct SessionImpl {
     accessor: Accessor,
-    verbose: bool,
-    lookups: RwLock<LruCache<u64, Box<Lookup>>>,
+    lookups: RwLock<LruCache<u64, Arc<Lookup>>>,
     /// Secondary index: `(parent_inode, child_name) → child_inode`.
     /// Populated by every `make_lookup` call (from both `lookup` and
     /// `readdirplus`).  Lets `lookup()` skip the entire pxar directory
@@ -204,7 +192,7 @@ struct SessionImpl {
 }
 
 impl SessionImpl {
-    fn new(accessor: Accessor, verbose: bool, max_lookups: usize) -> Self {
+    fn new(accessor: Accessor, max_lookups: usize) -> Self {
         let max = NonZeroUsize::new(max_lookups.max(1024)).unwrap();
         // Root has no meaningful stat at construction time (we'd need to read
         // the archive), so zero-fill; the kernel rarely calls getattr on root
@@ -222,7 +210,6 @@ impl SessionImpl {
         let name_cap = NonZeroUsize::new(max_lookups.max(1024)).unwrap();
         Self {
             accessor,
-            verbose,
             lookups: RwLock::new(cache),
             name_index: Mutex::new(LruCache::new(name_cap)),
             max_lookups,
@@ -264,7 +251,7 @@ impl SessionImpl {
                     None => break,
                 },
                 err = err_recv.next() => match err {
-                    Some(err) => if session.verbose {
+                    Some(err) => {
                         log::error!("cancelling fuse main loop due to error: {}", err);
                         return Err(err);
                     },
@@ -292,13 +279,14 @@ impl SessionImpl {
                 },
                 Err(err) => return self.handle_err(request, err, err_sender).await,
             },
-            Forget(request) => match self.forget(request.inode, request.count as usize) {
-                Ok(()) => {
-                    request.reply();
-                    Ok(())
-                }
-                Err(err) => return self.handle_err(request, err, err_sender).await,
-            },
+            Forget(request) => {
+                // Ignore errors: the inode may have been evicted from the LRU
+                // cache while the kernel still held a nlookup ref.  The kernel's
+                // forget is still semantically valid; we just have nothing to update.
+                let _ = self.forget(request.inode, request.count as usize);
+                request.reply();
+                Ok(())
+            }
             Getattr(request) => match self.getattr(request.inode).await {
                 Ok(stat) => request.reply(&stat, f64::MAX).map_err(Error::from),
                 Err(err) => return self.handle_err(request, err, err_sender).await,
@@ -361,12 +349,23 @@ impl SessionImpl {
     fn get_lookup(&self, inode: u64) -> Result<LookupRef<'_>, Error> {
         let cache = self.lookups.read();
         if let Some(lookup) = cache.peek(&inode) {
-            if lookup.refs.fetch_add(1, Ordering::AcqRel) == 0 {
-                return Err(io_format_err!("inode refcount was 0").into());
+            loop {
+                let old = lookup.refs.load(Ordering::Acquire);
+                if old == 0 {
+                    return Err(io_format_err!("inode refcount was 0").into());
+                }
+                if lookup
+                    .refs
+                    .compare_exchange(old, old + 1, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    break;
+                }
             }
             return Ok(LookupRef {
                 session: self,
                 inode,
+                lookup: Arc::clone(lookup),
             });
         }
         io_return!(libc::ENOENT);
@@ -406,7 +405,7 @@ impl SessionImpl {
 
     /// Evict up to `EVICTION_BATCH_SIZE` entries whose FUSE kernel ref count
     /// has dropped to zero.  Called under an existing write lock.
-    fn evict_stale_entries(&self, cache: &mut LruCache<u64, Box<Lookup>>) {
+    fn evict_stale_entries(&self, cache: &mut LruCache<u64, Arc<Lookup>>) {
         let mut to_evict = Vec::with_capacity(EVICTION_BATCH_SIZE.min(self.max_lookups / 8));
         for (inode, entry) in cache.iter() {
             if entry.refs.load(Ordering::Acquire) == 0 {
@@ -434,6 +433,7 @@ impl SessionImpl {
 
         if let Some(lookup) = cache.get_mut(&inode) {
             lookup.refs.fetch_add(1, Ordering::AcqRel);
+            let arc = Arc::clone(lookup);
             drop(cache);
             self.name_index
                 .lock()
@@ -441,6 +441,7 @@ impl SessionImpl {
             return Ok(LookupRef {
                 session: self,
                 inode,
+                lookup: arc,
             });
         }
 
@@ -456,7 +457,17 @@ impl SessionImpl {
             stat,
         );
         lookup.refs.store(1, Ordering::Release);
-        cache.put(inode, lookup);
+
+        // Clone the Arc before moving it into the cache so the returned
+        // LookupRef owns its own strong reference.  Even if the LRU later
+        // evicts this entry (or another entry via the put-back path below),
+        // the LookupRef's Arc keeps the Lookup alive.
+        let arc = Arc::clone(&lookup);
+        if let Some((evicted_inode, evicted)) = cache.push(inode, lookup) {
+            if evicted.refs.load(Ordering::Acquire) > 0 {
+                cache.put(evicted_inode, evicted);
+            }
+        }
         drop(cache);
         self.name_index
             .lock()
@@ -465,6 +476,7 @@ impl SessionImpl {
         Ok(LookupRef {
             session: self,
             inode,
+            lookup: arc,
         })
     }
 
