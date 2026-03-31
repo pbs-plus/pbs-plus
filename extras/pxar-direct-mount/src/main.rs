@@ -1,6 +1,7 @@
 mod direct_dynamic_index;
 mod fuse_session;
 mod local_chunk_store;
+mod goodbye_table_cache;
 
 use std::env;
 use std::ffi::OsStr;
@@ -17,6 +18,7 @@ use pxar::accessor;
 
 use crate::direct_dynamic_index::ConcurrentLocalReader;
 use crate::fuse_session::{Accessor, Reader, Session};
+use crate::goodbye_table_cache::GoodbyeTableCache;
 use crate::local_chunk_store::LocalChunkStore;
 
 use pbs_datastore::dynamic_index::DynamicIndexReader;
@@ -219,7 +221,7 @@ async fn main() -> Result<(), Error> {
     let mountpoint_path = Path::new(&args.mountpoint);
     let fuse_opts = OsStr::new(&args.options);
 
-    let accessor: Accessor = if let Some(archive_path) = archive_opt {
+    let mut accessor: Accessor = if let Some(archive_path) = archive_opt {
         let meta_file = std::fs::File::open(&archive_path)
             .with_context(|| format!("failed to open archive {}", &archive_path))?;
         let meta_size = meta_file.metadata()?.len();
@@ -304,10 +306,13 @@ async fn main() -> Result<(), Error> {
         .await?
     };
 
+    accessor.set_goodbye_table_cache(Some(GoodbyeTableCache::new(
+        args.lookup_cache_size / 8,
+    )));
+
     let session = Session::mount_with_cache(
         accessor,
         fuse_opts,
-        args.verbose,
         mountpoint_path,
         args.lookup_cache_size,
     )

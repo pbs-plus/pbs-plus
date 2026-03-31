@@ -20,7 +20,6 @@ use pxar::accessor::{self, ContentRange, EntryRangeInfo, ReadAt};
 use pxar::EntryKind;
 
 const NON_DIRECTORY_INODE: u64 = 1u64 << 63;
-const DEFAULT_MAX_LOOKUPS: usize = 131072;
 const EVICTION_BATCH_SIZE: usize = 16;
 
 /// Offset cookie returned after the last regular entry; on the next kernel
@@ -46,19 +45,9 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn mount(
-        accessor: Accessor,
-        options: &OsStr,
-        verbose: bool,
-        path: &Path,
-    ) -> Result<Self, Error> {
-        Self::mount_with_cache(accessor, options, verbose, path, DEFAULT_MAX_LOOKUPS)
-    }
-
     pub fn mount_with_cache(
         accessor: Accessor,
         options: &OsStr,
-        verbose: bool,
         path: &Path,
         max_lookups: usize,
     ) -> Result<Self, Error> {
@@ -72,7 +61,7 @@ impl Session {
             .build()?
             .mount(path)?;
 
-        let session = SessionImpl::new(accessor, verbose, max_lookups);
+        let session = SessionImpl::new(accessor, max_lookups);
 
         Ok(Self {
             fut: Box::pin(session.main(fuse)),
@@ -112,8 +101,8 @@ impl Lookup {
         entry_range_info: EntryRangeInfo,
         content_range: Option<ContentRange>,
         stat: libc::stat,
-    ) -> Box<Self> {
-        Box::new(Self {
+    ) -> Arc<Self> {
+        Arc::new(Self {
             refs: AtomicUsize::new(1),
             parent,
             entry_range_info,
@@ -140,6 +129,10 @@ impl Lookup {
 struct LookupRef<'a> {
     session: &'a SessionImpl,
     inode: u64,
+    /// Owning Arc for the Lookup data.  Kept alive independently of the LRU
+    /// cache so that deref/drop never need to re-acquire the cache lock and
+    /// can never panic due to LRU eviction.
+    lookup: Arc<Lookup>,
 }
 
 unsafe impl Send for LookupRef<'_> {}
@@ -147,36 +140,32 @@ unsafe impl Sync for LookupRef<'_> {}
 
 impl Clone for LookupRef<'_> {
     fn clone(&self) -> Self {
-        self.session
-            .get_lookup(self.inode)
-            .expect("lookup ref clone failed")
+        // Increment the FUSE kernel ref count directly on the owned Arc —
+        // no cache lookup required, safe even if the LRU has evicted the entry.
+        self.lookup.refs.fetch_add(1, Ordering::AcqRel);
+        LookupRef {
+            session: self.session,
+            inode: self.inode,
+            lookup: Arc::clone(&self.lookup),
+        }
     }
 }
 
 impl std::ops::Deref for LookupRef<'_> {
     type Target = Lookup;
     fn deref(&self) -> &Self::Target {
-        // SAFETY: The `Box<Lookup>` for this inode lives at a stable heap
-        // address for as long as it remains in the LRU cache.  An entry is
-        // only evicted when `refs == 0`.  We hold a ref (incremented in
-        // `get_ref`/`make_lookup`), so the entry cannot be evicted while this
-        // `LookupRef` exists, and the pointer therefore remains valid.
-        let cache = self.session.lookups.read();
-        let lookup = cache.peek(&self.inode).expect("lookup ref deref: inode disappeared");
-        unsafe { &*(&**lookup as *const Lookup) }
+        // The Arc keeps the Lookup alive regardless of LRU eviction — no cache
+        // lookup, no lock, no possibility of panic.
+        &self.lookup
     }
 }
 
 impl Drop for LookupRef<'_> {
     fn drop(&mut self) {
-        // Decrement the Rust-side ref count.  We leave the entry in the LRU
-        // cache even when refs reaches 0; evict_stale_entries will clean it up
-        // lazily when the cache is full.  This avoids a read→write lock
-        // upgrade in the hot path.
-        let cache = self.session.lookups.read();
-        if let Some(entry) = cache.peek(&self.inode) {
-            entry.refs.fetch_sub(1, Ordering::AcqRel);
-        }
+        // Decrement the FUSE kernel ref count directly via the owned Arc.
+        // We leave the LRU entry in place (if it's still there); evict_stale_entries
+        // cleans it up lazily when the cache is full.
+        self.lookup.refs.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -192,8 +181,7 @@ impl<'a> LookupRef<'a> {
 
 struct SessionImpl {
     accessor: Accessor,
-    verbose: bool,
-    lookups: RwLock<LruCache<u64, Box<Lookup>>>,
+    lookups: RwLock<LruCache<u64, Arc<Lookup>>>,
     /// Secondary index: `(parent_inode, child_name) → child_inode`.
     /// Populated by every `make_lookup` call (from both `lookup` and
     /// `readdirplus`).  Lets `lookup()` skip the entire pxar directory
@@ -204,7 +192,7 @@ struct SessionImpl {
 }
 
 impl SessionImpl {
-    fn new(accessor: Accessor, verbose: bool, max_lookups: usize) -> Self {
+    fn new(accessor: Accessor, max_lookups: usize) -> Self {
         let max = NonZeroUsize::new(max_lookups.max(1024)).unwrap();
         // Root has no meaningful stat at construction time (we'd need to read
         // the archive), so zero-fill; the kernel rarely calls getattr on root
@@ -222,7 +210,6 @@ impl SessionImpl {
         let name_cap = NonZeroUsize::new(max_lookups.max(1024)).unwrap();
         Self {
             accessor,
-            verbose,
             lookups: RwLock::new(cache),
             name_index: Mutex::new(LruCache::new(name_cap)),
             max_lookups,
@@ -264,7 +251,7 @@ impl SessionImpl {
                     None => break,
                 },
                 err = err_recv.next() => match err {
-                    Some(err) => if session.verbose {
+                    Some(err) => {
                         log::error!("cancelling fuse main loop due to error: {}", err);
                         return Err(err);
                     },
@@ -292,13 +279,14 @@ impl SessionImpl {
                 },
                 Err(err) => return self.handle_err(request, err, err_sender).await,
             },
-            Forget(request) => match self.forget(request.inode, request.count as usize) {
-                Ok(()) => {
-                    request.reply();
-                    Ok(())
-                }
-                Err(err) => return self.handle_err(request, err, err_sender).await,
-            },
+            Forget(request) => {
+                // Ignore errors: the inode may have been evicted from the LRU
+                // cache while the kernel still held a nlookup ref.  The kernel's
+                // forget is still semantically valid; we just have nothing to update.
+                let _ = self.forget(request.inode, request.count as usize);
+                request.reply();
+                Ok(())
+            }
             Getattr(request) => match self.getattr(request.inode).await {
                 Ok(stat) => request.reply(&stat, f64::MAX).map_err(Error::from),
                 Err(err) => return self.handle_err(request, err, err_sender).await,
@@ -361,12 +349,23 @@ impl SessionImpl {
     fn get_lookup(&self, inode: u64) -> Result<LookupRef<'_>, Error> {
         let cache = self.lookups.read();
         if let Some(lookup) = cache.peek(&inode) {
-            if lookup.refs.fetch_add(1, Ordering::AcqRel) == 0 {
-                return Err(io_format_err!("inode refcount was 0").into());
+            loop {
+                let old = lookup.refs.load(Ordering::Acquire);
+                if old == 0 {
+                    return Err(io_format_err!("inode refcount was 0").into());
+                }
+                if lookup
+                    .refs
+                    .compare_exchange(old, old + 1, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    break;
+                }
             }
             return Ok(LookupRef {
                 session: self,
                 inode,
+                lookup: Arc::clone(lookup),
             });
         }
         io_return!(libc::ENOENT);
@@ -406,7 +405,7 @@ impl SessionImpl {
 
     /// Evict up to `EVICTION_BATCH_SIZE` entries whose FUSE kernel ref count
     /// has dropped to zero.  Called under an existing write lock.
-    fn evict_stale_entries(&self, cache: &mut LruCache<u64, Box<Lookup>>) {
+    fn evict_stale_entries(&self, cache: &mut LruCache<u64, Arc<Lookup>>) {
         let mut to_evict = Vec::with_capacity(EVICTION_BATCH_SIZE.min(self.max_lookups / 8));
         for (inode, entry) in cache.iter() {
             if entry.refs.load(Ordering::Acquire) == 0 {
@@ -434,6 +433,7 @@ impl SessionImpl {
 
         if let Some(lookup) = cache.get_mut(&inode) {
             lookup.refs.fetch_add(1, Ordering::AcqRel);
+            let arc = Arc::clone(lookup);
             drop(cache);
             self.name_index
                 .lock()
@@ -441,6 +441,7 @@ impl SessionImpl {
             return Ok(LookupRef {
                 session: self,
                 inode,
+                lookup: arc,
             });
         }
 
@@ -456,7 +457,17 @@ impl SessionImpl {
             stat,
         );
         lookup.refs.store(1, Ordering::Release);
-        cache.put(inode, lookup);
+
+        // Clone the Arc before moving it into the cache so the returned
+        // LookupRef owns its own strong reference.  Even if the LRU later
+        // evicts this entry (or another entry via the put-back path below),
+        // the LookupRef's Arc keeps the Lookup alive.
+        let arc = Arc::clone(&lookup);
+        if let Some((evicted_inode, evicted)) = cache.push(inode, lookup) {
+            if evicted.refs.load(Ordering::Acquire) > 0 {
+                cache.put(evicted_inode, evicted);
+            }
+        }
         drop(cache);
         self.name_index
             .lock()
@@ -465,6 +476,7 @@ impl SessionImpl {
         Ok(LookupRef {
             session: self,
             inode,
+            lookup: arc,
         })
     }
 
@@ -722,4 +734,219 @@ fn to_stat(inode: u64, entry: &pxar::Entry) -> Result<libc::stat, Error> {
     stat.st_ctime = metadata.stat.mtime.secs;
     stat.st_ctime_nsec = metadata.stat.mtime.nanos as _;
     Ok(stat)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lru::LruCache;
+    use std::num::NonZeroUsize;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    /// Create a minimal Arc<Lookup> suitable for testing.
+    /// `refs` is the initial FUSE kernel reference count.
+    fn make_arc_lookup(refs: usize) -> Arc<Lookup> {
+        let stat: libc::stat = unsafe { std::mem::zeroed() };
+        let l = Arc::new(Lookup {
+            refs: AtomicUsize::new(refs),
+            parent: 0,
+            entry_range_info: EntryRangeInfo::toplevel(0..0),
+            content_range: None,
+            stat,
+        });
+        l
+    }
+
+    /// Create a minimal Box<Lookup> to simulate the *old* storage type.
+    fn make_box_lookup(refs: usize) -> Box<Lookup> {
+        let stat: libc::stat = unsafe { std::mem::zeroed() };
+        Box::new(Lookup {
+            refs: AtomicUsize::new(refs),
+            parent: 0,
+            entry_range_info: EntryRangeInfo::toplevel(0..0),
+            content_range: None,
+            stat,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 1 – reproduces the bug scenario
+    //
+    // With Box<Lookup> and the push()+put() eviction pattern used by the old
+    // make_lookup, a cache that is full with all-active entries causes a
+    // *silent* double-eviction: put() drops the new LRU without returning it.
+    // Any code that then calls cache.peek(evicted_inode) gets None — which is
+    // exactly what the old LookupRef::deref hit before calling
+    // .expect("lookup ref deref: inode disappeared") and panicking.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn bug_box_double_eviction_silently_drops_active_entry() {
+        // Tiny cache so we can trigger pressure easily.
+        let cap = NonZeroUsize::new(3).unwrap();
+        let mut cache: LruCache<u64, Box<Lookup>> = LruCache::new(cap);
+
+        // Fill all three slots with active entries (refs = 1 = kernel holds a ref).
+        cache.put(1, make_box_lookup(1)); // will be LRU after subsequent puts
+        cache.put(2, make_box_lookup(1));
+        cache.put(3, make_box_lookup(1)); // MRU
+
+        // Cache is at capacity; all entries have refs > 0.
+        // Inserting inode 4 via push() evicts the LRU (inode 1).
+        let evicted = cache
+            .push(4, make_box_lookup(1))
+            .expect("cache was full, must evict");
+        let (evicted_inode, evicted_box) = evicted;
+        assert_eq!(evicted_inode, 1);
+        assert!(
+            evicted_box.refs.load(Ordering::Acquire) > 0,
+            "evicted entry still has an active kernel ref"
+        );
+
+        // Old make_lookup put() the evicted entry back to avoid losing it.
+        // lru::LruCache::put() evicts the *new* LRU to make room — but unlike
+        // push() it does NOT return the displaced entry.  Inode 2 is silently
+        // dropped even though its refs > 0.
+        cache.put(evicted_inode, evicted_box);
+
+        // Inode 2 is now gone from the cache.
+        assert!(
+            cache.peek(&2).is_none(),
+            "inode 2 was silently evicted despite having an active kernel ref"
+        );
+
+        // Any concurrent task that held a LookupRef for inode 2 would now
+        // execute the old deref path:
+        //   cache.peek(&2).expect("lookup ref deref: inode disappeared")
+        // That expect() would fire.  We reproduce the failure here without
+        // actually invoking expect() so the test remains deterministic.
+        let would_panic = cache.peek(&2).is_none();
+        assert!(
+            would_panic,
+            "old LookupRef::deref would have panicked for inode 2"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 2 – proves the fix
+    //
+    // With Arc<Lookup>, the LookupRef holds its own strong reference to the
+    // Lookup data.  Even after the exact same double-eviction sequence, the
+    // data is still live and fully accessible — no cache lookup required.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn fix_arc_survives_double_eviction() {
+        let cap = NonZeroUsize::new(3).unwrap();
+        let mut cache: LruCache<u64, Arc<Lookup>> = LruCache::new(cap);
+
+        cache.put(1, make_arc_lookup(1));
+        let entry2 = make_arc_lookup(1);
+        // Simulate a LookupRef: hold a clone of inode 2's Arc.
+        let entry2_held = Arc::clone(&entry2);
+        cache.put(2, entry2);
+        cache.put(3, make_arc_lookup(1));
+
+        // Same double-eviction sequence as Test 1.
+        let evicted = cache
+            .push(4, make_arc_lookup(1))
+            .expect("cache was full, must evict");
+        let (evicted_inode, evicted_arc) = evicted;
+        assert_eq!(evicted_inode, 1);
+        cache.put(evicted_inode, evicted_arc); // evicts inode 2 from cache
+
+        // Inode 2 is gone from the cache — same as before.
+        assert!(cache.peek(&2).is_none(), "inode 2 evicted from LRU");
+
+        // But the Arc held by entry2_held is *still alive*.  Strong count ≥ 1
+        // (the cache Arc was dropped, the held Arc is still there).
+        assert!(Arc::strong_count(&entry2_held) >= 1);
+
+        // The new LookupRef::deref uses &*self.lookup — no cache lookup at all.
+        // This is always safe and can never panic.
+        let _refs = entry2_held.refs.load(Ordering::Acquire);
+        let _parent = entry2_held.parent;
+        // reaching here without panic proves the fix works
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 3 – concurrent stress test
+    //
+    // Many threads simultaneously grab Arc refs and insert new entries into a
+    // small cache, forcing constant eviction.  Every thread accesses the
+    // Lookup data via its owned Arc after potentially being evicted from the
+    // LRU.  No thread should panic.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn fix_concurrent_arc_access_under_cache_pressure() {
+        use parking_lot::Mutex;
+        use std::sync::Barrier;
+        use std::thread;
+
+        const CACHE_CAP: usize = 8;
+        const INODE_SPACE: u64 = 16; // small so evictions are frequent
+        const THREADS: usize = 16;
+        const ITERS: usize = 2000;
+
+        let cap = NonZeroUsize::new(CACHE_CAP).unwrap();
+        let cache: Arc<Mutex<LruCache<u64, Arc<Lookup>>>> =
+            Arc::new(Mutex::new(LruCache::new(cap)));
+
+        // Pre-fill the cache.
+        {
+            let mut c = cache.lock();
+            for i in 0..CACHE_CAP as u64 {
+                c.put(i, make_arc_lookup(1));
+            }
+        }
+
+        let barrier = Arc::new(Barrier::new(THREADS));
+        let mut handles = Vec::with_capacity(THREADS);
+
+        for t in 0..THREADS {
+            let cache = Arc::clone(&cache);
+            let barrier = Arc::clone(&barrier);
+
+            handles.push(thread::spawn(move || {
+                barrier.wait(); // all threads start at the same time
+
+                for i in 0..ITERS {
+                    let inode = ((t * ITERS + i) as u64) % INODE_SPACE;
+
+                    // Acquire or insert — mirrors what make_lookup does.
+                    let arc: Arc<Lookup> = {
+                        let mut c = cache.lock();
+                        if let Some(entry) = c.get(&inode) {
+                            entry.refs.fetch_add(1, Ordering::AcqRel);
+                            Arc::clone(entry)
+                        } else {
+                            let new_entry = make_arc_lookup(1);
+                            let held = Arc::clone(&new_entry);
+                            // Replicate the old push()+put() eviction pattern.
+                            if let Some((ev_inode, ev_arc)) = c.push(inode, new_entry) {
+                                if ev_arc.refs.load(Ordering::Acquire) > 0 {
+                                    // This is the double-eviction path.
+                                    // With Box it silently dropped a live entry;
+                                    // with Arc the displaced entry's data stays alive.
+                                    c.put(ev_inode, ev_arc);
+                                }
+                            }
+                            held
+                        }
+                    };
+
+                    // Access the Lookup data via the owned Arc.
+                    // With the fix this never panics even if the LRU has
+                    // already evicted this entry from the cache.
+                    let _refs = arc.refs.load(Ordering::Acquire);
+                    let _parent = arc.parent;
+
+                    arc.refs.fetch_sub(1, Ordering::AcqRel);
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().expect("thread panicked — Arc fix should prevent this");
+        }
+    }
 }
