@@ -327,6 +327,7 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 	}
 
 	if err := watcher.Add(targetPath); err != nil {
+		watcher.Close()
 		return fmt.Errorf("failed to add file to watcher: %w", err)
 	}
 
