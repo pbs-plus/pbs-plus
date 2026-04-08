@@ -118,31 +118,12 @@ impl<S: ChunkCacheStore + Clone> ConcurrentDynamicReader<S> {
             .filter_map(|(i, v)| if v.is_none() { Some(i) } else { None })
             .collect();
 
-        if miss_indices.len() == 1 {
-            // Single miss — load directly without thread overhead.
-            let i = miss_indices[0];
+        // Load cache misses — sequential to avoid thread spawning overhead.
+        // Thread::scope per-read causes thread storms under heavy concurrent load
+        // (FreeFileSync scanning). Sequential loading with fast NVMe is often
+        // faster than thread creation overhead anyway.
+        for &i in &miss_indices {
             loaded[i] = Some(self.store.read_chunk_cached(&chunks[i].digest)?);
-        } else if miss_indices.len() > 1 {
-            // Multiple misses — load in parallel.
-            // Safety: each slot in `results` is written by exactly one thread.
-            let mut results: Vec<Option<Result<Arc<Vec<u8>>, Error>>> =
-                miss_indices.iter().map(|_| None).collect();
-
-            std::thread::scope(|s| {
-                for (slot, &ci) in results.iter_mut().zip(miss_indices.iter()) {
-                    let digest = &chunks[ci].digest;
-                    let store = &self.store;
-                    // Each thread writes into its own `slot`.
-                    *slot = Some(s
-                        .spawn(move || store.read_chunk_cached(digest))
-                        .join()
-                        .unwrap_or_else(|_| Err(anyhow::anyhow!("chunk load thread panicked"))));
-                }
-            });
-
-            for (slot_result, &ci) in results.into_iter().zip(miss_indices.iter()) {
-                loaded[ci] = Some(slot_result.unwrap()?);
-            }
         }
 
         // ── Phase 4: copy loaded chunks into the output buffer ────────────────

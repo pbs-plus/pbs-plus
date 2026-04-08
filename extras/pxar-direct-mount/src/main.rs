@@ -260,8 +260,10 @@ async fn main() -> Result<(), Error> {
         use std::time::Duration;
 
         let chunk_ttl = Duration::from_secs(args.chunk_ttl_secs);
-        // Use half the sweep interval of the TTL, capped at 60 s.
-        let sweep_interval = Duration::from_secs((args.chunk_ttl_secs / 2).max(10).min(60));
+        // With proportional eviction (Go GC-assist style), cleanup happens
+        // during inserts. Background sweep is now just a safety net for
+        // idle periods - run it very infrequently (min 2 min, max 5 min).
+        let sweep_interval = Duration::from_secs((args.chunk_ttl_secs / 2).max(120).min(300));
 
         let meta_index = open_index(&args.mpxar_didx)?;
         let meta_store = LocalChunkStore::with_cache_config(
