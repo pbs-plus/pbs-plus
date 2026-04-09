@@ -11,16 +11,11 @@ path = "src/main.rs"
 anyhow = "1.0"
 env_logger = "0.11"
 futures = "0.3"
-hex = "0.4.3"
 libc = "0.2"
 log = "0.4.17"
 lru = "0.12"
-nix = "0.29"
 parking_lot = "0.12"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 sha2 = "0.10"
-tempfile = "3"
 tokio = { version = "1.6", features = ["rt-multi-thread", "signal", "macros", "fs", "io-util", "io-std", "net", "parking_lot", "process", "rt", "time"] }
 
 pbs-api-types  = { git = "https://git.proxmox.com/git/proxmox.git" }
