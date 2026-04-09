@@ -1847,11 +1847,9 @@ dependencies = [
  "anyhow",
  "env_logger",
  "futures",
- "hex",
  "libc",
  "log",
  "lru",
- "nix",
  "parking_lot",
  "pbs-api-types",
  "pbs-datastore",
@@ -1862,10 +1860,7 @@ dependencies = [
  "proxmox-lang",
  "proxmox-sys",
  "pxar",
- "serde",
- "serde_json",
  "sha2",
- "tempfile",
  "tokio",
 ]
 

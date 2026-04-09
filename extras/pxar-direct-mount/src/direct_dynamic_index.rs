@@ -1,6 +1,5 @@
 use std::cmp::min;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::Context;
 
 use anyhow::{bail, format_err, Error};
@@ -8,28 +7,18 @@ use pxar::accessor::{MaybeReady, ReadAt, ReadAtOperation};
 
 use pbs_datastore::dynamic_index::DynamicIndexReader;
 use pbs_datastore::index::IndexFile;
+use pbs_datastore::read_chunk::ReadChunk;
 
-use crate::local_chunk_store::ChunkCacheStore;
+use crate::local_chunk_store::LocalChunkStore;
 
-/// Concurrent, fully-stateless chunk reader over a dynamic index.
-///
-/// The struct itself has NO mutable state — it is safe to share a single
-/// `Arc<ConcurrentDynamicReader>` across any number of concurrent readers
-/// without any locking or cache-line contention.
-///
-/// Parallel loading: for each `read_at_range` call, all chunks spanning the
-/// requested byte range are identified up front. Chunks already in the cache
-/// are reused immediately via `peek_cached`. Remaining cache-miss chunks are
-/// loaded in parallel using `std::thread::scope`, so data starts flowing to
-/// the FUSE buffer as soon as the first needed chunk is ready.
-pub struct ConcurrentDynamicReader<S: ChunkCacheStore + Clone> {
-    store: S,
+pub struct ConcurrentDynamicReader {
+    store: LocalChunkStore,
     index: DynamicIndexReader,
     archive_size: u64,
 }
 
-impl<S: ChunkCacheStore + Clone> ConcurrentDynamicReader<S> {
-    pub fn new(index: DynamicIndexReader, store: S) -> Self {
+impl ConcurrentDynamicReader {
+    pub fn new(index: DynamicIndexReader, store: LocalChunkStore) -> Self {
         let archive_size = index.index_bytes();
         Self {
             store,
@@ -38,7 +27,6 @@ impl<S: ChunkCacheStore + Clone> ConcurrentDynamicReader<S> {
         }
     }
 
-    /// O(log n) binary search — called at most once per `read_at_range` call.
     #[inline]
     fn locate_chunk_index(&self, offset: u64) -> Result<usize, Error> {
         let n = self.index.index().len();
@@ -55,20 +43,40 @@ impl<S: ChunkCacheStore + Clone> ConcurrentDynamicReader<S> {
             return Ok(0);
         }
 
-        // ── Phase 1: collect chunk metadata for the entire read range ─────────
-        // One binary search for the first chunk; subsequent chunks are adjacent.
         let first_idx = self.locate_chunk_index(offset)?;
+        let first_info = self
+            .index
+            .chunk_info(first_idx)
+            .ok_or_else(|| format_err!("chunk index out of range"))?;
 
+        let available = (first_info.range.end - offset) as usize;
+        let first_copy = min(available, buf.len());
+
+        // Single-chunk fast path — avoids Vec allocation and thread scope overhead.
+        if first_copy >= buf.len() || first_info.range.end >= self.archive_size {
+            let data = self.store.read_chunk(&first_info.digest)?;
+            let chunk_offset = (offset - first_info.range.start) as usize;
+            let to_copy = min(data.len().saturating_sub(chunk_offset), buf.len());
+            buf[..to_copy].copy_from_slice(&data[chunk_offset..chunk_offset + to_copy]);
+            return Ok(to_copy);
+        }
+
+        // Multi-chunk path.
         struct ChunkMeta {
             digest: [u8; 32],
             range_start: u64,
         }
 
-        let mut chunks: Vec<ChunkMeta> = Vec::new();
+        let mut chunks = Vec::with_capacity(4);
+        chunks.push(ChunkMeta {
+            digest: first_info.digest,
+            range_start: first_info.range.start,
+        });
+
         {
-            let mut pos = offset;
-            let mut remaining = buf.len();
-            let mut chunk_idx = first_idx;
+            let mut pos = offset + first_copy as u64;
+            let mut remaining = buf.len() - first_copy;
+            let mut chunk_idx = first_idx + 1;
 
             loop {
                 let info = self
@@ -78,10 +86,6 @@ impl<S: ChunkCacheStore + Clone> ConcurrentDynamicReader<S> {
 
                 let available = (info.range.end - pos) as usize;
                 let to_copy = min(available, remaining);
-
-                if to_copy == 0 {
-                    break;
-                }
 
                 chunks.push(ChunkMeta {
                     digest: info.digest,
@@ -99,42 +103,22 @@ impl<S: ChunkCacheStore + Clone> ConcurrentDynamicReader<S> {
             }
         }
 
-        if chunks.is_empty() {
-            return Ok(0);
-        }
+        let store = &self.store;
+        let loaded: Vec<Result<Vec<u8>, Error>> = std::thread::scope(|s| {
+            let handles: Vec<_> = chunks
+                .iter()
+                .map(|meta| s.spawn(|| store.read_chunk(&meta.digest)))
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
 
-        // ── Phase 2: peek cache for all chunks ────────────────────────────────
-        // Avoid holding any lock while doing I/O: collect Arc refs first.
-        let mut loaded: Vec<Option<Arc<Vec<u8>>>> = chunks
-            .iter()
-            .map(|c| self.store.peek_cached(&c.digest))
-            .collect();
-
-        // ── Phase 3: parallel load for cache misses ───────────────────────────
-        // Identify which chunks need disk I/O.
-        let miss_indices: Vec<usize> = loaded
-            .iter()
-            .enumerate()
-            .filter_map(|(i, v)| if v.is_none() { Some(i) } else { None })
-            .collect();
-
-        // Load cache misses — sequential to avoid thread spawning overhead.
-        // Thread::scope per-read causes thread storms under heavy concurrent load
-        // (FreeFileSync scanning). Sequential loading with fast NVMe is often
-        // faster than thread creation overhead anyway.
-        for &i in &miss_indices {
-            loaded[i] = Some(self.store.read_chunk_cached(&chunks[i].digest)?);
-        }
-
-        // ── Phase 4: copy loaded chunks into the output buffer ────────────────
         let mut total = 0usize;
         let mut pos = offset;
 
-        for (meta, data_opt) in chunks.iter().zip(loaded.iter()) {
-            let data = data_opt.as_ref().expect("all chunks must be loaded by now");
+        for (meta, result) in chunks.iter().zip(loaded.into_iter()) {
+            let data = result?;
             let chunk_offset = (pos - meta.range_start) as usize;
-            let available = data.len().saturating_sub(chunk_offset);
-            let to_copy = min(available, buf.len() - total);
+            let to_copy = min(data.len().saturating_sub(chunk_offset), buf.len() - total);
 
             if to_copy == 0 {
                 break;
@@ -150,7 +134,7 @@ impl<S: ChunkCacheStore + Clone> ConcurrentDynamicReader<S> {
     }
 }
 
-impl<S: ChunkCacheStore + Clone + Send + Sync + 'static> ReadAt for ConcurrentDynamicReader<S> {
+impl ReadAt for ConcurrentDynamicReader {
     fn start_read_at<'a>(
         self: Pin<&'a Self>,
         _cx: &mut Context,
@@ -171,4 +155,4 @@ impl<S: ChunkCacheStore + Clone + Send + Sync + 'static> ReadAt for ConcurrentDy
     }
 }
 
-pub type ConcurrentLocalReader<S> = ConcurrentDynamicReader<S>;
+pub type ConcurrentLocalReader = ConcurrentDynamicReader;
