@@ -350,8 +350,8 @@ impl SessionImpl {
                 lookup: Some(Arc::clone(lookup)),
             })
         } else {
-            let mut cache = self.lookups.write();
-            let lookup = cache.get(&inode).ok_or_else(|| {
+            let cache = self.lookups.read();
+            let lookup = cache.peek(&inode).ok_or_else(|| {
                 io_format_err!("inode {} not found in file cache", inode)
             })?;
             Self::try_inc_refs(lookup)?;
