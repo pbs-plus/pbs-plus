@@ -1,8 +1,109 @@
 package database
 
 import (
+	"database/sql/driver"
+	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3fs/s3url"
 )
+
+// JobStatus is a typed enum for job completion status.
+// It provides type-safe status checking without string parsing.
+type JobStatus int
+
+const (
+	JobStatusUnknown  JobStatus = iota // 0 - not run or uninitialized
+	JobStatusSuccess                   // 1 - completed successfully
+	JobStatusWarnings                  // 2 - completed with warnings (success)
+	JobStatusFailed                    // 3 - failed (retryable)
+	JobStatusCanceled                  // 4 - manually canceled (non-retryable)
+)
+
+// String returns the human-readable name of the status.
+func (js JobStatus) String() string {
+	switch js {
+	case JobStatusSuccess:
+		return "OK"
+	case JobStatusWarnings:
+		return "WARNINGS"
+	case JobStatusFailed:
+		return "FAILED"
+	case JobStatusCanceled:
+		return "CANCELED"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// ShouldRetry returns true if the job should be retried based on this status.
+func (js JobStatus) ShouldRetry() bool {
+	return js == JobStatusFailed
+}
+
+// IsCompleted returns true if the job has finished (success, warnings, failed, or canceled).
+func (js JobStatus) IsCompleted() bool {
+	return js == JobStatusSuccess || js == JobStatusWarnings ||
+		js == JobStatusFailed || js == JobStatusCanceled
+}
+
+// IsSuccess returns true if the job completed successfully (with or without warnings).
+func (js JobStatus) IsSuccess() bool {
+	return js == JobStatusSuccess || js == JobStatusWarnings
+}
+
+// Value implements the driver.Valuer interface for database storage.
+func (js JobStatus) Value() (driver.Value, error) {
+	return int64(js), nil
+}
+
+// Scan implements the sql.Scanner interface for database retrieval.
+func (js *JobStatus) Scan(value any) error {
+	switch v := value.(type) {
+	case int64:
+		*js = JobStatus(v)
+	case int:
+		*js = JobStatus(v)
+	case []byte:
+		i, err := strconv.Atoi(string(v))
+		if err != nil {
+			return fmt.Errorf("cannot scan %v into JobStatus: %w", value, err)
+		}
+		*js = JobStatus(i)
+	case string:
+		i, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("cannot scan %v into JobStatus: %w", value, err)
+		}
+		*js = JobStatus(i)
+	case nil:
+		*js = JobStatusUnknown
+	default:
+		return fmt.Errorf("cannot scan %T into JobStatus", value)
+	}
+	return nil
+}
+
+// JobStatusFromString parses a legacy string status into a typed JobStatus.
+// This is used for backward compatibility when reading old records.
+func JobStatusFromString(state string) JobStatus {
+	switch state {
+	case "OK":
+		return JobStatusSuccess
+	case "operation canceled":
+		return JobStatusCanceled
+	case "":
+		return JobStatusUnknown
+	default:
+		// Check for warnings pattern - must start with "WARNINGS: "
+		if strings.HasPrefix(state, "WARNINGS: ") {
+			return JobStatusWarnings
+		}
+		// Anything else is a failure
+		return JobStatusFailed
+	}
+}
 
 type Backup struct {
 	ID               string      `json:"id"`
@@ -83,14 +184,16 @@ type JobStats struct {
 }
 
 type JobHistory struct {
-	LastRunUpid           string `json:"last-run-upid"`
-	LastRunStarttime      int64  `json:"last-run-starttime"`
-	LastRunState          string `json:"last-run-state"`
-	LastRunEndtime        int64  `json:"last-run-endtime"`
-	LastSuccessfulEndtime int64  `json:"last-successful-endtime"`
-	LastSuccessfulUpid    string `json:"last-successful-upid"`
-	LatestSnapshotSize    int    `json:"latest_snapshot_size,omitempty"`
-	Duration              int64  `json:"duration"`
+	LastRunUpid           string    `json:"last-run-upid"`
+	LastRunStarttime      int64     `json:"last-run-starttime"`
+	LastRunState          string    `json:"last-run-state"`  // human-readable message (legacy, for display)
+	LastRunStatus         JobStatus `json:"last-run-status"` // typed status for logic ★ NEW
+	LastRunEndtime        int64     `json:"last-run-endtime"`
+	LastSuccessfulEndtime int64     `json:"last-successful-endtime"`
+	LastSuccessfulUpid    string    `json:"last-successful-upid"`
+	RetryCount            int       `json:"retry-count"` // persistent retry counter ★ NEW
+	LatestSnapshotSize    int       `json:"latest_snapshot_size,omitempty"`
+	Duration              int64     `json:"duration"`
 }
 
 type Target struct {
