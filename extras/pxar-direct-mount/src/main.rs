@@ -1,7 +1,6 @@
 mod direct_dynamic_index;
 mod fuse_session;
 mod local_chunk_store;
-mod goodbye_table_cache;
 
 use std::env;
 use std::ffi::OsStr;
@@ -18,15 +17,12 @@ use pxar::accessor;
 
 use crate::direct_dynamic_index::ConcurrentLocalReader;
 use crate::fuse_session::{Accessor, Reader, Session};
-use crate::goodbye_table_cache::GoodbyeTableCache;
 use crate::local_chunk_store::LocalChunkStore;
 
 use pbs_datastore::dynamic_index::DynamicIndexReader;
 use pbs_datastore::index::IndexFile;
 use pbs_key_config::load_and_decrypt_key;
 use pbs_tools::crypt_config::CryptConfig;
-
-const DEFAULT_LOOKUP_CACHE_SIZE: usize = 131072;
 
 struct Args {
     mountpoint: String,
@@ -37,7 +33,7 @@ struct Args {
     keyfile: Option<String>,
     verify_chunks: bool,
     options: String,
-    lookup_cache_size: usize,
+    cache_mb: usize,
 }
 
 fn print_usage() {
@@ -53,7 +49,6 @@ fn print_usage() {
     eprintln!("  --keyfile <FILE>         Path to encryption key (if backup is encrypted)");
     eprintln!("  --verify-chunks          Verify chunk SHA256 on read");
     eprintln!("  --options <STR>          FUSE options (default: ro,default_permissions)");
-    eprintln!("  --lookup-cache <N>       Max cached inodes (default: 131072)");
     eprintln!("  --verbose                Verbose logging/foreground");
     eprintln!();
     eprintln!("Legacy modes:");
@@ -74,7 +69,7 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
     let mut keyfile: Option<String> = None;
     let mut verify_chunks = false;
     let mut options = "ro,default_permissions".to_string();
-    let mut lookup_cache_size = DEFAULT_LOOKUP_CACHE_SIZE;
+    let mut cache_mb: usize = 256;
 
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -115,15 +110,12 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
                     .next()
                     .ok_or_else(|| Error::msg("--options requires value"))?;
             }
-            "--lookup-cache" => {
-                lookup_cache_size = it
+            "--cache-size" => {
+                cache_mb = it
                     .next()
-                    .ok_or_else(|| Error::msg("--lookup-cache requires value"))?
-                    .parse()
-                    .context("--lookup-cache must be a number")?;
-                if lookup_cache_size < 1024 {
-                    bail!("--lookup-cache must be at least 1024");
-                }
+                    .ok_or_else(|| Error::msg("--cache-size requires value (MB)"))?
+                    .parse::<usize>()
+                    .map_err(|_| Error::msg("--cache-size must be a number"))?;
             }
             _ => positional.push(arg),
         }
@@ -150,7 +142,7 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
             keyfile,
             verify_chunks,
             options,
-            lookup_cache_size,
+            cache_mb,
         };
         return Ok((None, payload_input, args));
     }
@@ -171,7 +163,7 @@ fn parse_args() -> Result<(Option<String>, Option<String>, Args), Error> {
         keyfile,
         verify_chunks,
         options,
-        lookup_cache_size,
+        cache_mb,
     };
 
     Ok((Some(archive), payload_input, args))
@@ -192,7 +184,7 @@ async fn main() -> Result<(), Error> {
     let mountpoint_path = Path::new(&args.mountpoint);
     let fuse_opts = OsStr::new(&args.options);
 
-    let mut accessor: Accessor = if let Some(archive_path) = archive_opt {
+    let accessor: Accessor = if let Some(archive_path) = archive_opt {
         let meta_file = std::fs::File::open(&archive_path)
             .with_context(|| format!("failed to open archive {}", &archive_path))?;
         let meta_size = meta_file.metadata()?.len();
@@ -227,11 +219,23 @@ async fn main() -> Result<(), Error> {
             Ok(index)
         };
 
+        let cache_bytes = args.cache_mb * 1024 * 1024;
+
         let meta_index = open_index(&args.mpxar_didx)?;
-        let meta_store = LocalChunkStore::new(&args.pbs_store, crypt.clone(), args.verify_chunks);
+        let meta_store = LocalChunkStore::with_cache_size(
+            &args.pbs_store,
+            crypt.clone(),
+            args.verify_chunks,
+            cache_bytes,
+        );
 
         let payload_index = open_index(&args.ppxar_didx)?;
-        let payload_store = LocalChunkStore::new(&args.pbs_store, crypt.clone(), args.verify_chunks);
+        let payload_store = LocalChunkStore::with_cache_size(
+            &args.pbs_store,
+            crypt.clone(),
+            args.verify_chunks,
+            cache_bytes,
+        );
 
         let meta_size = meta_index.index_bytes();
         let meta_reader: Reader =
@@ -248,18 +252,8 @@ async fn main() -> Result<(), Error> {
         .await?
     };
 
-    accessor.set_goodbye_table_cache(Some(GoodbyeTableCache::new(
-        args.lookup_cache_size / 8,
-    )));
-
-    let session = Session::mount(
-        accessor,
-        fuse_opts,
-        mountpoint_path,
-        args.lookup_cache_size,
-        args.verbose,
-    )
-    .map_err(|err| anyhow::format_err!("pxar mount failed: {}", err))?;
+    let session = Session::mount(accessor, fuse_opts, mountpoint_path, args.verbose)
+        .map_err(|err| anyhow::format_err!("pxar mount failed: {}", err))?;
 
     let mut interrupt = signal(SignalKind::interrupt())?;
     select! {
@@ -271,3 +265,4 @@ async fn main() -> Result<(), Error> {
 
     Ok(())
 }
+
