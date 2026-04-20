@@ -511,6 +511,40 @@ func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) 
 	return nil
 }
 
+func (r *Restore) GetAllUPIDs() []Tasks {
+	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, r.ID)
+	if err := os.MkdirAll(restoreLogsPath, 0755); err != nil {
+		syslog.L.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err)).
+			WithField("id", r.ID).
+			Write()
+		return nil
+	}
+
+	logs, err := os.ReadDir(restoreLogsPath)
+	if err != nil {
+		syslog.L.Error(fmt.Errorf("GetAllUPIDs: failed to read dir: %w", err)).
+			WithField("id", r.ID).
+			Write()
+		return nil
+	}
+
+	upids := make([]Tasks, 0, len(logs))
+
+	for _, log := range logs {
+		task, err := proxmox.GetTaskByUPID(log.Name())
+		if err != nil {
+			continue
+		}
+		upids = append(upids, Tasks{
+			UPID:    task.UPID,
+			Endtime: task.EndTime,
+			Status:  task.ExitStatus,
+		})
+	}
+
+	return upids
+}
+
 func (r *Restore) GetStreamID() string {
 	if r.DestTarget.Type == TargetTypeLocal {
 		return ""
