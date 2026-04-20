@@ -209,7 +209,7 @@ func ValidateHostname(host string) error {
 	if ip := net.ParseIP(host); ip != nil {
 		return nil
 	}
-	for _, part := range strings.Split(host, ".") {
+	for part := range strings.SplitSeq(host, ".") {
 		if part == "" {
 			return fmt.Errorf("hostname segment cannot be empty")
 		}
