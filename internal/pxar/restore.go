@@ -29,13 +29,6 @@ type restoreJob struct {
 	info EntryInfo
 }
 
-func Restore(ctx context.Context, client *Client, sources []string, destDir string) error {
-	return RestoreWithOptions(ctx, client, sources, RestoreOptions{
-		Mode:    RestoreModeNormal,
-		DestDir: destDir,
-	})
-}
-
 func RestoreWithOptions(ctx context.Context, client *Client, sources []string, opts RestoreOptions) error {
 	if err := os.MkdirAll(opts.DestDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir root: %w", err)
