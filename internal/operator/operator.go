@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -101,7 +102,7 @@ func (o *Operator) Run(ctx context.Context) error {
 	return nil
 }
 
-func (o *Operator) handlePVCAdd(obj interface{}) {
+func (o *Operator) handlePVCAdd(obj any) {
 	pvc, ok := obj.(*corev1.PersistentVolumeClaim)
 	if !ok {
 		return
@@ -109,7 +110,7 @@ func (o *Operator) handlePVCAdd(obj interface{}) {
 	o.processPVC(pvc, nil)
 }
 
-func (o *Operator) handlePVCUpdate(oldObj, newObj interface{}) {
+func (o *Operator) handlePVCUpdate(oldObj, newObj any) {
 	oldPVC, ok := oldObj.(*corev1.PersistentVolumeClaim)
 	if !ok {
 		return
@@ -121,7 +122,7 @@ func (o *Operator) handlePVCUpdate(oldObj, newObj interface{}) {
 	o.processPVC(newPVC, oldPVC)
 }
 
-func (o *Operator) handlePVCDelete(obj interface{}) {
+func (o *Operator) handlePVCDelete(obj any) {
 	pvc, ok := obj.(*corev1.PersistentVolumeClaim)
 	if !ok {
 		return
@@ -139,7 +140,7 @@ func (o *Operator) handlePVCDelete(obj interface{}) {
 	}
 }
 
-func (o *Operator) handlePodDelete(obj interface{}) {
+func (o *Operator) handlePodDelete(obj any) {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		return
@@ -256,12 +257,7 @@ func keyFunc(obj metav1.Object) string {
 
 func isReadWriteOnce(pvc *corev1.PersistentVolumeClaim) bool {
 	accessModes := pvc.Spec.AccessModes
-	for _, mode := range accessModes {
-		if mode == corev1.ReadWriteOnce {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(accessModes, corev1.ReadWriteOnce)
 }
 
 func IsManagedByOperator(pod *corev1.Pod) bool {

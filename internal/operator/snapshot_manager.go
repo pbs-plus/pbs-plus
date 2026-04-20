@@ -159,7 +159,7 @@ func (sm *SnapshotManager) createRestoredPVC(ctx context.Context, namespace, nam
 				},
 			},
 			DataSource: &corev1.TypedLocalObjectReference{
-				APIGroup: strPtr("snapshot.storage.k8s.io"),
+				APIGroup: new("snapshot.storage.k8s.io"),
 				Kind:     "VolumeSnapshot",
 				Name:     snapshotName,
 			},
@@ -264,14 +264,15 @@ func (sm *SnapshotManager) getVolumeSnapshot(ctx context.Context, namespace, nam
 	return result, err
 }
 
+//go:fix inline
 func strPtr(s string) *string {
-	return &s
+	return new(s)
 }
 
 type VolumeSnapshot struct {
 	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              VolumeSnapshotSpec    `json:"spec,omitempty"`
+	metav1.ObjectMeta `json:"metadata"`
+	Spec              VolumeSnapshotSpec    `json:"spec"`
 	Status            *VolumeSnapshotStatus `json:"status,omitempty"`
 }
 
