@@ -6,10 +6,10 @@ import (
 	"context"
 	"sync"
 
-	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
-	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3"
+	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpcfs"
+	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3fs"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
 type FSMount struct {

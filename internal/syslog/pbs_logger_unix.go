@@ -13,8 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/utils"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
+
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
 type JobLogger struct {
@@ -30,7 +31,7 @@ type JobLogger struct {
 var jobLoggers = safemap.New[string, *JobLogger]()
 
 func safeJobLogPath(jobId string) (string, error) {
-	if err := utils.ValidateJobId(jobId); err != nil {
+	if err := conf.ValidateJobId(jobId); err != nil {
 		return "", fmt.Errorf("invalid jobId: %w", err)
 	}
 
