@@ -17,11 +17,12 @@ func TestIsFailedState(t *testing.T) {
 		{"WARNINGS: 3", false},
 		{"WARNINGS: 0", false},
 		{"WARNINGS: 10", false},
+		{"operation canceled", false}, // Manual stop should not retry
 		{"TASK ERROR: connection refused", true},
 		{"exit status 1", true},
 		{"some error message", true},
 		{"lost connection with backup agent", true},
-		{"cancelled", true},
+		{"cancelled", true}, // British spelling is treated as error (only exact "operation canceled" is excluded)
 		// Edge cases: partial prefix matches should not be treated as warnings
 		{"WARNING", true},            // No colon-space after WARNING
 		{"WARNINGS:3", true},         // Missing space after colon
@@ -191,6 +192,7 @@ func TestIsFailedState_EdgeCases(t *testing.T) {
 		{"OK", false, "OK is not a failure"},
 		{"WARNINGS: 3", false, "warnings with count is not a failure"},
 		{"WARNINGS: 0", false, "warnings with zero count is not a failure"},
+		{"operation canceled", false, "manual stop/cancel is not a failure"},
 		{"WARNING", true, "WARNING without S is a failure"},
 		{"WARNINGS", true, "WARNINGS without count is a failure"},
 		{"WARNINGS:3", true, "WARNINGS without space is a failure"},
