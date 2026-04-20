@@ -67,7 +67,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 	arpcTls := tlsConfig.Clone()
 	arpcTls.NextProtos = []string{"pbsarpc"}
 
-	conn, err := dialServer(serverAddr, arpcTls)
+	conn, err := dialServerContext(ctx, serverAddr, arpcTls)
 	if err != nil {
 		syslog.L.Info().WithField("NextProtos", arpcTls.NextProtos).WithField("serverAddr", serverAddr).Write()
 		return nil, fmt.Errorf("server not reachable (%s): %w", serverAddr, err)
