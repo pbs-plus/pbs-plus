@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/rs/zerolog"
 	"golang.org/x/sys/windows/svc/eventlog"
 	"gopkg.in/natefinch/lumberjack.v2"
