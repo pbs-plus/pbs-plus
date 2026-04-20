@@ -98,6 +98,10 @@ func (s *Scheduler) checkBackups() {
 // shouldRunScheduled returns the next run time and true if the backup should be
 // enqueued now. It uses the later of (last enqueued time, last run start time)
 // as the reference point to prevent duplicate launches.
+//
+// On restart, the in-memory lastEnqueued map is lost, so we guard against
+// spuriously catching up on missed schedules by only enqueueing if the
+// scheduled time fell within the current check interval.
 func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.Time, bool) {
 	ev, err := calendarevent.Parse(b.Schedule)
 	if err != nil {
@@ -118,9 +122,30 @@ func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.T
 		return time.Time{}, false
 	}
 
-	if !nextRun.After(now) {
+	// If nextRun is in the future, the schedule hasn't been reached yet.
+	if nextRun.After(now) {
+		return time.Time{}, false
+	}
+
+	// nextRun is in the past. Only enqueue if the scheduled time fell within
+	// the current check interval (30s). This prevents catch-up runs on restart
+	// for schedules that were missed while the service was down, while still
+	// allowing legitimate runs within the current tick.
+	if now.Sub(nextRun) < 30*time.Second {
 		return nextRun, true
 	}
+
+	// The scheduled time was missed by more than one check interval.
+	// Recompute from now so we know the real next future occurrence.
+	futureRun, err := calendarevent.ComputeNextEvent(ev, now, time.Local)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	// Mark this future run as already counted so we don't re-trigger
+	// on the next tick when nextRun is <= now.
+	s.markEnqueued(b.ID, futureRun)
+
 	return time.Time{}, false
 }
 

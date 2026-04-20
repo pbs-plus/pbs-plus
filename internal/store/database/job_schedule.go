@@ -19,14 +19,9 @@ func (backup *Backup) getNextSchedule(ctx context.Context) (*time.Time, error) {
 		return nil, err
 	}
 
-	var refTime time.Time
-	if backup.History.LastRunStarttime > 0 {
-		refTime = time.Unix(backup.History.LastRunStarttime, 0)
-	} else {
-		refTime = time.Now()
-	}
-
-	nextRun, err := calendarevent.ComputeNextEvent(ev, refTime, time.Local)
+	// Always compute from now so NextRun reflects the next future occurrence,
+	// not a past missed run.
+	nextRun, err := calendarevent.ComputeNextEvent(ev, time.Now(), time.Local)
 	if err != nil {
 		return nil, err
 	}
