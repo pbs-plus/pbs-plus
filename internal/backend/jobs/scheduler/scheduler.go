@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,8 +83,8 @@ func (s *Scheduler) checkBackups() {
 			}
 		}
 
-		// Handle retries
-		if b.Retry > 0 && b.History.LastRunState != "OK" && b.History.LastRunState != "" {
+		// Handle retries (only for actual failures, not successes-with-warnings)
+		if b.Retry > 0 && isFailedState(b.History.LastRunState) {
 			if s.shouldRetryBackup(b, now) {
 				syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: backup retry is due, enqueuing").Write()
 				op := backup.NewBackupOperation(b, s.storeInstance, false, false, nil)
@@ -172,12 +173,13 @@ func (s *Scheduler) shouldRetryBackup(b database.Backup, now time.Time) bool {
 		return false
 	}
 
-	// Count retries since the last SUCCESSFUL run.
+	// Count failed attempts since the last SUCCESSFUL run.
+	// Only count actual failures; runs that succeeded with warnings are not failures.
 	upids := b.GetAllUPIDs()
 	lastSuccessTime := b.History.LastSuccessfulEndtime
 	count := 0
 	for _, t := range upids {
-		if t.Endtime > lastSuccessTime && t.Status != "OK" {
+		if t.Endtime > lastSuccessTime && isFailedState(t.Status) {
 			count++
 		}
 	}
@@ -199,7 +201,8 @@ func (s *Scheduler) checkRestores() {
 			continue
 		}
 
-		if r.Retry > 0 && r.History.LastRunState != "OK" && r.History.LastRunState != "" {
+		// Handle retries (only for actual failures, not successes-with-warnings)
+		if r.Retry > 0 && isFailedState(r.History.LastRunState) {
 			if s.shouldRetryRestore(r, now) {
 				syslog.L.Info().WithField("restoreID", r.ID).WithMessage("Scheduler: restore retry is due, enqueuing").Write()
 				op, err := restore.NewRestoreOperation(r, s.storeInstance, false, false)
@@ -225,6 +228,30 @@ func (s *Scheduler) shouldRetryRestore(r database.Restore, now time.Time) bool {
 		return false
 	}
 
-	// Restore doesn't have GetAllUPIDs for now, so we just retry ONCE if last was failure.
+	// Count failed attempts since the last SUCCESSFUL run.
+	// Only count actual failures; runs that succeeded with warnings are not failures.
+	upids := r.GetAllUPIDs()
+	lastSuccessTime := r.History.LastSuccessfulEndtime
+	count := 0
+	for _, t := range upids {
+		if t.Endtime > lastSuccessTime && isFailedState(t.Status) {
+			count++
+		}
+	}
+
+	return count <= r.Retry
+}
+
+// isFailedState returns true if the given task state represents an actual
+// failure, as opposed to a success ("OK") or a success with warnings
+// ("WARNINGS: N"). Empty state is treated as non-failure so that an
+// uninitialised history never triggers a retry.
+func isFailedState(state string) bool {
+	if state == "" || state == "OK" {
+		return false
+	}
+	if strings.HasPrefix(state, "WARNINGS: ") {
+		return false
+	}
 	return true
 }
