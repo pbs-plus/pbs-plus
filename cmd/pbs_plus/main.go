@@ -23,6 +23,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/helpers"
 	backend "github.com/pbs-plus/pbs-plus/internal/backend/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/scheduler"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
 	backuprpc "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
@@ -73,7 +74,7 @@ func main() {
 	var restoresRun arrayFlags
 	flag.Var(&backupsRun, "backup-job", "Backup ID/s to execute")
 	flag.Var(&restoresRun, "restore-job", "Restore ID/s to execute")
-	retryAttempts := flag.String("retry", "", "Current attempt number")
+	_ = flag.String("retry", "", "Current attempt number") // legacy flag, no-op
 	webRun := flag.Bool("web", false, "Backup executed from Web UI")
 	stop := flag.Bool("stop", false, "Stop Job ID instead of executing")
 	flag.Var(&extExclusions, "skip", "Extra exclusions")
@@ -154,10 +155,6 @@ func main() {
 			if err != nil {
 				syslog.L.Error(err).WithField("backupId", backupRun).Write()
 				continue
-			}
-
-			if retryAttempts == nil || *retryAttempts == "" {
-				backupTask.RemoveAllRetrySchedules(context.Background())
 			}
 
 			arrExtExc := []string(extExclusions)
@@ -335,6 +332,8 @@ func main() {
 	}()
 
 	manager := backend.NewManager(mainCtx, utils.MaxConcurrentClients, 100, true)
+	s := scheduler.NewScheduler(mainCtx, storeInstance, manager)
+	s.Start()
 
 	go func() {
 		for {
