@@ -105,13 +105,6 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			decodedBackupIDs = append(decodedBackupIDs, decoded)
-
-			backup, err := storeInstance.Database.GetBackup(decoded)
-			if err != nil {
-				controllers.WriteErrorResponse(w, err)
-				return
-			}
-			backup.RemoveAllRetrySchedules(r.Context())
 		}
 
 		execPath, err := os.Executable()
