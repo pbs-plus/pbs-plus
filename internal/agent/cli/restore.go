@@ -127,6 +127,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 
 	var wg sync.WaitGroup
 	var restoreInitiatedOnce sync.Once
+	restoreDone := make(chan struct{})
 
 	wg.Go(func() {
 		defer syslog.L.Info().WithMessage("CmdRestore: ARPC session handler shutting down").Write()
@@ -145,6 +146,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 		router.Handle("server_ready", func(req *arpc.Request) (arpc.Response, error) {
 			restoreInitiatedOnce.Do(func() {
 				go func() {
+					defer close(restoreDone)
 					err := Restore(session, *restoreId, *srcPath, *destPath, mode)
 					if err != nil {
 						fmt.Fprintln(os.Stderr, "Restore failed:", err)
@@ -176,6 +178,14 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 	}()
 
 	wg.Wait()
+
+	// Wait for restore goroutine to complete logging before exiting
+	select {
+	case <-restoreDone:
+		// Restore completed (success or failure), logs should be flushed
+	case <-time.After(5 * time.Second):
+		// Timeout waiting for restore - it may not have been initiated
+	}
 
 	if session, ok := activeRestoreSessions.Get(*restoreId); ok {
 		session.Close()
