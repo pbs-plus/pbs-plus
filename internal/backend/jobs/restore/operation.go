@@ -18,15 +18,14 @@ import (
 	agenttypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
-	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
+	"github.com/pbs-plus/pbs-plus/internal/store/vfssessions"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 type RestoreOperation struct {
@@ -103,12 +102,12 @@ func (b *RestoreOperation) runPreScript() error {
 	b.queueTask.UpdateDescription("running pre-restore script")
 	b.task.WriteString(fmt.Sprintf("running pre-restore script %s", b.job.PreScript))
 
-	envVars, err := utils.StructToEnvVars(b.job)
+	envVars, err := jobs.StructToEnvVars(b.job)
 	if err != nil {
 		envVars = []string{}
 	}
 
-	scriptOut, _, err := utils.RunShellScript(b.Context(), b.job.PreScript, envVars)
+	scriptOut, _, err := jobs.RunShellScript(b.Context(), b.job.PreScript, envVars)
 	syslog.L.Info().WithJob(b.job.ID).WithMessage(scriptOut).WithField("script", b.job.PreScript).Write()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -150,12 +149,12 @@ func (b *RestoreOperation) runPostScript() {
 		WithJob(job.ID).
 		Write()
 
-	envVars, err := utils.StructToEnvVars(job)
+	envVars, err := jobs.StructToEnvVars(job)
 	if err != nil {
 		envVars = []string{}
 	}
 
-	scriptOut, _, err := utils.RunShellScript(b.Context(), job.PostScript, envVars)
+	scriptOut, _, err := jobs.RunShellScript(b.Context(), job.PostScript, envVars)
 	if err != nil {
 		b.task.WriteString(err.Error())
 		b.task.WriteString(fmt.Sprintf("encountered error while running %s", b.job.PostScript))
@@ -270,7 +269,7 @@ func (b *RestoreOperation) agentExecute() error {
 	}
 
 	socketPath := filepath.Join(
-		constants.RestoreSocketPath,
+		conf.RestoreSocketPath,
 		strings.ReplaceAll(childKey, "|", "-")+".sock",
 	)
 
@@ -358,7 +357,7 @@ func (b *RestoreOperation) localExecute() error {
 
 	childKey := b.job.GetStreamID()
 	socketPath := filepath.Join(
-		constants.RestoreSocketPath,
+		conf.RestoreSocketPath,
 		strings.ReplaceAll(childKey, "|", "-")+".sock",
 	)
 

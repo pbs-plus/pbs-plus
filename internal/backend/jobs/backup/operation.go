@@ -23,7 +23,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 type BackupOperation struct {
@@ -343,7 +342,6 @@ func (b *BackupOperation) Cleanup() {
 		b.waitGroup.Wait()
 
 		b.mu.Lock()
-		utils.ClearIOStats(b.job.CurrentPID)
 		b.job.CurrentPID = 0
 		agentMount := b.agentMount
 		s3Mount := b.s3Mount
@@ -395,12 +393,12 @@ func (b *BackupOperation) runPreScript() error {
 
 	b.updateQueueDescription("running pre-backup script")
 
-	envVars, err := utils.StructToEnvVars(job)
+	envVars, err := jobs.StructToEnvVars(job)
 	if err != nil {
 		envVars = []string{}
 	}
 
-	scriptOut, modEnvVars, err := utils.RunShellScript(b.Context(), job.PreScript, envVars)
+	scriptOut, modEnvVars, err := jobs.RunShellScript(b.Context(), job.PreScript, envVars)
 	syslog.L.Info().WithJob(job.ID).WithMessage(scriptOut).WithField("script", job.PreScript).Write()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -488,12 +486,12 @@ func (b *BackupOperation) runTargetMountScript(target database.Target) error {
 
 	b.updateQueueDescription("running target mount script")
 
-	envVars, err := utils.StructToEnvVars(target)
+	envVars, err := jobs.StructToEnvVars(target)
 	if err != nil {
 		envVars = []string{}
 	}
 
-	scriptOut, _, err := utils.RunShellScript(b.Context(), target.MountScript, envVars)
+	scriptOut, _, err := jobs.RunShellScript(b.Context(), target.MountScript, envVars)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return jobs.ErrCanceled
@@ -735,7 +733,7 @@ func (b *BackupOperation) runPostScript(success bool, warningsNum int) {
 		WithJob(job.ID).
 		Write()
 
-	envVars, err := utils.StructToEnvVars(job)
+	envVars, err := jobs.StructToEnvVars(job)
 	if err != nil {
 		envVars = []string{}
 	}
@@ -743,7 +741,7 @@ func (b *BackupOperation) runPostScript(success bool, warningsNum int) {
 	envVars = append(envVars, fmt.Sprintf("PBS_PLUS__JOB_SUCCESS=%t", success))
 	envVars = append(envVars, fmt.Sprintf("PBS_PLUS__JOB_WARNINGS=%d", warningsNum))
 
-	scriptOut, _, err := utils.RunShellScript(b.Context(), job.PostScript, envVars)
+	scriptOut, _, err := jobs.RunShellScript(b.Context(), job.PostScript, envVars)
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("error encountered while running job post-backup script").

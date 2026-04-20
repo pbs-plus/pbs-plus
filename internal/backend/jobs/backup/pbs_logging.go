@@ -12,9 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/backend/helpers"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 var (
@@ -87,7 +85,7 @@ func processPBSProxyLogs(
 		}
 	}
 
-	logFilePath := utils.GetTaskLogPath(upid)
+	logFilePath := getTaskLogPath(upid)
 
 	inFile, err := os.Open(logFilePath)
 	if err != nil {
@@ -143,7 +141,7 @@ func processPBSProxyLogs(
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		if helpers.IsJunkLog(line) {
+		if IsJunkLog(line) {
 			continue
 		}
 

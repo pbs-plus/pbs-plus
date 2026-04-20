@@ -8,7 +8,6 @@ import (
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/memlocal"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/puzpuzpuz/xsync/v4"
 )
@@ -48,7 +47,7 @@ func InjectBase(base VFSBase) *VFSBase {
 func (fs *VFSBase) GetCacheKey(prefix string, pathKey string) string {
 	sb := keyPool.Get()
 	sb.WriteString(prefix)
-	sb.WriteString(memlocal.Key(pathKey))
+	sb.WriteString(Key(pathKey))
 
 	key := sb.String()
 	keyPool.Put(sb)

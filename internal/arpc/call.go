@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/xtaci/smux"
 )
 
@@ -32,6 +31,37 @@ type SerializableError struct {
 }
 
 type RawStreamHandler func(*smux.Stream) error
+
+// checkRPCError returns an error if the response status is not OK.
+func (s *StreamPipe) checkRPCError(resp *Response) error {
+	if resp.Status != http.StatusOK {
+		if len(resp.Data) > 0 {
+			var serErr SerializableError
+			if err := s.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
+				return UnwrapError(serErr)
+			}
+		}
+		return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+	}
+	return nil
+}
+
+// performHandshake performs the ready/ack handshake for raw stream mode.
+func performHandshake(stream *smux.Stream) error {
+	readySignal := []byte{0xFF}
+	if _, err := stream.Write(readySignal); err != nil {
+		return fmt.Errorf("write ready signal: %w", err)
+	}
+
+	ackByte := make([]byte, 1)
+	if _, err := stream.Read(ackByte); err != nil {
+		return fmt.Errorf("read ack signal: %w", err)
+	}
+	if ackByte[0] != 0xAA {
+		return fmt.Errorf("invalid ack signal: expected 0xAA, got 0x%02X", ackByte[0])
+	}
+	return nil
+}
 
 func (s *StreamPipe) call(ctx context.Context, method string, payload any) (*smux.Stream, *Response, error) {
 	var stream *smux.Stream
@@ -93,34 +123,15 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 			return fmt.Errorf("invalid out handler while in raw stream mode")
 		}
 
-		readySignal := []byte{0xFF}
-		if _, err := stream.Write(readySignal); err != nil {
-			return fmt.Errorf("write ready signal: %w", err)
-		}
-
-		ackByte := make([]byte, 1)
-		if _, err := stream.Read(ackByte); err != nil {
-			return fmt.Errorf("read ack signal: %w", err)
-		}
-		if ackByte[0] != 0xAA {
-			return fmt.Errorf("invalid ack signal: expected 0xAA, got 0x%02X", ackByte[0])
-		}
-
-		err = handler(stream)
-		if err != nil {
+		if err := performHandshake(stream); err != nil {
 			return err
 		}
-		return nil
+
+		return handler(stream)
 	}
 
-	if resp.Status != http.StatusOK {
-		if len(resp.Data) > 0 {
-			var serErr SerializableError
-			if err := s.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
-				return UnwrapError(serErr)
-			}
-		}
-		return fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+	if err := s.checkRPCError(resp); err != nil {
+		return err
 	}
 
 	if out == nil || len(resp.Data) == 0 {
@@ -154,14 +165,8 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", resp.Status)
 	}
 
-	if resp.Status != http.StatusOK {
-		if len(resp.Data) > 0 {
-			var serErr SerializableError
-			if err := s.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
-				return "", UnwrapError(serErr)
-			}
-		}
-		return "", fmt.Errorf("RPC error: %s (status %d)", resp.Message, resp.Status)
+	if err := s.checkRPCError(resp); err != nil {
+		return "", err
 	}
 
 	return resp.Message, nil
@@ -182,18 +187,9 @@ func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any,
 		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
-	readySignal := []byte{0xFF}
-	if _, err := stream.Write(readySignal); err != nil {
-		return 0, fmt.Errorf("write ready signal: %w", err)
+	if err := performHandshake(stream); err != nil {
+		return 0, err
 	}
 
-	ackByte := make([]byte, 1)
-	if _, err := stream.Read(ackByte); err != nil {
-		return 0, fmt.Errorf("read ack signal: %w", err)
-	}
-	if ackByte[0] != 0xAA {
-		return 0, fmt.Errorf("invalid ack signal: expected 0xAA, got 0x%02X", ackByte[0])
-	}
-
-	return binarystream.ReceiveDataInto(stream, dst)
+	return ReceiveDataInto(stream, dst)
 }

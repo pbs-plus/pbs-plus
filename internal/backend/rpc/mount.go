@@ -1,6 +1,6 @@
 //go:build linux
 
-package rpcmount
+package rpc
 
 import (
 	"context"
@@ -14,15 +14,15 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
-	arpcmount "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc/mount"
-	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3"
-	s3mount "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/mount"
+	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpcfs"
+	arpcmount "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpcfs/arpcmount"
+	s3fs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3fs"
+	s3mount "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3fs/s3mount"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfs"
+	"github.com/pbs-plus/pbs-plus/internal/store/vfssessions"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 type BackupArgs struct {
@@ -159,7 +159,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	}
 
 	// Set up the local mount path.
-	mntPath := filepath.Join(constants.AgentMountBasePath, args.BackupId)
+	mntPath := filepath.Join(conf.AgentMountBasePath, args.BackupId)
 
 	if err := arpcmount.Mount(arpcFS, mntPath); err != nil {
 		syslog.L.Error(err).Write()
@@ -222,7 +222,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 	}
 
 	// Set up the local mount path.
-	mntPath := filepath.Join(constants.AgentMountBasePath, args.BackupId)
+	mntPath := filepath.Join(conf.AgentMountBasePath, args.BackupId)
 
 	if err := s3mount.Mount(s3FS, mntPath); err != nil {
 		syslog.L.Error(err).Write()
