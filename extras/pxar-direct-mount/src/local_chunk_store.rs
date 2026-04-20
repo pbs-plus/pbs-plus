@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Error;
+use lru::LruCache;
+use parking_lot::Mutex;
 use pbs_datastore::data_blob::DataBlob;
 use pbs_datastore::read_chunk::ReadChunk;
 use pbs_tools::crypt_config::CryptConfig;
@@ -22,21 +24,75 @@ fn hex_encode(digest: &[u8; 32]) -> [u8; 64] {
     out
 }
 
+struct ChunkCache {
+    lru: LruCache<ChunkKey, Arc<[u8]>>,
+    current_bytes: usize,
+    max_bytes: usize,
+}
+
+impl ChunkCache {
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            lru: LruCache::unbounded(),
+            current_bytes: 0,
+            max_bytes,
+        }
+    }
+
+    fn get(&mut self, key: &ChunkKey) -> Option<Arc<[u8]>> {
+        self.lru.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: ChunkKey, data: Arc<[u8]>) {
+        let entry_bytes = data.len();
+
+        if entry_bytes > self.max_bytes {
+            return;
+        }
+
+        if let Some(existing) = self.lru.peek(&key) {
+            if Arc::ptr_eq(existing, &data) {
+                return;
+            }
+        }
+
+        while self.current_bytes + entry_bytes > self.max_bytes {
+            if let Some((_k, evicted)) = self.lru.pop_lru() {
+                self.current_bytes -= evicted.len();
+            } else {
+                break;
+            }
+        }
+
+        if let Some((_old_key, old_val)) = self.lru.push(key, data) {
+            self.current_bytes -= old_val.len();
+        }
+        self.current_bytes += entry_bytes;
+    }
+}
+
 #[derive(Clone)]
 pub struct LocalChunkStore {
     chunks_root: PathBuf,
     crypt: Option<Arc<CryptConfig>>,
     verify: bool,
+    cache: Arc<Mutex<ChunkCache>>,
 }
 
 impl LocalChunkStore {
-    pub fn new(root: impl Into<PathBuf>, crypt: Option<Arc<CryptConfig>>, verify: bool) -> Self {
+    pub fn with_cache_size(
+        root: impl Into<PathBuf>,
+        crypt: Option<Arc<CryptConfig>>,
+        verify: bool,
+        cache_bytes: usize,
+    ) -> Self {
         let root = root.into();
         let chunks_root = root.join(".chunks");
         Self {
             chunks_root,
             crypt,
             verify,
+            cache: Arc::new(Mutex::new(ChunkCache::new(cache_bytes))),
         }
     }
 
@@ -50,7 +106,14 @@ impl LocalChunkStore {
         path
     }
 
-    fn load_and_decode(&self, digest: &ChunkKey) -> Result<Vec<u8>, Error> {
+    pub fn load_and_decode(&self, digest: &ChunkKey) -> Result<Arc<[u8]>, Error> {
+        {
+            let mut cache = self.cache.lock();
+            if let Some(data) = cache.get(digest) {
+                return Ok(data);
+            }
+        }
+
         let path = self.chunk_path(digest);
         let mut file = File::open(&path)
             .map_err(|e| anyhow::anyhow!("open chunk {} failed: {e}", path.display()))?;
@@ -70,13 +133,21 @@ impl LocalChunkStore {
             }
         }
 
-        Ok(data)
+        let arc: Arc<[u8]> = data.into();
+
+        {
+            let mut cache = self.cache.lock();
+            cache.insert(*digest, Arc::clone(&arc));
+        }
+
+        Ok(arc)
     }
 }
 
 impl ReadChunk for LocalChunkStore {
     fn read_chunk(&self, digest: &ChunkKey) -> Result<Vec<u8>, Error> {
-        self.load_and_decode(digest)
+        let arc = self.load_and_decode(digest)?;
+        Ok(arc.to_vec())
     }
 
     fn read_raw_chunk(&self, digest: &ChunkKey) -> Result<DataBlob, Error> {
@@ -84,5 +155,36 @@ impl ReadChunk for LocalChunkStore {
         let mut file = File::open(&path)
             .map_err(|e| anyhow::anyhow!("open chunk {} failed: {e}", path.display()))?;
         DataBlob::load_from_reader(&mut file)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunk_cache_eviction_respects_byte_limit() {
+        let mut cache = ChunkCache::new(100);
+        let k1 = [1u8; 32];
+        let k2 = [2u8; 32];
+        let k3 = [3u8; 32];
+        cache.insert(k1, Arc::from(vec![0u8; 40].as_slice()));
+        cache.insert(k2, Arc::from(vec![0u8; 40].as_slice()));
+        assert!(cache.get(&k1).is_some());
+        assert!(cache.get(&k2).is_some());
+        cache.insert(k3, Arc::from(vec![0u8; 40].as_slice()));
+        assert!(cache.get(&k1).is_none());
+        assert!(cache.get(&k2).is_some());
+        assert!(cache.get(&k3).is_some());
+        assert!(cache.current_bytes <= 100);
+    }
+
+    #[test]
+    fn chunk_cache_rejects_oversized_entry() {
+        let mut cache = ChunkCache::new(10);
+        let k = [1u8; 32];
+        cache.insert(k, Arc::from(vec![0u8; 20].as_slice()));
+        assert!(cache.get(&k).is_none());
+        assert_eq!(cache.current_bytes, 0);
     }
 }
