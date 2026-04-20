@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,89 +15,50 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
+// QueuedTask represents a task in queued state before execution starts.
 type QueuedTask struct {
 	proxmox.Task
-	sync.Mutex
-	closed  atomic.Bool
-	path    string
-	backup  database.Backup
-	restore database.Restore
+	mu       sync.Mutex
+	closed   atomic.Bool
+	path     string
+	job      any // either database.Backup or database.Restore
+	isBackup bool
 }
 
+// Lock locks the task mutex.
+func (t *QueuedTask) Lock() { t.mu.Lock() }
+
+// Unlock unlocks the task mutex.
+func (t *QueuedTask) Unlock() { t.mu.Unlock() }
+
+// GenerateBackupQueuedTask creates a queued task for backup jobs.
 func GenerateBackupQueuedTask(job database.Backup, web bool) (QueuedTask, error) {
-	targetName := job.Target.GetHostname()
-	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
-
-	wtype := "backup"
-	node := "pbsplusgen-queue"
-
-	task := proxmox.Task{
-		Node:       node,
-		PID:        os.Getpid(),
-		PStart:     proxmox.GetPStart(),
-		StartTime:  time.Now().Unix(),
-		WorkerType: wtype,
-		WID:        wid,
-		User:       proxmox.AUTH_ID,
-	}
-
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, proxmox.AUTH_ID)
-
-	task.UPID = upid
-
-	path, err := proxmox.GetLogPath(upid)
-	if err != nil {
-		return QueuedTask{}, err
-	}
-
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	_ = os.Chown(filepath.Dir(path), 34, 34)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return QueuedTask{}, err
-	}
-
-	err = file.Chown(34, 34)
-	if err != nil {
-		return QueuedTask{}, err
-	}
-	defer file.Close()
-
-	timestamp := time.Now().Format(time.RFC3339)
-	statusLine := fmt.Sprintf("%s: TASK QUEUED: ", timestamp)
-	if web {
-		statusLine += "job started from web UI\n"
-	} else {
-		statusLine += "job started from schedule\n"
-	}
-
-	if _, err := file.WriteString(statusLine); err != nil {
-		return QueuedTask{}, fmt.Errorf("failed to write status line: %w", err)
-	}
-
-	task.Status = "running"
-
-	return QueuedTask{Task: task, backup: job, path: path}, nil
+	return generateQueuedTask(job, job.Target.GetHostname(), "backup", web, true)
 }
 
+// GenerateRestoreQueuedTask creates a queued task for restore jobs.
 func GenerateRestoreQueuedTask(job database.Restore, web bool) (QueuedTask, error) {
-	targetName := job.DestTarget.GetHostname()
-	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
+	return generateQueuedTask(job, job.DestTarget.GetHostname(), "reader", web, false)
+}
 
-	wtype := "reader"
-	node := "pbsplusgen-queue"
+// generateQueuedTask creates a queued task with common setup logic.
+func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (QueuedTask, error) {
+	var store string
+	if isBackup {
+		store = job.(database.Backup).Store
+	} else {
+		store = job.(database.Restore).Store
+	}
+
+	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(target))
+	startTime := now()
+	startTimeHex := fmt.Sprintf("%08X", uint32(startTime.Unix()))
 
 	task := proxmox.Task{
-		Node:       node,
+		Node:       "pbsplusgen-queue",
 		PID:        os.Getpid(),
 		PStart:     proxmox.GetPStart(),
-		StartTime:  time.Now().Unix(),
+		StartTime:  startTime.Unix(),
 		WorkerType: wtype,
 		WID:        wid,
 		User:       proxmox.AUTH_ID,
@@ -107,77 +67,58 @@ func GenerateRestoreQueuedTask(job database.Restore, web bool) (QueuedTask, erro
 	pid := fmt.Sprintf("%08X", task.PID)
 	pstart := fmt.Sprintf("%08X", task.PStart)
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
+	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, wtype, wid, proxmox.AUTH_ID)
 
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, proxmox.AUTH_ID)
-
-	task.UPID = upid
-
-	path, err := proxmox.GetLogPath(upid)
+	file, path, err := createTaskLogFile(task.UPID)
 	if err != nil {
 		return QueuedTask{}, err
 	}
 
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	_ = os.Chown(filepath.Dir(path), 34, 34)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return QueuedTask{}, err
+	source := "web UI"
+	if !web {
+		source = "schedule"
 	}
-
-	err = file.Chown(34, 34)
-	if err != nil {
-		return QueuedTask{}, err
-	}
-	defer file.Close()
-
-	timestamp := time.Now().Format(time.RFC3339)
-	statusLine := fmt.Sprintf("%s: TASK QUEUED: ", timestamp)
-	if web {
-		statusLine += "job started from web UI\n"
-	} else {
-		statusLine += "job started from schedule\n"
-	}
-
-	if _, err := file.WriteString(statusLine); err != nil {
-		return QueuedTask{}, fmt.Errorf("failed to write status line: %w", err)
-	}
+	timestamp := now().Format(time.RFC3339)
+	fmt.Fprintf(file, "%s: TASK QUEUED: job started from %s\n", timestamp, source)
+	file.Close()
 
 	task.Status = "running"
-
-	return QueuedTask{Task: task, restore: job, path: path}, nil
+	return QueuedTask{Task: task, path: path, job: job, isBackup: isBackup}, nil
 }
 
-func (task *QueuedTask) UpdateDescription(desc string) error {
-	if task.closed.Load() {
+// UpdateDescription updates the queued task status description.
+func (t *QueuedTask) UpdateDescription(desc string) error {
+	if t.closed.Load() {
 		return nil
 	}
 
-	task.Lock()
-	defer task.Unlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
-	file, err := os.OpenFile(task.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	// Re-create with Truncate to overwrite
+	file, err := os.OpenFile(t.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	timestamp := time.Now().Format(time.RFC3339)
-	statusLine := fmt.Sprintf("%s: TASK QUEUED: ", timestamp)
-	statusLine += desc + "\n"
-
-	if _, err := file.WriteString(statusLine); err != nil {
+	timestamp := now().Format(time.RFC3339)
+	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: %s\n", timestamp, desc); err != nil {
 		return fmt.Errorf("failed to write status line: %w", err)
 	}
 
-	syslog.L.Info().WithJob(task.backup.ID).WithMessage(desc).Write()
-
+	if t.isBackup {
+		syslog.L.Info().WithJob(t.job.(database.Backup).ID).WithMessage(desc).Write()
+	} else {
+		syslog.L.Info().WithJob(t.job.(database.Restore).ID).WithMessage(desc).Write()
+	}
 	return nil
 }
 
-func (task *QueuedTask) Close() {
-	task.Lock()
-	defer task.Unlock()
-
-	_ = os.Remove(task.path)
-	task.closed.Store(true)
+// Close removes the queued task file.
+func (t *QueuedTask) Close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_ = os.Remove(t.path)
+	t.closed.Store(true)
 }
