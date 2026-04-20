@@ -24,10 +24,10 @@ func (q *Queries) BackupExists(ctx context.Context, id string) (int64, error) {
 const createBackup = `-- name: CreateBackup :exec
 INSERT INTO backups (
     id, store, mode, source_mode, read_mode, target, subpath, schedule, comment,
-    notification_mode, namespace, current_pid, last_run_upid, last_successful_upid, 
-    retry, retry_interval, max_dir_entries, pre_script, post_script, 
-    include_xattr, legacy_xattr
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    notification_mode, namespace, current_pid, last_run_upid, last_successful_upid,
+    retry, retry_interval, max_dir_entries, pre_script, post_script,
+    include_xattr, legacy_xattr, last_run_status, retry_count
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateBackupParams struct {
@@ -52,6 +52,8 @@ type CreateBackupParams struct {
 	PostScript         string         `json:"post_script"`
 	IncludeXattr       sql.NullInt64  `json:"include_xattr"`
 	LegacyXattr        sql.NullInt64  `json:"legacy_xattr"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 }
 
 func (q *Queries) CreateBackup(ctx context.Context, arg CreateBackupParams) error {
@@ -77,6 +79,8 @@ func (q *Queries) CreateBackup(ctx context.Context, arg CreateBackupParams) erro
 		arg.PostScript,
 		arg.IncludeXattr,
 		arg.LegacyXattr,
+		arg.LastRunStatus,
+		arg.RetryCount,
 	)
 	return err
 }
@@ -95,14 +99,15 @@ func (q *Queries) DeleteBackup(ctx context.Context, id string) (int64, error) {
 
 const getBackup = `-- name: GetBackup :one
 SELECT
-    j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, 
-    j.schedule, j.comment, j.notification_mode, j.namespace, j.current_pid, 
-    j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval, 
+    j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath,
+    j.schedule, j.comment, j.notification_mode, j.namespace, j.current_pid,
+    j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval,
     j.max_dir_entries, j.pre_script, j.post_script, j.include_xattr, j.legacy_xattr,
+    j.last_run_status, j.retry_count,
     t.name, t.path, t.agent_host, t.volume_id, t.volume_type, t.volume_name,
     t.volume_fs, t.volume_total_bytes, t.volume_used_bytes, t.volume_free_bytes,
     t.volume_total, t.volume_used, t.volume_free, t.mount_script,
-    ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth, 
+    ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
 LEFT JOIN targets t ON j.target = t.name
@@ -133,6 +138,8 @@ type GetBackupRow struct {
 	PostScript         string         `json:"post_script"`
 	IncludeXattr       sql.NullInt64  `json:"include_xattr"`
 	LegacyXattr        sql.NullInt64  `json:"legacy_xattr"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 	Name               sql.NullString `json:"name"`
 	Path               sql.NullString `json:"path"`
 	AgentHost          sql.NullString `json:"agent_host"`
@@ -179,6 +186,8 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 		&i.PostScript,
 		&i.IncludeXattr,
 		&i.LegacyXattr,
+		&i.LastRunStatus,
+		&i.RetryCount,
 		&i.Name,
 		&i.Path,
 		&i.AgentHost,
@@ -204,14 +213,15 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 
 const listAllBackups = `-- name: ListAllBackups :many
 SELECT
-    j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, 
-    j.schedule, j.comment, j.notification_mode, j.namespace, j.current_pid, 
-    j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval, 
+    j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath,
+    j.schedule, j.comment, j.notification_mode, j.namespace, j.current_pid,
+    j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval,
     j.max_dir_entries, j.pre_script, j.post_script, j.include_xattr, j.legacy_xattr,
+    j.last_run_status, j.retry_count,
     t.name, t.path, t.agent_host, t.volume_id, t.volume_type, t.volume_name,
     t.volume_fs, t.volume_total_bytes, t.volume_used_bytes, t.volume_free_bytes,
     t.volume_total, t.volume_used, t.volume_free, t.mount_script,
-    ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth, 
+    ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
 LEFT JOIN targets t ON j.target = t.name
@@ -241,6 +251,8 @@ type ListAllBackupsRow struct {
 	PostScript         string         `json:"post_script"`
 	IncludeXattr       sql.NullInt64  `json:"include_xattr"`
 	LegacyXattr        sql.NullInt64  `json:"legacy_xattr"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 	Name               sql.NullString `json:"name"`
 	Path               sql.NullString `json:"path"`
 	AgentHost          sql.NullString `json:"agent_host"`
@@ -293,6 +305,8 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 			&i.PostScript,
 			&i.IncludeXattr,
 			&i.LegacyXattr,
+			&i.LastRunStatus,
+			&i.RetryCount,
 			&i.Name,
 			&i.Path,
 			&i.AgentHost,
@@ -328,10 +342,11 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 
 const listQueuedBackups = `-- name: ListQueuedBackups :many
 SELECT
-    j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath, 
-    j.schedule, j.comment, j.notification_mode, j.namespace, j.current_pid, 
-    j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval, 
+    j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath,
+    j.schedule, j.comment, j.notification_mode, j.namespace, j.current_pid,
+    j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval,
     j.max_dir_entries, j.pre_script, j.post_script, j.include_xattr, j.legacy_xattr,
+    j.last_run_status, j.retry_count,
     t.volume_used_bytes, t.mount_script
 FROM backups j
 LEFT JOIN targets t ON j.target = t.name
@@ -361,6 +376,8 @@ type ListQueuedBackupsRow struct {
 	PostScript         string         `json:"post_script"`
 	IncludeXattr       sql.NullInt64  `json:"include_xattr"`
 	LegacyXattr        sql.NullInt64  `json:"legacy_xattr"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 	VolumeUsedBytes    sql.NullInt64  `json:"volume_used_bytes"`
 	MountScript        sql.NullString `json:"mount_script"`
 }
@@ -396,6 +413,8 @@ func (q *Queries) ListQueuedBackups(ctx context.Context) ([]ListQueuedBackupsRow
 			&i.PostScript,
 			&i.IncludeXattr,
 			&i.LegacyXattr,
+			&i.LastRunStatus,
+			&i.RetryCount,
 			&i.VolumeUsedBytes,
 			&i.MountScript,
 		); err != nil {
@@ -413,12 +432,13 @@ func (q *Queries) ListQueuedBackups(ctx context.Context) ([]ListQueuedBackupsRow
 }
 
 const updateBackup = `-- name: UpdateBackup :exec
-UPDATE backups 
+UPDATE backups
 SET store = ?, mode = ?, source_mode = ?, read_mode = ?, target = ?,
     subpath = ?, schedule = ?, comment = ?, notification_mode = ?,
     namespace = ?, current_pid = ?, last_run_upid = ?, retry = ?,
-    retry_interval = ?, last_successful_upid = ?, pre_script = ?, 
-    post_script = ?, max_dir_entries = ?, include_xattr = ?, legacy_xattr = ?
+    retry_interval = ?, last_successful_upid = ?, pre_script = ?,
+    post_script = ?, max_dir_entries = ?, include_xattr = ?, legacy_xattr = ?,
+    last_run_status = ?, retry_count = ?
 WHERE id = ?
 `
 
@@ -443,6 +463,8 @@ type UpdateBackupParams struct {
 	MaxDirEntries      sql.NullInt64  `json:"max_dir_entries"`
 	IncludeXattr       sql.NullInt64  `json:"include_xattr"`
 	LegacyXattr        sql.NullInt64  `json:"legacy_xattr"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 	ID                 string         `json:"id"`
 }
 
@@ -468,6 +490,8 @@ func (q *Queries) UpdateBackup(ctx context.Context, arg UpdateBackupParams) erro
 		arg.MaxDirEntries,
 		arg.IncludeXattr,
 		arg.LegacyXattr,
+		arg.LastRunStatus,
+		arg.RetryCount,
 		arg.ID,
 	)
 	return err
