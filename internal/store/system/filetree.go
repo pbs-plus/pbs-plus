@@ -7,7 +7,6 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 func FileTree(basePath string, subPath string) (types.FileTreeResp, error) {
@@ -39,7 +38,7 @@ func FileTree(basePath string, subPath string) (types.FileTreeResp, error) {
 		}
 
 		virtualItemPath := filepath.Join(safeRequestedPath, entry.Name())
-		encodedPath := utils.EncodePath(virtualItemPath)
+		encodedPath := EncodePath(virtualItemPath)
 
 		item := types.FileTreeEntry{
 			Filepath: encodedPath,

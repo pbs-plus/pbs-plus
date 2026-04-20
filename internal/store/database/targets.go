@@ -8,11 +8,10 @@ import (
 	"fmt"
 	"strings"
 
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
-	secrets "github.com/pbs-plus/pbs-plus/internal/store/database/secrets"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3fs/s3url"
 	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 func (database *Database) CreateTarget(tx *Transaction, target Target) (err error) {
@@ -52,7 +51,7 @@ func (database *Database) CreateTarget(tx *Transaction, target Target) (err erro
 	}
 
 	_, s3Err := s3url.Parse(target.Path)
-	if target.Path != "" && !utils.ValidateTargetPath(target.Path) && s3Err != nil {
+	if target.Path != "" && !validate.ValidateTargetPath(target.Path) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -118,7 +117,7 @@ func (database *Database) UpdateTarget(tx *Transaction, target Target) (err erro
 	}
 
 	_, s3Err := s3url.Parse(target.Path)
-	if target.Path != "" && !utils.ValidateTargetPath(target.Path) && s3Err != nil {
+	if target.Path != "" && !validate.ValidateTargetPath(target.Path) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -183,7 +182,7 @@ func (database *Database) UpsertTarget(tx *Transaction, target Target) (err erro
 	}
 
 	_, s3Err := s3url.Parse(target.Path)
-	if target.Path != "" && !utils.ValidateTargetPath(target.Path) && s3Err != nil {
+	if target.Path != "" && !validate.ValidateTargetPath(target.Path) && s3Err != nil {
 		return fmt.Errorf("invalid target path: %s", target.Path)
 	}
 
@@ -243,7 +242,7 @@ func (database *Database) AddS3Secret(tx *Transaction, targetName string, secret
 	}
 	q = database.queries.WithTx(tx.Tx)
 
-	encrypted, err := secrets.Encrypt(secret)
+	encrypted, err := Encrypt(secret)
 	if err != nil {
 		return fmt.Errorf("AddS3Secret: error encrypting secret: %w", err)
 	}
@@ -355,7 +354,7 @@ func (database *Database) GetS3Secret(name string) (string, error) {
 		return "", ErrSecretNotFound
 	}
 
-	decrypted, err := secrets.Decrypt(encrypted)
+	decrypted, err := Decrypt(encrypted)
 	if err != nil {
 		return "", fmt.Errorf("GetS3Secret: failed to decrypt secret: %w", err)
 	}
@@ -447,7 +446,7 @@ func (t *Target) populateInfo() {
 				t.S3Info = s3
 				t.Type = TargetTypeS3
 			}
-		} else if utils.IsValid(t.Path) {
+		} else if validate.IsValid(t.Path) {
 			t.Type = TargetTypeLocal
 		}
 	} else if t.AgentHost.Name != "" {
