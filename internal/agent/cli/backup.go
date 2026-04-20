@@ -25,10 +25,11 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
+
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 var (
@@ -80,7 +81,7 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 		os.Exit(1)
 	}
 
-	if err := utils.ValidateJobId(*backupId); err != nil {
+	if err := validate.ValidateJobId(*backupId); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid backupId: %v\n", err)
 		syslog.L.Error(err).WithMessage("CmdBackup: backupId validation failed").Write()
 		os.Exit(1)
@@ -104,7 +105,7 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 	if err != nil {
 		os.Exit(1)
 	}
-	uri, err := utils.ParseURI(serverUrl.Value)
+	uri, err := agent.ParseURI(serverUrl.Value)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -113,7 +114,7 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 		os.Exit(1)
 	}
 
-	address := fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort)
+	address := fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), conf.ARPCServerPort)
 	headers := http.Header{}
 	headers.Add("X-PBS-Plus-BackupId", *backupId)
 
@@ -237,7 +238,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupId strin
 		WithField("backupId", backupId).
 		Write()
 
-	if err := utils.ValidateJobId(backupId); err != nil {
+	if err := validate.ValidateJobId(backupId); err != nil {
 		syslog.L.Error(err).WithMessage("ExecBackup: backupId validation failed").Write()
 		return "", -1, fmt.Errorf("invalid backupId: %w", err)
 	}
@@ -356,7 +357,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 		WithField("backupId", backupId).
 		Write()
 
-	if err := utils.ValidateJobId(backupId); err != nil {
+	if err := validate.ValidateJobId(backupId); err != nil {
 		syslog.L.Error(err).WithMessage("Backup: backupId validation failed").Write()
 		return nil, "", fmt.Errorf("invalid backupId: %w", err)
 	}

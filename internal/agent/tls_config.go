@@ -12,9 +12,8 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 var (
@@ -82,7 +81,7 @@ func InvalidateTLSConfigCache() {
 }
 
 func CheckAndRenewCertificate() error {
-	const renewalWindow = max(constants.TLSCARotationGraceDays-1, 1) * 24 * time.Hour
+	const renewalWindow = max(conf.TLSCARotationGraceDays-1, 1) * 24 * time.Hour
 
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
 	if err != nil {
@@ -125,7 +124,7 @@ func CheckAndRenewCertificate() error {
 }
 
 func renewCertificate() error {
-	hostname, err := utils.GetAgentHostname()
+	hostname, err := GetAgentHostname()
 	if err != nil {
 		return fmt.Errorf("renewCertificate: failed to get hostname - %w", err)
 	}
@@ -137,7 +136,7 @@ func renewCertificate() error {
 
 	encodedCSR := base64.StdEncoding.EncodeToString(csr)
 
-	drives, err := utils.GetLocalDrives()
+	drives, err := GetLocalDrives()
 	if err != nil {
 		return fmt.Errorf("renewCertificate: failed to get local drives list: %w", err)
 	}
