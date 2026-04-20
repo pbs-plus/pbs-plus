@@ -1861,6 +1861,7 @@ dependencies = [
  "proxmox-sys",
  "pxar",
  "sha2",
+ "tempfile",
  "tokio",
 ]
 
