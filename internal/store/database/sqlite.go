@@ -14,8 +14,8 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
@@ -82,7 +82,7 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		}
 
 		qtx := database.queries.WithTx(tx)
-		for _, exclusion := range constants.DefaultExclusions {
+		for _, exclusion := range conf.DefaultExclusions {
 			err = qtx.CreateExclusion(ctx, sqlc.CreateExclusionParams{
 				JobID:   "",
 				Path:    exclusion,

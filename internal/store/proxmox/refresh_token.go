@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -255,10 +255,10 @@ func (token *APIToken) saveToFile() error {
 		return nil
 	}
 
-	_ = os.MkdirAll(constants.DbBasePath, os.FileMode(0755))
+	_ = os.MkdirAll(conf.DbBasePath, os.FileMode(0755))
 
 	tokenFileContent, _ := json.Marshal(token)
-	file, err := os.OpenFile(filepath.Join(constants.DbBasePath, "pbs-plus-token.json"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	file, err := os.OpenFile(filepath.Join(conf.DbBasePath, "pbs-plus-token.json"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func (token *APIToken) saveToFile() error {
 }
 
 func getAPITokenFromFile() (*APIToken, error) {
-	jsonFile, err := os.Open(filepath.Join(constants.DbBasePath, "pbs-plus-token.json"))
+	jsonFile, err := os.Open(filepath.Join(conf.DbBasePath, "pbs-plus-token.json"))
 	if err != nil {
 		return nil, err
 	}

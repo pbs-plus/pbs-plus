@@ -13,11 +13,11 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpc"
+	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpcfs"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	sqlite "github.com/pbs-plus/pbs-plus/internal/store/database"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 
 	_ "modernc.org/sqlite"
 )
@@ -61,7 +61,7 @@ func (s *Store) SignAgentCSR(csr []byte) (cert []byte, ca []byte, err error) {
 
 func (s *Store) ValidateServerCertificates() error {
 	serverCertPath, serverKeyPath, caCertPath, caKeyPath, err := mtls.EnsureLocalCAAndServerCert(
-		filepath.Dir(constants.AgentTLSCACertFile),
+		filepath.Dir(conf.AgentTLSCACertFile),
 		"PBS Plus",
 		"PBS Plus CA",
 		2048,
@@ -116,7 +116,7 @@ func (s *Store) GetAPIServerTLSConfig() (*tls.Config, error) {
 	s.mTLS.Lock()
 	defer s.mTLS.Unlock()
 
-	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, nil, tls.VerifyClientCertIfGiven, false)
+	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, conf.AgentTLSPrevCACertFile, nil, tls.VerifyClientCertIfGiven, false)
 	return conf, err
 }
 
@@ -124,7 +124,7 @@ func (s *Store) GetARPCServerTLSConfig() (*tls.Config, error) {
 	s.mTLS.Lock()
 	defer s.mTLS.Unlock()
 
-	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, constants.AgentTLSPrevCACertFile, []string{"pbsarpc"}, tls.VerifyClientCertIfGiven, true)
+	conf, err := mtls.BuildServerTLS(s.mTLS.ServerCertPath, s.mTLS.ServerKeyPath, s.mTLS.CACertPath, conf.AgentTLSPrevCACertFile, []string{"pbsarpc"}, tls.VerifyClientCertIfGiven, true)
 	return conf, err
 }
 

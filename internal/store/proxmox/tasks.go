@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 )
 
 type TaskCache struct {
@@ -82,7 +82,7 @@ func GetTaskEndTime(task Task) (int64, error) {
 }
 
 func IsUPIDRunning(upid string) bool {
-	activePath := filepath.Join(constants.TaskLogsBasePath, "active")
+	activePath := filepath.Join(conf.TaskLogsBasePath, "active")
 	cmd := exec.Command("grep", "-F", upid, activePath)
 	output, err := cmd.Output()
 	if err != nil {
@@ -99,7 +99,7 @@ func IsUPIDRunning(upid string) bool {
 }
 
 func CleanupPbsPlusActiveTasks() error {
-	filePath := constants.ActiveLogsPath
+	filePath := conf.ActiveLogsPath
 	targetNode := "pbsplus"
 
 	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)

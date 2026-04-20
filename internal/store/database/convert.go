@@ -53,15 +53,15 @@ func fromNullInt64(ni sql.NullInt64) int {
 }
 
 func boolToNullInt64(b bool) sql.NullInt64 {
-	i := boolToInt64(b)
-	return sql.NullInt64{Int64: int64(i), Valid: true}
+	v := int64(0)
+	if b {
+		v = 1
+	}
+	return sql.NullInt64{Int64: v, Valid: true}
 }
 
 func fromNullInt64ToBool(ni sql.NullInt64) bool {
-	if ni.Valid {
-		return int64ToBool(ni.Int64)
-	}
-	return false
+	return ni.Valid && ni.Int64 != 0
 }
 
 func toNullBool(b bool) sql.NullBool {
@@ -69,21 +69,7 @@ func toNullBool(b bool) sql.NullBool {
 }
 
 func fromNullBool(ni sql.NullBool) bool {
-	if ni.Valid {
-		return ni.Bool
-	}
-	return false
-}
-
-func boolToInt64(b bool) int64 {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-func int64ToBool(i int64) bool {
-	return i != 0
+	return ni.Valid && ni.Bool
 }
 
 func interfaceToString(i any) string {

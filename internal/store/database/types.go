@@ -1,7 +1,7 @@
 package database
 
 import (
-	s3url "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3/url"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3fs/s3url"
 )
 
 type Backup struct {

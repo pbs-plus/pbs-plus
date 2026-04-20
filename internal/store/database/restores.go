@@ -10,15 +10,16 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
+
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 func (database *Database) generateUniqueRestoreID(restore Restore) (string, error) {
-	baseID := utils.Slugify(restore.DestTarget.Name)
+	baseID := validate.Slugify(restore.DestTarget.Name)
 	if baseID == "" {
 		return "", fmt.Errorf("invalid target: slugified value is empty")
 	}
@@ -91,13 +92,13 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 	if restore.Store == "" {
 		return errors.New("datastore is empty")
 	}
-	if !utils.IsValidID(restore.ID) && restore.ID != "" {
+	if !validate.IsValidID(restore.ID) && restore.ID != "" {
 		return fmt.Errorf("CreateRestore: invalid id string -> %s", restore.ID)
 	}
-	if !utils.IsValidPathString(restore.SrcPath) {
+	if !validate.IsValidPathString(restore.SrcPath) {
 		return fmt.Errorf("invalid source path string: %s", restore.SrcPath)
 	}
-	if !utils.IsValidPathString(restore.DestSubpath) {
+	if !validate.IsValidPathString(restore.DestSubpath) {
 		return fmt.Errorf("invalid dest path string: %s", restore.DestSubpath)
 	}
 	if restore.RetryInterval <= 0 {
@@ -249,7 +250,7 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 	q = database.queries.WithTx(tx.Tx)
 
 	// Validation
-	if !utils.IsValidID(restore.ID) && restore.ID != "" {
+	if !validate.IsValidID(restore.ID) && restore.ID != "" {
 		return fmt.Errorf("UpdateRestore: invalid id string -> %s", restore.ID)
 	}
 	if restore.DestTarget.Name == "" {
@@ -261,10 +262,10 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 	if restore.Store == "" {
 		return errors.New("datastore is empty")
 	}
-	if !utils.IsValidPathString(restore.SrcPath) {
+	if !validate.IsValidPathString(restore.SrcPath) {
 		return fmt.Errorf("invalid source path string: %s", restore.SrcPath)
 	}
-	if !utils.IsValidPathString(restore.DestSubpath) {
+	if !validate.IsValidPathString(restore.DestSubpath) {
 		return fmt.Errorf("invalid dest path string: %s", restore.DestSubpath)
 	}
 	if restore.RetryInterval <= 0 {
@@ -308,7 +309,7 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 }
 
 func (database *Database) linkRestoreLog(restoreID, upid string) {
-	restoreLogsPath := filepath.Join(constants.RestoreLogsBasePath, restoreID)
+	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, restoreID)
 	if err := os.MkdirAll(restoreLogsPath, 0755); err != nil {
 		syslog.L.Error(fmt.Errorf("linkRestoreLog: failed to create log dir: %w", err)).
 			WithField("id", restoreID).
@@ -497,7 +498,7 @@ func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) 
 		return ErrRestoreNotFound
 	}
 
-	restoreLogsPath := filepath.Join(constants.RestoreLogsBasePath, id)
+	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, id)
 	if err := os.RemoveAll(restoreLogsPath); err != nil {
 		if !os.IsNotExist(err) {
 			syslog.L.Error(fmt.Errorf("DeleteRestore: failed removing restore logs: %w", err)).

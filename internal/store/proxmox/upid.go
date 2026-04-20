@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -184,7 +184,7 @@ func GetLogPath(upid string) (string, error) {
 	parsed := upidSplit[3]
 	logFolder := parsed[len(parsed)-2:]
 
-	logPath := filepath.Join(constants.TaskLogsBasePath, logFolder, upid)
+	logPath := filepath.Join(conf.TaskLogsBasePath, logFolder, upid)
 
 	return logPath, nil
 }

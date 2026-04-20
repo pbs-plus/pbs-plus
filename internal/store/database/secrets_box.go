@@ -1,4 +1,4 @@
-package simplebox
+package database
 
 import (
 	"crypto/rand"
@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/crypto/nacl/box"
 )
@@ -23,11 +23,11 @@ func init() {
 }
 
 func loadOrCreateKey() error {
-	if err := os.MkdirAll(filepath.Dir(constants.SecretsKeyPath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(conf.SecretsKeyPath), 0700); err != nil {
 		return err
 	}
 
-	if data, err := os.ReadFile(constants.SecretsKeyPath); err == nil {
+	if data, err := os.ReadFile(conf.SecretsKeyPath); err == nil {
 		if len(data) != 64 {
 			return errors.New("invalid key file")
 		}
@@ -47,7 +47,7 @@ func loadOrCreateKey() error {
 	privateKey = priv
 
 	keyData := append(pub[:], priv[:]...)
-	if err := os.WriteFile(constants.SecretsKeyPath, keyData, 0600); err != nil {
+	if err := os.WriteFile(conf.SecretsKeyPath, keyData, 0600); err != nil {
 		return err
 	}
 

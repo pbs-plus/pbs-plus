@@ -11,15 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
+
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 func (database *Database) generateUniqueJobId(backup Backup) (string, error) {
-	baseID := utils.Slugify(backup.Target.Name)
+	baseID := validate.Slugify(backup.Target.Name)
 	if baseID == "" {
 		return "", fmt.Errorf("invalid target: slugified value is empty")
 	}
@@ -89,16 +90,16 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 	if backup.Store == "" {
 		return errors.New("datastore is empty")
 	}
-	if !utils.IsValidID(backup.ID) && backup.ID != "" {
+	if !validate.IsValidID(backup.ID) && backup.ID != "" {
 		return fmt.Errorf("CreateBackup: invalid id string -> %s", backup.ID)
 	}
-	if !utils.IsValidNamespace(backup.Namespace) && backup.Namespace != "" {
+	if !validate.IsValidNamespace(backup.Namespace) && backup.Namespace != "" {
 		return fmt.Errorf("invalid namespace string: %s", backup.Namespace)
 	}
-	if err := utils.ValidateOnCalendar(backup.Schedule); err != nil && backup.Schedule != "" {
+	if err := validate.ValidateOnCalendar(backup.Schedule); err != nil && backup.Schedule != "" {
 		return fmt.Errorf("invalid schedule string: %s", backup.Schedule)
 	}
-	if !utils.IsValidPathString(backup.Subpath) {
+	if !validate.IsValidPathString(backup.Subpath) {
 		return fmt.Errorf("invalid subpath string: %s", backup.Subpath)
 	}
 
@@ -138,8 +139,8 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 		MaxDirEntries:      toNullInt64(backup.MaxDirEntries),
 		PreScript:          backup.PreScript,
 		PostScript:         backup.PostScript,
-		IncludeXattr:       sql.NullInt64{Int64: boolToInt64(backup.IncludeXattr), Valid: true},
-		LegacyXattr:        sql.NullInt64{Int64: boolToInt64(backup.LegacyXattr), Valid: true},
+		IncludeXattr:       boolToNullInt64(backup.IncludeXattr),
+		LegacyXattr:        boolToNullInt64(backup.LegacyXattr),
 	})
 	if err != nil {
 		return fmt.Errorf("CreateBackup: error inserting backup: %w", err)
@@ -303,7 +304,7 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 	q = database.queries.WithTx(tx.Tx)
 
 	// Validation
-	if !utils.IsValidID(backup.ID) && backup.ID != "" {
+	if !validate.IsValidID(backup.ID) && backup.ID != "" {
 		return fmt.Errorf("UpdateBackup: invalid id string -> %s", backup.ID)
 	}
 	if backup.Target.Name == "" {
@@ -318,13 +319,13 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 	if backup.Retry < 0 {
 		backup.Retry = 0
 	}
-	if !utils.IsValidNamespace(backup.Namespace) && backup.Namespace != "" {
+	if !validate.IsValidNamespace(backup.Namespace) && backup.Namespace != "" {
 		return fmt.Errorf("invalid namespace string: %s", backup.Namespace)
 	}
-	if err := utils.ValidateOnCalendar(backup.Schedule); err != nil && backup.Schedule != "" {
+	if err := validate.ValidateOnCalendar(backup.Schedule); err != nil && backup.Schedule != "" {
 		return fmt.Errorf("invalid schedule string: %s", backup.Schedule)
 	}
-	if !utils.IsValidPathString(backup.Subpath) {
+	if !validate.IsValidPathString(backup.Subpath) {
 		return fmt.Errorf("invalid subpath string: %s", backup.Subpath)
 	}
 	if strings.TrimSpace(backup.ReadMode) == "" {
@@ -381,7 +382,6 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 		}
 	}
 
-
 	if backup.History.LastRunUpid != "" {
 		go database.linkBackupLog(backup.ID, backup.History.LastRunUpid)
 	}
@@ -391,7 +391,7 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 }
 
 func (database *Database) linkBackupLog(backupID, upid string) {
-	backupLogsPath := filepath.Join(constants.BackupLogsBasePath, backupID)
+	backupLogsPath := filepath.Join(conf.BackupLogsBasePath, backupID)
 	if err := os.MkdirAll(backupLogsPath, 0755); err != nil {
 		syslog.L.Error(fmt.Errorf("linkBackupLog: failed to create log dir: %w", err)).
 			WithField("id", backupID).
@@ -642,7 +642,7 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 		return ErrBackupNotFound
 	}
 
-	backupLogsPath := filepath.Join(constants.BackupLogsBasePath, id)
+	backupLogsPath := filepath.Join(conf.BackupLogsBasePath, id)
 	if err := os.RemoveAll(backupLogsPath); err != nil {
 		if !os.IsNotExist(err) {
 			syslog.L.Error(fmt.Errorf("DeleteBackup: failed removing backup logs: %w", err)).
@@ -668,7 +668,7 @@ func (b *Backup) GetStreamID() string {
 }
 
 func (b *Backup) GetAllUPIDs() []Tasks {
-	backupLogsPath := filepath.Join(constants.BackupLogsBasePath, b.ID)
+	backupLogsPath := filepath.Join(conf.BackupLogsBasePath, b.ID)
 	if err := os.MkdirAll(backupLogsPath, 0755); err != nil {
 		syslog.L.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err)).
 			WithField("id", b.ID).

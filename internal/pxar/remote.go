@@ -11,7 +11,6 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
 )
@@ -199,7 +198,7 @@ func (s *RemoteServer) handleRead(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
-		_ = binarystream.SendDataFromReader(bytes.NewReader(data), len(data), stream)
+		_ = arpc.SendDataFromReader(bytes.NewReader(data), len(data), stream)
 	}}, nil
 }
 

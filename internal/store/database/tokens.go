@@ -10,22 +10,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 func generateWinInstall(token string) string {
 	forceDisableIrm := os.Getenv("PBS_PLUS_FORCE_DISABLE_IRM_GENERATE")
 	hostname := os.Getenv("PBS_PLUS_HOSTNAME")
-	if utils.IsProxyCertValid(hostname) && forceDisableIrm != "true" {
-		return fmt.Sprintf("irm https://%s%s/plus/agent/install/win?t=%s | iex", hostname, constants.ServerAPIExtPort, token)
+	if IsProxyCertValid(hostname) && forceDisableIrm != "true" {
+		return fmt.Sprintf("irm https://%s%s/plus/agent/install/win?t=%s | iex", hostname, conf.ServerAPIExtPort, token)
 	}
 
 	return fmt.Sprintf(`[System.Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; `+
 		`[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; `+
-		`iex(New-Object Net.WebClient).DownloadString("https://%s:%s/plus/agent/install/win?t=%s")`, hostname, strings.TrimPrefix(constants.ServerAPIExtPort, ":"), token)
+		`iex(New-Object Net.WebClient).DownloadString("https://%s:%s/plus/agent/install/win?t=%s")`, hostname, strings.TrimPrefix(conf.ServerAPIExtPort, ":"), token)
 }
 
 func (database *Database) CreateToken(expiration time.Duration, comment string) error {

@@ -10,7 +10,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/store/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils/pattern"
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 	_ "modernc.org/sqlite"
 )
 
@@ -50,7 +50,7 @@ func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) 
 	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
-	if !pattern.IsValidPattern(exclusion.Path) {
+	if !validate.IsValidPattern(exclusion.Path) {
 		return fmt.Errorf("CreateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
@@ -177,7 +177,7 @@ func (database *Database) UpdateExclusion(tx *Transaction, exclusion Exclusion) 
 	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
-	if !pattern.IsValidPattern(exclusion.Path) {
+	if !validate.IsValidPattern(exclusion.Path) {
 		return fmt.Errorf("UpdateExclusion: invalid path pattern -> %s", exclusion.Path)
 	}
 
