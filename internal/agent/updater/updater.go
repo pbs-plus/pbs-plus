@@ -165,20 +165,6 @@ func New(cfg Config) (*Updater, error) {
 	return up, nil
 }
 
-func (u *Updater) CheckNow() error {
-	if u.manager == nil {
-		return fmt.Errorf("updater not initialized")
-	}
-	return u.manager.CheckNow()
-}
-
-func (u *Updater) Restart() error {
-	if u.manager == nil {
-		return fmt.Errorf("updater not initialized")
-	}
-	return u.manager.Restart()
-}
-
 type agentSource struct {
 	versionURL     string
 	binaryURL      string
