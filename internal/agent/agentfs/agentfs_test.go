@@ -27,7 +27,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xtaci/smux"
@@ -383,7 +382,7 @@ func TestAgentFSServer(t *testing.T) {
 		n := 0
 		buf := make([]byte, 64*1024)
 		readDirHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
-			n, err = binarystream.ReceiveDataInto(st, buf)
+			n, err = arpc.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
 				return err
 			}
@@ -438,7 +437,7 @@ func TestAgentFSServer(t *testing.T) {
 
 		readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, 25)
-			n, err := binarystream.ReceiveDataInto(st, buf)
+			n, err := arpc.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
 				return err
 			}
@@ -489,7 +488,7 @@ func TestAgentFSServer(t *testing.T) {
 
 			readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 				buf := make([]byte, readSize)
-				_, err := binarystream.ReceiveDataInto(st, buf)
+				_, err := arpc.ReceiveDataInto(st, buf)
 				if err != nil && !errors.Is(err, io.EOF) {
 					return err
 				}
@@ -533,7 +532,7 @@ func TestAgentFSServer(t *testing.T) {
 		var receivedLargeFileBytes bytes.Buffer
 		readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, readSize)
-			n, err := binarystream.ReceiveDataInto(st, buf)
+			n, err := arpc.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
 				return err
 			}
@@ -786,7 +785,7 @@ func TestAgentFSServer(t *testing.T) {
 				var goroutineReadBytes bytes.Buffer
 				readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 					buf := make([]byte, readSize)
-					n, err := binarystream.ReceiveDataInto(st, buf)
+					n, err := arpc.ReceiveDataInto(st, buf)
 					if err != nil && !errors.Is(err, io.EOF) {
 						return err
 					}
@@ -895,7 +894,7 @@ func TestAgentFSServer(t *testing.T) {
 		var buffer1 bytes.Buffer
 		readAtHandler1 := arpc.RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, readAtPayload1.Length)
-			n, copyErr := binarystream.ReceiveDataInto(st, buf)
+			n, copyErr := arpc.ReceiveDataInto(st, buf)
 			if copyErr != nil && !errors.Is(copyErr, io.EOF) {
 				return fmt.Errorf("read from stream failed: %w", copyErr)
 			}
@@ -906,7 +905,7 @@ func TestAgentFSServer(t *testing.T) {
 		var buffer2 bytes.Buffer
 		readAtHandler2 := arpc.RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, readAtPayload2.Length)
-			n, copyErr := binarystream.ReceiveDataInto(st, buf)
+			n, copyErr := arpc.ReceiveDataInto(st, buf)
 			if copyErr != nil && !errors.Is(copyErr, io.EOF) {
 				return fmt.Errorf("read from stream failed: %w", copyErr)
 			}
@@ -978,7 +977,7 @@ func TestAgentFSServer(t *testing.T) {
 
 		readDirHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 			buf := make([]byte, 64*1024)
-			n, err := binarystream.ReceiveDataInto(st, buf)
+			n, err := arpc.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
 				return err
 			}
@@ -1034,7 +1033,7 @@ func TestAgentFSServer(t *testing.T) {
 
 			readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
 				buf := make([]byte, readSize)
-				_, err := binarystream.ReceiveDataInto(st, buf)
+				_, err := arpc.ReceiveDataInto(st, buf)
 				if err != nil && !errors.Is(err, io.EOF) {
 					return err
 				}

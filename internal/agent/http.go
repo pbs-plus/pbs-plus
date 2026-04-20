@@ -9,8 +9,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
 var httpClient *http.Client
@@ -43,7 +42,7 @@ func AgentHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (
 		return nil, fmt.Errorf("AgentHTTPRequestAttempt: server url not found -> %w", err)
 	}
 
-	parsedServerUrl, err := utils.ParseURI(serverUrl.Value)
+	parsedServerUrl, err := ParseURI(serverUrl.Value)
 	if err != nil {
 		return nil, fmt.Errorf("AgentHTTPRequestAttempt: server url is invalid -> %w", err)
 	}
@@ -53,7 +52,7 @@ func AgentHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (
 		fmt.Sprintf(
 			"https://%s%s%s",
 			strings.TrimSuffix(parsedServerUrl.Hostname(), ":"),
-			constants.AgentAPIPort,
+			conf.AgentAPIPort,
 			url,
 		),
 		body,
@@ -63,14 +62,14 @@ func AgentHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (
 		return nil, fmt.Errorf("AgentHTTPRequestAttempt: error creating http request -> %w", err)
 	}
 
-	hostname, err := utils.GetAgentHostname()
+	hostname, err := GetAgentHostname()
 	if err != nil {
 		return nil, fmt.Errorf("AgentHTTPRequestAttempt: failed to get hostname -> %w", err)
 	}
 
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("X-PBS-Agent", hostname)
-	req.Header.Add("X-PBS-Plus-Version", constants.Version)
+	req.Header.Add("X-PBS-Plus-Version", conf.Version)
 
 	tlsConfig, err := GetTLSConfig()
 	if err != nil {
