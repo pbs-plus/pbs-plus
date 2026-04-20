@@ -12,10 +12,10 @@ import (
 
 const createRestore = `-- name: CreateRestore :exec
 INSERT INTO restores (
-    id, store, namespace, snapshot, src_path, dest_target, dest_subpath, 
+    id, store, namespace, snapshot, src_path, dest_target, dest_subpath,
     comment, current_pid, last_run_upid, last_successful_upid, retry,
-    retry_interval, pre_script, post_script, restore_mode
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    retry_interval, pre_script, post_script, restore_mode, last_run_status, retry_count
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateRestoreParams struct {
@@ -35,6 +35,8 @@ type CreateRestoreParams struct {
 	PreScript          string         `json:"pre_script"`
 	PostScript         string         `json:"post_script"`
 	RestoreMode        int64          `json:"restore_mode"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 }
 
 func (q *Queries) CreateRestore(ctx context.Context, arg CreateRestoreParams) error {
@@ -55,6 +57,8 @@ func (q *Queries) CreateRestore(ctx context.Context, arg CreateRestoreParams) er
 		arg.PreScript,
 		arg.PostScript,
 		arg.RestoreMode,
+		arg.LastRunStatus,
+		arg.RetryCount,
 	)
 	return err
 }
@@ -73,14 +77,14 @@ func (q *Queries) DeleteRestore(ctx context.Context, id string) (int64, error) {
 
 const getRestore = `-- name: GetRestore :one
 SELECT
-    j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, 
-    j.dest_subpath, j.comment, j.current_pid, j.last_run_upid, 
+    j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target,
+    j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
-    j.restore_mode,
+    j.restore_mode, j.last_run_status, j.retry_count,
     t.name, t.path, t.agent_host, t.volume_id, t.volume_type, t.volume_name,
     t.volume_fs, t.volume_total_bytes, t.volume_used_bytes, t.volume_free_bytes,
     t.volume_total, t.volume_used, t.volume_free, t.mount_script,
-    ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth, 
+    ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM restores j
 LEFT JOIN targets t ON j.dest_target = t.name
@@ -106,6 +110,8 @@ type GetRestoreRow struct {
 	PreScript          string         `json:"pre_script"`
 	PostScript         string         `json:"post_script"`
 	RestoreMode        int64          `json:"restore_mode"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 	Name               sql.NullString `json:"name"`
 	Path               sql.NullString `json:"path"`
 	AgentHost          sql.NullString `json:"agent_host"`
@@ -147,6 +153,8 @@ func (q *Queries) GetRestore(ctx context.Context, id string) (GetRestoreRow, err
 		&i.PreScript,
 		&i.PostScript,
 		&i.RestoreMode,
+		&i.LastRunStatus,
+		&i.RetryCount,
 		&i.Name,
 		&i.Path,
 		&i.AgentHost,
@@ -172,14 +180,14 @@ func (q *Queries) GetRestore(ctx context.Context, id string) (GetRestoreRow, err
 
 const listAllRestores = `-- name: ListAllRestores :many
 SELECT
-    j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, 
-    j.dest_subpath, j.comment, j.current_pid, j.last_run_upid, 
+    j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target,
+    j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
-    j.restore_mode,
+    j.restore_mode, j.last_run_status, j.retry_count,
     t.name, t.path, t.agent_host, t.volume_id, t.volume_type, t.volume_name,
     t.volume_fs, t.volume_total_bytes, t.volume_used_bytes, t.volume_free_bytes,
     t.volume_total, t.volume_used, t.volume_free, t.mount_script,
-    ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth, 
+    ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM restores j
 LEFT JOIN targets t ON j.dest_target = t.name
@@ -204,6 +212,8 @@ type ListAllRestoresRow struct {
 	PreScript          string         `json:"pre_script"`
 	PostScript         string         `json:"post_script"`
 	RestoreMode        int64          `json:"restore_mode"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 	Name               sql.NullString `json:"name"`
 	Path               sql.NullString `json:"path"`
 	AgentHost          sql.NullString `json:"agent_host"`
@@ -251,6 +261,8 @@ func (q *Queries) ListAllRestores(ctx context.Context) ([]ListAllRestoresRow, er
 			&i.PreScript,
 			&i.PostScript,
 			&i.RestoreMode,
+			&i.LastRunStatus,
+			&i.RetryCount,
 			&i.Name,
 			&i.Path,
 			&i.AgentHost,
@@ -286,10 +298,10 @@ func (q *Queries) ListAllRestores(ctx context.Context) ([]ListAllRestoresRow, er
 
 const listQueuedRestores = `-- name: ListQueuedRestores :many
 SELECT
-    j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target, 
-    j.dest_subpath, j.comment, j.current_pid, j.last_run_upid, 
+    j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target,
+    j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
-    j.restore_mode
+    j.restore_mode, j.last_run_status, j.retry_count
 FROM restores j
 LEFT JOIN targets t ON j.dest_target = t.name
 WHERE j.last_run_upid LIKE '%pbsplusgen-queue%'
@@ -313,6 +325,8 @@ type ListQueuedRestoresRow struct {
 	PreScript          string         `json:"pre_script"`
 	PostScript         string         `json:"post_script"`
 	RestoreMode        int64          `json:"restore_mode"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 }
 
 func (q *Queries) ListQueuedRestores(ctx context.Context) ([]ListQueuedRestoresRow, error) {
@@ -341,6 +355,8 @@ func (q *Queries) ListQueuedRestores(ctx context.Context) ([]ListQueuedRestoresR
 			&i.PreScript,
 			&i.PostScript,
 			&i.RestoreMode,
+			&i.LastRunStatus,
+			&i.RetryCount,
 		); err != nil {
 			return nil, err
 		}
@@ -367,11 +383,11 @@ func (q *Queries) RestoreExists(ctx context.Context, id string) (int64, error) {
 }
 
 const updateRestore = `-- name: UpdateRestore :exec
-UPDATE restores 
-SET store = ?, namespace = ?, snapshot = ?, src_path = ?, dest_target = ?, 
-    dest_subpath = ?, comment = ?, current_pid = ?, last_run_upid = ?, 
-    retry = ?, retry_interval = ?, last_successful_upid = ?, 
-    pre_script = ?, post_script = ?, restore_mode = ?
+UPDATE restores
+SET store = ?, namespace = ?, snapshot = ?, src_path = ?, dest_target = ?,
+    dest_subpath = ?, comment = ?, current_pid = ?, last_run_upid = ?,
+    retry = ?, retry_interval = ?, last_successful_upid = ?,
+    pre_script = ?, post_script = ?, restore_mode = ?, last_run_status = ?, retry_count = ?
 WHERE id = ?
 `
 
@@ -391,6 +407,8 @@ type UpdateRestoreParams struct {
 	PreScript          string         `json:"pre_script"`
 	PostScript         string         `json:"post_script"`
 	RestoreMode        int64          `json:"restore_mode"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 	ID                 string         `json:"id"`
 }
 
@@ -411,6 +429,8 @@ func (q *Queries) UpdateRestore(ctx context.Context, arg UpdateRestoreParams) er
 		arg.PreScript,
 		arg.PostScript,
 		arg.RestoreMode,
+		arg.LastRunStatus,
+		arg.RetryCount,
 		arg.ID,
 	)
 	return err

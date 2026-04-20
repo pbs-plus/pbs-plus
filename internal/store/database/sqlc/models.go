@@ -38,6 +38,8 @@ type Backup struct {
 	PostScript         string         `json:"post_script"`
 	IncludeXattr       sql.NullInt64  `json:"include_xattr"`
 	LegacyXattr        sql.NullInt64  `json:"legacy_xattr"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 }
 
 type Exclusion struct {
@@ -64,6 +66,8 @@ type Restore struct {
 	PreScript          string         `json:"pre_script"`
 	PostScript         string         `json:"post_script"`
 	RestoreMode        int64          `json:"restore_mode"`
+	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
+	RetryCount         sql.NullInt64  `json:"retry_count"`
 }
 
 type Script struct {
