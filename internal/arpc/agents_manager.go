@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
 	"github.com/xtaci/smux"
 	"golang.org/x/time/rate"
 )

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	binarystream "github.com/pbs-plus/pbs-plus/internal/arpc/binary"
 	"github.com/xtaci/smux"
 )
 
@@ -356,7 +355,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 			Status: 213,
 			RawStream: func(st *smux.Stream) {
 				payload := []byte("hello world")
-				_ = binarystream.SendDataFromReader(bytes.NewReader(payload), len(payload), st)
+				_ = SendDataFromReader(bytes.NewReader(payload), len(payload), st)
 				_ = st.Close()
 			},
 		}
@@ -376,7 +375,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 	var received []byte
 	handler := RawStreamHandler(func(st *smux.Stream) error {
 		buf := make([]byte, len("hello world"))
-		n, err := binarystream.ReceiveDataInto(st, buf)
+		n, err := ReceiveDataInto(st, buf)
 		if err != nil {
 			return fmt.Errorf("receive failed: %w", err)
 		}
