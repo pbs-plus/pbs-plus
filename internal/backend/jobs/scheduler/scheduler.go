@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
@@ -83,14 +82,12 @@ func (s *Scheduler) checkBackups() {
 			}
 		}
 
-		// Handle retries (only for actual failures, not successes-with-warnings)
-		if b.Retry > 0 && isFailedState(b.History.LastRunState) {
-			if s.shouldRetryBackup(b, now) {
-				syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: backup retry is due, enqueuing").Write()
-				op := backup.NewBackupOperation(b, s.storeInstance, false, false, nil)
-				if err := s.manager.Enqueue(op); err != nil {
-					syslog.L.Error(err).WithField("backupID", b.ID).WithMessage("Scheduler: failed to enqueue backup retry").Write()
-				}
+		// Handle retries using typed status and persistent retry count
+		if b.Retry > 0 && s.shouldRetryBackup(b, now) {
+			syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: backup retry is due, enqueuing").Write()
+			op := backup.NewBackupOperation(b, s.storeInstance, false, false, nil)
+			if err := s.manager.Enqueue(op); err != nil {
+				syslog.L.Error(err).WithField("backupID", b.ID).WithMessage("Scheduler: failed to enqueue backup retry").Write()
 			}
 		}
 	}
@@ -173,18 +170,20 @@ func (s *Scheduler) shouldRetryBackup(b database.Backup, now time.Time) bool {
 		return false
 	}
 
-	// Count failed attempts since the last SUCCESSFUL run.
-	// Only count actual failures; runs that succeeded with warnings are not failures.
-	upids := b.GetAllUPIDs()
-	lastSuccessTime := b.History.LastSuccessfulEndtime
-	count := 0
-	for _, t := range upids {
-		if t.Endtime > lastSuccessTime && isFailedState(t.Status) {
-			count++
-		}
+	// Use typed status for retry decision - much more reliable than string parsing
+	// Fall back to legacy string parsing for records before migration
+	shouldRetry := b.History.LastRunStatus.ShouldRetry()
+	if b.History.LastRunStatus == database.JobStatusUnknown {
+		// For pre-migration records or uninitialized status, fall back to string parsing
+		shouldRetry = isFailedState(b.History.LastRunState)
 	}
 
-	return count <= b.Retry
+	if !shouldRetry {
+		return false
+	}
+
+	// Use persistent retry count - this survives restarts and log rotation
+	return b.History.RetryCount < b.Retry
 }
 
 func (s *Scheduler) checkRestores() {
@@ -201,18 +200,16 @@ func (s *Scheduler) checkRestores() {
 			continue
 		}
 
-		// Handle retries (only for actual failures, not successes-with-warnings)
-		if r.Retry > 0 && isFailedState(r.History.LastRunState) {
-			if s.shouldRetryRestore(r, now) {
-				syslog.L.Info().WithField("restoreID", r.ID).WithMessage("Scheduler: restore retry is due, enqueuing").Write()
-				op, err := restore.NewRestoreOperation(r, s.storeInstance, false, false)
-				if err != nil {
-					syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to create restore operation").Write()
-					continue
-				}
-				if err := s.manager.Enqueue(op); err != nil {
-					syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to enqueue restore retry").Write()
-				}
+		// Handle retries using typed status and persistent retry count
+		if r.Retry > 0 && s.shouldRetryRestore(r, now) {
+			syslog.L.Info().WithField("restoreID", r.ID).WithMessage("Scheduler: restore retry is due, enqueuing").Write()
+			op, err := restore.NewRestoreOperation(r, s.storeInstance, false, false)
+			if err != nil {
+				syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to create restore operation").Write()
+				continue
+			}
+			if err := s.manager.Enqueue(op); err != nil {
+				syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to enqueue restore retry").Write()
 			}
 		}
 	}
@@ -228,34 +225,24 @@ func (s *Scheduler) shouldRetryRestore(r database.Restore, now time.Time) bool {
 		return false
 	}
 
-	// Count failed attempts since the last SUCCESSFUL run.
-	// Only count actual failures; runs that succeeded with warnings are not failures.
-	upids := r.GetAllUPIDs()
-	lastSuccessTime := r.History.LastSuccessfulEndtime
-	count := 0
-	for _, t := range upids {
-		if t.Endtime > lastSuccessTime && isFailedState(t.Status) {
-			count++
-		}
+	// Use typed status for retry decision
+	shouldRetry := r.History.LastRunStatus.ShouldRetry()
+	if r.History.LastRunStatus == database.JobStatusUnknown {
+		// For pre-migration records, fall back to string parsing
+		shouldRetry = isFailedState(r.History.LastRunState)
 	}
 
-	return count <= r.Retry
+	if !shouldRetry {
+		return false
+	}
+
+	// Use persistent retry count
+	return r.History.RetryCount < r.Retry
 }
 
-// isFailedState returns true if the given task state represents an actual
-// failure, as opposed to a success ("OK"), a success with warnings
-// ("WARNINGS: N"), or a cancellation ("operation canceled"). Empty state is
-// treated as non-failure so that an uninitialised history never triggers a retry.
+// isFailedState provides backward compatibility for legacy records that don't have
+// the typed LastRunStatus field. It parses the string status to determine if
+// a retry should be attempted.
 func isFailedState(state string) bool {
-	if state == "" || state == "OK" {
-		return false
-	}
-	if strings.HasPrefix(state, "WARNINGS: ") {
-		return false
-	}
-	// Manual stop/cancellation should not trigger retries
-	if state == "operation canceled" {
-		return false
-	}
-	return true
+	return database.JobStatusFromString(state).ShouldRetry()
 }
