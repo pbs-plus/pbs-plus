@@ -270,11 +270,6 @@ func (pm *PodManager) getPodName(pvc *corev1.PersistentVolumeClaim) string {
 	return AgentPodPrefix + sanitizedName
 }
 
-//go:fix inline
-func int64Ptr(i int64) *int64 {
-	return new(i)
-}
-
 func createQuantity(s string) resource.Quantity {
 	return resource.MustParse(s)
 }
