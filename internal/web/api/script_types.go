@@ -1,0 +1,18 @@
+//go:build linux
+
+package api
+
+import "github.com/pbs-plus/pbs-plus/internal/store/database"
+
+type ScriptsResponse struct {
+	Data   []database.Script `json:"data"`
+	Digest string            `json:"digest"`
+}
+
+type ScriptConfigResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    database.Script   `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
+}
