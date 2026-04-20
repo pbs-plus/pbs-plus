@@ -15,12 +15,12 @@ import (
 )
 
 type Scheduler struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	storeInstance   *store.Store
-	manager         *jobs.Manager
-	lastEnqueued    map[string]time.Time // tracks last scheduled run time per backup ID
-	lastEnqueuedMu  sync.Mutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	storeInstance  *store.Store
+	manager        *jobs.Manager
+	lastEnqueued   map[string]time.Time // tracks last scheduled run time per backup ID
+	lastEnqueuedMu sync.Mutex
 }
 
 func NewScheduler(ctx context.Context, storeInstance *store.Store, manager *jobs.Manager) *Scheduler {

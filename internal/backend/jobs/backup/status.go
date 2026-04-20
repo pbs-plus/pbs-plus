@@ -3,53 +3,31 @@
 package backup
 
 import (
-	"fmt"
-	"sync"
-
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-var backupMutexes sync.Map
-
 func updateBackupStatus(succeeded bool, warningsNum int, backup database.Backup, task proxmox.Task, storeInstance *store.Store) error {
-	value, _ := backupMutexes.LoadOrStore(backup.ID, &sync.Mutex{})
-	mu := value.(*sync.Mutex)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	taskFound, err := proxmox.GetTaskByUPID(task.UPID)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("unable to get task by upid").Write()
-		return err
-	}
-
-	latestBackup, err := storeInstance.Database.GetBackup(backup.ID)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("unable to get backup").Write()
-		return err
-	}
-
-	latestBackup.CurrentPID = backup.CurrentPID
-	latestBackup.History.LastRunUpid = taskFound.UPID
-	latestBackup.History.LastRunState = taskFound.Status
-	latestBackup.History.LastRunEndtime = taskFound.EndTime
-
-	if warningsNum > 0 && succeeded {
-		latestBackup.History.LastRunState = fmt.Sprintf("WARNINGS: %d", warningsNum)
-	}
-
-	if succeeded {
-		latestBackup.History.LastSuccessfulUpid = taskFound.UPID
-		latestBackup.History.LastSuccessfulEndtime = task.EndTime
-	}
-
-	if err := storeInstance.Database.UpdateBackup(nil, latestBackup); err != nil {
-		return err
-	}
-
-	return nil
+	return jobs.UpdateJobHistory(
+		backup.ID,
+		backup.CurrentPID,
+		succeeded,
+		warningsNum,
+		task,
+		func() (database.JobHistory, int, error) {
+			b, err := storeInstance.Database.GetBackup(backup.ID)
+			return b.History, b.CurrentPID, err
+		},
+		func(history database.JobHistory, currentPID int) error {
+			b, err := storeInstance.Database.GetBackup(backup.ID)
+			if err != nil {
+				return err
+			}
+			b.CurrentPID = currentPID
+			b.History = history
+			return storeInstance.Database.UpdateBackup(nil, b)
+		},
+	)
 }

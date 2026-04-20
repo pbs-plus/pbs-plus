@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
 var (
