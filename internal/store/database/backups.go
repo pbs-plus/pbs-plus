@@ -141,6 +141,8 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 		PostScript:         backup.PostScript,
 		IncludeXattr:       boolToNullInt64(backup.IncludeXattr),
 		LegacyXattr:        boolToNullInt64(backup.LegacyXattr),
+		LastRunStatus:      toNullInt64(int(backup.History.LastRunStatus)),
+		RetryCount:         toNullInt64(backup.History.RetryCount),
 	})
 	if err != nil {
 		return fmt.Errorf("CreateBackup: error inserting backup: %w", err)
@@ -214,6 +216,8 @@ func (database *Database) GetBackup(id string) (Backup, error) {
 		History: JobHistory{
 			LastRunUpid:        fromNullString(row.LastRunUpid),
 			LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+			LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
+			RetryCount:         fromNullInt64(row.RetryCount),
 		},
 		Retry:         fromNullInt64(row.Retry),
 		RetryInterval: fromNullInt64(row.RetryInterval),
@@ -356,6 +360,8 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 		MaxDirEntries:      toNullInt64(backup.MaxDirEntries),
 		IncludeXattr:       boolToNullInt64(backup.IncludeXattr),
 		LegacyXattr:        boolToNullInt64(backup.LegacyXattr),
+		LastRunStatus:      toNullInt64(int(backup.History.LastRunStatus)),
+		RetryCount:         toNullInt64(backup.History.RetryCount),
 		ID:                 backup.ID,
 	})
 	if err != nil {
@@ -494,6 +500,8 @@ func (database *Database) GetAllBackups() ([]Backup, error) {
 			History: JobHistory{
 				LastRunUpid:        fromNullString(row.LastRunUpid),
 				LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
+				RetryCount:         fromNullInt64(row.RetryCount),
 			},
 			Retry:         fromNullInt64(row.Retry),
 			RetryInterval: fromNullInt64(row.RetryInterval),
@@ -566,6 +574,8 @@ func (database *Database) GetAllQueuedBackups() ([]Backup, error) {
 			History: JobHistory{
 				LastRunUpid:        fromNullString(row.LastRunUpid),
 				LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
+				RetryCount:         fromNullInt64(row.RetryCount),
 			},
 			Retry:         fromNullInt64(row.Retry),
 			RetryInterval: fromNullInt64(row.RetryInterval),
