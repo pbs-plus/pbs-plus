@@ -17,13 +17,12 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/lifecycle"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 
 	_ "net/http/pprof"
 
-	_ "github.com/pbs-plus/pbs-plus/internal/utils/memlimit"
+	_ "github.com/pbs-plus/pbs-plus/internal/memlimit"
 )
 
 var Version = "v0.0.0"
@@ -101,7 +100,7 @@ func (p *pbsService) run() {
 
 		innerWg.Go(func() {
 			_ = lifecycle.UpdateDrives()
-			ticker := time.NewTicker(utils.ComputeDelay())
+			ticker := time.NewTicker(agent.ComputeDelay())
 			defer ticker.Stop()
 			for {
 				select {
@@ -109,7 +108,7 @@ func (p *pbsService) run() {
 					return
 				case <-ticker.C:
 					_ = lifecycle.UpdateDrives()
-					ticker.Reset(utils.ComputeDelay())
+					ticker.Reset(agent.ComputeDelay())
 				}
 			}
 		})
@@ -178,7 +177,7 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-	constants.Version = Version
+	conf.Version = Version
 	cli.Entry()
 
 	svcConfig := &service.Config{
