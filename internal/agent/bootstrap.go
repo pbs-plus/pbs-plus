@@ -12,16 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 )
 
 type BootstrapRequest struct {
 	Hostname        string            `json:"hostname"`
 	CSR             string            `json:"csr"`
-	Drives          []utils.DriveInfo `json:"drives"`
+	Drives          []types.DriveInfo `json:"drives"`
 	OperatingSystem string            `json:"os"`
 }
 
@@ -41,7 +41,7 @@ func Bootstrap() error {
 		return fmt.Errorf("Bootstrap: server url not found -> %w", err)
 	}
 
-	hostname, err := utils.GetAgentHostname()
+	hostname, err := types.GetAgentHostname()
 	if err != nil {
 		return fmt.Errorf("Bootstrap: failed to get hostname -> %w", err)
 	}
@@ -53,7 +53,7 @@ func Bootstrap() error {
 
 	encodedCSR := base64.StdEncoding.EncodeToString(csr)
 
-	drives, err := utils.GetLocalDrives()
+	drives, err := GetLocalDrives()
 	if err != nil {
 		return fmt.Errorf("Bootstrap: failed to get local drives list: %w", err)
 	}
@@ -68,7 +68,7 @@ func Bootstrap() error {
 		return fmt.Errorf("failed to marshal bootstrap request: %w", err)
 	}
 
-	parsedServerUrl, err := utils.ParseURI(serverUrl.Value)
+	parsedServerUrl, err := ParseURI(serverUrl.Value)
 	if err != nil {
 		return fmt.Errorf("Bootstrap: server url is invalid -> %w", err)
 	}
@@ -78,7 +78,7 @@ func Bootstrap() error {
 		fmt.Sprintf(
 			"https://%s%s%s",
 			strings.TrimSuffix(parsedServerUrl.Hostname(), ":"),
-			constants.AgentAPIPort,
+			conf.AgentAPIPort,
 			"/plus/agent/bootstrap",
 		),
 		bytes.NewBuffer(reqBody),

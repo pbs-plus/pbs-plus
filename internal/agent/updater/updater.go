@@ -19,7 +19,7 @@ import (
 	"github.com/fynelabs/selfupdate"
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -116,7 +116,7 @@ func New(cfg Config) (*Updater, error) {
 		versionURL: "/api2/json/plus/version",
 		binaryURL:  fmt.Sprintf("/api2/json/plus/binary?%s", queryString),
 		sigURL:     fmt.Sprintf("/api2/json/plus/binary/sig?%s", queryString),
-		currentVer: constants.Version,
+		currentVer: conf.Version,
 		minConstr:  cfg.MinConstraint,
 	}
 

@@ -21,37 +21,32 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/backend/helpers"
 	backend "github.com/pbs-plus/pbs-plus/internal/backend/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/scheduler"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
-	backuprpc "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
+	"github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
+
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
 	"github.com/pbs-plus/pbs-plus/internal/web"
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers/agents"
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers/exclusions"
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers/plus"
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers/scripts"
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers/targets"
-	"github.com/pbs-plus/pbs-plus/internal/web/controllers/tokens"
-	mw "github.com/pbs-plus/pbs-plus/internal/web/middlewares"
+	"github.com/pbs-plus/pbs-plus/internal/web/api"
 
 	"net/http/pprof"
 
-	_ "github.com/pbs-plus/pbs-plus/internal/utils/memlimit"
+	_ "github.com/pbs-plus/pbs-plus/internal/memlimit"
 )
 
 var Version = "v0.0.0"
 
 func init() {
-	utils.IsServer = true
+	conf.IsServer = true
+	conf.InitBuffers()
 }
 
 type arrayFlags []string
@@ -87,7 +82,7 @@ func main() {
 		fmt.Println("         /var/log/proxmox-backup/tasks")
 		fmt.Println()
 		fmt.Println("All log entries with the following substrings will be removed if found in any log file:")
-		for _, substr := range helpers.JunkSubstrings {
+		for _, substr := range backup.JunkSubstrings {
 			fmt.Printf(" - %s\n", substr)
 		}
 		fmt.Println()
@@ -117,7 +112,7 @@ func main() {
 
 		fmt.Println("Proceeding with log cleanup...")
 
-		removed, err := helpers.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
+		removed, err := backup.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -139,7 +134,7 @@ func main() {
 
 	// Handle backup execution
 	if len(backupsRun) > 0 || len(restoresRun) > 0 {
-		conn, err := net.DialTimeout("unix", constants.JobMutateSocketPath, 5*time.Minute)
+		conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
 		if err != nil {
 			syslog.L.Error(err).
 				WithField("backups", backupsRun).
@@ -159,14 +154,14 @@ func main() {
 
 			arrExtExc := []string(extExclusions)
 
-			args := &backuprpc.BackupQueueArgs{
+			args := &job.BackupQueueArgs{
 				Job:             backupTask,
 				SkipCheck:       true,
 				Stop:            *stop,
 				Web:             *webRun,
 				ExtraExclusions: arrExtExc,
 			}
-			var reply backuprpc.QueueReply
+			var reply job.QueueReply
 
 			err = rpcClient.Call("JobRPCService.BackupQueue", args, &reply)
 			if err != nil {
@@ -186,13 +181,13 @@ func main() {
 				continue
 			}
 
-			args := &backuprpc.RestoreQueueArgs{
+			args := &job.RestoreQueueArgs{
 				Job:       restoreTask,
 				SkipCheck: true,
 				Stop:      *stop,
 				Web:       *webRun,
 			}
-			var reply backuprpc.QueueReply
+			var reply job.QueueReply
 
 			err = rpcClient.Call("JobRPCService.RestoreQueue", args, &reply)
 			if err != nil {
@@ -216,7 +211,7 @@ func main() {
 		return
 	}
 
-	if err := utils.ValidateHostname(hn); err != nil {
+	if err := types.ValidateHostname(hn); err != nil {
 		syslog.L.Error(fmt.Errorf("PBS_PLUS_HOSTNAME is an invalid hostname/fqdn")).WithField("PBS_PLUS_HOSTNAME", hn).WithMessage("a required environment variable is invalid. you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables").Write()
 		return
 	}
@@ -257,7 +252,7 @@ func main() {
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
 
 	if _, err := os.Lstat(secKeyPath); err != nil {
-		key, err := utils.GenerateSecretKey(48)
+		key, err := GenerateSecretKey(48)
 		if err == nil {
 			_ = os.WriteFile(secKeyPath, []byte(key), 0640)
 		}
@@ -283,7 +278,7 @@ func main() {
 
 	// Initialize token manager
 	tokenManager, err := mtls.NewTokenManager(mtls.TokenConfig{
-		TokenExpiration: constants.AuthTokenExpiration,
+		TokenExpiration: conf.AuthTokenExpiration,
 		SecretKey:       string(secKey),
 	})
 	if err != nil {
@@ -294,7 +289,7 @@ func main() {
 
 	// Unmount and remove all stale mount points
 	// Get all mount points under the base path
-	mountPoints, err := filepath.Glob(filepath.Join(constants.AgentMountBasePath, "*"))
+	mountPoints, err := filepath.Glob(filepath.Join(conf.AgentMountBasePath, "*"))
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to find agent mount base path").Write()
 	}
@@ -309,11 +304,11 @@ func main() {
 		}
 	}
 
-	if err := os.RemoveAll(constants.AgentMountBasePath); err != nil {
+	if err := os.RemoveAll(conf.AgentMountBasePath); err != nil {
 		syslog.L.Error(err).WithMessage("failed to remove directory").Write()
 	}
 
-	if err := os.Mkdir(constants.AgentMountBasePath, 0700); err != nil {
+	if err := os.Mkdir(conf.AgentMountBasePath, 0700); err != nil {
 		syslog.L.Error(err).WithMessage("failed to recreate directory").Write()
 	}
 
@@ -324,14 +319,14 @@ func main() {
 				syslog.L.Error(mainCtx.Err()).WithMessage("mount rpc server cancelled")
 				return
 			default:
-				if err := rpcmount.RunRPCServer(mainCtx, constants.MountSocketPath, storeInstance); err != nil {
+				if err := rpcmount.RunRPCServer(mainCtx, conf.MountSocketPath, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("mount rpc server failed, restarting")
 				}
 			}
 		}
 	}()
 
-	manager := backend.NewManager(mainCtx, utils.MaxConcurrentClients, 100, true)
+	manager := backend.NewManager(mainCtx, conf.MaxConcurrentClients, 100, true)
 	s := scheduler.NewScheduler(mainCtx, storeInstance, manager)
 	s.Start()
 
@@ -342,7 +337,7 @@ func main() {
 				syslog.L.Error(mainCtx.Err()).WithMessage("backup rpc server cancelled")
 				return
 			default:
-				if err := backuprpc.RunJobRPCServer(mainCtx, constants.JobMutateSocketPath, manager, storeInstance); err != nil {
+				if err := job.RunJobRPCServer(mainCtx, conf.JobMutateSocketPath, manager, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("backup rpc server failed, restarting")
 				}
 			}
@@ -353,50 +348,50 @@ func main() {
 	apiMux := http.NewServeMux()
 
 	// API routes
-	apiMux.HandleFunc("/api2/json/d2d/backup", mw.ServerOnly(storeInstance, jobs.D2DBackupHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/restore", mw.ServerOnly(storeInstance, jobs.D2DRestoreHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/target", mw.ServerOnly(storeInstance, targets.D2DTargetHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/script", mw.ServerOnly(storeInstance, scripts.D2DScriptHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/token", mw.ServerOnly(storeInstance, tokens.D2DTokenHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/filetree/{target}", mw.ServerOnly(storeInstance, jobs.D2DFileTree(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/exclusion", mw.AgentOrServer(storeInstance, exclusions.D2DExclusionHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/backup", web.ServerOnly(storeInstance, api.D2DBackupHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/restore", web.ServerOnly(storeInstance, api.D2DRestoreHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/target", web.ServerOnly(storeInstance, api.D2DTargetHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/script", web.ServerOnly(storeInstance, api.D2DScriptHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/token", web.ServerOnly(storeInstance, api.D2DTokenHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/filetree/{target}", web.ServerOnly(storeInstance, api.D2DFileTree(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/exclusion", web.AgentOrServer(storeInstance, api.D2DExclusionHandler(storeInstance)))
 
 	// ExtJS routes with path parameters
-	apiMux.HandleFunc("/api2/extjs/d2d/backup", mw.ServerOnly(storeInstance, jobs.ExtJsBackupRunHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/d2d/restore", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreRunHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-target", mw.ServerOnly(storeInstance, targets.ExtJsTargetHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}", mw.ServerOnly(storeInstance, targets.ExtJsTargetSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}/s3-secret", mw.ServerOnly(storeInstance, targets.ExtJsTargetS3SecretHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-agent/{agent}", mw.ServerOnly(storeInstance, targets.ExtJsAgentSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-mount/{datastore}", mw.ServerOnly(storeInstance, jobs.ExtJsMountHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount/{datastore}", mw.ServerOnly(storeInstance, jobs.ExtJsUnmountHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount-all/{datastore}", mw.ServerOnly(storeInstance, jobs.ExtJsUnmountAllHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-script", mw.ServerOnly(storeInstance, scripts.ExtJsScriptHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-script/{path}", mw.ServerOnly(storeInstance, scripts.ExtJsScriptSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-token", mw.ServerOnly(storeInstance, tokens.ExtJsTokenHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-token/{token}", mw.ServerOnly(storeInstance, tokens.ExtJsTokenSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion", mw.ServerOnly(storeInstance, exclusions.ExtJsExclusionHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", mw.ServerOnly(storeInstance, exclusions.ExtJsExclusionSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup", mw.ServerOnly(storeInstance, jobs.ExtJsBackupHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}", mw.ServerOnly(storeInstance, jobs.ExtJsBackupSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}/upids", mw.ServerOnly(storeInstance, jobs.ExtJsBackupUPIDsHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-restore", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", mw.ServerOnly(storeInstance, jobs.ExtJsRestoreSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/plus/agent/install/win", plus.AgentInstallScriptHandler(storeInstance, Version))
-	apiMux.HandleFunc("/plus/metrics", plus.PrometheusMetricsHandler(storeInstance))
+	apiMux.HandleFunc("/api2/extjs/d2d/backup", web.ServerOnly(storeInstance, api.ExtJsBackupRunHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/d2d/restore", web.ServerOnly(storeInstance, api.ExtJsRestoreRunHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-target", web.ServerOnly(storeInstance, api.ExtJsTargetHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}", web.ServerOnly(storeInstance, api.ExtJsTargetSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}/s3-secret", web.ServerOnly(storeInstance, api.ExtJsTargetS3SecretHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-agent/{agent}", web.ServerOnly(storeInstance, api.ExtJsAgentSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-mount/{datastore}", web.ServerOnly(storeInstance, api.ExtJsMountHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount/{datastore}", web.ServerOnly(storeInstance, api.ExtJsUnmountHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount-all/{datastore}", web.ServerOnly(storeInstance, api.ExtJsUnmountAllHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-script", web.ServerOnly(storeInstance, api.ExtJsScriptHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-script/{path}", web.ServerOnly(storeInstance, api.ExtJsScriptSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-token", web.ServerOnly(storeInstance, api.ExtJsTokenHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-token/{token}", web.ServerOnly(storeInstance, api.ExtJsTokenSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion", web.ServerOnly(storeInstance, api.ExtJsExclusionHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", web.ServerOnly(storeInstance, api.ExtJsExclusionSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-backup", web.ServerOnly(storeInstance, api.ExtJsBackupHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}", web.ServerOnly(storeInstance, api.ExtJsBackupSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}/upids", web.ServerOnly(storeInstance, api.ExtJsBackupUPIDsHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-restore", web.ServerOnly(storeInstance, api.ExtJsRestoreHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", web.ServerOnly(storeInstance, api.ExtJsRestoreSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/plus/agent/install/win", api.AgentInstallScriptHandler(storeInstance, Version))
+	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(storeInstance))
 
 	// Agent routes
-	agentMux.HandleFunc("/api2/json/plus/version", plus.VersionHandler(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/binary", plus.DownloadBinary(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/msi", plus.DownloadMsi(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/binary/sig", plus.DownloadSig(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/binary/checksum", plus.DownloadChecksum(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/d2d/target/agent", mw.AgentOnly(storeInstance, targets.D2DTargetAgentHandler(storeInstance)))
-	agentMux.HandleFunc("/api2/json/d2d/agent-log", mw.AgentOnly(storeInstance, agents.AgentLogHandler(storeInstance)))
+	agentMux.HandleFunc("/api2/json/plus/version", api.VersionHandler(storeInstance, Version))
+	agentMux.HandleFunc("/api2/json/plus/binary", api.DownloadBinary(storeInstance, Version))
+	agentMux.HandleFunc("/api2/json/plus/msi", api.DownloadMsi(storeInstance, Version))
+	agentMux.HandleFunc("/api2/json/plus/binary/sig", api.DownloadSig(storeInstance, Version))
+	agentMux.HandleFunc("/api2/json/plus/binary/checksum", api.DownloadChecksum(storeInstance, Version))
+	agentMux.HandleFunc("/api2/json/d2d/target/agent", web.AgentOnly(storeInstance, api.D2DTargetAgentHandler(storeInstance)))
+	agentMux.HandleFunc("/api2/json/d2d/agent-log", web.AgentOnly(storeInstance, api.AgentLogHandler(storeInstance)))
 
 	// Agent auth routes
-	agentMux.HandleFunc("/plus/agent/bootstrap", agents.AgentBootstrapHandler(storeInstance))
-	agentMux.HandleFunc("/plus/agent/renew", mw.AgentOnly(storeInstance, agents.AgentRenewHandler(storeInstance)))
+	agentMux.HandleFunc("/plus/agent/bootstrap", api.AgentBootstrapHandler(storeInstance))
+	agentMux.HandleFunc("/plus/agent/renew", web.AgentOnly(storeInstance, api.AgentRenewHandler(storeInstance)))
 
 	// pprof routes
 	apiMux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -406,28 +401,28 @@ func main() {
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	apiServer := &http.Server{
-		Addr:           constants.ServerAPIExtPort,
+		Addr:           conf.ServerAPIExtPort,
 		Handler:        apiMux,
-		ReadTimeout:    constants.HTTPReadTimeout,
-		WriteTimeout:   constants.HTTPWriteTimeout,
-		IdleTimeout:    constants.HTTPIdleTimeout,
-		MaxHeaderBytes: constants.HTTPMaxHeaderBytes,
+		ReadTimeout:    conf.HTTPReadTimeout,
+		WriteTimeout:   conf.HTTPWriteTimeout,
+		IdleTimeout:    conf.HTTPIdleTimeout,
+		MaxHeaderBytes: conf.HTTPMaxHeaderBytes,
 	}
 
 	agentServer := &http.Server{
-		Addr:           constants.AgentAPIPort,
+		Addr:           conf.AgentAPIPort,
 		Handler:        agentMux,
 		TLSConfig:      serverConfig,
-		ReadTimeout:    constants.HTTPReadTimeout,
-		WriteTimeout:   constants.HTTPWriteTimeout,
-		IdleTimeout:    constants.HTTPIdleTimeout,
-		MaxHeaderBytes: constants.HTTPMaxHeaderBytes,
+		ReadTimeout:    conf.HTTPReadTimeout,
+		WriteTimeout:   conf.HTTPWriteTimeout,
+		IdleTimeout:    conf.HTTPIdleTimeout,
+		MaxHeaderBytes: conf.HTTPMaxHeaderBytes,
 	}
 
 	var endpointsWg sync.WaitGroup
 
 	endpointsWg.Go(func() {
-		web.WatchAndServe(apiServer, constants.CertFile, constants.KeyFile, []string{constants.CertFile, constants.KeyFile})
+		web.WatchAndServe(apiServer, conf.CertFile, conf.KeyFile, []string{conf.CertFile, conf.KeyFile})
 	})
 
 	endpointsWg.Go(func() {
@@ -438,7 +433,7 @@ func main() {
 	})
 
 	endpointsWg.Go(func() {
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC endpoint on TCP %s", constants.ARPCServerPort)).Write()
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC endpoint on TCP %s", conf.ARPCServerPort)).Write()
 
 		router := arpc.NewRouter()
 		router.Handle("echo", func(req *arpc.Request) (arpc.Response, error) {
@@ -496,7 +491,7 @@ func main() {
 			return true
 		})
 
-		if err := arpc.ListenAndServe(storeInstance.Ctx, constants.ARPCServerPort, storeInstance.ARPCAgentsManager, arpcTlsConfig, router); err != nil {
+		if err := arpc.ListenAndServe(storeInstance.Ctx, conf.ARPCServerPort, storeInstance.ARPCAgentsManager, arpcTlsConfig, router); err != nil {
 			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed")
 		}
 	})

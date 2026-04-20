@@ -22,11 +22,12 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
-	"github.com/pbs-plus/pbs-plus/internal/utils/safemap"
+
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 var (
@@ -71,19 +72,19 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 		os.Exit(1)
 	}
 
-	if err := utils.ValidateJobId(*restoreId); err != nil {
+	if err := validate.ValidateJobId(*restoreId); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid restoreId: %v\n", err)
 		syslog.L.Error(err).WithMessage("CmdRestore: restoreId validation failed").Write()
 		os.Exit(1)
 	}
 
-	if err := utils.ValidateRestorePath("srcPath", *srcPath); err != nil {
+	if err := validate.ValidateRestorePath("srcPath", *srcPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid srcPath: %v\n", err)
 		syslog.L.Error(err).WithMessage("CmdRestore: srcPath validation failed").Write()
 		os.Exit(1)
 	}
 
-	if err := utils.ValidateRestorePath("destPath", *destPath); err != nil {
+	if err := validate.ValidateRestorePath("destPath", *destPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid destPath: %v\n", err)
 		syslog.L.Error(err).WithMessage("CmdRestore: destPath validation failed").Write()
 		os.Exit(1)
@@ -102,7 +103,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 		syslog.L.Error(err).WithMessage("CmdRestore: GetEntry ServerURL failed").Write()
 		os.Exit(1)
 	}
-	uri, err := utils.ParseURI(serverUrl.Value)
+	uri, err := agent.ParseURI(serverUrl.Value)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("CmdRestore: url.Parse failed").Write()
 		os.Exit(1)
@@ -113,7 +114,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 		os.Exit(1)
 	}
 
-	address := fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), constants.ARPCServerPort)
+	address := fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), conf.ARPCServerPort)
 	headers := http.Header{}
 	headers.Add("X-PBS-Plus-RestoreId", *restoreId)
 
@@ -189,17 +190,17 @@ func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 		WithField("restoreId", id).
 		Write()
 
-	if err := utils.ValidateJobId(id); err != nil {
+	if err := validate.ValidateJobId(id); err != nil {
 		syslog.L.Error(err).WithMessage("ExecRestore: restoreId validation failed").Write()
 		return -1, fmt.Errorf("invalid restoreId: %w", err)
 	}
 
-	if err := utils.ValidateRestorePath("srcPath", srcPath); err != nil {
+	if err := validate.ValidateRestorePath("srcPath", srcPath); err != nil {
 		syslog.L.Error(err).WithMessage("ExecRestore: srcPath validation failed").Write()
 		return -1, fmt.Errorf("invalid srcPath: %w", err)
 	}
 
-	if err := utils.ValidateRestorePath("destPath", destPath); err != nil {
+	if err := validate.ValidateRestorePath("destPath", destPath); err != nil {
 		syslog.L.Error(err).WithMessage("ExecRestore: destPath validation failed").Write()
 		return -1, fmt.Errorf("invalid destPath: %w", err)
 	}
@@ -300,17 +301,17 @@ func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string, mode pxar
 		WithField("restoreId", restoreId).
 		Write()
 
-	if err := utils.ValidateJobId(restoreId); err != nil {
+	if err := validate.ValidateJobId(restoreId); err != nil {
 		syslog.L.Error(err).WithMessage("Restore: restoreId validation failed").Write()
 		return fmt.Errorf("invalid restoreId: %w", err)
 	}
 
-	if err := utils.ValidateRestorePath("source", source); err != nil {
+	if err := validate.ValidateRestorePath("source", source); err != nil {
 		syslog.L.Error(err).WithMessage("Restore: source validation failed").Write()
 		return fmt.Errorf("invalid source: %w", err)
 	}
 
-	if err := utils.ValidateRestorePath("dest", dest); err != nil {
+	if err := validate.ValidateRestorePath("dest", dest); err != nil {
 		syslog.L.Error(err).WithMessage("Restore: dest validation failed").Write()
 		return fmt.Errorf("invalid dest: %w", err)
 	}
