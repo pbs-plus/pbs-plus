@@ -172,6 +172,14 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 						continue
 					}
 				}
+				// Check context AFTER connection to avoid race with cleanup
+				select {
+				case <-ctx.Done():
+					session.Close()
+					return
+				default:
+				}
+
 				session.SetRouter(arpc.NewRouter())
 				syslog.L.Info().WithMessage("ARPC connection established").Write()
 				backoff = base
@@ -208,6 +216,14 @@ func cmdBackup(sourceMode, readMode, drive, backupId *string) {
 				syslog.L.Warn().WithMessage("ARPC connection lost, attempting recovery").WithField("error", err.Error()).Write()
 				session.Close()
 				session = nil
+
+				// Check if we should attempt reconnection
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					// Continue with reconnection attempt
+				}
 			} else {
 				return
 			}

@@ -12,17 +12,27 @@ import (
 	"github.com/xtaci/smux"
 )
 
-func dialServer(serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
+func dialServerContext(ctx context.Context, serverAddr string, tlsConfig *tls.Config) (net.Conn, error) {
 	if tlsConfig == nil {
 		return nil, fmt.Errorf("missing tls config")
 	}
 
-	conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
+	dialer := &tls.Dialer{
+		Config: tlsConfig,
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", serverAddr)
 	if err != nil {
 		return nil, fmt.Errorf("TLS dial failed: %w", err)
 	}
 
-	state := conn.ConnectionState()
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		// Should always be *tls.Conn from tls.Dialer, but handle gracefully
+		_ = conn.Close()
+		return nil, fmt.Errorf("unexpected connection type: %T", conn)
+	}
+
+	state := tlsConn.ConnectionState()
 	syslog.L.Info().
 		WithField("tls_version", state.Version).
 		WithField("alpn", state.NegotiatedProtocol).
