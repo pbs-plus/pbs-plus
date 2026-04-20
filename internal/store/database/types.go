@@ -84,6 +84,7 @@ type JobStats struct {
 
 type JobHistory struct {
 	LastRunUpid           string `json:"last-run-upid"`
+	LastRunStarttime      int64  `json:"last-run-starttime"`
 	LastRunState          string `json:"last-run-state"`
 	LastRunEndtime        int64  `json:"last-run-endtime"`
 	LastSuccessfulEndtime int64  `json:"last-successful-endtime"`
