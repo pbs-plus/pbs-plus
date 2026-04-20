@@ -38,18 +38,3 @@ func (m *SnapshotManager) CreateSnapshot(jobId string, sourcePath string) (Snaps
 
 	return handler.CreateSnapshot(jobId, sourcePath)
 }
-
-// DeleteSnapshot delegates the deletion to the appropriate handler
-func (m *SnapshotManager) DeleteSnapshot(snapshot Snapshot) error {
-	fsType, err := detectFilesystem(snapshot.SourcePath)
-	if err != nil {
-		return fmt.Errorf("failed to detect filesystem: %w", err)
-	}
-
-	handler, exists := m.handlerMap[fsType]
-	if !exists || handler == nil {
-		return fmt.Errorf("no snapshot handler available for filesystem type: %s", fsType)
-	}
-
-	return handler.DeleteSnapshot(snapshot)
-}
