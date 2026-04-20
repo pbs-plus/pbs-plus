@@ -98,12 +98,6 @@ func (b *BackupOperation) getJob() database.Backup {
 	return b.job
 }
 
-func (b *BackupOperation) setJob(job database.Backup) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.job = job
-}
-
 func (b *BackupOperation) updateQueueDescription(desc string) {
 	b.mu.RLock()
 	qt := b.queueTask
@@ -117,12 +111,6 @@ func (b *BackupOperation) getAgentMount() *mount.AgentMount {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.agentMount
-}
-
-func (b *BackupOperation) getS3Mount() *mount.S3Mount {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.s3Mount
 }
 
 func (b *BackupOperation) PreExecute() error {
