@@ -263,14 +263,9 @@ func (b *BackupOperation) processPBSLogs(logErr error) (bool, int) {
 	}
 
 	if succeeded || cancelled {
-		syslog.L.Info().WithJob(jobID).WithMessage("succeeded/cancelled, removing all retry schedules")
-		currentJob.RemoveAllRetrySchedules(b.Context())
+		syslog.L.Info().WithJob(jobID).WithMessage("succeeded/cancelled")
 	} else {
-		syslog.L.Info().WithJob(jobID).WithMessage("failed, setting a retry schedule")
-		b.mu.RLock()
-		excl := b.extraExclusions
-		b.mu.RUnlock()
-		currentJob.SetBackupRetrySchedule(b.Context(), excl)
+		syslog.L.Info().WithJob(jobID).WithMessage("failed, scheduler will retry")
 	}
 
 	return succeeded, warningsNum
@@ -279,7 +274,6 @@ func (b *BackupOperation) processPBSLogs(logErr error) (bool, int) {
 func (b *BackupOperation) OnError(err error) {
 	b.mu.RLock()
 	job := b.job
-	extraExclusions := b.extraExclusions
 	b.mu.RUnlock()
 
 	syslog.L.Error(err).WithField("jobId", job.ID).Write()
@@ -314,10 +308,6 @@ func (b *BackupOperation) OnError(err error) {
 		syslog.L.Error(terr).WithField("jobId", job.ID).Write()
 	} else {
 		b.updateBackupWithTask(task)
-	}
-
-	if rerr := b.job.SetBackupRetrySchedule(b.ctx, extraExclusions); rerr != nil {
-		syslog.L.Error(rerr).WithField("jobId", job.ID).Write()
 	}
 }
 

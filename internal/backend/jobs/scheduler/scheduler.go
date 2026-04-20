@@ -1,0 +1,205 @@
+package scheduler
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/restore"
+	"github.com/pbs-plus/pbs-plus/internal/calendarevent"
+	"github.com/pbs-plus/pbs-plus/internal/store"
+	"github.com/pbs-plus/pbs-plus/internal/store/database"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+)
+
+type Scheduler struct {
+	ctx             context.Context
+	cancel          context.CancelFunc
+	storeInstance   *store.Store
+	manager         *jobs.Manager
+	lastEnqueued    map[string]time.Time // tracks last scheduled run time per backup ID
+	lastEnqueuedMu  sync.Mutex
+}
+
+func NewScheduler(ctx context.Context, storeInstance *store.Store, manager *jobs.Manager) *Scheduler {
+	newCtx, cancel := context.WithCancel(ctx)
+	return &Scheduler{
+		ctx:           newCtx,
+		cancel:        cancel,
+		storeInstance: storeInstance,
+		manager:       manager,
+		lastEnqueued:  make(map[string]time.Time),
+	}
+}
+
+func (s *Scheduler) Start() {
+	go s.run()
+}
+
+func (s *Scheduler) run() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	syslog.L.Info().WithMessage("Internal scheduler started").Write()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.checkBackups()
+			s.checkRestores()
+		}
+	}
+}
+
+func (s *Scheduler) checkBackups() {
+	backups, err := s.storeInstance.Database.GetAllBackups()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("Scheduler: failed to get all backups").Write()
+		return
+	}
+
+	now := time.Now()
+
+	for _, b := range backups {
+		if s.manager.IsRunning(b.ID) {
+			continue
+		}
+
+		// Handle calendar schedule
+		if b.Schedule != "" {
+			if nextRun, ok := s.shouldRunScheduled(b, now); ok {
+				syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: scheduled backup is due, enqueuing").Write()
+				s.markEnqueued(b.ID, nextRun)
+				op := backup.NewBackupOperation(b, s.storeInstance, false, false, nil)
+				if err := s.manager.Enqueue(op); err != nil {
+					syslog.L.Error(err).WithField("backupID", b.ID).WithMessage("Scheduler: failed to enqueue scheduled backup").Write()
+				}
+				continue
+			}
+		}
+
+		// Handle retries
+		if b.Retry > 0 && b.History.LastRunState != "OK" && b.History.LastRunState != "" {
+			if s.shouldRetryBackup(b, now) {
+				syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: backup retry is due, enqueuing").Write()
+				op := backup.NewBackupOperation(b, s.storeInstance, false, false, nil)
+				if err := s.manager.Enqueue(op); err != nil {
+					syslog.L.Error(err).WithField("backupID", b.ID).WithMessage("Scheduler: failed to enqueue backup retry").Write()
+				}
+			}
+		}
+	}
+}
+
+// shouldRunScheduled returns the next run time and true if the backup should be
+// enqueued now. It uses the later of (last enqueued time, last run start time)
+// as the reference point to prevent duplicate launches.
+func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.Time, bool) {
+	ev, err := calendarevent.Parse(b.Schedule)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	// Determine reference time: use the latest of lastEnqueued or LastRunStarttime
+	refTime := now
+	if b.History.LastRunStarttime > 0 {
+		refTime = time.Unix(b.History.LastRunStarttime, 0)
+	}
+	if lastEnq, ok := s.getEnqueued(b.ID); ok && lastEnq.After(refTime) {
+		refTime = lastEnq
+	}
+
+	nextRun, err := calendarevent.ComputeNextEvent(ev, refTime, time.Local)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	if !nextRun.After(now) {
+		return nextRun, true
+	}
+	return time.Time{}, false
+}
+
+func (s *Scheduler) markEnqueued(backupID string, t time.Time) {
+	s.lastEnqueuedMu.Lock()
+	s.lastEnqueued[backupID] = t
+	s.lastEnqueuedMu.Unlock()
+}
+
+func (s *Scheduler) getEnqueued(backupID string) (time.Time, bool) {
+	s.lastEnqueuedMu.Lock()
+	t, ok := s.lastEnqueued[backupID]
+	s.lastEnqueuedMu.Unlock()
+	return t, ok
+}
+
+func (s *Scheduler) shouldRetryBackup(b database.Backup, now time.Time) bool {
+	if b.History.LastRunEndtime == 0 {
+		return false
+	}
+
+	lastEnd := time.Unix(b.History.LastRunEndtime, 0)
+	if now.Sub(lastEnd) < time.Duration(b.RetryInterval)*time.Minute {
+		return false
+	}
+
+	// Count retries since the last SUCCESSFUL run.
+	upids := b.GetAllUPIDs()
+	lastSuccessTime := b.History.LastSuccessfulEndtime
+	count := 0
+	for _, t := range upids {
+		if t.Endtime > lastSuccessTime && t.Status != "OK" {
+			count++
+		}
+	}
+
+	return count <= b.Retry
+}
+
+func (s *Scheduler) checkRestores() {
+	restores, err := s.storeInstance.Database.GetAllRestores()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("Scheduler: failed to get all restores").Write()
+		return
+	}
+
+	now := time.Now()
+
+	for _, r := range restores {
+		if s.manager.IsRunning(r.ID) {
+			continue
+		}
+
+		if r.Retry > 0 && r.History.LastRunState != "OK" && r.History.LastRunState != "" {
+			if s.shouldRetryRestore(r, now) {
+				syslog.L.Info().WithField("restoreID", r.ID).WithMessage("Scheduler: restore retry is due, enqueuing").Write()
+				op, err := restore.NewRestoreOperation(r, s.storeInstance, false, false)
+				if err != nil {
+					syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to create restore operation").Write()
+					continue
+				}
+				if err := s.manager.Enqueue(op); err != nil {
+					syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to enqueue restore retry").Write()
+				}
+			}
+		}
+	}
+}
+
+func (s *Scheduler) shouldRetryRestore(r database.Restore, now time.Time) bool {
+	if r.History.LastRunEndtime == 0 {
+		return false
+	}
+
+	lastEnd := time.Unix(r.History.LastRunEndtime, 0)
+	if now.Sub(lastEnd) < time.Duration(r.RetryInterval)*time.Minute {
+		return false
+	}
+
+	// Restore doesn't have GetAllUPIDs for now, so we just retry ONCE if last was failure.
+	return true
+}

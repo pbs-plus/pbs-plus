@@ -6,4 +6,5 @@ target
 operator
 pbs-plus
 pbs-plus-agent
+/pbs_plus
 *.exe

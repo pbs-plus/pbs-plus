@@ -163,12 +163,6 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 		}
 	}
 
-	if err = backup.setSchedule(database.ctx); err != nil {
-		syslog.L.Error(fmt.Errorf("CreateBackup: failed to set schedule: %w", err)).
-			WithField("id", backup.ID).
-			Write()
-	}
-
 	commitNeeded = true
 	return nil
 }
@@ -256,6 +250,7 @@ func (database *Database) populateBackupExtras(backup *Backup) {
 	if backup.History.LastRunUpid != "" {
 		task, err := proxmox.GetTaskByUPID(backup.History.LastRunUpid)
 		if err == nil {
+			backup.History.LastRunStarttime = task.StartTime
 			backup.History.LastRunEndtime = task.EndTime
 			if task.Status == "stopped" {
 				backup.History.LastRunState = task.ExitStatus
@@ -386,11 +381,6 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 		}
 	}
 
-	if err = backup.setSchedule(database.ctx); err != nil {
-		syslog.L.Error(fmt.Errorf("UpdateBackup: failed to set schedule: %w", err)).
-			WithField("id", backup.ID).
-			Write()
-	}
 
 	if backup.History.LastRunUpid != "" {
 		go database.linkBackupLog(backup.ID, backup.History.LastRunUpid)
@@ -659,12 +649,6 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 				WithField("id", id).
 				Write()
 		}
-	}
-
-	if err := deleteBackupSchedule(database.ctx, id); err != nil {
-		syslog.L.Error(fmt.Errorf("DeleteBackup: failed deleting schedule: %w", err)).
-			WithField("id", id).
-			Write()
 	}
 
 	commitNeeded = true
