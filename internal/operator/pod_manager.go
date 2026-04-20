@@ -98,7 +98,7 @@ func (pm *PodManager) CleanupForPVC(ctx context.Context, pvc *corev1.PersistentV
 		Write()
 
 	err := pm.clientset.CoreV1().Pods(namespace).Delete(ctx, podName, metav1.DeleteOptions{
-		GracePeriodSeconds: int64Ptr(30),
+		GracePeriodSeconds: new(int64(30)),
 	})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete backup pod: %w", err)
@@ -270,8 +270,9 @@ func (pm *PodManager) getPodName(pvc *corev1.PersistentVolumeClaim) string {
 	return AgentPodPrefix + sanitizedName
 }
 
+//go:fix inline
 func int64Ptr(i int64) *int64 {
-	return &i
+	return new(i)
 }
 
 func createQuantity(s string) resource.Quantity {

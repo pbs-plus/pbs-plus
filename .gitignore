@@ -3,7 +3,7 @@ test
 target
 
 # Go binaries
-operator
+/operator
 pbs-plus
 pbs-plus-agent
 /pbs_plus
