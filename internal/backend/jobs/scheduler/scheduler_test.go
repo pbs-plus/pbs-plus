@@ -41,6 +41,65 @@ func TestIsFailedState(t *testing.T) {
 	}
 }
 
+func TestJobStatusEnum(t *testing.T) {
+	tests := []struct {
+		status         database.JobStatus
+		shouldRetry    bool
+		isSuccess      bool
+		isCompleted    bool
+		expectedString string
+	}{
+		{database.JobStatusUnknown, false, false, false, "UNKNOWN"},
+		{database.JobStatusSuccess, false, true, true, "OK"},
+		{database.JobStatusWarnings, false, true, true, "WARNINGS"},
+		{database.JobStatusFailed, true, false, true, "FAILED"},
+		{database.JobStatusCanceled, false, false, true, "CANCELED"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expectedString, func(t *testing.T) {
+			if got := tt.status.ShouldRetry(); got != tt.shouldRetry {
+				t.Errorf("JobStatus(%s).ShouldRetry() = %v, want %v", tt.expectedString, got, tt.shouldRetry)
+			}
+			if got := tt.status.IsSuccess(); got != tt.isSuccess {
+				t.Errorf("JobStatus(%s).IsSuccess() = %v, want %v", tt.expectedString, got, tt.isSuccess)
+			}
+			if got := tt.status.IsCompleted(); got != tt.isCompleted {
+				t.Errorf("JobStatus(%s).IsCompleted() = %v, want %v", tt.expectedString, got, tt.isCompleted)
+			}
+			if got := tt.status.String(); got != tt.expectedString {
+				t.Errorf("JobStatus(%d).String() = %q, want %q", tt.status, got, tt.expectedString)
+			}
+		})
+	}
+}
+
+func TestJobStatusFromString(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected database.JobStatus
+	}{
+		{"", database.JobStatusUnknown},
+		{"OK", database.JobStatusSuccess},
+		{"WARNINGS: 5", database.JobStatusWarnings},
+		{"WARNINGS: 0", database.JobStatusWarnings},
+		{"WARNINGS: ", database.JobStatusWarnings},
+		{"operation canceled", database.JobStatusCanceled},
+		{"TASK ERROR: something", database.JobStatusFailed},
+		{"exit status 1", database.JobStatusFailed},
+		{"random error", database.JobStatusFailed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := database.JobStatusFromString(tt.input)
+			if result != tt.expected {
+				t.Errorf("JobStatusFromString(%q) = %v, want %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestShouldRetryBackup_IntervalNotElapsed(t *testing.T) {
 	s := &Scheduler{}
 
@@ -51,6 +110,8 @@ func TestShouldRetryBackup_IntervalNotElapsed(t *testing.T) {
 		History: database.JobHistory{
 			LastRunEndtime: now.Unix() - 60, // 1 minute ago; interval is 5 minutes
 			LastRunState:   "exit status 1",
+			LastRunStatus:  database.JobStatusFailed,
+			RetryCount:     1,
 		},
 	}
 
@@ -60,24 +121,45 @@ func TestShouldRetryBackup_IntervalNotElapsed(t *testing.T) {
 	}
 }
 
-func TestShouldRetryBackup_IntervalElapsed(t *testing.T) {
+func TestShouldRetryBackup_TypedStatus(t *testing.T) {
+	s := &Scheduler{}
+
 	now := time.Now()
-	b := database.Backup{
-		Retry:         3,
-		RetryInterval: 1, // 1 minute
-		History: database.JobHistory{
-			LastRunEndtime:        now.Unix() - 120, // 2 minutes ago; interval is 1 minute
-			LastRunState:          "exit status 1",
-			LastSuccessfulEndtime: 0, // No successful run
-		},
+
+	tests := []struct {
+		name         string
+		status       database.JobStatus
+		retryCount   int
+		shouldRetry  bool
+	}{
+		{"Failed with retries remaining", database.JobStatusFailed, 1, true},
+		{"Failed at retry limit", database.JobStatusFailed, 3, false},
+		{"Success should not retry", database.JobStatusSuccess, 0, false},
+		{"Warnings should not retry", database.JobStatusWarnings, 0, false},
+		{"Canceled should not retry", database.JobStatusCanceled, 0, false},
+		{"Unknown falls back to string parsing", database.JobStatusUnknown, 0, true}, // exit status 1 is failed
 	}
 
-	// Note: GetAllUPIDs reads from the filesystem, so we can't easily test
-	// the count logic in unit tests without mocking. The interval check
-	// should pass though.
-	// This test verifies the interval check works.
-	// The count check is tested indirectly via integration tests.
-	_ = b
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := database.Backup{
+				Retry:         3,
+				RetryInterval: 1,
+				History: database.JobHistory{
+					LastRunEndtime: now.Unix() - 120, // 2 minutes ago
+					LastRunState:   "exit status 1",   // used for Unknown fallback
+					LastRunStatus:  tt.status,
+					RetryCount:     tt.retryCount,
+				},
+			}
+
+			result := s.shouldRetryBackup(b, now)
+			if result != tt.shouldRetry {
+				t.Errorf("shouldRetryBackup() = %v, want %v (status=%v, retryCount=%d)",
+					result, tt.shouldRetry, tt.status, tt.retryCount)
+			}
+		})
+	}
 }
 
 func TestShouldRetryBackup_NoLastEndTime(t *testing.T) {
@@ -90,6 +172,8 @@ func TestShouldRetryBackup_NoLastEndTime(t *testing.T) {
 		History: database.JobHistory{
 			LastRunEndtime: 0, // No end time
 			LastRunState:   "exit status 1",
+			LastRunStatus:  database.JobStatusFailed,
+			RetryCount:     1,
 		},
 	}
 
@@ -99,84 +183,71 @@ func TestShouldRetryBackup_NoLastEndTime(t *testing.T) {
 	}
 }
 
-func TestCheckBackups_WarningsNoRetry(t *testing.T) {
-	// Verify that a backup that succeeded with warnings does NOT trigger
-	// retry logic, since isFailedState("WARNINGS: 3") returns false.
-	state := "WARNINGS: 3"
-	if isFailedState(state) {
-		t.Errorf("isFailedState(%q) should be false for warnings state", state)
-	}
-
-	// Also verify that empty state does NOT trigger retries
-	state = ""
-	if isFailedState(state) {
-		t.Errorf("isFailedState(%q) should be false for empty state", state)
-	}
-
-	// And OK state does NOT trigger retries
-	state = "OK"
-	if isFailedState(state) {
-		t.Errorf("isFailedState(%q) should be false for OK state", state)
-	}
-}
-
-func TestShouldRetryBackup_WarningsNotCountedAsFailures(t *testing.T) {
-	// This tests the logic in shouldRetryBackup for how WARNINGS UPIDs
-	//
-	// A UPID with Status "WARNINGS: 5" should NOT be counted as a failure.
-	warningsStatus := "WARNINGS: 5"
-	if isFailedState(warningsStatus) {
-		t.Errorf("WARNINGS status should not be treated as a failed state, got isFailedState(%q) = true", warningsStatus)
-	}
-
-	// An error status SHOULD be counted as a failure.
-	errorStatus := "exit status 1"
-	if !isFailedState(errorStatus) {
-		t.Errorf("Error status should be treated as a failed state, got isFailedState(%q) = false", errorStatus)
-	}
-
-	// OK status should NOT be counted as a failure.
-	okStatus := "OK"
-	if isFailedState(okStatus) {
-		t.Errorf("OK status should not be treated as a failed state, got isFailedState(%q) = true", okStatus)
-	}
-}
-
-func TestShouldRetryRestore_IntervalNotElapsed(t *testing.T) {
+func TestShouldRetryBackup_PersistentRetryCount(t *testing.T) {
 	s := &Scheduler{}
 
 	now := time.Now()
-	r := database.Restore{
-		Retry:         3,
-		RetryInterval: 5,
-		History: database.JobHistory{
-			LastRunEndtime: now.Unix() - 60, // 1 minute ago; interval is 5 minutes
-			LastRunState:   "exit status 1",
-		},
-	}
 
-	result := s.shouldRetryRestore(r, now)
-	if result {
-		t.Error("should not retry when interval has not elapsed")
-	}
-}
-
-func TestShouldRetryRestore_NoLastEndTime(t *testing.T) {
-	s := &Scheduler{}
-
-	now := time.Now()
-	r := database.Restore{
+	// Test that RetryCount persists across "restarts" (we just read it from the job history)
+	b := database.Backup{
 		Retry:         3,
 		RetryInterval: 1,
 		History: database.JobHistory{
-			LastRunEndtime: 0,
+			LastRunEndtime: now.Unix() - 120,
 			LastRunState:   "exit status 1",
+			LastRunStatus:  database.JobStatusFailed,
+			RetryCount:     2, // Already had 2 retries
 		},
 	}
 
-	result := s.shouldRetryRestore(r, now)
-	if result {
-		t.Error("should not retry when LastRunEndtime is 0")
+	// Should allow retry since 2 < 3
+	if !s.shouldRetryBackup(b, now) {
+		t.Error("should retry when RetryCount (2) < Retry limit (3)")
+	}
+
+	// Should not allow retry when at limit
+	b.History.RetryCount = 3
+	if s.shouldRetryBackup(b, now) {
+		t.Error("should not retry when RetryCount (3) >= Retry limit (3)")
+	}
+}
+
+func TestShouldRetryRestore_TypedStatus(t *testing.T) {
+	s := &Scheduler{}
+
+	now := time.Now()
+
+	tests := []struct {
+		name        string
+		status      database.JobStatus
+		retryCount  int
+		shouldRetry bool
+	}{
+		{"Failed with retries remaining", database.JobStatusFailed, 1, true},
+		{"Failed at retry limit", database.JobStatusFailed, 3, false},
+		{"Success should not retry", database.JobStatusSuccess, 0, false},
+		{"Warnings should not retry", database.JobStatusWarnings, 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := database.Restore{
+				Retry:         3,
+				RetryInterval: 1,
+				History: database.JobHistory{
+					LastRunEndtime: now.Unix() - 120,
+					LastRunState:   "exit status 1",
+					LastRunStatus:  tt.status,
+					RetryCount:     tt.retryCount,
+				},
+			}
+
+			result := s.shouldRetryRestore(r, now)
+			if result != tt.shouldRetry {
+				t.Errorf("shouldRetryRestore() = %v, want %v (status=%v, retryCount=%d)",
+					result, tt.shouldRetry, tt.status, tt.retryCount)
+			}
+		})
 	}
 }
 
