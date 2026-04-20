@@ -128,6 +128,8 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 		PreScript:          restore.PreScript,
 		PostScript:         restore.PostScript,
 		RestoreMode:        int64(restore.Mode),
+		LastRunStatus:      toNullInt64(int(restore.History.LastRunStatus)),
+		RetryCount:         toNullInt64(restore.History.RetryCount),
 	})
 	if err != nil {
 		return fmt.Errorf("CreateRestore: error inserting restore: %w", err)
@@ -179,6 +181,8 @@ func (database *Database) GetRestore(id string) (Restore, error) {
 		History: JobHistory{
 			LastRunUpid:        fromNullString(row.LastRunUpid),
 			LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+			LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
+			RetryCount:         fromNullInt64(row.RetryCount),
 		},
 		Retry:         fromNullInt64(row.Retry),
 		RetryInterval: fromNullInt64(row.RetryInterval),
@@ -294,6 +298,8 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 		RetryInterval:      toNullInt64(restore.RetryInterval),
 		PreScript:          restore.PreScript,
 		PostScript:         restore.PostScript,
+		LastRunStatus:      toNullInt64(int(restore.History.LastRunStatus)),
+		RetryCount:         toNullInt64(restore.History.RetryCount),
 		ID:                 restore.ID,
 	})
 	if err != nil {
@@ -396,6 +402,8 @@ func (database *Database) GetAllRestores() ([]Restore, error) {
 			History: JobHistory{
 				LastRunUpid:        fromNullString(row.LastRunUpid),
 				LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
+				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
+				RetryCount:         fromNullInt64(row.RetryCount),
 			},
 			Retry:         fromNullInt64(row.Retry),
 			RetryInterval: fromNullInt64(row.RetryInterval),
