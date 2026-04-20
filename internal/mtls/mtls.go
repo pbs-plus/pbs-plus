@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/store/constants"
-	"github.com/pbs-plus/pbs-plus/internal/utils"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
 var currentTLSCert = atomic.Pointer[tls.Certificate]{}
@@ -298,9 +298,9 @@ func EnsureLocalCA(outDir, org, caCN string, keySize, validDays int) (caCertPath
 		return "", "", fmt.Errorf("mkdir: %w", err)
 	}
 
-	caCertPath = filepath.Join(outDir, filepath.Base(constants.AgentTLSCACertFile))
-	caKeyPath = filepath.Join(outDir, filepath.Base(constants.AgentTLSCAKeyFile))
-	prevCACert := filepath.Join(outDir, filepath.Base(constants.AgentTLSPrevCAKeyFile))
+	caCertPath = filepath.Join(outDir, filepath.Base(conf.AgentTLSCACertFile))
+	caKeyPath = filepath.Join(outDir, filepath.Base(conf.AgentTLSCAKeyFile))
+	prevCACert := filepath.Join(outDir, filepath.Base(conf.AgentTLSPrevCAKeyFile))
 
 	if fileExists(caCertPath) && fileExists(caKeyPath) {
 		caPEM, rErr := os.ReadFile(caCertPath)
@@ -309,7 +309,7 @@ func EnsureLocalCA(outDir, org, caCN string, keySize, validDays int) (caCertPath
 			caCert, _, vErr := parseCACreds(caPEM, keyPEM)
 			if vErr == nil {
 				timeUntilExpiry := time.Until(caCert.NotAfter)
-				if timeUntilExpiry <= constants.TLSCARotationGraceDays*24*time.Hour {
+				if timeUntilExpiry <= conf.TLSCARotationGraceDays*24*time.Hour {
 					if err := os.Rename(caCertPath, prevCACert); err != nil {
 						return "", "", fmt.Errorf("rotate: move current CA to previous: %w", err)
 					}
@@ -387,7 +387,7 @@ func EnsureServerCertUsingExistingCA(outDir, org string, keySize, validDays int,
 
 	userHostname, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
 	if ok {
-		if err := utils.ValidateHostname(userHostname); err == nil {
+		if err := types.ValidateHostname(userHostname); err == nil {
 			hostnames = append(hostnames, userHostname)
 		}
 	}
