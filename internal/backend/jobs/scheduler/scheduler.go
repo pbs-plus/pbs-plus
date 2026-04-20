@@ -243,14 +243,18 @@ func (s *Scheduler) shouldRetryRestore(r database.Restore, now time.Time) bool {
 }
 
 // isFailedState returns true if the given task state represents an actual
-// failure, as opposed to a success ("OK") or a success with warnings
-// ("WARNINGS: N"). Empty state is treated as non-failure so that an
-// uninitialised history never triggers a retry.
+// failure, as opposed to a success ("OK"), a success with warnings
+// ("WARNINGS: N"), or a cancellation ("operation canceled"). Empty state is
+// treated as non-failure so that an uninitialised history never triggers a retry.
 func isFailedState(state string) bool {
 	if state == "" || state == "OK" {
 		return false
 	}
 	if strings.HasPrefix(state, "WARNINGS: ") {
+		return false
+	}
+	// Manual stop/cancellation should not trigger retries
+	if state == "operation canceled" {
 		return false
 	}
 	return true
