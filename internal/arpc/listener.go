@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/xtaci/smux"
@@ -61,6 +62,9 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
+	// Check if listener supports deadlines (TCPListener)
+	tcpListener, hasDeadline := listener.(*net.TCPListener)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -68,8 +72,26 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 		default:
 		}
 
+		// Set deadline to prevent unbounded blocking on Accept
+		if hasDeadline {
+			tcpListener.SetDeadline(time.Now().Add(2 * time.Second))
+		}
+
 		conn, err := listener.Accept()
 		if err != nil {
+			if hasDeadline {
+				// Check if it's a timeout error
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					// Timeout - check context and continue
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					default:
+						continue
+					}
+				}
+			}
+			// Check if context was cancelled during Accept
 			select {
 			case <-ctx.Done():
 				return ctx.Err()

@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,10 +24,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-type BackupOperation struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+// BackupJob holds the state for a backup operation.
+type backupJob struct {
 	mu     sync.RWMutex
+	cancel context.CancelFunc
 
 	Task      proxmox.Task
 	currOwner string
@@ -53,16 +52,15 @@ type BackupOperation struct {
 	srcPath    string
 }
 
-var _ jobs.Operation = (*BackupOperation)(nil)
-
-func NewBackupOperation(
+// NewBackupJob creates a new backup job with the given parameters.
+func NewBackupJob(
 	job database.Backup,
 	storeInstance *store.Store,
 	skipCheck bool,
 	web bool,
 	extraExclusions []string,
-) *BackupOperation {
-	return &BackupOperation{
+) *jobs.Job {
+	j := &backupJob{
 		job:             job,
 		storeInstance:   storeInstance,
 		skipCheck:       skipCheck,
@@ -71,109 +69,28 @@ func NewBackupOperation(
 		extraExclusions: extraExclusions,
 		waitGroup:       &sync.WaitGroup{},
 	}
+
+	return &jobs.Job{
+		ID:        job.ID,
+		Execute:   j.execute,
+		OnSuccess: j.onSuccess,
+		OnError:   j.onError,
+		Cleanup:   j.cleanup,
+	}
 }
 
-func (b *BackupOperation) GetID() string {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.job.ID
-}
-
-func (b *BackupOperation) SetContext(ctx context.Context, cancel context.CancelFunc) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.ctx = ctx
+// execute performs the backup operation.
+func (b *backupJob) execute(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
 	b.cancel = cancel
-}
 
-func (b *BackupOperation) Context() context.Context {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.ctx
-}
-
-func (b *BackupOperation) getJob() database.Backup {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.job
-}
-
-func (b *BackupOperation) setJob(job database.Backup) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.job = job
-}
-
-func (b *BackupOperation) updateQueueDescription(desc string) {
-	b.mu.RLock()
-	qt := b.queueTask
-	b.mu.RUnlock()
-	if qt != nil {
-		qt.UpdateDescription(desc)
-	}
-}
-
-func (b *BackupOperation) getAgentMount() *mount.AgentMount {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.agentMount
-}
-
-func (b *BackupOperation) getS3Mount() *mount.S3Mount {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.s3Mount
-}
-
-func (b *BackupOperation) PreExecute() error {
-	job := b.getJob()
-
-	queueTask, err := tasks.GenerateBackupQueuedTask(job, b.web)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
-	} else {
-		if err := updateBackupStatus(false, 0, job, queueTask.Task, b.storeInstance); err != nil {
-			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
-		}
-	}
-
-	b.mu.Lock()
-	b.queueTask = &queueTask
-	b.mu.Unlock()
-
-	if err := b.runPreScript(); err != nil {
+	// Pre-execution phase
+	if err := b.preExecute(ctx); err != nil {
 		return err
 	}
 
-	if err := b.validateTargetConnection(); err != nil {
-		return err
-	}
-
-	job = b.getJob()
-	if err := b.runTargetMountScript(job.Target); err != nil {
-		return err
-	}
-
-	job = b.getJob()
-	srcPath, agentMount, s3Mount, err := b.mountSource(job.Target)
-	if err != nil {
-		return err
-	}
-
-	b.mu.Lock()
-	b.srcPath = srcPath
-	b.agentMount = agentMount
-	b.s3Mount = s3Mount
-	b.mu.Unlock()
-
-	b.updateQueueDescription("operation ready, waiting for queue to free up")
-
-	return nil
-}
-
-func (b *BackupOperation) Execute() error {
 	select {
-	case <-b.Context().Done():
+	case <-ctx.Done():
 		return jobs.ErrCanceled
 	default:
 	}
@@ -183,7 +100,7 @@ func (b *BackupOperation) Execute() error {
 	target := b.job.Target
 	b.mu.RUnlock()
 
-	cmd, task, currOwner, err := b.startBackup(srcPath, target)
+	cmd, task, currOwner, err := b.startBackup(ctx, srcPath, target)
 	if err != nil {
 		return err
 	}
@@ -206,15 +123,202 @@ func (b *BackupOperation) Execute() error {
 
 	b.started.Store(true)
 
-	b.waitGroup.Go(func() {
-		b.waitForCompletion(cmd)
-	})
+	// Wait for completion
+	return b.waitForCompletion(ctx, cmd)
+}
+
+func (b *backupJob) preExecute(ctx context.Context) error {
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
+
+	queueTask, err := tasks.GenerateBackupQueuedTask(job, b.web)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
+	} else {
+		if err := updateBackupStatus(false, 0, job, queueTask.Task, b.storeInstance); err != nil {
+			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
+		}
+	}
+
+	b.mu.Lock()
+	b.queueTask = &queueTask
+	b.mu.Unlock()
+
+	if err := b.runPreScript(ctx); err != nil {
+		return err
+	}
+
+	if err := b.validateTargetConnection(ctx); err != nil {
+		return err
+	}
+
+	b.mu.RLock()
+	job = b.job
+	b.mu.RUnlock()
+	if err := b.runTargetMountScript(ctx, job.Target); err != nil {
+		return err
+	}
+
+	b.mu.RLock()
+	job = b.job
+	b.mu.RUnlock()
+	srcPath, agentMount, s3Mount, err := b.mountSource(ctx, job.Target)
+	if err != nil {
+		return err
+	}
+
+	b.mu.Lock()
+	b.srcPath = srcPath
+	b.agentMount = agentMount
+	b.s3Mount = s3Mount
+	b.mu.Unlock()
+
+	b.mu.RLock()
+	qt := b.queueTask
+	b.mu.RUnlock()
+	if qt != nil {
+		qt.UpdateDescription("operation ready, waiting for queue to free up")
+	}
 
 	return nil
 }
 
-func (b *BackupOperation) processPBSLogs(logErr error) (bool, int) {
-	agentMount := b.getAgentMount()
+func (b *backupJob) onError(err error) {
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
+
+	syslog.L.Error(err).WithField("jobId", job.ID).Write()
+
+	if errors.Is(err, jobs.ErrOneInstance) {
+		return
+	}
+
+	if errors.Is(err, ErrMountEmpty) {
+		b.createOK(err)
+		return
+	}
+
+	if b.started.Load() {
+		b.waitGroup.Wait()
+		succeeded, warningsNum := b.processPBSLogs(err)
+		syslog.L.Info().WithJob(job.ID).WithMessage("checking post-backup script")
+		b.runPostScript(succeeded, warningsNum)
+		return
+	}
+
+	task, terr := tasks.GenerateBackupTaskErrorFile(
+		b.job,
+		err,
+		[]string{
+			"Error handling from a scheduled job run request",
+			"Backup ID: " + job.ID,
+			"Source Mode: " + job.SourceMode,
+		},
+	)
+	if terr != nil {
+		syslog.L.Error(terr).WithField("jobId", job.ID).Write()
+	} else {
+		b.updateBackupWithTask(task)
+	}
+}
+
+func (b *backupJob) onSuccess() {
+	b.mu.RLock()
+	job := b.job
+	extraExclusions := b.extraExclusions
+	currOwner := b.currOwner
+	b.mu.RUnlock()
+
+	for _, ext := range extraExclusions {
+		syslog.L.Warn().
+			WithJob(job.ID).
+			WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", ext)).
+			Write()
+	}
+
+	b.waitGroup.Wait()
+
+	succeeded, warningsNum := b.processPBSLogs(nil)
+
+	if currOwner != "" {
+		syslog.L.Info().WithJob(job.ID).WithMessage("setting owner to datastore owner")
+		_ = SetDatastoreOwner(job, b.storeInstance, currOwner)
+	}
+
+	syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script")
+	b.runPostScript(succeeded, warningsNum)
+}
+
+func (b *backupJob) cleanup() {
+	b.cleanupOnce.Do(func() {
+		b.waitGroup.Wait()
+
+		b.mu.Lock()
+		b.job.CurrentPID = 0
+		agentMount := b.agentMount
+		s3Mount := b.s3Mount
+		logger := b.logger
+		qt := b.queueTask
+		cancel := b.cancel
+		b.mu.Unlock()
+
+		if cancel != nil {
+			cancel()
+		}
+
+		if agentMount != nil {
+			agentMount.Unmount()
+			agentMount.CloseMount()
+		}
+		if s3Mount != nil {
+			s3Mount.Unmount()
+			s3Mount.CloseMount()
+		}
+		if logger != nil {
+			_ = logger.Close()
+		}
+		if qt != nil {
+			qt.Close()
+		}
+	})
+}
+
+// Helper methods (copied and adapted from operation.go)
+
+func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd) error {
+	done := make(chan error, 1)
+
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			b.mu.Lock()
+			b.err = err
+			b.mu.Unlock()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-done
+		b.mu.Lock()
+		b.err = jobs.ErrCanceled
+		b.mu.Unlock()
+		return jobs.ErrCanceled
+	}
+}
+
+func (b *backupJob) processPBSLogs(logErr error) (bool, int) {
+	b.mu.RLock()
+	agentMount := b.agentMount
+	b.mu.RUnlock()
 	gracefulEnd := true
 	if agentMount != nil && !agentMount.IsConnected() {
 		gracefulEnd = false
@@ -270,135 +374,34 @@ func (b *BackupOperation) processPBSLogs(logErr error) (bool, int) {
 	return succeeded, warningsNum
 }
 
-func (b *BackupOperation) OnError(err error) {
+func (b *backupJob) runPreScript(ctx context.Context) error {
 	b.mu.RLock()
 	job := b.job
 	b.mu.RUnlock()
 
-	syslog.L.Error(err).WithField("jobId", job.ID).Write()
-
-	if errors.Is(err, jobs.ErrOneInstance) {
-		return
-	}
-
-	if errors.Is(err, ErrMountEmpty) {
-		b.createOK(err)
-		return
-	}
-
-	if b.started.Load() {
-		b.waitGroup.Wait()
-		succeeded, warningsNum := b.processPBSLogs(err)
-		syslog.L.Info().WithJob(job.ID).WithMessage("checking post-backup script")
-		b.runPostScript(succeeded, warningsNum)
-		return
-	}
-
-	task, terr := tasks.GenerateBackupTaskErrorFile(
-		b.job,
-		err,
-		[]string{
-			"Error handling from a scheduled job run request",
-			"Backup ID: " + job.ID,
-			"Source Mode: " + job.SourceMode,
-		},
-	)
-	if terr != nil {
-		syslog.L.Error(terr).WithField("jobId", job.ID).Write()
-	} else {
-		b.updateBackupWithTask(task)
-	}
-}
-
-func (b *BackupOperation) OnSuccess() {
-	b.mu.RLock()
-	job := b.job
-	extraExclusions := b.extraExclusions
-	currOwner := b.currOwner
-	b.mu.RUnlock()
-
-	for _, ext := range extraExclusions {
-		syslog.L.Warn().
-			WithJob(job.ID).
-			WithMessage(fmt.Sprintf("skipped %s due to an error from previous retry attempts", ext)).
-			Write()
-	}
-
-	b.waitGroup.Wait()
-
-	succeeded, warningsNum := b.processPBSLogs(nil)
-
-	if currOwner != "" {
-		syslog.L.Info().WithJob(job.ID).WithMessage("setting owner to datastore owner")
-		_ = SetDatastoreOwner(job, b.storeInstance, currOwner)
-	}
-
-	syslog.L.Info().WithJob(b.GetID()).WithMessage("checking post-backup script")
-	b.runPostScript(succeeded, warningsNum)
-}
-
-func (b *BackupOperation) Cleanup() {
-	b.cleanupOnce.Do(func() {
-		b.waitGroup.Wait()
-
-		b.mu.Lock()
-		b.job.CurrentPID = 0
-		agentMount := b.agentMount
-		s3Mount := b.s3Mount
-		logger := b.logger
-		qt := b.queueTask
-		cancel := b.cancel
-		b.mu.Unlock()
-
-		if cancel != nil {
-			cancel()
-		}
-
-		if agentMount != nil {
-			agentMount.Unmount()
-			agentMount.CloseMount()
-		}
-		if s3Mount != nil {
-			s3Mount.Unmount()
-			s3Mount.CloseMount()
-		}
-		if logger != nil {
-			_ = logger.Close()
-		}
-		if qt != nil {
-			qt.Close()
-		}
-	})
-}
-
-func (b *BackupOperation) Wait() error {
-	b.waitGroup.Wait()
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.err
-}
-
-func (b *BackupOperation) runPreScript() error {
-	job := b.getJob()
-
-	if strings.TrimSpace(job.PreScript) == "" {
+	if job.PreScript == "" {
 		return nil
 	}
 
 	select {
-	case <-b.Context().Done():
+	case <-ctx.Done():
 		return jobs.ErrCanceled
 	default:
 	}
 
-	b.updateQueueDescription("running pre-backup script")
+	b.mu.RLock()
+	qt := b.queueTask
+	b.mu.RUnlock()
+	if qt != nil {
+		qt.UpdateDescription("running pre-backup script")
+	}
 
 	envVars, err := jobs.StructToEnvVars(job)
 	if err != nil {
 		envVars = []string{}
 	}
 
-	scriptOut, modEnvVars, err := jobs.RunShellScript(b.Context(), job.PreScript, envVars)
+	scriptOut, modEnvVars, err := jobs.RunShellScript(ctx, job.PreScript, envVars)
 	syslog.L.Info().WithJob(job.ID).WithMessage(scriptOut).WithField("script", job.PreScript).Write()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -426,9 +429,9 @@ func (b *BackupOperation) runPreScript() error {
 	return nil
 }
 
-func (b *BackupOperation) validateTargetConnection() error {
+func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 	select {
-	case <-b.Context().Done():
+	case <-ctx.Done():
 		return jobs.ErrCanceled
 	default:
 	}
@@ -437,7 +440,9 @@ func (b *BackupOperation) validateTargetConnection() error {
 		return nil
 	}
 
-	job := b.getJob()
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
 
 	switch job.Target.Type {
 	case database.TargetTypeAgent:
@@ -445,10 +450,6 @@ func (b *BackupOperation) validateTargetConnection() error {
 		if !exists {
 			return fmt.Errorf("%w: %s", ErrTargetUnreachable, job.Target.Name)
 		}
-
-		b.mu.RLock()
-		ctx := b.ctx
-		b.mu.RUnlock()
 
 		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -458,7 +459,7 @@ func (b *BackupOperation) validateTargetConnection() error {
 			"target_status",
 			&types.TargetStatusReq{Drive: job.Target.VolumeID},
 		)
-		if err != nil || !strings.HasPrefix(respMsg, "reachable") {
+		if err != nil || !isReachable(respMsg) {
 			return fmt.Errorf("%w: %s", ErrTargetUnreachable, job.Target.Name)
 		}
 
@@ -473,25 +474,34 @@ func (b *BackupOperation) validateTargetConnection() error {
 	return nil
 }
 
-func (b *BackupOperation) runTargetMountScript(target database.Target) error {
+func isReachable(msg string) bool {
+	return len(msg) >= 9 && msg[:9] == "reachable"
+}
+
+func (b *backupJob) runTargetMountScript(ctx context.Context, target database.Target) error {
 	if target.MountScript == "" {
 		return nil
 	}
 
 	select {
-	case <-b.Context().Done():
+	case <-ctx.Done():
 		return jobs.ErrCanceled
 	default:
 	}
 
-	b.updateQueueDescription("running target mount script")
+	b.mu.RLock()
+	qt := b.queueTask
+	b.mu.RUnlock()
+	if qt != nil {
+		qt.UpdateDescription("running target mount script")
+	}
 
 	envVars, err := jobs.StructToEnvVars(target)
 	if err != nil {
 		envVars = []string{}
 	}
 
-	scriptOut, _, err := jobs.RunShellScript(b.Context(), target.MountScript, envVars)
+	scriptOut, _, err := jobs.RunShellScript(ctx, target.MountScript, envVars)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return jobs.ErrCanceled
@@ -503,14 +513,19 @@ func (b *BackupOperation) runTargetMountScript(target database.Target) error {
 	return nil
 }
 
-func (b *BackupOperation) mountSource(target database.Target) (string, *mount.AgentMount, *mount.S3Mount, error) {
+func (b *backupJob) mountSource(ctx context.Context, target database.Target) (string, *mount.AgentMount, *mount.S3Mount, error) {
 	select {
-	case <-b.Context().Done():
+	case <-ctx.Done():
 		return "", nil, nil, jobs.ErrCanceled
 	default:
 	}
 
-	b.updateQueueDescription("mounting target to server")
+	b.mu.RLock()
+	qt := b.queueTask
+	b.mu.RUnlock()
+	if qt != nil {
+		qt.UpdateDescription("mounting target to server")
+	}
 
 	var (
 		srcPath    = target.Path
@@ -519,14 +534,21 @@ func (b *BackupOperation) mountSource(target database.Target) (string, *mount.Ag
 		err        error
 	)
 
-	job := b.getJob()
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
 
 	if target.IsAgent() {
 		if job.SourceMode == "snapshot" {
-			b.updateQueueDescription("waiting for agent to finish snapshot")
+			b.mu.RLock()
+			qt := b.queueTask
+			b.mu.RUnlock()
+			if qt != nil {
+				qt.UpdateDescription("waiting for agent to finish snapshot")
+			}
 		}
 
-		timedCtx, timedCtxCancel := context.WithTimeout(b.Context(), 5*time.Minute)
+		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
 
 		agentMount, err = mount.AgentFSMount(timedCtx, b.storeInstance, job, target)
@@ -536,7 +558,7 @@ func (b *BackupOperation) mountSource(target database.Target) (string, *mount.Ag
 		srcPath = agentMount.Path
 
 		select {
-		case <-b.Context().Done():
+		case <-ctx.Done():
 			agentMount.Unmount()
 			agentMount.CloseMount()
 			return "", nil, nil, jobs.ErrCanceled
@@ -554,7 +576,7 @@ func (b *BackupOperation) mountSource(target database.Target) (string, *mount.Ag
 			return "", agentMount, nil, ErrMountEmpty
 		}
 	} else if target.IsS3() {
-		timedCtx, timedCtxCancel := context.WithTimeout(b.Context(), 5*time.Minute)
+		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
 
 		s3Mount, err = mount.S3FSMount(timedCtx, b.storeInstance, job, target)
@@ -564,7 +586,7 @@ func (b *BackupOperation) mountSource(target database.Target) (string, *mount.Ag
 		srcPath = s3Mount.Path
 
 		select {
-		case <-b.Context().Done():
+		case <-ctx.Done():
 			s3Mount.Unmount()
 			s3Mount.CloseMount()
 			return "", nil, nil, jobs.ErrCanceled
@@ -588,36 +610,41 @@ func (b *BackupOperation) mountSource(target database.Target) (string, *mount.Ag
 	return srcPath, agentMount, s3Mount, nil
 }
 
-func (b *BackupOperation) startBackup(srcPath string, target database.Target) (*exec.Cmd, proxmox.Task, string, error) {
+func (b *backupJob) startBackup(ctx context.Context, srcPath string, target database.Target) (*exec.Cmd, proxmox.Task, string, error) {
 	select {
-	case <-b.Context().Done():
+	case <-ctx.Done():
 		return nil, proxmox.Task{}, "", jobs.ErrCanceled
 	default:
 	}
 
-	b.updateQueueDescription("waiting for proxmox-backup-client to start")
+	b.mu.RLock()
+	qt := b.queueTask
+	b.mu.RUnlock()
+	if qt != nil {
+		qt.UpdateDescription("waiting for proxmox-backup-client to start")
+	}
 
 	b.mu.RLock()
 	job := b.job
 	extraExclusions := b.extraExclusions
 	b.mu.RUnlock()
 
-	cmd, err := prepareBackupCommand(b.Context(), job, b.storeInstance, srcPath, target.IsAgent(), extraExclusions)
+	cmd, err := prepareBackupCommand(ctx, job, b.storeInstance, srcPath, target.IsAgent(), extraExclusions)
 	if err != nil {
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
 	}
 
-	taskChan, readyChan, errChan := b.startTaskMonitoring(target)
+	taskChan, readyChan, errChan := b.startTaskMonitoring(ctx, target)
 
 	select {
 	case <-readyChan:
 	case err := <-errChan:
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskMonitoringInitializationFailed, err)
-	case <-b.Context().Done():
-		if errors.Is(b.Context().Err(), context.Canceled) {
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil, proxmox.Task{}, "", jobs.ErrCanceled
 		}
-		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskMonitoringTimedOut, b.Context().Err())
+		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskMonitoringTimedOut, ctx.Err())
 	}
 
 	currOwner, _ := GetCurrentOwner(job, b.storeInstance)
@@ -647,7 +674,6 @@ func (b *BackupOperation) startBackup(srcPath string, target database.Target) (*
 	}
 
 	b.mu.RLock()
-	ctx := b.ctx
 	loggerPath := logger.Path
 	b.mu.RUnlock()
 
@@ -658,7 +684,7 @@ func (b *BackupOperation) startBackup(srcPath string, target database.Target) (*
 	case task = <-taskChan:
 	case err := <-errChan:
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskDetectionFailed, err)
-	case <-b.Context().Done():
+	case <-ctx.Done():
 		_ = cmd.Process.Kill()
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, b.storeInstance, currOwner)
@@ -669,17 +695,19 @@ func (b *BackupOperation) startBackup(srcPath string, target database.Target) (*
 	return cmd, task, currOwner, nil
 }
 
-func (b *BackupOperation) startTaskMonitoring(target database.Target) (chan proxmox.Task, chan struct{}, chan error) {
+func (b *backupJob) startTaskMonitoring(ctx context.Context, target database.Target) (<-chan proxmox.Task, <-chan struct{}, <-chan error) {
 	readyChan := make(chan struct{})
 	taskChan := make(chan proxmox.Task, 1)
 	errChan := make(chan error, 1)
 
-	job := b.getJob()
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
 
 	go func() {
 		defer syslog.L.Info().WithMessage("monitor goroutine closing").Write()
 
-		timedCtx, timedCancel := context.WithTimeout(b.Context(), 20*time.Second)
+		timedCtx, timedCancel := context.WithTimeout(ctx, 20*time.Second)
 		defer timedCancel()
 
 		task, err := tasks.GetBackupTask(timedCtx, readyChan, job, target)
@@ -693,39 +721,22 @@ func (b *BackupOperation) startTaskMonitoring(target database.Target) (chan prox
 	return taskChan, readyChan, errChan
 }
 
-func (b *BackupOperation) waitForCompletion(cmd *exec.Cmd) {
-	done := make(chan error, 1)
-
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			b.mu.Lock()
-			b.err = err
-			b.mu.Unlock()
-		}
-	case <-b.Context().Done():
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		<-done
-		b.mu.Lock()
-		b.err = jobs.ErrCanceled
-		b.mu.Unlock()
-	}
-}
-
-func (b *BackupOperation) runPostScript(success bool, warningsNum int) {
-	job := b.getJob()
+func (b *backupJob) runPostScript(success bool, warningsNum int) {
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
 
 	if job.PostScript == "" {
 		return
 	}
 
-	b.updateQueueDescription("running post-backup script")
+	b.mu.RLock()
+	job = b.job
+	qt := b.queueTask
+	b.mu.RUnlock()
+	if qt != nil {
+		qt.UpdateDescription("running post-backup script")
+	}
 
 	syslog.L.Info().
 		WithMessage("running post-backup script").
@@ -741,7 +752,10 @@ func (b *BackupOperation) runPostScript(success bool, warningsNum int) {
 	envVars = append(envVars, fmt.Sprintf("PBS_PLUS__JOB_SUCCESS=%t", success))
 	envVars = append(envVars, fmt.Sprintf("PBS_PLUS__JOB_WARNINGS=%d", warningsNum))
 
-	scriptOut, _, err := jobs.RunShellScript(b.Context(), job.PostScript, envVars)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	scriptOut, _, err := jobs.RunShellScript(ctx, job.PostScript, envVars)
 	if err != nil {
 		syslog.L.Error(err).
 			WithMessage("error encountered while running job post-backup script").
@@ -756,8 +770,10 @@ func (b *BackupOperation) runPostScript(success bool, warningsNum int) {
 		Write()
 }
 
-func (b *BackupOperation) createOK(err error) {
-	job := b.getJob()
+func (b *backupJob) createOK(err error) {
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
 
 	task, terr := tasks.GenerateBackupTaskOKFile(
 		job,
@@ -790,7 +806,7 @@ func (b *BackupOperation) createOK(err error) {
 	_ = b.storeInstance.Database.UpdateBackup(nil, latest)
 }
 
-func (b *BackupOperation) updateBackupWithTask(task proxmox.Task) {
+func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

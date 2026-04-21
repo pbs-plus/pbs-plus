@@ -16,7 +16,6 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	agenttypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
@@ -28,10 +27,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-type RestoreOperation struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+// restoreJob holds the state for a restore operation.
+type restoreJob struct {
 	mu     sync.RWMutex
+	cancel context.CancelFunc
 
 	task         *tasks.RestoreTask
 	queueTask    *tasks.QueuedTask
@@ -51,20 +50,19 @@ type RestoreOperation struct {
 	web           bool
 }
 
-var _ jobs.Operation = (*RestoreOperation)(nil)
-
-func NewRestoreOperation(
+// NewRestoreJob creates a new restore job.
+func NewRestoreJob(
 	job database.Restore,
 	storeInstance *store.Store,
 	skipCheck bool,
 	web bool,
-) (*RestoreOperation, error) {
+) (*jobs.Job, error) {
 	task, err := tasks.GetRestoreTask(job)
 	if err != nil {
 		return nil, err
 	}
 
-	return &RestoreOperation{
+	j := &restoreJob{
 		job:           job,
 		storeInstance: storeInstance,
 		skipCheck:     skipCheck,
@@ -72,29 +70,152 @@ func NewRestoreOperation(
 		waitGroup:     &sync.WaitGroup{},
 		task:          task,
 		disconnected:  make(chan struct{}, 1),
+	}
+
+	return &jobs.Job{
+		ID:        job.ID,
+		Execute:   j.execute,
+		OnSuccess: j.onSuccess,
+		OnError:   j.onError,
+		Cleanup:   j.cleanup,
 	}, nil
 }
 
-func (b *RestoreOperation) GetID() string {
-	return b.job.ID
-}
-
-func (b *RestoreOperation) SetContext(ctx context.Context, cancel context.CancelFunc) {
-	b.ctx = ctx
+// execute performs the restore operation.
+func (b *restoreJob) execute(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
 	b.cancel = cancel
+
+	// Pre-execution phase
+	if err := b.preExecute(ctx); err != nil {
+		return err
+	}
+
+	b.updateRestoreWithTask(b.task.Task)
+
+	syslog.L.Info().
+		WithMessage("Received restore request").
+		WithFields(map[string]any{
+			"restoreId": b.job.ID,
+			"target":    b.job.DestTarget,
+		}).
+		Write()
+
+	// Execute based on target type
+	switch b.job.DestTarget.Type {
+	case database.TargetTypeAgent:
+		return b.agentExecute(ctx)
+	case database.TargetTypeLocal:
+		return b.localExecute(ctx)
+	case database.TargetTypeS3:
+		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
+	default:
+		return ErrTargetNotFound
+	}
 }
 
-func (b *RestoreOperation) Context() context.Context {
-	return b.ctx
+func (b *restoreJob) preExecute(ctx context.Context) error {
+	queueTask, err := tasks.GenerateRestoreQueuedTask(b.job, b.web)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
+	} else {
+		if err := updateRestoreStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
+			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
+		}
+	}
+	b.queueTask = &queueTask
+
+	if err := b.runPreScript(ctx); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (b *RestoreOperation) runPreScript() error {
+func (b *restoreJob) onError(err error) {
+	syslog.L.Error(err).WithField("jobId", b.job.ID).Write()
+
+	if errors.Is(err, jobs.ErrOneInstance) {
+		return
+	}
+
+	if errors.Is(err, ErrMountEmpty) {
+		b.createOK(err)
+		return
+	}
+
+	b.task.WriteString("Restore job summary:")
+
+	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
+	if r != nil {
+		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
+		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
+		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(r.TotalBytes.Value())))
+	}
+
+	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
+	b.task.CloseErr(err)
+}
+
+func (b *restoreJob) onSuccess() {
+	b.task.WriteString("Restore job summary:")
+
+	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
+	if r != nil {
+		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
+		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
+		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(r.TotalBytes.Value())))
+	}
+
+	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
+
+	errCount := b.errCount.Load()
+	if errCount > 0 {
+		b.task.CloseWarn(int(errCount))
+		return
+	}
+
+	b.task.CloseOK()
+}
+
+func (b *restoreJob) cleanup() {
+	if b.queueTask != nil {
+		b.queueTask.Close()
+	}
+
+	childKey := b.job.GetStreamID()
+
+	agentRPC, ok := b.storeInstance.ARPCAgentsManager.GetStreamPipe(childKey)
+	if ok {
+		agentRPC.Close()
+	}
+
+	if b.localClient != nil {
+		b.localClient.Close()
+	}
+
+	if b.remoteServer != nil {
+		b.remoteServer.Close()
+	}
+
+	if b.errCh != nil {
+		if !b.errChClosed.Swap(true) {
+			close(b.errCh)
+		}
+	}
+
+	vfssessions.DisconnectSession(childKey)
+}
+
+// Helper methods
+
+func (b *restoreJob) runPreScript(ctx context.Context) error {
 	if strings.TrimSpace(b.job.PreScript) == "" {
 		return nil
 	}
 
 	select {
-	case <-b.Context().Done():
+	case <-ctx.Done():
 		return jobs.ErrCanceled
 	default:
 	}
@@ -107,7 +228,7 @@ func (b *RestoreOperation) runPreScript() error {
 		envVars = []string{}
 	}
 
-	scriptOut, _, err := jobs.RunShellScript(b.Context(), b.job.PreScript, envVars)
+	scriptOut, _, err := jobs.RunShellScript(ctx, b.job.PreScript, envVars)
 	syslog.L.Info().WithJob(b.job.ID).WithMessage(scriptOut).WithField("script", b.job.PreScript).Write()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -129,70 +250,8 @@ func (b *RestoreOperation) runPreScript() error {
 	return nil
 }
 
-func (b *RestoreOperation) runPostScript() {
-	b.mu.RLock()
-	job := b.job
-	b.mu.RUnlock()
-
-	if job.PostScript == "" {
-		return
-	}
-
-	if b.queueTask != nil {
-		b.queueTask.UpdateDescription("running post-restore script")
-	}
-
-	b.task.WriteString(fmt.Sprintf("running post-restore script %s", b.job.PostScript))
-	syslog.L.Info().
-		WithMessage("running post-restore script").
-		WithField("script", job.PostScript).
-		WithJob(job.ID).
-		Write()
-
-	envVars, err := jobs.StructToEnvVars(job)
-	if err != nil {
-		envVars = []string{}
-	}
-
-	scriptOut, _, err := jobs.RunShellScript(b.Context(), job.PostScript, envVars)
-	if err != nil {
-		b.task.WriteString(err.Error())
-		b.task.WriteString(fmt.Sprintf("encountered error while running %s", b.job.PostScript))
-		b.errCount.Add(1)
-		syslog.L.Error(err).
-			WithMessage("error encountered while running job post-restore script").
-			WithJob(job.ID).
-			Write()
-	}
-
-	b.task.WriteString(scriptOut)
-	syslog.L.Info().
-		WithMessage(scriptOut).
-		WithField("script", job.PostScript).
-		WithJob(job.ID).
-		Write()
-}
-
-func (b *RestoreOperation) PreExecute() error {
-	queueTask, err := tasks.GenerateRestoreQueuedTask(b.job, b.web)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
-	} else {
-		if err := updateRestoreStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
-			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
-		}
-	}
-	b.queueTask = &queueTask
-
-	if err := b.runPreScript(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (b *RestoreOperation) agentExecute() error {
-	preCtx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
+func (b *restoreJob) agentExecute(ctx context.Context) error {
+	preCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", b.job.DestTarget.Name))
@@ -202,7 +261,7 @@ func (b *RestoreOperation) agentExecute() error {
 		return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	respMsg, err := arpcSess.CallMessage(
@@ -223,7 +282,7 @@ func (b *RestoreOperation) agentExecute() error {
 		if len(fullPath) >= 2 && fullPath[1] == ':' {
 			drive := strings.ToUpper(fullPath[:2])
 			remaining := fullPath[2:]
-			remaining = regexp.MustCompile(`\\+`).ReplaceAllString(remaining, "\\")
+			remaining = regexp.MustCompile(`\+`).ReplaceAllString(remaining, "\\")
 			if !strings.HasPrefix(remaining, "\\") {
 				remaining = "\\" + remaining
 			}
@@ -260,7 +319,7 @@ func (b *RestoreOperation) agentExecute() error {
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", childKey))
 
-	pipeCtx, pipeCtxCancel := context.WithTimeout(b.ctx, 10*time.Second)
+	pipeCtx, pipeCtxCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer pipeCtxCancel()
 
 	agentRPC, err := b.storeInstance.ARPCAgentsManager.WaitStreamPipe(pipeCtx, childKey)
@@ -279,7 +338,7 @@ func (b *RestoreOperation) agentExecute() error {
 	))
 
 	reader, err := pxar.NewPxarReader(
-		b.ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task,
+		ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task,
 	)
 	if err != nil {
 		return err
@@ -296,9 +355,10 @@ func (b *RestoreOperation) agentExecute() error {
 	}
 
 	go func() {
+		defer b.waitGroup.Done()
 		for {
 			select {
-			case <-b.ctx.Done():
+			case <-ctx.Done():
 				return
 			case err, ok := <-b.errCh:
 				if !ok {
@@ -311,6 +371,7 @@ func (b *RestoreOperation) agentExecute() error {
 			}
 		}
 	}()
+	b.waitGroup.Add(1)
 
 	agentRPC.SetRouter(*b.remoteServer.Router())
 	vfssessions.CreatePxarReader(childKey, reader)
@@ -327,27 +388,11 @@ func (b *RestoreOperation) agentExecute() error {
 		return err
 	}
 
-	ticker := time.NewTicker(1 * time.Second)
-	go func() {
-		for {
-			select {
-			case <-b.ctx.Done():
-				ticker.Stop()
-				return
-			case <-ticker.C:
-				if state := agentRPC.GetState(); state == arpc.StateDisconnected {
-					close(b.disconnected)
-					ticker.Stop()
-					return
-				}
-			}
-		}
-	}()
-
-	return nil
+	// Wait for completion
+	return b.waitForCompletion(ctx)
 }
 
-func (b *RestoreOperation) localExecute() error {
+func (b *restoreJob) localExecute(ctx context.Context) error {
 	destPath := filepath.Join(b.job.DestTarget.Path, b.job.DestSubpath)
 
 	srcPath := b.job.SrcPath
@@ -367,7 +412,7 @@ func (b *RestoreOperation) localExecute() error {
 	))
 
 	reader, err := pxar.NewPxarReader(
-		b.ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task,
+		ctx, socketPath, b.job.Store, b.job.Namespace, b.job.Snapshot, b.task,
 	)
 	if err != nil {
 		return err
@@ -383,16 +428,16 @@ func (b *RestoreOperation) localExecute() error {
 	b.task.WriteString("starting local restore")
 
 	b.waitGroup.Go(func() {
-		pxar.RestoreWithOptions(b.ctx, b.localClient, []string{srcPath}, pxar.RestoreOptions{
+		pxar.RestoreWithOptions(ctx, b.localClient, []string{srcPath}, pxar.RestoreOptions{
 			DestDir: destPath,
 			Mode:    pxar.RestoreMode(b.job.Mode),
 		})
 	})
 
-	go func() {
+	b.waitGroup.Go(func() {
 		for {
 			select {
-			case <-b.ctx.Done():
+			case <-ctx.Done():
 				return
 			case err, ok := <-b.errCh:
 				if !ok {
@@ -404,120 +449,23 @@ func (b *RestoreOperation) localExecute() error {
 				}
 			}
 		}
-	}()
+	})
 
 	vfssessions.CreatePxarReader(childKey, reader)
 
-	return nil
+	// Wait for completion
+	return b.waitForCompletion(ctx)
 }
 
-func (b *RestoreOperation) Execute() error {
-	b.updateRestoreWithTask(b.task.Task)
-
-	syslog.L.Info().
-		WithMessage("Received restore request").
-		WithFields(map[string]any{
-			"restoreId": b.job.ID,
-			"target":    b.job.DestTarget,
-		}).
-		Write()
-
-	switch b.job.DestTarget.Type {
-	case database.TargetTypeAgent:
-		return b.agentExecute()
-	case database.TargetTypeLocal:
-		return b.localExecute()
-	case database.TargetTypeS3:
-		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
-	default:
-		return ErrTargetNotFound
-	}
-}
-
-func (b *RestoreOperation) OnError(err error) {
-	syslog.L.Error(err).WithField("jobId", b.job.ID).Write()
-
-	if errors.Is(err, jobs.ErrOneInstance) {
-		return
-	}
-
-	if errors.Is(err, ErrMountEmpty) {
-		b.createOK(err)
-		return
-	}
-
-	b.task.WriteString("Restore job summary:")
-
-	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
-	if r != nil {
-		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
-		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
-		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(r.TotalBytes.Value())))
-	}
-
-	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
-	b.task.CloseErr(err)
-}
-
-func (b *RestoreOperation) OnSuccess() {
-	b.task.WriteString("Restore job summary:")
-
-	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
-	if r != nil {
-		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
-		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
-		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(r.TotalBytes.Value())))
-	}
-
-	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
-
-	errCount := b.errCount.Load()
-	if errCount > 0 {
-		b.task.CloseWarn(int(errCount))
-		return
-	}
-
-	b.task.CloseOK()
-}
-
-func (b *RestoreOperation) Cleanup() {
-	if b.queueTask != nil {
-		b.queueTask.Close()
-	}
-
-	childKey := b.job.GetStreamID()
-
-	agentRPC, ok := b.storeInstance.ARPCAgentsManager.GetStreamPipe(childKey)
-	if ok {
-		agentRPC.Close()
-	}
-
-	if b.localClient != nil {
-		b.localClient.Close()
-	}
-
-	if b.remoteServer != nil {
-		b.remoteServer.Close()
-	}
-
-	if b.errCh != nil {
-		if !b.errChClosed.Swap(true) {
-			close(b.errCh)
-		}
-	}
-
-	vfssessions.DisconnectSession(childKey)
-}
-
-func (b *RestoreOperation) Wait() error {
+func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 	if b.waitGroup != nil {
 		b.waitGroup.Wait()
 	}
 
 	if b.remoteServer != nil {
 		select {
-		case <-b.ctx.Done():
-			return b.ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-b.remoteServer.DoneCh:
 			b.receivedDone.Store(true)
 			b.task.WriteString("received done signal from agent")
@@ -529,7 +477,7 @@ func (b *RestoreOperation) Wait() error {
 		}
 	}
 
-	if b.ctx.Err() == nil {
+	if ctx.Err() == nil {
 		b.runPostScript()
 	}
 
@@ -537,10 +485,57 @@ func (b *RestoreOperation) Wait() error {
 		return b.err
 	}
 
-	return b.ctx.Err()
+	return ctx.Err()
 }
 
-func (b *RestoreOperation) createOK(err error) {
+func (b *restoreJob) runPostScript() {
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
+
+	if job.PostScript == "" {
+		return
+	}
+
+	if b.queueTask != nil {
+		b.queueTask.UpdateDescription("running post-restore script")
+	}
+
+	b.task.WriteString(fmt.Sprintf("running post-restore script %s", b.job.PostScript))
+	syslog.L.Info().
+		WithMessage("running post-restore script").
+		WithField("script", job.PostScript).
+		WithJob(job.ID).
+		Write()
+
+	envVars, err := jobs.StructToEnvVars(job)
+	if err != nil {
+		envVars = []string{}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	scriptOut, _, err := jobs.RunShellScript(ctx, job.PostScript, envVars)
+	if err != nil {
+		b.task.WriteString(err.Error())
+		b.task.WriteString(fmt.Sprintf("encountered error while running %s", b.job.PostScript))
+		b.errCount.Add(1)
+		syslog.L.Error(err).
+			WithMessage("error encountered while running job post-restore script").
+			WithJob(job.ID).
+			Write()
+	}
+
+	b.task.WriteString(scriptOut)
+	syslog.L.Info().
+		WithMessage(scriptOut).
+		WithField("script", b.job.PostScript).
+		WithJob(job.ID).
+		Write()
+}
+
+func (b *restoreJob) createOK(err error) {
 	task, terr := tasks.GenerateRestoreTaskOKFile(
 		b.job,
 		[]string{
@@ -576,7 +571,7 @@ func (b *RestoreOperation) createOK(err error) {
 	}
 }
 
-func (b *RestoreOperation) updateRestoreWithTask(task proxmox.Task) {
+func (b *restoreJob) updateRestoreWithTask(task proxmox.Task) {
 	latest, gerr := b.storeInstance.Database.GetRestore(b.job.ID)
 	if gerr != nil {
 		latest = b.job

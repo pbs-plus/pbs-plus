@@ -9,7 +9,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -299,46 +298,4 @@ func (t *PVCBackupTracker) IsTracked(key string) bool {
 	defer t.mu.RUnlock()
 	_, exists := t.pvcs[key]
 	return exists
-}
-
-func (t *PVCBackupTracker) Get(key string) (PVCBackupInfo, bool) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	info, exists := t.pvcs[key]
-	return info, exists
-}
-
-func (t *PVCBackupTracker) List() []PVCBackupInfo {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	result := make([]PVCBackupInfo, 0, len(t.pvcs))
-	for _, info := range t.pvcs {
-		result = append(result, info)
-	}
-	return result
-}
-
-func ListPVCsWithBackupAnnotation(factory informers.SharedInformerFactory, namespace string) ([]*corev1.PersistentVolumeClaim, error) {
-	pvcLister := factory.Core().V1().PersistentVolumeClaims().Lister()
-
-	var pvcs []*corev1.PersistentVolumeClaim
-	var err error
-
-	if namespace != "" {
-		pvcs, err = pvcLister.PersistentVolumeClaims(namespace).List(labels.Everything())
-	} else {
-		pvcs, err = pvcLister.List(labels.Everything())
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	var result []*corev1.PersistentVolumeClaim
-	for _, pvc := range pvcs {
-		if pvc.Annotations[BackupAnnotation] == "true" {
-			result = append(result, pvc)
-		}
-	}
-	return result, nil
 }

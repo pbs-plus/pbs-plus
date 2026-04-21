@@ -56,8 +56,12 @@ func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) er
 		return nil
 	}
 
-	job := backup.NewBackupOperation(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
-	s.Manager.Enqueue(job)
+	jobOp := backup.NewBackupJob(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
+	if err := s.Manager.Enqueue(jobOp); err != nil {
+		reply.Status = 500
+		reply.Message = err.Error()
+		return nil
+	}
 	reply.Status = 200
 
 	return nil
@@ -76,19 +80,23 @@ func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) 
 		return nil
 	}
 
-	job, err := restore.NewRestoreOperation(args.Job, s.Store, args.SkipCheck, args.Web)
+	jobOp, err := restore.NewRestoreJob(args.Job, s.Store, args.SkipCheck, args.Web)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
 		return nil
 	}
-	s.Manager.Enqueue(job)
+	if err := s.Manager.Enqueue(jobOp); err != nil {
+		reply.Status = 500
+		reply.Message = err.Error()
+		return nil
+	}
 	reply.Status = 200
 
 	return nil
 }
 
-func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
+func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
 	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
 	listener, err := net.Listen("unix", socketPath)

@@ -107,13 +107,3 @@ func (bs *RestoreStore) HasActiveRestoreForJob(job string) (bool, error) {
 	_, exists := sessions[job]
 	return exists, nil
 }
-
-func (bs *RestoreStore) ClearAll() error {
-	disableWakeLock()
-
-	return bs.updateSessions(func(sessions map[string]*RestoreSessionData) {
-		for job := range sessions {
-			delete(sessions, job)
-		}
-	})
-}
