@@ -159,14 +159,14 @@ func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.T
 
 func (s *Scheduler) markEnqueued(backupID string, t time.Time) {
 	s.lastEnqueuedMu.Lock()
+	defer s.lastEnqueuedMu.Unlock()
 	s.lastEnqueued[backupID] = t
-	s.lastEnqueuedMu.Unlock()
 }
 
 func (s *Scheduler) getEnqueued(backupID string) (time.Time, bool) {
 	s.lastEnqueuedMu.Lock()
+	defer s.lastEnqueuedMu.Unlock()
 	t, ok := s.lastEnqueued[backupID]
-	s.lastEnqueuedMu.Unlock()
 	return t, ok
 }
 
