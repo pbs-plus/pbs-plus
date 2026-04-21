@@ -8,6 +8,8 @@ SYMLINK_PATH="/usr/bin/pbs-plus-agent"
 STATE_DIR="/var/lib/pbs-plus-agent"
 LOG_DIR="/var/log/pbs-plus-agent"
 ETC_DIR="/etc/pbs-plus-agent"
+LEGACY_STATE_DIR="/var/lib/pbs-plus"
+LEGACY_LOG_DIR="/var/log/pbs-plus"
 
 is_cmd() { command -v "$1" >/dev/null 2>&1; }
 log() { echo "--> $@"; }
@@ -149,8 +151,58 @@ setup_apparmor() {
   fi
 }
 
+migrate_legacy_paths() {
+  # Migration from v0.78.x and earlier which used /var/lib/pbs-plus instead of /var/lib/pbs-plus-agent
+  # This handles RPM updates where users may have existing data in old location
+  
+  if [ ! -d "$LEGACY_STATE_DIR" ]; then
+    # No legacy data to migrate
+    return 0
+  fi
+
+  if [ -d "$LEGACY_STATE_DIR.backup.legacy" ]; then
+    # Migration already completed in a previous install
+    log "Legacy data already migrated (backup exists)"
+    return 0
+  fi
+
+  log "Migrating legacy data from $LEGACY_STATE_DIR to $STATE_DIR..."
+
+  # Check if new directory already has content
+  if [ -d "$STATE_DIR" ] && [ "$(ls -A "$STATE_DIR" 2>/dev/null)" ]; then
+    log "New state directory already has content, skipping migration"
+    return 0
+  fi
+
+  # Ensure new directories exist with proper permissions
+  mkdir -p "$STATE_DIR" "$LOG_DIR" 2>/dev/null || true
+  
+  # Attempt migration
+  if [ -d "$STATE_DIR" ] && [ -w "$STATE_DIR" ]; then
+    # Copy all content from legacy to new
+    if cp -a "$LEGACY_STATE_DIR/"* "$STATE_DIR/" 2>/dev/null; then
+      # Rename legacy to backup
+      if mv "$LEGACY_STATE_DIR" "$LEGACY_STATE_DIR.backup.legacy" 2>/dev/null; then
+        log "Migration complete, backed up old directory to $LEGACY_STATE_DIR.backup.legacy"
+      else
+        log "Data migrated but failed to backup old directory (will retry on next run)"
+      fi
+    else
+      log "Warning: Failed to copy legacy data, agent will continue using legacy paths"
+    fi
+  else
+    log "Warning: Cannot create new state directory, agent will continue using legacy paths"
+  fi
+  
+  # Ensure permissions are correct
+  chown -R pbsplus:pbsplus "$STATE_DIR" "$LOG_DIR" 2>/dev/null || true
+}
+
 setup_service() {
   log "Configuring directories..."
+  
+  # Migrate legacy data before setting up new directories
+  migrate_legacy_paths
   
   mkdir -p "$STATE_DIR" "$LOG_DIR" "$ETC_DIR"
   chown -R pbsplus:pbsplus "$STATE_DIR" "$LOG_DIR" "$ETC_DIR"
