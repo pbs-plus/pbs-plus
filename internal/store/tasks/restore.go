@@ -56,8 +56,8 @@ func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 
 // WriteString writes a timestamped log line to the task file.
 func (t *RestoreTask) WriteString(data string) {
-	t.Lock()
-	defer t.Unlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	if t.closed.Load() {
 		return

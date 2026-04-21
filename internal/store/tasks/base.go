@@ -19,7 +19,7 @@ import (
 // to avoid duplicating common file-handling logic.
 type baseTask struct {
 	proxmox.Task
-	sync.Mutex
+	mu     sync.Mutex
 	closed atomic.Bool
 	file   *os.File
 }
@@ -49,13 +49,13 @@ func (t *baseTask) writeLogLine(format string, args ...any) bool {
 // The beforeClose callback is called before closing, allowing the task to write
 // additional data while the file is still open.
 func (t *baseTask) closeWithStatus(status string, beforeClose func(), afterUnlock func()) {
-	t.Lock()
+	t.mu.Lock()
 	defer func() {
 		if beforeClose != nil {
 			beforeClose()
 		}
 		t.close()
-		t.Unlock()
+		t.mu.Unlock()
 		if afterUnlock != nil {
 			afterUnlock()
 		}
