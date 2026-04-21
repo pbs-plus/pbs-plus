@@ -142,28 +142,6 @@ func CreateEntry(entry *RegistryEntry) error {
 	return baseKey.SetStringValue(entry.Key, entry.Value)
 }
 
-func UpdateEntry(entry *RegistryEntry) error {
-	if err := ensureInitialized(); err != nil {
-		return err
-	}
-
-	if _, err := GetEntry(entry.Path, entry.Key, entry.IsSecret); err != nil {
-		return fmt.Errorf("UpdateEntry error: entry does not exist")
-	}
-
-	if entry.IsSecret {
-		return writeSecretDPAPIToRegistry(entry.Path, entry.Key, entry.Value)
-	}
-
-	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, entry.Path, registry.SET_VALUE)
-	if err != nil {
-		return err
-	}
-	defer baseKey.Close()
-
-	return baseKey.SetStringValue(entry.Key, entry.Value)
-}
-
 func CreateEntryIfNotExists(entry *RegistryEntry) error {
 	if _, err := GetEntry(entry.Path, entry.Key, entry.IsSecret); err == nil {
 		return nil
@@ -183,25 +161,4 @@ func DeleteEntry(path string, key string) error {
 	defer baseKey.Close()
 
 	return baseKey.DeleteValue(key)
-}
-
-func DeleteKey(path string) error {
-	if err := ensureInitialized(); err != nil {
-		return err
-	}
-	return registry.DeleteKey(registry.LOCAL_MACHINE, path)
-}
-
-func ListEntries(path string) ([]string, error) {
-	if err := ensureInitialized(); err != nil {
-		return nil, err
-	}
-
-	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
-	if err != nil {
-		return []string{}, nil
-	}
-	defer baseKey.Close()
-
-	return baseKey.ReadValueNames(0)
 }

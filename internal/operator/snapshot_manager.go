@@ -264,11 +264,6 @@ func (sm *SnapshotManager) getVolumeSnapshot(ctx context.Context, namespace, nam
 	return result, err
 }
 
-//go:fix inline
-func strPtr(s string) *string {
-	return new(s)
-}
-
 type VolumeSnapshot struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata"`

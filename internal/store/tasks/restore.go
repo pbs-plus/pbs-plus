@@ -7,171 +7,89 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
-	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"syscall"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
 )
 
+// RestoreTask manages restore job logging and lifecycle.
 type RestoreTask struct {
-	proxmox.Task
-	sync.Mutex
-	closed  atomic.Bool
-	file    *os.File
+	baseTask
 	restore database.Restore
 }
 
-func GetRestoreTask(
-	job database.Restore,
-) (*RestoreTask, error) {
+// GetRestoreTask creates a new restore task with log file setup.
+func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
-
-	proxyPID := os.Getpid()
-	proxyPStart := proxmox.GetPStart()
-
-	wtype := "reader"
-	node := "pbsplus"
+	startTimeHex := fmt.Sprintf("%08X", uint32(now().Unix()))
+	pidHex := fmt.Sprintf("%08X", os.Getpid())
+	pstartHex := fmt.Sprintf("%08X", proxmox.GetPStart())
+	taskID := fmt.Sprintf("%08X", rand.Uint32())
 
 	task := proxmox.Task{
-		Node:       node,
-		PID:        proxyPID,
-		PStart:     proxyPStart,
-		StartTime:  time.Now().Unix(),
-		WorkerType: wtype,
+		Node:       "pbsplus",
+		PID:        os.Getpid(),
+		PStart:     proxmox.GetPStart(),
+		StartTime:  now().Unix(),
+		WorkerType: "reader",
 		WID:        wid,
 		User:       proxmox.AUTH_ID,
 	}
+	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pidHex, pstartHex, taskID, startTimeHex, task.WorkerType, wid, proxmox.AUTH_ID)
 
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, proxmox.AUTH_ID)
-
-	task.UPID = upid
-
-	path, err := proxmox.GetLogPath(upid)
+	file, _, err := createTaskLogFile(task.UPID)
 	if err != nil {
-		return nil, err
-	}
-
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	_ = os.Chown(filepath.Dir(path), 34, 34)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		_ = os.Remove(filepath.Dir(path))
 		return nil, err
 	}
 
 	rTask := &RestoreTask{
-		Task:    task,
-		file:    file,
-		restore: job,
+		baseTask: baseTask{Task: task, file: file},
+		restore:  job,
 	}
-
 	rTask.addActiveTask()
-
 	return rTask, nil
 }
 
+// WriteString writes a timestamped log line to the task file.
 func (t *RestoreTask) WriteString(data string) {
-	t.Mutex.Lock()
-	defer t.Mutex.Unlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	if t.closed.Load() {
 		return
 	}
-
-	timestamp := time.Now().Format(time.RFC3339)
-
-	dataLine := fmt.Sprintf("%s: %s\n", timestamp, data)
-	if _, err := t.file.WriteString(dataLine); err != nil {
-		return
-	}
-
+	t.writeLogLine("%s", data)
 	t.file.Sync()
 }
 
+// close cleans up resources and marks the task closed.
 func (t *RestoreTask) close() {
-	if t.file != nil {
-		t.file.Close()
-	}
-
+	t.baseTask.close()
 	t.removeActiveTask()
-
-	t.closed.Store(true)
 }
 
+// addActiveTask registers this task in the active tasks file.
 func (t *RestoreTask) addActiveTask() error {
-	filePath := conf.ActiveLogsPath
-	target := t.UPID
-
-	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return fmt.Errorf("could not open active tasks file: %w", err)
-	}
-	defer f.Close()
-
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("could not acquire lock: %w", err)
-	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-
-	var lines []string
-	alreadyExists := false
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.Contains(line, target) {
-			alreadyExists = true
-		}
-		lines = append(lines, line)
-	}
-
-	if alreadyExists {
-		return nil // Task already registered
-	}
-
-	lines = append(lines, target)
-
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		return err
-	}
-
-	writer := bufio.NewWriter(f)
-	for _, line := range lines {
-		if _, err := writer.WriteString(line + "\n"); err != nil {
-			return err
-		}
-	}
-
-	if err := writer.Flush(); err != nil {
-		return err
-	}
-	return f.Sync()
+	return modifyActiveTaskFile(t.UPID, true)
 }
 
+// removeActiveTask unregisters this task from the active tasks file.
 func (t *RestoreTask) removeActiveTask() error {
-	filePath := conf.ActiveLogsPath
-	target := t.UPID
+	return modifyActiveTaskFile(t.UPID, false)
+}
 
-	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
+// modifyActiveTaskFile adds or removes a task from the active tasks file.
+func modifyActiveTaskFile(target string, add bool) error {
+	f, err := os.OpenFile(conf.ActiveLogsPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if !add && os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("could not open active tasks file: %w", err)
 	}
 	defer f.Close()
 
@@ -187,13 +105,22 @@ func (t *RestoreTask) removeActiveTask() error {
 		line := scanner.Text()
 		if strings.Contains(line, target) {
 			found = true
-			continue // Skip the line to be removed
+			if !add { // skip when removing
+				continue
+			}
 		}
 		lines = append(lines, line)
 	}
 
-	if !found {
-		return nil // Nothing changed
+	if add {
+		if found {
+			return nil // already exists
+		}
+		lines = append(lines, target)
+	} else {
+		if !found {
+			return nil // nothing to remove
+		}
 	}
 
 	if err := f.Truncate(0); err != nil {
@@ -209,266 +136,71 @@ func (t *RestoreTask) removeActiveTask() error {
 			return err
 		}
 	}
-
 	if err := writer.Flush(); err != nil {
 		return err
 	}
 	return f.Sync()
 }
 
+// CloseOK closes the task with "OK" status.
 func (t *RestoreTask) CloseOK() {
-	t.Mutex.Lock()
-	defer func() {
-		t.close()
-		t.Mutex.Unlock()
-	}()
-
-	timestamp := time.Now().Format(time.RFC3339)
-
-	errorLine := fmt.Sprintf("%s: TASK OK\n", timestamp)
-	if _, err := t.file.WriteString(errorLine); err != nil {
-		return
-	}
-
-	archive, err := os.OpenFile(filepath.Join(conf.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer archive.Close()
-
-	startTime := fmt.Sprintf("%08X", uint32(t.StartTime))
-	archiveLine := fmt.Sprintf("%s %s OK\n", t.UPID, startTime)
-	if _, err := archive.WriteString(archiveLine); err != nil {
-		return
-	}
+	t.closeWithStatus("OK", nil, func() {
+		_ = t.removeActiveTask()
+	})
 }
 
+// CloseErr closes the task with "ERROR: <msg>" status.
 func (t *RestoreTask) CloseErr(taskErr error) {
-	t.Mutex.Lock()
-	defer func() {
-		t.close()
-		t.Mutex.Unlock()
-	}()
-
-	timestamp := time.Now().Format(time.RFC3339)
-
-	errorLine := fmt.Sprintf("%s: TASK ERROR: %s\n", timestamp, taskErr.Error())
-	if _, err := t.file.WriteString(errorLine); err != nil {
-		return
-	}
-
-	archive, err := os.OpenFile(filepath.Join(conf.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer archive.Close()
-
-	startTime := fmt.Sprintf("%08X", uint32(t.StartTime))
-	archiveLine := fmt.Sprintf("%s %s %s\n", t.UPID, startTime, taskErr.Error())
-	if _, err := archive.WriteString(archiveLine); err != nil {
-		return
-	}
+	errMsg := taskErr.Error()
+	t.closeWithStatus("ERROR: "+errMsg, nil, func() {
+		_ = t.removeActiveTask()
+	})
+	writeArchive(t.UPID, t.StartTime, errMsg) // archive has raw error without "ERROR:" prefix
 }
 
+// CloseWarn closes the task with "WARNINGS: <n>" status.
 func (t *RestoreTask) CloseWarn(warning int) {
-	t.Mutex.Lock()
-	defer func() {
-		t.close()
-		t.Mutex.Unlock()
-	}()
-
-	timestamp := time.Now().Format(time.RFC3339)
-
-	errorLine := fmt.Sprintf("%s: TASK WARNINGS: %d\n", timestamp, warning)
-	if _, err := t.file.WriteString(errorLine); err != nil {
-		return
-	}
-
-	archive, err := os.OpenFile(filepath.Join(conf.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer archive.Close()
-
-	startTime := fmt.Sprintf("%08X", uint32(t.StartTime))
-	archiveLine := fmt.Sprintf("%s %s OK\n", t.UPID, startTime)
-	if _, err := archive.WriteString(archiveLine); err != nil {
-		return
-	}
+	t.closeWithStatus(fmt.Sprintf("WARNINGS: %d", warning), nil, func() {
+		_ = t.removeActiveTask()
+	})
 }
 
-func GenerateRestoreTaskErrorFile(job database.Restore, pbsError error, additionalData []string) (proxmox.Task, error) {
-	targetName := job.DestTarget.GetHostname()
-	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
-
-	wtype := "reader"
-	node := "pbsplusgen-error"
-
-	task := proxmox.Task{
-		Node:       node,
-		PID:        os.Getpid(),
-		PStart:     proxmox.GetPStart(),
-		StartTime:  time.Now().Unix(),
-		WorkerType: wtype,
-		WID:        wid,
-		User:       proxmox.AUTH_ID,
-	}
-
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, proxmox.AUTH_ID)
-
-	task.UPID = upid
-
-	path, err := proxmox.GetLogPath(upid)
-	if err != nil {
-		return proxmox.Task{}, err
-	}
-
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	_ = os.Chown(filepath.Dir(path), 34, 34)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return proxmox.Task{}, err
-	}
-
-	err = file.Chown(34, 34)
-	if err != nil {
-		return proxmox.Task{}, err
-	}
-	defer file.Close()
-
-	timestamp := time.Now().Format(time.RFC3339)
-
-	for _, data := range additionalData {
-		dataLine := fmt.Sprintf("%s: %s\n", timestamp, data)
-		if _, err := file.WriteString(dataLine); err != nil {
-			return proxmox.Task{}, fmt.Errorf("failed to write additional data line: %w", err)
-		}
-	}
-
-	fullError := pbsError.Error()
-	errorLines := strings.Split(fullError, "\n")
-
-	firstNonEmptyLine := ""
-	for _, line := range errorLines {
-		if trimmed := strings.TrimSpace(line); trimmed != "" {
-			firstNonEmptyLine = trimmed
-			break
-		}
-	}
-
-	if firstNonEmptyLine == "" {
-		firstNonEmptyLine = fullError
-	}
-
-	for _, line := range errorLines {
-		if line != "" {
-			errorDetailLine := fmt.Sprintf("%s: %s\n", timestamp, line)
-			if _, err := file.WriteString(errorDetailLine); err != nil {
-				return proxmox.Task{}, fmt.Errorf("failed to write error detail line: %w", err)
-			}
-		}
-	}
-
-	errorLine := fmt.Sprintf("%s: TASK ERROR: %s\n", timestamp, firstNonEmptyLine)
-	if _, err := file.WriteString(errorLine); err != nil {
-		return proxmox.Task{}, fmt.Errorf("failed to write error line: %w", err)
-	}
-
-	archive, err := os.OpenFile(filepath.Join(conf.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return proxmox.Task{}, fmt.Errorf("failed to open file archive: %w", err)
-	}
-	defer archive.Close()
-
-	archiveLine := fmt.Sprintf("%s %s %s\n", upid, startTime, firstNonEmptyLine)
-	if _, err := archive.WriteString(archiveLine); err != nil {
-		return proxmox.Task{}, fmt.Errorf("failed to write archive line: %w", err)
-	}
-
-	task.Status = "stopped"
-	task.ExitStatus = firstNonEmptyLine
-	task.EndTime = time.Now().Unix()
-
-	return task, nil
-}
-
+// GenerateRestoreTaskOKFile creates a standalone OK task file for restore operations.
 func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (proxmox.Task, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := fmt.Sprintf("%08X", uint32(time.Now().Unix()))
-
-	wtype := "reader"
-	node := "pbsplusgen-ok"
+	startTime := now().Unix()
+	startTimeHex := fmt.Sprintf("%08X", uint32(startTime))
+	pidHex := fmt.Sprintf("%08X", os.Getpid())
+	pstartHex := fmt.Sprintf("%08X", proxmox.GetPStart())
+	taskID := fmt.Sprintf("%08X", rand.Uint32())
 
 	task := proxmox.Task{
-		Node:       node,
+		Node:       "pbsplusgen-ok",
 		PID:        os.Getpid(),
 		PStart:     proxmox.GetPStart(),
-		StartTime:  time.Now().Unix(),
-		WorkerType: wtype,
+		StartTime:  startTime,
+		WorkerType: "reader",
 		WID:        wid,
 		User:       proxmox.AUTH_ID,
 	}
+	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pidHex, pstartHex, taskID, startTimeHex, task.WorkerType, wid, proxmox.AUTH_ID)
 
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-
-	upid := fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", node, pid, pstart, taskID, startTime, wtype, wid, proxmox.AUTH_ID)
-
-	task.UPID = upid
-
-	path, err := proxmox.GetLogPath(upid)
-	if err != nil {
-		return proxmox.Task{}, err
-	}
-
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	_ = os.Chown(filepath.Dir(path), 34, 34)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return proxmox.Task{}, err
-	}
-
-	err = file.Chown(34, 34)
+	file, _, err := createTaskLogFile(task.UPID)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
 	defer file.Close()
 
-	timestamp := time.Now().Format(time.RFC3339)
-
+	base := baseTask{Task: task, file: file}
 	for _, data := range additionalData {
-		dataLine := fmt.Sprintf("%s: %s\n", timestamp, data)
-		if _, err := file.WriteString(dataLine); err != nil {
-			return proxmox.Task{}, fmt.Errorf("failed to write additional data line: %w", err)
-		}
+		base.writeLogLine("%s", data)
 	}
+	base.writeLogLine("TASK OK")
 
-	errorLine := fmt.Sprintf("%s: TASK OK\n", timestamp)
-	if _, err := file.WriteString(errorLine); err != nil {
-		return proxmox.Task{}, fmt.Errorf("failed to write ok line: %w", err)
-	}
-
-	archive, err := os.OpenFile(filepath.Join(conf.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return proxmox.Task{}, fmt.Errorf("failed to open file archive: %w", err)
-	}
-	defer archive.Close()
-
-	archiveLine := fmt.Sprintf("%s %s OK\n", upid, startTime)
-	if _, err := archive.WriteString(archiveLine); err != nil {
-		return proxmox.Task{}, fmt.Errorf("failed to write archive line: %w", err)
-	}
-
+	writeArchive(task.UPID, task.StartTime, "OK")
 	task.Status = "stopped"
 	task.ExitStatus = "OK"
-	task.EndTime = time.Now().Unix()
-
+	task.EndTime = now().Unix()
 	return task, nil
 }

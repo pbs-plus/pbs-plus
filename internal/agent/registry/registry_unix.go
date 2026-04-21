@@ -344,33 +344,6 @@ func CreateEntry(entry *RegistryEntry) error {
 	})
 }
 
-func UpdateEntry(entry *RegistryEntry) error {
-	return withLock(false, func() error {
-		reg, err := loadRegistry()
-		if err != nil {
-			return err
-		}
-		p := lcPath(entry.Path)
-		k := toTomlKey(entry.Key)
-		if reg[p] == nil {
-			return fmt.Errorf("UpdateEntry error: entry does not exist")
-		}
-		if _, ok := reg[p][k]; !ok {
-			return fmt.Errorf("UpdateEntry error: entry does not exist")
-		}
-		value := preprocessValue(entry.Value, entry.IsSecret)
-		if entry.IsSecret {
-			enc, err := encrypt(value)
-			if err != nil {
-				return fmt.Errorf("UpdateEntry error encrypting: %w", err)
-			}
-			value = enc
-		}
-		reg[p][k] = value
-		return saveRegistry(reg)
-	})
-}
-
 func CreateEntryIfNotExists(entry *RegistryEntry) error {
 	return withLock(false, func() error {
 		reg, err := loadRegistry()
@@ -416,37 +389,4 @@ func DeleteEntry(path string, key string) error {
 		}
 		return saveRegistry(reg)
 	})
-}
-
-func DeleteKey(path string) error {
-	return withLock(false, func() error {
-		reg, err := loadRegistry()
-		if err != nil {
-			return err
-		}
-		delete(reg, lcPath(path))
-		return saveRegistry(reg)
-	})
-}
-
-func ListEntries(path string) ([]string, error) {
-	var keys []string
-	err := withLock(true, func() error {
-		reg, err := loadRegistry()
-		if err != nil {
-			return err
-		}
-		p := lcPath(path)
-		section, ok := reg[p]
-		if !ok {
-			keys = []string{}
-			return nil
-		}
-		keys = make([]string, 0, len(section))
-		for k := range section {
-			keys = append(keys, k)
-		}
-		return nil
-	})
-	return keys, err
 }

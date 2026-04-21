@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
+
+const schedulerTickInterval = 30 * time.Second
 
 type Scheduler struct {
 	ctx            context.Context
@@ -35,11 +38,18 @@ func NewScheduler(ctx context.Context, storeInstance *store.Store, manager *jobs
 }
 
 func (s *Scheduler) Start() {
-	go s.run()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				syslog.L.Error(fmt.Errorf("scheduler panic: %v", r)).WithMessage("Scheduler: panic recovered").Write()
+			}
+		}()
+		s.run()
+	}()
 }
 
 func (s *Scheduler) run() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(schedulerTickInterval)
 	defer ticker.Stop()
 
 	syslog.L.Info().WithMessage("Internal scheduler started").Write()
@@ -74,8 +84,8 @@ func (s *Scheduler) checkBackups() {
 			if nextRun, ok := s.shouldRunScheduled(b, now); ok {
 				syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: scheduled backup is due, enqueuing").Write()
 				s.markEnqueued(b.ID, nextRun)
-				op := backup.NewBackupOperation(b, s.storeInstance, false, false, nil)
-				if err := s.manager.Enqueue(op); err != nil {
+				job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
+				if err := s.manager.Enqueue(job); err != nil {
 					syslog.L.Error(err).WithField("backupID", b.ID).WithMessage("Scheduler: failed to enqueue scheduled backup").Write()
 				}
 				continue
@@ -85,8 +95,8 @@ func (s *Scheduler) checkBackups() {
 		// Handle retries using typed status and persistent retry count
 		if b.Retry > 0 && s.shouldRetryBackup(b, now) {
 			syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: backup retry is due, enqueuing").Write()
-			op := backup.NewBackupOperation(b, s.storeInstance, false, false, nil)
-			if err := s.manager.Enqueue(op); err != nil {
+			job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
+			if err := s.manager.Enqueue(job); err != nil {
 				syslog.L.Error(err).WithField("backupID", b.ID).WithMessage("Scheduler: failed to enqueue backup retry").Write()
 			}
 		}
@@ -129,7 +139,7 @@ func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.T
 	// the current check interval (30s). This prevents catch-up runs on restart
 	// for schedules that were missed while the service was down, while still
 	// allowing legitimate runs within the current tick.
-	if now.Sub(nextRun) < 30*time.Second {
+	if now.Sub(nextRun) < schedulerTickInterval {
 		return nextRun, true
 	}
 
@@ -149,14 +159,14 @@ func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.T
 
 func (s *Scheduler) markEnqueued(backupID string, t time.Time) {
 	s.lastEnqueuedMu.Lock()
+	defer s.lastEnqueuedMu.Unlock()
 	s.lastEnqueued[backupID] = t
-	s.lastEnqueuedMu.Unlock()
 }
 
 func (s *Scheduler) getEnqueued(backupID string) (time.Time, bool) {
 	s.lastEnqueuedMu.Lock()
+	defer s.lastEnqueuedMu.Unlock()
 	t, ok := s.lastEnqueued[backupID]
-	s.lastEnqueuedMu.Unlock()
 	return t, ok
 }
 
@@ -203,12 +213,12 @@ func (s *Scheduler) checkRestores() {
 		// Handle retries using typed status and persistent retry count
 		if r.Retry > 0 && s.shouldRetryRestore(r, now) {
 			syslog.L.Info().WithField("restoreID", r.ID).WithMessage("Scheduler: restore retry is due, enqueuing").Write()
-			op, err := restore.NewRestoreOperation(r, s.storeInstance, false, false)
+			job, err := restore.NewRestoreJob(r, s.storeInstance, false, false)
 			if err != nil {
-				syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to create restore operation").Write()
+				syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to create restore job").Write()
 				continue
 			}
-			if err := s.manager.Enqueue(op); err != nil {
+			if err := s.manager.Enqueue(job); err != nil {
 				syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to enqueue restore retry").Write()
 			}
 		}

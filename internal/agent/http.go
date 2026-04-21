@@ -99,8 +99,14 @@ func AgentHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (
 	}
 
 	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			// Log error but continue - cleanup is best-effort
+			fmt.Printf("agent: failed to discard response body: %v\n", err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			// Log error but continue - cleanup is best-effort
+			fmt.Printf("agent: failed to close response body: %v\n", err)
+		}
 	}()
 
 	rawBody, err := io.ReadAll(resp.Body)

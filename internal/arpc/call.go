@@ -8,6 +8,7 @@ import (
 	"github.com/xtaci/smux"
 )
 
+// Request represents an RPC request to be sent over the stream.
 type Request struct {
 	Context context.Context     `cbor:"-"`
 	Method  string              `cbor:"method"`
@@ -15,6 +16,7 @@ type Request struct {
 	Headers map[string][]string `cbor:"headers,omitempty"`
 }
 
+// Response represents an RPC response received from the stream.
 type Response struct {
 	Status    int                `cbor:"status"`
 	Message   string             `cbor:"message"`
@@ -30,7 +32,11 @@ type SerializableError struct {
 	OriginalError error  `cbor:"-"`
 }
 
+// RawStreamHandler is a function type for handling raw stream data.
 type RawStreamHandler func(*smux.Stream) error
+
+// StatusRawStream is the HTTP status code for raw stream mode.
+const StatusRawStream = 213
 
 // checkRPCError returns an error if the response status is not OK.
 func (s *StreamPipe) checkRPCError(resp *Response) error {
@@ -76,7 +82,10 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (*smu
 	dec := s.cborDec.NewDecoder(stream)
 
 	if deadline, ok := ctx.Deadline(); ok {
-		_ = stream.SetDeadline(deadline)
+		if err := stream.SetDeadline(deadline); err != nil {
+			// Log error but continue - SetDeadline is best-effort
+			fmt.Printf("arpc: failed to set stream deadline: %v\n", err)
+		}
 	}
 
 	var payloadBytes []byte
@@ -117,7 +126,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	}
 	defer stream.Close()
 
-	if resp.Status == 213 {
+	if resp.Status == StatusRawStream {
 		handler, ok := out.(RawStreamHandler)
 		if !ok || handler == nil {
 			return fmt.Errorf("invalid out handler while in raw stream mode")
@@ -161,8 +170,8 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	}
 	defer stream.Close()
 
-	if resp.Status == 213 {
-		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", resp.Status)
+	if resp.Status == StatusRawStream {
+		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", StatusRawStream)
 	}
 
 	if err := s.checkRPCError(resp); err != nil {
@@ -179,7 +188,7 @@ func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any,
 	}
 	defer stream.Close()
 
-	if resp.Status != 213 {
+	if resp.Status != StatusRawStream {
 		var serErr SerializableError
 		if err := s.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
 			return 0, UnwrapError(serErr)
