@@ -144,7 +144,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			syslog.L.Info().WithMessage("updating host target details").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives}).Write()
 			err = storeInstance.Database.UpdateAgentHost(tx, host)
 			if err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
@@ -154,7 +154,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			syslog.L.Info().WithMessage("creating new host target").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives, "error": err.Error()}).Write()
 			err = storeInstance.Database.CreateAgentHost(tx, host)
 			if err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
@@ -189,7 +189,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 				err := storeInstance.Database.DeleteTarget(tx, newTarget.Name)
 				if err != nil {
-					tx.Rollback()
+					_ = tx.Rollback()
 					w.WriteHeader(http.StatusInternalServerError)
 					WriteErrorResponse(w, err)
 					syslog.L.Error(err).Write()
@@ -198,7 +198,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 				err = storeInstance.Database.CreateTarget(tx, newTarget)
 				if err != nil {
-					tx.Rollback()
+					_ = tx.Rollback()
 					w.WriteHeader(http.StatusInternalServerError)
 					WriteErrorResponse(w, err)
 					syslog.L.Error(err).Write()
@@ -208,7 +208,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			} else {
 				err := storeInstance.Database.CreateTarget(tx, newTarget)
 				if err != nil {
-					tx.Rollback()
+					_ = tx.Rollback()
 					w.WriteHeader(http.StatusInternalServerError)
 					WriteErrorResponse(w, err)
 					syslog.L.Error(err).Write()
@@ -220,7 +220,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		err = tx.Commit()
 		if err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
@@ -299,7 +299,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		currentHost, err := storeInstance.Database.GetAgentHost(reqParsed.Hostname)
 		if err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
@@ -316,7 +316,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		err = storeInstance.Database.UpdateAgentHost(tx, host)
 		if err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
@@ -354,7 +354,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			err = storeInstance.Database.DeleteTarget(tx, targetName)
 			if err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
@@ -363,7 +363,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			err = storeInstance.Database.CreateTarget(tx, updatedTarget)
 			if err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
@@ -375,7 +375,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		err = tx.Commit()
 		if err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
