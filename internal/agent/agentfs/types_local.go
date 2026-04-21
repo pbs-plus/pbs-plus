@@ -356,7 +356,6 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	fh.mu.Lock()
-	defer fh.mu.Unlock()
 	s.platformCloseResources(fh)
 	if fh.dirReader != nil {
 		fh.dirReader.Close()
@@ -364,6 +363,7 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	if fh.file != nil {
 		fh.file.Close()
 	}
+	fh.mu.Unlock()
 
 	s.handles.Del(uint64(payload.HandleID))
 	data, _ := cbor.Marshal("closed")
