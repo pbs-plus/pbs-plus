@@ -7,10 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-
-	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
 func RunShellScript(
@@ -132,67 +129,4 @@ func getInterpreterFromShebang(scriptFilePath string) (string, error) {
 	}
 
 	return "", fmt.Errorf("no valid shebang found in %s", scriptFilePath)
-}
-
-func SaveScriptToFile(scriptContent string) (string, error) {
-	// Ensure the directory exists, create it if necessary
-	if err := os.MkdirAll(conf.ScriptsBasePath, 0755); err != nil {
-		return "", fmt.Errorf("failed to create directory %s: %w", conf.ScriptsBasePath, err)
-	}
-
-	// Create a temporary file *within* the specified directory.
-	// os.CreateTemp handles generating a unique name.
-	tmpfile, err := os.CreateTemp(conf.ScriptsBasePath, "script-*.sh")
-	if err != nil {
-		return "", fmt.Errorf("failed to create file in directory %s: %w", conf.ScriptsBasePath, err)
-	}
-	defer tmpfile.Close() // Close the file when done
-
-	// Write the script content to the file
-	if _, err := tmpfile.WriteString(scriptContent); err != nil {
-		os.Remove(tmpfile.Name()) // Clean up the partial file on error
-		return "", fmt.Errorf("failed to write script to file %s: %w", tmpfile.Name(), err)
-	}
-
-	return tmpfile.Name(), nil
-}
-
-func UpdateScriptContentToFile(filePath string, newScriptContent string) error {
-	// Resolve the absolute path of the file
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve absolute path for %s: %w", filePath, err)
-	}
-
-	// Ensure the file is within the safe directory
-	if !strings.HasPrefix(absPath, conf.ScriptsBasePath) {
-		return fmt.Errorf("invalid file path: %s is outside the allowed directory", absPath)
-	}
-
-	// Write the new script content to the file
-	err = os.WriteFile(absPath, []byte(newScriptContent), 0644)
-	if err != nil {
-		return fmt.Errorf("failed to update file %s: %w", absPath, err)
-	}
-	return nil
-}
-
-func ReadScriptContentFromFile(filePath string) (string, error) {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read file %s: %w", filePath, err)
-	}
-	return string(content), nil
-}
-
-func IsValidShellScriptWithShebang(scriptContent string) bool {
-	if scriptContent == "" {
-		return false
-	}
-	lines := strings.Split(scriptContent, "\n")
-	if len(lines) == 0 {
-		return false
-	}
-	firstLine := lines[0]
-	return strings.HasPrefix(firstLine, "#!") && len(strings.TrimSpace(firstLine)) > 2
 }

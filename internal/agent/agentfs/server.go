@@ -76,6 +76,7 @@ func safeHandler(fn func(req *arpc.Request) (arpc.Response, error)) func(req *ar
 	}
 }
 
+// RegisterHandlers registers the agent file system handlers with the given router.
 func (s *AgentFSServer) RegisterHandlers(r *arpc.Router) {
 	r.Handle("OpenFile", safeHandler(s.handleOpenFile))
 	r.Handle("Attr", safeHandler(s.handleAttr))

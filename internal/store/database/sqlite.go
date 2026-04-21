@@ -128,7 +128,7 @@ func (d *Database) NewTransaction() (*Transaction, error) {
 
 	tx, err := d.writeDb.BeginTx(d.ctx, nil)
 	if err != nil {
-		d.writeMu.Unlock()
+		defer d.writeMu.Unlock()
 		return nil, err
 	}
 

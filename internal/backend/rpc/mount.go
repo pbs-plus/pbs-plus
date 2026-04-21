@@ -333,7 +333,7 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 	return nil
 }
 
-func StartRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, storeInstance *store.Store) error {
+func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, storeInstance *store.Store) error {
 	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
 	listener, err := net.Listen("unix", socketPath)
