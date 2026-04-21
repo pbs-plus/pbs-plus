@@ -15,16 +15,13 @@ var (
 	ErrOneInstance   = errors.New("a job is still running; only one instance allowed")
 )
 
-type Operation interface {
-	GetID() string
-	PreExecute() error
-	Execute() error
-	OnError(err error)
-	OnSuccess()
-	Cleanup()
-	Wait() error
-	SetContext(ctx context.Context, cancel context.CancelFunc)
-	Context() context.Context
+// Job represents a unit of work with lifecycle callbacks.
+type Job struct {
+	ID        string
+	Execute   func(ctx context.Context) error
+	OnSuccess func()
+	OnError   func(err error)
+	Cleanup   func()
 }
 
 type contextPair struct {
@@ -36,7 +33,7 @@ type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	taskMonitorQueue chan Operation
+	taskMonitorQueue chan *Job
 	executionSem     chan struct{}
 
 	detectionMu     sync.Mutex
@@ -50,7 +47,7 @@ func NewManager(ctx context.Context, maxConcurrent int, queueSize int, singleExe
 	m := &Manager{
 		ctx:              newCtx,
 		cancel:           cancel,
-		taskMonitorQueue: make(chan Operation, queueSize),
+		taskMonitorQueue: make(chan *Job, queueSize),
 		executionSem:     make(chan struct{}, maxConcurrent),
 		runningJobs:      safemap.New[string, contextPair](),
 		singleExecution:  singleExecution,
@@ -61,14 +58,14 @@ func NewManager(ctx context.Context, maxConcurrent int, queueSize int, singleExe
 	return m
 }
 
-func (m *Manager) Enqueue(op Operation) error {
+func (m *Manager) Enqueue(job *Job) error {
 	select {
 	case <-m.ctx.Done():
 		return ErrManagerClosed
 	default:
 	}
 
-	jobID := op.GetID()
+	jobID := job.ID
 
 	m.detectionMu.Lock()
 	if _, exists := m.runningJobs.Get(jobID); exists {
@@ -79,18 +76,20 @@ func (m *Manager) Enqueue(op Operation) error {
 	m.runningJobs.Set(jobID, contextPair{ctx: ctx, cancel: cancel})
 	m.detectionMu.Unlock()
 
-	op.SetContext(ctx, cancel)
-
 	select {
-	case m.taskMonitorQueue <- op:
+	case m.taskMonitorQueue <- job:
 		return nil
 	case <-m.ctx.Done():
-		m.cleanup(op)
-		op.OnError(ErrManagerClosed)
+		m.cleanup(job, cancel)
+		if job.OnError != nil {
+			job.OnError(ErrManagerClosed)
+		}
 		return ErrManagerClosed
 	case <-ctx.Done():
-		m.cleanup(op)
-		op.OnError(ErrCanceled)
+		m.cleanup(job, cancel)
+		if job.OnError != nil {
+			job.OnError(ErrCanceled)
+		}
 		return ErrCanceled
 	}
 }
@@ -100,39 +99,41 @@ func (m *Manager) processQueue() {
 		select {
 		case <-m.ctx.Done():
 			return
-		case op := <-m.taskMonitorQueue:
-			go m.runJob(op)
+		case job := <-m.taskMonitorQueue:
+			go m.runJob(job)
 		}
 	}
 }
 
-func (m *Manager) runJob(op Operation) {
+func (m *Manager) runJob(job *Job) {
+	pair, exists := m.runningJobs.Get(job.ID)
+	if !exists {
+		// Job was cancelled before starting
+		return
+	}
+	ctx := pair.ctx
+	cancel := pair.cancel
+
 	select {
-	case <-op.Context().Done():
-		op.OnError(ErrCanceled)
-		m.cleanup(op)
+	case <-ctx.Done():
+		if job.OnError != nil {
+			job.OnError(ErrCanceled)
+		}
+		m.cleanup(job, cancel)
 		return
 	default:
-	}
-
-	if err := op.PreExecute(); err != nil {
-		if errors.Is(err, context.Canceled) {
-			op.OnError(ErrCanceled)
-		} else {
-			op.OnError(err)
-		}
-		m.cleanup(op)
-		return
 	}
 
 	select {
 	case m.executionSem <- struct{}{}:
 	case <-m.ctx.Done():
-		m.cleanup(op)
+		m.cleanup(job, cancel)
 		return
-	case <-op.Context().Done():
-		op.OnError(ErrCanceled)
-		m.cleanup(op)
+	case <-ctx.Done():
+		if job.OnError != nil {
+			job.OnError(ErrCanceled)
+		}
+		m.cleanup(job, cancel)
 		return
 	}
 
@@ -140,41 +141,33 @@ func (m *Manager) runJob(op Operation) {
 		m.detectionMu.Lock()
 	}
 
-	if err := op.Execute(); err != nil {
-		if errors.Is(err, context.Canceled) {
-			op.OnError(ErrCanceled)
-		} else {
-			op.OnError(err)
-		}
-
-		if m.singleExecution {
-			m.detectionMu.Unlock()
-		}
-		m.cleanup(op)
-		<-m.executionSem
-		return
-	}
+	// Execute the job
+	err := job.Execute(ctx)
 
 	if m.singleExecution {
 		m.detectionMu.Unlock()
 	}
 
-	go func() {
-		if err := op.Wait(); err != nil {
-			if errors.Is(err, context.Canceled) {
-				op.OnError(ErrCanceled)
-			} else {
-				op.OnError(err)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			if job.OnError != nil {
+				job.OnError(ErrCanceled)
 			}
-			m.cleanup(op)
-			<-m.executionSem
-			return
+		} else {
+			if job.OnError != nil {
+				job.OnError(err)
+			}
 		}
-
-		op.OnSuccess()
-		m.cleanup(op)
+		m.cleanup(job, cancel)
 		<-m.executionSem
-	}()
+		return
+	}
+
+	if job.OnSuccess != nil {
+		job.OnSuccess()
+	}
+	m.cleanup(job, cancel)
+	<-m.executionSem
 }
 
 func (m *Manager) StopJob(jobID string) error {
@@ -191,9 +184,14 @@ func (m *Manager) StopJob(jobID string) error {
 	return nil
 }
 
-func (m *Manager) cleanup(op Operation) {
-	op.Cleanup()
-	m.runningJobs.Del(op.GetID())
+func (m *Manager) cleanup(job *Job, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
+	}
+	if job.Cleanup != nil {
+		job.Cleanup()
+	}
+	m.runningJobs.Del(job.ID)
 }
 
 func (m *Manager) IsRunning(jobID string) bool {
