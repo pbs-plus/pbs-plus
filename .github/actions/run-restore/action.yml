@@ -59,6 +59,8 @@ runs:
         while [ $elapsed -lt $timeout ]; do
           if docker logs pbs-plus-agent 2>&1 | grep -q "CmdRestore: finished"; then
             echo "✓ PBS Agent restore process finished"
+            # Give logs time to flush before verifying success
+            sleep 0.5
             break
           fi
           sleep 1
@@ -74,7 +76,18 @@ runs:
     - name: Verify restore success
       shell: bash
       run: |
-        if ! docker logs pbs-plus-agent 2>&1 | grep -q "CmdRestore: Restore completed successfully"; then
+        # Retry loop to account for Docker log buffering
+        success=false
+        for i in {1..5}; do
+          if docker logs pbs-plus-agent 2>&1 | grep -q "CmdRestore: Restore completed successfully"; then
+            success=true
+            break
+          fi
+          echo "Waiting for success log to appear... (attempt $i/5)"
+          sleep 0.5
+        done
+        
+        if [ "$success" != "true" ]; then
           echo "✗ Restore did not complete successfully"
           exit 1
         fi
