@@ -34,14 +34,19 @@ const (
 	TaskLogsBasePath     = LogsBasePath + "/tasks"
 	ActiveLogsPath       = TaskLogsBasePath + "/active"
 	ArchivedLogsPath     = TaskLogsBasePath + "/archive"
-	BackupLogsBasePath   = "/var/log/pbs-plus"
-	RestoreLogsBasePath  = "/var/log/pbs-plus/restores"
-	ScriptsBasePath      = "/var/lib/pbs-plus/scripts"
-	SecretsKeyPath       = "/var/lib/pbs-plus/.secret.key"
-	MountSocketPath      = "/var/run/pbs_agent_mount.sock"
-	JobMutateSocketPath  = "/var/run/pbs_agent_job_mutate.sock"
-	RestoreSocketPath    = "/var/run/pbs_plus_restore"
-	LockSocketPath       = "/var/run/pbs_plus_locker.sock"
-	MemcachedSocketPath  = "/var/run/pbs_plus_memcached"
 	PBSAuthKeyPath       = "/etc/proxmox-backup/authkey.key"
+)
+
+// These paths are variables so they can be overridden by build tags for agent vs server
+var (
+	StatePrefix         = "/var/lib/pbs-plus"
+	ScriptsBasePath     = StatePrefix + "/scripts"
+	SecretsKeyPath      = StatePrefix + "/.secret.key"
+	BackupLogsBasePath  = "/var/log/pbs-plus"
+	RestoreLogsBasePath = "/var/log/pbs-plus/restores"
+	MountSocketPath     = "/var/run/pbs_agent_mount.sock"
+	JobMutateSocketPath = "/var/run/pbs_agent_job_mutate.sock"
+	RestoreSocketPath   = "/var/run/pbs_plus_restore"
+	LockSocketPath      = "/var/run/pbs_plus_locker.sock"
+	MemcachedSocketPath = "/var/run/pbs_plus_memcached"
 )
