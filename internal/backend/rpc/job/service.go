@@ -56,8 +56,8 @@ func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) er
 		return nil
 	}
 
-	job := backup.NewBackupOperation(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
-	s.Manager.Enqueue(job)
+	jobOp := backup.NewBackupJob(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
+	s.Manager.Enqueue(jobOp)
 	reply.Status = 200
 
 	return nil
@@ -76,13 +76,13 @@ func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) 
 		return nil
 	}
 
-	job, err := restore.NewRestoreOperation(args.Job, s.Store, args.SkipCheck, args.Web)
+	jobOp, err := restore.NewRestoreJob(args.Job, s.Store, args.SkipCheck, args.Web)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
 		return nil
 	}
-	s.Manager.Enqueue(job)
+	s.Manager.Enqueue(jobOp)
 	reply.Status = 200
 
 	return nil
