@@ -4,6 +4,7 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -49,7 +50,7 @@ func (database *Database) CreateToken(expiration time.Duration, comment string) 
 func (database *Database) GetToken(tokenStr string) (AgentToken, error) {
 	row, err := database.readQueries.GetToken(database.ctx, tokenStr)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return AgentToken{}, fmt.Errorf("GetToken: not found")
 		}
 		return AgentToken{}, fmt.Errorf("GetToken: error fetching token: %w", err)

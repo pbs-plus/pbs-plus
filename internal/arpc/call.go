@@ -32,6 +32,9 @@ type SerializableError struct {
 
 type RawStreamHandler func(*smux.Stream) error
 
+// StatusRawStream is the HTTP status code for raw stream mode.
+const StatusRawStream = 213
+
 // checkRPCError returns an error if the response status is not OK.
 func (s *StreamPipe) checkRPCError(resp *Response) error {
 	if resp.Status != http.StatusOK {
@@ -117,7 +120,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	}
 	defer stream.Close()
 
-	if resp.Status == 213 {
+	if resp.Status == StatusRawStream {
 		handler, ok := out.(RawStreamHandler)
 		if !ok || handler == nil {
 			return fmt.Errorf("invalid out handler while in raw stream mode")
@@ -161,8 +164,8 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	}
 	defer stream.Close()
 
-	if resp.Status == 213 {
-		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", resp.Status)
+	if resp.Status == StatusRawStream {
+		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", StatusRawStream)
 	}
 
 	if err := s.checkRPCError(resp); err != nil {
@@ -179,7 +182,7 @@ func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any,
 	}
 	defer stream.Close()
 
-	if resp.Status != 213 {
+	if resp.Status != StatusRawStream {
 		var serErr SerializableError
 		if err := s.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
 			return 0, UnwrapError(serErr)
