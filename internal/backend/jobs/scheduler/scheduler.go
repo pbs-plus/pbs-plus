@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
+
+const schedulerTickInterval = 30 * time.Second
 
 type Scheduler struct {
 	ctx            context.Context
@@ -35,11 +38,18 @@ func NewScheduler(ctx context.Context, storeInstance *store.Store, manager *jobs
 }
 
 func (s *Scheduler) Start() {
-	go s.run()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				syslog.L.Error(fmt.Errorf("scheduler panic: %v", r)).WithMessage("Scheduler: panic recovered").Write()
+			}
+		}()
+		s.run()
+	}()
 }
 
 func (s *Scheduler) run() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(schedulerTickInterval)
 	defer ticker.Stop()
 
 	syslog.L.Info().WithMessage("Internal scheduler started").Write()
@@ -129,7 +139,7 @@ func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.T
 	// the current check interval (30s). This prevents catch-up runs on restart
 	// for schedules that were missed while the service was down, while still
 	// allowing legitimate runs within the current tick.
-	if now.Sub(nextRun) < 30*time.Second {
+	if now.Sub(nextRun) < schedulerTickInterval {
 		return nextRun, true
 	}
 
