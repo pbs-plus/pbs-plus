@@ -68,13 +68,14 @@ func (m *Manager) Enqueue(job *Job) error {
 	jobID := job.ID
 
 	m.detectionMu.Lock()
-	defer m.detectionMu.Unlock()
 
 	if _, exists := m.runningJobs.Get(jobID); exists {
+		m.detectionMu.Unlock()
 		return fmt.Errorf("Job %s is already running/in queue.", jobID)
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.runningJobs.Set(jobID, contextPair{ctx: ctx, cancel: cancel})
+	m.detectionMu.Unlock()
 
 	select {
 	case m.taskMonitorQueue <- job:
