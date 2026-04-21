@@ -143,6 +143,12 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// Panic recovered - log error if syslog were available
+				_ = fmt.Errorf("store initialization panic: %v", r)
+			}
+		}()
 		// Trigger initial schedule computation for all backups
 		_, _ = db.GetAllBackups()
 	}()
