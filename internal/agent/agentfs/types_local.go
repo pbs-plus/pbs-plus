@@ -52,7 +52,8 @@ func (fh *FileHandle) releaseOp() {
 
 	fh.activeOps--
 	if fh.activeOps == 0 && fh.closing {
-		close(fh.closeDone)
+		// Close channel outside the lock
+		go func() { close(fh.closeDone) }()
 	}
 }
 
