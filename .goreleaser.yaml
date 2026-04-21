@@ -40,7 +40,7 @@ builds:
       - -extld gcc
       - -extldflags "-static"
     flags:
-      - -tags=netgo,osusergo
+      - -tags=agent,netgo,osusergo
       - -installsuffix=netgo
 
   # BSD Agent
@@ -55,6 +55,8 @@ builds:
     goarch:
       - amd64
       - arm64
+    flags:
+      - -tags=agent
     ldflags:
       - -X 'main.Version=v{{.Version}}'
       - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
@@ -70,6 +72,8 @@ builds:
       - windows
     goarch:
       - amd64
+    flags:
+      - -tags=agent
     ldflags:
       - -H=windowsgui
       - -X 'main.Version=v{{.Version}}'
