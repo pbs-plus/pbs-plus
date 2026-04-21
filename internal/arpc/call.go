@@ -8,6 +8,7 @@ import (
 	"github.com/xtaci/smux"
 )
 
+// Request represents an RPC request to be sent over the stream.
 type Request struct {
 	Context context.Context     `cbor:"-"`
 	Method  string              `cbor:"method"`
@@ -15,6 +16,7 @@ type Request struct {
 	Headers map[string][]string `cbor:"headers,omitempty"`
 }
 
+// Response represents an RPC response received from the stream.
 type Response struct {
 	Status    int                `cbor:"status"`
 	Message   string             `cbor:"message"`
@@ -30,6 +32,7 @@ type SerializableError struct {
 	OriginalError error  `cbor:"-"`
 }
 
+// RawStreamHandler is a function type for handling raw stream data.
 type RawStreamHandler func(*smux.Stream) error
 
 // StatusRawStream is the HTTP status code for raw stream mode.
@@ -79,7 +82,10 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (*smu
 	dec := s.cborDec.NewDecoder(stream)
 
 	if deadline, ok := ctx.Deadline(); ok {
-		_ = stream.SetDeadline(deadline)
+		if err := stream.SetDeadline(deadline); err != nil {
+			// Log error but continue - SetDeadline is best-effort
+			fmt.Printf("arpc: failed to set stream deadline: %v\n", err)
+		}
 	}
 
 	var payloadBytes []byte
