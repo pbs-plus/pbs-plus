@@ -355,6 +355,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 	}
 
 	go func() {
+		defer b.waitGroup.Done()
 		for {
 			select {
 			case <-ctx.Done():
@@ -370,6 +371,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 			}
 		}
 	}()
+	b.waitGroup.Add(1)
 
 	agentRPC.SetRouter(*b.remoteServer.Router())
 	vfssessions.CreatePxarReader(childKey, reader)
@@ -425,14 +427,15 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 
 	b.task.WriteString("starting local restore")
 
-	b.waitGroup.Go(func() {
+	go func() {
+		defer b.waitGroup.Done()
 		pxar.RestoreWithOptions(ctx, b.localClient, []string{srcPath}, pxar.RestoreOptions{
 			DestDir: destPath,
 			Mode:    pxar.RestoreMode(b.job.Mode),
 		})
-	})
+	}()
 
-	go func() {
+	b.waitGroup.Go(func() {
 		for {
 			select {
 			case <-ctx.Done():
@@ -447,7 +450,8 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 				}
 			}
 		}
-	}()
+	})
+	b.waitGroup.Add(1)
 
 	vfssessions.CreatePxarReader(childKey, reader)
 
