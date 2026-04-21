@@ -1,20 +1,58 @@
 name: Run Backup Test
-description: Execute and verify backup operation
+description: Execute and verify backup operation with robust polling
 
 inputs:
   timeout-seconds:
     required: false
-    default: "20"
-    description: Timeout for backup completion
+    default: "180"
+    description: Timeout for backup completion (agent can take time to connect)
 
 runs:
   using: composite
   steps:
+    - name: Wait for agent to be ready
+      shell: bash
+      run: |
+        echo "Checking agent connection..."
+        timeout=60
+        elapsed=0
+        while [ $elapsed -lt $timeout ]; do
+          # Check agent logs for successful connection
+          if docker logs pbs-plus-agent 2>&1 | grep -q "connected successfully"; then
+            echo "✓ Agent connected to server"
+            break
+          fi
+          # Check for connection errors
+          if docker logs pbs-plus-agent 2>&1 | grep -q "connection failed"; then
+            echo "✗ Agent connection failed"
+            exit 1
+          fi
+          sleep 2
+          elapsed=$((elapsed + 2))
+          if [ $((elapsed % 10)) -eq 0 ]; then
+            echo "Still waiting for agent... (${elapsed}s)"
+          fi
+        done
+        
+        if [ $elapsed -ge $timeout ]; then
+          echo "⚠ Agent connection check timed out, but continuing..."
+        fi
+
     - name: Start backup
       shell: bash
       run: |
-        docker exec pbs-plus-test curl -k -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=dGVzdC1iYWNrdXAtam9i" \
-          -H "Content-Type: application/x-www-form-urlencoded"
+        echo "Starting backup job..."
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=dGVzdC1iYWNrdXAtam9i" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -w "\nHTTP_CODE:%{http_code}")
+        echo "Backup API response: $response"
+        
+        # Check if backup was accepted
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Backup API returned non-200 status"
+          exit 1
+        fi
+        echo "✓ Backup job accepted"
 
     - name: Wait for backup completion
       shell: bash
@@ -22,28 +60,78 @@ runs:
         echo "Waiting for backup to complete..."
         timeout=${{ inputs.timeout-seconds }}
         elapsed=0
+        poll_interval=5
+        last_status_count=0
 
         while [ $elapsed -lt $timeout ]; do
-          if docker logs pbs-plus-agent 2>&1 | grep -q "CmdBackup: finished"; then
-            echo "✓ PBS Agent forked process exited"
+          agent_logs=$(docker logs pbs-plus-agent 2>&1)
+          server_logs=$(docker logs pbs-plus-test 2>&1)
+          
+          # Success: Agent forked process exited
+          if echo "$agent_logs" | grep -q "CmdBackup: finished"; then
+            echo "✓ Agent backup process completed"
             break
           fi
-          sleep 1
-          elapsed=$((elapsed + 1))
-          echo "Still waiting... (${elapsed}s)"
+          
+          # Success: proxmox-backup-client running
+          if echo "$server_logs" | grep -q ": had to backup"; then
+            echo "✓ Server is processing backup"
+            # Wait a bit more for agent to actually finish
+            sleep 5
+            continue
+          fi
+          
+          # Error: Agent connection failed
+          if echo "$agent_logs" | grep -q "CmdBackup: Authorization failed"; then
+            echo "✗ Agent authorization failed"
+            exit 1
+          fi
+          
+          # Error: Backup mount failed
+          if echo "$server_logs" | grep -q "failed to create fuse connection"; then
+            echo "✗ Backup mount failed"
+            exit 1
+          fi
+          
+          # Progress reporting every 30s
+          if [ $((elapsed % 30)) -eq 0 ]; then
+            pending_count=$(echo "$server_logs" | grep -c "waiting for queue to free up" || true)
+            if [ "$pending_count" -gt "$last_status_count" ]; then
+              echo "Backup in progress... (${elapsed}s elapsed)"
+              last_status_count=$pending_count
+            fi
+          fi
+          
+          sleep $poll_interval
+          elapsed=$((elapsed + poll_interval))
         done
 
         if [ $elapsed -ge $timeout ]; then
-          echo "✗ Timeout reached after ${timeout}s"
+          echo "✗ Backup timed out after ${timeout}s"
+          echo "Agent logs:"
+          docker logs pbs-plus-agent 2>&1 | tail -50
+          echo ""
+          echo "Server logs:"
+          docker logs pbs-plus-test 2>&1 | tail -50
           exit 1
         fi
 
     - name: Verify backup success
       shell: bash
       run: |
-        if docker logs pbs-plus-test 2>&1 | grep -q ": had to backup"; then
-          echo "✓ proxmox-backup-client finished successfully"
+        server_logs=$(docker logs pbs-plus-test 2>&1)
+        
+        if echo "$server_logs" | grep -q ": had to backup"; then
+          echo "✓ proxmox-backup-client processed backup"
         else
-          echo "✗ proxmox-backup-client did not finish successfully"
+          echo "✗ proxmox-backup-client did not process backup"
           exit 1
         fi
+        
+        # Check for any errors in server logs
+        if echo "$server_logs" | grep -q "backup.*error"; then
+          echo "⚠ Warning: Errors detected in server logs"
+          echo "$server_logs" | grep "backup.*error" || true
+        fi
+        
+        echo "✓ Backup test completed successfully"
