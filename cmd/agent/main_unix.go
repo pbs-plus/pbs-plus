@@ -1,4 +1,4 @@
-//go:build unix
+//go:build agent && unix
 
 package main
 
@@ -15,6 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/agent/lifecycle"
+	"github.com/pbs-plus/pbs-plus/internal/agent/migration"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
@@ -178,6 +179,12 @@ func main() {
 		}
 	}()
 	conf.Version = Version
+
+	// Run migration early before any other code that might access state directories
+	// This is best-effort; if it fails due to permissions, the agent will fall back
+	// to using the legacy paths automatically via initPaths() in conf package.
+	_ = migration.TryMigrate()
+
 	cli.Entry()
 
 	svcConfig := &service.Config{
