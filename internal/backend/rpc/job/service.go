@@ -96,7 +96,7 @@ func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) 
 	return nil
 }
 
-func StartJobRPCServer(watcher chan struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
+func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
 	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
 	listener, err := net.Listen("unix", socketPath)

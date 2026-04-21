@@ -695,7 +695,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	return cmd, task, currOwner, nil
 }
 
-func (b *backupJob) startTaskMonitoring(ctx context.Context, target database.Target) (chan proxmox.Task, chan struct{}, chan error) {
+func (b *backupJob) startTaskMonitoring(ctx context.Context, target database.Target) (<-chan proxmox.Task, <-chan struct{}, <-chan error) {
 	readyChan := make(chan struct{})
 	taskChan := make(chan proxmox.Task, 1)
 	errChan := make(chan error, 1)
