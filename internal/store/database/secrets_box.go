@@ -7,19 +7,29 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/crypto/nacl/box"
 )
 
-var publicKey *[32]byte
-var privateKey *[32]byte
+var (
+	publicKey  *[32]byte
+	privateKey *[32]byte
+	once       sync.Once
+	initErr    error
+)
 
-func init() {
-	if err := loadOrCreateKey(); err != nil {
-		syslog.L.Error(err).WithMessage("failed to initialize database secret store").Write()
-	}
+// ensureInitialized performs one-time initialization of the secret keys.
+// Call this at the start of any exported function that needs the keys.
+func ensureInitialized() {
+	once.Do(func() {
+		initErr = loadOrCreateKey()
+		if initErr != nil {
+			syslog.L.Error(initErr).WithMessage("failed to initialize database secret store").Write()
+		}
+	})
 }
 
 func loadOrCreateKey() error {
@@ -56,6 +66,10 @@ func loadOrCreateKey() error {
 
 // Encrypt takes a plaintext string and returns a base64 ciphertext
 func Encrypt(plaintext string) (string, error) {
+	ensureInitialized()
+	if initErr != nil {
+		return "", initErr
+	}
 	if privateKey == nil || publicKey == nil {
 		return "", errors.New("failed to acquire database private and public keys")
 	}
@@ -72,6 +86,10 @@ func Encrypt(plaintext string) (string, error) {
 }
 
 func Decrypt(ciphertext string) (string, error) {
+	ensureInitialized()
+	if initErr != nil {
+		return "", initErr
+	}
 	if privateKey == nil || publicKey == nil {
 		return "", errors.New("failed to acquire database private and public keys")
 	}
