@@ -427,13 +427,12 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 
 	b.task.WriteString("starting local restore")
 
-	go func() {
-		defer b.waitGroup.Done()
+	b.waitGroup.Go(func() {
 		pxar.RestoreWithOptions(ctx, b.localClient, []string{srcPath}, pxar.RestoreOptions{
 			DestDir: destPath,
 			Mode:    pxar.RestoreMode(b.job.Mode),
 		})
-	}()
+	})
 
 	b.waitGroup.Go(func() {
 		for {
@@ -451,7 +450,6 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 			}
 		}
 	})
-	b.waitGroup.Add(1)
 
 	vfssessions.CreatePxarReader(childKey, reader)
 
