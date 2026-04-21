@@ -70,6 +70,8 @@ runs:
           # Success: Agent forked process exited
           if echo "$agent_logs" | grep -q "CmdBackup: finished"; then
             echo "✓ Agent backup process completed"
+            # Give logs time to flush before verifying
+            sleep 0.5
             break
           fi
           
@@ -119,14 +121,25 @@ runs:
     - name: Verify backup success
       shell: bash
       run: |
-        server_logs=$(docker logs pbs-plus-test 2>&1)
+        # Retry loop to account for Docker log buffering
+        backup_processed=false
+        for i in {1..5}; do
+          server_logs=$(docker logs pbs-plus-test 2>&1)
+          
+          if echo "$server_logs" | grep -q ": had to backup"; then
+            backup_processed=true
+            break
+          fi
+          
+          echo "Waiting for backup completion log... (attempt $i/5)"
+          sleep 0.5
+        done
         
-        if echo "$server_logs" | grep -q ": had to backup"; then
-          echo "✓ proxmox-backup-client processed backup"
-        else
+        if [ "$backup_processed" != "true" ]; then
           echo "✗ proxmox-backup-client did not process backup"
           exit 1
         fi
+        echo "✓ proxmox-backup-client processed backup"
         
         # Check for any errors in server logs
         if echo "$server_logs" | grep -q "backup.*error"; then
