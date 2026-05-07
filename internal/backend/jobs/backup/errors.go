@@ -16,5 +16,7 @@ var (
 
 	ErrProxmoxBackupClientStart = errors.New("proxmox-backup-client start error")
 
+	ErrSubpathNotFound = errors.New("subpath does not exist")
+
 	ErrTaskDetectionFailed = errors.New("failed while waiting for backup to start")
 )
