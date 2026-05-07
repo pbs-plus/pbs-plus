@@ -607,6 +607,19 @@ func (b *backupJob) mountSource(ctx context.Context, target database.Target) (st
 
 	srcPath = filepath.Join(srcPath, job.Subpath)
 
+	if job.Subpath != "" && !target.IsS3() {
+		info, err := os.Stat(srcPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", agentMount, s3Mount, fmt.Errorf("%w: %q does not exist under the mount point", ErrSubpathNotFound, job.Subpath)
+			}
+			return "", agentMount, s3Mount, fmt.Errorf("%w: cannot access subpath %q: %v", ErrSubpathNotFound, job.Subpath, err)
+		}
+		if !info.IsDir() {
+			return "", agentMount, s3Mount, fmt.Errorf("%w: %q is not a directory", ErrSubpathNotFound, job.Subpath)
+		}
+	}
+
 	return srcPath, agentMount, s3Mount, nil
 }
 
