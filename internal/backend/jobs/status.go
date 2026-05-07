@@ -55,6 +55,8 @@ func UpdateJobHistory(
 		history.LastRunState = fmt.Sprintf("WARNINGS: %d", warningsNum)
 		history.LastRunStatus = database.JobStatusWarnings
 		history.RetryCount = 0 // Reset retry count on success
+		history.LastSuccessfulUpid = taskFound.UPID
+		history.LastSuccessfulEndtime = task.EndTime
 	} else if succeeded {
 		// Clean success
 		history.LastRunStatus = database.JobStatusSuccess
