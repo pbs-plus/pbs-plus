@@ -45,26 +45,31 @@ func (t *baseTask) writeLogLine(format string, args ...any) bool {
 	return true
 }
 
-// closeWithStatus closes the task with a status line and archives it.
-// The beforeClose callback is called before closing, allowing the task to write
-// additional data while the file is still open.
-func (t *baseTask) closeWithStatus(status string, beforeClose func(), afterUnlock func()) {
+// closeWithStatus writes a final TASK status line, archives it, and closes the log file.
+// The onClose callback runs while the mutex is held but before the file is closed.
+// The afterUnlock callback runs after the mutex is released.
+func (t *baseTask) closeWithStatus(status string, onClose func(), afterUnlock func()) {
 	t.mu.Lock()
-	defer func() {
-		if beforeClose != nil {
-			beforeClose()
+
+	if !t.writeLogLine("TASK %s", status) {
+		if onClose != nil {
+			onClose()
 		}
 		t.close()
 		t.mu.Unlock()
-		if afterUnlock != nil {
-			afterUnlock()
-		}
-	}()
-
-	if !t.writeLogLine("TASK %s", status) {
 		return
 	}
 	writeArchive(t.UPID, t.StartTime, status)
+
+	if onClose != nil {
+		onClose()
+	}
+	t.close()
+	t.mu.Unlock()
+
+	if afterUnlock != nil {
+		afterUnlock()
+	}
 }
 
 // writeArchive writes an entry to the global task archive.

@@ -72,6 +72,7 @@ func NewBackupJob(
 
 	return &jobs.Job{
 		ID:        job.ID,
+		PreExec:   j.preExecute,
 		Execute:   j.execute,
 		OnSuccess: j.onSuccess,
 		OnError:   j.onError,
@@ -83,11 +84,6 @@ func NewBackupJob(
 func (b *backupJob) execute(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	b.cancel = cancel
-
-	// Pre-execution phase
-	if err := b.preExecute(ctx); err != nil {
-		return err
-	}
 
 	select {
 	case <-ctx.Done():
