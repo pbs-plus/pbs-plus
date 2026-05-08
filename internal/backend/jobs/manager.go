@@ -18,6 +18,7 @@ var (
 // Job represents a unit of work with lifecycle callbacks.
 type Job struct {
 	ID        string
+	PreExec   func(ctx context.Context) error
 	Execute   func(ctx context.Context) error
 	OnSuccess func()
 	OnError   func(err error)
@@ -123,6 +124,24 @@ func (m *Manager) runJob(job *Job) {
 		m.cleanup(job, cancel)
 		return
 	default:
+	}
+
+	// Run pre-execution phase outside the semaphore so queuing/mounting
+	// doesn't consume a concurrency slot.
+	if job.PreExec != nil {
+		if err := job.PreExec(ctx); err != nil {
+			if errors.Is(err, context.Canceled) {
+				if job.OnError != nil {
+					job.OnError(ErrCanceled)
+				}
+			} else {
+				if job.OnError != nil {
+					job.OnError(err)
+				}
+			}
+			m.cleanup(job, cancel)
+			return
+		}
 	}
 
 	select {

@@ -15,21 +15,28 @@ import (
 )
 
 var (
+	keyMu      sync.Mutex
 	publicKey  *[32]byte
 	privateKey *[32]byte
-	once       sync.Once
+	initDone   bool
 	initErr    error
 )
 
 // ensureInitialized performs one-time initialization of the secret keys.
 // Call this at the start of any exported function that needs the keys.
 func ensureInitialized() {
-	once.Do(func() {
-		initErr = loadOrCreateKey()
-		if initErr != nil {
-			syslog.L.Error(initErr).WithMessage("failed to initialize database secret store").Write()
-		}
-	})
+	keyMu.Lock()
+	defer keyMu.Unlock()
+
+	if initDone {
+		return
+	}
+	initDone = true
+
+	initErr = loadOrCreateKey()
+	if initErr != nil {
+		syslog.L.Error(initErr).WithMessage("failed to initialize database secret store").Write()
+	}
 }
 
 func loadOrCreateKey() error {

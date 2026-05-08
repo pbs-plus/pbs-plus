@@ -74,6 +74,7 @@ func NewRestoreJob(
 
 	return &jobs.Job{
 		ID:        job.ID,
+		PreExec:   j.preExecute,
 		Execute:   j.execute,
 		OnSuccess: j.onSuccess,
 		OnError:   j.onError,
@@ -85,11 +86,6 @@ func NewRestoreJob(
 func (b *restoreJob) execute(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	b.cancel = cancel
-
-	// Pre-execution phase
-	if err := b.preExecute(ctx); err != nil {
-		return err
-	}
 
 	b.updateRestoreWithTask(b.task.Task)
 
