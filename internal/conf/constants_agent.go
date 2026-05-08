@@ -21,14 +21,15 @@ func init() {
 // Priority: legacy path (if exists) > new path (if exists/writable) > legacy path (fallback)
 // This ensures the agent keeps working during updates and migrations.
 func initPaths() {
-	// Check if legacy paths exist and are writable
-	legacyStateExists := pathExistsAndWritable(legacyStatePrefix)
-	newStateExists := pathExistsAndWritable(StatePrefix)
+	// Check if legacy paths exist (do NOT create them)
+	legacyStateExists := dirExists(legacyStatePrefix)
+	// Check if new paths exist (do NOT create them)
+	newStateExists := dirExists(StatePrefix)
 
 	// Decision logic:
 	// 1. If legacy exists and new doesn't: keep using legacy (no migration happened yet)
 	// 2. If new exists: use new (migration happened or fresh install)
-	// 3. If neither exists: use new (fresh install)
+	// 3. If neither exists: use new (fresh install, will be created on demand)
 	// 4. If legacy exists but new creation failed: keep using legacy (fallback)
 
 	useLegacyPaths := false
@@ -62,31 +63,12 @@ func initPaths() {
 	}
 }
 
-// pathExistsAndWritable checks if a path exists and is writable by attempting to create it if needed
-func pathExistsAndWritable(path string) bool {
+// dirExists returns true if the path exists and is a directory.
+// It does NOT attempt to create the directory.
+func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
-		// Path doesn't exist - try to create it
-		if err := os.MkdirAll(path, 0700); err != nil {
-			// Can't create - not writable
-			return false
-		}
-		// Created successfully - it's writable
-		return true
-	}
-
-	// Path exists - check if it's a directory
-	if !info.IsDir() {
 		return false
 	}
-
-	// Try to create a test file to verify writability
-	testFile := path + "/.pbsplus_write_test"
-	f, err := os.Create(testFile)
-	if err != nil {
-		return false
-	}
-	_ = f.Close()
-	_ = os.Remove(testFile)
-	return true
+	return info.IsDir()
 }

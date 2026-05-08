@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	sqlite "github.com/pbs-plus/pbs-plus/internal/store/database"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
 	_ "modernc.org/sqlite"
 )
@@ -145,8 +146,8 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				// Panic recovered - log error if syslog were available
-				_ = fmt.Errorf("store initialization panic: %v", r)
+				syslog.L.Error(fmt.Errorf("store initialization panic: %v", r)).
+					WithMessage("Initialize: GetAllBackups panicked").Write()
 			}
 		}()
 		// Trigger initial schedule computation for all backups

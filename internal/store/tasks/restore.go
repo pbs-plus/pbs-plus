@@ -66,12 +66,6 @@ func (t *RestoreTask) WriteString(data string) {
 	t.file.Sync()
 }
 
-// close cleans up resources and marks the task closed.
-func (t *RestoreTask) close() {
-	t.baseTask.close()
-	t.removeActiveTask()
-}
-
 // addActiveTask registers this task in the active tasks file.
 func (t *RestoreTask) addActiveTask() error {
 	return modifyActiveTaskFile(t.UPID, true)
@@ -152,15 +146,14 @@ func (t *RestoreTask) CloseOK() {
 // CloseErr closes the task with "ERROR: <msg>" status.
 func (t *RestoreTask) CloseErr(taskErr error) {
 	errMsg := taskErr.Error()
-	t.closeWithStatus("ERROR: "+errMsg, nil, func() {
+	t.closeWithStatus(errMsg, nil, func() {
 		_ = t.removeActiveTask()
 	})
-	writeArchive(t.UPID, t.StartTime, errMsg) // archive has raw error without "ERROR:" prefix
 }
 
 // CloseWarn closes the task with "WARNINGS: <n>" status.
 func (t *RestoreTask) CloseWarn(warning int) {
-	t.closeWithStatus(fmt.Sprintf("WARNINGS: %d", warning), nil, func() {
+	t.closeWithStatus("OK", nil, func() {
 		_ = t.removeActiveTask()
 	})
 }
