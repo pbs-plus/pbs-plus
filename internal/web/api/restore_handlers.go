@@ -24,7 +24,7 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		allRestores, err := storeInstance.Database.GetAllRestores()
+		allRestores, err := storeInstance.RestoreSvc.ListRestores()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -235,7 +235,7 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			RetryInterval: retryInterval,
 		}
 
-		err = storeInstance.Database.CreateRestore(nil, newRestore)
+		err = storeInstance.RestoreSvc.CreateRestore(newRestore)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -264,7 +264,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			restore, err := storeInstance.Database.GetRestore(restoreID)
+			restore, err := storeInstance.RestoreSvc.GetRestore(restoreID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -383,7 +383,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.Database.UpdateRestore(nil, restore)
+			err = storeInstance.RestoreSvc.UpdateRestore(restore)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -403,7 +403,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			restore, err := storeInstance.Database.GetRestore(restoreID)
+			restore, err := storeInstance.RestoreSvc.GetRestore(restoreID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -424,7 +424,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			err := storeInstance.Database.DeleteRestore(nil, restoreID)
+			err := storeInstance.RestoreSvc.DeleteRestore(restoreID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
