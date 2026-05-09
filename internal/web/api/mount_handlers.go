@@ -18,7 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/backend/system"
+	"github.com/pbs-plus/pbs-plus/internal/backend"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -160,9 +160,9 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		serviceName := system.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
+		serviceName := backend.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
 
-		_ = system.StopMountService(r.Context(), serviceName)
+		_ = backend.StopMountService(r.Context(), serviceName)
 		if IsMounted(mountPoint) {
 			_ = unmountPath(mountPoint)
 		}
@@ -187,7 +187,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 		args = append(args, mountPoint)
 
-		if err := system.CreateMountService(r.Context(), serviceName, mountPoint, args); err != nil {
+		if err := backend.CreateMountService(r.Context(), serviceName, mountPoint, args); err != nil {
 			WriteErrorResponse(w, fmt.Errorf("start mount service: %w", err))
 			_ = os.RemoveAll(mountPoint)
 			return
@@ -203,7 +203,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if !mountOK {
-			_ = system.StopMountService(r.Context(), serviceName)
+			_ = backend.StopMountService(r.Context(), serviceName)
 			_ = os.RemoveAll(mountPoint)
 			WriteErrorResponse(w, errors.New("mount failed"))
 			return
@@ -281,9 +281,9 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			datastore,
 		))
 
-		serviceName := system.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
+		serviceName := backend.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
 
-		_ = system.StopMountService(r.Context(), serviceName)
+		_ = backend.StopMountService(r.Context(), serviceName)
 
 		if IsMounted(mountPoint) {
 			_ = unmountPath(mountPoint)
@@ -335,7 +335,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		services, err := system.ListMountServices(r.Context())
+		services, err := backend.ListMountServices(r.Context())
 		if err != nil {
 			WriteErrorResponse(w, fmt.Errorf("list services: %w", err))
 			return
@@ -348,7 +348,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, svc := range services {
 			if strings.HasPrefix(svc, prefix) {
-				_ = system.StopMountService(r.Context(), svc)
+				_ = backend.StopMountService(r.Context(), svc)
 			}
 		}
 

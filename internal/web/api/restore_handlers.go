@@ -24,7 +24,7 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		allRestores, err := storeInstance.RestoreSvc.ListRestores()
+		allRestores, err := storeInstance.RestoreSvc.GetAllRestores()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return

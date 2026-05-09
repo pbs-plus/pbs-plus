@@ -23,7 +23,7 @@ func D2DExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			all, err := storeInstance.ExclusionSvc.ListGlobal()
+			all, err := storeInstance.ExclusionSvc.GetAllGlobalExclusions()
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -82,7 +82,7 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 			Comment: comment,
 		}
 
-		err = storeInstance.ExclusionSvc.Create(newExclusion)
+		err = storeInstance.ExclusionSvc.CreateExclusion(newExclusion)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -122,7 +122,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			exclusion, err := storeInstance.ExclusionSvc.Get(pathDecoded)
+			exclusion, err := storeInstance.ExclusionSvc.GetExclusion(pathDecoded)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -158,7 +158,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.ExclusionSvc.Update(*exclusion)
+			err = storeInstance.ExclusionSvc.UpdateExclusion(*exclusion)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -172,7 +172,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			exclusion, err := storeInstance.ExclusionSvc.Get(pathDecoded)
+			exclusion, err := storeInstance.ExclusionSvc.GetExclusion(pathDecoded)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -187,7 +187,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err = storeInstance.ExclusionSvc.Delete(pathDecoded)
+			err = storeInstance.ExclusionSvc.DeleteExclusion(pathDecoded)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return

@@ -496,7 +496,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 	m.backupsLastRunSuccessTotal.Set(float64(successCount))
 
 	// Collect target metrics
-	targets, err := storeInstance.TargetSvc.ListTargets()
+	targets, err := storeInstance.TargetSvc.GetAllTargets()
 	if err != nil {
 		syslog.L.Error(err).
 			WithField("handler", "prometheus_metrics").

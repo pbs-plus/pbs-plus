@@ -24,7 +24,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/web"
 
-	_ "github.com/pbs-plus/pbs-plus/internal/memlimit"
 )
 
 var Version = "v0.0.0"

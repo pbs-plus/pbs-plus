@@ -22,7 +22,7 @@ func ExtJsAgentSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodGet {
-			agent, err := storeInstance.AgentHostSvc.Get(validate.DecodePath(r.PathValue("agent")))
+			agent, err := storeInstance.AgentHostSvc.GetAgentHost(validate.DecodePath(r.PathValue("agent")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -37,7 +37,7 @@ func ExtJsAgentSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.AgentHostSvc.Delete(validate.DecodePath(r.PathValue("agent")))
+			err := storeInstance.AgentHostSvc.DeleteAgentHost(validate.DecodePath(r.PathValue("agent")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return

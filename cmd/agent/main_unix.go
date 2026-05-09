@@ -23,7 +23,6 @@ import (
 
 	_ "net/http/pprof"
 
-	_ "github.com/pbs-plus/pbs-plus/internal/memlimit"
 )
 
 var Version = "v0.0.0"
