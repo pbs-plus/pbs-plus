@@ -131,9 +131,9 @@ func main() {
 }
 
 func validateEnvironment() error {
-	if err := proxmox.CleanupPBSPlusActiveTasks(); err != nil {
-		return fmt.Errorf("CleanupPBSPlusActiveTasks: %w", err)
-	}
+	// Best-effort cleanup; the tasks/active directory may not exist in test
+	// environments or Docker containers. Ignore errors from this step.
+	_ = proxmox.CleanupPBSPlusActiveTasks()
 
 	hn, ok := conf.Env.Hostname, conf.Env.Hostname != ""
 	if !ok {
