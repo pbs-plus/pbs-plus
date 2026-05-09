@@ -25,6 +25,7 @@ type Store struct {
 	ExclusionSvc     *application.ExclusionService
 	AgentHostSvc     *application.AgentHostService
 	TokenSvc         *application.TokenService
+	ScriptSvc        *application.ScriptService
 	TargetSvc        *application.TargetService
 	ARPCAgentsManager *arpc.AgentsManager
 	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
@@ -51,6 +52,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	exclusionSvc := application.NewExclusionService(db)
 	agentHostSvc := application.NewAgentHostService(db)
 	tokenSvc := application.NewTokenService(db)
+	scriptSvc := application.NewScriptService(db)
 	targetSvc := application.NewTargetService(db, agentsManager)
 
 	go func() {
@@ -71,6 +73,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		ExclusionSvc:     exclusionSvc,
 		AgentHostSvc:     agentHostSvc,
 		TokenSvc:         tokenSvc,
+		ScriptSvc:        scriptSvc,
 		TargetSvc:         targetSvc,
 		arpcFS:            safemap.New[string, *arpcfs.ARPCFS](),
 		ARPCAgentsManager: agentsManager,
