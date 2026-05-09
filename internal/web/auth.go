@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/store"
@@ -43,6 +44,23 @@ func getClientInfo(r *http.Request) string {
 type PBSAuth struct {
 	privateKey crypto.PrivateKey
 	keyType    string
+}
+
+var (
+	cachedPBSAuth *PBSAuth
+	pbsAuthOnce   sync.Once
+	pbsAuthErr    error
+)
+
+// GetPBSAuth returns a cached PBSAuth instance, initializing it once at startup.
+func GetPBSAuth() (*PBSAuth, error) {
+	pbsAuthOnce.Do(func() {
+		cachedPBSAuth, pbsAuthErr = NewPBSAuth()
+		if pbsAuthErr != nil {
+			syslog.L.Error(fmt.Errorf("GetPBSAuth: failed to initialize PBS auth at startup: %w", pbsAuthErr)).Write()
+		}
+	})
+	return cachedPBSAuth, pbsAuthErr
 }
 
 func NewPBSAuth() (*PBSAuth, error) {
@@ -282,9 +300,9 @@ func checkAgentAuth(store *store.Store, r *http.Request) error {
 }
 
 func checkProxyAuth(r *http.Request) error {
-	auth, err := NewPBSAuth()
+	auth, err := GetPBSAuth()
 	if err != nil {
-		return fmt.Errorf("CheckProxyAuth: failed to initialize PBS auth -> %w", err)
+		return fmt.Errorf("CheckProxyAuth: failed to get cached PBS auth -> %w", err)
 	}
 
 	cookie, err := r.Cookie("__Host-PBSAuthCookie")
