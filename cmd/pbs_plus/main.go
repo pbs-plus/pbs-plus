@@ -132,8 +132,8 @@ func main() {
 }
 
 func validateEnvironment() error {
-	if err := proxmox.CleanupPbsPlusActiveTasks(); err != nil {
-		return fmt.Errorf("CleanupPbsPlusActiveTasks: %w", err)
+	if err := proxmox.CleanupPBSPlusActiveTasks(); err != nil {
+		return fmt.Errorf("CleanupPBSPlusActiveTasks: %w", err)
 	}
 
 	hn, ok := conf.Env.Hostname, conf.Env.Hostname != ""

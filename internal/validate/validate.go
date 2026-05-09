@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gobwas/glob"
-	"github.com/pbs-plus/pbs-plus/internal/calendarevent"
+	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"net"
 	"net/url"
@@ -330,7 +330,7 @@ func ValidateOnCalendar(value string) error {
 	if value == "" {
 		return fmt.Errorf("calendar specification cannot be empty")
 	}
-	_, err := calendarevent.Parse(value)
+	_, err := calendar.Parse(value)
 	if err != nil {
 		return fmt.Errorf("invalid calendar specification: %v", err)
 	}

@@ -65,7 +65,7 @@ func NewBackupJob(
 		storeInstance:   storeInstance,
 		skipCheck:       skipCheck,
 		web:             web,
-		logger:          syslog.CreateJobLogger(job.ID),
+		logger:          syslog.NewJobLogger(job.ID),
 		extraExclusions: extraExclusions,
 		waitGroup:       &sync.WaitGroup{},
 	}

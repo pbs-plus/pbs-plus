@@ -168,7 +168,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	vfssessions.CreateARPCFSMount(backup.GetStreamID(), arpcFS)
+	vfssessions.NewARPCFSMount(backup.GetStreamID(), arpcFS)
 
 	// Set the reply values.
 	reply.Status = 200
@@ -231,7 +231,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	vfssessions.CreateS3FSMount(backup.GetStreamID(), s3FS)
+	vfssessions.NewS3FSMount(backup.GetStreamID(), s3FS)
 
 	// Set the reply values.
 	reply.Status = 200

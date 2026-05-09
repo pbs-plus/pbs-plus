@@ -80,27 +80,27 @@ func InvalidateTLSConfigCache() {
 	cacheExpiry = time.Time{}
 }
 
-func CheckAndRenewCertificate() error {
+func RenewCertificateIfExpiring() error {
 	const renewalWindow = max(conf.TLSCARotationGraceDays-1, 1) * 24 * time.Hour
 
 	certReg, err := registry.GetEntry(registry.AUTH, "Cert", true)
 	if err != nil {
-		return fmt.Errorf("CheckAndRenewCertificate: failed to retrieve certificate - %w", err)
+		return fmt.Errorf("RenewCertificateIfExpiring: failed to retrieve certificate - %w", err)
 	}
 
 	serverCAReg, err := registry.GetEntry(registry.AUTH, "ServerCA", true)
 	if err != nil {
-		return fmt.Errorf("CheckAndRenewCertificate: failed to retrieve server CA - %w", err)
+		return fmt.Errorf("RenewCertificateIfExpiring: failed to retrieve server CA - %w", err)
 	}
 
 	cert, err := mtls.ParseCertInfo([]byte(certReg.Value))
 	if err != nil {
-		return fmt.Errorf("CheckAndRenewCertificate: failed to parse certificate - %w", err)
+		return fmt.Errorf("RenewCertificateIfExpiring: failed to parse certificate - %w", err)
 	}
 
 	serverCA, err := mtls.ParseCertInfo([]byte(serverCAReg.Value))
 	if err != nil {
-		return fmt.Errorf("CheckAndRenewCertificate: failed to parse server CA - %w", err)
+		return fmt.Errorf("RenewCertificateIfExpiring: failed to parse server CA - %w", err)
 	}
 
 	now := time.Now()

@@ -98,7 +98,7 @@ func IsUPIDRunning(upid string) bool {
 	return strings.TrimSpace(string(output)) != ""
 }
 
-func CleanupPbsPlusActiveTasks() error {
+func CleanupPBSPlusActiveTasks() error {
 	filePath := conf.ActiveLogsPath
 	targetNode := "pbsplus"
 
