@@ -123,7 +123,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 
 	handleId := s.handleIdGen.NextID()
 	s.handles.Set(handleId, fh)
-	dataBytes, _ := cbor.Marshal(types.FileHandleId(handleId))
+	dataBytes, _ := cbor.Marshal(types.FileHandleID(handleId))
 
 	syslog.L.Debug().WithMessage("handleOpenFile: success").
 		WithField("handle_id", handleId).

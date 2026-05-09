@@ -9,7 +9,7 @@ import (
 )
 
 type RestoreSessionData struct {
-	JobId     string    `json:"job_id"`
+	JobID     string    `json:"job_id"`
 	StartTime time.Time `json:"start_time"`
 }
 
@@ -44,25 +44,25 @@ func (bs *RestoreStore) updateSessions(fn func(map[string]*RestoreSessionData)) 
 	return os.WriteFile(bs.filePath, newData, 0644)
 }
 
-func (bs *RestoreStore) StartRestore(jobId string) error {
+func (bs *RestoreStore) StartRestore(jobID string) error {
 	enableWakeLockSystem()
 
 	return bs.updateSessions(func(sessions map[string]*RestoreSessionData) {
-		sessions[jobId] = &RestoreSessionData{
-			JobId:     jobId,
+		sessions[jobID] = &RestoreSessionData{
+			JobID:     jobID,
 			StartTime: time.Now(),
 		}
 	})
 }
 
-func (bs *RestoreStore) EndRestore(jobId string) error {
+func (bs *RestoreStore) EndRestore(jobID string) error {
 	hasActive, err := bs.HasActiveRestores()
 	if err == nil && !hasActive {
 		disableWakeLock()
 	}
 
 	return bs.updateSessions(func(sessions map[string]*RestoreSessionData) {
-		delete(sessions, jobId)
+		delete(sessions, jobID)
 	})
 }
 

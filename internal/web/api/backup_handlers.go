@@ -80,8 +80,8 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		args := []string{}
-		for _, backupId := range decodedBackupIDs {
-			args = append(args, "-backup-job", backupId)
+		for _, backupID := range decodedBackupIDs {
+			args = append(args, "-backup-job", backupID)
 		}
 		args = append(args, "-web")
 		if r.Method == http.MethodDelete {
@@ -240,7 +240,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			exclusionInst := database.Exclusion{
 				Path:  exclusion,
-				JobId: newBackup.ID,
+				JobID: newBackup.ID,
 			}
 
 			newBackup.Exclusions = append(newBackup.Exclusions, exclusionInst)
@@ -396,7 +396,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 					exclusionInst := database.Exclusion{
 						Path:  exclusion,
-						JobId: backup.ID,
+						JobID: backup.ID,
 					}
 
 					backup.Exclusions = append(backup.Exclusions, exclusionInst)

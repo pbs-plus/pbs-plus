@@ -163,7 +163,7 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 	for _, backupRun := range backupsRun {
 		backupTask, err := storeInstance.Database.GetBackup(backupRun)
 		if err != nil {
-			syslog.L.Error(err).WithField("backupId", backupRun).Write()
+			syslog.L.Error(err).WithField("backupID", backupRun).Write()
 			continue
 		}
 
@@ -176,18 +176,18 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 		}
 		var reply job.QueueReply
 		if err := rpcClient.Call("JobRPCService.BackupQueue", args, &reply); err != nil {
-			syslog.L.Error(err).WithField("backupId", backupRun).Write()
+			syslog.L.Error(err).WithField("backupID", backupRun).Write()
 			continue
 		}
 		if reply.Status != 200 {
-			syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("backupId", backupRun).Write()
+			syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("backupID", backupRun).Write()
 		}
 	}
 
 	for _, restoreRun := range restoresRun {
 		restoreTask, err := storeInstance.Database.GetRestore(restoreRun)
 		if err != nil {
-			syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
+			syslog.L.Error(err).WithField("restoreID", restoreRun).Write()
 			continue
 		}
 
@@ -199,11 +199,11 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 		}
 		var reply job.QueueReply
 		if err := rpcClient.Call("JobRPCService.RestoreQueue", args, &reply); err != nil {
-			syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
+			syslog.L.Error(err).WithField("restoreID", restoreRun).Write()
 			continue
 		}
 		if reply.Status != 200 {
-			syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("restoreId", restoreRun).Write()
+			syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("restoreID", restoreRun).Write()
 		}
 	}
 }

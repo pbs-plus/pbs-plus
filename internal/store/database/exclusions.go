@@ -55,7 +55,7 @@ func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) 
 	}
 
 	err = q.CreateExclusion(database.ctx, sqlc.CreateExclusionParams{
-		JobID:   exclusion.JobId,
+		JobID:   exclusion.JobID,
 		Path:    exclusion.Path,
 		Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
 	})
@@ -67,8 +67,8 @@ func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) 
 	return nil
 }
 
-func (database *Database) GetAllBackupExclusions(backupId string) ([]Exclusion, error) {
-	rows, err := database.readQueries.GetBackupExclusions(database.ctx, backupId)
+func (database *Database) GetAllBackupExclusions(backupID string) ([]Exclusion, error) {
+	rows, err := database.readQueries.GetBackupExclusions(database.ctx, backupID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("GetAllBackupExclusions: error querying exclusions: %w", err)
 	}
@@ -84,7 +84,7 @@ func (database *Database) GetAllBackupExclusions(backupId string) ([]Exclusion, 
 		seenPaths[path] = true
 
 		excl := Exclusion{
-			JobId:   row.JobID,
+			JobID:   row.JobID,
 			Path:    path,
 			Comment: row.Comment.String,
 		}
@@ -111,7 +111,7 @@ func (database *Database) GetAllGlobalExclusions() ([]Exclusion, error) {
 		seenPaths[path] = true
 
 		excl := Exclusion{
-			JobId:   "",
+			JobID:   "",
 			Path:    path,
 			Comment: row.Comment.String,
 		}
@@ -134,7 +134,7 @@ func (database *Database) GetExclusion(path string) (*Exclusion, error) {
 	}
 
 	excl := &Exclusion{
-		JobId:   row.JobID,
+		JobID:   row.JobID,
 		Path:    row.Path,
 		Comment: row.Comment.String,
 	}
@@ -182,7 +182,7 @@ func (database *Database) UpdateExclusion(tx *Transaction, exclusion Exclusion) 
 	}
 
 	affected, err := q.UpdateExclusion(database.ctx, sqlc.UpdateExclusionParams{
-		JobID:   exclusion.JobId,
+		JobID:   exclusion.JobID,
 		Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
 		Path:    exclusion.Path,
 	})

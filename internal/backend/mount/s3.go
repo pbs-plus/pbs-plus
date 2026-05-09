@@ -21,7 +21,7 @@ import (
 )
 
 type S3Mount struct {
-	BackupId  string
+	BackupID  string
 	Endpoint  string
 	AccessKey string
 	SecretKey string
@@ -38,7 +38,7 @@ func S3FSMount(ctx context.Context, storeInstance *store.Store, backup database.
 	parsedS3 := target.S3Info
 
 	s3Mount := &S3Mount{
-		BackupId:  backup.ID,
+		BackupID:  backup.ID,
 		Endpoint:  parsedS3.Endpoint,
 		AccessKey: parsedS3.AccessKey,
 		Bucket:    parsedS3.Bucket,
@@ -65,7 +65,7 @@ func S3FSMount(ctx context.Context, storeInstance *store.Store, backup database.
 	}
 
 	args := &rpcmount.S3BackupArgs{
-		BackupId:     backup.ID,
+		BackupID:     backup.ID,
 		Endpoint:     parsedS3.Endpoint,
 		AccessKey:    parsedS3.AccessKey,
 		Bucket:       parsedS3.Bucket,
@@ -144,7 +144,7 @@ func (a *S3Mount) Unmount() {
 }
 
 func (a *S3Mount) CloseMount() {
-	sessions.DisconnectSession(a.Endpoint + "|" + a.BackupId)
+	sessions.DisconnectSession(a.Endpoint + "|" + a.BackupID)
 }
 
 func (a *S3Mount) IsEmpty() bool {

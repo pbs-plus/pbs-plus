@@ -185,7 +185,7 @@ func (b *backupJob) onError(err error) {
 	job := b.job
 	b.mu.RUnlock()
 
-	syslog.L.Error(err).WithField("jobId", job.ID).Write()
+	syslog.L.Error(err).WithField("jobID", job.ID).Write()
 
 	if errors.Is(err, jobs.ErrOneInstance) {
 		return
@@ -214,7 +214,7 @@ func (b *backupJob) onError(err error) {
 		},
 	)
 	if terr != nil {
-		syslog.L.Error(terr).WithField("jobId", job.ID).Write()
+		syslog.L.Error(terr).WithField("jobID", job.ID).Write()
 	} else {
 		b.updateBackupWithTask(task)
 	}
@@ -831,7 +831,7 @@ func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
 	b.job = latest
 	if uerr := b.storeInstance.Database.UpdateBackup(nil, latest); uerr != nil {
 		syslog.L.Error(uerr).
-			WithField("jobId", latest.ID).
+			WithField("jobID", latest.ID).
 			WithField("upid", task.UPID).
 			Write()
 	}

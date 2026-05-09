@@ -64,7 +64,7 @@ func (e *LogEntry) Write() {
 		e.serverWrite()
 	} else {
 		if e.JobID != "" {
-			e.Fields["jobId"] = e.JobID
+			e.Fields["jobID"] = e.JobID
 		}
 		e.writeSlog()
 	}
@@ -103,7 +103,7 @@ func (e *LogEntry) serverWrite() {
 			backupLogger.Write([]byte(sb.String()))
 			sb.Reset()
 		}
-		e.Fields["jobId"] = e.JobID
+		e.Fields["jobID"] = e.JobID
 	}
 
 	e.writeSlog()

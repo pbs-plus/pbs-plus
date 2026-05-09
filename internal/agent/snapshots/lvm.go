@@ -11,7 +11,7 @@ import (
 
 type LVMSnapshotHandler struct{}
 
-func (l *LVMSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
+func (l *LVMSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
 	if !l.IsSupported(sourcePath) {
 		return Snapshot{}, fmt.Errorf("source path %q is not on an LVM volume", sourcePath)
 	}
@@ -22,7 +22,7 @@ func (l *LVMSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Sn
 		return Snapshot{}, fmt.Errorf("failed to get volume group and logical volume: %w", err)
 	}
 
-	snapshotName := fmt.Sprintf("%s-snap-%s", lvName, jobId)
+	snapshotName := fmt.Sprintf("%s-snap-%s", lvName, jobID)
 	timeStarted := time.Now()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

@@ -23,7 +23,7 @@ var readBufPool = sync.Pool{
 type AgentFSServer struct {
 	ctx              context.Context
 	ctxCancel        context.CancelFunc
-	jobId            string
+	jobID            string
 	snapshot         snapshots.Snapshot
 	handleIdGen      *IDGenerator
 	handles          *safemap.Map[uint64, *FileHandle]
@@ -34,7 +34,7 @@ type AgentFSServer struct {
 	idBuf            []byte
 }
 
-func NewAgentFSServer(jobId string, readMode string, snapshot snapshots.Snapshot) *AgentFSServer {
+func NewAgentFSServer(jobID string, readMode string, snapshot snapshots.Snapshot) *AgentFSServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	allocGranularity := getAllocGranularity()
@@ -44,7 +44,7 @@ func NewAgentFSServer(jobId string, readMode string, snapshot snapshots.Snapshot
 
 	s := &AgentFSServer{
 		snapshot:         snapshot,
-		jobId:            jobId,
+		jobID:            jobID,
 		handles:          safemap.New[uint64, *FileHandle](),
 		ctx:              ctx,
 		ctxCancel:        cancel,
