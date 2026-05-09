@@ -21,7 +21,7 @@ func (l *Logger) SetServiceLogger() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if os.Getenv("PBS_PLUS_STDOUT_ONLY") == "true" {
+	if conf.Env.StdoutOnly {
 		return nil
 	}
 

@@ -35,7 +35,7 @@ func (l *Logger) SetServiceLogger() error {
 		Level:     slog.LevelInfo,
 		AddSource: true,
 	})
-	if os.Getenv("DEBUG") == "true" {
+	if conf.Env.Debug {
 		handler = slog.NewJSONHandler(&LogWriter{logger: sysWriter}, &slog.HandlerOptions{
 			Level:     slog.LevelDebug,
 			AddSource: true,
