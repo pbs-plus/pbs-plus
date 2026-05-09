@@ -119,7 +119,7 @@ func validateEnvironment() error {
 		return fmt.Errorf("CleanupPbsPlusActiveTasks: %w", err)
 	}
 
-	hn, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
+	hn, ok := conf.Env.Hostname, conf.Env.Hostname != ""
 	if !ok {
 		return fmt.Errorf("PBS_PLUS_HOSTNAME is not set; you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables")
 	}
