@@ -3,12 +3,12 @@ package syslog
 import (
 	"sync"
 
-	"github.com/rs/zerolog"
+	"log/slog"
 )
 
 type Logger struct {
 	mu           sync.RWMutex
-	zlog         *zerolog.Logger
+	zlog         *slog.Logger
 	hostname     string
 	Server       bool
 	disabled     bool
