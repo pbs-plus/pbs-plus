@@ -58,8 +58,6 @@ func S3FSMount(ctx context.Context, storeInstance *store.Store, backup database.
 	}
 
 	// Try mounting with retries
-	const maxRetries = 3
-	const retryDelay = 2 * time.Second
 
 	errCleanup := func() {
 		s3Mount.CloseMount()
