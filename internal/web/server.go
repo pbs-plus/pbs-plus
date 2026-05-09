@@ -78,10 +78,10 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 
 	// Agent routes
 	agentMux.HandleFunc("/api2/json/plus/version", api.VersionHandler(storeInstance, version))
-	agentMux.HandleFunc("/api2/json/plus/binary", api.DownloadBinary(storeInstance, version))
-	agentMux.HandleFunc("/api2/json/plus/msi", api.DownloadMsi(storeInstance, version))
-	agentMux.HandleFunc("/api2/json/plus/binary/sig", api.DownloadSig(storeInstance, version))
-	agentMux.HandleFunc("/api2/json/plus/binary/checksum", api.DownloadChecksum(storeInstance, version))
+	agentMux.HandleFunc("/api2/json/plus/binary", api.DownloadBinaryHandler(storeInstance, version))
+	agentMux.HandleFunc("/api2/json/plus/msi", api.DownloadMsiHandler(storeInstance, version))
+	agentMux.HandleFunc("/api2/json/plus/binary/sig", api.DownloadSigHandler(storeInstance, version))
+	agentMux.HandleFunc("/api2/json/plus/binary/checksum", api.DownloadChecksumHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/d2d/target/agent", AgentOnly(storeInstance, api.D2DTargetAgentHandler(storeInstance)))
 	agentMux.HandleFunc("/api2/json/d2d/agent-log", AgentOnly(storeInstance, api.AgentLogHandler(storeInstance)))
 

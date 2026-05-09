@@ -8,7 +8,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	arpcTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/system"
+	"github.com/pbs-plus/pbs-plus/internal/backend/system"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )

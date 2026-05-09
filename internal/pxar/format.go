@@ -23,7 +23,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
+	"github.com/pbs-plus/pbs-plus/internal/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/puzpuzpuz/xsync/v4"
 )

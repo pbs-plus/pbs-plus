@@ -4,7 +4,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/store/system"
+	"github.com/pbs-plus/pbs-plus/internal/backend/system"
 )
 
 func FileTreeHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {

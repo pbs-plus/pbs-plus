@@ -18,7 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/system"
+	"github.com/pbs-plus/pbs-plus/internal/backend/system"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
