@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -12,7 +13,7 @@ import (
 func NewBackupStore() (*BackupStore, error) {
 	execPath, err := os.Executable()
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("NewBackupStore: %w", err)
 	}
 	dir := filepath.Dir(execPath)
 	filePath := filepath.Join(dir, "backup_sessions.json")
