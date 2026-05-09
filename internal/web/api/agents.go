@@ -102,7 +102,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		cert, ca, err := storeInstance.SignAgentCSR(decodedCSR)
+		cert, ca, err := storeInstance.CertManager.SignCSR(decodedCSR)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
@@ -269,7 +269,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		cert, ca, err := storeInstance.SignAgentCSR(decodedCSR)
+		cert, ca, err := storeInstance.CertManager.SignCSR(decodedCSR)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)

@@ -116,7 +116,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	agentHandler := Recovery(RequestLogger(apiLogger)(RequestID(agentMux)))
 
 	// Build TLS config for agent server
-	serverConfig, err := storeInstance.GetAPIServerTLSConfig()
+	serverConfig, err := storeInstance.CertManager.APIServerTLSConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build server TLS config: %w", err)
 	}
@@ -166,7 +166,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 
 // StartARPC starts the ARPC server with proper TLS configuration.
 func (s *Server) StartARPC() error {
-	arpcTlsConfig, err := s.Store.GetARPCServerTLSConfig()
+	arpcTlsConfig, err := s.Store.CertManager.ARPCServerTLSConfig()
 	if err != nil {
 		return fmt.Errorf("failed to build server TLS config: %w", err)
 	}
@@ -211,7 +211,7 @@ func (s *Server) StartAll() {
 
 	s.wg.Go(func() {
 		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", s.AgentServer.Addr)).Write()
-		if err := s.Store.ListenAndServeAgentEndpoint(s.AgentServer); err != nil {
+		if err := s.Store.CertManager.ServeTLS(s.AgentServer); err != nil {
 			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
 		}
 	})
