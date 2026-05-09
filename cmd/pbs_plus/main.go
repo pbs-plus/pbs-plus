@@ -4,40 +4,24 @@ package main
 
 import (
 	"context"
-	"crypto/x509"
 	"flag"
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"net/rpc"
 	"os"
-	"os/exec"
 	"os/signal"
-	"path/filepath"
-	"strings"
-	"sync"
 	"time"
 
-	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	backend "github.com/pbs-plus/pbs-plus/internal/backend/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
-	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/scheduler"
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/backend/rpc"
-	"github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
-
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	backend "github.com/pbs-plus/pbs-plus/internal/backend"
+	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
+	"github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/web"
-	"github.com/pbs-plus/pbs-plus/internal/web/api"
-
-	"net/http/pprof"
 
 	_ "github.com/pbs-plus/pbs-plus/internal/memlimit"
 )
@@ -78,45 +62,7 @@ func main() {
 	argsWithoutProg := os.Args[1:]
 
 	if len(argsWithoutProg) > 0 && argsWithoutProg[0] == "clean-task-logs" {
-		fmt.Println("WARNING: You are about to remove all junk logs recursively from:")
-		fmt.Println("         /var/log/proxmox-backup/tasks")
-		fmt.Println()
-		fmt.Println("All log entries with the following substrings will be removed if found in any log file:")
-		for _, substr := range backup.JunkSubstrings {
-			fmt.Printf(" - %s\n", substr)
-		}
-		fmt.Println()
-		fmt.Println("If this is not what you intend, press Ctrl+C within the next 10 seconds to cancel.")
-		fmt.Println()
-
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, os.Interrupt)
-
-		cancelChan := make(chan struct{})
-		go func() {
-			<-sigChan
-			fmt.Println("\nOperation cancelled by user.")
-			close(cancelChan)
-		}()
-
-		for i := 10; i > 0; i-- {
-			select {
-			case <-cancelChan:
-				// User cancelled the operation.
-				return
-			default:
-				fmt.Printf("Proceeding in %d seconds...\n", i)
-				time.Sleep(1 * time.Second)
-			}
-		}
-
-		fmt.Println("Proceeding with log cleanup...")
-
-		removed, err := backup.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Printf("Successfully removed %d of junk lines from all task logs files.\n", removed)
+		runCleanTaskLogs()
 		return
 	}
 
@@ -132,369 +78,155 @@ func main() {
 		return
 	}
 
-	// Handle backup execution
 	if len(backupsRun) > 0 || len(restoresRun) > 0 {
-		conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
-		if err != nil {
-			syslog.L.Error(err).
-				WithField("backups", backupsRun).
-				WithField("restores", restoresRun).
-				Write()
-			return
-		}
-		rpcClient := rpc.NewClient(conn)
-		defer rpcClient.Close()
-
-		for _, backupRun := range backupsRun {
-			backupTask, err := storeInstance.Database.GetBackup(backupRun)
-			if err != nil {
-				syslog.L.Error(err).WithField("backupId", backupRun).Write()
-				continue
-			}
-
-			arrExtExc := []string(extExclusions)
-
-			args := &job.BackupQueueArgs{
-				Job:             backupTask,
-				SkipCheck:       true,
-				Stop:            *stop,
-				Web:             *webRun,
-				ExtraExclusions: arrExtExc,
-			}
-			var reply job.QueueReply
-
-			err = rpcClient.Call("JobRPCService.BackupQueue", args, &reply)
-			if err != nil {
-				syslog.L.Error(err).WithField("backupId", backupRun).Write()
-				continue
-			}
-			if reply.Status != 200 {
-				syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("backupId", backupRun).Write()
-				continue
-			}
-		}
-
-		for _, restoreRun := range restoresRun {
-			restoreTask, err := storeInstance.Database.GetRestore(restoreRun)
-			if err != nil {
-				syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
-				continue
-			}
-
-			args := &job.RestoreQueueArgs{
-				Job:       restoreTask,
-				SkipCheck: true,
-				Stop:      *stop,
-				Web:       *webRun,
-			}
-			var reply job.QueueReply
-
-			err = rpcClient.Call("JobRPCService.RestoreQueue", args, &reply)
-			if err != nil {
-				syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
-				continue
-			}
-			if reply.Status != 200 {
-				syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("restoreId", restoreRun).Write()
-				continue
-			}
-		}
-
+		runOneShotJobs(storeInstance, backupsRun, restoresRun, extExclusions, *stop, *webRun)
 		return
 	}
 
-	proxmox.CleanupPbsPlusActiveTasks()
-
-	hn, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
-	if !ok {
-		syslog.L.Error(fmt.Errorf("PBS_PLUS_HOSTNAME is not set.")).WithMessage("a required environment variable is not set. you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables").Write()
+	if err := validateEnvironment(); err != nil {
+		syslog.L.Error(err).Write()
 		return
 	}
 
-	if err := types.ValidateHostname(hn); err != nil {
-		syslog.L.Error(fmt.Errorf("PBS_PLUS_HOSTNAME is an invalid hostname/fqdn")).WithField("PBS_PLUS_HOSTNAME", hn).WithMessage("a required environment variable is invalid. you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables").Write()
-		return
-	}
-
-	if err := web.ModifyPBSHandlebars("/usr/share/javascript/proxmox-backup/index.hbs", "/usr/share/javascript/proxmox-backup/js"); err != nil {
+	if err := web.ModifyPBSHandlebars(
+		"/usr/share/javascript/proxmox-backup/index.hbs",
+		"/usr/share/javascript/proxmox-backup/js",
+	); err != nil {
 		syslog.L.Error(err).WithMessage("failed to mount modified proxmox-backup-gui.js").Write()
 		return
 	}
 
-	// cleanup previously queued backups
-	queuedBackups, err := storeInstance.Database.GetAllQueuedBackups()
+	// Bootstrap: cert generation, secret key, token manager, mount cleanup,
+	// queue cleanup, scheduler, and RPC servers.
+	_, _, err = backend.Bootstrap(mainCtx, storeInstance)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to get all queued backups").Write()
-	}
-
-	tx, err := storeInstance.Database.NewTransaction()
-	if err == nil {
-		for _, queuedBackup := range queuedBackups {
-			task, err := tasks.GenerateBackupTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
-			if err != nil {
-				continue
-			}
-
-			queueTaskPath, err := proxmox.GetLogPath(queuedBackup.History.LastRunUpid)
-			if err == nil {
-				os.Remove(queueTaskPath)
-			}
-
-			queuedBackup.History.LastRunUpid = task.UPID
-			err = storeInstance.Database.UpdateBackup(tx, queuedBackup)
-			if err != nil {
-				continue
-			}
-		}
-		tx.Commit()
-	}
-
-	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
-
-	if _, err := os.Lstat(secKeyPath); err != nil {
-		key, err := GenerateSecretKey(48)
-		if err == nil {
-			_ = os.WriteFile(secKeyPath, []byte(key), 0640)
-		}
-	}
-
-	secKey, err := os.ReadFile(secKeyPath)
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to read .key").Write()
+		syslog.L.Error(err).WithMessage("bootstrap failed").Write()
 		return
 	}
 
-	err = storeInstance.ValidateServerCertificates()
+	// Create and start all HTTP/ARPC servers.
+	server, err := web.NewServer(storeInstance, Version)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to generate local CA and server cert").Write()
+		syslog.L.Error(err).WithMessage("failed to create server").Write()
 		return
 	}
 
-	serverConfig, err := storeInstance.GetAPIServerTLSConfig()
+	server.StartAll()
+}
+
+func validateEnvironment() error {
+	if err := proxmox.CleanupPbsPlusActiveTasks(); err != nil {
+		return fmt.Errorf("CleanupPbsPlusActiveTasks: %w", err)
+	}
+
+	hn, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
+	if !ok {
+		return fmt.Errorf("PBS_PLUS_HOSTNAME is not set; you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables")
+	}
+
+	if err := types.ValidateHostname(hn); err != nil {
+		return fmt.Errorf("PBS_PLUS_HOSTNAME is an invalid hostname/fqdn: %s", hn)
+	}
+
+	return nil
+}
+
+func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExclusions []string, stop, webRun bool) {
+	conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to build server TLS config").Write()
+		syslog.L.Error(err).
+			WithField("backups", backupsRun).
+			WithField("restores", restoresRun).
+			Write()
 		return
 	}
+	rpcClient := rpc.NewClient(conn)
+	defer rpcClient.Close()
 
-	// Initialize token manager
-	tokenManager, err := mtls.NewTokenManager(mtls.TokenConfig{
-		TokenExpiration: conf.AuthTokenExpiration,
-		SecretKey:       string(secKey),
-	})
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to initialize token manager").Write()
-		return
-	}
-	storeInstance.Database.TokenManager = tokenManager
-
-	// Unmount and remove all stale mount points
-	// Get all mount points under the base path
-	mountPoints, err := filepath.Glob(filepath.Join(conf.AgentMountBasePath, "*"))
-	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to find agent mount base path").Write()
-	}
-
-	// Unmount each one
-	for _, mountPoint := range mountPoints {
-		umount := exec.Command("umount", "-lf", mountPoint)
-		umount.Env = os.Environ()
-		if err := umount.Run(); err != nil {
-			// Optionally handle individual unmount errors
-			syslog.L.Error(err).WithMessage("failed to unmount some mounted agents").Write()
-		}
-	}
-
-	if err := os.RemoveAll(conf.AgentMountBasePath); err != nil {
-		syslog.L.Error(err).WithMessage("failed to remove directory").Write()
-	}
-
-	if err := os.Mkdir(conf.AgentMountBasePath, 0700); err != nil {
-		syslog.L.Error(err).WithMessage("failed to recreate directory").Write()
-	}
-
-	go func() {
-		for {
-			select {
-			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("mount rpc server cancelled")
-				return
-			default:
-				if err := rpcmount.RunRPCServer(mainCtx, conf.MountSocketPath, storeInstance); err != nil {
-					syslog.L.Error(err).WithMessage("mount rpc server failed, restarting")
-				}
-			}
-		}
-	}()
-
-	manager := backend.NewManager(mainCtx, conf.MaxConcurrentClients, 100, true)
-	s := scheduler.NewScheduler(mainCtx, storeInstance, manager)
-	s.Start()
-
-	go func() {
-		for {
-			select {
-			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("backup rpc server cancelled")
-				return
-			default:
-				if err := job.RunJobRPCServer(mainCtx, conf.JobMutateSocketPath, manager, storeInstance); err != nil {
-					syslog.L.Error(err).WithMessage("backup rpc server failed, restarting")
-				}
-			}
-		}
-	}()
-
-	agentMux := http.NewServeMux()
-	apiMux := http.NewServeMux()
-
-	// API routes
-	apiMux.HandleFunc("/api2/json/d2d/backup", web.ServerOnly(storeInstance, api.D2DBackupHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/restore", web.ServerOnly(storeInstance, api.D2DRestoreHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/target", web.ServerOnly(storeInstance, api.D2DTargetHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/script", web.ServerOnly(storeInstance, api.D2DScriptHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/token", web.ServerOnly(storeInstance, api.D2DTokenHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/filetree/{target}", web.ServerOnly(storeInstance, api.D2DFileTree(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/exclusion", web.AgentOrServer(storeInstance, api.D2DExclusionHandler(storeInstance)))
-
-	// ExtJS routes with path parameters
-	apiMux.HandleFunc("/api2/extjs/d2d/backup", web.ServerOnly(storeInstance, api.ExtJsBackupRunHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/d2d/restore", web.ServerOnly(storeInstance, api.ExtJsRestoreRunHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-target", web.ServerOnly(storeInstance, api.ExtJsTargetHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}", web.ServerOnly(storeInstance, api.ExtJsTargetSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}/s3-secret", web.ServerOnly(storeInstance, api.ExtJsTargetS3SecretHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-agent/{agent}", web.ServerOnly(storeInstance, api.ExtJsAgentSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-mount/{datastore}", web.ServerOnly(storeInstance, api.ExtJsMountHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount/{datastore}", web.ServerOnly(storeInstance, api.ExtJsUnmountHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount-all/{datastore}", web.ServerOnly(storeInstance, api.ExtJsUnmountAllHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-script", web.ServerOnly(storeInstance, api.ExtJsScriptHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-script/{path}", web.ServerOnly(storeInstance, api.ExtJsScriptSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-token", web.ServerOnly(storeInstance, api.ExtJsTokenHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-token/{token}", web.ServerOnly(storeInstance, api.ExtJsTokenSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion", web.ServerOnly(storeInstance, api.ExtJsExclusionHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", web.ServerOnly(storeInstance, api.ExtJsExclusionSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup", web.ServerOnly(storeInstance, api.ExtJsBackupHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}", web.ServerOnly(storeInstance, api.ExtJsBackupSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}/upids", web.ServerOnly(storeInstance, api.ExtJsBackupUPIDsHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-restore", web.ServerOnly(storeInstance, api.ExtJsRestoreHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", web.ServerOnly(storeInstance, api.ExtJsRestoreSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/plus/agent/install/win", api.AgentInstallScriptHandler(storeInstance, Version))
-	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(storeInstance))
-
-	// Agent routes
-	agentMux.HandleFunc("/api2/json/plus/version", api.VersionHandler(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/binary", api.DownloadBinary(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/msi", api.DownloadMsi(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/binary/sig", api.DownloadSig(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/plus/binary/checksum", api.DownloadChecksum(storeInstance, Version))
-	agentMux.HandleFunc("/api2/json/d2d/target/agent", web.AgentOnly(storeInstance, api.D2DTargetAgentHandler(storeInstance)))
-	agentMux.HandleFunc("/api2/json/d2d/agent-log", web.AgentOnly(storeInstance, api.AgentLogHandler(storeInstance)))
-
-	// Agent auth routes
-	agentMux.HandleFunc("/plus/agent/bootstrap", api.AgentBootstrapHandler(storeInstance))
-	agentMux.HandleFunc("/plus/agent/renew", web.AgentOnly(storeInstance, api.AgentRenewHandler(storeInstance)))
-
-	// pprof routes
-	apiMux.HandleFunc("/debug/pprof/", pprof.Index)
-	apiMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	apiMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	apiMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-
-	apiServer := &http.Server{
-		Addr:           conf.ServerAPIExtPort,
-		Handler:        apiMux,
-		ReadTimeout:    conf.HTTPReadTimeout,
-		WriteTimeout:   conf.HTTPWriteTimeout,
-		IdleTimeout:    conf.HTTPIdleTimeout,
-		MaxHeaderBytes: conf.HTTPMaxHeaderBytes,
-	}
-
-	agentServer := &http.Server{
-		Addr:           conf.AgentAPIPort,
-		Handler:        agentMux,
-		TLSConfig:      serverConfig,
-		ReadTimeout:    conf.HTTPReadTimeout,
-		WriteTimeout:   conf.HTTPWriteTimeout,
-		IdleTimeout:    conf.HTTPIdleTimeout,
-		MaxHeaderBytes: conf.HTTPMaxHeaderBytes,
-	}
-
-	var endpointsWg sync.WaitGroup
-
-	endpointsWg.Go(func() {
-		web.WatchAndServe(apiServer, conf.CertFile, conf.KeyFile, []string{conf.CertFile, conf.KeyFile})
-	})
-
-	endpointsWg.Go(func() {
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", agentServer.Addr)).Write()
-		if err := storeInstance.ListenAndServeAgentEndpoint(agentServer); err != nil {
-			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
-		}
-	})
-
-	endpointsWg.Go(func() {
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC endpoint on TCP %s", conf.ARPCServerPort)).Write()
-
-		router := arpc.NewRouter()
-		router.Handle("echo", func(req *arpc.Request) (arpc.Response, error) {
-			var msg string
-			if err := cbor.Unmarshal(req.Payload, &msg); err != nil {
-				return arpc.Response{}, arpc.WrapError(err)
-			}
-			data, err := cbor.Marshal(msg)
-			if err != nil {
-				return arpc.Response{}, arpc.WrapError(err)
-			}
-			return arpc.Response{Status: 200, Data: data}, nil
-		})
-
-		arpcTlsConfig, err := storeInstance.GetARPCServerTLSConfig()
+	for _, backupRun := range backupsRun {
+		backupTask, err := storeInstance.Database.GetBackup(backupRun)
 		if err != nil {
-			syslog.L.Error(err).WithMessage("failed to build server TLS config").Write()
+			syslog.L.Error(err).WithField("backupId", backupRun).Write()
+			continue
+		}
+
+		args := &job.BackupQueueArgs{
+			Job:             backupTask,
+			SkipCheck:       true,
+			Stop:            stop,
+			Web:             webRun,
+			ExtraExclusions: extExclusions,
+		}
+		var reply job.QueueReply
+		if err := rpcClient.Call("JobRPCService.BackupQueue", args, &reply); err != nil {
+			syslog.L.Error(err).WithField("backupId", backupRun).Write()
+			continue
+		}
+		if reply.Status != 200 {
+			syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("backupId", backupRun).Write()
+		}
+	}
+
+	for _, restoreRun := range restoresRun {
+		restoreTask, err := storeInstance.Database.GetRestore(restoreRun)
+		if err != nil {
+			syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
+			continue
+		}
+
+		args := &job.RestoreQueueArgs{
+			Job:       restoreTask,
+			SkipCheck: true,
+			Stop:      stop,
+			Web:       webRun,
+		}
+		var reply job.QueueReply
+		if err := rpcClient.Call("JobRPCService.RestoreQueue", args, &reply); err != nil {
+			syslog.L.Error(err).WithField("restoreId", restoreRun).Write()
+			continue
+		}
+		if reply.Status != 200 {
+			syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("restoreId", restoreRun).Write()
+		}
+	}
+}
+
+func runCleanTaskLogs() {
+	fmt.Println("WARNING: You are about to remove all junk logs recursively from:")
+	fmt.Println("         /var/log/proxmox-backup/tasks")
+	fmt.Println()
+	fmt.Println("All log entries with the following substrings will be removed if found in any log file:")
+	for _, substr := range backup.JunkSubstrings {
+		fmt.Printf(" - %s\n", substr)
+	}
+	fmt.Println()
+	fmt.Println("If this is not what you intend, press Ctrl+C within the next 10 seconds to cancel.")
+	fmt.Println()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+
+	cancelChan := make(chan struct{})
+	go func() {
+		<-sigChan
+		fmt.Println("\nOperation cancelled by user.")
+		close(cancelChan)
+	}()
+
+	for i := 10; i > 0; i-- {
+		select {
+		case <-cancelChan:
 			return
+		default:
+			fmt.Printf("Proceeding in %d seconds...\n", i)
+			time.Sleep(1 * time.Second)
 		}
+	}
 
-		storeInstance.ARPCAgentsManager.SetExtraExpectFunc(func(id string, certs []*x509.Certificate) bool {
-			// agent worker connections should already be validated before this point
-			if len(strings.Split(id, "|")) > 1 {
-				return false
-			}
-
-			syslog.L.Debug().WithMessage("checking client authorization").WithField("id", id).Write()
-
-			if len(certs) == 0 {
-				syslog.L.Error(fmt.Errorf("no client certificates received")).WithMessage("client unauthorized").WithField("id", id).Write()
-				return false
-			}
-
-			trustedCert, err := storeInstance.Database.LoadAgentHostCert(id)
-			if err != nil {
-				syslog.L.Error(err).WithMessage("client unauthorized").WithField("id", id).Write()
-				return false
-			}
-
-			found := false
-			for _, cert := range certs {
-				if cert.Equal(trustedCert) {
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				syslog.L.Error(fmt.Errorf("did not match trusted certificate")).WithMessage("client unauthorized").WithField("id", id).Write()
-				return false
-			}
-
-			syslog.L.Debug().WithMessage("client authorized").WithField("id", id).Write()
-
-			return true
-		})
-
-		if err := arpc.ListenAndServe(storeInstance.Ctx, conf.ARPCServerPort, storeInstance.ARPCAgentsManager, arpcTlsConfig, router); err != nil {
-			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed")
-		}
-	})
-
-	endpointsWg.Wait()
+	fmt.Println("Proceeding with log cleanup...")
+	removed, err := backup.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Successfully removed %d of junk lines from all task logs files.\n", removed)
 }
