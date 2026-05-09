@@ -238,7 +238,11 @@ func (e *LogEntry) SkipDedup() *LogEntry {
 // slogAttrs converts the LogEntry fields to slog key-value pairs
 // for use with slog.Logger methods.
 func (e *LogEntry) slogAttrs() []any {
-	args := make([]any, 0, len(e.Fields)*2+2)
+	n := len(e.Fields)
+	if n < 0 {
+		n = 0
+	}
+	args := make([]any, 0, n*2+2)
 	for k, v := range e.Fields {
 		args = append(args, k, v)
 	}
