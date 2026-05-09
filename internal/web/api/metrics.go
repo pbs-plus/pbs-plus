@@ -349,7 +349,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 	currentTargetInfoLabels := make(map[string]prometheus.Labels)
 
 	// Collect backup metrics
-	backups, err := storeInstance.Database.GetAllBackups()
+	backups, err := storeInstance.BackupSvc.ListBackups()
 	if err != nil {
 		syslog.L.Error(err).
 			WithField("handler", "prometheus_metrics").
@@ -496,7 +496,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 	m.backupsLastRunSuccessTotal.Set(float64(successCount))
 
 	// Collect target metrics
-	targets, err := storeInstance.Database.GetAllTargets()
+	targets, err := storeInstance.TargetSvc.ListTargets()
 	if err != nil {
 		syslog.L.Error(err).
 			WithField("handler", "prometheus_metrics").
