@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"log/syslog"
 	"os"
-	"path/filepath"
 	"strings"
+
+	"log/slog"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/rs/zerolog"
 )
 
 func (l *Logger) SetServiceLogger() error {
@@ -30,32 +30,21 @@ func (l *Logger) SetServiceLogger() error {
 		return err
 	}
 
-	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-		w.Out = &LogWriter{logger: sysWriter}
-		w.NoColor = true
-		w.FormatCaller = func(i any) string {
-			var c string
-			if cc, ok := i.(string); ok {
-				c = cc
-			}
-			if c == "" {
-				return ""
-			}
+	// Build a slog.Logger that writes JSON to the syslog writer.
+	handler := slog.NewJSONHandler(&LogWriter{logger: sysWriter}, &slog.HandlerOptions{
+		Level:     slog.LevelInfo,
+		AddSource: true,
+	})
+	if os.Getenv("DEBUG") == "true" {
+		handler = slog.NewJSONHandler(&LogWriter{logger: sysWriter}, &slog.HandlerOptions{
+			Level:     slog.LevelDebug,
+			AddSource: true,
+		})
+	}
 
-			parts := strings.Split(c, "/")
-			if len(parts) >= 2 {
-				return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
-			}
-			return filepath.Base(c)
-		}
-	})).With().
-		CallerWithSkipFrameCount(3).
-		Timestamp().
-		Logger()
-
-	l.zlog = &zlogger
-
-	l.zlog.Info().Msg("Service logger successfully added for syslog")
+	zlogger := slog.New(handler)
+	l.zlog = zlogger
+	l.zlog.Info("service logger successfully added for syslog")
 	return nil
 }
 
@@ -77,20 +66,7 @@ func (e *LogEntry) Write() {
 		if e.JobID != "" {
 			e.Fields["jobId"] = e.JobID
 		}
-	}
-
-	// Produce a full JSON log entry.
-	switch e.Level {
-	case "info":
-		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
-	case "debug":
-		e.logger.zlog.Debug().Fields(e.Fields).Msg(e.Message)
-	case "warn":
-		e.logger.zlog.Warn().Fields(e.Fields).Msg(e.Message)
-	case "error":
-		e.logger.zlog.Error().Err(e.Err).Fields(e.Fields).Msg(e.Message)
-	default:
-		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
+		e.writeSlog()
 	}
 }
 
@@ -125,9 +101,10 @@ func (e *LogEntry) serverWrite() {
 			}
 
 			backupLogger.Write([]byte(sb.String()))
-
 			sb.Reset()
 		}
 		e.Fields["jobId"] = e.JobID
 	}
+
+	e.writeSlog()
 }
