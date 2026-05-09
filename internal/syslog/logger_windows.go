@@ -74,7 +74,7 @@ func (e *LogEntry) Write() {
 	}
 
 	if e.JobID != "" {
-		e.Fields["jobId"] = e.JobID
+		e.Fields["jobID"] = e.JobID
 	}
 
 	if _, ok := e.Fields["hostname"]; !ok {

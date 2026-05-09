@@ -39,7 +39,7 @@ func NewS3FS(
 		WithMessage("NewS3FS called").
 		WithField("endpoint", endpoint).
 		WithField("bucket", bucket).
-		WithField("backupId", backup.ID).
+		WithField("backupID", backup.ID).
 		Write()
 
 	transport := &http.Transport{
@@ -77,7 +77,7 @@ func NewS3FS(
 	syslog.L.Debug().
 		WithMessage("Starting local memcached").
 		WithField("socketPath", memcachePath).
-		WithField("backupId", backup.ID).
+		WithField("backupID", backup.ID).
 		Write()
 
 	stopMemLocal, err := vfs.StartMemcachedOnUnixSocket(s3ctx, vfs.MemcachedConfig{
@@ -108,7 +108,7 @@ func NewS3FS(
 		<-s3ctx.Done()
 		syslog.L.Debug().
 			WithMessage("Context done, cleaning up memcache and memlocal").
-			WithField("backupId", fs.Backup.ID).
+			WithField("backupID", fs.Backup.ID).
 			Write()
 		fs.Memcache.DeleteAll()
 		fs.Memcache.Close()
@@ -138,7 +138,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 		WithMessage("Attr called").
 		WithField("path", fpath).
 		WithField("isLookup", isLookup).
-		WithField("backupId", fs.Backup.ID).
+		WithField("backupID", fs.Backup.ID).
 		Write()
 
 	now := time.Now().Unix()
@@ -163,7 +163,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 			syslog.L.Debug().
 				WithMessage("Attr cache hit").
 				WithField("path", fpath).
-				WithField("backupId", fs.Backup.ID).
+				WithField("backupID", fs.Backup.ID).
 				Write()
 			return fi, nil
 		}
@@ -237,7 +237,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 }
 
 func (fs *S3FS) StatFS(ctx context.Context) (agentTypes.StatFS, error) {
-	syslog.L.Debug().WithMessage("StatFS called").WithField("backupId", fs.Backup.ID).Write()
+	syslog.L.Debug().WithMessage("StatFS called").WithField("backupID", fs.Backup.ID).Write()
 	return agentTypes.StatFS{
 		Bsize:   4096,
 		Blocks:  1 << 50,
@@ -274,7 +274,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 	syslog.L.Debug().
 		WithMessage("ReadDir called").
 		WithField("path", fpath).
-		WithField("backupId", fs.Backup.ID).
+		WithField("backupID", fs.Backup.ID).
 		Write()
 
 	var prefix string

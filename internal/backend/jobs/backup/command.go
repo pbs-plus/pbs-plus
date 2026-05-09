@@ -40,11 +40,11 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
 
-	backupId, err := getBackupId(backup.Target)
+	backupID, err := getBackupId(backup.Target)
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to get backup ID: %w", err)
 	}
-	backupId = proxmox.NormalizeHostname(backupId)
+	backupID = proxmox.NormalizeHostname(backupID)
 
 	backupStore := fmt.Sprintf("%s@localhost:%s", proxmox.AUTH_ID, backup.Store)
 	if backupStore == "@localhost:" {
@@ -73,7 +73,7 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 		"--repository", backupStore,
 		detectionMode,
 		"--entries-max", fmt.Sprintf("%d", backup.MaxDirEntries+1024),
-		"--backup-id", backupId,
+		"--backup-id", backupID,
 		"--crypt-mode=none",
 	}...)
 
@@ -111,8 +111,8 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 	cmd := exec.CommandContext(ctx, "/usr/bin/prlimit", cmdArgs...)
 	cmd.Env = env
 
-	if err := CleanUnfinishedSnapshot(backup, backupId); err != nil {
-		syslog.L.Error(err).WithJob(backup.ID).WithField("backupId", backupId).Write()
+	if err := CleanUnfinishedSnapshot(backup, backupID); err != nil {
+		syslog.L.Error(err).WithJob(backup.ID).WithField("backupID", backupID).Write()
 	}
 
 	return cmd, nil

@@ -149,11 +149,11 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 	}
 
 	for _, exclusion := range backup.Exclusions {
-		if exclusion.JobId == "" {
-			exclusion.JobId = backup.ID
+		if exclusion.JobID == "" {
+			exclusion.JobID = backup.ID
 		}
 		err = q.CreateExclusion(database.ctx, sqlc.CreateExclusionParams{
-			JobID:   exclusion.JobId,
+			JobID:   exclusion.JobID,
 			Path:    exclusion.Path,
 			Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
 		})
@@ -239,7 +239,7 @@ func (database *Database) GetBackup(id string) (Backup, error) {
 	exclusionPaths := make([]string, len(exclusions))
 	for i, excl := range exclusions {
 		backup.Exclusions[i] = Exclusion{
-			JobId: excl.JobID,
+			JobID: excl.JobID,
 			Path:  excl.Path,
 		}
 		exclusionPaths[i] = excl.Path
@@ -456,7 +456,7 @@ func (database *Database) GetAllBackups() ([]Backup, error) {
 	exclusionsByJob := make(map[string][]Exclusion)
 	for _, excl := range allExclusions {
 		exclusionsByJob[excl.JobID] = append(exclusionsByJob[excl.JobID], Exclusion{
-			JobId: excl.JobID,
+			JobID: excl.JobID,
 			Path:  excl.Path,
 		})
 	}
@@ -546,7 +546,7 @@ func (database *Database) GetAllQueuedBackups() ([]Backup, error) {
 	exclusionsByJob := make(map[string][]Exclusion)
 	for _, excl := range allExclusions {
 		exclusionsByJob[excl.JobID] = append(exclusionsByJob[excl.JobID], Exclusion{
-			JobId: excl.JobID,
+			JobID: excl.JobID,
 			Path:  excl.Path,
 		})
 	}

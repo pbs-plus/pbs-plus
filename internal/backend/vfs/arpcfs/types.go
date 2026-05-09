@@ -24,7 +24,7 @@ type ARPCFS struct {
 type DirStream struct {
 	fs            *ARPCFS
 	path          string
-	handleId      types.FileHandleId
+	handleId      types.FileHandleID
 	closed        int32
 	maxedOut      int32
 	mu            sync.Mutex
@@ -38,7 +38,7 @@ type ARPCFile struct {
 	fs       *ARPCFS
 	name     string
 	offset   int64
-	handleID types.FileHandleId
+	handleID types.FileHandleID
 	isClosed atomic.Bool
-	backupId string
+	backupID string
 }

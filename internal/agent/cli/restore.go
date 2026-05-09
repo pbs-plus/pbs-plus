@@ -39,7 +39,7 @@ func init() {
 }
 
 type restoreSession struct {
-	restoreId    string
+	restoreID    string
 	ctx          context.Context
 	cancel       context.CancelFunc
 	store        *agent.RestoreStore
@@ -48,33 +48,33 @@ type restoreSession struct {
 }
 
 func (s *restoreSession) Close() {
-	syslog.L.Info().WithMessage("restoreSession.Close: begin").WithField("restoreId", s.restoreId).Write()
+	syslog.L.Info().WithMessage("restoreSession.Close: begin").WithField("restoreID", s.restoreID).Write()
 	s.once.Do(func() {
 		if s.remoteClient != nil {
-			syslog.L.Info().WithMessage("restoreSession.Close: closing remoteClient").WithField("restoreId", s.restoreId).Write()
+			syslog.L.Info().WithMessage("restoreSession.Close: closing remoteClient").WithField("restoreID", s.restoreID).Write()
 			s.remoteClient.Close()
 		}
 		if s.store != nil {
-			if err := s.store.EndRestore(s.restoreId); err != nil {
-				syslog.L.Warn().WithMessage("restoreSession.Close: EndRestore returned error").WithField("restoreId", s.restoreId).WithField("error", err.Error()).Write()
+			if err := s.store.EndRestore(s.restoreID); err != nil {
+				syslog.L.Warn().WithMessage("restoreSession.Close: EndRestore returned error").WithField("restoreID", s.restoreID).WithField("error", err.Error()).Write()
 			}
 		}
-		activeRestoreSessions.Del(s.restoreId)
+		activeRestoreSessions.Del(s.restoreID)
 		s.cancel()
 	})
-	syslog.L.Info().WithMessage("restoreSession.Close: done").WithField("restoreId", s.restoreId).Write()
+	syslog.L.Info().WithMessage("restoreSession.Close: done").WithField("restoreID", s.restoreID).Write()
 }
 
-func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMode *int) {
-	if *restoreId == "" || *srcPath == "" || *destPath == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing required flags: restoreId, srcPath, and destPath are required")
+func cmdRestore(restoreID *string, srcPath *string, destPath *string, restoreMode *int) {
+	if *restoreID == "" || *srcPath == "" || *destPath == "" {
+		fmt.Fprintln(os.Stderr, "Error: missing required flags: restoreID, srcPath, and destPath are required")
 		syslog.L.Error(errors.New("missing required flags")).WithMessage("CmdRestore: validation failed").Write()
 		os.Exit(1)
 	}
 
-	if err := validate.ValidateJobId(*restoreId); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid restoreId: %v\n", err)
-		syslog.L.Error(err).WithMessage("CmdRestore: restoreId validation failed").Write()
+	if err := validate.ValidateJobId(*restoreID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid restoreID: %v\n", err)
+		syslog.L.Error(err).WithMessage("CmdRestore: restoreID validation failed").Write()
 		os.Exit(1)
 	}
 
@@ -116,7 +116,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 
 	address := fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), conf.ARPCServerPort)
 	headers := http.Header{}
-	headers.Add("X-PBS-Plus-RestoreId", *restoreId)
+	headers.Add("X-PBS-Plus-RestoreID", *restoreID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -132,7 +132,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 	wg.Go(func() {
 		defer syslog.L.Info().WithMessage("CmdRestore: ARPC session handler shutting down").Write()
 
-		syslog.L.Info().WithMessage("CmdRestore: Attempting connection").WithField("restoreId", *restoreId).Write()
+		syslog.L.Info().WithMessage("CmdRestore: Attempting connection").WithField("restoreID", *restoreID).Write()
 
 		session, err := arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 		if err != nil {
@@ -147,7 +147,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 			restoreInitiatedOnce.Do(func() {
 				go func() {
 					defer close(restoreDone)
-					err := Restore(session, *restoreId, *srcPath, *destPath, mode)
+					err := Restore(session, *restoreID, *srcPath, *destPath, mode)
 					if err != nil {
 						fmt.Fprintln(os.Stderr, "Restore failed:", err)
 						syslog.L.Error(err).WithMessage("CmdRestore: Restore execution failed").Write()
@@ -187,7 +187,7 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 		// Timeout waiting for restore - it may not have been initiated
 	}
 
-	if session, ok := activeRestoreSessions.Get(*restoreId); ok {
+	if session, ok := activeRestoreSessions.Get(*restoreID); ok {
 		session.Close()
 	}
 
@@ -197,12 +197,12 @@ func cmdRestore(restoreId *string, srcPath *string, destPath *string, restoreMod
 
 func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 	syslog.L.Info().WithMessage("ExecRestore: begin").
-		WithField("restoreId", id).
+		WithField("restoreID", id).
 		Write()
 
 	if err := validate.ValidateJobId(id); err != nil {
-		syslog.L.Error(err).WithMessage("ExecRestore: restoreId validation failed").Write()
-		return -1, fmt.Errorf("invalid restoreId: %w", err)
+		syslog.L.Error(err).WithMessage("ExecRestore: restoreID validation failed").Write()
+		return -1, fmt.Errorf("invalid restoreID: %w", err)
 	}
 
 	if err := validate.ValidateRestorePath("srcPath", srcPath); err != nil {
@@ -279,7 +279,7 @@ func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 		for scanner.Scan() {
 			line := scanner.Text()
 			syslog.L.Info().
-				WithField("restoreId", id).
+				WithField("restoreID", id).
 				WithField("forked", true).
 				WithMessage(line).Write()
 		}
@@ -291,7 +291,7 @@ func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 	go func() {
 		for errScanner.Scan() {
 			syslog.L.Error(errors.New(errScanner.Text())).
-				WithField("restoreId", id).
+				WithField("restoreID", id).
 				WithField("forked", true).
 				Write()
 		}
@@ -306,14 +306,14 @@ func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 	return cmd.Process.Pid, nil
 }
 
-func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string, mode pxar.RestoreMode) error {
+func Restore(rpcSess *arpc.StreamPipe, restoreID, source, dest string, mode pxar.RestoreMode) error {
 	syslog.L.Info().WithMessage("Restore: begin").
-		WithField("restoreId", restoreId).
+		WithField("restoreID", restoreID).
 		Write()
 
-	if err := validate.ValidateJobId(restoreId); err != nil {
-		syslog.L.Error(err).WithMessage("Restore: restoreId validation failed").Write()
-		return fmt.Errorf("invalid restoreId: %w", err)
+	if err := validate.ValidateJobId(restoreID); err != nil {
+		syslog.L.Error(err).WithMessage("Restore: restoreID validation failed").Write()
+		return fmt.Errorf("invalid restoreID: %w", err)
 	}
 
 	if err := validate.ValidateRestorePath("source", source); err != nil {
@@ -328,41 +328,41 @@ func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string, mode pxar
 
 	store, err := agent.NewRestoreStore()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Restore: NewRestoreStore failed").WithField("restoreId", restoreId).Write()
+		syslog.L.Error(err).WithMessage("Restore: NewRestoreStore failed").WithField("restoreID", restoreID).Write()
 		return err
 	}
-	if existingSession, ok := activeRestoreSessions.Get(restoreId); ok {
-		syslog.L.Info().WithMessage("Restore: closing existing session").WithField("restoreId", restoreId).Write()
+	if existingSession, ok := activeRestoreSessions.Get(restoreID); ok {
+		syslog.L.Info().WithMessage("Restore: closing existing session").WithField("restoreID", restoreID).Write()
 		existingSession.Close()
-		_ = store.EndRestore(restoreId)
+		_ = store.EndRestore(restoreID)
 	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	session := &restoreSession{
-		restoreId: restoreId,
+		restoreID: restoreID,
 		ctx:       sessionCtx,
 		cancel:    cancel,
 		store:     store,
 	}
-	activeRestoreSessions.Set(restoreId, session)
+	activeRestoreSessions.Set(restoreID, session)
 
 	defer session.Close()
 
-	if hasActive, err := store.HasActiveRestoreForJob(restoreId); hasActive || err != nil {
+	if hasActive, err := store.HasActiveRestoreForJob(restoreID); hasActive || err != nil {
 		if err != nil {
-			syslog.L.Error(err).WithMessage("Restore: HasActiveRestoreForRestore failed").WithField("restoreId", restoreId).Write()
+			syslog.L.Error(err).WithMessage("Restore: HasActiveRestoreForRestore failed").WithField("restoreID", restoreID).Write()
 			return err
 		}
-		syslog.L.Info().WithMessage("Restore: ending previous active restore").WithField("restoreId", restoreId).Write()
-		_ = store.EndRestore(restoreId)
+		syslog.L.Info().WithMessage("Restore: ending previous active restore").WithField("restoreID", restoreID).Write()
+		_ = store.EndRestore(restoreID)
 	}
 
-	if err := store.StartRestore(restoreId); err != nil {
-		syslog.L.Error(err).WithMessage("Restore: StartRestore failed").WithField("restoreId", restoreId).Write()
+	if err := store.StartRestore(restoreID); err != nil {
+		syslog.L.Error(err).WithMessage("Restore: StartRestore failed").WithField("restoreID", restoreID).Write()
 		return err
 	}
 
-	client := pxar.NewRemoteClient(rpcSess, restoreId)
+	client := pxar.NewRemoteClient(rpcSess, restoreID)
 	if client == nil {
 		syslog.L.Error(errors.New("client is nil")).WithMessage("Restore: NewRemoteClient returned nil").Write()
 		return fmt.Errorf("client is nil")
@@ -370,7 +370,7 @@ func Restore(rpcSess *arpc.StreamPipe, restoreId, source, dest string, mode pxar
 	session.remoteClient = client
 
 	syslog.L.Info().WithMessage("Restore: client registered and session ready").
-		WithField("restoreId", restoreId).
+		WithField("restoreID", restoreID).
 		Write()
 
 	err = pxar.RestoreWithOptions(session.ctx, client, []string{source}, pxar.RestoreOptions{

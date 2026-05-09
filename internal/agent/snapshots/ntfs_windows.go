@@ -18,7 +18,7 @@ import (
 
 type NtfsSnapshotHandler struct{}
 
-func (w *NtfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
+func (w *NtfsSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
 	// Extract the drive letter from the source path
 	if sourcePath == "" {
 		return Snapshot{}, errors.New("empty source path")
@@ -32,7 +32,7 @@ func (w *NtfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (S
 		return Snapshot{}, fmt.Errorf("error getting VSS folder: %w", err)
 	}
 
-	snapshotPath := filepath.Join(vssFolder, jobId)
+	snapshotPath := filepath.Join(vssFolder, jobID)
 	timeStarted := time.Now()
 
 	// Cleanup any existing snapshot
