@@ -205,8 +205,8 @@ func (e *LogEntry) WithMessage(msg string) *LogEntry {
 	return e
 }
 
-func (e *LogEntry) WithJob(jobId string) *LogEntry {
-	e.JobID = jobId
+func (e *LogEntry) WithJob(jobID string) *LogEntry {
+	e.JobID = jobID
 	return e
 }
 

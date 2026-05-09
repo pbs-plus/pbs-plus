@@ -25,29 +25,29 @@ type (
 		AclOnly bool   `cbor:"acl_only,omitempty"`
 	}
 
-	FileHandleId uint64
+	FileHandleID uint64
 
 	ReadDirReq struct {
-		HandleID FileHandleId `cbor:"handle_id"`
+		HandleID FileHandleID `cbor:"handle_id"`
 	}
 
 	ReadReq struct {
-		HandleID FileHandleId `cbor:"handle_id"`
+		HandleID FileHandleID `cbor:"handle_id"`
 		Length   int          `cbor:"length"`
 	}
 
 	ReadAtReq struct {
-		HandleID FileHandleId `cbor:"handle_id"`
+		HandleID FileHandleID `cbor:"handle_id"`
 		Offset   int64        `cbor:"offset"`
 		Length   int          `cbor:"length"`
 	}
 
 	CloseReq struct {
-		HandleID FileHandleId `cbor:"handle_id"`
+		HandleID FileHandleID `cbor:"handle_id"`
 	}
 
 	BackupReq struct {
-		BackupId   string `cbor:"job_id"`
+		BackupID   string `cbor:"job_id"`
 		Drive      string `cbor:"drive"`
 		SourceMode string `cbor:"source_mode,omitempty"`
 		ReadMode   string `cbor:"read_mode,omitempty"`
@@ -55,7 +55,7 @@ type (
 	}
 
 	RestoreReq struct {
-		RestoreId string `cbor:"job_id"`
+		RestoreID string `cbor:"job_id"`
 		SrcPath   string `cbor:"src_path"`
 		DestPath  string `cbor:"dest_path"`
 		Mode      int    `cbor:"mode"`
@@ -63,7 +63,7 @@ type (
 	}
 
 	RestoreCloseReq struct {
-		RestoreId string `cbor:"job_id"`
+		RestoreID string `cbor:"job_id"`
 	}
 
 	FileTreeReq struct {
@@ -86,7 +86,7 @@ type (
 	}
 
 	LseekReq struct {
-		HandleID FileHandleId `cbor:"handle_id"`
+		HandleID FileHandleID `cbor:"handle_id"`
 		Offset   int64        `cbor:"offset"`
 		Whence   int          `cbor:"whence"`
 	}

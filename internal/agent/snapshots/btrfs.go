@@ -13,13 +13,13 @@ import (
 
 type BtrfsSnapshotHandler struct{}
 
-func (b *BtrfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
+func (b *BtrfsSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
 	if !b.IsSupported(sourcePath) {
 		return Snapshot{}, fmt.Errorf("source path %q is not on a Btrfs volume", sourcePath)
 	}
 
 	tmpDir := os.TempDir()
-	snapshotPath := filepath.Join(tmpDir, "pbs-plus-btrfs", jobId)
+	snapshotPath := filepath.Join(tmpDir, "pbs-plus-btrfs", jobID)
 	timeStarted := time.Now()
 
 	// Cleanup existing snapshot

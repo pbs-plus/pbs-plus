@@ -73,11 +73,11 @@ func GetOwnerFilePath(backup database.Backup, storeInstance *store.Store) (strin
 		return "", fmt.Errorf("GetCurrentOwner: store is required")
 	}
 
-	backupId, err := getBackupId(backup.Target)
+	backupID, err := getBackupId(backup.Target)
 	if err != nil {
 		return "", fmt.Errorf("GetCurrentOwner: failed to get backup ID: %w", err)
 	}
-	backupId = proxmox.NormalizeHostname(backupId)
+	backupID = proxmox.NormalizeHostname(backupID)
 
 	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
 	if err != nil {
@@ -92,7 +92,7 @@ func GetOwnerFilePath(backup database.Backup, storeInstance *store.Store) (strin
 		fullNamespacePath = filepath.Join(fullNamespacePath, "ns", ns)
 	}
 
-	ownerFilePath := filepath.Join(fullNamespacePath, "host", backupId, "owner")
+	ownerFilePath := filepath.Join(fullNamespacePath, "host", backupID, "owner")
 
 	return ownerFilePath, nil
 }
@@ -151,9 +151,9 @@ func parseSnapshotTimestamp(input string) (time.Time, error) {
 	return parsedTime, nil
 }
 
-func CleanUnfinishedSnapshot(backup database.Backup, backupId string) error {
-	if backupId == "" {
-		return fmt.Errorf("CleanUnfinishedSnapshot: backupId is required")
+func CleanUnfinishedSnapshot(backup database.Backup, backupID string) error {
+	if backupID == "" {
+		return fmt.Errorf("CleanUnfinishedSnapshot: backupID is required")
 	}
 
 	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
@@ -173,7 +173,7 @@ func CleanUnfinishedSnapshot(backup database.Backup, backupId string) error {
 		}
 	}
 
-	pathWithBackupId := filepath.Join(fullNamespacePath, "host", backupId)
+	pathWithBackupId := filepath.Join(fullNamespacePath, "host", backupID)
 
 	existingSnapshots, err := os.ReadDir(pathWithBackupId)
 	if len(existingSnapshots) == 0 || err != nil {

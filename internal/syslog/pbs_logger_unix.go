@@ -21,7 +21,7 @@ import (
 type JobLogger struct {
 	*os.File
 	Path      string
-	jobId     string
+	jobID     string
 	Writer    *bufio.Writer
 	StartTime time.Time
 
@@ -30,13 +30,13 @@ type JobLogger struct {
 
 var jobLoggers = safemap.New[string, *JobLogger]()
 
-func safeJobLogPath(jobId string) (string, error) {
-	if err := validate.ValidateJobId(jobId); err != nil {
-		return "", fmt.Errorf("invalid jobId: %w", err)
+func safeJobLogPath(jobID string) (string, error) {
+	if err := validate.ValidateJobId(jobID); err != nil {
+		return "", fmt.Errorf("invalid jobID: %w", err)
 	}
 
 	tempDir := os.TempDir()
-	fileName := fmt.Sprintf("job-%s-stdout", jobId)
+	fileName := fmt.Sprintf("job-%s-stdout", jobID)
 	filePath := filepath.Join(tempDir, fileName)
 
 	cleanPath := filepath.Clean(filePath)
@@ -47,13 +47,13 @@ func safeJobLogPath(jobId string) (string, error) {
 	return cleanPath, nil
 }
 
-func NewJobLogger(jobId string) *JobLogger {
-	filePath, err := safeJobLogPath(jobId)
+func NewJobLogger(jobID string) *JobLogger {
+	filePath, err := safeJobLogPath(jobID)
 	if err != nil {
 		return nil
 	}
 
-	logger, _ := jobLoggers.GetOrCompute(jobId, func() *JobLogger {
+	logger, _ := jobLoggers.GetOrCompute(jobID, func() *JobLogger {
 		clientLogFile, createErr := os.Create(filePath)
 		if createErr != nil {
 			return nil
@@ -62,7 +62,7 @@ func NewJobLogger(jobId string) *JobLogger {
 		return &JobLogger{
 			File:      clientLogFile,
 			Path:      filePath,
-			jobId:     jobId,
+			jobID:     jobID,
 			Writer:    bufio.NewWriter(clientLogFile),
 			StartTime: time.Now(),
 		}
@@ -71,13 +71,13 @@ func NewJobLogger(jobId string) *JobLogger {
 	return logger
 }
 
-func GetExistingJobLogger(jobId string) *JobLogger {
-	filePath, err := safeJobLogPath(jobId)
+func GetExistingJobLogger(jobID string) *JobLogger {
+	filePath, err := safeJobLogPath(jobID)
 	if err != nil {
 		return nil
 	}
 
-	logger, _ := jobLoggers.GetOrCompute(jobId, func() *JobLogger {
+	logger, _ := jobLoggers.GetOrCompute(jobID, func() *JobLogger {
 		flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
 		perm := os.FileMode(0666)
 
@@ -89,7 +89,7 @@ func GetExistingJobLogger(jobId string) *JobLogger {
 		return &JobLogger{
 			File:      clientLogFile,
 			Path:      filePath,
-			jobId:     jobId,
+			jobID:     jobID,
 			Writer:    bufio.NewWriter(clientLogFile),
 			StartTime: time.Now(),
 		}
@@ -179,7 +179,7 @@ func (b *JobLogger) Close() error {
 		b.Writer = nil
 	}
 
-	jobLoggers.Del(b.jobId)
+	jobLoggers.Del(b.jobID)
 
 	if b.Path != "" {
 		if strings.HasPrefix(filepath.Clean(b.Path), filepath.Clean(os.TempDir())) {

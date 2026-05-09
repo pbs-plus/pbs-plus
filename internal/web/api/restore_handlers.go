@@ -99,8 +99,8 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		args := []string{}
-		for _, restoreId := range decodedRestoreIDs {
-			args = append(args, "-restore-job", restoreId)
+		for _, restoreID := range decodedRestoreIDs {
+			args = append(args, "-restore-job", restoreID)
 		}
 		args = append(args, "-web")
 		if r.Method == http.MethodDelete {

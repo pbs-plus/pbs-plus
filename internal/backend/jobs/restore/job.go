@@ -92,7 +92,7 @@ func (b *restoreJob) execute(ctx context.Context) error {
 	syslog.L.Info().
 		WithMessage("Received restore request").
 		WithFields(map[string]any{
-			"restoreId": b.job.ID,
+			"restoreID": b.job.ID,
 			"target":    b.job.DestTarget,
 		}).
 		Write()
@@ -129,7 +129,7 @@ func (b *restoreJob) preExecute(ctx context.Context) error {
 }
 
 func (b *restoreJob) onError(err error) {
-	syslog.L.Error(err).WithField("jobId", b.job.ID).Write()
+	syslog.L.Error(err).WithField("jobID", b.job.ID).Write()
 
 	if errors.Is(err, jobs.ErrOneInstance) {
 		return
@@ -295,7 +295,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 	}
 
 	restoreReq := agenttypes.RestoreReq{
-		RestoreId: b.job.ID,
+		RestoreID: b.job.ID,
 		SrcPath:   srcPath,
 		DestPath:  destPath,
 		Mode:      b.job.Mode,
@@ -374,7 +374,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 
 	syslog.L.Info().
 		WithMessage("Restore request sent").
-		WithFields(map[string]any{"restoreId": b.job.ID}).
+		WithFields(map[string]any{"restoreID": b.job.ID}).
 		Write()
 
 	b.task.WriteString(fmt.Sprintf("sending ready signal to stream pipe of %s", childKey))
@@ -418,7 +418,7 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 
 	syslog.L.Info().
 		WithMessage("Restore request sent").
-		WithFields(map[string]any{"restoreId": b.job.ID}).
+		WithFields(map[string]any{"restoreID": b.job.ID}).
 		Write()
 
 	b.task.WriteString("starting local restore")
@@ -544,7 +544,7 @@ func (b *restoreJob) createOK(err error) {
 		},
 	)
 	if terr != nil {
-		syslog.L.Error(terr).WithField("jobId", b.job.ID).Write()
+		syslog.L.Error(terr).WithField("jobID", b.job.ID).Write()
 		return
 	}
 
@@ -561,7 +561,7 @@ func (b *restoreJob) createOK(err error) {
 
 	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
 		syslog.L.Error(uerr).
-			WithField("jobId", latest.ID).
+			WithField("jobID", latest.ID).
 			WithField("upid", task.UPID).
 			Write()
 	}
@@ -579,7 +579,7 @@ func (b *restoreJob) updateRestoreWithTask(task proxmox.Task) {
 
 	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
 		syslog.L.Error(uerr).
-			WithField("jobId", latest.ID).
+			WithField("jobID", latest.ID).
 			WithField("upid", task.UPID).
 			Write()
 	}

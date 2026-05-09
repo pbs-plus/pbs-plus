@@ -33,13 +33,13 @@ func GetBackupTask(
 	}
 
 	startTimeThreshold := time.Now().Unix()
-	backupId := hostname
+	backupID := hostname
 	if target.IsAgent() {
-		backupId = target.GetHostname()
+		backupID = target.GetHostname()
 	}
-	backupId = proxmox.NormalizeHostname(backupId)
+	backupID = proxmox.NormalizeHostname(backupID)
 
-	searchString := fmt.Sprintf(":backup:%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(backupId))
+	searchString := fmt.Sprintf(":backup:%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(backupID))
 
 	close(readyChan)
 

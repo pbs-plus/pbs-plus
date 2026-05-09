@@ -21,7 +21,7 @@ import (
 )
 
 type AgentMount struct {
-	BackupId string
+	BackupID string
 	Hostname string
 	Drive    string
 	Path     string
@@ -31,7 +31,7 @@ type AgentMount struct {
 func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup database.Backup, target database.Target) (*AgentMount, error) {
 	// Parse target information
 	agentMount := &AgentMount{
-		BackupId: backup.ID,
+		BackupID: backup.ID,
 		Hostname: target.GetHostname(),
 		Drive:    target.VolumeID,
 	}
@@ -55,7 +55,7 @@ func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup databa
 	}
 
 	args := &rpcmount.BackupArgs{
-		BackupId:       backup.ID,
+		BackupID:       backup.ID,
 		TargetHostname: target.GetHostname(),
 		Drive:          target.VolumeID,
 	}
@@ -117,7 +117,7 @@ func (a *AgentMount) IsEmpty() bool {
 
 func (a *AgentMount) IsConnected() bool {
 	args := &rpcmount.StatusArgs{
-		BackupId:       a.BackupId,
+		BackupID:       a.BackupID,
 		TargetHostname: a.Hostname,
 	}
 	var reply rpcmount.StatusReply
@@ -158,7 +158,7 @@ func (a *AgentMount) Unmount() {
 
 func (a *AgentMount) CloseMount() {
 	args := &rpcmount.CleanupArgs{
-		BackupId:       a.BackupId,
+		BackupID:       a.BackupID,
 		TargetHostname: a.Hostname,
 		Drive:          a.Drive,
 	}
