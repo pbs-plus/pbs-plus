@@ -8,7 +8,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	arpcTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/backend/system"
+	"github.com/pbs-plus/pbs-plus/internal/backend"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -42,7 +42,7 @@ func D2DFileTree(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if target.IsLocal() {
-			respData, err := system.FileTree(target.Path, subPath)
+			respData, err := backend.FileTree(target.Path, subPath)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
