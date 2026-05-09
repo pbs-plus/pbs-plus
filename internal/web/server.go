@@ -206,7 +206,7 @@ func (s *Server) StartARPC() error {
 // StartAll starts all HTTP and ARPC servers in background goroutines.
 func (s *Server) StartAll() {
 	s.wg.Go(func() {
-		WatchAndServe(s.APIServer, conf.CertFile, conf.KeyFile, []string{conf.CertFile, conf.KeyFile})
+		WatchAndServe(s.APIServer, conf.CertFile, conf.KeyFile, []string{conf.CertFile, conf.KeyFile}, s.shutdownCh)
 	})
 
 	s.wg.Go(func() {
