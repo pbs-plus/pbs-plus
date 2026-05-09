@@ -57,7 +57,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	}
 
 	// Validate server certificates
-	err = storeInstance.ValidateServerCertificates()
+	err = storeInstance.CertManager.Validate()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate local CA and server cert: %w", err)
 	}
