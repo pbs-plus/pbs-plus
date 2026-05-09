@@ -1,8 +1,8 @@
 package web
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -10,7 +10,9 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFiles []string) {
+// WatchAndServe starts the HTTPS server and restarts it if the certificate files change.
+// It exits when the done channel is closed.
+func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFiles []string, done <-chan struct{}) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("api server watcher error").Write()
@@ -42,11 +44,23 @@ func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFile
 		}
 	}()
 	for {
+		select {
+		case <-done:
+			syslog.L.Info().WithMessage("WatchAndServe: shutting down").Write()
+			return
+		default:
+		}
+
 		syslog.L.Info().WithMessage(fmt.Sprintf("Starting HTTPS server on %s...", apiServer.Addr)).Write()
 		err := apiServer.ListenAndServeTLS(certFile, keyFile)
 		if err != nil && err != http.ErrServerClosed {
 			syslog.L.Error(err).WithMessage("server failed").Write()
 		}
-		time.Sleep(time.Second)
+
+		select {
+		case <-done:
+			return
+		case <-time.After(time.Second):
+		}
 	}
 }
