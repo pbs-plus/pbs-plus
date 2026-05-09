@@ -5,8 +5,10 @@ package web
 import (
 	"crypto/x509"
 	"fmt"
+	"context"
 	"log/slog"
 	"net/http"
+	"time"
 	"os"
 	"strings"
 	"sync"
@@ -83,6 +85,22 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	// Agent auth routes
 	agentMux.HandleFunc("/plus/agent/bootstrap", api.AgentBootstrapHandler(storeInstance))
 	agentMux.HandleFunc("/plus/agent/renew", AgentOnly(storeInstance, api.AgentRenewHandler(storeInstance)))
+
+	// Health probes
+	apiMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	apiMux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := storeInstance.Database.Ping(ctx); err != nil {
+			syslog.L.Error(err).WithMessage("readiness check failed").Write()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
 
 	// pprof routes
 	apiMux.HandleFunc("/debug/pprof/", pprof.Index)
