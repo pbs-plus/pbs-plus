@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/pbs-plus/pbs-plus/internal/application"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpcfs"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
@@ -38,6 +39,8 @@ type TLSConfig struct {
 type Store struct {
 	Ctx               context.Context
 	Database          *sqlite.Database
+	BackupSvc        *application.BackupService
+	TargetSvc        *application.TargetService
 	ARPCAgentsManager *arpc.AgentsManager
 	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
 	mTLS              *TLSConfig
@@ -143,6 +146,10 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		return nil, fmt.Errorf("Initialize: error initializing database -> %w", err)
 	}
 
+	agentsManager := arpc.NewAgentsManager()
+	backupSvc := application.NewBackupService(db)
+	targetSvc := application.NewTargetService(db, agentsManager)
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -150,15 +157,16 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 					WithMessage("Initialize: GetAllBackups panicked").Write()
 			}
 		}()
-		// Trigger initial schedule computation for all backups
 		_, _ = db.GetAllBackups()
 	}()
 
 	store := &Store{
 		Ctx:               ctx,
 		Database:          db,
+		BackupSvc:         backupSvc,
+		TargetSvc:         targetSvc,
 		arpcFS:            safemap.New[string, *arpcfs.ARPCFS](),
-		ARPCAgentsManager: arpc.NewAgentsManager(),
+		ARPCAgentsManager: agentsManager,
 		mTLS:              &TLSConfig{},
 	}
 
