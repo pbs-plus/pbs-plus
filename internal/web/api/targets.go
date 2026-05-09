@@ -33,7 +33,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		all, err := storeInstance.Database.GetAllTargets()
+		all, err := storeInstance.TargetSvc.ListTargets()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -129,7 +129,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			clientIP = strings.Split(clientIP, ":")[0]
 		}
 
-		tx, err := storeInstance.Database.NewTransaction()
+		tx, err := storeInstance.TargetSvc.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, fmt.Errorf("Failed to start transaction: %w", err))
@@ -159,7 +159,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				VolumeTotal:      parsedDrive.Total,
 			}
 
-			err = storeInstance.Database.UpsertTarget(tx, targetData)
+			err = storeInstance.TargetSvc.UpsertTarget(tx, targetData)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, fmt.Errorf("Failed to upsert target %s: %w", targetName, err))
@@ -208,7 +208,7 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			MountScript: r.FormValue("mount_script"),
 		}
 
-		err = storeInstance.Database.CreateTarget(nil, newTarget)
+		err = storeInstance.TargetSvc.CreateTarget(nil, newTarget)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -246,7 +246,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			target, err := storeInstance.Database.GetTarget(validate.DecodePath(r.PathValue("target")))
+			target, err := storeInstance.TargetSvc.GetTarget(validate.DecodePath(r.PathValue("target")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -274,7 +274,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.Database.UpdateTarget(nil, target)
+			err = storeInstance.TargetSvc.UpdateTarget(nil, target)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -288,7 +288,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			target, err := storeInstance.Database.GetTarget(validate.DecodePath(r.PathValue("target")))
+			target, err := storeInstance.TargetSvc.GetTarget(validate.DecodePath(r.PathValue("target")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -338,7 +338,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.Database.DeleteTarget(nil, validate.DecodePath(r.PathValue("target")))
+			err := storeInstance.TargetSvc.DeleteTarget(nil, validate.DecodePath(r.PathValue("target")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -368,7 +368,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		target, err := storeInstance.Database.GetTarget(validate.DecodePath(r.PathValue("target")))
+		target, err := storeInstance.TargetSvc.GetTarget(validate.DecodePath(r.PathValue("target")))
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -379,7 +379,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		err = storeInstance.Database.AddS3Secret(nil, target.Name, r.FormValue("secret"))
+		err = storeInstance.TargetSvc.AddS3Secret(target.Name, r.FormValue("secret"))
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return

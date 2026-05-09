@@ -22,7 +22,7 @@ func D2DScriptHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		all, err := storeInstance.Database.GetAllScripts()
+		all, err := storeInstance.ScriptSvc.List()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -79,7 +79,7 @@ func ExtJsScriptHandler(storeInstance *store.Store) http.HandlerFunc {
 			Description: r.FormValue("description"),
 		}
 
-		err = storeInstance.Database.CreateScript(nil, newScript)
+		err = storeInstance.ScriptSvc.Create(newScript)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -120,7 +120,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			script, err := storeInstance.Database.GetScript(currentPath)
+			script, err := storeInstance.ScriptSvc.Get(currentPath)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -143,7 +143,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.Database.UpdateScript(nil, script)
+			err = storeInstance.ScriptSvc.Update(script)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -157,7 +157,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			script, err := storeInstance.Database.GetScript(currentPath)
+			script, err := storeInstance.ScriptSvc.Get(currentPath)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -180,7 +180,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.Database.DeleteScript(nil, currentPath)
+			err := storeInstance.ScriptSvc.Delete(currentPath)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
