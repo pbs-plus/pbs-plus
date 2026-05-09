@@ -9,7 +9,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/restore"
-	"github.com/pbs-plus/pbs-plus/internal/calendarevent"
+	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -111,7 +111,7 @@ func (s *Scheduler) checkBackups() {
 // spuriously catching up on missed schedules by only enqueueing if the
 // scheduled time fell within the current check interval.
 func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.Time, bool) {
-	ev, err := calendarevent.Parse(b.Schedule)
+	ev, err := calendar.Parse(b.Schedule)
 	if err != nil {
 		return time.Time{}, false
 	}
@@ -125,7 +125,7 @@ func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.T
 		refTime = lastEnq
 	}
 
-	nextRun, err := calendarevent.ComputeNextEvent(ev, refTime, time.Local)
+	nextRun, err := calendar.ComputeNextEvent(ev, refTime, time.Local)
 	if err != nil {
 		return time.Time{}, false
 	}
@@ -145,7 +145,7 @@ func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.T
 
 	// The scheduled time was missed by more than one check interval.
 	// Recompute from now so we know the real next future occurrence.
-	futureRun, err := calendarevent.ComputeNextEvent(ev, now, time.Local)
+	futureRun, err := calendar.ComputeNextEvent(ev, now, time.Local)
 	if err != nil {
 		return time.Time{}, false
 	}

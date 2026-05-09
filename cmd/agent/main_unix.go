@@ -94,7 +94,7 @@ func (p *pbsService) run() {
 				case <-innerCtx.Done():
 					return
 				case <-ticker.C:
-					_ = agent.CheckAndRenewCertificate()
+					_ = agent.RenewCertificateIfExpiring()
 				}
 			}
 		})

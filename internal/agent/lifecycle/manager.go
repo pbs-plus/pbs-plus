@@ -95,7 +95,7 @@ func WaitForBootstrap(ctx context.Context) error {
 		priv, _ := registry.GetEntry(registry.AUTH, "Priv", true)
 
 		if serverCA != nil && cert != nil && priv != nil {
-			if err := agent.CheckAndRenewCertificate(); err == nil {
+			if err := agent.RenewCertificateIfExpiring(); err == nil {
 				return nil
 			}
 		} else {
