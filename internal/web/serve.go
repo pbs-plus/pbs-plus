@@ -1,8 +1,8 @@
 package web
 
 import (
+	"fmt"
 	"context"
-	"log"
 	"net/http"
 	"time"
 
@@ -42,7 +42,7 @@ func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFile
 		}
 	}()
 	for {
-		log.Printf("Starting HTTPS server on %s...", apiServer.Addr)
+		syslog.L.Info().WithMessage(fmt.Sprintf("Starting HTTPS server on %s...", apiServer.Addr)).Write()
 		err := apiServer.ListenAndServeTLS(certFile, keyFile)
 		if err != nil && err != http.ErrServerClosed {
 			syslog.L.Error(err).WithMessage("server failed").Write()
