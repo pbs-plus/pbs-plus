@@ -246,7 +246,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			newBackup.Exclusions = append(newBackup.Exclusions, exclusionInst)
 		}
 
-		err = storeInstance.Database.CreateBackup(nil, newBackup)
+		err = storeInstance.BackupSvc.CreateBackup(newBackup)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -275,7 +275,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			backup, err := storeInstance.Database.GetBackup(backupID)
+			backup, err := storeInstance.BackupSvc.GetBackup(backupID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -442,7 +442,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.Database.UpdateBackup(nil, backup)
+			err = storeInstance.BackupSvc.UpdateBackup(backup)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -462,7 +462,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			backup, err := storeInstance.Database.GetBackup(backupID)
+			backup, err := storeInstance.BackupSvc.GetBackup(backupID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -483,7 +483,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			err := storeInstance.Database.DeleteBackup(nil, backupID)
+			err := storeInstance.BackupSvc.DeleteBackup(backupID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -514,7 +514,7 @@ func ExtJsBackupUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			backup, err := storeInstance.Database.GetBackup(backupID)
+			backup, err := storeInstance.BackupSvc.GetBackup(backupID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return

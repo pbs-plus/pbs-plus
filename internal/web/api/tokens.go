@@ -22,7 +22,7 @@ func D2DTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		all, err := storeInstance.Database.GetAllTokens(false)
+		all, err := storeInstance.TokenSvc.List()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -79,7 +79,7 @@ func ExtJsTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
-		err = storeInstance.Database.CreateToken(duration, newToken.Comment)
+		err = storeInstance.TokenSvc.Create(duration, newToken.Comment)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -102,7 +102,7 @@ func ExtJsTokenSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodGet {
-			token, err := storeInstance.Database.GetToken(validate.DecodePath(r.PathValue("token")))
+			token, err := storeInstance.TokenSvc.Get(validate.DecodePath(r.PathValue("token")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -117,13 +117,13 @@ func ExtJsTokenSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			token, err := storeInstance.Database.GetToken(validate.DecodePath(r.PathValue("token")))
+			token, err := storeInstance.TokenSvc.Get(validate.DecodePath(r.PathValue("token")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
 
-			err = storeInstance.Database.RevokeToken(token)
+			err = storeInstance.TokenSvc.Revoke(token)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
