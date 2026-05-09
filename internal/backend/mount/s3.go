@@ -17,7 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
-	"github.com/pbs-plus/pbs-plus/internal/store/vfssessions"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs/sessions"
 )
 
 type S3Mount struct {
@@ -144,7 +144,7 @@ func (a *S3Mount) Unmount() {
 }
 
 func (a *S3Mount) CloseMount() {
-	vfssessions.DisconnectSession(a.Endpoint + "|" + a.BackupId)
+	sessions.DisconnectSession(a.Endpoint + "|" + a.BackupId)
 }
 
 func (a *S3Mount) IsEmpty() bool {

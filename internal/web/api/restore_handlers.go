@@ -12,7 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
-	"github.com/pbs-plus/pbs-plus/internal/store/vfssessions"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs/sessions"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -32,7 +32,7 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for i, restore := range allRestores {
 			var stats pxar.PxarReaderStats
-			session := vfssessions.GetSessionPxarReader(restore.GetStreamID())
+			session := sessions.GetSessionPxarReader(restore.GetStreamID())
 			if session == nil {
 				continue
 			}

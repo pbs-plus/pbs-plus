@@ -5,7 +5,7 @@ package application
 import (
 	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
-	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfssessions"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs/sessions"
 )
 
 // BackupService encapsulates backup business logic between the HTTP layer
@@ -30,13 +30,13 @@ func (s *BackupService) ListBackups() ([]database.Backup, error) {
 	for i, backup := range backups {
 		switch backup.Target.Type {
 		case database.TargetTypeAgent:
-			session := vfssessions.GetSessionARPCFS(backup.GetStreamID())
+			session := sessions.GetSessionARPCFS(backup.GetStreamID())
 			if session == nil {
 				continue
 			}
 			backups[i].CurrentStats = jobStatsFromVFS(session.GetStats())
 		case database.TargetTypeS3:
-			session := vfssessions.GetSessionS3FS(backup.GetStreamID())
+			session := sessions.GetSessionS3FS(backup.GetStreamID())
 			if session == nil {
 				continue
 			}

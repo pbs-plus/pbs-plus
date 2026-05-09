@@ -21,7 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/vfssessions"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -168,7 +168,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	vfssessions.NewARPCFSMount(backup.GetStreamID(), arpcFS)
+	sessions.NewARPCFSMount(backup.GetStreamID(), arpcFS)
 
 	// Set the reply values.
 	reply.Status = 200
@@ -231,7 +231,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	vfssessions.NewS3FSMount(backup.GetStreamID(), s3FS)
+	sessions.NewS3FSMount(backup.GetStreamID(), s3FS)
 
 	// Set the reply values.
 	reply.Status = 200
@@ -260,7 +260,7 @@ func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) er
 		}).Write()
 
 	childKey := args.TargetHostname + "|" + args.BackupId
-	vfssessions.DisconnectSession(childKey)
+	sessions.DisconnectSession(childKey)
 
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()

@@ -202,7 +202,7 @@ func buildFilename(component, version string, platform PlatformInfo) string {
 	return fmt.Sprintf("%s-%s-%s-%s%s", component, version, platform.OS, platform.Arch, platform.Ext)
 }
 
-func DownloadMsi(storeInstance *store.Store, version string) http.HandlerFunc {
+func DownloadMsiHandler(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if version == "v0.0.0" {
 			version = "dev"
@@ -227,7 +227,7 @@ func DownloadMsi(storeInstance *store.Store, version string) http.HandlerFunc {
 	}
 }
 
-func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc {
+func DownloadBinaryHandler(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if version == "v0.0.0" {
 			version = "dev"
@@ -252,7 +252,7 @@ func DownloadBinary(storeInstance *store.Store, version string) http.HandlerFunc
 	}
 }
 
-func DownloadSig(storeInstance *store.Store, version string) http.HandlerFunc {
+func DownloadSigHandler(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if version == "v0.0.0" {
 			version = "dev"
@@ -277,7 +277,7 @@ func DownloadSig(storeInstance *store.Store, version string) http.HandlerFunc {
 	}
 }
 
-func DownloadChecksum(storeInstance *store.Store, version string) http.HandlerFunc {
+func DownloadChecksumHandler(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if version == "v0.0.0" {
 			version = "dev"
