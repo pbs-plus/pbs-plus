@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -12,7 +13,7 @@ import (
 func NewRestoreStore() (*RestoreStore, error) {
 	execPath, err := os.Executable()
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("NewRestoreStore: %w", err)
 	}
 	dir := filepath.Dir(execPath)
 	filePath := filepath.Join(dir, "restore_sessions.json")
