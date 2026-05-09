@@ -11,6 +11,7 @@ import (
 	"net/rpc"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -112,6 +113,22 @@ func main() {
 	}
 
 	server.StartAll()
+
+	// Wait for shutdown signal.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	sig := <-sigCh
+	syslog.L.Info().WithMessage(fmt.Sprintf("received %s, shutting down gracefully", sig)).Write()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		syslog.L.Error(err).WithMessage("shutdown error").Write()
+	}
+
+	mainCancel()
+	syslog.L.Info().WithMessage("shutdown complete").Write()
 }
 
 func validateEnvironment() error {
