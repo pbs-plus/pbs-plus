@@ -134,3 +134,38 @@ func (d *Database) NewTransaction() (*Transaction, error) {
 
 	return &Transaction{Tx: tx, database: d}, nil
 }
+
+// Ping checks the database connection health.
+func (d *Database) Ping(ctx context.Context) error {
+	return d.readDb.PingContext(ctx)
+}
+
+// RunInTransaction executes fn within a database transaction.
+// If fn returns an error, the transaction is rolled back.
+// If fn panics, the panic is re-thrown after rollback.
+func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction, q *sqlc.Queries) error) error {
+	tx, err := d.NewTransaction()
+	if err != nil {
+		return fmt.Errorf("RunInTransaction: %w", err)
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback()
+			panic(p)
+		}
+	}()
+
+	q := d.queries.WithTx(tx.Tx)
+	if err := fn(tx, q); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			syslog.L.Error(fmt.Errorf("RunInTransaction: rollback error: %w", rbErr)).Write()
+		}
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("RunInTransaction: commit error: %w", err)
+	}
+
+	return nil
+}
