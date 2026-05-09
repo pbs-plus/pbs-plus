@@ -33,7 +33,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		all, err := storeInstance.TargetSvc.ListTargets()
+		all, err := storeInstance.TargetSvc.GetAllTargets()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -61,7 +61,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		if len(agentTargets) > 0 {
 			timeout := 5 * time.Second
-			results := storeInstance.TargetSvc.CheckTargetStatus(
+			results := storeInstance.TargetSvc.CheckStatus(
 				r.Context(),
 				agentTargets,
 				checkStatus,

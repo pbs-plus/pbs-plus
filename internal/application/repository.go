@@ -1,6 +1,6 @@
 //go:build linux
 
-package domain
+package application
 
 import (
 
