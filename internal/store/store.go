@@ -21,6 +21,7 @@ type Store struct {
 	Ctx               context.Context
 	Database          *sqlite.Database
 	BackupSvc        *application.BackupService
+	RestoreSvc       *application.RestoreService
 	TargetSvc        *application.TargetService
 	ARPCAgentsManager *arpc.AgentsManager
 	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
@@ -43,6 +44,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 
 	agentsManager := arpc.NewAgentsManager()
 	backupSvc := application.NewBackupService(db)
+	restoreSvc := application.NewRestoreService(db)
 	targetSvc := application.NewTargetService(db, agentsManager)
 
 	go func() {
@@ -59,6 +61,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		Ctx:               ctx,
 		Database:          db,
 		BackupSvc:         backupSvc,
+		RestoreSvc:       restoreSvc,
 		TargetSvc:         targetSvc,
 		arpcFS:            safemap.New[string, *arpcfs.ARPCFS](),
 		ARPCAgentsManager: agentsManager,
