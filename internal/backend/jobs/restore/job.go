@@ -370,7 +370,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 	b.waitGroup.Add(1)
 
 	agentRPC.SetRouter(*b.remoteServer.Router())
-	vfssessions.CreatePxarReader(childKey, reader)
+	vfssessions.NewPxarReader(childKey, reader)
 
 	syslog.L.Info().
 		WithMessage("Restore request sent").
@@ -447,7 +447,7 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 		}
 	})
 
-	vfssessions.CreatePxarReader(childKey, reader)
+	vfssessions.NewPxarReader(childKey, reader)
 
 	// Wait for completion
 	return b.waitForCompletion(ctx)

@@ -1,4 +1,4 @@
-package calendarevent
+package calendar
 
 import (
 	"fmt"

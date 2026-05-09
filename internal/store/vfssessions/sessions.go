@@ -21,7 +21,7 @@ type FSMount struct {
 
 var activeMounts = safemap.New[string, *FSMount]()
 
-func CreateARPCFSMount(connId string, fs *arpcfs.ARPCFS) {
+func NewARPCFSMount(connId string, fs *arpcfs.ARPCFS) {
 	conn := &FSMount{
 		arpcfs: fs,
 	}
@@ -29,7 +29,7 @@ func CreateARPCFSMount(connId string, fs *arpcfs.ARPCFS) {
 	activeMounts.Set(connId, conn)
 }
 
-func CreatePxarReader(connId string, r *pxar.PxarReader) {
+func NewPxarReader(connId string, r *pxar.PxarReader) {
 	conn := &FSMount{
 		pxar: r,
 	}
@@ -37,7 +37,7 @@ func CreatePxarReader(connId string, r *pxar.PxarReader) {
 	activeMounts.Set(connId, conn)
 }
 
-func CreateS3FSMount(connId string, fs *s3fs.S3FS) {
+func NewS3FSMount(connId string, fs *s3fs.S3FS) {
 	conn := &FSMount{
 		s3fs: fs,
 	}

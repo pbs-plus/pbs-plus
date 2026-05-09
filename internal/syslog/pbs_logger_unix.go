@@ -47,7 +47,7 @@ func safeJobLogPath(jobId string) (string, error) {
 	return cleanPath, nil
 }
 
-func CreateJobLogger(jobId string) *JobLogger {
+func NewJobLogger(jobId string) *JobLogger {
 	filePath, err := safeJobLogPath(jobId)
 	if err != nil {
 		return nil
