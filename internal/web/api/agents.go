@@ -63,7 +63,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		tokenStr := authHeaderSplit[1]
-		token, err := storeInstance.Database.GetToken(tokenStr)
+		token, err := storeInstance.TokenSvc.Get(tokenStr)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			WriteErrorResponse(w, fmt.Errorf("[%s]: token not found", r.RemoteAddr))
@@ -139,10 +139,10 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			OperatingSystem: reqParsed.OperatingSystem,
 		}
 
-		_, err = storeInstance.Database.GetAgentHost(reqParsed.Hostname)
+		_, err = storeInstance.AgentHostSvc.Get(reqParsed.Hostname)
 		if err == nil {
 			syslog.L.Info().WithMessage("updating host target details").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives}).Write()
-			err = storeInstance.Database.UpdateAgentHost(tx, host)
+			err = storeInstance.AgentHostSvc.Update(tx, host)
 			if err != nil {
 				_ = tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
@@ -152,7 +152,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		} else {
 			syslog.L.Info().WithMessage("creating new host target").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives, "error": err.Error()}).Write()
-			err = storeInstance.Database.CreateAgentHost(tx, host)
+			err = storeInstance.AgentHostSvc.Create(tx, host)
 			if err != nil {
 				_ = tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
@@ -297,7 +297,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		currentHost, err := storeInstance.Database.GetAgentHost(reqParsed.Hostname)
+		currentHost, err := storeInstance.AgentHostSvc.Get(reqParsed.Hostname)
 		if err != nil {
 			_ = tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
@@ -314,7 +314,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			OperatingSystem: reqParsed.OperatingSystem,
 		}
 
-		err = storeInstance.Database.UpdateAgentHost(tx, host)
+		err = storeInstance.AgentHostSvc.Update(tx, host)
 		if err != nil {
 			_ = tx.Rollback()
 			w.WriteHeader(http.StatusInternalServerError)
