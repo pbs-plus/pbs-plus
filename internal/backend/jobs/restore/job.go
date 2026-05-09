@@ -22,8 +22,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
-	"github.com/pbs-plus/pbs-plus/internal/store/vfssessions"
+	"github.com/pbs-plus/pbs-plus/internal/tasks"
+	"github.com/pbs-plus/pbs-plus/internal/backend/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -142,7 +142,7 @@ func (b *restoreJob) onError(err error) {
 
 	b.task.WriteString("Restore job summary:")
 
-	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
+	r := sessions.GetSessionPxarReader(b.job.GetStreamID())
 	if r != nil {
 		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
 		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
@@ -156,7 +156,7 @@ func (b *restoreJob) onError(err error) {
 func (b *restoreJob) onSuccess() {
 	b.task.WriteString("Restore job summary:")
 
-	r := vfssessions.GetSessionPxarReader(b.job.GetStreamID())
+	r := sessions.GetSessionPxarReader(b.job.GetStreamID())
 	if r != nil {
 		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
 		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
@@ -200,7 +200,7 @@ func (b *restoreJob) cleanup() {
 		}
 	}
 
-	vfssessions.DisconnectSession(childKey)
+	sessions.DisconnectSession(childKey)
 }
 
 // Helper methods
@@ -370,7 +370,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 	b.waitGroup.Add(1)
 
 	agentRPC.SetRouter(*b.remoteServer.Router())
-	vfssessions.NewPxarReader(childKey, reader)
+	sessions.NewPxarReader(childKey, reader)
 
 	syslog.L.Info().
 		WithMessage("Restore request sent").
@@ -447,7 +447,7 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 		}
 	})
 
-	vfssessions.NewPxarReader(childKey, reader)
+	sessions.NewPxarReader(childKey, reader)
 
 	// Wait for completion
 	return b.waitForCompletion(ctx)

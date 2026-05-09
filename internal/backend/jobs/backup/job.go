@@ -20,7 +20,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
+	"github.com/pbs-plus/pbs-plus/internal/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
