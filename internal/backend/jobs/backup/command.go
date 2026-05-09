@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
@@ -59,7 +60,7 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 	}
 
 	cmdArgs := []string{}
-	if nofile := os.Getenv("PBS_PLUS_CLIENT_NOFILE"); nofile != "" {
+	if nofile := conf.Env.ClientNofile; nofile != "" {
 		cmdArgs = append(cmdArgs, fmt.Sprintf("--nofile=%s", nofile))
 	} else {
 		cmdArgs = append(cmdArgs, "--nofile=1024:1024")

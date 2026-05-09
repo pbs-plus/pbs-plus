@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/scheduler"
@@ -76,8 +77,10 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		syslog.L.Error(err).WithMessage("failed to cleanup stale mounts").Write()
 	}
 
-	// Start mount RPC server
+	// Start mount RPC server with exponential backoff on restart.
 	go func() {
+		backoff := 100 * time.Millisecond
+		const maxBackoff = 30 * time.Second
 		for {
 			select {
 			case <-mainCtx.Done():
@@ -86,6 +89,13 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 			default:
 				if err := rpcmount.RunRPCServer(mainCtx, conf.MountSocketPath, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("mount rpc server failed, restarting")
+					time.Sleep(backoff)
+					backoff *= 2
+					if backoff > maxBackoff {
+						backoff = maxBackoff
+					}
+				} else {
+					backoff = 100 * time.Millisecond
 				}
 			}
 		}
@@ -96,8 +106,10 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	s := scheduler.NewScheduler(mainCtx, storeInstance, manager)
 	s.Start()
 
-	// Start job RPC server
+	// Start job RPC server with exponential backoff on restart.
 	go func() {
+		backoff := 100 * time.Millisecond
+		const maxBackoff = 30 * time.Second
 		for {
 			select {
 			case <-mainCtx.Done():
@@ -106,6 +118,13 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 			default:
 				if err := job.RunJobRPCServer(mainCtx, conf.JobMutateSocketPath, manager, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("backup rpc server failed, restarting")
+					time.Sleep(backoff)
+					backoff *= 2
+					if backoff > maxBackoff {
+						backoff = maxBackoff
+					}
+				} else {
+					backoff = 100 * time.Millisecond
 				}
 			}
 		}

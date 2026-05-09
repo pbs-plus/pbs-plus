@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"log/slog"
+
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
 // Global logger instance.
@@ -94,7 +96,7 @@ func (e *LogEntry) generateKey() [32]byte {
 
 func init() {
 	level := slog.LevelInfo
-	if os.Getenv("DEBUG") == "true" {
+	if conf.Env.Debug {
 		level = slog.LevelDebug
 	}
 
@@ -106,8 +108,8 @@ func init() {
 	zlogger := slog.New(handler)
 
 	dedupWindow := 5 * time.Second
-	if window := os.Getenv("LOG_DEDUP_WINDOW"); window != "" {
-		if d, err := time.ParseDuration(window); err == nil {
+	if conf.Env.LogDedupWindow != "" {
+		if d, err := time.ParseDuration(conf.Env.LogDedupWindow); err == nil {
 			dedupWindow = d
 		}
 	}
