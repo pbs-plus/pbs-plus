@@ -3,15 +3,15 @@
 package web
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
-	"context"
 	"log/slog"
 	"net/http"
-	"time"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -29,6 +29,9 @@ type Server struct {
 	ARPCRouter  arpc.Router
 	Store       *store.Store
 	Version     string
+
+	shutdownCh chan struct{}
+	wg         sync.WaitGroup
 }
 
 // NewServer creates and configures all HTTP servers with middleware chains applied.
@@ -101,7 +104,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-
 	// pprof routes
 	apiMux.HandleFunc("/debug/pprof/", pprof.Index)
 	apiMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -110,7 +112,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	// Apply middleware chain: RequestID → RequestLogger → Recovery
-	// Auth is per-route via ServerOnly/AgentOnly wrappers above
 	apiHandler := Recovery(RequestLogger(apiLogger)(RequestID(apiMux)))
 	agentHandler := Recovery(RequestLogger(apiLogger)(RequestID(agentMux)))
 
@@ -159,6 +160,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 		ARPCRouter:  router,
 		Store:       storeInstance,
 		Version:     version,
+		shutdownCh:  make(chan struct{}),
 	}, nil
 }
 
@@ -201,27 +203,47 @@ func (s *Server) StartARPC() error {
 	return arpc.ListenAndServe(s.Store.Ctx, conf.ARPCServerPort, s.Store.ARPCAgentsManager, arpcTlsConfig, s.ARPCRouter)
 }
 
-// StartAll starts all HTTP servers and waits for them to complete.
+// StartAll starts all HTTP and ARPC servers in background goroutines.
 func (s *Server) StartAll() {
-	var endpointsWg sync.WaitGroup
-
-	endpointsWg.Go(func() {
+	s.wg.Go(func() {
 		WatchAndServe(s.APIServer, conf.CertFile, conf.KeyFile, []string{conf.CertFile, conf.KeyFile})
 	})
 
-	endpointsWg.Go(func() {
+	s.wg.Go(func() {
 		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", s.AgentServer.Addr)).Write()
 		if err := s.Store.ListenAndServeAgentEndpoint(s.AgentServer); err != nil {
 			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
 		}
 	})
 
-	endpointsWg.Go(func() {
+	s.wg.Go(func() {
 		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC endpoint on TCP %s", conf.ARPCServerPort)).Write()
 		if err := s.StartARPC(); err != nil {
 			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed")
 		}
 	})
+}
 
-	endpointsWg.Wait()
+// Shutdown gracefully stops all servers, allowing in-flight requests to complete.
+func (s *Server) Shutdown(ctx context.Context) error {
+	close(s.shutdownCh)
+	syslog.L.Info().WithMessage("shutting down HTTP servers").Write()
+
+	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	var errs []error
+	if err := s.APIServer.Shutdown(shutdownCtx); err != nil {
+		errs = append(errs, fmt.Errorf("api server: %w", err))
+	}
+	if err := s.AgentServer.Shutdown(shutdownCtx); err != nil {
+		errs = append(errs, fmt.Errorf("agent server: %w", err))
+	}
+
+	s.wg.Wait()
+
+	if len(errs) > 0 {
+		return fmt.Errorf("shutdown errors: %v", errs)
+	}
+	return nil
 }
