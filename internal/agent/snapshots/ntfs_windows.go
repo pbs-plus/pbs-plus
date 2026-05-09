@@ -131,7 +131,7 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 					strings.Contains(err.Error(), "shadow copy")) {
 					syslog.L.Error(err).WithMessage("vss error detected, attempting to re-register").Write()
 					if reregErr := reregisterVSSWriters(); reregErr != nil {
-						syslog.L.Error(reregErr).WithMessage("failed to re-register VSS writers")
+						syslog.L.Error(reregErr).WithMessage("failed to re-register VSS writers").Write()
 					}
 					// Break inner loop to start fresh after re-registration
 					break

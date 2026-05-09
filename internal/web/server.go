@@ -212,14 +212,14 @@ func (s *Server) StartAll() {
 	s.wg.Go(func() {
 		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", s.AgentServer.Addr)).Write()
 		if err := s.Store.CertManager.ServeTLS(s.AgentServer); err != nil {
-			syslog.L.Error(err).WithMessage("http agent endpoint server failed")
+			syslog.L.Error(err).WithMessage("http agent endpoint server failed").Write()
 		}
 	})
 
 	s.wg.Go(func() {
 		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC endpoint on TCP %s", conf.ARPCServerPort)).Write()
 		if err := s.StartARPC(); err != nil {
-			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed")
+			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed").Write()
 		}
 	})
 }

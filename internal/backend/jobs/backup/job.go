@@ -20,8 +20,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/tasks"
 )
 
 // BackupJob holds the state for a backup operation.
@@ -199,7 +199,7 @@ func (b *backupJob) onError(err error) {
 	if b.started.Load() {
 		b.waitGroup.Wait()
 		succeeded, warningsNum := b.processPBSLogs(err)
-		syslog.L.Info().WithJob(job.ID).WithMessage("checking post-backup script")
+		syslog.L.Info().WithJob(job.ID).WithMessage("checking post-backup script").Write()
 		b.runPostScript(succeeded, warningsNum)
 		return
 	}
@@ -239,11 +239,11 @@ func (b *backupJob) onSuccess() {
 	succeeded, warningsNum := b.processPBSLogs(nil)
 
 	if currOwner != "" {
-		syslog.L.Info().WithJob(job.ID).WithMessage("setting owner to datastore owner")
+		syslog.L.Info().WithJob(job.ID).WithMessage("setting owner to datastore owner").Write()
 		_ = SetDatastoreOwner(job, b.storeInstance, currOwner)
 	}
 
-	syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script")
+	syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script").Write()
 	b.runPostScript(succeeded, warningsNum)
 }
 
@@ -339,7 +339,7 @@ func (b *backupJob) processPBSLogs(logErr error) (bool, int) {
 	jobID := b.job.ID
 	b.mu.RUnlock()
 
-	syslog.L.Info().WithJob(jobID).WithMessage("updating job status")
+	syslog.L.Info().WithJob(jobID).WithMessage("updating job status").Write()
 
 	b.mu.RLock()
 	currentUPID = b.Task.UPID
@@ -362,9 +362,9 @@ func (b *backupJob) processPBSLogs(logErr error) (bool, int) {
 	}
 
 	if succeeded || cancelled {
-		syslog.L.Info().WithJob(jobID).WithMessage("succeeded/cancelled")
+		syslog.L.Info().WithJob(jobID).WithMessage("succeeded/cancelled").Write()
 	} else {
-		syslog.L.Info().WithJob(jobID).WithMessage("failed, scheduler will retry")
+		syslog.L.Info().WithJob(jobID).WithMessage("failed, scheduler will retry").Write()
 	}
 
 	return succeeded, warningsNum
