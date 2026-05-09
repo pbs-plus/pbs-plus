@@ -10,10 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/backend/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/database"
-	vfssessions "github.com/pbs-plus/pbs-plus/internal/store/vfssessions"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -24,41 +22,10 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		allBackups, err := storeInstance.Database.GetAllBackups()
+		allBackups, err := storeInstance.BackupSvc.ListBackups()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
-		}
-
-		for i, backup := range allBackups {
-			var stats vfs.VFSStats
-			switch backup.Target.Type {
-			case database.TargetTypeAgent:
-				session := vfssessions.GetSessionARPCFS(backup.GetStreamID())
-				if session == nil {
-					continue
-				}
-
-				stats = session.GetStats()
-			case database.TargetTypeS3:
-				session := vfssessions.GetSessionS3FS(backup.GetStreamID())
-				if session == nil {
-					continue
-				}
-
-				stats = session.GetStats()
-			case database.TargetTypeLocal:
-				continue
-			default:
-				continue
-			}
-
-			allBackups[i].CurrentStats.CurrentFileCount = int(stats.FilesAccessed)
-			allBackups[i].CurrentStats.CurrentFolderCount = int(stats.FoldersAccessed)
-			allBackups[i].CurrentStats.CurrentBytesTotal = int(stats.TotalBytes)
-			allBackups[i].CurrentStats.CurrentBytesSpeed = int(stats.ByteReadSpeed)
-			allBackups[i].CurrentStats.CurrentFilesSpeed = int(stats.FileAccessSpeed)
-			allBackups[i].CurrentStats.StatCacheHits = int(stats.StatCacheHits)
 		}
 
 		digest, err := calculateDigest(allBackups)

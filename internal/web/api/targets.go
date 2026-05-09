@@ -3,14 +3,12 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
@@ -26,70 +24,6 @@ type TargetStatusResult struct {
 	AgentVersion     string
 	ConnectionStatus bool
 	Error            error
-}
-
-func CheckTargetStatusBatch(
-	ctx context.Context,
-	storeInstance *store.Store,
-	targets []database.Target,
-	checkStatus bool,
-	timeout time.Duration,
-) []TargetStatusResult {
-	results := make([]TargetStatusResult, len(targets))
-	var wg sync.WaitGroup
-
-	sem := make(chan struct{}, 20) // Max concurrent requests
-
-	for i, target := range targets {
-		wg.Add(1)
-		go func(idx int, tgt database.Target) {
-			defer wg.Done()
-
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			result := TargetStatusResult{Index: idx}
-
-			if !tgt.IsAgent() {
-				results[idx] = result
-				return
-			}
-
-			arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(tgt.GetHostname())
-			if !ok {
-				results[idx] = result
-				return
-			}
-
-			result.AgentVersion = arpcSess.GetVersion()
-			result.ConnectionStatus = false
-
-			if checkStatus {
-				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-				defer cancel()
-
-				respMsg, err := arpcSess.CallMessage(
-					timeoutCtx,
-					"target_status",
-					&reqTypes.TargetStatusReq{Drive: tgt.VolumeID},
-				)
-				if err == nil && strings.HasPrefix(respMsg, "reachable") {
-					result.ConnectionStatus = true
-					splittedMsg := strings.Split(respMsg, "|")
-					if len(splittedMsg) > 1 {
-						result.AgentVersion = splittedMsg[1]
-					}
-				} else if err != nil {
-					result.Error = err
-				}
-			}
-
-			results[idx] = result
-		}(i, target)
-	}
-
-	wg.Wait()
-	return results
 }
 
 func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -127,9 +61,8 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		if len(agentTargets) > 0 {
 			timeout := 5 * time.Second
-			results := CheckTargetStatusBatch(
+			results := storeInstance.TargetSvc.CheckTargetStatus(
 				r.Context(),
-				storeInstance,
 				agentTargets,
 				checkStatus,
 				timeout,
