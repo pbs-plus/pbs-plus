@@ -90,7 +90,7 @@ func IsUPIDRunning(upid string) bool {
 		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
 			return false
 		}
-		syslog.L.Error(err).WithField("upid", upid)
+		syslog.L.Error(err).WithField("upid", upid).Write()
 		return false
 	}
 

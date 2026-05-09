@@ -20,8 +20,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/store"
 	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/tasks"
 )
 
 // GenerateSecretKey generates a cryptographically secure secret key
@@ -84,11 +84,11 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		for {
 			select {
 			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("mount rpc server cancelled")
+				syslog.L.Error(mainCtx.Err()).WithMessage("mount rpc server cancelled").Write()
 				return
 			default:
 				if err := rpcmount.RunRPCServer(mainCtx, conf.MountSocketPath, storeInstance); err != nil {
-					syslog.L.Error(err).WithMessage("mount rpc server failed, restarting")
+					syslog.L.Error(err).WithMessage("mount rpc server failed, restarting").Write()
 					time.Sleep(backoff)
 					backoff *= 2
 					if backoff > maxBackoff {
@@ -113,11 +113,11 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		for {
 			select {
 			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("backup rpc server cancelled")
+				syslog.L.Error(mainCtx.Err()).WithMessage("backup rpc server cancelled").Write()
 				return
 			default:
 				if err := job.RunJobRPCServer(mainCtx, conf.JobMutateSocketPath, manager, storeInstance); err != nil {
-					syslog.L.Error(err).WithMessage("backup rpc server failed, restarting")
+					syslog.L.Error(err).WithMessage("backup rpc server failed, restarting").Write()
 					time.Sleep(backoff)
 					backoff *= 2
 					if backoff > maxBackoff {
