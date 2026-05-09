@@ -48,8 +48,6 @@ func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup databa
 	}
 
 	// Try mounting with retries
-	const maxRetries = 3
-	const retryDelay = 2 * time.Second
 
 	errCleanup := func() {
 		agentMount.CloseMount()
