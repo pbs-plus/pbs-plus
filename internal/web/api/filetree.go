@@ -21,7 +21,7 @@ func D2DFileTree(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		targetName := validate.DecodePath(r.PathValue("target"))
-		target, err := storeInstance.Database.GetTarget(targetName)
+		target, err := storeInstance.TargetSvc.GetTarget(targetName)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return

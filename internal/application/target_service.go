@@ -104,3 +104,38 @@ func (s *TargetService) CheckTargetStatus(
 		return results
 	}
 }
+
+// GetTarget returns a single target by name.
+func (s *TargetService) GetTarget(name string) (database.Target, error) {
+	return s.db.GetTarget(name)
+}
+
+// CreateTarget creates a new target.
+func (s *TargetService) CreateTarget(tx *database.Transaction, target database.Target) error {
+	return s.db.CreateTarget(tx, target)
+}
+
+// UpdateTarget updates an existing target.
+func (s *TargetService) UpdateTarget(tx *database.Transaction, target database.Target) error {
+	return s.db.UpdateTarget(tx, target)
+}
+
+// DeleteTarget removes a target.
+func (s *TargetService) DeleteTarget(tx *database.Transaction, name string) error {
+	return s.db.DeleteTarget(tx, name)
+}
+
+// UpsertTarget creates or updates a target and its associated volumes.
+func (s *TargetService) UpsertTarget(tx *database.Transaction, target database.Target) error {
+	return s.db.UpsertTarget(tx, target)
+}
+
+// AddS3Secret adds an S3 secret key to a target.
+func (s *TargetService) AddS3Secret(targetName, secret string) error {
+	return s.db.AddS3Secret(nil, targetName, secret)
+}
+
+// NewTransaction creates a new database transaction (delegates to Database).
+func (s *TargetService) NewTransaction() (*database.Transaction, error) {
+	return s.db.NewTransaction()
+}

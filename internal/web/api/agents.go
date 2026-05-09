@@ -123,7 +123,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		clientIP = strings.Split(clientIP, ":")[0]
 
 		syslog.L.Info().WithMessage("bootstrapping target").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives}).Write()
-		tx, err := storeInstance.Database.NewTransaction()
+		tx, err := storeInstance.TargetSvc.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
@@ -181,13 +181,13 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			newTarget.Name = database.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
 
-			existingTarget, err := storeInstance.Database.GetTarget(newTarget.Name)
+			existingTarget, err := storeInstance.TargetSvc.GetTarget(newTarget.Name)
 			if err == nil {
 				newTarget.JobCount = existingTarget.JobCount
 				newTarget.AgentVersion = existingTarget.AgentVersion
 				newTarget.ConnectionStatus = existingTarget.ConnectionStatus
 
-				err := storeInstance.Database.DeleteTarget(tx, newTarget.Name)
+				err := storeInstance.TargetSvc.DeleteTarget(tx, newTarget.Name)
 				if err != nil {
 					_ = tx.Rollback()
 					w.WriteHeader(http.StatusInternalServerError)
@@ -196,7 +196,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 					return
 				}
 
-				err = storeInstance.Database.CreateTarget(tx, newTarget)
+				err = storeInstance.TargetSvc.CreateTarget(tx, newTarget)
 				if err != nil {
 					_ = tx.Rollback()
 					w.WriteHeader(http.StatusInternalServerError)
@@ -206,7 +206,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 				syslog.L.Info().WithMessage("updated existing target auth").WithFields(map[string]any{"target": newTarget.Name}).Write()
 			} else {
-				err := storeInstance.Database.CreateTarget(tx, newTarget)
+				err := storeInstance.TargetSvc.CreateTarget(tx, newTarget)
 				if err != nil {
 					_ = tx.Rollback()
 					w.WriteHeader(http.StatusInternalServerError)
@@ -289,7 +289,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		syslog.L.Info().WithMessage("renewing target certificates").WithFields(map[string]any{"target": reqParsed.Hostname}).Write()
 
-		tx, err := storeInstance.Database.NewTransaction()
+		tx, err := storeInstance.TargetSvc.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
@@ -326,7 +326,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		for _, drive := range reqParsed.Drives {
 			targetName := database.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
 
-			existingTarget, err := storeInstance.Database.GetTarget(targetName)
+			existingTarget, err := storeInstance.TargetSvc.GetTarget(targetName)
 			if err != nil {
 				syslog.L.Warn().WithMessage("target not found during renewal, skipping").WithFields(map[string]any{"target": targetName}).Write()
 				continue
@@ -352,7 +352,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				MountScript:      existingTarget.MountScript,
 			}
 
-			err = storeInstance.Database.DeleteTarget(tx, targetName)
+			err = storeInstance.TargetSvc.DeleteTarget(tx, targetName)
 			if err != nil {
 				_ = tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
@@ -361,7 +361,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			err = storeInstance.Database.CreateTarget(tx, updatedTarget)
+			err = storeInstance.TargetSvc.CreateTarget(tx, updatedTarget)
 			if err != nil {
 				_ = tx.Rollback()
 				w.WriteHeader(http.StatusInternalServerError)
