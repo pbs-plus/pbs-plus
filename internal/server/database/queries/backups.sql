@@ -69,3 +69,6 @@ DELETE FROM backups WHERE id = ?;
 
 -- name: BackupExists :one
 SELECT 1 FROM backups WHERE id = ? LIMIT 1;
+
+-- name: CountBackups :one
+SELECT COUNT(*) FROM backups;

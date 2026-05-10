@@ -21,6 +21,17 @@ func (q *Queries) BackupExists(ctx context.Context, id string) (int64, error) {
 	return column_1, err
 }
 
+const countBackups = `-- name: CountBackups :one
+SELECT COUNT(*) FROM backups
+`
+
+func (q *Queries) CountBackups(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countBackups)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createBackup = `-- name: CreateBackup :exec
 INSERT INTO backups (
     id, store, mode, source_mode, read_mode, target, subpath, schedule, comment,
