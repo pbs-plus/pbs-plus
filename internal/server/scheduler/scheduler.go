@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/backup"
-	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/restore"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -85,9 +85,7 @@ func (s *Scheduler) checkBackups() {
 				syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: scheduled backup is due, enqueuing").Write()
 				s.markEnqueued(b.ID, nextRun)
 				job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
-				if err := s.manager.Enqueue(job); err != nil {
-					syslog.L.Error(err).WithField("backupID", b.ID).WithMessage("Scheduler: failed to enqueue scheduled backup").Write()
-				}
+				go s.enqueueBackup(b.ID, job)
 				continue
 			}
 		}
@@ -96,9 +94,7 @@ func (s *Scheduler) checkBackups() {
 		if b.Retry > 0 && s.shouldRetryBackup(b, now) {
 			syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: backup retry is due, enqueuing").Write()
 			job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
-			if err := s.manager.Enqueue(job); err != nil {
-				syslog.L.Error(err).WithField("backupID", b.ID).WithMessage("Scheduler: failed to enqueue backup retry").Write()
-			}
+			go s.enqueueBackup(b.ID, job)
 		}
 	}
 }
@@ -218,9 +214,7 @@ func (s *Scheduler) checkRestores() {
 				syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to create restore job").Write()
 				continue
 			}
-			if err := s.manager.Enqueue(job); err != nil {
-				syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to enqueue restore retry").Write()
-			}
+			go s.enqueueRestore(r.ID, job)
 		}
 	}
 }
@@ -248,6 +242,18 @@ func (s *Scheduler) shouldRetryRestore(r database.Restore, now time.Time) bool {
 
 	// Use persistent retry count
 	return r.History.RetryCount < r.Retry
+}
+
+func (s *Scheduler) enqueueBackup(id string, job *jobs.Job) {
+	if err := s.manager.Enqueue(job); err != nil {
+		syslog.L.Error(err).WithField("backupID", id).WithMessage("Scheduler: failed to enqueue backup").Write()
+	}
+}
+
+func (s *Scheduler) enqueueRestore(id string, job *jobs.Job) {
+	if err := s.manager.Enqueue(job); err != nil {
+		syslog.L.Error(err).WithField("restoreID", id).WithMessage("Scheduler: failed to enqueue restore").Write()
+	}
 }
 
 // isFailedState provides backward compatibility for legacy records that don't have
