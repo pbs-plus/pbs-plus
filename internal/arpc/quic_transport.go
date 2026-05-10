@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"sync"
@@ -88,10 +89,11 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 		WithMessage("quic: connection established").
 		Write()
 
-	if headers == nil {
-		headers = make(http.Header)
-	}
-	headers.Add("ARPCVersion", "2")
+	// Copy headers to avoid mutating the caller's map (agent reuses it across
+	// reconnects, so Add would accumulate duplicate values).
+	hdrCopy := make(http.Header, len(headers)+1)
+	maps.Copy(hdrCopy, headers)
+	hdrCopy.Set("ARPCVersion", "2")
 
 	pipeCtx, pipeCancel := context.WithCancel(ctx)
 	enc, _ := cbor.EncOptions{}.EncMode()
@@ -107,7 +109,7 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 		serverAddr: serverAddr,
 		tlsConfig:  quicTLS,
 		version:    "2",
-		headers:    headers,
+		headers:    hdrCopy,
 		cborEnc:    enc,
 		cborDec:    dec,
 	}
@@ -119,7 +121,7 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 	}
 	defer stream.Close()
 
-	if werr := writeHeadersFrame(stream, headers); werr != nil {
+	if werr := writeHeadersFrame(stream, hdrCopy); werr != nil {
 		pipe.Close()
 		return nil, fmt.Errorf("failed to write headers: %w", werr)
 	}
