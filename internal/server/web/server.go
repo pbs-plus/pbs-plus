@@ -164,7 +164,8 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	}, nil
 }
 
-// StartARPC starts the ARPC server with proper TLS configuration.
+// StartARPC starts the ARPC server (TCP) with proper TLS configuration.
+// TCP is used for backup/restore data sessions.
 func (s *Server) StartARPC() error {
 	arpcTlsConfig, err := s.Store.CertManager.ARPCServerTLSConfig()
 	if err != nil {
@@ -203,6 +204,16 @@ func (s *Server) StartARPC() error {
 	return arpc.ListenAndServe(s.Store.Ctx, conf.ARPCServerPort, s.Store.ARPCAgentsManager, arpcTlsConfig, s.ARPCRouter)
 }
 
+// StartARPCQuic starts the QUIC ARPC server for agent control-plane connections.
+func (s *Server) StartARPCQuic() error {
+	arpcTlsConfig, err := s.Store.CertManager.ARPCServerTLSConfig()
+	if err != nil {
+		return fmt.Errorf("failed to build server TLS config: %w", err)
+	}
+
+	return arpc.ListenAndServeQuic(s.Store.Ctx, conf.ARPCQuicPort, s.Store.ARPCAgentsManager, arpcTlsConfig, s.ARPCRouter)
+}
+
 // StartAll starts all HTTP and ARPC servers in background goroutines.
 func (s *Server) StartAll() {
 	s.wg.Go(func() {
@@ -220,6 +231,13 @@ func (s *Server) StartAll() {
 		syslog.L.Info().WithMessage(fmt.Sprintf("arpc: endpoint starting on tcp %s", conf.ARPCServerPort)).Write()
 		if err := s.StartARPC(); err != nil {
 			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed").Write()
+		}
+	})
+
+	s.wg.Go(func() {
+		syslog.L.Info().WithMessage(fmt.Sprintf("arpc: quic endpoint starting on %s", conf.ARPCQuicPort)).Write()
+		if err := s.StartARPCQuic(); err != nil {
+			syslog.L.Error(err).WithMessage("arpc quic agent endpoint server failed").Write()
 		}
 	})
 }

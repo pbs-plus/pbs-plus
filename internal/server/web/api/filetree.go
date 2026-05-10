@@ -7,8 +7,8 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	arpcTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -53,16 +53,22 @@ func D2DFileTree(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(target.GetHostname())
-		if !ok {
+		var resp []byte
+		var ftErr error
+
+		if qSess, qOk := storeInstance.ARPCAgentsManager.GetQuicPipe(target.GetHostname()); qOk {
+			reqData := arpcTypes.FileTreeReq{HostPath: target.GetAgentHostPath(), SubPath: subPath}
+			resp, ftErr = qSess.CallData(r.Context(), "filetree", &reqData)
+		} else if tSess, tOk := storeInstance.ARPCAgentsManager.GetStreamPipe(target.GetHostname()); tOk {
+			reqData := arpcTypes.FileTreeReq{HostPath: target.GetAgentHostPath(), SubPath: subPath}
+			resp, ftErr = tSess.CallData(r.Context(), "filetree", &reqData)
+		} else {
 			WriteErrorResponse(w, errors.New("target unreachable"))
 			return
 		}
 
-		reqData := arpcTypes.FileTreeReq{HostPath: target.GetAgentHostPath(), SubPath: subPath}
-		resp, err := arpcSess.CallData(r.Context(), "filetree", &reqData)
-		if err != nil {
-			WriteErrorResponse(w, err)
+		if ftErr != nil {
+			WriteErrorResponse(w, ftErr)
 			return
 		}
 

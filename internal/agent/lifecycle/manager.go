@@ -133,7 +133,7 @@ func ConnectARPC(
 	address := fmt.Sprintf(
 		"%s%s",
 		strings.TrimSuffix(uri.Hostname(), ":"),
-		conf.ARPCServerPort,
+		conf.ARPCQuicPort,
 	)
 	headers := http.Header{}
 	headers.Add("X-PBS-Agent", clientId)
@@ -156,7 +156,7 @@ func ConnectARPC(
 		factor := 2.0
 		jitter := 0.2
 		backoff := base
-		var session *arpc.StreamPipe
+		var session *arpc.QuicPipe
 
 		for {
 			select {
@@ -169,8 +169,8 @@ func ConnectARPC(
 			}
 
 			var connErr error
-			session, connErr = arpc.ConnectToServer(
-				ctx, address, headers, tlsConfig,
+			session, connErr = arpc.DialQuic(
+				ctx, address, tlsConfig,
 			)
 			if connErr != nil {
 				if isCertError(connErr) {
@@ -199,6 +199,8 @@ func ConnectARPC(
 				}
 			}
 
+			session.SetHeaders(headers)
+
 			router := arpc.NewRouter()
 			router.Handle(
 				"ping",
@@ -213,19 +215,19 @@ func ConnectARPC(
 			router.Handle(
 				"backup",
 				func(req *arpc.Request) (arpc.Response, error) {
-					return sync.BackupStartHandler(req, session)
+					return sync.BackupStartHandler(req, nil)
 				},
 			)
 			router.Handle(
 				"restore",
 				func(req *arpc.Request) (arpc.Response, error) {
-					return sync.RestoreStartHandler(req, session)
+					return sync.RestoreStartHandler(req, nil)
 				},
 			)
 			router.Handle(
 				"filetree",
 				func(req *arpc.Request) (arpc.Response, error) {
-					return sync.FileTreeHandler(req, session)
+					return sync.FileTreeHandler(req, nil)
 				},
 			)
 			router.Handle("target_status", sync.StatusHandler)

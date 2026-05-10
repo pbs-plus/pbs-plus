@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/xtaci/smux"
 )
 
 const (
@@ -15,7 +14,7 @@ const (
 	maxLength        = 1 << 30
 )
 
-func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
+func SendDataFromReader(r io.Reader, length int, stream ARPCStream) error {
 	if stream == nil {
 		err := fmt.Errorf("stream is nil")
 		syslog.L.Error(err).WithMessage("SendDataFromReader: nil stream").Write()
@@ -70,7 +69,7 @@ func SendDataFromReader(r io.Reader, length int, stream *smux.Stream) error {
 	return nil
 }
 
-func ReceiveDataInto(stream *smux.Stream, dst []byte) (int, error) {
+func ReceiveDataInto(stream ARPCStream, dst []byte) (int, error) {
 	var hdr [14]byte
 	if _, err := io.ReadFull(stream, hdr[:]); err != nil {
 		wErr := fmt.Errorf("failed to read header: %w", err)
