@@ -56,6 +56,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/d2d/backup", ServerOnly(storeInstance, api.ExtJsBackupRunHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/d2d/restore", ServerOnly(storeInstance, api.ExtJsRestoreRunHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target", ServerOnly(storeInstance, api.ExtJsTargetHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-target-status", ServerOnly(storeInstance, api.D2DTargetStatusHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}", ServerOnly(storeInstance, api.ExtJsTargetSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}/s3-secret", ServerOnly(storeInstance, api.ExtJsTargetS3SecretHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-agent/{agent}", ServerOnly(storeInstance, api.ExtJsAgentSingleHandler(storeInstance)))
