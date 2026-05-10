@@ -4,6 +4,7 @@ package application
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -137,12 +138,20 @@ func (s *ScriptService) DeleteScript(path string) error                 { return
 // --- TargetService ---
 
 type TargetService struct {
-	db        *database.Database
-	agentsMgr *arpc.AgentsManager
+	db          *database.Database
+	agentsMgr   *arpc.AgentsManager
+	statusCache map[string]TargetStatusResult
+	statusMu    sync.RWMutex
+	refreshing  bool
+	refreshMu   sync.Mutex
 }
 
 func NewTargetService(db *database.Database, agentsMgr *arpc.AgentsManager) *TargetService {
-	return &TargetService{db: db, agentsMgr: agentsMgr}
+	return &TargetService{
+		db:          db,
+		agentsMgr:   agentsMgr,
+		statusCache: make(map[string]TargetStatusResult),
+	}
 }
 
 func (s *TargetService) GetAllTargets() ([]database.Target, error)      { return s.db.GetAllTargets() }
@@ -255,6 +264,57 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []database.Targ
 	case <-done:
 		return results
 	}
+}
+
+func (s *TargetService) GetCachedStatuses() map[string]TargetStatusResult {
+	s.statusMu.RLock()
+	defer s.statusMu.RUnlock()
+	out := make(map[string]TargetStatusResult, len(s.statusCache))
+	maps.Copy(out, s.statusCache)
+	return out
+}
+
+func (s *TargetService) RefreshStatuses() {
+	s.refreshMu.Lock()
+	if s.refreshing {
+		s.refreshMu.Unlock()
+		return
+	}
+	s.refreshing = true
+	s.refreshMu.Unlock()
+
+	go func() {
+		defer func() {
+			s.refreshMu.Lock()
+			s.refreshing = false
+			s.refreshMu.Unlock()
+		}()
+
+		targets, err := s.db.GetAllTargets()
+		if err != nil {
+			return
+		}
+
+		agentTargets := make([]database.Target, 0)
+		for _, t := range targets {
+			if t.IsAgent() {
+				agentTargets = append(agentTargets, t)
+			}
+		}
+
+		if len(agentTargets) == 0 {
+			return
+		}
+
+		results := s.CheckStatus(context.Background(), agentTargets, true, 5*time.Second)
+
+		s.statusMu.Lock()
+		for _, r := range results {
+			key := agentTargets[r.Index].Name
+			s.statusCache[key] = r
+		}
+		s.statusMu.Unlock()
+	}()
 }
 
 // Ensure fmt is used (needed by sprintf patterns elsewhere)
