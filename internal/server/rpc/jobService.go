@@ -1,0 +1,167 @@
+//go:build linux
+
+package rpc
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/rpc"
+	"os"
+
+	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+)
+
+type BackupQueueArgs struct {
+	Job             database.Backup
+	SkipCheck       bool
+	Web             bool
+	Stop            bool
+	ExtraExclusions []string
+}
+
+type RestoreQueueArgs struct {
+	Job       database.Restore
+	SkipCheck bool
+	Web       bool
+	Stop      bool
+}
+
+type QueueReply struct {
+	Status  int
+	Message string
+}
+
+// BackupJobFactory creates a backup job operation. Set during initialization
+// to break the import cycle between rpc and jobs/backup.
+var BackupJobFactory func(database.Backup, *store.Store, bool, bool, []string) *jobs.Job
+
+// RestoreJobFactory creates a restore job operation. Set during initialization
+// to break the import cycle between rpc and jobs/restore.
+var RestoreJobFactory func(database.Restore, *store.Store, bool, bool) (*jobs.Job, error)
+
+type JobRPCService struct {
+	ctx     context.Context
+	Store   *store.Store
+	Manager *jobs.Manager
+}
+
+func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
+	if args.Stop {
+		err := s.Manager.StopJob(args.Job.ID)
+		if err != nil {
+			reply.Status = 500
+			reply.Message = err.Error()
+			return nil
+		}
+
+		reply.Status = 200
+		return nil
+	}
+
+	jobOp := BackupJobFactory(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
+	if err := s.Manager.Enqueue(jobOp); err != nil {
+		reply.Status = 500
+		reply.Message = err.Error()
+		return nil
+	}
+	reply.Status = 200
+
+	return nil
+}
+
+func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error {
+	if args.Stop {
+		err := s.Manager.StopJob(args.Job.ID)
+		if err != nil {
+			reply.Status = 500
+			reply.Message = err.Error()
+			return nil
+		}
+
+		reply.Status = 200
+		return nil
+	}
+
+	jobOp, err := RestoreJobFactory(args.Job, s.Store, args.SkipCheck, args.Web)
+	if err != nil {
+		reply.Status = 500
+		reply.Message = err.Error()
+		return nil
+	}
+	if err := s.Manager.Enqueue(jobOp); err != nil {
+		reply.Status = 500
+		reply.Message = err.Error()
+		return nil
+	}
+	reply.Status = 200
+
+	return nil
+}
+
+func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
+	// Remove any stale socket file.
+	_ = os.RemoveAll(socketPath)
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %v", socketPath, err)
+	}
+
+	service := &JobRPCService{
+		ctx:     ctx,
+		Store:   storeInstance,
+		Manager: manager,
+	}
+
+	// Register the RPC service.
+	if err := rpc.Register(service); err != nil {
+		return fmt.Errorf("failed to register rpc service: %v", err)
+	}
+
+	// Start accepting connections.
+	ready := make(chan struct{})
+
+	go func() {
+		if watcher != nil {
+			defer close(watcher)
+		}
+		close(ready)
+		rpc.Accept(listener)
+	}()
+
+	syslog.L.Info().
+		WithMessage("RPC server listening").
+		WithField("socket", socketPath).
+		Write()
+
+	<-ready
+
+	return nil
+}
+
+func RunJobRPCServer(ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
+	watcher := make(chan struct{}, 1)
+	err := StartJobRPCServer(watcher, ctx, socketPath, manager, storeInstance)
+	if err != nil {
+		return err
+	}
+
+	select {
+	case <-ctx.Done():
+		syslog.L.Info().
+			WithMessage("rpc mount server shutting down due to context cancellation").
+			WithField("socket", socketPath).
+			Write()
+		_ = os.Remove(socketPath)
+	case <-watcher:
+		syslog.L.Info().
+			WithMessage("rpc mount server shut down unexpectedly").
+			WithField("socket", socketPath).
+			Write()
+	}
+
+	return nil
+}
