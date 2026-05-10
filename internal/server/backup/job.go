@@ -204,7 +204,7 @@ func (b *backupJob) onError(err error) {
 		return
 	}
 
-	task, terr := tasks.GenerateBackupTaskErrorFile(
+	task, terr := GenerateBackupTaskErrorFile(
 		b.job,
 		err,
 		[]string{
@@ -719,7 +719,7 @@ func (b *backupJob) startTaskMonitoring(ctx context.Context, target database.Tar
 		timedCtx, timedCancel := context.WithTimeout(ctx, 20*time.Second)
 		defer timedCancel()
 
-		task, err := tasks.GetBackupTask(timedCtx, readyChan, job, target)
+		task, err := GetBackupTask(timedCtx, readyChan, job, target)
 		if err != nil {
 			errChan <- err
 			return
@@ -784,7 +784,7 @@ func (b *backupJob) createOK(err error) {
 	job := b.job
 	b.mu.RUnlock()
 
-	task, terr := tasks.GenerateBackupTaskOKFile(
+	task, terr := GenerateBackupTaskOKFile(
 		job,
 		[]string{
 			"Done handling from a job run request",

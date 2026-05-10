@@ -32,7 +32,7 @@ type restoreJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
 
-	task         *tasks.RestoreTask
+	task         *RestoreTask
 	queueTask    *tasks.QueuedTask
 	waitGroup    *sync.WaitGroup
 	err          error
@@ -57,7 +57,7 @@ func NewRestoreJob(
 	skipCheck bool,
 	web bool,
 ) (*jobs.Job, error) {
-	task, err := tasks.GetRestoreTask(job)
+	task, err := GetRestoreTask(job)
 	if err != nil {
 		return nil, err
 	}
@@ -532,7 +532,7 @@ func (b *restoreJob) runPostScript() {
 }
 
 func (b *restoreJob) createOK(err error) {
-	task, terr := tasks.GenerateRestoreTaskOKFile(
+	task, terr := GenerateRestoreTaskOKFile(
 		b.job,
 		[]string{
 			"Done handling from a job run request",

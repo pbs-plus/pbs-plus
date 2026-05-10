@@ -51,7 +51,7 @@ func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (Queu
 	}
 
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(target))
-	startTime := now()
+	startTime := Now()
 	startTimeHex := fmt.Sprintf("%08X", uint32(startTime.Unix()))
 
 	task := proxmox.Task{
@@ -69,7 +69,7 @@ func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (Queu
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
 	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, wtype, wid, proxmox.AUTH_ID)
 
-	file, path, err := createTaskLogFile(task.UPID)
+	file, path, err := CreateTaskLogFile(task.UPID)
 	if err != nil {
 		return QueuedTask{}, err
 	}
@@ -78,7 +78,7 @@ func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (Queu
 	if !web {
 		source = "schedule"
 	}
-	timestamp := now().Format(time.RFC3339)
+	timestamp := Now().Format(time.RFC3339)
 	fmt.Fprintf(file, "%s: TASK QUEUED: job started from %s\n", timestamp, source)
 	file.Close()
 
@@ -102,7 +102,7 @@ func (t *QueuedTask) UpdateDescription(desc string) error {
 	}
 	defer file.Close()
 
-	timestamp := now().Format(time.RFC3339)
+	timestamp := Now().Format(time.RFC3339)
 	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: %s\n", timestamp, desc); err != nil {
 		return fmt.Errorf("failed to write status line: %w", err)
 	}
