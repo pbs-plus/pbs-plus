@@ -110,7 +110,8 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 			return 100
 		}
 		return n
-	}, true)
+	})
+	storeInstance.Manager = manager
 	s := scheduler.NewScheduler(mainCtx, storeInstance, manager)
 	s.Start()
 
