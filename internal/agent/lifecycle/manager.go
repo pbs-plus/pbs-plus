@@ -170,7 +170,7 @@ func ConnectARPC(
 
 			var connErr error
 			session, connErr = arpc.DialQuic(
-				ctx, address, tlsConfig,
+				ctx, address, tlsConfig, headers,
 			)
 			if connErr != nil {
 				if isCertError(connErr) {
