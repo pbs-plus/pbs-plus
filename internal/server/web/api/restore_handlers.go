@@ -4,16 +4,20 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
-	"os"
-	"os/exec"
+	"net/rpc"
 	"strconv"
+	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
-
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -80,43 +84,49 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		decodedRestoreIDs := []string{}
-
 		for _, restoreID := range restoreIDs {
 			decoded := validate.DecodePath(restoreID)
-
 			if err := validate.ValidateJobId(decoded); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
-
 			decodedRestoreIDs = append(decodedRestoreIDs, decoded)
 		}
 
-		execPath, err := os.Executable()
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
+		stop := r.Method == http.MethodDelete
 
-		args := []string{}
-		for _, restoreID := range decodedRestoreIDs {
-			args = append(args, "-restore-job", restoreID)
-		}
-		args = append(args, "-web")
-		if r.Method == http.MethodDelete {
-			args = append(args, "-stop")
-		} else if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
+		go func() {
+			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
+			if err != nil {
+				syslog.L.Error(err).WithField("restores", decodedRestoreIDs).Write()
+				return
+			}
+			rpcClient := rpc.NewClient(conn)
+			defer rpcClient.Close()
 
-		cmd := exec.Command(execPath, args...)
-		cmd.Env = os.Environ()
-		err = cmd.Start()
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
+			for _, restoreID := range decodedRestoreIDs {
+				restoreTask, err := storeInstance.Database.GetRestore(restoreID)
+				if err != nil {
+					syslog.L.Error(err).WithField("restoreID", restoreID).Write()
+					continue
+				}
+
+				args := &jobrpc.RestoreQueueArgs{
+					Job:       restoreTask,
+					SkipCheck: true,
+					Stop:      stop,
+					Web:       true,
+				}
+				var reply jobrpc.QueueReply
+				if err := rpcClient.Call("JobRPCService.RestoreQueue", args, &reply); err != nil {
+					syslog.L.Error(err).WithField("restoreID", restoreID).Write()
+					continue
+				}
+				if reply.Status != 200 {
+					syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("restoreID", restoreID).Write()
+				}
+			}
+		}()
 
 		w.Header().Set("Content-Type", "application/json")
 		response.Status = http.StatusOK
