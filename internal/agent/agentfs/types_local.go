@@ -12,7 +12,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/xtaci/smux"
 )
 
 type FileHandle struct {
@@ -217,7 +216,7 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 
 	return arpc.Response{
 		Status: 213,
-		RawStream: func(stream *smux.Stream) {
+		RawStream: func(stream arpc.ARPCStream) {
 			defer fh.releaseOp()
 			_ = arpc.SendDataFromReader(bytes.NewReader(encodedBatch), len(encodedBatch), stream)
 		},
@@ -254,7 +253,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 	if payload.Offset >= fileSize {
 		fh.releaseOp()
-		return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
+		return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
 			_ = arpc.SendDataFromReader(bytes.NewReader(nil), 0, stream)
 		}}, nil
 	}
@@ -266,7 +265,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 	if s.readMode == "mmap" && reqLen > 0 {
 		if data, cleanup, ok := s.platformMmap(fh, payload.Offset, reqLen); ok {
-			return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
+			return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
 				defer fh.releaseOp()
 				defer cleanup()
 				_ = arpc.SendDataFromReader(bytes.NewReader(data), len(data), stream)
@@ -292,7 +291,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	return arpc.Response{Status: 213, RawStream: func(stream *smux.Stream) {
+	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
 		defer fh.releaseOp()
 		if !isTemp {
 			defer readBufPool.Put(bptr)

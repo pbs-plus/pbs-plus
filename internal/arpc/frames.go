@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/xtaci/smux"
 )
 
 const (
@@ -15,6 +14,11 @@ const (
 	maxHeaderCount      = 50
 	maxRejectionSize    = 4096
 	maxSingleHeaderSize = 2048
+)
+
+var (
+	rejectionMarker = []byte{0x00}
+	successMarker   = []byte{0x01}
 )
 
 type RejectionFrame struct {
@@ -26,9 +30,9 @@ func (r RejectionFrame) Error() string {
 	return fmt.Sprintf("connection rejected: %s (code %d)", r.Message, r.Code)
 }
 
-func writeRejectionFrame(s *smux.Stream, rejection RejectionFrame) error {
+func writeRejectionFrame(s ARPCStream, rejection RejectionFrame) error {
 	// Send marker byte to indicate rejection (0x00 = rejection, 0x01 = success)
-	if _, err := s.Write([]byte{0x00}); err != nil {
+	if _, err := s.Write(rejectionMarker); err != nil {
 		return err
 	}
 
@@ -49,7 +53,7 @@ func writeRejectionFrame(s *smux.Stream, rejection RejectionFrame) error {
 	return err
 }
 
-func readRejectionFrame(s *smux.Stream) (RejectionFrame, error) {
+func readRejectionFrame(s ARPCStream) (RejectionFrame, error) {
 	var rejection RejectionFrame
 
 	length, err := readVarint(s)
@@ -71,12 +75,12 @@ func readRejectionFrame(s *smux.Stream) (RejectionFrame, error) {
 	return rejection, err
 }
 
-func writeHeadersSuccess(s *smux.Stream) error {
-	_, err := s.Write([]byte{0x01})
+func writeHeadersSuccess(s ARPCStream) error {
+	_, err := s.Write(successMarker)
 	return err
 }
 
-func readHandshakeResponse(s *smux.Stream) error {
+func readHandshakeResponse(s ARPCStream) error {
 	var marker [1]byte
 	if _, err := io.ReadFull(s, marker[:]); err != nil {
 		return fmt.Errorf("failed to read handshake response: %w", err)
@@ -114,7 +118,7 @@ func validateHeaders(headers http.Header) error {
 	return nil
 }
 
-func writeHeadersFrame(s *smux.Stream, hdr http.Header) error {
+func writeHeadersFrame(s ARPCStream, hdr http.Header) error {
 	if err := validateHeaders(hdr); err != nil {
 		return err
 	}
@@ -146,7 +150,7 @@ func writeHeadersFrame(s *smux.Stream, hdr http.Header) error {
 	return nil
 }
 
-func readHeadersFrame(s *smux.Stream) (http.Header, error) {
+func readHeadersFrame(s ARPCStream) (http.Header, error) {
 	h := http.Header{}
 	n, err := readVarint(s)
 	if err != nil {
