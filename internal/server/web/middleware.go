@@ -63,7 +63,7 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(rec, r)
 			duration := time.Since(start)
 
-			logger.Info("request",
+			logger.Debug("request",
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", rec.status,
