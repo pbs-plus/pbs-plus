@@ -25,7 +25,7 @@ func Entry() {
 	flag.Parse()
 
 	if *cmdMode != "restore" && *cmdMode != "backup" {
-		syslog.L.Debug().WithMessage("CLI: cmdMode invalid, returning").WithField("cmdMode", *cmdMode).Write()
+		syslog.L.Debug().WithMessage("cli: invalid command mode").WithField("cmdMode", *cmdMode).Write()
 		return
 	}
 
@@ -34,7 +34,7 @@ func Entry() {
 		os.Exit(1)
 	}
 
-	syslog.L.Debug().WithMessage("CmdFork: invoked").
+	syslog.L.Debug().WithMessage("cli: fork invoked").
 		WithField("cmdMode", *cmdMode).
 		WithField("sourceMode", *sourceMode).
 		WithField("readMode", *readMode).
@@ -50,7 +50,7 @@ func Entry() {
 	os.Remove(tokenFile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error: token file not found")
-		syslog.L.Error(err).WithMessage("cmdBackup: token file read failed").Write()
+		syslog.L.Error(err).WithMessage("backup: token file read failed").Write()
 		os.Exit(1)
 	}
 

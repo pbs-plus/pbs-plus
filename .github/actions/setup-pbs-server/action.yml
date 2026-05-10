@@ -4,7 +4,7 @@ description: Run and initialize PBS Plus server container
 inputs:
   timeout-seconds:
     required: false
-    default: '20'
+    default: "20"
     description: Timeout for server initialization
 
 runs:
@@ -30,9 +30,9 @@ runs:
         echo "Waiting for PBS Plus..."
         timeout=${{ inputs.timeout-seconds }}
         elapsed=0
-        
+
         while [ $elapsed -lt $timeout ]; do
-          if docker logs pbs-plus-test 2>&1 | grep -q "Starting aRPC endpoint"; then
+          if docker logs pbs-plus-test 2>&1 | grep -q "arpc: endpoint starting"; then
             echo "✓ PBS Plus fully initialized and running"
             break
           fi
@@ -46,5 +46,5 @@ runs:
           echo "✗ Timeout reached after ${timeout}s"
           exit 1
         fi
-        
+
         docker ps | grep pbs-plus-test

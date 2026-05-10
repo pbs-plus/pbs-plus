@@ -14,12 +14,12 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
-	s3fs "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
-	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
+	s3fs "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -162,7 +162,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	if err := arpcfs.MountARPC(arpcFS, mntPath); err != nil {
 		syslog.L.Error(err).Write()
 		reply.Status = 500
-		reply.Message = fmt.Sprintf("failed to create fuse connection for target -> %v", err)
+		reply.Message = fmt.Sprintf("mount: fuse connection failed: %v", err)
 		return fmt.Errorf("backup: %w", err)
 	}
 
@@ -225,7 +225,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 	if err := s3fs.MountS3(s3FS, mntPath); err != nil {
 		syslog.L.Error(err).Write()
 		reply.Status = 500
-		reply.Message = fmt.Sprintf("Failed to create fuse connection for target -> %v", err)
+		reply.Message = fmt.Sprintf("mount: fuse connection failed: %v", err)
 		return fmt.Errorf("backup: %w", err)
 	}
 

@@ -53,37 +53,37 @@ type backupSession struct {
 const BACKUP_MODE_PREFIX = "pbs-plus--child-backup-mode:"
 
 func (s *backupSession) Close() {
-	syslog.L.Info().WithMessage("backupSession.Close: begin").WithField("backupID", s.backupID).Write()
+	syslog.L.Info().WithMessage("session: closing").WithField("backupID", s.backupID).Write()
 	s.once.Do(func() {
 		if s.fs != nil {
-			syslog.L.Info().WithMessage("backupSession.Close: closing AgentFSServer").WithField("backupID", s.backupID).Write()
+			syslog.L.Info().WithMessage("session: closing agentfs server").WithField("backupID", s.backupID).Write()
 			s.fs.Close()
 		}
 		if s.snapshot != (snapshots.Snapshot{}) && !s.snapshot.Direct && s.snapshot.Handler != nil {
-			syslog.L.Info().WithMessage("backupSession.Close: deleting snapshot").WithField("backupID", s.backupID).WithField("path", s.snapshot.Path).Write()
+			syslog.L.Info().WithMessage("session: deleting snapshot").WithField("backupID", s.backupID).WithField("path", s.snapshot.Path).Write()
 			s.snapshot.Handler.DeleteSnapshot(s.snapshot)
 		}
 		if s.store != nil {
 			if err := s.store.EndBackup(s.backupID); err != nil {
-				syslog.L.Warn().WithMessage("backupSession.Close: EndBackup returned error").WithField("backupID", s.backupID).WithField("error", err.Error()).Write()
+				syslog.L.Warn().WithMessage("session: end backup returned error").WithField("backupID", s.backupID).WithField("error", err.Error()).Write()
 			}
 		}
 		activeSessions.Del(s.backupID)
 		s.cancel()
 	})
-	syslog.L.Info().WithMessage("backupSession.Close: done").WithField("backupID", s.backupID).Write()
+	syslog.L.Info().WithMessage("session: closed").WithField("backupID", s.backupID).Write()
 }
 
 func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 	if *sourceMode == "" || *drive == "" || *backupID == "" || *readMode == "" {
 		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and backupID are required")
-		syslog.L.Error(errors.New("missing required flags")).WithMessage("CmdBackup: validation failed").Write()
+		syslog.L.Error(errors.New("missing required flags")).WithMessage("backup: validation failed").Write()
 		os.Exit(1)
 	}
 
 	if err := validate.ValidateJobId(*backupID); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid backupID: %v\n", err)
-		syslog.L.Error(err).WithMessage("CmdBackup: backupID validation failed").Write()
+		syslog.L.Error(err).WithMessage("backup: backup id validation failed").Write()
 		os.Exit(1)
 	}
 
@@ -128,7 +128,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		defer syslog.L.Info().WithMessage("CmdBackup: ARPC session handler shutting down").Write()
+		defer syslog.L.Info().WithMessage("backup: arpc session handler shutting down").Write()
 
 		base := 500 * time.Millisecond
 		maxWait := 30 * time.Second
@@ -149,13 +149,13 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 				}
 				return
 			default:
-				syslog.L.Info().WithMessage("CmdBackup: Attempting connection").WithField("backupID", *backupID).Write()
+				syslog.L.Info().WithMessage("backup: attempting connection").WithField("backupID", *backupID).Write()
 
 				var err error
 				session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 				if err != nil {
 					if strings.Contains(err.Error(), "(code 403)") {
-						syslog.L.Error(err).WithMessage("CmdBackup: Authorization failed, shutting down").Write()
+						syslog.L.Error(err).WithMessage("backup: authorization failed, shutting down").Write()
 						return
 					}
 
@@ -181,7 +181,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 				}
 
 				session.SetRouter(arpc.NewRouter())
-				syslog.L.Info().WithMessage("ARPC connection established").Write()
+				syslog.L.Info().WithMessage("arpc: connection established").Write()
 				backoff = base
 			}
 
@@ -189,7 +189,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 				snap, backupMode, err := Backup(session, *sourceMode, currentReadMode, *drive, *backupID)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "Backup initiation failed:", err)
-					syslog.L.Error(err).WithMessage("CmdBackup: Backup initiation failed").Write()
+					syslog.L.Error(err).WithMessage("backup: initiation failed").Write()
 					cancel()
 					return
 				}
@@ -206,7 +206,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 			}
 
 			fs.RegisterHandlers(router)
-			syslog.L.Info().WithMessage("Backup: AgentFSServer registered and session ready").
+			syslog.L.Info().WithMessage("backup: agentfs server registered, session ready").
 				WithField("backupID", backupID).
 				WithField("mode", currentReadMode).
 				WithField("snapshot_path", currentSnap.Path).
@@ -232,7 +232,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 
 	go func() {
 		sig := <-done
-		syslog.L.Info().WithMessage(fmt.Sprintf("CmdBackup: received signal %v", sig)).Write()
+		syslog.L.Info().WithMessage(fmt.Sprintf("backup: received signal %v", sig)).Write()
 		cancel()
 	}()
 
@@ -242,12 +242,12 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 		session.Close()
 	}
 
-	syslog.L.Info().WithMessage("CmdBackup: finished").Write()
+	syslog.L.Info().WithMessage("backup: finished").Write()
 	os.Exit(0)
 }
 
 func ExecBackup(sourceMode string, readMode string, drive string, backupID string) (string, int, error) {
-	syslog.L.Info().WithMessage("ExecBackup: begin").
+	syslog.L.Info().WithMessage("backup: exec begin").
 		WithField("sourceMode", sourceMode).
 		WithField("readMode", readMode).
 		WithField("drive", drive).
@@ -315,7 +315,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 		syslog.L.Error(err).WithMessage("ExecBackup: cmd.Start failed").Write()
 		return "", -1, err
 	}
-	syslog.L.Info().WithMessage("ExecBackup: child started").
+	syslog.L.Info().WithMessage("backup: child process started").
 		WithField("pid", cmd.Process.Pid).
 		WithField("args", strings.Join(args, " ")).
 		Write()
@@ -329,7 +329,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 		for scanner.Scan() {
 			line := scanner.Text()
 			if mode, found := strings.CutPrefix(line, BACKUP_MODE_PREFIX); found {
-				syslog.L.Info().WithMessage("ExecBackup: detected backup mode line").WithField("mode", mode).Write()
+				syslog.L.Info().WithMessage("backup: detected mode").WithField("mode", mode).Write()
 				backupMode <- mode
 			} else {
 				syslog.L.Info().
@@ -358,7 +358,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 	}()
 
 	mode := strings.TrimSpace(<-backupMode)
-	syslog.L.Info().WithMessage("ExecBackup: returning to parent").
+	syslog.L.Info().WithMessage("backup: returning to parent").
 		WithField("mode", mode).
 		WithField("pid", cmd.Process.Pid).
 		Write()
@@ -366,7 +366,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 }
 
 func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, backupID string) (*snapshots.Snapshot, string, error) {
-	syslog.L.Info().WithMessage("Backup: begin").
+	syslog.L.Info().WithMessage("backup: begin").
 		WithField("sourceMode", sourceMode).
 		WithField("readMode", readMode).
 		WithField("drive", drive).
@@ -418,7 +418,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 				SourcePath:  drive,
 				Direct:      true,
 			}
-			syslog.L.Info().WithMessage("Backup: configured direct mode snapshot").
+			syslog.L.Info().WithMessage("backup: configured direct mode").
 				WithField("path", path).
 				WithField("drive", drive).
 				Write()
@@ -440,7 +440,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 					Direct:      true,
 				}
 			} else {
-				syslog.L.Info().WithMessage("Backup: snapshot created successfully").
+				syslog.L.Info().WithMessage("backup: snapshot created").
 					WithField("path", snapshot.Path).
 					WithField("drive", drive).
 					Write()
@@ -453,7 +453,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 			SourcePath:  "/",
 			Direct:      true,
 		}
-		syslog.L.Info().WithMessage("Backup: non-Windows platform, using root snapshot").Write()
+		syslog.L.Info().WithMessage("backup: using root snapshot").Write()
 	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())

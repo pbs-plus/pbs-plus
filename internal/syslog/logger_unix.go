@@ -33,12 +33,12 @@ func (l *Logger) SetServiceLogger() error {
 	// Build a slog.Logger that writes JSON to the syslog writer.
 	handler := slog.NewJSONHandler(&LogWriter{logger: sysWriter}, &slog.HandlerOptions{
 		Level:     slog.LevelInfo,
-		AddSource: true,
+		AddSource: false,
 	})
 	if conf.Env.Debug {
 		handler = slog.NewJSONHandler(&LogWriter{logger: sysWriter}, &slog.HandlerOptions{
 			Level:     slog.LevelDebug,
-			AddSource: true,
+			AddSource: false,
 		})
 	}
 
