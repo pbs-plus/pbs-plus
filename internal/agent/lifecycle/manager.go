@@ -156,7 +156,7 @@ func ConnectARPC(
 		factor := 2.0
 		jitter := 0.2
 		backoff := base
-		var session *arpc.QuicPipe
+		var session arpc.Session
 
 		for {
 			select {
@@ -172,6 +172,30 @@ func ConnectARPC(
 			session, connErr = arpc.DialQuic(
 				ctx, address, tlsConfig, headers,
 			)
+			if connErr != nil {
+				if isCertError(connErr) {
+					syslog.L.Error(connErr).
+						WithMessage("certificate error on connect, requesting re-bootstrap").
+						Write()
+					signalCertError(connErr)
+					return
+				}
+
+				syslog.L.Warn().
+					WithField("error", connErr.Error()).
+					WithMessage("QUIC connection failed, falling back to TCP/mTLS").
+					Write()
+
+				var tcpPipe *arpc.StreamPipe
+				tcpPipe, connErr = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
+				if connErr == nil {
+					session = tcpPipe
+					syslog.L.Info().
+						WithMessage("TCP/mTLS fallback connection established").
+						Write()
+				}
+			}
+
 			if connErr != nil {
 				if isCertError(connErr) {
 					syslog.L.Error(connErr).
